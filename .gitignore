@@ -1,2 +1,4 @@
 .venv/
 .env
+support_bundle_*.zip
+support_bundle_*/
