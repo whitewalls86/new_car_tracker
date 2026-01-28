@@ -38,6 +38,23 @@ services:
     networks:
       - cartracker-net
 
+  dbt:
+    image: ghcr.io/dbt-labs/dbt-postgres:1.8.2
+    container_name: cartracker-dbt
+    working_dir: /usr/app
+    volumes:
+      - ./dbt:/usr/app
+    environment:
+      DBT_PROFILES_DIR: /usr/app
+      PGHOST: postgres
+      PGPORT: 5432
+      PGDATABASE: cartracker
+      PGUSER: cartracker
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    networks:
+      - cartracker-net
+
+
 volumes:
   cartracker_pgdata:
     external: true

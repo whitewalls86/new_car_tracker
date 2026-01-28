@@ -6,7 +6,7 @@ cartracker:
       host: postgres
       port: 5432
       user: cartracker
-      password: cartracker
+      password: "{{ env_var('POSTGRES_PASSWORD') }}"
       dbname: cartracker
       schema: analytics
       threads: 2
