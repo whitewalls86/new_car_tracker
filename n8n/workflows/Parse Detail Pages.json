@@ -1,0 +1,457 @@
+{
+  "name": "Parse Detail Pages",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        240
+      ],
+      "id": "4ad68247-68a8-4a90-bd09-0ea0dede01dd",
+      "name": "After Scrape"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH candidates AS (\n  SELECT ra.artifact_id\n  FROM raw_artifacts ra\n  LEFT JOIN artifact_processing ap\n    ON ap.artifact_id = ra.artifact_id\n   AND ap.processor = '{{ $json.processor }}'\n  WHERE ra.source = 'cars.com'\n    AND ra.artifact_type = 'detail_page'\n    AND NOT EXISTS (\n      SELECT 1\n      FROM artifact_processing ap_ok\n      WHERE ap_ok.artifact_id = ra.artifact_id\n        AND ap_ok.status = 'ok'\n        AND ap_ok.processor LIKE 'cars_detail_page__%'\n    )\n    AND (\n          ap.artifact_id IS NULL\n          OR ap.status = 'retry'\n          OR (ap.status = 'processing' AND ap.processed_at < now() - interval '1 minutes')\n        )\n  ORDER BY ra.fetched_at ASC\n),\nclaimed AS (\n  INSERT INTO artifact_processing (artifact_id, processor, status, processed_at)\n  SELECT c.artifact_id, '{{ $json.processor }}', 'processing', now()\n  FROM candidates c\n  ON CONFLICT (artifact_id, processor) DO UPDATE\n    SET status = 'processing',\n        processed_at = now(),\n        message = NULL\n  RETURNING artifact_id\n)\nSELECT ra.*\nFROM raw_artifacts ra\nJOIN claimed c ON ra.artifact_id = c.artifact_id\nORDER BY ra.fetched_at ASC;\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        448,
+        240
+      ],
+      "id": "5f5e9f4d-488c-4b82-97dc-01f9e5c81af1",
+      "name": "Identify Unproccessed Artifacts",
+      "credentials": {
+        "postgres": {
+          "id": "l8Ecbn62FzXCDkF9",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "{\n  \"processor\": \"cars_detail_page__v1\"\n}\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        224,
+        240
+      ],
+      "id": "5114bf1b-bd71-49b6-8bff-f6f0f7ef6ce4",
+      "name": "Set Processor"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        672,
+        240
+      ],
+      "id": "7544f104-385d-4212-821b-af072778a766",
+      "name": "Loop Over Items"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://cartracker-scraper:8000/process/detail_pages",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"processor\": \"cars_detail_page__v1\",\n  \"artifact\": {\n    \"artifact_id\": \"{{ $json.artifact_id }}\",\n    \"filepath\": \"{{ $json.filepath }}\",\n    \"search_key\": \"{{ $json.search_key }}\"\n  }\n}\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        896,
+        176
+      ],
+      "id": "65b0d076-dc1d-4ccd-8b1e-8d78a3f22d59",
+      "name": "HTTP Request"
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        1312,
+        -96
+      ],
+      "id": "8607f3c3-c7c5-4eb8-af91-8f31bc10470d",
+      "name": "Aggregate"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH parsed AS (\n  SELECT *\n  FROM jsonb_to_recordset('{{ JSON.stringify($json.data).replace(/'/g,\"''\") }}'::jsonb)\n    AS p(\n      processor   text,\n      artifact_id bigint,\n      status      text,\n      message     text,\n      search_key  text,\n      meta        jsonb,\n      \"primary\"   jsonb,\n      carousel    jsonb\n    )\n),\nra AS (\n  SELECT artifact_id, fetched_at, url\n  FROM raw_artifacts\n  WHERE artifact_id IN (SELECT artifact_id FROM parsed)\n),\nrows AS (\n  SELECT DISTINCT\n    p.artifact_id,\n    ra.fetched_at,\n\n    NULLIF(p.\"primary\"->>'listing_id', '')                         AS listing_id,\n    COALESCE(\n      NULLIF(p.\"primary\"->>'vin', ''),\n      NULLIF(p.search_key, '')\n    ) AS vin,\n    COALESCE(NULLIF(p.\"primary\"->>'listing_state',''), 'active')   AS listing_state,\n\n    NULLIF(p.\"primary\"->>'price',   '')::int                       AS price,\n    NULLIF(p.\"primary\"->>'mileage', '')::int                       AS mileage,\n    NULLIF(p.\"primary\"->>'msrp',    '')::int                       AS msrp,\n\n    NULLIF(p.\"primary\"->>'stock_type',  '')                        AS stock_type,\n    NULLIF(p.\"primary\"->>'dealer_name', '')                        AS dealer_name,\n    NULLIF(p.\"primary\"->>'dealer_zip',  '')                        AS dealer_zip\n\n  FROM parsed p\n  JOIN ra USING (artifact_id)\n  WHERE p.status = 'ok'\n)\nINSERT INTO detail_observations (\n  artifact_id,\n  fetched_at,\n  listing_id,\n  vin,\n  listing_state,\n  price,\n  mileage,\n  msrp,\n  stock_type,\n  dealer_name,\n  dealer_zip\n)\nSELECT\n  artifact_id,\n  fetched_at,\n  listing_id,\n  vin,\n  listing_state,\n  price,\n  mileage,\n  msrp,\n  stock_type,\n  dealer_name,\n  dealer_zip\nFROM rows\nON CONFLICT DO NOTHING;\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1504,
+        -128
+      ],
+      "id": "a39c4bf4-6641-4675-93f2-31d755a73d19",
+      "name": "Write Detail Observations",
+      "credentials": {
+        "postgres": {
+          "id": "l8Ecbn62FzXCDkF9",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH parsed AS (\n  SELECT *\n  FROM jsonb_to_recordset('{{ JSON.stringify($items(\"Aggregate\")[0].json.data).replace(/'/g,\"''\") }}'::jsonb)\n  AS p(\n    artifact_id bigint,\n    status      text,\n    \"primary\"   jsonb,\n    carousel    jsonb\n  )\n  WHERE status = 'ok'\n),\nra AS (\n  SELECT artifact_id, fetched_at, url\n  FROM raw_artifacts\n  WHERE artifact_id IN (SELECT artifact_id FROM parsed)\n),\ncards AS (\n  SELECT DISTINCT ON (p.artifact_id, src.source_listing_id, c->>'listing_id')\n    p.artifact_id,\n    ra.fetched_at,\n    src.source_listing_id,\n\n    NULLIF(c->>'listing_id','')            AS listing_id,\n    NULLIF(c->>'price','')::int            AS price,\n    NULLIF(c->>'mileage','')::int          AS mileage,\n    NULLIF(c->>'body','')                  AS body,\n    NULLIF(c->>'condition','')             AS condition,\n    NULLIF(c->>'year','')::int             AS year\n  FROM parsed p\n  JOIN ra USING (artifact_id)\n\n  -- derive source_listing_id once per parsed row\n  CROSS JOIN LATERAL (\n    SELECT COALESCE(\n      NULLIF(p.\"primary\"->>'listing_id',''),\n      NULLIF(regexp_replace(ra.url, '.*/vehicledetail/([^/]+)/?.*', '\\1'), ra.url)\n    ) AS source_listing_id\n  ) src\n\n  -- explode carousel array into rows\n  CROSS JOIN LATERAL jsonb_array_elements(COALESCE(p.carousel, '[]'::jsonb)) AS c\n  WHERE NULLIF(c->>'listing_id','') IS NOT NULL\n)\nINSERT INTO detail_carousel_hints (\n  artifact_id,\n  fetched_at,\n  source_listing_id,\n  listing_id,\n  price,\n  mileage,\n  body,\n  condition,\n  year\n)\nSELECT\n  artifact_id,\n  fetched_at,\n  source_listing_id,\n  listing_id,\n  price,\n  mileage,\n  body,\n  condition,\n  year\nFROM cards\nON CONFLICT DO NOTHING;\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1664,
+        -128
+      ],
+      "id": "f42121d2-8167-4b92-8b24-968285e97b66",
+      "name": "Write Carousel Hints",
+      "credentials": {
+        "postgres": {
+          "id": "l8Ecbn62FzXCDkF9",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1104,
+        -96
+      ],
+      "id": "6c11caca-f17f-42a7-81c1-e700136fdc65",
+      "name": "Loop Over Items1"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH data AS (\n  SELECT *\n  FROM jsonb_to_recordset(\n    '{{ JSON.stringify($node[\"Aggregate\"].json.data).replace(/'/g, \"''\") }}'::jsonb\n  ) AS x(\n    artifact_id bigint,\n    status text,\n    message text,\n    meta jsonb\n  )\n)\nUPDATE artifact_processing ap\nSET\n  status = d.status,\n  processed_at = now(),\n  message = d.message,\n  meta = COALESCE(d.meta, '{}'::jsonb)\nFROM data d\nWHERE ap.artifact_id = d.artifact_id\n  AND ap.processor = '{{ $node[\"Set Processor\"].json.processor }}';\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1824,
+        -64
+      ],
+      "id": "1bda3376-0950-4a5d-aaf3-aeb94960f6fa",
+      "name": "Mark Artifacts Processed",
+      "credentials": {
+        "postgres": {
+          "id": "l8Ecbn62FzXCDkF9",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.status }}",
+                    "rightValue": "ok",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "20204476-2db5-41ed-befa-9355dc309db8"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "ok"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "a72f9328-92c7-4e29-a144-56a2c4da4a58",
+                    "leftValue": "={{ $json.status }}",
+                    "rightValue": "ok",
+                    "operator": {
+                      "type": "string",
+                      "operation": "notEquals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Not Ok"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        1120,
+        240
+      ],
+      "id": "fd61dd04-1ca1-465a-98a9-b442b9d41f18",
+      "name": "Switch"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE artifact_processing\nSET\n  status = 'retry',\n  meta = '{{ JSON.stringify($node[\"HTTP Request\"].json.meta) }}'\nWHERE artifact_id = {{ $node[\"HTTP Request\"].json.artifact_id }}\n  AND processor = '{{ $node[\"HTTP Request\"].json.processor }}';\n\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1344,
+        320
+      ],
+      "id": "74a5df77-adaf-4098-89d8-4607bd0bb333",
+      "name": "Update Artifacts Processing With Retry",
+      "credentials": {
+        "postgres": {
+          "id": "l8Ecbn62FzXCDkF9",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "Zqzriv9Kmv8h2OlKOksJI",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/Zqzriv9Kmv8h2OlKOksJI",
+          "cachedResultName": "Vehicle Refresh"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        1440,
+        -304
+      ],
+      "id": "3cfa3bc5-0ed9-4306-9cf3-768cace37c1d",
+      "name": "Call 'Vehicle Refresh'"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "After Scrape": {
+      "main": [
+        [
+          {
+            "node": "Set Processor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Processor": {
+      "main": [
+        [
+          {
+            "node": "Identify Unproccessed Artifacts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Identify Unproccessed Artifacts": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate": {
+      "main": [
+        [
+          {
+            "node": "Write Detail Observations",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Detail Observations": {
+      "main": [
+        [
+          {
+            "node": "Write Carousel Hints",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items1": {
+      "main": [
+        [
+          {
+            "node": "Call 'Vehicle Refresh'",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Aggregate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Carousel Hints": {
+      "main": [
+        [
+          {
+            "node": "Mark Artifacts Processed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Artifacts Processed": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update Artifacts Processing With Retry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Artifacts Processing With Retry": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "1f253f03-ea22-4bd0-b048-9589707d156f",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179"
+  },
+  "id": "WX_1Ky-8veuMLlqX_iRXK",
+  "tags": []
+}

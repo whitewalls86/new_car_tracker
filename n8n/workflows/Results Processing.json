@@ -1,0 +1,386 @@
+{
+  "name": "Results Processing",
+  "nodes": [
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        624,
+        0
+      ],
+      "id": "1b5833a1-8fde-42eb-8882-916545ab3d52",
+      "name": "Loop Over Items"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH candidates AS (\n  SELECT ra.artifact_id\n  FROM raw_artifacts ra\n  LEFT JOIN artifact_processing ap\n    ON ap.artifact_id = ra.artifact_id\n   AND ap.processor = '{{ $json.processor }}'\n  WHERE ra.source = 'cars.com'\n    AND ra.artifact_type = 'results_page'\n    AND NOT EXISTS (\n      SELECT 1\n      FROM artifact_processing ap_ok\n      WHERE ap_ok.artifact_id = ra.artifact_id\n        AND ap_ok.status = 'ok'\n        AND ap_ok.processor LIKE 'cars_results_page__listings_%'\n    )\n    AND (\n          ap.artifact_id IS NULL\n          OR ap.status = 'retry'\n          OR (ap.status = 'processing' AND ap.processed_at < now() - interval '20 minutes')\n        )\n  ORDER BY ra.fetched_at ASC\n--  LIMIT 50\n),\nclaimed AS (\n  INSERT INTO artifact_processing (artifact_id, processor, status, processed_at)\n  SELECT c.artifact_id, '{{ $json.processor }}', 'processing', now()\n  FROM candidates c\n  ON CONFLICT (artifact_id, processor) DO UPDATE\n    SET status = 'processing',\n        processed_at = now(),\n        message = NULL\n  RETURNING artifact_id\n)\nSELECT ra.*\nFROM raw_artifacts ra\nJOIN claimed c ON ra.artifact_id = c.artifact_id\nORDER BY ra.fetched_at ASC;\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        416,
+        0
+      ],
+      "id": "ca9798d2-019e-4e2c-a4f8-bbdfbedb5777",
+      "name": "Get Artifacts to Process",
+      "credentials": {
+        "postgres": {
+          "id": "l8Ecbn62FzXCDkF9",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://cartracker-scraper:8000/process/results_pages",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"processor\": \"{{ $('Set Processor').item.json.processor }}\",\n  \"artifact\": {\n    \"artifact_id\": {{$json.artifact_id}},\n    \"filepath\": \"{{$json.filepath}}\",\n    \"run_id\": \"{{$json.run_id}}\",\n    \"fetched_at\": \"{{$json.fetched_at}}\",\n    \"url\": \"{{$json.url}}\",\n    \"http_status\": {{$json.http_status}},\n    \"content_type\": \"{{$json.content_type}}\"\n  },\n  \"options\": {\n    \"include_dummy_listings\": true\n  }\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        832,
+        96
+      ],
+      "id": "a8dfa4aa-dd2d-4856-880e-0a44c6ae4d6f",
+      "name": "Send Artifact for Processing"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE artifact_processing\nSET\n  status = '{{ $node[\"Send Artifact for Processing\"].json.status }}',\n  processed_at = now(),\n  message = '{{ $node[\"Send Artifact for Processing\"].json.message }}',\n  meta = '{{ JSON.stringify($node[\"Send Artifact for Processing\"].json.meta || {}).replace(/'/g, \"''\") }}'::jsonb\nWHERE artifact_id = {{ $node[\"Send Artifact for Processing\"].json.artifact_id }}\n  AND processor = '{{ $node[\"Send Artifact for Processing\"].json.processor }}';\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1424,
+        32
+      ],
+      "id": "b98710db-852c-4889-9b2f-d515b2bb5fa0",
+      "name": "Update Artifacts Metadata",
+      "credentials": {
+        "postgres": {
+          "id": "l8Ecbn62FzXCDkF9",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $('Send Artifact for Processing').item.json.status }}",
+                    "rightValue": "ok",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "3cb8bd72-8e3e-4b9d-953d-a42b8a979ad1"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Ok"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "34aa1595-e397-4acb-8aa9-4a3ed996378b",
+                    "leftValue": "={{ $('Send Artifact for Processing').item.json.status }}",
+                    "rightValue": "ok",
+                    "operator": {
+                      "type": "string",
+                      "operation": "notEquals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Not Ok"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        1024,
+        128
+      ],
+      "id": "7947df0a-42b3-4cec-9617-49c6c64449a1",
+      "name": "Check Status"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE artifact_processing\nSET\n  status = 'retry',\n  meta = '{{ JSON.stringify($node[\"Send Artifact for Processing\"].json.meta) }}'\nWHERE artifact_id = {{ $node[\"Send Artifact for Processing\"].json.artifact_id }}\n  AND processor = '{{ $node[\"Send Artifact for Processing\"].json.processor }}';\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1424,
+        176
+      ],
+      "id": "c39f9d71-bdd2-4b39-a185-e2e685867556",
+      "name": "Update Artifacts Table with retry status",
+      "credentials": {
+        "postgres": {
+          "id": "l8Ecbn62FzXCDkF9",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH data AS (\n  SELECT *\n  FROM jsonb_to_recordset('{{ JSON.stringify($json.listings || []).replace(/'/g, \"''\") }}'::jsonb)\n    AS x(\n      listing_id text,\n      canonical_detail_url text,\n      year int,\n      make text,\n      model text,\n      trim text,\n\n      \"stockType\" text,\n      price int,\n      msrp int,\n      mileage int,\n      vin text,\n\n      \"fuelType\" text,\n      \"bodyStyle\" text,\n      \"financingType\" text,\n\n      seller_zip text,\n      \"seller_customerId\" text,\n\n      page_number int,\n      position_on_page int,\n      trid text,\n      \"isaContext\" text\n    )\n)\nINSERT INTO srp_observations (\n  artifact_id,\n  run_id,\n  fetched_at,\n\n  listing_id,\n  vin,\n  seller_customer_id,\n\n  price,\n  msrp,\n  mileage,\n\n  year,\n  make,\n  model,\n  trim,\n  stock_type,\n\n  fuel_type,\n  body_style,\n  financing_type,\n\n  seller_zip,\n\n  page_number,\n  position_on_page,\n  trid,\n  isa_context,\n\n  canonical_detail_url\n)\nSELECT\n  {{ $node[\"Loop Over Items\"].json.artifact_id }}::bigint,\n  '{{ $node[\"Loop Over Items\"].json.run_id }}'::uuid,\n  '{{ $node[\"Loop Over Items\"].json.fetched_at }}'::timestamptz,\n\n  d.listing_id,\n  d.vin,\n  d.\"seller_customerId\",\n\n  d.price,\n  d.msrp,\n  d.mileage,\n\n  d.year,\n  d.make,\n  d.model,\n  d.trim,\n  d.\"stockType\",\n\n  d.\"fuelType\",\n  d.\"bodyStyle\",\n  d.\"financingType\",\n\n  d.seller_zip,\n\n  d.page_number,\n  d.position_on_page,\n  d.trid,\n  d.\"isaContext\",\n\n  d.canonical_detail_url\nFROM data d\nON CONFLICT (artifact_id, listing_id) DO NOTHING;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1232,
+        64
+      ],
+      "id": "3190dcc7-3134-466a-905b-5a99a9dedb64",
+      "name": "Insert SRP_Observations",
+      "notesInFlow": true,
+      "credentials": {
+        "postgres": {
+          "id": "l8Ecbn62FzXCDkF9",
+          "name": "Postgres account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "b0895d77-aa4f-486f-92ca-ecd031b1872a",
+              "name": "processor",
+              "value": "cars_results_page__listings_v2",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        208,
+        0
+      ],
+      "id": "3b68fa49-4de3-4648-9795-4b3e74d0baed",
+      "name": "Set Processor"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "Zqzriv9Kmv8h2OlKOksJI",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/Zqzriv9Kmv8h2OlKOksJI",
+          "cachedResultName": "Vehicle Refresh"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        832,
+        -96
+      ],
+      "id": "fb1943a4-8655-4a8b-99f4-8fc9a71af926",
+      "name": "Call 'Vehicle Refresh'"
+    },
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "c9cdc6fa-5ae3-459e-befd-d2995885b2c7",
+      "name": "When Executed by Another Workflow"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Loop Over Items": {
+      "main": [
+        [
+          {
+            "node": "Call 'Vehicle Refresh'",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Artifact for Processing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Artifacts to Process": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Artifact for Processing": {
+      "main": [
+        [
+          {
+            "node": "Check Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Artifacts Metadata": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Status": {
+      "main": [
+        [
+          {
+            "node": "Insert SRP_Observations",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update Artifacts Table with retry status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Artifacts Table with retry status": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert SRP_Observations": {
+      "main": [
+        [
+          {
+            "node": "Update Artifacts Metadata",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update Artifacts Table with retry status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Processor": {
+      "main": [
+        [
+          {
+            "node": "Get Artifacts to Process",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Set Processor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "301e2eb6-5ad1-4fcc-81a8-e70ff04d3452",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179"
+  },
+  "id": "kxKnWLkjHwud2yjhxlpME",
+  "tags": []
+}

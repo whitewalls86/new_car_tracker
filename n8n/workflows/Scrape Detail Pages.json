@@ -1,0 +1,481 @@
+{
+  "name": "Scrape Detail Pages",
+  "nodes": [
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH dealer_data AS (\n  SELECT\n    v.current_listing_id,\n    v.vin,\n    v.canonical_detail_url,\n    v.seller_customer_id,\n    'fetch' AS mode,\n\n    ROW_NUMBER() OVER (\n      PARTITION BY COALESCE(v.seller_customer_id, v.vin)\n      ORDER BY COALESCE(v.price_last_seen_at, 'epoch'::timestamptz) ASC\n    ) AS dealer_row_num\n\n  FROM public.vehicles v\n\n  LEFT JOIN public.listing_current_state lcs\n    ON lcs.listing_id = v.current_listing_id\n\n  LEFT JOIN public.vin_current_state vcs\n    ON vcs.vin = v.vin\n\n  WHERE\n    (\n      v.price_last_seen_at IS NULL\n      OR v.price_last_seen_at < (now() - interval '24 hours')\n    )\n    AND COALESCE(\n          lcs.listing_state,\n          vcs.listing_state,\n          'active'\n        ) = 'active'\n)\nSELECT *\nFROM dealer_data\nWHERE dealer_row_num = 1;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        224,
+        208
+      ],
+      "id": "ef55e48a-79f2-4b65-98c2-7c4eaeb7339c",
+      "name": "Get Batch to Process",
+      "credentials": {
+        "postgres": {
+          "id": "l8Ecbn62FzXCDkF9",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1344,
+        208
+      ],
+      "id": "a200369d-a0d4-4e90-8330-46ef4e381809",
+      "name": "Loop Over Items"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://cartracker-scraper:8000/scrape_detail",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "run_id",
+              "value": "={{ $('Create Run Id').item.json.run_id }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"listing_id\": \"{{ $json.current_listing_id }}\",\n  \"vin\": \"{{ $json.vin }}\",\n  \"url\": \"{{ $json.canonical_detail_url }}\",\n  \"mode\": \"{{ $json.mode }}\"\n}\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1568,
+        208
+      ],
+      "id": "70152e10-4fdd-4312-9ac4-2416613fcc53",
+      "name": "HTTP Request"
+    },
+    {
+      "parameters": {
+        "jsCode": "function uuidv4() {\n  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {\n    const r = Math.random() * 16 | 0;\n    const v = c === 'x' ? r : (r & 0x3 | 0x8);\n    return v.toString(16);\n  });\n}\n\nreturn [{ run_id: uuidv4() }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        688,
+        192
+      ],
+      "id": "81d18339-2cda-459e-b224-2f759a450687",
+      "name": "Create Run Id"
+    },
+    {
+      "parameters": {
+        "jsCode": "const run_id = $('Create Run Id').first().json.run_id;\nconst artifacts = $input.first().json.artifacts;\n\nreturn artifacts.map(a => ({\n  json: {\n    ...a,\n    run_id\n  }\n}));\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1792,
+        288
+      ],
+      "id": "a65eb621-7eca-4224-b31b-ba04e04f84d4",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH data AS (\n  SELECT *\n  FROM jsonb_to_recordset('{{ JSON.stringify($json.data).replaceAll(\"'\",\"''\") }}'::jsonb)\n    AS x(\n      source text,\n      artifact_type text,\n      search_key text,\n      search_scope text,\n      page_num int,\n      url text,\n      fetched_at timestamptz,\n      http_status int,\n      content_type text,\n      content_bytes int,\n      sha256 text,\n      filepath text,\n      error text,\n      run_id uuid\n    )\n)\nINSERT INTO raw_artifacts (\n  run_id,\n  source,\n  artifact_type,\n  search_key,\n  search_scope,\n  page_num,\n  url,\n  fetched_at,\n  http_status,\n  content_type,\n  content_bytes,\n  sha256,\n  filepath,\n  error\n)\nSELECT\n  d.run_id,\n  d.source,\n  d.artifact_type,\n  d.search_key,\n  d.search_scope,\n  d.page_num,\n  d.url,\n  d.fetched_at,\n  d.http_status,\n  d.content_type,\n  d.content_bytes,\n  d.sha256,\n  d.filepath,\n  d.error\nFROM data d;\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2016,
+        -32
+      ],
+      "id": "8c439651-b2e5-48d3-b1cf-562cbd4e6a02",
+      "name": "Execute a SQL query",
+      "credentials": {
+        "postgres": {
+          "id": "l8Ecbn62FzXCDkF9",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "batchSize": 250,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1568,
+        -64
+      ],
+      "id": "18ac1c04-7e50-4ee9-81b1-b3f3a87fd70c",
+      "name": "Loop Over Items1"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO runs (run_id, status, trigger)\nVALUES ('{{ $json.run_id }}'::uuid, 'running', 'manual');",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        896,
+        208
+      ],
+      "id": "f75c1e89-334c-4abb-960e-0b4189ee8899",
+      "name": "Insert Run Row",
+      "credentials": {
+        "postgres": {
+          "id": "l8Ecbn62FzXCDkF9",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE runs\nSET status = 'success', finished_at = now()\nWHERE run_id = '{{ $('Create Run Id').item.json.run_id }}'::uuid;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1792,
+        -272
+      ],
+      "id": "ee8568d8-9e24-40e2-9ac3-ee114521037b",
+      "name": "Mark Run Done",
+      "credentials": {
+        "postgres": {
+          "id": "l8Ecbn62FzXCDkF9",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        1792,
+        -80
+      ],
+      "id": "b5f841f6-7d36-419d-b38f-04c21c0ce0db",
+      "name": "Aggregate"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "WX_1Ky-8veuMLlqX_iRXK",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/WX_1Ky-8veuMLlqX_iRXK",
+          "cachedResultName": "Parse Detail Pages"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        2016,
+        -272
+      ],
+      "id": "3fd58e82-38a8-44ec-8bd6-ab94d5c46b7b",
+      "name": "Call 'Parse Detail Pages'"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $items(\"Get Batch to Process\").length }}",
+                    "rightValue": 200,
+                    "operator": {
+                      "type": "number",
+                      "operation": "gte"
+                    },
+                    "id": "c37e1a96-bdda-417f-8d4a-f4ae1c9c5dd2"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Continue"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "b1f462d7-c5a6-4988-a5f1-228942a20b64",
+                    "leftValue": "={{ $items(\"Get Batch to Process\").length }}",
+                    "rightValue": 200,
+                    "operator": {
+                      "type": "number",
+                      "operation": "lt"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "End"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        448,
+        208
+      ],
+      "id": "eae4165d-3a46-4697-a6f5-751b060e83bb",
+      "name": "Switch"
+    },
+    {
+      "parameters": {
+        "jsCode": "return $items(\"Get Batch to Process\");"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        208
+      ],
+      "id": "9ff67da8-88cc-4407-8b28-b9375ac8cc2a",
+      "name": "Get Batch"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 6
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        208
+      ],
+      "id": "93980ac2-5dea-4bf0-adfa-721092698dea",
+      "name": "Schedule Trigger"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Get Batch to Process": {
+      "main": [
+        [
+          {
+            "node": "Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Run Id": {
+      "main": [
+        [
+          {
+            "node": "Insert Run Row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items1": {
+      "main": [
+        [
+          {
+            "node": "Mark Run Done",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Aggregate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute a SQL query": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Run Row": {
+      "main": [
+        [
+          {
+            "node": "Get Batch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Run Done": {
+      "main": [
+        [
+          {
+            "node": "Call 'Parse Detail Pages'",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate": {
+      "main": [
+        [
+          {
+            "node": "Execute a SQL query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch": {
+      "main": [
+        [
+          {
+            "node": "Create Run Id",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Get Batch": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get Batch to Process",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "0346f533-a171-4e22-9b7c-fe20657a3ec7",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179"
+  },
+  "id": "z7KfENdOTYsM3rctgQ4Kv",
+  "tags": []
+}
