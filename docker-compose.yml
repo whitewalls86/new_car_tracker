@@ -6,7 +6,7 @@ services:
     environment:
       POSTGRES_DB: cartracker
       POSTGRES_USER: cartracker
-      POSTGRES_PASSWORD: ${postgres_password}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     ports:
       - "5432:5432"
     volumes:
@@ -21,12 +21,14 @@ services:
     ports:
       - "5678:5678"
     volumes:
-      - cartracker_n8n:/home/node/.n8n
+      - n8n_data:/home/node/.n8n
     networks:
       - cartracker-net
 
   scraper:
-    image: cartracker-scraper:0.926
+    build:
+      context: .
+    image: cartracker-scraper
     container_name: cartracker-scraper
     restart: unless-stopped
     ports:
@@ -38,8 +40,16 @@ services:
 
 volumes:
   cartracker_pgdata:
-  cartracker_n8n:
+    external: true
+    name: cartracker_pgdata
+
   cartracker_raw:
+    external: true
+    name: cartracker_raw
+
+  n8n_data:
+    external: true
+    name: n8n_data
 
 networks:
   cartracker-net:
