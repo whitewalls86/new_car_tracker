@@ -1,0 +1,12 @@
+cartracker:
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      host: postgres
+      port: 5432
+      user: cartracker
+      password: cartracker
+      dbname: cartracker
+      schema: analytics
+      threads: 2
