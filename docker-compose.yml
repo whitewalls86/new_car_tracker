@@ -1,0 +1,46 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: cartracker-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: cartracker
+      POSTGRES_USER: cartracker
+      POSTGRES_PASSWORD: ${postgres_password}
+    ports:
+      - "5432:5432"
+    volumes:
+      - cartracker_pgdata:/var/lib/postgresql/data
+    networks:
+      - cartracker-net
+
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: cartracker-n8n
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    volumes:
+      - cartracker_n8n:/home/node/.n8n
+    networks:
+      - cartracker-net
+
+  scraper:
+    image: cartracker-scraper:0.926
+    container_name: cartracker-scraper
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - cartracker_raw:/data/raw
+    networks:
+      - cartracker-net
+
+volumes:
+  cartracker_pgdata:
+  cartracker_n8n:
+  cartracker_raw:
+
+networks:
+  cartracker-net:
+    external: true
