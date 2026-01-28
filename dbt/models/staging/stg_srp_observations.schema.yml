@@ -5,23 +5,23 @@ models:
     description: "Staging model for public.srp_observations with explicit columns and light cleanup."
     columns:
       - name: id
-        tests:
+        data_tests:
           - not_null
           - unique
 
       - name: artifact_id
-        tests:
+        data_tests:
           - not_null
           - relationships:
               to: source('public', 'raw_artifacts')
               field: artifact_id
 
       - name: listing_id
-        tests:
+        data_tests:
           - not_null
 
       - name: created_at
-        tests:
+        data_tests:
           - not_null
 
     data_tests:
