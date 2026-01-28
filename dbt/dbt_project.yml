@@ -13,3 +13,9 @@ macro-paths: ["macros"]
 models:
   cartracker:
     +materialized: view
+
+    marts:
+      +materialized: table
+    ops:
+      +schema: ops
+      +materialized: view

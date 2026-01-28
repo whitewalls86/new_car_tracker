@@ -3,3 +3,8 @@
 support_bundle_*.zip
 support_bundle_*/
 .idea/
+dbt/target/
+dbt/dbt_packages/
+dbt/package-lock.yml
+dbt/logs/
+dbt/.*.yml

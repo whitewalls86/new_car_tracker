@@ -1,0 +1,29 @@
+version: 2
+
+models:
+  - name: stg_srp_observations
+    description: "Staging model for public.srp_observations with explicit columns and light cleanup."
+    columns:
+      - name: id
+        tests:
+          - not_null
+          - unique
+
+      - name: artifact_id
+        tests:
+          - not_null
+          - relationships:
+              to: source('public', 'raw_artifacts')
+              field: artifact_id
+
+      - name: listing_id
+        tests:
+          - not_null
+
+      - name: created_at
+        tests:
+          - not_null
+
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: ['artifact_id', 'listing_id']
