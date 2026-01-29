@@ -1,0 +1,25 @@
+version: 2
+
+models:
+  - name: int_latest_tier1_observation_by_vin
+    description: Latest Tier-1 (SRP/Detail) observation per VIN for non-price vehicle state fields.
+    columns:
+      - name: vin
+        data_tests:
+          - not_null
+          - unique
+          - valid_vin
+      - name: artifact_id
+        data_tests:
+          - not_null
+          - relationships:
+              to: source('public', 'raw_artifacts')
+              field: artifact_id
+      - name: observed_at
+        data_tests:
+          - not_null
+      - name: source
+        data_tests:
+          - not_null
+          - accepted_values:
+              values: ['srp', 'detail']

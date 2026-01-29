@@ -1,0 +1,27 @@
+version: 2
+
+models:
+  - name: mart_vehicle_snapshot
+    description: >
+      Current vehicle snapshot per VIN, derived from latest Tier-1 observation
+      and latest available price event.
+    columns:
+      - name: vin
+        data_tests:
+          - not_null
+          - unique
+          - valid_vin
+
+      - name: tier1_observed_at
+        data_tests:
+          - not_null
+
+      - name: tier1_artifact_id
+        data_tests:
+          - not_null
+          - relationships:
+              to: source('public', 'raw_artifacts')
+              field: artifact_id
+
+      - name: price
+        description: Latest observed price (Tier-1 or Tier-2).

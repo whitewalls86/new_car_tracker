@@ -9,8 +9,7 @@ with candidates as (
             order by fetched_at desc, artifact_id desc
         ) as rn
     from {{ ref('stg_srp_observations') }}
-    where vin is not null
-      and length(vin) = 17
+    where vin17 is not null
 )
 
 select
