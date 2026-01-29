@@ -163,6 +163,7 @@ def process_detail_pages(payload: dict = Body(...)) -> Dict[str, Any]:
     artifact = (payload or {}).get("artifact") or {}
     options = (payload or {}).get("options") or {}
     search_key = (artifact or {}).get("search_key") or (payload or {}).get("search_key") or None
+    artifact_url = (artifact or {}).get("url") or (payload or {}).get("url") or None
 
     # --- Validate/coerce artifact_id ---
     raw_id = artifact.get("artifact_id")
@@ -242,7 +243,7 @@ def process_detail_pages(payload: dict = Body(...)) -> Dict[str, Any]:
     # --- Parse ---
     try:
         if processor == "cars_detail_page__v1":
-            primary, carousel, parse_meta = parse_cars_detail_page_html_v1(html)
+            primary, carousel, parse_meta = parse_cars_detail_page_html_v1(html, artifact_url)
         else:
             return {
                 "processor": processor,
@@ -270,6 +271,8 @@ def process_detail_pages(payload: dict = Body(...)) -> Dict[str, Any]:
             "primary": {},
             "carousel": [],
         }
+
+    parse_meta = {**(parse_meta or {}), "artifact_url": artifact_url}
 
     return {
         "processor": processor,

@@ -63,6 +63,13 @@ def _detect_unlisted(soup: BeautifulSoup, html: str) -> Optional[Dict[str, Any]]
     return None
 
 
+def _extract_listing_id_from_url(url: Optional[str]) -> Optional[str]:
+    if not url:
+        return None
+    m = _UUID_RE.search(url)
+    return m.group(0) if m else None
+
+
 def _parse_carousel_cards(soup: BeautifulSoup) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """
     Parses:
@@ -170,7 +177,10 @@ def _parse_carousel_cards(soup: BeautifulSoup) -> Tuple[List[Dict[str, Any]], Di
     return cards_out, meta
 
 
-def parse_cars_detail_page_html_v1(html: str) -> Tuple[Dict[str, Any], List[Dict[str, Any]], Dict[str, Any]]:
+def parse_cars_detail_page_html_v1(
+        html: str,
+        url: Optional[str] = None
+) -> Tuple[Dict[str, Any], List[Dict[str, Any]], Dict[str, Any]]:
     """
     Cars.com detail page parser v1.
 
@@ -193,12 +203,19 @@ def parse_cars_detail_page_html_v1(html: str) -> Tuple[Dict[str, Any], List[Dict
     # --- Primary JSON blob ---
     activity = _extract_script_json_by_id(soup, "initial-activity-data") or {}
 
+    listing_id_from_activity = activity.get("listing_id")
+    listing_id_from_url = _extract_listing_id_from_url(url)
+    listing_id = listing_id_from_activity or listing_id_from_url
+    listing_id_source = "initial-activity-data" if listing_id_from_activity else (
+        "url" if listing_id_from_url else None)
+
     primary = {
         "listing_state": listing_state,
         "unlisted_title": (unlisted or {}).get("unlisted_title"),
         "unlisted_message": (unlisted or {}).get("unlisted_message"),
 
-        "listing_id": activity.get("listing_id"),
+        "listing_id": listing_id,
+        "listing_id_source": listing_id_source,
         "vin": activity.get("vin"),
         "price": activity.get("price"),
         "mileage": activity.get("mileage"),
@@ -217,6 +234,7 @@ def parse_cars_detail_page_html_v1(html: str) -> Tuple[Dict[str, Any], List[Dict
         "parser": "cars_detail_page__v1",
         "html_len": len(html),
         "primary_json_present": bool(activity),
+        "listing_id_source": listing_id_source,
         "primary_keys_present": sorted([k for k, v in primary.items() if v is not None]),
         **carousel_meta,
     }

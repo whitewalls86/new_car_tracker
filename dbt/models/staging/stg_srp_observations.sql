@@ -5,6 +5,10 @@ select
   fetched_at,
   listing_id,
   vin,
+  case
+      when vin is not null and length(vin) = 17 and upper(vin) ~ '^[A-Z0-9]{17}$' then upper(vin)
+      else null
+  end as vin17,
   seller_customer_id,
   price,
   msrp,

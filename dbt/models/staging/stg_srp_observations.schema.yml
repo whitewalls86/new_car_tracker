@@ -9,6 +9,14 @@ models:
           - not_null
           - unique
 
+      - name: vin17
+        data_tests:
+          - valid_vin_nullable
+
+      - name: vin
+        data_tests:
+          - not_null
+
       - name: artifact_id
         data_tests:
           - not_null

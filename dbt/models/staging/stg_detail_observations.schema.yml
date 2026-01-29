@@ -8,6 +8,10 @@ models:
       - name: id
         data_tests: [not_null, unique]
 
+      - name: vin
+        data_tests:
+          - valid_vin
+
       - name: artifact_id
         data_tests:
           - not_null

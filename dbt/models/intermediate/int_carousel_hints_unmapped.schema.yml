@@ -1,0 +1,23 @@
+version: 2
+
+models:
+  - name: int_carousel_hints_unmapped
+    description: >
+      Tier-2 price hints from detail carousel that cannot yet be mapped to VIN.
+      Stored keyed by listing_id until VIN mapping is available.
+    columns:
+      - name: listing_id
+        data_tests:
+          - not_null
+      - name: artifact_id
+        data_tests:
+          - not_null
+          - relationships:
+              to: source('public', 'raw_artifacts')
+              field: artifact_id
+      - name: observed_at
+        data_tests:
+          - not_null
+      - name: price
+        data_tests:
+          - not_null

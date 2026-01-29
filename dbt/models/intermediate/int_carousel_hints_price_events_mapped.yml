@@ -1,0 +1,24 @@
+version: 2
+
+models:
+  - name: int_carousel_price_events_mapped
+    description: Tier-2 price-only events from carousel hints that are currently mappable to VIN.
+    columns:
+      - name: vin
+        data_tests:
+          - valid_vin
+      - name: listing_id
+        data_tests:
+          - not_null
+      - name: artifact_id
+        data_tests:
+          - not_null
+          - relationships:
+              to: source('public', 'raw_artifacts')
+              field: artifact_id
+      - name: observed_at
+        data_tests:
+          - not_null
+      - name: price
+        data_tests:
+          - not_null

@@ -1,0 +1,27 @@
+version: 2
+
+models:
+  - name: int_listing_to_vin
+    description: >
+      Latest VIN observed for each listing_id, derived from SRP observations.
+      dbt equivalent of public.srp_listing_to_vin.
+    columns:
+      - name: listing_id
+        data_tests:
+          - not_null
+          - unique
+
+      - name: vin
+        data_tests:
+          - valid_vin
+
+      - name: vin_observed_at
+        data_tests:
+          - not_null
+
+      - name: vin_artifact_id
+        data_tests:
+          - not_null
+          - relationships:
+              to: source('public', 'raw_artifacts')
+              field: artifact_id
