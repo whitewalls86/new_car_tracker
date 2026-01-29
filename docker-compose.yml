@@ -27,7 +27,8 @@ services:
 
   scraper:
     build:
-      context: .
+      context: ./scraper
+      dockerfile: Dockerfile
     image: cartracker-scraper
     container_name: cartracker-scraper
     restart: unless-stopped
@@ -53,6 +54,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     networks:
       - cartracker-net
+    profiles: ["tools"]
 
 
 volumes:

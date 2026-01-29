@@ -3,7 +3,7 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # Copy the whole project (so processors/, parsers/, etc. are included)
-COPY . .
+COPY .. .
 
 # Install deps
 RUN pip install --no-cache-dir fastapi uvicorn requests bs4 lxml

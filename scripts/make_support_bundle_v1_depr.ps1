@@ -45,26 +45,6 @@ function Copy-IfExists($src, $dst) {
   }
 }
 
-function Copy-DirFiltered($srcDir, $dstDir, $excludePatterns) {
-  if (-not (Test-Path $srcDir)) { return }
-  Ensure-Dir $dstDir
-
-  $files = Get-ChildItem -Path $srcDir -Recurse -File
-  foreach ($f in $files) {
-    $rel = $f.FullName.Substring($srcDir.Length).TrimStart([char]'\',[char]'/')
-    $skip = $false
-    foreach ($pat in $excludePatterns) {
-      if ($rel -like $pat) { $skip = $true; break }
-    }
-    if ($skip) { continue }
-
-    $destPath = Join-Path $dstDir $rel
-    Ensure-Dir (Split-Path $destPath -Parent)
-    Copy-Item -Path $f.FullName -Destination $destPath -Force
-  }
-}
-
-
 function Redact-Secrets($text) {
   if ($null -eq $text) { return $text }
 
@@ -151,20 +131,6 @@ Copy-IfExists (Join-Path $repoRoot "reporting") (Join-Path $bundleRoot "repo\rep
 Copy-IfExists (Join-Path $repoRoot "n8n") (Join-Path $bundleRoot "repo\n8n")
 Copy-IfExists (Join-Path $repoRoot "db") (Join-Path $bundleRoot "repo\db")
 
-# dbt project (include source-of-truth only; exclude generated/local artifacts)
-Copy-DirFiltered (Join-Path $repoRoot "dbt") (Join-Path $bundleRoot "repo\dbt") @(
-  "target\*",
-  "logs\*",
-  "dbt_packages\*",
-  ".user.yml",
-  "package-lock.yml"
-)
-
-# Helper folders (optional, but useful context)
-Copy-IfExists (Join-Path $repoRoot "scripts") (Join-Path $bundleRoot "repo\scripts")
-Copy-IfExists (Join-Path $repoRoot "docs") (Join-Path $bundleRoot "repo\docs")
-
-
 # ---------- Docker runtime state ----------
 Run-Cmd 'docker ps -a --format "table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}"' (Join-Path $bundleRoot "docker_ps_a.txt") $false
 Run-Cmd 'docker volume ls' (Join-Path $bundleRoot "docker_volume_ls.txt") $false
@@ -207,7 +173,7 @@ if ($IncludeDbDumps) {
     $q += "SELECT * FROM detail_carousel_hints ORDER BY fetched_at DESC NULLS LAST LIMIT 25;"
     $q += ""
     $q += "-- recent artifacts processing (if exists)"
-    $q += "SELECT * FROM artifact_processing ORDER BY started_at DESC NULLS LAST LIMIT 25;"
+    $q += "SELECT * FROM artifacts_processing ORDER BY started_at DESC NULLS LAST LIMIT 25;"
 
     Write-TextFile $qPath ($q -join "`r`n")
 
@@ -217,7 +183,7 @@ if ($IncludeDbDumps) {
 
 # ---------- Final manifest ----------
 $manifest += "Included:"
-$manifest += "  - repo/: compose files, Dockerfile, db/, n8n/, reporting/, parsers/, processors/, dbt/, scripts/, docs/, key .py files"
+$manifest += "  - repo/: docker-compose.yml, Dockerfile, db/, n8n/, reporting/, parsers/, processors/, key .py files"
 $manifest += "  - docker state: docker ps/volume ls/network ls"
 $manifest += "  - docker compose config (redacted)"
 $manifest += "  - docker compose logs (tail: $LogTail) (redacted)"
