@@ -208,34 +208,6 @@
     },
     {
       "parameters": {
-        "workflowId": {
-          "__rl": true,
-          "value": "Zqzriv9Kmv8h2OlKOksJI",
-          "mode": "list",
-          "cachedResultUrl": "/workflow/Zqzriv9Kmv8h2OlKOksJI",
-          "cachedResultName": "Vehicle Refresh"
-        },
-        "workflowInputs": {
-          "mappingMode": "defineBelow",
-          "value": {},
-          "matchingColumns": [],
-          "schema": [],
-          "attemptToConvertTypes": false,
-          "convertFieldsToString": true
-        },
-        "options": {}
-      },
-      "type": "n8n-nodes-base.executeWorkflow",
-      "typeVersion": 1.3,
-      "position": [
-        832,
-        -96
-      ],
-      "id": "fb1943a4-8655-4a8b-99f4-8fc9a71af926",
-      "name": "Call 'Vehicle Refresh'"
-    },
-    {
-      "parameters": {
         "inputSource": "passthrough"
       },
       "type": "n8n-nodes-base.executeWorkflowTrigger",
@@ -246,6 +218,30 @@
       ],
       "id": "c9cdc6fa-5ae3-459e-befd-d2995885b2c7",
       "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://dbt_runner:8080/dbt/build",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "intent",
+              "value": "after_srp"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        832,
+        -80
+      ],
+      "id": "a1996cb3-2b82-42c0-83cf-c9a3ca91903f",
+      "name": "Rebuild DBT"
     }
   ],
   "pinData": {},
@@ -254,7 +250,7 @@
       "main": [
         [
           {
-            "node": "Call 'Vehicle Refresh'",
+            "node": "Rebuild DBT",
             "type": "main",
             "index": 0
           }
@@ -376,7 +372,7 @@
     "executionOrder": "v1",
     "availableInMCP": false
   },
-  "versionId": "301e2eb6-5ad1-4fcc-81a8-e70ff04d3452",
+  "versionId": "f29336aa-0a84-4ac3-96bb-edddd007b921",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179"

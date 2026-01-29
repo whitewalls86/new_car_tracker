@@ -290,7 +290,7 @@
         "rule": {
           "interval": [
             {
-              "triggerAtHour": 6
+              "field": "hours"
             }
           ]
         }
@@ -471,7 +471,7 @@
     "executionOrder": "v1",
     "availableInMCP": false
   },
-  "versionId": "0346f533-a171-4e22-9b7c-fe20657a3ec7",
+  "versionId": "325e6e87-431c-42cb-bf4a-dab56af4a673",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179"

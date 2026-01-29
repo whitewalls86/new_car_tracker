@@ -69,7 +69,7 @@
         "url": "http://cartracker-scraper:8000/process/detail_pages",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"processor\": \"cars_detail_page__v1\",\n  \"artifact\": {\n    \"artifact_id\": \"{{ $json.artifact_id }}\",\n    \"filepath\": \"{{ $json.filepath }}\",\n    \"search_key\": \"{{ $json.search_key }}\"\n  }\n}\n",
+        "jsonBody": "={\n  \"processor\": \"cars_detail_page__v1\",\n  \"artifact\": {\n    \"artifact_id\": \"{{ $json.artifact_id }}\",\n    \"filepath\": \"{{ $json.filepath }}\",\n    \"search_key\": \"{{ $json.search_key }}\",\n    \"url\": \"{{ $json.url }}\"\n  }\n}\n",
         "options": {}
       },
       "type": "n8n-nodes-base.httpRequest",
@@ -259,31 +259,27 @@
     },
     {
       "parameters": {
-        "workflowId": {
-          "__rl": true,
-          "value": "Zqzriv9Kmv8h2OlKOksJI",
-          "mode": "list",
-          "cachedResultUrl": "/workflow/Zqzriv9Kmv8h2OlKOksJI",
-          "cachedResultName": "Vehicle Refresh"
-        },
-        "workflowInputs": {
-          "mappingMode": "defineBelow",
-          "value": {},
-          "matchingColumns": [],
-          "schema": [],
-          "attemptToConvertTypes": false,
-          "convertFieldsToString": true
+        "method": "POST",
+        "url": "http://dbt_runner:8080/dbt/build",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "intent",
+              "value": "after_detail"
+            }
+          ]
         },
         "options": {}
       },
-      "type": "n8n-nodes-base.executeWorkflow",
-      "typeVersion": 1.3,
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
       "position": [
         1440,
         -304
       ],
-      "id": "3cfa3bc5-0ed9-4306-9cf3-768cace37c1d",
-      "name": "Call 'Vehicle Refresh'"
+      "id": "76854b89-1ca8-4129-9319-ed7082640650",
+      "name": "Execute DBT Build"
     }
   ],
   "pinData": {},
@@ -376,7 +372,7 @@
       "main": [
         [
           {
-            "node": "Call 'Vehicle Refresh'",
+            "node": "Execute DBT Build",
             "type": "main",
             "index": 0
           }
@@ -447,7 +443,7 @@
     "executionOrder": "v1",
     "availableInMCP": false
   },
-  "versionId": "2585350e-910b-417c-af82-e031f03172b0",
+  "versionId": "6ceedc42-9fc6-4cc4-bbb5-47bf7039d12f",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179"
