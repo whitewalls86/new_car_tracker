@@ -1,6 +1,7 @@
 FROM ghcr.io/dbt-labs/dbt-postgres:1.8.2
 
-RUN pip install --no-cache-dir fastapi uvicorn
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
 WORKDIR /usr/app
 ENV DBT_PROFILES_DIR=/usr/app
