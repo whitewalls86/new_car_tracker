@@ -9,9 +9,6 @@ models:
           - not_null
           - unique
           - valid_vin
-      - name: price
-        data_tests:
-          - not_null
       - name: price_observed_at
         data_tests:
           - not_null

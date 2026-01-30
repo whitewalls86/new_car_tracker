@@ -2,30 +2,27 @@
 CarTracker Support Bundle Generator (Windows / PowerShell)
 
 Creates a zip containing:
-- Repo files (selectively, aligned with current tree)
+- Repo files (selectively)
 - n8n workflow JSONs
-- dbt project (source-of-truth; optional include of target artifacts)
-- dbt_runner service code
-- docker-compose.yml + compose config (redacted)
-- Docker runtime state + compose logs (tail)
+- DB schema file(s)
+- Docker compose config (redacted)
+- Docker status + container logs (tail)
 - Optional: schema-only pg_dump + small sample queries (redacted)
 
 Usage:
   powershell -ExecutionPolicy Bypass -File .\scripts\make_support_bundle.ps1
   powershell -ExecutionPolicy Bypass -File .\scripts\make_support_bundle.ps1 -IncludeDbDumps
   powershell -ExecutionPolicy Bypass -File .\scripts\make_support_bundle.ps1 -IncludeDbDumps -LogTail 800
-  powershell -ExecutionPolicy Bypass -File .\scripts\make_support_bundle.ps1 -IncludeDbtTargetArtifacts
 
 Notes:
-- Does NOT include .env, .git, .venv, node_modules, volumes, or raw DB data directories.
+- Does NOT include .env, .git, .venv, volumes, or raw database data directories.
 - Redacts obvious secrets in generated text outputs.
 #>
 
 param(
   [int]$LogTail = 300,
   [switch]$IncludeDbDumps = $false,
-  [switch]$IncludeSampleQueries = $false,
-  [switch]$IncludeDbtTargetArtifacts = $false
+  [switch]$IncludeSampleQueries = $false
 )
 
 $ErrorActionPreference = "Stop"
@@ -67,6 +64,7 @@ function Copy-DirFiltered($srcDir, $dstDir, $excludePatterns) {
   }
 }
 
+
 function Redact-Secrets($text) {
   if ($null -eq $text) { return $text }
 
@@ -93,13 +91,8 @@ function Redact-Secrets($text) {
     $redacted = [regex]::Replace($redacted, $p, '$1<REDACTED>', 'IgnoreCase')
   }
 
-  # Heuristic: redact long token-like strings, but avoid nuking common hashes/ids too aggressively.
-  # Only redact if it contains at least one letter and one digit and is 32+ chars.
-  $redacted = [regex]::Replace(
-    $redacted,
-    '\b(?=[A-Za-z0-9_\-]{32,}\b)(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9_\-]{32,}\b',
-    '<REDACTED_LONG_TOKEN>'
-  )
+  # Redact things that look like long secrets (rough heuristic)
+  $redacted = [regex]::Replace($redacted, '([A-Za-z0-9_\-]{24,})', '<REDACTED_LONG_TOKEN>')
 
   return $redacted
 }
@@ -130,66 +123,54 @@ $manifest += "Created: $(Get-Date -Format "yyyy-MM-dd HH:mm:ss")"
 $manifest += "RepoRoot: $repoRoot"
 $manifest += ""
 
-# ---------- Git metadata ----------
+# Git metadata
 Run-Cmd 'git rev-parse HEAD' (Join-Path $bundleRoot "git_head.txt") $false
 Run-Cmd 'git status --porcelain' (Join-Path $bundleRoot "git_status_porcelain.txt") $false
 Run-Cmd 'git remote -v' (Join-Path $bundleRoot "git_remotes.txt") $false
 
-# File tree
+# File tree (fast, useful)
 Run-Cmd 'cmd /c "tree /F"' (Join-Path $bundleRoot "tree_full.txt") $false
 
 # ---------- Copy key repo files ----------
 Copy-IfExists (Join-Path $repoRoot "docker-compose.yml") (Join-Path $bundleRoot "repo\docker-compose.yml")
+Copy-IfExists (Join-Path $repoRoot "Dockerfile") (Join-Path $bundleRoot "repo\Dockerfile")
 Copy-IfExists (Join-Path $repoRoot ".env.example") (Join-Path $bundleRoot "repo\.env.example")
 Copy-IfExists (Join-Path $repoRoot ".gitignore") (Join-Path $bundleRoot "repo\.gitignore")
-Copy-IfExists (Join-Path $repoRoot "README.md") (Join-Path $bundleRoot "repo\README.md")
 
-# docs (DEBUG_BUNDLE.md lives here)
-Copy-IfExists (Join-Path $repoRoot "docs") (Join-Path $bundleRoot "repo\docs")
+# Python entrypoints / core files
+Copy-IfExists (Join-Path $repoRoot "app.py") (Join-Path $bundleRoot "repo\app.py")
+Copy-IfExists (Join-Path $repoRoot "scrape_results.py") (Join-Path $bundleRoot "repo\scrape_results.py")
+Copy-IfExists (Join-Path $repoRoot "scrape_detail.py") (Join-Path $bundleRoot "repo\scrape_detail.py")
+Copy-IfExists (Join-Path $repoRoot "parse_detail_page.py") (Join-Path $bundleRoot "repo\parse_detail_page.py")
+Copy-IfExists (Join-Path $repoRoot "results_page_cards.py") (Join-Path $bundleRoot "repo\results_page_cards.py")
 
-# n8n workflows (JSON)
-Copy-IfExists (Join-Path $repoRoot "n8n") (Join-Path $bundleRoot "repo\n8n")
-
-# reporting SQL
+# Copy folders (selective, avoids .venv/.git)
+Copy-IfExists (Join-Path $repoRoot "processors") (Join-Path $bundleRoot "repo\processors")
+Copy-IfExists (Join-Path $repoRoot "parsers") (Join-Path $bundleRoot "repo\parsers")
 Copy-IfExists (Join-Path $repoRoot "reporting") (Join-Path $bundleRoot "repo\reporting")
-
-# scripts (including this script)
-Copy-IfExists (Join-Path $repoRoot "scripts") (Join-Path $bundleRoot "repo\scripts")
-
-# scraper service (actual code location in current tree)
-Copy-IfExists (Join-Path $repoRoot "scraper") (Join-Path $bundleRoot "repo\scraper")
-
-# dbt_runner service (new)
-Copy-IfExists (Join-Path $repoRoot "dbt_runner") (Join-Path $bundleRoot "repo\dbt_runner")
-
-# db folder (if you keep schema/migrations/etc there)
+Copy-IfExists (Join-Path $repoRoot "n8n") (Join-Path $bundleRoot "repo\n8n")
 Copy-IfExists (Join-Path $repoRoot "db") (Join-Path $bundleRoot "repo\db")
 
-# dbt project (source-of-truth only; optionally include target artifacts)
-$excludeDbt = @(
+# dbt project (include source-of-truth only; exclude generated/local artifacts)
+Copy-DirFiltered (Join-Path $repoRoot "dbt") (Join-Path $bundleRoot "repo\dbt") @(
+  "target\*",
   "logs\*",
   "dbt_packages\*",
   ".user.yml",
   "package-lock.yml"
 )
 
-if (-not $IncludeDbtTargetArtifacts) {
-  $excludeDbt += "target\*"
-}
+# Helper folders (optional, but useful context)
+Copy-IfExists (Join-Path $repoRoot "scripts") (Join-Path $bundleRoot "repo\scripts")
+Copy-IfExists (Join-Path $repoRoot "docs") (Join-Path $bundleRoot "repo\docs")
 
-Copy-DirFiltered (Join-Path $repoRoot "dbt") (Join-Path $bundleRoot "repo\dbt") $excludeDbt
-
-# Explicitly avoid copying prior bundles if script is run repeatedly
-# (we just don't include them; they’re not under repo\ anyway)
 
 # ---------- Docker runtime state ----------
 Run-Cmd 'docker ps -a --format "table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}"' (Join-Path $bundleRoot "docker_ps_a.txt") $false
-Run-Cmd 'docker images --format "table {{.Repository}}\t{{.Tag}}\t{{.ID}}\t{{.Size}}"' (Join-Path $bundleRoot "docker_images.txt") $false
 Run-Cmd 'docker volume ls' (Join-Path $bundleRoot "docker_volume_ls.txt") $false
 Run-Cmd 'docker network ls' (Join-Path $bundleRoot "docker_network_ls.txt") $false
 
-# Compose status + expanded config (redacted)
-Run-Cmd 'docker compose ps' (Join-Path $bundleRoot "docker_compose_ps.txt") $false
+# Compose expanded config (IMPORTANT: redacted)
 Run-Cmd 'docker compose config' (Join-Path $bundleRoot "docker_compose_config_redacted.yml") $true
 
 # Compose logs (tail)
@@ -197,28 +178,20 @@ Run-Cmd ("docker compose logs --tail " + $LogTail) (Join-Path $bundleRoot ("dock
 Run-Cmd ("docker compose logs --tail " + $LogTail + " scraper") (Join-Path $bundleRoot ("logs_scraper_tail_" + $LogTail + ".txt")) $true
 Run-Cmd ("docker compose logs --tail " + $LogTail + " postgres") (Join-Path $bundleRoot ("logs_postgres_tail_" + $LogTail + ".txt")) $true
 Run-Cmd ("docker compose logs --tail " + $LogTail + " n8n") (Join-Path $bundleRoot ("logs_n8n_tail_" + $LogTail + ".txt")) $true
-Run-Cmd ("docker compose logs --tail " + $LogTail + " dbt_runner") (Join-Path $bundleRoot ("logs_dbt_runner_tail_" + $LogTail + ".txt")) $true
-
-# Container inspect (useful when networking/volumes/env are wrong)
-Run-Cmd 'docker inspect cartracker-dbt-runner' (Join-Path $bundleRoot "inspect_dbt_runner_redacted.json") $true
-Run-Cmd 'docker inspect cartracker-scraper' (Join-Path $bundleRoot "inspect_scraper_redacted.json") $true
-Run-Cmd 'docker inspect cartracker-postgres' (Join-Path $bundleRoot "inspect_postgres_redacted.json") $true
-Run-Cmd 'docker inspect cartracker-n8n' (Join-Path $bundleRoot "inspect_n8n_redacted.json") $true
-
-# Quick “inside container” sanity checks (these are great for hard-fail debugging)
-Run-Cmd 'docker exec -i cartracker-dbt-runner dbt --version' (Join-Path $bundleRoot "dbt_runner_dbt_version.txt") $false
-Run-Cmd 'docker exec -i cartracker-dbt-runner dbt debug' (Join-Path $bundleRoot "dbt_runner_dbt_debug_redacted.txt") $true
-Run-Cmd 'docker exec -i cartracker-dbt-runner dbt ls' (Join-Path $bundleRoot "dbt_runner_dbt_ls.txt") $false
 
 # ---------- Optional: DB schema-only dump ----------
 if ($IncludeDbDumps) {
+  # Schema-only dump (safe-ish, no data). Uses container-local pg_dump.
+  # Writes into bundle/db/
   $dumpPath = Join-Path $bundleRoot "db\schema_only.sql"
   Ensure-Dir (Split-Path $dumpPath -Parent)
 
-  # Schema-only dump (no data)
+  # Note: uses POSTGRES_USER/DB from your setup; adjust here if you ever rename.
+  # We avoid embedding password: pg_dump inside container can connect via local trust.
   Run-Cmd 'docker exec -i cartracker-postgres pg_dump -U cartracker -d cartracker --schema-only' $dumpPath $true
 
   if ($IncludeSampleQueries) {
+    # Small, last-N snapshots from key tables (redacted). Avoids big exports.
     $qPath = Join-Path $bundleRoot "db\sample_queries.txt"
     $q = @()
     $q += "\dt"
@@ -238,33 +211,20 @@ if ($IncludeDbDumps) {
 
     Write-TextFile $qPath ($q -join "`r`n")
 
-    # Feed the file content into psql via stdin
-    $cmd = 'cmd /c type "' + $qPath + '" | docker exec -i cartracker-postgres psql -U cartracker -d cartracker -v ON_ERROR_STOP=1'
-    Run-Cmd $cmd (Join-Path $bundleRoot "db\sample_outputs_redacted.txt") $true
+    Run-Cmd ("docker exec -i cartracker-postgres psql -U cartracker -d cartracker -v ON_ERROR_STOP=1 -f /dev/stdin < `"" + $qPath + "`"") (Join-Path $bundleRoot "db\sample_outputs.txt") $true
   }
 }
 
 # ---------- Final manifest ----------
-$manifest += "Included repo paths:"
-$manifest += "  - docker-compose.yml"
-$manifest += "  - docs/ (incl. DEBUG_BUNDLE.md)"
-$manifest += "  - n8n/ (workflows)"
-$manifest += "  - reporting/"
-$manifest += "  - scripts/"
-$manifest += "  - scraper/ (actual scraper code)"
-$manifest += "  - dbt_runner/ (dbt runner service code)"
-$manifest += "  - dbt/ (source-of-truth; target included: $IncludeDbtTargetArtifacts)"
-$manifest += "  - db/ (if present)"
-$manifest += ""
-$manifest += "Included runtime state:"
-$manifest += "  - docker ps/images/volumes/networks"
-$manifest += "  - docker compose ps/config/logs"
-$manifest += "  - docker inspect (redacted) for core containers"
-$manifest += "  - dbt_runner: dbt --version / dbt debug / dbt ls"
+$manifest += "Included:"
+$manifest += "  - repo/: compose files, Dockerfile, db/, n8n/, reporting/, parsers/, processors/, dbt/, scripts/, docs/, key .py files"
+$manifest += "  - docker state: docker ps/volume ls/network ls"
+$manifest += "  - docker compose config (redacted)"
+$manifest += "  - docker compose logs (tail: $LogTail) (redacted)"
 if ($IncludeDbDumps) {
   $manifest += "  - db/schema_only.sql (schema-only pg_dump)"
   if ($IncludeSampleQueries) {
-    $manifest += "  - db/sample_queries.txt + db/sample_outputs_redacted.txt"
+    $manifest += "  - db/sample_queries.txt + db/sample_outputs.txt (redacted)"
   }
 }
 $manifest += ""

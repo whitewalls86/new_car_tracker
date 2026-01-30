@@ -7,6 +7,10 @@ with base as (
         tier1_artifact_id,
         tier1_source,
 
+        current_listing_url,
+        tier1_seller_customer_id,
+        listing_state,
+
         price,
         price_observed_at,
         price_artifact_id,
@@ -68,6 +72,10 @@ select
     price_age_interval,
     tier1_age_hours,
     price_age_hours,
+
+    listing_state,
+    current_listing_url,
+    tier1_seller_customer_id,
 
     is_full_details_stale,
     is_price_stale,

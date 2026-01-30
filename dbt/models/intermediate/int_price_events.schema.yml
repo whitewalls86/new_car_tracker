@@ -26,10 +26,6 @@ models:
         data_tests:
           - not_null
 
-      - name: price
-        data_tests:
-          - not_null
-
       - name: source
         data_tests:
           - not_null

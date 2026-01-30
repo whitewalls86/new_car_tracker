@@ -6,6 +6,10 @@ with srp as (
       s.fetched_at as observed_at,
       null::text as listing_state,
       s.mileage,
+
+      s.canonical_detail_url,
+      s.seller_customer_id,
+
       'srp'::text as source
     from {{ ref('stg_srp_observations') }} s
     where s.vin17 is not null
@@ -19,6 +23,10 @@ detail as (
         d.fetched_at as observed_at,
         d.listing_state,
         d.mileage,
+
+        d.canonical_detail_url,
+        null::text as seller_customer_id,
+
         'detail'::text as source
     from {{ ref('stg_detail_observations') }} d
     where d.vin is not null
@@ -47,6 +55,10 @@ select
     observed_at,
     listing_state,
     mileage,
+
+    canonical_detail_url,
+    seller_customer_id,
+
     source
 from ranked
 where rn = 1

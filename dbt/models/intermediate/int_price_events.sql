@@ -5,13 +5,11 @@ with srp_price_events as (
         s.listing_id,
         s.artifact_id,
         s.fetched_at as observed_at,
-        s.price,
+        case when s.price is not null and s.price > 0 then s.price else null end as price,
         'srp'::text as source,
         1::int as tier
     from {{ ref('stg_srp_observations') }} s
     where s.vin17 is not null
-      and s.price is not null
-      and s.price > 0
 ),
 
 detail_price_events as (
@@ -20,13 +18,11 @@ detail_price_events as (
         d.listing_id,
         d.artifact_id,
         d.fetched_at as observed_at,
-        d.price,
+        case when d.price is not null and d.price > 0 then d.price else null end as price,
         'detail'::text as source,
         1::int as tier
     from {{ ref('stg_detail_observations') }} d
     where d.vin is not null
-      and d.price is not null
-      and d.price > 0
 ),
 
 carousel_price_events as (

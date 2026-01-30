@@ -9,7 +9,7 @@ with ranked as (
         tier as price_tier,
         row_number() over (
             partition by vin
-            order by observed_at desc, artifact_id desc
+            order by observed_at desc, (price is not null) desc, artifact_id desc
         ) as rn
     from {{ ref('int_price_events') }}
 )
