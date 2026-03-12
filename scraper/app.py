@@ -2,7 +2,7 @@ from fastapi import FastAPI, Body
 from typing import Any, Dict, Optional
 import os
 from processors.scrape_results import scrape_results
-from processors.results_page_cards import (parse_cars_results_page_html, parse_cars_results_page_html_v2)
+from processors.results_page_cards import (parse_cars_results_page_html, parse_cars_results_page_html_v2, parse_cars_results_page_html_v3)
 from processors.scrape_detail import (scrape_detail_dummy, scrape_detail_fetch)
 from processors.parse_detail_page import parse_cars_detail_page_html_v1
 
@@ -100,6 +100,8 @@ def process_results_pages(payload: dict = Body(...)) -> Dict[str, Any]:
             listings, parse_meta = parse_cars_results_page_html(html)
         elif processor == "cars_results_page__listings_v2":
             listings, parse_meta = parse_cars_results_page_html_v2(html)
+        elif processor == "cars_results_page__listings_v3":
+            listings, parse_meta = parse_cars_results_page_html_v3(html)
         else:
             return {
                 "processor": processor,

@@ -17,7 +17,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "WITH candidates AS (\n  SELECT ra.artifact_id\n  FROM raw_artifacts ra\n  LEFT JOIN artifact_processing ap\n    ON ap.artifact_id = ra.artifact_id\n   AND ap.processor = '{{ $json.processor }}'\n  WHERE ra.source = 'cars.com'\n    AND ra.artifact_type = 'results_page'\n    AND NOT EXISTS (\n      SELECT 1\n      FROM artifact_processing ap_ok\n      WHERE ap_ok.artifact_id = ra.artifact_id\n        AND ap_ok.status = 'ok'\n        AND ap_ok.processor LIKE 'cars_results_page__listings_%'\n    )\n    AND (\n          ap.artifact_id IS NULL\n          OR ap.status = 'retry'\n          OR (ap.status = 'processing' AND ap.processed_at < now() - interval '20 minutes')\n        )\n  ORDER BY ra.fetched_at ASC\n--  LIMIT 50\n),\nclaimed AS (\n  INSERT INTO artifact_processing (artifact_id, processor, status, processed_at)\n  SELECT c.artifact_id, '{{ $json.processor }}', 'processing', now()\n  FROM candidates c\n  ON CONFLICT (artifact_id, processor) DO UPDATE\n    SET status = 'processing',\n        processed_at = now(),\n        message = NULL\n  RETURNING artifact_id\n)\nSELECT ra.*\nFROM raw_artifacts ra\nJOIN claimed c ON ra.artifact_id = c.artifact_id\nORDER BY ra.fetched_at ASC;\n",
+        "query": "WITH candidates AS (\n  SELECT ra.artifact_id\n  FROM raw_artifacts ra\n  LEFT JOIN artifact_processing ap\n    ON ap.artifact_id = ra.artifact_id\n   AND ap.processor = '{{ $json.processor }}'\n  WHERE ra.source = 'cars.com'\n    AND ra.artifact_type = 'results_page'\n    AND NOT EXISTS (\n      SELECT 1\n      FROM artifact_processing ap_ok\n      WHERE ap_ok.artifact_id = ra.artifact_id\n        AND ap_ok.status = 'ok'\n        AND ap_ok.processor LIKE 'cars_results_page__listings_%'\n    )\n    AND (\n          ap.artifact_id IS NULL\n          OR ap.status = 'retry'\n          OR (ap.status = 'processing' AND ap.processed_at < now() - interval '20 minutes')\n        )\n  ORDER BY ra.fetched_at ASC\n  LIMIT 500\n),\nclaimed AS (\n  INSERT INTO artifact_processing (artifact_id, processor, status, processed_at)\n  SELECT c.artifact_id, '{{ $json.processor }}', 'processing', now()\n  FROM candidates c\n  ON CONFLICT (artifact_id, processor) DO UPDATE\n    SET status = 'processing',\n        processed_at = now(),\n        message = NULL\n  RETURNING artifact_id\n)\nSELECT ra.*\nFROM raw_artifacts ra\nJOIN claimed c ON ra.artifact_id = c.artifact_id\nORDER BY ra.fetched_at ASC;\n",
         "options": {}
       },
       "type": "n8n-nodes-base.postgres",
@@ -190,7 +190,7 @@
             {
               "id": "b0895d77-aa4f-486f-92ca-ecd031b1872a",
               "name": "processor",
-              "value": "cars_results_page__listings_v2",
+              "value": "cars_results_page__listings_v3",
               "type": "string"
             }
           ]

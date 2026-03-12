@@ -8,8 +8,10 @@ import html as html_lib
 import math
 import re
 
+import time
 import requests
 from urllib.parse import urlencode
+from bs4 import BeautifulSoup
 
 
 RAW_BASE = "/data/raw"
@@ -39,6 +41,11 @@ def extract_results_paging_meta(html_text: str) -> Optional[Dict[str, Any]]:
     """
     Extract paging metadata from Cars.com results HTML.
 
+    Supports both formats:
+      - Legacy (pre-Jan 2026): data-site-activity JSON blob with result_page_number etc.
+      - srp2025 (post-Jan 2026): spark-card[data-vehicle-details] per-card JSON with
+        metadata.page_number and metadata.position_on_page.
+
     Returns:
       {
         "total_results": int|None,
@@ -48,34 +55,65 @@ def extract_results_paging_meta(html_text: str) -> Optional[Dict[str, Any]]:
       }
     or None if not found / parse fails.
     """
+    def to_int(x):
+        try:
+            return int(x)
+        except Exception:
+            return None
+
+    # --- Try legacy data-site-activity first ---
     m = _SITE_ACTIVITY_RE.search(html_text)
-    if not m:
-        return None
+    if m:
+        try:
+            decoded = html_lib.unescape(m.group(1))
+            obj = json.loads(decoded)
 
-    raw = m.group(1)
+            total_results = to_int(obj.get("total_results"))
+            per_page = to_int(obj.get("result_per_page") or obj.get("results_per_page"))
+            page_number = to_int(obj.get("result_page_number") or obj.get("results_page_number"))
+            page_count = to_int(obj.get("result_page_count") or obj.get("results_page_count"))
+
+            if page_count is None and total_results and per_page:
+                page_count = int(math.ceil(total_results / per_page))
+
+            if page_number is not None:
+                return {
+                    "total_results": total_results,
+                    "result_per_page": per_page,
+                    "result_page_number": page_number,
+                    "result_page_count": page_count,
+                }
+        except Exception:
+            pass
+
+    # --- Fall back to srp2025 spark-card format ---
     try:
-        decoded = html_lib.unescape(raw)
-        obj = json.loads(decoded)
+        soup = BeautifulSoup(html_text, "lxml")
+        cards = soup.select("spark-card[data-vehicle-details]")
+        if not cards:
+            return None
 
-        total_results = obj.get("total_results")
-        # note: Cars.com uses result_per_page (singular) in this blob
-        per_page = obj.get("result_per_page") or obj.get("results_per_page")
-        page_number = obj.get("result_page_number") or obj.get("results_page_number")
-        page_count = obj.get("result_page_count") or obj.get("results_page_count")
+        # page_number is the same on every card — read from the first one
+        raw = cards[0].get("data-vehicle-details") or ""
+        v = json.loads(raw)
+        metadata = v.get("metadata") or {}
+        page_number = to_int(metadata.get("page_number"))
+        if page_number is None:
+            return None
 
-        # normalize ints where possible
-        def to_int(x):
-            try:
-                return int(x)
-            except Exception:
-                return None
+        # total_results / page_count: look in a nearby pagination element if present
+        total_results = None
+        page_count = None
+        pagination_el = soup.select_one("[data-total-result-count]")
+        if pagination_el:
+            total_results = to_int(pagination_el.get("data-total-result-count"))
+        if total_results is None:
+            # Try a text pattern like "1-100 of 1,234 results"
+            m2 = re.search(r'of\s+([\d,]+)\s+result', html_text, re.IGNORECASE)
+            if m2:
+                total_results = to_int(m2.group(1).replace(",", ""))
 
-        total_results = to_int(total_results)
-        per_page = to_int(per_page)
-        page_number = to_int(page_number)
-        page_count = to_int(page_count)
-
-        # derive page_count if missing
+        per_page = len(cards) if cards else None
         if page_count is None and total_results and per_page:
             page_count = int(math.ceil(total_results / per_page))
 
@@ -125,12 +163,16 @@ def scrape_results(
     artifacts: List[Dict[str, Any]] = []
     session = requests.Session()
     headers = {
-        "User-Agent": "Mozilla/5.0 (Linux; Android 5.0; SM-G900P Build/LRX21T) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/39.0.1047.1013 Mobile Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Upgrade-Insecure-Requests": "1",
     }
 
     for page_num in range(1, max_pages + 1):
+        if page_num > 1:
+            time.sleep(3)
         url = build_results_url(makes, models, zip_code, scope, radius_miles, page_num, page_size)
         fetched_at = datetime.now(UTC).isoformat()
 
