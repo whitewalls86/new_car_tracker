@@ -199,7 +199,8 @@ CREATE TABLE public.raw_artifacts (
     sha256 text,
     filepath text NOT NULL,
     error text,
-    page_num integer
+    page_num integer,
+    deleted_at timestamp with time zone
 );
 
 
