@@ -286,3 +286,23 @@ def process_detail_pages(payload: dict = Body(...)) -> Dict[str, Any]:
         "primary": primary,
         "carousel": carousel,
     }
+
+
+@app.post("/cleanup/artifacts")
+def run_cleanup_artifacts(payload: dict = Body(...)) -> Dict[str, Any]:
+    """
+    Delete raw artifact files from disk.
+    Accepts {"artifacts": [{"artifact_id": int, "filepath": str}, ...]}.
+    Returns {"results": [{"artifact_id": int, "deleted": bool, "reason": str|None}]}.
+    n8n marks deleted_at on rows where deleted=true.
+    """
+    from processors.cleanup_artifacts import cleanup_artifacts
+    artifacts = (payload or {}).get("artifacts", [])
+    results = cleanup_artifacts(artifacts)
+    deleted_count = sum(1 for r in results if r.get("deleted"))
+    return {
+        "total": len(results),
+        "deleted": deleted_count,
+        "failed": len(results) - deleted_count,
+        "results": results,
+    }

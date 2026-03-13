@@ -1,0 +1,243 @@
+{
+  "name": "Cleanup Artifacts",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 2
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0],
+      "id": "a1b2c3d4-0001-0001-0001-000000000001",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT ra.artifact_id, ra.filepath\nFROM raw_artifacts ra\nWHERE ra.deleted_at IS NULL\n  AND ra.filepath IS NOT NULL\n  AND (\n    -- ok: delete after 15 days\n    EXISTS (\n      SELECT 1 FROM artifact_processing ap\n      WHERE ap.artifact_id = ra.artifact_id\n        AND ap.status = 'ok'\n        AND ra.fetched_at < now() - interval '15 days'\n    )\n    OR\n    -- skip (no ok): delete immediately\n    (\n      EXISTS (\n        SELECT 1 FROM artifact_processing ap\n        WHERE ap.artifact_id = ra.artifact_id AND ap.status = 'skip'\n      )\n      AND NOT EXISTS (\n        SELECT 1 FROM artifact_processing ap\n        WHERE ap.artifact_id = ra.artifact_id AND ap.status = 'ok'\n      )\n    )\n    OR\n    -- retry (no ok): delete after 30 days\n    (\n      EXISTS (\n        SELECT 1 FROM artifact_processing ap\n        WHERE ap.artifact_id = ra.artifact_id AND ap.status = 'retry'\n      )\n      AND NOT EXISTS (\n        SELECT 1 FROM artifact_processing ap\n        WHERE ap.artifact_id = ra.artifact_id AND ap.status = 'ok'\n      )\n      AND ra.fetched_at < now() - interval '30 days'\n    )\n  )\nLIMIT 100000;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [208, 0],
+      "id": "a1b2c3d4-0001-0001-0001-000000000002",
+      "name": "Get Candidates",
+      "credentials": {
+        "postgres": {
+          "id": "l8Ecbn62FzXCDkF9",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "destinationFieldName": "artifacts",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [416, 0],
+      "id": "a1b2c3d4-0001-0001-0001-000000000008",
+      "name": "Aggregate Rows"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "a1b2c3d4-0001-0001-0001-000000000010",
+              "leftValue": "={{ $json.artifacts.length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [624, 0],
+      "id": "a1b2c3d4-0001-0001-0001-000000000003",
+      "name": "Any Candidates?"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://cartracker-scraper:8000/cleanup/artifacts",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"artifacts\": {{ JSON.stringify($json.artifacts.map(r => ({ artifact_id: r.artifact_id, filepath: r.filepath }))) }}\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [832, -100],
+      "id": "a1b2c3d4-0001-0001-0001-000000000004",
+      "name": "Call Cleanup API"
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "results",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [1040, -100],
+      "id": "a1b2c3d4-0001-0001-0001-000000000005",
+      "name": "Split Results"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "a1b2c3d4-0001-0001-0001-000000000011",
+              "leftValue": "={{ $json.deleted }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1248, -100],
+      "id": "a1b2c3d4-0001-0001-0001-000000000006",
+      "name": "Was Deleted?"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE raw_artifacts\nSET deleted_at = now()\nWHERE artifact_id = {{ $json.artifact_id }};",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [1456, -200],
+      "id": "a1b2c3d4-0001-0001-0001-000000000007",
+      "name": "Mark Deleted",
+      "credentials": {
+        "postgres": {
+          "id": "l8Ecbn62FzXCDkF9",
+          "name": "Postgres account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get Candidates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Candidates": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate Rows": {
+      "main": [
+        [
+          {
+            "node": "Any Candidates?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Any Candidates?": {
+      "main": [
+        [
+          {
+            "node": "Call Cleanup API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Cleanup API": {
+      "main": [
+        [
+          {
+            "node": "Split Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Results": {
+      "main": [
+        [
+          {
+            "node": "Was Deleted?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Was Deleted?": {
+      "main": [
+        [
+          {
+            "node": "Mark Deleted",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "a1b2c3d4-0001-0001-0001-000000000099",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "id": "cleanup-artifacts-workflow-v1",
+  "tags": []
+}
