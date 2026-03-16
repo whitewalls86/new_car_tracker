@@ -1,12 +1,29 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Body
+from fastapi.staticfiles import StaticFiles
 from typing import Any, Dict, Optional
 import os
 from processors.scrape_results import scrape_results
 from processors.results_page_cards import (parse_cars_results_page_html, parse_cars_results_page_html_v2, parse_cars_results_page_html_v3)
 from processors.scrape_detail import (scrape_detail_dummy, scrape_detail_fetch)
 from processors.parse_detail_page import parse_cars_detail_page_html_v1
+from routers.admin import router as admin_router
+from db import get_pool, close_pool
 
-app = FastAPI()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup: initialize DB pool
+    await get_pool()
+    yield
+    # Shutdown: close DB pool
+    await close_pool()
+
+
+app = FastAPI(lifespan=lifespan)
+
+# Mount admin UI
+app.include_router(admin_router, prefix="/admin")
 
 
 @app.post("/scrape_results")

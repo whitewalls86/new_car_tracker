@@ -8,25 +8,25 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        96,
-        528
+        736,
+        1424
       ],
-      "id": "07610bf1-4eb2-4027-9b0b-be218c3d64eb",
+      "id": "00bc2a68-5ac1-4fa8-b60c-70cb4e20e1db",
       "name": "Create Run ID"
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "INSERT INTO runs (run_id, status, trigger)\nVALUES ('{{$json.run_id}}'::uuid, 'running', 'manual');",
+        "query": "INSERT INTO runs (run_id, status, trigger)\nVALUES ('{{$json.run_id}}'::uuid, 'running', 'search scrape');",
         "options": {}
       },
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        320,
-        528
+        960,
+        1424
       ],
-      "id": "df81f974-f37f-44ae-8f4e-33d183a0f639",
+      "id": "e566be85-1ae7-40fe-b3cb-14b21e71917d",
       "name": "Insert Run Row",
       "credentials": {
         "postgres": {
@@ -44,10 +44,10 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        544,
-        528
+        1184,
+        1424
       ],
-      "id": "d5adbb10-d6be-4906-bbca-50fcac8c2440",
+      "id": "d87e8160-0875-441f-9613-c5ef44b6d1a9",
       "name": "Get Config",
       "credentials": {
         "postgres": {
@@ -63,10 +63,10 @@
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
       "position": [
-        768,
-        528
+        1408,
+        1424
       ],
-      "id": "efa85057-3f6f-44a3-bf29-91709e284e53",
+      "id": "223a1601-617a-4c8c-aeec-fb54d54b8093",
       "name": "Loop Over Items"
     },
     {
@@ -99,15 +99,17 @@
             }
           ]
         },
-        "options": {}
+        "options": {
+          "timeout": 900000
+        }
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        992,
-        624
+        1632,
+        1520
       ],
-      "id": "4b72ee7f-c7da-45e3-85c7-d8c87039598c",
+      "id": "518fcf58-3bc9-430e-9ac8-e88d68477a63",
       "name": "National Search"
     },
     {
@@ -140,15 +142,17 @@
             }
           ]
         },
-        "options": {}
+        "options": {
+          "timeout": 900000
+        }
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        992,
-        448
+        1632,
+        1344
       ],
-      "id": "1317ca3b-d9ad-4251-86ac-b1e7578d5f1c",
+      "id": "bbd18bbf-3e2c-495f-99b7-75907b8a13ba",
       "name": "Local Search"
     },
     {
@@ -160,10 +164,10 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        992,
-        240
+        1632,
+        1136
       ],
-      "id": "3a4db8f8-8323-4d0e-b5ca-a3209a339cac",
+      "id": "8972a2b7-da56-473c-9061-5e116897bc70",
       "name": "Mark Run Done",
       "credentials": {
         "postgres": {
@@ -179,10 +183,10 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1232,
-        624
+        1872,
+        1520
       ],
-      "id": "c189f615-63d8-4481-a724-ea6ba45db892",
+      "id": "5e6429b0-f950-4129-96a3-c35740c2435e",
       "name": "Explode Artifacts (National)"
     },
     {
@@ -194,10 +198,10 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        1440,
-        624
+        2080,
+        1520
       ],
-      "id": "7460d394-0cae-4c58-9ec7-c15cf9f5b7c9",
+      "id": "e7bf686e-a475-4566-a821-622d76d0a457",
       "name": "Insert (National)",
       "credentials": {
         "postgres": {
@@ -215,10 +219,10 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        1440,
-        448
+        2080,
+        1344
       ],
-      "id": "c33f6719-ae68-453c-b2a7-14fa0a7e51f9",
+      "id": "13023eb9-aa83-4b34-93a3-c979341fa7e5",
       "name": "Insert (Local)",
       "credentials": {
         "postgres": {
@@ -234,10 +238,10 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1232,
-        448
+        1872,
+        1344
       ],
-      "id": "bb29d5af-9d1a-4a7b-aed0-887420c150b7",
+      "id": "bcfe7a7a-68d1-4db8-8a1e-9cf938482133",
       "name": "Explode Artifacts (Local)"
     },
     {
@@ -253,11 +257,32 @@
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.3,
       "position": [
-        -128,
-        528
+        512,
+        1424
       ],
-      "id": "f43f42b0-b869-45b4-8be9-0b22e21d1472",
+      "id": "c04345c4-8fe9-43bc-9b1f-152825dcd5d2",
       "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE search_configs\nSET params = jsonb_set(\n  params,\n  '{sort_order}',\n  to_jsonb(\n    COALESCE(\n      params->'sort_rotation'->>(\n        (SELECT i FROM generate_series(0, jsonb_array_length(params->'sort_rotation') - 1) AS i\n         WHERE params->'sort_rotation'->>i = params->>'sort_order'\n         LIMIT 1\n        ) + 1\n      ),\n      params->'sort_rotation'->>0\n    )\n  )\n)\nWHERE enabled = true\n  AND params ? 'sort_rotation'\n  AND jsonb_array_length(params->'sort_rotation') > 0;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1840,
+        976
+      ],
+      "id": "75d5a3f7-7faf-464d-b960-02d1764f7524",
+      "name": "Rotate Sort Order",
+      "credentials": {
+        "postgres": {
+          "id": "l8Ecbn62FzXCDkF9",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
@@ -281,10 +306,10 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        1200,
-        240
+        2048,
+        1136
       ],
-      "id": "5ead58db-7b49-4e8e-9264-bd9c8f3b5148",
+      "id": "44d7f45e-93a1-4768-bbfd-ecdda4d28e94",
       "name": "Call 'Results Processing'"
     }
   ],
@@ -422,6 +447,11 @@
       "main": [
         [
           {
+            "node": "Rotate Sort Order",
+            "type": "main",
+            "index": 0
+          },
+          {
             "node": "Call 'Results Processing'",
             "type": "main",
             "index": 0
@@ -435,7 +465,7 @@
     "executionOrder": "v1",
     "availableInMCP": false
   },
-  "versionId": "d82ba33a-7ab2-47fd-99eb-e5e5b583c4ef",
+  "versionId": "7fa53273-697d-4ed9-97b4-7ea9e058760c",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179"

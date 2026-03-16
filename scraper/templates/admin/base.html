@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}Cartracker Admin{% endblock %}</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+    <style>
+        :root {
+            --pico-font-size: 16px;
+        }
+        nav {
+            margin-bottom: 1rem;
+        }
+        .badge {
+            display: inline-block;
+            padding: 0.15rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            font-weight: 600;
+        }
+        .badge-active { background: #2ecc71; color: #fff; }
+        .badge-disabled { background: #95a5a6; color: #fff; }
+        .badge-scope { background: #3498db; color: #fff; margin-right: 0.25rem; }
+        .badge-sort { background: #9b59b6; color: #fff; margin-right: 0.25rem; font-weight: 400; }
+        .config-card {
+            border: 1px solid var(--pico-muted-border-color);
+            border-radius: 8px;
+            padding: 1rem 1.25rem;
+            margin-bottom: 1rem;
+        }
+        .config-card.disabled {
+            opacity: 0.6;
+        }
+        .config-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.5rem;
+        }
+        .config-header h3 {
+            margin: 0;
+            font-size: 1.1rem;
+        }
+        .config-meta {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 0.25rem 1.5rem;
+            font-size: 0.9rem;
+            color: var(--pico-muted-color);
+        }
+        .config-meta strong {
+            color: var(--pico-color);
+        }
+        .config-actions {
+            display: flex;
+            gap: 0.5rem;
+            align-items: center;
+        }
+        .config-actions form {
+            margin: 0;
+        }
+        .btn-sm {
+            padding: 0.25rem 0.75rem;
+            font-size: 0.85rem;
+        }
+        .btn-danger {
+            background: #e74c3c;
+            border-color: #e74c3c;
+        }
+        .btn-danger:hover {
+            background: #c0392b;
+            border-color: #c0392b;
+        }
+        fieldset {
+            border: 1px solid var(--pico-muted-border-color);
+            border-radius: 8px;
+            padding: 1rem;
+            margin-bottom: 1rem;
+        }
+        fieldset legend {
+            font-weight: 600;
+            padding: 0 0.5rem;
+        }
+        .checkbox-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem 1.5rem;
+        }
+        .checkbox-group label {
+            display: flex;
+            align-items: center;
+            gap: 0.35rem;
+            cursor: pointer;
+            font-size: 0.9rem;
+        }
+        .checkbox-group input[type="checkbox"] {
+            margin: 0;
+        }
+        .flash-error {
+            background: #fdecea;
+            border: 1px solid #e74c3c;
+            color: #c0392b;
+            padding: 0.75rem 1rem;
+            border-radius: 8px;
+            margin-bottom: 1rem;
+        }
+    </style>
+</head>
+<body>
+    <main class="container">
+        <nav>
+            <ul>
+                <li><strong>Cartracker Admin</strong></li>
+            </ul>
+            <ul>
+                <li><a href="/admin/">Searches</a></li>
+                <li><a href="/admin/new" role="button" class="btn-sm outline">+ New Search</a></li>
+            </ul>
+        </nav>
+        {% block content %}{% endblock %}
+    </main>
+</body>
+</html>

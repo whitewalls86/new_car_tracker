@@ -1,6 +1,10 @@
 fastapi
 uvicorn
 requests
+curl_cffi
 bs4
 lxml
 playwright
+jinja2
+python-multipart
+asyncpg
