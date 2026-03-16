@@ -3,7 +3,13 @@ select
 
     -- Tier-1 state
     t.listing_id,
-    t.listing_state,
+    -- Infer listing_state for SRP-only VINs: if seen within 7 days treat as active,
+    -- otherwise treat as unlisted (only detail scrapes provide a confirmed state)
+    case
+        when t.listing_state is not null then t.listing_state
+        when t.observed_at >= now() - interval '7 days' then 'active'
+        else 'unlisted'
+    end as listing_state,
     t.mileage,
     t.observed_at        as tier1_observed_at,
     t.artifact_id        as tier1_artifact_id,
