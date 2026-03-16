@@ -417,3 +417,52 @@ Or reuse a connection pool initialized on app startup in `app.py`.
 - Authentication — admin is localhost-only, no auth needed for now
 - Live scrape triggering from UI — that stays in n8n (could be added via Plan 5 webhooks later)
 - Cars.com make/model autocomplete — plain text input with comma separation is sufficient initially
+
+---
+
+## Plan 12: Dealer Table
+
+**Status:** Not started
+**Priority:** Medium
+**Complexity:** Low–Medium
+
+### Problem
+We capture `seller_customer_id` on every SRP observation and deal score, but it's an opaque Cars.com internal ID. We have no human-readable dealer name, address, phone, or geographic data. This limits:
+- Dealer-level analysis in the dashboard (can't label charts with real names)
+- Plan 2 (dealer-grouped refresh) — hard to prioritize without knowing dealer size/region
+- Any future dealer relationship or proximity features
+
+### Approach
+
+**Phase 1 — Dealers table**
+Create a `dealers` table in the public schema:
+```sql
+CREATE TABLE dealers (
+  seller_customer_id TEXT PRIMARY KEY,
+  name               TEXT,
+  address            TEXT,
+  city               TEXT,
+  state              TEXT,
+  zip                TEXT,
+  phone              TEXT,
+  website            TEXT,
+  cars_com_url       TEXT,
+  first_seen_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_scraped_at    TIMESTAMPTZ,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+```
+
+**Phase 2 — Backfill from existing data**
+Populate with all `seller_customer_id` values already in `srp_observations` / `mart_deal_scores`. Name/address scraped from the dealer's Cars.com profile page (`https://www.cars.com/dealers/{seller_customer_id}/`).
+
+**Phase 3 — Auto-discovery**
+During SRP parse, insert any new `seller_customer_id` as a row with `last_scraped_at = NULL` (stub). A periodic cleanup job scrapes stubs to fill in name/address.
+
+**Phase 4 — dbt integration**
+Add `dealers` as a dbt source. Join into `mart_deal_scores` and the Streamlit dashboard to show real dealer names on all charts and tables.
+
+### Notes
+- Carousel hints: 69.8% of carousel hints are already mapped to VINs (10,706 VINs get their latest price from carousel). Dealer table enables grouping carousel price trends by dealer.
+- Pairs naturally with Plan 2 (dealer-grouped detail refresh) — once we have real dealer metadata, we can weight the refresh queue by dealer inventory size or geography.
