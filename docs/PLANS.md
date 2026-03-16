@@ -167,67 +167,92 @@ Both are now rebuilt as part of the `stg_detail_observations+` DAG on every `aft
 
 ---
 
-## Plan 9: Metabase Analytics Dashboard
+## Plan 9: Analytics Dashboard (Streamlit)
 
-**Status:** To do (high priority)
+**Status:** In progress — queries validated, Streamlit build next
 **Complexity:** Medium
 
 ### Goal
 Build a Metabase dashboard that surfaces actionable intelligence from the data we're collecting — not just pipeline health, but actual deal-finding and market analysis.
 
-### Proposed Dashboard Sections
+### Approach
+Streamlit app in a new Docker service. Pure Python + Plotly. Queries Postgres directly via `psycopg2`. Lives in `dashboard/` in the repo — fully git-trackable and shareable (recipient just runs `docker compose up`).
 
-**Pipeline Health**
-- Last Search Scrape / Last Detail Scrape (with timezone correction — US Central)
-- Runs over time by type (Search vs Detail)
-- Artifact processing backlog (retry count by processor)
-- Detail scrape success rate (200 vs 403 over time)
+### Dashboard Sections
 
-**Inventory Overview**
-- Total active listings by make/model
-- New listings added (last 24h, 7d, 30d)
-- Listings going unlisted (sold/removed) over time
-- Active listings by dealer
+**Section 1 — Pipeline Health**
+- Last Search Scrape / Last Detail Scrape timestamps (US Central)
+- New vehicles added + vehicles observed since last search run
+- Price updates since last detail run (direct vs carousel breakdown)
+- Detail scrape success rate over time (200 vs 403 vs error — bar chart)
+- Runs over time by type (search vs detail — time series)
+- Stale vehicle backlog (count needing refresh)
+- Artifact processing backlog (retry/processing counts by processor)
+- Recent pipeline errors table
+- Terminated runs last 7 days
 
-**Deal Finder**
-- `mart_deal_scores` — listings ranked by deal score
-- Price vs market median by model
-- Price drop events (listings that dropped in price)
-- Days on market distribution
+**Section 2 — Inventory Overview**
+- Total active listings (scalar)
+- New listings: last 24h / 7d / 30d (scalars)
+- Active listings by make/model (bar chart)
+- New listings over time by make (time series, from `int_listing_days_on_market`)
+- Listings going unlisted over time (from `detail_observations`)
+- Active listings by dealer (table)
 
-**Market Trends**
-- Average price by make/model over time
-- Inventory levels by model (are they rising or falling?)
-- Median days-on-market trends
+**Section 3 — Deal Finder**
+- Full `mart_deal_scores` table with filters (make, model, deal tier, local/national)
+- Deal tier distribution (bar chart)
+- Price drop events (listings with `price_drop_count > 0`)
+- Days on market distribution (bar chart)
+- Price vs MSRP by model (bar chart)
 
-### Notes
-- Most data is already in `mart_vehicle_snapshot` and `mart_deal_scores`
-- Timezone: all timestamps should display in US Central (`AT TIME ZONE 'America/Chicago'`)
+**Section 4 — Market Trends**
+- Median price by model over time (weekly, from `int_price_events`)
+- Inventory levels by model over time (daily, from `srp_observations`)
+- Days on market by model (median/avg, from `mart_deal_scores`)
+- National supply vs local availability (table)
+
+### Key Table Notes (validated against live DB)
+- `analytics.mart_deal_scores` — 19,230 active VINs (seen in SRP last 3 days); `listing_state` always populated
+- `analytics.int_listing_days_on_market` — all 67k VINs ever seen; use for historical new-listing counts
+- `analytics.int_price_events` — 5.4M rows, full price time-series (SRP + detail + carousel); use for price trends
+- `analytics.int_srp_vehicle_attributes` — latest make/model/trim/msrp per VIN
+- `srp_observations` — 415k rows, raw time-series; use for inventory levels over time
+
+### Implementation
+1. Add `dashboard/` directory with `app.py` + `requirements.txt`
+2. Add `streamlit` service to `docker-compose.yml` (port 8501)
+3. Connect to Postgres via env var `DATABASE_URL`
+4. Build section by section, validating each query against live data
 
 ---
 
 ## Plan 10: Pipeline Durability
 
-**Status:** To do (high priority)
-**Complexity:** Medium
+**Status:** ✅ Implemented (2026-03-16)
 
-### Problem
-Pipeline failures are silent — a crashed n8n workflow, a stale `processing` run, or a dbt error can go unnoticed for hours or days.
+### What Was Done
+1. **Auto-terminate stale runs** — "Pipeline Maintenance" node added to Cleanup Artifacts workflow; runs stuck `running` > 2 hours are set to `terminated` nightly at 2:30am
+2. **Reset stuck artifact_processing** — same node resets `processing` → `retry` for records older than 15 minutes, preventing silent queue jams
+3. **`pipeline_errors` table** — new DB table captures workflow name, execution ID, node name, error message, and error type
+4. **Error Handler workflow** — new n8n workflow (`Error Handler.json`) with an Error Trigger that logs to `pipeline_errors`; import it and set it as the error workflow in Scrape Listings + Scrape Detail Pages settings
 
-### Goals
-1. **Stale run detection** — any run stuck in `running` status for > 2 hours should be auto-flagged or auto-terminated
-2. **Error surfacing** — failed n8n executions, scraper 5xx errors, and dbt failures should be visible in one place
-3. **Processing queue health** — alert when `retry` artifact count spikes unexpectedly
-4. **Artifact processing stuck jobs** — `artifact_processing` records in `processing` status for > X minutes should be auto-reset to `retry`
+### Remaining Manual Step
+- Import `Error Handler.json` into n8n
+- In Scrape Listings settings → set Error Workflow to "Error Handler"
+- In Scrape Detail Pages settings → set Error Workflow to "Error Handler"
 
-### Proposed Implementation
-1. **DB: runs table improvements**
-   - Add `run_type` column (`'Search Scrape'` / `'Detail Scrape'`) — set by n8n workflow via `trigger` column (already planned)
-   - Auto-terminate: scheduled SQL job that sets `status = 'terminated'` for runs stuck `running` > 2h
-2. **Stuck artifact_processing cleanup**
-   - Add to existing cleanup workflow: reset `processing` → `retry` for records older than 10 minutes
-3. **Metabase pipeline health card** — surface stale runs, high retry counts, and recent errors in a single view
-4. **n8n error handling** — add error workflow in n8n that catches failed executions and logs them to a `pipeline_errors` table
+### Metabase health queries (to add to dashboard — Plan 9)
+```sql
+-- Recent pipeline errors
+SELECT workflow_name, node_name, error_message, occurred_at AT TIME ZONE 'America/Chicago'
+FROM pipeline_errors ORDER BY occurred_at DESC LIMIT 20;
+
+-- Runs terminated in last 7 days
+SELECT trigger, COUNT(*), MAX(started_at) FROM runs
+WHERE status = 'terminated' AND started_at > now() - interval '7 days'
+GROUP BY trigger;
+```
 
 ---
 
