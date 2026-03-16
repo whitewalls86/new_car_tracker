@@ -167,50 +167,63 @@ Both are now rebuilt as part of the `stg_detail_observations+` DAG on every `aft
 
 ---
 
-## Plan 9: Metabase Analytics Dashboard
+## Plan 9: Analytics Dashboard (Streamlit)
 
-**Status:** To do (high priority)
+**Status:** In progress — queries validated, Streamlit build next
 **Complexity:** Medium
 
 ### Goal
 Build a Metabase dashboard that surfaces actionable intelligence from the data we're collecting — not just pipeline health, but actual deal-finding and market analysis.
 
-### Proposed Dashboard Sections
+### Approach
+Streamlit app in a new Docker service. Pure Python + Plotly. Queries Postgres directly via `psycopg2`. Lives in `dashboard/` in the repo — fully git-trackable and shareable (recipient just runs `docker compose up`).
 
-**Pipeline Health**
-- Last Search Scrape / Last Detail Scrape (with timezone correction — US Central)
-- Below Last Search Scrape: **new vehicles added** count + **vehicles updated** count since that run
-- Below Last Detail Scrape: **price updates** count since that run, broken down by source:
-  - Updated via direct detail page load
-  - Updated via carousel hint (no full page fetch needed)
-- Runs over time by type (Search vs Detail)
-- Artifact processing backlog (retry count by processor)
-- Detail scrape success rate (200 vs 403 over time)
+### Dashboard Sections
 
-**Inventory Overview**
-- Total active listings by make/model
-- New listings added (last 24h, 7d, 30d)
-- Listings going unlisted (sold/removed) over time
-- Active listings by dealer
+**Section 1 — Pipeline Health**
+- Last Search Scrape / Last Detail Scrape timestamps (US Central)
+- New vehicles added + vehicles observed since last search run
+- Price updates since last detail run (direct vs carousel breakdown)
+- Detail scrape success rate over time (200 vs 403 vs error — bar chart)
+- Runs over time by type (search vs detail — time series)
+- Stale vehicle backlog (count needing refresh)
+- Artifact processing backlog (retry/processing counts by processor)
+- Recent pipeline errors table
+- Terminated runs last 7 days
 
-**Deal Finder**
-- `mart_deal_scores` — listings ranked by deal score
-- Price vs market median by model
-- Price drop events (listings that dropped in price)
-- Days on market distribution
+**Section 2 — Inventory Overview**
+- Total active listings (scalar)
+- New listings: last 24h / 7d / 30d (scalars)
+- Active listings by make/model (bar chart)
+- New listings over time by make (time series, from `int_listing_days_on_market`)
+- Listings going unlisted over time (from `detail_observations`)
+- Active listings by dealer (table)
 
-**Market Trends**
-- Average price by make/model over time
-- Inventory levels by model (are they rising or falling?)
-- Median days-on-market trends
+**Section 3 — Deal Finder**
+- Full `mart_deal_scores` table with filters (make, model, deal tier, local/national)
+- Deal tier distribution (bar chart)
+- Price drop events (listings with `price_drop_count > 0`)
+- Days on market distribution (bar chart)
+- Price vs MSRP by model (bar chart)
 
-### Notes
-- Most data is already in `mart_vehicle_snapshot` and `mart_deal_scores`
-- Timezone: all timestamps should display in US Central (`AT TIME ZONE 'America/Chicago'`)
-- New vehicles added: count of VINs first seen in `srp_observations` within the run's time window
-- Vehicles updated: count of VINs with a new `srp_observation` in that run (price or state change)
-- Price updates via carousel: `detail_carousel_hints` source; via direct load: `detail_observations` source
-- The carousel vs direct breakdown is a useful efficiency metric — carousel hits are cheaper (no full page fetch)
+**Section 4 — Market Trends**
+- Median price by model over time (weekly, from `int_price_events`)
+- Inventory levels by model over time (daily, from `srp_observations`)
+- Days on market by model (median/avg, from `mart_deal_scores`)
+- National supply vs local availability (table)
+
+### Key Table Notes (validated against live DB)
+- `analytics.mart_deal_scores` — 19,230 active VINs (seen in SRP last 3 days); `listing_state` always populated
+- `analytics.int_listing_days_on_market` — all 67k VINs ever seen; use for historical new-listing counts
+- `analytics.int_price_events` — 5.4M rows, full price time-series (SRP + detail + carousel); use for price trends
+- `analytics.int_srp_vehicle_attributes` — latest make/model/trim/msrp per VIN
+- `srp_observations` — 415k rows, raw time-series; use for inventory levels over time
+
+### Implementation
+1. Add `dashboard/` directory with `app.py` + `requirements.txt`
+2. Add `streamlit` service to `docker-compose.yml` (port 8501)
+3. Connect to Postgres via env var `DATABASE_URL`
+4. Build section by section, validating each query against live data
 
 ---
 
