@@ -3,24 +3,15 @@ from datetime import datetime, UTC
 from typing import Any, Dict, Optional
 import hashlib
 import os
-import requests
+from curl_cffi import requests as cf_requests
+
+# Browser fingerprint to impersonate — curl_cffi uses this for TLS fingerprinting
+# to bypass Cloudflare WAF. Rotate to newer versions if this gets blocked.
+BROWSER_IMPERSONATE = "chrome131"
 
 
 def _sha256_bytes(b: bytes) -> str:
     return hashlib.sha256(b).hexdigest()
-
-
-def _default_headers() -> Dict[str, str]:
-    # Match your SRP scraper "mobile chrome" UA style for consistency.
-    return {
-        "User-Agent": (
-            "Mozilla/5.0 (Linux; Android 5.0; SM-G900P Build/LRX21T) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/39.0.1047.1013 "
-            "Mobile Safari/537.36"
-        ),
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.9",
-    }
 
 
 def scrape_detail_fetch(*, run_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -53,17 +44,13 @@ def scrape_detail_fetch(*, run_id: str, payload: Dict[str, Any]) -> Dict[str, An
     fetched_at = datetime.now(UTC).isoformat()
 
     timeout_s = int((payload or {}).get("timeout_s") or 30)
-    headers = _default_headers()
-    hdr_override = (payload or {}).get("headers")
-    if isinstance(hdr_override, dict):
-        headers.update({str(k): str(v) for k, v in hdr_override.items()})
 
-    session = requests.Session()
+    session = cf_requests.Session(impersonate=BROWSER_IMPERSONATE)
 
     # We always write *something* for auditability.
     # Non-200 responses get written too (useful for debugging blocks/interstitials).
     try:
-        resp = session.get(url, headers=headers, timeout=timeout_s, allow_redirects=True)
+        resp = session.get(url, timeout=timeout_s, allow_redirects=True)
         status = resp.status_code
         content_type = resp.headers.get("content-type")
         content = resp.content or b""

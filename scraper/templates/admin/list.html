@@ -1,0 +1,65 @@
+{% extends "admin/base.html" %}
+{% block title %}Search Configs — Cartracker Admin{% endblock %}
+
+{% block content %}
+<h2>Search Configurations</h2>
+
+{% if not configs %}
+<p>No search configs found. <a href="/admin/new">Create one</a>.</p>
+{% endif %}
+
+{% for c in configs %}
+{% set p = c.params %}
+<article class="config-card {{ 'disabled' if not c.enabled }}">
+    <div class="config-header">
+        <div>
+            <h3>
+                {{ c.search_key }}
+                {% if c.enabled %}
+                    <span class="badge badge-active">Active</span>
+                {% else %}
+                    <span class="badge badge-disabled">Disabled</span>
+                {% endif %}
+            </h3>
+        </div>
+        <div class="config-actions">
+            <a href="/admin/{{ c.search_key }}/edit" role="button" class="btn-sm outline">Edit</a>
+            <form method="post" action="/admin/{{ c.search_key }}/toggle">
+                <button type="submit" class="btn-sm outline">
+                    {{ "Disable" if c.enabled else "Enable" }}
+                </button>
+            </form>
+            <form method="post" action="/admin/{{ c.search_key }}/delete"
+                  onsubmit="return confirm('Delete {{ c.search_key }}? This cannot be undone.')">
+                <button type="submit" class="btn-sm btn-danger outline">Delete</button>
+            </form>
+        </div>
+    </div>
+
+    <div class="config-meta">
+        <div><strong>Makes:</strong> {{ p.makes | join(", ") }}</div>
+        <div><strong>Models:</strong> {{ p.models | join(", ") }}</div>
+        <div><strong>Zip / Radius:</strong> {{ p.zip }} &middot; {{ p.radius_miles }}mi</div>
+        <div><strong>Max Listings:</strong> {{ "{:,}".format(p.max_listings) }}</div>
+        <div>
+            <strong>Scopes:</strong>
+            {% for s in p.get("scopes", ["local", "national"]) %}
+                <span class="badge badge-scope">{{ s | capitalize }}</span>
+            {% endfor %}
+        </div>
+        <div>
+            <strong>Sort:</strong>
+            {{ p.get("sort_order", "default") }}
+            {% if p.get("sort_rotation") %}
+                <br>
+                <small>Rotation:
+                {% for s in p.sort_rotation %}
+                    <span class="badge badge-sort">{{ s }}</span>
+                {% endfor %}
+                </small>
+            {% endif %}
+        </div>
+    </div>
+</article>
+{% endfor %}
+{% endblock %}

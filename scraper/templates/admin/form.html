@@ -1,0 +1,135 @@
+{% extends "admin/base.html" %}
+{% block title %}{{ "Edit" if editing else "New" }} Search — Cartracker Admin{% endblock %}
+
+{% block content %}
+<h2>{{ "Edit Search" if editing else "New Search" }}{% if editing %}: {{ config.search_key }}{% endif %}</h2>
+
+{% if error %}
+<div class="flash-error">{{ error }}</div>
+{% endif %}
+
+{% set p = config.params if config else {} %}
+
+<form method="post" action="{{ '/admin/' ~ config.search_key if editing else '/admin/' }}">
+
+    <!-- Search Key -->
+    {% if not editing %}
+    <label for="search_key">
+        Search Key
+        <small>(slug format, e.g. "honda-cr_v_hybrid")</small>
+    </label>
+    <input type="text" id="search_key" name="search_key"
+           value="{{ config.search_key if config else '' }}"
+           placeholder="honda-cr_v_hybrid" required
+           pattern="[a-z0-9_-]+" title="lowercase letters, numbers, hyphens, underscores only">
+    {% endif %}
+
+    <!-- Makes & Models -->
+    <div class="grid">
+        <div>
+            <label for="makes">
+                Makes
+                <small>(comma-separated)</small>
+            </label>
+            <input type="text" id="makes" name="makes"
+                   value="{{ p.makes | join(', ') if p.get('makes') else '' }}"
+                   placeholder="honda, toyota" required>
+        </div>
+        <div>
+            <label for="models">
+                Models
+                <small>(comma-separated, Cars.com format)</small>
+            </label>
+            <input type="text" id="models" name="models"
+                   value="{{ p.models | join(', ') if p.get('models') else '' }}"
+                   placeholder="honda-cr_v_hybrid, toyota-rav4_hybrid" required>
+        </div>
+    </div>
+
+    <!-- Location -->
+    <div class="grid">
+        <div>
+            <label for="zip">Zip Code</label>
+            <input type="text" id="zip" name="zip"
+                   value="{{ p.zip if p.get('zip') else '' }}"
+                   placeholder="77008" required
+                   pattern="\d{5}" title="5-digit zip code" maxlength="5">
+        </div>
+        <div>
+            <label for="radius_miles">Radius (miles)</label>
+            <input type="number" id="radius_miles" name="radius_miles"
+                   value="{{ p.radius_miles if p.get('radius_miles') else 150 }}"
+                   min="1" max="5000" required>
+        </div>
+    </div>
+
+    <!-- Scopes -->
+    <fieldset>
+        <legend>Scopes</legend>
+        <div class="checkbox-group">
+            {% set scopes = p.get("scopes", ["local", "national"]) if p else ["local", "national"] %}
+            <label>
+                <input type="checkbox" name="scope_local" value="true"
+                       {{ "checked" if "local" in scopes }}>
+                Local
+            </label>
+            <label>
+                <input type="checkbox" name="scope_national" value="true"
+                       {{ "checked" if "national" in scopes }}>
+                National
+            </label>
+        </div>
+    </fieldset>
+
+    <!-- Limits -->
+    <div class="grid">
+        <div>
+            <label for="max_listings">Max Listings</label>
+            <input type="number" id="max_listings" name="max_listings"
+                   value="{{ p.max_listings if p.get('max_listings') else 2000 }}"
+                   min="1" max="10000" required>
+        </div>
+        <div>
+            <label for="max_safety_pages">
+                Max Safety Pages
+                <small>(runaway guard)</small>
+            </label>
+            <input type="number" id="max_safety_pages" name="max_safety_pages"
+                   value="{{ p.max_safety_pages if p.get('max_safety_pages') else 500 }}"
+                   min="1" max="1000" required>
+        </div>
+    </div>
+
+    <!-- Sort Rotation -->
+    <fieldset>
+        <legend>Sort Rotation</legend>
+        <p><small>Select which sort orders to rotate through. The first checked option will be the starting sort.</small></p>
+        <div class="checkbox-group">
+            {% set rotation = p.get("sort_rotation", []) if p else [] %}
+            {% for key, label in sort_options %}
+            <label>
+                <input type="checkbox" name="sort_rotation" value="{{ key }}"
+                       {{ "checked" if key in (rotation or []) }}>
+                {{ label }}
+            </label>
+            {% endfor %}
+        </div>
+    </fieldset>
+
+    <!-- Enabled -->
+    <fieldset>
+        <label>
+            <input type="checkbox" name="enabled" value="true"
+                   {{ "checked" if (config.enabled if config else true) }}
+                   role="switch">
+            Enabled
+        </label>
+    </fieldset>
+
+    <!-- Submit -->
+    <div class="grid">
+        <button type="submit">{{ "Save Changes" if editing else "Create Search" }}</button>
+        <a href="/admin/" role="button" class="outline secondary">Cancel</a>
+    </div>
+</form>
+{% endblock %}

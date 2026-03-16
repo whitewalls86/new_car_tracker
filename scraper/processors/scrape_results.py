@@ -24,16 +24,19 @@ def sha256_bytes(b: bytes) -> str:
 
 
 def build_results_url(makes: List[str], models: List[str], zip_code: str, scope: str,
-                      radius_miles: int, page_num: int, page_size: int) -> str:
+                      radius_miles: int, page_num: int,
+                      sort_order: Optional[str] = None) -> str:
     params = {
         "makes[]": makes,
         "models[]": models,
         "stock_type": "new",              # keep as-is or make configurable later
         "zip": zip_code,
         "page": page_num,
-        "page_size": page_size,
+        "page_size": 100,                 # Cars.com ignores this (returns ~22/page) but we send it for API compat
         "maximum_distance": radius_miles if scope == "local" else "all",
     }
+    if sort_order:
+        params["sort"] = sort_order
     return BASE_URL + "?" + urlencode(params, doseq=True)
 
 
@@ -178,10 +181,10 @@ def scrape_results(
     models = params.get("models") or []
     zip_code = params.get("zip")
     radius_miles = int(params.get("radius_miles", 200))
-    page_size = int(params.get("page_size", 100))
 
     max_listings = int(params.get("max_listings", 2000))
     max_safety_pages = int(params.get("max_safety_pages", 500))
+    sort_order = params.get("sort_order")  # e.g. "list_price", "listed_at_desc", etc.
 
     if scope not in ("national", "local"):
         return {"error": f"Invalid scope '{scope}'", "artifacts": []}
@@ -200,7 +203,7 @@ def scrape_results(
         for page_num in range(1, max_safety_pages + 1):
             if page_num > 1:
                 time.sleep(3)
-            url = build_results_url(makes, models, zip_code, scope, radius_miles, page_num, page_size)
+            url = build_results_url(makes, models, zip_code, scope, radius_miles, page_num, sort_order)
             fetched_at = datetime.now(UTC).isoformat()
 
             # Fresh context per page — each page gets a new browser session so

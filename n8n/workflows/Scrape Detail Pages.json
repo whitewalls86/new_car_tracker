@@ -4,7 +4,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "WITH dealer_data AS (\n  SELECT\n    v.current_listing_id,\n    v.vin,\n    v.canonical_detail_url,\n    v.seller_customer_id,\n    'fetch' AS mode,\n\n    ROW_NUMBER() OVER (\n      PARTITION BY COALESCE(v.seller_customer_id, v.vin)\n      ORDER BY COALESCE(v.price_last_seen_at, 'epoch'::timestamptz) ASC\n    ) AS dealer_row_num\n\n  FROM public.vehicles v\n\n  LEFT JOIN public.listing_current_state lcs\n    ON lcs.listing_id = v.current_listing_id\n\n  LEFT JOIN public.vin_current_state vcs\n    ON vcs.vin = v.vin\n\n  WHERE\n    (\n      v.price_last_seen_at IS NULL\n      OR v.price_last_seen_at < (now() - interval '24 hours')\n    )\n    AND COALESCE(\n          lcs.listing_state,\n          vcs.listing_state,\n          'active'\n        ) = 'active'\n)\nSELECT *\nFROM dealer_data\nWHERE dealer_row_num = 1;",
+        "query": "WITH candidates AS (\n  SELECT\n    ovs.vin,\n    ovs.current_listing_url,\n    ovs.listing_id,\n    ovs.tier1_seller_customer_id AS seller_customer_id,\n    ovs.listing_state,\n\n    ovs.is_price_stale,\n    ovs.is_full_details_stale,\n    ovs.stale_reason,\n\n    ovs.price_observed_at,\n    ovs.tier1_observed_at,\n\n    -- One-per-dealer (fallback to VIN if dealer id missing)\n    ROW_NUMBER() OVER (\n      PARTITION BY COALESCE(ovs.tier1_seller_customer_id::text, ovs.vin)\n      ORDER BY\n        -- prioritize full-details stale first, then price-only\n        CASE WHEN ovs.is_full_details_stale THEN 0 ELSE 1 END,\n        -- then oldest price first (nulls first)\n        COALESCE(ovs.price_observed_at, 'epoch'::timestamptz) ASC,\n        -- then oldest tier1 first\n        COALESCE(ovs.tier1_observed_at, 'epoch'::timestamptz) ASC\n    ) AS dealer_row_num\n\n  FROM ops.ops_vehicle_staleness ovs\n  WHERE\n    -- stale of either kind\n    (ovs.is_price_stale OR ovs.is_full_details_stale)\n    -- only fetch active vehicles\n    AND COALESCE(ovs.listing_state, 'active') = 'active'\n    -- must have a URL to fetch\n    AND ovs.current_listing_url IS NOT NULL\n)\nSELECT\n  vin,\n  current_listing_url,\n  seller_customer_id,\n  stale_reason,\n  is_price_stale,\n  is_full_details_stale,\n  price_observed_at,\n  tier1_observed_at,\n  listing_id\nFROM candidates\nWHERE dealer_row_num = 1\nORDER BY\n  CASE WHEN is_full_details_stale THEN 0 ELSE 1 END,\n  COALESCE(price_observed_at, 'epoch'::timestamptz) ASC\n--LIMIT 500\n  ;\n",
         "options": {}
       },
       "type": "n8n-nodes-base.postgres",
@@ -50,7 +50,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"listing_id\": \"{{ $json.current_listing_id }}\",\n  \"vin\": \"{{ $json.vin }}\",\n  \"url\": \"{{ $json.canonical_detail_url }}\",\n  \"mode\": \"{{ $json.mode }}\"\n}\n",
+        "jsonBody": "={\n  \"listing_id\": \"{{ $json.listing_id }}\",\n  \"vin\": \"{{ $json.vin }}\",\n  \"url\": \"{{ $json.current_listing_url}}\",\n  \"mode\": \"fetch\"\n}\n",
         "options": {}
       },
       "type": "n8n-nodes-base.httpRequest",
@@ -126,7 +126,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "INSERT INTO runs (run_id, status, trigger)\nVALUES ('{{ $json.run_id }}'::uuid, 'running', 'manual');",
+        "query": "INSERT INTO runs (run_id, status, trigger)\nVALUES ('{{ $json.run_id }}'::uuid, 'running', 'detail scrape');",
         "options": {}
       },
       "type": "n8n-nodes-base.postgres",
@@ -471,7 +471,7 @@
     "executionOrder": "v1",
     "availableInMCP": false
   },
-  "versionId": "325e6e87-431c-42cb-bf4a-dab56af4a673",
+  "versionId": "198a7ac5-6b1d-4f35-9359-9b0e6166cb43",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179"

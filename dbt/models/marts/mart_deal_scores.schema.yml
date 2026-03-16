@@ -1,0 +1,26 @@
+version: 2
+
+models:
+  - name: mart_deal_scores
+    description: >
+      Deal scores for all active listings. One row per VIN with a composite
+      deal_score (0-100) and deal_tier (excellent/good/fair/weak).
+      Combines MSRP discount, national price position, days on market,
+      price drop history, dealer inventory depth, and model supply.
+    columns:
+      - name: vin
+        data_tests:
+          - not_null
+          - unique
+          - valid_vin
+      - name: current_price
+        data_tests:
+          - not_null
+      - name: deal_score
+        data_tests:
+          - not_null
+      - name: deal_tier
+        data_tests:
+          - not_null
+          - accepted_values:
+              values: ['excellent', 'good', 'fair', 'weak']

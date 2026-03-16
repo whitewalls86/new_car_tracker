@@ -3,31 +3,53 @@
   "nodes": [
     {
       "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "destinationFieldName": "artifacts",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        -1216,
+        752
+      ],
+      "id": "16f501f1-4634-4124-ae22-54db3de9e6d1",
+      "name": "Aggregate Rows"
+    },
+    {
+      "parameters": {
         "rule": {
           "interval": [
             {
-              "triggerAtHour": 2
+              "triggerAtHour": 2,
+              "triggerAtMinute": 30
             }
           ]
         }
       },
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
-      "position": [0, 0],
-      "id": "a1b2c3d4-0001-0001-0001-000000000001",
-      "name": "Schedule Trigger"
+      "position": [
+        -1632,
+        752
+      ],
+      "id": "0fc648d2-b1ab-421e-8313-160fbf9de448",
+      "name": "Schedule Trigger1"
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT ra.artifact_id, ra.filepath\nFROM raw_artifacts ra\nWHERE ra.deleted_at IS NULL\n  AND ra.filepath IS NOT NULL\n  AND (\n    -- ok: delete after 15 days\n    EXISTS (\n      SELECT 1 FROM artifact_processing ap\n      WHERE ap.artifact_id = ra.artifact_id\n        AND ap.status = 'ok'\n        AND ra.fetched_at < now() - interval '15 days'\n    )\n    OR\n    -- skip (no ok): delete immediately\n    (\n      EXISTS (\n        SELECT 1 FROM artifact_processing ap\n        WHERE ap.artifact_id = ra.artifact_id AND ap.status = 'skip'\n      )\n      AND NOT EXISTS (\n        SELECT 1 FROM artifact_processing ap\n        WHERE ap.artifact_id = ra.artifact_id AND ap.status = 'ok'\n      )\n    )\n    OR\n    -- retry (no ok): delete after 30 days\n    (\n      EXISTS (\n        SELECT 1 FROM artifact_processing ap\n        WHERE ap.artifact_id = ra.artifact_id AND ap.status = 'retry'\n      )\n      AND NOT EXISTS (\n        SELECT 1 FROM artifact_processing ap\n        WHERE ap.artifact_id = ra.artifact_id AND ap.status = 'ok'\n      )\n      AND ra.fetched_at < now() - interval '30 days'\n    )\n  )\nLIMIT 100000;",
+        "query": "SELECT ra.artifact_id, ra.filepath\nFROM raw_artifacts ra\nWHERE ra.deleted_at IS NULL\n  AND ra.filepath IS NOT NULL\n  AND (\n    -- ok: delete after 15 days\n    EXISTS (\n      SELECT 1 FROM artifact_processing ap\n      WHERE ap.artifact_id = ra.artifact_id\n        AND ap.status = 'ok'\n        AND ra.fetched_at < now() - interval '15 days'\n    )\n    OR\n    -- skip (no ok): delete immediately\n    (\n      EXISTS (\n        SELECT 1 FROM artifact_processing ap\n        WHERE ap.artifact_id = ra.artifact_id AND ap.status = 'skip'\n      )\n      AND NOT EXISTS (\n        SELECT 1 FROM artifact_processing ap\n        WHERE ap.artifact_id = ra.artifact_id AND ap.status = 'ok'\n      )\n    )\n    OR\n    -- retry (no ok): delete after 30 days\n    (\n      EXISTS (\n        SELECT 1 FROM artifact_processing ap\n        WHERE ap.artifact_id = ra.artifact_id AND ap.status = 'retry'\n      )\n      AND NOT EXISTS (\n        SELECT 1 FROM artifact_processing ap\n        WHERE ap.artifact_id = ra.artifact_id AND ap.status = 'ok'\n      )\n      AND ra.fetched_at < now() - interval '30 days'\n    )\n  )\nLIMIT 200000;",
         "options": {}
       },
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
-      "position": [208, 0],
-      "id": "a1b2c3d4-0001-0001-0001-000000000002",
-      "name": "Get Candidates",
+      "position": [
+        -1424,
+        752
+      ],
+      "id": "d359f497-433c-4e55-9f7a-603ff9f77dd7",
+      "name": "Get Candidates1",
       "credentials": {
         "postgres": {
           "id": "l8Ecbn62FzXCDkF9",
@@ -37,23 +59,12 @@
     },
     {
       "parameters": {
-        "aggregate": "aggregateAllItemData",
-        "destinationFieldName": "artifacts",
-        "options": {}
-      },
-      "type": "n8n-nodes-base.aggregate",
-      "typeVersion": 1,
-      "position": [416, 0],
-      "id": "a1b2c3d4-0001-0001-0001-000000000008",
-      "name": "Aggregate Rows"
-    },
-    {
-      "parameters": {
         "conditions": {
           "options": {
             "caseSensitive": true,
             "leftValue": "",
-            "typeValidation": "strict"
+            "typeValidation": "strict",
+            "version": 2
           },
           "conditions": [
             {
@@ -72,9 +83,12 @@
       },
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [624, 0],
-      "id": "a1b2c3d4-0001-0001-0001-000000000003",
-      "name": "Any Candidates?"
+      "position": [
+        -1008,
+        752
+      ],
+      "id": "d720de27-8d79-4fad-aeb0-8c453f9bf812",
+      "name": "Any Candidates?1"
     },
     {
       "parameters": {
@@ -87,9 +101,12 @@
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [832, -100],
-      "id": "a1b2c3d4-0001-0001-0001-000000000004",
-      "name": "Call Cleanup API"
+      "position": [
+        -800,
+        656
+      ],
+      "id": "165655d7-0fe4-415c-9afe-1522f3663204",
+      "name": "Call Cleanup API1"
     },
     {
       "parameters": {
@@ -98,9 +115,12 @@
       },
       "type": "n8n-nodes-base.splitOut",
       "typeVersion": 1,
-      "position": [1040, -100],
-      "id": "a1b2c3d4-0001-0001-0001-000000000005",
-      "name": "Split Results"
+      "position": [
+        -592,
+        656
+      ],
+      "id": "c7332521-60e2-43a5-9cae-e22eede06556",
+      "name": "Split Results1"
     },
     {
       "parameters": {
@@ -127,9 +147,12 @@
       },
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [1248, -100],
-      "id": "a1b2c3d4-0001-0001-0001-000000000006",
-      "name": "Was Deleted?"
+      "position": [
+        -384,
+        656
+      ],
+      "id": "eefc2a7e-3b64-4cda-918b-ca64313efd35",
+      "name": "Was Deleted?1"
     },
     {
       "parameters": {
@@ -139,9 +162,12 @@
       },
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
-      "position": [1456, -200],
-      "id": "a1b2c3d4-0001-0001-0001-000000000007",
-      "name": "Mark Deleted",
+      "position": [
+        -176,
+        544
+      ],
+      "id": "d5efdd16-af93-4580-9e70-6ccd82b1a92f",
+      "name": "Mark Deleted1",
       "credentials": {
         "postgres": {
           "id": "l8Ecbn62FzXCDkF9",
@@ -150,19 +176,31 @@
       }
     }
   ],
+  "pinData": {},
   "connections": {
-    "Schedule Trigger": {
+    "Aggregate Rows": {
       "main": [
         [
           {
-            "node": "Get Candidates",
+            "node": "Any Candidates?1",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Get Candidates": {
+    "Schedule Trigger1": {
+      "main": [
+        [
+          {
+            "node": "Get Candidates1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Candidates1": {
       "main": [
         [
           {
@@ -173,55 +211,44 @@
         ]
       ]
     },
-    "Aggregate Rows": {
+    "Any Candidates?1": {
       "main": [
         [
           {
-            "node": "Any Candidates?",
+            "node": "Call Cleanup API1",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Any Candidates?": {
+    "Call Cleanup API1": {
       "main": [
         [
           {
-            "node": "Call Cleanup API",
+            "node": "Split Results1",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Call Cleanup API": {
+    "Split Results1": {
       "main": [
         [
           {
-            "node": "Split Results",
+            "node": "Was Deleted?1",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Split Results": {
+    "Was Deleted?1": {
       "main": [
         [
           {
-            "node": "Was Deleted?",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Was Deleted?": {
-      "main": [
-        [
-          {
-            "node": "Mark Deleted",
+            "node": "Mark Deleted1",
             "type": "main",
             "index": 0
           }
@@ -229,15 +256,15 @@
       ]
     }
   },
-  "pinData": {},
-  "active": false,
+  "active": true,
   "settings": {
-    "executionOrder": "v1"
+    "executionOrder": "v1",
+    "availableInMCP": false
   },
-  "versionId": "a1b2c3d4-0001-0001-0001-000000000099",
+  "versionId": "1628b27d-0d73-44b3-90c5-79c10fae4101",
   "meta": {
-    "templateCredsSetupCompleted": true
+    "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179"
   },
-  "id": "cleanup-artifacts-workflow-v1",
+  "id": "yvi0fCeO61X9-hL_w9I5Y",
   "tags": []
 }
