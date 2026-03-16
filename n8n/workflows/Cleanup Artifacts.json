@@ -3,21 +3,6 @@
   "nodes": [
     {
       "parameters": {
-        "aggregate": "aggregateAllItemData",
-        "destinationFieldName": "artifacts",
-        "options": {}
-      },
-      "type": "n8n-nodes-base.aggregate",
-      "typeVersion": 1,
-      "position": [
-        -1216,
-        752
-      ],
-      "id": "16f501f1-4634-4124-ae22-54db3de9e6d1",
-      "name": "Aggregate Rows"
-    },
-    {
-      "parameters": {
         "rule": {
           "interval": [
             {
@@ -39,13 +24,34 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT ra.artifact_id, ra.filepath\nFROM raw_artifacts ra\nWHERE ra.deleted_at IS NULL\n  AND ra.filepath IS NOT NULL\n  AND (\n    -- ok: delete after 15 days\n    EXISTS (\n      SELECT 1 FROM artifact_processing ap\n      WHERE ap.artifact_id = ra.artifact_id\n        AND ap.status = 'ok'\n        AND ra.fetched_at < now() - interval '15 days'\n    )\n    OR\n    -- skip (no ok): delete immediately\n    (\n      EXISTS (\n        SELECT 1 FROM artifact_processing ap\n        WHERE ap.artifact_id = ra.artifact_id AND ap.status = 'skip'\n      )\n      AND NOT EXISTS (\n        SELECT 1 FROM artifact_processing ap\n        WHERE ap.artifact_id = ra.artifact_id AND ap.status = 'ok'\n      )\n    )\n    OR\n    -- retry (no ok): delete after 30 days\n    (\n      EXISTS (\n        SELECT 1 FROM artifact_processing ap\n        WHERE ap.artifact_id = ra.artifact_id AND ap.status = 'retry'\n      )\n      AND NOT EXISTS (\n        SELECT 1 FROM artifact_processing ap\n        WHERE ap.artifact_id = ra.artifact_id AND ap.status = 'ok'\n      )\n      AND ra.fetched_at < now() - interval '30 days'\n    )\n  )\nLIMIT 200000;",
+        "query": "-- Terminate runs stuck in 'running' for more than 2 hours\nUPDATE runs\nSET status = 'terminated'\nWHERE status = 'running'\n  AND started_at < now() - interval '2 hours';\n\n-- Reset artifact_processing records stuck in 'processing' for more than 15 minutes\nUPDATE artifact_processing\nSET status = 'retry',\n    message = 'Reset from stale processing state by cleanup job'\nWHERE status = 'processing'\n  AND processed_at < now() - interval '15 minutes';",
         "options": {}
       },
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
         -1424,
+        752
+      ],
+      "id": "a2b3c4d5-e6f7-8901-abcd-ef1234567890",
+      "name": "Pipeline Maintenance",
+      "credentials": {
+        "postgres": {
+          "id": "l8Ecbn62FzXCDkF9",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT ra.artifact_id, ra.filepath\nFROM raw_artifacts ra\nWHERE ra.deleted_at IS NULL\n  AND ra.filepath IS NOT NULL\n  AND (\n    -- ok: delete after 15 days\n    EXISTS (\n      SELECT 1 FROM artifact_processing ap\n      WHERE ap.artifact_id = ra.artifact_id\n        AND ap.status = 'ok'\n        AND ra.fetched_at < now() - interval '15 days'\n    )\n    OR\n    -- skip (no ok): delete immediately\n    (\n      EXISTS (\n        SELECT 1 FROM artifact_processing ap\n        WHERE ap.artifact_id = ra.artifact_id AND ap.status = 'skip'\n      )\n      AND NOT EXISTS (\n        SELECT 1 FROM artifact_processing ap\n        WHERE ap.artifact_id = ra.artifact_id AND ap.status = 'ok'\n      )\n    )\n    OR\n    -- retry (no ok): delete after 30 days\n    (\n      EXISTS (\n        SELECT 1 FROM artifact_processing ap\n        WHERE ap.artifact_id = ra.artifact_id AND ap.status = 'retry'\n      )\n      AND NOT EXISTS (\n        SELECT 1 FROM artifact_processing ap\n        WHERE ap.artifact_id = ra.artifact_id AND ap.status = 'ok'\n      )\n      AND ra.fetched_at < now() - interval '30 days'\n    )\n  )\nLIMIT 200000;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -1216,
         752
       ],
       "id": "d359f497-433c-4e55-9f7a-603ff9f77dd7",
@@ -56,6 +62,21 @@
           "name": "Postgres account"
         }
       }
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "destinationFieldName": "artifacts",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        -1008,
+        752
+      ],
+      "id": "16f501f1-4634-4124-ae22-54db3de9e6d1",
+      "name": "Aggregate Rows"
     },
     {
       "parameters": {
@@ -84,7 +105,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        -1008,
+        -800,
         752
       ],
       "id": "d720de27-8d79-4fad-aeb0-8c453f9bf812",
@@ -102,7 +123,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        -800,
+        -592,
         656
       ],
       "id": "165655d7-0fe4-415c-9afe-1522f3663204",
@@ -116,7 +137,7 @@
       "type": "n8n-nodes-base.splitOut",
       "typeVersion": 1,
       "position": [
-        -592,
+        -384,
         656
       ],
       "id": "c7332521-60e2-43a5-9cae-e22eede06556",
@@ -148,7 +169,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        -384,
+        -176,
         656
       ],
       "id": "eefc2a7e-3b64-4cda-918b-ca64313efd35",
@@ -163,7 +184,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        -176,
+        32,
         544
       ],
       "id": "d5efdd16-af93-4580-9e70-6ccd82b1a92f",
@@ -178,18 +199,18 @@
   ],
   "pinData": {},
   "connections": {
-    "Aggregate Rows": {
+    "Schedule Trigger1": {
       "main": [
         [
           {
-            "node": "Any Candidates?1",
+            "node": "Pipeline Maintenance",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Schedule Trigger1": {
+    "Pipeline Maintenance": {
       "main": [
         [
           {
@@ -205,6 +226,17 @@
         [
           {
             "node": "Aggregate Rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate Rows": {
+      "main": [
+        [
+          {
+            "node": "Any Candidates?1",
             "type": "main",
             "index": 0
           }

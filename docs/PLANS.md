@@ -179,6 +179,10 @@ Build a Metabase dashboard that surfaces actionable intelligence from the data w
 
 **Pipeline Health**
 - Last Search Scrape / Last Detail Scrape (with timezone correction — US Central)
+- Below Last Search Scrape: **new vehicles added** count + **vehicles updated** count since that run
+- Below Last Detail Scrape: **price updates** count since that run, broken down by source:
+  - Updated via direct detail page load
+  - Updated via carousel hint (no full page fetch needed)
 - Runs over time by type (Search vs Detail)
 - Artifact processing backlog (retry count by processor)
 - Detail scrape success rate (200 vs 403 over time)
@@ -203,31 +207,39 @@ Build a Metabase dashboard that surfaces actionable intelligence from the data w
 ### Notes
 - Most data is already in `mart_vehicle_snapshot` and `mart_deal_scores`
 - Timezone: all timestamps should display in US Central (`AT TIME ZONE 'America/Chicago'`)
+- New vehicles added: count of VINs first seen in `srp_observations` within the run's time window
+- Vehicles updated: count of VINs with a new `srp_observation` in that run (price or state change)
+- Price updates via carousel: `detail_carousel_hints` source; via direct load: `detail_observations` source
+- The carousel vs direct breakdown is a useful efficiency metric — carousel hits are cheaper (no full page fetch)
 
 ---
 
 ## Plan 10: Pipeline Durability
 
-**Status:** To do (high priority)
-**Complexity:** Medium
+**Status:** ✅ Implemented (2026-03-16)
 
-### Problem
-Pipeline failures are silent — a crashed n8n workflow, a stale `processing` run, or a dbt error can go unnoticed for hours or days.
+### What Was Done
+1. **Auto-terminate stale runs** — "Pipeline Maintenance" node added to Cleanup Artifacts workflow; runs stuck `running` > 2 hours are set to `terminated` nightly at 2:30am
+2. **Reset stuck artifact_processing** — same node resets `processing` → `retry` for records older than 15 minutes, preventing silent queue jams
+3. **`pipeline_errors` table** — new DB table captures workflow name, execution ID, node name, error message, and error type
+4. **Error Handler workflow** — new n8n workflow (`Error Handler.json`) with an Error Trigger that logs to `pipeline_errors`; import it and set it as the error workflow in Scrape Listings + Scrape Detail Pages settings
 
-### Goals
-1. **Stale run detection** — any run stuck in `running` status for > 2 hours should be auto-flagged or auto-terminated
-2. **Error surfacing** — failed n8n executions, scraper 5xx errors, and dbt failures should be visible in one place
-3. **Processing queue health** — alert when `retry` artifact count spikes unexpectedly
-4. **Artifact processing stuck jobs** — `artifact_processing` records in `processing` status for > X minutes should be auto-reset to `retry`
+### Remaining Manual Step
+- Import `Error Handler.json` into n8n
+- In Scrape Listings settings → set Error Workflow to "Error Handler"
+- In Scrape Detail Pages settings → set Error Workflow to "Error Handler"
 
-### Proposed Implementation
-1. **DB: runs table improvements**
-   - Add `run_type` column (`'Search Scrape'` / `'Detail Scrape'`) — set by n8n workflow via `trigger` column (already planned)
-   - Auto-terminate: scheduled SQL job that sets `status = 'terminated'` for runs stuck `running` > 2h
-2. **Stuck artifact_processing cleanup**
-   - Add to existing cleanup workflow: reset `processing` → `retry` for records older than 10 minutes
-3. **Metabase pipeline health card** — surface stale runs, high retry counts, and recent errors in a single view
-4. **n8n error handling** — add error workflow in n8n that catches failed executions and logs them to a `pipeline_errors` table
+### Metabase health queries (to add to dashboard — Plan 9)
+```sql
+-- Recent pipeline errors
+SELECT workflow_name, node_name, error_message, occurred_at AT TIME ZONE 'America/Chicago'
+FROM pipeline_errors ORDER BY occurred_at DESC LIMIT 20;
+
+-- Runs terminated in last 7 days
+SELECT trigger, COUNT(*), MAX(started_at) FROM runs
+WHERE status = 'terminated' AND started_at > now() - interval '7 days'
+GROUP BY trigger;
+```
 
 ---
 
