@@ -60,17 +60,29 @@
         .config-actions form {
             margin: 0;
         }
-        .btn-sm {
-            padding: 0.25rem 0.75rem;
+        .config-actions button,
+        .config-actions a[role="button"] {
+            padding: 0.3rem 0.85rem;
             font-size: 0.85rem;
+            margin: 0;
+            height: auto;
+            line-height: 1.4;
+            white-space: nowrap;
+        }
+        .btn-sm {
+            padding: 0.3rem 0.85rem;
+            font-size: 0.85rem;
+            margin: 0;
         }
         .btn-danger {
             background: #e74c3c;
             border-color: #e74c3c;
+            color: #fff;
         }
         .btn-danger:hover {
             background: #c0392b;
             border-color: #c0392b;
+            color: #fff;
         }
         fieldset {
             border: 1px solid var(--pico-muted-border-color);

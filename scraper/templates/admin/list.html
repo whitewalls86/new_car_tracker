@@ -23,7 +23,9 @@
             </h3>
         </div>
         <div class="config-actions">
-            <a href="/admin/{{ c.search_key }}/edit" role="button" class="btn-sm outline">Edit</a>
+            <form method="get" action="/admin/{{ c.search_key }}/edit">
+                <button type="submit" class="btn-sm outline">Edit</button>
+            </form>
             <form method="post" action="/admin/{{ c.search_key }}/toggle">
                 <button type="submit" class="btn-sm outline">
                     {{ "Disable" if c.enabled else "Enable" }}
@@ -31,7 +33,7 @@
             </form>
             <form method="post" action="/admin/{{ c.search_key }}/delete"
                   onsubmit="return confirm('Delete {{ c.search_key }}? This cannot be undone.')">
-                <button type="submit" class="btn-sm btn-danger outline">Delete</button>
+                <button type="submit" class="btn-sm btn-danger">Delete</button>
             </form>
         </div>
     </div>
@@ -48,15 +50,9 @@
             {% endfor %}
         </div>
         <div>
-            <strong>Sort:</strong>
-            {{ p.get("sort_order", "default") }}
+            <strong>Sort:</strong> {{ p.get("sort_order", "default") }}
             {% if p.get("sort_rotation") %}
-                <br>
-                <small>Rotation:
-                {% for s in p.sort_rotation %}
-                    <span class="badge badge-sort">{{ s }}</span>
-                {% endfor %}
-                </small>
+            &nbsp;<small style="color: var(--pico-muted-color);">({{ p.sort_rotation | join(" → ") }})</small>
             {% endif %}
         </div>
     </div>
