@@ -1,6 +1,6 @@
 FROM ghcr.io/dbt-labs/dbt-postgres:1.8.2
 
-COPY requirements.txt .
+COPY dbt_runner/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 WORKDIR /usr/app

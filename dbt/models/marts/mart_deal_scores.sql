@@ -70,6 +70,11 @@ scored as (
         -- Seller
         a.seller_customer_id,
         a.seller_zip,
+        dlr.name as dealer_name,
+        dlr.city as dealer_city,
+        dlr.state as dealer_state,
+        dlr.phone as dealer_phone,
+        dlr.rating as dealer_rating,
 
         -- Price
         v.price as current_price,
@@ -162,6 +167,8 @@ scored as (
         on di.seller_customer_id = a.seller_customer_id
         and di.make = a.make and di.model = a.model
     left join percentiles_deduped pctl on pctl.vin = av.vin
+    left join {{ source('public', 'dealers') }} dlr
+        on dlr.customer_id = a.seller_customer_id
     left join local_seen ls on ls.vin = av.vin
     where v.price is not null and v.price > 0
 )

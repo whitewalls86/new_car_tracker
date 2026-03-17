@@ -23,10 +23,15 @@ deduped as (
 )
 
 select
-    seller_customer_id,
-    seller_zip,
-    make,
-    model,
-    count(distinct vin) as dealer_inventory_count
-from deduped
-group by seller_customer_id, seller_zip, make, model
+    d.seller_customer_id,
+    d.seller_zip,
+    dlr.name as dealer_name,
+    dlr.city as dealer_city,
+    dlr.state as dealer_state,
+    d.make,
+    d.model,
+    count(distinct d.vin) as dealer_inventory_count
+from deduped d
+left join {{ source('public', 'dealers') }} dlr
+    on dlr.customer_id = d.seller_customer_id
+group by d.seller_customer_id, d.seller_zip, dlr.name, dlr.city, dlr.state, d.make, d.model

@@ -11,3 +11,4 @@ sources:
       - name: detail_carousel_hints
       - name: runs
       - name: search_configs
+      - name: dealers
