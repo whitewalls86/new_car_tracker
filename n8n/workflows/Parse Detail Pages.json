@@ -119,6 +119,27 @@
     {
       "parameters": {
         "operation": "executeQuery",
+        "query": "WITH parsed AS (\n  SELECT *\n  FROM jsonb_to_recordset('{{ JSON.stringify($items(\"Aggregate\")[0].json.data).replace(/'/g,\"''\") }}'::jsonb)\n  AS p(\n    artifact_id bigint,\n    status      text,\n    \"primary\"   jsonb,\n    carousel    jsonb\n  )\n  WHERE status = 'ok'\n),\ndealers AS (\n  SELECT DISTINCT ON (NULLIF(p.\"primary\"->>'customer_id',''))\n    NULLIF(p.\"primary\"->>'customer_id','')       AS customer_id,\n    NULLIF(p.\"primary\"->>'dealer_name','')        AS name,\n    NULLIF(p.\"primary\"->>'dealer_street','')      AS street,\n    NULLIF(p.\"primary\"->>'dealer_city','')        AS city,\n    NULLIF(p.\"primary\"->>'dealer_state','')       AS state,\n    NULLIF(p.\"primary\"->>'dealer_zip','')         AS zip,\n    NULLIF(p.\"primary\"->>'dealer_phone','')       AS phone,\n    NULLIF(p.\"primary\"->>'dealer_website','')     AS website,\n    NULLIF(p.\"primary\"->>'dealer_cars_com_url','') AS cars_com_url,\n    (NULLIF(p.\"primary\"->>'dealer_rating',''))::numeric(3,1) AS rating\n  FROM parsed p\n  WHERE NULLIF(p.\"primary\"->>'customer_id','') IS NOT NULL\n    AND NULLIF(p.\"primary\"->>'dealer_name','') IS NOT NULL\n)\nINSERT INTO dealers (customer_id, name, street, city, state, zip, phone, website, cars_com_url, rating)\nSELECT customer_id, name, street, city, state, zip, phone, website, cars_com_url, rating\nFROM dealers\nON CONFLICT (customer_id) DO UPDATE SET\n  name = COALESCE(EXCLUDED.name, dealers.name),\n  street = COALESCE(EXCLUDED.street, dealers.street),\n  city = COALESCE(EXCLUDED.city, dealers.city),\n  state = COALESCE(EXCLUDED.state, dealers.state),\n  zip = COALESCE(EXCLUDED.zip, dealers.zip),\n  phone = COALESCE(EXCLUDED.phone, dealers.phone),\n  website = COALESCE(EXCLUDED.website, dealers.website),\n  cars_com_url = COALESCE(EXCLUDED.cars_com_url, dealers.cars_com_url),\n  rating = COALESCE(EXCLUDED.rating, dealers.rating),\n  last_updated_at = now();\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1456,
+        -112
+      ],
+      "id": "b8e2c1a1-d4f7-4a2e-9c3b-1a5e6f8d9b2c",
+      "name": "Upsert Dealers",
+      "credentials": {
+        "postgres": {
+          "id": "l8Ecbn62FzXCDkF9",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
         "query": "WITH parsed AS (\n  SELECT *\n  FROM jsonb_to_recordset('{{ JSON.stringify($items(\"Aggregate\")[0].json.data).replace(/'/g,\"''\") }}'::jsonb)\n  AS p(\n    artifact_id bigint,\n    status      text,\n    \"primary\"   jsonb,\n    carousel    jsonb\n  )\n  WHERE status = 'ok'\n),\nra AS (\n  SELECT artifact_id, fetched_at, url\n  FROM raw_artifacts\n  WHERE artifact_id IN (SELECT artifact_id FROM parsed)\n),\ncards AS (\n  SELECT DISTINCT ON (p.artifact_id, src.source_listing_id, c->>'listing_id')\n    p.artifact_id,\n    ra.fetched_at,\n    src.source_listing_id,\n\n    NULLIF(c->>'listing_id','')            AS listing_id,\n    NULLIF(c->>'price','')::int            AS price,\n    NULLIF(c->>'mileage','')::int          AS mileage,\n    NULLIF(c->>'body','')                  AS body,\n    NULLIF(c->>'condition','')             AS condition,\n    NULLIF(c->>'year','')::int             AS year\n  FROM parsed p\n  JOIN ra USING (artifact_id)\n\n  -- derive source_listing_id once per parsed row\n  CROSS JOIN LATERAL (\n    SELECT COALESCE(\n      NULLIF(p.\"primary\"->>'listing_id',''),\n      NULLIF(regexp_replace(ra.url, '.*/vehicledetail/([^/]+)/?.*', '\\1'), ra.url)\n    ) AS source_listing_id\n  ) src\n\n  -- explode carousel array into rows\n  CROSS JOIN LATERAL jsonb_array_elements(COALESCE(p.carousel, '[]'::jsonb)) AS c\n  WHERE NULLIF(c->>'listing_id','') IS NOT NULL\n)\nINSERT INTO detail_carousel_hints (\n  artifact_id,\n  fetched_at,\n  source_listing_id,\n  listing_id,\n  price,\n  mileage,\n  body,\n  condition,\n  year\n)\nSELECT\n  artifact_id,\n  fetched_at,\n  source_listing_id,\n  listing_id,\n  price,\n  mileage,\n  body,\n  condition,\n  year\nFROM cards\nON CONFLICT DO NOTHING;\n",
         "options": {}
       },
@@ -366,6 +387,17 @@
       ]
     },
     "Write Detail Observations": {
+      "main": [
+        [
+          {
+            "node": "Upsert Dealers",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert Dealers": {
       "main": [
         [
           {

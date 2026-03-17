@@ -1,4 +1,22 @@
-with ranked as (
+{{
+  config(
+    materialized = 'incremental',
+    unique_key = 'vin',
+    incremental_strategy = 'merge',
+    on_schema_change = 'sync_all_columns'
+  )
+}}
+
+with
+{% if is_incremental() %}
+changed_vins as (
+    select distinct vin
+    from {{ ref('int_price_events') }}
+    where artifact_id > (select coalesce(max(price_artifact_id), 0) from {{ this }})
+),
+{% endif %}
+
+ranked as (
     select
         vin,
         price,
@@ -12,6 +30,9 @@ with ranked as (
             order by observed_at desc, (price is not null) desc, artifact_id desc
         ) as rn
     from {{ ref('int_price_events') }}
+    {% if is_incremental() %}
+    where vin in (select vin from changed_vins)
+    {% endif %}
 )
 
 select
