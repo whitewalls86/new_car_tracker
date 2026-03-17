@@ -86,7 +86,7 @@
             },
             {
               "name": "scope",
-              "value": "national"
+              "value": "local"
             }
           ]
         },
@@ -95,22 +95,43 @@
           "parameters": [
             {
               "name": "params",
-              "value": "={{ $('Loop Over Items').item.json.params }}"
+              "value": "={{ $json.params }}"
             }
           ]
         },
         "options": {
-          "timeout": 900000
+          "timeout": 30000
         }
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
         1632,
-        1520
+        1424
       ],
-      "id": "518fcf58-3bc9-430e-9ac8-e88d68477a63",
-      "name": "National Search"
+      "id": "bbd18bbf-3e2c-495f-99b7-75907b8a13ba",
+      "name": "Local Search"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO scrape_jobs (job_id, run_id, search_key, scope, status)\nVALUES (\n  '{{ $json.job_id }}'::uuid,\n  '{{ $('Create Run ID').item.json.run_id }}'::uuid,\n  '{{ $('Get Config').item.json.search_key }}',\n  'local',\n  'queued'\n);",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1856,
+        1424
+      ],
+      "id": "a1b2c3d4-1111-4aaa-bbbb-000000000001",
+      "name": "Insert Job Row (Local)",
+      "credentials": {
+        "postgres": {
+          "id": "l8Ecbn62FzXCDkF9",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
@@ -129,7 +150,7 @@
             },
             {
               "name": "scope",
-              "value": "local"
+              "value": "national"
             }
           ]
         },
@@ -138,111 +159,43 @@
           "parameters": [
             {
               "name": "params",
-              "value": "={{ $json.params }}"
+              "value": "={{ $('Loop Over Items').item.json.params }}"
             }
           ]
         },
         "options": {
-          "timeout": 900000
+          "timeout": 30000
         }
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        1632,
-        1344
-      ],
-      "id": "bbd18bbf-3e2c-495f-99b7-75907b8a13ba",
-      "name": "Local Search"
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "UPDATE runs\nSET status = 'success', finished_at = now()\nWHERE run_id = '{{ $('Create Run ID').item.json.run_id }}'::uuid;",
-        "options": {}
-      },
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.6,
-      "position": [
-        1632,
-        1136
-      ],
-      "id": "8972a2b7-da56-473c-9061-5e116897bc70",
-      "name": "Mark Run Done",
-      "credentials": {
-        "postgres": {
-          "id": "l8Ecbn62FzXCDkF9",
-          "name": "Postgres account"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "jsCode": "const run_id = $('Create Run ID').first().json.run_id;\nconst artifacts = $input.first().json.artifacts;\n\nreturn artifacts.map(a => ({\n  json: {\n    ...a,\n    run_id\n  }\n}));\n"
-      },
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1872,
-        1520
-      ],
-      "id": "5e6429b0-f950-4129-96a3-c35740c2435e",
-      "name": "Explode Artifacts (National)"
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "INSERT INTO raw_artifacts (\n  run_id,\n  source,\n  artifact_type,\n  search_key,\n  search_scope,\n  page_num,\n  url,\n  fetched_at,\n  http_status,\n  content_type,\n  content_bytes,\n  sha256,\n  filepath,\n  error\n)\nVALUES (\n  '{{$json.run_id}}'::uuid,\n  '{{$json.source}}',\n  '{{$json.artifact_type}}',\n  '{{$json.search_key}}',\n  '{{$json.search_scope}}',\n  {{$json.page_num}},\n  '{{$json.url}}',\n  '{{$json.fetched_at}}',\n  {{$json.http_status}},\n  '{{$json.content_type}}',\n  {{$json.content_bytes}},\n  '{{$json.sha256}}',\n  '{{$json.filepath}}',\n  {{ $json.error === null ? 'NULL' : \"'\" + $json.error + \"'\" }}\n);\n",
-        "options": {}
-      },
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.6,
-      "position": [
         2080,
-        1520
+        1424
       ],
-      "id": "e7bf686e-a475-4566-a821-622d76d0a457",
-      "name": "Insert (National)",
-      "credentials": {
-        "postgres": {
-          "id": "l8Ecbn62FzXCDkF9",
-          "name": "Postgres account"
-        }
-      }
+      "id": "518fcf58-3bc9-430e-9ac8-e88d68477a63",
+      "name": "National Search"
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "INSERT INTO raw_artifacts (\n  run_id,\n  source,\n  artifact_type,\n  search_key,\n  search_scope,\n  page_num,\n  url,\n  fetched_at,\n  http_status,\n  content_type,\n  content_bytes,\n  sha256,\n  filepath,\n  error\n)\nVALUES (\n  '{{$json.run_id}}'::uuid,\n  '{{$json.source}}',\n  '{{$json.artifact_type}}',\n  '{{$json.search_key}}',\n  '{{$json.search_scope}}',\n  {{$json.page_num}},\n  '{{$json.url}}',\n  '{{$json.fetched_at}}',\n  {{$json.http_status}},\n  '{{$json.content_type}}',\n  {{$json.content_bytes}},\n  '{{$json.sha256}}',\n  '{{$json.filepath}}',\n  {{ $json.error === null ? 'NULL' : \"'\" + $json.error + \"'\" }}\n);\n",
+        "query": "INSERT INTO scrape_jobs (job_id, run_id, search_key, scope, status)\nVALUES (\n  '{{ $json.job_id }}'::uuid,\n  '{{ $('Create Run ID').item.json.run_id }}'::uuid,\n  '{{ $('Get Config').item.json.search_key }}',\n  'national',\n  'queued'\n);",
         "options": {}
       },
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        2080,
-        1344
+        2304,
+        1424
       ],
-      "id": "13023eb9-aa83-4b34-93a3-c979341fa7e5",
-      "name": "Insert (Local)",
+      "id": "a1b2c3d4-2222-4aaa-bbbb-000000000002",
+      "name": "Insert Job Row (National)",
       "credentials": {
         "postgres": {
           "id": "l8Ecbn62FzXCDkF9",
           "name": "Postgres account"
         }
       }
-    },
-    {
-      "parameters": {
-        "jsCode": "const run_id = $('Create Run ID').first().json.run_id;\nconst artifacts = $input.first().json.artifacts;\n\nreturn artifacts.map(a => ({\n  json: {\n    ...a,\n    run_id\n  }\n}));\n"
-      },
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1872,
-        1344
-      ],
-      "id": "bcfe7a7a-68d1-4db8-8a1e-9cf938482133",
-      "name": "Explode Artifacts (Local)"
     },
     {
       "parameters": {
@@ -273,7 +226,7 @@
       "typeVersion": 2.6,
       "position": [
         1840,
-        976
+        1200
       ],
       "id": "75d5a3f7-7faf-464d-b960-02d1764f7524",
       "name": "Rotate Sort Order",
@@ -283,38 +236,21 @@
           "name": "Postgres account"
         }
       }
-    },
-    {
-      "parameters": {
-        "workflowId": {
-          "__rl": true,
-          "value": "kxKnWLkjHwud2yjhxlpME",
-          "mode": "list",
-          "cachedResultUrl": "/workflow/kxKnWLkjHwud2yjhxlpME",
-          "cachedResultName": "Results Processing"
-        },
-        "workflowInputs": {
-          "mappingMode": "defineBelow",
-          "value": {},
-          "matchingColumns": [],
-          "schema": [],
-          "attemptToConvertTypes": false,
-          "convertFieldsToString": true
-        },
-        "options": {}
-      },
-      "type": "n8n-nodes-base.executeWorkflow",
-      "typeVersion": 1.3,
-      "position": [
-        2048,
-        1136
-      ],
-      "id": "44d7f45e-93a1-4768-bbfd-ecdda4d28e94",
-      "name": "Call 'Results Processing'"
     }
   ],
   "pinData": {},
   "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Create Run ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "Create Run ID": {
       "main": [
         [
@@ -352,7 +288,7 @@
       "main": [
         [
           {
-            "node": "Mark Run Done",
+            "node": "Rotate Sort Order",
             "type": "main",
             "index": 0
           }
@@ -366,51 +302,18 @@
         ]
       ]
     },
-    "National Search": {
-      "main": [
-        [
-          {
-            "node": "Explode Artifacts (National)",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Local Search": {
       "main": [
         [
           {
-            "node": "Explode Artifacts (Local)",
+            "node": "Insert Job Row (Local)",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Explode Artifacts (National)": {
-      "main": [
-        [
-          {
-            "node": "Insert (National)",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Insert (National)": {
-      "main": [
-        [
-          {
-            "node": "Loop Over Items",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Insert (Local)": {
+    "Insert Job Row (Local)": {
       "main": [
         [
           {
@@ -421,38 +324,22 @@
         ]
       ]
     },
-    "Explode Artifacts (Local)": {
+    "National Search": {
       "main": [
         [
           {
-            "node": "Insert (Local)",
+            "node": "Insert Job Row (National)",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Schedule Trigger": {
+    "Insert Job Row (National)": {
       "main": [
         [
           {
-            "node": "Create Run ID",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Mark Run Done": {
-      "main": [
-        [
-          {
-            "node": "Rotate Sort Order",
-            "type": "main",
-            "index": 0
-          },
-          {
-            "node": "Call 'Results Processing'",
+            "node": "Loop Over Items",
             "type": "main",
             "index": 0
           }

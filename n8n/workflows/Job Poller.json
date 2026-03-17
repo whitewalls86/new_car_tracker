@@ -1,0 +1,389 @@
+{
+  "name": "Job Poller",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        2592,
+        880
+      ],
+      "id": "e9f18769-afb2-4c96-91f0-65dd3d7212f6",
+      "name": "Schedule Trigger (1 min)"
+    },
+    {
+      "parameters": {
+        "url": "http://cartracker-scraper:8000/scrape_results/jobs/completed",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        2816,
+        880
+      ],
+      "id": "612bfc3d-3c7a-4b9e-810c-2e8a92846fca",
+      "name": "Get Completed Jobs"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normalize: httpRequest may return each array element as a separate item,\n// or the whole array as one item — handle both.\nconst allItems = $input.all();\nlet jobs = [];\nfor (const item of allItems) {\n  const d = item.json;\n  if (Array.isArray(d)) {\n    jobs = jobs.concat(d);\n  } else if (d.job_id) {\n    jobs.push(d);\n  }\n}\n\nif (jobs.length === 0) return []; // Nothing to do\n\n// Emit one item per artifact. Jobs with 0 artifacts get a stub\n// (no filepath/artifact_type) so Has Artifact? routes them to skip-insert.\nconst items = [];\nfor (const job of jobs) {\n  const artifacts = job.artifacts || [];\n  if (artifacts.length === 0) {\n    items.push({ json: { job_id: job.job_id, run_id: job.run_id, search_key: job.search_key, scope: job.scope } });\n  } else {\n    for (const a of artifacts) {\n      items.push({ json: { ...a, job_id: job.job_id, run_id: job.run_id, search_key: job.search_key, scope: job.scope } });\n    }\n  }\n}\nreturn items;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3040,
+        880
+      ],
+      "id": "63c3e20e-dfda-4341-80a1-f943fbaedb37",
+      "name": "Explode Artifacts"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO raw_artifacts (\n  run_id,\n  source,\n  artifact_type,\n  search_key,\n  search_scope,\n  page_num,\n  url,\n  fetched_at,\n  http_status,\n  content_type,\n  content_bytes,\n  sha256,\n  filepath,\n  error\n)\nVALUES (\n  '{{$json.run_id}}'::uuid,\n  '{{$json.source}}',\n  '{{$json.artifact_type}}',\n  '{{$json.search_key}}',\n  '{{$json.search_scope}}',\n  {{$json.page_num}},\n  '{{$json.url}}',\n  '{{$json.fetched_at}}',\n  {{$json.http_status}},\n  '{{$json.content_type}}',\n  {{$json.content_bytes}},\n  '{{$json.sha256}}',\n  '{{$json.filepath}}',\n  {{ $json.error === null ? 'NULL' : \"'\" + $json.error + \"'\" }}\n);\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        3488,
+        768
+      ],
+      "id": "1edf1cbd-41c4-4b2c-aa4e-4c189c3bcbc8",
+      "name": "Insert Artifact",
+      "credentials": {
+        "postgres": {
+          "id": "l8Ecbn62FzXCDkF9",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Collect all items from both branches (artifacts inserted + skipped)\n// Deduplicate by job_id\nconst seen = new Set();\nconst jobs = [];\nfor (const item of $input.all()) {\n  const jid = item.json.job_id;\n  if (jid && !seen.has(jid)) {\n    seen.add(jid);\n    jobs.push({\n      json: {\n        job_id: jid,\n        run_id: item.json.run_id,\n        artifact_count: item.json.artifact_count || 0\n      }\n    });\n  }\n}\nreturn jobs;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3712,
+        880
+      ],
+      "id": "08c35532-d515-43ba-9030-7419a6c260f9",
+      "name": "Unique Job IDs"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://cartracker-scraper:8000/scrape_results/jobs/{{ $json.job_id }}/fetched",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        3936,
+        880
+      ],
+      "id": "12eae702-0195-49a3-8a76-3bd7d4a303a3",
+      "name": "Mark Job Fetched (API)"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE scrape_jobs\nSET status = 'fetched',\n    fetched_at = now(),\n    artifact_count = (\n      SELECT COUNT(*) FROM raw_artifacts ra\n      WHERE ra.run_id = scrape_jobs.run_id\n        AND ra.search_key = scrape_jobs.search_key\n        AND ra.search_scope = scrape_jobs.scope\n    )\nWHERE job_id = '{{ $json.job_id }}'::uuid\nRETURNING run_id;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        4160,
+        880
+      ],
+      "id": "f64054fb-1d57-4201-bc26-b6da1cc3d6bd",
+      "name": "Update scrape_jobs",
+      "credentials": {
+        "postgres": {
+          "id": "l8Ecbn62FzXCDkF9",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract unique run_ids\nconst seen = new Set();\nconst runs = [];\nfor (const item of $input.all()) {\n  const rid = item.json.run_id;\n  if (rid && !seen.has(rid)) {\n    seen.add(rid);\n    runs.push({ json: { run_id: rid } });\n  }\n}\nreturn runs;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4384,
+        880
+      ],
+      "id": "eb0be6e0-14c6-4835-bddd-684fe3b95733",
+      "name": "Unique Run IDs"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT '{{ $json.run_id }}' AS run_id, COUNT(*) AS pending\nFROM scrape_jobs\nWHERE run_id = '{{ $json.run_id }}'::uuid\n  AND status NOT IN ('fetched', 'failed');",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        4608,
+        880
+      ],
+      "id": "9a11db97-0f49-4587-8a7e-9f70a269dcc8",
+      "name": "Check Pending Jobs",
+      "credentials": {
+        "postgres": {
+          "id": "l8Ecbn62FzXCDkF9",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-all-done",
+              "leftValue": "={{ $json.pending }}",
+              "rightValue": "0",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        4832,
+        880
+      ],
+      "id": "a821bac3-c8df-4e15-bda2-910ed80e7cf8",
+      "name": "All Jobs Done?"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE runs\nSET status = 'success', finished_at = now()\nWHERE run_id = '{{ $json.run_id }}'::uuid\n  AND status = 'running';",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        5056,
+        768
+      ],
+      "id": "869dd010-bbe0-4c37-90d5-16f9a420f510",
+      "name": "Mark Run Done",
+      "credentials": {
+        "postgres": {
+          "id": "l8Ecbn62FzXCDkF9",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "752cf3bf-2a67-4d8c-99b3-385d27c879dd",
+              "leftValue": "={{ $json.filepath }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        3248,
+        880
+      ],
+      "id": "d2945575-5eb7-48b2-8743-48af353df930",
+      "name": "If"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger (1 min)": {
+      "main": [
+        [
+          {
+            "node": "Get Completed Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Completed Jobs": {
+      "main": [
+        [
+          {
+            "node": "Explode Artifacts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Explode Artifacts": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Artifact": {
+      "main": [
+        [
+          {
+            "node": "Unique Job IDs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Unique Job IDs": {
+      "main": [
+        [
+          {
+            "node": "Mark Job Fetched (API)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Job Fetched (API)": {
+      "main": [
+        [
+          {
+            "node": "Update scrape_jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update scrape_jobs": {
+      "main": [
+        [
+          {
+            "node": "Unique Run IDs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Unique Run IDs": {
+      "main": [
+        [
+          {
+            "node": "Check Pending Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Pending Jobs": {
+      "main": [
+        [
+          {
+            "node": "All Jobs Done?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "All Jobs Done?": {
+      "main": [
+        [
+          {
+            "node": "Mark Run Done",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Insert Artifact",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Unique Job IDs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "61e60027-374d-4942-a667-d9ffa8b9a50a",
+  "meta": {
+    "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179"
+  },
+  "id": "yKfhg_fQ_lShUBFgL_gu8",
+  "tags": []
+}

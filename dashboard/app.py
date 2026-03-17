@@ -50,15 +50,12 @@ _freshness_val = _freshness_df["ts"].iloc[0]
 if pd.notna(_freshness_val):
     st.sidebar.caption(f"Data as of: {_freshness_val.strftime('%b %d %H:%M')}")
 
-section = st.sidebar.radio(
-    "Section",
-    ["Pipeline Health", "Inventory Overview", "Deal Finder", "Market Trends"],
-)
+tab1, tab2, tab3, tab4 = st.tabs(["Pipeline Health", "Inventory Overview", "Deal Finder", "Market Trends"])
 
 # ---------------------------------------------------------------------------
 # Section 1: Pipeline Health
 # ---------------------------------------------------------------------------
-if section == "Pipeline Health":
+with tab1:
     st.header("Pipeline Health")
 
     # -- Active run indicator
@@ -162,27 +159,27 @@ if section == "Pipeline Health":
     freshness_df = run_query("""
         SELECT
             CASE
-                WHEN price_age_hours <= 3  THEN '0-3h'
-                WHEN price_age_hours <= 6  THEN '3-6h'
-                WHEN price_age_hours <= 9  THEN '6-9h'
-                WHEN price_age_hours <= 12 THEN '9-12h'
-                WHEN price_age_hours <= 15 THEN '12-15h'
-                WHEN price_age_hours <= 18 THEN '15-18h'
-                WHEN price_age_hours <= 21 THEN '18-21h'
-                WHEN price_age_hours <= 24 THEN '21-24h'
-                ELSE '24h+ (stale)'
-            END AS age_bucket,
+                WHEN price_age_hours > 24   THEN 'Already stale'
+                WHEN price_age_hours >= 21  THEN 'Expiring 0-3h'
+                WHEN price_age_hours >= 18  THEN 'Expiring 3-6h'
+                WHEN price_age_hours >= 15  THEN 'Expiring 6-9h'
+                WHEN price_age_hours >= 12  THEN 'Expiring 9-12h'
+                WHEN price_age_hours >= 9   THEN 'Expiring 12-15h'
+                WHEN price_age_hours >= 6   THEN 'Expiring 15-18h'
+                WHEN price_age_hours >= 3   THEN 'Expiring 18-21h'
+                ELSE                             'Expiring 21-24h'
+            END AS expiry_bucket,
             COUNT(*) FILTER (WHERE price_tier = 1) AS tier1,
             COUNT(*) FILTER (WHERE price_tier = 2) AS tier2,
             COUNT(*) AS total
         FROM ops.ops_vehicle_staleness
         GROUP BY 1
-        ORDER BY MIN(price_age_hours)
+        ORDER BY MIN(price_age_hours) DESC
     """)
     if not freshness_df.empty:
         fig = px.bar(
-            freshness_df, x="age_bucket", y=["tier1", "tier2"], barmode="stack",
-            labels={"value": "VINs", "age_bucket": "Price Age"},
+            freshness_df, x="expiry_bucket", y=["tier1", "tier2"], barmode="stack",
+            labels={"value": "VINs", "expiry_bucket": "Expires In"},
             color_discrete_map={"tier1": "#3498db", "tier2": "#95a5a6"},
         )
         fig.update_layout(xaxis_title=None, yaxis_title="Active VINs", legend_title="Price Tier")
@@ -291,7 +288,7 @@ if section == "Pipeline Health":
 # ---------------------------------------------------------------------------
 # Section 2: Inventory Overview
 # ---------------------------------------------------------------------------
-elif section == "Inventory Overview":
+with tab2:
     st.header("Inventory Overview")
 
     # -- Row 1: Scalar cards
@@ -416,7 +413,7 @@ elif section == "Inventory Overview":
 # ---------------------------------------------------------------------------
 # Section 3: Deal Finder
 # ---------------------------------------------------------------------------
-elif section == "Deal Finder":
+with tab3:
     st.header("Deal Finder")
 
     # -- Filters
@@ -599,7 +596,7 @@ elif section == "Deal Finder":
 # ---------------------------------------------------------------------------
 # Section 4: Market Trends
 # ---------------------------------------------------------------------------
-elif section == "Market Trends":
+with tab4:
     st.header("Market Trends")
 
     # -- Row 1: Median price by model over time (from int_price_events)

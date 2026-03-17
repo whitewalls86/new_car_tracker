@@ -33,29 +33,38 @@ Add webhook trigger nodes to Scrape Listings, Scrape Detail Pages, and Cleanup A
 
 ---
 
-## Plan 6: Async Job Polling for Scraper API
+## Plan 6: Async SRP Scraping with DB-Backed Job Tracking
 
-**Status:** Not started
+**Status:** Implementation complete — needs import into n8n and end-to-end testing
 **Priority:** High
 
-### Problem
-n8n holds an open HTTP connection for entire scrape duration (~10 min per scope). 9 configs × 2 scopes = 18 sequential calls = ~3 hours total.
+### Architecture
+- **Scraper API** — in-memory job store, `ThreadPoolExecutor(max_workers=4)`
+  - `POST /scrape_results` → returns `{"job_id", "status": "queued"}` immediately, runs scrape in background
+  - `GET /scrape_results/jobs/completed` → returns completed jobs with artifacts
+  - `POST /scrape_results/jobs/{job_id}/fetched` → removes job from memory
+  - `GET /scrape_results/jobs` → lists all jobs (debug)
+- **Workflow A (Scrape Listings)** — simplified: fires all searches, inserts `scrape_jobs` rows, rotates sort, exits
+- **Workflow B (Job Poller)** — every 1 min: polls completed jobs, inserts artifacts to `raw_artifacts`, marks fetched, checks run completion
+- **`scrape_jobs` table** — tracks job lifecycle: `queued → running → completed → fetched` (or `failed`)
+- **Results Processing** — user converting to scheduled (every 5 min), independent of this change
 
-### Solution
-Switch to async job pattern:
-1. `POST /scrape_results` → returns `{"job_id": "abc123", "status": "processing"}` immediately
-2. n8n polls `GET /scrape_results/status/{job_id}` every 30s
-3. Fire all 18 requests simultaneously → total time drops from ~3 hours to ~20 minutes
+### What's Done
+- `scrape_jobs` table created with indexes
+- `scraper/app.py` modified with async job pattern (tested: POST returns in <1s, background worker completes, all endpoints work)
+- `n8n/workflows/Scrape Listings.json` simplified (removed artifact nodes, added job row inserts, timeout 30s)
+- `n8n/workflows/Job Poller.json` created
 
-### Implementation
-- FastAPI: background task runner, in-memory job store, status endpoint
-- n8n: Fire Request → Wait (30s) → Poll Status → IF done → continue
+### Remaining
+- Import updated Scrape Listings + new Job Poller into n8n
+- End-to-end test with a real scrape
+- Activate Job Poller schedule
 
 ---
 
 ## Plan 9: Analytics Dashboard (Streamlit)
 
-**Status:** ✅ Core implemented — remaining polish in Plan 15
+**Status:** ✅ Complete (Plan 15 polish done)
 **Port:** 8501
 
 Streamlit app in `dashboard/` with 4 sections:
@@ -162,8 +171,7 @@ Streamlit app in `dashboard/` with 4 sections:
 
 ## Plan 15: Streamlit Dashboard Polish + Telegram Alerts
 
-**Status:** In progress (15.1 done, 15.2/15.3/15.5 done in dashboard)
-**Priority:** High
+**Status:** ✅ Complete
 **Date identified:** 2026-03-16
 
 ### ~~15.1 — Telegram Pipeline Alerts~~ ✅
@@ -176,15 +184,14 @@ Streamlit app in `dashboard/` with 4 sections:
 ### ~~15.3 — Dealer Names in Tables~~ ✅
 - Added `dealer_name` to Deal Finder and Inventory tables
 
-### 15.4 — Fix listing_state Filter
-- **Data check (2026-03-17):** Not actually critical — mart already filters to 3-day staleness window, so all rows have explicit listing_state. COALESCE change is defensive only.
+### ~~15.4 — Fix listing_state Filter~~ ✅
+- Data check confirmed: mart already filters to 3-day window, all rows have explicit listing_state. COALESCE added defensively.
 
 ### ~~15.5 — Refresh Button + Data Freshness~~ ✅
 - Refresh button + data freshness timestamp in sidebar
 
-### 15.6 — Mobile Tab Navigation
-- **File:** `dashboard/app.py`
-- Replace sidebar radio with `st.tabs` for better mobile UX.
+### ~~15.6 — Mobile Tab Navigation~~ ✅
+- Replaced sidebar radio with `st.tabs`. Sidebar keeps refresh button + data freshness.
 
 ---
 
@@ -197,15 +204,69 @@ Streamlit app in `dashboard/` with 4 sections:
 ### ~~16.1 — Twice-Daily SRP Scrape~~ ✅
 - Second daily SRP schedule added in n8n — burns through sort rotation in 2 days instead of 4
 
-### 16.2 — Exclude Unlisted VINs from Staleness View
-- **File:** `dbt/models/ops/ops_vehicle_staleness.sql`
-- Add `WHERE listing_state IS DISTINCT FROM 'unlisted'`
-- 15,656 unlisted VINs are perpetually stale noise; removing them focuses the view and speeds up the batch query
+### ~~16.2 — Exclude Unlisted VINs from Staleness View~~ ✅
+- Already implemented — `WHERE listing_state IS DISTINCT FROM 'unlisted'` confirmed in production (47,551 active only, zero unlisted)
 
 ### 16.3 — Monitor Detail Scrape Volume (decision pending ~March 20)
 - After the post-fix backlog settles and SRP rotation completes a full cycle, check daily detail volume
 - If stabilizes ~6-8K/day: no changes needed
 - If still 30K+/day: consider changing batch query to `is_full_details_stale` only
+
+## Plan 17: Update README.md
+
+**Status:** Not started
+**Priority:** Low
+
+Update the README to accurately reflect current project architecture, services, and setup steps.
+
+---
+
+## Plan 18: Active Scrape Progress in Dashboard
+
+**Status:** Not started
+**Priority:** Medium
+
+Show live progress during an active detail scrape — number of vehicles processed since the run started.
+
+- **Short-term (no polling needed):** Add a metric to the active run indicator: `SELECT COUNT(*) FROM detail_observations WHERE fetched_at >= (SELECT started_at FROM runs WHERE status = 'running' ORDER BY started_at DESC LIMIT 1)`
+- **Long-term:** Tie into Plan 6 async polling for richer progress/ETA estimates
+
+---
+
+## Plan 19: Detail Scrape Waits for Active Search Scrape
+
+**Status:** Not started
+**Priority:** Medium
+
+If a search scrape is running when the detail scrape triggers, the search scrape may update prices that the detail scrape would otherwise fetch unnecessarily. Add a pre-check in the n8n Scrape Detail Pages workflow: if `runs WHERE status = 'running' AND trigger = 'search scrape'` exists, wait/skip.
+
+- **Simple implementation:** IF node at the start of Scrape Detail Pages — check for active search scrape, exit early if found
+- **Better with Plan 6:** Once async, could actively wait and retry after search completes
+
+---
+
+## Plan 20: dbt + Postgres Health in Pipeline Dashboard
+
+**Status:** Not started
+**Priority:** Medium
+
+Add a new section or expand Pipeline Health with:
+- **dbt:** Last build time, build duration, last build status (query a `dbt_run_results` log table if available, or parse from file)
+- **Postgres:** Active/idle-in-transaction connections, any long-running queries, table bloat indicators
+- **Locks:** Any queries blocked on locks (`pg_stat_activity` + `pg_locks`)
+
+---
+
+## Plan 21: Investigate Stale Vehicle Backlog vs Price Freshness Discrepancy
+
+**Status:** Likely a non-issue — confirm after 16.2
+
+**Note:** Almost certainly a filter mismatch, not a bug:
+- **Stale Vehicle Backlog** filters to `listing_state IS DISTINCT FROM 'unlisted'` AND only shows *currently stale* VINs
+- **Price Freshness chart** includes *all* VINs (including unlisted) across all age buckets
+- Once 16.2 lands (filtering unlisted from `ops_vehicle_staleness`), both widgets will draw from the same filtered population and should align
+
+Confirm after 16.2 is deployed before investigating further.
 
 ---
 
@@ -213,21 +274,22 @@ Streamlit app in `dashboard/` with 4 sections:
 
 | Priority | Item | Notes |
 |----------|------|-------|
-| 1 | **16.2** — Staleness view exclude unlisted | Quick win — removes 15K noise rows |
-| 2 | **15.6** — Mobile tabs | Dashboard UX |
-| 3 | **14.7** — Source freshness | Alerting for stale data |
-| 4 | **14.10** — Detail fetch retry | Prevents transient data loss |
-| 5 | **14.3** — Uncomment uniqueness test | Quick — just uncomment + verify |
-| 6 | **14.2** — Duplicate ops models | Code smell cleanup |
-| 7 | **14.1** — VIN case normalization | Defensive — only 1 affected VIN |
-| 8 | **14.5** — Price events dedup | Defensive — only 1 duplicate found |
-| 9 | **14.9** — Browser lock | Low risk in practice |
-| 10 | **14.11** — Chrome fingerprint env var | Working fine currently |
-| 11 | **14.12** — max_safety_pages validator | Low risk |
-| 12 | **15.4** — listing_state filter | Defensive only |
-| 13 | **16.3** — Monitor detail volume | Wait until ~March 20 |
-| 14 | **6** — Async job polling | Large feature — later sprint |
-| 15 | **5** — Webhook triggers | Nice-to-have |
+| 1 | **6** — Async SRP scraping | Import workflows into n8n + end-to-end test |
+| 2 | **19** — Detail scrape waits for search scrape | Simple IF node in n8n — reduces redundant detail fetches |
+| 3 | **18** — Active scrape progress in dashboard | Query `detail_observations` count since run start |
+| 4 | **14.7** — dbt source freshness | Alerting when scraper stops ingesting |
+| 5 | **14.10** — Detail fetch retry | Prevents transient data loss |
+| 6 | **20** — dbt + Postgres health in dashboard | Operational visibility |
+| 7 | **14.3** — Uncomment uniqueness test | Quick — just uncomment + verify |
+| 8 | **14.2** — Duplicate ops models | Code smell cleanup |
+| 9 | **14.1** — VIN case normalization | Defensive — only 1 affected VIN |
+| 10 | **14.5** — Price events dedup | Defensive — only 1 duplicate found |
+| 11 | **14.9** — Browser lock | Low risk in practice |
+| 12 | **14.11** — Chrome fingerprint env var | Working fine currently |
+| 13 | **14.12** — max_safety_pages validator | Low risk |
+| 14 | **17** — Update README | Admin |
+| 15 | **16.3** — Monitor detail volume | Wait until ~March 20 |
+| 16 | **5** — Webhook triggers | Nice-to-have |
 
 ---
 

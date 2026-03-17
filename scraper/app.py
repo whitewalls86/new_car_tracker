@@ -1,14 +1,48 @@
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Body
+from fastapi import FastAPI, Body, HTTPException
 from fastapi.staticfiles import StaticFiles
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 import os
+import uuid
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from processors.scrape_results import scrape_results
 from processors.results_page_cards import (parse_cars_results_page_html, parse_cars_results_page_html_v2, parse_cars_results_page_html_v3)
 from processors.scrape_detail import (scrape_detail_dummy, scrape_detail_fetch)
 from processors.parse_detail_page import parse_cars_detail_page_html_v1
 from routers.admin import router as admin_router
 from db import get_pool, close_pool
+
+# ---------------------------------------------------------------------------
+# In-memory job store for async SRP scraping
+# ---------------------------------------------------------------------------
+_jobs: Dict[str, Dict[str, Any]] = {}
+_jobs_lock = threading.Lock()
+_executor = ThreadPoolExecutor(max_workers=12)
+
+
+def _run_scrape_job(job_id: str, run_id: str, search_key: str, scope: str, payload: dict):
+    """Runs in background thread. Updates in-memory job store."""
+    # sync_playwright checks asyncio.get_event_loop().is_running().
+    # uvicorn/anyio may leave the main loop visible to worker threads; give
+    # this thread its own fresh (non-running) loop so Playwright is happy.
+    import asyncio
+    asyncio.set_event_loop(asyncio.new_event_loop())
+
+    with _jobs_lock:
+        _jobs[job_id]["status"] = "running"
+        _jobs[job_id]["started_at"] = __import__("datetime").datetime.utcnow().isoformat()
+    try:
+        result = scrape_results(run_id, search_key, scope, payload)
+        artifacts = result.get("artifacts", [])
+        with _jobs_lock:
+            _jobs[job_id]["status"] = "completed"
+            _jobs[job_id]["artifacts"] = artifacts
+            _jobs[job_id]["artifact_count"] = len(artifacts)
+    except Exception as e:
+        with _jobs_lock:
+            _jobs[job_id]["status"] = "failed"
+            _jobs[job_id]["error"] = str(e)
 
 
 @asynccontextmanager
@@ -34,10 +68,55 @@ def run_scrape_results(
     payload: dict = Body(...),
 ) -> Dict[str, Any]:
     """
-    Fetches results pages for one (search_key, scope), saves raw HTML to disk,
-    and returns artifact metadata for n8n to write to Postgres.
+    Queues an async SRP scrape job. Returns job_id immediately.
+    The scrape runs in a background thread; poll /scrape_results/jobs/completed
+    to retrieve results.
     """
-    return scrape_results(run_id, search_key, scope, payload)
+    job_id = str(uuid.uuid4())
+    with _jobs_lock:
+        _jobs[job_id] = {
+            "job_id": job_id,
+            "run_id": run_id,
+            "search_key": search_key,
+            "scope": scope,
+            "status": "queued",
+            "artifacts": [],
+            "artifact_count": 0,
+            "error": None,
+            "started_at": None,
+        }
+    _executor.submit(_run_scrape_job, job_id, run_id, search_key, scope, payload)
+    return {"job_id": job_id, "status": "queued"}
+
+
+@app.get("/scrape_results/jobs/completed")
+def get_completed_jobs() -> List[Dict[str, Any]]:
+    """Returns all completed jobs with their artifacts."""
+    with _jobs_lock:
+        return [
+            job for job in _jobs.values()
+            if job["status"] == "completed"
+        ]
+
+
+@app.post("/scrape_results/jobs/{job_id}/fetched")
+def mark_job_fetched(job_id: str) -> Dict[str, Any]:
+    """Marks a job as fetched and removes it from memory."""
+    with _jobs_lock:
+        job = _jobs.pop(job_id, None)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found or already fetched")
+    return {"job_id": job_id, "status": "fetched"}
+
+
+@app.get("/scrape_results/jobs")
+def list_all_jobs() -> List[Dict[str, Any]]:
+    """Lists all in-memory jobs (for debugging/dashboard)."""
+    with _jobs_lock:
+        return [
+            {k: v for k, v in job.items() if k != "artifacts"}
+            for job in _jobs.values()
+        ]
 
 
 @app.post("/process/results_pages")
