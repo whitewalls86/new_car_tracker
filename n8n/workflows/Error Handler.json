@@ -32,6 +32,31 @@
           "name": "Postgres account"
         }
       }
+    },
+    {
+      "parameters": {
+        "operation": "sendMessage",
+        "chatId": "774819707",
+        "text": "=🚨 <b>Pipeline Error</b>\n\n<b>Workflow:</b> {{ $json.workflow.name }}\n<b>Node:</b> {{ $json.execution.lastNodeExecuted }}\n<b>Error:</b> {{ $json.execution.error.message }}\n<b>Type:</b> {{ $json.execution.error.name }}\n<b>Execution:</b> {{ $json.execution.id }}",
+        "additionalFields": {
+          "parse_mode": "HTML"
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -160,
+        200
+      ],
+      "id": "d3e4f5a6-b7c8-9012-def0-234567890123",
+      "name": "Send Telegram Alert",
+      "credentials": {
+        "telegramApi": {
+          "id": "",
+          "name": "Cartracker Alerts"
+        }
+      },
+      "continueOnFail": true
     }
   ],
   "pinData": {},
@@ -41,6 +66,11 @@
         [
           {
             "node": "Log Error to DB",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Send Telegram Alert",
             "type": "main",
             "index": 0
           }

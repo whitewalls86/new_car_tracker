@@ -15,7 +15,7 @@ with active_listings as (
     from {{ ref('stg_srp_observations') }} s
     where s.vin17 is not null
       and s.seller_customer_id is not null
-      and s.fetched_at >= now() - interval '3 days'
+      and s.fetched_at >= now() - interval '{{ var("staleness_window_days") }} days'
 ),
 
 deduped as (

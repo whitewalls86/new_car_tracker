@@ -10,6 +10,9 @@ test-paths: ["tests"]
 seed-paths: ["seeds"]
 macro-paths: ["macros"]
 
+vars:
+  staleness_window_days: 3
+
 models:
   cartracker:
     +materialized: view

@@ -26,7 +26,7 @@ with srp as (
 
 detail as (
     select
-        d.vin as vin,
+        d.vin17 as vin,
         d.listing_id,
         d.artifact_id,
         d.fetched_at as observed_at,
@@ -38,7 +38,7 @@ detail as (
 
         'detail'::text as source
     from {{ ref('stg_detail_observations') }} d
-    where d.vin is not null
+    where d.vin17 is not null
 ),
 
 tier1 as (

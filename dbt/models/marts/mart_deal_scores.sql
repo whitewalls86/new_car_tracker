@@ -6,7 +6,7 @@ with active_vins as (
     select distinct vin17 as vin
     from {{ ref('stg_srp_observations') }}
     where vin17 is not null
-      and fetched_at >= now() - interval '3 days'
+      and fetched_at >= now() - interval '{{ var("staleness_window_days") }} days'
 ),
 
 -- National price percentile per VIN (within its make/model/trim)
@@ -32,7 +32,7 @@ price_percentiles as (
       and s.price is not null
       and s.price > 0
       and ra.search_scope = 'national'
-      and s.fetched_at >= now() - interval '3 days'
+      and s.fetched_at >= now() - interval '{{ var("staleness_window_days") }} days'
 ),
 
 percentiles_deduped as (
@@ -49,7 +49,7 @@ local_seen as (
         on ra.artifact_id = s.artifact_id
     where s.vin17 is not null
       and ra.search_scope = 'local'
-      and s.fetched_at >= now() - interval '3 days'
+      and s.fetched_at >= now() - interval '{{ var("staleness_window_days") }} days'
 ),
 
 scored as (
@@ -120,7 +120,7 @@ scored as (
         b.national_avg_discount_pct,
 
         -- National price percentile (0 = cheapest, 1 = most expensive)
-        coalesce(pctl.national_price_percentile, 0.5) as national_price_percentile,
+        coalesce(pctl.national_price_percentile, 0.75) as national_price_percentile,
 
         -- Dealer inventory
         coalesce(di.dealer_inventory_count, 0) as dealer_inventory_count,
@@ -140,7 +140,7 @@ scored as (
                 )), 0)
 
             -- National price percentile (30 pts): lower percentile = better
-            + (1 - coalesce(pctl.national_price_percentile, 0.5)) * 30
+            + (1 - coalesce(pctl.national_price_percentile, 0.75)) * 30
 
             -- Days on market (15 pts): capped at 90 days
             + least(coalesce(dom.days_on_market, 0), 90) / 90.0 * 15

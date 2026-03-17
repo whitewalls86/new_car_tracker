@@ -20,7 +20,7 @@ with active_national as (
       and s.price is not null
       and s.price > 0
       and ra.search_scope = 'national'
-      and s.fetched_at >= now() - interval '3 days'
+      and s.fetched_at >= now() - interval '{{ var("staleness_window_days") }} days'
 ),
 
 -- Dedupe: one row per VIN with latest national observation

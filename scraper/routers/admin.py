@@ -255,14 +255,16 @@ async def toggle_search(search_key: str):
 
 
 # ---------------------------------------------------------------------------
-# Delete (soft — set enabled=false)
+# Delete (soft — disable + rename to prevent key reuse conflicts)
 # ---------------------------------------------------------------------------
 
 @router.post("/{search_key}/delete")
 async def delete_search(search_key: str):
     pool = await get_pool()
+    deleted_key = f"_deleted_{search_key}_{int(datetime.now(UTC).timestamp())}"
     await pool.execute(
-        "DELETE FROM search_configs WHERE search_key = $1",
-        search_key,
+        "UPDATE search_configs SET enabled = false, search_key = $1, updated_at = now() "
+        "WHERE search_key = $2",
+        deleted_key, search_key,
     )
     return RedirectResponse(url="/admin/", status_code=303)

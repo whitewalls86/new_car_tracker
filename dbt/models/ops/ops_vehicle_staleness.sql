@@ -82,3 +82,4 @@ select
     stale_reason
 
 from flags
+where listing_state is distinct from 'unlisted'

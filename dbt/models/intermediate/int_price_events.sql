@@ -14,7 +14,7 @@ with srp_price_events as (
 
 detail_price_events as (
     select
-        d.vin as vin,
+        d.vin17 as vin,
         d.listing_id,
         d.artifact_id,
         d.fetched_at as observed_at,
@@ -22,7 +22,7 @@ detail_price_events as (
         'detail'::text as source,
         1::int as tier
     from {{ ref('stg_detail_observations') }} d
-    where d.vin is not null
+    where d.vin17 is not null
 ),
 
 carousel_price_events as (
@@ -35,10 +35,30 @@ carousel_price_events as (
         c.source,
         c.tier
     from {{ ref('int_carousel_price_events_mapped') }} c
+),
+
+all_events as (
+    select * from srp_price_events
+    union all
+    select * from detail_price_events
+    union all
+    select * from carousel_price_events
+),
+
+-- Deduplicate: when the same VIN has the same price at the same timestamp from
+-- multiple sources, keep one row. Prefer detail > srp > carousel.
+deduped as (
+    select distinct on (vin, observed_at, price)
+        vin,
+        listing_id,
+        artifact_id,
+        observed_at,
+        price,
+        source,
+        tier
+    from all_events
+    order by vin, observed_at, price,
+        case source when 'detail' then 1 when 'srp' then 2 else 3 end
 )
 
-select * from srp_price_events
-union all
-select * from detail_price_events
-union all
-select * from carousel_price_events
+select * from deduped

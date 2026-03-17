@@ -38,6 +38,18 @@ def run_query(sql: str) -> pd.DataFrame:
 # Sidebar
 # ---------------------------------------------------------------------------
 st.sidebar.title("Cartracker")
+if st.sidebar.button("Refresh Data"):
+    st.rerun()
+
+# Data freshness
+_freshness_df = run_query("""
+    SELECT MAX(price_observed_at) AT TIME ZONE 'America/Chicago' AS ts
+    FROM analytics.mart_vehicle_snapshot
+""")
+_freshness_val = _freshness_df["ts"].iloc[0]
+if pd.notna(_freshness_val):
+    st.sidebar.caption(f"Data as of: {_freshness_val.strftime('%b %d %H:%M')}")
+
 section = st.sidebar.radio(
     "Section",
     ["Pipeline Health", "Inventory Overview", "Deal Finder", "Market Trends"],
@@ -48,6 +60,18 @@ section = st.sidebar.radio(
 # ---------------------------------------------------------------------------
 if section == "Pipeline Health":
     st.header("Pipeline Health")
+
+    # -- Active run indicator
+    active_runs_df = run_query("""
+        SELECT trigger, started_at AT TIME ZONE 'America/Chicago' AS started_at,
+               ROUND(EXTRACT(EPOCH FROM now() - started_at) / 60) AS elapsed_min
+        FROM runs WHERE status = 'running' ORDER BY started_at
+    """)
+    if not active_runs_df.empty:
+        for _, row in active_runs_df.iterrows():
+            st.warning(f"Running: {row['trigger']} — {int(row['elapsed_min'])}m elapsed (started {row['started_at'].strftime('%H:%M')})")
+    else:
+        st.success("No active runs")
 
     # -- Row 1: Last scrape timestamps + counts
     col1, col2, col3, col4 = st.columns(4)
@@ -132,6 +156,37 @@ if section == "Pipeline Health":
             ORDER BY vehicle_count DESC
         """)
         st.dataframe(df, use_container_width=True, hide_index=True)
+
+    # -- Price freshness distribution
+    st.subheader("Price Freshness — Expiring in Next 24h")
+    freshness_df = run_query("""
+        SELECT
+            CASE
+                WHEN price_age_hours <= 3  THEN '0-3h'
+                WHEN price_age_hours <= 6  THEN '3-6h'
+                WHEN price_age_hours <= 9  THEN '6-9h'
+                WHEN price_age_hours <= 12 THEN '9-12h'
+                WHEN price_age_hours <= 15 THEN '12-15h'
+                WHEN price_age_hours <= 18 THEN '15-18h'
+                WHEN price_age_hours <= 21 THEN '18-21h'
+                WHEN price_age_hours <= 24 THEN '21-24h'
+                ELSE '24h+ (stale)'
+            END AS age_bucket,
+            COUNT(*) FILTER (WHERE price_tier = 1) AS tier1,
+            COUNT(*) FILTER (WHERE price_tier = 2) AS tier2,
+            COUNT(*) AS total
+        FROM ops.ops_vehicle_staleness
+        GROUP BY 1
+        ORDER BY MIN(price_age_hours)
+    """)
+    if not freshness_df.empty:
+        fig = px.bar(
+            freshness_df, x="age_bucket", y=["tier1", "tier2"], barmode="stack",
+            labels={"value": "VINs", "age_bucket": "Price Age"},
+            color_discrete_map={"tier1": "#3498db", "tier2": "#95a5a6"},
+        )
+        fig.update_layout(xaxis_title=None, yaxis_title="Active VINs", legend_title="Price Tier")
+        st.plotly_chart(fig, use_container_width=True)
 
     # -- Row 3: Detail scrape success rate
     st.subheader("Detail Scrape Success Rate (Last 30 Days)")
@@ -246,7 +301,7 @@ elif section == "Inventory Overview":
         df = run_query("""
             SELECT COUNT(*) AS cnt
             FROM analytics.mart_deal_scores
-            WHERE listing_state = 'active'
+            WHERE COALESCE(listing_state, 'active') != 'unlisted'
         """)
         st.metric("Total Active Listings", f"{df['cnt'].iloc[0]:,}")
 
@@ -284,7 +339,7 @@ elif section == "Inventory Overview":
             ROUND(AVG(current_price)) AS avg_price,
             MIN(current_price) AS min_price
         FROM analytics.mart_deal_scores
-        WHERE listing_state = 'active'
+        WHERE COALESCE(listing_state, 'active') != 'unlisted'
         GROUP BY make, model
         ORDER BY active_listings DESC
     """)
@@ -342,16 +397,16 @@ elif section == "Inventory Overview":
     st.subheader("Active Listings by Dealer")
     df = run_query("""
         SELECT
-            seller_customer_id AS dealer_id,
+            COALESCE(dealer_name, seller_customer_id) AS dealer,
             make,
             model,
             COUNT(*) AS active_listings,
             ROUND(AVG(current_price)) AS avg_price,
             MIN(current_price) AS min_price
         FROM analytics.mart_deal_scores
-        WHERE listing_state = 'active'
+        WHERE COALESCE(listing_state, 'active') != 'unlisted'
           AND seller_customer_id IS NOT NULL
-        GROUP BY seller_customer_id, make, model
+        GROUP BY COALESCE(dealer_name, seller_customer_id), make, model
         ORDER BY active_listings DESC
         LIMIT 50
     """)
@@ -369,7 +424,7 @@ elif section == "Deal Finder":
 
     makes_df = run_query("""
         SELECT DISTINCT make FROM analytics.mart_deal_scores
-        WHERE listing_state = 'active' ORDER BY make
+        WHERE COALESCE(listing_state, 'active') != 'unlisted' ORDER BY make
     """)
     all_makes = makes_df["make"].tolist()
 
@@ -383,7 +438,7 @@ elif section == "Deal Finder":
         scope_filter = st.selectbox("Scope", ["All", "Local", "National"])
 
     # Build WHERE clauses
-    where = ["listing_state = 'active'"]
+    where = ["COALESCE(listing_state, 'active') != 'unlisted'"]
     if selected_makes:
         makes_str = ", ".join(f"'{m}'" for m in selected_makes)
         where.append(f"make IN ({makes_str})")
@@ -404,6 +459,7 @@ elif section == "Deal Finder":
             model,
             vehicle_trim,
             model_year,
+            dealer_name,
             current_price,
             national_median_price,
             msrp,
@@ -493,6 +549,7 @@ elif section == "Deal Finder":
             model,
             vehicle_trim,
             model_year,
+            dealer_name,
             current_price,
             first_price,
             current_price - first_price AS price_change,
@@ -601,7 +658,7 @@ elif section == "Market Trends":
             MAX(days_on_market) AS max_days,
             COUNT(*) AS listings
         FROM analytics.mart_deal_scores
-        WHERE listing_state = 'active'
+        WHERE COALESCE(listing_state, 'active') != 'unlisted'
         GROUP BY make, model
         ORDER BY median_days DESC
     """)
@@ -624,7 +681,7 @@ elif section == "Market Trends":
             ROUND(AVG(current_price)) AS avg_price,
             ROUND(AVG(msrp_discount_pct)::numeric, 1) AS avg_msrp_off_pct
         FROM analytics.mart_deal_scores
-        WHERE listing_state = 'active'
+        WHERE COALESCE(listing_state, 'active') != 'unlisted'
         GROUP BY make, model
         ORDER BY national_listings DESC
     """)
