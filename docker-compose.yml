@@ -85,6 +85,22 @@ services:
 
 
 
+  dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+    image: cartracker-dashboard
+    container_name: cartracker-dashboard
+    restart: unless-stopped
+    ports:
+      - "8501:8501"
+    environment:
+      DATABASE_URL: postgresql://cartracker:${POSTGRES_PASSWORD}@postgres:5432/cartracker
+    depends_on:
+      - postgres
+    networks:
+      - cartracker-net
+
   metabase:
     image: metabase/metabase:latest
     container_name: cartracker-metabase

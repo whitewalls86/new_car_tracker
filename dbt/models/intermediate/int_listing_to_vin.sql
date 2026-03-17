@@ -1,4 +1,23 @@
-with candidates as (
+{{
+  config(
+    materialized = 'incremental',
+    unique_key = 'listing_id',
+    incremental_strategy = 'merge',
+    on_schema_change = 'sync_all_columns'
+  )
+}}
+
+with
+{% if is_incremental() %}
+changed_listings as (
+    select distinct listing_id
+    from {{ ref('stg_srp_observations') }}
+    where vin17 is not null
+      and artifact_id > (select coalesce(max(vin_artifact_id), 0) from {{ this }})
+),
+{% endif %}
+
+candidates as (
     select
         listing_id,
         vin17 as vin,
@@ -10,6 +29,9 @@ with candidates as (
         ) as rn
     from {{ ref('stg_srp_observations') }}
     where vin17 is not null
+    {% if is_incremental() %}
+      and listing_id in (select listing_id from changed_listings)
+    {% endif %}
 )
 
 select

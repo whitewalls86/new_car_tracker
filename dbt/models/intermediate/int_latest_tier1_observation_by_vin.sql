@@ -1,3 +1,12 @@
+{{
+  config(
+    materialized = 'incremental',
+    unique_key = 'vin',
+    incremental_strategy = 'merge',
+    on_schema_change = 'sync_all_columns'
+  )
+}}
+
 with srp as (
     select
       s.vin17 as vin,
@@ -38,6 +47,14 @@ tier1 as (
     select * from detail
 ),
 
+{% if is_incremental() %}
+changed_vins as (
+    select distinct vin
+    from tier1
+    where artifact_id > (select coalesce(max(artifact_id), 0) from {{ this }})
+),
+{% endif %}
+
 ranked as (
     select
         *,
@@ -46,6 +63,9 @@ ranked as (
             order by observed_at desc, artifact_id desc
         ) as rn
     from tier1
+    {% if is_incremental() %}
+    where vin in (select vin from changed_vins)
+    {% endif %}
 )
 
 select

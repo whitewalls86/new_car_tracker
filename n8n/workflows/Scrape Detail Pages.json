@@ -469,7 +469,10 @@
   "active": true,
   "settings": {
     "executionOrder": "v1",
-    "availableInMCP": false
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "rJfFKS2DGRAn_IPJR1xTc"
   },
   "versionId": "198a7ac5-6b1d-4f35-9359-9b0e6166cb43",
   "meta": {

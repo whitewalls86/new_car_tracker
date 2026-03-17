@@ -70,6 +70,77 @@ def _extract_listing_id_from_url(url: Optional[str]) -> Optional[str]:
     return m.group(0) if m else None
 
 
+_ADDRESS_RE = re.compile(
+    r"(\d+[^,]+),\s*([^,]+),\s*([A-Z]{2})\s*(\d{5})"
+)
+
+
+def _parse_dealer_card(soup: BeautifulSoup) -> Dict[str, Any]:
+    """Extract dealer info from the .dealer-card HTML section."""
+    info: Dict[str, Any] = {}
+    card = soup.select_one(".dealer-card")
+    if not card:
+        return info
+
+    # Dealer name from <h3> or <h4>
+    name_el = card.select_one("h3, h4")
+    if name_el:
+        info["dealer_card_name"] = name_el.get_text(strip=True)
+
+    # Address from .map-link a
+    map_link = card.select_one(".map-link a")
+    if map_link:
+        addr_text = map_link.get_text(strip=True)
+        info["dealer_address_raw"] = addr_text
+        m = _ADDRESS_RE.search(addr_text)
+        if m:
+            info["dealer_street"] = m.group(1).strip()
+            info["dealer_city"] = m.group(2).strip()
+            info["dealer_state"] = m.group(3)
+            info["dealer_zip_parsed"] = m.group(4)
+
+    # Website from .website a
+    website_el = card.select_one(".website a")
+    if website_el:
+        href = website_el.get("href") or ""
+        # Strip utm params for cleaner URL
+        if "?" in href:
+            href = href.split("?")[0]
+        info["dealer_website"] = href
+
+    # Dealer URL from any link containing /dealers/
+    dealer_link = card.select_one("a[href*='/dealers/']")
+    if dealer_link:
+        info["dealer_cars_com_url"] = dealer_link.get("href")
+
+    # Rating
+    rating_el = card.select_one("fuse-rating")
+    if rating_el and rating_el.has_attr("rating"):
+        try:
+            info["dealer_rating"] = float(rating_el["rating"])
+        except (ValueError, TypeError):
+            pass
+
+    # Seller JSON (phone, zipcode) from embedded JSON in page
+    seller_el = soup.select_one("script#initial-activity-data")
+    # Phone is in a separate seller JSON block, already extracted via activity data
+    # Try the seller JSON pattern in the HTML for phone
+    seller_match = re.search(
+        r'"seller"\s*:\s*\{([^}]+)\}', str(soup)
+    )
+    if seller_match:
+        try:
+            seller_obj = json.loads("{" + seller_match.group(1) + "}")
+            if seller_obj.get("phoneNumber"):
+                info["dealer_phone"] = seller_obj["phoneNumber"]
+            if seller_obj.get("zipcode") and not info.get("dealer_zip_parsed"):
+                info["dealer_zip_parsed"] = seller_obj["zipcode"]
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+    return info
+
+
 def _parse_carousel_cards(soup: BeautifulSoup) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """
     Parses:
@@ -209,6 +280,9 @@ def parse_cars_detail_page_html_v1(
     listing_id_source = "initial-activity-data" if listing_id_from_activity else (
         "url" if listing_id_from_url else None)
 
+    # --- Dealer card (HTML) ---
+    dealer_card = _parse_dealer_card(soup)
+
     primary = {
         "listing_state": listing_state,
         "unlisted_title": (unlisted or {}).get("unlisted_title"),
@@ -221,10 +295,17 @@ def parse_cars_detail_page_html_v1(
         "mileage": activity.get("mileage"),
         "msrp": activity.get("msrp"),
         "stock_type": activity.get("stock_type"),
-        "dealer_name": activity.get("dealer_name"),
-        "dealer_zip": activity.get("dealer_zip"),
+        "dealer_name": dealer_card.get("dealer_card_name") or activity.get("dealer_name"),
+        "dealer_zip": dealer_card.get("dealer_zip_parsed") or activity.get("dealer_zip"),
         "seller_id": activity.get("seller_id"),
         "customer_id": activity.get("customer_id"),
+        "dealer_street": dealer_card.get("dealer_street"),
+        "dealer_city": dealer_card.get("dealer_city"),
+        "dealer_state": dealer_card.get("dealer_state"),
+        "dealer_phone": dealer_card.get("dealer_phone"),
+        "dealer_website": dealer_card.get("dealer_website"),
+        "dealer_cars_com_url": dealer_card.get("dealer_cars_com_url"),
+        "dealer_rating": dealer_card.get("dealer_rating"),
     }
 
     # --- Carousel ---
@@ -235,6 +316,7 @@ def parse_cars_detail_page_html_v1(
         "html_len": len(html),
         "primary_json_present": bool(activity),
         "listing_id_source": listing_id_source,
+        "dealer_card_found": bool(dealer_card),
         "primary_keys_present": sorted([k for k, v in primary.items() if v is not None]),
         **carousel_meta,
     }
