@@ -33,6 +33,7 @@
 | 14.2 | **Duplicate ops models** — deleted both `ops_listing_trace` and `ops_vin_latest_artifact` (identical, unused) | 2026-03-17 |
 | 22 | **dbt model cleanup** — audited all 19 models; deleted 3 orphans (`int_carousel_hints_unmapped`, `int_listing_current_state`, `int_vin_current_state`) + schemas. 16 active models all have downstream consumers. | 2026-03-17 |
 | 17 | **Update README** — full rewrite: architecture diagram, all 6 services, 7 workflows, 16 dbt models, data model, refresh strategy, setup steps, project structure | 2026-03-17 |
+| 23 | **Fresh install support** — updated `schema_new.sql` (pg_dump), `.env.example`, `setup.ps1` script, example search config seed, README quick-start guide | 2026-03-17 |
 
 ---
 
@@ -138,28 +139,11 @@ Expand Pipeline Health section with:
 
 ---
 
-## Plan 23: Windows Installation Guide
-
-**Status:** Not started
-**Priority:** Medium
-
-Explore what it takes for someone else to clone and run this repo on a fresh Windows machine. Document prerequisites, gotchas, and any setup automation needed.
-
-- Docker Desktop for Windows requirements
-- `.env` file setup
-- External volume/network creation
-- n8n workflow import process
-- DB schema initialization
-- Any Windows-specific path or permission issues
-
----
-
 ## Remaining Priority Order
 
 | Priority | Item | Notes |
 |----------|------|-------|
-| 1 | **23** — Windows installation guide | What's the lift for someone else to run this? |
-| 2 | **20** — dbt + Postgres health in dashboard | Operational visibility |
+| 1 | **20** — dbt + Postgres health in dashboard | Operational visibility |
 | 3 | **14.1** — VIN case normalization | Defensive — only 1 affected VIN |
 | 4 | **14.5** — Price events dedup | Defensive — only 1 duplicate found |
 | 5 | **14.9** — Browser lock | Low risk in practice |
