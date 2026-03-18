@@ -159,7 +159,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT run_id, COUNT(*) AS pending\nFROM scrape_jobs\nWHERE run_id = '{{ $json.run_id }}'::uuid\n  AND status NOT IN ('fetched', 'failed')\nGROUP BY run_id;",
+        "query": "SELECT\n  '{{ $json.run_id }}'::uuid AS run_id,\n  COUNT(*) FILTER (WHERE status NOT IN ('fetched', 'failed')) AS pending\nFROM scrape_jobs\nWHERE run_id = '{{ $json.run_id }}'::uuid;",
         "options": {}
       },
       "type": "n8n-nodes-base.postgres",
@@ -190,9 +190,9 @@
             {
               "id": "cond-all-done",
               "leftValue": "={{ $json.pending }}",
-              "rightValue": "0",
+              "rightValue": 0,
               "operator": {
-                "type": "string",
+                "type": "number",
                 "operation": "equals"
               }
             }
