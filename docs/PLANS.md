@@ -95,6 +95,23 @@ Expand Pipeline Health section with:
 
 ---
 
+## Plan 25: Bridge Dealer ID Systems
+
+**Status:** Not started
+**Priority:** Low
+
+cars.com uses two completely different dealer identifiers:
+- **UUID** (`150b427b-c147-5a18-a733-cf5aa95519d0`) — in SRP JSON, stored in `srp_observations.seller_customer_id`
+- **Numeric** (`735`) — in detail page HTML, stored in `dealers.customer_id`
+
+These represent the same dealer but can never be joined directly. The `dealers` table (name, street, phone, rating) is currently an island — it can't be linked to `mart_deal_scores` or any SRP-based model.
+
+**Fix:** Add `seller_customer_id` (UUID) column to `dealers`. Populate it during Parse Detail Pages by looking up the VIN being parsed → `srp_observations.seller_customer_id`. One backfill query covers existing data.
+
+Once bridged: `mart_deal_scores` can join to `dealers` for phone, rating, website; dealer reputation scoring becomes possible.
+
+---
+
 ## Future Ideas (Unprioritized)
 
 - **Price alert notifications** — email/SMS when a VIN drops below a threshold
