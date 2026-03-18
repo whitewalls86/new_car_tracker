@@ -32,6 +32,7 @@
 | 18 | **Active scrape progress in dashboard** — `progress_count`/`total_count` on `runs`, 10% milestone UPDATEs in loop, dashboard shows "X / Y scraped (Z%)" | 2026-03-17 |
 | 14.2 | **Duplicate ops models** — deleted both `ops_listing_trace` and `ops_vin_latest_artifact` (identical, unused) | 2026-03-17 |
 | 22 | **dbt model cleanup** — audited all 19 models; deleted 3 orphans (`int_carousel_hints_unmapped`, `int_listing_current_state`, `int_vin_current_state`) + schemas. 16 active models all have downstream consumers. | 2026-03-17 |
+| 17 | **Update README** — full rewrite: architecture diagram, all 6 services, 7 workflows, 16 dbt models, data model, refresh strategy, setup steps, project structure | 2026-03-17 |
 
 ---
 
@@ -125,15 +126,6 @@ Add webhook trigger nodes to Scrape Listings, Scrape Detail Pages, and Cleanup A
 
 ---
 
-## Plan 17: Update README.md
-
-**Status:** Not started
-**Priority:** Low
-
-Update README to reflect current architecture, services, and setup steps.
-
----
-
 ## Plan 20: dbt + Postgres Health in Dashboard
 
 **Status:** Not started
@@ -146,17 +138,33 @@ Expand Pipeline Health section with:
 
 ---
 
+## Plan 23: Windows Installation Guide
+
+**Status:** Not started
+**Priority:** Medium
+
+Explore what it takes for someone else to clone and run this repo on a fresh Windows machine. Document prerequisites, gotchas, and any setup automation needed.
+
+- Docker Desktop for Windows requirements
+- `.env` file setup
+- External volume/network creation
+- n8n workflow import process
+- DB schema initialization
+- Any Windows-specific path or permission issues
+
+---
+
 ## Remaining Priority Order
 
 | Priority | Item | Notes |
 |----------|------|-------|
-| 1 | **20** — dbt + Postgres health in dashboard | Operational visibility |
-| 2 | **14.1** — VIN case normalization | Defensive — only 1 affected VIN |
-| 3 | **14.5** — Price events dedup | Defensive — only 1 duplicate found |
-| 4 | **14.9** — Browser lock | Low risk in practice |
-| 5 | **14.11** — Chrome fingerprint env var | Working fine currently |
-| 6 | **14.12** — max_safety_pages validator | Low risk |
-| 7 | **17** — Update README | Admin |
+| 1 | **23** — Windows installation guide | What's the lift for someone else to run this? |
+| 2 | **20** — dbt + Postgres health in dashboard | Operational visibility |
+| 3 | **14.1** — VIN case normalization | Defensive — only 1 affected VIN |
+| 4 | **14.5** — Price events dedup | Defensive — only 1 duplicate found |
+| 5 | **14.9** — Browser lock | Low risk in practice |
+| 6 | **14.11** — Chrome fingerprint env var | Working fine currently |
+| 7 | **14.12** — max_safety_pages validator | Low risk |
 | 8 | **16.3** — Monitor detail volume | Wait until ~March 20 |
 | 9 | **5** — Webhook triggers | Nice-to-have |
 
