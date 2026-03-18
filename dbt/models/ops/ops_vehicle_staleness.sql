@@ -34,12 +34,17 @@ computed as (
             else extract(epoch from (now() - b.price_observed_at)) / 3600.0
         end as price_age_hours,
 
-        -- Dealer is considered unenriched if we've never captured their street address
-        (d.street is null) as dealer_unenriched
+        -- Dealer is considered unenriched if no VIN from this dealer has ever had a detail scrape
+        not exists (
+            select 1
+            from {{ source('public', 'srp_observations') }} s2
+            join {{ source('public', 'detail_observations') }} d2
+                on d2.vin = s2.vin
+            where s2.seller_customer_id = b.tier1_seller_customer_id
+            limit 1
+        ) as dealer_unenriched
 
     from base b
-    left join {{ source('public', 'dealers') }} d
-        on d.customer_id = b.tier1_seller_customer_id
 ),
 
 flags as (
