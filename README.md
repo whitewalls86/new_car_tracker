@@ -102,32 +102,56 @@ Schedule Trigger (12h)              Schedule Trigger (1h)
 
 ### Prerequisites
 
-- Docker and Docker Compose
-- A `.env` file with `POSTGRES_PASSWORD=<your_password>`
+- Docker Desktop (Windows) or Docker Engine + Docker Compose (Linux/macOS)
+- Git
 
-### First-time setup
+### Quick start (Windows PowerShell)
+
+```powershell
+git clone https://github.com/whitewalls86/new_car_tracker.git
+cd new_car_tracker
+cp .env.example .env        # Edit .env to set a strong POSTGRES_PASSWORD
+.\scripts\setup.ps1          # Creates volumes, starts services, inits DB, runs dbt
+```
+
+### Manual setup
 
 ```bash
-# Create external Docker resources
+# 1. Create .env from template
+cp .env.example .env
+# Edit .env to set POSTGRES_PASSWORD
+
+# 2. Create external Docker resources
 docker network create cartracker-net
 docker volume create cartracker_pgdata
 docker volume create cartracker_raw
 docker volume create n8n_data
 
-# Start all services
+# 3. Start all services
 docker compose up -d
 
-# Initialize the database schema
+# 4. Initialize the database schema
 docker exec -i cartracker-postgres psql -U cartracker -d cartracker < db/schema/schema_new.sql
 
-# Install dbt packages and run initial build
+# 5. Load example search config (Honda CR-V Hybrid)
+docker exec -i cartracker-postgres psql -U cartracker -d cartracker < db/seed/example_search_config.sql
+
+# 6. Install dbt packages and run initial build
 docker compose run --rm dbt deps
 docker compose run --rm dbt build
 ```
 
-### Import n8n workflows
+### Configure n8n workflows
 
-Import each JSON file from `n8n/workflows/` into the n8n UI at `http://localhost:5678`. Configure the Postgres credential to point to `postgres:5432/cartracker`.
+1. Open n8n at `http://localhost:5678`
+2. Create a **Postgres credential** (host: `postgres`, user: `cartracker`, password: from `.env`, database: `cartracker`)
+3. Import each JSON file from `n8n/workflows/` via **Settings > Import Workflow**
+4. Wire the Postgres credential into each workflow's Postgres nodes
+5. Activate the workflows
+
+### Add search configurations
+
+Use the admin UI at `http://localhost:8000/admin` to add make/model searches. The setup script loads one example (Honda CR-V Hybrid). Each config defines a zip code, radius, make/model filters, and sort rotation.
 
 ### Service URLs
 
@@ -167,7 +191,10 @@ cartracker-scraper/
   dbt_runner/
     app.py                  # FastAPI wrapper for dbt build
   n8n/workflows/            # 7 workflow JSON exports
-  db/schema/                # SQL schema definitions
+  db/schema/schema_new.sql  # Full database schema (pg_dump)
+  db/seed/                  # Example search config seed data
+  scripts/setup.ps1         # Windows first-time setup script
   docs/PLANS.md             # Roadmap and completed work log
+  .env.example              # Environment variable template
   docker-compose.yml
 ```
