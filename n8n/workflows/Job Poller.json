@@ -138,7 +138,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT '{{ $json.run_id }}' AS run_id, COUNT(*) AS pending\nFROM scrape_jobs\nWHERE run_id = '{{ $json.run_id }}'::uuid\n  AND status NOT IN ('fetched', 'failed');",
+        "query": "SELECT COUNT(*) AS pending\nFROM scrape_jobs\nWHERE run_id = '{{ $json.run_id }}'::uuid\n  AND status NOT IN ('fetched', 'failed');",
         "options": {}
       },
       "type": "n8n-nodes-base.postgres",
