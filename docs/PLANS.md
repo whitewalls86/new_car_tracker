@@ -97,18 +97,27 @@ Expand Pipeline Health section with:
 
 ## Plan 25: Bridge Dealer ID Systems
 
-**Status:** Not started
-**Priority:** Low
+**Status:** Partially done (UUID preservation fixed in dbt)
+**Priority:** Medium
 
 cars.com uses two completely different dealer identifiers:
 - **UUID** (`150b427b-c147-5a18-a733-cf5aa95519d0`) — in SRP JSON, stored in `srp_observations.seller_customer_id`
 - **Numeric** (`735`) — in detail page HTML, stored in `dealers.customer_id`
 
-These represent the same dealer but can never be joined directly. The `dealers` table (name, street, phone, rating) is currently an island — it can't be linked to `mart_deal_scores` or any SRP-based model.
+**25.1 — Preserve UUID when detail becomes T1 (done 2026-03-18)**
+`int_latest_tier1_observation_by_vin` was overwriting `seller_customer_id` with `null` when a detail observation became the most recent T1. Fixed with a `MAX(CASE WHEN source = 'srp' ...) OVER (PARTITION BY vin)` window — UUID now always carried forward from the most recent SRP observation regardless of which source wins T1.
 
-**Fix:** Add `seller_customer_id` (UUID) column to `dealers`. Populate it during Parse Detail Pages by looking up the VIN being parsed → `srp_observations.seller_customer_id`. One backfill query covers existing data.
+**25.2 — Add numeric `customer_id` to `int_latest_tier1_observation_by_vin`**
+Detail pages contain a numeric `customer_id` (already parsed by `parse_detail_page.py`, present in `primary` JSON). Store it in `detail_observations` via:
+1. `ALTER TABLE detail_observations ADD COLUMN customer_id text`
+2. Add `customer_id` to the `Write Detail Observations` SQL in Parse Detail Pages workflow
+3. Pull it through `stg_detail_observations` → `int_latest_tier1_observation_by_vin` → `mart_vehicle_snapshot`
 
-Once bridged: `mart_deal_scores` can join to `dealers` for phone, rating, website; dealer reputation scoring becomes possible.
+**25.3 — Join `dealers` into mart models**
+Once `mart_vehicle_snapshot` carries `customer_id`, join to `dealers` in `mart_deal_scores` to surface `phone`, `rating`, `website`, `cars_com_url`. Enables dealer reputation scoring.
+
+**25.4 — Backfill `dealer_unenriched` signal**
+With `customer_id` in `detail_observations`, the `dealer_unenriched` check in `ops_vehicle_staleness` can use `customer_id IS NOT NULL` instead of the correlated EXISTS subquery — simpler and faster.
 
 ---
 

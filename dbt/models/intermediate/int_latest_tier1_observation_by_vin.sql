@@ -61,7 +61,11 @@ ranked as (
         row_number() over (
             partition by vin
             order by observed_at desc, artifact_id desc
-        ) as rn
+        ) as rn,
+        -- Always carry the most recent SRP seller_customer_id forward,
+        -- even when a detail observation wins T1 (detail pages don't carry this UUID).
+        max(case when source = 'srp' then seller_customer_id end)
+            over (partition by vin) as srp_seller_customer_id
     from tier1
     {% if is_incremental() %}
     where vin in (select vin from changed_vins)
@@ -77,7 +81,7 @@ select
     mileage,
 
     canonical_detail_url,
-    seller_customer_id,
+    coalesce(seller_customer_id, srp_seller_customer_id) as seller_customer_id,
 
     source
 from ranked
