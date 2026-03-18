@@ -10,7 +10,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        224,
+        640,
         208
       ],
       "id": "ef55e48a-79f2-4b65-98c2-7c4eaeb7339c",
@@ -29,7 +29,7 @@
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
       "position": [
-        1344,
+        1760,
         208
       ],
       "id": "a200369d-a0d4-4e90-8330-46ef4e381809",
@@ -56,7 +56,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        1568,
+        1984,
         208
       ],
       "id": "70152e10-4fdd-4312-9ac4-2416613fcc53",
@@ -69,7 +69,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        688,
+        1104,
         192
       ],
       "id": "81d18339-2cda-459e-b224-2f759a450687",
@@ -82,7 +82,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1792,
+        2208,
         288
       ],
       "id": "a65eb621-7eca-4224-b31b-ba04e04f84d4",
@@ -97,7 +97,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        2016,
+        2432,
         -32
       ],
       "id": "8c439651-b2e5-48d3-b1cf-562cbd4e6a02",
@@ -117,7 +117,7 @@
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
       "position": [
-        1568,
+        1984,
         -64
       ],
       "id": "18ac1c04-7e50-4ee9-81b1-b3f3a87fd70c",
@@ -132,7 +132,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        896,
+        1312,
         208
       ],
       "id": "f75c1e89-334c-4abb-960e-0b4189ee8899",
@@ -153,7 +153,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        1792,
+        2208,
         -272
       ],
       "id": "ee8568d8-9e24-40e2-9ac3-ee114521037b",
@@ -173,7 +173,7 @@
       "type": "n8n-nodes-base.aggregate",
       "typeVersion": 1,
       "position": [
-        1792,
+        2208,
         -80
       ],
       "id": "b5f841f6-7d36-419d-b38f-04c21c0ce0db",
@@ -201,7 +201,7 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        2016,
+        2432,
         -272
       ],
       "id": "3fd58e82-38a8-44ec-8bd6-ab94d5c46b7b",
@@ -266,7 +266,7 @@
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3.4,
       "position": [
-        448,
+        864,
         208
       ],
       "id": "eae4165d-3a46-4697-a6f5-751b060e83bb",
@@ -279,7 +279,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1120,
+        1536,
         208
       ],
       "id": "9ff67da8-88cc-4407-8b28-b9375ac8cc2a",
@@ -303,6 +303,76 @@
       ],
       "id": "93980ac2-5dea-4bf0-adfa-721092698dea",
       "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "25293cc0-6965-4151-be35-c7993d59033e",
+              "leftValue": "={{ $json.running_scrapes }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        416,
+        208
+      ],
+      "id": "03b5587f-8068-413f-a009-c317ac5f1ccc",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  COUNT(DISTINCT run_id) as running_scrapes\nFROM\n  runs r\nWHERE r.trigger IN ('search scrape', 'detail scrape') AND status ='running';",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        208,
+        208
+      ],
+      "id": "329b4a3a-b1e5-4879-9c3f-60b655f7dcac",
+      "name": "Execute a SQL query1",
+      "credentials": {
+        "postgres": {
+          "id": "l8Ecbn62FzXCDkF9",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "amount": 3,
+        "unit": "minutes"
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        432,
+        384
+      ],
+      "id": "21689a25-9923-4d77-b307-9654bd157f00",
+      "name": "Wait",
+      "webhookId": "28e39f27-4c1e-42bd-8043-8e6608b2557a"
     }
   ],
   "pinData": {},
@@ -458,7 +528,47 @@
       "main": [
         [
           {
+            "node": "Execute a SQL query1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
             "node": "Get Batch to Process",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute a SQL query1": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait": {
+      "main": [
+        [
+          {
+            "node": "Execute a SQL query1",
             "type": "main",
             "index": 0
           }
@@ -474,7 +584,7 @@
     "callerPolicy": "workflowsFromSameOwner",
     "errorWorkflow": "rJfFKS2DGRAn_IPJR1xTc"
   },
-  "versionId": "198a7ac5-6b1d-4f35-9359-9b0e6166cb43",
+  "versionId": "bfe3a4b3-e9c2-4a03-a4e1-8f8754b081fa",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179"
