@@ -23,6 +23,27 @@
     },
     {
       "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE scrape_jobs\nSET status = 'failed',\n    error = 'Timeout — job lost, likely due to container restart'\nWHERE status IN ('queued', 'running')\n  AND created_at < now() - interval '30 minutes';",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2592,
+        1080
+      ],
+      "id": "jp-orphan-cleanup-001",
+      "name": "Expire Orphaned Jobs",
+      "credentials": {
+        "postgres": {
+          "id": "l8Ecbn62FzXCDkF9",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
         "url": "http://cartracker-scraper:8000/scrape_results/jobs/completed",
         "options": {
           "timeout": 10000
@@ -59,8 +80,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        3488,
-        768
+        3504,
+        704
       ],
       "id": "1edf1cbd-41c4-4b2c-aa4e-4c189c3bcbc8",
       "name": "Insert Artifact",
@@ -95,7 +116,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        3936,
+        3968,
         880
       ],
       "id": "12eae702-0195-49a3-8a76-3bd7d4a303a3",
@@ -138,7 +159,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT COUNT(*) AS pending\nFROM scrape_jobs\nWHERE run_id = '{{ $json.run_id }}'::uuid\n  AND status NOT IN ('fetched', 'failed');",
+        "query": "SELECT run_id, COUNT(*) AS pending\nFROM scrape_jobs\nWHERE run_id = '{{ $json.run_id }}'::uuid\n  AND status NOT IN ('fetched', 'failed')\nGROUP BY run_id;",
         "options": {}
       },
       "type": "n8n-nodes-base.postgres",
@@ -162,7 +183,8 @@
           "options": {
             "caseSensitive": true,
             "leftValue": "",
-            "typeValidation": "strict"
+            "typeValidation": "strict",
+            "version": 2
           },
           "conditions": [
             {
@@ -244,9 +266,41 @@
       "name": "If"
     }
   ],
-  "pinData": {},
+  "pinData": {
+    "Schedule Trigger (1 min)": [
+      {
+        "json": {
+          "timestamp": "2026-03-17T17:03:28.005-04:00",
+          "Readable date": "March 17th 2026, 5:03:28 pm",
+          "Readable time": "5:03:28 pm",
+          "Day of week": "Tuesday",
+          "Year": "2026",
+          "Month": "March",
+          "Day of month": "17",
+          "Hour": "17",
+          "Minute": "03",
+          "Second": "28",
+          "Timezone": "America/New_York (UTC-04:00)"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ]
+  },
   "connections": {
     "Schedule Trigger (1 min)": {
+      "main": [
+        [
+          {
+            "node": "Expire Orphaned Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Expire Orphaned Jobs": {
       "main": [
         [
           {
@@ -281,13 +335,7 @@
     },
     "Insert Artifact": {
       "main": [
-        [
-          {
-            "node": "Unique Job IDs",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        []
       ]
     },
     "Unique Job IDs": {
@@ -363,6 +411,11 @@
             "node": "Insert Artifact",
             "type": "main",
             "index": 0
+          },
+          {
+            "node": "Unique Job IDs",
+            "type": "main",
+            "index": 0
           }
         ],
         [
@@ -375,12 +428,15 @@
       ]
     }
   },
-  "active": false,
+  "active": true,
   "settings": {
     "executionOrder": "v1",
-    "availableInMCP": false
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "rJfFKS2DGRAn_IPJR1xTc"
   },
-  "versionId": "61e60027-374d-4942-a667-d9ffa8b9a50a",
+  "versionId": "d90887cd-c617-4369-af24-51e8f41cbac7",
   "meta": {
     "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179"
   },

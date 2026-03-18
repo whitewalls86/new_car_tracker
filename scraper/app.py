@@ -91,11 +91,12 @@ def run_scrape_results(
 
 @app.get("/scrape_results/jobs/completed")
 def get_completed_jobs() -> List[Dict[str, Any]]:
-    """Returns all completed jobs with their artifacts."""
+    """Returns all completed or failed jobs. Failed jobs have no artifacts but
+    are included so the Job Poller can clear them from memory and mark them in DB."""
     with _jobs_lock:
         return [
             job for job in _jobs.values()
-            if job["status"] == "completed"
+            if job["status"] in ("completed", "failed")
         ]
 
 

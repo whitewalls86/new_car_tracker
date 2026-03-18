@@ -21,6 +21,7 @@
 | 14.8 | **Admin soft-delete** — delete now disables + renames key instead of hard `DELETE` | 2026-03-17 |
 | 15.1 | **Telegram pipeline alerts** — native Telegram node in Error Handler, uses n8n "Cartracker Alerts" credential | 2026-03-17 |
 | 16.1 | **Twice-daily SRP** — second daily SRP schedule in n8n, burns through sort rotation in 2 days | 2026-03-17 |
+| 6 (core) | **Async SRP scraping** — ThreadPoolExecutor(12), Job Poller, `scrape_jobs` table, jitter delays. Scrape time ~3hr → ~20min | 2026-03-17 |
 
 ---
 
@@ -35,30 +36,42 @@ Add webhook trigger nodes to Scrape Listings, Scrape Detail Pages, and Cleanup A
 
 ## Plan 6: Async SRP Scraping with DB-Backed Job Tracking
 
-**Status:** Implementation complete — needs import into n8n and end-to-end testing
+**Status:** ✅ Core complete — resilience layer remaining
 **Priority:** High
 
 ### Architecture
-- **Scraper API** — in-memory job store, `ThreadPoolExecutor(max_workers=4)`
+- **Scraper API** — in-memory job store, `ThreadPoolExecutor(max_workers=12)`
   - `POST /scrape_results` → returns `{"job_id", "status": "queued"}` immediately, runs scrape in background
   - `GET /scrape_results/jobs/completed` → returns completed jobs with artifacts
   - `POST /scrape_results/jobs/{job_id}/fetched` → removes job from memory
   - `GET /scrape_results/jobs` → lists all jobs (debug)
-- **Workflow A (Scrape Listings)** — simplified: fires all searches, inserts `scrape_jobs` rows, rotates sort, exits
+- **Workflow A (Scrape Listings)** — fires all searches with random 1-5s jitter, inserts `scrape_jobs` rows, rotates sort, exits in ~30s
 - **Workflow B (Job Poller)** — every 1 min: polls completed jobs, inserts artifacts to `raw_artifacts`, marks fetched, checks run completion
 - **`scrape_jobs` table** — tracks job lifecycle: `queued → running → completed → fetched` (or `failed`)
-- **Results Processing** — user converting to scheduled (every 5 min), independent of this change
+- **Results Processing** — runs on 5-min schedule, independent of this workflow
 
-### What's Done
+### What's Done ✅
 - `scrape_jobs` table created with indexes
-- `scraper/app.py` modified with async job pattern (tested: POST returns in <1s, background worker completes, all endpoints work)
-- `n8n/workflows/Scrape Listings.json` simplified (removed artifact nodes, added job row inserts, timeout 30s)
-- `n8n/workflows/Job Poller.json` created
+- `scraper/app.py` — async job pattern, 12 concurrent workers, all endpoints tested end-to-end
+- `n8n/workflows/Scrape Listings.json` — simplified, 30s timeout, random jitter delay added
+- `n8n/workflows/Job Poller.json` — created, tested, deployed and active
 
-### Remaining
-- Import updated Scrape Listings + new Job Poller into n8n
-- End-to-end test with a real scrape
-- Activate Job Poller schedule
+### Remaining — Resilience Layer
+**6.1 — Orphan job recovery** (Medium priority)
+- If scraper container restarts mid-run, in-memory jobs are lost but `scrape_jobs` rows stay `queued` forever
+- Job Poller never sees them (they never appear in `/completed`)
+- **Fix:** Add a step to Job Poller (or a separate nightly cleanup) that marks `scrape_jobs` rows as `failed` if they've been `queued` or `running` for >30 minutes with no update
+- SQL: `UPDATE scrape_jobs SET status = 'failed', error = 'Timeout — likely lost in container restart' WHERE status IN ('queued', 'running') AND created_at < now() - interval '30 minutes'`
+
+**6.2 — Failed API job propagation** (Medium priority)
+- When a scrape job fails in the API (Playwright crash etc.), it shows as `failed` in `/scrape_results/jobs` but the Job Poller only polls `/completed`
+- Failed jobs are never cleared from API memory and never marked in DB
+- **Fix:** Either expose a `/scrape_results/jobs/failed` endpoint and have the Job Poller handle those too, or include failed jobs in the `/completed` response with an `error` field so they get cleaned up in one pass
+
+**6.3 — `Check Pending Jobs` missing `run_id` passthrough** (Low — already fixed in n8n UI, verify on next export)
+- SQL `SELECT COUNT(*) AS pending` drops `run_id` from the output, causing `Mark Run Done` to get `run_id = undefined`
+- **Fix (already applied in n8n):** `SELECT '{{ $json.run_id }}' AS run_id, COUNT(*) AS pending ...`
+- Ensure the exported JSON reflects this before next re-import
 
 ---
 
@@ -274,22 +287,23 @@ Confirm after 16.2 is deployed before investigating further.
 
 | Priority | Item | Notes |
 |----------|------|-------|
-| 1 | **6** — Async SRP scraping | Import workflows into n8n + end-to-end test |
-| 2 | **19** — Detail scrape waits for search scrape | Simple IF node in n8n — reduces redundant detail fetches |
-| 3 | **18** — Active scrape progress in dashboard | Query `detail_observations` count since run start |
-| 4 | **14.7** — dbt source freshness | Alerting when scraper stops ingesting |
-| 5 | **14.10** — Detail fetch retry | Prevents transient data loss |
-| 6 | **20** — dbt + Postgres health in dashboard | Operational visibility |
-| 7 | **14.3** — Uncomment uniqueness test | Quick — just uncomment + verify |
-| 8 | **14.2** — Duplicate ops models | Code smell cleanup |
-| 9 | **14.1** — VIN case normalization | Defensive — only 1 affected VIN |
-| 10 | **14.5** — Price events dedup | Defensive — only 1 duplicate found |
-| 11 | **14.9** — Browser lock | Low risk in practice |
-| 12 | **14.11** — Chrome fingerprint env var | Working fine currently |
-| 13 | **14.12** — max_safety_pages validator | Low risk |
-| 14 | **17** — Update README | Admin |
-| 15 | **16.3** — Monitor detail volume | Wait until ~March 20 |
-| 16 | **5** — Webhook triggers | Nice-to-have |
+| 1 | **6.1** — Orphan job recovery | Add >30min timeout cleanup to Job Poller |
+| 2 | **6.2** — Failed API job propagation | Expose failed jobs so Poller can clean them up |
+| 3 | **19** — Detail scrape waits for search scrape | Simple IF node in n8n — reduces redundant detail fetches |
+| 4 | **18** — Active scrape progress in dashboard | Query `detail_observations` count since run start |
+| 5 | **14.7** — dbt source freshness | Alerting when scraper stops ingesting |
+| 6 | **14.10** — Detail fetch retry | Prevents transient data loss |
+| 7 | **20** — dbt + Postgres health in dashboard | Operational visibility |
+| 8 | **14.3** — Uncomment uniqueness test | Quick — just uncomment + verify |
+| 9 | **14.2** — Duplicate ops models | Code smell cleanup |
+| 10 | **14.1** — VIN case normalization | Defensive — only 1 affected VIN |
+| 11 | **14.5** — Price events dedup | Defensive — only 1 duplicate found |
+| 12 | **14.9** — Browser lock | Low risk in practice |
+| 13 | **14.11** — Chrome fingerprint env var | Working fine currently |
+| 14 | **14.12** — max_safety_pages validator | Low risk |
+| 15 | **17** — Update README | Admin |
+| 16 | **16.3** — Monitor detail volume | Wait until ~March 20 |
+| 17 | **5** — Webhook triggers | Nice-to-have |
 
 ---
 
