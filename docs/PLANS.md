@@ -46,74 +46,15 @@ Add webhook trigger nodes to Scrape Listings, Scrape Detail Pages, and Cleanup A
 
 ---
 
-## Plan 6: Async SRP Scraping with DB-Backed Job Tracking
-
-**Status:** ✅ Core complete — one minor item remaining
-**Priority:** Low
-
-### Architecture
-- **Scraper API** — in-memory job store, `ThreadPoolExecutor(max_workers=12)`
-  - `POST /scrape_results` → returns `{"job_id", "status": "queued"}` immediately
-  - `GET /scrape_results/jobs/completed` → returns completed + failed jobs with artifacts
-  - `POST /scrape_results/jobs/{job_id}/fetched` → removes job from memory
-  - `GET /scrape_results/jobs` → lists all jobs (debug)
-- **Scrape Listings** — fires all searches with 1-5s jitter, inserts `scrape_jobs` rows, rotates sort, exits in ~30s
-- **Job Poller** — every 1 min: expires orphans, polls completed jobs, inserts artifacts, marks fetched, checks run completion
-- **`scrape_jobs` table** — lifecycle: `queued → running → completed → fetched` (or `failed`)
-
-### Remaining
-**6.3** — Verify `Check Pending Jobs` SELECT includes `run_id` column on next workflow export from n8n (already fixed in UI, just confirm JSON matches).
-
----
-
 ## Plan 14: Codebase Audit Bug Fixes
 
-**Status:** In progress (14.4, 14.6, 14.8 done)
-**Priority:** High
+**Status:** Mostly complete (14.2, 14.3, 14.4, 14.6, 14.8 done). Remaining items are low-risk defensive fixes.
 
-### CRITICAL — Data Correctness
-
-**14.1 — VIN case normalization gap in `stg_detail_observations`**
-- `stg_srp_observations` normalizes VINs via `upper(vin)`, but `stg_detail_observations` passes raw. Case mismatches cause silent join failures.
-- **Fix:** Add `upper(vin)` → `vin17` to `stg_detail_observations`. Update downstream refs.
-- **Data check:** Only 1 lowercase VIN found — defensive fix.
-
-**14.2 — Duplicate ops models**
-- `ops_listing_trace.sql` and `ops_vin_latest_artifact.sql` are byte-for-byte identical.
-- **Fix:** Delete one, make the other the reference.
-
-**14.3 — `stg_detail_observations` uniqueness test commented out**
-- `unique_combination_of_columns: ['artifact_id', 'listing_id']` is commented out in schema.yml.
-- **Fix:** Uncomment. Investigate if it fails.
-
-### HIGH — Reliability & Data Quality
-
-**14.5 — `int_price_events` can double-count prices**
-- `UNION ALL` across SRP, detail, carousel with no dedup. Same VIN at similar timestamps inflates `price_drop_count`.
-- **Fix:** Add deduplication (`DISTINCT ON (vin, observed_at, price)` or priority-based).
-- **Data check:** Only 1 actual duplicate found — defensive fix.
-
-**14.7 — No `source_freshness` in dbt sources**
-- If scraper stops ingesting, dbt builds succeed silently on stale data.
-- **Fix:** Add `freshness` with `loaded_at_field: fetched_at` in `sources.yml`.
-
-### MEDIUM — Robustness
-
-**14.9 — Browser singleton race condition**
-- `get_browser()` has no `threading.Lock()`. Concurrent calls can spawn multiple instances.
-- **Fix:** Add lock around initialization.
-
-**14.10 — `scrape_detail_fetch` has no retry logic**
-- Single attempt per URL. Transient 429/timeout → permanent data loss.
-- **Fix:** Exponential backoff, 2-3 attempts.
-
-**14.11 — Hardcoded `chrome131` browser fingerprint**
-- Single point of failure if blocked.
-- **Fix:** Configurable via env var or rotation.
-
-**14.12 — `max_safety_pages` missing bounds validation**
-- No `@field_validator` with bounds (unlike `radius_miles` and `max_listings`).
-- **Fix:** Add validator (1–2000).
+**14.1 — VIN case normalization** — `stg_detail_observations` passes raw VIN (only 1 lowercase VIN found)
+**14.5 — Price events dedup** — `UNION ALL` with no dedup (only 1 actual duplicate found)
+**14.9 — Browser singleton lock** — no `threading.Lock()` on `get_browser()` (low risk in practice)
+**14.11 — Chrome fingerprint env var** — hardcoded `chrome131` (working fine currently)
+**14.12 — max_safety_pages validator** — no bounds check (low risk)
 
 ---
 
@@ -144,13 +85,13 @@ Expand Pipeline Health section with:
 | Priority | Item | Notes |
 |----------|------|-------|
 | 1 | **20** — dbt + Postgres health in dashboard | Operational visibility |
-| 3 | **14.1** — VIN case normalization | Defensive — only 1 affected VIN |
-| 4 | **14.5** — Price events dedup | Defensive — only 1 duplicate found |
-| 5 | **14.9** — Browser lock | Low risk in practice |
-| 6 | **14.11** — Chrome fingerprint env var | Working fine currently |
-| 7 | **14.12** — max_safety_pages validator | Low risk |
-| 8 | **16.3** — Monitor detail volume | Wait until ~March 20 |
-| 9 | **5** — Webhook triggers | Nice-to-have |
+| 2 | **14.1** — VIN case normalization | Defensive — only 1 affected VIN |
+| 3 | **14.5** — Price events dedup | Defensive — only 1 duplicate found |
+| 4 | **14.9** — Browser lock | Low risk in practice |
+| 5 | **14.11** — Chrome fingerprint env var | Working fine currently |
+| 6 | **14.12** — max_safety_pages validator | Low risk |
+| 7 | **16.3** — Monitor detail volume | Wait until ~March 20 |
+| 8 | **5** — Webhook triggers | Nice-to-have |
 
 ---
 
