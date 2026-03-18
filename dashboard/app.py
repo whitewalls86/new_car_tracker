@@ -217,6 +217,32 @@ with tab1:
     else:
         st.info("No detail page artifacts in the last 30 days.")
 
+    # -- Row 3b: Search scrape success rate
+    st.subheader("Search Scrape Success Rate (Last 30 Days)")
+    df = run_query("""
+        SELECT
+            date_trunc('day', fetched_at AT TIME ZONE 'America/Chicago') AS day,
+            CASE
+                WHEN http_status = 200 THEN '200 OK'
+                WHEN http_status = 403 THEN '403 Blocked'
+                WHEN http_status IS NULL THEN 'Error/Timeout'
+                ELSE http_status::text
+            END AS result,
+            COUNT(*) AS fetches
+        FROM raw_artifacts
+        WHERE artifact_type = 'results_page'
+          AND fetched_at > now() - interval '30 days'
+        GROUP BY 1, 2
+        ORDER BY 1, 2
+    """)
+    if not df.empty:
+        fig = px.bar(df, x="day", y="fetches", color="result", barmode="stack",
+                     color_discrete_map={"200 OK": "#2ecc71", "403 Blocked": "#e74c3c", "Error/Timeout": "#95a5a6"})
+        fig.update_layout(xaxis_title=None, yaxis_title="Fetches", legend_title=None)
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("No search page artifacts in the last 30 days.")
+
     # -- Row 4: Runs over time
     st.subheader("Runs Over Time")
     df = run_query("""
