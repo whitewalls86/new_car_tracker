@@ -61,12 +61,17 @@ with tab1:
     # -- Active run indicator
     active_runs_df = run_query("""
         SELECT trigger, started_at AT TIME ZONE 'America/Chicago' AS started_at,
-               ROUND(EXTRACT(EPOCH FROM now() - started_at) / 60) AS elapsed_min
+               ROUND(EXTRACT(EPOCH FROM now() - started_at) / 60) AS elapsed_min,
+               progress_count, total_count
         FROM runs WHERE status = 'running' ORDER BY started_at
     """)
     if not active_runs_df.empty:
         for _, row in active_runs_df.iterrows():
-            st.warning(f"Running: {row['trigger']} — {int(row['elapsed_min'])}m elapsed (started {row['started_at'].strftime('%H:%M')})")
+            progress_str = ""
+            if row['trigger'] == 'detail scrape' and pd.notna(row['total_count']) and int(row['total_count']) > 0:
+                pct = int(row['progress_count'] / row['total_count'] * 100)
+                progress_str = f" — {int(row['progress_count']):,} / {int(row['total_count']):,} scraped ({pct}%)"
+            st.warning(f"Running: {row['trigger']} — {int(row['elapsed_min'])}m elapsed (started {row['started_at'].strftime('%H:%M')}){progress_str}")
     else:
         st.success("No active runs")
 

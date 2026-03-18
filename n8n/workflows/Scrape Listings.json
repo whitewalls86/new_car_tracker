@@ -8,10 +8,10 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        736,
-        1424
+        1136,
+        2048
       ],
-      "id": "00bc2a68-5ac1-4fa8-b60c-70cb4e20e1db",
+      "id": "8d069252-bf82-4b22-a49b-87c47c83f951",
       "name": "Create Run ID"
     },
     {
@@ -23,10 +23,10 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        960,
-        1424
+        1360,
+        2048
       ],
-      "id": "e566be85-1ae7-40fe-b3cb-14b21e71917d",
+      "id": "aa72617e-5ec5-4e6a-a864-37557dfb6006",
       "name": "Insert Run Row",
       "credentials": {
         "postgres": {
@@ -44,10 +44,10 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        1184,
-        1424
+        1584,
+        2048
       ],
-      "id": "d87e8160-0875-441f-9613-c5ef44b6d1a9",
+      "id": "2a255443-4b53-402d-9527-5463158b7c7d",
       "name": "Get Config",
       "credentials": {
         "postgres": {
@@ -63,10 +63,10 @@
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
       "position": [
-        1408,
-        1424
+        1808,
+        2048
       ],
-      "id": "223a1601-617a-4c8c-aeec-fb54d54b8093",
+      "id": "570dde9a-1264-4aa1-8015-24f4525c7954",
       "name": "Loop Over Items"
     },
     {
@@ -106,10 +106,10 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        1632,
-        1424
+        2480,
+        2048
       ],
-      "id": "bbd18bbf-3e2c-495f-99b7-75907b8a13ba",
+      "id": "3232ca11-6d92-4828-85a0-cc0c7087a2de",
       "name": "Local Search"
     },
     {
@@ -121,10 +121,10 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        1856,
-        1424
+        2704,
+        2048
       ],
-      "id": "a1b2c3d4-1111-4aaa-bbbb-000000000001",
+      "id": "a5328a94-5f75-4c8b-8251-f31f2b10e7e8",
       "name": "Insert Job Row (Local)",
       "credentials": {
         "postgres": {
@@ -170,10 +170,10 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        2080,
-        1424
+        3376,
+        2048
       ],
-      "id": "518fcf58-3bc9-430e-9ac8-e88d68477a63",
+      "id": "d6a81802-1a07-4118-af4a-db55ef5126f2",
       "name": "National Search"
     },
     {
@@ -185,10 +185,10 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        2304,
-        1424
+        3600,
+        2128
       ],
-      "id": "a1b2c3d4-2222-4aaa-bbbb-000000000002",
+      "id": "7a65ea8b-3da3-4d7e-b4b5-7f3783ac75ae",
       "name": "Insert Job Row (National)",
       "credentials": {
         "postgres": {
@@ -202,7 +202,8 @@
         "rule": {
           "interval": [
             {
-              "triggerAtHour": 7
+              "field": "hours",
+              "hoursInterval": 12
             }
           ]
         }
@@ -210,10 +211,10 @@
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.3,
       "position": [
-        512,
-        1424
+        912,
+        2048
       ],
-      "id": "c04345c4-8fe9-43bc-9b1f-152825dcd5d2",
+      "id": "b8883a2a-194d-430c-a37c-e238d1897979",
       "name": "Schedule Trigger"
     },
     {
@@ -225,10 +226,10 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        1840,
-        1200
+        2032,
+        1856
       ],
-      "id": "75d5a3f7-7faf-464d-b960-02d1764f7524",
+      "id": "f022c98a-260f-446c-9c01-5d96674034bb",
       "name": "Rotate Sort Order",
       "credentials": {
         "postgres": {
@@ -236,6 +237,60 @@
           "name": "Postgres account"
         }
       }
+    },
+    {
+      "parameters": {
+        "amount": "={{ $json.wait_seconds }}"
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2256,
+        2048
+      ],
+      "id": "6f0bc263-1cb8-40a9-b01d-05b5cdf45679",
+      "name": "Wait",
+      "webhookId": "0636641d-739c-4686-92b4-8dc5c4aeccff"
+    },
+    {
+      "parameters": {
+        "amount": "={{ $json.wait_seconds }}"
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        3152,
+        2048
+      ],
+      "id": "9797f447-6a1e-4252-9cf4-42cd7d7dcdf8",
+      "name": "Wait1",
+      "webhookId": "6d5f547e-9db5-4983-86ef-150e203f1b54"
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all().map(item => ({\n  json: { ...item.json, wait_seconds: (Math.random() * 4 + 1).toFixed(2) }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2032,
+        2048
+      ],
+      "id": "5d2d4249-d6a3-47ce-9206-f22c17dc661c",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all().map(item => ({\n  json: { ...item.json, wait_seconds: (Math.random() * 4 + 1).toFixed(2) }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2928,
+        2048
+      ],
+      "id": "da2f33de-3249-4643-a9bd-f931ee9c4624",
+      "name": "Code in JavaScript1"
     }
   ],
   "pinData": {},
@@ -295,7 +350,7 @@
         ],
         [
           {
-            "node": "Local Search",
+            "node": "Code in JavaScript",
             "type": "main",
             "index": 0
           }
@@ -317,7 +372,7 @@
       "main": [
         [
           {
-            "node": "National Search",
+            "node": "Code in JavaScript1",
             "type": "main",
             "index": 0
           }
@@ -345,14 +400,61 @@
           }
         ]
       ]
+    },
+    "Wait": {
+      "main": [
+        [
+          {
+            "node": "Local Search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait1": {
+      "main": [
+        [
+          {
+            "node": "National Search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "Wait1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": true,
   "settings": {
     "executionOrder": "v1",
-    "availableInMCP": false
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "rJfFKS2DGRAn_IPJR1xTc"
   },
-  "versionId": "7fa53273-697d-4ed9-97b4-7ea9e058760c",
+  "versionId": "8e666093-ee0d-45f5-a6b7-f33590d1be29",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179"

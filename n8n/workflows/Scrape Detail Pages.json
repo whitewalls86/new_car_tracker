@@ -373,6 +373,75 @@
       "id": "21689a25-9923-4d77-b307-9654bd157f00",
       "name": "Wait",
       "webhookId": "28e39f27-4c1e-42bd-8043-8e6608b2557a"
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        1536,
+        400
+      ],
+      "id": "store-total-agg-001",
+      "name": "Store Total (Aggregate)"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE runs\nSET total_count = {{ $json.data.length }}\nWHERE run_id = '{{ $('Create Run Id').first().json.run_id }}'::uuid;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1760,
+        400
+      ],
+      "id": "store-total-pg-001",
+      "name": "Store Total Count",
+      "credentials": {
+        "postgres": {
+          "id": "l8Ecbn62FzXCDkF9",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Fire a progress update only at 10% milestones.\n// $runIndex increments each time this node executes (0-based).\nconst total = $('Get Batch').all().length;\nconst stepSize = Math.max(1, Math.round(total * 0.1));\nconst iteration = $runIndex + 1; // 1-based\nconst runId = $('Create Run Id').first().json.run_id;\n\nif (iteration % stepSize === 0) {\n  return [{ json: { run_id: runId, progress_count: iteration } }];\n}\nreturn [];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2208,
+        480
+      ],
+      "id": "check-milestone-001",
+      "name": "Check Milestone"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE runs\nSET progress_count = {{ $json.progress_count }}\nWHERE run_id = '{{ $json.run_id }}'::uuid;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2432,
+        480
+      ],
+      "id": "update-progress-001",
+      "name": "Update Progress",
+      "credentials": {
+        "postgres": {
+          "id": "l8Ecbn62FzXCDkF9",
+          "name": "Postgres account"
+        }
+      }
     }
   ],
   "pinData": {},
@@ -411,6 +480,11 @@
         [
           {
             "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Check Milestone",
             "type": "main",
             "index": 0
           }
@@ -520,6 +594,11 @@
             "node": "Loop Over Items",
             "type": "main",
             "index": 0
+          },
+          {
+            "node": "Store Total (Aggregate)",
+            "type": "main",
+            "index": 0
           }
         ]
       ]
@@ -569,6 +648,28 @@
         [
           {
             "node": "Execute a SQL query1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Total (Aggregate)": {
+      "main": [
+        [
+          {
+            "node": "Store Total Count",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Milestone": {
+      "main": [
+        [
+          {
+            "node": "Update Progress",
             "type": "main",
             "index": 0
           }

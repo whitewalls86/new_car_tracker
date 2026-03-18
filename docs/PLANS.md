@@ -28,6 +28,8 @@
 | 6 | **Async SRP scraping** — ThreadPoolExecutor(12), Job Poller, `scrape_jobs` table, jitter delays. Scrape time ~3hr → ~20min | 2026-03-17 |
 | 6.1 | **Orphan job recovery** — `Expire Orphaned Jobs` node in Job Poller marks stuck jobs failed after 30min | 2026-03-17 |
 | 6.2 | **Failed API job propagation** — `/completed` endpoint now includes failed jobs so Poller clears them | 2026-03-17 |
+| 19 | **Detail scrape waits for search scrape** — IF node loop at start of Scrape Detail Pages, waits 3 min and retries if any scrape is running | 2026-03-17 |
+| 18 | **Active scrape progress in dashboard** — `progress_count`/`total_count` on `runs`, 10% milestone UPDATEs in loop, dashboard shows "X / Y scraped (Z%)" | 2026-03-17 |
 
 ---
 
@@ -130,28 +132,6 @@ Update README to reflect current architecture, services, and setup steps.
 
 ---
 
-## Plan 18: Active Scrape Progress in Dashboard
-
-**Status:** Not started
-**Priority:** Medium
-
-Add live progress to the active run indicator: count of vehicles processed since run start.
-
-- **Query:** `SELECT COUNT(*) FROM detail_observations WHERE fetched_at >= (SELECT started_at FROM runs WHERE status = 'running' ORDER BY started_at DESC LIMIT 1)`
-
----
-
-## Plan 19: Detail Scrape Waits for Active Search Scrape
-
-**Status:** Not started
-**Priority:** Medium
-
-If a search scrape is running when a detail scrape triggers, detail work is partially redundant. Add a pre-check in Scrape Detail Pages: if `runs WHERE status = 'running' AND trigger = 'search scrape'` exists, exit early.
-
-- **Implementation:** IF node at the start of Scrape Detail Pages workflow.
-
----
-
 ## Plan 20: dbt + Postgres Health in Dashboard
 
 **Status:** Not started
@@ -168,21 +148,19 @@ Expand Pipeline Health section with:
 
 | Priority | Item | Notes |
 |----------|------|-------|
-| 1 | **19** — Detail scrape waits for search scrape | Simple IF node in n8n |
-| 2 | **18** — Active scrape progress in dashboard | Count `detail_observations` since run start |
-| 3 | **14.7** — dbt source freshness | Alert when scraper stops ingesting |
-| 4 | **14.10** — Detail fetch retry | Exponential backoff on transient failures |
-| 5 | **20** — dbt + Postgres health in dashboard | Operational visibility |
-| 6 | **14.3** — Uncomment uniqueness test | Quick — just uncomment + verify |
-| 7 | **14.2** — Duplicate ops models | Code smell cleanup |
-| 8 | **14.1** — VIN case normalization | Defensive — only 1 affected VIN |
-| 9 | **14.5** — Price events dedup | Defensive — only 1 duplicate found |
-| 10 | **14.9** — Browser lock | Low risk in practice |
-| 11 | **14.11** — Chrome fingerprint env var | Working fine currently |
-| 12 | **14.12** — max_safety_pages validator | Low risk |
-| 13 | **17** — Update README | Admin |
-| 14 | **16.3** — Monitor detail volume | Wait until ~March 20 |
-| 15 | **5** — Webhook triggers | Nice-to-have |
+| 1 | **14.7** — dbt source freshness | Alert when scraper stops ingesting |
+| 2 | **14.10** — Detail fetch retry | Exponential backoff on transient failures |
+| 3 | **20** — dbt + Postgres health in dashboard | Operational visibility |
+| 4 | **14.3** — Uncomment uniqueness test | Quick — just uncomment + verify |
+| 5 | **14.2** — Duplicate ops models | Code smell cleanup |
+| 6 | **14.1** — VIN case normalization | Defensive — only 1 affected VIN |
+| 7 | **14.5** — Price events dedup | Defensive — only 1 duplicate found |
+| 8 | **14.9** — Browser lock | Low risk in practice |
+| 9 | **14.11** — Chrome fingerprint env var | Working fine currently |
+| 10 | **14.12** — max_safety_pages validator | Low risk |
+| 11 | **17** — Update README | Admin |
+| 12 | **16.3** — Monitor detail volume | Wait until ~March 20 |
+| 13 | **5** — Webhook triggers | Nice-to-have |
 
 ---
 
