@@ -30,6 +30,7 @@
 | 6.2 | **Failed API job propagation** — `/completed` endpoint now includes failed jobs so Poller clears them | 2026-03-17 |
 | 19 | **Detail scrape waits for search scrape** — IF node loop at start of Scrape Detail Pages, waits 3 min and retries if any scrape is running | 2026-03-17 |
 | 18 | **Active scrape progress in dashboard** — `progress_count`/`total_count` on `runs`, 10% milestone UPDATEs in loop, dashboard shows "X / Y scraped (Z%)" | 2026-03-17 |
+| 14.2 | **Duplicate ops models** — deleted both `ops_listing_trace` and `ops_vin_latest_artifact` (identical, unused) | 2026-03-17 |
 
 ---
 
@@ -144,23 +145,34 @@ Expand Pipeline Health section with:
 
 ---
 
+## Plan 22: dbt Model Cleanup & Audit
+
+**Status:** Not started
+**Priority:** High
+
+Deep dive of all dbt models to identify unused models, duplicates, overlapping logic, and dead code. Clean up the DAG.
+
+- Enumerate all models, check each for downstream references
+- Identify any models that overlap in purpose or output
+- Remove orphans, consolidate where appropriate
+- Verify the DAG is tight and every model earns its place
+
+---
+
 ## Remaining Priority Order
 
 | Priority | Item | Notes |
 |----------|------|-------|
-| 1 | **14.7** — dbt source freshness | Alert when scraper stops ingesting |
-| 2 | **14.10** — Detail fetch retry | Exponential backoff on transient failures |
-| 3 | **20** — dbt + Postgres health in dashboard | Operational visibility |
-| 4 | **14.3** — Uncomment uniqueness test | Quick — just uncomment + verify |
-| 5 | **14.2** — Duplicate ops models | Code smell cleanup |
-| 6 | **14.1** — VIN case normalization | Defensive — only 1 affected VIN |
-| 7 | **14.5** — Price events dedup | Defensive — only 1 duplicate found |
-| 8 | **14.9** — Browser lock | Low risk in practice |
-| 9 | **14.11** — Chrome fingerprint env var | Working fine currently |
-| 10 | **14.12** — max_safety_pages validator | Low risk |
-| 11 | **17** — Update README | Admin |
-| 12 | **16.3** — Monitor detail volume | Wait until ~March 20 |
-| 13 | **5** — Webhook triggers | Nice-to-have |
+| 1 | **22** — dbt model cleanup & audit | Find unused/duplicate/overlapping models, tighten the DAG |
+| 2 | **20** — dbt + Postgres health in dashboard | Operational visibility |
+| 3 | **14.1** — VIN case normalization | Defensive — only 1 affected VIN |
+| 4 | **14.5** — Price events dedup | Defensive — only 1 duplicate found |
+| 5 | **14.9** — Browser lock | Low risk in practice |
+| 6 | **14.11** — Chrome fingerprint env var | Working fine currently |
+| 7 | **14.12** — max_safety_pages validator | Low risk |
+| 8 | **17** — Update README | Admin |
+| 9 | **16.3** — Monitor detail volume | Wait until ~March 20 |
+| 10 | **5** — Webhook triggers | Nice-to-have |
 
 ---
 
