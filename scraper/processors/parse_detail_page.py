@@ -145,13 +145,13 @@ def _parse_carousel_cards(soup: BeautifulSoup) -> Tuple[List[Dict[str, Any]], Di
     """
     Parses:
       <div class="listings-carousel">
-        <spark-card-carousel>
-          <spark-card> ... </spark-card>
-        </spark-card-carousel>
+        <fuse-card-carousel>   (previously spark-card-carousel)
+          <fuse-card> ... </fuse-card>   (previously spark-card)
+        </fuse-card-carousel>
       </div>
 
     Expected stable bits in samples:
-      - spark-save[data-listing-id]
+      - fuse-save[data-listing-id]  (previously spark-save)
       - a[href^="/vehicledetail/"]
       - span.price, span.body
       - span[slot="footer"] containing something like "10 mi"
@@ -173,13 +173,14 @@ def _parse_carousel_cards(soup: BeautifulSoup) -> Tuple[List[Dict[str, Any]], Di
     meta["carousel_found"] = True
 
     cards_out: List[Dict[str, Any]] = []
-    cards = container.select("spark-card")
+    # Support both old (spark-card) and new (fuse-card) component names
+    cards = container.select("fuse-card, spark-card")
     meta["cards_found"] = len(cards)
 
     for card in cards:
         # listing_id
         listing_id = None
-        save = card.select_one("spark-save[data-listing-id]")
+        save = card.select_one("fuse-save[data-listing-id], spark-save[data-listing-id]")
         if save and save.has_attr("data-listing-id"):
             listing_id = (save.get("data-listing-id") or "").strip()
 
