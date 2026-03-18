@@ -32,20 +32,26 @@ computed as (
         case
             when b.price_observed_at is null then null
             else extract(epoch from (now() - b.price_observed_at)) / 3600.0
-        end as price_age_hours
+        end as price_age_hours,
+
+        -- Dealer is considered unenriched if we've never captured their street address
+        (d.street is null) as dealer_unenriched
 
     from base b
+    left join {{ source('public', 'dealers') }} d
+        on d.customer_id = b.tier1_seller_customer_id
 ),
 
 flags as (
     select
         c.*,
 
-        -- Policy thresholds (hours)
-        (c.tier1_age_hours > 168.0) as is_full_details_stale,
+        -- Full details stale if: 7-day age exceeded, OR dealer has never been enriched via detail scrape
+        (c.tier1_age_hours > 168.0 or c.dealer_unenriched) as is_full_details_stale,
         (c.price_observed_at is null) or (c.price_age_hours > 24.0) as is_price_stale,
 
         case
+            when c.dealer_unenriched then 'dealer_unenriched'
             when (c.tier1_age_hours > 168.0) then 'full_details'
             when (c.price_observed_at is null) or (c.price_age_hours > 24.0) then 'price_only'
             else 'not_stale'
