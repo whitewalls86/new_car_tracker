@@ -6,10 +6,10 @@
       "type": "n8n-nodes-base.errorTrigger",
       "typeVersion": 1,
       "position": [
-        -400,
-        0
+        1056,
+        384
       ],
-      "id": "b1c2d3e4-f5a6-7890-bcde-f12345678901",
+      "id": "39a11f14-1dda-4871-b78c-2aecda4c8171",
       "name": "Error Trigger"
     },
     {
@@ -21,11 +21,12 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        -160,
-        0
+        1280,
+        416
       ],
-      "id": "c2d3e4f5-a6b7-8901-cdef-123456789012",
+      "id": "dc1d489f-41de-45d8-9c66-d8aa70a648ac",
       "name": "Log Error to DB",
+      "alwaysOutputData": false,
       "credentials": {
         "postgres": {
           "id": "l8Ecbn62FzXCDkF9",
@@ -35,7 +36,6 @@
     },
     {
       "parameters": {
-        "operation": "sendMessage",
         "chatId": "774819707",
         "text": "=🚨 <b>Pipeline Error</b>\n\n<b>Workflow:</b> {{ $json.workflow.name }}\n<b>Node:</b> {{ $json.execution.lastNodeExecuted }}\n<b>Error:</b> {{ $json.execution.error.message }}\n<b>Type:</b> {{ $json.execution.error.name }}\n<b>Execution:</b> {{ $json.execution.id }}",
         "additionalFields": {
@@ -45,14 +45,15 @@
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
-        -160,
-        200
+        1296,
+        240
       ],
-      "id": "d3e4f5a6-b7c8-9012-def0-234567890123",
+      "id": "fa602b91-15bb-4c21-8097-236b4d8b1c70",
       "name": "Send Telegram Alert",
+      "webhookId": "3f97844c-717f-4bcd-86d2-b10cba6f7a6c",
       "credentials": {
         "telegramApi": {
-          "id": "",
+          "id": "qoqqtiFUa4Dq2Wqp",
           "name": "Cartracker Alerts"
         }
       },
@@ -76,6 +77,12 @@
           }
         ]
       ]
+    },
+    "Log Error to DB": {
+      "main": [
+        [],
+        []
+      ]
     }
   },
   "active": true,
@@ -83,10 +90,11 @@
     "executionOrder": "v1",
     "availableInMCP": false
   },
-  "versionId": "2739c38e-1e84-55c5-1d6-8d21gbf5102",
+  "versionId": "20bb0e15-3669-4b07-81af-3dc944bc7895",
   "meta": {
+    "templateCredsSetupCompleted": true,
     "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179"
   },
-  "id": "ErrorHandlerWorkflow001",
+  "id": "rJfFKS2DGRAn_IPJR1xTc",
   "tags": []
 }

@@ -8,10 +8,10 @@
       "type": "n8n-nodes-base.executeWorkflowTrigger",
       "typeVersion": 1.1,
       "position": [
-        0,
-        224
+        1408,
+        1008
       ],
-      "id": "4ad68247-68a8-4a90-bd09-0ea0dede01dd",
+      "id": "bd389921-4d46-4ee1-84ae-ac145e1e53ac",
       "name": "After Scrape"
     },
     {
@@ -23,10 +23,10 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        448,
-        224
+        1856,
+        1008
       ],
-      "id": "5f5e9f4d-488c-4b82-97dc-01f9e5c81af1",
+      "id": "6a5768c6-d4d3-493f-b09d-cfcc95b19faf",
       "name": "Identify Unproccessed Artifacts",
       "credentials": {
         "postgres": {
@@ -44,10 +44,10 @@
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        224,
-        224
+        1632,
+        1008
       ],
-      "id": "5114bf1b-bd71-49b6-8bff-f6f0f7ef6ce4",
+      "id": "d46815ff-c28e-4409-8d14-1b9f08402e1b",
       "name": "Set Processor"
     },
     {
@@ -57,10 +57,10 @@
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
       "position": [
-        672,
-        224
+        2080,
+        1008
       ],
-      "id": "7544f104-385d-4212-821b-af072778a766",
+      "id": "4222d7ff-e31d-4605-83f5-aca3ceed71af",
       "name": "Loop Over Items"
     },
     {
@@ -75,10 +75,10 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        896,
-        160
+        2304,
+        944
       ],
-      "id": "65b0d076-dc1d-4ccd-8b1e-8d78a3f22d59",
+      "id": "d524e2c0-ac8a-4441-b080-82e9d6c5c168",
       "name": "HTTP Request"
     },
     {
@@ -89,10 +89,10 @@
       "type": "n8n-nodes-base.aggregate",
       "typeVersion": 1,
       "position": [
-        1120,
-        -112
+        2528,
+        672
       ],
-      "id": "8607f3c3-c7c5-4eb8-af91-8f31bc10470d",
+      "id": "75dccd54-e317-49d5-9a5c-259f2a441b39",
       "name": "Aggregate"
     },
     {
@@ -104,10 +104,10 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        1344,
-        -112
+        2752,
+        672
       ],
-      "id": "a39c4bf4-6641-4675-93f2-31d755a73d19",
+      "id": "71ba63f8-15a6-4136-8040-d5f68ab7d3cb",
       "name": "Write Detail Observations",
       "credentials": {
         "postgres": {
@@ -125,10 +125,10 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        1456,
-        -112
+        2976,
+        672
       ],
-      "id": "b8e2c1a1-d4f7-4a2e-9c3b-1a5e6f8d9b2c",
+      "id": "971aa7ab-4fb6-4acb-b8b4-4af3d0cacaa7",
       "name": "Upsert Dealers",
       "credentials": {
         "postgres": {
@@ -146,10 +146,10 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        1568,
-        -112
+        3200,
+        672
       ],
-      "id": "f42121d2-8167-4b92-8b24-968285e97b66",
+      "id": "5a2a5163-467e-4440-b5b4-204a04384b26",
       "name": "Write Carousel Hints",
       "credentials": {
         "postgres": {
@@ -166,10 +166,10 @@
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
       "position": [
-        896,
-        -112
+        2304,
+        672
       ],
-      "id": "6c11caca-f17f-42a7-81c1-e700136fdc65",
+      "id": "6920d194-d2b7-4bcc-9d01-a014cea086f0",
       "name": "Loop Over Items1"
     },
     {
@@ -181,10 +181,10 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        1792,
-        -96
+        3424,
+        704
       ],
-      "id": "1bda3376-0950-4a5d-aaf3-aeb94960f6fa",
+      "id": "869752c3-7a22-46c4-b02c-c50355cfa081",
       "name": "Mark Artifacts Processed",
       "credentials": {
         "postgres": {
@@ -252,10 +252,10 @@
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3.4,
       "position": [
-        1120,
-        224
+        2528,
+        1008
       ],
-      "id": "fd61dd04-1ca1-465a-98a9-b442b9d41f18",
+      "id": "f604e034-e20d-42d1-864f-8827ededebcd",
       "name": "Switch"
     },
     {
@@ -267,10 +267,10 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        1344,
-        304
+        2752,
+        1088
       ],
-      "id": "74a5df77-adaf-4098-89d8-4607bd0bb333",
+      "id": "b4fc4f4a-234b-48ef-ab19-f0adcbbb63c5",
       "name": "Update Artifacts Processing With Retry",
       "credentials": {
         "postgres": {
@@ -285,16 +285,18 @@
         "url": "http://dbt_runner:8080/dbt/build",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"intent\": \"{{$json.intent}}\"\n}",
-        "options": {}
+        "jsonBody": "={\n  \"intent\": \"{{$json.intent}}\",\n  \"full_refresh\": true\n}",
+        "options": {
+          "timeout": 900000
+        }
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        1344,
-        -304
+        2752,
+        480
       ],
-      "id": "76854b89-1ca8-4129-9319-ed7082640650",
+      "id": "aa193d33-1e83-42af-8631-2acffb1c97e6",
       "name": "Execute DBT Build"
     },
     {
@@ -304,14 +306,25 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1120,
-        -304
+        2528,
+        480
       ],
-      "id": "e0cfe20b-82a6-41a4-a574-a0eaa4b9cb11",
+      "id": "ef062d1c-a63e-4d7e-9e7d-177bc8a395e3",
       "name": "Set DBT Params"
     }
   ],
-  "pinData": {},
+  "pinData": {
+    "After Scrape": [
+      {
+        "json": {
+          "success": true
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ]
+  },
   "connections": {
     "After Scrape": {
       "main": [
@@ -494,7 +507,7 @@
     "executionOrder": "v1",
     "availableInMCP": false
   },
-  "versionId": "47b71b3d-b315-4b84-8daf-92493c73efb3",
+  "versionId": "5a7d07ff-7356-4298-8591-a653e6e20b00",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179"

@@ -10,10 +10,10 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        640,
-        208
+        1120,
+        320
       ],
-      "id": "ef55e48a-79f2-4b65-98c2-7c4eaeb7339c",
+      "id": "b8df12fe-b392-4e4e-b0f0-0987c1b884fd",
       "name": "Get Batch to Process",
       "credentials": {
         "postgres": {
@@ -29,10 +29,10 @@
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
       "position": [
-        1760,
-        208
+        2272,
+        496
       ],
-      "id": "a200369d-a0d4-4e90-8330-46ef4e381809",
+      "id": "e98d64f4-08a0-48e7-8256-d28d2985ab9c",
       "name": "Loop Over Items"
     },
     {
@@ -56,10 +56,10 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        1984,
-        208
+        2480,
+        512
       ],
-      "id": "70152e10-4fdd-4312-9ac4-2416613fcc53",
+      "id": "d68afffe-ce9d-463a-add9-bb8d9208879e",
       "name": "HTTP Request"
     },
     {
@@ -69,10 +69,10 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1104,
-        192
+        1568,
+        320
       ],
-      "id": "81d18339-2cda-459e-b224-2f759a450687",
+      "id": "c4169916-3ec4-4e98-a742-c070c966a989",
       "name": "Create Run Id"
     },
     {
@@ -82,10 +82,10 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2208,
-        288
+        2688,
+        576
       ],
-      "id": "a65eb621-7eca-4224-b31b-ba04e04f84d4",
+      "id": "1ceee330-f8c7-469d-8b08-82cb9a2691f4",
       "name": "Code in JavaScript"
     },
     {
@@ -97,10 +97,10 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        2432,
-        -32
+        3152,
+        160
       ],
-      "id": "8c439651-b2e5-48d3-b1cf-562cbd4e6a02",
+      "id": "b417829c-9f66-4fbb-80d1-8315a28ded9e",
       "name": "Execute a SQL query",
       "credentials": {
         "postgres": {
@@ -117,10 +117,10 @@
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
       "position": [
-        1984,
-        -64
+        2720,
+        144
       ],
-      "id": "18ac1c04-7e50-4ee9-81b1-b3f3a87fd70c",
+      "id": "b1e23439-7721-4eb9-9923-4f55664e37d0",
       "name": "Loop Over Items1"
     },
     {
@@ -132,10 +132,10 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        1312,
-        208
+        1792,
+        320
       ],
-      "id": "f75c1e89-334c-4abb-960e-0b4189ee8899",
+      "id": "2c3e5644-6a46-4034-bd57-6fffed159164",
       "name": "Insert Run Row",
       "credentials": {
         "postgres": {
@@ -153,10 +153,10 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        2208,
-        -272
+        2992,
+        -16
       ],
-      "id": "ee8568d8-9e24-40e2-9ac3-ee114521037b",
+      "id": "4879c7c1-787f-4426-a801-61ac9c777098",
       "name": "Mark Run Done",
       "credentials": {
         "postgres": {
@@ -173,10 +173,10 @@
       "type": "n8n-nodes-base.aggregate",
       "typeVersion": 1,
       "position": [
-        2208,
-        -80
+        2992,
+        160
       ],
-      "id": "b5f841f6-7d36-419d-b38f-04c21c0ce0db",
+      "id": "fe750991-76f8-422a-9508-9a381125a3c2",
       "name": "Aggregate"
     },
     {
@@ -201,10 +201,10 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        2432,
-        -272
+        3152,
+        -16
       ],
-      "id": "3fd58e82-38a8-44ec-8bd6-ab94d5c46b7b",
+      "id": "7f81f241-b2a5-4945-87e0-ecc88488f1f2",
       "name": "Call 'Parse Detail Pages'"
     },
     {
@@ -222,7 +222,7 @@
                 "conditions": [
                   {
                     "leftValue": "={{ $items(\"Get Batch to Process\").length }}",
-                    "rightValue": 200,
+                    "rightValue": 150,
                     "operator": {
                       "type": "number",
                       "operation": "gte"
@@ -266,10 +266,10 @@
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3.4,
       "position": [
-        864,
-        208
+        1344,
+        320
       ],
-      "id": "eae4165d-3a46-4697-a6f5-751b060e83bb",
+      "id": "227746a7-d7ed-4bab-bd32-394db63b1e7e",
       "name": "Switch"
     },
     {
@@ -279,10 +279,10 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1536,
-        208
+        2016,
+        320
       ],
-      "id": "9ff67da8-88cc-4407-8b28-b9375ac8cc2a",
+      "id": "38f891d7-0dfe-4963-9b71-4fb31b190975",
       "name": "Get Batch"
     },
     {
@@ -290,7 +290,8 @@
         "rule": {
           "interval": [
             {
-              "field": "hours"
+              "field": "hours",
+              "triggerAtMinute": 5
             }
           ]
         }
@@ -298,10 +299,10 @@
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.3,
       "position": [
-        0,
-        208
+        448,
+        432
       ],
-      "id": "93980ac2-5dea-4bf0-adfa-721092698dea",
+      "id": "186a6bb6-4696-472e-8470-5bda72f2e46f",
       "name": "Schedule Trigger"
     },
     {
@@ -332,10 +333,10 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
-        416,
-        208
+        896,
+        368
       ],
-      "id": "03b5587f-8068-413f-a009-c317ac5f1ccc",
+      "id": "6f0f7b8d-34c0-49a8-9db9-858634f0085c",
       "name": "If"
     },
     {
@@ -347,10 +348,10 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        208,
-        208
+        672,
+        432
       ],
-      "id": "329b4a3a-b1e5-4879-9c3f-60b655f7dcac",
+      "id": "44c75f0f-7b24-4b74-ada4-bda5bcd858f8",
       "name": "Execute a SQL query1",
       "credentials": {
         "postgres": {
@@ -367,10 +368,10 @@
       "type": "n8n-nodes-base.wait",
       "typeVersion": 1.1,
       "position": [
-        432,
-        384
+        1120,
+        528
       ],
-      "id": "21689a25-9923-4d77-b307-9654bd157f00",
+      "id": "d717c93f-8563-4b5c-8b1e-d414a6bb4ae9",
       "name": "Wait",
       "webhookId": "28e39f27-4c1e-42bd-8043-8e6608b2557a"
     },
@@ -382,10 +383,10 @@
       "type": "n8n-nodes-base.aggregate",
       "typeVersion": 1,
       "position": [
-        1536,
-        400
+        2192,
+        224
       ],
-      "id": "store-total-agg-001",
+      "id": "f3f88d9a-8d5c-44cd-97b7-2cccc9f57bc1",
       "name": "Store Total (Aggregate)"
     },
     {
@@ -397,10 +398,10 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        1760,
-        400
+        2368,
+        224
       ],
-      "id": "store-total-pg-001",
+      "id": "fc451c0b-7f96-4877-9a9d-5f8b7c134bb7",
       "name": "Store Total Count",
       "credentials": {
         "postgres": {
@@ -416,10 +417,10 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2208,
-        480
+        2688,
+        416
       ],
-      "id": "check-milestone-001",
+      "id": "fbafbbf8-1fd9-4ba6-8f17-aa8245ee14ac",
       "name": "Check Milestone"
     },
     {
@@ -431,10 +432,10 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        2432,
-        480
+        2912,
+        416
       ],
-      "id": "update-progress-001",
+      "id": "07ce8a24-dd7f-4c23-a446-c29fd9a582e1",
       "name": "Update Progress",
       "credentials": {
         "postgres": {
@@ -583,8 +584,7 @@
             "type": "main",
             "index": 0
           }
-        ],
-        []
+        ]
       ]
     },
     "Get Batch": {
@@ -685,7 +685,7 @@
     "callerPolicy": "workflowsFromSameOwner",
     "errorWorkflow": "rJfFKS2DGRAn_IPJR1xTc"
   },
-  "versionId": "bfe3a4b3-e9c2-4a03-a4e1-8f8754b081fa",
+  "versionId": "acd8b928-2365-40ba-9b6f-4ea549599440",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179"
