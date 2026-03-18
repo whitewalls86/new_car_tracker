@@ -174,8 +174,9 @@ with tab1:
                 WHEN price_age_hours >= 3   THEN 'Expiring 18-21h'
                 ELSE                             'Expiring 21-24h'
             END AS expiry_bucket,
-            COUNT(*) FILTER (WHERE price_tier = 1) AS tier1,
-            COUNT(*) FILTER (WHERE price_tier = 2) AS tier2,
+            COUNT(*) FILTER (WHERE price_tier = 1 AND NOT is_full_details_stale) AS tier1,
+            COUNT(*) FILTER (WHERE price_tier = 2 AND NOT is_full_details_stale) AS tier2,
+            COUNT(*) FILTER (WHERE is_full_details_stale) AS full_details_stale,
             COUNT(*) AS total
         FROM ops.ops_vehicle_staleness
         GROUP BY 1
@@ -183,9 +184,9 @@ with tab1:
     """)
     if not freshness_df.empty:
         fig = px.bar(
-            freshness_df, x="expiry_bucket", y=["tier1", "tier2"], barmode="stack",
+            freshness_df, x="expiry_bucket", y=["tier1", "tier2", "full_details_stale"], barmode="stack",
             labels={"value": "VINs", "expiry_bucket": "Expires In"},
-            color_discrete_map={"tier1": "#3498db", "tier2": "#95a5a6"},
+            color_discrete_map={"tier1": "#3498db", "tier2": "#95a5a6", "full_details_stale": "#e67e22"},
         )
         fig.update_layout(xaxis_title=None, yaxis_title="Active VINs", legend_title="Price Tier")
         st.plotly_chart(fig, use_container_width=True)
