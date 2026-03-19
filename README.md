@@ -7,33 +7,40 @@ CarTracker tracks local and national new car inventory on Cars.com, collecting a
 Six containerized services orchestrated via Docker Compose:
 
 ```
-Schedule Trigger (12h)              Schedule Trigger (1h)
+Schedule Trigger (30 min)           Schedule Trigger (1h)
         |                                   |
-   Scrape Listings                  Scrape Detail Pages
-   (n8n workflow)                    (n8n workflow)
-        |                                   |
-   Scraper API ──── ThreadPool(12) ────> Scraper API
-   POST /scrape_results                 POST /scrape_detail
-        |                                   |
-   Job Poller (1 min)               raw_artifacts table
-   polls completed jobs                     |
-        |                              dbt_runner
-   raw_artifacts table              (incremental build)
-        |                                   |
-   Results Processing               Parse Detail Pages
-   (n8n sub-workflow)                (n8n sub-workflow)
-        |                                   |
-   srp_observations              detail_observations
-                                 detail_carousel_hints
-                                 dealers
+   Scrape Listings              Scrape Detail Pages
+   (n8n workflow)                (n8n workflow)
+        |                               |
+  /advance_rotation            waits if search scrape
+  claims next slot              is running or SRP
+  (6 slots, ~4h gap)           artifacts are pending
+        |                               |
+  Explode Configs × Scopes      Scraper API
+  fan-out per search_key         POST /scrape_detail
+        |                               |
+   Scraper API                  raw_artifacts table
+   POST /scrape_results                 |
+   (async, returns job_id)        dbt_runner
+        |                        (incremental build)
+   Job Poller (1 min)                   |
+   polls /jobs/completed          Parse Detail Pages
+   inserts artifacts              (n8n sub-workflow)
+        |                               |
+   Results Processing         detail_observations
+   (n8n sub-workflow)         detail_carousel_hints
+        |                         dealers
+   srp_observations
 ```
+
+**Discovery mode:** SRP pages are sorted `listed_at_desc` and paginated until ≥80% of VINs on a page are already known (seen in the last 14 days) or 3 consecutive pages yield 0 new VINs — whichever comes first. Max 30 pages per job. On Akamai rate-limit (`ERR_HTTP2_PROTOCOL_ERROR`), the scraper stops immediately and the job fails.
 
 ### Services
 
 | Service | Port | Description |
 |---------|------|-------------|
 | **postgres** | 5432 | PostgreSQL 16 — all config, raw data, parsed observations, and analytics |
-| **scraper** | 8000 | FastAPI — fetches search results and detail pages via curl_cffi (Cloudflare bypass). Async job queue with ThreadPoolExecutor(12). Admin UI at `/admin` for search config CRUD |
+| **scraper** | 8000 | FastAPI — fetches SRP and detail pages via Playwright (Akamai bypass). Async job queue with ThreadPoolExecutor(6). Startup recovery clears orphaned jobs/runs on container restart. Admin UI at `/admin` for search config CRUD |
 | **n8n** | 5678 | Workflow orchestration — 7 workflows handle scraping, polling, parsing, cleanup, and error handling |
 | **dbt** | — | dbt-postgres 1.8.2 — 16 models across staging/intermediate/marts/ops schemas. Runs on-demand via dbt_runner |
 | **dbt_runner** | 8081 | Lightweight FastAPI wrapper that lets n8n trigger `dbt build` via HTTP |
@@ -43,13 +50,13 @@ Schedule Trigger (12h)              Schedule Trigger (1h)
 
 | Workflow | Trigger | Description |
 |----------|---------|-------------|
-| **Scrape Listings** | Every 12h | Fires local + national searches for each enabled config with 1-5s jitter. Rotates sort order each run. |
-| **Job Poller** | Every 1 min | Expires orphaned jobs (>30 min), polls completed jobs from the API, inserts artifacts, marks runs done |
-| **Scrape Detail Pages** | Every 1h | Waits if any scrape is running. Queries stale VINs (1 per dealer), fetches detail pages, batch-inserts artifacts, triggers parse + dbt build |
+| **Scrape Listings** | Every 30 min | Polls `POST /advance_rotation` — claims the next due rotation slot (6 slots, ≥239 min idle required). Explodes each slot's configs × scopes into individual async scrape jobs. |
+| **Job Poller** | Every 1 min | Expires orphaned jobs (>30 min), polls `/jobs/completed`, inserts artifacts, marks runs done |
+| **Scrape Detail Pages** | Every 1h | Waits if a search scrape is running or fresh SRP artifacts are unprocessed. Queries stale VINs (1 per dealer), fetches detail pages, batch-inserts artifacts, triggers parse + dbt build |
 | **Results Processing** | Sub-workflow | Parses SRP HTML artifacts into `srp_observations` rows |
 | **Parse Detail Pages** | Sub-workflow | Parses detail HTML into `detail_observations`, `detail_carousel_hints`, and `dealers` |
 | **Cleanup Artifacts** | Daily | Applies retention rules to old raw HTML files |
-| **Error Handler** | On error | Sends Telegram alerts when any workflow fails |
+| **Error Handler** | On error | Logs to `pipeline_errors` table and sends Telegram alerts when any workflow fails |
 
 ## Data Model
 
@@ -60,7 +67,7 @@ Schedule Trigger (12h)              Schedule Trigger (1h)
 - `detail_observations` — parsed vehicle detail pages (full specs, listing state)
 - `detail_carousel_hints` — similar-vehicle prices from detail page carousels
 - `dealers` — dealer names and IDs parsed from detail pages
-- `search_configs` — search definitions (zip, radius, make/model, sort rotation)
+- `search_configs` — search definitions (zip, radius, make/model, sort rotation, rotation_slot, last_queued_at)
 - `runs` — run lifecycle tracking (status, trigger, progress_count, total_count)
 - `scrape_jobs` — async job tracking (queued/running/completed/fetched/failed)
 - `pipeline_errors` — error log for n8n Error Handler
@@ -92,10 +99,11 @@ Schedule Trigger (12h)              Schedule Trigger (1h)
 
 ## Refresh Strategy
 
-- **Search scrapes** run every 12 hours (sort order rotates: list_price, listed_at_desc, best_deal, best_match_desc)
+- **Search scrapes** use slot-based rotation: 6 slots of 1-2 search configs each fire ~once per day with ≥4h spacing between slots. The 30-min n8n schedule is a dumb clock; the `min_idle_minutes=239` gate in `/advance_rotation` is authoritative. Sort order is `listed_at_desc` (discovery mode — surfaces newly listed vehicles first).
+- **Discovery mode** stops pagination early: if ≥80% of VINs on a page were already seen in the last 14 days, or 3 consecutive pages yield 0 new VINs, the job exits. Max 30 pages per job. This keeps daily request volume low (~200–500/day) to avoid Akamai rate limiting.
 - **Detail scrapes** run hourly, targeting 1 stale VIN per dealer (leverages carousel hints for neighboring inventory)
 - **Price data** is stale after 24 hours; **full details** after 7 days
-- **Detail scrapes wait** if a search scrape is already running (avoids redundant work)
+- **Detail scrapes wait** if a search scrape is running or if SRP artifacts from the last 45 minutes haven't been processed yet
 - dbt builds run incrementally after each detail scrape completes
 
 ## Running Locally
@@ -151,7 +159,7 @@ docker compose run --rm dbt build
 
 ### Add search configurations
 
-Use the admin UI at `http://localhost:8000/admin` to add make/model searches. The setup script loads one example (Honda CR-V Hybrid). Each config defines a zip code, radius, make/model filters, and sort rotation.
+Use the admin UI at `http://localhost:8000/admin` to add make/model searches. The setup script loads one example (Honda CR-V Hybrid). Each config defines a zip code, radius, make/model filters, and a `rotation_slot` (1–6) that controls which daily firing window it belongs to. Configs sharing a slot fire together; slots fire ~4 hours apart.
 
 ### Service URLs
 
@@ -168,11 +176,11 @@ Use the admin UI at `http://localhost:8000/admin` to add make/model searches. Th
 ```
 cartracker-scraper/
   scraper/
-    app.py                  # FastAPI app — routes, job queue, thread pool
+    app.py                  # FastAPI app — routes, async job queue, startup recovery
     routers/admin.py        # /admin CRUD UI for search_configs
     processors/
-      scrape_results.py     # SRP page fetcher (curl_cffi)
-      scrape_detail.py      # Detail page fetcher
+      scrape_results.py     # SRP page fetcher — discovery mode, VIN breakpoint
+      scrape_detail.py      # Detail page fetcher (Playwright)
       parse_detail_page.py  # HTML parser for detail pages
       results_page_cards.py # HTML parser for SRP cards
       browser.py            # Browser singleton (Playwright)
