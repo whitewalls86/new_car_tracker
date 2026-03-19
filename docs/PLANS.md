@@ -34,6 +34,7 @@
 | 22 | **dbt model cleanup** — audited all 19 models; deleted 3 orphans (`int_carousel_hints_unmapped`, `int_listing_current_state`, `int_vin_current_state`) + schemas. 16 active models all have downstream consumers. | 2026-03-17 |
 | 17 | **Update README** — full rewrite: architecture diagram, all 6 services, 7 workflows, 16 dbt models, data model, refresh strategy, setup steps, project structure | 2026-03-17 |
 | 23 | **Fresh install support** — updated `schema_new.sql` (pg_dump), `.env.example`, `setup.ps1` script, example search config seed, README quick-start guide | 2026-03-17 |
+| 26.3 | **Reduce max_workers 12→6** — ThreadPoolExecutor halved for immediate rate-limit relief | 2026-03-19 |
 
 ---
 
@@ -84,16 +85,15 @@ Expand Pipeline Health section with:
 
 | Priority | Item | Notes |
 |----------|------|-------|
-| 1 | **26.3** — Reduce max_workers 12→6 | 5-min fix, immediate relief |
-| 2 | **26.1** — Stagger search keys | Biggest reliability gain |
-| 3 | **26.2** — Retry failed SRP pages | Recovers remaining failures |
-| 4 | **20** — dbt + Postgres health in dashboard | Operational visibility |
-| 5 | **25.2/25.3** — Bridge dealer ID systems | Unlocks dealer data in mart |
-| 6 | **14.1** — VIN case normalization | Defensive — only 1 affected VIN |
-| 7 | **14.5** — Price events dedup | Defensive — only 1 duplicate found |
-| 8 | **16.3** — Monitor detail volume | Wait until ~March 20 |
-| 9 | **14.9 / 14.11 / 14.12** — Minor defensive fixes | Low risk |
-| 10 | **5** — Webhook triggers | Nice-to-have |
+| 1 | **26.1** — Wire n8n to use `/advance_rotation` | Backend done; n8n workflow + DB migration remain |
+| 2 | **26.2** — Retry failed SRP pages | Recovers remaining failures |
+| 3 | **20** — dbt + Postgres health in dashboard | Operational visibility |
+| 4 | **25.2/25.3** — Bridge dealer ID systems | Unlocks dealer data in mart |
+| 5 | **14.1** — VIN case normalization | Defensive — only 1 affected VIN |
+| 6 | **14.5** — Price events dedup | Defensive — only 1 duplicate found |
+| 7 | **16.3** — Monitor detail volume | Wait until ~March 20 |
+| 8 | **14.9 / 14.11 / 14.12** — Minor defensive fixes | Low risk |
+| 9 | **5** — Webhook triggers | Nice-to-have |
 
 ---
 
@@ -125,22 +125,44 @@ With `customer_id` in `detail_observations`, the `dealer_unenriched` check in `o
 
 ## Plan 26: Search Scrape Reliability — Stagger + Retry
 
-**Status:** Not started
+**Status:** 26.3 done. 26.1 backend done — n8n workflow pending.
 **Priority:** High
 
 Currently all 9 search configs fire simultaneously at :00 with 12 async workers. Cars.com's rate limiting is cumulative — early search keys succeed (~30% error rate), later ones hit a throttling threshold (~67% error rate). We're consistently getting only ~60% of requested pages.
 
-**26.1 — Stagger search keys across time**
-Instead of one run firing all searches at once, space each search key 10-15 minutes apart. Options:
-- Add a per-search-key n8n schedule (simplest, but 9 separate schedules)
-- Process one search key at a time sequentially within a single run (one job batch per key, wait for completion before next)
-- Add a `priority` / `scheduled_offset_minutes` column to `search_configs` and have Scrape Listings self-throttle
+**26.1 — Stagger search keys across time (rotation index approach)**
+
+Approach: workflow runs every 40 min, claims one search key per run via `/search_configs/advance_rotation`, fires only that key's scopes, then stops. With 9 configs × 40 min = 6h cycle, each config gets scraped ~twice a day, spaced ~12h apart.
+
+**Backend (done 2026-03-19):**
+- Added `rotation_order integer` and `last_queued_at timestamptz` to `search_configs`
+- New `POST /search_configs/advance_rotation?min_idle_minutes=719` endpoint — atomically claims next due config (SELECT FOR UPDATE SKIP LOCKED), sets `last_queued_at = now()`, returns `{search_key, params, scopes}` or `{search_key: null}` if nothing due
+
+**DB migration to run:**
+```sql
+ALTER TABLE search_configs ADD COLUMN IF NOT EXISTS rotation_order integer;
+ALTER TABLE search_configs ADD COLUMN IF NOT EXISTS last_queued_at timestamptz;
+
+-- Backfill rotation_order (alphabetical by search_key; adjust order as desired)
+UPDATE search_configs SET rotation_order = sub.rn
+FROM (
+    SELECT search_key, ROW_NUMBER() OVER (ORDER BY search_key) AS rn
+    FROM search_configs
+) sub
+WHERE search_configs.search_key = sub.search_key;
+```
+
+**n8n workflow changes needed (TODO):**
+1. Replace the "Load Search Configs" Postgres node with `POST /search_configs/advance_rotation`
+2. Add an IF node after it: if `search_key` is null → stop (nothing due yet)
+3. The existing scrape-jobs loop now only iterates over `scopes` for the one returned config
+4. Change the schedule trigger from twice-daily to every 40 minutes
 
 **26.2 — Retry failed SRP pages**
 After each search-key's jobs complete, identify artifacts with `error IS NOT NULL` and re-queue them with a delay. Two passes at most — recovers transient failures without infinite loops.
 
-**26.3 — Reduce max_workers (quick win)**
-Drop `ThreadPoolExecutor` from 12 → 6 as an interim measure. Less aggressive, easier on cars.com's rate limiter while 26.1 is being built.
+**26.3 — Reduce max_workers (done 2026-03-19)**
+Dropped `ThreadPoolExecutor` from 12 → 6. Less aggressive on cars.com's rate limiter.
 
 ---
 

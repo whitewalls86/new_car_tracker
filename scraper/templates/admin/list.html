@@ -14,6 +14,9 @@
     <div class="config-header">
         <div>
             <h3>
+                {% if c.rotation_order is not none %}
+                    <span class="badge badge-scope" title="Rotation position">#{{ c.rotation_order }}</span>
+                {% endif %}
                 {{ c.search_key }}
                 {% if c.enabled %}
                     <span class="badge badge-active">Active</span>
@@ -21,6 +24,14 @@
                     <span class="badge badge-disabled">Disabled</span>
                 {% endif %}
             </h3>
+            <small style="color: var(--pico-muted-color);">
+                Last queued:
+                {% if c.last_queued_at %}
+                    {{ c.last_queued_at.strftime("%Y-%m-%d %H:%M") }} UTC
+                {% else %}
+                    Never
+                {% endif %}
+            </small>
         </div>
         <div class="config-actions">
             <form method="get" action="/admin/{{ c.search_key }}/edit">

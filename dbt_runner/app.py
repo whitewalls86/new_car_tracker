@@ -1,13 +1,49 @@
 from __future__ import annotations
 
+import os
 import re
 import shlex
 import subprocess
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+import psycopg2
 from fastapi import FastAPI, Body, HTTPException
 
 app = FastAPI()
+
+DB_KWARGS = {
+    "host": "postgres",
+    "dbname": "cartracker",
+    "user": "cartracker",
+    "password": os.environ.get("POSTGRES_PASSWORD", ""),
+}
+_MODEL_COUNTS_RE = re.compile(r"PASS=(\d+)\s+WARN=\d+\s+ERROR=(\d+)\s+SKIP=(\d+)")
+
+
+def _record_run(started_at: datetime, finished_at: datetime, ok: bool,
+                intent: Optional[str], select: List[str],
+                stdout: str, returncode: int) -> None:
+    m = _MODEL_COUNTS_RE.search(stdout)
+    models_pass = int(m.group(1)) if m else None
+    models_error = int(m.group(2)) if m else None
+    models_skip = int(m.group(3)) if m else None
+    duration_s = (finished_at - started_at).total_seconds()
+    try:
+        conn = psycopg2.connect(**DB_KWARGS)
+        with conn, conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO dbt_runs
+                   (started_at, finished_at, duration_s, ok, intent, select_args,
+                    models_pass, models_error, models_skip, returncode)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                (started_at, finished_at, duration_s, ok, intent,
+                 " ".join(select), models_pass, models_error, models_skip, returncode),
+            )
+        conn.close()
+    except Exception:
+        pass  # never let DB logging break the build response
+
 
 # Update these to match your dbt model names (you already confirmed the detail stg_ targets)
 INTENT_TO_SELECT: Dict[str, List[str]] = {
@@ -81,10 +117,15 @@ def dbt_build(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
     if exclude:
         cmd += ["--exclude", *exclude]
 
+    started_at = datetime.now(timezone.utc)
     proc = subprocess.run(cmd, capture_output=True, text=True)
+    finished_at = datetime.now(timezone.utc)
+
+    ok = proc.returncode == 0
+    _record_run(started_at, finished_at, ok, intent, select, proc.stdout, proc.returncode)
 
     result = {
-        "ok": proc.returncode == 0,
+        "ok": ok,
         "returncode": proc.returncode,
         "intent": intent,
         "select": select,

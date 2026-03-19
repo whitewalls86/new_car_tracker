@@ -347,7 +347,9 @@ CREATE TABLE public.search_configs (
     source text DEFAULT 'cars.com'::text NOT NULL,
     params jsonb NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    rotation_order integer,
+    last_queued_at timestamp with time zone
 );
 
 

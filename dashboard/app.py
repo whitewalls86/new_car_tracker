@@ -217,31 +217,59 @@ with tab1:
     else:
         st.info("No detail page artifacts in the last 30 days.")
 
-    # -- Row 3b: Search scrape success rate
-    st.subheader("Search Scrape Success Rate (Last 30 Days)")
+    # -- Row 3b: Search scrape success rate by run
+    st.subheader("Search Scrape Success Rate (Last 7 Days, by Run)")
     df = run_query("""
         SELECT
-            date_trunc('day', fetched_at AT TIME ZONE 'America/Chicago') AS day,
+            r.run_id,
+            to_char(r.started_at AT TIME ZONE 'America/Chicago', 'Mon DD HH24:MI') AS run_label,
+            r.started_at,
             CASE
-                WHEN http_status = 200 THEN '200 OK'
-                WHEN http_status = 403 THEN '403 Blocked'
-                WHEN http_status IS NULL THEN 'Error/Timeout'
-                ELSE http_status::text
+                WHEN a.http_status = 200 THEN '200 OK'
+                WHEN a.http_status = 403 THEN '403 Blocked'
+                WHEN a.http_status IS NULL THEN 'Error/Timeout'
+                ELSE a.http_status::text
             END AS result,
             COUNT(*) AS fetches
-        FROM raw_artifacts
-        WHERE artifact_type = 'results_page'
-          AND fetched_at > now() - interval '30 days'
-        GROUP BY 1, 2
-        ORDER BY 1, 2
+        FROM runs r
+        JOIN raw_artifacts a ON a.run_id = r.run_id
+        WHERE r.trigger = 'search scrape'
+          AND r.started_at > now() - interval '7 days'
+          AND a.artifact_type = 'results_page'
+        GROUP BY r.run_id, r.started_at, result
+        ORDER BY r.started_at, result
     """)
     if not df.empty:
-        fig = px.bar(df, x="day", y="fetches", color="result", barmode="stack",
+        fig = px.bar(df, x="run_label", y="fetches", color="result", barmode="stack",
                      color_discrete_map={"200 OK": "#2ecc71", "403 Blocked": "#e74c3c", "Error/Timeout": "#95a5a6"})
         fig.update_layout(xaxis_title=None, yaxis_title="Fetches", legend_title=None)
         st.plotly_chart(fig, use_container_width=True)
     else:
-        st.info("No search page artifacts in the last 30 days.")
+        st.info("No search scrape artifacts in the last 7 days.")
+
+    # -- Search scrape jobs
+    st.subheader("Search Scrape Jobs (Last 7 Days)")
+    df = run_query("""
+        SELECT
+            r.run_id,
+            r.started_at AT TIME ZONE 'America/Chicago' AS run_started,
+            r.status AS run_status,
+            j.search_key,
+            j.scope,
+            j.status AS job_status,
+            j.artifact_count,
+            j.retry_count,
+            j.error
+        FROM runs r
+        JOIN scrape_jobs j ON j.run_id = r.run_id
+        WHERE r.trigger = 'search scrape'
+          AND r.started_at > now() - interval '7 days'
+        ORDER BY r.started_at DESC, j.search_key, j.scope
+    """)
+    if df.empty:
+        st.info("No search scrape jobs in the last 7 days.")
+    else:
+        st.dataframe(df, use_container_width=True, hide_index=True)
 
     # -- Row 4: Runs over time
     st.subheader("Runs Over Time")
@@ -315,6 +343,67 @@ with tab1:
         st.success("No pipeline errors recorded.")
     else:
         st.dataframe(df, use_container_width=True, hide_index=True)
+
+    st.subheader("dbt Build History")
+    df = run_query("SELECT * FROM dbt_runs ORDER BY started_at DESC LIMIT 10")
+    if df.empty:
+        st.info("No dbt builds recorded yet.")
+    else:
+        last = df.iloc[0]
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            ts = pd.to_datetime(last["started_at"]).tz_convert("America/Chicago")
+            st.metric("Last Build", ts.strftime("%b %d %H:%M"))
+        with col2:
+            st.metric("Duration", f"{last['duration_s']:.0f}s" if pd.notna(last["duration_s"]) else "—")
+        with col3:
+            st.metric("Status", "✓ OK" if last["ok"] else "✗ Failed")
+        with col4:
+            st.metric("Models Passed", int(last["models_pass"]) if pd.notna(last["models_pass"]) else "—")
+
+        display = df[["started_at", "duration_s", "ok", "intent", "models_pass", "models_error"]].copy()
+        display["started_at"] = pd.to_datetime(display["started_at"]).dt.tz_convert("America/Chicago").dt.strftime("%b %d %H:%M")
+        display["status"] = display["ok"].map({True: "✓ OK", False: "✗ Failed"})
+        display = display[["started_at", "duration_s", "status", "intent", "models_pass", "models_error"]]
+        display.columns = ["Time", "Duration (s)", "Status", "Intent", "Pass", "Error"]
+        st.dataframe(display, use_container_width=True, hide_index=True)
+
+    st.subheader("Postgres Health")
+    df_conn = run_query("""
+        SELECT
+            COUNT(*) FILTER (WHERE state = 'active') AS active,
+            COUNT(*) FILTER (WHERE state = 'idle in transaction') AS idle_in_tx,
+            ROUND(MAX(CASE WHEN state = 'active' AND query_start IS NOT NULL
+                          THEN EXTRACT(EPOCH FROM (now() - query_start)) END)::numeric, 1) AS longest_query_s
+        FROM pg_stat_activity
+        WHERE backend_type = 'client backend'
+    """)
+    if not df_conn.empty:
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Active Connections", int(df_conn["active"].iloc[0]))
+        with col2:
+            st.metric("Idle-in-Transaction", int(df_conn["idle_in_tx"].iloc[0]))
+        with col3:
+            val = df_conn["longest_query_s"].iloc[0]
+            st.metric("Longest Query (s)", f"{val:.1f}" if pd.notna(val) else "0")
+
+    df_slow = run_query("""
+        SELECT
+            pid,
+            state,
+            ROUND(EXTRACT(EPOCH FROM (now() - query_start))::numeric, 1) AS duration_s,
+            LEFT(query, 80) AS query
+        FROM pg_stat_activity
+        WHERE state = 'active'
+          AND query_start < now() - interval '5 seconds'
+          AND backend_type = 'client backend'
+        ORDER BY duration_s DESC
+    """)
+    if df_slow.empty:
+        st.success("No long-running queries (>5s).")
+    else:
+        st.dataframe(df_slow, use_container_width=True, hide_index=True)
 
 
 # ---------------------------------------------------------------------------

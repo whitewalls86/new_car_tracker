@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Body, HTTPException
 from fastapi.staticfiles import StaticFiles
 from typing import Any, Dict, List, Optional
+import json
 import os
 import uuid
 import threading
@@ -18,7 +19,37 @@ from db import get_pool, close_pool
 # ---------------------------------------------------------------------------
 _jobs: Dict[str, Dict[str, Any]] = {}
 _jobs_lock = threading.Lock()
-_executor = ThreadPoolExecutor(max_workers=12)
+_executor = ThreadPoolExecutor(max_workers=4)
+
+# Sync DB config for background threads (psycopg2, not asyncpg)
+_SYNC_DB_KWARGS = {
+    "host": "postgres",
+    "dbname": "cartracker",
+    "user": "cartracker",
+    "password": os.environ.get("POSTGRES_PASSWORD", ""),
+}
+
+
+def _fetch_known_vins(search_key: str, scope: str) -> List[str]:
+    """Fetch VINs observed for this search_key+scope in the last 14 days.
+    Uses psycopg2 (sync) so it works in background threads."""
+    import psycopg2
+    try:
+        conn = psycopg2.connect(**_SYNC_DB_KWARGS)
+        with conn, conn.cursor() as cur:
+            cur.execute("""
+                SELECT DISTINCT s.vin
+                FROM srp_observations s
+                JOIN raw_artifacts a ON a.artifact_id = s.artifact_id
+                WHERE a.search_key = %s
+                  AND a.search_scope = %s
+                  AND a.fetched_at > now() - interval '14 days'
+                  AND s.vin IS NOT NULL
+            """, (search_key, scope))
+            return [row[0] for row in cur.fetchall()]
+        conn.close()
+    except Exception:
+        return []  # degrade gracefully — scrape without breakpoint
 
 
 def _run_scrape_job(job_id: str, run_id: str, search_key: str, scope: str, payload: dict):
@@ -33,6 +64,10 @@ def _run_scrape_job(job_id: str, run_id: str, search_key: str, scope: str, paylo
         _jobs[job_id]["status"] = "running"
         _jobs[job_id]["started_at"] = __import__("datetime").datetime.utcnow().isoformat()
     try:
+        # Discovery mode: inject known VINs if not already provided
+        if "known_vins" not in payload:
+            payload["known_vins"] = _fetch_known_vins(search_key, scope)
+
         result = scrape_results(run_id, search_key, scope, payload)
         artifacts = result.get("artifacts", [])
         with _jobs_lock:
@@ -48,7 +83,29 @@ def _run_scrape_job(job_id: str, run_id: str, search_key: str, scope: str, paylo
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: initialize DB pool
-    await get_pool()
+    pool = await get_pool()
+
+    # Recover orphaned runs/jobs from a previous container crash.
+    # Any run/job still 'running' or 'queued' at startup was lost in memory.
+    async with pool.acquire() as conn:
+        orphaned_jobs = await conn.execute("""
+            UPDATE scrape_jobs
+            SET status = 'failed', error = 'Orphaned by container restart'
+            WHERE status IN ('running', 'queued')
+        """)
+        orphaned_runs = await conn.execute("""
+            UPDATE runs
+            SET status = 'failed', finished_at = now(),
+                notes = 'Orphaned by container restart'
+            WHERE status = 'running'
+              AND trigger = 'search scrape'
+        """)
+    import logging
+    logging.getLogger("uvicorn").info(
+        "Startup recovery: %s orphaned jobs, %s orphaned runs marked failed",
+        orphaned_jobs, orphaned_runs,
+    )
+
     yield
     # Shutdown: close DB pool
     await close_pool()
@@ -118,6 +175,120 @@ def list_all_jobs() -> List[Dict[str, Any]]:
             {k: v for k, v in job.items() if k != "artifacts"}
             for job in _jobs.values()
         ]
+
+
+@app.get("/search_configs/{search_key}/known_vins")
+async def get_known_vins(search_key: str, scope: str = "national") -> Dict[str, Any]:
+    """Returns VINs observed for this search_key+scope in the last 14 days."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT DISTINCT s.vin
+            FROM srp_observations s
+            JOIN raw_artifacts a ON a.artifact_id = s.artifact_id
+            WHERE a.search_key = $1
+              AND a.search_scope = $2
+              AND a.fetched_at > now() - interval '14 days'
+              AND s.vin IS NOT NULL
+        """, search_key, scope)
+    return {"search_key": search_key, "scope": scope, "count": len(rows), "vins": [r["vin"] for r in rows]}
+
+
+@app.post("/search_configs/advance_rotation")
+async def advance_search_rotation(min_idle_minutes: int = 239) -> Dict[str, Any]:
+    """
+    Atomically claims the next rotation slot due for scraping.
+
+    Finds the slot with the oldest (or null) last_queued_at that has been
+    idle >= min_idle_minutes. Claims ALL configs in that slot by setting
+    last_queued_at = now(). Returns all configs in the slot so the caller
+    can launch scrape jobs for each.
+
+    Returns {"slot": null, "configs": []} when nothing is due.
+
+    Default min_idle_minutes=239 (~4h) for 6 slots across 24h.
+
+    Backward compat: configs without rotation_slot are returned individually
+    using the legacy single-config path.
+    """
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            # Find the next due slot
+            slot_row = await conn.fetchrow("""
+                SELECT rotation_slot
+                FROM search_configs
+                WHERE enabled = true
+                  AND rotation_slot IS NOT NULL
+                  AND (last_queued_at IS NULL
+                       OR last_queued_at < now() - make_interval(mins => $1))
+                GROUP BY rotation_slot
+                ORDER BY MIN(COALESCE(last_queued_at, '1970-01-01'::timestamptz)), rotation_slot
+                LIMIT 1
+            """, min_idle_minutes)
+
+            if slot_row is None:
+                # Fallback: try legacy single-config (no rotation_slot)
+                row = await conn.fetchrow("""
+                    SELECT search_key, params
+                    FROM search_configs
+                    WHERE enabled = true
+                      AND rotation_slot IS NULL
+                      AND (last_queued_at IS NULL
+                           OR last_queued_at < now() - make_interval(mins => $1))
+                    ORDER BY rotation_order NULLS LAST, search_key
+                    LIMIT 1
+                    FOR UPDATE SKIP LOCKED
+                """, min_idle_minutes)
+
+                if not row:
+                    return {"slot": None, "configs": []}
+
+                await conn.execute(
+                    "UPDATE search_configs SET last_queued_at = now() WHERE search_key = $1",
+                    row["search_key"],
+                )
+                raw_params = row["params"]
+                params = json.loads(raw_params) if isinstance(raw_params, str) else dict(raw_params)
+                return {
+                    "slot": None,
+                    "configs": [{
+                        "search_key": row["search_key"],
+                        "params": params,
+                        "scopes": params.get("scopes", ["local", "national"]),
+                    }],
+                }
+
+            slot = slot_row["rotation_slot"]
+
+            # Claim all configs in this slot
+            await conn.execute("""
+                UPDATE search_configs
+                SET last_queued_at = now()
+                WHERE enabled = true AND rotation_slot = $1
+            """, slot)
+
+            rows = await conn.fetch("""
+                SELECT search_key, params
+                FROM search_configs
+                WHERE enabled = true AND rotation_slot = $1
+                ORDER BY rotation_order NULLS LAST, search_key
+            """, slot)
+
+    configs = []
+    for row in rows:
+        raw_params = row["params"]
+        params = json.loads(raw_params) if isinstance(raw_params, str) else dict(raw_params)
+        configs.append({
+            "search_key": row["search_key"],
+            "params": params,
+            "scopes": params.get("scopes", ["local", "national"]),
+        })
+
+    return {
+        "slot": slot,
+        "configs": configs,
+    }
 
 
 @app.post("/process/results_pages")

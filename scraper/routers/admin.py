@@ -4,6 +4,7 @@ Admin UI routes for managing search_configs.
 import json
 import re
 from datetime import datetime, UTC
+from typing import Optional
 from fastapi import APIRouter, Request, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
@@ -45,8 +46,8 @@ def _row_to_dict(row) -> dict:
 async def list_searches(request: Request):
     pool = await get_pool()
     rows = await pool.fetch(
-        "SELECT search_key, enabled, source, params, created_at, updated_at "
-        "FROM search_configs ORDER BY enabled DESC, search_key"
+        "SELECT search_key, enabled, source, params, rotation_order, last_queued_at, created_at, updated_at "
+        "FROM search_configs ORDER BY enabled DESC, rotation_order NULLS LAST, search_key"
     )
     configs = [_row_to_dict(r) for r in rows]
     return templates.TemplateResponse("admin/list.html", {
@@ -78,7 +79,7 @@ async def new_search_form(request: Request):
 async def edit_search_form(request: Request, search_key: str):
     pool = await get_pool()
     row = await pool.fetchrow(
-        "SELECT search_key, enabled, source, params FROM search_configs WHERE search_key = $1",
+        "SELECT search_key, enabled, source, params, rotation_order, last_queued_at FROM search_configs WHERE search_key = $1",
         search_key,
     )
     if not row:
@@ -111,6 +112,7 @@ async def create_search(
     scope_local: bool = Form(False),
     scope_national: bool = Form(False),
     sort_rotation: list[str] = Form([]),
+    rotation_order: Optional[int] = Form(None),
     enabled: bool = Form(False),
 ):
     key = _slug(search_key)
@@ -154,9 +156,9 @@ async def create_search(
     pool = await get_pool()
     try:
         await pool.execute(
-            "INSERT INTO search_configs (search_key, enabled, params, created_at, updated_at) "
-            "VALUES ($1, $2, $3::jsonb, now(), now())",
-            key, enabled, json.dumps(params.model_dump()),
+            "INSERT INTO search_configs (search_key, enabled, params, rotation_order, created_at, updated_at) "
+            "VALUES ($1, $2, $3::jsonb, $4, now(), now())",
+            key, enabled, json.dumps(params.model_dump()), rotation_order,
         )
     except Exception as e:
         if "duplicate key" in str(e).lower():
@@ -191,6 +193,7 @@ async def update_search(
     scope_local: bool = Form(False),
     scope_national: bool = Form(False),
     sort_rotation: list[str] = Form([]),
+    rotation_order: Optional[int] = Form(None),
     enabled: bool = Form(False),
 ):
     scopes = []
@@ -232,9 +235,9 @@ async def update_search(
 
     pool = await get_pool()
     await pool.execute(
-        "UPDATE search_configs SET enabled = $1, params = $2::jsonb, updated_at = now() "
-        "WHERE search_key = $3",
-        enabled, json.dumps(params.model_dump()), search_key,
+        "UPDATE search_configs SET enabled = $1, params = $2::jsonb, rotation_order = $3, updated_at = now() "
+        "WHERE search_key = $4",
+        enabled, json.dumps(params.model_dump()), rotation_order, search_key,
     )
     return RedirectResponse(url="/admin/", status_code=303)
 

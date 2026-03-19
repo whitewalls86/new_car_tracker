@@ -8,7 +8,9 @@ import html as html_lib
 import math
 import re
 
+import random
 import time
+from typing import Set
 from urllib.parse import urlencode
 from bs4 import BeautifulSoup
 from processors.browser import get_browser, close_browser
@@ -17,6 +19,7 @@ from processors.browser import get_browser, close_browser
 RAW_BASE = "/data/raw"
 BASE_URL = "https://www.cars.com/shopping/results/"  # adjust if your real base differs
 _SITE_ACTIVITY_RE = re.compile(r'data-site-activity="([^"]+)"')
+_VIN_RE = re.compile(r'"vin"\s*:\s*"([A-HJ-NPR-Z0-9]{17})"')
 
 
 def sha256_bytes(b: bytes) -> str:
@@ -186,6 +189,10 @@ def scrape_results(
     max_safety_pages = int(params.get("max_safety_pages", 500))
     sort_order = params.get("sort_order")  # e.g. "list_price", "listed_at_desc", etc.
 
+    # Discovery mode: known VINs for early-stop breakpoint
+    raw_known_vins = payload.get("known_vins") or []
+    known_vins: Set[str] = set(raw_known_vins)
+
     if scope not in ("national", "local"):
         return {"error": f"Invalid scope '{scope}'", "artifacts": []}
 
@@ -197,12 +204,13 @@ def scrape_results(
     os.makedirs(run_dir, exist_ok=True)
 
     artifacts: List[Dict[str, Any]] = []
+    consecutive_no_new = 0
     browser = get_browser()
 
     try:
         for page_num in range(1, max_safety_pages + 1):
             if page_num > 1:
-                time.sleep(3)
+                time.sleep(random.uniform(3, 8))
             url = build_results_url(makes, models, zip_code, scope, radius_miles, page_num, sort_order)
             fetched_at = datetime.now(UTC).isoformat()
 
@@ -231,6 +239,11 @@ def scrape_results(
                 # --- decide whether to stop early based on embedded paging meta ---
                 paging = None
                 stop_after_this_page = False
+
+                # Stop on HTTP error — don't burn more IP reputation
+                if status != 200:
+                    stop_after_this_page = True
+
                 if status == 200 and content:
                     paging = extract_results_paging_meta(html_text)
                     if paging:
@@ -264,6 +277,28 @@ def scrape_results(
                 with open(filepath, "wb") as f:
                     f.write(content)
 
+                # --- VIN breakpoint: detect when we've caught up to known inventory ---
+                page_vins: Set[str] = set()
+                if status == 200:
+                    for vin_match in _VIN_RE.finditer(html_text):
+                        page_vins.add(vin_match.group(1))
+
+                new_vins_count = 0
+                if known_vins and page_vins:
+                    new_vins = page_vins - known_vins
+                    new_vins_count = len(new_vins)
+                    known_vins.update(page_vins)  # track all seen VINs
+                    if new_vins_count == 0:
+                        consecutive_no_new += 1
+                    else:
+                        consecutive_no_new = 0
+                    # >=80% known VINs on this page → caught up
+                    if len(page_vins) > 0 and new_vins_count / len(page_vins) <= 0.2:
+                        stop_after_this_page = True
+                    # 3 consecutive pages with 0 new VINs
+                    if consecutive_no_new >= 3:
+                        stop_after_this_page = True
+
                 artifacts.append({
                     "source": "cars.com",
                     "artifact_type": "results_page",
@@ -279,6 +314,8 @@ def scrape_results(
                     "fetched_at": fetched_at,
                     "error": None if status == 200 else f"HTTP {status}",
                     "paging_meta": paging,
+                    "page_vins_total": len(page_vins),
+                    "page_vins_new": new_vins_count,
                 })
 
                 if stop_after_this_page:
@@ -300,6 +337,7 @@ def scrape_results(
                     "fetched_at": fetched_at,
                     "error": f"{type(e).__name__}: {str(e)}"[:500].replace("'", ""),
                 })
+                break  # stop paginating — IP may be rate-limited
             finally:
                 context.close()
     finally:

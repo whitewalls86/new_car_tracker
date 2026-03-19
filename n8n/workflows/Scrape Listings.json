@@ -3,15 +3,35 @@
   "nodes": [
     {
       "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 30
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        400,
+        1400
+      ],
+      "id": "c04345c4-8fe9-43bc-9b1f-152825dcd5d2",
+      "name": "Schedule Trigger (4h)"
+    },
+    {
+      "parameters": {
         "jsCode": "function uuidv4() {\n  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {\n    const r = Math.random() * 16 | 0;\n    const v = c === 'x' ? r : (r & 0x3 | 0x8);\n    return v.toString(16);\n  });\n}\n\nreturn [{ run_id: uuidv4() }];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1136,
-        2048
+        620,
+        1400
       ],
-      "id": "8d069252-bf82-4b22-a49b-87c47c83f951",
+      "id": "00bc2a68-5ac1-4fa8-b60c-70cb4e20e1db",
       "name": "Create Run ID"
     },
     {
@@ -23,10 +43,10 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        1360,
-        2048
+        840,
+        1400
       ],
-      "id": "aa72617e-5ec5-4e6a-a864-37557dfb6006",
+      "id": "e566be85-1ae7-40fe-b3cb-14b21e71917d",
       "name": "Insert Run Row",
       "credentials": {
         "postgres": {
@@ -37,24 +57,74 @@
     },
     {
       "parameters": {
-        "operation": "executeQuery",
-        "query": "SELECT search_key, params\nFROM search_configs\nWHERE enabled = true\nORDER BY search_key;",
+        "method": "POST",
+        "url": "http://cartracker-scraper:8000/search_configs/advance_rotation",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "min_idle_minutes",
+              "value": "239"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1060,
+        1400
+      ],
+      "id": "d87e8160-0875-441f-9613-c5ef44b6d1a9",
+      "name": "Advance Rotation (Slot)"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "slot-check",
+              "leftValue": "={{ $json.configs.length }}",
+              "rightValue": "0",
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
         "options": {}
       },
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.6,
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
       "position": [
-        1584,
-        2048
+        1280,
+        1400
       ],
-      "id": "2a255443-4b53-402d-9527-5463158b7c7d",
-      "name": "Get Config",
-      "credentials": {
-        "postgres": {
-          "id": "l8Ecbn62FzXCDkF9",
-          "name": "Postgres account"
-        }
-      }
+      "id": "check-configs-exist",
+      "name": "Has Configs?"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Explode configs × scopes into individual scrape jobs\nconst run_id = $('Create Run ID').first().json.run_id;\nconst slot = $input.first().json.slot;\nconst configs = $input.first().json.configs;\n\nconst jobs = [];\nfor (const config of configs) {\n  for (const scope of config.scopes || ['local', 'national']) {\n    jobs.push({\n      json: {\n        run_id,\n        slot,\n        search_key: config.search_key,\n        scope,\n        params: config.params\n      }\n    });\n  }\n}\n\nreturn jobs;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1500,
+        1340
+      ],
+      "id": "explode-configs",
+      "name": "Explode Configs × Scopes"
     },
     {
       "parameters": {
@@ -63,11 +133,11 @@
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
       "position": [
-        1808,
-        2048
+        1720,
+        1340
       ],
-      "id": "570dde9a-1264-4aa1-8015-24f4525c7954",
-      "name": "Loop Over Items"
+      "id": "223a1601-617a-4c8c-aeec-fb54d54b8093",
+      "name": "Loop Over Jobs"
     },
     {
       "parameters": {
@@ -78,15 +148,15 @@
           "parameters": [
             {
               "name": "run_id",
-              "value": "={{ $('Create Run ID').item.json.run_id }}"
+              "value": "={{ $json.run_id }}"
             },
             {
               "name": "search_key",
-              "value": "={{ $('Get Config').item.json.search_key }}"
+              "value": "={{ $json.search_key }}"
             },
             {
               "name": "scope",
-              "value": "local"
+              "value": "={{ $json.scope }}"
             }
           ]
         },
@@ -106,26 +176,26 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        2480,
-        2048
+        1940,
+        1420
       ],
-      "id": "3232ca11-6d92-4828-85a0-cc0c7087a2de",
-      "name": "Local Search"
+      "id": "518fcf58-3bc9-430e-9ac8-e88d68477a63",
+      "name": "Queue Scrape Job"
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "INSERT INTO scrape_jobs (job_id, run_id, search_key, scope, status)\nVALUES (\n  '{{ $json.job_id }}'::uuid,\n  '{{ $('Create Run ID').item.json.run_id }}'::uuid,\n  '{{ $('Get Config').item.json.search_key }}',\n  'local',\n  'queued'\n);",
+        "query": "UPDATE runs\nSET status = 'success', finished_at = now()\nWHERE run_id = '{{ $('Create Run ID').item.json.run_id }}'::uuid;",
         "options": {}
       },
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        2704,
-        2048
+        1940,
+        1200
       ],
-      "id": "a5328a94-5f75-4c8b-8251-f31f2b10e7e8",
-      "name": "Insert Job Row (Local)",
+      "id": "8972a2b7-da56-473c-9061-5e116897bc70",
+      "name": "Mark Run Done",
       "credentials": {
         "postgres": {
           "id": "l8Ecbn62FzXCDkF9",
@@ -135,167 +205,29 @@
     },
     {
       "parameters": {
-        "method": "POST",
-        "url": "http://cartracker-scraper:8000/scrape_results",
-        "sendQuery": true,
-        "queryParameters": {
-          "parameters": [
-            {
-              "name": "run_id",
-              "value": "={{ $('Create Run ID').item.json.run_id }}"
-            },
-            {
-              "name": "search_key",
-              "value": "={{ $('Get Config').item.json.search_key }}"
-            },
-            {
-              "name": "scope",
-              "value": "national"
-            }
-          ]
-        },
-        "sendBody": true,
-        "bodyParameters": {
-          "parameters": [
-            {
-              "name": "params",
-              "value": "={{ $('Loop Over Items').item.json.params }}"
-            }
-          ]
-        },
-        "options": {
-          "timeout": 30000
-        }
-      },
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.3,
-      "position": [
-        3376,
-        2048
-      ],
-      "id": "d6a81802-1a07-4118-af4a-db55ef5126f2",
-      "name": "National Search"
-    },
-    {
-      "parameters": {
         "operation": "executeQuery",
-        "query": "INSERT INTO scrape_jobs (job_id, run_id, search_key, scope, status)\nVALUES (\n  '{{ $json.job_id }}'::uuid,\n  '{{ $('Create Run ID').item.json.run_id }}'::uuid,\n  '{{ $('Get Config').item.json.search_key }}',\n  'national',\n  'queued'\n);",
+        "query": "UPDATE runs\nSET status = 'skipped', finished_at = now(), notes = 'No configs due for rotation'\nWHERE run_id = '{{ $('Create Run ID').item.json.run_id }}'::uuid;",
         "options": {}
       },
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        3600,
-        2128
+        1500,
+        1520
       ],
-      "id": "7a65ea8b-3da3-4d7e-b4b5-7f3783ac75ae",
-      "name": "Insert Job Row (National)",
+      "id": "mark-run-skipped",
+      "name": "Mark Run Skipped",
       "credentials": {
         "postgres": {
           "id": "l8Ecbn62FzXCDkF9",
           "name": "Postgres account"
         }
       }
-    },
-    {
-      "parameters": {
-        "rule": {
-          "interval": [
-            {
-              "field": "hours",
-              "hoursInterval": 12
-            }
-          ]
-        }
-      },
-      "type": "n8n-nodes-base.scheduleTrigger",
-      "typeVersion": 1.3,
-      "position": [
-        912,
-        2048
-      ],
-      "id": "b8883a2a-194d-430c-a37c-e238d1897979",
-      "name": "Schedule Trigger"
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "UPDATE search_configs\nSET params = jsonb_set(\n  params,\n  '{sort_order}',\n  to_jsonb(\n    COALESCE(\n      params->'sort_rotation'->>(\n        (SELECT i FROM generate_series(0, jsonb_array_length(params->'sort_rotation') - 1) AS i\n         WHERE params->'sort_rotation'->>i = params->>'sort_order'\n         LIMIT 1\n        ) + 1\n      ),\n      params->'sort_rotation'->>0\n    )\n  )\n)\nWHERE enabled = true\n  AND params ? 'sort_rotation'\n  AND jsonb_array_length(params->'sort_rotation') > 0;",
-        "options": {}
-      },
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.6,
-      "position": [
-        2032,
-        1856
-      ],
-      "id": "f022c98a-260f-446c-9c01-5d96674034bb",
-      "name": "Rotate Sort Order",
-      "credentials": {
-        "postgres": {
-          "id": "l8Ecbn62FzXCDkF9",
-          "name": "Postgres account"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "amount": "={{ $json.wait_seconds }}"
-      },
-      "type": "n8n-nodes-base.wait",
-      "typeVersion": 1.1,
-      "position": [
-        2256,
-        2048
-      ],
-      "id": "6f0bc263-1cb8-40a9-b01d-05b5cdf45679",
-      "name": "Wait",
-      "webhookId": "0636641d-739c-4686-92b4-8dc5c4aeccff"
-    },
-    {
-      "parameters": {
-        "amount": "={{ $json.wait_seconds }}"
-      },
-      "type": "n8n-nodes-base.wait",
-      "typeVersion": 1.1,
-      "position": [
-        3152,
-        2048
-      ],
-      "id": "9797f447-6a1e-4252-9cf4-42cd7d7dcdf8",
-      "name": "Wait1",
-      "webhookId": "6d5f547e-9db5-4983-86ef-150e203f1b54"
-    },
-    {
-      "parameters": {
-        "jsCode": "return $input.all().map(item => ({\n  json: { ...item.json, wait_seconds: (Math.random() * 4 + 1).toFixed(2) }\n}));"
-      },
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        2032,
-        2048
-      ],
-      "id": "5d2d4249-d6a3-47ce-9206-f22c17dc661c",
-      "name": "Code in JavaScript"
-    },
-    {
-      "parameters": {
-        "jsCode": "return $input.all().map(item => ({\n  json: { ...item.json, wait_seconds: (Math.random() * 4 + 1).toFixed(2) }\n}));"
-      },
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        2928,
-        2048
-      ],
-      "id": "da2f33de-3249-4643-a9bd-f931ee9c4624",
-      "name": "Code in JavaScript1"
     }
   ],
   "pinData": {},
   "connections": {
-    "Schedule Trigger": {
+    "Schedule Trigger (4h)": {
       "main": [
         [
           {
@@ -321,124 +253,76 @@
       "main": [
         [
           {
-            "node": "Get Config",
+            "node": "Advance Rotation (Slot)",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Get Config": {
+    "Advance Rotation (Slot)": {
       "main": [
         [
           {
-            "node": "Loop Over Items",
+            "node": "Has Configs?",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Loop Over Items": {
+    "Has Configs?": {
       "main": [
         [
           {
-            "node": "Rotate Sort Order",
+            "node": "Explode Configs × Scopes",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "Code in JavaScript",
+            "node": "Mark Run Skipped",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Local Search": {
+    "Explode Configs × Scopes": {
       "main": [
         [
           {
-            "node": "Insert Job Row (Local)",
+            "node": "Loop Over Jobs",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Insert Job Row (Local)": {
+    "Loop Over Jobs": {
       "main": [
         [
           {
-            "node": "Code in JavaScript1",
+            "node": "Mark Run Done",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Queue Scrape Job",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "National Search": {
+    "Queue Scrape Job": {
       "main": [
         [
           {
-            "node": "Insert Job Row (National)",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Insert Job Row (National)": {
-      "main": [
-        [
-          {
-            "node": "Loop Over Items",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Wait": {
-      "main": [
-        [
-          {
-            "node": "Local Search",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Wait1": {
-      "main": [
-        [
-          {
-            "node": "National Search",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Code in JavaScript": {
-      "main": [
-        [
-          {
-            "node": "Wait",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Code in JavaScript1": {
-      "main": [
-        [
-          {
-            "node": "Wait1",
+            "node": "Loop Over Jobs",
             "type": "main",
             "index": 0
           }
@@ -449,12 +333,9 @@
   "active": true,
   "settings": {
     "executionOrder": "v1",
-    "availableInMCP": false,
-    "timeSavedMode": "fixed",
-    "callerPolicy": "workflowsFromSameOwner",
-    "errorWorkflow": "rJfFKS2DGRAn_IPJR1xTc"
+    "availableInMCP": false
   },
-  "versionId": "8e666093-ee0d-45f5-a6b7-f33590d1be29",
+  "versionId": "plan26-discovery-mode",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179"
