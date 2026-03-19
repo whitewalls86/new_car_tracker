@@ -84,14 +84,16 @@ Expand Pipeline Health section with:
 
 | Priority | Item | Notes |
 |----------|------|-------|
-| 1 | **20** — dbt + Postgres health in dashboard | Operational visibility |
-| 2 | **14.1** — VIN case normalization | Defensive — only 1 affected VIN |
-| 3 | **14.5** — Price events dedup | Defensive — only 1 duplicate found |
-| 4 | **14.9** — Browser lock | Low risk in practice |
-| 5 | **14.11** — Chrome fingerprint env var | Working fine currently |
-| 6 | **14.12** — max_safety_pages validator | Low risk |
-| 7 | **16.3** — Monitor detail volume | Wait until ~March 20 |
-| 8 | **5** — Webhook triggers | Nice-to-have |
+| 1 | **26.3** — Reduce max_workers 12→6 | 5-min fix, immediate relief |
+| 2 | **26.1** — Stagger search keys | Biggest reliability gain |
+| 3 | **26.2** — Retry failed SRP pages | Recovers remaining failures |
+| 4 | **20** — dbt + Postgres health in dashboard | Operational visibility |
+| 5 | **25.2/25.3** — Bridge dealer ID systems | Unlocks dealer data in mart |
+| 6 | **14.1** — VIN case normalization | Defensive — only 1 affected VIN |
+| 7 | **14.5** — Price events dedup | Defensive — only 1 duplicate found |
+| 8 | **16.3** — Monitor detail volume | Wait until ~March 20 |
+| 9 | **14.9 / 14.11 / 14.12** — Minor defensive fixes | Low risk |
+| 10 | **5** — Webhook triggers | Nice-to-have |
 
 ---
 
@@ -118,6 +120,27 @@ Once `mart_vehicle_snapshot` carries `customer_id`, join to `dealers` in `mart_d
 
 **25.4 — Backfill `dealer_unenriched` signal**
 With `customer_id` in `detail_observations`, the `dealer_unenriched` check in `ops_vehicle_staleness` can use `customer_id IS NOT NULL` instead of the correlated EXISTS subquery — simpler and faster.
+
+---
+
+## Plan 26: Search Scrape Reliability — Stagger + Retry
+
+**Status:** Not started
+**Priority:** High
+
+Currently all 9 search configs fire simultaneously at :00 with 12 async workers. Cars.com's rate limiting is cumulative — early search keys succeed (~30% error rate), later ones hit a throttling threshold (~67% error rate). We're consistently getting only ~60% of requested pages.
+
+**26.1 — Stagger search keys across time**
+Instead of one run firing all searches at once, space each search key 10-15 minutes apart. Options:
+- Add a per-search-key n8n schedule (simplest, but 9 separate schedules)
+- Process one search key at a time sequentially within a single run (one job batch per key, wait for completion before next)
+- Add a `priority` / `scheduled_offset_minutes` column to `search_configs` and have Scrape Listings self-throttle
+
+**26.2 — Retry failed SRP pages**
+After each search-key's jobs complete, identify artifacts with `error IS NOT NULL` and re-queue them with a delay. Two passes at most — recovers transient failures without infinite loops.
+
+**26.3 — Reduce max_workers (quick win)**
+Drop `ThreadPoolExecutor` from 12 → 6 as an interim measure. Less aggressive, easier on cars.com's rate limiter while 26.1 is being built.
 
 ---
 
