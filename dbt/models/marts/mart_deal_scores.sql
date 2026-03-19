@@ -70,7 +70,9 @@ scored as (
         -- Seller
         a.seller_customer_id,
         a.seller_zip,
-        dlr.name as dealer_name,
+        -- dealer_name/zip from most recent detail observation (direct parse, always populated when available)
+        -- dlr.* fields from dealers table are intentionally omitted until Plan 25.2 bridges UUID↔numeric ID
+        coalesce(do_latest.dealer_name, dlr.name) as dealer_name,
         dlr.city as dealer_city,
         dlr.state as dealer_state,
         dlr.phone as dealer_phone,
@@ -169,6 +171,15 @@ scored as (
     left join percentiles_deduped pctl on pctl.vin = av.vin
     left join {{ source('public', 'dealers') }} dlr
         on dlr.customer_id = a.seller_customer_id
+    -- Interim until Plan 25.2: pull dealer_name directly from most recent detail observation
+    left join lateral (
+        select dealer_name
+        from {{ source('public', 'detail_observations') }}
+        where vin = av.vin
+          and dealer_name is not null
+        order by fetched_at desc
+        limit 1
+    ) do_latest on true
     left join local_seen ls on ls.vin = av.vin
     where v.price is not null and v.price > 0
 )
