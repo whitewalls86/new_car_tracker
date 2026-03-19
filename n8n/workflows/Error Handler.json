@@ -15,7 +15,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "INSERT INTO pipeline_errors (\n  workflow_name,\n  workflow_id,\n  execution_id,\n  node_name,\n  error_message,\n  error_type,\n  occurred_at\n) VALUES (\n  '{{ $json.workflow.name }}',\n  '{{ $json.workflow.id }}',\n  '{{ $json.execution.id }}',\n  '{{ $json.execution.lastNodeExecuted.replace(\"'\", \"''\") }}',\n  '{{ $json.execution.error.message.replace(\"'\", \"''\") }}',\n  '{{ $json.execution.error.name }}',\n  now()\n);",
+        "query": "INSERT INTO pipeline_errors (\n  workflow_name,\n  workflow_id,\n  execution_id,\n  node_name,\n  error_message,\n  error_type,\n  occurred_at\n) VALUES (\n  '{{ $json.workflow.name.replaceAll(\"'\", \"''\") }}',\n  '{{ $json.workflow.id }}',\n  '{{ $json.execution.id }}',\n  '{{ $json.execution.lastNodeExecuted.replaceAll(\"'\", \"''\") }}',\n  '{{ $json.execution.error.message.replaceAll(\"'\", \"''\") }}',\n  '{{ $json.execution.error.name.replaceAll(\"'\", \"''\") }}',\n  now()\n);",
         "options": {}
       },
       "type": "n8n-nodes-base.postgres",
