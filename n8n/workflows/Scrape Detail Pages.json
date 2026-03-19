@@ -351,7 +351,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT\n  (SELECT COUNT(DISTINCT run_id)\n   FROM runs\n   WHERE trigger IN ('search scrape', 'detail scrape')\n     AND status = 'running') AS running_scrapes,\n  (SELECT COUNT(*)\n   FROM raw_artifacts ra\n   WHERE ra.artifact_type = 'results_page'\n     AND ra.fetched_at > now() - interval '45 minutes'\n     AND NOT EXISTS (\n       SELECT 1 FROM artifact_processing ap\n       WHERE ap.artifact_id = ra.artifact_id\n         AND ap.status IN ('ok', 'skip', 'failed')\n         AND ap.processor LIKE 'cars_results_page__listings_%'\n     )\n  ) AS unprocessed_srp_artifacts;",
+        "query": "SELECT\n  (SELECT COUNT(DISTINCT run_id)\n   FROM runs\n   WHERE trigger IN ('search scrape', 'detail scrape')\n     AND status = 'running') AS running_scrapes,\n  (SELECT COUNT(*)\n   FROM raw_artifacts ra\n   WHERE ra.artifact_type = 'results_page'\n     AND ra.fetched_at > now() - interval '45 minutes'\n     AND ra.http_status IS NOT NULL\n     AND NOT EXISTS (\n       SELECT 1 FROM artifact_processing ap\n       WHERE ap.artifact_id = ra.artifact_id\n         AND ap.status IN ('ok', 'skip', 'failed')\n         AND ap.processor LIKE 'cars_results_page__listings_%'\n     )\n  ) AS unprocessed_srp_artifacts;",
         "options": {}
       },
       "type": "n8n-nodes-base.postgres",
