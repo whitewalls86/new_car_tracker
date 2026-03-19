@@ -9,50 +9,6 @@ with active_vins as (
       and fetched_at >= now() - interval '{{ var("staleness_window_days") }} days'
 ),
 
--- National price percentile per VIN (within its make/model/trim)
-price_percentiles as (
-    select
-        s.vin17 as vin,
-        s.make,
-        s.model,
-        s.vehicle_trim,
-        s.price,
-        percent_rank() over (
-            partition by s.make, s.model, s.vehicle_trim
-            order by s.price
-        ) as national_price_percentile,
-        row_number() over (
-            partition by s.vin17
-            order by s.fetched_at desc, s.artifact_id desc
-        ) as rn
-    from {{ ref('stg_srp_observations') }} s
-    inner join {{ source('public', 'raw_artifacts') }} ra
-        on ra.artifact_id = s.artifact_id
-    where s.vin17 is not null
-      and s.price is not null
-      and s.price > 0
-      and ra.search_scope = 'national'
-      and s.fetched_at >= now() - interval '{{ var("staleness_window_days") }} days'
-),
-
-percentiles_deduped as (
-    select vin, national_price_percentile
-    from price_percentiles
-    where rn = 1
-),
-
--- Most recent dealer_name per VIN from detail observations
--- (interim until Plan 25.2 bridges UUID↔numeric dealer ID)
-latest_dealer_name as (
-    select distinct on (vin)
-        vin,
-        dealer_name
-    from {{ source('public', 'detail_observations') }}
-    where vin is not null
-      and dealer_name is not null
-    order by vin, fetched_at desc
-),
-
 -- Check if VIN was seen locally in last 3 days
 local_seen as (
     select distinct s.vin17 as vin
@@ -85,6 +41,7 @@ scored as (
         -- dealer_name from most recent detail observation (direct parse, always populated when available)
         -- dlr.* fields from dealers table are intentionally omitted until Plan 25.2 bridges UUID↔numeric ID
         coalesce(ldn.dealer_name, dlr.name) as dealer_name,
+
         dlr.city as dealer_city,
         dlr.state as dealer_state,
         dlr.phone as dealer_phone,
@@ -136,6 +93,7 @@ scored as (
         -- National price percentile (0 = cheapest, 1 = most expensive)
         coalesce(pctl.national_price_percentile, 0.75) as national_price_percentile,
 
+
         -- Dealer inventory
         coalesce(di.dealer_inventory_count, 0) as dealer_inventory_count,
 
@@ -180,10 +138,10 @@ scored as (
     left join {{ ref('int_dealer_inventory') }} di
         on di.seller_customer_id = a.seller_customer_id
         and di.make = a.make and di.model = a.model
-    left join percentiles_deduped pctl on pctl.vin = av.vin
+    left join {{ ref('int_price_percentiles_by_vin') }} pctl on pctl.vin = av.vin
     left join {{ source('public', 'dealers') }} dlr
         on dlr.customer_id = a.seller_customer_id
-    left join latest_dealer_name ldn on ldn.vin = av.vin
+    left join {{ ref('int_latest_dealer_name_by_vin') }} ldn on ldn.vin = av.vin
     left join local_seen ls on ls.vin = av.vin
     where v.price is not null and v.price > 0
 )

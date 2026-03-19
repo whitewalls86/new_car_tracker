@@ -1,3 +1,12 @@
+{{
+  config(
+    materialized = 'incremental',
+    unique_key = ['artifact_id', 'vin', 'source'],
+    incremental_strategy = 'merge',
+    on_schema_change = 'sync_all_columns'
+  )
+}}
+
 with srp_price_events as (
     select
         -- SRP sometimes carries non-VIN identifiers; vin17 is the cleaned/optional VIN
@@ -47,18 +56,25 @@ all_events as (
 
 -- Deduplicate: when the same VIN has the same price at the same timestamp from
 -- multiple sources, keep one row. Prefer detail > srp > carousel.
+-- Skipped in incremental mode — new artifacts don't overlap with existing rows.
+{% if is_incremental() %}
+new_events as (
+    select * from all_events
+    where artifact_id > (select coalesce(max(artifact_id), 0) from {{ this }})
+),
+{% endif %}
+
 deduped as (
+{% if is_incremental() %}
+    select vin, listing_id, artifact_id, observed_at, price, source, tier
+    from new_events
+{% else %}
     select distinct on (vin, observed_at, price)
-        vin,
-        listing_id,
-        artifact_id,
-        observed_at,
-        price,
-        source,
-        tier
+        vin, listing_id, artifact_id, observed_at, price, source, tier
     from all_events
     order by vin, observed_at, price,
         case source when 'detail' then 1 when 'srp' then 2 else 3 end
+{% endif %}
 )
 
 select * from deduped
