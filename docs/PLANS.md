@@ -85,15 +85,16 @@ Expand Pipeline Health section with:
 
 | Priority | Item | Notes |
 |----------|------|-------|
-| 1 | **26.1** — Wire n8n to use `/advance_rotation` | Backend done; n8n workflow + DB migration remain |
-| 2 | **26.2** — Retry failed SRP pages | Recovers remaining failures |
-| 3 | **20** — dbt + Postgres health in dashboard | Operational visibility |
-| 4 | **25.2/25.3** — Bridge dealer ID systems | Unlocks dealer data in mart |
-| 5 | **14.1** — VIN case normalization | Defensive — only 1 affected VIN |
-| 6 | **14.5** — Price events dedup | Defensive — only 1 duplicate found |
-| 7 | **16.3** — Monitor detail volume | Wait until ~March 20 |
-| 8 | **14.9 / 14.11 / 14.12** — Minor defensive fixes | Low risk |
-| 9 | **5** — Webhook triggers | Nice-to-have |
+| 1 | **27.2** — Search scrape Akamai alert | Immediate signal when IP gets rate-limited |
+| 2 | **27.1** — Detail scrape error rate alert | Alert when >20% of detail pages fail |
+| 3 | **26.2** — Retry failed SRP pages | Recovers remaining failures |
+| 4 | **20** — dbt + Postgres health in dashboard | Operational visibility |
+| 5 | **25.2/25.3** — Bridge dealer ID systems | Unlocks dealer data in mart |
+| 6 | **14.1** — VIN case normalization | Defensive — only 1 affected VIN |
+| 7 | **14.5** — Price events dedup | Defensive — only 1 duplicate found |
+| 8 | **16.3** — Monitor detail volume | Wait until ~March 20 |
+| 9 | **14.9 / 14.11 / 14.12** — Minor defensive fixes | Low risk |
+| 10 | **5** — Webhook triggers | Nice-to-have |
 
 ---
 
@@ -163,6 +164,55 @@ After each search-key's jobs complete, identify artifacts with `error IS NOT NUL
 
 **26.3 — Reduce max_workers (done 2026-03-19)**
 Dropped `ThreadPoolExecutor` from 12 → 6. Less aggressive on cars.com's rate limiter.
+
+---
+
+## Plan 27: Telegram Alerts — Scrape Health
+
+**Status:** Not started
+**Priority:** Medium
+
+Two distinct alert scenarios with different trigger points:
+
+---
+
+**27.1 — Detail scrape error rate alert**
+
+After all detail pages finish scraping (after the Loop Over Items in Scrape Detail Pages), query the run's error rate and fire a Telegram message if it exceeds a threshold.
+
+Implementation:
+- After "Mark Run Done", add a Postgres node that queries:
+  ```sql
+  SELECT
+    COUNT(*) FILTER (WHERE http_status IS NULL OR http_status >= 400) AS errors,
+    COUNT(*) AS total,
+    ROUND(100.0 * COUNT(*) FILTER (WHERE http_status IS NULL OR http_status >= 400) / NULLIF(COUNT(*), 0), 1) AS error_pct
+  FROM raw_artifacts
+  WHERE run_id = '<run_id>'::uuid
+    AND artifact_type = 'detail_page'
+  ```
+- Add an IF node: if `error_pct >= 20` → send Telegram message
+- Message format: `⚠️ Detail scrape error rate: {{error_pct}}% ({{errors}}/{{total}} pages failed) — Run {{run_id}}`
+- Threshold: 20% (tunable)
+
+---
+
+**27.2 — Search scrape Akamai kill alert**
+
+With discovery mode, an Akamai rate-limit kill (`ERR_HTTP2_PROTOCOL_ERROR`) causes the scraper to stop immediately and return a failed job. The Job Poller detects these as `status = 'failed'` jobs. We should alert when this happens.
+
+Implementation:
+- In the **Job Poller** workflow, after processing completed jobs, add a check: count how many jobs in the current poll batch have `status = 'failed'` AND contain `ERR_HTTP2_PROTOCOL_ERROR` in the error field
+- If any are found, send a Telegram alert
+- Alternatively: add a Telegram node in **Scrape Listings** at the "Mark Run Failed" path (after the Job Poller marks a run as failed due to all jobs failing)
+- Message format: `🚨 Akamai rate limit hit — {{search_key}} ({{scope}}) stopped at page {{page_num}}. IP cool-down in effect. Next slot fires in ~4h.`
+- This is a signal to watch IP reputation recovery; not necessarily actionable immediately
+
+---
+
+**27.3 — Telegram credential**
+
+Telegram bot is already configured in n8n from Plan 15 (Error Handler). Reuse the same bot/chat ID credential for consistency.
 
 ---
 
