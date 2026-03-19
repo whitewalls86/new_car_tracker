@@ -84,8 +84,7 @@ Expanded Pipeline Health section with dbt build time/status, active Postgres con
 |----------|------|-------|
 | 1 | **27.2** — Search scrape Akamai alert | Immediate signal when IP gets rate-limited |
 | 2 | **27.1** — Detail scrape error rate alert | Alert when >20% of detail pages fail |
-| 3 | **26.2** — Retry failed SRP pages | Recovers remaining failures |
-| 4 | **25.2/25.3** — Bridge dealer ID systems | Unlocks dealer data in mart |
+| 3 | **25.2/25.3** — Bridge dealer ID systems | Unlocks dealer data in mart |
 | 6 | **14.1** — VIN case normalization | Defensive — only 1 affected VIN |
 | 7 | **14.5** — Price events dedup | Defensive — only 1 duplicate found |
 | 8 | **16.3** — Monitor detail volume | Wait until ~March 20 |
@@ -155,8 +154,8 @@ WHERE search_configs.search_key = sub.search_key;
 3. The existing scrape-jobs loop now only iterates over `scopes` for the one returned config
 4. Change the schedule trigger from twice-daily to every 40 minutes
 
-**26.2 — Retry failed SRP pages**
-After each search-key's jobs complete, identify artifacts with `error IS NOT NULL` and re-queue them with a delay. Two passes at most — recovers transient failures without infinite loops.
+**26.2 — Retry failed SRP pages** *(Cancelled)*
+Originally planned to re-queue error artifacts for a second pass. Superseded by discovery mode — errors are now intentional early stops on Akamai rate limits. Retrying a rate-limited IP would worsen reputation decay, not recover it.
 
 **26.3 — Reduce max_workers (done 2026-03-19)**
 Dropped `ThreadPoolExecutor` from 12 → 6. Less aggressive on cars.com's rate limiter.
