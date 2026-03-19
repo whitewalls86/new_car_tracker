@@ -267,11 +267,12 @@ def parse_cars_results_page_html_v2(html: str) -> Tuple[List[Dict[str, Any]], Di
 
 def parse_cars_results_page_html_v3(html: str) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """
-    Cars.com SRP parser v3 (srp2025 spark-card format).
+    Cars.com SRP parser v3 (srp2025 spark-card / fuse-card format).
 
     Cars.com migrated to a new frontend around Jan 31 2026. Each listing is now
-    a <spark-card data-listing-id="..." data-vehicle-details='{...}'> element
-    instead of a single data-site-activity blob.
+    a <spark-card> or <fuse-card> element with data-vehicle-details='{...}'
+    instead of a single data-site-activity blob. The fuse-card rename was
+    observed around Mar 19 2026 — data structure is identical.
 
     Field mapping from data-vehicle-details JSON:
       listingId             -> listing_id
@@ -301,7 +302,8 @@ def parse_cars_results_page_html_v3(html: str) -> Tuple[List[Dict[str, Any]], Di
             return int(digits) if digits else None
         return None
 
-    cards = soup.select("spark-card[data-vehicle-details]")
+    # Support both old (spark-card) and new (fuse-card) component names
+    cards = soup.select("fuse-card[data-vehicle-details], spark-card[data-vehicle-details]")
 
     listings: List[Dict[str, Any]] = []
     json_failures = 0
