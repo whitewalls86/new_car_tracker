@@ -41,6 +41,18 @@ percentiles_deduped as (
     where rn = 1
 ),
 
+-- Most recent dealer_name per VIN from detail observations
+-- (interim until Plan 25.2 bridges UUID↔numeric dealer ID)
+latest_dealer_name as (
+    select distinct on (vin)
+        vin,
+        dealer_name
+    from {{ source('public', 'detail_observations') }}
+    where vin is not null
+      and dealer_name is not null
+    order by vin, fetched_at desc
+),
+
 -- Check if VIN was seen locally in last 3 days
 local_seen as (
     select distinct s.vin17 as vin
@@ -70,9 +82,9 @@ scored as (
         -- Seller
         a.seller_customer_id,
         a.seller_zip,
-        -- dealer_name/zip from most recent detail observation (direct parse, always populated when available)
+        -- dealer_name from most recent detail observation (direct parse, always populated when available)
         -- dlr.* fields from dealers table are intentionally omitted until Plan 25.2 bridges UUID↔numeric ID
-        coalesce(do_latest.dealer_name, dlr.name) as dealer_name,
+        coalesce(ldn.dealer_name, dlr.name) as dealer_name,
         dlr.city as dealer_city,
         dlr.state as dealer_state,
         dlr.phone as dealer_phone,
@@ -171,15 +183,7 @@ scored as (
     left join percentiles_deduped pctl on pctl.vin = av.vin
     left join {{ source('public', 'dealers') }} dlr
         on dlr.customer_id = a.seller_customer_id
-    -- Interim until Plan 25.2: pull dealer_name directly from most recent detail observation
-    left join lateral (
-        select dealer_name
-        from {{ source('public', 'detail_observations') }}
-        where vin = av.vin
-          and dealer_name is not null
-        order by fetched_at desc
-        limit 1
-    ) do_latest on true
+    left join latest_dealer_name ldn on ldn.vin = av.vin
     left join local_seen ls on ls.vin = av.vin
     where v.price is not null and v.price > 0
 )
