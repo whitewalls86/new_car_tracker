@@ -95,27 +95,80 @@ Expanded Pipeline Health section with dbt build time/status, active Postgres con
 
 ## Plan 25: Bridge Dealer ID Systems
 
-**Status:** Partially done (UUID preservation fixed in dbt)
-**Priority:** Medium
+**Status:** 25.1 done. 25.2/25.3/25.4 ready to implement.
+**Priority:** High
 
-cars.com uses two completely different dealer identifiers:
+cars.com uses two different dealer identifiers:
 - **UUID** (`150b427b-c147-5a18-a733-cf5aa95519d0`) — in SRP JSON, stored in `srp_observations.seller_customer_id`
-- **Numeric** (`735`) — in detail page HTML, stored in `dealers.customer_id`
+- **Numeric** (`735`) — in detail page HTML, already parsed by `parse_detail_page.py` and written to `dealers.customer_id`, but never stored in `detail_observations`
 
 **25.1 — Preserve UUID when detail becomes T1 (done 2026-03-18)**
-`int_latest_tier1_observation_by_vin` was overwriting `seller_customer_id` with `null` when a detail observation became the most recent T1. Fixed with a `MAX(CASE WHEN source = 'srp' ...) OVER (PARTITION BY vin)` window — UUID now always carried forward from the most recent SRP observation regardless of which source wins T1.
+`int_latest_tier1_observation_by_vin` was overwriting `seller_customer_id` with `null` when a detail observation became the most recent T1. Fixed.
 
-**25.2 — Add numeric `customer_id` to `int_latest_tier1_observation_by_vin`**
-Detail pages contain a numeric `customer_id` (already parsed by `parse_detail_page.py`, present in `primary` JSON). Store it in `detail_observations` via:
-1. `ALTER TABLE detail_observations ADD COLUMN customer_id text`
-2. Add `customer_id` to the `Write Detail Observations` SQL in Parse Detail Pages workflow
-3. Pull it through `stg_detail_observations` → `int_latest_tier1_observation_by_vin` → `mart_vehicle_snapshot`
+---
 
-**25.3 — Join `dealers` into mart models**
-Once `mart_vehicle_snapshot` carries `customer_id`, join to `dealers` in `mart_deal_scores` to surface `phone`, `rating`, `website`, `cars_com_url`. Enables dealer reputation scoring.
+**25.2 — Store numeric `customer_id` in `detail_observations`**
 
-**25.4 — Backfill `dealer_unenriched` signal**
-With `customer_id` in `detail_observations`, the `dealer_unenriched` check in `ops_vehicle_staleness` can use `customer_id IS NOT NULL` instead of the correlated EXISTS subquery — simpler and faster.
+The parser already extracts `customer_id` from the detail page. The `Upsert Dealers` node in Parse Detail Pages already uses it. It just never gets written to `detail_observations`.
+
+*Step 1 — DB migration (run first):*
+```sql
+ALTER TABLE detail_observations ADD COLUMN IF NOT EXISTS customer_id text;
+CREATE INDEX IF NOT EXISTS ix_detail_observations_customer_id
+  ON detail_observations (customer_id) WHERE customer_id IS NOT NULL;
+```
+
+*Step 2 — n8n "Write Detail Observations" node:*
+Add to the `rows` CTE SELECT:
+```sql
+NULLIF(p."primary"->>'customer_id', '') AS customer_id
+```
+Add `customer_id` to the INSERT column list and SELECT from rows.
+
+*Step 3 — `stg_detail_observations.sql`:*
+Add `d.customer_id` to the projection.
+
+*Step 4 — `int_latest_tier1_observation_by_vin.sql`:*
+- In the `detail` CTE: add `d.customer_id` (alongside the existing `null::text as seller_customer_id`)
+- In the `srp` CTE: add `null::text as customer_id` placeholder
+- In the `ranked` CTE: add window `max(case when source = 'detail' then customer_id end) over (partition by vin) as detail_customer_id`
+- In final SELECT: expose as `detail_customer_id as customer_id`
+- ⚠️ Requires `dbt run --full-refresh` on this incremental model (the workflow's `full_refresh: true` flag handles this automatically on next run)
+
+*Step 5 — `mart_vehicle_snapshot.sql`:*
+Add `t.customer_id` to the projection so downstream marts can access it.
+
+---
+
+**25.3 — Fix the dealer join in `mart_deal_scores.sql`**
+
+The existing join is broken because it matches UUID against numeric ID:
+```sql
+-- Current (broken — UUID never matches numeric):
+left join dealers dlr on dlr.customer_id = a.seller_customer_id
+
+-- Fix (use numeric customer_id from mart_vehicle_snapshot):
+left join dealers dlr on dlr.customer_id = v.customer_id
+```
+Where `v` is the existing `mart_vehicle_snapshot` alias. This immediately surfaces `dlr.name`, `dlr.phone`, `dlr.rating`, `dlr.city`, `dlr.state` for all detail-scraped VINs.
+
+---
+
+**25.4 — Replace correlated subquery in `ops_vehicle_staleness.sql`** *(defer 24-48h after 25.2 ships)*
+
+Once `customer_id` has been populating for at least one full scrape cycle, the expensive correlated NOT EXISTS subquery for `dealer_unenriched` can be replaced with a simple null check.
+
+Add `customer_id` to the `base` CTE SELECT from `mart_vehicle_snapshot`, then:
+```sql
+-- Replace correlated NOT EXISTS with:
+(b.customer_id IS NULL) AS dealer_unenriched
+```
+
+⚠️ Do NOT deploy this until after 25.2 has been running for 24-48h. If deployed while `customer_id` is still NULL for all historical rows, every VIN will be flagged `dealer_unenriched = true` and the staleness system will schedule a full re-scrape of everything.
+
+---
+
+**Execution order:** DB migration → n8n workflow → dbt models (25.2+25.3 together) → wait 24-48h → 25.4
 
 ---
 
