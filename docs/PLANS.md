@@ -35,6 +35,7 @@
 | 17 | **Update README** — full rewrite: architecture diagram, all 6 services, 7 workflows, 16 dbt models, data model, refresh strategy, setup steps, project structure | 2026-03-17 |
 | 23 | **Fresh install support** — updated `schema_new.sql` (pg_dump), `.env.example`, `setup.ps1` script, example search config seed, README quick-start guide | 2026-03-17 |
 | 26.3 | **Reduce max_workers 12→6** — ThreadPoolExecutor halved for immediate rate-limit relief | 2026-03-19 |
+| 20 | **dbt + Postgres health in dashboard** — dbt build time/status, active connections, long-running queries, lock visibility | 2026-03-19 |
 
 ---
 
@@ -71,13 +72,9 @@ Add webhook trigger nodes to Scrape Listings, Scrape Detail Pages, and Cleanup A
 
 ## Plan 20: dbt + Postgres Health in Dashboard
 
-**Status:** Not started
-**Priority:** Medium
+**Status:** Done (2026-03-19)
 
-Expand Pipeline Health section with:
-- **dbt:** Last build time, duration, status
-- **Postgres:** Active/idle-in-transaction connections, long-running queries
-- **Locks:** Blocked queries (`pg_stat_activity` + `pg_locks`)
+Expanded Pipeline Health section with dbt build time/status, active Postgres connections, long-running queries, and lock visibility.
 
 ---
 
@@ -88,8 +85,7 @@ Expand Pipeline Health section with:
 | 1 | **27.2** — Search scrape Akamai alert | Immediate signal when IP gets rate-limited |
 | 2 | **27.1** — Detail scrape error rate alert | Alert when >20% of detail pages fail |
 | 3 | **26.2** — Retry failed SRP pages | Recovers remaining failures |
-| 4 | **20** — dbt + Postgres health in dashboard | Operational visibility |
-| 5 | **25.2/25.3** — Bridge dealer ID systems | Unlocks dealer data in mart |
+| 4 | **25.2/25.3** — Bridge dealer ID systems | Unlocks dealer data in mart |
 | 6 | **14.1** — VIN case normalization | Defensive — only 1 affected VIN |
 | 7 | **14.5** — Price events dedup | Defensive — only 1 duplicate found |
 | 8 | **16.3** — Monitor detail volume | Wait until ~March 20 |
