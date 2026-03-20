@@ -37,7 +37,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "INSERT INTO runs (run_id, status, trigger)\nVALUES ('{{$json.run_id}}'::uuid, 'running', 'search scrape');",
+        "query": "INSERT INTO runs (run_id, status, trigger)\nVALUES ('{{$json.run_id}}'::uuid, 'requested', 'search scrape');",
         "options": {}
       },
       "type": "n8n-nodes-base.postgres",
@@ -202,6 +202,27 @@
           "name": "Postgres account"
         }
       }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE runs\nSET status = 'running'\nWHERE run_id = '{{ $('Create Run ID').item.json.run_id }}'::uuid;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1500,
+        1240
+      ],
+      "id": "mark-run-running",
+      "name": "Mark Run Running",
+      "credentials": {
+        "postgres": {
+          "id": "l8Ecbn62FzXCDkF9",
+          "name": "Postgres account"
+        }
+      }
     }
   ],
   "pinData": {},
@@ -254,7 +275,7 @@
       "main": [
         [
           {
-            "node": "Explode Configs × Scopes",
+            "node": "Mark Run Running",
             "type": "main",
             "index": 0
           }
@@ -262,6 +283,17 @@
         [
           {
             "node": "Mark Run Skipped",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Run Running": {
+      "main": [
+        [
+          {
+            "node": "Explode Configs × Scopes",
             "type": "main",
             "index": 0
           }
