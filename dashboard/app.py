@@ -82,113 +82,121 @@ with tab1:
     else:
         st.success("No active runs")
 
-    # -- Rotation schedule
+    # -- Table 1: Search Scrape Rotation Schedule
     st.subheader("Search Scrape Rotation Schedule")
     rotation_df = run_query("""
+        WITH slot_configs AS (
+            SELECT
+                rotation_slot,
+                string_agg(search_key, ', ' ORDER BY search_key) AS search_keys,
+                MAX(last_queued_at) AS last_queued_at
+            FROM search_configs
+            WHERE enabled = true AND rotation_slot IS NOT NULL
+            GROUP BY rotation_slot
+        ),
+        slot_runs AS (
+            SELECT DISTINCT ON (sc.rotation_slot)
+                sc.rotation_slot,
+                r.run_id,
+                r.status AS run_status,
+                r.started_at,
+                r.finished_at
+            FROM search_configs sc
+            JOIN scrape_jobs j ON j.search_key = sc.search_key
+            JOIN runs r ON r.run_id = j.run_id
+            WHERE sc.enabled = true AND sc.rotation_slot IS NOT NULL
+              AND r.trigger = 'search scrape'
+            ORDER BY sc.rotation_slot, r.started_at DESC
+        ),
+        slot_results AS (
+            SELECT
+                sr.rotation_slot,
+                COUNT(DISTINCT so.vin) AS vins_observed,
+                COUNT(DISTINCT so.vin) FILTER (
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM srp_observations prev
+                        WHERE prev.vin = so.vin
+                          AND prev.fetched_at < sr.started_at
+                    )
+                ) AS new_vins,
+                COUNT(DISTINCT a.artifact_id) AS pages_fetched,
+                COUNT(DISTINCT a.artifact_id) FILTER (WHERE a.http_status != 200 OR a.http_status IS NULL) AS error_pages
+            FROM slot_runs sr
+            JOIN raw_artifacts a ON a.run_id = sr.run_id AND a.artifact_type = 'results_page'
+            LEFT JOIN srp_observations so ON so.artifact_id = a.artifact_id AND so.vin IS NOT NULL
+            GROUP BY sr.rotation_slot
+        )
         SELECT
-            rotation_slot AS slot,
-            string_agg(search_key, ', ' ORDER BY search_key) AS search_keys,
-            MAX(last_queued_at) AT TIME ZONE 'America/Chicago' AS last_fired,
-            ROUND(EXTRACT(EPOCH FROM (now() - MAX(last_queued_at))) / 3600, 1) AS hours_ago,
-            (MAX(last_queued_at) + interval '1439 minutes') AT TIME ZONE 'America/Chicago' AS next_eligible,
+            c.rotation_slot AS slot,
+            c.search_keys,
+            c.last_queued_at AT TIME ZONE 'America/Chicago' AS last_fired,
+            ROUND(EXTRACT(EPOCH FROM (now() - c.last_queued_at)) / 3600, 1) AS hours_ago,
+            COALESCE(sr.run_status, '-') AS last_run_status,
+            COALESCE(res.pages_fetched, 0) AS pages,
+            COALESCE(res.error_pages, 0) AS errors,
+            COALESCE(res.vins_observed, 0) AS vins_observed,
+            COALESCE(res.new_vins, 0) AS new_vins,
+            (c.last_queued_at + interval '1439 minutes') AT TIME ZONE 'America/Chicago' AS next_eligible,
             CASE
-                WHEN MAX(last_queued_at) IS NULL THEN 'Ready now'
-                WHEN now() > MAX(last_queued_at) + interval '1439 minutes' THEN 'Ready now'
-                ELSE 'In ' || ROUND(EXTRACT(EPOCH FROM (MAX(last_queued_at) + interval '1439 minutes' - now())) / 3600, 1)::text || 'h'
-            END AS status
-        FROM search_configs
-        WHERE enabled = true AND rotation_slot IS NOT NULL
-        GROUP BY rotation_slot
-        ORDER BY rotation_slot
+                WHEN c.last_queued_at IS NULL THEN 'Ready now'
+                WHEN now() > c.last_queued_at + interval '1439 minutes' THEN 'Ready now'
+                ELSE 'In ' || ROUND(EXTRACT(EPOCH FROM (c.last_queued_at + interval '1439 minutes' - now())) / 3600, 1)::text || 'h'
+            END AS next_status
+        FROM slot_configs c
+        LEFT JOIN slot_runs sr ON sr.rotation_slot = c.rotation_slot
+        LEFT JOIN slot_results res ON res.rotation_slot = c.rotation_slot
+        ORDER BY c.rotation_slot
     """)
     if not rotation_df.empty:
         st.dataframe(rotation_df, use_container_width=True, hide_index=True)
     else:
         st.info("No rotation slots configured.")
 
-    # -- Row 1: Last scrape timestamps + counts
-    col1, col2, col3, col4 = st.columns(4)
+    # -- Table 2: Recent Detail Scrape Runs
+    st.subheader("Recent Detail Scrape Runs")
+    detail_runs_df = run_query("""
+        SELECT
+            r.started_at AT TIME ZONE 'America/Chicago' AS started,
+            CASE
+                WHEN r.finished_at IS NOT NULL
+                THEN ROUND(EXTRACT(EPOCH FROM (r.finished_at - r.started_at)) / 60)::text || 'm'
+                ELSE ROUND(EXTRACT(EPOCH FROM (now() - r.started_at)) / 60)::text || 'm (running)'
+            END AS duration,
+            r.status,
+            r.total_count AS batch_size,
+            COUNT(DISTINCT CASE WHEN a.artifact_type = 'detail_page' AND a.http_status = 200 THEN a.artifact_id END) AS detail_pages_ok,
+            COUNT(DISTINCT CASE WHEN a.artifact_type = 'detail_page' AND (a.http_status != 200 OR a.http_status IS NULL) THEN a.artifact_id END) AS detail_errors,
+            (SELECT COUNT(*) FROM detail_observations do2
+             WHERE do2.fetched_at BETWEEN r.started_at AND COALESCE(r.finished_at, now())) AS observations,
+            (SELECT COUNT(*) FROM detail_carousel_hints ch
+             WHERE ch.fetched_at BETWEEN r.started_at AND COALESCE(r.finished_at, now())) AS carousel_hints
+        FROM runs r
+        LEFT JOIN raw_artifacts a ON a.run_id = r.run_id
+        WHERE r.trigger = 'detail scrape'
+          AND r.status != 'skipped'
+        GROUP BY r.run_id, r.started_at, r.finished_at, r.status, r.total_count
+        ORDER BY r.started_at DESC
+        LIMIT 10
+    """)
+    if not detail_runs_df.empty:
+        st.dataframe(detail_runs_df, use_container_width=True, hide_index=True)
+    else:
+        st.info("No detail scrape runs found.")
 
-    with col1:
-        df = run_query("""
-            SELECT MAX(started_at) AT TIME ZONE 'America/Chicago' AS ts
-            FROM runs
-            WHERE status = 'success' AND trigger = 'search scrape'
-        """)
-        val = df["ts"].iloc[0]
-        st.metric("Last Search Scrape", val.strftime("%b %d %H:%M") if pd.notna(val) else "Never")
-
-    with col2:
-        df = run_query("""
-            SELECT MAX(started_at) AT TIME ZONE 'America/Chicago' AS ts
-            FROM runs
-            WHERE status = 'success' AND trigger = 'detail scrape'
-        """)
-        val = df["ts"].iloc[0]
-        st.metric("Last Detail Scrape", val.strftime("%b %d %H:%M") if pd.notna(val) else "Never")
-
-    with col3:
-        df = run_query("""
-            WITH last_run AS (
-                SELECT started_at FROM runs
-                WHERE status = 'success' AND trigger = 'search scrape'
-                ORDER BY started_at DESC LIMIT 1
-            )
-            SELECT COUNT(DISTINCT vin) AS cnt
-            FROM analytics.int_listing_days_on_market
-            WHERE first_seen_at >= (SELECT started_at FROM last_run)
-        """)
-        st.metric("New Vehicles Added", f"{df['cnt'].iloc[0]:,}")
-
-    with col4:
-        df = run_query("""
-            WITH last_run AS (
-                SELECT started_at FROM runs
-                WHERE status = 'success' AND trigger = 'search scrape'
-                ORDER BY started_at DESC LIMIT 1
-            )
-            SELECT COUNT(DISTINCT vin) AS cnt
-            FROM srp_observations
-            WHERE fetched_at >= (SELECT started_at FROM last_run)
-              AND vin IS NOT NULL
-        """)
-        st.metric("Vehicles Observed", f"{df['cnt'].iloc[0]:,}")
-
-    # -- Row 2: Price updates + stale backlog
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.subheader("Price Updates Since Last Detail Scrape")
-        df = run_query("""
-            WITH last_run AS (
-                SELECT started_at FROM runs
-                WHERE status = 'success' AND trigger = 'detail scrape'
-                ORDER BY started_at DESC LIMIT 1
-            )
-            SELECT 'Direct Detail Page' AS source, COUNT(*) AS updates
-            FROM detail_observations
-            WHERE fetched_at >= (SELECT started_at FROM last_run)
-            UNION ALL
-            SELECT 'Carousel Hint' AS source, COUNT(*) AS updates
-            FROM detail_carousel_hints
-            WHERE fetched_at >= (SELECT started_at FROM last_run)
-        """)
-        st.dataframe(df, use_container_width=True, hide_index=True)
-
-    with col2:
-        st.subheader("Stale Vehicle Backlog")
-        df = run_query("""
-            SELECT
-                stale_reason,
-                COUNT(*) AS vehicle_count,
-                ROUND(AVG(tier1_age_hours)::numeric, 1) AS avg_tier1_age_hours,
-                ROUND(AVG(price_age_hours)::numeric, 1) AS avg_price_age_hours
-            FROM ops.ops_vehicle_staleness
-            WHERE listing_state IS DISTINCT FROM 'unlisted'
-            GROUP BY stale_reason
-            ORDER BY vehicle_count DESC
-        """)
-        st.dataframe(df, use_container_width=True, hide_index=True)
+    # -- Stale backlog
+    st.subheader("Stale Vehicle Backlog")
+    df = run_query("""
+        SELECT
+            stale_reason,
+            COUNT(*) AS vehicle_count,
+            ROUND(AVG(tier1_age_hours)::numeric, 1) AS avg_tier1_age_hours,
+            ROUND(AVG(price_age_hours)::numeric, 1) AS avg_price_age_hours
+        FROM ops.ops_vehicle_staleness
+        WHERE listing_state IS DISTINCT FROM 'unlisted'
+        GROUP BY stale_reason
+        ORDER BY vehicle_count DESC
+    """)
+    st.dataframe(df, use_container_width=True, hide_index=True)
 
     # -- Price freshness distribution
     st.subheader("Price Freshness — Expiring in Next 24h")
