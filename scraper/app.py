@@ -142,6 +142,19 @@ def run_scrape_results(
             "error": None,
             "started_at": None,
         }
+    import psycopg2
+    try:
+        conn = psycopg2.connect(**_SYNC_DB_KWARGS)
+        with conn, conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO scrape_jobs (job_id, run_id, search_key, scope, status)
+                   VALUES (%s, %s, %s, %s, 'queued')""",
+                (job_id, run_id, search_key, scope),
+            )
+        conn.close()
+    except Exception:
+        pass  # DB write failure shouldn't block the scrape
+
     _executor.submit(_run_scrape_job, job_id, run_id, search_key, scope, payload)
     return {"job_id": job_id, "status": "queued"}
 

@@ -19,7 +19,7 @@
         1400
       ],
       "id": "c04345c4-8fe9-43bc-9b1f-152825dcd5d2",
-      "name": "Schedule Trigger (4h)"
+      "name": "Schedule Trigger (30 min)"
     },
     {
       "parameters": {
@@ -185,27 +185,6 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "UPDATE runs\nSET status = 'success', finished_at = now()\nWHERE run_id = '{{ $('Create Run ID').item.json.run_id }}'::uuid;",
-        "options": {}
-      },
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.6,
-      "position": [
-        1940,
-        1200
-      ],
-      "id": "8972a2b7-da56-473c-9061-5e116897bc70",
-      "name": "Mark Run Done",
-      "credentials": {
-        "postgres": {
-          "id": "l8Ecbn62FzXCDkF9",
-          "name": "Postgres account"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
         "query": "UPDATE runs\nSET status = 'skipped', finished_at = now(), notes = 'No configs due for rotation'\nWHERE run_id = '{{ $('Create Run ID').item.json.run_id }}'::uuid;",
         "options": {}
       },
@@ -227,7 +206,7 @@
   ],
   "pinData": {},
   "connections": {
-    "Schedule Trigger (4h)": {
+    "Schedule Trigger (30 min)": {
       "main": [
         [
           {
@@ -302,13 +281,7 @@
     },
     "Loop Over Jobs": {
       "main": [
-        [
-          {
-            "node": "Mark Run Done",
-            "type": "main",
-            "index": 0
-          }
-        ],
+        [],
         [
           {
             "node": "Queue Scrape Job",
