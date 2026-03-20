@@ -184,60 +184,93 @@ with tab1:
     else:
         st.info("No detail scrape runs found.")
 
-    # -- Carousel Hint Discovery Pipeline
-    st.subheader("Carousel Hint Discovery")
-    carousel_df = run_query("""
-        WITH
-        total_hints AS (
-            SELECT COUNT(DISTINCT listing_id) AS cnt
-            FROM detail_carousel_hints
-            WHERE body IS NOT NULL
+    # -- Last Detail Run Results
+    st.subheader("Last Detail Run Results")
+    last_detail_df = run_query("""
+        WITH last_run AS (
+            SELECT run_id, started_at, finished_at
+            FROM runs
+            WHERE trigger = 'detail scrape'
+              AND status = 'success'
+            ORDER BY started_at DESC
+            LIMIT 1
         ),
-        in_scope AS (
-            SELECT COUNT(DISTINCT h.listing_id) AS cnt
-            FROM detail_carousel_hints h
-            WHERE h.body IS NOT NULL
-              AND lower(split_part(h.body, ' ', 3)) IN (
-                  SELECT DISTINCT jsonb_array_elements_text(params->'makes')
-                  FROM search_configs WHERE enabled = true
+        run_obs AS (
+            SELECT
+                d.vin,
+                d.listing_id,
+                d.listing_state,
+                d.price,
+                d.dealer_name
+            FROM detail_observations d
+            JOIN last_run lr ON d.fetched_at BETWEEN lr.started_at AND lr.finished_at
+        ),
+        new_vins AS (
+            SELECT ro.vin
+            FROM run_obs ro
+            WHERE ro.vin IS NOT NULL AND length(ro.vin) = 17
+              AND NOT EXISTS (
+                  SELECT 1 FROM detail_observations older
+                  WHERE older.vin = ro.vin
+                    AND older.fetched_at < (SELECT started_at FROM last_run)
               )
-        ),
-        mapped AS (
-            SELECT COUNT(DISTINCT h.listing_id) AS cnt
-            FROM detail_carousel_hints h
-            JOIN analytics.int_listing_to_vin m ON m.listing_id = h.listing_id
-        ),
-        scraped AS (
-            SELECT COUNT(DISTINCT h.listing_id) AS cnt
-            FROM detail_carousel_hints h
-            JOIN detail_observations d ON d.listing_id = h.listing_id
-            WHERE d.listing_id IS NOT NULL
-        ),
-        unmapped_queue AS (
-            SELECT COUNT(DISTINCT listing_id) AS cnt
-            FROM analytics.int_carousel_price_events_unmapped
         )
         SELECT
-            t.cnt AS total_hints,
-            s.cnt AS in_scope,
-            m.cnt AS mapped_to_vin,
-            sc.cnt AS scraped,
-            u.cnt AS queued_to_scrape
-        FROM total_hints t, in_scope s, mapped m, scraped sc, unmapped_queue u
+            (SELECT COUNT(*) FROM run_obs) AS total_observed,
+            (SELECT COUNT(*) FROM run_obs WHERE listing_state = 'unlisted') AS unlisted,
+            (SELECT COUNT(*) FROM new_vins) AS new_vehicles,
+            (SELECT started_at AT TIME ZONE 'America/Chicago' FROM last_run) AS run_started
     """)
-    if not carousel_df.empty:
-        r = carousel_df.iloc[0]
-        col1, col2, col3, col4, col5 = st.columns(5)
+    if not last_detail_df.empty and pd.notna(last_detail_df["run_started"].iloc[0]):
+        r = last_detail_df.iloc[0]
+        st.caption(f"Run started: {r['run_started'].strftime('%b %d %H:%M')}")
+        col1, col2, col3 = st.columns(3)
         with col1:
-            st.metric("Unique Hints", f"{int(r['total_hints']):,}")
+            st.metric("Total Observed", f"{int(r['total_observed']):,}")
         with col2:
-            st.metric("In Scope", f"{int(r['in_scope']):,}")
+            st.metric("Unlisted", f"{int(r['unlisted']):,}")
         with col3:
-            st.metric("Mapped to VIN", f"{int(r['mapped_to_vin']):,}")
-        with col4:
-            st.metric("Scraped", f"{int(r['scraped']):,}")
-        with col5:
-            st.metric("Queued", f"{int(r['queued_to_scrape']):,}")
+            st.metric("New Vehicles", f"{int(r['new_vehicles']):,}")
+
+        # Breakdown of new vehicles by make/model
+        new_by_model_df = run_query("""
+            WITH last_run AS (
+                SELECT run_id, started_at, finished_at
+                FROM runs
+                WHERE trigger = 'detail scrape'
+                  AND status = 'success'
+                ORDER BY started_at DESC
+                LIMIT 1
+            ),
+            run_obs AS (
+                SELECT d.vin
+                FROM detail_observations d
+                JOIN last_run lr ON d.fetched_at BETWEEN lr.started_at AND lr.finished_at
+                WHERE d.vin IS NOT NULL AND length(d.vin) = 17
+            ),
+            new_vins AS (
+                SELECT ro.vin
+                FROM run_obs ro
+                LEFT JOIN detail_observations older
+                  ON older.vin = ro.vin
+                  AND older.fetched_at < (SELECT started_at FROM last_run)
+                WHERE older.vin IS NULL
+            )
+            SELECT
+                a.make,
+                a.model,
+                COUNT(*) AS new_count
+            FROM new_vins nv
+            JOIN analytics.int_srp_vehicle_attributes a ON a.vin = nv.vin
+            GROUP BY a.make, a.model
+            ORDER BY new_count DESC
+        """)
+        if not new_by_model_df.empty:
+            st.dataframe(new_by_model_df, use_container_width=True, hide_index=True)
+        else:
+            st.info("No new vehicles in the last detail run.")
+    else:
+        st.info("No completed detail runs found.")
 
     # -- Stale backlog
     st.subheader("Stale Vehicle Backlog")
