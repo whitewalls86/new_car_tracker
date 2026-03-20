@@ -78,8 +78,8 @@ Add webhook trigger nodes to Scrape Listings, Scrape Detail Pages, and Cleanup A
 
 | Priority | Item | Notes |
 |----------|------|-------|
-| 1 | **27.1** — Detail scrape error rate alert | Alert when >20% of detail pages fail |
-| 2 | **25.2/25.3** — Bridge dealer ID systems | Unlocks dealer data in mart |
+| 1 | **25.2/25.3** — Bridge dealer ID systems | Unlocks dealer data in mart |
+| 2 | **28** — Dashboard quicklinks | n8n + admin links in sidebar |
 | 3 | **25.2/25.3** — Bridge dealer ID systems | Unlocks dealer data in mart |
 | 6 | **14.1** — VIN case normalization | Defensive — only 1 affected VIN |
 | 7 | **14.5** — Price events dedup | Defensive — only 1 duplicate found |
@@ -182,24 +182,11 @@ Two distinct alert scenarios with different trigger points:
 
 ---
 
-**27.1 — Detail scrape error rate alert**
+**27.1 — Detail scrape error rate alert** *(Done 2026-03-20)*
 
-After all detail pages finish scraping (after the Loop Over Items in Scrape Detail Pages), query the run's error rate and fire a Telegram message if it exceeds a threshold.
-
-Implementation:
-- After "Mark Run Done", add a Postgres node that queries:
-  ```sql
-  SELECT
-    COUNT(*) FILTER (WHERE http_status IS NULL OR http_status >= 400) AS errors,
-    COUNT(*) AS total,
-    ROUND(100.0 * COUNT(*) FILTER (WHERE http_status IS NULL OR http_status >= 400) / NULLIF(COUNT(*), 0), 1) AS error_pct
-  FROM raw_artifacts
-  WHERE run_id = '<run_id>'::uuid
-    AND artifact_type = 'detail_page'
-  ```
-- Add an IF node: if `error_pct >= 20` → send Telegram message
-- Message format: `⚠️ Detail scrape error rate: {{error_pct}}% ({{errors}}/{{total}} pages failed) — Run {{run_id}}`
-- Threshold: 20% (tunable)
+After "Mark Run Done" in Scrape Detail Pages: Postgres query checks error rate for the run → IF `error_pct >= 2.5` → Telegram alert:
+`⚠️ Detail Scrape Error Rate — {error_pct}% ({errors}/{total} pages failed) — Run {run_id}`
+Both branches continue to "Call Parse Detail Pages".
 
 ---
 

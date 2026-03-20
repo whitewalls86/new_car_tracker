@@ -181,6 +181,83 @@
     },
     {
       "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  COUNT(*) AS total,\n  COUNT(*) FILTER (WHERE http_status IS NULL OR http_status >= 400) AS errors,\n  ROUND(100.0 * COUNT(*) FILTER (WHERE http_status IS NULL OR http_status >= 400) / NULLIF(COUNT(*), 0), 1) AS error_pct\nFROM raw_artifacts\nWHERE run_id = '{{ $('Create Run Id').item.json.run_id }}'::uuid\n  AND artifact_type = 'detail_page';",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        3192,
+        -16
+      ],
+      "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "name": "Check Error Rate",
+      "credentials": {
+        "postgres": {
+          "id": "l8Ecbn62FzXCDkF9",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "error-rate-check",
+              "leftValue": "={{ $json.error_pct }}",
+              "rightValue": 2.5,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3392,
+        -16
+      ],
+      "id": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+      "name": "Error Rate High?"
+    },
+    {
+      "parameters": {
+        "chatId": "774819707",
+        "text": "=⚠️ <b>Detail Scrape Error Rate</b>\n\n<b>Error rate:</b> {{ $json.error_pct }}% ({{ $json.errors }}/{{ $json.total }} pages failed)\n<b>Run:</b> {{ $('Create Run Id').item.json.run_id }}",
+        "additionalFields": {
+          "parse_mode": "HTML"
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        3592,
+        -116
+      ],
+      "id": "c3d4e5f6-a7b8-9012-cdef-123456789012",
+      "name": "Send Error Rate Alert",
+      "credentials": {
+        "telegramApi": {
+          "id": "qoqqtiFUa4Dq2Wqp",
+          "name": "Cartracker Alerts"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
         "workflowId": {
           "__rl": true,
           "value": "WX_1Ky-8veuMLlqX_iRXK",
@@ -564,6 +641,46 @@
       ]
     },
     "Mark Run Done": {
+      "main": [
+        [
+          {
+            "node": "Check Error Rate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Error Rate": {
+      "main": [
+        [
+          {
+            "node": "Error Rate High?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error Rate High?": {
+      "main": [
+        [
+          {
+            "node": "Send Error Rate Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Call 'Parse Detail Pages'",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Error Rate Alert": {
       "main": [
         [
           {
