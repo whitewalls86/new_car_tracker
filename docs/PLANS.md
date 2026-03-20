@@ -41,6 +41,10 @@
 | 27.1 | **Detail scrape error rate alert** — Telegram alert when error rate >= 2.5% after each detail scrape run | 2026-03-20 |
 | 27.2 | **Search scrape Akamai kill alert** — Job Poller Switch node detects ERR_HTTP2, sends Telegram with search_key/scope/page count | 2026-03-20 |
 | 32 | **Force-grab stale vehicles in detail scrape** — added second pool for vehicles > 36h stale bypassing one-per-dealer rule | 2026-03-20 |
+| 25.2 | **Store numeric `customer_id` in `detail_observations`** — DB migration, n8n Parse Detail Pages, dbt staging→mart chain | 2026-03-20 |
+| 25.3 | **Fix dealer join in `mart_deal_scores`** — changed from UUID to numeric `customer_id` via `mart_vehicle_snapshot` | 2026-03-20 |
+| 28 | **Dashboard quicklinks** — sidebar links to n8n, Search Config Admin, pgAdmin | 2026-03-20 |
+| 31 | **pgAdmin for SQL access** — pgAdmin 4 container on port 5050, connected to cartracker DB | 2026-03-20 |
 
 ---
 
@@ -81,23 +85,21 @@ Add webhook trigger nodes to Scrape Listings, Scrape Detail Pages, and Cleanup A
 
 | Priority | Item | Notes |
 |----------|------|-------|
-| 1 | **25.2/25.3** — Bridge dealer ID systems | Branch ready, needs deploy steps |
+| 1 | **25.4** — Replace correlated subquery in staleness | Wait 24-48h for customer_id to populate |
 | 2 | **33** — Add error info to runs table | Better run failure visibility |
 | 3 | **34** — Fix artifact_count subquery in Job Poller | Prevents overcounting across runs |
-| 4 | **28** — Dashboard quicklinks | n8n + admin links in sidebar |
-| 5 | **31** — pgAdmin for SQL access | Web-based DB querying |
-| 6 | **29** — n8n API + trigger button | Programmatic workflow control |
-| 7 | **30** — More detailed run info in dashboard | Execution list, duration, processing stats |
-| 8 | **14.1** — VIN case normalization | Defensive — only 1 affected VIN |
-| 9 | **14.5** — Price events dedup | Defensive — only 1 duplicate found |
-| 10 | **14.9 / 14.11 / 14.12** — Minor defensive fixes | Low risk |
-| 11 | **5** — Webhook triggers | Folded into Plan 29 |
+| 4 | **29** — n8n API + trigger button | Programmatic workflow control |
+| 5 | **30** — More detailed run info in dashboard | Execution list, duration, processing stats |
+| 6 | **14.1** — VIN case normalization | Defensive — only 1 affected VIN |
+| 7 | **14.5** — Price events dedup | Defensive — only 1 duplicate found |
+| 8 | **14.9 / 14.11 / 14.12** — Minor defensive fixes | Low risk |
+| 9 | **5** — Webhook triggers | Folded into Plan 29 |
 
 ---
 
 ## Plan 25: Bridge Dealer ID Systems
 
-**Status:** 25.1 done. 25.2/25.3/25.4 ready to implement.
+**Status:** 25.1/25.2/25.3 done (2026-03-20). 25.4 waiting for data population (24-48h).
 **Priority:** High
 
 cars.com uses two different dealer identifiers:
@@ -188,7 +190,9 @@ Add `customer_id` to the `base` CTE SELECT from `mart_vehicle_snapshot`, then:
 
 ## Plan 28: Add Quicklinks to dashboard
 
-Add quicklinks to n8n, search config admin to dashboard. On the left under the refresh data button.
+**Status:** Done (2026-03-20)
+
+---
 
 
 ## Plan 29: Set up n8n API
@@ -206,31 +210,9 @@ Add quicklinks to n8n, search config admin to dashboard. On the left under the r
 
 ## Plan 31: Add pgAdmin for SQL access
 
-**Status:** Not started
-**Priority:** Medium
+**Status:** Done (2026-03-20)
 
-Add pgAdmin 4 as a Docker container for web-based SQL access to the Postgres database.
-
-**Implementation:**
-- Add to `docker-compose.yml`:
-  ```yaml
-  pgadmin:
-    image: dpage/pgadmin4
-    container_name: cartracker-pgadmin
-    restart: unless-stopped
-    ports:
-      - "5050:80"
-    environment:
-      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL}
-      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD}
-    volumes:
-      - pgadmin_data:/var/lib/pgadmin
-    networks:
-      - cartracker-net
-  ```
-- Add `PGADMIN_EMAIL` and `PGADMIN_PASSWORD` to `.env.example`
-- Add `pgadmin_data` to volumes
-- Add pgAdmin link to dashboard quicklinks (Plan 28)
+---
 
 ## Plan 32: Enhance Detail Scrape Selection — force-grab stale vehicles
 
