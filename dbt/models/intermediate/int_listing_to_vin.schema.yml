@@ -3,8 +3,8 @@ version: 2
 models:
   - name: int_listing_to_vin
     description: >
-      Latest VIN observed for each listing_id, derived from SRP observations.
-      dbt equivalent of public.srp_listing_to_vin.
+      Latest VIN observed for each listing_id, derived from SRP and detail observations.
+      Detail observations allow carousel hints to be mapped to VINs after scraping.
     columns:
       - name: listing_id
         data_tests:

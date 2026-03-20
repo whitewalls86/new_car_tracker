@@ -4,16 +4,16 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "WITH candidates AS (\n  SELECT\n    ovs.vin,\n    ovs.current_listing_url,\n    ovs.listing_id,\n    ovs.tier1_seller_customer_id AS seller_customer_id,\n    ovs.listing_state,\n\n    ovs.is_price_stale,\n    ovs.is_full_details_stale,\n    ovs.stale_reason,\n\n    ovs.price_observed_at,\n    ovs.tier1_observed_at,\n    ovs.tier1_age_hours,\n\n    -- One-per-dealer (fallback to VIN if dealer id missing)\n    ROW_NUMBER() OVER (\n      PARTITION BY COALESCE(ovs.tier1_seller_customer_id::text, ovs.vin)\n      ORDER BY\n        CASE WHEN ovs.is_full_details_stale THEN 0 ELSE 1 END,\n        COALESCE(ovs.price_observed_at, 'epoch'::timestamptz) ASC,\n        COALESCE(ovs.tier1_observed_at, 'epoch'::timestamptz) ASC\n    ) AS dealer_row_num\n\n  FROM ops.ops_vehicle_staleness ovs\n  WHERE\n    (ovs.is_price_stale OR ovs.is_full_details_stale)\n    AND COALESCE(ovs.listing_state, 'active') = 'active'\n    AND ovs.current_listing_url IS NOT NULL\n),\n\n-- Pool 1: one per dealer (existing logic)\ndealer_picks AS (\n  SELECT vin, current_listing_url, seller_customer_id, stale_reason,\n         is_price_stale, is_full_details_stale, price_observed_at,\n         tier1_observed_at, listing_id\n  FROM candidates\n  WHERE dealer_row_num = 1\n),\n\n-- Pool 2: force-grab vehicles > 36h stale that dealer_picks missed\nforce_stale AS (\n  SELECT vin, current_listing_url, seller_customer_id,\n         'force_stale_36h' AS stale_reason,\n         is_price_stale, is_full_details_stale, price_observed_at,\n         tier1_observed_at, listing_id\n  FROM candidates\n  WHERE tier1_age_hours > 36\n    AND dealer_row_num > 1\n),\n\ncombined AS (\n  SELECT * FROM dealer_picks\n  UNION ALL\n  SELECT * FROM force_stale\n)\nSELECT DISTINCT ON (vin) *\nFROM combined\nORDER BY vin,\n  CASE WHEN is_full_details_stale THEN 0 ELSE 1 END,\n  COALESCE(price_observed_at, 'epoch'::timestamptz) ASC;\n",
+        "query": "WITH candidates AS (\n  SELECT\n    ovs.vin,\n    ovs.current_listing_url,\n    ovs.listing_id,\n    ovs.tier1_seller_customer_id AS seller_customer_id,\n    ovs.listing_state,\n\n    ovs.is_price_stale,\n    ovs.is_full_details_stale,\n    ovs.stale_reason,\n\n    ovs.price_observed_at,\n    ovs.tier1_observed_at,\n    ovs.tier1_age_hours,\n\n    -- One-per-dealer (fallback to VIN if dealer id missing)\n    ROW_NUMBER() OVER (\n      PARTITION BY COALESCE(ovs.tier1_seller_customer_id::text, ovs.vin)\n      ORDER BY\n        CASE WHEN ovs.is_full_details_stale THEN 0 ELSE 1 END,\n        COALESCE(ovs.price_observed_at, 'epoch'::timestamptz) ASC,\n        COALESCE(ovs.tier1_observed_at, 'epoch'::timestamptz) ASC\n    ) AS dealer_row_num\n\n  FROM ops.ops_vehicle_staleness ovs\n  WHERE\n    (ovs.is_price_stale OR ovs.is_full_details_stale)\n    AND COALESCE(ovs.listing_state, 'active') = 'active'\n    AND ovs.current_listing_url IS NOT NULL\n),\n\n-- Pool 1: one per dealer (existing logic)\ndealer_picks AS (\n  SELECT vin, current_listing_url, seller_customer_id, stale_reason,\n         is_price_stale, is_full_details_stale, price_observed_at,\n         tier1_observed_at, listing_id\n  FROM candidates\n  WHERE dealer_row_num = 1\n),\n\n-- Pool 2: force-grab vehicles > 36h stale that dealer_picks missed\nforce_stale AS (\n  SELECT vin, current_listing_url, seller_customer_id,\n         'force_stale_36h' AS stale_reason,\n         is_price_stale, is_full_details_stale, price_observed_at,\n         tier1_observed_at, listing_id\n  FROM candidates\n  WHERE tier1_age_hours > 36\n    AND dealer_row_num > 1\n),\n\n-- Pool 3: grab unmapped carousel hints, limited to the number of detail scrapes we're running\nunmapped AS (\n\tSELECT\n\t\tvin,\n\t\tcurrent_listing_url,\n\t\tseller_customer_id,\n\t\tstale_reason,\n\t\tis_price_stale,\n\t\tis_full_details_stale,\n\t\tprice_observed_at,\n\t\ttier1_observed_at,\n\t\tlisting_id\n\tFROM (\n\t\tSELECT \n\t\t\tlisting_id as vin,\n\t\t\tCONCAT('https://www.cars.com/vehicledetail/', listing_id, '/') as current_listing_url,\n\t\t\tnull as seller_customer_id,\n\t\t\t'unmapped_carousel' as stale_reason,\n\t\t\ttrue as is_price_stale,\n\t\t\ttrue as is_full_details_stale,\n\t\t\tobserved_at as price_observed_at,\n\t\t\tnull::timestamptz as tier1_observed_at,\n\t\t\tlisting_id,\n\t\t\tROW_NUMBER() OVER (PARTITION BY listing_id ORDER BY observed_at DESC) as listing_row\n\t\tFROM analytics.int_carousel_price_events_unmapped\n ) WHERE listing_row = 1\n   ORDER BY price_observed_at desc \n   LIMIT (SELECT (SELECT COUNT(*) FROM force_stale)+(SELECT COUNT(*) FROM dealer_picks))\n),\n\ncombined AS (\n  SELECT * FROM dealer_picks\n  UNION ALL\n  SELECT * FROM force_stale\n  UNION ALL\n  SELECT vin, current_listing_url, seller_customer_id, stale_reason, is_price_stale, is_full_details_stale, null, null, listing_id FROM unmapped\n)\nSELECT DISTINCT ON (vin) *\nFROM combined\nORDER BY vin,\n  CASE WHEN is_full_details_stale THEN 0 ELSE 1 END,\n  COALESCE(price_observed_at, 'epoch'::timestamptz) ASC;\n",
         "options": {}
       },
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        1120,
-        320
+        -2128,
+        1136
       ],
-      "id": "b8df12fe-b392-4e4e-b0f0-0987c1b884fd",
+      "id": "bbcb22dc-76e0-4258-b009-b7d4cf63a269",
       "name": "Get Batch to Process",
       "credentials": {
         "postgres": {
@@ -29,10 +29,10 @@
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
       "position": [
-        2272,
-        496
+        -1008,
+        1376
       ],
-      "id": "e98d64f4-08a0-48e7-8256-d28d2985ab9c",
+      "id": "a1eb499b-6143-4e9a-a17d-de5599d02ffb",
       "name": "Loop Over Items"
     },
     {
@@ -56,10 +56,10 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        2480,
-        512
+        -784,
+        1376
       ],
-      "id": "d68afffe-ce9d-463a-add9-bb8d9208879e",
+      "id": "8dec758f-b5e3-438e-a3af-6ee445611a56",
       "name": "HTTP Request"
     },
     {
@@ -69,10 +69,10 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1568,
-        320
+        -1680,
+        1136
       ],
-      "id": "c4169916-3ec4-4e98-a742-c070c966a989",
+      "id": "333d97ca-20ed-4c13-90e4-c5f04fa8ca1d",
       "name": "Create Run Id"
     },
     {
@@ -82,10 +82,10 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2688,
-        576
+        -560,
+        1552
       ],
-      "id": "1ceee330-f8c7-469d-8b08-82cb9a2691f4",
+      "id": "cfcb9d8c-1297-408c-a63a-79443ec69e29",
       "name": "Code in JavaScript"
     },
     {
@@ -97,10 +97,10 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        3152,
-        160
+        -336,
+        1088
       ],
-      "id": "b417829c-9f66-4fbb-80d1-8315a28ded9e",
+      "id": "0185c73b-7b86-45a3-b8aa-6d91567501b2",
       "name": "Execute a SQL query",
       "credentials": {
         "postgres": {
@@ -117,10 +117,10 @@
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
       "position": [
-        2720,
-        144
+        -784,
+        1024
       ],
-      "id": "b1e23439-7721-4eb9-9923-4f55664e37d0",
+      "id": "b14a087a-59d6-444a-b8a9-c080f7efce28",
       "name": "Loop Over Items1"
     },
     {
@@ -132,10 +132,10 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        1792,
-        320
+        -1456,
+        1136
       ],
-      "id": "2c3e5644-6a46-4034-bd57-6fffed159164",
+      "id": "4bbc7faa-b4f0-42f9-8214-b3862103a3a6",
       "name": "Insert Run Row",
       "credentials": {
         "postgres": {
@@ -153,10 +153,10 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        2992,
-        -16
+        -560,
+        832
       ],
-      "id": "4879c7c1-787f-4426-a801-61ac9c777098",
+      "id": "3dd28ac4-b9f7-4261-868d-8138490f9739",
       "name": "Mark Run Done",
       "credentials": {
         "postgres": {
@@ -173,10 +173,10 @@
       "type": "n8n-nodes-base.aggregate",
       "typeVersion": 1,
       "position": [
-        2992,
-        160
+        -560,
+        1024
       ],
-      "id": "fe750991-76f8-422a-9508-9a381125a3c2",
+      "id": "a2f35491-2012-416b-a6ae-8d27a0ea32f0",
       "name": "Aggregate"
     },
     {
@@ -188,10 +188,10 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        3192,
-        -16
+        -336,
+        832
       ],
-      "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "id": "c3600aad-c3ae-4c52-96f3-906b41cee02b",
       "name": "Check Error Rate",
       "credentials": {
         "postgres": {
@@ -206,7 +206,8 @@
           "options": {
             "caseSensitive": true,
             "leftValue": "",
-            "typeValidation": "strict"
+            "typeValidation": "loose",
+            "version": 2
           },
           "conditions": [
             {
@@ -221,15 +222,16 @@
           ],
           "combinator": "and"
         },
+        "looseTypeValidation": true,
         "options": {}
       },
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        3392,
-        -16
+        -112,
+        832
       ],
-      "id": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+      "id": "0a3c3cbd-88c3-46da-b8d9-1c9e1f1a9d5c",
       "name": "Error Rate High?"
     },
     {
@@ -243,11 +245,12 @@
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
-        3592,
-        -116
+        112,
+        752
       ],
-      "id": "c3d4e5f6-a7b8-9012-cdef-123456789012",
+      "id": "96856eef-9bbc-4071-a6d6-3379f609f841",
       "name": "Send Error Rate Alert",
+      "webhookId": "4a9b227a-7727-44d0-becc-c1e2dc80b6fd",
       "credentials": {
         "telegramApi": {
           "id": "qoqqtiFUa4Dq2Wqp",
@@ -278,10 +281,10 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        3152,
-        -16
+        304,
+        832
       ],
-      "id": "7f81f241-b2a5-4945-87e0-ecc88488f1f2",
+      "id": "29efe20b-ac77-42b6-8121-17d3eac18ead",
       "name": "Call 'Parse Detail Pages'"
     },
     {
@@ -343,10 +346,10 @@
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3.4,
       "position": [
-        1344,
-        320
+        -1904,
+        1136
       ],
-      "id": "227746a7-d7ed-4bab-bd32-394db63b1e7e",
+      "id": "a28c30ae-2158-4d2a-8036-dad10180d14f",
       "name": "Switch"
     },
     {
@@ -356,10 +359,10 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2016,
-        320
+        -1232,
+        1136
       ],
-      "id": "38f891d7-0dfe-4963-9b71-4fb31b190975",
+      "id": "60cf06d0-af57-4f80-857a-10a42f7c7888",
       "name": "Get Batch"
     },
     {
@@ -367,8 +370,8 @@
         "rule": {
           "interval": [
             {
-              "field": "hours",
-              "triggerAtMinute": 5
+              "field": "minutes",
+              "minutesInterval": 30
             }
           ]
         }
@@ -376,10 +379,10 @@
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.3,
       "position": [
-        448,
-        432
+        -2800,
+        1264
       ],
-      "id": "186a6bb6-4696-472e-8470-5bda72f2e46f",
+      "id": "9b717d83-c95c-44c5-91a5-9538651d12ec",
       "name": "Schedule Trigger"
     },
     {
@@ -419,10 +422,10 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
-        896,
-        368
+        -2352,
+        1184
       ],
-      "id": "6f0f7b8d-34c0-49a8-9db9-858634f0085c",
+      "id": "784cd0e3-5bd4-4820-9f1d-74f58982409f",
       "name": "If"
     },
     {
@@ -434,10 +437,10 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        672,
-        432
+        -2576,
+        1264
       ],
-      "id": "44c75f0f-7b24-4b74-ada4-bda5bcd858f8",
+      "id": "36105da5-0655-4d43-b334-a6de7c712c11",
       "name": "Execute a SQL query1",
       "credentials": {
         "postgres": {
@@ -454,10 +457,10 @@
       "type": "n8n-nodes-base.wait",
       "typeVersion": 1.1,
       "position": [
-        1120,
-        528
+        -2128,
+        1360
       ],
-      "id": "d717c93f-8563-4b5c-8b1e-d414a6bb4ae9",
+      "id": "b650a665-f81b-4d1b-963f-1fd2839549b0",
       "name": "Wait",
       "webhookId": "28e39f27-4c1e-42bd-8043-8e6608b2557a"
     },
@@ -469,10 +472,10 @@
       "type": "n8n-nodes-base.aggregate",
       "typeVersion": 1,
       "position": [
-        2192,
-        224
+        -1008,
+        832
       ],
-      "id": "f3f88d9a-8d5c-44cd-97b7-2cccc9f57bc1",
+      "id": "5243cdfd-9488-4e71-b261-55cb8976d421",
       "name": "Store Total (Aggregate)"
     },
     {
@@ -484,10 +487,10 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        2368,
-        224
+        -784,
+        832
       ],
-      "id": "fc451c0b-7f96-4877-9a9d-5f8b7c134bb7",
+      "id": "d15b24f6-5030-4a3d-ad77-3a974925e516",
       "name": "Store Total Count",
       "credentials": {
         "postgres": {
@@ -503,10 +506,10 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2688,
-        416
+        -560,
+        1328
       ],
-      "id": "fbafbbf8-1fd9-4ba6-8f17-aa8245ee14ac",
+      "id": "ab39563d-9f1a-496b-9272-e36245184884",
       "name": "Check Milestone"
     },
     {
@@ -518,10 +521,10 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        2912,
-        416
+        -336,
+        1328
       ],
-      "id": "07ce8a24-dd7f-4c23-a446-c29fd9a582e1",
+      "id": "ea3032ed-b8f0-4ba9-8885-1a7667e38515",
       "name": "Update Progress",
       "credentials": {
         "postgres": {
@@ -531,7 +534,28 @@
       }
     }
   ],
-  "pinData": {},
+  "pinData": {
+    "Schedule Trigger": [
+      {
+        "json": {
+          "timestamp": "2026-03-19T23:05:28.008-04:00",
+          "Readable date": "March 19th 2026, 11:05:28 pm",
+          "Readable time": "11:05:28 pm",
+          "Day of week": "Thursday",
+          "Year": "2026",
+          "Month": "March",
+          "Day of month": "19",
+          "Hour": "23",
+          "Minute": "05",
+          "Second": "28",
+          "Timezone": "America/New_York (UTC-04:00)"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ]
+  },
   "connections": {
     "Get Batch to Process": {
       "main": [
@@ -811,7 +835,7 @@
     "callerPolicy": "workflowsFromSameOwner",
     "errorWorkflow": "rJfFKS2DGRAn_IPJR1xTc"
   },
-  "versionId": "acd8b928-2365-40ba-9b6f-4ea549599440",
+  "versionId": "ed76a19b-9cef-4686-a368-59b751aaeb3e",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179"
