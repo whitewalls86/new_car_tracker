@@ -18,6 +18,7 @@ with srp as (
 
       s.canonical_detail_url,
       s.seller_customer_id,
+      null::text as customer_id,
 
       'srp'::text as source
     from {{ ref('stg_srp_observations') }} s
@@ -35,6 +36,7 @@ detail as (
 
         d.canonical_detail_url,
         null::text as seller_customer_id,
+        d.customer_id,
 
         'detail'::text as source
     from {{ ref('stg_detail_observations') }} d
@@ -65,7 +67,10 @@ ranked as (
         -- Always carry the most recent SRP seller_customer_id forward,
         -- even when a detail observation wins T1 (detail pages don't carry this UUID).
         max(case when source = 'srp' then seller_customer_id end)
-            over (partition by vin) as srp_seller_customer_id
+            over (partition by vin) as srp_seller_customer_id,
+        -- Carry the numeric customer_id from the most recent detail observation
+        max(case when source = 'detail' then customer_id end)
+            over (partition by vin) as detail_customer_id
     from tier1
     {% if is_incremental() %}
     where vin in (select vin from changed_vins)
@@ -82,6 +87,7 @@ select
 
     canonical_detail_url,
     coalesce(seller_customer_id, srp_seller_customer_id) as seller_customer_id,
+    detail_customer_id as customer_id,
 
     source
 from ranked

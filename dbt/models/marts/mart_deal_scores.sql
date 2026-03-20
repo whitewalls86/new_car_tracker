@@ -38,8 +38,7 @@ scored as (
         -- Seller
         a.seller_customer_id,
         a.seller_zip,
-        -- dealer_name from most recent detail observation (direct parse, always populated when available)
-        -- dlr.* fields from dealers table are intentionally omitted until Plan 25.2 bridges UUID↔numeric ID
+        -- dealer_name: prefer detail parse, fallback to dealers table (now joined via numeric customer_id)
         coalesce(ldn.dealer_name, dlr.name) as dealer_name,
 
         dlr.city as dealer_city,
@@ -140,7 +139,7 @@ scored as (
         and di.make = a.make and di.model = a.model
     left join {{ ref('int_price_percentiles_by_vin') }} pctl on pctl.vin = av.vin
     left join {{ source('public', 'dealers') }} dlr
-        on dlr.customer_id = a.seller_customer_id
+        on dlr.customer_id = v.customer_id
     left join {{ ref('int_latest_dealer_name_by_vin') }} ldn on ldn.vin = av.vin
     left join local_seen ls on ls.vin = av.vin
     where v.price is not null and v.price > 0
