@@ -232,7 +232,7 @@ async def advance_search_rotation(
                 SELECT started_at
                 FROM runs
                 WHERE trigger = 'search scrape'
-                  AND status NOT IN ('skipped', 'failed')
+                  AND status NOT IN ('skipped', 'failed', 'requested')
                 ORDER BY started_at DESC
                 LIMIT 1
             """)
