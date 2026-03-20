@@ -172,6 +172,27 @@ Move operational intermediate models that serve n8n/pipeline (not analytics) int
 
 ---
 
+## Plan 36: Automate n8n workflow setup
+
+**Status:** Not started
+**Priority:** Medium
+
+Currently, deploying workflow changes requires manually importing JSON files via the n8n UI. This is error-prone and blocks CI/CD.
+
+**Options to investigate:**
+
+1. **n8n CLI import** — `n8n import:workflow --input=file.json` can be run inside the container. Could script a startup entrypoint that imports all JSON files from a mounted directory on container creation.
+
+2. **n8n REST API** — Enable the n8n API (`N8N_PUBLIC_API_ENABLED=true` env var), then use `PUT /workflows/{id}` to update workflows programmatically. Pairs with Plan 29. Would need to store workflow IDs somewhere stable.
+
+3. **Volume-mount the n8n DB** — n8n uses SQLite by default. Could snapshot and restore the entire n8n state, but this is brittle across n8n version upgrades.
+
+4. **Startup script** — Add a `docker-entrypoint` wrapper that runs `n8n import:workflow --separate --input=/workflows/` before starting n8n. Mount `n8n/workflows/` into the container. This would auto-import on every container rebuild.
+
+**Goal:** After editing a workflow JSON in git, `docker compose up -d n8n` should pick up the change without manual UI work. Credential wiring may still need a one-time manual step.
+
+---
+
 ## Future Ideas (Unprioritized)
 
 - **Price alert notifications** — email/SMS when a VIN drops below a threshold
