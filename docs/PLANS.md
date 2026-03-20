@@ -80,6 +80,7 @@ Add webhook trigger nodes to Scrape Listings, Scrape Detail Pages, and Cleanup A
 | 7 | **14.5** — Price events dedup | Defensive — only 1 duplicate found |
 | 8 | **14.9 / 14.11 / 14.12** — Minor defensive fixes | Low risk |
 | 9 | **5** — Webhook triggers | Folded into Plan 29 |
+| 10 | **35** — dbt schema audit | Missing staging layers + ops consolidation |
 
 ---
 
@@ -133,6 +134,43 @@ Add `customer_id` to the `base` CTE SELECT from `mart_vehicle_snapshot`, then:
 - `Update scrape_jobs` counts artifacts matching `search_key + search_scope` but doesn't filter by `run_id`
 - Could overcount if same search_key+scope runs overlap
 - Add `AND run_id = scrape_jobs.run_id` to the subquery
+
+## Plan 35: dbt Schema Audit — staging gaps + ops consolidation
+
+**Status:** Not started
+**Priority:** Low
+
+Audit found two issues with the current dbt model organization:
+
+### 35.1 — Missing staging layers
+
+4 raw tables are accessed directly by intermediate/mart models without a staging layer:
+
+| Raw Table | Direct Consumers (bypassing staging) |
+|---|---|
+| `raw_artifacts` | `int_listing_days_on_market`, `int_model_price_benchmarks`, `int_price_percentiles_by_vin`, `int_srp_vehicle_attributes`, `mart_deal_scores` |
+| `dealers` | `int_dealer_inventory`, `mart_deal_scores` |
+| `detail_observations` | `int_latest_dealer_name_by_vin` |
+| `srp_observations` | `ops_vehicle_staleness` |
+
+**Decision needed:** Should we add `stg_raw_artifacts`, `stg_dealers`? Or are these tables clean enough to access directly? `raw_artifacts` is the worst offender (5 consumers). `dealers` is small and simple. The `detail_observations` and `srp_observations` direct access in `int_latest_dealer_name_by_vin` and `ops_vehicle_staleness` should use the existing staging models.
+
+### 35.2 — Ops schema: deprecate or expand?
+
+Currently `ops/` contains only `ops_vehicle_staleness`. Two options:
+
+**Option A — Deprecate ops, move to intermediate:**
+`ops_vehicle_staleness` is consumed only by the n8n Get Batch query (not by other dbt models). It reads from `mart_vehicle_snapshot` and raw sources. Move it to `intermediate/` as `int_vehicle_staleness` for consistency.
+
+**Option B — Expand ops as the "operational queries" schema:**
+Move operational intermediate models that serve n8n/pipeline (not analytics) into `ops/`:
+- `int_dealer_inventory` → `ops_dealer_inventory` (used by batch query logic)
+- `int_latest_dealer_name_by_vin` → `ops_latest_dealer_name` (used for display only)
+- Keep `ops_vehicle_staleness` where it is
+
+**Recommendation:** Option A is simpler. The ops schema adds cognitive overhead for one model. If we later have 3+ operational models, revisit Option B.
+
+---
 
 ## Future Ideas (Unprioritized)
 
