@@ -193,6 +193,34 @@ Currently, deploying workflow changes requires manually importing JSON files via
 
 ---
 
+## Plan 37: Use unmapped carousel hints to trigger detail scrapes
+
+**Status:** In progress
+**Priority:** Medium
+
+Right now we don't do anything with our unmapped carousel hints. We should do a couple things.
+
+1. Make sure that if we ever do see a vehicle, the carousel hints from the past are correctly tied to it and incorporated in its price history
+2. Trigger Detail scrapes of those vehicles, checking that the makes/models are in our search configs before inserting the rows
+   - We should see what info we can get from the carousel cards related to make/model, maybe we can pre-emptively exclude hints that fall outside our search params
+
+Implementing this will reduce reliance on Search Scrapes to discover new VINS, giving us another way to increase coverage.
+
+### Done
+
+- **Pool 3 in batch query** — `Scrape Detail Pages` workflow pulls unmapped carousel hints as a third pool, limited to the count of pools 1+2
+- **`int_carousel_price_events_unmapped`** — dbt model surfaces carousel hints not yet mapped to a VIN
+- **`int_carousel_price_events_mapped`** — dbt model feeds mapped carousel hints into `int_price_events` as Tier-2 events
+- **Fixed batch query URL** — was `vehicle_data/{id}`, corrected to `vehicledetail/{id}/`
+- **Fixed VIN fallback** — Write Detail Observations now validates `search_key` is 17-char alphanumeric before using as VIN fallback (prevents UUIDs from being stored as VINs)
+- **Expanded `int_listing_to_vin`** — now includes detail observations as a VIN source, so carousel hints become mapped after successful scrape
+- **Excluded already-scraped hints** — `int_carousel_price_events_unmapped` excludes listing_ids already in `detail_observations` to prevent infinite re-scraping
+
+### Remaining
+
+- **Make/model filtering** — pre-filter carousel hints against search configs to avoid scraping vehicles outside our search scope (carousel cards have `body` text with make/model info)
+- **Metrics** — track how many unmapped hints successfully map to VINs to tune the LIMIT
+
 ## Future Ideas (Unprioritized)
 
 - **Price alert notifications** — email/SMS when a VIN drops below a threshold
