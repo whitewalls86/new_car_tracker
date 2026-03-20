@@ -221,10 +221,50 @@ Add quicklinks to n8n, search config admin to dashboard. On the left under the r
 - Lengh of time
 - Information about results processing and detail parsing
 
-## Plan 31: Add a SQL runner where we can write SQL to execute against the database
-- Investigate if there are off the shelf tools for this
-- I'd like it to be accessible from the dashboard.
+## Plan 31: Add pgAdmin for SQL access
 
+**Status:** Not started
+**Priority:** Medium
+
+Add pgAdmin 4 as a Docker container for web-based SQL access to the Postgres database.
+
+**Implementation:**
+- Add to `docker-compose.yml`:
+  ```yaml
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: cartracker-pgadmin
+    restart: unless-stopped
+    ports:
+      - "5050:80"
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD}
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    networks:
+      - cartracker-net
+  ```
+- Add `PGADMIN_EMAIL` and `PGADMIN_PASSWORD` to `.env.example`
+- Add `pgadmin_data` to volumes
+- Add pgAdmin link to dashboard quicklinks (Plan 28)
+
+## Plan 32: Enhance Detail Scrape Selection — force-grab stale vehicles
+
+**Status:** Done (2026-03-20)
+
+One-per-dealer rule was causing vehicles from large dealers to consistently miss detail scrapes. Added a second "force stale" pool: any vehicle > 36 hours stale that wasn't already picked by the dealer rule gets added to the batch. Tested: 66 dealer picks + 134 force-stale = 200 total (manageable).
+
+
+## Plan 33: Add error info to runs table
+- runs table has no `error_count` or `last_error` column
+- When a run fails, there's no record of why (only in scrape_jobs)
+- Add columns and update Job Poller's Mark Run Done to populate them
+
+## Plan 34: Fix artifact_count subquery in Job Poller
+- `Update scrape_jobs` counts artifacts matching `search_key + search_scope` but doesn't filter by `run_id`
+- Could overcount if same search_key+scope runs overlap
+- Add `AND run_id = scrape_jobs.run_id` to the subquery
 
 ## Future Ideas (Unprioritized)
 
