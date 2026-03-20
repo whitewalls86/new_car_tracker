@@ -22,12 +22,25 @@ _jobs_lock = threading.Lock()
 _executor = ThreadPoolExecutor(max_workers=4)
 
 # Sync DB config for background threads (psycopg2, not asyncpg)
-_SYNC_DB_KWARGS = {
-    "host": "postgres",
-    "dbname": "cartracker",
-    "user": "cartracker",
-    "password": os.environ.get("POSTGRES_PASSWORD", ""),
-}
+# Parse from DATABASE_URL to stay in sync with docker-compose
+_DATABASE_URL = os.environ.get("DATABASE_URL", "")
+if _DATABASE_URL:
+    from urllib.parse import urlparse
+    _parsed = urlparse(_DATABASE_URL)
+    _SYNC_DB_KWARGS = {
+        "host": _parsed.hostname or "postgres",
+        "port": _parsed.port or 5432,
+        "dbname": _parsed.path.lstrip("/") or "cartracker",
+        "user": _parsed.username or "cartracker",
+        "password": _parsed.password or "",
+    }
+else:
+    _SYNC_DB_KWARGS = {
+        "host": "postgres",
+        "dbname": "cartracker",
+        "user": "cartracker",
+        "password": os.environ.get("POSTGRES_PASSWORD", ""),
+    }
 
 
 def _fetch_known_vins(search_key: str, scope: str) -> List[str]:
@@ -48,7 +61,9 @@ def _fetch_known_vins(search_key: str, scope: str) -> List[str]:
             """, (search_key, scope))
             return [row[0] for row in cur.fetchall()]
         conn.close()
-    except Exception:
+    except Exception as e:
+        import logging
+        logging.getLogger("uvicorn").warning("_fetch_known_vins failed: %s", e)
         return []  # degrade gracefully — scrape without breakpoint
 
 
@@ -142,19 +157,6 @@ def run_scrape_results(
             "error": None,
             "started_at": None,
         }
-    import psycopg2
-    try:
-        conn = psycopg2.connect(**_SYNC_DB_KWARGS)
-        with conn, conn.cursor() as cur:
-            cur.execute(
-                """INSERT INTO scrape_jobs (job_id, run_id, search_key, scope, status)
-                   VALUES (%s, %s, %s, %s, 'queued')""",
-                (job_id, run_id, search_key, scope),
-            )
-        conn.close()
-    except Exception:
-        pass  # DB write failure shouldn't block the scrape
-
     _executor.submit(_run_scrape_job, job_id, run_id, search_key, scope, payload)
     return {"job_id": job_id, "status": "queued"}
 
