@@ -67,20 +67,6 @@ Add webhook trigger nodes to Scrape Listings, Scrape Detail Pages, and Cleanup A
 **14.11 — Chrome fingerprint env var** — hardcoded `chrome131` (working fine currently)
 **14.12 — max_safety_pages validator** — no bounds check (low risk)
 
----
-
-## Plan 16: Pipeline Efficiency
-
-**Status:** Done (16.1, 16.2, 16.3 complete)
-
----
-
-## Plan 20: dbt + Postgres Health in Dashboard
-
-**Status:** Done (2026-03-19)
-
----
-
 ## Remaining Priority Order
 
 | Priority | Item | Notes |
@@ -106,57 +92,6 @@ cars.com uses two different dealer identifiers:
 - **UUID** (`150b427b-c147-5a18-a733-cf5aa95519d0`) — in SRP JSON, stored in `srp_observations.seller_customer_id`
 - **Numeric** (`735`) — in detail page HTML, already parsed by `parse_detail_page.py` and written to `dealers.customer_id`, but never stored in `detail_observations`
 
-**25.1 — Preserve UUID when detail becomes T1 (done 2026-03-18)**
-`int_latest_tier1_observation_by_vin` was overwriting `seller_customer_id` with `null` when a detail observation became the most recent T1. Fixed.
-
----
-
-**25.2 — Store numeric `customer_id` in `detail_observations`**
-
-The parser already extracts `customer_id` from the detail page. The `Upsert Dealers` node in Parse Detail Pages already uses it. It just never gets written to `detail_observations`.
-
-*Step 1 — DB migration (run first):*
-```sql
-ALTER TABLE detail_observations ADD COLUMN IF NOT EXISTS customer_id text;
-CREATE INDEX IF NOT EXISTS ix_detail_observations_customer_id
-  ON detail_observations (customer_id) WHERE customer_id IS NOT NULL;
-```
-
-*Step 2 — n8n "Write Detail Observations" node:*
-Add to the `rows` CTE SELECT:
-```sql
-NULLIF(p."primary"->>'customer_id', '') AS customer_id
-```
-Add `customer_id` to the INSERT column list and SELECT from rows.
-
-*Step 3 — `stg_detail_observations.sql`:*
-Add `d.customer_id` to the projection.
-
-*Step 4 — `int_latest_tier1_observation_by_vin.sql`:*
-- In the `detail` CTE: add `d.customer_id` (alongside the existing `null::text as seller_customer_id`)
-- In the `srp` CTE: add `null::text as customer_id` placeholder
-- In the `ranked` CTE: add window `max(case when source = 'detail' then customer_id end) over (partition by vin) as detail_customer_id`
-- In final SELECT: expose as `detail_customer_id as customer_id`
-- ⚠️ Requires `dbt run --full-refresh` on this incremental model (the workflow's `full_refresh: true` flag handles this automatically on next run)
-
-*Step 5 — `mart_vehicle_snapshot.sql`:*
-Add `t.customer_id` to the projection so downstream marts can access it.
-
----
-
-**25.3 — Fix the dealer join in `mart_deal_scores.sql`**
-
-The existing join is broken because it matches UUID against numeric ID:
-```sql
--- Current (broken — UUID never matches numeric):
-left join dealers dlr on dlr.customer_id = a.seller_customer_id
-
--- Fix (use numeric customer_id from mart_vehicle_snapshot):
-left join dealers dlr on dlr.customer_id = v.customer_id
-```
-Where `v` is the existing `mart_vehicle_snapshot` alias. This immediately surfaces `dlr.name`, `dlr.phone`, `dlr.rating`, `dlr.city`, `dlr.state` for all detail-scraped VINs.
-
----
 
 **25.4 — Replace correlated subquery in `ops_vehicle_staleness.sql`** *(defer 24-48h after 25.2 ships)*
 
@@ -176,25 +111,6 @@ Add `customer_id` to the `base` CTE SELECT from `mart_vehicle_snapshot`, then:
 
 ---
 
-## Plan 26: Search Scrape Slot Rotation
-
-**Status:** Done (2026-03-20)
-
----
-
-## Plan 27: Telegram Alerts — Scrape Health
-
-**Status:** 27.1 + 27.2 done (2026-03-20). 27.3 was already in place.
-
----
-
-## Plan 28: Add Quicklinks to dashboard
-
-**Status:** Done (2026-03-20)
-
----
-
-
 ## Plan 29: Set up n8n API
 
 - Set up the n8n API so we can interact with it programatically.
@@ -207,19 +123,6 @@ Add `customer_id` to the `base` CTE SELECT from `mart_vehicle_snapshot`, then:
 - List of ongoing executions
 - Lengh of time
 - Information about results processing and detail parsing
-
-## Plan 31: Add pgAdmin for SQL access
-
-**Status:** Done (2026-03-20)
-
----
-
-## Plan 32: Enhance Detail Scrape Selection — force-grab stale vehicles
-
-**Status:** Done (2026-03-20)
-
----
-
 
 ## Plan 33: Add error info to runs table
 - runs table has no `error_count` or `last_error` column

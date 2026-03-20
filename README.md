@@ -4,7 +4,7 @@ CarTracker tracks local and national new car inventory on Cars.com, collecting a
 
 ## Architecture
 
-Six containerized services orchestrated via Docker Compose:
+Seven containerized services orchestrated via Docker Compose:
 
 ```
 Schedule Trigger (30 min)           Schedule Trigger (1h)
@@ -40,19 +40,20 @@ Schedule Trigger (30 min)           Schedule Trigger (1h)
 | Service | Port | Description |
 |---------|------|-------------|
 | **postgres** | 5432 | PostgreSQL 16 — all config, raw data, parsed observations, and analytics |
-| **scraper** | 8000 | FastAPI — fetches SRP and detail pages via Playwright (Akamai bypass). Async job queue with ThreadPoolExecutor(6). Startup recovery clears orphaned jobs/runs on container restart. Admin UI at `/admin` for search config CRUD |
+| **scraper** | 8000 | FastAPI — fetches SRP and detail pages via Playwright (Akamai bypass). Async job queue with ThreadPoolExecutor(4). Startup recovery clears orphaned jobs/runs (search + detail scrapes) on container restart. Admin UI at `/admin` for search config CRUD |
 | **n8n** | 5678 | Workflow orchestration — 7 workflows handle scraping, polling, parsing, cleanup, and error handling |
 | **dbt** | — | dbt-postgres 1.8.2 — 16 models across staging/intermediate/marts/ops schemas. Runs on-demand via dbt_runner |
 | **dbt_runner** | 8081 | Lightweight FastAPI wrapper that lets n8n trigger `dbt build` via HTTP |
-| **dashboard** | 8501 | Streamlit — 4-tab analytics dashboard (Pipeline Health, Inventory Overview, Deal Finder, Market Trends) |
+| **pgadmin** | 5050 | pgAdmin 4 — web-based SQL IDE for querying and browsing the database |
+| **dashboard** | 8501 | Streamlit — 4-tab analytics dashboard (Pipeline Health, Inventory Overview, Deal Finder, Market Trends). Sidebar quicklinks to n8n, admin UI, pgAdmin |
 
 ### n8n Workflows
 
 | Workflow | Trigger | Description |
 |----------|---------|-------------|
-| **Scrape Listings** | Every 30 min | Polls `POST /advance_rotation` — claims the next due rotation slot (6 slots, ≥239 min idle required). Explodes each slot's configs × scopes into individual async scrape jobs. |
-| **Job Poller** | Every 1 min | Expires orphaned jobs (>30 min), polls `/jobs/completed`, inserts artifacts, marks runs done |
-| **Scrape Detail Pages** | Every 1h | Waits if a search scrape is running or fresh SRP artifacts are unprocessed. Queries stale VINs (1 per dealer), fetches detail pages, batch-inserts artifacts, triggers parse + dbt build |
+| **Scrape Listings** | Every 30 min | Polls `POST /advance_rotation` — claims the next due rotation slot (6 slots, ≥1439 min idle per slot, ≥230 min gap between any runs). Explodes each slot's configs × scopes into individual async scrape jobs. |
+| **Job Poller** | Every 1 min | Expires orphaned jobs (>30 min), polls `/jobs/completed`, inserts artifacts, marks runs done. Sends Telegram alert on Akamai rate-limit kills (ERR_HTTP2). |
+| **Scrape Detail Pages** | Every 30 min | Waits if a search scrape is running or fresh SRP artifacts are unprocessed. Queries stale VINs (1 per dealer + force-grab for >36h stale), fetches detail pages, batch-inserts artifacts, triggers parse + dbt build. Telegram alert if error rate ≥2.5%. |
 | **Results Processing** | Sub-workflow | Parses SRP HTML artifacts into `srp_observations` rows |
 | **Parse Detail Pages** | Sub-workflow | Parses detail HTML into `detail_observations`, `detail_carousel_hints`, and `dealers` |
 | **Cleanup Artifacts** | Daily | Applies retention rules to old raw HTML files |
@@ -64,10 +65,10 @@ Schedule Trigger (30 min)           Schedule Trigger (1h)
 
 - `raw_artifacts` — every HTTP response (filepath, status, sha256, etc.)
 - `srp_observations` — parsed search result page listings (VIN, price, make, model, dealer)
-- `detail_observations` — parsed vehicle detail pages (full specs, listing state)
+- `detail_observations` — parsed vehicle detail pages (full specs, listing state, numeric `customer_id`)
 - `detail_carousel_hints` — similar-vehicle prices from detail page carousels
 - `dealers` — dealer names and IDs parsed from detail pages
-- `search_configs` — search definitions (zip, radius, make/model, sort rotation, rotation_slot, last_queued_at)
+- `search_configs` — search definitions (zip, radius, make/model, sort rotation, `rotation_slot`, `last_queued_at`, `rotation_order`)
 - `runs` — run lifecycle tracking (status, trigger, progress_count, total_count)
 - `scrape_jobs` — async job tracking (queued/running/completed/fetched/failed)
 - `pipeline_errors` — error log for n8n Error Handler
@@ -99,9 +100,9 @@ Schedule Trigger (30 min)           Schedule Trigger (1h)
 
 ## Refresh Strategy
 
-- **Search scrapes** use slot-based rotation: 6 slots of 1-2 search configs each fire ~once per day with ≥4h spacing between slots. The 30-min n8n schedule is a dumb clock; the `min_idle_minutes=239` gate in `/advance_rotation` is authoritative. Sort order is `listed_at_desc` (discovery mode — surfaces newly listed vehicles first).
+- **Search scrapes** use slot-based rotation: 6 slots of 1-2 search configs each fire ~once per day. Two guards enforce spacing: `min_idle_minutes=1439` (23h59m per slot) and `min_gap_minutes=230` (~4h between any runs). The 30-min n8n schedule is a dumb clock; the API is authoritative. Sort order is `listed_at_desc` (discovery mode — surfaces newly listed vehicles first).
 - **Discovery mode** stops pagination early: if ≥80% of VINs on a page were already seen in the last 14 days, or 3 consecutive pages yield 0 new VINs, the job exits. Max 30 pages per job. This keeps daily request volume low (~200–500/day) to avoid Akamai rate limiting.
-- **Detail scrapes** run hourly, targeting 1 stale VIN per dealer (leverages carousel hints for neighboring inventory)
+- **Detail scrapes** run every 30 minutes, targeting 1 stale VIN per dealer plus force-grabbing any vehicle >36h stale (leverages carousel hints for neighboring inventory)
 - **Price data** is stale after 24 hours; **full details** after 7 days
 - **Detail scrapes wait** if a search scrape is running or if SRP artifacts from the last 45 minutes haven't been processed yet
 - dbt builds run incrementally after each detail scrape completes
@@ -169,6 +170,7 @@ Use the admin UI at `http://localhost:8000/admin` to add make/model searches. Th
 | Scraper API | http://localhost:8000 |
 | Scraper Admin UI | http://localhost:8000/admin |
 | dbt Runner | http://localhost:8081 |
+| pgAdmin | http://localhost:5050 |
 | Dashboard | http://localhost:8501 |
 
 ## Project Structure
