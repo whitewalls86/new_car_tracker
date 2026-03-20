@@ -283,6 +283,7 @@ with tab1:
             COUNT(*) FILTER (WHERE status = 'failed') AS failed
         FROM runs
         WHERE started_at > now() - interval '30 days'
+              AND status != 'skipped'
         GROUP BY 1, 2
         ORDER BY 1, 2
     """)

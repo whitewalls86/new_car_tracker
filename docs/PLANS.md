@@ -36,6 +36,8 @@
 | 23 | **Fresh install support** — updated `schema_new.sql` (pg_dump), `.env.example`, `setup.ps1` script, example search config seed, README quick-start guide | 2026-03-17 |
 | 26.3 | **Reduce max_workers 12→6** — ThreadPoolExecutor halved for immediate rate-limit relief | 2026-03-19 |
 | 20 | **dbt + Postgres health in dashboard** — dbt build time/status, active connections, long-running queries, lock visibility | 2026-03-19 |
+| 26 | **Search scrape slot rotation** — 6 slots, each fires every ~4h via `advance_rotation`; discovery mode with VIN breakpoint and stop-on-error; `rotation_slot` + `last_queued_at` on `search_configs`; n8n runs every 30min with `min_idle_minutes=239` | 2026-03-20 |
+| 16.3 | **Detail scrape volume monitoring** — volume dropped from 48K→12K over 4 days, trending to 6-8K target. No intervention needed. | 2026-03-20 |
 
 ---
 
@@ -62,11 +64,7 @@ Add webhook trigger nodes to Scrape Listings, Scrape Detail Pages, and Cleanup A
 
 ## Plan 16: Pipeline Efficiency
 
-**Status:** 16.1 + 16.2 done. 16.3 monitoring.
-
-**16.3 — Monitor detail scrape volume (~March 20)**
-- If daily detail volume stabilizes ~6-8K: no changes needed.
-- If still 30K+/day: change batch query to filter on `is_full_details_stale` only.
+**Status:** Done (16.1, 16.2, 16.3 complete)
 
 ---
 
@@ -74,20 +72,17 @@ Add webhook trigger nodes to Scrape Listings, Scrape Detail Pages, and Cleanup A
 
 **Status:** Done (2026-03-19)
 
-Expanded Pipeline Health section with dbt build time/status, active Postgres connections, long-running queries, and lock visibility.
-
 ---
 
 ## Remaining Priority Order
 
 | Priority | Item | Notes |
 |----------|------|-------|
-| 1 | **27.2** — Search scrape Akamai alert | Immediate signal when IP gets rate-limited |
-| 2 | **27.1** — Detail scrape error rate alert | Alert when >20% of detail pages fail |
+| 1 | **27.1** — Detail scrape error rate alert | Alert when >20% of detail pages fail |
+| 2 | **25.2/25.3** — Bridge dealer ID systems | Unlocks dealer data in mart |
 | 3 | **25.2/25.3** — Bridge dealer ID systems | Unlocks dealer data in mart |
 | 6 | **14.1** — VIN case normalization | Defensive — only 1 affected VIN |
 | 7 | **14.5** — Price events dedup | Defensive — only 1 duplicate found |
-| 8 | **16.3** — Monitor detail volume | Wait until ~March 20 |
 | 9 | **14.9 / 14.11 / 14.12** — Minor defensive fixes | Low risk |
 | 10 | **5** — Webhook triggers | Nice-to-have |
 
@@ -172,46 +167,9 @@ Add `customer_id` to the `base` CTE SELECT from `mart_vehicle_snapshot`, then:
 
 ---
 
-## Plan 26: Search Scrape Reliability — Stagger + Retry
+## Plan 26: Search Scrape Slot Rotation
 
-**Status:** 26.3 done. 26.1 backend done — n8n workflow pending.
-**Priority:** High
-
-Currently all 9 search configs fire simultaneously at :00 with 12 async workers. Cars.com's rate limiting is cumulative — early search keys succeed (~30% error rate), later ones hit a throttling threshold (~67% error rate). We're consistently getting only ~60% of requested pages.
-
-**26.1 — Stagger search keys across time (rotation index approach)**
-
-Approach: workflow runs every 40 min, claims one search key per run via `/search_configs/advance_rotation`, fires only that key's scopes, then stops. With 9 configs × 40 min = 6h cycle, each config gets scraped ~twice a day, spaced ~12h apart.
-
-**Backend (done 2026-03-19):**
-- Added `rotation_order integer` and `last_queued_at timestamptz` to `search_configs`
-- New `POST /search_configs/advance_rotation?min_idle_minutes=719` endpoint — atomically claims next due config (SELECT FOR UPDATE SKIP LOCKED), sets `last_queued_at = now()`, returns `{search_key, params, scopes}` or `{search_key: null}` if nothing due
-
-**DB migration to run:**
-```sql
-ALTER TABLE search_configs ADD COLUMN IF NOT EXISTS rotation_order integer;
-ALTER TABLE search_configs ADD COLUMN IF NOT EXISTS last_queued_at timestamptz;
-
--- Backfill rotation_order (alphabetical by search_key; adjust order as desired)
-UPDATE search_configs SET rotation_order = sub.rn
-FROM (
-    SELECT search_key, ROW_NUMBER() OVER (ORDER BY search_key) AS rn
-    FROM search_configs
-) sub
-WHERE search_configs.search_key = sub.search_key;
-```
-
-**n8n workflow changes needed (TODO):**
-1. Replace the "Load Search Configs" Postgres node with `POST /search_configs/advance_rotation`
-2. Add an IF node after it: if `search_key` is null → stop (nothing due yet)
-3. The existing scrape-jobs loop now only iterates over `scopes` for the one returned config
-4. Change the schedule trigger from twice-daily to every 40 minutes
-
-**26.2 — Retry failed SRP pages** *(Cancelled)*
-Originally planned to re-queue error artifacts for a second pass. Superseded by discovery mode — errors are now intentional early stops on Akamai rate limits. Retrying a rate-limited IP would worsen reputation decay, not recover it.
-
-**26.3 — Reduce max_workers (done 2026-03-19)**
-Dropped `ThreadPoolExecutor` from 12 → 6. Less aggressive on cars.com's rate limiter.
+**Status:** Done (2026-03-20)
 
 ---
 
@@ -245,16 +203,10 @@ Implementation:
 
 ---
 
-**27.2 — Search scrape Akamai kill alert**
+**27.2 — Search scrape Akamai kill alert** *(Done 2026-03-20)*
 
-With discovery mode, an Akamai rate-limit kill (`ERR_HTTP2_PROTOCOL_ERROR`) causes the scraper to stop immediately and return a failed job. The Job Poller detects these as `status = 'failed'` jobs. We should alert when this happens.
-
-Implementation:
-- In the **Job Poller** workflow, after processing completed jobs, add a check: count how many jobs in the current poll batch have `status = 'failed'` AND contain `ERR_HTTP2_PROTOCOL_ERROR` in the error field
-- If any are found, send a Telegram alert
-- Alternatively: add a Telegram node in **Scrape Listings** at the "Mark Run Failed" path (after the Job Poller marks a run as failed due to all jobs failing)
-- Message format: `🚨 Akamai rate limit hit — {{search_key}} ({{scope}}) stopped at page {{page_num}}. IP cool-down in effect. Next slot fires in ~4h.`
-- This is a signal to watch IP reputation recovery; not necessarily actionable immediately
+Job Poller Switch node checks `$json.error` contains `"ERR_HTTP2"` → Telegram alert:
+`🚨 Akamai Rate Limit — Search: {search_key} ({scope}) — Pages scraped: {artifact_count} — Error: {error}`
 
 ---
 
@@ -263,6 +215,29 @@ Implementation:
 Telegram bot is already configured in n8n from Plan 15 (Error Handler). Reuse the same bot/chat ID credential for consistency.
 
 ---
+
+## Plan 28: Add Quicklinks to dashboard
+
+Add quicklinks to n8n, search config admin to dashboard. On the left under the refresh data button.
+
+
+## Plan 29: Set up n8n API
+
+- Set up the n8n API so we can interact with it programatically.
+- Fold in Plan 5 to this.
+- Add button to trigger detail scrape from from dashboard.
+
+## Plan 30: More detailed Run info in Dashboard
+
+- Increase the quality of information we're getting about running n8n processes in Dashboard.
+- List of ongoing executions
+- Lengh of time
+- Information about results processing and detail parsing
+
+## Plan 31: Add a SQL runner where we can write SQL to execute against the database
+- Investigate if there are off the shelf tools for this
+- I'd like it to be accessible from the dashboard.
+
 
 ## Future Ideas (Unprioritized)
 

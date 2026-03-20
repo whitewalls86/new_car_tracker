@@ -8,3 +8,4 @@ playwright
 jinja2
 python-multipart
 asyncpg
+psycopg2-binary

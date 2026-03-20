@@ -7,7 +7,7 @@
           "interval": [
             {
               "field": "minutes",
-              "minutesInterval": 1
+              "minutesInterval": 2
             }
           ]
         }
@@ -16,7 +16,7 @@
       "typeVersion": 1.3,
       "position": [
         4400,
-        1248
+        1344
       ],
       "id": "84f4d3f9-a89b-41f8-b5ea-582e6bbbc94e",
       "name": "Schedule Trigger (1 min)"
@@ -31,7 +31,7 @@
       "typeVersion": 2.6,
       "position": [
         4624,
-        1248
+        1344
       ],
       "id": "2f467f0f-e115-4a59-adcb-11354b232cb4",
       "name": "Expire Orphaned Jobs",
@@ -53,7 +53,7 @@
       "typeVersion": 4.3,
       "position": [
         4848,
-        1248
+        1344
       ],
       "id": "774da0e5-e86c-4917-9e06-9fdfe85fe65e",
       "name": "Get Completed Jobs"
@@ -66,7 +66,7 @@
       "typeVersion": 2,
       "position": [
         5072,
-        1248
+        1344
       ],
       "id": "b53068c8-d84f-4bdc-9ef1-842aa5ae8ff0",
       "name": "Explode Artifacts"
@@ -260,26 +260,143 @@
       "typeVersion": 2.3,
       "position": [
         5296,
-        1248
+        1344
       ],
       "id": "a551d850-9c18-4625-afbc-de7e36c57bca",
       "name": "If"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.error }}",
+                    "rightValue": "ERR_HTTP2",
+                    "operator": {
+                      "type": "string",
+                      "operation": "contains"
+                    },
+                    "id": "fe15becd-ec0d-4a89-8725-4781ff491516"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Has Backoff Error"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "952f2e98-f200-4ac6-a0e9-d7055bf68cb5",
+                    "leftValue": "={{ $json.error }}",
+                    "rightValue": "No Error",
+                    "operator": {
+                      "type": "string",
+                      "operation": "empty",
+                      "singleValue": true
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "No Error"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "acbfcd12-9eb4-4029-aaae-6bacab52524e",
+                    "leftValue": "={{ $json.error }}",
+                    "rightValue": "",
+                    "operator": {
+                      "type": "string",
+                      "operation": "notEmpty",
+                      "singleValue": true
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Other Error"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        5520,
+        1568
+      ],
+      "id": "c2df321a-cf2e-475d-b1ba-2dd869935d34",
+      "name": "Switch"
+    },
+    {
+      "parameters": {
+        "chatId": "774819707",
+        "text": "=🚨 <b>Akamai Rate Limit</b>\n\n<b>Search:</b> {{ $json.search_key }} ({{ $json.scope }})\n<b>Pages scraped:</b> {{ $json.artifact_count }}\n<b>Error:</b> {{ $json.error }}",
+        "additionalFields": {
+          "parse_mode": "HTML"
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        5824,
+        1552
+      ],
+      "id": "258490dc-56eb-4758-b2c3-ad2ad9b93e88",
+      "name": "Send Telegram Alert",
+      "webhookId": "3f97844c-717f-4bcd-86d2-b10cba6f7a6c",
+      "executeOnce": true,
+      "credentials": {
+        "telegramApi": {
+          "id": "qoqqtiFUa4Dq2Wqp",
+          "name": "Cartracker Alerts"
+        }
+      },
+      "continueOnFail": true
     }
   ],
   "pinData": {
     "Schedule Trigger (1 min)": [
       {
         "json": {
-          "timestamp": "2026-03-17T17:03:28.005-04:00",
-          "Readable date": "March 17th 2026, 5:03:28 pm",
-          "Readable time": "5:03:28 pm",
-          "Day of week": "Tuesday",
+          "timestamp": "2026-03-18T11:24:42.001-04:00",
+          "Readable date": "March 18th 2026, 11:24:42 am",
+          "Readable time": "11:24:42 am",
+          "Day of week": "Wednesday",
           "Year": "2026",
           "Month": "March",
-          "Day of month": "17",
-          "Hour": "17",
-          "Minute": "03",
-          "Second": "28",
+          "Day of month": "18",
+          "Hour": "11",
+          "Minute": "24",
+          "Second": "42",
           "Timezone": "America/New_York (UTC-04:00)"
         },
         "pairedItem": {
@@ -411,6 +528,11 @@
             "node": "Unique Job IDs",
             "type": "main",
             "index": 0
+          },
+          {
+            "node": "Switch",
+            "type": "main",
+            "index": 0
           }
         ],
         [
@@ -420,6 +542,18 @@
             "index": 0
           }
         ]
+      ]
+    },
+    "Switch": {
+      "main": [
+        [
+          {
+            "node": "Send Telegram Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
       ]
     }
   },
@@ -431,7 +565,7 @@
     "callerPolicy": "workflowsFromSameOwner",
     "errorWorkflow": "rJfFKS2DGRAn_IPJR1xTc"
   },
-  "versionId": "d5e116cd-6878-4204-83ff-8738f82f4ace",
+  "versionId": "cb37eb4a-61ce-4151-80e0-ddbd552d80e5",
   "meta": {
     "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179"
   },
