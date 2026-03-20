@@ -1,3 +1,5 @@
+{{ config(materialized='table') }}
+
 with hints as (
     select
         h.artifact_id,
@@ -18,16 +20,9 @@ active_makes as (
     where enabled = true
 ),
 
--- Exclude hints already mapped to a VIN (via SRP or detail observations)
--- AND hints already scraped as detail pages (even if VIN wasn't found)
-already_scraped as (
-    select distinct listing_id
-    from {{ ref('stg_detail_observations') }}
-    where listing_id is not null
-),
-
 unmapped as (
     select
+        m.vin,
         h.listing_id,
         h.artifact_id,
         h.observed_at,
@@ -37,10 +32,7 @@ unmapped as (
       on am.make = h.hint_make
     left join {{ ref('int_listing_to_vin') }} m
       on m.listing_id = h.listing_id
-    left join already_scraped s
-      on s.listing_id = h.listing_id
-    where m.listing_id is null
-      and s.listing_id is null
+    where m.listing_id IS NULL
 )
 
 select

@@ -220,6 +220,18 @@ Implementing this will reduce reliance on Search Scrapes to discover new VINS, g
 - **Make filtering** — `int_carousel_price_events_unmapped` extracts make from `body` text (`split_part(body, ' ', 3)`) and inner-joins against `search_configs.params->'makes'`, excluding out-of-scope vehicles (e.g., Volvo, Jeep)
 - **Dashboard metrics** — Carousel Hint Discovery section in Pipeline Health tab showing: unique hints, in-scope, mapped-to-VIN, scraped, and queued counts
 
+## Plan 37: Use unmapped carousel hints to trigger detail scrapes
+
+Right now we don't do anything with our unmapped carousel hints. We should do a couple things.
+
+1. Make sure that if we ever do see a vehicle, the carousel hints from the past are correctly tied to it and incorporated in it's price history
+2. Trigger Detail scrapes of those vehicles, checking that the makes/models are in our search configs before inserting the rows
+   - We should see what info we can get from the carousel cards related to make/model, maybe we can pre-emptively exclude hints that fall ourside our search params
+
+Implementing this will reduce reliance on Search Scrapes to discover new VINS, giving us another way to increase coverage.
+
+**I've implemented a rough version of this by adding int_carousel_price_events_unmapped and updating the qry in scrape detail pages. It could use refinement.**
+
 ## Future Ideas (Unprioritized)
 
 - **Price alert notifications** — email/SMS when a VIN drops below a threshold
