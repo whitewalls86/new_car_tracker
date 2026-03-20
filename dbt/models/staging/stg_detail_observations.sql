@@ -15,6 +15,7 @@ select
   d.stock_type,
   d.dealer_name,
   d.dealer_zip,
+  d.customer_id,
 
   -- URL we actually fetched for this detail artifact
   ra.url as canonical_detail_url

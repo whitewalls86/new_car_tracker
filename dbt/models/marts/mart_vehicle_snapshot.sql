@@ -18,6 +18,7 @@ select
     -- Tier-1 winner fetch metadata (THIS is what ops should use)
     t.canonical_detail_url as tier1_canonical_detail_url,
     t.seller_customer_id   as tier1_seller_customer_id,
+    t.customer_id,
 
     -- Convenience alias
     t.canonical_detail_url as current_listing_url,
