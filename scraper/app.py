@@ -98,7 +98,7 @@ async def lifespan(app: FastAPI):
             SET status = 'failed', finished_at = now(),
                 notes = 'Orphaned by container restart'
             WHERE status = 'running'
-              AND trigger = 'search scrape'
+              AND trigger IN ('search scrape', 'detail scrape')
         """)
     import logging
     logging.getLogger("uvicorn").info(
@@ -208,25 +208,41 @@ async def get_known_vins(search_key: str, scope: str = "national") -> Dict[str, 
 
 
 @app.post("/search_configs/advance_rotation")
-async def advance_search_rotation(min_idle_minutes: int = 239) -> Dict[str, Any]:
+async def advance_search_rotation(
+    min_idle_minutes: int = 1439,
+    min_gap_minutes: int = 230,
+) -> Dict[str, Any]:
     """
     Atomically claims the next rotation slot due for scraping.
 
-    Finds the slot with the oldest (or null) last_queued_at that has been
-    idle >= min_idle_minutes. Claims ALL configs in that slot by setting
-    last_queued_at = now(). Returns all configs in the slot so the caller
-    can launch scrape jobs for each.
+    Two guards:
+    1. min_idle_minutes (default 1439 = 23h59m): each slot must wait this long
+       before it can fire again. With 6 slots this means ~1 fire/day per slot.
+    2. min_gap_minutes (default 230 = ~3h50m): blocks if ANY non-skipped search
+       scrape run started within this window. Prevents multiple slots from
+       firing in rapid succession even if all have stale timestamps.
 
     Returns {"slot": null, "configs": []} when nothing is due.
-
-    Default min_idle_minutes=239 (~4h) for 6 slots across 24h.
-
-    Backward compat: configs without rotation_slot are returned individually
-    using the legacy single-config path.
     """
     pool = await get_pool()
     async with pool.acquire() as conn:
         async with conn.transaction():
+            # Guard: check time since last non-skipped search scrape run
+            last_run = await conn.fetchrow("""
+                SELECT started_at
+                FROM runs
+                WHERE trigger = 'search scrape'
+                  AND status NOT IN ('skipped', 'failed')
+                ORDER BY started_at DESC
+                LIMIT 1
+            """)
+            if last_run and last_run["started_at"]:
+                import datetime
+                gap = datetime.datetime.now(datetime.timezone.utc) - last_run["started_at"]
+                if gap.total_seconds() < min_gap_minutes * 60:
+                    return {"slot": None, "configs": [], "reason": "too_soon",
+                            "last_run_minutes_ago": round(gap.total_seconds() / 60, 1)}
+
             # Find the next due slot
             slot_row = await conn.fetchrow("""
                 SELECT rotation_slot

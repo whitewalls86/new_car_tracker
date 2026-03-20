@@ -64,7 +64,7 @@
           "parameters": [
             {
               "name": "min_idle_minutes",
-              "value": "239"
+              "value": "1439"
             }
           ]
         },
@@ -93,7 +93,7 @@
             {
               "id": "slot-check",
               "leftValue": "={{ $json.configs.length }}",
-              "rightValue": "0",
+              "rightValue": 0,
               "operator": {
                 "type": "number",
                 "operation": "gt"
