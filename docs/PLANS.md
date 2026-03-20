@@ -45,6 +45,7 @@
 | 25.3 | **Fix dealer join in `mart_deal_scores`** — changed from UUID to numeric `customer_id` via `mart_vehicle_snapshot` | 2026-03-20 |
 | 28 | **Dashboard quicklinks** — sidebar links to n8n, Search Config Admin, pgAdmin | 2026-03-20 |
 | 31 | **pgAdmin for SQL access** — pgAdmin 4 container on port 5050, connected to cartracker DB | 2026-03-20 |
+| 37 | **Carousel hint discovery pipeline** — Pool 3 in detail batch, make filtering, VIN mapping via detail obs, dashboard metrics | 2026-03-20 |
 
 ---
 
@@ -195,7 +196,7 @@ Currently, deploying workflow changes requires manually importing JSON files via
 
 ## Plan 37: Use unmapped carousel hints to trigger detail scrapes
 
-**Status:** In progress
+**Status:** Complete
 **Priority:** Medium
 
 Right now we don't do anything with our unmapped carousel hints. We should do a couple things.
@@ -216,10 +217,8 @@ Implementing this will reduce reliance on Search Scrapes to discover new VINS, g
 - **Expanded `int_listing_to_vin`** — now includes detail observations as a VIN source, so carousel hints become mapped after successful scrape
 - **Excluded already-scraped hints** — `int_carousel_price_events_unmapped` excludes listing_ids already in `detail_observations` to prevent infinite re-scraping
 
-### Remaining
-
-- **Make/model filtering** — pre-filter carousel hints against search configs to avoid scraping vehicles outside our search scope (carousel cards have `body` text with make/model info)
-- **Metrics** — track how many unmapped hints successfully map to VINs to tune the LIMIT
+- **Make filtering** — `int_carousel_price_events_unmapped` extracts make from `body` text (`split_part(body, ' ', 3)`) and inner-joins against `search_configs.params->'makes'`, excluding out-of-scope vehicles (e.g., Volvo, Jeep)
+- **Dashboard metrics** — Carousel Hint Discovery section in Pipeline Health tab showing: unique hints, in-scope, mapped-to-VIN, scraped, and queued counts
 
 ## Future Ideas (Unprioritized)
 

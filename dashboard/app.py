@@ -184,6 +184,61 @@ with tab1:
     else:
         st.info("No detail scrape runs found.")
 
+    # -- Carousel Hint Discovery Pipeline
+    st.subheader("Carousel Hint Discovery")
+    carousel_df = run_query("""
+        WITH
+        total_hints AS (
+            SELECT COUNT(DISTINCT listing_id) AS cnt
+            FROM detail_carousel_hints
+            WHERE body IS NOT NULL
+        ),
+        in_scope AS (
+            SELECT COUNT(DISTINCT h.listing_id) AS cnt
+            FROM detail_carousel_hints h
+            WHERE h.body IS NOT NULL
+              AND lower(split_part(h.body, ' ', 3)) IN (
+                  SELECT DISTINCT jsonb_array_elements_text(params->'makes')
+                  FROM search_configs WHERE enabled = true
+              )
+        ),
+        mapped AS (
+            SELECT COUNT(DISTINCT h.listing_id) AS cnt
+            FROM detail_carousel_hints h
+            JOIN analytics.int_listing_to_vin m ON m.listing_id = h.listing_id
+        ),
+        scraped AS (
+            SELECT COUNT(DISTINCT h.listing_id) AS cnt
+            FROM detail_carousel_hints h
+            JOIN detail_observations d ON d.listing_id = h.listing_id
+            WHERE d.listing_id IS NOT NULL
+        ),
+        unmapped_queue AS (
+            SELECT COUNT(DISTINCT listing_id) AS cnt
+            FROM analytics.int_carousel_price_events_unmapped
+        )
+        SELECT
+            t.cnt AS total_hints,
+            s.cnt AS in_scope,
+            m.cnt AS mapped_to_vin,
+            sc.cnt AS scraped,
+            u.cnt AS queued_to_scrape
+        FROM total_hints t, in_scope s, mapped m, scraped sc, unmapped_queue u
+    """)
+    if not carousel_df.empty:
+        r = carousel_df.iloc[0]
+        col1, col2, col3, col4, col5 = st.columns(5)
+        with col1:
+            st.metric("Unique Hints", f"{int(r['total_hints']):,}")
+        with col2:
+            st.metric("In Scope", f"{int(r['in_scope']):,}")
+        with col3:
+            st.metric("Mapped to VIN", f"{int(r['mapped_to_vin']):,}")
+        with col4:
+            st.metric("Scraped", f"{int(r['scraped']):,}")
+        with col5:
+            st.metric("Queued", f"{int(r['queued_to_scrape']):,}")
+
     # -- Stale backlog
     st.subheader("Stale Vehicle Backlog")
     df = run_query("""
