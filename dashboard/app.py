@@ -82,6 +82,30 @@ with tab1:
     else:
         st.success("No active runs")
 
+    # -- Rotation schedule
+    st.subheader("Search Scrape Rotation Schedule")
+    rotation_df = run_query("""
+        SELECT
+            rotation_slot AS slot,
+            string_agg(search_key, ', ' ORDER BY search_key) AS search_keys,
+            MAX(last_queued_at) AT TIME ZONE 'America/Chicago' AS last_fired,
+            ROUND(EXTRACT(EPOCH FROM (now() - MAX(last_queued_at))) / 3600, 1) AS hours_ago,
+            (MAX(last_queued_at) + interval '1439 minutes') AT TIME ZONE 'America/Chicago' AS next_eligible,
+            CASE
+                WHEN MAX(last_queued_at) IS NULL THEN 'Ready now'
+                WHEN now() > MAX(last_queued_at) + interval '1439 minutes' THEN 'Ready now'
+                ELSE 'In ' || ROUND(EXTRACT(EPOCH FROM (MAX(last_queued_at) + interval '1439 minutes' - now())) / 3600, 1)::text || 'h'
+            END AS status
+        FROM search_configs
+        WHERE enabled = true AND rotation_slot IS NOT NULL
+        GROUP BY rotation_slot
+        ORDER BY rotation_slot
+    """)
+    if not rotation_df.empty:
+        st.dataframe(rotation_df, use_container_width=True, hide_index=True)
+    else:
+        st.info("No rotation slots configured.")
+
     # -- Row 1: Last scrape timestamps + counts
     col1, col2, col3, col4 = st.columns(4)
 
