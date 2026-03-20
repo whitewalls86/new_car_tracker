@@ -36,8 +36,11 @@
 | 23 | **Fresh install support** — updated `schema_new.sql` (pg_dump), `.env.example`, `setup.ps1` script, example search config seed, README quick-start guide | 2026-03-17 |
 | 26.3 | **Reduce max_workers 12→6** — ThreadPoolExecutor halved for immediate rate-limit relief | 2026-03-19 |
 | 20 | **dbt + Postgres health in dashboard** — dbt build time/status, active connections, long-running queries, lock visibility | 2026-03-19 |
-| 26 | **Search scrape slot rotation** — 6 slots, each fires every ~4h via `advance_rotation`; discovery mode with VIN breakpoint and stop-on-error; `rotation_slot` + `last_queued_at` on `search_configs`; n8n runs every 30min with `min_idle_minutes=239` | 2026-03-20 |
+| 26 | **Search scrape slot rotation** — 6 slots, each fires once/day via `advance_rotation` (`min_idle_minutes=1439`, `min_gap_minutes=230`); discovery mode with VIN breakpoint and stop-on-error; `rotation_slot` + `last_queued_at` on `search_configs` | 2026-03-20 |
 | 16.3 | **Detail scrape volume monitoring** — volume dropped from 48K→12K over 4 days, trending to 6-8K target. No intervention needed. | 2026-03-20 |
+| 27.1 | **Detail scrape error rate alert** — Telegram alert when error rate >= 2.5% after each detail scrape run | 2026-03-20 |
+| 27.2 | **Search scrape Akamai kill alert** — Job Poller Switch node detects ERR_HTTP2, sends Telegram with search_key/scope/page count | 2026-03-20 |
+| 32 | **Force-grab stale vehicles in detail scrape** — added second pool for vehicles > 36h stale bypassing one-per-dealer rule | 2026-03-20 |
 
 ---
 
@@ -78,13 +81,17 @@ Add webhook trigger nodes to Scrape Listings, Scrape Detail Pages, and Cleanup A
 
 | Priority | Item | Notes |
 |----------|------|-------|
-| 1 | **25.2/25.3** — Bridge dealer ID systems | Unlocks dealer data in mart |
-| 2 | **28** — Dashboard quicklinks | n8n + admin links in sidebar |
-| 3 | **25.2/25.3** — Bridge dealer ID systems | Unlocks dealer data in mart |
-| 6 | **14.1** — VIN case normalization | Defensive — only 1 affected VIN |
-| 7 | **14.5** — Price events dedup | Defensive — only 1 duplicate found |
-| 9 | **14.9 / 14.11 / 14.12** — Minor defensive fixes | Low risk |
-| 10 | **5** — Webhook triggers | Nice-to-have |
+| 1 | **25.2/25.3** — Bridge dealer ID systems | Branch ready, needs deploy steps |
+| 2 | **33** — Add error info to runs table | Better run failure visibility |
+| 3 | **34** — Fix artifact_count subquery in Job Poller | Prevents overcounting across runs |
+| 4 | **28** — Dashboard quicklinks | n8n + admin links in sidebar |
+| 5 | **31** — pgAdmin for SQL access | Web-based DB querying |
+| 6 | **29** — n8n API + trigger button | Programmatic workflow control |
+| 7 | **30** — More detailed run info in dashboard | Execution list, duration, processing stats |
+| 8 | **14.1** — VIN case normalization | Defensive — only 1 affected VIN |
+| 9 | **14.5** — Price events dedup | Defensive — only 1 duplicate found |
+| 10 | **14.9 / 14.11 / 14.12** — Minor defensive fixes | Low risk |
+| 11 | **5** — Webhook triggers | Folded into Plan 29 |
 
 ---
 
@@ -175,31 +182,7 @@ Add `customer_id` to the `base` CTE SELECT from `mart_vehicle_snapshot`, then:
 
 ## Plan 27: Telegram Alerts — Scrape Health
 
-**Status:** Not started
-**Priority:** Medium
-
-Two distinct alert scenarios with different trigger points:
-
----
-
-**27.1 — Detail scrape error rate alert** *(Done 2026-03-20)*
-
-After "Mark Run Done" in Scrape Detail Pages: Postgres query checks error rate for the run → IF `error_pct >= 2.5` → Telegram alert:
-`⚠️ Detail Scrape Error Rate — {error_pct}% ({errors}/{total} pages failed) — Run {run_id}`
-Both branches continue to "Call Parse Detail Pages".
-
----
-
-**27.2 — Search scrape Akamai kill alert** *(Done 2026-03-20)*
-
-Job Poller Switch node checks `$json.error` contains `"ERR_HTTP2"` → Telegram alert:
-`🚨 Akamai Rate Limit — Search: {search_key} ({scope}) — Pages scraped: {artifact_count} — Error: {error}`
-
----
-
-**27.3 — Telegram credential**
-
-Telegram bot is already configured in n8n from Plan 15 (Error Handler). Reuse the same bot/chat ID credential for consistency.
+**Status:** 27.1 + 27.2 done (2026-03-20). 27.3 was already in place.
 
 ---
 
@@ -253,7 +236,7 @@ Add pgAdmin 4 as a Docker container for web-based SQL access to the Postgres dat
 
 **Status:** Done (2026-03-20)
 
-One-per-dealer rule was causing vehicles from large dealers to consistently miss detail scrapes. Added a second "force stale" pool: any vehicle > 36 hours stale that wasn't already picked by the dealer rule gets added to the batch. Tested: 66 dealer picks + 134 force-stale = 200 total (manageable).
+---
 
 
 ## Plan 33: Add error info to runs table

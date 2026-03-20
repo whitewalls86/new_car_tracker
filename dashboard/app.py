@@ -41,6 +41,13 @@ st.sidebar.title("Cartracker")
 if st.sidebar.button("Refresh Data"):
     st.rerun()
 
+# Quicklinks
+st.sidebar.markdown("---")
+st.sidebar.markdown("**Quick Links**")
+st.sidebar.markdown("[n8n Workflows](http://localhost:5678)")
+st.sidebar.markdown("[Search Config Admin](http://localhost:8000/admin)")
+st.sidebar.markdown("[pgAdmin](http://localhost:5050)")
+
 # Data freshness
 _freshness_df = run_query("""
     SELECT MAX(price_observed_at) AT TIME ZONE 'America/Chicago' AS ts
