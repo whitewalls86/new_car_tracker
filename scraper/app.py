@@ -47,9 +47,10 @@ def _fetch_known_vins(search_key: str, scope: str) -> List[str]:
     """Fetch VINs observed for this search_key+scope in the last 14 days.
     Uses psycopg2 (sync) so it works in background threads."""
     import psycopg2
+    conn = None
     try:
         conn = psycopg2.connect(**_SYNC_DB_KWARGS)
-        with conn, conn.cursor() as cur:
+        with conn.cursor() as cur:
             cur.execute("""
                 SELECT DISTINCT s.vin
                 FROM srp_observations s
@@ -60,11 +61,13 @@ def _fetch_known_vins(search_key: str, scope: str) -> List[str]:
                   AND s.vin IS NOT NULL
             """, (search_key, scope))
             return [row[0] for row in cur.fetchall()]
-        conn.close()
     except Exception as e:
         import logging
         logging.getLogger("uvicorn").warning("_fetch_known_vins failed: %s", e)
         return []  # degrade gracefully — scrape without breakpoint
+    finally:
+        if conn is not None:
+            conn.close()
 
 
 def _run_scrape_job(job_id: str, run_id: str, search_key: str, scope: str, payload: dict):

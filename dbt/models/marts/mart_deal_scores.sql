@@ -127,7 +127,7 @@ scored as (
         )::numeric, 1) as deal_score
 
     from active_vins av
-    inner join {{ ref('int_srp_vehicle_attributes') }} a on a.vin = av.vin
+    inner join {{ ref('int_vehicle_attributes') }} a on a.vin = av.vin
     inner join {{ ref('mart_vehicle_snapshot') }} v on v.vin = av.vin
     left join {{ ref('int_listing_days_on_market') }} dom on dom.vin = av.vin
     left join {{ ref('int_price_history_by_vin') }} ph on ph.vin = av.vin

@@ -185,12 +185,19 @@ CREATE TABLE public.detail_observations (
     listing_id text,
     vin text,
     listing_state text DEFAULT 'active'::text NOT NULL,
+    make text,
+    model text,
+    "trim" text,
+    year integer,
     price integer,
     mileage integer,
     msrp integer,
     stock_type text,
+    fuel_type text,
+    body_style text,
     dealer_name text,
-    dealer_zip text
+    dealer_zip text,
+    customer_id text
 );
 
 
@@ -349,7 +356,8 @@ CREATE TABLE public.search_configs (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     rotation_order integer,
-    last_queued_at timestamp with time zone
+    last_queued_at timestamp with time zone,
+    rotation_slot integer
 );
 
 
@@ -660,6 +668,25 @@ ALTER TABLE ONLY public.srp_observations
 --
 -- PostgreSQL database dump complete
 --
+
+--
+-- Name: dbt_runs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.dbt_runs (
+    id serial PRIMARY KEY,
+    started_at timestamp with time zone NOT NULL,
+    finished_at timestamp with time zone NOT NULL,
+    duration_s numeric(8,2),
+    ok boolean NOT NULL,
+    intent text,
+    select_args text,
+    models_pass integer,
+    models_error integer,
+    models_skip integer,
+    returncode integer
+);
+
 
 -- Create schemas for dbt output
 CREATE SCHEMA IF NOT EXISTS analytics;

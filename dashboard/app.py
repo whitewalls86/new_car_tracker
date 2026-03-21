@@ -19,10 +19,10 @@ def get_connection():
     return conn
 
 
-def run_query(sql: str) -> pd.DataFrame:
+def run_query(sql: str, params=None) -> pd.DataFrame:
     conn = get_connection()
     try:
-        return pd.read_sql(sql, conn)
+        return pd.read_sql(sql, conn, params=params)
     except Exception:
         # Connection may be dead — clear cache and reconnect
         try:
@@ -31,7 +31,7 @@ def run_query(sql: str) -> pd.DataFrame:
             pass
         get_connection.clear()
         conn = get_connection()
-        return pd.read_sql(sql, conn)
+        return pd.read_sql(sql, conn, params=params)
 
 
 # ---------------------------------------------------------------------------
@@ -261,7 +261,7 @@ with tab1:
                 a.model,
                 COUNT(*) AS new_count
             FROM new_vins nv
-            JOIN analytics.int_srp_vehicle_attributes a ON a.vin = nv.vin
+            JOIN analytics.int_vehicle_attributes a ON a.vin = nv.vin
             GROUP BY a.make, a.model
             ORDER BY new_count DESC
         """)
@@ -602,10 +602,10 @@ with tab2:
     df = run_query("""
         SELECT
             date_trunc('day', dom.first_seen_at AT TIME ZONE 'America/Chicago') AS day,
-            a.make,
+            COALESCE(a.make, 'Unknown') AS make,
             COUNT(DISTINCT dom.vin) AS new_listings
         FROM analytics.int_listing_days_on_market dom
-        JOIN analytics.int_srp_vehicle_attributes a ON a.vin = dom.vin
+        LEFT JOIN analytics.int_vehicle_attributes a ON a.vin = dom.vin
         WHERE dom.first_seen_at > now() - interval '30 days'
         GROUP BY 1, 2
         ORDER BY 1, 2
@@ -684,14 +684,17 @@ with tab3:
     with col3:
         scope_filter = st.selectbox("Scope", ["All", "Local", "National"])
 
-    # Build WHERE clauses
+    # Build WHERE clauses with parameterized queries to prevent SQL injection
     where = ["COALESCE(listing_state, 'active') != 'unlisted'"]
+    query_params = []
     if selected_makes:
-        makes_str = ", ".join(f"'{m}'" for m in selected_makes)
-        where.append(f"make IN ({makes_str})")
+        placeholders = ", ".join(["%s"] * len(selected_makes))
+        where.append(f"make IN ({placeholders})")
+        query_params.extend(selected_makes)
     if selected_tiers:
-        tiers_str = ", ".join(f"'{t}'" for t in selected_tiers)
-        where.append(f"deal_tier IN ({tiers_str})")
+        placeholders = ", ".join(["%s"] * len(selected_tiers))
+        where.append(f"deal_tier IN ({placeholders})")
+        query_params.extend(selected_tiers)
     if scope_filter == "Local":
         where.append("is_local")
     elif scope_filter == "National":
@@ -721,7 +724,7 @@ with tab3:
         FROM analytics.mart_deal_scores
         WHERE {where_clause}
         ORDER BY deal_score DESC
-    """)
+    """, params=query_params if query_params else None)
     st.dataframe(
         df,
         use_container_width=True,
@@ -753,7 +756,7 @@ with tab3:
                     WHEN 'fair' THEN 3
                     WHEN 'weak' THEN 4
                 END
-        """)
+        """, params=query_params if query_params else None)
         if not df.empty:
             fig = px.bar(df, x="deal_tier", y="listings",
                          color="deal_tier",
@@ -782,7 +785,7 @@ with tab3:
             WHERE {where_clause}
             GROUP BY 1
             ORDER BY MIN(days_on_market)
-        """)
+        """, params=query_params if query_params else None)
         if not df.empty:
             fig = px.bar(df, x="bucket", y="listings")
             fig.update_layout(xaxis_title=None, yaxis_title="Listings")
@@ -808,7 +811,7 @@ with tab3:
         WHERE {where_clause}
           AND price_drop_count > 0
         ORDER BY total_price_drop_pct DESC
-    """)
+    """, params=query_params if query_params else None)
     st.dataframe(
         df,
         use_container_width=True,
@@ -835,7 +838,7 @@ with tab3:
           AND msrp IS NOT NULL AND msrp > 0
         GROUP BY model
         ORDER BY avg_msrp_off_pct DESC
-    """)
+    """, params=query_params if query_params else None)
     if not df.empty:
         fig = px.bar(df, x="model", y=["avg_price", "avg_msrp"], barmode="group",
                      hover_data=["avg_msrp_off_pct", "listings"])
@@ -859,7 +862,7 @@ with tab4:
             PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY pe.price) AS median_price,
             COUNT(DISTINCT pe.vin) AS listing_count
         FROM analytics.int_price_events pe
-        JOIN analytics.int_srp_vehicle_attributes a ON a.vin = pe.vin
+        JOIN analytics.int_vehicle_attributes a ON a.vin = pe.vin
         WHERE pe.observed_at > now() - interval '90 days'
           AND pe.price > 0
           AND pe.source = 'srp'

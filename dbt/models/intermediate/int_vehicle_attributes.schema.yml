@@ -1,8 +1,8 @@
 version: 2
 
 models:
-  - name: int_srp_vehicle_attributes
-    description: Latest SRP attributes per VIN — make, model, trim, year, msrp, seller info, search scope.
+  - name: int_vehicle_attributes
+    description: Latest vehicle attributes per VIN — make, model, trim, year, msrp, seller info. Combines SRP and detail observation sources; freshest observation wins.
     columns:
       - name: vin
         data_tests:
@@ -18,3 +18,8 @@ models:
           - relationships:
               to: source('public', 'raw_artifacts')
               field: artifact_id
+      - name: attributes_source
+        data_tests:
+          - not_null
+          - accepted_values:
+              values: ['srp', 'detail']
