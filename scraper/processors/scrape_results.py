@@ -14,6 +14,7 @@ from typing import Set
 from urllib.parse import urlencode
 from bs4 import BeautifulSoup
 from processors.browser import get_browser, close_browser
+from processors.fingerprint import random_profile, random_zip, human_delay
 
 
 RAW_BASE = "/data/raw"
@@ -166,6 +167,143 @@ def extract_results_paging_meta(html_text: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+def _fetch_page(browser, profile: Dict, url: str, run_dir: str,
+                search_key: str, scope: str, page_num: int,
+                known_vins: Set[str]) -> Dict[str, Any]:
+    """Fetch a single SRP page using the given fingerprint profile.
+
+    Returns an artifact dict plus extra keys used by the caller:
+      - _paging: parsed paging metadata (or None)
+      - _page_vins: set of VINs found on this page
+      - _new_vins_count: number of previously-unseen VINs
+      - _stop: True if pagination should stop after this page
+      - _break_no_save: True if page should be discarded (duplicate clamp)
+    """
+    fetched_at = datetime.now(UTC).isoformat()
+
+    context = browser.new_context(
+        user_agent=profile["user_agent"],
+        extra_http_headers=profile["extra_http_headers"],
+        viewport=profile["viewport"],
+        locale=profile["locale"],
+    )
+    page = context.new_page()
+    try:
+        response = page.goto(url, timeout=30000, wait_until="domcontentloaded")
+        # Wait for SRP cards to render (Akamai JS challenge + React hydration)
+        try:
+            page.wait_for_selector("spark-card[data-vehicle-details]", timeout=10000)
+        except Exception:
+            pass  # 403 or empty results — still save whatever's on the page
+
+        status = response.status if response else 0
+        content_type = response.headers.get("content-type") if response else None
+        html_text = page.content()
+        content = html_text.encode("utf-8")
+        size = len(content)
+
+        # --- paging metadata ---
+        paging = None
+        stop = False
+        break_no_save = False
+
+        if status != 200:
+            stop = True
+
+        if status == 200 and content:
+            paging = extract_results_paging_meta(html_text)
+            if paging:
+                actual_page = paging.get("result_page_number")
+                page_count = paging.get("result_page_count")
+
+                # Cars.com clamped to a different page → duplicate territory
+                if actual_page is not None and actual_page != page_num:
+                    break_no_save = True
+
+                if actual_page is not None and page_count is not None and actual_page >= page_count:
+                    stop = True
+
+                cards_on_page = paging.get("result_per_page") or 0
+                if cards_on_page == 0:
+                    stop = True
+
+        # Save raw HTML
+        filename = f"{search_key}__{scope}__page_{page_num:04d}__{status}.html"
+        filepath = os.path.join(run_dir, filename)
+        with open(filepath, "wb") as f:
+            f.write(content)
+
+        # --- VIN extraction ---
+        page_vins: Set[str] = set()
+        new_vins_count = 0
+        if status == 200:
+            for vin_match in _VIN_RE.finditer(html_text):
+                page_vins.add(vin_match.group(1))
+
+        if known_vins and page_vins:
+            new_vins = page_vins - known_vins
+            new_vins_count = len(new_vins)
+            known_vins.update(page_vins)
+
+        artifact = {
+            "source": "cars.com",
+            "artifact_type": "results_page",
+            "search_key": search_key,
+            "search_scope": scope,
+            "page_num": page_num,
+            "url": url,
+            "http_status": status,
+            "content_type": content_type,
+            "content_bytes": size,
+            "sha256": sha256_bytes(content) if content else None,
+            "filepath": filepath,
+            "fetched_at": fetched_at,
+            "error": None if status == 200 else f"HTTP {status}",
+            "paging_meta": paging,
+            "page_vins_total": len(page_vins),
+            "page_vins_new": new_vins_count,
+        }
+        artifact["_paging"] = paging
+        artifact["_page_vins"] = page_vins
+        artifact["_new_vins_count"] = new_vins_count
+        artifact["_stop"] = stop
+        artifact["_break_no_save"] = break_no_save
+        return artifact
+
+    except Exception as e:
+        error_filepath = os.path.join(run_dir, f"{search_key}__{scope}__page_{page_num:04d}__ERROR.txt")
+        return {
+            "source": "cars.com",
+            "artifact_type": "results_page",
+            "search_key": search_key,
+            "search_scope": scope,
+            "page_num": page_num,
+            "url": url,
+            "http_status": None,
+            "content_type": None,
+            "content_bytes": None,
+            "sha256": None,
+            "filepath": error_filepath,
+            "fetched_at": fetched_at,
+            "error": f"{type(e).__name__}: {str(e)}"[:500].replace("'", ""),
+            "paging_meta": None,
+            "page_vins_total": 0,
+            "page_vins_new": 0,
+            "_paging": None,
+            "_page_vins": set(),
+            "_new_vins_count": 0,
+            "_stop": True,  # stop on error — don't burn IP
+            "_break_no_save": False,
+        }
+    finally:
+        context.close()
+
+
+def _clean_artifact(artifact: Dict) -> Dict:
+    """Remove internal keys before returning to caller."""
+    return {k: v for k, v in artifact.items() if not k.startswith("_")}
+
+
 def scrape_results(
     run_id: str,
     search_key: str,
@@ -182,7 +320,6 @@ def scrape_results(
 
     makes = params.get("makes") or []
     models = params.get("models") or []
-    zip_code = params.get("zip")
     radius_miles = int(params.get("radius_miles", 200))
 
     max_listings = int(params.get("max_listings", 2000))
@@ -196,150 +333,115 @@ def scrape_results(
     if scope not in ("national", "local"):
         return {"error": f"Invalid scope '{scope}'", "artifacts": []}
 
-    if not makes or not models or not zip_code:
-        return {"error": "Missing makes/models/zip in params", "artifacts": []}
+    if not makes or not models:
+        return {"error": "Missing makes/models in params", "artifacts": []}
+
+    # --- ZIP rotation: pick a random ZIP per session ---
+    # Use pool from params if provided, otherwise use defaults
+    zip_code = random_zip(scope)
 
     # directory per run for organization
     run_dir = os.path.join(RAW_BASE, f"run_{run_id}")
     os.makedirs(run_dir, exist_ok=True)
 
+    # --- Pick a consistent fingerprint for this entire session ---
+    profile = random_profile()
+
     artifacts: List[Dict[str, Any]] = []
-    consecutive_no_new = 0
     browser = get_browser()
 
     try:
-        for page_num in range(1, max_safety_pages + 1):
-            if page_num > 1:
-                time.sleep(random.uniform(3, 8))
-            url = build_results_url(makes, models, zip_code, scope, radius_miles, page_num, sort_order)
-            fetched_at = datetime.now(UTC).isoformat()
+        # === Phase 1: Fetch page 1 to learn total page count ===
+        time.sleep(human_delay(1))
+        url_p1 = build_results_url(makes, models, zip_code, scope, radius_miles, 1, sort_order)
+        result_p1 = _fetch_page(browser, profile, url_p1, run_dir,
+                                search_key, scope, 1, known_vins)
 
-            # Fresh context per page — each page gets a new browser session so
-            # Akamai re-evaluates the JS challenge instead of blocking a flagged session.
-            context = browser.new_context(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-                viewport={"width": 1920, "height": 1080},
-                locale="en-US",
-            )
-            page = context.new_page()
-            try:
-                response = page.goto(url, timeout=30000, wait_until="domcontentloaded")
-                # Wait for SRP cards to render (Akamai JS challenge + React hydration)
-                try:
-                    page.wait_for_selector("spark-card[data-vehicle-details]", timeout=10000)
-                except Exception:
-                    pass  # 403 or empty results — still save whatever's on the page
+        if result_p1["_break_no_save"]:
+            return {"run_id": run_id, "search_key": search_key,
+                    "scope": scope, "artifacts": []}
 
-                status = response.status if response else 0
-                content_type = response.headers.get("content-type") if response else None
-                html_text = page.content()
-                content = html_text.encode("utf-8")
-                size = len(content)
+        artifacts.append(_clean_artifact(result_p1))
 
-                # --- decide whether to stop early based on embedded paging meta ---
-                paging = None
-                stop_after_this_page = False
+        if result_p1["_stop"]:
+            return {"run_id": run_id, "search_key": search_key,
+                    "scope": scope, "artifacts": artifacts}
 
-                # Stop on HTTP error — don't burn more IP reputation
-                if status != 200:
-                    stop_after_this_page = True
+        # --- Determine remaining pages ---
+        paging = result_p1["_paging"]
+        page_count = None
+        if paging:
+            page_count = paging.get("result_page_count")
+            total_listings = paging.get("total_listings") or 0
+            cards_on_page = paging.get("result_per_page") or 0
 
-                if status == 200 and content:
-                    paging = extract_results_paging_meta(html_text)
-                    if paging:
-                        actual_page = paging.get("result_page_number")
-                        page_count = paging.get("result_page_count")
+            # Cap pages based on max_listings
+            if total_listings > max_listings and cards_on_page > 0:
+                max_pages_for_listings = math.ceil(max_listings / cards_on_page)
+                if page_count is not None:
+                    page_count = min(page_count, max_pages_for_listings)
+                else:
+                    page_count = max_pages_for_listings
 
-                        # If Cars.com clamps you to a different page than requested,
-                        # you're in duplicate territory. Stop and DON'T save this artifact.
-                        if actual_page is not None and actual_page != page_num:
-                            break
+        if page_count is None:
+            page_count = max_safety_pages
 
-                        if actual_page is not None and page_count is not None and actual_page >= page_count:
-                            stop_after_this_page = True
+        page_count = min(page_count, max_safety_pages)
 
-                        # Stop if we got zero cards (empty page = past the last real page).
-                        cards_on_page = paging.get("result_per_page") or 0
-                        if cards_on_page == 0:
-                            stop_after_this_page = True
+        if page_count <= 1:
+            return {"run_id": run_id, "search_key": search_key,
+                    "scope": scope, "artifacts": artifacts}
 
-                        # Cap at max_listings if total_listings exceeds it — prevents
-                        # pulling hundreds of pages for large national searches.
-                        total_listings = paging.get("total_listings") or 0
-                        if total_listings > max_listings and cards_on_page > 0:
-                            collected = page_num * cards_on_page
-                            if collected >= max_listings:
-                                stop_after_this_page = True
+        # === Phase 2: Fetch remaining pages in randomized order ===
+        remaining_pages = list(range(2, page_count + 1))
+        random.shuffle(remaining_pages)
 
-                # save raw html (only if we decided to keep it)
-                filename = f"{search_key}__{scope}__page_{page_num:04d}__{status}.html"
-                filepath = os.path.join(run_dir, filename)
-                with open(filepath, "wb") as f:
-                    f.write(content)
+        # VIN breakpoint tracking for randomized order:
+        # Instead of "3 consecutive pages with 0 new VINs", track the rolling
+        # ratio of new VINs across the last N pages.
+        recent_new_vin_counts: List[int] = []
+        if result_p1["_new_vins_count"] is not None:
+            recent_new_vin_counts.append(result_p1["_new_vins_count"])
 
-                # --- VIN breakpoint: detect when we've caught up to known inventory ---
-                page_vins: Set[str] = set()
-                if status == 200:
-                    for vin_match in _VIN_RE.finditer(html_text):
-                        page_vins.add(vin_match.group(1))
+        for page_num in remaining_pages:
+            time.sleep(human_delay(page_num))
 
-                new_vins_count = 0
-                if known_vins and page_vins:
-                    new_vins = page_vins - known_vins
-                    new_vins_count = len(new_vins)
-                    known_vins.update(page_vins)  # track all seen VINs
-                    if new_vins_count == 0:
-                        consecutive_no_new += 1
-                    else:
-                        consecutive_no_new = 0
-                    # >=80% known VINs on this page → caught up
-                    if len(page_vins) > 0 and new_vins_count / len(page_vins) <= 0.2:
-                        stop_after_this_page = True
-                    # 3 consecutive pages with 0 new VINs
-                    if consecutive_no_new >= 3:
-                        stop_after_this_page = True
+            url = build_results_url(makes, models, zip_code, scope,
+                                    radius_miles, page_num, sort_order)
+            result = _fetch_page(browser, profile, url, run_dir,
+                                 search_key, scope, page_num, known_vins)
 
-                artifacts.append({
-                    "source": "cars.com",
-                    "artifact_type": "results_page",
-                    "search_key": search_key,
-                    "search_scope": scope,
-                    "page_num": page_num,
-                    "url": url,
-                    "http_status": status,
-                    "content_type": content_type,
-                    "content_bytes": size,
-                    "sha256": sha256_bytes(content) if content else None,
-                    "filepath": filepath,
-                    "fetched_at": fetched_at,
-                    "error": None if status == 200 else f"HTTP {status}",
-                    "paging_meta": paging,
-                    "page_vins_total": len(page_vins),
-                    "page_vins_new": new_vins_count,
-                })
+            if result["_break_no_save"]:
+                # Cars.com clamped page — we've gone past the end
+                break
 
-                if stop_after_this_page:
-                    break
+            artifacts.append(_clean_artifact(result))
 
-            except Exception as e:
-                artifacts.append({
-                    "source": "cars.com",
-                    "artifact_type": "results_page",
-                    "search_key": search_key,
-                    "search_scope": scope,
-                    "page_num": page_num,
-                    "url": url,
-                    "http_status": None,
-                    "content_type": None,
-                    "content_bytes": None,
-                    "sha256": None,
-                    "filepath": os.path.join(run_dir, f"{search_key}__{scope}__page_{page_num:04d}__ERROR.txt"),
-                    "fetched_at": fetched_at,
-                    "error": f"{type(e).__name__}: {str(e)}"[:500].replace("'", ""),
-                })
-                break  # stop paginating — IP may be rate-limited
-            finally:
-                context.close()
+            if result["_stop"]:
+                break
+
+            # --- VIN breakpoint for randomized pages ---
+            if known_vins and result["_page_vins"]:
+                recent_new_vin_counts.append(result["_new_vins_count"])
+
+                # Keep a window of the last 5 pages
+                if len(recent_new_vin_counts) > 5:
+                    recent_new_vin_counts.pop(0)
+
+                # If the last 5 pages averaged < 1 new VIN each, we've
+                # caught up to known inventory — stop early
+                if len(recent_new_vin_counts) >= 3:
+                    avg_new = sum(recent_new_vin_counts) / len(recent_new_vin_counts)
+                    if avg_new < 1.0:
+                        break
+
+                # Single-page check: >=80% known VINs
+                page_vins = result["_page_vins"]
+                if len(page_vins) > 0:
+                    new_ratio = result["_new_vins_count"] / len(page_vins)
+                    if new_ratio <= 0.2:
+                        break
+
     finally:
         close_browser()
 
