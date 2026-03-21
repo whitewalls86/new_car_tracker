@@ -358,8 +358,21 @@
     },
     {
       "parameters": {
+        "jsCode": "// Aggregate all error items into a single summary message\nconst items = $input.all();\nconst errors = [];\nconst seen = new Set();\n\nfor (const item of items) {\n  const d = item.json;\n  const key = `${d.search_key}|${d.scope}|${d.page_num}`;\n  if (seen.has(key)) continue;\n  seen.add(key);\n  errors.push({\n    search_key: d.search_key || 'unknown',\n    scope: d.scope || '?',\n    page_num: d.page_num || '?',\n    http_status: d.http_status || 'N/A',\n    url: d.url || '',\n    error: (d.error || '').substring(0, 200),\n  });\n}\n\n// Group by search_key + scope\nconst groups = {};\nfor (const e of errors) {\n  const gk = `${e.search_key} (${e.scope})`;\n  if (!groups[gk]) groups[gk] = [];\n  groups[gk].push(e);\n}\n\nlet lines = [`\\u{1F6A8} <b>Akamai Rate Limit — ${errors.length} error(s)</b>\\n`];\nfor (const [group, errs] of Object.entries(groups)) {\n  lines.push(`<b>${group}</b>: ${errs.length} blocked`);\n  for (const e of errs) {\n    lines.push(`  • page ${e.page_num} — ${e.error}`);\n  }\n  lines.push('');\n}\n\nreturn [{ json: { summary: lines.join('\\n') } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5824,
+        1552
+      ],
+      "id": "f1a3c2d0-8e5b-4a9f-b123-456789abcdef",
+      "name": "Summarize Errors"
+    },
+    {
+      "parameters": {
         "chatId": "774819707",
-        "text": "=🚨 <b>Akamai Rate Limit</b>\n\n<b>Search:</b> {{ $json.search_key }} ({{ $json.scope }})\n<b>Pages scraped:</b> {{ $json.artifact_count }}\n<b>Error:</b> {{ $json.error }}",
+        "text": "={{ $json.summary }}",
         "additionalFields": {
           "parse_mode": "HTML"
         }
@@ -367,13 +380,12 @@
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
-        5824,
+        6048,
         1552
       ],
       "id": "258490dc-56eb-4758-b2c3-ad2ad9b93e88",
       "name": "Send Telegram Alert",
       "webhookId": "3f97844c-717f-4bcd-86d2-b10cba6f7a6c",
-      "executeOnce": true,
       "credentials": {
         "telegramApi": {
           "id": "qoqqtiFUa4Dq2Wqp",
@@ -548,12 +560,23 @@
       "main": [
         [
           {
-            "node": "Send Telegram Alert",
+            "node": "Summarize Errors",
             "type": "main",
             "index": 0
           }
         ],
         []
+      ]
+    },
+    "Summarize Errors": {
+      "main": [
+        [
+          {
+            "node": "Send Telegram Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     }
   },
