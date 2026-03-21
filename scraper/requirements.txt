@@ -4,7 +4,7 @@ requests
 curl_cffi
 bs4
 lxml
-playwright
+patchright
 jinja2
 python-multipart
 asyncpg

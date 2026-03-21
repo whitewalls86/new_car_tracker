@@ -1,10 +1,19 @@
-"""Thread-local Playwright browser for SRP scraping.
+"""Thread-local Patchright browser for SRP scraping.
 
 Each worker thread gets its own browser instance so parallel scrape jobs
 don't share (and clobber) each other's browser state.
+
+Uses Patchright (a Playwright fork) which patches common automation
+detection vectors: CDP Runtime.enable leak, navigator.webdriver,
+HeadlessChrome sec-ch-ua, and automation-related Chrome flags.
 """
 import threading
-from playwright.sync_api import sync_playwright, Browser
+
+try:
+    from patchright.sync_api import sync_playwright, Browser
+except ImportError:
+    # Fallback to regular playwright if patchright isn't installed yet
+    from playwright.sync_api import sync_playwright, Browser
 
 _local = threading.local()
 

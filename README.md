@@ -33,14 +33,14 @@ Schedule Trigger (30 min)           Schedule Trigger (1h)
    srp_observations
 ```
 
-**Discovery mode:** SRP pages are sorted `listed_at_desc` and paginated until ≥80% of VINs on a page are already known (seen in the last 14 days) or 3 consecutive pages yield 0 new VINs — whichever comes first. Max 30 pages per job. On Akamai rate-limit (`ERR_HTTP2_PROTOCOL_ERROR`), the scraper stops immediately and the job fails.
+**Discovery mode:** SRP pages are sorted `listed_at_desc`. Page 1 is fetched first to learn the total page count, then remaining pages are fetched in **randomized order** to avoid sequential pagination fingerprinting. Pagination stops when ≥80% of VINs on a page are already known (seen in the last 14 days) or a rolling 5-page window averages < 1 new VIN per page. Max 30 pages per job. On Akamai rate-limit (`ERR_HTTP2_PROTOCOL_ERROR`), the scraper stops immediately and the job fails.
 
 ### Services
 
 | Service | Port | Description |
 |---------|------|-------------|
 | **postgres** | 5432 | PostgreSQL 16 — all config, raw data, parsed observations, and analytics |
-| **scraper** | 8000 | FastAPI — fetches SRP and detail pages via Playwright (Akamai bypass). Async job queue with ThreadPoolExecutor(4). Startup recovery clears orphaned jobs/runs (search + detail scrapes) on container restart. Admin UI at `/admin` for search config CRUD |
+| **scraper** | 8000 | FastAPI — fetches SRP pages via Patchright (Playwright fork with anti-detection patches) and detail pages via curl_cffi. Anti-fingerprinting: rotates Chrome UA + sec-ch-ua headers, ZIP codes, viewports, and uses human-like pacing (8-20s between pages). Async job queue with ThreadPoolExecutor(4). Startup recovery clears orphaned jobs/runs on container restart. Admin UI at `/admin` for search config CRUD |
 | **n8n** | 5678 | Workflow orchestration — 7 workflows handle scraping, polling, parsing, cleanup, and error handling |
 | **dbt** | — | dbt-postgres 1.8.2 — 16 models across staging/intermediate/marts/ops schemas. Runs on-demand via dbt_runner |
 | **dbt_runner** | 8081 | Lightweight FastAPI wrapper that lets n8n trigger `dbt build` via HTTP |
@@ -87,7 +87,7 @@ Schedule Trigger (30 min)           Schedule Trigger (1h)
 - `int_price_history_by_vin` — price trajectory per VIN (first price, drops, min/max)
 - `int_carousel_price_events_mapped` — carousel hints mapped to VINs via listing_to_vin
 - `int_listing_days_on_market` — days on market, first/last seen per VIN
-- `int_srp_vehicle_attributes` — latest make/model/trim/MSRP per VIN
+- `int_vehicle_attributes` — latest make/model/trim/MSRP per VIN (merged SRP + detail sources, freshest wins)
 - `int_model_price_benchmarks` — national price percentiles by make/model/trim
 - `int_dealer_inventory` — active vehicle count per dealer per make/model
 
@@ -101,7 +101,7 @@ Schedule Trigger (30 min)           Schedule Trigger (1h)
 ## Refresh Strategy
 
 - **Search scrapes** use slot-based rotation: 6 slots of 1-2 search configs each fire ~once per day. Two guards enforce spacing: `min_idle_minutes=1439` (23h59m per slot) and `min_gap_minutes=230` (~4h between any runs). The 30-min n8n schedule is a dumb clock; the API is authoritative. Sort order is `listed_at_desc` (discovery mode — surfaces newly listed vehicles first).
-- **Discovery mode** stops pagination early: if ≥80% of VINs on a page were already seen in the last 14 days, or 3 consecutive pages yield 0 new VINs, the job exits. Max 30 pages per job. This keeps daily request volume low (~200–500/day) to avoid Akamai rate limiting.
+- **Discovery mode** stops pagination early: if ≥80% of VINs on a page were already seen in the last 14 days, or a rolling 5-page window averages < 1 new VIN per page, the job exits. Pages are fetched in **randomized order** (after page 1) to avoid sequential pagination fingerprinting. Max 30 pages per job. This keeps daily request volume low (~200–500/day) to avoid Akamai rate limiting.
 - **Detail scrapes** run every 30 minutes, targeting 1 stale VIN per dealer plus force-grabbing any vehicle >36h stale (leverages carousel hints for neighboring inventory)
 - **Price data** is stale after 24 hours; **full details** after 7 days
 - **Detail scrapes wait** if a search scrape is running or if SRP artifacts from the last 45 minutes haven't been processed yet
@@ -182,10 +182,11 @@ cartracker-scraper/
     routers/admin.py        # /admin CRUD UI for search_configs
     processors/
       scrape_results.py     # SRP page fetcher — discovery mode, VIN breakpoint
-      scrape_detail.py      # Detail page fetcher (Playwright)
+      scrape_detail.py      # Detail page fetcher (curl_cffi)
       parse_detail_page.py  # HTML parser for detail pages
       results_page_cards.py # HTML parser for SRP cards
-      browser.py            # Browser singleton (Playwright)
+      browser.py            # Browser singleton (Patchright)
+      fingerprint.py        # UA/sec-ch-ua/viewport/ZIP rotation profiles
       cleanup_artifacts.py  # Artifact retention logic
     models/search_config.py # Pydantic models for search config
   dashboard/
