@@ -497,6 +497,73 @@ with tab1:
         display.columns = ["Time", "Duration (s)", "Status", "Intent", "Pass", "Error"]
         st.dataframe(display, use_container_width=True, hide_index=True)
 
+    # -- Processor Activity
+    st.subheader("Processor Activity")
+
+    # Summary metrics
+    proc_summary_df = run_query("""
+        SELECT
+            processor,
+            COUNT(*) FILTER (WHERE status = 'ok') AS ok,
+            COUNT(*) FILTER (WHERE status IN ('retry', 'processing')) AS pending,
+            COUNT(*) FILTER (WHERE status = 'ok'
+                AND message ILIKE '%cloudflare%') AS cloudflare_blocked,
+            COUNT(*) FILTER (WHERE status = 'ok'
+                AND meta->>'primary_json_present' = 'true') AS has_primary_data,
+            MAX(processed_at) AT TIME ZONE 'America/Chicago' AS last_processed
+        FROM artifact_processing
+        GROUP BY processor
+        ORDER BY processor
+    """)
+    if not proc_summary_df.empty:
+        st.dataframe(proc_summary_df, use_container_width=True, hide_index=True)
+
+    # Recent processing throughput (last 24h, hourly)
+    st.caption("Processing throughput — last 24 hours")
+    proc_hourly_df = run_query("""
+        SELECT
+            date_trunc('hour', processed_at AT TIME ZONE 'America/Chicago') AS hour,
+            processor,
+            COUNT(*) AS processed,
+            COUNT(*) FILTER (WHERE status = 'ok') AS ok,
+            COUNT(*) FILTER (WHERE status NOT IN ('ok')) AS errors
+        FROM artifact_processing
+        WHERE processed_at > now() - interval '24 hours'
+        GROUP BY 1, 2
+        ORDER BY 1 DESC, 2
+    """)
+    if not proc_hourly_df.empty:
+        fig = px.bar(proc_hourly_df, x="hour", y="processed", color="processor",
+                     barmode="group")
+        fig.update_layout(xaxis_title=None, yaxis_title="Artifacts Processed",
+                          legend_title=None)
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("No processing activity in the last 24 hours.")
+
+    # Detail parser coverage
+    st.caption("Detail parser data extraction coverage")
+    proc_coverage_df = run_query("""
+        SELECT
+            date_trunc('day', ap.processed_at AT TIME ZONE 'America/Chicago') AS day,
+            COUNT(*) AS total_processed,
+            COUNT(*) FILTER (WHERE ap.meta->>'primary_json_present' = 'true') AS has_vehicle_data,
+            COUNT(*) FILTER (WHERE ap.message ILIKE '%cloudflare%') AS cloudflare_blocked,
+            COUNT(*) FILTER (WHERE ap.meta->>'primary_json_present' = 'false'
+                AND (ap.message IS NULL OR ap.message NOT ILIKE '%cloudflare%')) AS no_data,
+            ROUND(100.0 * COUNT(*) FILTER (WHERE ap.meta->>'primary_json_present' = 'true')
+                / NULLIF(COUNT(*), 0), 1) AS extraction_pct
+        FROM artifact_processing ap
+        WHERE ap.processor LIKE 'cars_detail_page__%'
+          AND ap.processed_at > now() - interval '14 days'
+        GROUP BY 1
+        ORDER BY 1 DESC
+    """)
+    if not proc_coverage_df.empty:
+        st.dataframe(proc_coverage_df, use_container_width=True, hide_index=True)
+    else:
+        st.info("No detail processing data in the last 14 days.")
+
     st.subheader("Postgres Health")
     df_conn = run_query("""
         SELECT
