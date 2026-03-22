@@ -262,6 +262,7 @@ with tab1:
                 COUNT(*) AS new_count
             FROM new_vins nv
             JOIN analytics.int_vehicle_attributes a ON a.vin = nv.vin
+            INNER JOIN analytics.int_scrape_targets t ON t.make = a.make AND t.model = a.model
             GROUP BY a.make, a.model
             ORDER BY new_count DESC
         """)
@@ -621,25 +622,31 @@ with tab2:
 
     with col2:
         df = run_query("""
-            SELECT COUNT(DISTINCT vin) AS cnt
-            FROM analytics.int_listing_days_on_market
-            WHERE first_seen_at > now() - interval '24 hours'
+            SELECT COUNT(DISTINCT dom.vin) AS cnt
+            FROM analytics.int_listing_days_on_market dom
+            INNER JOIN analytics.int_vehicle_attributes a ON a.vin = dom.vin
+            INNER JOIN analytics.int_scrape_targets t ON t.make = a.make AND t.model = a.model
+            WHERE dom.first_seen_at > now() - interval '24 hours'
         """)
         st.metric("New (24h)", f"{df['cnt'].iloc[0]:,}")
 
     with col3:
         df = run_query("""
-            SELECT COUNT(DISTINCT vin) AS cnt
-            FROM analytics.int_listing_days_on_market
-            WHERE first_seen_at > now() - interval '7 days'
+            SELECT COUNT(DISTINCT dom.vin) AS cnt
+            FROM analytics.int_listing_days_on_market dom
+            INNER JOIN analytics.int_vehicle_attributes a ON a.vin = dom.vin
+            INNER JOIN analytics.int_scrape_targets t ON t.make = a.make AND t.model = a.model
+            WHERE dom.first_seen_at > now() - interval '7 days'
         """)
         st.metric("New (7d)", f"{df['cnt'].iloc[0]:,}")
 
     with col4:
         df = run_query("""
-            SELECT COUNT(DISTINCT vin) AS cnt
-            FROM analytics.int_listing_days_on_market
-            WHERE first_seen_at > now() - interval '30 days'
+            SELECT COUNT(DISTINCT dom.vin) AS cnt
+            FROM analytics.int_listing_days_on_market dom
+            INNER JOIN analytics.int_vehicle_attributes a ON a.vin = dom.vin
+            INNER JOIN analytics.int_scrape_targets t ON t.make = a.make AND t.model = a.model
+            WHERE dom.first_seen_at > now() - interval '30 days'
         """)
         st.metric("New (30d)", f"{df['cnt'].iloc[0]:,}")
 
@@ -669,10 +676,11 @@ with tab2:
     df = run_query("""
         SELECT
             date_trunc('day', dom.first_seen_at AT TIME ZONE 'America/Chicago') AS day,
-            COALESCE(a.make, 'Unknown') AS make,
+            a.make,
             COUNT(DISTINCT dom.vin) AS new_listings
         FROM analytics.int_listing_days_on_market dom
-        LEFT JOIN analytics.int_vehicle_attributes a ON a.vin = dom.vin
+        INNER JOIN analytics.int_vehicle_attributes a ON a.vin = dom.vin
+        INNER JOIN analytics.int_scrape_targets t ON t.make = a.make AND t.model = a.model
         WHERE dom.first_seen_at > now() - interval '30 days'
         GROUP BY 1, 2
         ORDER BY 1, 2
@@ -690,11 +698,11 @@ with tab2:
                 d.vin,
                 MIN(d.fetched_at) AS unlisted_at
             FROM detail_observations d
-            JOIN analytics.int_vehicle_attributes a ON a.vin = d.vin
-            JOIN analytics.int_scrape_targets t
-                ON lower(a.make) = t.make_lower AND lower(a.model) = t.model_lower
+            INNER JOIN analytics.int_vehicle_attributes a ON a.vin = upper(d.vin)
+            INNER JOIN analytics.int_scrape_targets t ON t.make = a.make AND t.model = a.model
             WHERE d.listing_state = 'unlisted'
               AND d.vin IS NOT NULL
+              AND length(d.vin) = 17
             GROUP BY d.vin
         )
         SELECT
@@ -934,7 +942,7 @@ with tab4:
         FROM analytics.int_price_events pe
         JOIN analytics.int_vehicle_attributes a ON a.vin = pe.vin
         JOIN analytics.int_scrape_targets t
-            ON lower(a.make) = t.make_lower AND lower(a.model) = t.model_lower
+            ON t.make = a.make AND t.model = a.model
         WHERE pe.observed_at > now() - interval '90 days'
           AND pe.price > 0
           AND pe.source = 'srp'
@@ -959,7 +967,7 @@ with tab4:
         FROM srp_observations s
         JOIN analytics.int_vehicle_attributes a ON a.vin = s.vin
         JOIN analytics.int_scrape_targets t
-            ON lower(a.make) = t.make_lower AND lower(a.model) = t.model_lower
+            ON t.make = a.make AND t.model = a.model
         WHERE s.fetched_at > now() - interval '30 days'
           AND s.vin IS NOT NULL
         GROUP BY 1, 2, 3
