@@ -31,5 +31,9 @@ select
     p.price_tier
 
 from {{ ref('int_latest_tier1_observation_by_vin') }} t
+inner join {{ ref('int_vehicle_attributes') }} a
+  on a.vin = t.vin
+inner join {{ ref('int_scrape_targets') }} tgt
+  on tgt.make = a.make and tgt.model = a.model
 left join {{ ref('int_latest_price_by_vin') }} p
   on p.vin = t.vin
