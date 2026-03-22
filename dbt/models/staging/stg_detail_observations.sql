@@ -1,3 +1,11 @@
+{{
+  config(
+    materialized = 'incremental',
+    unique_key = 'id',
+    incremental_strategy = 'merge'
+  )
+}}
+
 select
   d.id,
   d.artifact_id,
@@ -29,3 +37,6 @@ select
 from {{ source('public', 'detail_observations') }} d
 left join {{ source('public', 'raw_artifacts') }} ra
   on ra.artifact_id = d.artifact_id
+{% if is_incremental() %}
+where d.id > (select coalesce(max(id), 0) from {{ this }})
+{% endif %}

@@ -1,3 +1,11 @@
+{{
+  config(
+    materialized = 'incremental',
+    unique_key = 'id',
+    incremental_strategy = 'merge'
+  )
+}}
+
 select
   id,
   artifact_id,
@@ -30,3 +38,6 @@ select
   raw_vehicle_json,
   created_at
 from {{ source('public', 'srp_observations') }}
+{% if is_incremental() %}
+where id > (select coalesce(max(id), 0) from {{ this }})
+{% endif %}
