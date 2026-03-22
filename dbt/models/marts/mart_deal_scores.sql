@@ -1,12 +1,32 @@
 -- Deal scores for all active listings.
 -- One row per VIN, ranked by composite deal_score (0-100).
 
-with active_vins as (
+with srp_vins as (
     -- VINs seen in SRP within last 3 days
     select distinct vin17 as vin
     from {{ ref('stg_srp_observations') }}
     where vin17 is not null
       and fetched_at >= now() - interval '{{ var("staleness_window_days") }} days'
+),
+
+detail_only_vins as (
+    -- VINs discovered via detail scrapes (carousel hints) within last 3 days
+    -- that match an active scrape target make/model
+    select distinct d.vin17 as vin
+    from {{ ref('stg_detail_observations') }} d
+    inner join {{ ref('int_scrape_targets') }} t
+        on d.make = t.make and d.model = t.model
+    where d.vin17 is not null
+      and d.fetched_at >= now() - interval '{{ var("staleness_window_days") }} days'
+      and not exists (
+          select 1 from srp_vins s where s.vin = d.vin17
+      )
+),
+
+active_vins as (
+    select vin from srp_vins
+    union
+    select vin from detail_only_vins
 ),
 
 -- Check if VIN was seen locally in last 3 days

@@ -6,32 +6,37 @@ with hints as (
         h.fetched_at as observed_at,
         h.listing_id,
         h.price,
-        lower(split_part(h.body, ' ', 3)) as hint_make
+        h.body
     from {{ ref('stg_detail_carousel_hints') }} h
     where h.price is not null
       and h.price > 0
       and h.body is not null
 ),
 
--- Only keep hints whose make matches an active search config
-active_makes as (
-    select distinct jsonb_array_elements_text(params->'makes') as make
-    from {{ source('public', 'search_configs') }}
-    where enabled = true
+-- Only keep hints whose make AND model match an active scrape target.
+-- Body format: "{condition} {year} {Make} {Model...} {Trim...}"
+-- e.g. "Certified 2021 Ford Escape SE", "New 2025 Toyota RAV4 Hybrid"
+filtered as (
+    select
+        h.artifact_id,
+        h.observed_at,
+        h.listing_id,
+        h.price
+    from hints h
+    inner join {{ ref('int_scrape_targets') }} t
+        on h.body ilike '% ' || t.make || ' ' || t.model || '%'
 ),
 
 unmapped as (
     select
         m.vin,
-        h.listing_id,
-        h.artifact_id,
-        h.observed_at,
-        h.price
-    from hints h
-    inner join active_makes am
-      on am.make = h.hint_make
+        f.listing_id,
+        f.artifact_id,
+        f.observed_at,
+        f.price
+    from filtered f
     left join {{ ref('int_listing_to_vin') }} m
-      on m.listing_id = h.listing_id
+      on m.listing_id = f.listing_id
     where m.listing_id IS NULL
 )
 
