@@ -687,12 +687,15 @@ with tab2:
     df = run_query("""
         WITH first_unlisted AS (
             SELECT
-                vin,
-                MIN(fetched_at) AS unlisted_at
-            FROM detail_observations
-            WHERE listing_state = 'unlisted'
-              AND vin IS NOT NULL
-            GROUP BY vin
+                d.vin,
+                MIN(d.fetched_at) AS unlisted_at
+            FROM detail_observations d
+            JOIN analytics.int_vehicle_attributes a ON a.vin = d.vin
+            JOIN analytics.int_scrape_targets t
+                ON lower(a.make) = t.make_lower AND lower(a.model) = t.model_lower
+            WHERE d.listing_state = 'unlisted'
+              AND d.vin IS NOT NULL
+            GROUP BY d.vin
         )
         SELECT
             date_trunc('day', unlisted_at AT TIME ZONE 'America/Chicago') AS day,
@@ -930,6 +933,8 @@ with tab4:
             COUNT(DISTINCT pe.vin) AS listing_count
         FROM analytics.int_price_events pe
         JOIN analytics.int_vehicle_attributes a ON a.vin = pe.vin
+        JOIN analytics.int_scrape_targets t
+            ON lower(a.make) = t.make_lower AND lower(a.model) = t.model_lower
         WHERE pe.observed_at > now() - interval '90 days'
           AND pe.price > 0
           AND pe.source = 'srp'
@@ -947,13 +952,16 @@ with tab4:
     st.subheader("Inventory Levels by Model (Daily)")
     df = run_query("""
         SELECT
-            date_trunc('day', fetched_at AT TIME ZONE 'America/Chicago') AS day,
-            make,
-            model,
-            COUNT(DISTINCT vin) AS listings_seen
-        FROM srp_observations
-        WHERE fetched_at > now() - interval '30 days'
-          AND vin IS NOT NULL
+            date_trunc('day', s.fetched_at AT TIME ZONE 'America/Chicago') AS day,
+            a.make,
+            a.model,
+            COUNT(DISTINCT s.vin) AS listings_seen
+        FROM srp_observations s
+        JOIN analytics.int_vehicle_attributes a ON a.vin = s.vin
+        JOIN analytics.int_scrape_targets t
+            ON lower(a.make) = t.make_lower AND lower(a.model) = t.model_lower
+        WHERE s.fetched_at > now() - interval '30 days'
+          AND s.vin IS NOT NULL
         GROUP BY 1, 2, 3
         ORDER BY 1, 4 DESC
     """)
