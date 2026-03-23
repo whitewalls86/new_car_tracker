@@ -91,6 +91,14 @@ with tab1:
     else:
         st.success("No active runs")
 
+    # -- dbt build status
+    dbt_lock_df = run_query("SELECT locked, locked_at AT TIME ZONE 'America/Chicago' AS locked_at, locked_by FROM dbt_lock WHERE id = 1")
+    if not dbt_lock_df.empty and dbt_lock_df["locked"].iloc[0]:
+        lock_at = dbt_lock_df["locked_at"].iloc[0]
+        lock_by = dbt_lock_df["locked_by"].iloc[0] or "unknown"
+        lock_str = lock_at.strftime('%H:%M') if pd.notna(lock_at) else "?"
+        st.info(f"dbt building ({lock_by}) — started {lock_str}")
+
     # -- All Recent Runs
     st.subheader("Recent Runs (All Types)")
     recent_runs_df = run_query("""
