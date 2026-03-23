@@ -4,7 +4,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "WITH batch AS (\n  SELECT q.*\n  FROM ops.ops_detail_scrape_queue q\n  LEFT JOIN detail_scrape_claims c\n    ON c.listing_id = q.listing_id\n   AND c.status = 'running'\n  WHERE c.listing_id IS NULL\n  ORDER BY q.priority, q.listing_id\n  LIMIT 1500\n),\nclaimed AS (\n  INSERT INTO detail_scrape_claims (listing_id, claimed_by, claimed_at, status)\n  SELECT b.listing_id, '{{ $('Create Run Id').first().json.run_id }}', now(), 'running'\n  FROM batch b\n  ON CONFLICT (listing_id) DO UPDATE\n    SET claimed_by = EXCLUDED.claimed_by,\n        claimed_at = EXCLUDED.claimed_at,\n        status     = 'running'\n    WHERE detail_scrape_claims.status != 'running'\n  RETURNING listing_id\n)\nSELECT b.* FROM batch b\nJOIN claimed c ON c.listing_id = b.listing_id;",
+        "query": "WITH batch AS (\n  SELECT q.*\n  FROM ops.ops_detail_scrape_queue q\n  LEFT JOIN detail_scrape_claims c\n    ON c.listing_id = q.listing_id\n   AND c.status = 'running'\n  WHERE c.listing_id IS NULL\n  ORDER BY q.priority, q.listing_id\n  LIMIT 1750\n),\nclaimed AS (\n  INSERT INTO detail_scrape_claims (listing_id, claimed_by, claimed_at, status)\n  SELECT b.listing_id, '{{ $('Create Run Id').first().json.run_id }}', now(), 'running'\n  FROM batch b\n  ON CONFLICT (listing_id) DO UPDATE\n    SET claimed_by = EXCLUDED.claimed_by,\n        claimed_at = EXCLUDED.claimed_at,\n        status     = 'running'\n    WHERE detail_scrape_claims.status != 'running'\n  RETURNING listing_id\n)\nSELECT b.* FROM batch b\nJOIN claimed c ON c.listing_id = b.listing_id;",
         "options": {}
       },
       "type": "n8n-nodes-base.postgres",
@@ -153,8 +153,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        -560,
-        832
+        -496,
+        640
       ],
       "id": "3dd28ac4-b9f7-4261-868d-8138490f9739",
       "name": "Mark Run Done",
@@ -188,8 +188,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        -336,
-        832
+        -352,
+        640
       ],
       "id": "c3600aad-c3ae-4c52-96f3-906b41cee02b",
       "name": "Check Error Rate",
@@ -306,7 +306,7 @@
           "interval": [
             {
               "field": "minutes",
-              "minutesInterval": 30
+              "minutesInterval": 15
             }
           ]
         }
@@ -322,93 +322,14 @@
     },
     {
       "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "loose",
-            "version": 3
-          },
-          "conditions": [
-            {
-              "id": "25293cc0-6965-4151-be35-c7993d59033e",
-              "leftValue": "={{ $json.running_scrapes }}",
-              "rightValue": 0,
-              "operator": {
-                "type": "number",
-                "operation": "equals"
-              }
-            },
-            {
-              "id": "d4e5f6a7-b8c9-4d0e-1f2a-b3c4d5e6f7a8",
-              "leftValue": "={{ $json.unprocessed_srp_artifacts }}",
-              "rightValue": 0,
-              "operator": {
-                "type": "number",
-                "operation": "equals"
-              }
-            }
-          ],
-          "combinator": "and"
-        },
-        "looseTypeValidation": true,
-        "options": {}
-      },
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.3,
-      "position": [
-        -2352,
-        1184
-      ],
-      "id": "784cd0e3-5bd4-4820-9f1d-74f58982409f",
-      "name": "If"
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "SELECT\n  (SELECT COUNT(DISTINCT run_id)\n   FROM runs\n   WHERE trigger IN ('search scrape', 'detail scrape')\n     AND status = 'running') AS running_scrapes,\n  (SELECT COUNT(*)\n   FROM raw_artifacts ra\n   WHERE ra.artifact_type = 'results_page'\n     AND ra.fetched_at > now() - interval '45 minutes'\n     AND ra.http_status IS NOT NULL\n     AND NOT EXISTS (\n       SELECT 1 FROM artifact_processing ap\n       WHERE ap.artifact_id = ra.artifact_id\n         AND ap.status IN ('ok', 'skip', 'failed')\n         AND ap.processor LIKE 'cars_results_page__listings_%'\n     )\n  ) AS unprocessed_srp_artifacts;",
-        "options": {}
-      },
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.6,
-      "position": [
-        -2576,
-        1264
-      ],
-      "id": "36105da5-0655-4d43-b334-a6de7c712c11",
-      "name": "Execute a SQL query1",
-      "credentials": {
-        "postgres": {
-          "id": "l8Ecbn62FzXCDkF9",
-          "name": "Postgres account"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "amount": 3,
-        "unit": "minutes"
-      },
-      "type": "n8n-nodes-base.wait",
-      "typeVersion": 1.1,
-      "position": [
-        -2352,
-        1360
-      ],
-      "id": "b650a665-f81b-4d1b-963f-1fd2839549b0",
-      "name": "Wait",
-      "webhookId": "28e39f27-4c1e-42bd-8043-8e6608b2557a"
-    },
-    {
-      "parameters": {
         "aggregate": "aggregateAllItemData",
         "options": {}
       },
       "type": "n8n-nodes-base.aggregate",
       "typeVersion": 1,
       "position": [
-        -1008,
-        832
+        -1056,
+        960
       ],
       "id": "5243cdfd-9488-4e71-b261-55cb8976d421",
       "name": "Store Total (Aggregate)"
@@ -422,7 +343,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        -784,
+        -896,
         832
       ],
       "id": "d15b24f6-5030-4a3d-ad77-3a974925e516",
@@ -532,8 +453,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        -784,
-        700
+        -656,
+        640
       ],
       "id": "a1b2c3d4-e5f6-7890-abcd-release00001",
       "name": "Release Claims",
@@ -768,47 +689,7 @@
       "main": [
         [
           {
-            "node": "Execute a SQL query1",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "If": {
-      "main": [
-        [
-          {
             "node": "Create Run Id",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Wait",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Execute a SQL query1": {
-      "main": [
-        [
-          {
-            "node": "If",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Wait": {
-      "main": [
-        [
-          {
-            "node": "Execute a SQL query1",
             "type": "main",
             "index": 0
           }
@@ -864,7 +745,7 @@
     "callerPolicy": "workflowsFromSameOwner",
     "errorWorkflow": "rJfFKS2DGRAn_IPJR1xTc"
   },
-  "versionId": "ed76a19b-9cef-4686-a368-59b751aaeb3e",
+  "versionId": "93793ecc-d513-44ef-a191-61354d313c03",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179"
