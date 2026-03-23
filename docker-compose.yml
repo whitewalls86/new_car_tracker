@@ -46,11 +46,11 @@ services:
       - cartracker-net
 
   dbt:
-    image: ghcr.io/dbt-labs/dbt-postgres:1.8.2
+    build:
+      context: .
+      dockerfile: dbt/Dockerfile
     container_name: cartracker-dbt
     working_dir: /usr/app
-    volumes:
-      - ./dbt:/usr/app
     environment:
       DBT_PROFILES_DIR: /usr/app
       PGHOST: postgres
@@ -69,9 +69,6 @@ services:
     container_name: cartracker-dbt-runner
     restart: unless-stopped
     working_dir: /usr/app
-    volumes:
-      - ./dbt:/usr/app
-      - ./dbt_runner/app.py:/usr/app/app.py
     environment:
       DBT_PROFILES_DIR: /usr/app
       PGHOST: postgres
@@ -98,8 +95,6 @@ services:
     restart: unless-stopped
     ports:
       - "8501:8501"
-    volumes:
-      - ./dashboard/app.py:/app/app.py
     environment:
       DATABASE_URL: postgresql://cartracker:${POSTGRES_PASSWORD}@postgres:5432/cartracker
     depends_on:
