@@ -320,7 +320,9 @@ CREATE TABLE public.runs (
     trigger text DEFAULT 'schedule'::text NOT NULL,
     notes text,
     progress_count integer DEFAULT 0,
-    total_count integer
+    total_count integer,
+    error_count integer DEFAULT 0,
+    last_error text
 );
 
 

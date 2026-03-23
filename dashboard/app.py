@@ -167,15 +167,13 @@ with tab1:
             r.total_count AS batch_size,
             COUNT(DISTINCT CASE WHEN a.artifact_type = 'detail_page' AND a.http_status = 200 THEN a.artifact_id END) AS detail_pages_ok,
             COUNT(DISTINCT CASE WHEN a.artifact_type = 'detail_page' AND (a.http_status != 200 OR a.http_status IS NULL) THEN a.artifact_id END) AS detail_errors,
-            (SELECT COUNT(*) FROM detail_observations do2
-             WHERE do2.fetched_at BETWEEN r.started_at AND COALESCE(r.finished_at, now())) AS observations,
-            (SELECT COUNT(*) FROM detail_carousel_hints ch
-             WHERE ch.fetched_at BETWEEN r.started_at AND COALESCE(r.finished_at, now())) AS carousel_hints
+            r.error_count AS job_errors,
+            r.last_error
         FROM runs r
         LEFT JOIN raw_artifacts a ON a.run_id = r.run_id
         WHERE r.trigger = 'detail scrape'
           AND r.status != 'skipped'
-        GROUP BY r.run_id, r.started_at, r.finished_at, r.status, r.total_count
+        GROUP BY r.run_id, r.started_at, r.finished_at, r.status, r.total_count, r.error_count, r.last_error
         ORDER BY r.started_at DESC
         LIMIT 10
     """)
