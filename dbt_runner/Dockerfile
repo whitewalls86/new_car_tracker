@@ -7,6 +7,10 @@ WORKDIR /usr/app
 ENV DBT_PROFILES_DIR=/usr/app
 ENV PYTHONUNBUFFERED=1
 
+# Copy dbt project files and the runner app from committed code
+COPY dbt/ /usr/app/
+COPY dbt_runner/app.py /usr/app/app.py
+
 EXPOSE 8080
 ENTRYPOINT []
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8080"]
