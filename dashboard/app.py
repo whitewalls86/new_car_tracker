@@ -383,13 +383,11 @@ with tab1:
     else:
         st.info("No detail page artifacts in the last 30 days.")
 
-    # -- Row 3b: Search scrape success rate by run
-    st.subheader("Search Scrape Success Rate (Last 7 Days, by Run)")
+    # -- Row 3b: Search scrape success rate (daily)
+    st.subheader("Search Scrape Success Rate (Last 7 Days)")
     df = run_query("""
         SELECT
-            r.run_id,
-            to_char(r.started_at AT TIME ZONE 'America/Chicago', 'Mon DD HH24:MI') AS run_label,
-            r.started_at,
+            date_trunc('day', a.fetched_at AT TIME ZONE 'America/Chicago') AS day,
             CASE
                 WHEN a.http_status = 200 THEN '200 OK'
                 WHEN a.http_status = 403 THEN '403 Blocked'
@@ -397,16 +395,14 @@ with tab1:
                 ELSE a.http_status::text
             END AS result,
             COUNT(*) AS fetches
-        FROM runs r
-        JOIN raw_artifacts a ON a.run_id = r.run_id
-        WHERE r.trigger = 'search scrape'
-          AND r.started_at > now() - interval '7 days'
-          AND a.artifact_type = 'results_page'
-        GROUP BY r.run_id, r.started_at, result
-        ORDER BY r.started_at, result
+        FROM raw_artifacts a
+        WHERE a.artifact_type = 'results_page'
+          AND a.fetched_at > now() - interval '7 days'
+        GROUP BY 1, 2
+        ORDER BY 1, 2
     """)
     if not df.empty:
-        fig = px.bar(df, x="run_label", y="fetches", color="result", barmode="stack",
+        fig = px.bar(df, x="day", y="fetches", color="result", barmode="stack",
                      color_discrete_map={"200 OK": "#2ecc71", "403 Blocked": "#e74c3c", "Error/Timeout": "#95a5a6"})
         fig.update_layout(xaxis_title=None, yaxis_title="Fetches", legend_title=None)
         st.plotly_chart(fig, use_container_width=True)
