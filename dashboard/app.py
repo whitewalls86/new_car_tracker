@@ -313,48 +313,60 @@ with tab1:
     # -- Stale backlog
     st.subheader("Stale Vehicle Backlog")
     df = run_query("""
-        SELECT
-            stale_reason,
-            COUNT(*) AS vehicle_count,
-            ROUND(AVG(tier1_age_hours)::numeric, 1) AS avg_tier1_age_hours,
-            ROUND(AVG(price_age_hours)::numeric, 1) AS avg_price_age_hours
-        FROM ops.ops_vehicle_staleness
-        WHERE listing_state IS DISTINCT FROM 'unlisted'
-        GROUP BY stale_reason
+        SELECT stale_reason, vehicle_count, avg_tier1_age_hours, avg_price_age_hours
+        FROM (
+            SELECT
+                stale_reason,
+                COUNT(*) AS vehicle_count,
+                ROUND(AVG(tier1_age_hours)::numeric, 1) AS avg_tier1_age_hours,
+                ROUND(AVG(price_age_hours)::numeric, 1) AS avg_price_age_hours
+            FROM ops.ops_vehicle_staleness
+            WHERE listing_state IS DISTINCT FROM 'unlisted'
+            GROUP BY stale_reason
+            UNION ALL
+            SELECT
+                'unmapped_carousel' AS stale_reason,
+                COUNT(*) AS vehicle_count,
+                NULL::numeric AS avg_tier1_age_hours,
+                NULL::numeric AS avg_price_age_hours
+            FROM analytics.int_carousel_price_events_unmapped
+        ) combined
         ORDER BY vehicle_count DESC
     """)
     st.dataframe(df, use_container_width=True, hide_index=True)
 
     # -- Price freshness distribution
-    st.subheader("Price Freshness — Expiring in Next 24h")
+    st.subheader("Price Freshness — Expiring in Next 12h")
     freshness_df = run_query("""
+        WITH buckets AS (
+            SELECT
+                FLOOR(price_age_hours * 2) / 2 AS age_floor,
+                price_tier,
+                is_full_details_stale
+            FROM ops.ops_vehicle_staleness
+            WHERE price_age_hours IS NOT NULL
+              AND price_age_hours BETWEEN 12 AND 24
+        )
         SELECT
-            CASE
-                WHEN price_age_hours > 24   THEN 'Already stale'
-                WHEN price_age_hours >= 21  THEN 'Expiring 0-3h'
-                WHEN price_age_hours >= 18  THEN 'Expiring 3-6h'
-                WHEN price_age_hours >= 15  THEN 'Expiring 6-9h'
-                WHEN price_age_hours >= 12  THEN 'Expiring 9-12h'
-                WHEN price_age_hours >= 9   THEN 'Expiring 12-15h'
-                WHEN price_age_hours >= 6   THEN 'Expiring 15-18h'
-                WHEN price_age_hours >= 3   THEN 'Expiring 18-21h'
-                ELSE                             'Expiring 21-24h'
-            END AS expiry_bucket,
+            (24 - age_floor)::numeric AS hours_until_stale,
+            TO_CHAR((24 - age_floor)::numeric, 'FM90.0') || 'h' AS expiry_bucket,
             COUNT(*) FILTER (WHERE price_tier = 1 AND NOT is_full_details_stale) AS tier1,
             COUNT(*) FILTER (WHERE price_tier = 2 AND NOT is_full_details_stale) AS tier2,
             COUNT(*) FILTER (WHERE is_full_details_stale) AS full_details_stale,
             COUNT(*) AS total
-        FROM ops.ops_vehicle_staleness
-        GROUP BY 1
-        ORDER BY MIN(price_age_hours) DESC
+        FROM buckets
+        GROUP BY age_floor
+        ORDER BY age_floor DESC
     """)
     if not freshness_df.empty:
+        freshness_df = freshness_df.sort_values("hours_until_stale")
         fig = px.bar(
             freshness_df, x="expiry_bucket", y=["tier1", "tier2", "full_details_stale"], barmode="stack",
             labels={"value": "VINs", "expiry_bucket": "Expires In"},
             color_discrete_map={"tier1": "#3498db", "tier2": "#95a5a6", "full_details_stale": "#e67e22"},
         )
-        fig.update_layout(xaxis_title=None, yaxis_title="Active VINs", legend_title="Price Tier")
+        fig.update_layout(xaxis_title="Hours until stale", yaxis_title="Active VINs", legend_title="Price Tier",
+                          xaxis={"categoryorder": "array", "categoryarray": freshness_df["expiry_bucket"].tolist()})
         st.plotly_chart(fig, use_container_width=True)
 
     # -- Row 3: Detail scrape success rate
@@ -402,9 +414,31 @@ with tab1:
         ORDER BY 1, 2
     """)
     if not df.empty:
-        fig = px.bar(df, x="day", y="fetches", color="result", barmode="stack",
-                     color_discrete_map={"200 OK": "#2ecc71", "403 Blocked": "#e74c3c", "Error/Timeout": "#95a5a6"})
-        fig.update_layout(xaxis_title=None, yaxis_title="Fetches", legend_title=None)
+        import plotly.graph_objects as go
+        from plotly.subplots import make_subplots
+
+        fig = make_subplots(specs=[[{"secondary_y": True}]])
+
+        # Pivot for stacked bars
+        for result, color in [("200 OK", "#2ecc71"), ("403 Blocked", "#e74c3c"), ("Error/Timeout", "#95a5a6")]:
+            subset = df[df["result"] == result]
+            if not subset.empty:
+                fig.add_trace(go.Bar(x=subset["day"], y=subset["fetches"], name=result,
+                                     marker_color=color), secondary_y=False)
+
+        # Success % line on secondary y-axis
+        daily_totals = df.groupby("day")["fetches"].sum()
+        daily_ok = df[df["result"] == "200 OK"].set_index("day")["fetches"]
+        success_pct = (daily_ok / daily_totals * 100).fillna(0).reset_index()
+        success_pct.columns = ["day", "pct"]
+        fig.add_trace(go.Scatter(x=success_pct["day"], y=success_pct["pct"],
+                                  name="Success %", mode="lines+markers",
+                                  line=dict(color="white", width=2),
+                                  marker=dict(size=6)), secondary_y=True)
+
+        fig.update_layout(barmode="stack", xaxis_title=None, legend=dict(orientation="h", y=-0.15))
+        fig.update_yaxes(title_text="Fetches", secondary_y=False)
+        fig.update_yaxes(title_text="Success %", secondary_y=True, range=[0, 100])
         st.plotly_chart(fig, use_container_width=True)
     else:
         st.info("No search scrape artifacts in the last 7 days.")
