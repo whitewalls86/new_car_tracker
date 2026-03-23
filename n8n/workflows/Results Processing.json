@@ -222,7 +222,8 @@
         -80
       ],
       "id": "a1996cb3-2b82-42c0-83cf-c9a3ca91903f",
-      "name": "Rebuild DBT"
+      "name": "Rebuild DBT",
+      "onError": "continueErrorOutput"
     },
     {
       "parameters": {

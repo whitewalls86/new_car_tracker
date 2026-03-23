@@ -297,7 +297,8 @@
         480
       ],
       "id": "aa193d33-1e83-42af-8631-2acffb1c97e6",
-      "name": "Execute DBT Build"
+      "name": "Execute DBT Build",
+      "onError": "continueErrorOutput"
     },
     {
       "parameters": {
