@@ -336,35 +336,37 @@ with tab1:
     st.dataframe(df, use_container_width=True, hide_index=True)
 
     # -- Price freshness distribution
-    st.subheader("Price Freshness — Expiring in Next 24h")
+    st.subheader("Price Freshness — Expiring in Next 12h")
     freshness_df = run_query("""
+        WITH buckets AS (
+            SELECT
+                FLOOR(price_age_hours * 2) / 2 AS age_floor,
+                price_tier,
+                is_full_details_stale
+            FROM ops.ops_vehicle_staleness
+            WHERE price_age_hours IS NOT NULL
+              AND price_age_hours BETWEEN 12 AND 24
+        )
         SELECT
-            CASE
-                WHEN price_age_hours > 24   THEN 'Already stale'
-                WHEN price_age_hours >= 21  THEN 'Expiring 0-3h'
-                WHEN price_age_hours >= 18  THEN 'Expiring 3-6h'
-                WHEN price_age_hours >= 15  THEN 'Expiring 6-9h'
-                WHEN price_age_hours >= 12  THEN 'Expiring 9-12h'
-                WHEN price_age_hours >= 9   THEN 'Expiring 12-15h'
-                WHEN price_age_hours >= 6   THEN 'Expiring 15-18h'
-                WHEN price_age_hours >= 3   THEN 'Expiring 18-21h'
-                ELSE                             'Expiring 21-24h'
-            END AS expiry_bucket,
+            (24 - age_floor)::numeric AS hours_until_stale,
+            TO_CHAR((24 - age_floor)::numeric, 'FM90.0') || 'h' AS expiry_bucket,
             COUNT(*) FILTER (WHERE price_tier = 1 AND NOT is_full_details_stale) AS tier1,
             COUNT(*) FILTER (WHERE price_tier = 2 AND NOT is_full_details_stale) AS tier2,
             COUNT(*) FILTER (WHERE is_full_details_stale) AS full_details_stale,
             COUNT(*) AS total
-        FROM ops.ops_vehicle_staleness
-        GROUP BY 1
-        ORDER BY MIN(price_age_hours) DESC
+        FROM buckets
+        GROUP BY age_floor
+        ORDER BY age_floor DESC
     """)
     if not freshness_df.empty:
+        freshness_df = freshness_df.sort_values("hours_until_stale")
         fig = px.bar(
             freshness_df, x="expiry_bucket", y=["tier1", "tier2", "full_details_stale"], barmode="stack",
             labels={"value": "VINs", "expiry_bucket": "Expires In"},
             color_discrete_map={"tier1": "#3498db", "tier2": "#95a5a6", "full_details_stale": "#e67e22"},
         )
-        fig.update_layout(xaxis_title=None, yaxis_title="Active VINs", legend_title="Price Tier")
+        fig.update_layout(xaxis_title="Hours until stale", yaxis_title="Active VINs", legend_title="Price Tier",
+                          xaxis={"categoryorder": "array", "categoryarray": freshness_df["expiry_bucket"].tolist()})
         st.plotly_chart(fig, use_container_width=True)
 
     # -- Row 3: Detail scrape success rate
