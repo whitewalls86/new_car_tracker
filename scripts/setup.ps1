@@ -55,14 +55,19 @@ Write-Host "Postgres is ready."
 Write-Host "`n[4/6] Initializing database schema..." -ForegroundColor Green
 Get-Content "db\schema\schema_new.sql" | docker exec -i cartracker-postgres psql -U cartracker -d cartracker
 
-# --- Load example search config ---
-Write-Host "`n[5/6] Loading example search config (Honda CR-V Hybrid)..." -ForegroundColor Green
+# --- Load seed data ---
+Write-Host "`n[5/7] Loading seed data..." -ForegroundColor Green
 Get-Content "db\seed\example_search_config.sql" | docker exec -i cartracker-postgres psql -U cartracker -d cartracker
+Get-Content "db\seed\dbt_lock.sql" | docker exec -i cartracker-postgres psql -U cartracker -d cartracker
+Get-Content "db\seed\detail_scrape_claims.sql" | docker exec -i cartracker-postgres psql -U cartracker -d cartracker
 
 # --- Run dbt ---
-Write-Host "`n[6/6] Installing dbt packages and running initial build..." -ForegroundColor Green
+Write-Host "`n[6/7] Installing dbt packages and running initial build..." -ForegroundColor Green
 docker compose run --rm dbt deps
 docker compose run --rm dbt build
+
+# --- Import n8n workflows ---
+Write-Host "`n[7/7] Setup complete — import n8n workflows next." -ForegroundColor Green
 
 Write-Host "`n=== Setup Complete ===" -ForegroundColor Cyan
 Write-Host ""
