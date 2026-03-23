@@ -4,7 +4,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "WITH batch AS (\n  SELECT q.*\n  FROM ops.ops_detail_scrape_queue q\n  WHERE NOT EXISTS (\n    SELECT 1 FROM detail_scrape_claims c\n    JOIN runs r ON r.run_id::text = c.claimed_by\n    WHERE c.listing_id = q.listing_id\n      AND r.status = 'running'\n      AND r.started_at > now() - interval '6 hours'\n  )\n  ORDER BY q.priority, q.listing_id\n  LIMIT 1500\n),\nclaimed AS (\n  INSERT INTO detail_scrape_claims (listing_id, claimed_by, claimed_at)\n  SELECT b.listing_id, '{{ $('Create Run Id').first().json.run_id }}', now()\n  FROM batch b\n  ON CONFLICT (listing_id) DO NOTHING\n  RETURNING listing_id\n)\nSELECT b.* FROM batch b\nJOIN claimed c ON c.listing_id = b.listing_id;",
+        "query": "WITH batch AS (\n  SELECT q.*\n  FROM ops.ops_detail_scrape_queue q\n  LEFT JOIN detail_scrape_claims c\n    ON c.listing_id = q.listing_id\n   AND c.status = 'running'\n  WHERE c.listing_id IS NULL\n  ORDER BY q.priority, q.listing_id\n  LIMIT 1500\n),\nclaimed AS (\n  INSERT INTO detail_scrape_claims (listing_id, claimed_by, claimed_at, status)\n  SELECT b.listing_id, '{{ $('Create Run Id').first().json.run_id }}', now(), 'running'\n  FROM batch b\n  ON CONFLICT (listing_id) DO UPDATE\n    SET claimed_by = EXCLUDED.claimed_by,\n        claimed_at = EXCLUDED.claimed_at,\n        status     = 'running'\n    WHERE detail_scrape_claims.status != 'running'\n  RETURNING listing_id\n)\nSELECT b.* FROM batch b\nJOIN claimed c ON c.listing_id = b.listing_id;",
         "options": {}
       },
       "type": "n8n-nodes-base.postgres",
@@ -522,6 +522,27 @@
           "name": "Postgres account"
         }
       }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE detail_scrape_claims\nSET status = 'completed'\nWHERE claimed_by = '{{ $('Create Run Id').first().json.run_id }}';",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -784,
+        700
+      ],
+      "id": "a1b2c3d4-e5f6-7890-abcd-release00001",
+      "name": "Release Claims",
+      "credentials": {
+        "postgres": {
+          "id": "l8Ecbn62FzXCDkF9",
+          "name": "Postgres account"
+        }
+      }
     }
   ],
   "pinData": {
@@ -618,7 +639,7 @@
       "main": [
         [
           {
-            "node": "Mark Run Done",
+            "node": "Release Claims",
             "type": "main",
             "index": 0
           }
@@ -626,6 +647,17 @@
         [
           {
             "node": "Aggregate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Release Claims": {
+      "main": [
+        [
+          {
+            "node": "Mark Run Done",
             "type": "main",
             "index": 0
           }
