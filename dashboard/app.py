@@ -691,21 +691,19 @@ with tab2:
     df = run_query("""
         WITH first_unlisted AS (
             SELECT
-                d.vin,
+                upper(d.vin) AS vin,
                 MIN(d.fetched_at) AS unlisted_at
             FROM detail_observations d
-            INNER JOIN analytics.int_scrape_targets t ON t.make = d.make AND t.model = d.model
             WHERE d.listing_state = 'unlisted'
               AND d.vin IS NOT NULL
               AND length(d.vin) = 17
-              AND d.make IS NOT NULL
-            GROUP BY d.vin
+              AND d.fetched_at > now() - interval '30 days'
+            GROUP BY upper(d.vin)
         )
         SELECT
             date_trunc('day', unlisted_at AT TIME ZONE 'America/Chicago') AS day,
             COUNT(*) AS vehicles_unlisted
         FROM first_unlisted
-        WHERE unlisted_at > now() - interval '30 days'
         GROUP BY 1
         ORDER BY 1
     """)
