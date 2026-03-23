@@ -42,8 +42,8 @@ Schedule Trigger (30 min)           Schedule Trigger (1h)
 | **postgres** | 5432 | PostgreSQL 16 — all config, raw data, parsed observations, and analytics |
 | **scraper** | 8000 | FastAPI — fetches SRP pages via Patchright (Playwright fork with anti-detection patches) and detail pages via curl_cffi. Anti-fingerprinting: rotates Chrome UA + sec-ch-ua headers, ZIP codes, viewports, and uses human-like pacing (8-20s between pages). Async job queue with ThreadPoolExecutor(4). Startup recovery clears orphaned jobs/runs on container restart. Admin UI at `/admin` for search config CRUD |
 | **n8n** | 5678 | Workflow orchestration — 7 workflows handle scraping, polling, parsing, cleanup, and error handling |
-| **dbt** | — | dbt-postgres 1.8.2 — 16 models across staging/intermediate/marts/ops schemas. Runs on-demand via dbt_runner |
-| **dbt_runner** | 8081 | Lightweight FastAPI wrapper that lets n8n trigger `dbt build` via HTTP |
+| **dbt** | — | dbt-postgres 1.8.2 — 21 models across staging/intermediate/marts/ops schemas. Code is baked into the image at build time. Runs on-demand via dbt_runner |
+| **dbt_runner** | 8081 | FastAPI wrapper that lets n8n trigger `dbt build` via HTTP. Includes a database-level mutex (`dbt_lock` table) to prevent concurrent builds — returns 409 if a build is already running. `GET /dbt/lock` endpoint for status checks |
 | **pgadmin** | 5050 | pgAdmin 4 — web-based SQL IDE for querying and browsing the database |
 | **dashboard** | 8501 | Streamlit — 4-tab analytics dashboard (Pipeline Health, Inventory Overview, Deal Finder, Market Trends). Sidebar quicklinks to n8n, admin UI, pgAdmin |
 
@@ -53,7 +53,7 @@ Schedule Trigger (30 min)           Schedule Trigger (1h)
 |----------|---------|-------------|
 | **Scrape Listings** | Every 30 min | Polls `POST /advance_rotation` — claims the next due rotation slot (6 slots, ≥1439 min idle per slot, ≥230 min gap between any runs). Explodes each slot's configs × scopes into individual async scrape jobs. |
 | **Job Poller** | Every 1 min | Expires orphaned jobs (>30 min), polls `/jobs/completed`, inserts artifacts, marks runs done. Sends Telegram alert on Akamai rate-limit kills (ERR_HTTP2). |
-| **Scrape Detail Pages** | Every 30 min | Waits if a search scrape is running or fresh SRP artifacts are unprocessed. Queries stale VINs (1 per dealer + force-grab for >36h stale), fetches detail pages, batch-inserts artifacts, triggers parse + dbt build. Telegram alert if error rate ≥2.5%. |
+| **Scrape Detail Pages** | Every 15 min | Queries `ops_detail_scrape_queue` dbt view (stale VINs + unmapped carousel hints, priority-ordered). Atomically claims batch via `detail_scrape_claims` table — enables parallel runs without duplicate work. Batch capped at 1,500 listings. Fetches detail pages, batch-inserts artifacts, triggers parse + dbt build. Telegram alert if error rate ≥2.5%. |
 | **Results Processing** | Sub-workflow | Parses SRP HTML artifacts into `srp_observations` rows |
 | **Parse Detail Pages** | Sub-workflow | Parses detail HTML into `detail_observations`, `detail_carousel_hints`, and `dealers` |
 | **Cleanup Artifacts** | Daily | Applies retention rules to old raw HTML files |
@@ -73,39 +73,45 @@ Schedule Trigger (30 min)           Schedule Trigger (1h)
 - `scrape_jobs` — async job tracking (queued/running/completed/fetched/failed)
 - `pipeline_errors` — error log for n8n Error Handler
 - `artifact_processing` — tracks which artifacts have been parsed
+- `dbt_lock` — single-row mutex preventing concurrent dbt builds (locked/locked_at/locked_by)
+- `dbt_runs` — dbt build history (duration, pass/error/skip counts, intent)
+- `detail_scrape_claims` — listing_id claims for parallel detail scrapes (keyed on listing_id, linked to run_id)
 
-### dbt Models (16 active)
+### dbt Models (21 active)
 
-**Staging** — clean projections over raw tables:
+**Staging** — incremental tables over raw data:
 - `stg_srp_observations`, `stg_detail_observations`, `stg_detail_carousel_hints`
 
 **Intermediate** — business logic:
 - `int_listing_to_vin` — maps listing_id to VIN (incremental)
+- `int_vehicle_attributes` — canonical make/model/trim/year per VIN with detail > SRP priority (incremental table, not a view)
+- `int_scrape_targets` — distinct make/model pairs from search_configs, used to filter on-target vehicles
 - `int_latest_price_by_vin` — most recent price per VIN across all sources (incremental)
 - `int_latest_tier1_observation_by_vin` — latest SRP/detail observation per VIN (incremental)
 - `int_price_events` — union of all price observations (SRP + detail + carousel)
 - `int_price_history_by_vin` — price trajectory per VIN (first price, drops, min/max)
+- `int_price_percentiles_by_vin` — price rank within make/model/trim cohort
 - `int_carousel_price_events_mapped` — carousel hints mapped to VINs via listing_to_vin
+- `int_carousel_price_events_unmapped` — on-target carousel hints not yet mapped to a VIN (table, feeds detail scrape queue)
 - `int_listing_days_on_market` — days on market, first/last seen per VIN
-- `int_vehicle_attributes` — latest make/model/trim/MSRP per VIN (merged SRP + detail sources, freshest wins)
 - `int_model_price_benchmarks` — national price percentiles by make/model/trim
 - `int_dealer_inventory` — active vehicle count per dealer per make/model
 
 **Marts** — final analytics tables:
-- `mart_vehicle_snapshot` — current state per VIN (price + observation joined)
+- `mart_vehicle_snapshot` — current state per VIN (price + observation joined, filtered to scrape targets)
 - `mart_deal_scores` — composite deal score (0-100) with tier (excellent/good/fair/weak)
 
 **Ops** — operational views:
-- `ops_vehicle_staleness` — identifies stale VINs for the detail scrape batch query
+- `ops_vehicle_staleness` — identifies stale VINs needing a detail refresh
+- `ops_detail_scrape_queue` — priority-ordered queue combining stale VINs + unmapped carousel hints (queried by n8n)
 
 ## Refresh Strategy
 
 - **Search scrapes** use slot-based rotation: 6 slots of 1-2 search configs each fire ~once per day. Two guards enforce spacing: `min_idle_minutes=1439` (23h59m per slot) and `min_gap_minutes=230` (~4h between any runs). The 30-min n8n schedule is a dumb clock; the API is authoritative. Sort order is `listed_at_desc` (discovery mode — surfaces newly listed vehicles first).
 - **Discovery mode** stops pagination early: if ≥80% of VINs on a page were already seen in the last 14 days, or a rolling 5-page window averages < 1 new VIN per page, the job exits. Pages are fetched in **randomized order** (after page 1) to avoid sequential pagination fingerprinting. Max 30 pages per job. This keeps daily request volume low (~200–500/day) to avoid Akamai rate limiting.
-- **Detail scrapes** run every 30 minutes, targeting 1 stale VIN per dealer plus force-grabbing any vehicle >36h stale (leverages carousel hints for neighboring inventory)
+- **Detail scrapes** run every 15 minutes, pulling from the `ops_detail_scrape_queue` dbt view. Priority 1: one stale VIN per dealer. Priority 2: force-grab vehicles >36h stale. Priority 3: unmapped carousel hints fill remaining capacity. Batch capped at 1,500 listings (~15 min at ~100 VINs/min). Atomic `detail_scrape_claims` table prevents duplicate work across parallel runs.
 - **Price data** is stale after 24 hours; **full details** after 7 days
-- **Detail scrapes wait** if a search scrape is running or if SRP artifacts from the last 45 minutes haven't been processed yet
-- dbt builds run incrementally after each detail scrape completes
+- **dbt builds** run incrementally after each detail scrape completes. A `dbt_lock` mutex prevents concurrent builds — if locked, n8n retries every 30 seconds until the lock is released.
 
 ## Running Locally
 
@@ -193,17 +199,17 @@ cartracker-scraper/
     app.py                  # Streamlit dashboard (4 tabs)
   dbt/
     models/
-      staging/              # 3 staging models
-      intermediate/         # 10 intermediate models
+      staging/              # 3 staging models (incremental)
+      intermediate/         # 14 intermediate models
       marts/                # 2 mart models
-      ops/                  # 1 ops model
+      ops/                  # 2 ops models
     dbt_project.yml
     profiles.yml
   dbt_runner/
     app.py                  # FastAPI wrapper for dbt build
   n8n/workflows/            # 7 workflow JSON exports
   db/schema/schema_new.sql  # Full database schema (pg_dump)
-  db/seed/                  # Example search config seed data
+  db/seed/                  # Seed data (search config, dbt_lock, detail_scrape_claims)
   scripts/setup.ps1         # Windows first-time setup script
   docs/PLANS.md             # Roadmap and completed work log
   .env.example              # Environment variable template

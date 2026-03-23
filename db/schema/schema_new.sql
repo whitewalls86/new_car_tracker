@@ -690,6 +690,46 @@ CREATE TABLE public.dbt_runs (
 );
 
 
+--
+-- Name: dbt_lock; Type: TABLE; Schema: public; Owner: -
+-- Single-row mutex to prevent concurrent dbt builds.
+--
+
+CREATE TABLE public.dbt_lock (
+    id integer NOT NULL DEFAULT 1,
+    locked boolean NOT NULL DEFAULT false,
+    locked_at timestamp with time zone,
+    locked_by text,
+    CONSTRAINT single_row CHECK (id = 1)
+);
+
+ALTER TABLE ONLY public.dbt_lock
+    ADD CONSTRAINT dbt_lock_pkey PRIMARY KEY (id);
+
+INSERT INTO public.dbt_lock (id, locked, locked_at, locked_by)
+VALUES (1, false, NULL, NULL)
+ON CONFLICT (id) DO NOTHING;
+
+
+--
+-- Name: detail_scrape_claims; Type: TABLE; Schema: public; Owner: -
+-- Tracks which listing_ids are currently being scraped by a detail run.
+-- A claim is "active" while its associated run has status='running'.
+--
+
+CREATE TABLE public.detail_scrape_claims (
+    listing_id text NOT NULL,
+    claimed_by text NOT NULL,
+    claimed_at timestamp with time zone NOT NULL DEFAULT now()
+);
+
+ALTER TABLE ONLY public.detail_scrape_claims
+    ADD CONSTRAINT detail_scrape_claims_pkey PRIMARY KEY (listing_id);
+
+CREATE INDEX ix_detail_scrape_claims_claimed_by
+    ON public.detail_scrape_claims USING btree (claimed_by);
+
+
 -- Create schemas for dbt output
 CREATE SCHEMA IF NOT EXISTS analytics;
 CREATE SCHEMA IF NOT EXISTS ops;
