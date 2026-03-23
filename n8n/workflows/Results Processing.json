@@ -17,7 +17,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "WITH candidates AS (\n  SELECT ra.artifact_id\n  FROM raw_artifacts ra\n  LEFT JOIN artifact_processing ap\n    ON ap.artifact_id = ra.artifact_id\n   AND ap.processor = '{{ $json.processor }}'\n  WHERE ra.source = 'cars.com'\n    AND ra.artifact_type = 'results_page'\n    --AND ra.error IS NULL\n    AND NOT EXISTS (\n      SELECT 1\n      FROM artifact_processing ap_ok\n      WHERE ap_ok.artifact_id = ra.artifact_id\n        AND ap_ok.status = 'ok'\n        AND ap_ok.processor LIKE 'cars_results_page__listings_%'\n    )\n    AND (\n          ap.artifact_id IS NULL\n          OR ap.status = 'retry'\n          OR (ap.status = 'processing' AND ap.processed_at < now() - interval '20 minutes')\n        )\n  ORDER BY ra.fetched_at ASC\n),\nclaimed AS (\n  INSERT INTO artifact_processing (artifact_id, processor, status, processed_at)\n  SELECT c.artifact_id, '{{ $json.processor }}', 'processing', now()\n  FROM candidates c\n  ON CONFLICT (artifact_id, processor) DO UPDATE\n    SET status = 'processing',\n        processed_at = now(),\n        message = NULL\n  RETURNING artifact_id\n)\nSELECT ra.*\nFROM raw_artifacts ra\nJOIN claimed c ON ra.artifact_id = c.artifact_id\nORDER BY ra.fetched_at ASC;\n",
+        "query": "WITH candidates AS (\n  SELECT ra.artifact_id\n  FROM raw_artifacts ra\n  LEFT JOIN artifact_processing ap\n    ON ap.artifact_id = ra.artifact_id\n   AND ap.processor = '{{ $json.processor }}'\n  WHERE ra.source = 'cars.com'\n    AND ra.artifact_type = 'results_page'\n    AND ra.error IS NULL\n    AND NOT EXISTS (\n      SELECT 1\n      FROM artifact_processing ap_ok\n      WHERE ap_ok.artifact_id = ra.artifact_id\n        AND ap_ok.status = 'ok'\n        AND ap_ok.processor LIKE 'cars_results_page__listings_%'\n    )\n    AND (\n          ap.artifact_id IS NULL\n          OR ap.status = 'retry'\n          OR (ap.status = 'processing' AND ap.processed_at < now() - interval '20 minutes')\n        )\n  ORDER BY ra.fetched_at ASC\n),\nclaimed AS (\n  INSERT INTO artifact_processing (artifact_id, processor, status, processed_at)\n  SELECT c.artifact_id, '{{ $json.processor }}', 'processing', now()\n  FROM candidates c\n  ON CONFLICT (artifact_id, processor) DO UPDATE\n    SET status = 'processing',\n        processed_at = now(),\n        message = NULL\n  RETURNING artifact_id\n)\nSELECT ra.*\nFROM raw_artifacts ra\nJOIN claimed c ON ra.artifact_id = c.artifact_id\nORDER BY ra.fetched_at ASC;\n",
         "options": {}
       },
       "type": "n8n-nodes-base.postgres",
@@ -218,8 +218,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        1328,
-        -80
+        1392,
+        -192
       ],
       "id": "a1996cb3-2b82-42c0-83cf-c9a3ca91903f",
       "name": "Rebuild DBT",
@@ -346,6 +346,20 @@
       ],
       "id": "890b7763-40df-4f92-860d-039c395ff5ec",
       "name": "If1"
+    },
+    {
+      "parameters": {
+        "amount": 30
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1648,
+        -160
+      ],
+      "id": "57cbe31c-fbd2-489c-af0e-5af77d6dbf5f",
+      "name": "Wait",
+      "webhookId": "c004fb4c-71bc-41fe-81b6-19fa4c4f3130"
     }
   ],
   "pinData": {},
@@ -520,6 +534,29 @@
           }
         ]
       ]
+    },
+    "Rebuild DBT": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait": {
+      "main": [
+        [
+          {
+            "node": "Rebuild DBT",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": true,
@@ -527,7 +564,7 @@
     "executionOrder": "v1",
     "availableInMCP": false
   },
-  "versionId": "22b16e1c-d9a7-4386-ab6e-83496d949f06",
+  "versionId": "24e76e07-e2fa-4916-9121-d607f48618bc",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179"

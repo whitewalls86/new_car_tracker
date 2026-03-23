@@ -8,10 +8,10 @@
       "type": "n8n-nodes-base.executeWorkflowTrigger",
       "typeVersion": 1.1,
       "position": [
-        1408,
-        1008
+        3344,
+        3840
       ],
-      "id": "bd389921-4d46-4ee1-84ae-ac145e1e53ac",
+      "id": "c8485c74-e9d3-490b-a91c-eefbb5aa6259",
       "name": "After Scrape"
     },
     {
@@ -23,10 +23,10 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        1856,
-        1008
+        3792,
+        3840
       ],
-      "id": "6a5768c6-d4d3-493f-b09d-cfcc95b19faf",
+      "id": "7b62e186-ee17-401a-8929-252448aab8e2",
       "name": "Identify Unproccessed Artifacts",
       "credentials": {
         "postgres": {
@@ -44,10 +44,10 @@
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        1632,
-        1008
+        3568,
+        3840
       ],
-      "id": "d46815ff-c28e-4409-8d14-1b9f08402e1b",
+      "id": "2ab0061c-5ed8-4cec-ac67-5711b7d28540",
       "name": "Set Processor"
     },
     {
@@ -57,10 +57,10 @@
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
       "position": [
-        2080,
-        1008
+        4016,
+        3840
       ],
-      "id": "4222d7ff-e31d-4605-83f5-aca3ceed71af",
+      "id": "94d192c0-619f-4ec4-a4ed-b137e4d7c9be",
       "name": "Loop Over Items"
     },
     {
@@ -75,10 +75,10 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        2304,
-        944
+        4240,
+        3776
       ],
-      "id": "d524e2c0-ac8a-4441-b080-82e9d6c5c168",
+      "id": "c01acf31-fc08-4b2e-8b77-b2ee45273ca5",
       "name": "HTTP Request"
     },
     {
@@ -89,10 +89,10 @@
       "type": "n8n-nodes-base.aggregate",
       "typeVersion": 1,
       "position": [
-        2528,
-        672
+        4464,
+        3504
       ],
-      "id": "75dccd54-e317-49d5-9a5c-259f2a441b39",
+      "id": "a7e59eba-824e-4e3d-865d-0ffe7dec2076",
       "name": "Aggregate"
     },
     {
@@ -104,10 +104,10 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        2752,
-        672
+        4688,
+        3504
       ],
-      "id": "71ba63f8-15a6-4136-8040-d5f68ab7d3cb",
+      "id": "ae24a6c8-c49a-4b07-8045-18e28380a629",
       "name": "Write Detail Observations",
       "credentials": {
         "postgres": {
@@ -125,10 +125,10 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        2976,
-        672
+        4912,
+        3504
       ],
-      "id": "971aa7ab-4fb6-4acb-b8b4-4af3d0cacaa7",
+      "id": "fb842853-367a-456b-96c0-a966f9a78e55",
       "name": "Upsert Dealers",
       "credentials": {
         "postgres": {
@@ -146,10 +146,10 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        3200,
-        672
+        5136,
+        3504
       ],
-      "id": "5a2a5163-467e-4440-b5b4-204a04384b26",
+      "id": "9a2d5575-48d0-4fd8-9bc4-77715aa780c0",
       "name": "Write Carousel Hints",
       "credentials": {
         "postgres": {
@@ -166,10 +166,10 @@
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
       "position": [
-        2304,
-        672
+        4240,
+        3504
       ],
-      "id": "6920d194-d2b7-4bcc-9d01-a014cea086f0",
+      "id": "b813f9c5-da0c-452d-a199-5ab165da7537",
       "name": "Loop Over Items1"
     },
     {
@@ -181,10 +181,10 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        3424,
-        704
+        5360,
+        3536
       ],
-      "id": "869752c3-7a22-46c4-b02c-c50355cfa081",
+      "id": "d6d0c8e9-9442-4aea-80a7-d4e70a49f039",
       "name": "Mark Artifacts Processed",
       "credentials": {
         "postgres": {
@@ -252,10 +252,10 @@
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3.4,
       "position": [
-        2528,
-        1008
+        4464,
+        3840
       ],
-      "id": "f604e034-e20d-42d1-864f-8827ededebcd",
+      "id": "275dccbe-f723-417a-ae97-e8a897923cf0",
       "name": "Switch"
     },
     {
@@ -267,10 +267,10 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        2752,
-        1088
+        4688,
+        3920
       ],
-      "id": "b4fc4f4a-234b-48ef-ab19-f0adcbbb63c5",
+      "id": "e23dc932-9a29-4874-8ede-46f72e1b41f2",
       "name": "Update Artifacts Processing With Retry",
       "credentials": {
         "postgres": {
@@ -285,7 +285,7 @@
         "url": "http://dbt_runner:8080/dbt/build",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"intent\": \"{{$json.intent}}\",\n  \"full_refresh\": true\n}",
+        "jsonBody": "={\n  \"intent\": \"{{$json.intent}}\",\n  \"full_refresh\": false\n}",
         "options": {
           "timeout": 900000
         }
@@ -293,10 +293,10 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        2752,
-        480
+        4768,
+        3184
       ],
-      "id": "aa193d33-1e83-42af-8631-2acffb1c97e6",
+      "id": "ebabaf65-dabe-49c1-8c9d-4ee7f5e8d224",
       "name": "Execute DBT Build",
       "onError": "continueErrorOutput"
     },
@@ -307,11 +307,25 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2528,
-        480
+        4464,
+        3312
       ],
-      "id": "ef062d1c-a63e-4d7e-9e7d-177bc8a395e3",
+      "id": "45192c9d-5cbc-44c6-ac53-51318e9970d4",
       "name": "Set DBT Params"
+    },
+    {
+      "parameters": {
+        "amount": 30
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        4960,
+        3312
+      ],
+      "id": "969bade5-f791-4133-b5f2-f6fd61a75388",
+      "name": "Wait",
+      "webhookId": "8bf44a97-dce3-4ba4-ae6f-fe69c5545844"
     }
   ],
   "pinData": {
@@ -501,6 +515,29 @@
           }
         ]
       ]
+    },
+    "Execute DBT Build": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait": {
+      "main": [
+        [
+          {
+            "node": "Execute DBT Build",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": true,
@@ -508,7 +545,7 @@
     "executionOrder": "v1",
     "availableInMCP": false
   },
-  "versionId": "5a7d07ff-7356-4298-8591-a653e6e20b00",
+  "versionId": "abad7431-dc32-4f6d-911e-3e5937711f78",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179"
