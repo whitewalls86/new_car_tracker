@@ -402,9 +402,31 @@ with tab1:
         ORDER BY 1, 2
     """)
     if not df.empty:
-        fig = px.bar(df, x="day", y="fetches", color="result", barmode="stack",
-                     color_discrete_map={"200 OK": "#2ecc71", "403 Blocked": "#e74c3c", "Error/Timeout": "#95a5a6"})
-        fig.update_layout(xaxis_title=None, yaxis_title="Fetches", legend_title=None)
+        import plotly.graph_objects as go
+        from plotly.subplots import make_subplots
+
+        fig = make_subplots(specs=[[{"secondary_y": True}]])
+
+        # Pivot for stacked bars
+        for result, color in [("200 OK", "#2ecc71"), ("403 Blocked", "#e74c3c"), ("Error/Timeout", "#95a5a6")]:
+            subset = df[df["result"] == result]
+            if not subset.empty:
+                fig.add_trace(go.Bar(x=subset["day"], y=subset["fetches"], name=result,
+                                     marker_color=color), secondary_y=False)
+
+        # Success % line on secondary y-axis
+        daily_totals = df.groupby("day")["fetches"].sum()
+        daily_ok = df[df["result"] == "200 OK"].set_index("day")["fetches"]
+        success_pct = (daily_ok / daily_totals * 100).fillna(0).reset_index()
+        success_pct.columns = ["day", "pct"]
+        fig.add_trace(go.Scatter(x=success_pct["day"], y=success_pct["pct"],
+                                  name="Success %", mode="lines+markers",
+                                  line=dict(color="white", width=2),
+                                  marker=dict(size=6)), secondary_y=True)
+
+        fig.update_layout(barmode="stack", xaxis_title=None, legend=dict(orientation="h", y=-0.15))
+        fig.update_yaxes(title_text="Fetches", secondary_y=False)
+        fig.update_yaxes(title_text="Success %", secondary_y=True, range=[0, 100])
         st.plotly_chart(fig, use_container_width=True)
     else:
         st.info("No search scrape artifacts in the last 7 days.")
