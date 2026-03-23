@@ -9,6 +9,7 @@ with base as (
 
         current_listing_url,
         tier1_seller_customer_id,
+        customer_id,
         listing_state,
 
         price,
@@ -34,23 +35,8 @@ computed as (
             else extract(epoch from (now() - b.price_observed_at)) / 3600.0
         end as price_age_hours,
 
-        -- Dealer is considered unenriched if no detail scrape exists for this dealer
-        -- (check both SRP→detail path and direct detail observations with customer_id)
-        not exists (
-            select 1
-            from {{ source('public', 'srp_observations') }} s2
-            join {{ source('public', 'detail_observations') }} d2
-                on d2.vin = s2.vin
-            where s2.seller_customer_id = b.tier1_seller_customer_id
-            limit 1
-        )
-        and not exists (
-            select 1
-            from {{ source('public', 'detail_observations') }} d3
-            where d3.vin = b.vin
-              and d3.customer_id is not null
-            limit 1
-        ) as dealer_unenriched
+        -- Dealer is unenriched if no detail scrape has populated customer_id
+        (b.customer_id is null) as dealer_unenriched
 
     from base b
 ),

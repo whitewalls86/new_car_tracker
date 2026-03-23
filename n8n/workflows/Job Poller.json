@@ -213,7 +213,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "UPDATE runs\nSET status = 'success', finished_at = now()\nWHERE run_id = '{{ $json.run_id }}'::uuid\n  AND status = 'running';",
+        "query": "WITH run_errors AS (\n  SELECT\n    COUNT(*) FILTER (WHERE status = 'failed') AS error_count,\n    (array_agg(error ORDER BY completed_at DESC) FILTER (WHERE error IS NOT NULL))[1] AS last_error\n  FROM scrape_jobs\n  WHERE run_id = '{{ $json.run_id }}'::uuid\n)\nUPDATE runs\nSET status = CASE\n      WHEN (SELECT error_count FROM run_errors) > 0\n           AND NOT EXISTS (\n             SELECT 1 FROM scrape_jobs\n             WHERE run_id = '{{ $json.run_id }}'::uuid AND status NOT IN ('failed', 'fetched')\n           )\n      THEN 'failed'\n      ELSE 'success'\n    END,\n    finished_at = now(),\n    error_count = (SELECT error_count FROM run_errors),\n    last_error = (SELECT last_error FROM run_errors)\nWHERE run_id = '{{ $json.run_id }}'::uuid\n  AND status = 'running';",
         "options": {}
       },
       "type": "n8n-nodes-base.postgres",
