@@ -313,14 +313,24 @@ with tab1:
     # -- Stale backlog
     st.subheader("Stale Vehicle Backlog")
     df = run_query("""
-        SELECT
-            stale_reason,
-            COUNT(*) AS vehicle_count,
-            ROUND(AVG(tier1_age_hours)::numeric, 1) AS avg_tier1_age_hours,
-            ROUND(AVG(price_age_hours)::numeric, 1) AS avg_price_age_hours
-        FROM ops.ops_vehicle_staleness
-        WHERE listing_state IS DISTINCT FROM 'unlisted'
-        GROUP BY stale_reason
+        SELECT stale_reason, vehicle_count, avg_tier1_age_hours, avg_price_age_hours
+        FROM (
+            SELECT
+                stale_reason,
+                COUNT(*) AS vehicle_count,
+                ROUND(AVG(tier1_age_hours)::numeric, 1) AS avg_tier1_age_hours,
+                ROUND(AVG(price_age_hours)::numeric, 1) AS avg_price_age_hours
+            FROM ops.ops_vehicle_staleness
+            WHERE listing_state IS DISTINCT FROM 'unlisted'
+            GROUP BY stale_reason
+            UNION ALL
+            SELECT
+                'unmapped_carousel' AS stale_reason,
+                COUNT(*) AS vehicle_count,
+                NULL::numeric AS avg_tier1_age_hours,
+                NULL::numeric AS avg_price_age_hours
+            FROM analytics.int_carousel_price_events_unmapped
+        ) combined
         ORDER BY vehicle_count DESC
     """)
     st.dataframe(df, use_container_width=True, hide_index=True)
