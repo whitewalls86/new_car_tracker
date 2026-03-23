@@ -7,7 +7,7 @@ set -e
 
 echo "[entrypoint] Importing workflows from /workflows/ ..."
 if [ -d /workflows ] && ls /workflows/*.json 1>/dev/null 2>&1; then
-    n8n import:workflow --separate --input=/workflows/ 2>&1 || {
+    n8n import:workflow --separate --input=/workflows/ --activate 2>&1 || {
         echo "[entrypoint] WARNING: workflow import failed (may be first run — n8n DB not ready yet)"
     }
     echo "[entrypoint] Workflow import complete."
