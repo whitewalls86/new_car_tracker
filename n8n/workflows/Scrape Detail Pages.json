@@ -4,13 +4,13 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "WITH candidates AS (\n  SELECT\n    ovs.vin,\n    ovs.current_listing_url,\n    ovs.listing_id,\n    ovs.tier1_seller_customer_id AS seller_customer_id,\n    ovs.listing_state,\n\n    ovs.is_price_stale,\n    ovs.is_full_details_stale,\n    ovs.stale_reason,\n\n    ovs.price_observed_at,\n    ovs.tier1_observed_at,\n    ovs.tier1_age_hours,\n\n    -- One-per-dealer (fallback to VIN if dealer id missing)\n    ROW_NUMBER() OVER (\n      PARTITION BY COALESCE(ovs.tier1_seller_customer_id::text, ovs.vin)\n      ORDER BY\n        CASE WHEN ovs.is_full_details_stale THEN 0 ELSE 1 END,\n        COALESCE(ovs.price_observed_at, 'epoch'::timestamptz) ASC,\n        COALESCE(ovs.tier1_observed_at, 'epoch'::timestamptz) ASC\n    ) AS dealer_row_num\n\n  FROM ops.ops_vehicle_staleness ovs\n  WHERE\n    (ovs.is_price_stale OR ovs.is_full_details_stale)\n    AND COALESCE(ovs.listing_state, 'active') = 'active'\n    AND ovs.current_listing_url IS NOT NULL\n),\n\n-- Max batch size: ~15 min at ~100 VINs/min\nbatch_limit AS (SELECT 1500 AS max_batch),\n\n-- Pool 1: one per dealer (existing logic)\ndealer_picks AS (\n  SELECT vin, current_listing_url, seller_customer_id, stale_reason,\n         is_price_stale, is_full_details_stale, price_observed_at,\n         tier1_observed_at, listing_id\n  FROM candidates\n  WHERE dealer_row_num = 1\n),\n\n-- Pool 2: force-grab vehicles > 36h stale that dealer_picks missed\nforce_stale AS (\n  SELECT vin, current_listing_url, seller_customer_id,\n         'force_stale_36h' AS stale_reason,\n         is_price_stale, is_full_details_stale, price_observed_at,\n         tier1_observed_at, listing_id\n  FROM candidates\n  WHERE tier1_age_hours > 36\n    AND dealer_row_num > 1\n),\n\n-- Count stale VINs to determine remaining carousel capacity\nstale_count AS (\n  SELECT (SELECT COUNT(*) FROM dealer_picks) + (SELECT COUNT(*) FROM force_stale) AS cnt\n),\n\n-- Pool 3: carousel hints, limited to remaining capacity after stale VINs\nunmapped AS (\n  SELECT\n    vin,\n    current_listing_url,\n    seller_customer_id,\n    stale_reason,\n    is_price_stale,\n    is_full_details_stale,\n    price_observed_at,\n    tier1_observed_at,\n    listing_id\n  FROM (\n    SELECT\n      listing_id as vin,\n      CONCAT('https://www.cars.com/vehicledetail/', listing_id, '/') as current_listing_url,\n      null as seller_customer_id,\n      'unmapped_carousel' as stale_reason,\n      true as is_price_stale,\n      true as is_full_details_stale,\n      observed_at as price_observed_at,\n      null::timestamptz as tier1_observed_at,\n      listing_id,\n      ROW_NUMBER() OVER (PARTITION BY listing_id ORDER BY observed_at DESC) as listing_row\n    FROM analytics.int_carousel_price_events_unmapped\n  ) sub\n  WHERE listing_row = 1\n  ORDER BY price_observed_at DESC\n  LIMIT GREATEST(0, (SELECT max_batch FROM batch_limit) - (SELECT cnt FROM stale_count))\n),\n\ncombined AS (\n  SELECT * FROM dealer_picks\n  UNION ALL\n  SELECT * FROM force_stale\n  UNION ALL\n  SELECT vin, current_listing_url, seller_customer_id, stale_reason,\n         is_price_stale, is_full_details_stale, null, null, listing_id\n  FROM unmapped\n)\nSELECT DISTINCT ON (vin) *\nFROM combined\nORDER BY vin,\n  CASE WHEN is_full_details_stale THEN 0 ELSE 1 END,\n  COALESCE(price_observed_at, 'epoch'::timestamptz) ASC\nLIMIT (SELECT max_batch FROM batch_limit);",
+        "query": "WITH batch AS (\n  SELECT q.*\n  FROM ops.ops_detail_scrape_queue q\n  WHERE NOT EXISTS (\n    SELECT 1 FROM detail_scrape_claims c\n    JOIN runs r ON r.run_id::text = c.claimed_by\n    WHERE c.listing_id = q.listing_id\n      AND r.status = 'running'\n      AND r.started_at > now() - interval '6 hours'\n  )\n  ORDER BY q.priority, q.listing_id\n  LIMIT 1500\n),\nclaimed AS (\n  INSERT INTO detail_scrape_claims (listing_id, claimed_by, claimed_at)\n  SELECT b.listing_id, '{{ $('Create Run Id').first().json.run_id }}', now()\n  FROM batch b\n  ON CONFLICT (listing_id) DO NOTHING\n  RETURNING listing_id\n)\nSELECT b.* FROM batch b\nJOIN claimed c ON c.listing_id = b.listing_id;",
         "options": {}
       },
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        -2128,
+        -1680,
         1136
       ],
       "id": "bbcb22dc-76e0-4258-b009-b7d4cf63a269",
@@ -69,7 +69,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -1680,
+        -2128,
         1136
       ],
       "id": "333d97ca-20ed-4c13-90e4-c5f04fa8ca1d",
@@ -132,7 +132,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        -1456,
+        -1904,
         1136
       ],
       "id": "4bbc7faa-b4f0-42f9-8214-b3862103a3a6",
@@ -289,71 +289,6 @@
     },
     {
       "parameters": {
-        "rules": {
-          "values": [
-            {
-              "conditions": {
-                "options": {
-                  "caseSensitive": true,
-                  "leftValue": "",
-                  "typeValidation": "strict",
-                  "version": 3
-                },
-                "conditions": [
-                  {
-                    "leftValue": "={{ $items(\"Get Batch to Process\").length }}",
-                    "rightValue": 150,
-                    "operator": {
-                      "type": "number",
-                      "operation": "gte"
-                    },
-                    "id": "c37e1a96-bdda-417f-8d4a-f4ae1c9c5dd2"
-                  }
-                ],
-                "combinator": "and"
-              },
-              "renameOutput": true,
-              "outputKey": "Continue"
-            },
-            {
-              "conditions": {
-                "options": {
-                  "caseSensitive": true,
-                  "leftValue": "",
-                  "typeValidation": "strict",
-                  "version": 3
-                },
-                "conditions": [
-                  {
-                    "id": "b1f462d7-c5a6-4988-a5f1-228942a20b64",
-                    "leftValue": "={{ $items(\"Get Batch to Process\").length }}",
-                    "rightValue": 200,
-                    "operator": {
-                      "type": "number",
-                      "operation": "lt"
-                    }
-                  }
-                ],
-                "combinator": "and"
-              },
-              "renameOutput": true,
-              "outputKey": "End"
-            }
-          ]
-        },
-        "options": {}
-      },
-      "type": "n8n-nodes-base.switch",
-      "typeVersion": 3.4,
-      "position": [
-        -1904,
-        1136
-      ],
-      "id": "a28c30ae-2158-4d2a-8036-dad10180d14f",
-      "name": "Switch"
-    },
-    {
-      "parameters": {
         "jsCode": "return $items(\"Get Batch to Process\");"
       },
       "type": "n8n-nodes-base.code",
@@ -457,7 +392,7 @@
       "type": "n8n-nodes-base.wait",
       "typeVersion": 1.1,
       "position": [
-        -2128,
+        -2352,
         1360
       ],
       "id": "b650a665-f81b-4d1b-963f-1fd2839549b0",
@@ -532,6 +467,61 @@
           "name": "Postgres account"
         }
       }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "batch-empty-check",
+              "leftValue": "={{ $json.listing_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -1456,
+        1136
+      ],
+      "id": "c8a1b2d3-e4f5-6789-abcd-ef0123456789",
+      "name": "If Batch Empty?"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE runs\nSET status = 'skipped', finished_at = now()\nWHERE run_id = '{{ $('Create Run Id').first().json.run_id }}'::uuid;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -1456,
+        1360
+      ],
+      "id": "d9e0f1a2-b3c4-5678-9abc-def012345678",
+      "name": "Mark Run Skipped",
+      "credentials": {
+        "postgres": {
+          "id": "l8Ecbn62FzXCDkF9",
+          "name": "Postgres account"
+        }
+      }
     }
   ],
   "pinData": {
@@ -561,7 +551,7 @@
       "main": [
         [
           {
-            "node": "Switch",
+            "node": "If Batch Empty?",
             "type": "main",
             "index": 0
           }
@@ -657,7 +647,7 @@
       "main": [
         [
           {
-            "node": "Get Batch",
+            "node": "Get Batch to Process",
             "type": "main",
             "index": 0
           }
@@ -726,17 +716,6 @@
         ]
       ]
     },
-    "Switch": {
-      "main": [
-        [
-          {
-            "node": "Create Run Id",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Get Batch": {
       "main": [
         [
@@ -768,7 +747,7 @@
       "main": [
         [
           {
-            "node": "Get Batch to Process",
+            "node": "Create Run Id",
             "type": "main",
             "index": 0
           }
@@ -820,6 +799,24 @@
         [
           {
             "node": "Update Progress",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Batch Empty?": {
+      "main": [
+        [
+          {
+            "node": "Get Batch",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark Run Skipped",
             "type": "main",
             "index": 0
           }
