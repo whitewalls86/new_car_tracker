@@ -11,8 +11,9 @@
 -- One row per VIN: best make/model/trim/year/dealer resolved with detail > SRP priority.
 -- Includes first_seen_at, last_seen_at, and is_tracked flag.
 
+with
 {% if is_incremental() %}
-with changed_vins as (
+changed_vins as (
     select distinct vin17 as vin
     from {{ ref('stg_srp_observations') }}
     where artifact_id > (select coalesce(max(attributes_artifact_id), 0) from {{ this }})
