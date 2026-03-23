@@ -67,20 +67,59 @@ with tab1:
 
     # -- Active run indicator
     active_runs_df = run_query("""
-        SELECT trigger, started_at AT TIME ZONE 'America/Chicago' AS started_at,
-               ROUND(EXTRACT(EPOCH FROM now() - started_at) / 60) AS elapsed_min,
-               progress_count, total_count
-        FROM runs WHERE status = 'running' ORDER BY started_at
+        SELECT r.trigger, r.started_at AT TIME ZONE 'America/Chicago' AS started_at,
+               ROUND(EXTRACT(EPOCH FROM now() - r.started_at) / 60) AS elapsed_min,
+               r.progress_count, r.total_count,
+               CASE WHEN r.total_count > 0
+                    THEN ROUND(r.progress_count::numeric / (EXTRACT(EPOCH FROM now() - r.started_at) / 60), 1)
+               END AS vins_per_min,
+               (SELECT COUNT(*) FROM scrape_jobs j
+                WHERE j.run_id = r.run_id AND j.status = 'failed') AS failed_jobs
+        FROM runs r WHERE r.status = 'running' ORDER BY r.started_at
     """)
     if not active_runs_df.empty:
         for _, row in active_runs_df.iterrows():
             progress_str = ""
-            if row['trigger'] == 'detail scrape' and pd.notna(row['total_count']) and int(row['total_count']) > 0:
+            if pd.notna(row['total_count']) and int(row['total_count']) > 0:
                 pct = int(row['progress_count'] / row['total_count'] * 100)
-                progress_str = f" — {int(row['progress_count']):,} / {int(row['total_count']):,} scraped ({pct}%)"
-            st.warning(f"Running: {row['trigger']} — {int(row['elapsed_min'])}m elapsed (started {row['started_at'].strftime('%H:%M')}){progress_str}")
+                progress_str = f" — {int(row['progress_count']):,} / {int(row['total_count']):,} ({pct}%)"
+                if pd.notna(row['vins_per_min']) and row['vins_per_min'] > 0:
+                    remaining = (int(row['total_count']) - int(row['progress_count'])) / row['vins_per_min']
+                    progress_str += f" ~{remaining:.0f}m remaining"
+            err_str = f" | {int(row['failed_jobs'])} errors" if pd.notna(row['failed_jobs']) and int(row['failed_jobs']) > 0 else ""
+            st.warning(f"Running: {row['trigger']} — {int(row['elapsed_min'])}m elapsed (started {row['started_at'].strftime('%H:%M')}){progress_str}{err_str}")
     else:
         st.success("No active runs")
+
+    # -- All Recent Runs
+    st.subheader("Recent Runs (All Types)")
+    recent_runs_df = run_query("""
+        SELECT
+            r.started_at AT TIME ZONE 'America/Chicago' AS started,
+            r.trigger,
+            CASE
+                WHEN r.finished_at IS NOT NULL
+                THEN ROUND(EXTRACT(EPOCH FROM (r.finished_at - r.started_at)) / 60, 1)::text || 'm'
+                ELSE ROUND(EXTRACT(EPOCH FROM (now() - r.started_at)) / 60)::text || 'm'
+            END AS duration,
+            r.status,
+            r.total_count AS batch,
+            r.progress_count AS processed,
+            CASE WHEN r.finished_at IS NOT NULL AND r.progress_count > 0
+                 THEN ROUND(r.progress_count / (EXTRACT(EPOCH FROM (r.finished_at - r.started_at)) / 60), 1)
+            END AS rate_per_min,
+            COALESCE(r.error_count, 0) AS errors,
+            r.last_error
+        FROM runs r
+        WHERE r.started_at > now() - interval '48 hours'
+          AND r.status != 'skipped'
+        ORDER BY r.started_at DESC
+        LIMIT 30
+    """)
+    if not recent_runs_df.empty:
+        st.dataframe(recent_runs_df, use_container_width=True, hide_index=True)
+    else:
+        st.info("No runs in the last 48 hours.")
 
     # -- Table 1: Search Scrape Rotation Schedule
     st.subheader("Search Scrape Rotation Schedule")
