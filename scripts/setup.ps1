@@ -26,18 +26,18 @@ if (-not (Test-Path ".env")) {
 }
 
 # --- Create external Docker resources ---
-Write-Host "`n[1/6] Creating Docker network and volumes..." -ForegroundColor Green
+Write-Host "`n[1/7] Creating Docker network and volumes..." -ForegroundColor Green
 docker network create cartracker-net 2>$null
 docker volume create cartracker_pgdata 2>$null
 docker volume create cartracker_raw 2>$null
 docker volume create n8n_data 2>$null
 
 # --- Start services ---
-Write-Host "`n[2/6] Starting services..." -ForegroundColor Green
+Write-Host "`n[2/7] Starting services..." -ForegroundColor Green
 docker compose up -d
 
 # --- Wait for Postgres to be ready ---
-Write-Host "`n[3/6] Waiting for Postgres to be ready..." -ForegroundColor Green
+Write-Host "`n[3/7] Waiting for Postgres to be ready..." -ForegroundColor Green
 $retries = 0
 do {
     Start-Sleep -Seconds 2
@@ -52,11 +52,11 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host "Postgres is ready."
 
 # --- Initialize database schema ---
-Write-Host "`n[4/6] Initializing database schema..." -ForegroundColor Green
+Write-Host "`n[4/7] Initializing database schema..." -ForegroundColor Green
 Get-Content "db\schema\schema_new.sql" | docker exec -i cartracker-postgres psql -U cartracker -d cartracker
 
 # --- Load seed data ---
-Write-Host "`n[5/7] Loading seed data..." -ForegroundColor Green
+Write-Host "`n[5/7] Loading seed data (search config, dbt lock, scrape claims)..." -ForegroundColor Green
 Get-Content "db\seed\example_search_config.sql" | docker exec -i cartracker-postgres psql -U cartracker -d cartracker
 Get-Content "db\seed\dbt_lock.sql" | docker exec -i cartracker-postgres psql -U cartracker -d cartracker
 Get-Content "db\seed\detail_scrape_claims.sql" | docker exec -i cartracker-postgres psql -U cartracker -d cartracker
@@ -66,8 +66,8 @@ Write-Host "`n[6/7] Installing dbt packages and running initial build..." -Foreg
 docker compose run --rm dbt deps
 docker compose run --rm dbt build
 
-# --- Import n8n workflows ---
-Write-Host "`n[7/7] Setup complete — import n8n workflows next." -ForegroundColor Green
+# --- Done ---
+Write-Host "`n[7/7] All services started. Workflows auto-imported by n8n entrypoint." -ForegroundColor Green
 
 Write-Host "`n=== Setup Complete ===" -ForegroundColor Cyan
 Write-Host ""
@@ -77,11 +77,11 @@ Write-Host "  n8n UI:           http://localhost:5678"
 Write-Host "  Scraper API:      http://localhost:8000"
 Write-Host "  Scraper Admin:    http://localhost:8000/admin"
 Write-Host "  dbt Runner:       http://localhost:8081"
+Write-Host "  pgAdmin:          http://localhost:5050"
 Write-Host ""
 Write-Host "Next steps:" -ForegroundColor Yellow
 Write-Host "  1. Open n8n at http://localhost:5678"
 Write-Host "  2. Create a Postgres credential (host: postgres, user: cartracker, password: from .env, db: cartracker)"
-Write-Host "  3. Import the 7 workflow JSON files from n8n\workflows\"
-Write-Host "  4. Wire the Postgres credential into each workflow"
-Write-Host "  5. Activate the workflows"
-Write-Host "  6. Add more search configs at http://localhost:8000/admin"
+Write-Host "  3. Wire the Postgres credential into each workflow's Postgres nodes"
+Write-Host "  4. Verify all 7 workflows are active (auto-activated on startup)"
+Write-Host "  5. Add more search configs at http://localhost:8000/admin"

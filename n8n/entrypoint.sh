@@ -11,6 +11,10 @@ if [ -d /workflows ] && ls /workflows/*.json 1>/dev/null 2>&1; then
         echo "[entrypoint] WARNING: workflow import failed (may be first run — n8n DB not ready yet)"
     }
     echo "[entrypoint] Workflow import complete."
+    echo "[entrypoint] Re-activating all workflows ..."
+    n8n update:workflow --all --active=true 2>&1 || {
+        echo "[entrypoint] WARNING: workflow activation failed"
+    }
 else
     echo "[entrypoint] No workflow files found in /workflows/, skipping import."
 fi
