@@ -1,37 +1,8 @@
 -- Deal scores for all active listings.
 -- One row per VIN, ranked by composite deal_score (0-100).
+-- Active VINs sourced from mart_vehicle_snapshot (listing_state = 'active').
 
-with srp_vins as (
-    -- VINs seen in SRP within last 3 days
-    select distinct vin17 as vin
-    from {{ ref('stg_srp_observations') }}
-    where vin17 is not null
-      and fetched_at >= now() - interval '{{ var("staleness_window_days") }} days'
-),
-
-detail_only_vins as (
-    -- VINs discovered via detail scrapes (carousel hints) within last 3 days
-    -- that match an active scrape target make/model
-    -- Uses base table directly to avoid expensive raw_artifacts join in staging view
-    select distinct upper(d.vin) as vin
-    from {{ source('public', 'detail_observations') }} d
-    inner join {{ ref('int_scrape_targets') }} t
-        on d.make = t.make and d.model = t.model
-    where d.vin is not null
-      and length(d.vin) = 17
-      and d.make is not null
-      and d.fetched_at >= now() - interval '{{ var("staleness_window_days") }} days'
-      and not exists (
-          select 1 from srp_vins s where s.vin = upper(d.vin)
-      )
-),
-
-active_vins as (
-    select vin from srp_vins
-    union
-    select vin from detail_only_vins
-),
-
+with
 -- Check if VIN was seen locally in last 3 days
 local_seen as (
     select distinct s.vin17 as vin
@@ -149,23 +120,23 @@ scored as (
             + least(coalesce(b.national_listing_count, 0), 500) / 500.0 * 5
         )::numeric, 1) as deal_score
 
-    from active_vins av
-    inner join {{ ref('int_vehicle_attributes') }} a on a.vin = av.vin
-    inner join {{ ref('mart_vehicle_snapshot') }} v on v.vin = av.vin
-    left join {{ ref('int_listing_days_on_market') }} dom on dom.vin = av.vin
-    left join {{ ref('int_price_history_by_vin') }} ph on ph.vin = av.vin
+    from {{ ref('mart_vehicle_snapshot') }} v
+    inner join {{ ref('int_vehicle_attributes') }} a on a.vin = v.vin
+    left join {{ ref('int_listing_days_on_market') }} dom on dom.vin = v.vin
+    left join {{ ref('int_price_history_by_vin') }} ph on ph.vin = v.vin
     left join {{ ref('int_model_price_benchmarks') }} b
         on b.make = a.make and b.model = a.model
         and ((b.vehicle_trim = a.vehicle_trim) or (b.vehicle_trim is null and a.vehicle_trim is null))
     left join {{ ref('int_dealer_inventory') }} di
         on di.seller_customer_id = a.seller_customer_id
         and di.make = a.make and di.model = a.model
-    left join {{ ref('int_price_percentiles_by_vin') }} pctl on pctl.vin = av.vin
+    left join {{ ref('int_price_percentiles_by_vin') }} pctl on pctl.vin = v.vin
     left join {{ source('public', 'dealers') }} dlr
         on dlr.customer_id = v.customer_id
-    left join {{ ref('int_latest_dealer_name_by_vin') }} ldn on ldn.vin = av.vin
-    left join local_seen ls on ls.vin = av.vin
-    where v.price is not null and v.price > 0
+    left join {{ ref('int_latest_dealer_name_by_vin') }} ldn on ldn.vin = v.vin
+    left join local_seen ls on ls.vin = v.vin
+    where v.listing_state = 'active'
+      and v.price is not null and v.price > 0
 )
 
 select
