@@ -16,7 +16,7 @@
       "typeVersion": 1.3,
       "position": [
         400,
-        1400
+        1440
       ],
       "id": "c04345c4-8fe9-43bc-9b1f-152825dcd5d2",
       "name": "Schedule Trigger (30 min)"
@@ -28,8 +28,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        620,
-        1400
+        624,
+        1440
       ],
       "id": "00bc2a68-5ac1-4fa8-b60c-70cb4e20e1db",
       "name": "Create Run ID"
@@ -43,8 +43,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        840,
-        1400
+        848,
+        1440
       ],
       "id": "e566be85-1ae7-40fe-b3cb-14b21e71917d",
       "name": "Insert Run Row",
@@ -75,8 +75,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        1060,
-        1400
+        1072,
+        1440
       ],
       "id": "d87e8160-0875-441f-9613-c5ef44b6d1a9",
       "name": "Advance Rotation (Slot)"
@@ -107,8 +107,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        1280,
-        1400
+        1296,
+        1440
       ],
       "id": "check-configs-exist",
       "name": "Has Configs?"
@@ -120,8 +120,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1500,
-        1340
+        1520,
+        1440
       ],
       "id": "explode-configs",
       "name": "Explode Configs × Scopes"
@@ -133,8 +133,8 @@
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
       "position": [
-        1720,
-        1340
+        1744,
+        1440
       ],
       "id": "223a1601-617a-4c8c-aeec-fb54d54b8093",
       "name": "Loop Over Jobs"
@@ -170,8 +170,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        1940,
-        1420
+        1968,
+        1368
       ],
       "id": "518fcf58-3bc9-430e-9ac8-e88d68477a63",
       "name": "Queue Scrape Job"
@@ -185,8 +185,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        1500,
-        1520
+        1520,
+        1632
       ],
       "id": "mark-run-skipped",
       "name": "Mark Run Skipped",
@@ -206,8 +206,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        1500,
-        1240
+        1520,
+        1248
       ],
       "id": "mark-run-running",
       "name": "Mark Run Running",
@@ -227,8 +227,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        2160,
-        1420
+        2192,
+        1440
       ],
       "id": "insert-scrape-job",
       "name": "Insert Scrape Job",
@@ -240,7 +240,28 @@
       }
     }
   ],
-  "pinData": {},
+  "pinData": {
+    "Schedule Trigger (30 min)": [
+      {
+        "json": {
+          "timestamp": "2026-03-23T17:00:29.008-04:00",
+          "Readable date": "March 23rd 2026, 5:00:29 pm",
+          "Readable time": "5:00:29 pm",
+          "Day of week": "Monday",
+          "Year": "2026",
+          "Month": "March",
+          "Day of month": "23",
+          "Hour": "17",
+          "Minute": "00",
+          "Second": "29",
+          "Timezone": "America/New_York (UTC-04:00)"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ]
+  },
   "connections": {
     "Schedule Trigger (30 min)": {
       "main": [
@@ -293,6 +314,11 @@
             "node": "Mark Run Running",
             "type": "main",
             "index": 0
+          },
+          {
+            "node": "Explode Configs × Scopes",
+            "type": "main",
+            "index": 0
           }
         ],
         [
@@ -306,13 +332,7 @@
     },
     "Mark Run Running": {
       "main": [
-        [
-          {
-            "node": "Explode Configs × Scopes",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        []
       ]
     },
     "Explode Configs × Scopes": {
@@ -366,7 +386,7 @@
     "executionOrder": "v1",
     "availableInMCP": false
   },
-  "versionId": "plan26-discovery-mode",
+  "versionId": "9b03c583-fbbc-4c9f-8bc9-c3d44bb2cbb2",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179"

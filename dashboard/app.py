@@ -321,25 +321,17 @@ with tab1:
     # -- Stale backlog
     st.subheader("Stale Vehicle Backlog")
     df = run_query("""
-        SELECT stale_reason, vehicle_count, avg_tier1_age_hours, avg_price_age_hours
-        FROM (
             SELECT
-                stale_reason,
+                q.stale_reason,
                 COUNT(*) AS vehicle_count,
                 ROUND(AVG(tier1_age_hours)::numeric, 1) AS avg_tier1_age_hours,
                 ROUND(AVG(price_age_hours)::numeric, 1) AS avg_price_age_hours
-            FROM ops.ops_vehicle_staleness
-            WHERE listing_state IS DISTINCT FROM 'unlisted'
-            GROUP BY stale_reason
-            UNION ALL
-            SELECT
-                'unmapped_carousel' AS stale_reason,
-                COUNT(*) AS vehicle_count,
-                NULL::numeric AS avg_tier1_age_hours,
-                NULL::numeric AS avg_price_age_hours
-            FROM analytics.int_carousel_price_events_unmapped
-        ) combined
-        ORDER BY vehicle_count DESC
+            FROM ops.ops_detail_scrape_queue q
+            LEFT JOIN detail_scrape_claims c ON c.listing_id = q.listing_id AND c.status = 'running'
+            LEFT JOIN ops.ops_vehicle_staleness s ON q.listing_id = s.listing_id
+            WHERE c.listing_id IS NULL
+            GROUP BY Q.stale_reason
+            ORDER BY vehicle_count DESC
     """)
     st.dataframe(df, use_container_width=True, hide_index=True)
 
@@ -348,16 +340,25 @@ with tab1:
     freshness_df = run_query("""
         WITH buckets AS (
             SELECT
-                FLOOR(price_age_hours * 2) / 2 AS age_floor,
+                CASE 
+                    WHEN price_age_hours >= 24 THEN 24
+                    ELSE FLOOR(price_age_hours * 2) / 2
+                END AS age_floor,
                 price_tier,
                 is_full_details_stale
             FROM ops.ops_vehicle_staleness
             WHERE price_age_hours IS NOT NULL
-              AND price_age_hours BETWEEN 12 AND 24
+              AND price_age_hours >= 12
         )
         SELECT
-            (24 - age_floor)::numeric AS hours_until_stale,
-            TO_CHAR((24 - age_floor)::numeric, 'FM90.0') || 'h' AS expiry_bucket,
+            CASE 
+                WHEN age_floor >= 24 THEN 0
+                ELSE (24 - age_floor)::numeric
+            END AS hours_until_stale,
+            CASE 
+                WHEN age_floor >= 24 THEN 'STALE'
+                ELSE TO_CHAR((24 - age_floor)::numeric, 'FM90.0') || 'h'
+            END AS expiry_bucket,
             COUNT(*) FILTER (WHERE price_tier = 1 AND NOT is_full_details_stale) AS tier1,
             COUNT(*) FILTER (WHERE price_tier = 2 AND NOT is_full_details_stale) AS tier2,
             COUNT(*) FILTER (WHERE is_full_details_stale) AS full_details_stale,
