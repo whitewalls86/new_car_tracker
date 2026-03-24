@@ -55,6 +55,12 @@
 | 43 | **Detail batch sizing** — capped at 1500 VINs (~15 min at 100/min); carousel VINs fill remaining capacity after stale VINs; designed for 30-min schedule | 2026-03-23 |
 | 45 | **int_vehicle_attributes materialized** — converted from view to incremental table; detail > SRP source priority; added first_seen_at, last_seen_at, is_tracked; upstream VIN identity source of truth; eliminates repeated 2M+ row scans per mart build | 2026-03-23 |
 | 46 | **Docker build from committed code** — dbt, dbt_runner, dashboard now COPY code at build time; source volume mounts removed; deploy workflow: git pull + docker compose build + docker compose up -d | 2026-03-23 |
+| 47 | **dbt build lock** — `dbt_lock` single-row mutex table; dbt_runner acquires atomically before build, releases in `finally`; returns 409 when locked; 30-min stale timeout; n8n retries every 30s; dashboard shows lock status | 2026-03-23 |
+| 48 | **Parallel detail scrapes** — `detail_scrape_claims` table keyed on `listing_id` with `status` column; atomic `INSERT ... ON CONFLICT DO UPDATE WHERE status != 'running'`; claims expire by run status, not TTL; two parallel runs get non-overlapping batches | 2026-03-23 |
+| 49 | **ops_detail_scrape_queue dbt view** — moved 80-line batch selection SQL from n8n into dbt ops view; combines stale VINs (priority 1: one per dealer, priority 2: force-stale >36h) + unmapped carousel hints (priority 3); n8n query reduced to simple SELECT + claiming | 2026-03-23 |
+| 36 | **Automate n8n workflow import** — entrypoint.sh runs `n8n import:workflow --separate` on container startup + `n8n update:workflow --all --active=true`; workflows volume-mounted from repo; `git pull + docker compose restart n8n` picks up changes | 2026-03-23 |
+| 50 | **Dashboard refactor** — split 1108-line app.py into per-tab modules: db.py (shared), pages/pipeline_health.py, pages/inventory.py, pages/deals.py, pages/market_trends.py; app.py reduced to 47 lines (sidebar + routing) | 2026-03-23 |
+| 51 | **Docs and setup update** — README architecture diagram updated for parallel scrapes + claiming; n8n section updated for auto-import; setup.ps1 step numbering fixed + post-setup messages updated; seed files added to manual setup instructions | 2026-03-23 |
 
 ---
 
@@ -74,12 +80,13 @@
 
 | Priority | Item | Notes |
 |----------|------|-------|
-| 1 | **29** — n8n API + trigger button | Programmatic workflow control |
-| 2 | **36** — Automate n8n workflow import | Eliminates manual reimport step |
+| 1 | **52** — Carousel hint backlog strategy | 430k+ unmapped hints growing faster than processable; need pruning/prioritization strategy |
+| 2 | **29** — n8n API + trigger button | Programmatic workflow control; trigger detail scrape from dashboard |
 | 3 | **35** — dbt schema audit | Missing staging layers + ops consolidation |
-| 4 | **14.1** — VIN case normalization | Defensive — only 1 affected VIN |
-| 5 | **14.5** — Price events dedup | Defensive — only 1 duplicate found |
-| 6 | **14.9 / 14.11 / 14.12** — Minor defensive fixes | Low risk |
+| 4 | **53** — Dashboard cleanup/optimization | Pipeline Health tab is bloated; consider collapsible sections or sub-tabs |
+| 5 | **14.1** — VIN case normalization | Defensive — only 1 affected VIN |
+| 6 | **14.5** — Price events dedup | Defensive — only 1 duplicate found |
+| 7 | **14.9 / 14.11 / 14.12** — Minor defensive fixes | Low risk |
 
 ---
 
@@ -112,24 +119,42 @@
 
 ### 35.2 — Ops schema: deprecate or expand?
 
-Currently `ops/` contains only `ops_vehicle_staleness`. Recommendation: keep as-is until we have 3+ operational models.
+`ops/` now contains 2 models: `ops_vehicle_staleness` and `ops_detail_scrape_queue`. Growing naturally as operational needs arise.
 
 ---
 
 ## Plan 36: Automate n8n workflow setup
 
+**Status:** Complete (2026-03-23)
+
+Implemented via option 3 (startup script). Custom `n8n/entrypoint.sh` runs `n8n import:workflow --separate --input=/workflows/` then `n8n update:workflow --all --active=true` before starting n8n. Workflows are volume-mounted from the repo. Deploy: `git pull + docker compose restart n8n`.
+
+---
+
+## Plan 52: Carousel hint backlog strategy
+
 **Status:** Not started
+**Priority:** High
+
+430k+ unmapped carousel hints and growing faster than we can process. Need a strategy to:
+- Prune hints for vehicles outside scrape targets
+- Prioritize hints by recency or price relevance
+- Cap the backlog to a manageable size
+- Consider aging out hints older than N days
+
+---
+
+## Plan 53: Dashboard cleanup/optimization
+
+**Status:** In progress
 **Priority:** Medium
 
-Currently, deploying workflow changes requires manually importing JSON files via the n8n UI. This is error-prone and blocks CI/CD.
+Pipeline Health tab has 18 sections — too much scrolling. Consider:
+- Collapsible sections or st.expander for less-critical sections
+- Sub-tabs within Pipeline Health (e.g., "Active Runs", "History", "System Health")
+- Move Processor Activity and Postgres Health into a "System" sub-tab
 
-**Options to investigate:**
-
-1. **n8n CLI import** — `n8n import:workflow --input=file.json` can be run inside the container.
-2. **n8n REST API** — Enable the n8n API (`N8N_PUBLIC_API_ENABLED=true` env var), then use `PUT /workflows/{id}` to update workflows programmatically. Pairs with Plan 29.
-3. **Startup script** — Add a `docker-entrypoint` wrapper that runs `n8n import:workflow --separate --input=/workflows/` before starting n8n.
-
-**Goal:** After editing a workflow JSON in git, `docker compose up -d n8n` should pick up the change without manual UI work.
+File split complete (Plan 50). Stale backlog query updated to use ops_detail_scrape_queue with claim-aware filtering. Price freshness chart updated with STALE bucket.
 
 ---
 
