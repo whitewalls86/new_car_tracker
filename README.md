@@ -7,30 +7,30 @@ CarTracker tracks local and national new car inventory on Cars.com, collecting a
 Seven containerized services orchestrated via Docker Compose:
 
 ```
-Schedule Trigger (30 min)           Schedule Trigger (1h)
+Schedule Trigger (30 min)           Schedule Trigger (15 min)
         |                                   |
-   Scrape Listings              Scrape Detail Pages
+   Scrape Listings              Scrape Detail Pages (parallel OK)
    (n8n workflow)                (n8n workflow)
         |                               |
-  /advance_rotation            waits if search scrape
-  claims next slot              is running or SRP
-  (6 slots, ~4h gap)           artifacts are pending
+  /advance_rotation            ops_detail_scrape_queue (dbt view)
+  claims next slot              priority-ordered batch
+  (6 slots, ~4h gap)           (stale VINs + carousel hints)
         |                               |
-  Explode Configs × Scopes      Scraper API
-  fan-out per search_key         POST /scrape_detail
+  Explode Configs × Scopes     Atomic claim via detail_scrape_claims
+  fan-out per search_key        (ON CONFLICT DO UPDATE, no duplicates)
         |                               |
-   Scraper API                  raw_artifacts table
-   POST /scrape_results                 |
-   (async, returns job_id)        dbt_runner
-        |                        (incremental build)
+   Scraper API                  Scraper API
+   POST /scrape_results         POST /scrape_detail
+   (async, returns job_id)              |
+        |                        raw_artifacts table
    Job Poller (1 min)                   |
    polls /jobs/completed          Parse Detail Pages
    inserts artifacts              (n8n sub-workflow)
         |                               |
-   Results Processing         detail_observations
-   (n8n sub-workflow)         detail_carousel_hints
-        |                         dealers
-   srp_observations
+   Results Processing           dbt_runner (locked build)
+   (n8n sub-workflow)           detail_observations
+        |                       detail_carousel_hints
+   srp_observations               dealers
 ```
 
 **Discovery mode:** SRP pages are sorted `listed_at_desc`. Page 1 is fetched first to learn the total page count, then remaining pages are fetched in **randomized order** to avoid sequential pagination fingerprinting. Pagination stops when ≥80% of VINs on a page are already known (seen in the last 14 days) or a rolling 5-page window averages < 1 new VIN per page. Max 30 pages per job. On Akamai rate-limit (`ERR_HTTP2_PROTOCOL_ERROR`), the scraper stops immediately and the job fails.
@@ -148,8 +148,10 @@ docker compose up -d
 # 4. Initialize the database schema
 docker exec -i cartracker-postgres psql -U cartracker -d cartracker < db/schema/schema_new.sql
 
-# 5. Load example search config (Honda CR-V Hybrid)
+# 5. Load seed data (search config, dbt lock, scrape claims)
 docker exec -i cartracker-postgres psql -U cartracker -d cartracker < db/seed/example_search_config.sql
+docker exec -i cartracker-postgres psql -U cartracker -d cartracker < db/seed/dbt_lock.sql
+docker exec -i cartracker-postgres psql -U cartracker -d cartracker < db/seed/detail_scrape_claims.sql
 
 # 6. Install dbt packages and run initial build
 docker compose run --rm dbt deps
@@ -158,11 +160,12 @@ docker compose run --rm dbt build
 
 ### Configure n8n workflows
 
+Workflows are auto-imported from `n8n/workflows/` and activated on container startup via the custom entrypoint. On first setup you still need to create and wire the database credential:
+
 1. Open n8n at `http://localhost:5678`
 2. Create a **Postgres credential** (host: `postgres`, user: `cartracker`, password: from `.env`, database: `cartracker`)
-3. Import each JSON file from `n8n/workflows/` via **Settings > Import Workflow**
-4. Wire the Postgres credential into each workflow's Postgres nodes
-5. Activate the workflows
+3. Open each workflow and wire the Postgres credential into the Postgres nodes
+4. Verify all 7 workflows are active (they should be — the entrypoint activates them automatically)
 
 ### Add search configurations
 
