@@ -3,10 +3,10 @@ version: 2
 models:
   - name: ops_detail_scrape_queue
     description: >
-      Operational queue for populating detail scrapes
+      Operational queue for detail scrapes. Pool 3 (carousel hints)
+      uses listing_id as vin, so vin is not a valid 17-char VIN.
     columns:
-      - name: vin
+      - name: listing_id
         data_tests:
           - not_null
           - unique
-          - valid_vin
