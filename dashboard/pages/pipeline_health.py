@@ -212,12 +212,13 @@ def _section_detail_runs():
             END AS duration,
             r.status,
             r.total_count AS batch_size,
-            COUNT(DISTINCT CASE WHEN a.artifact_type = 'detail_page' AND a.http_status = 200 THEN a.artifact_id END) AS detail_pages_ok,
-            COUNT(DISTINCT CASE WHEN a.artifact_type = 'detail_page' AND (a.http_status != 200 OR a.http_status IS NULL) THEN a.artifact_id END) AS detail_errors,
+            COUNT(DISTINCT d.vin) FILTER (WHERE d.price IS NOT NULL) AS prices_refreshed,
+            COUNT(DISTINCT d.vin) FILTER (WHERE d.listing_state = 'unlisted') AS newly_unlisted,
             r.error_count AS job_errors,
             r.last_error
         FROM runs r
-        LEFT JOIN raw_artifacts a ON a.run_id = r.run_id
+        LEFT JOIN detail_observations d
+            ON d.fetched_at BETWEEN r.started_at AND COALESCE(r.finished_at, now())
         WHERE r.trigger = 'detail scrape'
           AND r.status != 'skipped'
         GROUP BY r.run_id, r.started_at, r.finished_at, r.status, r.total_count, r.error_count, r.last_error
@@ -229,7 +230,7 @@ def _section_detail_runs():
     else:
         st.info("No detail scrape runs found.")
 
-    # Last detail run results
+    # Last detail run summary metrics
     st.subheader("Last Detail Run Results")
     last_df = run_query("""
         WITH last_run AS (
@@ -239,24 +240,14 @@ def _section_detail_runs():
             ORDER BY started_at DESC LIMIT 1
         ),
         run_obs AS (
-            SELECT d.vin, d.listing_id, d.listing_state, d.price, d.dealer_name
+            SELECT d.vin, d.listing_state, d.price
             FROM detail_observations d
             JOIN last_run lr ON d.fetched_at BETWEEN lr.started_at AND lr.finished_at
-        ),
-        new_vins AS (
-            SELECT ro.vin
-            FROM run_obs ro
-            WHERE ro.vin IS NOT NULL AND length(ro.vin) = 17
-              AND NOT EXISTS (
-                  SELECT 1 FROM detail_observations older
-                  WHERE older.vin = ro.vin
-                    AND older.fetched_at < (SELECT started_at FROM last_run)
-              )
         )
         SELECT
             (SELECT COUNT(*) FROM run_obs) AS total_observed,
-            (SELECT COUNT(*) FROM run_obs WHERE listing_state = 'unlisted') AS unlisted,
-            (SELECT COUNT(*) FROM new_vins) AS new_vehicles,
+            (SELECT COUNT(DISTINCT vin) FILTER (WHERE price IS NOT NULL) FROM run_obs) AS prices_refreshed,
+            (SELECT COUNT(DISTINCT vin) FILTER (WHERE listing_state = 'unlisted') FROM run_obs) AS newly_unlisted,
             (SELECT started_at AT TIME ZONE 'America/Chicago' FROM last_run) AS run_started
     """)
     if not last_df.empty and pd.notna(last_df["run_started"].iloc[0]):
@@ -266,42 +257,9 @@ def _section_detail_runs():
         with c1:
             st.metric("Total Observed", f"{int(r['total_observed']):,}")
         with c2:
-            st.metric("Unlisted", f"{int(r['unlisted']):,}")
+            st.metric("Prices Refreshed", f"{int(r['prices_refreshed']):,}")
         with c3:
-            st.metric("New Vehicles", f"{int(r['new_vehicles']):,}")
-
-        new_by_model_df = run_query("""
-            WITH last_run AS (
-                SELECT run_id, started_at, finished_at
-                FROM runs
-                WHERE trigger = 'detail scrape' AND status = 'success'
-                ORDER BY started_at DESC LIMIT 1
-            ),
-            run_obs AS (
-                SELECT d.vin
-                FROM detail_observations d
-                JOIN last_run lr ON d.fetched_at BETWEEN lr.started_at AND lr.finished_at
-                WHERE d.vin IS NOT NULL AND length(d.vin) = 17
-            ),
-            new_vins AS (
-                SELECT ro.vin
-                FROM run_obs ro
-                LEFT JOIN detail_observations older
-                  ON older.vin = ro.vin
-                  AND older.fetched_at < (SELECT started_at FROM last_run)
-                WHERE older.vin IS NULL
-            )
-            SELECT a.make, a.model, COUNT(*) AS new_count
-            FROM new_vins nv
-            JOIN analytics.int_vehicle_attributes a ON a.vin = nv.vin
-            INNER JOIN analytics.int_scrape_targets t ON t.make = a.make AND t.model = a.model
-            GROUP BY a.make, a.model
-            ORDER BY new_count DESC
-        """)
-        if not new_by_model_df.empty:
-            st.dataframe(new_by_model_df, use_container_width=True, hide_index=True)
-        else:
-            st.info("No new vehicles in the last detail run.")
+            st.metric("Newly Unlisted", f"{int(r['newly_unlisted']):,}")
     else:
         st.info("No completed detail runs found.")
 
