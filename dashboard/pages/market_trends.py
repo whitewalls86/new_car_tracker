@@ -8,18 +8,18 @@ def render():
     st.header("Market Trends")
 
     # -- Median price by model over time -------------------------------------
-    st.subheader("Median Price by Model Over Time (Weekly, SRP Source)")
+    st.subheader("Median Price by Model Over Time (Weekly)")
     df = run_query("""
         SELECT
-            date_trunc('week', s.fetched_at AT TIME ZONE 'America/Chicago') AS week,
-            s.make, s.model,
-            PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY s.price) AS median_price,
-            COUNT(DISTINCT s.vin) AS listing_count
-        FROM srp_observations s
-        INNER JOIN analytics.int_scrape_targets t
-            ON t.make = s.make AND t.model = s.model
-        WHERE s.fetched_at > now() - interval '90 days'
-          AND s.price > 0 AND s.vin IS NOT NULL
+            date_trunc('week', ph.observed_at AT TIME ZONE 'America/Chicago') AS week,
+            va.make, va.model,
+            PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY mrt.price) AS median_price,
+            COUNT(DISTINCT ph.vin) AS listing_count
+        FROM analytics.mart_vehicle_snapshot mrt
+        LEFT JOIN analytics.int_price_events ph ON mrt.vin = ph.vin
+		LEFT JOIN analytics.int_vehicle_attributes va ON  mrt.vin = va.vin
+        WHERE ph.observed_at > now() - interval '90 days'
+          AND ph.price > 0 AND mrt.vin IS NOT NULL
         GROUP BY 1, 2, 3 ORDER BY 1, 2, 3
     """)
     if not df.empty:
@@ -33,13 +33,13 @@ def render():
     st.subheader("Inventory Levels by Model (Daily)")
     df = run_query("""
         SELECT
-            date_trunc('day', s.fetched_at AT TIME ZONE 'America/Chicago') AS day,
-            s.make, s.model,
-            COUNT(DISTINCT s.vin) AS listings_seen
-        FROM srp_observations s
-        INNER JOIN analytics.int_scrape_targets t
-            ON t.make = s.make AND t.model = s.model
-        WHERE s.fetched_at > now() - interval '30 days' AND s.vin IS NOT NULL
+            date_trunc('day', ph.observed_at AT TIME ZONE 'America/Chicago') AS day,
+            va.make, va.model,
+            COUNT(DISTINCT ph.vin) AS listings_seen
+        FROM analytics.mart_vehicle_snapshot mrt
+        LEFT JOIN analytics.int_price_events ph ON mrt.vin = ph.vin
+		LEFT JOIN analytics.int_vehicle_attributes va ON  mrt.vin = va.vin
+        WHERE ph.observed_at > now() - interval '30 days' AND mrt.vin IS NOT NULL
         GROUP BY 1, 2, 3 ORDER BY 1, 4 DESC
     """)
     if not df.empty:

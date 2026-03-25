@@ -3,6 +3,10 @@ services:
     image: postgres:16
     container_name: cartracker-postgres
     restart: unless-stopped
+    command: >
+      postgres
+      -c shared_buffers=2GB
+      -c max_connections=50
     environment:
       POSTGRES_DB: cartracker
       POSTGRES_USER: cartracker
