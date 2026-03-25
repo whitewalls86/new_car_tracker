@@ -68,6 +68,8 @@ services:
     networks:
       - cartracker-net
     profiles: ["tools"]
+    volumes:
+      - ./target:/usr/app/target
 
   dbt_runner:
     build:

@@ -298,8 +298,7 @@
         "rule": {
           "interval": [
             {
-              "field": "minutes",
-              "minutesInterval": 10
+              "field": "minutes"
             }
           ]
         }
@@ -564,7 +563,7 @@
     "executionOrder": "v1",
     "availableInMCP": false
   },
-  "versionId": "24e76e07-e2fa-4916-9121-d607f48618bc",
+  "versionId": "b86fcd26-6e5c-4fd2-a944-5c477a587be6",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179"

@@ -19,6 +19,7 @@ with base as (
         price_tier
 
     from {{ ref('mart_vehicle_snapshot') }}
+    WHERE listing_state != 'unlisted'
 ),
 
 computed as (

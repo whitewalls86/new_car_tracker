@@ -276,7 +276,7 @@ def _section_detail_runs():
             r.total_count AS batch_size,
             COUNT(DISTINCT d.vin) FILTER (WHERE d.price IS NOT NULL) AS prices_refreshed,
             COUNT(DISTINCT ra.artifact_id) FILTER (WHERE d.listing_state = 'unlisted') AS newly_unlisted,
-            COUNT(DISTINCT ra.artifact_id) FILTER (WHERE ap.message = 'unlisted') AS unlisted_carousel_hit,
+            COUNT(DISTINCT ra.artifact_id) FILTER (WHERE ap.message = 'unlisted' AND d.artifact_id IS NULL) AS unlisted_carousel_hit,
             COUNT(DISTINCT d.vin) FILTER (WHERE pe.vin IS NULL) AS newly_mapped_vins
         FROM
             my_runs r

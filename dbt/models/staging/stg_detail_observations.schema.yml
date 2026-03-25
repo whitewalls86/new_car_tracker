@@ -8,9 +8,9 @@ models:
       - name: id
         data_tests: [not_null, unique]
 
-      - name: vin
+      - name: vin17
         data_tests:
-          - valid_vin
+          - valid_vin_nullable
 
       - name: artifact_id
         data_tests:

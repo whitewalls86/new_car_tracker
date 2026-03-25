@@ -9,7 +9,7 @@
       "typeVersion": 1.1,
       "position": [
         3056,
-        3856
+        3592
       ],
       "id": "c8485c74-e9d3-490b-a91c-eefbb5aa6259",
       "name": "After Scrape"
@@ -23,8 +23,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        3760,
-        3856
+        3952,
+        3592
       ],
       "id": "7b62e186-ee17-401a-8929-252448aab8e2",
       "name": "Identify Unproccessed Artifacts",
@@ -44,8 +44,8 @@
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        3264,
-        3856
+        3280,
+        3592
       ],
       "id": "2ab0061c-5ed8-4cec-ac67-5711b7d28540",
       "name": "Set Processor"
@@ -57,8 +57,8 @@
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
       "position": [
-        4016,
-        3840
+        4176,
+        4120
       ],
       "id": "94d192c0-619f-4ec4-a4ed-b137e4d7c9be",
       "name": "Loop Over Items"
@@ -75,8 +75,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        4240,
-        3776
+        4400,
+        4048
       ],
       "id": "c01acf31-fc08-4b2e-8b77-b2ee45273ca5",
       "name": "HTTP Request"
@@ -89,8 +89,8 @@
       "type": "n8n-nodes-base.aggregate",
       "typeVersion": 1,
       "position": [
-        4464,
-        3504
+        4848,
+        3784
       ],
       "id": "a7e59eba-824e-4e3d-865d-0ffe7dec2076",
       "name": "Aggregate"
@@ -98,14 +98,14 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "WITH parsed AS (\n  SELECT *\n  FROM jsonb_to_recordset('{{ JSON.stringify($json.data).replace(/'/g,\"''\") }}'::jsonb)\n    AS p(\n      processor   text,\n      artifact_id bigint,\n      status      text,\n      message     text,\n      search_key  text,\n      meta        jsonb,\n      \"primary\"   jsonb,\n      carousel    jsonb\n    )\n),\nra AS (\n  SELECT artifact_id, fetched_at, url\n  FROM raw_artifacts\n  WHERE artifact_id IN (SELECT artifact_id FROM parsed)\n),\nrows AS (\n  SELECT DISTINCT\n    p.artifact_id,\n    ra.fetched_at,\n\n    COALESCE(\n  NULLIF(p.\"primary\"->>'listing_id', ''),\n  NULLIF(regexp_replace(ra.url, '.*/vehicledetail/([^/]+)/?.*', '\\1'), ra.url)\n) AS listing_id,\n    COALESCE(\n      NULLIF(p.\"primary\"->>'vin', ''),\n      CASE WHEN length(p.search_key) = 17 AND p.search_key ~ '^[A-Z0-9]+$' THEN p.search_key END\n    ) AS vin,\n    COALESCE(NULLIF(p.\"primary\"->>'listing_state',''), 'active')   AS listing_state,\n\n    NULLIF(p.\"primary\"->>'make',      '')                          AS make,\n    NULLIF(p.\"primary\"->>'model',     '')                          AS model,\n    NULLIF(p.\"primary\"->>'trim',      '')                          AS \"trim\",\n    NULLIF(p.\"primary\"->>'year',      '')::int                     AS year,\n\n    NULLIF(p.\"primary\"->>'price',   '')::int                       AS price,\n    NULLIF(p.\"primary\"->>'mileage', '')::int                       AS mileage,\n    NULLIF(p.\"primary\"->>'msrp',    '')::int                       AS msrp,\n\n    NULLIF(p.\"primary\"->>'stock_type',  '')                        AS stock_type,\n    NULLIF(p.\"primary\"->>'fuel_type',   '')                        AS fuel_type,\n    NULLIF(p.\"primary\"->>'bodystyle',   '')                        AS body_style,\n    NULLIF(p.\"primary\"->>'dealer_name', '')                        AS dealer_name,\n    NULLIF(p.\"primary\"->>'dealer_zip',  '')                        AS dealer_zip,\n    NULLIF(p.\"primary\"->>'customer_id', '')                        AS customer_id\n\n  FROM parsed p\n  JOIN ra USING (artifact_id)\n  WHERE p.status = 'ok'\n)\nINSERT INTO detail_observations (\n  artifact_id,\n  fetched_at,\n  listing_id,\n  vin,\n  listing_state,\n  make,\n  model,\n  \"trim\",\n  year,\n  price,\n  mileage,\n  msrp,\n  stock_type,\n  fuel_type,\n  body_style,\n  dealer_name,\n  dealer_zip,\n  customer_id\n)\nSELECT\n  artifact_id,\n  fetched_at,\n  listing_id,\n  vin,\n  listing_state,\n  make,\n  model,\n  \"trim\",\n  year,\n  price,\n  mileage,\n  msrp,\n  stock_type,\n  fuel_type,\n  body_style,\n  dealer_name,\n  dealer_zip,\n  customer_id\nFROM rows\nWHERE vin IS NOT NULL AND length(vin) = 17\nON CONFLICT (artifact_id, listing_id) DO UPDATE SET\n  make = EXCLUDED.make,\n  model = EXCLUDED.model,\n  trim = EXCLUDED.trim,\n  year = EXCLUDED.year,\n  fuel_type = EXCLUDED.fuel_type,\n  body_style = EXCLUDED.body_style;\n",
+        "query": "WITH parsed AS (\n  SELECT *\n  FROM jsonb_to_recordset('{{ JSON.stringify($json.data).replace(/'/g,\"''\") }}'::jsonb)\n    AS p(\n      processor   text,\n      artifact_id bigint,\n      status      text,\n      message     text,\n      search_key  text,\n      meta        jsonb,\n      \"primary\"   jsonb,\n      carousel    jsonb\n    )\n),\nra AS (\n  SELECT artifact_id, fetched_at, url\n  FROM raw_artifacts\n  WHERE artifact_id IN (SELECT artifact_id FROM parsed)\n),\nrows AS (\n  SELECT DISTINCT\n    p.artifact_id,\n    ra.fetched_at,\n\n    COALESCE(\n  NULLIF(p.\"primary\"->>'listing_id', ''),\n  NULLIF(regexp_replace(ra.url, '.*/vehicledetail/([^/]+)/?.*', '\\1'), ra.url)\n) AS listing_id,\n    COALESCE(\n      NULLIF(p.\"primary\"->>'vin', ''),\n      CASE WHEN length(p.search_key) = 17 AND p.search_key ~ '^[A-Z0-9]+$' THEN p.search_key END\n    ) AS vin,\n    COALESCE(NULLIF(p.\"primary\"->>'listing_state',''), 'active')   AS listing_state,\n\n    NULLIF(p.\"primary\"->>'make',      '')                          AS make,\n    NULLIF(p.\"primary\"->>'model',     '')                          AS model,\n    NULLIF(p.\"primary\"->>'trim',      '')                          AS \"trim\",\n    NULLIF(p.\"primary\"->>'year',      '')::int                     AS year,\n\n    NULLIF(p.\"primary\"->>'price',   '')::int                       AS price,\n    NULLIF(p.\"primary\"->>'mileage', '')::int                       AS mileage,\n    NULLIF(p.\"primary\"->>'msrp',    '')::int                       AS msrp,\n\n    NULLIF(p.\"primary\"->>'stock_type',  '')                        AS stock_type,\n    NULLIF(p.\"primary\"->>'fuel_type',   '')                        AS fuel_type,\n    NULLIF(p.\"primary\"->>'bodystyle',   '')                        AS body_style,\n    NULLIF(p.\"primary\"->>'dealer_name', '')                        AS dealer_name,\n    NULLIF(p.\"primary\"->>'dealer_zip',  '')                        AS dealer_zip,\n    NULLIF(p.\"primary\"->>'customer_id', '')                        AS customer_id\n\n  FROM parsed p\n  JOIN ra USING (artifact_id)\n  WHERE p.status = 'ok'\n)\nINSERT INTO detail_observations (\n  artifact_id,\n  fetched_at,\n  listing_id,\n  vin,\n  listing_state,\n  make,\n  model,\n  \"trim\",\n  year,\n  price,\n  mileage,\n  msrp,\n  stock_type,\n  fuel_type,\n  body_style,\n  dealer_name,\n  dealer_zip,\n  customer_id\n)\nSELECT\n  artifact_id,\n  fetched_at,\n  listing_id,\n  vin,\n  listing_state,\n  make,\n  model,\n  \"trim\",\n  year,\n  price,\n  mileage,\n  msrp,\n  stock_type,\n  fuel_type,\n  body_style,\n  dealer_name,\n  dealer_zip,\n  customer_id\nFROM rows\nON CONFLICT (artifact_id, listing_id) DO UPDATE SET\n  make = EXCLUDED.make,\n  model = EXCLUDED.model,\n  trim = EXCLUDED.trim,\n  year = EXCLUDED.year,\n  fuel_type = EXCLUDED.fuel_type,\n  body_style = EXCLUDED.body_style;\n",
         "options": {}
       },
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        4688,
-        3504
+        5072,
+        3784
       ],
       "id": "ae24a6c8-c49a-4b07-8045-18e28380a629",
       "name": "Write Detail Observations",
@@ -125,8 +125,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        4912,
-        3504
+        5296,
+        3784
       ],
       "id": "fb842853-367a-456b-96c0-a966f9a78e55",
       "name": "Upsert Dealers",
@@ -146,8 +146,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        5136,
-        3504
+        5520,
+        3784
       ],
       "id": "9a2d5575-48d0-4fd8-9bc4-77715aa780c0",
       "name": "Write Carousel Hints",
@@ -160,14 +160,14 @@
     },
     {
       "parameters": {
-        "batchSize": 50,
+        "batchSize": 100,
         "options": {}
       },
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
       "position": [
-        4240,
-        3504
+        4400,
+        3496
       ],
       "id": "b813f9c5-da0c-452d-a199-5ab165da7537",
       "name": "Loop Over Items1"
@@ -181,8 +181,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        5360,
-        3536
+        5744,
+        3784
       ],
       "id": "d6d0c8e9-9442-4aea-80a7-d4e70a49f039",
       "name": "Mark Artifacts Processed",
@@ -252,8 +252,8 @@
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3.4,
       "position": [
-        4464,
-        3840
+        4624,
+        4120
       ],
       "id": "275dccbe-f723-417a-ae97-e8a897923cf0",
       "name": "Switch"
@@ -267,8 +267,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        4688,
-        3920
+        4848,
+        4288
       ],
       "id": "e23dc932-9a29-4874-8ede-46f72e1b41f2",
       "name": "Update Artifacts Processing With Retry",
@@ -293,8 +293,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        4768,
-        3184
+        4848,
+        3328
       ],
       "id": "ebabaf65-dabe-49c1-8c9d-4ee7f5e8d224",
       "name": "Execute DBT Build",
@@ -307,8 +307,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        4464,
-        3312
+        4624,
+        3328
       ],
       "id": "45192c9d-5cbc-44c6-ac53-51318e9970d4",
       "name": "Set DBT Params"
@@ -320,8 +320,8 @@
       "type": "n8n-nodes-base.wait",
       "typeVersion": 1.1,
       "position": [
-        4960,
-        3312
+        5072,
+        3328
       ],
       "id": "969bade5-f791-4133-b5f2-f6fd61a75388",
       "name": "Wait",
@@ -334,8 +334,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3424,
-        3856
+        3504,
+        3592
       ],
       "id": "9370bd69-a2e2-4bbc-9195-08de2f18680c",
       "name": "Create Run Id"
@@ -349,8 +349,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        3600,
-        3856
+        3728,
+        3592
       ],
       "id": "4356ab6a-506b-477b-9283-ac618da72bcd",
       "name": "Insert Run Row",
@@ -369,8 +369,8 @@
       "type": "n8n-nodes-base.aggregate",
       "typeVersion": 1,
       "position": [
-        3888,
-        3696
+        4176,
+        3304
       ],
       "id": "d01f7754-5a31-4b5f-8546-260e0fae26c5",
       "name": "Store Total (Aggregate)"
@@ -384,8 +384,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        4048,
-        3664
+        4400,
+        3304
       ],
       "id": "a7f4d898-2e8c-4670-84ef-19251ab62103",
       "name": "Store Total Count",
@@ -405,8 +405,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        5040,
-        3792
+        5296,
+        4072
       ],
       "id": "9c28ca87-fa41-44e8-9b09-a0051d9a1a7f",
       "name": "Update Progress",
@@ -419,13 +419,13 @@
     },
     {
       "parameters": {
-        "jsCode": "// Fire a progress update only at 10% milestones.\n// $runIndex increments each time this node executes (0-based).\nconst total = $('Identify Unproccessed Artifacts').all().length;\nconst stepSize = Math.max(1, Math.round(total * 0.1));\nconst iteration = $runIndex + 1; // 1-based\nconst runId = $('Create Run Id').first().json.run_id;\n\nif (iteration % stepSize === 0) {\n  return [{ json: { run_id: runId, progress_count: iteration } }];\n}\nreturn [];"
+        "jsCode": "const total = $('Identify Unproccessed Artifacts').all().length;\nconst iteration = ($runIndex + 1) * 100;\nconst runId = $('Create Run Id').first().json.run_id;\n\n// Current % and previous %\nconst currentPercent = (iteration / total) * 100;\nconst prevPercent = ((iteration - 100) / total) * 100; // because IF node steps by 100\n\n// Check if we crossed a 10% boundary\nif (\n  Math.floor(currentPercent / 10) > Math.floor(prevPercent / 10)\n  || iteration >= total \n) {\n  return [{\n    json: {\n      run_id: runId,\n      progress_count: iteration,\n      progress_percent: Math.floor(currentPercent)\n    }\n  }];\n}\n\nreturn [];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        4816,
-        3792
+        5072,
+        4072
       ],
       "id": "87a735e6-058a-430b-ba21-a8534150184b",
       "name": "Check Milestone"
@@ -433,17 +433,212 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "UPDATE processing_runs\nSET status = 'success', finished_at = now()\nWHERE run_id = '{{ $('Create Run Id').item.json.run_id }}'::uuid;",
+        "query": "UPDATE processing_runs\nSET status = 'success',\nfinished_at = now(),\nprogress_count = total_count\nWHERE run_id = '{{ $('Create Run Id').item.json.run_id }}'::uuid;",
         "options": {}
       },
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        4464,
-        3168
+        4624,
+        3136
       ],
       "id": "3675596f-9d66-474d-be36-9e56b71b22df",
       "name": "Mark Run Done",
+      "credentials": {
+        "postgres": {
+          "id": "l8Ecbn62FzXCDkF9",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "fe50d134-c05f-40e7-bc3a-f04fbace5ad0",
+              "leftValue": "={{ $runIndex % 100}}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "6fb24221-355f-46c4-af54-19da12b7a2c0",
+              "leftValue": "={{ $runIndex}}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        4848,
+        4072
+      ],
+      "id": "80b8c7ed-694b-4e99-9e0b-c7ae0de35c45",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.primary.listing_state }}",
+                    "rightValue": "unlisted",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "eb328a03-5b15-4db4-8065-8243b43ec9c0"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Unlisted"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "dfd4c0fd-e56f-4a84-bcaa-9b1a4d60a583",
+                    "leftValue": "={{ $json.primary.listing_state }}",
+                    "rightValue": "unlisted",
+                    "operator": {
+                      "type": "string",
+                      "operation": "notEquals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "All Others"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        4624,
+        3616
+      ],
+      "id": "2971a13d-4e9c-4670-8117-4e9773597651",
+      "name": "Switch1"
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        5296,
+        3496
+      ],
+      "id": "f2561417-4e99-4c6b-8586-33307194c63d",
+      "name": "Aggregate1"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        5968,
+        3760
+      ],
+      "id": "c75643b7-05c5-488a-abc3-72ae130d62ee",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH data AS (\n  SELECT *\n  FROM jsonb_to_recordset(\n    '{{ JSON.stringify($node[\"Aggregate1\"].json.data).replace(/'/g, \"''\") }}'::jsonb\n  ) AS x(\n    artifact_id bigint,\n    status text,\n    message text,\n    meta jsonb\n  )\n)\nUPDATE artifact_processing ap\nSET\n  status = d.status,\n  processed_at = now(),\n  message = 'unlisted',\n  meta = COALESCE(d.meta, '{}'::jsonb)\nFROM data d\nWHERE ap.artifact_id = d.artifact_id\n  AND ap.processor = '{{ $node[\"Set Processor\"].json.processor }}';\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        5744,
+        3592
+      ],
+      "id": "6451a258-6038-44f9-8d02-42b93a1129f7",
+      "name": "Mark Artifacts Processed1",
+      "credentials": {
+        "postgres": {
+          "id": "l8Ecbn62FzXCDkF9",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH parsed AS (\n  SELECT *\n  FROM jsonb_to_recordset('{{ JSON.stringify($json.data).replace(/'/g,\"''\") }}'::jsonb)\n    AS p(\n      processor   text,\n      artifact_id bigint,\n      status      text,\n      message     text,\n      search_key  text,\n      meta        jsonb,\n      \"primary\"   jsonb,\n      carousel    jsonb\n    )\n),\nra AS (\n  SELECT artifact_id, fetched_at, url\n  FROM raw_artifacts\n  WHERE artifact_id IN (SELECT artifact_id FROM parsed)\n),\nrows AS (\n  SELECT DISTINCT\n    p.artifact_id,\n    ra.fetched_at,\n\tp.search_key,\n    COALESCE(\n  NULLIF(p.\"primary\"->>'listing_id', ''),\n  NULLIF(regexp_replace(ra.url, '.*/vehicledetail/([^/]+)/?.*', '\\1'), ra.url)\n) AS listing_id\nFROM parsed p\n  JOIN ra USING (artifact_id)\n  WHERE p.status = 'ok'\n)\n,joined_info AS (\nSELECT\n\trows.artifact_id\n\t,rows.fetched_at\n\t,rows.search_key\n\t,rows.listing_id\n\t,ROW_NUMBER() OVER (PARTITION BY rows.artifact_id ORDER BY d.fetched_at DESC) as observation_number\n\t,d.fetched_at AS detail_observation_time\n\t,d.vin\n\t,d.vin17\n\t,'unlisted' as listing_state\n\t,d.make\n\t,d.model\n\t,d.vehicle_trim\n\t,d.model_year\n\t,d.price\n\t,d.mileage\n\t,d.msrp\n\t,d.stock_type\n\t,d.dealer_name\n\t,d.dealer_zip\n\t,d.customer_id\n\t,d.canonical_detail_url\nFROM rows\nLEFT JOIN analytics.stg_detail_observations d on rows.search_key = d.vin\n)\nINSERT INTO detail_observations (\n  artifact_id,\n  fetched_at,\n  listing_id,\n  vin,\n  listing_state,\n  make,\n  model,\n  \"trim\",\n  year,\n  price,\n  mileage,\n  msrp,\n  stock_type,\n  fuel_type,\n  body_style,\n  dealer_name,\n  dealer_zip,\n  customer_id\n)\nSELECT\n\tartifact_id\n\t,fetched_at\n\t,listing_id\n\t,vin17 as vin\n\t,listing_state\n\t,make\n\t,model\n\t,vehicle_trim as \"trim\"\n\t,model_year as \"year\"\n\t,price\n\t,mileage\n\t,msrp\n\t,stock_type\n\t,null as fuel_type\n\t,null as body_style\n\t,dealer_name\n\t,dealer_zip\n\t,customer_id\nFROM joined_info \nWHERE observation_number = 1\nAND vin17 IS NOT NULL;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        5520,
+        3592
+      ],
+      "id": "71af4c3f-1d00-4432-a850-6d500615b943",
+      "name": "Insert Unlisted Rows",
+      "credentials": {
+        "postgres": {
+          "id": "l8Ecbn62FzXCDkF9",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH parsed AS (\n  SELECT *\n  FROM jsonb_to_recordset('{{ JSON.stringify($json.data).replace(/'/g,\"''\") }}'::jsonb)\n    AS p(\n      processor   text,\n      artifact_id bigint,\n      status      text,\n      message     text,\n      search_key  text,\n      meta        jsonb,\n      \"primary\"   jsonb,\n      carousel    jsonb\n    )\n),\nra AS (\n  SELECT artifact_id, fetched_at, url\n  FROM raw_artifacts\n  WHERE artifact_id IN (SELECT artifact_id FROM parsed)\n),\nrows AS (\n  SELECT DISTINCT\n    p.artifact_id,\n    ra.fetched_at,\n\tp.search_key,\n    COALESCE(\n  NULLIF(p.\"primary\"->>'listing_id', ''),\n  NULLIF(regexp_replace(ra.url, '.*/vehicledetail/([^/]+)/?.*', '\\1'), ra.url)\n) AS listing_id\nFROM parsed p\n  JOIN ra USING (artifact_id)\n  WHERE p.status = 'ok'\n)\nDELETE FROM detail_carousel_hints dch\nUSING rows\nWHERE dch.listing_id = rows.listing_id;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        5520,
+        3400
+      ],
+      "id": "ff8d1c85-6117-4505-9d04-8002978135f8",
+      "name": "Unlist Hints",
       "credentials": {
         "postgres": {
           "id": "l8Ecbn62FzXCDkF9",
@@ -456,7 +651,9 @@
     "After Scrape": [
       {
         "json": {
-          "success": true
+          "total": "1000",
+          "errors": "0",
+          "error_pct": "0.0"
         },
         "pairedItem": {
           "item": 0
@@ -581,7 +778,7 @@
         ],
         [
           {
-            "node": "Aggregate",
+            "node": "Switch1",
             "type": "main",
             "index": 0
           }
@@ -603,9 +800,9 @@
       "main": [
         [
           {
-            "node": "Loop Over Items1",
+            "node": "Merge",
             "type": "main",
-            "index": 0
+            "index": 1
           }
         ]
       ]
@@ -619,7 +816,7 @@
             "index": 0
           },
           {
-            "node": "Check Milestone",
+            "node": "If",
             "type": "main",
             "index": 0
           }
@@ -721,6 +918,89 @@
           }
         ]
       ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Check Milestone",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch1": {
+      "main": [
+        [
+          {
+            "node": "Aggregate1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Aggregate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate1": {
+      "main": [
+        [
+          {
+            "node": "Insert Unlisted Rows",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Unlist Hints",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Artifacts Processed1": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Total Count": {
+      "main": [
+        []
+      ]
+    },
+    "Insert Unlisted Rows": {
+      "main": [
+        [
+          {
+            "node": "Mark Artifacts Processed1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": true,
@@ -728,7 +1008,7 @@
     "executionOrder": "v1",
     "availableInMCP": false
   },
-  "versionId": "576b3392-f25e-4d57-a6af-8a4fefeb0b07",
+  "versionId": "8017c95e-a8f2-420c-a0d0-4d4d573ea687",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179"

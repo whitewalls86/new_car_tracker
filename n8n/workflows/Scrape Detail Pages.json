@@ -4,7 +4,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "WITH batch AS (\n  SELECT q.*\n  FROM ops.ops_detail_scrape_queue q\n  LEFT JOIN detail_scrape_claims c\n    ON c.listing_id = q.listing_id\n   AND c.status = 'running'\n  WHERE c.listing_id IS NULL\n  ORDER BY q.priority, q.listing_id\n  LIMIT 500\n),\nclaimed AS (\n  INSERT INTO detail_scrape_claims (listing_id, claimed_by, claimed_at, status)\n  SELECT b.listing_id, '{{ $('Create Run Id').first().json.run_id }}', now(), 'running'\n  FROM batch b\n  ON CONFLICT (listing_id) DO UPDATE\n    SET claimed_by = EXCLUDED.claimed_by,\n        claimed_at = EXCLUDED.claimed_at,\n        status     = 'running'\n    WHERE detail_scrape_claims.status != 'running'\n  RETURNING listing_id\n)\nSELECT b.* FROM batch b\nJOIN claimed c ON c.listing_id = b.listing_id;",
+        "query": "WITH batch AS (\n  SELECT q.*\n  FROM ops.ops_detail_scrape_queue q\n  LEFT JOIN detail_scrape_claims c\n    ON c.listing_id = q.listing_id\n   AND c.status = 'running'\n  WHERE c.listing_id IS NULL\n  ORDER BY q.priority, q.listing_id\n  LIMIT 1000\n),\nclaimed AS (\n  INSERT INTO detail_scrape_claims (listing_id, claimed_by, claimed_at, status)\n  SELECT b.listing_id, '{{ $('Create Run Id').first().json.run_id }}', now(), 'running'\n  FROM batch b\n  ON CONFLICT (listing_id) DO UPDATE\n    SET claimed_by = EXCLUDED.claimed_by,\n        claimed_at = EXCLUDED.claimed_at,\n        status     = 'running'\n    WHERE detail_scrape_claims.status != 'running'\n  RETURNING listing_id\n)\nSELECT b.* FROM batch b\nJOIN claimed c ON c.listing_id = b.listing_id;",
         "options": {}
       },
       "type": "n8n-nodes-base.postgres",
@@ -30,7 +30,7 @@
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
       "position": [
-        -1008,
+        -800,
         1376
       ],
       "id": "a1eb499b-6143-4e9a-a17d-de5599d02ffb",
@@ -57,7 +57,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        -784,
+        -576,
         1376
       ],
       "id": "8dec758f-b5e3-438e-a3af-6ee445611a56",
@@ -83,7 +83,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -560,
+        -352,
         1552
       ],
       "id": "cfcb9d8c-1297-408c-a63a-79443ec69e29",
@@ -98,7 +98,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        -336,
+        -128,
         1088
       ],
       "id": "0185c73b-7b86-45a3-b8aa-6d91567501b2",
@@ -118,7 +118,7 @@
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
       "position": [
-        -784,
+        -576,
         1024
       ],
       "id": "b14a087a-59d6-444a-b8a9-c080f7efce28",
@@ -154,7 +154,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        -496,
+        -288,
         640
       ],
       "id": "3dd28ac4-b9f7-4261-868d-8138490f9739",
@@ -174,7 +174,7 @@
       "type": "n8n-nodes-base.aggregate",
       "typeVersion": 1,
       "position": [
-        -560,
+        -352,
         1024
       ],
       "id": "a2f35491-2012-416b-a6ae-8d27a0ea32f0",
@@ -189,7 +189,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        -352,
+        -144,
         640
       ],
       "id": "c3600aad-c3ae-4c52-96f3-906b41cee02b",
@@ -229,7 +229,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        -112,
+        96,
         832
       ],
       "id": "0a3c3cbd-88c3-46da-b8d9-1c9e1f1a9d5c",
@@ -246,7 +246,7 @@
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
-        112,
+        320,
         752
       ],
       "id": "96856eef-9bbc-4071-a6d6-3379f609f841",
@@ -282,7 +282,7 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        304,
+        512,
         832
       ],
       "id": "29efe20b-ac77-42b6-8121-17d3eac18ead",
@@ -295,7 +295,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -1232,
+        -1024,
         1136
       ],
       "id": "60cf06d0-af57-4f80-857a-10a42f7c7888",
@@ -315,8 +315,8 @@
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.3,
       "position": [
-        -2800,
-        1264
+        -2400,
+        1136
       ],
       "id": "9b717d83-c95c-44c5-91a5-9538651d12ec",
       "name": "Schedule Trigger"
@@ -329,7 +329,7 @@
       "type": "n8n-nodes-base.aggregate",
       "typeVersion": 1,
       "position": [
-        -1056,
+        -848,
         960
       ],
       "id": "5243cdfd-9488-4e71-b261-55cb8976d421",
@@ -344,7 +344,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        -896,
+        -688,
         832
       ],
       "id": "d15b24f6-5030-4a3d-ad77-3a974925e516",
@@ -363,7 +363,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -560,
+        -352,
         1328
       ],
       "id": "ab39563d-9f1a-496b-9272-e36245184884",
@@ -378,7 +378,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        -336,
+        -128,
         1328
       ],
       "id": "ea3032ed-b8f0-4ba9-8885-1a7667e38515",
@@ -403,10 +403,10 @@
             {
               "id": "batch-empty-check",
               "leftValue": "={{ $json.listing_id }}",
-              "rightValue": "",
+              "rightValue": null,
               "operator": {
                 "type": "string",
-                "operation": "notEmpty",
+                "operation": "exists",
                 "singleValue": true
               }
             }
@@ -418,8 +418,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
-        -1456,
-        1136
+        -1344,
+        1152
       ],
       "id": "c8a1b2d3-e4f5-6789-abcd-ef0123456789",
       "name": "If Batch Empty?"
@@ -433,7 +433,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        -1296,
+        -1088,
         1312
       ],
       "id": "d9e0f1a2-b3c4-5678-9abc-def012345678",
@@ -454,7 +454,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        -656,
+        -448,
         640
       ],
       "id": "a1b2c3d4-e5f6-7890-abcd-release00001",
@@ -475,8 +475,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        -1520,
-        1296
+        -1328,
+        1328
       ],
       "id": "d92c022a-9d34-4930-aefb-99768ce5e4ff",
       "name": "Mark Run terminated",
@@ -766,7 +766,7 @@
       ]
     }
   },
-  "active": false,
+  "active": true,
   "settings": {
     "executionOrder": "v1",
     "availableInMCP": false,
@@ -774,7 +774,7 @@
     "callerPolicy": "workflowsFromSameOwner",
     "errorWorkflow": "rJfFKS2DGRAn_IPJR1xTc"
   },
-  "versionId": "a205f006-fd94-4889-9c12-22cd29e95746",
+  "versionId": "157e4230-a883-4609-8c30-7f3fd0f364eb",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179"
