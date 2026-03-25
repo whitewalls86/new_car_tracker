@@ -50,7 +50,7 @@ flags as (
         (c.price_observed_at is null) or (c.price_age_hours > 24.0) as is_price_stale,
 
         case
-            when c.dealer_unenriched then 'dealer_unenriched'
+            when c.dealer_unenriched and listing_state = 'active' then 'dealer_unenriched'
             when (c.tier1_age_hours > 168.0) then 'full_details'
             when (c.price_observed_at is null) or (c.price_age_hours > 24.0) then 'price_only'
             else 'not_stale'

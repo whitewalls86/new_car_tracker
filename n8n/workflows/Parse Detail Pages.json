@@ -8,8 +8,8 @@
       "type": "n8n-nodes-base.executeWorkflowTrigger",
       "typeVersion": 1.1,
       "position": [
-        3344,
-        3840
+        3056,
+        3856
       ],
       "id": "c8485c74-e9d3-490b-a91c-eefbb5aa6259",
       "name": "After Scrape"
@@ -17,14 +17,14 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "WITH candidates AS (\n  SELECT ra.artifact_id\n  FROM raw_artifacts ra\n  LEFT JOIN artifact_processing ap\n    ON ap.artifact_id = ra.artifact_id\n   AND ap.processor = '{{ $json.processor }}'\n  WHERE ra.source = 'cars.com'\n    AND ra.artifact_type = 'detail_page'\n    AND NOT EXISTS (\n      SELECT 1\n      FROM artifact_processing ap_ok\n      WHERE ap_ok.artifact_id = ra.artifact_id\n        AND ap_ok.status = 'ok'\n        AND ap_ok.processor LIKE 'cars_detail_page__%'\n    )\n    AND (\n          ap.artifact_id IS NULL\n          OR ap.status = 'retry'\n          OR (ap.status = 'processing' AND ap.processed_at < now() - interval '1 minutes')\n        )\n  ORDER BY ra.fetched_at ASC\n  LIMIT 500\n),\nclaimed AS (\n  INSERT INTO artifact_processing (artifact_id, processor, status, processed_at)\n  SELECT c.artifact_id, '{{ $json.processor }}', 'processing', now()\n  FROM candidates c\n  ON CONFLICT (artifact_id, processor) DO UPDATE\n    SET status = 'processing',\n        processed_at = now(),\n        message = NULL\n  RETURNING artifact_id\n)\nSELECT ra.*\nFROM raw_artifacts ra\nJOIN claimed c ON ra.artifact_id = c.artifact_id\nORDER BY ra.fetched_at ASC;\n",
+        "query": "WITH candidates AS (\n  SELECT ra.artifact_id\n  FROM raw_artifacts ra\n  LEFT JOIN artifact_processing ap\n    ON ap.artifact_id = ra.artifact_id\n   AND ap.processor = '{{ $('Set Processor').item.json.processor }}'\n  WHERE ra.source = 'cars.com'\n    AND ra.artifact_type = 'detail_page'\n    AND NOT EXISTS (\n      SELECT 1\n      FROM artifact_processing ap_ok\n      WHERE ap_ok.artifact_id = ra.artifact_id\n        AND ap_ok.status = 'ok'\n        AND ap_ok.processor LIKE 'cars_detail_page__%'\n    )\n    AND (\n          ap.artifact_id IS NULL\n          OR ap.status = 'retry'\n          OR (ap.status = 'processing' AND ap.processed_at < now() - interval '1 hours')\n        )\n  ORDER BY ra.fetched_at ASC\n  LIMIT 5000\n),\nclaimed AS (\n  INSERT INTO artifact_processing (artifact_id, processor, status, processed_at)\n  SELECT c.artifact_id, '{{ $('Set Processor').item.json.processor }}', 'processing', now()\n  FROM candidates c\n  ON CONFLICT (artifact_id, processor) DO UPDATE\n    SET status = 'processing',\n        processed_at = now(),\n        message = NULL\n  RETURNING artifact_id\n)\nSELECT ra.*\nFROM raw_artifacts ra\nJOIN claimed c ON ra.artifact_id = c.artifact_id\nORDER BY ra.fetched_at ASC;\n",
         "options": {}
       },
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        3792,
-        3840
+        3760,
+        3856
       ],
       "id": "7b62e186-ee17-401a-8929-252448aab8e2",
       "name": "Identify Unproccessed Artifacts",
@@ -44,8 +44,8 @@
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        3568,
-        3840
+        3264,
+        3856
       ],
       "id": "2ab0061c-5ed8-4cec-ac67-5711b7d28540",
       "name": "Set Processor"
@@ -285,7 +285,7 @@
         "url": "http://dbt_runner:8080/dbt/build",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"intent\": \"{{$json.intent}}\",\n  \"full_refresh\": false\n}",
+        "jsonBody": "={\n  \"intent\": \"{{$json.intent}}\",\n  \"full_refresh\": true\n}",
         "options": {
           "timeout": 900000
         }
@@ -326,6 +326,130 @@
       "id": "969bade5-f791-4133-b5f2-f6fd61a75388",
       "name": "Wait",
       "webhookId": "8bf44a97-dce3-4ba4-ae6f-fe69c5545844"
+    },
+    {
+      "parameters": {
+        "jsCode": "function uuidv4() {\n  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {\n    const r = Math.random() * 16 | 0;\n    const v = c === 'x' ? r : (r & 0x3 | 0x8);\n    return v.toString(16);\n  });\n}\n\nreturn [{ run_id: uuidv4() }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3424,
+        3856
+      ],
+      "id": "9370bd69-a2e2-4bbc-9195-08de2f18680c",
+      "name": "Create Run Id"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO processing_runs (run_id, status)\nVALUES ('{{ $json.run_id }}'::uuid, 'processing');",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        3600,
+        3856
+      ],
+      "id": "4356ab6a-506b-477b-9283-ac618da72bcd",
+      "name": "Insert Run Row",
+      "credentials": {
+        "postgres": {
+          "id": "l8Ecbn62FzXCDkF9",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        3888,
+        3696
+      ],
+      "id": "d01f7754-5a31-4b5f-8546-260e0fae26c5",
+      "name": "Store Total (Aggregate)"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE processing_runs\nSET total_count = {{ $json.data.length }}\nWHERE run_id = '{{ $('Create Run Id').first().json.run_id }}'::uuid;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        4048,
+        3664
+      ],
+      "id": "a7f4d898-2e8c-4670-84ef-19251ab62103",
+      "name": "Store Total Count",
+      "credentials": {
+        "postgres": {
+          "id": "l8Ecbn62FzXCDkF9",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE processing_runs\nSET progress_count = {{ $json.progress_count }}\nWHERE run_id = '{{ $json.run_id }}'::uuid;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        5040,
+        3792
+      ],
+      "id": "9c28ca87-fa41-44e8-9b09-a0051d9a1a7f",
+      "name": "Update Progress",
+      "credentials": {
+        "postgres": {
+          "id": "l8Ecbn62FzXCDkF9",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Fire a progress update only at 10% milestones.\n// $runIndex increments each time this node executes (0-based).\nconst total = $('Identify Unproccessed Artifacts').all().length;\nconst stepSize = Math.max(1, Math.round(total * 0.1));\nconst iteration = $runIndex + 1; // 1-based\nconst runId = $('Create Run Id').first().json.run_id;\n\nif (iteration % stepSize === 0) {\n  return [{ json: { run_id: runId, progress_count: iteration } }];\n}\nreturn [];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4816,
+        3792
+      ],
+      "id": "87a735e6-058a-430b-ba21-a8534150184b",
+      "name": "Check Milestone"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE processing_runs\nSET status = 'success', finished_at = now()\nWHERE run_id = '{{ $('Create Run Id').item.json.run_id }}'::uuid;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        4464,
+        3168
+      ],
+      "id": "3675596f-9d66-474d-be36-9e56b71b22df",
+      "name": "Mark Run Done",
+      "credentials": {
+        "postgres": {
+          "id": "l8Ecbn62FzXCDkF9",
+          "name": "Postgres account"
+        }
+      }
     }
   ],
   "pinData": {
@@ -356,7 +480,7 @@
       "main": [
         [
           {
-            "node": "Identify Unproccessed Artifacts",
+            "node": "Create Run Id",
             "type": "main",
             "index": 0
           }
@@ -368,6 +492,11 @@
         [
           {
             "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Store Total (Aggregate)",
             "type": "main",
             "index": 0
           }
@@ -443,6 +572,11 @@
             "node": "Set DBT Params",
             "type": "main",
             "index": 0
+          },
+          {
+            "node": "Mark Run Done",
+            "type": "main",
+            "index": 0
           }
         ],
         [
@@ -481,6 +615,11 @@
         [
           {
             "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Check Milestone",
             "type": "main",
             "index": 0
           }
@@ -538,6 +677,50 @@
           }
         ]
       ]
+    },
+    "Create Run Id": {
+      "main": [
+        [
+          {
+            "node": "Insert Run Row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Run Row": {
+      "main": [
+        [
+          {
+            "node": "Identify Unproccessed Artifacts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Total (Aggregate)": {
+      "main": [
+        [
+          {
+            "node": "Store Total Count",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Milestone": {
+      "main": [
+        [
+          {
+            "node": "Update Progress",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": true,
@@ -545,7 +728,7 @@
     "executionOrder": "v1",
     "availableInMCP": false
   },
-  "versionId": "abad7431-dc32-4f6d-911e-3e5937711f78",
+  "versionId": "576b3392-f25e-4d57-a6af-8a4fefeb0b07",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179"
