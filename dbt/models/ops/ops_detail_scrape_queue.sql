@@ -17,6 +17,7 @@ with stale as (
         ovs.is_full_details_stale,
         ovs.stale_reason,
         ovs.tier1_age_hours,
+        ovs.price_age_hours,
 
         row_number() over (
             partition by coalesce(ovs.tier1_seller_customer_id::text, ovs.vin)
@@ -55,7 +56,7 @@ force_stale as (
         'force_stale_36h' as stale_reason,
         2 as priority
     from stale
-    where tier1_age_hours > 36
+    where price_age_hours > 36
       and dealer_row_num > 1
 ),
 

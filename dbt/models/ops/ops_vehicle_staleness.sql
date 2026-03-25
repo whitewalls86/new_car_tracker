@@ -37,7 +37,7 @@ computed as (
         end as price_age_hours,
 
         -- Dealer is unenriched if no detail scrape has populated customer_id
-        (b.customer_id is null) as dealer_unenriched
+        (b.customer_id is null AND price_source != 'detail') as dealer_unenriched
 
     from base b
 ),

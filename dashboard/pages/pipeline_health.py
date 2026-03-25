@@ -73,9 +73,6 @@ def render():
     # -- Recent runs ---------------------------------------------------------
     _section_recent_runs()
 
-    # -- Rotation schedule ---------------------------------------------------
-    _section_rotation_schedule()
-
     # -- Detail scrape runs --------------------------------------------------
     _section_detail_runs()
 
@@ -85,18 +82,21 @@ def render():
     # -- Price freshness -----------------------------------------------------
     _section_price_freshness()
 
+    # -- Rotation schedule ---------------------------------------------------
+    _section_rotation_schedule()
+
+    # -- Search scrape jobs --------------------------------------------------
+    _section_search_jobs()
+
     # -- Success rates -------------------------------------------------------
     _section_success_rate(
-        "Detail Scrape Success Rate (Last 30 Days)",
-        "detail_page", "30 days",
+        "Detail Scrape Success Rate (Last 7 Days)",
+        "detail_page", "7 days",
     )
     _section_success_rate(
         "Search Scrape Success Rate (Last 7 Days)",
         "results_page", "7 days",
     )
-
-    # -- Search scrape jobs --------------------------------------------------
-    _section_search_jobs()
 
     # -- Runs over time ------------------------------------------------------
     _section_runs_over_time()
@@ -277,12 +277,12 @@ def _section_detail_runs():
             COUNT(DISTINCT d.vin) FILTER (WHERE d.price IS NOT NULL) AS prices_refreshed,
             COUNT(DISTINCT ra.artifact_id) FILTER (WHERE d.listing_state = 'unlisted') AS newly_unlisted,
             COUNT(DISTINCT ra.artifact_id) FILTER (WHERE ap.message = 'unlisted' AND d.artifact_id IS NULL) AS unlisted_carousel_hit,
-            COUNT(DISTINCT d.vin) FILTER (WHERE pe.vin IS NULL) AS newly_mapped_vins
+            COUNT(DISTINCT d.vin17) FILTER (WHERE pe.vin IS NULL) AS newly_mapped_vins
         FROM
             my_runs r
         LEFT JOIN raw_artifacts ra on r.run_id = ra.run_id
         LEFT JOIN artifact_processing ap ON ra.artifact_id = ap.artifact_id
-        LEFT JOIN detail_observations d on ra.artifact_id = d.artifact_id
+        LEFT JOIN analytics.stg_detail_observations d on ra.artifact_id = d.artifact_id
         LEFT JOIN (
             SELECT
                 vin
@@ -437,12 +437,19 @@ def _section_search_jobs():
             r.started_at AT TIME ZONE 'America/Chicago' AS run_started,
             r.status AS run_status,
             j.search_key, j.scope, j.status AS job_status,
-            j.artifact_count, j.retry_count, j.error
+            j.artifact_count,
+            COUNT(srp.vin) as vins_recorded,
+            COUNT(srp.vin) FILTER (WHERE pe.vin IS NULL) as new_vins_recorded
         FROM runs r
         JOIN scrape_jobs j ON j.run_id = r.run_id
+        LEFT JOIN raw_artifacts ra on j.scope = ra.search_scope and ra.run_id = r.run_id and ra.search_key = j.search_key
+        LEFT JOIN analytics.stg_srp_observations srp on ra.artifact_id = srp.artifact_id
+        LEFT JOIN ( SELECT vin, min(observed_at) as first_seen FROM  analytics.int_price_events group by vin) pe ON srp.vin17 = pe.vin AND pe.first_seen < r.started_at
         WHERE r.trigger = 'search scrape'
           AND r.started_at > now() - interval '7 days'
-        ORDER BY r.started_at DESC, j.search_key, j.scope
+        GROUP BY
+            1,2,3,4,5,6,7
+        ORDER BY r.started_at DESC, j.search_key, j.scope;
     """)
     if df.empty:
         st.info("No search scrape jobs in the last 7 days.")
@@ -460,7 +467,7 @@ def _section_runs_over_time():
             COUNT(*) FILTER (WHERE status = 'terminated') AS terminated,
             COUNT(*) FILTER (WHERE status = 'failed') AS failed
         FROM runs
-        WHERE started_at > now() - interval '30 days' AND status != 'skipped'
+        WHERE started_at > now() - interval '7 days' AND status NOT IN ('skipped', 'terminated')
         GROUP BY 1, 2 ORDER BY 1, 2
     """)
     if not df.empty:

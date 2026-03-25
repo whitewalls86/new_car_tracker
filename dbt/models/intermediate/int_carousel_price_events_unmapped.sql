@@ -37,7 +37,9 @@ unmapped as (
     from filtered f
     left join {{ ref('int_listing_to_vin') }} m
       on m.listing_id = f.listing_id
-    where m.listing_id IS NULL
+    left join {{ ref('stg_detail_observations') }} d
+      on f.listing_id = d.listing_id
+    where m.listing_id IS NULL AND d.vin IS NULL
 )
 
 select
