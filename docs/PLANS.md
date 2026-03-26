@@ -61,18 +61,18 @@
 | 36 | **Automate n8n workflow import** — entrypoint.sh runs `n8n import:workflow --separate` on container startup + `n8n update:workflow --all --active=true`; workflows volume-mounted from repo; `git pull + docker compose restart n8n` picks up changes | 2026-03-23 |
 | 50 | **Dashboard refactor** — split 1108-line app.py into per-tab modules: db.py (shared), pages/pipeline_health.py, pages/inventory.py, pages/deals.py, pages/market_trends.py; app.py reduced to 47 lines (sidebar + routing) | 2026-03-23 |
 | 51 | **Docs and setup update** — README architecture diagram updated for parallel scrapes + claiming; n8n section updated for auto-import; setup.ps1 step numbering fixed + post-setup messages updated; seed files added to manual setup instructions | 2026-03-23 |
+| 14.1 | **VIN case normalization** — `stg_detail_observations` computes `vin17` via `upper(d.vin)` with length/format validation; all downstream models use `vin17` | 2026-03-26 |
+| 14.5 | **Price events dedup** — `int_price_events` uses `SELECT DISTINCT ON (vin, observed_at, price)` with source priority (detail > srp > carousel) in full-refresh mode | 2026-03-26 |
+| 14.9 | **Browser singleton lock** — moot; `browser.py` uses `threading.local()` so each worker thread owns its own browser instance, no shared state | 2026-03-26 |
+| 14.11 | **Chrome fingerprint env var** — `fingerprint.py` rotates through `["132", "133", "134", "135"]`; no longer a hardcoded single value | 2026-03-26 |
 
 ---
 
 ## Plan 14: Codebase Audit Bug Fixes
 
-**Status:** Mostly complete (14.2, 14.4, 14.6, 14.8 done). Remaining items are low-risk defensive fixes.
+**Status:** Complete except 14.12 (low risk, not worth prioritizing).
 
-**14.1 — VIN case normalization** — `stg_detail_observations` passes raw VIN (only 1 lowercase VIN found)
-**14.5 — Price events dedup** — `UNION ALL` with no dedup (only 1 actual duplicate found)
-**14.9 — Browser singleton lock** — no `threading.Lock()` on `get_browser()` (low risk in practice)
-**14.11 — Chrome fingerprint env var** — hardcoded `chrome131` (working fine currently)
-**14.12 — max_safety_pages validator** — no bounds check (low risk)
+**14.12 — max_safety_pages validator** — no bounds check on `int(params.get("max_safety_pages", 500))` in `scrape_results.py` (low risk)
 
 ---
 
@@ -80,13 +80,10 @@
 
 | Priority | Item | Notes |
 |----------|------|-------|
-| 1 | **52** — Carousel hint backlog strategy | 430k+ unmapped hints growing faster than processable; need pruning/prioritization strategy |
+| 1 | **35** — dbt schema audit | Missing staging layers + ops consolidation |
 | 2 | **29** — n8n API + trigger button | Programmatic workflow control; trigger detail scrape from dashboard |
-| 3 | **35** — dbt schema audit | Missing staging layers + ops consolidation |
-| 4 | **53** — Dashboard cleanup/optimization | Pipeline Health tab is bloated; consider collapsible sections or sub-tabs |
-| 5 | **14.1** — VIN case normalization | Defensive — only 1 affected VIN |
-| 6 | **14.5** — Price events dedup | Defensive — only 1 duplicate found |
-| 7 | **14.9 / 14.11 / 14.12** — Minor defensive fixes | Low risk |
+| 3 | **53** — Dashboard cleanup/optimization | Pipeline Health tab is bloated; consider collapsible sections or sub-tabs |
+| 4 | **14.12** — max_safety_pages validator | No bounds check; low risk |
 
 ---
 
@@ -101,25 +98,71 @@
 
 ---
 
-## Plan 35: dbt Schema Audit — staging gaps + ops consolidation
+## Plan 35: dbt Health Audit — staging, materialization, redundancy, docs, dashboard alignment
 
 **Status:** Not started
-**Priority:** Low
+**Priority:** High
+**Health Score:** 72/100 (B-)
 
-### 35.1 — Missing staging layers
+### 35.1 — Create `stg_raw_artifacts` view
 
-4 raw tables are accessed directly by intermediate/mart models without a staging layer:
+5 intermediate/mart models join directly to `raw_artifacts` for `search_scope` and `search_key`. This is the single biggest staging gap.
 
-| Raw Table | Direct Consumers (bypassing staging) |
+| Model | Columns Used |
 |---|---|
-| `raw_artifacts` | `int_listing_days_on_market`, `int_model_price_benchmarks`, `int_price_percentiles_by_vin`, `mart_deal_scores` |
-| `dealers` | `int_dealer_inventory`, `mart_deal_scores` |
-| `detail_observations` | `int_latest_dealer_name_by_vin`, `mart_deal_scores` |
-| `srp_observations` | dashboard queries |
+| `int_vehicle_attributes` | `search_key`, `search_scope` |
+| `int_listing_days_on_market` | `search_scope` |
+| `int_model_price_benchmarks` | `search_scope` |
+| `int_price_percentiles_by_vin` | `search_scope` |
+| `mart_deal_scores` (local_seen CTE) | `search_scope` |
 
-### 35.2 — Ops schema: deprecate or expand?
+Create a thin view: `artifact_id`, `run_id`, `search_key`, `search_scope`, `fetched_at`, `http_status`. Refactor all 5 consumers.
 
-`ops/` now contains 2 models: `ops_vehicle_staleness` and `ops_detail_scrape_queue`. Growing naturally as operational needs arise.
+### 35.2 — Create `stg_dealers` view
+
+`dealers` accessed directly by `int_dealer_inventory` and `mart_deal_scores`. Create thin view: `customer_id`, `name`, `city`, `state`, `phone`, `rating`.
+
+### 35.3 — `stg_detail_carousel_hints` → incremental
+
+The other 2 staging models are incremental, but this one is a plain view. Referenced by 3 downstream models — every build re-scans the full table. Has a natural `id` column for incremental cutoff.
+
+### 35.4 — Evaluate + likely delete `int_latest_dealer_name_by_vin`
+
+Interim model from before Plan 25.2. Comment says "interim until Plan 25.2 bridges UUID<->numeric dealer ID" — Plan 25.2 is done. `mart_deal_scores` already joins `dealers` via `customer_id`. Verify how many VINs rely on the `ldn.dealer_name` fallback; if negligible, delete.
+
+### 35.5 — `int_model_price_benchmarks` → table
+
+Currently a view computing `percentile_cont` across all national SRP observations. Expensive window function re-runs every time `mart_deal_scores` builds. Convert to table.
+
+### 35.6 — Add .yml for undocumented models
+
+Missing schema files: `int_price_percentiles_by_vin`. (If 35.4 deletes `int_latest_dealer_name_by_vin`, that gap closes too.)
+
+### 35.7 — Add source descriptions to `sources.yml`
+
+`sources.yml` has 8 tables with zero descriptions or tests. Add descriptions for each source table.
+
+### 35.8 — Dashboard: `detail_observations` raw access in inventory.py
+
+The "Vehicles Unlisted" chart queries raw `detail_observations` for `listing_state = 'unlisted'`. Could be served by `stg_detail_observations` (which already has `listing_state`) or a small `int_unlisted_events` model.
+
+### 35.9 — Dashboard: pre-aggregate market trends
+
+Two market_trends.py queries do a 3-way join (`mart_vehicle_snapshot` + `int_price_events` + `int_vehicle_attributes`) with 90-day window and weekly `percentile_cont`. A `mart_price_trends` model (weekly median price by make/model) would simplify these.
+
+### Priority order within Plan 35
+
+| Step | Item | Impact | Effort |
+|------|------|--------|--------|
+| 1 | 35.1 — `stg_raw_artifacts` | Eliminates 5 staging gaps | Low |
+| 2 | 35.3 — carousel hints → incremental | Eliminates full-table scan | Low |
+| 3 | 35.2 — `stg_dealers` | Eliminates 2 staging gaps | Low |
+| 4 | 35.4 — Delete `int_latest_dealer_name_by_vin` | Removes obsolete model + raw access | Low |
+| 5 | 35.5 — benchmarks → table | Avoids recomputing percentiles | Low |
+| 6 | 35.6 — Add missing .yml | Documentation completeness | Low |
+| 7 | 35.7 — Source descriptions | Documentation | Low |
+| 8 | 35.8 — Dashboard unlisted query | Clean up raw access | Low |
+| 9 | 35.9 — `mart_price_trends` | Simplifies 2 dashboard queries | Medium |
 
 ---
 
@@ -128,19 +171,6 @@
 **Status:** Complete (2026-03-23)
 
 Implemented via option 3 (startup script). Custom `n8n/entrypoint.sh` runs `n8n import:workflow --separate --input=/workflows/` then `n8n update:workflow --all --active=true` before starting n8n. Workflows are volume-mounted from the repo. Deploy: `git pull + docker compose restart n8n`.
-
----
-
-## Plan 52: Carousel hint backlog strategy
-
-**Status:** Not started
-**Priority:** High
-
-430k+ unmapped carousel hints and growing faster than we can process. Need a strategy to:
-- Prune hints for vehicles outside scrape targets
-- Prioritize hints by recency or price relevance
-- Cap the backlog to a manageable size
-- Consider aging out hints older than N days
 
 ---
 

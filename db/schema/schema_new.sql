@@ -69,6 +69,7 @@ DROP TABLE IF EXISTS public.raw_artifacts;
 DROP TABLE IF EXISTS public.dealers;
 DROP TABLE IF EXISTS public.srp_observations;
 DROP TABLE IF EXISTS public.detail_carousel_hints;
+DROP TABLE IF EXISTS public.processing_runs;
 -- public schema already exists by default
 
 
@@ -728,6 +729,24 @@ ALTER TABLE ONLY public.detail_scrape_claims
 
 CREATE INDEX ix_detail_scrape_claims_claimed_by
     ON public.detail_scrape_claims USING btree (claimed_by);
+
+
+--
+-- Name: processing_runs; Type: TABLE; Schema: public; Owner: -
+-- Tracks detail-page parse runs (created by Parse Detail Pages workflow).
+--
+
+CREATE TABLE public.processing_runs (
+    run_id uuid NOT NULL,
+    status text NOT NULL DEFAULT 'processing',
+    started_at timestamp with time zone NOT NULL DEFAULT now(),
+    finished_at timestamp with time zone,
+    progress_count integer NOT NULL DEFAULT 0,
+    total_count integer,
+    error_count integer NOT NULL DEFAULT 0,
+    last_error text,
+    CONSTRAINT processing_runs_pkey PRIMARY KEY (run_id)
+);
 
 
 -- Create schemas for dbt output

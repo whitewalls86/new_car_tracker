@@ -76,6 +76,7 @@ Schedule Trigger (30 min)           Schedule Trigger (15 min)
 - `dbt_lock` — single-row mutex preventing concurrent dbt builds (locked/locked_at/locked_by)
 - `dbt_runs` — dbt build history (duration, pass/error/skip counts, intent)
 - `detail_scrape_claims` — listing_id claims for parallel detail scrapes (keyed on listing_id, linked to run_id)
+- `processing_runs` — tracks detail-page parse run lifecycle (status, progress_count, total_count, error_count); written by the Parse Detail Pages workflow
 
 ### dbt Models (21 active)
 
