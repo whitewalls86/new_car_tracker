@@ -7,6 +7,7 @@ services:
       postgres
       -c shared_buffers=2GB
       -c max_connections=50
+    shm_size: 1gb
     environment:
       POSTGRES_DB: cartracker
       POSTGRES_USER: cartracker

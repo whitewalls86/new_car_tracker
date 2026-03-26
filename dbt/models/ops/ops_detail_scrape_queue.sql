@@ -12,7 +12,7 @@ with stale as (
         ovs.vin,
         ovs.current_listing_url,
         ovs.listing_id,
-        ovs.tier1_seller_customer_id as seller_customer_id,
+        COALESCE(ovs.tier1_seller_customer_id, ovs.customer_id) as seller_customer_id,
         ovs.is_price_stale,
         ovs.is_full_details_stale,
         ovs.stale_reason,
@@ -78,12 +78,28 @@ carousel as (
     where rn = 1
 ),
 
+-- Pool 4: extra cars from dealers
+
+capacity_fill AS (
+    select
+        vin,
+        current_listing_url,
+        listing_id,
+        seller_customer_id,
+        CONCAT(stale_reason, '-extra') as stale_reason,
+        4 as priority
+    from stale
+    where dealer_row_num > 1
+),
+
 combined as (
     select * from dealer_picks
     union all
     select * from force_stale
     union all
     select * from carousel
+    union all
+    select * from capacity_fill
 )
 
 select distinct on (listing_id)

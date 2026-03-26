@@ -50,7 +50,7 @@ async def list_searches(request: Request):
         "FROM search_configs ORDER BY enabled DESC, rotation_order NULLS LAST, search_key"
     )
     configs = [_row_to_dict(r) for r in rows]
-    return templates.TemplateResponse("admin/list.html", {
+    return templates.TemplateResponse(request=request, name="admin/list.html", context={
         "request": request,
         "configs": configs,
     })
@@ -62,7 +62,7 @@ async def list_searches(request: Request):
 
 @router.get("/new", response_class=HTMLResponse)
 async def new_search_form(request: Request):
-    return templates.TemplateResponse("admin/form.html", {
+    return templates.TemplateResponse(request=request, name="admin/form.html", context={
         "request": request,
         "editing": False,
         "config": None,
@@ -86,7 +86,7 @@ async def edit_search_form(request: Request, search_key: str):
         return RedirectResponse(url="/admin/", status_code=303)
 
     config = _row_to_dict(row)
-    return templates.TemplateResponse("admin/form.html", {
+    return templates.TemplateResponse(request=request, name="admin/form.html", context={
         "request": request,
         "editing": True,
         "config": config,
@@ -138,9 +138,10 @@ async def create_search(
             max_safety_pages=max_safety_pages,
             sort_order=sort_order,
             sort_rotation=rotation,
+            rotation_slot=rotation_order,
         )
     except Exception as e:
-        return templates.TemplateResponse("admin/form.html", {
+        return templates.TemplateResponse(request=request, name="admin/form.html", context={
             "request": request,
             "editing": False,
             "config": {"search_key": key, "enabled": enabled, "params": {
@@ -165,7 +166,7 @@ async def create_search(
             error = f"Search key '{key}' already exists."
         else:
             error = str(e)
-        return templates.TemplateResponse("admin/form.html", {
+        return templates.TemplateResponse(request=request, name="admin/form.html", context={
             "request": request,
             "editing": False,
             "config": {"search_key": key, "enabled": enabled, "params": params.model_dump()},
@@ -218,9 +219,10 @@ async def update_search(
             max_safety_pages=max_safety_pages,
             sort_order=sort_order,
             sort_rotation=rotation,
+            rotation_slot=rotation_order
         )
     except Exception as e:
-        return templates.TemplateResponse("admin/form.html", {
+        return templates.TemplateResponse(request=request, name="admin/form.html", context={
             "request": request,
             "editing": True,
             "config": {"search_key": search_key, "enabled": enabled, "params": {

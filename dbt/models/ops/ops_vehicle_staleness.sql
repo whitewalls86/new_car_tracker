@@ -82,6 +82,7 @@ select
     listing_state,
     current_listing_url,
     tier1_seller_customer_id,
+    customer_id,
 
     is_full_details_stale,
     is_price_stale,

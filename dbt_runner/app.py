@@ -114,7 +114,7 @@ def _record_run(started_at: datetime, finished_at: datetime, ok: bool,
 
 # Update these to match your dbt model names (you already confirmed the detail stg_ targets)
 INTENT_TO_SELECT: Dict[str, List[str]] = {
-    "after_srp": ["stg_srp_observations+"],
+    "after_srp": ["stg_srp_observations+", "stg_detail_carousel_hints+", "ops_vehicle_staleness+"],
     "after_detail": ["stg_detail_observations+", "stg_detail_carousel_hints+", "ops_vehicle_staleness+"],
 }
 
