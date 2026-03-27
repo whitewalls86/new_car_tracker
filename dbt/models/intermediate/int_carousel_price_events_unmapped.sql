@@ -6,7 +6,9 @@ with hints as (
         h.fetched_at as observed_at,
         h.listing_id,
         h.price,
-        h.body
+        h.body,
+        (string_to_array(h.body, ' '))[3] AS parsed_make,
+        (string_to_array(h.body, ' '))[4] AS parsed_model
     from {{ ref('stg_detail_carousel_hints') }} h
     where h.price is not null
       and h.price > 0
@@ -24,7 +26,7 @@ filtered as (
         h.price
     from hints h
     inner join {{ ref('int_scrape_targets') }} t
-        on h.body ilike '% ' || t.make || ' ' || t.model || '%'
+        on lower(h.parsed_make) = lower(t.make) and lower(h.parsed_model) = lower(t.model)
 ),
 
 unmapped as (

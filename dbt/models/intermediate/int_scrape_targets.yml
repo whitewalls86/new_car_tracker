@@ -1,19 +1,23 @@
-version: 1
+version: 2
 
 models:
   - name: int_scrape_targets
-    description: >
-      Active scrape targets derived from search_configs joined to the
-      scrape_targets seed for display-name resolution.  One row per
-      enabled search_key with canonical make/model display names.
+    description: "Active scrape targets derived from search_configs joined to the
+      parsed output of those searches to get canonical formating.  One row per
+      enabled search_key with canonical make/model display names."
     columns:
       - name: search_key
         data_tests:
           - unique
           - not_null
+      - name: enabled
+      - name: make_slug
+      - name: model_slug
       - name: make
+        description: "Will be the cars formatted make display name after first search completes."
         data_tests:
           - not_null
       - name: model
+        description: "Will be the cars formatted model display name after first search completes."
         data_tests:
           - not_null

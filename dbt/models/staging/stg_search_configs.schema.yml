@@ -1,0 +1,36 @@
+version: 2
+
+models:
+  - name: stg_search_configs
+    description: "Staging view for search configs. Explodes parameters into columns for easy retrieval."
+
+    columns:
+      - name: search_key #PK
+      - name: enabled
+      - name: source
+      - name: rotation_slot
+      - name: last_queued_at
+      - name: zip
+        description: "Target Zip Code for Local Scope Searches."
+        data_tests:
+          - not_null
+      - name: radius_miles
+        description: "Distance for 'Local' Searches"
+        data_tests:
+          - not_null
+      - name: max_listings
+        description: "Maximum number of listings per scrape"
+
+      - name: max_safety_pages
+        description: "Maximum number of pages to iterate through during a search"
+
+      - name: make_slug
+        description: "Cars.com formatted manufacturer make, to add to URL"
+        data_tests:
+          - not_null
+
+      - name: model_slug
+        description: "Cars.com formatted model, to add to URL"
+        data_tests:
+          - not_null
+
