@@ -1,32 +1,12 @@
-with hints as (
-    select
-        h.artifact_id,
-        h.fetched_at as observed_at,
-        h.listing_id,
-        h.price
-    from {{ ref('stg_detail_carousel_hints') }} h
-    where h.price is not null
-      and h.price > 0
-),
-
-mapped as (
-    select
-        m.vin,
-        h.listing_id,
-        h.artifact_id,
-        h.observed_at,
-        h.price
-    from hints h
-    join {{ ref('int_listing_to_vin') }} m
-      on m.listing_id = h.listing_id
-)
-
 select
-    vin,
-    listing_id,
-    artifact_id,
-    observed_at,
-    price,
+    m.vin,
+    f.listing_id,
+    f.artifact_id,
+    f.observed_at,
+    f.price,
     'detail_carousel'::text as source,
     2::int as tier
-from mapped
+from {{ ref('int_carousel_hints_filtered') }} f
+join {{ ref('int_listing_to_vin') }} m
+    on m.listing_id = f.listing_id
+where f.is_valid_target = true

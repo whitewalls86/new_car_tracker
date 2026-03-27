@@ -81,9 +81,13 @@
 | Priority | Item | Notes |
 |----------|------|-------|
 | 1 | **35** — dbt schema audit | Missing staging layers + ops consolidation |
-| 2 | **29** — n8n API + trigger button | Programmatic workflow control; trigger detail scrape from dashboard |
-| 3 | **53** — Dashboard cleanup/optimization | Pipeline Health tab is bloated; consider collapsible sections or sub-tabs |
-| 4 | **14.12** — max_safety_pages validator | No bounds check; low risk |
+| 2 | **54** — Admin improvements | Scraper logs, dbt docs, other useful admin tools |
+| 3 | **55** — Dashboard review | Audit current state, fix issues, improve UX |
+| 4 | **56** — Analytics next steps | Identify new insights, models, or views to build |
+| 5 | **29** — n8n API + trigger button | Programmatic workflow control; trigger detail scrape from dashboard |
+| 6 | **53** — Dashboard cleanup/optimization | Pipeline Health tab is bloated; consider collapsible sections or sub-tabs |
+| 7 | **57** — dbt build sub-workflow | Retry/error handling for dbt calls from n8n |
+| 8 | **14.12** — max_safety_pages validator | No bounds check; low risk |
 
 ---
 
@@ -185,6 +189,76 @@ Pipeline Health tab has 18 sections — too much scrolling. Consider:
 - Move Processor Activity and Postgres Health into a "System" sub-tab
 
 File split complete (Plan 50). Stale backlog query updated to use ops_detail_scrape_queue with claim-aware filtering. Price freshness chart updated with STALE bucket.
+
+---
+
+## Plan 54: Admin improvements
+
+**Status:** Not started
+**Priority:** High
+
+- Scraper logs visible in admin UI
+- dbt docs served/accessible
+- Other useful operational tools (search config diagnostics, run history, etc.)
+
+---
+
+## Plan 55: Dashboard review
+
+**Status:** Not started
+**Priority:** High
+
+- Audit current dashboard state across all tabs
+- Fix any broken or stale widgets
+- Improve UX and information hierarchy
+
+---
+
+## Plan 56: Analytics next steps
+
+**Status:** Not started
+**Priority:** High
+
+- Identify new insights, models, or views to build on top of existing data
+- Evaluate gaps in current analytics coverage
+- Plan next wave of dbt models and dashboard features
+
+---
+
+## Plan 57: dbt Build Sub-Workflow with Retry/Error Handling
+
+**Status:** Not started
+**Priority:** High
+
+Both "Results Processing" and "Parse Detail Pages" workflows call `POST http://dbt_runner:8080/dbt/build` with a simple retry loop: on any error → wait 30s → retry forever. No distinction between 409 (lock contention) and 500 (build failure). No max retries. No escalation.
+
+### Design
+
+Create a shared n8n sub-workflow ("DBT Build with Retry") that both callers invoke via `Execute Workflow`, passing `intent` as input.
+
+**409 (Lock contention):** Wait 60s, retry up to 5 times (~5 min total). Lock stale timeout is 30 min, so if genuinely stuck, the stale-lock steal will eventually clear it.
+
+**500 (Build failure):** Retry once with `full_refresh: true` (handles missing table / stale incremental state). If that also fails, stop — don't loop.
+
+**Other errors:** Return failure immediately.
+
+### Flow
+```
+[Trigger] → [Initialize] (retry_count=0, max=5)
+  → [Call dbt_runner]
+      ├─ Success → [Return Success]
+      └─ Error → [Switch on status code]
+          ├─ 409 → retry with 60s wait (up to 5x)
+          ├─ 500 → retry once with full_refresh=true
+          └─ Other → return failure
+```
+
+### Files
+| File | Action |
+|------|--------|
+| `n8n/workflows/DBT Build with Retry.json` | Create — new sub-workflow |
+| `n8n/workflows/Results Processing.json` | Modify — replace dbt retry loop with Execute Workflow call |
+| `n8n/workflows/Parse Detail Pages.json` | Modify — same replacement |
 
 ---
 
