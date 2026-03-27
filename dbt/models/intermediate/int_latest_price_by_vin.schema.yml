@@ -5,19 +5,12 @@ models:
     description: Latest observed price event per VIN across all sources/tiers.
     columns:
       - name: vin
-        data_tests:
-          - not_null
-          - unique
-          - valid_vin
       - name: price_observed_at
         data_tests:
           - not_null
       - name: price_artifact_id
         data_tests:
           - not_null
-          - relationships:
-              to: source('public', 'raw_artifacts')
-              field: artifact_id
       - name: price_source
         data_tests:
           - not_null

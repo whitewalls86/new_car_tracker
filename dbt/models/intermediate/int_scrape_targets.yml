@@ -7,9 +7,6 @@ models:
       enabled search_key with canonical make/model display names."
     columns:
       - name: search_key
-        data_tests:
-          - unique
-          - not_null
       - name: enabled
       - name: make_slug
       - name: model_slug

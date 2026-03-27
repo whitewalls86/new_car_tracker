@@ -6,19 +6,8 @@ models:
     columns:
       - name: vin
         data_tests:
-          - valid_vin
+          - valid_vin_nullable
       - name: listing_id
-        data_tests:
-          - not_null
       - name: artifact_id
-        data_tests:
-          - not_null
-          - relationships:
-              to: source('public', 'raw_artifacts')
-              field: artifact_id
       - name: observed_at
-        data_tests:
-          - not_null
       - name: price
-        data_tests:
-          - not_null

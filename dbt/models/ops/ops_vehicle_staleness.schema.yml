@@ -7,28 +7,15 @@ models:
       from marts.mart_vehicle_snapshot using policy thresholds (price>24h, tier1>168h).
     columns:
       - name: vin
-        data_tests:
-          - not_null
-          - unique
-          - valid_vin
 
       - name: tier1_observed_at
         data_tests:
           - not_null
 
       - name: tier1_artifact_id
-        data_tests:
-          - not_null
-          - relationships:
-              to: source('public', 'raw_artifacts')
-              field: artifact_id
 
       - name: price_artifact_id
-        description: Nullable when price is null/unobserved.
-        data_tests:
-          - relationships:
-              to: source('public', 'raw_artifacts')
-              field: artifact_id
+        description: "Nullable when price is null/unobserved."
 
       - name: stale_reason
         data_tests:

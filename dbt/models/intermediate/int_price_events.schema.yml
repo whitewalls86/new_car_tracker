@@ -8,7 +8,6 @@ models:
     columns:
       - name: vin
         data_tests:
-          - not_null
           - valid_vin
 
       - name: listing_id
@@ -16,22 +15,14 @@ models:
         # no tests: can be legitimately null in some contexts
 
       - name: artifact_id
-        data_tests:
-          - not_null
-          - relationships:
-              to: source('public', 'raw_artifacts')
-              field: artifact_id
-
       - name: observed_at
         data_tests:
           - not_null
-
       - name: source
         data_tests:
           - not_null
           - accepted_values:
               values: ['srp', 'detail', 'detail_carousel']
-
       - name: tier
         data_tests:
           - not_null

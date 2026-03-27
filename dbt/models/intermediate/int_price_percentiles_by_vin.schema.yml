@@ -6,7 +6,9 @@ models:
 
     columns:
       - name: vin
-        data_tests: [unique]
+        data_tests:
+          - valid_vin
+          - unique
 
       - name: national_price_percentile
         description: "National Rank by Make/Model/Trim"

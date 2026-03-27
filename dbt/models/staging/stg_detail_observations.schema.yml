@@ -15,8 +15,6 @@ models:
         data_tests:
           - valid_vin_nullable
 
-      - name: artifact_id
-      - name: fetched_at
       - name: listing_state
       - name: make
       - name: model

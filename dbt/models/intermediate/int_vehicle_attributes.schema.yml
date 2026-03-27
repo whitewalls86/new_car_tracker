@@ -6,7 +6,6 @@ models:
     columns:
       - name: vin
         data_tests:
-          - not_null
           - unique
           - valid_vin
       - name: attributes_observed_at

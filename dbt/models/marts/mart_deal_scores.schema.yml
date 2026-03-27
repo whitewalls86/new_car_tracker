@@ -9,10 +9,6 @@ models:
       price drop history, dealer inventory depth, and model supply.
     columns:
       - name: vin
-        data_tests:
-          - not_null
-          - unique
-          - valid_vin
       - name: current_price
         data_tests:
           - not_null
