@@ -46,6 +46,7 @@ services:
     restart: unless-stopped
     volumes:
       - cartracker_raw:/data/raw
+      - scraper_logs:/usr/app/logs
     environment:
       DATABASE_URL: postgresql://cartracker:${POSTGRES_PASSWORD}@postgres:5432/cartracker
       DBT_RUNNER_URL: http://dbt_runner:8080
@@ -111,6 +112,7 @@ services:
       - postgres
     volumes:
       - ./target:/usr/app/target
+      - dbt_runner_logs:/usr/app/logs
 
 
 
@@ -158,6 +160,10 @@ volumes:
     name: n8n_data
 
   pgadmin_data:
+
+  scraper_logs:
+
+  dbt_runner_logs:
 
 networks:
   cartracker-net:

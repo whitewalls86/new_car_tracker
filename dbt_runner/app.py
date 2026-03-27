@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+from logging.handlers import RotatingFileHandler
 import re
 import shlex
 import subprocess
@@ -13,6 +14,13 @@ from fastapi import FastAPI, Body, HTTPException
 from fastapi.staticfiles import StaticFiles
 
 app = FastAPI()
+_LOG_PATH = "/usr/app/logs/app.log"
+os.makedirs(os.path.dirname(_LOG_PATH), exist_ok=True)
+_log_handler = RotatingFileHandler(_LOG_PATH, maxBytes=5_000_000, backupCount=3)
+_log_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+logging.getLogger().addHandler(_log_handler)
+logging.getLogger().setLevel(logging.INFO)
+
 logger = logging.getLogger("dbt_runner")
 
 DB_KWARGS = {
@@ -186,6 +194,17 @@ def _cap(s: str, limit: int = 20000) -> str:
 @app.get("/health")
 def health() -> Dict[str, Any]:
     return {"ok": True}
+
+
+@app.get("/logs")
+def get_logs(lines: int = 200) -> Dict[str, Any]:
+    """Return the last N lines of the application log file."""
+    try:
+        with open(_LOG_PATH) as f:
+            all_lines = f.readlines()
+        return {"lines": all_lines[-lines:]}
+    except FileNotFoundError:
+        return {"lines": []}
 
 
 @app.get("/dbt/lock")

@@ -255,6 +255,35 @@ async def dbt_docs_generate(request: Request):
 
 
 # ---------------------------------------------------------------------------
+# Log viewer
+# ---------------------------------------------------------------------------
+
+@router.get("/logs", response_class=HTMLResponse)
+async def view_logs(request: Request, lines: int = 200):
+    scraper_lines: list[str] = []
+    dbt_lines: list[str] = []
+
+    try:
+        with open("/usr/app/logs/app.log") as f:
+            scraper_lines = f.readlines()[-lines:]
+    except FileNotFoundError:
+        pass
+
+    try:
+        resp = http_requests.get(f"{DBT_RUNNER_URL}/logs?lines={lines}", timeout=5)
+        dbt_lines = resp.json().get("lines", [])
+    except Exception:
+        pass
+
+    return templates.TemplateResponse(request=request, name="admin/logs.html", context={
+        "request": request,
+        "scraper_lines": scraper_lines,
+        "dbt_lines": dbt_lines,
+        "lines": lines,
+    })
+
+
+# ---------------------------------------------------------------------------
 # Edit config form
 # ---------------------------------------------------------------------------
 

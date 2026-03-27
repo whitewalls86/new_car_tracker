@@ -1,0 +1,103 @@
+{% extends "admin/base.html" %}
+{% block title %}Logs — Cartracker Admin{% endblock %}
+{% block content %}
+<style>
+    .log-toolbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 0.75rem;
+    }
+    .log-toolbar h2 { margin: 0; }
+    .log-box {
+        background: #1e1e1e;
+        color: #d4d4d4;
+        font-family: monospace;
+        font-size: 0.78rem;
+        line-height: 1.5;
+        padding: 1rem;
+        border-radius: 6px;
+        overflow-x: auto;
+        overflow-y: auto;
+        max-height: 65vh;
+        white-space: pre;
+    }
+    .log-box .log-error   { color: #f48771; }
+    .log-box .log-warning { color: #dcdcaa; }
+    .log-box .log-info    { color: #d4d4d4; }
+    .log-box .log-debug   { color: #888; }
+    .log-empty { color: #888; font-style: italic; }
+    .tab-nav { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+    .tab-nav button {
+        background: none;
+        border: 1px solid var(--pico-muted-border-color);
+        border-radius: 4px;
+        padding: 0.3rem 1rem;
+        cursor: pointer;
+        font-size: 0.9rem;
+    }
+    .tab-nav button.active {
+        background: var(--pico-primary);
+        color: #fff;
+        border-color: var(--pico-primary);
+    }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+</style>
+
+<div class="log-toolbar">
+    <h2>Logs</h2>
+    <form method="get" style="display:flex;gap:0.5rem;align-items:center;margin:0;">
+        <label style="margin:0;font-size:0.9rem;">Last</label>
+        <select name="lines" style="width:auto;margin:0;padding:0.25rem 0.5rem;" onchange="this.form.submit()">
+            {% for n in [100, 200, 500, 1000] %}
+            <option value="{{ n }}" {% if n == lines %}selected{% endif %}>{{ n }} lines</option>
+            {% endfor %}
+        </select>
+    </form>
+</div>
+
+<div class="tab-nav">
+    <button class="active" onclick="switchTab('scraper', this)">Scraper</button>
+    <button onclick="switchTab('dbt', this)">dbt Runner</button>
+</div>
+
+<div id="tab-scraper" class="tab-panel active">
+    <div class="log-box" id="scraper-log">
+        {% if scraper_lines %}
+            {% for line in scraper_lines %}<span class="{{ 'log-error' if ' ERROR ' in line else ('log-warning' if ' WARNING ' in line else ('log-debug' if ' DEBUG ' in line else 'log-info')) }}">{{ line | e }}</span>{% endfor %}
+        {% else %}
+            <span class="log-empty">No log entries yet. Logs appear here after the first scrape job runs.</span>
+        {% endif %}
+    </div>
+</div>
+
+<div id="tab-dbt" class="tab-panel">
+    <div class="log-box" id="dbt-log">
+        {% if dbt_lines %}
+            {% for line in dbt_lines %}<span class="{{ 'log-error' if ' ERROR ' in line else ('log-warning' if ' WARNING ' in line else ('log-debug' if ' DEBUG ' in line else 'log-info')) }}">{{ line | e }}</span>{% endfor %}
+        {% else %}
+            <span class="log-empty">No log entries yet — or dbt Runner is unreachable.</span>
+        {% endif %}
+    </div>
+</div>
+
+<script>
+function switchTab(name, btn) {
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    document.querySelectorAll('.tab-nav button').forEach(b => b.classList.remove('active'));
+    document.getElementById('tab-' + name).classList.add('active');
+    btn.classList.add('active');
+    // Scroll to bottom of newly visible log box
+    const box = document.getElementById(name + '-log');
+    box.scrollTop = box.scrollHeight;
+}
+// Auto-scroll both log boxes to bottom on load
+window.addEventListener('load', () => {
+    ['scraper-log', 'dbt-log'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.scrollTop = el.scrollHeight;
+    });
+});
+</script>
+{% endblock %}
