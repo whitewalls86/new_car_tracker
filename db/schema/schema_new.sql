@@ -713,6 +713,21 @@ ON CONFLICT (id) DO NOTHING;
 
 
 --
+-- Name: dbt_intents; Type: TABLE; Schema: public; Owner: -
+-- Stores DB-backed dbt build intents, replacing hardcoded INTENT_TO_SELECT in dbt_runner.
+--
+
+CREATE TABLE public.dbt_intents (
+    intent_name text NOT NULL,
+    select_args text[] NOT NULL,
+    updated_at timestamp with time zone NOT NULL DEFAULT now()
+);
+
+ALTER TABLE ONLY public.dbt_intents
+    ADD CONSTRAINT dbt_intents_pkey PRIMARY KEY (intent_name);
+
+
+--
 -- Name: detail_scrape_claims; Type: TABLE; Schema: public; Owner: -
 -- Tracks which listing_ids are currently being scraped by a detail run.
 -- A claim is "active" while its associated run has status='running'.
