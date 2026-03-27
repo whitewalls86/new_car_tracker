@@ -5,7 +5,7 @@
 <h2>Search Configurations</h2>
 
 {% if not configs %}
-<p>No search configs found. <a href="/admin/new">Create one</a>.</p>
+<p>No search configs found. <a href="/admin/searches/new">Create one</a>.</p>
 {% endif %}
 
 {% for c in configs %}
@@ -34,15 +34,15 @@
             </small>
         </div>
         <div class="config-actions">
-            <form method="get" action="/admin/{{ c.search_key }}/edit">
+            <form method="get" action="/admin/searches/{{ c.search_key }}/edit">
                 <button type="submit" class="btn-sm outline">Edit</button>
             </form>
-            <form method="post" action="/admin/{{ c.search_key }}/toggle">
+            <form method="post" action="/admin/searches/{{ c.search_key }}/toggle">
                 <button type="submit" class="btn-sm outline">
                     {{ "Disable" if c.enabled else "Enable" }}
                 </button>
             </form>
-            <form method="post" action="/admin/{{ c.search_key }}/delete"
+            <form method="post" action="/admin/searches/{{ c.search_key }}/delete"
                   onsubmit="return confirm('Delete {{ c.search_key }}? This cannot be undone.')">
                 <button type="submit" class="btn-sm btn-danger">Delete</button>
             </form>

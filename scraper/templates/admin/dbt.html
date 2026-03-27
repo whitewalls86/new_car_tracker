@@ -1,0 +1,210 @@
+{% extends "admin/base.html" %}
+{% block title %}dbt Builds — Cartracker Admin{% endblock %}
+
+{% block content %}
+<h2>dbt Builds</h2>
+
+{# ── Lock Status ─────────────────────────────────────────────────── #}
+<article class="config-card" style="margin-bottom: 1rem;">
+    <div class="config-meta">
+        <div>
+            <strong>Lock:</strong>
+            {% if lock.locked %}
+                <span class="badge badge-running">Locked</span>
+                {% if lock.locked_by %}&nbsp;<small>by {{ lock.locked_by }}</small>{% endif %}
+                {% if lock.locked_at %}&nbsp;<small>since {{ lock.locked_at }}</small>{% endif %}
+            {% else %}
+                <span class="badge badge-active">Unlocked</span>
+            {% endif %}
+        </div>
+        <div style="text-align: right;">
+            <a href="http://localhost:8501" target="_blank" style="font-size: 0.85rem;">
+                View full build history → Dashboard
+            </a>
+        </div>
+    </div>
+</article>
+
+{# ── Manual Build Trigger ────────────────────────────────────────── #}
+<article class="config-card" style="margin-bottom: 1rem;">
+    <h4 style="margin-top: 0;">Trigger Build</h4>
+
+    {% if trigger_result is not none %}
+    <div class="flash-{{ 'ok' if trigger_ok else 'error' }}"
+         style="margin-bottom: 1rem; padding: 0.75rem 1rem; border-radius: 8px; border: 1px solid {{ '#2ecc71' if trigger_ok else '#e74c3c' }}; background: {{ '#f0fff4' if trigger_ok else '#fdecea' }};">
+        <strong>{{ '✓ Build succeeded' if trigger_ok else '✗ Build failed' }}</strong>
+        {% if trigger_result.get('returncode') is not none %}
+            &nbsp;<small>rc={{ trigger_result.returncode }}</small>
+        {% endif %}
+        {% if trigger_result.get('cmd') %}
+            <br><code style="font-size: 0.8rem;">{{ trigger_result.cmd }}</code>
+        {% endif %}
+        {% if trigger_result.get('error') %}
+            <br><span style="color: #e74c3c;">{{ trigger_result.error }}</span>
+        {% endif %}
+        {% if trigger_result.get('stdout') %}
+            <pre style="margin-top: 0.5rem; max-height: 300px; overflow-y: auto; font-size: 0.75rem; background: #f8f8f8; padding: 0.5rem; border-radius: 4px;">{{ trigger_result.stdout }}</pre>
+        {% endif %}
+        {% if trigger_result.get('stderr') %}
+            <pre style="margin-top: 0.25rem; max-height: 200px; overflow-y: auto; font-size: 0.75rem; background: #fff8f8; padding: 0.5rem; border-radius: 4px; color: #c0392b;">{{ trigger_result.stderr }}</pre>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    <form method="post" action="/admin/dbt/trigger">
+        {% if not intents %}
+        <p style="color: var(--pico-muted-color); font-size: 0.85rem;">
+            ⚠ Could not reach dbt_runner — intent dropdown unavailable. Use select override below.
+        </p>
+        {% endif %}
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+            <label>
+                Intent
+                <select name="intent" {% if lock.locked or not intents %}disabled title="{{ 'dbt build in progress' if lock.locked else 'dbt_runner unavailable' }}"{% endif %}>
+                    {% for intent_name, intent_info in intents.items() %}
+                    <option value="{{ intent_name }}">
+                        {{ intent_name }} — {{ intent_info.select | join(", ") }}
+                    </option>
+                    {% endfor %}
+                    {% if not intents %}
+                    <option value="">— unavailable —</option>
+                    {% endif %}
+                </select>
+            </label>
+            <label>
+                Select override
+                <textarea name="select_override" rows="2"
+                          placeholder="Space-separated dbt selectors (overrides intent if filled)"
+                          {% if lock.locked %}disabled title="dbt build in progress"{% endif %}
+                          style="font-family: monospace; font-size: 0.85rem;"></textarea>
+            </label>
+        </div>
+        <div style="display: flex; gap: 1.5rem; margin: 0.5rem 0 1rem;">
+            <label style="display: flex; align-items: center; gap: 0.5rem;">
+                <input type="checkbox" name="full_refresh" value="true"
+                       {% if lock.locked %}disabled{% endif %}
+                       style="margin: 0;">
+                Full refresh
+            </label>
+            <label style="display: flex; align-items: center; gap: 0.5rem;">
+                <input type="checkbox" name="fail_fast" value="true" checked
+                       {% if lock.locked %}disabled{% endif %}
+                       style="margin: 0;">
+                Fail fast
+            </label>
+        </div>
+        <button type="submit"
+                {% if lock.locked %}disabled title="dbt build in progress — wait for lock to release"{% endif %}>
+            Run Build
+        </button>
+    </form>
+</article>
+
+{# ── Intent Management ──────────────────────────────────────────── #}
+<article class="config-card" style="margin-bottom: 1rem;">
+    <h4 style="margin-top: 0;">Intents</h4>
+    <p style="font-size: 0.85rem; color: var(--pico-muted-color); margin-bottom: 0.75rem;">
+        Each intent maps a name to a set of dbt selectors. Used by n8n and the trigger form above.
+    </p>
+
+    {% if intents %}
+    <table style="margin-bottom: 1rem;">
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Selectors</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for name, info in intents.items() %}
+        <tr>
+            <td><code>{{ name }}</code></td>
+            <td style="font-size: 0.85rem;"><code>{{ info.select | join("  ") }}</code></td>
+            <td>
+                <button type="button" class="btn-sm outline"
+                        onclick="fillEditForm('{{ name }}', '{{ info.select | join(' ') }}')">
+                    Edit
+                </button>
+                <form method="post" action="/admin/dbt/intents/{{ name }}/delete"
+                      style="display:inline;"
+                      onsubmit="return confirm('Delete intent {{ name }}?')">
+                    <button type="submit" class="btn-sm btn-danger">Delete</button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p style="font-size: 0.85rem; color: var(--pico-muted-color);">No intents found.</p>
+    {% endif %}
+
+    <details>
+        <summary style="cursor: pointer; font-size: 0.9rem; font-weight: 600;" id="intent-form-summary">
+            Add / Edit Intent
+        </summary>
+        <form method="post" action="/admin/dbt/intents" style="margin-top: 0.75rem;">
+            <div style="display: grid; grid-template-columns: 1fr 2fr; gap: 1rem; align-items: end;">
+                <label>
+                    Intent name
+                    <input type="text" name="intent_name" id="intent-name-input"
+                           placeholder="e.g. after_srp" required
+                           style="font-family: monospace;">
+                </label>
+                <label>
+                    Selectors <small style="color: var(--pico-muted-color);">(space-separated)</small>
+                    <input type="text" name="select_args" id="intent-selectors-input"
+                           placeholder="stg_srp_observations+ ops_vehicle_staleness+"
+                           required style="font-family: monospace; font-size: 0.85rem;">
+                </label>
+            </div>
+            <button type="submit" style="margin-top: 0.5rem;">Save Intent</button>
+        </form>
+    </details>
+</article>
+
+<script>
+function fillEditForm(name, selectors) {
+    document.getElementById('intent-name-input').value = name;
+    document.getElementById('intent-selectors-input').value = selectors;
+    document.getElementById('intent-form-summary').parentElement.open = true;
+    document.getElementById('intent-form-summary').scrollIntoView({behavior: 'smooth'});
+}
+</script>
+
+{# ── dbt Docs ────────────────────────────────────────────────────── #}
+<article class="config-card">
+    <h4 style="margin-top: 0;">dbt Docs</h4>
+
+    {% if docs_result is not none %}
+    <div style="margin-bottom: 1rem; padding: 0.75rem 1rem; border-radius: 8px; border: 1px solid {{ '#2ecc71' if docs_ok else '#e74c3c' }}; background: {{ '#f0fff4' if docs_ok else '#fdecea' }};">
+        <strong>{{ '✓ Docs generated' if docs_ok else '✗ Docs generation failed' }}</strong>
+        {% if docs_result.get('error') %}
+            <br><span style="color: #e74c3c;">{{ docs_result.error }}</span>
+        {% endif %}
+        {% if docs_result.get('stdout') %}
+            <pre style="margin-top: 0.5rem; max-height: 200px; overflow-y: auto; font-size: 0.75rem; background: #f8f8f8; padding: 0.5rem; border-radius: 4px;">{{ docs_result.stdout }}</pre>
+        {% endif %}
+        {% if docs_result.get('stderr') %}
+            <pre style="margin-top: 0.25rem; max-height: 150px; overflow-y: auto; font-size: 0.75rem; background: #fff8f8; padding: 0.5rem; border-radius: 4px; color: #c0392b;">{{ docs_result.stderr }}</pre>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    <div style="display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;">
+        <form method="post" action="/admin/dbt/docs/generate" style="margin: 0;">
+            <button type="submit" class="outline">Generate Docs</button>
+        </form>
+        {% if docs_available %}
+        <a href="{{ docs_url }}" target="_blank" role="button" class="outline">
+            View Docs →
+        </a>
+        {% else %}
+        <span style="font-size: 0.85rem; color: var(--pico-muted-color);">
+            No docs generated yet — click Generate Docs first.
+        </span>
+        {% endif %}
+    </div>
+</article>
+{% endblock %}

@@ -3,6 +3,7 @@ from fastapi import FastAPI, Body, HTTPException
 from fastapi.staticfiles import StaticFiles
 from typing import Any, Dict, List, Optional
 import json
+import logging
 import os
 import uuid
 import threading
@@ -13,6 +14,8 @@ from processors.scrape_detail import (scrape_detail_dummy, scrape_detail_fetch)
 from processors.parse_detail_page import parse_cars_detail_page_html_v1
 from routers.admin import router as admin_router
 from db import get_pool, close_pool
+
+logger = logging.getLogger("scraper")
 
 # ---------------------------------------------------------------------------
 # In-memory job store for async SRP scraping
@@ -46,7 +49,11 @@ else:
 def _fetch_known_vins(search_key: str, scope: str) -> List[str]:
     """Fetch all VINs we have ever seen across all searches and sources.
     VINs are globally unique, so no make/model/scope filtering is needed.
-    Uses psycopg2 (sync) so it works in background threads."""
+    Uses psycopg2 (sync) so it works in background threads.
+
+    Architectural note: this is a justified exception to the principle that the
+    scraper should not read from the analytics schema. The alternative — passing
+    27k+ VINs over HTTP from n8n — is impractical."""
     import psycopg2
     conn = None
     try:
@@ -54,9 +61,8 @@ def _fetch_known_vins(search_key: str, scope: str) -> List[str]:
         with conn.cursor() as cur:
             cur.execute("SELECT vin FROM analytics.int_vehicle_attributes")
             return [row[0] for row in cur.fetchall()]
-    except Exception as e:
-        import logging
-        logging.getLogger("uvicorn").warning("_fetch_known_vins failed: %s", e)
+    except Exception:
+        logger.warning("_fetch_known_vins failed — scraping without breakpoint VINs", exc_info=True)
         return []  # degrade gracefully — scrape without breakpoint
     finally:
         if conn is not None:
@@ -86,6 +92,7 @@ def _run_scrape_job(job_id: str, run_id: str, search_key: str, scope: str, paylo
             _jobs[job_id]["artifacts"] = artifacts
             _jobs[job_id]["artifact_count"] = len(artifacts)
     except Exception as e:
+        logger.exception("Scrape job %s failed (run_id=%s, search_key=%s, scope=%s)", job_id, run_id, search_key, scope)
         with _jobs_lock:
             _jobs[job_id]["status"] = "failed"
             _jobs[job_id]["error"] = str(e)
@@ -93,30 +100,11 @@ def _run_scrape_job(job_id: str, run_id: str, search_key: str, scope: str, paylo
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: initialize DB pool
-    pool = await get_pool()
-
-    # Recover orphaned runs/jobs from a previous container crash.
-    # Any run/job still 'running' or 'queued' at startup was lost in memory.
-    async with pool.acquire() as conn:
-        orphaned_jobs = await conn.execute("""
-            UPDATE scrape_jobs
-            SET status = 'failed', error = 'Orphaned by container restart'
-            WHERE status IN ('running', 'queued')
-        """)
-        orphaned_runs = await conn.execute("""
-            UPDATE runs
-            SET status = 'failed', finished_at = now(),
-                notes = 'Orphaned by container restart'
-            WHERE status = 'running'
-              AND trigger IN ('search scrape', 'detail scrape')
-        """)
-    import logging
-    logging.getLogger("uvicorn").info(
-        "Startup recovery: %s orphaned jobs, %s orphaned runs marked failed",
-        orphaned_jobs, orphaned_runs,
-    )
-
+    # Startup: initialize DB pool.
+    # Orphan recovery (marking stale runs/jobs as failed) is handled by the
+    # n8n Orphan Checker workflow which runs every 5 minutes — no startup
+    # recovery needed here.
+    await get_pool()
     yield
     # Shutdown: close DB pool
     await close_pool()
@@ -206,6 +194,10 @@ async def advance_search_rotation(
 ) -> Dict[str, Any]:
     """
     Atomically claims the next rotation slot due for scraping.
+
+    Architectural note: this is a justified exception to the principle that n8n
+    owns all orchestration logic. The slot-claiming transaction requires an
+    atomic DB read-modify-write that cannot be expressed safely in n8n HTTP nodes.
 
     Two guards:
     1. min_idle_minutes (default 1439 = 23h59m): each slot must wait this long
@@ -406,6 +398,7 @@ def process_results_pages(payload: dict = Body(...)) -> Dict[str, Any]:
                 "listings": [],
             }
     except Exception as e:
+        logger.exception("Results page parsing failed (artifact_id=%s, processor=%s, filepath=%s)", artifact_id, processor, filepath)
         # If you prefer transient behavior, change status to "retry"
         return {
             "processor": processor,
@@ -547,6 +540,7 @@ def process_detail_pages(payload: dict = Body(...)) -> Dict[str, Any]:
                 "carousel": [],
             }
     except Exception as e:
+        logger.exception("Detail page parsing failed (artifact_id=%s, processor=%s, filepath=%s)", artifact_id, processor, filepath)
         return {
             "processor": processor,
             "artifact_id": artifact_id,
