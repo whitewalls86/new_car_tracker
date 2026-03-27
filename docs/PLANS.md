@@ -104,7 +104,7 @@
 **Priority:** High
 **Health Score:** 72/100 (B-)
 
-### 35.1 — Create `stg_raw_artifacts` view
+### 35.1 — Create `stg_raw_artifacts` view **[DONE]**
 
 5 intermediate/mart models join directly to `raw_artifacts` for `search_scope` and `search_key`. This is the single biggest staging gap.
 
@@ -118,35 +118,35 @@
 
 Create a thin view: `artifact_id`, `run_id`, `search_key`, `search_scope`, `fetched_at`, `http_status`. Refactor all 5 consumers.
 
-### 35.2 — Create `stg_dealers` view
+### 35.2 — Create `stg_dealers` view **[DONE]**
 
 `dealers` accessed directly by `int_dealer_inventory` and `mart_deal_scores`. Create thin view: `customer_id`, `name`, `city`, `state`, `phone`, `rating`.
 
-### 35.3 — `stg_detail_carousel_hints` → incremental
+### 35.3 — `stg_detail_carousel_hints` → incremental **[DONE]**
 
 The other 2 staging models are incremental, but this one is a plain view. Referenced by 3 downstream models — every build re-scans the full table. Has a natural `id` column for incremental cutoff.
 
-### 35.4 — Evaluate + likely delete `int_latest_dealer_name_by_vin`
+### 35.4 — Evaluate + likely delete `int_latest_dealer_name_by_vin` **[DONE]**
 
 Interim model from before Plan 25.2. Comment says "interim until Plan 25.2 bridges UUID<->numeric dealer ID" — Plan 25.2 is done. `mart_deal_scores` already joins `dealers` via `customer_id`. Verify how many VINs rely on the `ldn.dealer_name` fallback; if negligible, delete.
 
-### 35.5 — `int_model_price_benchmarks` → table
+### 35.5 — `int_model_price_benchmarks` → table **[DONE]**
 
 Currently a view computing `percentile_cont` across all national SRP observations. Expensive window function re-runs every time `mart_deal_scores` builds. Convert to table.
 
-### 35.6 — Add .yml for undocumented models
+### 35.6 — Add .yml for undocumented models **[DONE]**
 
 Missing schema files: `int_price_percentiles_by_vin`. (If 35.4 deletes `int_latest_dealer_name_by_vin`, that gap closes too.)
 
-### 35.7 — Add source descriptions to `sources.yml`
+### 35.7 — Add source descriptions to `sources.yml` **[DONE]**
 
 `sources.yml` has 8 tables with zero descriptions or tests. Add descriptions for each source table.
 
-### 35.8 — Dashboard: `detail_observations` raw access in inventory.py
+### 35.8 — Dashboard: `detail_observations` raw access in inventory.py **[DONE]**
 
 The "Vehicles Unlisted" chart queries raw `detail_observations` for `listing_state = 'unlisted'`. Could be served by `stg_detail_observations` (which already has `listing_state`) or a small `int_unlisted_events` model.
 
-### 35.9 — Dashboard: pre-aggregate market trends
+### 35.9 — Dashboard: pre-aggregate market trends [REJECTED]
 
 Two market_trends.py queries do a 3-way join (`mart_vehicle_snapshot` + `int_price_events` + `int_vehicle_attributes`) with 90-day window and weekly `percentile_cont`. A `mart_price_trends` model (weekly median price by make/model) would simplify these.
 

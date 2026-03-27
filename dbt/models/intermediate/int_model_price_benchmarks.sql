@@ -1,5 +1,10 @@
 -- National price benchmarks by make/model/trim.
 -- Uses active listings only (seen in last 3 days) for current market snapshot.
+{{
+  config(
+    materialized = 'table'
+  )
+ }}
 
 with active_national as (
     select
@@ -14,7 +19,7 @@ with active_national as (
             order by s.fetched_at desc, s.artifact_id desc
         ) as rn
     from {{ ref('stg_srp_observations') }} s
-    inner join {{ source('public', 'raw_artifacts') }} ra
+    inner join {{ ref('stg_raw_artifacts') }} ra
         on ra.artifact_id = s.artifact_id
     where s.vin17 is not null
       and s.price is not null

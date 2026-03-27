@@ -1,7 +1,16 @@
 cartracker:
-  target: dev
+  target: prod
   outputs:
     dev:
+      type: postgres
+      host: postgres
+      port: 5432
+      user: cartracker
+      password: "{{ env_var('POSTGRES_PASSWORD') }}"
+      dbname: cartracker
+      schema: analytics_dev
+      threads: 2
+    prod:
       type: postgres
       host: postgres
       port: 5432

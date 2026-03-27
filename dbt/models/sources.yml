@@ -2,13 +2,419 @@ version: 2
 
 sources:
   - name: public
+    description: "Raw Cartracker scrape data and operational tables"
     schema: public
+
     tables:
-      - name: srp_observations
-      - name: artifact_processing
       - name: raw_artifacts
+        description: "Metadata for each HTTP request during scraping (SRP pages, detail pages, carousel hints). One row per artifact."
+        config:
+          loaded_at_field: fetched_at
+          freshness:
+            warn_after: { count: 6, period: hour }
+            error_after: { count: 24, period: hour }
+        columns:
+          - name: artifact_id
+            description: "Unique identifier for this artifact"
+            data_tests:
+              - not_null
+              - unique
+
+          - name: run_id
+            description: "Foreign key to runs table"
+            data_tests:
+              - not_null
+              - relationships:
+                  to: source('public', 'runs')
+                  field: run_id
+
+          - name: search_key
+            description: "Search query identifier used for this scrape"
+            data_tests:
+              - not_null
+
+          - name: search_scope
+            description: "Scope of search (e.g., 'national', 'local', ZIP code)"
+            data_tests:
+              - not_null
+              - accepted_values:
+                  values: ['local', 'national', 'detail']
+
+          - name: fetched_at
+            description: "Timestamp when the artifact was fetched"
+            data_tests:
+              - not_null
+
+          - name: source
+            description: "Source of the artifact (e.g., 'cars.com')"
+          - name: artifact_type
+            description: "Type of artifact (e.g., 'srp', 'detail', 'carousel')"
+          - name: url
+            description: "Full URL of the request"
+          - name: http_status
+            description: "HTTP status code returned (200, 403, 500, etc.)"
+          - name: content_type
+            description: "Content-Type header of response"
+          - name: content_bytes
+            description: "Size of the response body in bytes"
+          - name: sha256
+            description: "SHA256 hash of the response content for deduplication"
+          - name: filepath
+            description: "Path where the artifact is stored"
+          - name: error
+            description: "Error message if the fetch failed"
+          - name: page_num
+            description: "Page number for SRP results (1-indexed)"
+          - name: deleted_at
+            description: "Timestamp when artifact was soft-deleted by cleanup pipeline"
+
+
+      - name: srp_observations
+        description: "Parsed search results from SRP (Search Results Page) scrapes. One row per listing observed on a search page."
+        config:
+          loaded_at_field: fetched_at
+          freshness:
+            warn_after: { count: 6, period: hour }
+            error_after: { count: 24, period: hour }
+        columns:
+          - name: id
+            description: "Row identifier"
+            data_tests:
+              - not_null
+              - unique
+
+          - name: artifact_id
+            description: "Foreign key to raw_artifacts"
+            data_tests:
+              - not_null
+              - relationships:
+                  to: source('public', 'raw_artifacts')
+                  field: artifact_id
+
+          - name: run_id
+            description: "Foreign key to runs table"
+            data_tests:
+              - not_null
+              - relationships:
+                  to: source('public', 'runs')
+                  field: run_id
+
+          - name: fetched_at
+            description: "Timestamp when this listing was observed"
+            data_tests:
+              - not_null
+
+          - name: listing_id
+            description: "Unique identifier for this Cars.com listing"
+            data_tests:
+              - not_null
+
+          - name: vin
+            description: "Vehicle Identification Number"
+            data_tests:
+              - not_null
+
+          - name: created_at
+            description: "Timestamp when row was inserted"
+            data_tests:
+              - not_null
+
+          - name: seller_customer_id
+            description: "Cars.com customer/dealer ID"
+          - name: price
+            description: "Asking price in cents"
+          - name: msrp
+            description: "Manufacturer's Suggested Retail Price in cents"
+          - name: mileage
+            description: "Odometer reading in miles"
+          - name: year
+            description: "Model year"
+          - name: make
+            description: "Vehicle manufacturer"
+          - name: model
+            description: "Vehicle model name"
+          - name: "trim"
+            description: "Trim level"
+          - name: stock_type
+            description: "Stock type (e.g., 'New', 'Used', 'Certified Pre-Owned')"
+          - name: fuel_type
+            description: "Primary fuel type"
+          - name: body_style
+            description: "Body style (e.g., 'Sedan', 'SUV', 'Truck')"
+          - name: financing_type
+            description: "Financing options offered"
+          - name: seller_zip
+            description: "Dealer's ZIP code"
+          - name: page_number
+            description: "Page number in SRP results (1-indexed)"
+          - name: position_on_page
+            description: "Position on page (1-indexed)"
+          - name: trid
+            description: "Internal tracking ID from Cars.com"
+          - name: isa_context
+            description: "ISA context from Cars.com for carousel hints"
+          - name: canonical_detail_url
+            description: "Full URL to the detail page for this listing"
+          - name: raw_vehicle_json
+            description: "Full JSON vehicle data from Cars.com API"
+
+
+      - name: artifact_processing
+        description: "Processing pipeline status for each artifact. Tracks which processors have processed each artifact and their status."
+        columns:
+          - name: artifact_id
+            description: "Foreign key to raw_artifacts"
+            data_tests:
+              - not_null
+              - relationships:
+                  to: source('public', 'raw_artifacts')
+                  field: artifact_id
+
+          - name: processor
+            description: "Name of the processor (e.g., 'parse_srp', 'parse_detail')"
+            data_tests:
+              - not_null
+
+          - name: status
+            description: "Processing status (queued, processing, completed, failed, etc.)"
+          - name: processed_at
+            description: "Timestamp of processing attempt"
+          - name: message
+            description: "Success/error message from processor"
+          - name: meta
+            description: "Additional metadata from processor as JSON"
+
+
       - name: detail_observations
+        description: "Parsed data from detail page scrapes. One row per unique listing scraped from its detail page."
+        config:
+          loaded_at_field: fetched_at
+          freshness:
+            warn_after: { count: 6, period: hour }
+            error_after: { count: 24, period: hour }
+        columns:
+          - name: id
+            description: "Row identifier"
+            data_tests:
+              - not_null
+              - unique
+
+          - name: artifact_id
+            description: "Foreign key to raw_artifacts"
+            data_tests:
+              - not_null
+              - relationships:
+                  to: source('public', 'raw_artifacts')
+                  field: artifact_id
+
+          - name: fetched_at
+            description: "Timestamp when detail page was scraped"
+            data_tests:
+              - not_null
+
+          - name: listing_id
+            description: "Unique identifier for this listing"
+            data_tests:
+              - not_null
+
+          - name: vin
+            description: "Vehicle Identification Number (normalized to 17-char uppercase)"
+            data_tests:
+              - not_null
+
+          - name: listing_state
+            description: "Listing state (active, unlisted, etc.)"
+            data_tests:
+              - not_null
+
+          - name: make
+            description: "Vehicle manufacturer"
+          - name: model
+            description: "Vehicle model name"
+          - name: "trim"
+            description: "Trim level"
+          - name: year
+            description: "Model year"
+          - name: price
+            description: "Current asking price in cents"
+          - name: mileage
+            description: "Odometer reading in miles"
+          - name: msrp
+            description: "MSRP in cents"
+          - name: stock_type
+            description: "Stock type (New, Used, etc.)"
+          - name: fuel_type
+            description: "Primary fuel type"
+          - name: body_style
+            description: "Body style"
+          - name: dealer_name
+            description: "Dealer name parsed from detail page"
+          - name: dealer_zip
+            description: "Dealer ZIP code"
+          - name: customer_id
+            description: "Numeric Cars.com customer/dealer ID"
+
+
       - name: detail_carousel_hints
+        description: "Carousel hint items from detail page scrapes. One row per related/carousel listing shown on a detail page."
+        config:
+          loaded_at_field: fetched_at
+          freshness:
+            warn_after: { count: 24, period: hour }
+            error_after: { count: 48, period: hour }
+        columns:
+          - name: id
+            description: "Row identifier"
+            data_tests:
+              - not_null
+              - unique
+
+          - name: artifact_id
+            description: "Foreign key to raw_artifacts"
+            data_tests:
+              - not_null
+              - relationships:
+                  to: source('public', 'raw_artifacts')
+                  field: artifact_id
+
+          - name: fetched_at
+            description: "Timestamp when carousel was observed"
+            data_tests:
+              - not_null
+
+          - name: source_listing_id
+            description: "Listing ID of the detail page that contained this carousel hint"
+            data_tests:
+              - not_null
+
+          - name: listing_id
+            description: "Listing ID of the carousel hint vehicle"
+            data_tests:
+              - not_null
+
+          - name: price
+            description: "Price shown in carousel in cents"
+          - name: mileage
+            description: "Mileage shown in carousel"
+          - name: body
+            description: "Body style from carousel"
+          - name: condition
+            description: "Condition from carousel"
+          - name: year
+            description: "Model year from carousel"
+
+
       - name: runs
+        description: "Scrape run metadata. One row per scrape execution (SRP, detail, etc.)."
+        columns:
+          - name: run_id
+            description: "Unique identifier for this run"
+            data_tests:
+              - not_null
+              - unique
+
+          - name: started_at
+            description: "Timestamp when run started"
+            data_tests:
+              - not_null
+
+          - name: finished_at
+            description: "Timestamp when run completed (null if still running)"
+          - name: status
+            description: "Status of run (running, completed, failed, etc.)"
+            data_tests:
+              - accepted_values:
+                  values: ['skipped', 'failed', 'partial', 'success', 'running', 'terminated']
+
+          - name: trigger
+            description: "What triggered this run (schedule, manual, etc.)"
+          - name: notes
+            description: "Optional notes about the run"
+          - name: progress_count
+            description: "Number of items processed so far"
+          - name: total_count
+            description: "Total number of items to process"
+          - name: error_count
+            description: "Number of errors encountered"
+          - name: last_error
+            description: "Text of the most recent error"
+
+
       - name: search_configs
+        description: "Search configuration settings. One row per unique search configuration (make/model/location/etc.)."
+        columns:
+          - name: search_key
+            description: "Unique identifier for this search (primary key)"
+            data_tests:
+              - not_null
+              - unique
+
+          - name: enabled
+            description: "Whether this search is currently active"
+            data_tests:
+              - not_null
+
+          - name: source
+            description: "Data source (e.g., 'cars.com')"
+          - name: params
+            description: "Full search parameters as JSON (make, model, ZIP, etc.)"
+            data_tests:
+              - not_null
+
+          - name: created_at
+            description: "Timestamp when search was created"
+          - name: updated_at
+            description: "Timestamp when search was last modified"
+          - name: rotation_order
+            description: "Order in rotation schedule (for sort-order rotation)"
+          - name: last_queued_at
+            description: "Timestamp when this search was last queued"
+          - name: rotation_slot
+            description: "Current slot in rotation (1-6)"
+            data_tests:
+              - not_null
+
       - name: dealers
+        description: "Dealer master data parsed from detail page scrapes. One row per unique dealer found."
+        columns:
+          - name: customer_id
+            description: "Numeric Cars.com customer/dealer ID (primary key)"
+            data_tests:
+              - not_null
+              - unique
+
+          - name: name
+            description: "Dealer name"
+            data_tests:
+              - not_null
+
+          - name: street
+            description: "Street address"
+          - name: city
+            description: "City"
+          - name: state
+            description: "State code"
+          - name: zip
+            description: "ZIP code"
+          - name: phone
+            description: "Phone number"
+          - name: website
+            description: "Dealer website URL"
+          - name: cars_com_url
+            description: "Dealer's Cars.com profile URL"
+          - name: rating
+            description: "Cars.com rating (1-5 scale)"
+          - name: seller_type
+            description: "Type of seller (dealer, private, etc.)"
+          - name: first_seen_at
+            description: "Timestamp when this dealer was first discovered"
+            data_tests:
+              - not_null
+
+          - name: last_updated_at
+            description: "Timestamp when dealer record was last updated"
+            data_tests:
+              - not_null
+
+          - name: created_at
+            description: "Timestamp when row was inserted"

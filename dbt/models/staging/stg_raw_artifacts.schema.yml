@@ -1,0 +1,14 @@
+version: 2
+
+models:
+  - name: stg_raw_artifacts
+    description: "Staging view over public.raw_artifacts with explicit columns, see source for column descriptions."
+
+
+    columns:
+      - name: artifact_id
+      - name: fetched_at
+      - name: run_id
+      - name: search_key
+      - name: search_scope
+      - name: http_status

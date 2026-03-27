@@ -14,7 +14,7 @@ with srp_obs as (
         s.fetched_at,
         ra.search_scope
     from {{ ref('stg_srp_observations') }} s
-    inner join {{ source('public', 'raw_artifacts') }} ra
+    inner join {{ ref('stg_raw_artifacts') }} ra
         on ra.artifact_id = s.artifact_id
     where s.vin17 is not null
     {% if is_incremental() %}

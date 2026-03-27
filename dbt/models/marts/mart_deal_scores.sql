@@ -7,7 +7,7 @@ with
 local_seen as (
     select distinct s.vin17 as vin
     from {{ ref('stg_srp_observations') }} s
-    inner join {{ source('public', 'raw_artifacts') }} ra
+    inner join {{ ref('stg_raw_artifacts') }} ra
         on ra.artifact_id = s.artifact_id
     where s.vin17 is not null
       and ra.search_scope = 'local'
@@ -33,7 +33,7 @@ scored as (
         a.seller_customer_id,
         a.seller_zip,
         -- dealer_name: prefer detail parse, fallback to dealers table (now joined via numeric customer_id)
-        coalesce(ldn.dealer_name, dlr.name) as dealer_name,
+        dlr.name as dealer_name,
 
         dlr.city as dealer_city,
         dlr.state as dealer_state,
@@ -131,9 +131,8 @@ scored as (
         on di.seller_customer_id = a.seller_customer_id
         and di.make = a.make and di.model = a.model
     left join {{ ref('int_price_percentiles_by_vin') }} pctl on pctl.vin = v.vin
-    left join {{ source('public', 'dealers') }} dlr
+    left join {{ ref('stg_dealers') }} dlr
         on dlr.customer_id = v.customer_id
-    left join {{ ref('int_latest_dealer_name_by_vin') }} ldn on ldn.vin = v.vin
     left join local_seen ls on ls.vin = v.vin
     where v.listing_state = 'active'
       and v.price is not null and v.price > 0

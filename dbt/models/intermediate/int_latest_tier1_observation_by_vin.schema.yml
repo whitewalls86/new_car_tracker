@@ -2,7 +2,7 @@ version: 2
 
 models:
   - name: int_latest_tier1_observation_by_vin
-    description: Latest Tier-1 (SRP/Detail) observation per VIN for non-price vehicle state fields.
+    description: "Latest Tier-1 (SRP/Detail) observation per VIN for non-price vehicle state fields."
     columns:
       - name: vin
         data_tests:

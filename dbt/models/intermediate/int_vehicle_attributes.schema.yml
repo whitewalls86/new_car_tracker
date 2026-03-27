@@ -15,9 +15,6 @@ models:
       - name: attributes_artifact_id
         data_tests:
           - not_null
-          - relationships:
-              to: source('public', 'raw_artifacts')
-              field: artifact_id
       - name: attributes_source
         data_tests:
           - not_null

@@ -2,24 +2,18 @@ version: 2
 
 models:
   - name: stg_detail_carousel_hints
-    description: "Staging view over public.detail_carousel_hints with explicit columns and constraint-mirroring tests."
+    description: "Staging materialized table over public.detail_carousel_hints with explicit columns"
 
     columns:
       - name: id
-        data_tests: [not_null, unique]
-
       - name: artifact_id
-        data_tests:
-          - not_null
-          - relationships:
-              to: source('public', 'raw_artifacts')
-              field: artifact_id
-
       - name: fetched_at
-        data_tests: [not_null]
-
       - name: listing_id
-        data_tests: [not_null]
+      - name: price
+      - name: mileage
+      - name: body
+      - name: condition
+      - name: year
 
     data_tests:
       - dbt_utils.unique_combination_of_columns:

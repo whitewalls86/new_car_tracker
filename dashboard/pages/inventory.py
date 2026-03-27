@@ -86,7 +86,7 @@ def render():
     df = run_query("""
         WITH first_unlisted AS (
             SELECT upper(d.vin) AS vin, MIN(d.fetched_at) AS unlisted_at
-            FROM detail_observations d
+            FROM analytics.stg_detail_observations d
             WHERE d.listing_state = 'unlisted'
               AND d.vin IS NOT NULL AND length(d.vin) = 17
               AND d.fetched_at > now() - interval '30 days'

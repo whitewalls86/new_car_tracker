@@ -1,0 +1,14 @@
+version: 2
+
+models:
+  - name: stg_dealers
+    description: "Staging view over public.dealers. Excludes SRP derived seller_ids"
+
+    columns:
+      - name: customer_id
+      - name: name
+      - name: city
+      - name: state
+      - name: zip
+      - name: phone
+      - name: rating

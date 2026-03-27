@@ -6,25 +6,32 @@ models:
 
     columns:
       - name: id
-        data_tests: [not_null, unique]
-
+      - name: artifact_id
+      - name: fetched_at
+      - name: listing_id
+      - name: vin
       - name: vin17
+        description: "Cleaned VIN, used for tracking vehicle across listings"
         data_tests:
           - valid_vin_nullable
 
       - name: artifact_id
-        data_tests:
-          - not_null
-          - relationships:
-              to: source('public', 'raw_artifacts')
-              field: artifact_id
-
       - name: fetched_at
-        data_tests: [not_null]
-
       - name: listing_state
-        data_tests: [not_null]
-
-#    data_tests:
-#      - dbt_utils.unique_combination_of_columns:
-#          combination_of_columns: ['artifact_id', 'listing_id']
+      - name: make
+      - name: model
+      - name: vehicle_trim
+        description: "Renamed from 'trim' in source"
+      - name: model_year
+        description: "Renamed from 'year' in source"
+      - name: price
+      - name: mileage
+      - name: msrp
+      - name: stock_type
+      - name: fuel_type
+      - name: body_style
+      - name: dealer_name
+      - name: dealer_zip
+      - name: customer_id
+      - name: canonical_detail_url
+        description: "URL we fetched for this observation"
