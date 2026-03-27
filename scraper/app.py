@@ -44,22 +44,15 @@ else:
 
 
 def _fetch_known_vins(search_key: str, scope: str) -> List[str]:
-    """Fetch VINs observed for this search_key+scope in the last 14 days.
+    """Fetch all VINs we have ever seen across all searches and sources.
+    VINs are globally unique, so no make/model/scope filtering is needed.
     Uses psycopg2 (sync) so it works in background threads."""
     import psycopg2
     conn = None
     try:
         conn = psycopg2.connect(**_SYNC_DB_KWARGS)
         with conn.cursor() as cur:
-            cur.execute("""
-                SELECT DISTINCT s.vin
-                FROM srp_observations s
-                JOIN raw_artifacts a ON a.artifact_id = s.artifact_id
-                WHERE a.search_key = %s
-                  AND a.search_scope = %s
-                  AND a.fetched_at > now() - interval '14 days'
-                  AND s.vin IS NOT NULL
-            """, (search_key, scope))
+            cur.execute("SELECT vin FROM analytics.int_vehicle_attributes")
             return [row[0] for row in cur.fetchall()]
     except Exception as e:
         import logging
@@ -197,18 +190,12 @@ def list_all_jobs() -> List[Dict[str, Any]]:
 
 @app.get("/search_configs/{search_key}/known_vins")
 async def get_known_vins(search_key: str, scope: str = "national") -> Dict[str, Any]:
-    """Returns VINs observed for this search_key+scope in the last 14 days."""
+    """Returns all known VINs from the analytics layer (globally unique across all searches)."""
     pool = await get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch("""
-            SELECT DISTINCT s.vin
-            FROM srp_observations s
-            JOIN raw_artifacts a ON a.artifact_id = s.artifact_id
-            WHERE a.search_key = $1
-              AND a.search_scope = $2
-              AND a.fetched_at > now() - interval '14 days'
-              AND s.vin IS NOT NULL
-        """, search_key, scope)
+            SELECT vin FROM analytics.int_vehicle_attributes WHERE vin IS NOT NULL
+        """)
     return {"search_key": search_key, "scope": scope, "count": len(rows), "vins": [r["vin"] for r in rows]}
 
 
