@@ -11,7 +11,7 @@
       "typeVersion": 2.6,
       "position": [
         -1712,
-        1168
+        1200
       ],
       "id": "bbcb22dc-76e0-4258-b009-b7d4cf63a269",
       "name": "Get Batch to Process",
@@ -70,15 +70,15 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -2128,
-        1136
+        -2176,
+        1200
       ],
       "id": "333d97ca-20ed-4c13-90e4-c5f04fa8ca1d",
       "name": "Create Run Id"
     },
     {
       "parameters": {
-        "jsCode": "const run_id = $('Create Run Id').first().json.run_id;\nconst artifacts = $input.first().json.artifacts;\n\nreturn artifacts.map(a => ({\n  json: {\n    ...a,\n    run_id\n  }\n}));\n"
+        "jsCode": "const run_id = $('Create Run Id').first().json.run_id;\nconst artifacts = $input.first().json.artifacts;\nconst listing_id = $input.first().json.meta.listing_id\n\nreturn artifacts.map(a => ({\n  json: {\n    ...a,\n    run_id,\n    listing_id\n  }\n}));\n"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -92,7 +92,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "WITH data AS (\n  SELECT *\n  FROM jsonb_to_recordset('{{ JSON.stringify($json.data).replaceAll(\"'\",\"''\") }}'::jsonb)\n    AS x(\n      source text,\n      artifact_type text,\n      search_key text,\n      search_scope text,\n      page_num int,\n      url text,\n      fetched_at timestamptz,\n      http_status int,\n      content_type text,\n      content_bytes int,\n      sha256 text,\n      filepath text,\n      error text,\n      run_id uuid\n    )\n)\nINSERT INTO raw_artifacts (\n  run_id,\n  source,\n  artifact_type,\n  search_key,\n  search_scope,\n  page_num,\n  url,\n  fetched_at,\n  http_status,\n  content_type,\n  content_bytes,\n  sha256,\n  filepath,\n  error\n)\nSELECT\n  d.run_id,\n  d.source,\n  d.artifact_type,\n  d.search_key,\n  d.search_scope,\n  d.page_num,\n  d.url,\n  d.fetched_at,\n  d.http_status,\n  d.content_type,\n  d.content_bytes,\n  d.sha256,\n  d.filepath,\n  d.error\nFROM data d;\n",
+        "query": "WITH data AS (\n  SELECT *\n  FROM jsonb_to_recordset('{{ JSON.stringify($json.data).replaceAll(\"'\",\"''\") }}'::jsonb)\n    AS x(\n      source text,\n      artifact_type text,\n      search_key text,\n      search_scope text,\n      page_num int,\n      url text,\n      fetched_at timestamptz,\n      http_status int,\n      content_type text,\n      content_bytes int,\n      sha256 text,\n      filepath text,\n      error text,\n      run_id uuid,\n      listing_id uuid\n    )\n)\nINSERT INTO raw_artifacts (\n  run_id,\n  source,\n  artifact_type,\n  search_key,\n  search_scope,\n  page_num,\n  url,\n  fetched_at,\n  http_status,\n  content_type,\n  content_bytes,\n  sha256,\n  filepath,\n  error,\n  listing_id\n)\nSELECT\n  d.run_id,\n  d.source,\n  d.artifact_type,\n  d.search_key,\n  d.search_scope,\n  d.page_num,\n  d.url,\n  d.fetched_at,\n  d.http_status,\n  d.content_type,\n  d.content_bytes,\n  d.sha256,\n  d.filepath,\n  d.error,\n  d.listing_id\nFROM data d;\n",
         "options": {}
       },
       "type": "n8n-nodes-base.postgres",
@@ -133,8 +133,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        -1904,
-        1136
+        -1984,
+        1200
       ],
       "id": "4bbc7faa-b4f0-42f9-8214-b3862103a3a6",
       "name": "Insert Run Row",
@@ -315,8 +315,8 @@
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.3,
       "position": [
-        -2400,
-        1136
+        -2368,
+        1200
       ],
       "id": "9b717d83-c95c-44c5-91a5-9538651d12ec",
       "name": "Schedule Trigger"
@@ -418,8 +418,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
-        -1344,
-        1152
+        -1488,
+        1200
       ],
       "id": "c8a1b2d3-e4f5-6789-abcd-ef0123456789",
       "name": "If Batch Empty?"
@@ -433,8 +433,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        -1088,
-        1312
+        -1168,
+        1328
       ],
       "id": "d9e0f1a2-b3c4-5678-9abc-def012345678",
       "name": "Mark Run Skipped",
@@ -448,14 +448,14 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "UPDATE detail_scrape_claims\nSET status = 'completed'\nWHERE claimed_by = '{{ $('Create Run Id').first().json.run_id }}';",
+        "query": "UPDATE detail_scrape_claims dsc\nSET status = CASE \n  WHEN EXISTS (\n    SELECT 1 FROM raw_artifacts ra\n    WHERE ra.listing_id = dsc.listing_id::uuid\n      AND ra.artifact_type = 'detail_page'\n      AND ra.run_id = dsc.claimed_by::uuid\n      AND ra.http_status = 200\n  ) THEN 'completed'\n  WHEN EXISTS (\n    SELECT 1 FROM raw_artifacts ra\n    WHERE ra.listing_id = dsc.listing_id::uuid\n      AND ra.artifact_type = 'detail_page'\n      AND ra.run_id = dsc.claimed_by::uuid\n  ) THEN 'failed'\n  ELSE 'orphaned'\nEND\nWHERE claimed_by = '{{ $('Create Run Id').first().json.run_id }}'\n  AND status = 'running';",
         "options": {}
       },
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        -448,
-        640
+        704,
+        832
       ],
       "id": "a1b2c3d4-e5f6-7890-abcd-release00001",
       "name": "Release Claims",
@@ -475,8 +475,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        -1328,
-        1328
+        -1488,
+        1360
       ],
       "id": "d92c022a-9d34-4930-aefb-99768ce5e4ff",
       "name": "Mark Run terminated",
@@ -492,15 +492,15 @@
     "Schedule Trigger": [
       {
         "json": {
-          "timestamp": "2026-03-19T23:05:28.008-04:00",
-          "Readable date": "March 19th 2026, 11:05:28 pm",
-          "Readable time": "11:05:28 pm",
-          "Day of week": "Thursday",
+          "timestamp": "2026-03-27T11:45:28.003-04:00",
+          "Readable date": "March 27th 2026, 11:45:28 am",
+          "Readable time": "11:45:28 am",
+          "Day of week": "Friday",
           "Year": "2026",
           "Month": "March",
-          "Day of month": "19",
-          "Hour": "23",
-          "Minute": "05",
+          "Day of month": "27",
+          "Hour": "11",
+          "Minute": "45",
           "Second": "28",
           "Timezone": "America/New_York (UTC-04:00)"
         },
@@ -589,7 +589,7 @@
       "main": [
         [
           {
-            "node": "Release Claims",
+            "node": "Mark Run Done",
             "type": "main",
             "index": 0
           }
@@ -605,13 +605,7 @@
     },
     "Release Claims": {
       "main": [
-        [
-          {
-            "node": "Mark Run Done",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        []
       ]
     },
     "Execute a SQL query": {
@@ -764,6 +758,17 @@
           }
         ]
       ]
+    },
+    "Call 'Parse Detail Pages'": {
+      "main": [
+        [
+          {
+            "node": "Release Claims",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": true,
@@ -774,7 +779,7 @@
     "callerPolicy": "workflowsFromSameOwner",
     "errorWorkflow": "rJfFKS2DGRAn_IPJR1xTc"
   },
-  "versionId": "157e4230-a883-4609-8c30-7f3fd0f364eb",
+  "versionId": "2932d3c6-f34c-498d-95fc-bab4769edcaf",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179"

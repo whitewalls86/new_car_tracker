@@ -225,9 +225,9 @@ File split complete (Plan 50). Stale backlog query updated to use ops_detail_scr
 
 ---
 
-## Plan 57: dbt Build Sub-Workflow with Retry/Error Handling
+## Plan 57: dbt Build Sub-Workflow with Retry/Error Handling **[DONE]**
 
-**Status:** Not started
+**Status:** Implemented in n8n/workflows/Build DBT
 **Priority:** High
 
 Both "Results Processing" and "Parse Detail Pages" workflows call `POST http://dbt_runner:8080/dbt/build` with a simple retry loop: on any error → wait 30s → retry forever. No distinction between 409 (lock contention) and 500 (build failure). No max retries. No escalation.
@@ -242,6 +242,8 @@ Create a shared n8n sub-workflow ("DBT Build with Retry") that both callers invo
 
 **Other errors:** Return failure immediately.
 
+**Stuck query detection:** If dbt_runner returns 500 or times out, check `pg_stat_activity` for long-running queries from the dbt process. If found (>300s), terminate them with `pg_terminate_backend()` and retry the build.
+
 ### Flow
 ```
 [Trigger] → [Initialize] (retry_count=0, max=5)
@@ -249,7 +251,9 @@ Create a shared n8n sub-workflow ("DBT Build with Retry") that both callers invo
       ├─ Success → [Return Success]
       └─ Error → [Switch on status code]
           ├─ 409 → retry with 60s wait (up to 5x)
-          ├─ 500 → retry once with full_refresh=true
+          ├─ 500 or timeout → [Check pg_stat_activity for stuck dbt queries]
+          │   ├─ Found → [Terminate query] → retry with full_refresh=true
+          │   └─ Not found → retry once with full_refresh=true
           └─ Other → return failure
 ```
 
@@ -259,13 +263,55 @@ Create a shared n8n sub-workflow ("DBT Build with Retry") that both callers invo
 | `n8n/workflows/DBT Build with Retry.json` | Create — new sub-workflow |
 | `n8n/workflows/Results Processing.json` | Modify — replace dbt retry loop with Execute Workflow call |
 | `n8n/workflows/Parse Detail Pages.json` | Modify — same replacement |
+| `dbt_runner.py` | Add query timeout detection (optional: abort stuck queries server-side) |
 
 ---
 
-## Future Ideas (Unprioritized)
+## Plan 58: Scraper Architecture — DB Responsibility Consolidation
 
-- **Price alert notifications** — email/SMS when a VIN drops below a threshold
-- **Dealer reputation scoring** — aggregate rating, inventory size, price competitiveness
-- **Geographic heatmaps** — map view of inventory density and pricing by region
-- **VIN decode enrichment** — NHTSA VIN decoder for specs not on Cars.com (engine, transmission, packages)
-- **Historical deal analysis** — track which deal-scored VINs actually sold (went unlisted) and at what price
+**Status:** Not started
+**Priority:** Low (works, philosophical)
+
+The scraper has accumulated several direct DB operations that originally belonged to n8n:
+
+| Location | Operation | Notes |
+|----------|-----------|-------|
+| `lifespan` startup | Orphan recovery — writes to `runs` + `scrape_jobs` | Should be n8n's concern |
+| `_fetch_known_vins` | Reads `analytics.int_vehicle_attributes` | Kept here to avoid passing 27k+ VINs through HTTP |
+| `GET /search_configs/{search_key}/known_vins` | Same read, exposed for debugging | |
+| `POST /search_configs/advance_rotation` | Reads/writes `search_configs` + `runs` | Pure orchestration, no scraper function |
+
+Original architecture was clean: scraper handles browser/HTML/disk, n8n handles all DB interaction. The `known_vins` fetch is the most defensible exception given the payload size concern (~27k VINs). `advance_rotation` is the clearest violation — pure scheduling logic with no scraper function.
+
+Options:
+- Move `advance_rotation` to a dedicated admin/ops service or into n8n directly
+- Move orphan recovery into a startup n8n workflow triggered on scraper health-check
+- Accept the fragmentation and document the boundary clearly
+
+---
+
+## Plan 59: Orphan Cleanup Workflow **[DONE]**
+
+**Status:** Implemented in n8n/workflows/Orphan Checker
+**Priority:** Medium
+
+A dedicated n8n workflow that runs every 5 minutes to clean up stale/orphaned resources across the pipeline:
+
+**Tables to check:**
+- `runs` — mark as `failed` if `status = 'running'` and `started_at < now() - 4 hours` (crash recovery)
+- `processing_runs` — mark as `failed` if `status = 'processing'` and `started_at < now() - 4 hours`
+- `artifact_processing` — mark as `failed` if `status = 'processing'` and `processed_at < now() - 2 hours`
+- `detail_scrape_claims` — mark as `failed` if `status = 'running'` and `created_at < now() - 2 hours`
+- `scrape_jobs` — mark as `failed` if `status = 'running'` and `created_at < now() - 4 hours`
+
+**Flow:**
+```
+[Trigger: every 5 min] → [Execute SQL cleanup for each table] → [Log results]
+```
+
+**Benefits:**
+- Prevents zombie locks from blocking future runs
+- Cleans up stale claims that block the detail scrape queue
+- Centralizes orphan recovery logic (currently scattered in scraper lifespan, dbt_runner, etc.)
+- Graceful recovery without manual intervention
+

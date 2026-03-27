@@ -15,32 +15,11 @@
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.3,
       "position": [
-        4400,
+        4592,
         1344
       ],
       "id": "84f4d3f9-a89b-41f8-b5ea-582e6bbbc94e",
       "name": "Schedule Trigger (1 min)"
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "UPDATE scrape_jobs\nSET status = 'failed',\n    error = 'Timeout — job lost, likely due to container restart'\nWHERE status IN ('queued', 'running')\n  AND created_at < now() - interval '30 minutes';",
-        "options": {}
-      },
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.6,
-      "position": [
-        4624,
-        1344
-      ],
-      "id": "2f467f0f-e115-4a59-adcb-11354b232cb4",
-      "name": "Expire Orphaned Jobs",
-      "credentials": {
-        "postgres": {
-          "id": "l8Ecbn62FzXCDkF9",
-          "name": "Postgres account"
-        }
-      }
     },
     {
       "parameters": {
@@ -422,17 +401,6 @@
       "main": [
         [
           {
-            "node": "Expire Orphaned Jobs",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Expire Orphaned Jobs": {
-      "main": [
-        [
-          {
             "node": "Get Completed Jobs",
             "type": "main",
             "index": 0
@@ -588,9 +556,10 @@
     "callerPolicy": "workflowsFromSameOwner",
     "errorWorkflow": "rJfFKS2DGRAn_IPJR1xTc"
   },
-  "versionId": "cb37eb4a-61ce-4151-80e0-ddbd552d80e5",
+  "versionId": "159a56c0-f41f-4cf5-b107-d0ebd0433ce9",
   "meta": {
-    "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179"
+    "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179",
+    "templateCredsSetupCompleted": true
   },
   "id": "yKfhg_fQ_lShUBFgL_gu8",
   "tags": []

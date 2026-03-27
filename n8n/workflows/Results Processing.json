@@ -47,7 +47,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        1200,
+        1232,
         96
       ],
       "id": "a8dfa4aa-dd2d-4856-880e-0a44c6ae4d6f",
@@ -62,8 +62,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        1776,
-        112
+        1808,
+        80
       ],
       "id": "b98710db-852c-4889-9b2f-d515b2bb5fa0",
       "name": "Update Artifacts Metadata",
@@ -133,8 +133,8 @@
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3.4,
       "position": [
-        1360,
-        80
+        1376,
+        96
       ],
       "id": "7947df0a-42b3-4cec-9617-49c6c64449a1",
       "name": "Check Status"
@@ -148,7 +148,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        1776,
+        1744,
         304
       ],
       "id": "c39f9d71-bdd2-4b39-a185-e2e685867556",
@@ -169,8 +169,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        1552,
-        64
+        1584,
+        80
       ],
       "id": "3190dcc7-3134-466a-905b-5a99a9dedb64",
       "name": "Insert SRP_Observations",
@@ -208,38 +208,6 @@
     },
     {
       "parameters": {
-        "method": "POST",
-        "url": "http://dbt_runner:8080/dbt/build",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={\n  \"intent\": \"{{ $json.intent }}\"\n}",
-        "options": {}
-      },
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.3,
-      "position": [
-        1392,
-        -192
-      ],
-      "id": "a1996cb3-2b82-42c0-83cf-c9a3ca91903f",
-      "name": "Rebuild DBT",
-      "onError": "continueErrorOutput"
-    },
-    {
-      "parameters": {
-        "jsCode": "return [{ json: { intent: \"after_srp\" } }];"
-      },
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1104,
-        -80
-      ],
-      "id": "8451d56c-497a-4198-b6f6-29ac89969b7f",
-      "name": "Set DBT Params"
-    },
-    {
-      "parameters": {
         "conditions": {
           "options": {
             "caseSensitive": true,
@@ -267,7 +235,7 @@
       "typeVersion": 2.3,
       "position": [
         1040,
-        144
+        176
       ],
       "id": "c27cee1f-99d4-42a4-b284-ef58b9667401",
       "name": "If"
@@ -281,7 +249,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        1520,
+        1216,
         304
       ],
       "id": "8ef7587c-92a8-4c07-9ef4-a6dbbe45bb63",
@@ -348,17 +316,46 @@
     },
     {
       "parameters": {
-        "amount": 30
+        "workflowId": {
+          "__rl": true,
+          "value": "qdURL8XbEkdApnjdAcFFL",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/qdURL8XbEkdApnjdAcFFL",
+          "cachedResultName": "Build DBT"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "intent": "after_srp"
+          },
+          "matchingColumns": [
+            "intent"
+          ],
+          "schema": [
+            {
+              "id": "intent",
+              "displayName": "intent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
       },
-      "type": "n8n-nodes-base.wait",
-      "typeVersion": 1.1,
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
       "position": [
-        1648,
-        -160
+        1232,
+        -80
       ],
-      "id": "57cbe31c-fbd2-489c-af0e-5af77d6dbf5f",
-      "name": "Wait",
-      "webhookId": "c004fb4c-71bc-41fe-81b6-19fa4c4f3130"
+      "id": "9c716e81-7e1c-4c81-a05b-314cc6061137",
+      "name": "Call 'Build DBT'"
     }
   ],
   "pinData": {},
@@ -367,7 +364,7 @@
       "main": [
         [
           {
-            "node": "Set DBT Params",
+            "node": "Call 'Build DBT'",
             "type": "main",
             "index": 0
           }
@@ -472,17 +469,6 @@
         ]
       ]
     },
-    "Set DBT Params": {
-      "main": [
-        [
-          {
-            "node": "Rebuild DBT",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "If": {
       "main": [
         [
@@ -533,29 +519,6 @@
           }
         ]
       ]
-    },
-    "Rebuild DBT": {
-      "main": [
-        [],
-        [
-          {
-            "node": "Wait",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Wait": {
-      "main": [
-        [
-          {
-            "node": "Rebuild DBT",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
     }
   },
   "active": true,
@@ -563,7 +526,7 @@
     "executionOrder": "v1",
     "availableInMCP": false
   },
-  "versionId": "b86fcd26-6e5c-4fd2-a944-5c477a587be6",
+  "versionId": "7305d60c-a416-4eba-af0d-8645db4123f7",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179"

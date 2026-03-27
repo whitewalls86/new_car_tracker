@@ -1,0 +1,784 @@
+{
+  "name": "Build DBT",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "intent"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -288,
+        -256
+      ],
+      "id": "69b0af34-900e-49f0-a808-506b1dda9a70",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://dbt_runner:8080/dbt/build",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"intent\": \"{{$json.intent}}\",\n  \"full_refresh\": false\n}",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1264,
+        16
+      ],
+      "id": "6299801c-bb69-42d8-a474-7ce76f94bf47",
+      "name": "Execute DBT Build",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.first().error.status }}",
+                    "rightValue": 409,
+                    "operator": {
+                      "type": "number",
+                      "operation": "equals"
+                    },
+                    "id": "db6d4ae4-ef52-4db7-8174-eb7c871156ff"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "409 - Locked"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "8c6f2fc7-7f66-41c2-922a-ca0a29282812",
+                    "leftValue": "={{ $json.first().error.status }}",
+                    "rightValue": "500",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "500"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "d61f7b61-edb6-4f62-8724-c014d600f390",
+                    "leftValue": "={{ $json.first().error.status }}",
+                    "rightValue": 400,
+                    "operator": {
+                      "type": "number",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "400 - Invalid/No Intent"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        1472,
+        32
+      ],
+      "id": "3591a3ac-98e1-466a-9c4e-15e6f0d3f8e8",
+      "name": "Error Router"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "9d399d7a-c11b-4fdf-98ee-32e6f76e93cb",
+              "name": "error_500_count",
+              "value": 0,
+              "type": "number"
+            },
+            {
+              "id": "4d5e1f1b-a294-4fef-b564-ebb5be201c5c",
+              "name": "intent",
+              "value": "={{ $json.intent }}",
+              "type": "string"
+            },
+            {
+              "id": "93b49349-3926-4cb1-aa2d-8e7bdb177ea3",
+              "name": "error_409_count",
+              "value": 0,
+              "type": "number"
+            },
+            {
+              "id": "385ca0ee-cdee-4d6a-854d-c10ab8f84174",
+              "name": "full_refresh",
+              "value": false,
+              "type": "boolean"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -16,
+        -256
+      ],
+      "id": "58cb9c17-bca6-4c19-b07d-a240d47793be",
+      "name": "Set Error Counts"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first();\n\nreturn {\n  json: {\n    ...item.json,\n    error_500_count: (item.json.error_500_count || 0) + 1,\n    full_refresh: true\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1840,
+        48
+      ],
+      "id": "aab73527-3847-4956-be75-b5ddddc66cf7",
+      "name": "Set Refresh to Full"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first();\n\nreturn {\n  json: {\n    ...item.json,\n    error_409_count: (item.json.error_409_count || 0) + 1\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1744,
+        -64
+      ],
+      "id": "22d8f284-5487-4231-8a19-9513fe5363aa",
+      "name": "Increment 409 Error"
+    },
+    {
+      "parameters": {
+        "amount": 60
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2048,
+        48
+      ],
+      "id": "a24fc853-92bb-4abe-a568-7c96c46a5376",
+      "name": "Wait 60s",
+      "webhookId": "83165e43-912b-4483-9b8a-1f6121a32e1b"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first();\n\nreturn {\n  json: {\n    ...item.json,\n    intent: \"after_detail\"\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1712,
+        112
+      ],
+      "id": "4ca68795-0f17-433d-bd64-df499bfc5610",
+      "name": "Fix 400 Error"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "aa5a4f10-6021-48d4-97d2-0b32102d0e00",
+              "name": "status_code",
+              "value": 200,
+              "type": "number"
+            },
+            {
+              "id": "78de2fbd-38aa-46ed-a2ac-990f2044b8c3",
+              "name": "message",
+              "value": "DBT Build Successful",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1536,
+        -240
+      ],
+      "id": "2f475fbb-cc01-4cfc-91b8-4879f06415a0",
+      "name": "Return 200"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "e2b09fb2-c291-4097-b85d-e979a8b43fac",
+              "name": "return_code",
+              "value": 409,
+              "type": "number"
+            },
+            {
+              "id": "dfa621e1-8953-4213-b24b-8befcb0b4320",
+              "name": "message",
+              "value": "={{ $(Check Error Status).item.json.error.message }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1008,
+        -560
+      ],
+      "id": "cdf8d3ef-fdb1-4aa7-a5bd-9cc4a3f767fc",
+      "name": "Return 409"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "0aac4771-591e-4960-a024-d1bc777b701b",
+              "name": "return_code",
+              "value": 500,
+              "type": "number"
+            },
+            {
+              "id": "4d59422c-ee7e-4144-a1ed-851c2d467f7f",
+              "name": "message",
+              "value": "={{ $(Check Error Status).item.json.error.message }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1296,
+        -384
+      ],
+      "id": "e300777a-9e44-4d6a-a715-319bb95672c2",
+      "name": "Return 500"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- On full_refresh retry after failures: kill everything\nWITH terminated AS (\n  SELECT pg_terminate_backend(pid) as was_terminated\n  FROM pg_stat_activity\n  WHERE query LIKE 'dbt%'\n    AND pid != pg_backend_pid()  -- don't kill ourselves\n),\nlock_reset AS (\n  UPDATE dbt_lock\n  SET locked = false, locked_at = null, locked_by = null\n  WHERE id = 1\n  RETURNING 1 as lock_reset\n)\nSELECT \n  COUNT(*) FILTER (WHERE was_terminated) as processes_killed,\n  COUNT(*) FILTER (WHERE lock_reset IS NOT NULL) as lock_reset\nFROM terminated\nFULL OUTER JOIN lock_reset ON true\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        752,
+        -272
+      ],
+      "id": "9e77517a-d81e-4f25-9254-ada9cf0f07a7",
+      "name": "Lock & Stuck Query Cleanup",
+      "credentials": {
+        "postgres": {
+          "id": "l8Ecbn62FzXCDkF9",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "af5e5008-2404-4fa1-ad87-59222c312b0c",
+                    "leftValue": "={{ $json.error_409_count }}",
+                    "rightValue": 4,
+                    "operator": {
+                      "type": "number",
+                      "operation": "gt"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "5+ 409 Errors"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "38e1a909-263c-4e46-892c-3f16ecbb0e16",
+                    "leftValue": "={{ $json.error_500_count }}",
+                    "rightValue": 2,
+                    "operator": {
+                      "type": "number",
+                      "operation": "gte"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "500 Error"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "11b3a19f-235b-41f8-9dd5-6c2084bd9159",
+                    "leftValue": "={{ $json.error_409_count }}",
+                    "rightValue": 5,
+                    "operator": {
+                      "type": "number",
+                      "operation": "lte"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Standard Logic"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        464,
+        -288
+      ],
+      "id": "150e12ee-502f-405b-b8f9-e4cd4a2c37d9",
+      "name": "Check Error Status"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "84a726b7-9d32-4726-ad24-77bf53c283f8",
+                    "leftValue": "={{ $('Check Error Status').item.json.error_500_count }}",
+                    "rightValue": 2,
+                    "operator": {
+                      "type": "number",
+                      "operation": "gt"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "500 - Hard"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $('Check Error Status').item.json.error_500_count }}",
+                    "rightValue": 2,
+                    "operator": {
+                      "type": "number",
+                      "operation": "equals"
+                    },
+                    "id": "af2e9d3e-2563-407f-980f-75855b351c15"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "500 - Soft"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        896,
+        -272
+      ],
+      "id": "8d92011d-a158-47a0-95d2-da5770ff2b25",
+      "name": "500 Type"
+    },
+    {
+      "parameters": {
+        "chatId": "774819707",
+        "text": "=DBT Build failed. Critical Error. Database Connections cleared, retried. 3 500 Failures.\n\n{{ $(Check Error Status).item.json.error.message }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1104,
+        -384
+      ],
+      "id": "7ccfa884-1ab9-425c-a35d-c8ba5e53ec52",
+      "name": "Send Final Fail Message",
+      "webhookId": "3f97844c-717f-4bcd-86d2-b10cba6f7a6c",
+      "credentials": {
+        "telegramApi": {
+          "id": "qoqqtiFUa4Dq2Wqp",
+          "name": "Cartracker Alerts"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "chatId": "774819707",
+        "text": "=DBT Build failed. Critical Error. Database Connections cleared, retrying.\n\n{{ $(Check Error Status).item.json.error.message }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1088,
+        -224
+      ],
+      "id": "a0aaa9e0-7fb9-4abd-98ed-a0c8d2926234",
+      "name": "Send Soft 500 Alert",
+      "webhookId": "3f97844c-717f-4bcd-86d2-b10cba6f7a6c",
+      "credentials": {
+        "telegramApi": {
+          "id": "qoqqtiFUa4Dq2Wqp",
+          "name": "Cartracker Alerts"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "chatId": "774819707",
+        "text": "=DBT Build failed due to Lock. Failed for 5 min.\n\n{{ $(Check Error Status).item.json.error.message }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        752,
+        -560
+      ],
+      "id": "b0b09f85-d9ee-4df5-8b00-0da07054792c",
+      "name": "Send 409 Alert",
+      "webhookId": "3f97844c-717f-4bcd-86d2-b10cba6f7a6c",
+      "credentials": {
+        "telegramApi": {
+          "id": "qoqqtiFUa4Dq2Wqp",
+          "name": "Cartracker Alerts"
+        }
+      },
+      "continueOnFail": true
+    }
+  ],
+  "pinData": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "intent": "after_detail"
+        }
+      }
+    ]
+  },
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Set Error Counts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute DBT Build": {
+      "main": [
+        [
+          {
+            "node": "Return 200",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error Router": {
+      "main": [
+        [
+          {
+            "node": "Increment 409 Error",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Set Refresh to Full",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fix 400 Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Error Counts": {
+      "main": [
+        [
+          {
+            "node": "Check Error Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Refresh to Full": {
+      "main": [
+        [
+          {
+            "node": "Check Error Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Increment 409 Error": {
+      "main": [
+        [
+          {
+            "node": "Wait 60s",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 60s": {
+      "main": [
+        [
+          {
+            "node": "Check Error Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fix 400 Error": {
+      "main": [
+        [
+          {
+            "node": "Check Error Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lock & Stuck Query Cleanup": {
+      "main": [
+        [
+          {
+            "node": "500 Type",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Return 500": {
+      "main": [
+        []
+      ]
+    },
+    "Check Error Status": {
+      "main": [
+        [
+          {
+            "node": "Send 409 Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Lock & Stuck Query Cleanup",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Execute DBT Build",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "500 Type": {
+      "main": [
+        [
+          {
+            "node": "Send Final Fail Message",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Soft 500 Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Final Fail Message": {
+      "main": [
+        [
+          {
+            "node": "Return 500",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Soft 500 Alert": {
+      "main": [
+        [
+          {
+            "node": "Execute DBT Build",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send 409 Alert": {
+      "main": [
+        [
+          {
+            "node": "Return 409",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "641fa826-ef89-49c5-bcdf-3f8fea07b2ee",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179"
+  },
+  "id": "qdURL8XbEkdApnjdAcFFL",
+  "tags": []
+}
