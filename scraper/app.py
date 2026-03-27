@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional
 import json
 import logging
 import os
+from logging.handlers import RotatingFileHandler
 import uuid
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -14,6 +15,13 @@ from processors.scrape_detail import (scrape_detail_dummy, scrape_detail_fetch)
 from processors.parse_detail_page import parse_cars_detail_page_html_v1
 from routers.admin import router as admin_router
 from db import get_pool, close_pool
+
+_LOG_PATH = "/usr/app/logs/app.log"
+os.makedirs(os.path.dirname(_LOG_PATH), exist_ok=True)
+_log_handler = RotatingFileHandler(_LOG_PATH, maxBytes=5_000_000, backupCount=3)
+_log_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+logging.getLogger().addHandler(_log_handler)
+logging.getLogger().setLevel(logging.INFO)
 
 logger = logging.getLogger("scraper")
 
