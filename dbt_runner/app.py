@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import re
 import shlex
@@ -9,8 +10,10 @@ from typing import Any, Dict, List, Optional
 
 import psycopg2
 from fastapi import FastAPI, Body, HTTPException
+from fastapi.staticfiles import StaticFiles
 
 app = FastAPI()
+logger = logging.getLogger("dbt_runner")
 
 DB_KWARGS = {
     "host": "postgres",
@@ -47,6 +50,7 @@ def _acquire_lock(caller: str) -> bool:
         conn.close()
         return acquired
     except Exception:
+        logger.exception("Failed to acquire dbt_lock")
         return False
 
 
@@ -62,7 +66,7 @@ def _release_lock() -> None:
             )
         conn.close()
     except Exception:
-        pass
+        logger.exception("Failed to release dbt_lock")
 
 
 def _lock_status() -> Dict[str, Any]:
@@ -81,6 +85,7 @@ def _lock_status() -> Dict[str, Any]:
             }
         return {"locked": False, "locked_at": None, "locked_by": None}
     except Exception:
+        logger.exception("Failed to read dbt_lock status")
         return {"locked": False, "locked_at": None, "locked_by": None}
 
 
@@ -109,14 +114,55 @@ def _record_run(started_at: datetime, finished_at: datetime, ok: bool,
             )
         conn.close()
     except Exception:
-        pass  # never let DB logging break the build response
+        logger.exception("Failed to record dbt run to DB")  # never let DB logging break the build response
 
 
-# Update these to match your dbt model names (you already confirmed the detail stg_ targets)
-INTENT_TO_SELECT: Dict[str, List[str]] = {
+# ---------------------------------------------------------------------------
+# Intent management (DB-backed, replaces hardcoded INTENT_TO_SELECT)
+# ---------------------------------------------------------------------------
+
+# Fallback used if the dbt_intents table doesn't exist yet (before migration).
+_INTENT_FALLBACK: Dict[str, List[str]] = {
     "after_srp": ["stg_srp_observations+", "stg_detail_carousel_hints+", "ops_vehicle_staleness+"],
     "after_detail": ["stg_detail_observations+", "stg_detail_carousel_hints+", "ops_vehicle_staleness+"],
 }
+
+
+def _load_intents() -> Dict[str, List[str]]:
+    """Read intents from dbt_intents table. Falls back to hardcoded defaults."""
+    try:
+        conn = psycopg2.connect(**DB_KWARGS)
+        with conn, conn.cursor() as cur:
+            cur.execute("SELECT intent_name, select_args FROM dbt_intents ORDER BY intent_name")
+            rows = cur.fetchall()
+        conn.close()
+        if rows:
+            return {row[0]: list(row[1]) for row in rows}
+    except Exception:
+        logger.warning("Could not load intents from DB, using fallback", exc_info=True)
+    return dict(_INTENT_FALLBACK)
+
+
+def _save_intent(intent_name: str, select_args: List[str]) -> None:
+    conn = psycopg2.connect(**DB_KWARGS)
+    with conn, conn.cursor() as cur:
+        cur.execute(
+            """INSERT INTO dbt_intents (intent_name, select_args, updated_at)
+               VALUES (%s, %s, now())
+               ON CONFLICT (intent_name) DO UPDATE
+               SET select_args = EXCLUDED.select_args, updated_at = now()""",
+            (intent_name, select_args),
+        )
+    conn.close()
+
+
+def _delete_intent(intent_name: str) -> bool:
+    conn = psycopg2.connect(**DB_KWARGS)
+    with conn, conn.cursor() as cur:
+        cur.execute("DELETE FROM dbt_intents WHERE intent_name = %s", (intent_name,))
+        deleted = cur.rowcount > 0
+    conn.close()
+    return deleted
 
 SAFE_TOKEN = re.compile(r"^[A-Za-z0-9_:+.@/-]+$")
 
@@ -148,6 +194,69 @@ def get_lock_status() -> Dict[str, Any]:
     return _lock_status()
 
 
+@app.get("/dbt/intents")
+def get_intents() -> Dict[str, Any]:
+    """Return all intents from the DB."""
+    intents = _load_intents()
+    return {"intents": {k: {"select": v} for k, v in intents.items()}}
+
+
+@app.post("/dbt/intents")
+def upsert_intent(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+    """Create or update an intent. Payload: {intent_name, select_args: []}"""
+    intent_name = (payload.get("intent_name") or "").strip()
+    select_args = payload.get("select_args") or []
+    if not intent_name:
+        raise HTTPException(status_code=400, detail="intent_name is required")
+    if isinstance(select_args, str):
+        select_args = [t.strip() for t in select_args.split() if t.strip()]
+    _validate_tokens(select_args, "select_args")
+    _save_intent(intent_name, select_args)
+    return {"ok": True, "intent_name": intent_name, "select_args": select_args}
+
+
+@app.delete("/dbt/intents/{intent_name}")
+def delete_intent(intent_name: str) -> Dict[str, Any]:
+    """Delete an intent by name."""
+    deleted = _delete_intent(intent_name)
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"Intent {intent_name!r} not found")
+    return {"ok": True, "deleted": intent_name}
+
+
+@app.get("/dbt/docs/status")
+def get_docs_status() -> Dict[str, Any]:
+    """Check whether dbt docs have been generated (target/index.html exists)."""
+    available = os.path.exists(os.path.join(os.getcwd(), "target", "index.html"))
+    return {"available": available}
+
+
+@app.post("/dbt/docs/generate")
+def dbt_docs_generate() -> Dict[str, Any]:
+    """Run dbt deps + dbt docs generate and return ok/stdout/stderr."""
+    # Ensure packages are installed before generating docs.
+    deps = subprocess.run(["dbt", "deps"], capture_output=True, text=True)
+    if deps.returncode != 0:
+        logger.error("dbt deps failed (rc=%d): %s", deps.returncode, deps.stderr)
+        return {
+            "ok": False,
+            "returncode": deps.returncode,
+            "stdout": _cap(deps.stdout),
+            "stderr": _cap(deps.stderr),
+        }
+
+    proc = subprocess.run(["dbt", "docs", "generate"], capture_output=True, text=True)
+    ok = proc.returncode == 0
+    if not ok:
+        logger.error("dbt docs generate failed (rc=%d): %s", proc.returncode, proc.stderr)
+    return {
+        "ok": ok,
+        "returncode": proc.returncode,
+        "stdout": _cap(deps.stdout + proc.stdout),
+        "stderr": _cap(proc.stderr),
+    }
+
+
 @app.post("/dbt/build")
 def dbt_build(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
     """
@@ -172,12 +281,13 @@ def dbt_build(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
     if select is None:
         if not intent:
             raise HTTPException(status_code=400, detail="Provide either 'intent' or 'select'.")
-        if intent not in INTENT_TO_SELECT:
+        intent_map = _load_intents()
+        if intent not in intent_map:
             raise HTTPException(
                 status_code=400,
-                detail=f"Unknown intent {intent!r}. Allowed: {sorted(INTENT_TO_SELECT.keys())}",
+                detail=f"Unknown intent {intent!r}. Allowed: {sorted(intent_map.keys())}",
             )
-        select = INTENT_TO_SELECT[intent]
+        select = intent_map[intent]
 
     if isinstance(select, str):
         select = [select]
@@ -239,3 +349,14 @@ def dbt_build(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
     finally:
         # --- Always release lock ---
         _release_lock()
+
+
+# ---------------------------------------------------------------------------
+# dbt docs static file serving
+# Mount target/ so generated docs are browsable at /docs/
+# The directory is created here to ensure the mount doesn't fail on first start
+# (before dbt docs generate has been run).
+# ---------------------------------------------------------------------------
+_TARGET_DIR = os.path.join(os.getcwd(), "target")
+os.makedirs(_TARGET_DIR, exist_ok=True)
+app.mount("/dbt-docs", StaticFiles(directory=_TARGET_DIR, html=True), name="dbt_docs")

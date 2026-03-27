@@ -1,0 +1,84 @@
+{% extends "admin/base.html" %}
+{% block title %}Run History — Cartracker Admin{% endblock %}
+
+{% block content %}
+<h2>Run History <small style="font-size: 0.7em; color: var(--pico-muted-color);">last 20</small></h2>
+
+{% if not runs %}
+<p>No runs found.</p>
+{% else %}
+<figure>
+<table>
+    <thead>
+        <tr>
+            <th>Started</th>
+            <th>Status</th>
+            <th>Trigger</th>
+            <th>Progress</th>
+            <th>Errors</th>
+            <th>Duration</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for r in runs %}
+    {% set is_error = r.error_count and r.error_count > 0 or r.status == 'failed' %}
+    <tr class="{{ 'row-error' if is_error }}">
+        <td style="white-space: nowrap; font-size: 0.85rem;">
+            {{ r.started_at.strftime("%m-%d %H:%M") if r.started_at else "—" }}
+        </td>
+        <td>
+            {% if r.status == 'completed' %}
+                <span class="badge badge-active">{{ r.status }}</span>
+            {% elif r.status == 'running' %}
+                <span class="badge badge-running">{{ r.status }}</span>
+            {% elif r.status == 'failed' %}
+                <span class="badge badge-failed">{{ r.status }}</span>
+            {% else %}
+                <span class="badge badge-disabled">{{ r.status }}</span>
+            {% endif %}
+        </td>
+        <td style="font-size: 0.85rem;">{{ r.trigger or "—" }}</td>
+        <td style="font-size: 0.85rem;">
+            {% if r.total_count is not none %}
+                {{ r.progress_count or 0 }} / {{ r.total_count }}
+            {% else %}
+                {{ r.progress_count or 0 }}
+            {% endif %}
+        </td>
+        <td style="font-size: 0.85rem;">
+            {% if r.error_count %}
+                <span style="color: #e74c3c; font-weight: 600;"
+                      title="{{ r.last_error or '' }}">
+                    {{ r.error_count }}
+                    {% if r.last_error %}
+                        — {{ r.last_error[:80] }}{% if r.last_error|length > 80 %}…{% endif %}
+                    {% endif %}
+                </span>
+            {% else %}
+                0
+            {% endif %}
+        </td>
+        <td style="font-size: 0.85rem; white-space: nowrap;">
+            {% if r.started_at and r.finished_at %}
+                {{ ((r.finished_at - r.started_at).total_seconds() | int) }}s
+            {% elif r.started_at %}
+                In progress
+            {% else %}
+                —
+            {% endif %}
+        </td>
+        <td>
+            <a href="/admin/runs/{{ r.run_id }}" class="btn-sm outline" role="button">View</a>
+        </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+</table>
+</figure>
+{% endif %}
+
+<p style="font-size: 0.85rem; color: var(--pico-muted-color);">
+    Full history: <a href="http://localhost:8501" target="_blank">Dashboard → Pipeline Health</a>
+</p>
+{% endblock %}

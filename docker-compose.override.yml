@@ -1,0 +1,12 @@
+# Auto-loaded by Docker Compose for production use.
+# Adds host port mappings for services that need browser/host access.
+# Not loaded when using explicit -f flags (e.g. test commands).
+
+services:
+  scraper:
+    ports:
+      - "8000:8000"
+
+  dbt_runner:
+    ports:
+      - "8081:8080"

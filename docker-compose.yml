@@ -44,12 +44,12 @@ services:
     image: cartracker-scraper
     container_name: cartracker-scraper
     restart: unless-stopped
-    ports:
-      - "8000:8000"
     volumes:
       - cartracker_raw:/data/raw
     environment:
       DATABASE_URL: postgresql://cartracker:${POSTGRES_PASSWORD}@postgres:5432/cartracker
+      DBT_RUNNER_URL: http://dbt_runner:8080
+      DBT_DOCS_URL: http://localhost:8081/dbt-docs/
     networks:
       - cartracker-net
 
@@ -109,9 +109,8 @@ services:
       - cartracker-net
     depends_on:
       - postgres
-    # Optional: only needed if you want to hit it from your host browser/curl
-    ports:
-      - "8081:8080"
+    volumes:
+      - ./target:/usr/app/target
 
 
 

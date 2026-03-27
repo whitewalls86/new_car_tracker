@@ -10,7 +10,7 @@
 
 {% set p = config.params if config else {} %}
 
-<form method="post" action="{{ '/admin/' ~ config.search_key if editing else '/admin/' }}">
+<form method="post" action="{{ '/admin/searches/' ~ config.search_key if editing else '/admin/searches/' }}">
 
     <!-- Search Key -->
     {% if not editing %}
@@ -138,7 +138,7 @@
     <!-- Submit -->
     <div class="grid">
         <button type="submit">{{ "Save Changes" if editing else "Create Search" }}</button>
-        <a href="/admin/" role="button" class="outline secondary">Cancel</a>
+        <a href="/admin/searches/" role="button" class="outline secondary">Cancel</a>
     </div>
 </form>
 {% endblock %}

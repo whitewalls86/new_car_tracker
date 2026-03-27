@@ -1,0 +1,37 @@
+# Test override — runs scraper and dbt_runner on alternate ports so production
+# containers are not disturbed during development/verification.
+#
+# Usage:
+#   docker compose -p cartracker-test -f docker-compose.yml -f docker-compose.test.yml build scraper dbt_runner
+#   docker compose -p cartracker-test -f docker-compose.yml -f docker-compose.test.yml up -d scraper dbt_runner
+#
+# Test endpoints:
+#   Scraper admin:  http://localhost:8002/admin/
+#   dbt_runner:     http://localhost:8082/
+#   dbt docs:       http://localhost:8082/dbt-docs/
+#
+# Tear down:
+#   docker compose -p cartracker-test -f docker-compose.yml -f docker-compose.test.yml down
+
+services:
+  scraper:
+    container_name: cartracker-scraper-test
+    restart: "no"
+    ports:
+      - "8002:8000"
+    environment:
+      DBT_RUNNER_URL: http://cartracker-dbt-runner-test:8080
+      DBT_DOCS_URL: http://localhost:8082/dbt-docs/
+    # Note: base docker-compose.yml has no host ports for scraper/dbt_runner.
+    # Production host ports live in docker-compose.override.yml (auto-loaded).
+    # Test commands use explicit -f flags so override.yml is NOT loaded,
+    # meaning only this file's ports apply — no conflicts with production.
+
+  dbt_runner:
+    container_name: cartracker-dbt-runner-test
+    restart: "no"
+    ports:
+      - "8082:8080"
+    # Base docker-compose.yml has no host port for dbt_runner (it's in
+    # docker-compose.override.yml which is NOT loaded by this test command),
+    # so only 8082 is bound — no conflict with production on 8081.

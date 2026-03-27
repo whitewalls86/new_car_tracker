@@ -1,0 +1,123 @@
+{% extends "admin/base.html" %}
+{% block title %}Run {{ run.run_id[:8] }} — Cartracker Admin{% endblock %}
+
+{% block content %}
+<p style="margin-bottom: 0.5rem;">
+    <a href="/admin/runs">← Back to Runs</a>
+</p>
+
+<h2>Run Detail</h2>
+
+<article class="config-card">
+    <div class="config-meta">
+        <div><strong>Run ID:</strong> <code style="font-size: 0.8rem;">{{ run.run_id }}</code></div>
+        <div>
+            <strong>Status:</strong>
+            {% if run.status == 'completed' %}
+                <span class="badge badge-active">{{ run.status }}</span>
+            {% elif run.status == 'running' %}
+                <span class="badge badge-running">{{ run.status }}</span>
+            {% elif run.status == 'failed' %}
+                <span class="badge badge-failed">{{ run.status }}</span>
+            {% else %}
+                <span class="badge badge-disabled">{{ run.status }}</span>
+            {% endif %}
+        </div>
+        <div><strong>Trigger:</strong> {{ run.trigger or "—" }}</div>
+        <div><strong>Started:</strong> {{ run.started_at.strftime("%Y-%m-%d %H:%M:%S") if run.started_at else "—" }} UTC</div>
+        <div><strong>Finished:</strong> {{ run.finished_at.strftime("%Y-%m-%d %H:%M:%S") if run.finished_at else "In progress" }} UTC</div>
+        <div>
+            <strong>Duration:</strong>
+            {% if run.started_at and run.finished_at %}
+                {{ ((run.finished_at - run.started_at).total_seconds() | int) }}s
+            {% else %}
+                —
+            {% endif %}
+        </div>
+        <div>
+            <strong>Progress:</strong>
+            {% if run.total_count is not none %}
+                {{ run.progress_count or 0 }} / {{ run.total_count }}
+            {% else %}
+                {{ run.progress_count or 0 }}
+            {% endif %}
+        </div>
+        <div><strong>Errors:</strong> {{ run.error_count or 0 }}</div>
+        {% if run.notes %}
+        <div style="grid-column: 1 / -1;"><strong>Notes:</strong> {{ run.notes }}</div>
+        {% endif %}
+        {% if run.last_error %}
+        <div style="grid-column: 1 / -1;">
+            <strong>Last Error:</strong>
+            <span style="color: #e74c3c;">{{ run.last_error }}</span>
+        </div>
+        {% endif %}
+    </div>
+</article>
+
+<h3>Jobs ({{ jobs | length }})</h3>
+
+{% if not jobs %}
+<p style="color: var(--pico-muted-color);">No jobs found for this run.</p>
+{% else %}
+<figure>
+<table>
+    <thead>
+        <tr>
+            <th>Search Key</th>
+            <th>Scope</th>
+            <th>Status</th>
+            <th>Created</th>
+            <th>Duration</th>
+            <th>Artifacts</th>
+            <th>Retries</th>
+            <th>Error</th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for j in jobs %}
+    {% set is_error = j.status == 'failed' or j.error %}
+    <tr class="{{ 'row-error' if is_error }}">
+        <td style="font-size: 0.85rem;">{{ j.search_key }}</td>
+        <td style="font-size: 0.85rem;">{{ j.scope }}</td>
+        <td>
+            {% if j.status == 'completed' %}
+                <span class="badge badge-active">{{ j.status }}</span>
+            {% elif j.status == 'running' %}
+                <span class="badge badge-running">{{ j.status }}</span>
+            {% elif j.status == 'failed' %}
+                <span class="badge badge-failed">{{ j.status }}</span>
+            {% else %}
+                <span class="badge badge-disabled">{{ j.status }}</span>
+            {% endif %}
+        </td>
+        <td style="font-size: 0.85rem; white-space: nowrap;">
+            {{ j.created_at.strftime("%H:%M:%S") if j.created_at else "—" }}
+        </td>
+        <td style="font-size: 0.85rem; white-space: nowrap;">
+            {% if j.started_at and j.completed_at %}
+                {{ ((j.completed_at - j.started_at).total_seconds() | int) }}s
+            {% elif j.started_at %}
+                In progress
+            {% else %}
+                —
+            {% endif %}
+        </td>
+        <td style="font-size: 0.85rem; text-align: right;">
+            {{ j.artifact_count if j.artifact_count is not none else "—" }}
+        </td>
+        <td style="font-size: 0.85rem; text-align: right;">{{ j.retry_count or 0 }}</td>
+        <td style="font-size: 0.8rem; color: #e74c3c; max-width: 300px;">
+            {% if j.error %}
+                <span title="{{ j.error }}">
+                    {{ j.error[:120] }}{% if j.error|length > 120 %}…{% endif %}
+                </span>
+            {% endif %}
+        </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+</table>
+</figure>
+{% endif %}
+{% endblock %}
