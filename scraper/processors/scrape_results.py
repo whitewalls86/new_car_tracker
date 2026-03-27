@@ -234,10 +234,13 @@ def _fetch_page(browser, profile: Dict, url: str, run_dir: str,
             f.write(content)
 
         # --- VIN extraction ---
+        # Cars.com now HTML-encodes JSON in data attributes (&quot; instead of ")
+        # so unescape before running the regex.
         page_vins: Set[str] = set()
         new_vins_count = 0
         if status == 200:
-            for vin_match in _VIN_RE.finditer(html_text):
+            unescaped = html_lib.unescape(html_text)
+            for vin_match in _VIN_RE.finditer(unescaped):
                 page_vins.add(vin_match.group(1))
 
         if known_vins and page_vins:
