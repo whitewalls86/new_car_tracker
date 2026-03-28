@@ -131,8 +131,8 @@ def _record_run(started_at: datetime, finished_at: datetime, ok: bool,
 
 # Fallback used if the dbt_intents table doesn't exist yet (before migration).
 _INTENT_FALLBACK: Dict[str, List[str]] = {
-    "after_srp": ["stg_srp_observations+", "stg_detail_carousel_hints+", "ops_vehicle_staleness+"],
-    "after_detail": ["stg_detail_observations+", "stg_detail_carousel_hints+", "ops_vehicle_staleness+"],
+    "after_srp": ["stg_raw_artifacts+", "stg_srp_observations+", "stg_detail_carousel_hints+"],
+    "after_detail": ["stg_raw_artifacts+", "stg_detail_observations+", "stg_detail_carousel_hints+"],
 }
 
 

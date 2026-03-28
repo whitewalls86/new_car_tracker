@@ -246,8 +246,6 @@ def _fetch_page(browser, profile: Dict, url: str, run_dir: str,
         if known_vins and page_vins:
             new_vins = page_vins - known_vins
             new_vins_count = len(new_vins)
-            if new_vins_count / len(page_vins) < .5:
-                stop = True
             known_vins.update(page_vins)
 
         artifact = {
