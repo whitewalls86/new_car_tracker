@@ -60,6 +60,7 @@
 <div class="tab-nav">
     <button class="active" onclick="switchTab('scraper', this)">Scraper</button>
     <button onclick="switchTab('dbt', this)">dbt Runner</button>
+    <button onclick="switchTab('ops', this)">Ops</button>
 </div>
 
 <div id="tab-scraper" class="tab-panel active">
@@ -67,7 +68,7 @@
         {% if scraper_lines %}
             {% for line in scraper_lines %}<span class="{{ 'log-error' if ' ERROR ' in line else ('log-warning' if ' WARNING ' in line else ('log-debug' if ' DEBUG ' in line else 'log-info')) }}">{{ line | e }}</span>{% endfor %}
         {% else %}
-            <span class="log-empty">No log entries yet. Logs appear here after the first scrape job runs.</span>
+            <span class="log-empty">No log entries yet — or scraper is unreachable.</span>
         {% endif %}
     </div>
 </div>
@@ -82,19 +83,27 @@
     </div>
 </div>
 
+<div id="tab-ops" class="tab-panel">
+    <div class="log-box" id="ops-log">
+        {% if ops_lines %}
+            {% for line in ops_lines %}<span class="{{ 'log-error' if ' ERROR ' in line else ('log-warning' if ' WARNING ' in line else ('log-debug' if ' DEBUG ' in line else 'log-info')) }}">{{ line | e }}</span>{% endfor %}
+        {% else %}
+            <span class="log-empty">No log entries yet.</span>
+        {% endif %}
+    </div>
+</div>
+
 <script>
 function switchTab(name, btn) {
     document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
     document.querySelectorAll('.tab-nav button').forEach(b => b.classList.remove('active'));
     document.getElementById('tab-' + name).classList.add('active');
     btn.classList.add('active');
-    // Scroll to bottom of newly visible log box
     const box = document.getElementById(name + '-log');
     box.scrollTop = box.scrollHeight;
 }
-// Auto-scroll both log boxes to bottom on load
 window.addEventListener('load', () => {
-    ['scraper-log', 'dbt-log'].forEach(id => {
+    ['scraper-log', 'dbt-log', 'ops-log'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.scrollTop = el.scrollHeight;
     });

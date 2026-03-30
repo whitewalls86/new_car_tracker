@@ -6,6 +6,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 WORKDIR /usr/app
 
 COPY ops/app.py /usr/app/app.py
+COPY ops/db.py /usr/app/db.py
+COPY ops/routers/ /usr/app/routers/
+COPY ops/models/ /usr/app/models/
+COPY ops/templates/ /usr/app/templates/
 
-# Run the API on all interfaces so host + n8n can reach it
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8060"]

@@ -1,0 +1,88 @@
+{% extends "admin/base.html" %}
+{% block title %}Deploy — Cartracker Admin{% endblock %}
+
+{% block content %}
+<h2>Deploy Coordination</h2>
+
+{# ── Current Status ──────────────────────────────────────────────── #}
+<article class="config-card" style="margin-bottom: 1rem;">
+    <h4 style="margin-top: 0;">Current Status</h4>
+    <div class="config-meta">
+        <div>
+            <strong>Intent:</strong>
+            {% if status.intent == 'none' %}
+                <span class="badge badge-active">None</span>
+            {% elif status.intent == 'pending' %}
+                <span class="badge badge-pending">Pending</span>
+            {% elif status.intent == 'deploying' %}
+                <span class="badge badge-running">Deploying</span>
+            {% else %}
+                <span class="badge badge-disabled">{{ status.intent }}</span>
+            {% endif %}
+        </div>
+        <div>
+            <strong>In-Flight:</strong>
+            {% if status.number_running and status.number_running > 0 %}
+                <span class="badge badge-running">{{ status.number_running }} running</span>
+            {% else %}
+                <span class="badge badge-active">0 running</span>
+            {% endif %}
+        </div>
+        {% if status.requested_by %}
+        <div><strong>Requested By:</strong> {{ status.requested_by }}</div>
+        {% endif %}
+        {% if status.requested_at %}
+        <div><strong>Requested At:</strong> {{ status.requested_at }}</div>
+        {% endif %}
+        {% if status.min_started_at %}
+        <div><strong>Oldest In-Flight:</strong> {{ status.min_started_at }}</div>
+        {% endif %}
+    </div>
+
+    {% if status.intent == 'pending' and (not status.number_running or status.number_running == 0) %}
+    <div style="margin-top: 1rem; padding: 0.75rem 1rem; border-radius: 8px; border: 1px solid #2ecc71; background: #f0fff4;">
+        <strong>Safe to deploy</strong> — all workflows have drained. You can proceed with the rebuild.
+    </div>
+    {% elif status.intent == 'pending' %}
+    <div style="margin-top: 1rem; padding: 0.75rem 1rem; border-radius: 8px; border: 1px solid #f39c12; background: #fef9e7;">
+        <strong>Waiting for drain</strong> — {{ status.number_running }} workflow(s) still in flight. New workflows are blocked.
+    </div>
+    {% endif %}
+</article>
+
+{# ── Actions ─────────────────────────────────────────────────────── #}
+<article class="config-card">
+    <h4 style="margin-top: 0;">Actions</h4>
+    <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
+        {% if status.intent == 'none' %}
+        <form method="post" action="/admin/deploy/start" style="margin: 0;">
+            <button type="submit"
+                    onclick="return confirm('This will block all n8n workflows from starting new executions. Continue?')">
+                Initiate Deploy
+            </button>
+        </form>
+        {% else %}
+        <form method="post" action="/admin/deploy/complete" style="margin: 0;">
+            <button type="submit" class="outline"
+                    onclick="return confirm('This will release the deploy lock and allow workflows to resume. Continue?')">
+                Release Lock
+            </button>
+        </form>
+        {% endif %}
+    </div>
+
+    {% if status.intent == 'none' %}
+    <p style="font-size: 0.85rem; color: var(--pico-muted-color); margin-top: 0.75rem; margin-bottom: 0;">
+        Click "Initiate Deploy" to set intent to pending. New n8n workflows will be blocked.
+        Once all in-flight workflows drain to zero, run <code>./redeploy.sh scraper dbt_runner</code> on the server.
+    </p>
+    {% endif %}
+</article>
+
+{% if status.intent == 'pending' %}
+<script>
+// Auto-refresh every 5 seconds while waiting for drain
+setTimeout(() => window.location.reload(), 5000);
+</script>
+{% endif %}
+{% endblock %}

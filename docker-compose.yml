@@ -39,8 +39,8 @@ services:
 
   ops:
     build:
-      context: ./ops
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ops/Dockerfile
     image: cartracker-ops
     container_name: cartracker-ops
     restart: unless-stopped
@@ -56,6 +56,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       DBT_RUNNER_URL: http://dbt_runner:8080
       DBT_DOCS_URL: http://localhost:8081/dbt-docs/
+      SCRAPER_URL: http://scraper:8000
     networks:
       - cartracker-net
 

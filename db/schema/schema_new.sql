@@ -713,6 +713,48 @@ ON CONFLICT (id) DO NOTHING;
 
 
 --
+-- Name: deploy_intent; Type: TABLE; Schema: public; Owner: -
+-- Singleton row (like dbt_lock) that gates n8n workflows during deploys.
+--
+
+CREATE TABLE public.deploy_intent (
+    id integer NOT NULL DEFAULT 1,
+    intent text NOT NULL DEFAULT 'none',
+    requested_at timestamp with time zone,
+    requested_by text,
+    completed_at timestamp with time zone,
+    CONSTRAINT deploy_intent_single_row CHECK (id = 1)
+);
+
+ALTER TABLE ONLY public.deploy_intent
+    ADD CONSTRAINT deploy_intent_pkey PRIMARY KEY (id);
+
+INSERT INTO public.deploy_intent (id, intent)
+VALUES (1, 'none')
+ON CONFLICT (id) DO NOTHING;
+
+
+--
+-- Name: n8n_executions; Type: TABLE; Schema: public; Owner: -
+-- Tracks every n8n workflow execution for deploy coordination.
+--
+
+CREATE TABLE public.n8n_executions (
+    execution_id text NOT NULL,
+    workflow_name text NOT NULL,
+    started_at timestamp with time zone NOT NULL DEFAULT now(),
+    finished_at timestamp with time zone,
+    status text NOT NULL DEFAULT 'running'
+);
+
+ALTER TABLE ONLY public.n8n_executions
+    ADD CONSTRAINT n8n_executions_pkey PRIMARY KEY (execution_id);
+
+CREATE INDEX ix_n8n_executions_status ON public.n8n_executions USING btree (status);
+CREATE INDEX ix_n8n_executions_workflow_name ON public.n8n_executions USING btree (workflow_name);
+
+
+--
 -- Name: dbt_intents; Type: TABLE; Schema: public; Owner: -
 -- Stores DB-backed dbt build intents, replacing hardcoded INTENT_TO_SELECT in dbt_runner.
 --
