@@ -35,7 +35,8 @@
         1344
       ],
       "id": "774da0e5-e86c-4917-9e06-9fdfe85fe65e",
-      "name": "Get Completed Jobs"
+      "name": "Get Completed Jobs",
+      "alwaysOutputData": true
     },
     {
       "parameters": {
@@ -44,7 +45,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        5376,
+        5584,
         1344
       ],
       "id": "b53068c8-d84f-4bdc-9ef1-842aa5ae8ff0",
@@ -59,7 +60,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        5824,
+        6032,
         1152
       ],
       "id": "989b86b7-aa50-4581-9575-1b3b5d2b2da0",
@@ -78,7 +79,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        5824,
+        6032,
         1344
       ],
       "id": "eb153a05-7b5e-4b72-b59d-ef902a1cf6fe",
@@ -95,7 +96,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        6048,
+        6256,
         1344
       ],
       "id": "764c4f7d-81a8-4902-a813-00f94c1692ad",
@@ -110,7 +111,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        6272,
+        6480,
         1344
       ],
       "id": "307b4e2b-1b12-4473-b8dc-a5e237377995",
@@ -129,7 +130,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        6496,
+        6704,
         1344
       ],
       "id": "1d54b55a-5eee-4825-b1b3-4589f679beb7",
@@ -144,7 +145,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        6720,
+        6928,
         1344
       ],
       "id": "4cf4a25d-21fa-4856-9b05-0b8e4fc4fd5f",
@@ -183,7 +184,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        6944,
+        7152,
         1344
       ],
       "id": "156584b4-34dd-4928-8769-f8854b03fde4",
@@ -198,7 +199,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        7168,
+        7376,
         1248
       ],
       "id": "9f3fe549-9b43-43b8-8282-ed3014af6296",
@@ -238,7 +239,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
-        5600,
+        5808,
         1344
       ],
       "id": "a551d850-9c18-4625-afbc-de7e36c57bca",
@@ -329,7 +330,7 @@
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3.4,
       "position": [
-        5824,
+        6032,
         1536
       ],
       "id": "c2df321a-cf2e-475d-b1ba-2dd869935d34",
@@ -342,7 +343,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        6048,
+        6256,
         1552
       ],
       "id": "f1a3c2d0-8e5b-4a9f-b123-456789abcdef",
@@ -359,7 +360,7 @@
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
-        6272,
+        6480,
         1552
       ],
       "id": "258490dc-56eb-4758-b2c3-ad2ad9b93e88",
@@ -507,7 +508,7 @@
               "removed": false
             }
           ],
-          "attemptToConvertTypes": false,
+          "attemptToConvertTypes": true,
           "convertFieldsToString": true
         },
         "options": {}
@@ -515,7 +516,7 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        7392,
+        7600,
         1248
       ],
       "id": "2a5b89cc-075e-463c-97da-319c3674dede",
@@ -581,7 +582,7 @@
               "removed": false
             }
           ],
-          "attemptToConvertTypes": false,
+          "attemptToConvertTypes": true,
           "convertFieldsToString": true
         },
         "options": {}
@@ -589,7 +590,7 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        7168,
+        7376,
         1440
       ],
       "id": "d8d39df9-4ec8-40b9-a636-69ac807378da",
@@ -623,11 +624,119 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
-        4928,
+        4912,
         1344
       ],
       "id": "7de6af56-fdf0-42eb-9fec-617b16ef6b40",
       "name": "Can Deploy?"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "e2d3b219-918f-4dcf-b743-9878b5d92452",
+              "leftValue": "={{ $json.isEmpty() }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "false",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        5344,
+        1376
+      ],
+      "id": "e7d3862b-24e5-4b48-8acf-af46bc890b39",
+      "name": "If1"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "QaFnwxOQopzO-wVjL64dl",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/QaFnwxOQopzO-wVjL64dl",
+          "cachedResultName": "Update n8n Runs Table"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "parent_workflow_id": "={{ $execution.id }}",
+            "parent_workflow_timestamp": "={{ $now }}",
+            "parent_workflow_name": "={{ $workflow.name }}",
+            "parent_workflow_status": "completed"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "parent_workflow_name",
+              "displayName": "parent_workflow_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "parent_workflow_id",
+              "displayName": "parent_workflow_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "number",
+              "removed": false
+            },
+            {
+              "id": "parent_workflow_timestamp",
+              "displayName": "parent_workflow_timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "parent_workflow_status",
+              "displayName": "parent_workflow_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": true,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        5552,
+        1520
+      ],
+      "id": "febb8453-3007-4537-b8f8-d348c033e328",
+      "name": "Call 'Update n8n Runs Table'2"
     }
   ],
   "pinData": {
@@ -668,7 +777,7 @@
       "main": [
         [
           {
-            "node": "Explode Artifacts",
+            "node": "If1",
             "type": "main",
             "index": 0
           }
@@ -848,6 +957,24 @@
           }
         ]
       ]
+    },
+    "If1": {
+      "main": [
+        [
+          {
+            "node": "Explode Artifacts",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Call 'Update n8n Runs Table'2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": true,
@@ -858,7 +985,7 @@
     "callerPolicy": "workflowsFromSameOwner",
     "errorWorkflow": "rJfFKS2DGRAn_IPJR1xTc"
   },
-  "versionId": "b82e9a13-c9b0-4380-8626-97648d028bdb",
+  "versionId": "167afa3c-7dae-4537-9a03-9c5d543018ba",
   "meta": {
     "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179",
     "templateCredsSetupCompleted": true

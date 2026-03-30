@@ -228,7 +228,7 @@
       "typeVersion": 2.6,
       "position": [
         2304,
-        1400
+        1408
       ],
       "id": "insert-scrape-job",
       "name": "Insert Scrape Job",
@@ -373,7 +373,7 @@
               "removed": false
             }
           ],
-          "attemptToConvertTypes": false,
+          "attemptToConvertTypes": true,
           "convertFieldsToString": true
         },
         "options": {}
@@ -447,7 +447,7 @@
               "removed": false
             }
           ],
-          "attemptToConvertTypes": false,
+          "attemptToConvertTypes": true,
           "convertFieldsToString": true
         },
         "options": {}
@@ -681,7 +681,7 @@
     "executionOrder": "v1",
     "availableInMCP": false
   },
-  "versionId": "2e17aa9f-d3a0-45b9-82af-b6f72a5ce0bb",
+  "versionId": "8a77145d-913c-4607-96e8-2b1b4a4925b3",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179"

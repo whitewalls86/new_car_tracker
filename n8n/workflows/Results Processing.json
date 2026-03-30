@@ -48,7 +48,7 @@
       "typeVersion": 4.3,
       "position": [
         1792,
-        136
+        144
       ],
       "id": "a8dfa4aa-dd2d-4856-880e-0a44c6ae4d6f",
       "name": "Send Artifact for Processing"
@@ -134,7 +134,7 @@
       "typeVersion": 3.4,
       "position": [
         2016,
-        136
+        144
       ],
       "id": "7947df0a-42b3-4cec-9617-49c6c64449a1",
       "name": "Check Status"
@@ -149,7 +149,7 @@
       "typeVersion": 2.6,
       "position": [
         2464,
-        424
+        432
       ],
       "id": "c39f9d71-bdd2-4b39-a185-e2e685867556",
       "name": "Update Artifacts Table with retry status",
@@ -250,7 +250,7 @@
       "typeVersion": 2.6,
       "position": [
         1792,
-        328
+        336
       ],
       "id": "8ef7587c-92a8-4c07-9ef4-a6dbbe45bb63",
       "name": "Update Artifacts Table with Skip status",
@@ -491,7 +491,7 @@
               "removed": false
             }
           ],
-          "attemptToConvertTypes": false,
+          "attemptToConvertTypes": true,
           "convertFieldsToString": true
         },
         "options": {}
@@ -565,7 +565,7 @@
               "removed": false
             }
           ],
-          "attemptToConvertTypes": false,
+          "attemptToConvertTypes": true,
           "convertFieldsToString": true
         },
         "options": {}
@@ -816,7 +816,7 @@
     "executionOrder": "v1",
     "availableInMCP": false
   },
-  "versionId": "2d0d989c-efbb-4b10-98c1-e4970b8f23c6",
+  "versionId": "4826d10f-dc5f-45a1-8372-85bdc5ae87d9",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179"

@@ -374,7 +374,7 @@
               "removed": false
             }
           ],
-          "attemptToConvertTypes": false,
+          "attemptToConvertTypes": true,
           "convertFieldsToString": true
         },
         "options": {}
@@ -425,7 +425,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "UPDATE n8n_executions\nSET \n  status = 'terminated',\n  finshed_at = now()\nWHERE\n  status = 'running'\n  AND started_at < now() - interval '{{ $json.timeout_minutes }} minutes'\nRETURNING\n  execution_id",
+        "query": "UPDATE n8n_executions\nSET \n  status = 'terminated',\n  finished_at = now()\nWHERE\n  status = 'running'\n  AND started_at < now() - interval '{{ $json.timeout_minutes }} minutes'\nRETURNING\n  execution_id",
         "options": {}
       },
       "type": "n8n-nodes-base.postgres",
@@ -645,7 +645,7 @@
     "executionOrder": "v1",
     "availableInMCP": false
   },
-  "versionId": "cada0124-bd77-4dfd-9363-77cd1183a298",
+  "versionId": "a2687291-341c-4168-955b-ed88eb59f9ca",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179"

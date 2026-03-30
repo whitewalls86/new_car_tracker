@@ -41,7 +41,7 @@ dealer_picks as (
         listing_id,
         seller_customer_id,
         stale_reason,
-        1 as priority
+        2 as priority
     from stale
     where dealer_row_num = 1
 ),
@@ -54,7 +54,7 @@ force_stale as (
         listing_id,
         seller_customer_id,
         'force_stale_36h' as stale_reason,
-        2 as priority
+        1 as priority
     from stale
     where price_age_hours > 36
       and dealer_row_num > 1

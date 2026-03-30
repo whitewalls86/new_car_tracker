@@ -321,7 +321,7 @@
       "typeVersion": 2.6,
       "position": [
         832,
-        -280
+        -288
       ],
       "id": "9e77517a-d81e-4f25-9254-ada9cf0f07a7",
       "name": "Lock & Stuck Query Cleanup",
@@ -481,7 +481,7 @@
       "typeVersion": 3.4,
       "position": [
         1056,
-        -280
+        -288
       ],
       "id": "8d92011d-a158-47a0-95d2-da5770ff2b25",
       "name": "500 Type"
@@ -689,7 +689,7 @@
               "removed": false
             }
           ],
-          "attemptToConvertTypes": false,
+          "attemptToConvertTypes": true,
           "convertFieldsToString": true
         },
         "options": {}
@@ -701,7 +701,8 @@
         -560
       ],
       "id": "02b43eb6-45e2-474b-9887-9d68796dc092",
-      "name": "Call 'Update n8n Runs Table'"
+      "name": "Call 'Update n8n Runs Table'",
+      "executeOnce": true
     },
     {
       "parameters": {
@@ -763,7 +764,7 @@
               "removed": false
             }
           ],
-          "attemptToConvertTypes": false,
+          "attemptToConvertTypes": true,
           "convertFieldsToString": true
         },
         "options": {}
@@ -775,7 +776,8 @@
         -368
       ],
       "id": "16306347-19c3-4e17-be3c-23e246c1775a",
-      "name": "Call 'Update n8n Runs Table'1"
+      "name": "Call 'Update n8n Runs Table'1",
+      "executeOnce": true
     },
     {
       "parameters": {
@@ -837,7 +839,7 @@
               "removed": false
             }
           ],
-          "attemptToConvertTypes": false,
+          "attemptToConvertTypes": true,
           "convertFieldsToString": true
         },
         "options": {}
@@ -849,7 +851,8 @@
         -176
       ],
       "id": "ca7c7c48-57b6-4120-bbfb-c5dad11271c8",
-      "name": "Call 'Update n8n Runs Table'2"
+      "name": "Call 'Update n8n Runs Table'2",
+      "executeOnce": true
     },
     {
       "parameters": {
@@ -1156,7 +1159,7 @@
     "executionOrder": "v1",
     "availableInMCP": false
   },
-  "versionId": "d11cad44-3b47-4097-b4c6-fcd06bdad14f",
+  "versionId": "0498fcd9-d46e-4478-823c-da4edca53809",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179"

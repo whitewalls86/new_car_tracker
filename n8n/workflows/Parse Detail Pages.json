@@ -76,7 +76,7 @@
       "typeVersion": 4.3,
       "position": [
         4848,
-        3976
+        3984
       ],
       "id": "c01acf31-fc08-4b2e-8b77-b2ee45273ca5",
       "name": "HTTP Request"
@@ -268,7 +268,7 @@
       "typeVersion": 2.6,
       "position": [
         5296,
-        4216
+        4224
       ],
       "id": "e23dc932-9a29-4874-8ede-46f72e1b41f2",
       "name": "Update Artifacts Processing With Retry",
@@ -530,7 +530,7 @@
       "typeVersion": 3.2,
       "position": [
         6416,
-        3688
+        3696
       ],
       "id": "c75643b7-05c5-488a-abc3-72ae130d62ee",
       "name": "Merge"
