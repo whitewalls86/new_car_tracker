@@ -37,6 +37,28 @@ services:
       - EXECUTIONS_DATA_MAX_AGE=168
       - EXECUTIONS_DATA_PRUNE_MAX=1000
 
+  ops:
+    build:
+      context: ./ops
+      dockerfile: Dockerfile
+    image: cartracker-ops
+    container_name: cartracker-ops
+    restart: unless-stopped
+    ports:
+      - "8060:8060"
+    volumes:
+      - ops_logs:/usr/app/logs
+    environment:
+      PGHOST: postgres
+      PGPORT: 5432
+      PGDATABASE: cartracker
+      PGUSER: cartracker
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      DBT_RUNNER_URL: http://dbt_runner:8080
+      DBT_DOCS_URL: http://localhost:8081/dbt-docs/
+    networks:
+      - cartracker-net
+
   scraper:
     build:
       context: ./scraper
@@ -164,6 +186,8 @@ volumes:
   scraper_logs:
 
   dbt_runner_logs:
+
+  ops_logs:
 
 networks:
   cartracker-net:
