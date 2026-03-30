@@ -545,13 +545,13 @@ Currently raw HTML artifacts are stored on a Docker volume as files, with metada
 
 ## Plan 73: Scraper Code Review & Refactor
 
-**Status:** Not started
+**Status:** In progress
 **Priority:** High
 
 `scraper/app.py` has accumulated significant scope: scrape logic, async job management, background threading, rotation guards, processing endpoints, and FastAPI wiring all in one file. This plan is a full code review and refactor — structural split plus logic quality pass.
 
 ### Known issues to address
-- **SRP breakpoint logic** — known breakpoint issues in discovery mode; the VIN breakpoint / early-exit conditions are not behaving correctly in all cases. Needs investigation and fix as part of this review.
+- **SRP breakpoint logic** — ✅ Root cause identified and fixed: n8n was hardcoding `known_vins: []` in the payload, bypassing `_fetch_known_vins` entirely. Fixed in n8n workflow. Also removed the aggressive 50% inner VIN threshold from `_fetch_page`; breakpoint logic now lives exclusively in the outer loop. Pending confirmation at next scrape run.
 
 ### Scope
 - Full read-through of `scraper/app.py` — identify logic that belongs in separate modules, complex functions that should be simplified, error handling gaps
@@ -575,7 +575,7 @@ Currently raw HTML artifacts are stored on a Docker volume as files, with metada
 
 ## Plan 74: dbt Logic Flaw — New Search Configs Not Reaching Mart Tables
 
-**Status:** Not started
+**Status:** ✅ Resolved
 **Priority:** High
 
 **Symptom:** Kia Sportage Plug-In Hybrid added as a new search config is not appearing in the dashboard. Suspected cause: a filtering step in the dbt DAG is excluding new make/model combinations that have no existing observations yet, preventing them from ever being scraped or surfacing in mart tables.
@@ -636,53 +636,143 @@ File split complete (Plan 50). Stale backlog query updated to use ops_detail_scr
 
 ---
 
-## Plan 60: Safe Redeploy — Service Health Gate for n8n
+## Plan 59: Orphan Checker — Add Stale detail_scrape_claims Cleanup
 
 **Status:** Not started
 **Priority:** Medium
 
-When scraper or dbt_runner containers are rebuilt and restarted, there's a window where the service is down. Currently n8n has no awareness of this — scheduled workflows fire regardless and fail mid-flight.
+The Orphan Checker currently cleans up stale `runs` and `scrape_jobs` but does not touch `detail_scrape_claims`. Claims stuck in `running` accumulate silently, blocking vehicles from the detail scrape queue indefinitely. Root cause identified: the Scrape Detail Pages workflow had a split execution branch (from Error Rate High? IF node) that caused Release Claims to only fire on one branch. Fixed by duplicating the Call 'Parse Detail Pages' → Release Claims path on both branches. However, a safety net in the Orphan Checker is still needed to catch any future orphaned claims.
 
-### Goal
-
-Trigger a rebuild from the admin UI (or manually), have n8n workflows automatically wait for services to come back up, then resume normally. No manual pausing or timing required.
-
-### Design
-
-**Health-gate sub-workflow** (`Service Health Gate`):
-- Accepts `service_url` as input (e.g. `http://scraper:8000/health` or `http://dbt_runner:8080/health`)
-- Polls `/health` every 15s, up to ~5 min (20 retries)
-- Returns success once 200 is received, failure if timeout exceeded
-- Called by Results Processing and Parse Detail Pages at the top of each workflow before any scraper/dbt call
-
-**Maintenance flag** (optional enhancement):
-- `POST /admin/maintenance` sets a flag in DB (or a simple `maintenance_mode` table)
-- Scraper's `/health` returns 503 while flag is set — triggers the health gate to wait without needing to actually bring the container down
-- Useful for pre-signaling before a rebuild starts, giving in-flight workflows a chance to finish
-
-**Redeploy trigger** (optional — n8n webhook):
-- n8n webhook `POST /webhook/redeploy` accepts `service: scraper|dbt_runner`
-- Signals maintenance mode, waits for in-flight runs to finish (polls `runs` table for active status), then responds — operator runs `docker compose build + up -d` externally and hits the webhook
-
-### Simplest viable version
-
-Just the health-gate sub-workflow added to the top of each n8n workflow. No maintenance flag, no webhook. When a container restarts, n8n retries `/health` until it's back. Combined with the Orphan Checker (Plan 59) cleaning up any jobs that were mid-flight during the restart, this covers the common case with minimal complexity.
-
-### Flow
+### Fix
+Add a cleanup step to the Orphan Checker n8n workflow:
+```sql
+DELETE FROM detail_scrape_claims
+WHERE status = 'running'
+AND claimed_by NOT IN (
+    SELECT run_id::text FROM runs WHERE status = 'running'
+);
 ```
-[Workflow trigger]
-  → [Service Health Gate: poll /health until 200 or timeout]
-      ├─ Healthy → [proceed with workflow]
-      └─ Timeout → [send Telegram alert: "scraper unreachable after redeploy"]
+This releases any claims whose `run_id` doesn't match an actively running scrape — safe to run even while a scrape is in progress.
+
+---
+
+## Plan 60: Safe Redeploy — Coordinated n8n Workflow Gating
+
+**Status:** Not started
+**Priority:** Medium
+
+When scraper or dbt_runner containers are rebuilt, n8n has no awareness — scheduled workflows fire regardless and fail mid-flight. This plan builds a coordination layer so deploys are safe, orderly, and environment-agnostic.
+
+### Design principles
+- The **coordination layer** (DB tables, API signals) is environment-agnostic — works the same on a home server, Oracle Cloud, or in a CI/CD pipeline
+- The **actual redeploy mechanism** is a swappable webhook — on a home server it calls a shell script; on cloud it calls an OCI/GCP restart API; in CI/CD GitHub Actions calls it
+- Never build the coordination into the deploy mechanism itself — they are separate concerns
+
+---
+
+### DB schema additions
+
+**`n8n_executions` table** — tracks every workflow run, not just errors:
+```sql
+CREATE TABLE n8n_executions (
+    execution_id    TEXT PRIMARY KEY,   -- n8n's own execution ID
+    workflow_name   TEXT NOT NULL,
+    started_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    finished_at     TIMESTAMPTZ,
+    status          TEXT NOT NULL DEFAULT 'running'  -- running / completed / failed
+);
 ```
+
+**`deploy_intent` table** — singleton row, like `dbt_lock`:
+```sql
+CREATE TABLE deploy_intent (
+    id              INT PRIMARY KEY DEFAULT 1,
+    intent          TEXT NOT NULL DEFAULT 'none',  -- none / pending / deploying / ready
+    requested_at    TIMESTAMPTZ,
+    requested_by    TEXT,
+    completed_at    TIMESTAMPTZ
+);
+INSERT INTO deploy_intent (id, intent) VALUES (1, 'none');
+```
+
+---
+
+### Full flow
+
+```
+Normal operation:
+  n8n workflow fires
+    → check deploy_intent: is intent = 'none'?
+        ├─ Yes → INSERT into n8n_executions (status='running') → proceed
+        └─ No  → exit immediately, wait for next scheduled trigger
+
+Deploy initiated (admin UI "Deploy" button):
+  → SET deploy_intent.intent = 'pending'
+  → Poll n8n_executions WHERE status = 'running' until count = 0
+  → SET deploy_intent.intent = 'deploying'
+  → Call redeploy webhook (shell script / OCI API / GitHub Actions / etc.)
+
+n8n workflows in-flight during deploy:
+  → Finish their current work normally
+  → UPDATE n8n_executions SET status='completed', finished_at=now()
+
+After redeploy completes:
+  → Redeploy webhook signals back: SET deploy_intent.intent = 'none'
+  → n8n workflows resume on their next scheduled trigger
+```
+
+---
+
+### Components
+
+**1. n8n workflow changes (all workflows)**
+- **Start of each workflow:** Postgres node checks `deploy_intent.intent`. If not `'none'`, exit immediately via IF node.
+- **Start of each workflow:** Postgres node INSERTs into `n8n_executions` with `status='running'`.
+- **End of each workflow (success + error paths):** Postgres node UPDATEs `n8n_executions` SET `status='completed'/'failed'`, `finished_at=now()`. Must be wired into both success and error branches to guarantee it always runs.
+
+**2. Scraper API — deploy coordination endpoints**
+- `POST /admin/deploy/start` — sets `deploy_intent = 'pending'`, returns immediately
+- `GET /admin/deploy/status` — returns intent state + count of in-flight executions
+- `POST /admin/deploy/complete` — called by redeploy webhook after build finishes; sets `deploy_intent = 'none'`
+
+**3. Admin UI — deploy panel**
+- "Initiate Deploy" button → calls `POST /admin/deploy/start`
+- Status card: shows current intent, count of in-flight workflows, last deploy time
+- "Ready to deploy" indicator when in-flight count = 0
+- Instructions for running the environment-specific redeploy command
+
+**4. Redeploy webhook (environment-specific, swappable)**
+- Home server: shell script (`./redeploy.sh`) runs `docker compose build scraper dbt_runner && docker compose up -d scraper dbt_runner`, then calls `POST /admin/deploy/complete`
+- Oracle Cloud (future): OCI instance action API, then `POST /admin/deploy/complete`
+- CI/CD (future): GitHub Actions workflow triggered by webhook, then `POST /admin/deploy/complete`
+
+---
+
+### Health gate (post-deploy)
+After containers restart, n8n workflows that fire before services are fully up should wait rather than immediately fail:
+- `Service Health Gate` sub-workflow: polls `/health` every 15s, up to 5 min
+- Called at the top of each workflow after the deploy_intent check
+- On timeout: Telegram alert "scraper unreachable after redeploy"
+
+---
+
+### Migration path
+- `n8n_executions` replaces/extends the current error-only execution tracking
+- Existing `pipeline_errors` table retained for error detail; `n8n_executions` adds the run-level wrapper
+- DDL added to `db/schema/schema_new.sql` and `db/seed/` where applicable
+
+---
 
 ### Files
 | File | Action |
 |------|--------|
-| `n8n/workflows/Service Health Gate.json` | Create — new sub-workflow, accepts service_url |
-| `n8n/workflows/Results Processing.json` | Add health gate call at start |
-| `n8n/workflows/Parse Detail Pages.json` | Add health gate call at start |
-| `scraper/routers/admin.py` | (optional) Add maintenance flag endpoints |
+| `db/schema/schema_new.sql` | Add `n8n_executions` and `deploy_intent` tables |
+| `scraper/routers/admin.py` | Add deploy coordination endpoints |
+| `scraper/templates/admin/deploy.html` | New deploy panel page |
+| `scraper/templates/admin/base.html` | Add "Deploy" nav link |
+| `n8n/workflows/*.json` | Add deploy_intent check + execution logging to all workflows |
+| `n8n/workflows/Service Health Gate.json` | Create health gate sub-workflow |
+| `redeploy.sh` | Home server deploy script (calls docker compose + signals complete) |
 
 ---
 

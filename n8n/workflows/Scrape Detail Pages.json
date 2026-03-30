@@ -10,7 +10,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        -1712,
+        -1504,
         1200
       ],
       "id": "bbcb22dc-76e0-4258-b009-b7d4cf63a269",
@@ -30,7 +30,7 @@
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
       "position": [
-        -800,
+        -592,
         1376
       ],
       "id": "a1eb499b-6143-4e9a-a17d-de5599d02ffb",
@@ -57,7 +57,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        -576,
+        -368,
         1376
       ],
       "id": "8dec758f-b5e3-438e-a3af-6ee445611a56",
@@ -70,7 +70,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -2176,
+        -1968,
         1200
       ],
       "id": "333d97ca-20ed-4c13-90e4-c5f04fa8ca1d",
@@ -83,7 +83,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -352,
+        -144,
         1552
       ],
       "id": "cfcb9d8c-1297-408c-a63a-79443ec69e29",
@@ -98,7 +98,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        -128,
+        80,
         1088
       ],
       "id": "0185c73b-7b86-45a3-b8aa-6d91567501b2",
@@ -118,7 +118,7 @@
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
       "position": [
-        -576,
+        -368,
         1024
       ],
       "id": "b14a087a-59d6-444a-b8a9-c080f7efce28",
@@ -133,7 +133,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        -1984,
+        -1776,
         1200
       ],
       "id": "4bbc7faa-b4f0-42f9-8214-b3862103a3a6",
@@ -154,7 +154,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        -288,
+        -80,
         640
       ],
       "id": "3dd28ac4-b9f7-4261-868d-8138490f9739",
@@ -174,7 +174,7 @@
       "type": "n8n-nodes-base.aggregate",
       "typeVersion": 1,
       "position": [
-        -352,
+        -144,
         1024
       ],
       "id": "a2f35491-2012-416b-a6ae-8d27a0ea32f0",
@@ -189,7 +189,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        -144,
+        64,
         640
       ],
       "id": "c3600aad-c3ae-4c52-96f3-906b41cee02b",
@@ -229,7 +229,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        96,
+        304,
         832
       ],
       "id": "0a3c3cbd-88c3-46da-b8d9-1c9e1f1a9d5c",
@@ -246,7 +246,7 @@
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
-        320,
+        512,
         752
       ],
       "id": "96856eef-9bbc-4071-a6d6-3379f609f841",
@@ -282,8 +282,8 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        512,
-        832
+        704,
+        928
       ],
       "id": "29efe20b-ac77-42b6-8121-17d3eac18ead",
       "name": "Call 'Parse Detail Pages'"
@@ -295,7 +295,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -1024,
+        -816,
         1136
       ],
       "id": "60cf06d0-af57-4f80-857a-10a42f7c7888",
@@ -315,7 +315,7 @@
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.3,
       "position": [
-        -2368,
+        -2480,
         1200
       ],
       "id": "9b717d83-c95c-44c5-91a5-9538651d12ec",
@@ -329,7 +329,7 @@
       "type": "n8n-nodes-base.aggregate",
       "typeVersion": 1,
       "position": [
-        -848,
+        -640,
         960
       ],
       "id": "5243cdfd-9488-4e71-b261-55cb8976d421",
@@ -344,7 +344,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        -688,
+        -480,
         832
       ],
       "id": "d15b24f6-5030-4a3d-ad77-3a974925e516",
@@ -363,7 +363,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -352,
+        -144,
         1328
       ],
       "id": "ab39563d-9f1a-496b-9272-e36245184884",
@@ -378,7 +378,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        -128,
+        80,
         1328
       ],
       "id": "ea3032ed-b8f0-4ba9-8885-1a7667e38515",
@@ -403,7 +403,7 @@
             {
               "id": "batch-empty-check",
               "leftValue": "={{ $json.listing_id }}",
-              "rightValue": null,
+              "rightValue": {},
               "operator": {
                 "type": "string",
                 "operation": "exists",
@@ -418,7 +418,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
-        -1488,
+        -1280,
         1200
       ],
       "id": "c8a1b2d3-e4f5-6789-abcd-ef0123456789",
@@ -433,7 +433,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        -1168,
+        -960,
         1328
       ],
       "id": "d9e0f1a2-b3c4-5678-9abc-def012345678",
@@ -454,8 +454,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        704,
-        832
+        896,
+        928
       ],
       "id": "a1b2c3d4-e5f6-7890-abcd-release00001",
       "name": "Release Claims",
@@ -475,8 +475,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        -1488,
-        1360
+        -1328,
+        1424
       ],
       "id": "d92c022a-9d34-4930-aefb-99768ce5e4ff",
       "name": "Mark Run terminated",
@@ -486,6 +486,425 @@
           "name": "Postgres account"
         }
       }
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "WX_1Ky-8veuMLlqX_iRXK",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/WX_1Ky-8veuMLlqX_iRXK",
+          "cachedResultName": "Parse Detail Pages"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        704,
+        752
+      ],
+      "id": "9bd1d4bb-551c-4dfe-add2-348615936607",
+      "name": "Call 'Parse Detail Pages'1"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE detail_scrape_claims dsc\nSET status = CASE \n  WHEN EXISTS (\n    SELECT 1 FROM raw_artifacts ra\n    WHERE ra.listing_id = dsc.listing_id::uuid\n      AND ra.artifact_type = 'detail_page'\n      AND ra.run_id = dsc.claimed_by::uuid\n      AND ra.http_status = 200\n  ) THEN 'completed'\n  WHEN EXISTS (\n    SELECT 1 FROM raw_artifacts ra\n    WHERE ra.listing_id = dsc.listing_id::uuid\n      AND ra.artifact_type = 'detail_page'\n      AND ra.run_id = dsc.claimed_by::uuid\n  ) THEN 'failed'\n  ELSE 'orphaned'\nEND\nWHERE claimed_by = '{{ $('Create Run Id').first().json.run_id }}'\n  AND status = 'running';",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        896,
+        752
+      ],
+      "id": "76da84b2-9f8f-49c1-a606-9c6e6e116842",
+      "name": "Release Claims1",
+      "credentials": {
+        "postgres": {
+          "id": "l8Ecbn62FzXCDkF9",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "QrtISF4STFcsa2bug83s4",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/QrtISF4STFcsa2bug83s4",
+          "cachedResultName": "Check Deploy Intent"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "parent_workflow_name": "={{ $workflow.name }}",
+            "parent_workflow_id": "={{ $execution.id }}",
+            "parent_workflow_timestamp": "={{ $now }}",
+            "parent_workflow_status": "started"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "parent_workflow_name",
+              "displayName": "parent_workflow_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "parent_workflow_id",
+              "displayName": "parent_workflow_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "parent_workflow_timestamp",
+              "displayName": "parent_workflow_timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "parent_workflow_status",
+              "displayName": "parent_workflow_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": true,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -2272,
+        1200
+      ],
+      "id": "2fd314f2-6639-4da4-a409-dbc21e7510bd",
+      "name": "Call 'Check Deploy Intent'"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "QaFnwxOQopzO-wVjL64dl",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/QaFnwxOQopzO-wVjL64dl",
+          "cachedResultName": "Update n8n Runs Table"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "parent_workflow_id": "={{ $execution.id }}",
+            "parent_workflow_name": "={{ $workflow.name }}",
+            "parent_workflow_timestamp": "={{ $now }}",
+            "parent_workflow_status": "failed"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "parent_workflow_name",
+              "displayName": "parent_workflow_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "parent_workflow_id",
+              "displayName": "parent_workflow_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "number",
+              "removed": false
+            },
+            {
+              "id": "parent_workflow_timestamp",
+              "displayName": "parent_workflow_timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "parent_workflow_status",
+              "displayName": "parent_workflow_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -1136,
+        1424
+      ],
+      "id": "d6e9da75-54eb-41b0-9c07-95dc1ddabaae",
+      "name": "Call 'Update n8n Runs Table'"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "QaFnwxOQopzO-wVjL64dl",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/QaFnwxOQopzO-wVjL64dl",
+          "cachedResultName": "Update n8n Runs Table"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "parent_workflow_id": "={{ $execution.id }}",
+            "parent_workflow_timestamp": "={{ $now }}",
+            "parent_workflow_name": "={{ $workflow.name }}",
+            "parent_workflow_status": "completed"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "parent_workflow_name",
+              "displayName": "parent_workflow_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "parent_workflow_id",
+              "displayName": "parent_workflow_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "number",
+              "removed": false
+            },
+            {
+              "id": "parent_workflow_timestamp",
+              "displayName": "parent_workflow_timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "parent_workflow_status",
+              "displayName": "parent_workflow_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -800,
+        1328
+      ],
+      "id": "b83178bd-2b26-48b0-a686-be948e5a9bcc",
+      "name": "Call 'Update n8n Runs Table'1"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "QaFnwxOQopzO-wVjL64dl",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/QaFnwxOQopzO-wVjL64dl",
+          "cachedResultName": "Update n8n Runs Table"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "parent_workflow_id": "={{ $execution.id }}",
+            "parent_workflow_timestamp": "={{ $now }}",
+            "parent_workflow_name": "={{ $workflow.name }}",
+            "parent_workflow_status": "completed"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "parent_workflow_name",
+              "displayName": "parent_workflow_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "parent_workflow_id",
+              "displayName": "parent_workflow_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "number",
+              "removed": false
+            },
+            {
+              "id": "parent_workflow_timestamp",
+              "displayName": "parent_workflow_timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "parent_workflow_status",
+              "displayName": "parent_workflow_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        1104,
+        752
+      ],
+      "id": "5aced572-89b6-48bd-893a-01541f4e2a0e",
+      "name": "Call 'Update n8n Runs Table'2"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "QaFnwxOQopzO-wVjL64dl",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/QaFnwxOQopzO-wVjL64dl",
+          "cachedResultName": "Update n8n Runs Table"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "parent_workflow_id": "={{ $execution.id }}",
+            "parent_workflow_timestamp": "={{ $now }}",
+            "parent_workflow_name": "={{ $workflow.name }}",
+            "parent_workflow_status": "completed"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "parent_workflow_name",
+              "displayName": "parent_workflow_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "parent_workflow_id",
+              "displayName": "parent_workflow_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "number",
+              "removed": false
+            },
+            {
+              "id": "parent_workflow_timestamp",
+              "displayName": "parent_workflow_timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "parent_workflow_status",
+              "displayName": "parent_workflow_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        1104,
+        928
+      ],
+      "id": "b25dfad2-199f-4342-adca-dec2f3837e8d",
+      "name": "Call 'Update n8n Runs Table'3"
     }
   ],
   "pinData": {
@@ -605,7 +1024,13 @@
     },
     "Release Claims": {
       "main": [
-        []
+        [
+          {
+            "node": "Call 'Update n8n Runs Table'3",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Execute a SQL query": {
@@ -674,7 +1099,7 @@
       "main": [
         [
           {
-            "node": "Call 'Parse Detail Pages'",
+            "node": "Call 'Parse Detail Pages'1",
             "type": "main",
             "index": 0
           }
@@ -712,7 +1137,7 @@
       "main": [
         [
           {
-            "node": "Create Run Id",
+            "node": "Call 'Check Deploy Intent'",
             "type": "main",
             "index": 0
           }
@@ -769,6 +1194,61 @@
           }
         ]
       ]
+    },
+    "Call 'Parse Detail Pages'1": {
+      "main": [
+        [
+          {
+            "node": "Release Claims1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call 'Check Deploy Intent'": {
+      "main": [
+        [
+          {
+            "node": "Create Run Id",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Run terminated": {
+      "main": [
+        [
+          {
+            "node": "Call 'Update n8n Runs Table'",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Run Skipped": {
+      "main": [
+        [
+          {
+            "node": "Call 'Update n8n Runs Table'1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Release Claims1": {
+      "main": [
+        [
+          {
+            "node": "Call 'Update n8n Runs Table'2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": true,
@@ -779,7 +1259,7 @@
     "callerPolicy": "workflowsFromSameOwner",
     "errorWorkflow": "rJfFKS2DGRAn_IPJR1xTc"
   },
-  "versionId": "2932d3c6-f34c-498d-95fc-bab4769edcaf",
+  "versionId": "938b96c4-42b5-4679-8712-1ffa6299c873",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179"

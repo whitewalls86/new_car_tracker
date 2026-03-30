@@ -21,7 +21,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        1280,
+        1296,
         416
       ],
       "id": "dc1d489f-41de-45d8-9c66-d8aa70a648ac",
@@ -58,6 +58,80 @@
         }
       },
       "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "QaFnwxOQopzO-wVjL64dl",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/QaFnwxOQopzO-wVjL64dl",
+          "cachedResultName": "Update n8n Runs Table"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "parent_workflow_id": "={{ $('Error Trigger').item.json.execution.error.executionId }}",
+            "parent_workflow_timestamp": "={{ $now }}",
+            "parent_workflow_status": "failed",
+            "parent_workflow_name": "={{ $('Error Trigger').item.json.workflow.name }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "parent_workflow_name",
+              "displayName": "parent_workflow_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "parent_workflow_id",
+              "displayName": "parent_workflow_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "number",
+              "removed": false
+            },
+            {
+              "id": "parent_workflow_timestamp",
+              "displayName": "parent_workflow_timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "parent_workflow_status",
+              "displayName": "parent_workflow_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": true,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        1504,
+        416
+      ],
+      "id": "a1b40027-c65e-43bf-a94c-8554934fb297",
+      "name": "Call 'Update n8n Runs Table'"
     }
   ],
   "pinData": {},
@@ -80,7 +154,13 @@
     },
     "Log Error to DB": {
       "main": [
-        [],
+        [
+          {
+            "node": "Call 'Update n8n Runs Table'",
+            "type": "main",
+            "index": 0
+          }
+        ],
         []
       ]
     }
@@ -90,7 +170,7 @@
     "executionOrder": "v1",
     "availableInMCP": false
   },
-  "versionId": "20bb0e15-3669-4b07-81af-3dc944bc7895",
+  "versionId": "65462153-227c-42da-b085-955bf092df85",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179"

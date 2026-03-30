@@ -1,0 +1,449 @@
+{
+  "name": "Check Deploy Intent",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "parent_workflow_name"
+            },
+            {
+              "name": "parent_workflow_id"
+            },
+            {
+              "name": "parent_workflow_timestamp"
+            },
+            {
+              "name": "parent_workflow_status"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "bbae2a20-d7da-4f05-9cf3-c5b82ca41cf8",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT intent, {{ $json.loop_counter }} as loop_counter from deploy_intent",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        416,
+        0
+      ],
+      "id": "85167d48-8288-4b6a-a41a-4b967015dff8",
+      "name": "Execute a SQL query",
+      "credentials": {
+        "postgres": {
+          "id": "l8Ecbn62FzXCDkF9",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "amount": 1,
+        "unit": "minutes"
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        832,
+        96
+      ],
+      "id": "06e59b5d-4918-445c-ad2a-faa1391d4177",
+      "name": "Wait",
+      "webhookId": "d506bb28-a0bc-4285-b10b-5661a0672e6c"
+    },
+    {
+      "parameters": {
+        "jsCode": "const loop_counter = $input.first().json.loop_counter || 0;\n\n$input.first().json.loop_counter = loop_counter + 1;\n\nreturn $input.all();"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1056,
+        96
+      ],
+      "id": "34cb6af2-e231-4c1d-b283-83a4081fc1c1",
+      "name": "Add Loop Count"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "f1ea80b3-f55c-4beb-9026-fbab210143e9",
+              "name": "can_deploy",
+              "value": false,
+              "type": "boolean"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1504,
+        112
+      ],
+      "id": "e8431389-9c2a-463c-a429-7e2262df93f2",
+      "name": "Can't Deploy"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "f1ea80b3-f55c-4beb-9026-fbab210143e9",
+              "name": "can_deploy",
+              "value": true,
+              "type": "boolean"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        864,
+        -96
+      ],
+      "id": "56daa19a-4544-49ce-b9e0-a74f06db40d3",
+      "name": "Can Deploy"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "17291809-1c03-4649-a1d3-83bd62504025",
+              "leftValue": "={{ $json.intent }}",
+              "rightValue": "none",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        624,
+        0
+      ],
+      "id": "1f4d86a1-4ec0-4cd8-8e44-879011082a0e",
+      "name": "No Deploy's Intended?"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "0a978829-1683-406e-869f-2522f3b75aea",
+              "leftValue": "={{ $json.loop_counts }}",
+              "rightValue": 5,
+              "operator": {
+                "type": "number",
+                "operation": "lte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1264,
+        96
+      ],
+      "id": "7c3aab0f-50ff-4499-9ea0-945a023ee7dd",
+      "name": "Waited Less than 5 min?"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "QaFnwxOQopzO-wVjL64dl",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/QaFnwxOQopzO-wVjL64dl",
+          "cachedResultName": "Update n8n Runs Table"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "parent_workflow_id": "={{ $('When Executed by Another Workflow').item.json.parent_workflow_id }}",
+            "parent_workflow_name": "={{ $('When Executed by Another Workflow').item.json.parent_workflow_name }}",
+            "parent_workflow_timestamp": "={{ $('When Executed by Another Workflow').item.json.parent_workflow_timestamp }}",
+            "parent_workflow_status": "={{ $('When Executed by Another Workflow').item.json.parent_workflow_status }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "parent_workflow_name",
+              "displayName": "parent_workflow_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "parent_workflow_id",
+              "displayName": "parent_workflow_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "number",
+              "removed": false
+            },
+            {
+              "id": "parent_workflow_timestamp",
+              "displayName": "parent_workflow_timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "parent_workflow_status",
+              "displayName": "parent_workflow_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": true,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": false
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        1072,
+        -96
+      ],
+      "id": "0b4e9c67-e5b3-4a1d-b2bc-d7f6b917b0a5",
+      "name": "Call 'Update n8n Runs Table'"
+    },
+    {
+      "parameters": {
+        "chatId": "774819707",
+        "text": "=⚠️ <b>{{ $('When Executed by Another Workflow').item.json.parent_workflow_name }} blocked.</b>\n\n<b>Workflow ID:</b> {{ $('When Executed by Another Workflow').item.json.parent_workflow_id }}\n<b>Started At:</b> {{ $('When Executed by Another Workflow').item.json.parent_workflow_timestamp }}",
+        "additionalFields": {
+          "parse_mode": "HTML"
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1696,
+        112
+      ],
+      "id": "1c159d2c-4b78-4ca3-97be-0dd00adf333f",
+      "name": "Send Notification",
+      "webhookId": "4a9b227a-7727-44d0-becc-c1e2dc80b6fd",
+      "credentials": {
+        "telegramApi": {
+          "id": "qoqqtiFUa4Dq2Wqp",
+          "name": "Cartracker Alerts"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a3f24ee4-888c-4cc3-b431-47cf5b7ec8b0",
+              "name": "loop_counter",
+              "value": 0,
+              "type": "number"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        208,
+        0
+      ],
+      "id": "58b86cf0-d7e2-4921-a442-15b1c039a845",
+      "name": "Edit Fields"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute a SQL query": {
+      "main": [
+        [
+          {
+            "node": "No Deploy's Intended?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait": {
+      "main": [
+        [
+          {
+            "node": "Add Loop Count",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add Loop Count": {
+      "main": [
+        [
+          {
+            "node": "Waited Less than 5 min?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "No Deploy's Intended?": {
+      "main": [
+        [
+          {
+            "node": "Can Deploy",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Waited Less than 5 min?": {
+      "main": [
+        [
+          {
+            "node": "Execute a SQL query",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Can't Deploy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Can Deploy": {
+      "main": [
+        [
+          {
+            "node": "Call 'Update n8n Runs Table'",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Can't Deploy": {
+      "main": [
+        [
+          {
+            "node": "Send Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Execute a SQL query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "1dff9ffb-a438-4255-bff2-356ac365cbea",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179"
+  },
+  "id": "QrtISF4STFcsa2bug83s4",
+  "tags": []
+}

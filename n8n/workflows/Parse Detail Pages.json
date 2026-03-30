@@ -23,7 +23,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        3952,
+        4160,
         3600
       ],
       "id": "7b62e186-ee17-401a-8929-252448aab8e2",
@@ -44,7 +44,7 @@
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        3280,
+        3488,
         3600
       ],
       "id": "2ab0061c-5ed8-4cec-ac67-5711b7d28540",
@@ -57,7 +57,7 @@
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
       "position": [
-        4144,
+        4352,
         3744
       ],
       "id": "94d192c0-619f-4ec4-a4ed-b137e4d7c9be",
@@ -75,7 +75,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        4352,
+        4560,
         3856
       ],
       "id": "c01acf31-fc08-4b2e-8b77-b2ee45273ca5",
@@ -89,7 +89,7 @@
       "type": "n8n-nodes-base.aggregate",
       "typeVersion": 1,
       "position": [
-        5376,
+        5584,
         3552
       ],
       "id": "a7e59eba-824e-4e3d-865d-0ffe7dec2076",
@@ -104,7 +104,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        5568,
+        5776,
         3552
       ],
       "id": "ae24a6c8-c49a-4b07-8045-18e28380a629",
@@ -125,7 +125,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        5776,
+        5984,
         3552
       ],
       "id": "fb842853-367a-456b-96c0-a966f9a78e55",
@@ -146,7 +146,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        5920,
+        6128,
         3552
       ],
       "id": "9a2d5575-48d0-4fd8-9bc4-77715aa780c0",
@@ -166,7 +166,7 @@
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
       "position": [
-        4848,
+        5056,
         3392
       ],
       "id": "b813f9c5-da0c-452d-a199-5ab165da7537",
@@ -181,7 +181,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        6080,
+        6288,
         3552
       ],
       "id": "d6d0c8e9-9442-4aea-80a7-d4e70a49f039",
@@ -252,7 +252,7 @@
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3.4,
       "position": [
-        4528,
+        4736,
         3856
       ],
       "id": "275dccbe-f723-417a-ae97-e8a897923cf0",
@@ -267,7 +267,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        4736,
+        4944,
         3936
       ],
       "id": "e23dc932-9a29-4874-8ede-46f72e1b41f2",
@@ -286,7 +286,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3504,
+        3712,
         3600
       ],
       "id": "9370bd69-a2e2-4bbc-9195-08de2f18680c",
@@ -301,7 +301,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        3728,
+        3936,
         3600
       ],
       "id": "4356ab6a-506b-477b-9283-ac618da72bcd",
@@ -321,7 +321,7 @@
       "type": "n8n-nodes-base.aggregate",
       "typeVersion": 1,
       "position": [
-        4144,
+        4352,
         3600
       ],
       "id": "d01f7754-5a31-4b5f-8546-260e0fae26c5",
@@ -336,7 +336,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        4352,
+        4560,
         3600
       ],
       "id": "a7f4d898-2e8c-4670-84ef-19251ab62103",
@@ -357,7 +357,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        5056,
+        5264,
         3792
       ],
       "id": "9c28ca87-fa41-44e8-9b09-a0051d9a1a7f",
@@ -376,7 +376,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        4944,
+        5152,
         3792
       ],
       "id": "87a735e6-058a-430b-ba21-a8534150184b",
@@ -391,7 +391,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        5040,
+        5248,
         3264
       ],
       "id": "3675596f-9d66-474d-be36-9e56b71b22df",
@@ -439,7 +439,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
-        4736,
+        4944,
         3808
       ],
       "id": "80b8c7ed-694b-4e99-9e0b-c7ae0de35c45",
@@ -504,7 +504,7 @@
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3.4,
       "position": [
-        5024,
+        5232,
         3440
       ],
       "id": "2971a13d-4e9c-4670-8117-4e9773597651",
@@ -518,7 +518,7 @@
       "type": "n8n-nodes-base.aggregate",
       "typeVersion": 1,
       "position": [
-        5376,
+        5584,
         3424
       ],
       "id": "f2561417-4e99-4c6b-8586-33307194c63d",
@@ -529,7 +529,7 @@
       "type": "n8n-nodes-base.merge",
       "typeVersion": 3.2,
       "position": [
-        6400,
+        6608,
         3536
       ],
       "id": "c75643b7-05c5-488a-abc3-72ae130d62ee",
@@ -544,7 +544,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        5776,
+        5984,
         3424
       ],
       "id": "6451a258-6038-44f9-8d02-42b93a1129f7",
@@ -565,7 +565,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        5568,
+        5776,
         3424
       ],
       "id": "71af4c3f-1d00-4432-a850-6d500615b943",
@@ -586,7 +586,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        5568,
+        5776,
         3280
       ],
       "id": "ff8d1c85-6117-4505-9d04-8002978135f8",
@@ -635,11 +635,159 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        5248,
-        3248
+        5520,
+        3088
       ],
       "id": "59d8cf9e-1d28-4997-b96f-d52b883933cb",
       "name": "Call 'Build DBT'"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "QaFnwxOQopzO-wVjL64dl",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/QaFnwxOQopzO-wVjL64dl",
+          "cachedResultName": "Update n8n Runs Table"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "parent_workflow_id": "={{ $execution.id }}",
+            "parent_workflow_timestamp": "={{ $now }}",
+            "parent_workflow_status": "completed",
+            "parent_workflow_name": "={{ $workflow.name }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "parent_workflow_name",
+              "displayName": "parent_workflow_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "parent_workflow_id",
+              "displayName": "parent_workflow_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "number",
+              "removed": false
+            },
+            {
+              "id": "parent_workflow_timestamp",
+              "displayName": "parent_workflow_timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "parent_workflow_status",
+              "displayName": "parent_workflow_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        5520,
+        3248
+      ],
+      "id": "c1b462e1-3565-450e-915a-604f09fdaa67",
+      "name": "Call 'Update n8n Runs Table'"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "QrtISF4STFcsa2bug83s4",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/QrtISF4STFcsa2bug83s4",
+          "cachedResultName": "Check Deploy Intent"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "parent_workflow_id": "={{ $execution.id }}",
+            "parent_workflow_name": "={{ $workflow.name }}",
+            "parent_workflow_timestamp": "={{ $now }}",
+            "parent_workflow_status": "started"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "parent_workflow_name",
+              "displayName": "parent_workflow_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "parent_workflow_id",
+              "displayName": "parent_workflow_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "parent_workflow_timestamp",
+              "displayName": "parent_workflow_timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "parent_workflow_status",
+              "displayName": "parent_workflow_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        3264,
+        3600
+      ],
+      "id": "4b4b753b-6e6d-483c-8351-a39716192233",
+      "name": "Call 'Check Deploy Intent'"
     }
   ],
   "pinData": {
@@ -661,7 +809,7 @@
       "main": [
         [
           {
-            "node": "Set Processor",
+            "node": "Call 'Check Deploy Intent'",
             "type": "main",
             "index": 0
           }
@@ -965,6 +1113,22 @@
             "node": "Call 'Build DBT'",
             "type": "main",
             "index": 0
+          },
+          {
+            "node": "Call 'Update n8n Runs Table'",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call 'Check Deploy Intent'": {
+      "main": [
+        [
+          {
+            "node": "Set Processor",
+            "type": "main",
+            "index": 0
           }
         ]
       ]
@@ -975,7 +1139,7 @@
     "executionOrder": "v1",
     "availableInMCP": false
   },
-  "versionId": "68c012ef-b0b8-41e8-8283-a32bd4305412",
+  "versionId": "fca4854f-66de-444a-99f2-8da2a4c9aef5",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179"
