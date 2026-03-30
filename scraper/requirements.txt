@@ -5,7 +5,5 @@ curl_cffi
 bs4
 lxml
 patchright
-jinja2
-python-multipart
 asyncpg
 psycopg2-binary

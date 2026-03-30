@@ -1,5 +1,6 @@
 """
-Admin UI routes for managing search_configs, viewing run history, and operating dbt.
+Admin UI routes — migrated from scraper container.
+All routes use sync psycopg2 (FastAPI threadpools them automatically).
 """
 import json
 import os
@@ -11,11 +12,15 @@ from fastapi import APIRouter, Request, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from db import get_pool
+from db import get_conn
 from models.search_config import SearchConfigParams, SORT_OPTIONS, SORT_KEYS
+from routers.deploy import _intent_status, _set_intent, _intent_release
+
+from psycopg2.extras import RealDictCursor
 
 DBT_RUNNER_URL = os.environ.get("DBT_RUNNER_URL", "http://dbt_runner:8080")
 DBT_DOCS_URL = os.environ.get("DBT_DOCS_URL", "http://localhost:8081/dbt-docs/")
+SCRAPER_URL = os.environ.get("SCRAPER_URL", "http://scraper:8000")
 
 router = APIRouter()
 templates = Jinja2Templates(directory="templates")
@@ -35,8 +40,8 @@ def _parse_comma_list(raw: str) -> list[str]:
     return [s.strip() for s in raw.split(",") if s.strip()]
 
 
-def _row_to_dict(row) -> dict:
-    """Convert an asyncpg Record to a dict with params unpacked."""
+def _row_to_dict(row: dict) -> dict:
+    """Ensure params JSON is unpacked if it's still a string."""
     d = dict(row)
     if isinstance(d.get("params"), str):
         d["params"] = json.loads(d["params"])
@@ -44,21 +49,24 @@ def _row_to_dict(row) -> dict:
 
 
 def _stringify_uuids(d: dict) -> dict:
-    """Convert any asyncpg UUID values to plain strings so templates can slice/compare them."""
+    """Convert any UUID values to plain strings so templates can slice/compare them."""
     return {k: str(v) if hasattr(v, 'hex') and hasattr(v, 'bytes') else v for k, v in d.items()}
 
 
 # ---------------------------------------------------------------------------
-# List view
+# Search config list
 # ---------------------------------------------------------------------------
 
 @router.get("/searches/", response_class=HTMLResponse)
-async def list_searches(request: Request):
-    pool = await get_pool()
-    rows = await pool.fetch(
-        "SELECT search_key, enabled, source, params, rotation_order, last_queued_at, created_at, updated_at "
-        "FROM search_configs ORDER BY enabled DESC, rotation_order NULLS LAST, search_key"
-    )
+def list_searches(request: Request):
+    conn = get_conn()
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(
+            "SELECT search_key, enabled, source, params, rotation_order, last_queued_at, created_at, updated_at "
+            "FROM search_configs ORDER BY enabled DESC, rotation_order NULLS LAST, search_key"
+        )
+        rows = cur.fetchall()
+    conn.close()
     configs = [_row_to_dict(r) for r in rows]
     return templates.TemplateResponse(request=request, name="admin/list.html", context={
         "request": request,
@@ -71,7 +79,7 @@ async def list_searches(request: Request):
 # ---------------------------------------------------------------------------
 
 @router.get("/searches/new", response_class=HTMLResponse)
-async def new_search_form(request: Request):
+def new_search_form(request: Request):
     return templates.TemplateResponse(request=request, name="admin/form.html", context={
         "request": request,
         "editing": False,
@@ -86,15 +94,18 @@ async def new_search_form(request: Request):
 # ---------------------------------------------------------------------------
 
 @router.get("/runs", response_class=HTMLResponse)
-async def list_runs(request: Request):
-    pool = await get_pool()
-    rows = await pool.fetch("""
-        SELECT run_id, started_at, finished_at, status, trigger,
-               progress_count, total_count, error_count, last_error, notes
-        FROM runs
-        ORDER BY started_at DESC
-        LIMIT 20
-    """)
+def list_runs(request: Request):
+    conn = get_conn()
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute("""
+            SELECT run_id, started_at, finished_at, status, trigger,
+                   progress_count, total_count, error_count, last_error, notes
+            FROM runs
+            ORDER BY started_at DESC
+            LIMIT 20
+        """)
+        rows = cur.fetchall()
+    conn.close()
     runs = [_stringify_uuids(dict(r)) for r in rows]
     return templates.TemplateResponse(request=request, name="admin/runs.html", context={
         "request": request,
@@ -103,22 +114,27 @@ async def list_runs(request: Request):
 
 
 @router.get("/runs/{run_id}", response_class=HTMLResponse)
-async def run_detail(request: Request, run_id: str):
-    pool = await get_pool()
-    run = await pool.fetchrow("""
-        SELECT run_id, started_at, finished_at, status, trigger,
-               progress_count, total_count, error_count, last_error, notes
-        FROM runs WHERE run_id = $1
-    """, run_id)
-    if not run:
-        return RedirectResponse(url="/admin/runs", status_code=303)
-    jobs = await pool.fetch("""
-        SELECT job_id, search_key, scope, status, created_at,
-               started_at, completed_at, artifact_count, error, retry_count
-        FROM scrape_jobs
-        WHERE run_id = $1
-        ORDER BY created_at
-    """, run_id)
+def run_detail(request: Request, run_id: str):
+    conn = get_conn()
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute("""
+            SELECT run_id, started_at, finished_at, status, trigger,
+                   progress_count, total_count, error_count, last_error, notes
+            FROM runs WHERE run_id = %s
+        """, (run_id,))
+        run = cur.fetchone()
+        if not run:
+            conn.close()
+            return RedirectResponse(url="/admin/runs", status_code=303)
+        cur.execute("""
+            SELECT job_id, search_key, scope, status, created_at,
+                   started_at, completed_at, artifact_count, error, retry_count
+            FROM scrape_jobs
+            WHERE run_id = %s
+            ORDER BY created_at
+        """, (run_id,))
+        jobs = cur.fetchall()
+    conn.close()
     return templates.TemplateResponse(request=request, name="admin/run_detail.html", context={
         "request": request,
         "run": _stringify_uuids(dict(run)),
@@ -158,7 +174,7 @@ def _fetch_dbt_context() -> dict:
 
 
 @router.get("/dbt", response_class=HTMLResponse)
-async def dbt_dashboard(request: Request):
+def dbt_dashboard(request: Request):
     ctx = _fetch_dbt_context()
     return templates.TemplateResponse(request=request, name="admin/dbt.html", context={
         "request": request,
@@ -170,7 +186,7 @@ async def dbt_dashboard(request: Request):
 
 
 @router.post("/dbt/trigger", response_class=HTMLResponse)
-async def dbt_trigger(
+def dbt_trigger(
     request: Request,
     intent: str = Form(None),
     select_override: str = Form(""),
@@ -204,7 +220,7 @@ async def dbt_trigger(
 
 
 @router.post("/dbt/intents", response_class=HTMLResponse)
-async def dbt_intent_upsert(
+def dbt_intent_upsert(
     request: Request,
     intent_name: str = Form(...),
     select_args: str = Form(...),
@@ -218,13 +234,13 @@ async def dbt_intent_upsert(
             timeout=5,
         )
         resp.raise_for_status()
-    except Exception as e:
-        pass  # errors surface on page reload via intents fetch
+    except Exception:
+        pass
     return RedirectResponse(url="/admin/dbt", status_code=303)
 
 
 @router.post("/dbt/intents/{intent_name}/delete", response_class=HTMLResponse)
-async def dbt_intent_delete(request: Request, intent_name: str):
+def dbt_intent_delete(request: Request, intent_name: str):
     try:
         http_requests.delete(f"{DBT_RUNNER_URL}/dbt/intents/{intent_name}", timeout=5)
     except Exception:
@@ -233,7 +249,7 @@ async def dbt_intent_delete(request: Request, intent_name: str):
 
 
 @router.post("/dbt/docs/generate", response_class=HTMLResponse)
-async def dbt_docs_generate(request: Request):
+def dbt_docs_generate(request: Request):
     docs_result = None
     docs_ok = False
     try:
@@ -258,15 +274,19 @@ async def dbt_docs_generate(request: Request):
 # Log viewer
 # ---------------------------------------------------------------------------
 
+_OPS_LOG_PATH = "/usr/app/logs/app.log"
+
+
 @router.get("/logs", response_class=HTMLResponse)
-async def view_logs(request: Request, lines: int = 200):
+def view_logs(request: Request, lines: int = 200):
     scraper_lines: list[str] = []
     dbt_lines: list[str] = []
+    ops_lines: list[str] = []
 
     try:
-        with open("/usr/app/logs/app.log") as f:
-            scraper_lines = f.readlines()[-lines:]
-    except FileNotFoundError:
+        resp = http_requests.get(f"{SCRAPER_URL}/logs?lines={lines}", timeout=5)
+        scraper_lines = resp.json().get("lines", [])
+    except Exception:
         pass
 
     try:
@@ -275,12 +295,44 @@ async def view_logs(request: Request, lines: int = 200):
     except Exception:
         pass
 
+    try:
+        with open(_OPS_LOG_PATH) as f:
+            ops_lines = f.readlines()[-lines:]
+    except FileNotFoundError:
+        pass
+
     return templates.TemplateResponse(request=request, name="admin/logs.html", context={
         "request": request,
         "scraper_lines": scraper_lines,
         "dbt_lines": dbt_lines,
+        "ops_lines": ops_lines,
         "lines": lines,
     })
+
+
+# ---------------------------------------------------------------------------
+# Deploy panel
+# ---------------------------------------------------------------------------
+
+@router.get("/deploy", response_class=HTMLResponse)
+def deploy_panel(request: Request):
+    status = _intent_status()
+    return templates.TemplateResponse(request=request, name="admin/deploy.html", context={
+        "request": request,
+        "status": status,
+    })
+
+
+@router.post("/deploy/start", response_class=HTMLResponse)
+def deploy_start(request: Request):
+    _set_intent("Admin UI")
+    return RedirectResponse(url="/admin/deploy", status_code=303)
+
+
+@router.post("/deploy/complete", response_class=HTMLResponse)
+def deploy_complete(request: Request):
+    _intent_release()
+    return RedirectResponse(url="/admin/deploy", status_code=303)
 
 
 # ---------------------------------------------------------------------------
@@ -288,12 +340,16 @@ async def view_logs(request: Request, lines: int = 200):
 # ---------------------------------------------------------------------------
 
 @router.get("/searches/{search_key}/edit", response_class=HTMLResponse)
-async def edit_search_form(request: Request, search_key: str):
-    pool = await get_pool()
-    row = await pool.fetchrow(
-        "SELECT search_key, enabled, source, params, rotation_order, last_queued_at FROM search_configs WHERE search_key = $1",
-        search_key,
-    )
+def edit_search_form(request: Request, search_key: str):
+    conn = get_conn()
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(
+            "SELECT search_key, enabled, source, params, rotation_order, last_queued_at "
+            "FROM search_configs WHERE search_key = %s",
+            (search_key,),
+        )
+        row = cur.fetchone()
+    conn.close()
     if not row:
         return RedirectResponse(url="/admin/searches/", status_code=303)
 
@@ -312,7 +368,7 @@ async def edit_search_form(request: Request, search_key: str):
 # ---------------------------------------------------------------------------
 
 @router.post("/searches/", response_class=HTMLResponse)
-async def create_search(
+def create_search(
     request: Request,
     search_key: str = Form(...),
     makes: str = Form(...),
@@ -366,18 +422,22 @@ async def create_search(
             "error": str(e),
         }, status_code=422)
 
-    pool = await get_pool()
+    conn = get_conn()
     try:
-        await pool.execute(
-            "INSERT INTO search_configs (search_key, enabled, params, rotation_order, created_at, updated_at) "
-            "VALUES ($1, $2, $3::jsonb, $4, now(), now())",
-            key, enabled, json.dumps(params.model_dump()), rotation_order,
-        )
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO search_configs (search_key, enabled, params, rotation_order, created_at, updated_at) "
+                "VALUES (%s, %s, %s::jsonb, %s, now(), now())",
+                (key, enabled, json.dumps(params.model_dump()), rotation_order),
+            )
+        conn.commit()
     except Exception as e:
+        conn.rollback()
         if "duplicate key" in str(e).lower():
             error = f"Search key '{key}' already exists."
         else:
             error = str(e)
+        conn.close()
         return templates.TemplateResponse(request=request, name="admin/form.html", context={
             "request": request,
             "editing": False,
@@ -385,6 +445,8 @@ async def create_search(
             "sort_options": SORT_OPTIONS,
             "error": error,
         }, status_code=422)
+    finally:
+        conn.close()
 
     return RedirectResponse(url="/admin/searches/", status_code=303)
 
@@ -394,7 +456,7 @@ async def create_search(
 # ---------------------------------------------------------------------------
 
 @router.post("/searches/{search_key}", response_class=HTMLResponse)
-async def update_search(
+def update_search(
     request: Request,
     search_key: str,
     makes: str = Form(...),
@@ -431,7 +493,7 @@ async def update_search(
             max_safety_pages=max_safety_pages,
             sort_order=sort_order,
             sort_rotation=rotation,
-            rotation_slot=rotation_order
+            rotation_slot=rotation_order,
         )
     except Exception as e:
         return templates.TemplateResponse(request=request, name="admin/form.html", context={
@@ -447,12 +509,15 @@ async def update_search(
             "error": str(e),
         }, status_code=422)
 
-    pool = await get_pool()
-    await pool.execute(
-        "UPDATE search_configs SET enabled = $1, params = $2::jsonb, rotation_order = $3, updated_at = now() "
-        "WHERE search_key = $4",
-        enabled, json.dumps(params.model_dump()), rotation_order, search_key,
-    )
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE search_configs SET enabled = %s, params = %s::jsonb, rotation_order = %s, updated_at = now() "
+            "WHERE search_key = %s",
+            (enabled, json.dumps(params.model_dump()), rotation_order, search_key),
+        )
+    conn.commit()
+    conn.close()
     return RedirectResponse(url="/admin/searches/", status_code=303)
 
 
@@ -461,13 +526,16 @@ async def update_search(
 # ---------------------------------------------------------------------------
 
 @router.post("/searches/{search_key}/toggle")
-async def toggle_search(search_key: str):
-    pool = await get_pool()
-    await pool.execute(
-        "UPDATE search_configs SET enabled = NOT enabled, updated_at = now() "
-        "WHERE search_key = $1",
-        search_key,
-    )
+def toggle_search(search_key: str):
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE search_configs SET enabled = NOT enabled, updated_at = now() "
+            "WHERE search_key = %s",
+            (search_key,),
+        )
+    conn.commit()
+    conn.close()
     return RedirectResponse(url="/admin/searches/", status_code=303)
 
 
@@ -476,12 +544,15 @@ async def toggle_search(search_key: str):
 # ---------------------------------------------------------------------------
 
 @router.post("/searches/{search_key}/delete")
-async def delete_search(search_key: str):
-    pool = await get_pool()
+def delete_search(search_key: str):
+    conn = get_conn()
     deleted_key = f"_deleted_{search_key}_{int(datetime.now(UTC).timestamp())}"
-    await pool.execute(
-        "UPDATE search_configs SET enabled = false, search_key = $1, updated_at = now() "
-        "WHERE search_key = $2",
-        deleted_key, search_key,
-    )
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE search_configs SET enabled = false, search_key = %s, updated_at = now() "
+            "WHERE search_key = %s",
+            (deleted_key, search_key),
+        )
+    conn.commit()
+    conn.close()
     return RedirectResponse(url="/admin/searches/", status_code=303)
