@@ -30,7 +30,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        -1376,
+        -1168,
         1344
       ],
       "id": "16d488d4-59e2-4347-814a-46dea56da67e",
@@ -51,7 +51,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        -1200,
+        -992,
         1344
       ],
       "id": "9e14840e-fea7-4527-84c8-487a400bda77",
@@ -72,7 +72,7 @@
       "type": "n8n-nodes-base.aggregate",
       "typeVersion": 1,
       "position": [
-        -1024,
+        -816,
         1344
       ],
       "id": "3d40e8b9-fcb9-4d85-bf3c-8a778fe8d986",
@@ -105,7 +105,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        -816,
+        -608,
         1344
       ],
       "id": "2f08c0aa-a3fb-43ca-ac36-8d239f722fca",
@@ -123,7 +123,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        -608,
+        -400,
         1248
       ],
       "id": "2a2e9bc1-44ef-4c20-9974-6559c69d62e6",
@@ -137,7 +137,7 @@
       "type": "n8n-nodes-base.splitOut",
       "typeVersion": 1,
       "position": [
-        -400,
+        -192,
         1248
       ],
       "id": "1c6adc1d-d802-4631-93ea-636a36dfb0c6",
@@ -169,7 +169,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        -192,
+        16,
         1248
       ],
       "id": "3a9d3e31-df00-443e-9307-8ea0d32d6dc3",
@@ -184,7 +184,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        16,
+        224,
         1136
       ],
       "id": "a9be451c-5799-4601-b0d1-a979dfd06b13",
@@ -264,7 +264,7 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        -1552,
+        -1584,
         1344
       ],
       "id": "b17a529a-00cc-4cbe-bf5e-9aabd2072e0d",
@@ -338,7 +338,7 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        -608,
+        -400,
         1440
       ],
       "id": "2aa6644a-efdd-44b7-88e2-a55b35acf02e",
@@ -412,7 +412,7 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        16,
+        224,
         1344
       ],
       "id": "8422a9c3-475c-4b7c-b4cd-de916af3d040",
@@ -486,11 +486,45 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        224,
+        432,
         1136
       ],
       "id": "a7e0c1ce-c899-4fe3-bd0f-ea0fbe2c7831",
       "name": "Call 'Update n8n Runs Table'2"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "1c979a3b-731d-4183-abe4-71f87c7faabe",
+              "leftValue": "={{ $json.can_deploy }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -1392,
+        1360
+      ],
+      "id": "0cfd9259-3971-4f6b-a65d-a65ab370a7e3",
+      "name": "If"
     }
   ],
   "pinData": {},
@@ -601,7 +635,7 @@
       "main": [
         [
           {
-            "node": "Pipeline Maintenance",
+            "node": "If",
             "type": "main",
             "index": 0
           }
@@ -618,6 +652,17 @@
           }
         ]
       ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Pipeline Maintenance",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": true,
@@ -625,7 +670,7 @@
     "executionOrder": "v1",
     "availableInMCP": false
   },
-  "versionId": "c5c1a44c-d506-41ba-8b50-36e8bf1b56ec",
+  "versionId": "a039bee9-0739-4abb-9694-a871876846b6",
   "meta": {
     "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179"
   },

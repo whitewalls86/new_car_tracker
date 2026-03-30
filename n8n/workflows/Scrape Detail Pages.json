@@ -10,8 +10,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        -1504,
-        1200
+        -1360,
+        1240
       ],
       "id": "bbcb22dc-76e0-4258-b009-b7d4cf63a269",
       "name": "Get Batch to Process",
@@ -30,8 +30,8 @@
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
       "position": [
-        -592,
-        1376
+        -688,
+        1288
       ],
       "id": "a1eb499b-6143-4e9a-a17d-de5599d02ffb",
       "name": "Loop Over Items"
@@ -57,8 +57,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        -368,
-        1376
+        -464,
+        1288
       ],
       "id": "8dec758f-b5e3-438e-a3af-6ee445611a56",
       "name": "HTTP Request"
@@ -70,8 +70,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -1968,
-        1200
+        -1808,
+        1240
       ],
       "id": "333d97ca-20ed-4c13-90e4-c5f04fa8ca1d",
       "name": "Create Run Id"
@@ -83,8 +83,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -144,
-        1552
+        -240,
+        1456
       ],
       "id": "cfcb9d8c-1297-408c-a63a-79443ec69e29",
       "name": "Code in JavaScript"
@@ -98,8 +98,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        80,
-        1088
+        -16,
+        1000
       ],
       "id": "0185c73b-7b86-45a3-b8aa-6d91567501b2",
       "name": "Execute a SQL query",
@@ -118,8 +118,8 @@
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
       "position": [
-        -368,
-        1024
+        -464,
+        928
       ],
       "id": "b14a087a-59d6-444a-b8a9-c080f7efce28",
       "name": "Loop Over Items1"
@@ -133,8 +133,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        -1776,
-        1200
+        -1584,
+        1240
       ],
       "id": "4bbc7faa-b4f0-42f9-8214-b3862103a3a6",
       "name": "Insert Run Row",
@@ -154,8 +154,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        -80,
-        640
+        -240,
+        736
       ],
       "id": "3dd28ac4-b9f7-4261-868d-8138490f9739",
       "name": "Mark Run Done",
@@ -174,8 +174,8 @@
       "type": "n8n-nodes-base.aggregate",
       "typeVersion": 1,
       "position": [
-        -144,
-        1024
+        -240,
+        928
       ],
       "id": "a2f35491-2012-416b-a6ae-8d27a0ea32f0",
       "name": "Aggregate"
@@ -189,8 +189,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        64,
-        640
+        -16,
+        736
       ],
       "id": "c3600aad-c3ae-4c52-96f3-906b41cee02b",
       "name": "Check Error Rate",
@@ -229,8 +229,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        304,
-        832
+        208,
+        736
       ],
       "id": "0a3c3cbd-88c3-46da-b8d9-1c9e1f1a9d5c",
       "name": "Error Rate High?"
@@ -246,8 +246,8 @@
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
-        512,
-        752
+        432,
+        640
       ],
       "id": "96856eef-9bbc-4071-a6d6-3379f609f841",
       "name": "Send Error Rate Alert",
@@ -282,8 +282,8 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        704,
-        928
+        432,
+        832
       ],
       "id": "29efe20b-ac77-42b6-8121-17d3eac18ead",
       "name": "Call 'Parse Detail Pages'"
@@ -295,8 +295,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -816,
-        1136
+        -912,
+        1048
       ],
       "id": "60cf06d0-af57-4f80-857a-10a42f7c7888",
       "name": "Get Batch"
@@ -316,7 +316,7 @@
       "typeVersion": 1.3,
       "position": [
         -2480,
-        1200
+        1240
       ],
       "id": "9b717d83-c95c-44c5-91a5-9538651d12ec",
       "name": "Schedule Trigger"
@@ -329,8 +329,8 @@
       "type": "n8n-nodes-base.aggregate",
       "typeVersion": 1,
       "position": [
-        -640,
-        960
+        -688,
+        736
       ],
       "id": "5243cdfd-9488-4e71-b261-55cb8976d421",
       "name": "Store Total (Aggregate)"
@@ -344,8 +344,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        -480,
-        832
+        -464,
+        736
       ],
       "id": "d15b24f6-5030-4a3d-ad77-3a974925e516",
       "name": "Store Total Count",
@@ -363,8 +363,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -144,
-        1328
+        -240,
+        1240
       ],
       "id": "ab39563d-9f1a-496b-9272-e36245184884",
       "name": "Check Milestone"
@@ -378,8 +378,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        80,
-        1328
+        -16,
+        1240
       ],
       "id": "ea3032ed-b8f0-4ba9-8885-1a7667e38515",
       "name": "Update Progress",
@@ -418,8 +418,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
-        -1280,
-        1200
+        -1136,
+        1144
       ],
       "id": "c8a1b2d3-e4f5-6789-abcd-ef0123456789",
       "name": "If Batch Empty?"
@@ -433,8 +433,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        -960,
-        1328
+        -912,
+        1480
       ],
       "id": "d9e0f1a2-b3c4-5678-9abc-def012345678",
       "name": "Mark Run Skipped",
@@ -454,8 +454,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        896,
-        928
+        656,
+        832
       ],
       "id": "a1b2c3d4-e5f6-7890-abcd-release00001",
       "name": "Release Claims",
@@ -475,8 +475,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        -1328,
-        1424
+        -1136,
+        1672
       ],
       "id": "d92c022a-9d34-4930-aefb-99768ce5e4ff",
       "name": "Mark Run terminated",
@@ -509,8 +509,8 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        704,
-        752
+        656,
+        640
       ],
       "id": "9bd1d4bb-551c-4dfe-add2-348615936607",
       "name": "Call 'Parse Detail Pages'1"
@@ -524,8 +524,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        896,
-        752
+        880,
+        640
       ],
       "id": "76da84b2-9f8f-49c1-a606-9c6e6e116842",
       "name": "Release Claims1",
@@ -604,8 +604,8 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        -2272,
-        1200
+        -2256,
+        1240
       ],
       "id": "2fd314f2-6639-4da4-a409-dbc21e7510bd",
       "name": "Call 'Check Deploy Intent'"
@@ -678,8 +678,8 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        -1136,
-        1424
+        -912,
+        1672
       ],
       "id": "d6e9da75-54eb-41b0-9c07-95dc1ddabaae",
       "name": "Call 'Update n8n Runs Table'"
@@ -752,8 +752,8 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        -800,
-        1328
+        -688,
+        1480
       ],
       "id": "b83178bd-2b26-48b0-a686-be948e5a9bcc",
       "name": "Call 'Update n8n Runs Table'1"
@@ -827,7 +827,7 @@
       "typeVersion": 1.3,
       "position": [
         1104,
-        752
+        640
       ],
       "id": "5aced572-89b6-48bd-893a-01541f4e2a0e",
       "name": "Call 'Update n8n Runs Table'2"
@@ -900,11 +900,45 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        1104,
-        928
+        880,
+        832
       ],
       "id": "b25dfad2-199f-4342-adca-dec2f3837e8d",
       "name": "Call 'Update n8n Runs Table'3"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "1c979a3b-731d-4183-abe4-71f87c7faabe",
+              "leftValue": "={{ $json.can_deploy }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -2032,
+        1240
+      ],
+      "id": "38c6f3ec-486a-40c1-9489-a239ea0c00a6",
+      "name": "Can Deploy?"
     }
   ],
   "pinData": {
@@ -1210,7 +1244,7 @@
       "main": [
         [
           {
-            "node": "Create Run Id",
+            "node": "Can Deploy?",
             "type": "main",
             "index": 0
           }
@@ -1249,6 +1283,17 @@
           }
         ]
       ]
+    },
+    "Can Deploy?": {
+      "main": [
+        [
+          {
+            "node": "Create Run Id",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": true,
@@ -1259,7 +1304,7 @@
     "callerPolicy": "workflowsFromSameOwner",
     "errorWorkflow": "rJfFKS2DGRAn_IPJR1xTc"
   },
-  "versionId": "938b96c4-42b5-4679-8712-1ffa6299c873",
+  "versionId": "0cf110f7-84c8-4366-a954-169da4af95ac",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179"

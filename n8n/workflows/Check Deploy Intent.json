@@ -96,7 +96,7 @@
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        1504,
+        1680,
         112
       ],
       "id": "e8431389-9c2a-463c-a429-7e2262df93f2",
@@ -120,7 +120,7 @@
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        864,
+        1232,
         -96
       ],
       "id": "56daa19a-4544-49ce-b9e0-a74f06db40d3",
@@ -171,7 +171,7 @@
           "conditions": [
             {
               "id": "0a978829-1683-406e-869f-2522f3b75aea",
-              "leftValue": "={{ $json.loop_counts }}",
+              "leftValue": "={{ $json.loop_counter }}",
               "rightValue": 5,
               "operator": {
                 "type": "number",
@@ -279,7 +279,7 @@
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
-        1696,
+        1504,
         112
       ],
       "id": "1c159d2c-4b78-4ca3-97be-0dd00adf333f",
@@ -368,7 +368,7 @@
       "main": [
         [
           {
-            "node": "Can Deploy",
+            "node": "Call 'Update n8n Runs Table'",
             "type": "main",
             "index": 0
           }
@@ -393,7 +393,7 @@
         ],
         [
           {
-            "node": "Can't Deploy",
+            "node": "Send Notification",
             "type": "main",
             "index": 0
           }
@@ -402,24 +402,12 @@
     },
     "Can Deploy": {
       "main": [
-        [
-          {
-            "node": "Call 'Update n8n Runs Table'",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        []
       ]
     },
     "Can't Deploy": {
       "main": [
-        [
-          {
-            "node": "Send Notification",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        []
       ]
     },
     "Edit Fields": {
@@ -432,6 +420,28 @@
           }
         ]
       ]
+    },
+    "Send Notification": {
+      "main": [
+        [
+          {
+            "node": "Can't Deploy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call 'Update n8n Runs Table'": {
+      "main": [
+        [
+          {
+            "node": "Can Deploy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": true,
@@ -439,7 +449,7 @@
     "executionOrder": "v1",
     "availableInMCP": false
   },
-  "versionId": "1dff9ffb-a438-4255-bff2-356ac365cbea",
+  "versionId": "c28e0acf-951b-4ee8-86ce-3f892599e36a",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179"

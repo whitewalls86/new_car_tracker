@@ -8,8 +8,8 @@
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
       "position": [
-        1088,
-        160
+        1344,
+        304
       ],
       "id": "1b5833a1-8fde-42eb-8882-916545ab3d52",
       "name": "Loop Over Items"
@@ -23,8 +23,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        656,
-        160
+        896,
+        400
       ],
       "id": "ca9798d2-019e-4e2c-a4f8-bbdfbedb5777",
       "name": "Get Artifacts to Process",
@@ -47,8 +47,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        1440,
-        96
+        1792,
+        136
       ],
       "id": "a8dfa4aa-dd2d-4856-880e-0a44c6ae4d6f",
       "name": "Send Artifact for Processing"
@@ -62,8 +62,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        2016,
-        80
+        2464,
+        208
       ],
       "id": "b98710db-852c-4889-9b2f-d515b2bb5fa0",
       "name": "Update Artifacts Metadata",
@@ -133,8 +133,8 @@
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3.4,
       "position": [
-        1584,
-        96
+        2016,
+        136
       ],
       "id": "7947df0a-42b3-4cec-9617-49c6c64449a1",
       "name": "Check Status"
@@ -148,8 +148,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        1952,
-        304
+        2464,
+        424
       ],
       "id": "c39f9d71-bdd2-4b39-a185-e2e685867556",
       "name": "Update Artifacts Table with retry status",
@@ -169,8 +169,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        1792,
-        80
+        2240,
+        64
       ],
       "id": "3190dcc7-3134-466a-905b-5a99a9dedb64",
       "name": "Insert SRP_Observations",
@@ -200,8 +200,8 @@
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        432,
-        160
+        672,
+        400
       ],
       "id": "3b68fa49-4de3-4648-9795-4b3e74d0baed",
       "name": "Set Processor"
@@ -234,8 +234,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
-        1248,
-        176
+        1568,
+        208
       ],
       "id": "c27cee1f-99d4-42a4-b284-ef58b9667401",
       "name": "If"
@@ -249,8 +249,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        1424,
-        304
+        1792,
+        328
       ],
       "id": "8ef7587c-92a8-4c07-9ef4-a6dbbe45bb63",
       "name": "Update Artifacts Table with Skip status",
@@ -275,7 +275,7 @@
       "typeVersion": 1.3,
       "position": [
         0,
-        160
+        400
       ],
       "id": "3767aa70-1635-4b7e-8dfc-3d2bad9e7b1c",
       "name": "Schedule Trigger"
@@ -308,8 +308,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
-        832,
-        176
+        1120,
+        400
       ],
       "id": "890b7763-40df-4f92-860d-039c395ff5ec",
       "name": "If1"
@@ -351,7 +351,7 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        1408,
+        1568,
         -176
       ],
       "id": "9c716e81-7e1c-4c81-a05b-314cc6061137",
@@ -425,8 +425,8 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        208,
-        160
+        224,
+        400
       ],
       "id": "e065ebf5-6d3c-46f5-8afc-ac844600a7bd",
       "name": "Call 'Check Deploy Intent'"
@@ -499,8 +499,8 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        1072,
-        528
+        1344,
+        496
       ],
       "id": "13926e82-6d1e-4117-95af-c4253b543af4",
       "name": "Call 'Update n8n Runs Table'"
@@ -573,11 +573,45 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        1408,
-        -32
+        1568,
+        16
       ],
       "id": "6f451ad4-01fd-4809-92e3-bf6ee6c2d439",
       "name": "Call 'Update n8n Runs Table'1"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "1c979a3b-731d-4183-abe4-71f87c7faabe",
+              "leftValue": "={{ $json.can_deploy }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        448,
+        400
+      ],
+      "id": "e1d44e1e-52f0-406c-a66b-5c328248b146",
+      "name": "Can Deploy?"
     }
   ],
   "pinData": {},
@@ -758,6 +792,17 @@
       "main": [
         [
           {
+            "node": "Can Deploy?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Can Deploy?": {
+      "main": [
+        [
+          {
             "node": "Set Processor",
             "type": "main",
             "index": 0
@@ -771,7 +816,7 @@
     "executionOrder": "v1",
     "availableInMCP": false
   },
-  "versionId": "bc17664b-171c-4b6d-b23c-c34b8776c269",
+  "versionId": "2d0d989c-efbb-4b10-98c1-e4970b8f23c6",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179"

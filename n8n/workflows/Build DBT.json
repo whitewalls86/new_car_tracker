@@ -15,7 +15,7 @@
       "typeVersion": 1.1,
       "position": [
         -288,
-        -256
+        496
       ],
       "id": "69b0af34-900e-49f0-a808-506b1dda9a70",
       "name": "When Executed by Another Workflow"
@@ -34,7 +34,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        1264,
+        1504,
         16
       ],
       "id": "6299801c-bb69-42d8-a474-7ce76f94bf47",
@@ -124,8 +124,8 @@
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3.4,
       "position": [
-        1472,
-        32
+        1728,
+        192
       ],
       "id": "3591a3ac-98e1-466a-9c4e-15e6f0d3f8e8",
       "name": "Error Router"
@@ -165,8 +165,8 @@
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        144,
-        -272
+        384,
+        496
       ],
       "id": "58cb9c17-bca6-4c19-b07d-a240d47793be",
       "name": "Set Error Counts"
@@ -178,8 +178,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1840,
-        48
+        1952,
+        208
       ],
       "id": "aab73527-3847-4956-be75-b5ddddc66cf7",
       "name": "Set Refresh to Full"
@@ -191,8 +191,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1744,
-        -64
+        1952,
+        16
       ],
       "id": "22d8f284-5487-4231-8a19-9513fe5363aa",
       "name": "Increment 409 Error"
@@ -204,8 +204,8 @@
       "type": "n8n-nodes-base.wait",
       "typeVersion": 1.1,
       "position": [
-        2048,
-        48
+        2176,
+        288
       ],
       "id": "a24fc853-92bb-4abe-a568-7c96c46a5376",
       "name": "Wait 60s",
@@ -218,8 +218,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1712,
-        112
+        1952,
+        400
       ],
       "id": "4ca68795-0f17-433d-bd64-df499bfc5610",
       "name": "Fix 400 Error"
@@ -247,8 +247,8 @@
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        1520,
-        -208
+        1728,
+        -176
       ],
       "id": "2f475fbb-cc01-4cfc-91b8-4879f06415a0",
       "name": "Return 200"
@@ -276,7 +276,7 @@
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        1008,
+        1056,
         -560
       ],
       "id": "cdf8d3ef-fdb1-4aa7-a5bd-9cc4a3f767fc",
@@ -305,8 +305,8 @@
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        1296,
-        -384
+        1504,
+        -368
       ],
       "id": "e300777a-9e44-4d6a-a715-319bb95672c2",
       "name": "Return 500"
@@ -320,8 +320,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        752,
-        -272
+        832,
+        -280
       ],
       "id": "9e77517a-d81e-4f25-9254-ada9cf0f07a7",
       "name": "Lock & Stuck Query Cleanup",
@@ -415,8 +415,8 @@
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3.4,
       "position": [
-        464,
-        -288
+        608,
+        480
       ],
       "id": "150e12ee-502f-405b-b8f9-e4cd4a2c37d9",
       "name": "Check Error Status"
@@ -480,8 +480,8 @@
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3.4,
       "position": [
-        896,
-        -272
+        1056,
+        -280
       ],
       "id": "8d92011d-a158-47a0-95d2-da5770ff2b25",
       "name": "500 Type"
@@ -495,8 +495,8 @@
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
-        1104,
-        -384
+        1280,
+        -368
       ],
       "id": "7ccfa884-1ab9-425c-a35d-c8ba5e53ec52",
       "name": "Send Final Fail Message",
@@ -518,8 +518,8 @@
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
-        1088,
-        -224
+        1280,
+        -176
       ],
       "id": "a0aaa9e0-7fb9-4abd-98ed-a0c8d2926234",
       "name": "Send Soft 500 Alert",
@@ -541,7 +541,7 @@
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
-        752,
+        832,
         -560
       ],
       "id": "b0b09f85-d9ee-4df5-8b00-0da07054792c",
@@ -623,8 +623,8 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        -80,
-        -256
+        -64,
+        496
       ],
       "id": "5f0df84f-3419-4eb9-acff-6f05e998267a",
       "name": "Call 'Check Deploy Intent'"
@@ -697,7 +697,7 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        1216,
+        1280,
         -560
       ],
       "id": "02b43eb6-45e2-474b-9887-9d68796dc092",
@@ -771,8 +771,8 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        1504,
-        -384
+        1728,
+        -368
       ],
       "id": "16306347-19c3-4e17-be3c-23e246c1775a",
       "name": "Call 'Update n8n Runs Table'1"
@@ -845,11 +845,45 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        1728,
-        -208
+        1952,
+        -176
       ],
       "id": "ca7c7c48-57b6-4120-bbfb-c5dad11271c8",
       "name": "Call 'Update n8n Runs Table'2"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "1c979a3b-731d-4183-abe4-71f87c7faabe",
+              "leftValue": "={{ $json.can_deploy }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        160,
+        496
+      ],
+      "id": "1332c89b-3c79-4424-917b-67ef0837f970",
+      "name": "Can Deploy?"
     }
   ],
   "pinData": {
@@ -1076,7 +1110,7 @@
       "main": [
         [
           {
-            "node": "Set Error Counts",
+            "node": "Can Deploy?",
             "type": "main",
             "index": 0
           }
@@ -1104,6 +1138,17 @@
           }
         ]
       ]
+    },
+    "Can Deploy?": {
+      "main": [
+        [
+          {
+            "node": "Set Error Counts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": true,
@@ -1111,7 +1156,7 @@
     "executionOrder": "v1",
     "availableInMCP": false
   },
-  "versionId": "227ce6d0-82a3-47f5-b91b-e53031ae626a",
+  "versionId": "d11cad44-3b47-4097-b4c6-fcd06bdad14f",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179"

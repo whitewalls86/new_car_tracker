@@ -31,7 +31,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        4880,
+        5152,
         1344
       ],
       "id": "774da0e5-e86c-4917-9e06-9fdfe85fe65e",
@@ -44,7 +44,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        5072,
+        5376,
         1344
       ],
       "id": "b53068c8-d84f-4bdc-9ef1-842aa5ae8ff0",
@@ -59,7 +59,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        5520,
+        5824,
         1152
       ],
       "id": "989b86b7-aa50-4581-9575-1b3b5d2b2da0",
@@ -78,7 +78,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        5520,
+        5824,
         1344
       ],
       "id": "eb153a05-7b5e-4b72-b59d-ef902a1cf6fe",
@@ -95,7 +95,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        5744,
+        6048,
         1344
       ],
       "id": "764c4f7d-81a8-4902-a813-00f94c1692ad",
@@ -110,7 +110,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        5968,
+        6272,
         1344
       ],
       "id": "307b4e2b-1b12-4473-b8dc-a5e237377995",
@@ -129,7 +129,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        6192,
+        6496,
         1344
       ],
       "id": "1d54b55a-5eee-4825-b1b3-4589f679beb7",
@@ -144,7 +144,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        6416,
+        6720,
         1344
       ],
       "id": "4cf4a25d-21fa-4856-9b05-0b8e4fc4fd5f",
@@ -183,7 +183,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        6640,
+        6944,
         1344
       ],
       "id": "156584b4-34dd-4928-8769-f8854b03fde4",
@@ -198,8 +198,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        6864,
-        1264
+        7168,
+        1248
       ],
       "id": "9f3fe549-9b43-43b8-8282-ed3014af6296",
       "name": "Mark Run Done",
@@ -238,7 +238,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
-        5296,
+        5600,
         1344
       ],
       "id": "a551d850-9c18-4625-afbc-de7e36c57bca",
@@ -329,8 +329,8 @@
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3.4,
       "position": [
-        5520,
-        1600
+        5824,
+        1536
       ],
       "id": "c2df321a-cf2e-475d-b1ba-2dd869935d34",
       "name": "Switch"
@@ -342,8 +342,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        5824,
-        1536
+        6048,
+        1552
       ],
       "id": "f1a3c2d0-8e5b-4a9f-b123-456789abcdef",
       "name": "Summarize Errors"
@@ -359,8 +359,8 @@
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
-        6016,
-        1536
+        6272,
+        1552
       ],
       "id": "258490dc-56eb-4758-b2c3-ad2ad9b93e88",
       "name": "Send Telegram Alert",
@@ -441,7 +441,7 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        4688,
+        4704,
         1344
       ],
       "id": "856a72cb-6470-47b9-991c-59c43b108c58",
@@ -515,8 +515,8 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        7072,
-        1264
+        7392,
+        1248
       ],
       "id": "2a5b89cc-075e-463c-97da-319c3674dede",
       "name": "Call 'Update n8n Runs Table'"
@@ -589,11 +589,45 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        6848,
+        7168,
         1440
       ],
       "id": "d8d39df9-4ec8-40b9-a636-69ac807378da",
       "name": "Call 'Update n8n Runs Table'1"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "1c979a3b-731d-4183-abe4-71f87c7faabe",
+              "leftValue": "={{ $json.can_deploy }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        4928,
+        1344
+      ],
+      "id": "7de6af56-fdf0-42eb-9fec-617b16ef6b40",
+      "name": "Can Deploy?"
     }
   ],
   "pinData": {
@@ -781,7 +815,7 @@
       "main": [
         [
           {
-            "node": "Get Completed Jobs",
+            "node": "Can Deploy?",
             "type": "main",
             "index": 0
           }
@@ -803,6 +837,17 @@
       "main": [
         []
       ]
+    },
+    "Can Deploy?": {
+      "main": [
+        [
+          {
+            "node": "Get Completed Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": true,
@@ -813,7 +858,7 @@
     "callerPolicy": "workflowsFromSameOwner",
     "errorWorkflow": "rJfFKS2DGRAn_IPJR1xTc"
   },
-  "versionId": "bab4bc26-2c3b-4c4c-8f6c-92cd28e331c6",
+  "versionId": "b82e9a13-c9b0-4380-8626-97648d028bdb",
   "meta": {
     "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179",
     "templateCredsSetupCompleted": true
