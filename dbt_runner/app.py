@@ -42,8 +42,17 @@ STALE_LOCK_MINUTES = 30
 
 def _acquire_lock(caller: str) -> bool:
     """Atomically try to acquire the dbt_lock. Returns True if acquired."""
+    conn = None
     try:
         conn = psycopg2.connect(**DB_KWARGS)
+    except psycopg2.OperationalError:
+        logger.error(f"Acquire-Lock: Unable to connect to Postgres database.")
+        return False
+    except Exception:
+        logger.error(f"Acquire-Lock: encountered DB error.")
+        return False
+
+    try:
         with conn, conn.cursor() as cur:
             cur.execute(
                 """UPDATE dbt_lock
@@ -55,11 +64,13 @@ def _acquire_lock(caller: str) -> bool:
                 (caller, STALE_LOCK_MINUTES),
             )
             acquired = cur.fetchone() is not None
-        conn.close()
         return acquired
     except Exception:
-        logger.exception("Failed to acquire dbt_lock")
+        logger.exception("Acquire-Lock: SQL execution failed.")
         return False
+    finally:
+        if conn:
+            conn.close()
 
 
 def _release_lock() -> None:
