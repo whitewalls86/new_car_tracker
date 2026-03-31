@@ -23,8 +23,8 @@
       "type": "n8n-nodes-base.executeWorkflowTrigger",
       "typeVersion": 1.1,
       "position": [
-        0,
-        0
+        -80,
+        272
       ],
       "id": "bbae2a20-d7da-4f05-9cf3-c5b82ca41cf8",
       "name": "When Executed by Another Workflow"
@@ -38,8 +38,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        416,
-        0
+        368,
+        272
       ],
       "id": "85167d48-8288-4b6a-a41a-4b967015dff8",
       "name": "Execute a SQL query",
@@ -48,7 +48,8 @@
           "id": "l8Ecbn62FzXCDkF9",
           "name": "Postgres account"
         }
-      }
+      },
+      "onError": "continueErrorOutput"
     },
     {
       "parameters": {
@@ -58,8 +59,8 @@
       "type": "n8n-nodes-base.wait",
       "typeVersion": 1.1,
       "position": [
-        832,
-        96
+        816,
+        0
       ],
       "id": "06e59b5d-4918-445c-ad2a-faa1391d4177",
       "name": "Wait",
@@ -72,8 +73,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1056,
-        96
+        976,
+        0
       ],
       "id": "34cb6af2-e231-4c1d-b283-83a4081fc1c1",
       "name": "Add Loop Count"
@@ -96,8 +97,8 @@
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        1680,
-        112
+        1744,
+        80
       ],
       "id": "e8431389-9c2a-463c-a429-7e2262df93f2",
       "name": "Can't Deploy"
@@ -120,8 +121,8 @@
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        1232,
-        -96
+        1472,
+        -336
       ],
       "id": "56daa19a-4544-49ce-b9e0-a74f06db40d3",
       "name": "Can Deploy"
@@ -153,8 +154,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
-        624,
-        0
+        592,
+        -96
       ],
       "id": "1f4d86a1-4ec0-4cd8-8e44-879011082a0e",
       "name": "No Deploy's Intended?"
@@ -186,8 +187,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
-        1264,
-        96
+        1120,
+        0
       ],
       "id": "7c3aab0f-50ff-4499-9ea0-945a023ee7dd",
       "name": "Waited Less than 5 min?"
@@ -262,8 +263,8 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        1072,
-        -96
+        1312,
+        -336
       ],
       "id": "0b4e9c67-e5b3-4a1d-b2bc-d7f6b917b0a5",
       "name": "Call 'Update n8n Runs Table'"
@@ -279,8 +280,8 @@
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
-        1504,
-        112
+        1360,
+        48
       ],
       "id": "1c159d2c-4b78-4ca3-97be-0dd00adf333f",
       "name": "Send Notification",
@@ -311,11 +312,135 @@
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        208,
-        0
+        144,
+        272
       ],
       "id": "58b86cf0-d7e2-4921-a442-15b1c039a845",
       "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "rVjVSPLmpj9ym-suqoVl9",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/rVjVSPLmpj9ym-suqoVl9",
+          "cachedResultName": "Containers Up"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        592,
+        192
+      ],
+      "id": "61451397-9c72-4896-ac5a-295fc6419c78",
+      "name": "Call 'Containers Up'"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "fdb297c2-a241-4d53-8578-ec663803e4d6",
+              "leftValue": "={{ $json.healthy }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        816,
+        192
+      ],
+      "id": "477fb9ed-df48-4460-9386-1c6db19ce0a2",
+      "name": "Services Healthy?"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "rVjVSPLmpj9ym-suqoVl9",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/rVjVSPLmpj9ym-suqoVl9",
+          "cachedResultName": "Containers Up"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        800,
+        -192
+      ],
+      "id": "fe8478dd-2d29-4979-b4df-3d275876544e",
+      "name": "Call 'Containers Up'1"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "9969b1c4-dd9a-41cc-a0f7-8764d8fd1bd6",
+              "leftValue": "={{ $json.healthy }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1008,
+        -192
+      ],
+      "id": "11fb1dc1-a98e-4ff3-8daf-106567d9a681",
+      "name": "If"
     }
   ],
   "pinData": {},
@@ -336,6 +461,13 @@
         [
           {
             "node": "No Deploy's Intended?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Call 'Containers Up'",
             "type": "main",
             "index": 0
           }
@@ -368,7 +500,7 @@
       "main": [
         [
           {
-            "node": "Call 'Update n8n Runs Table'",
+            "node": "Call 'Containers Up'1",
             "type": "main",
             "index": 0
           }
@@ -442,6 +574,64 @@
           }
         ]
       ]
+    },
+    "Call 'Containers Up'": {
+      "main": [
+        [
+          {
+            "node": "Services Healthy?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Services Healthy?": {
+      "main": [
+        [
+          {
+            "node": "Execute a SQL query",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Can't Deploy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call 'Containers Up'1": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Call 'Update n8n Runs Table'",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Can't Deploy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": true,
@@ -449,7 +639,7 @@
     "executionOrder": "v1",
     "availableInMCP": false
   },
-  "versionId": "c28e0acf-951b-4ee8-86ce-3f892599e36a",
+  "versionId": "bddf3ee3-3122-4c4f-90cc-887c09cce54a",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179"
