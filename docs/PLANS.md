@@ -573,9 +573,6 @@ Currently raw HTML artifacts are stored on a Docker volume as files, with metada
 
 `scraper/app.py` has accumulated significant scope: scrape logic, async job management, background threading, rotation guards, processing endpoints, and FastAPI wiring all in one file. This plan is a full code review and refactor — structural split plus logic quality pass.
 
-### Known issues to address
-- **SRP breakpoint logic** — ✅ Root cause identified and fixed: n8n was hardcoding `known_vins: []` in the payload, bypassing `_fetch_known_vins` entirely. Fixed in n8n workflow. Also removed the aggressive 50% inner VIN threshold from `_fetch_page`; breakpoint logic now lives exclusively in the outer loop. Pending confirmation at next scrape run.
-
 ### Scope
 - Full read-through of `scraper/app.py` — identify logic that belongs in separate modules, complex functions that should be simplified, error handling gaps
 - Structural split along natural seams (similar to Plan 50's dashboard split):
@@ -591,8 +588,8 @@ Currently raw HTML artifacts are stored on a Docker volume as files, with metada
 
 ### Notes
 - Behavior changes (bug fixes) and structural changes (refactor) should be committed separately so regressions are easy to bisect
-- SRP breakpoint fix is the known priority; other issues may surface during review
 - This plan does not touch `dbt_runner/` or `dashboard/` — scraper only
+- Goal is to get this code ready to add pytests to.
 
 ---
 

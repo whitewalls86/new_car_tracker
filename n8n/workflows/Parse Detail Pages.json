@@ -95,7 +95,7 @@
       "type": "n8n-nodes-base.aggregate",
       "typeVersion": 1,
       "position": [
-        5296,
+        5504,
         3712
       ],
       "id": "a7e59eba-824e-4e3d-865d-0ffe7dec2076",
@@ -110,7 +110,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        5520,
+        5728,
         3712
       ],
       "id": "ae24a6c8-c49a-4b07-8045-18e28380a629",
@@ -131,7 +131,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        5744,
+        5952,
         3712
       ],
       "id": "fb842853-367a-456b-96c0-a966f9a78e55",
@@ -152,7 +152,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        5968,
+        6176,
         3712
       ],
       "id": "9a2d5575-48d0-4fd8-9bc4-77715aa780c0",
@@ -172,7 +172,7 @@
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
       "position": [
-        4848,
+        5056,
         3520
       ],
       "id": "b813f9c5-da0c-452d-a199-5ab165da7537",
@@ -187,7 +187,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        6192,
+        6400,
         3712
       ],
       "id": "d6d0c8e9-9442-4aea-80a7-d4e70a49f039",
@@ -397,7 +397,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        5072,
+        5280,
         3232
       ],
       "id": "3675596f-9d66-474d-be36-9e56b71b22df",
@@ -510,7 +510,7 @@
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3.4,
       "position": [
-        5072,
+        5280,
         3568
       ],
       "id": "2971a13d-4e9c-4670-8117-4e9773597651",
@@ -535,7 +535,7 @@
       "type": "n8n-nodes-base.merge",
       "typeVersion": 3.2,
       "position": [
-        6416,
+        6624,
         3696
       ],
       "id": "c75643b7-05c5-488a-abc3-72ae130d62ee",
@@ -550,7 +550,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        6192,
+        6400,
         3520
       ],
       "id": "6451a258-6038-44f9-8d02-42b93a1129f7",
@@ -586,13 +586,13 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "WITH parsed AS (\n  SELECT *\n  FROM jsonb_to_recordset('{{ JSON.stringify($json.data).replace(/'/g,\"''\") }}'::jsonb)\n    AS p(\n      processor   text,\n      artifact_id bigint,\n      status      text,\n      message     text,\n      search_key  text,\n      meta        jsonb,\n      \"primary\"   jsonb,\n      carousel    jsonb\n    )\n),\nra AS (\n  SELECT artifact_id, fetched_at, url\n  FROM raw_artifacts\n  WHERE artifact_id IN (SELECT artifact_id FROM parsed)\n),\nrows AS (\n  SELECT DISTINCT\n    p.artifact_id,\n    ra.fetched_at,\n\tp.search_key,\n    COALESCE(\n  NULLIF(p.\"primary\"->>'listing_id', ''),\n  NULLIF(regexp_replace(ra.url, '.*/vehicledetail/([^/]+)/?.*', '\\1'), ra.url)\n) AS listing_id\nFROM parsed p\n  JOIN ra USING (artifact_id)\n  WHERE p.status = 'ok'\n)\nDELETE FROM detail_carousel_hints dch\nUSING rows\nWHERE dch.listing_id = rows.listing_id;",
+        "query": "WITH parsed AS (\n  SELECT *\n  FROM jsonb_to_recordset('{{ JSON.stringify($json.data).replace(/'/g,\"''\") }}'::jsonb)\n    AS p(\n      processor   text,\n      artifact_id bigint,\n      status      text,\n      message     text,\n      search_key  text,\n      meta        jsonb,\n      \"primary\"   jsonb,\n      carousel    jsonb\n    )\n),\nra AS (\n  SELECT artifact_id, fetched_at, url\n  FROM raw_artifacts\n  WHERE artifact_id IN (SELECT artifact_id FROM parsed)\n),\nrows AS (\n  SELECT DISTINCT\n    p.artifact_id,\n    ra.fetched_at,\n\tp.search_key,\n    COALESCE(\n  NULLIF(p.\"primary\"->>'listing_id', ''),\n  NULLIF(regexp_replace(ra.url, '.*/vehicledetail/([^/]+)/?.*', '\\1'), ra.url)\n) AS listing_id\nFROM parsed p\n  JOIN ra USING (artifact_id)\n  WHERE p.status = 'ok'\n)\nDELETE FROM detail_carousel_hints dch\nUSING rows\nWHERE dch.listing_id = rows.listing_id\nRETURNING dch.artifact_id;",
         "options": {}
       },
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        5968,
+        6016,
         3328
       ],
       "id": "ff8d1c85-6117-4505-9d04-8002978135f8",
@@ -643,7 +643,7 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        5456,
+        5664,
         3104
       ],
       "id": "59d8cf9e-1d28-4997-b96f-d52b883933cb",
@@ -719,7 +719,7 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        5456,
+        5664,
         3280
       ],
       "id": "c1b462e1-3565-450e-915a-604f09fdaa67",
@@ -842,7 +842,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        5248,
+        5456,
         3216
       ],
       "id": "27cd824b-6a91-4bb0-918b-63738104773d",
@@ -853,9 +853,1434 @@
           "name": "Postgres account"
         }
       }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH parsed AS (\n  SELECT *\n  FROM jsonb_to_recordset('{{ JSON.stringify($json.data).replace(/'/g,\"''\") }}'::jsonb)\n    AS p(\n      processor   text,\n      artifact_id bigint,\n      status      text,\n      message     text,\n      search_key  text,\n      meta        jsonb,\n      \"primary\"   jsonb,\n      carousel    jsonb\n    )\n),\nra AS (\n  SELECT artifact_id, fetched_at, url\n  FROM raw_artifacts\n  WHERE artifact_id IN (SELECT artifact_id FROM parsed)\n),\nrows AS (\n  SELECT DISTINCT\n    p.artifact_id,\n    ra.fetched_at,\n\tp.search_key,\n    COALESCE(\n  NULLIF(p.\"primary\"->>'listing_id', ''),\n  NULLIF(regexp_replace(ra.url, '.*/vehicledetail/([^/]+)/?.*', '\\1'), ra.url)\n) AS listing_id\nFROM parsed p\n  JOIN ra USING (artifact_id)\n  WHERE p.status = 'ok'\n)\nDELETE FROM analytics.int_carousel_hints_filtered chf\nUSING rows\nWHERE chf.listing_id = rows.listing_id\nRETURNING chf.artifact_id;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        6416,
+        3328
+      ],
+      "id": "64e3c446-19d6-4cf1-a8fb-39b51a4e36f9",
+      "name": "Unlist Hints1",
+      "credentials": {
+        "postgres": {
+          "id": "l8Ecbn62FzXCDkF9",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        6224,
+        3328
+      ],
+      "id": "ae66f970-7078-415e-9915-f414330c9389",
+      "name": "Aggregate2"
     }
   ],
-  "pinData": {},
+  "pinData": {
+    "After Scrape": [
+      {
+        "json": {
+          "parent_run_id": "1c3dfdc6-1d0c-4791-96ba-bc7fa0b0b182"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ],
+    "Aggregate1": [
+      {
+        "json": {
+          "data": [
+            {
+              "processor": "cars_detail_page__v1",
+              "artifact_id": 2467584,
+              "search_key": "3VVFR7RM3TM030496",
+              "status": "ok",
+              "message": "parsed primary + 0 carousel items",
+              "meta": {
+                "parser": "cars_detail_page__v1",
+                "html_len": 162299,
+                "primary_json_present": true,
+                "listing_id_source": "url",
+                "dealer_card_found": false,
+                "primary_keys_present": [
+                  "customer_id",
+                  "listing_id",
+                  "listing_id_source",
+                  "listing_state",
+                  "make",
+                  "model",
+                  "unlisted_message",
+                  "year"
+                ],
+                "carousel_found": false,
+                "cards_found": 0,
+                "cards_parsed": 0,
+                "missing_listing_id": 0,
+                "missing_price": 0,
+                "missing_body": 0,
+                "missing_mileage": 0,
+                "artifact_url": "https://www.cars.com/vehicle/a0353aee-fac4-4afa-a05b-76a2be61ec45/"
+              },
+              "primary": {
+                "listing_state": "unlisted",
+                "unlisted_title": null,
+                "unlisted_message": "page contains 'no longer available/listed' marker text",
+                "listing_id": "a0353aee-fac4-4afa-a05b-76a2be61ec45",
+                "listing_id_source": "url",
+                "vin": null,
+                "make": "",
+                "model": "",
+                "trim": null,
+                "year": "",
+                "price": null,
+                "mileage": null,
+                "msrp": null,
+                "stock_type": null,
+                "fuel_type": null,
+                "body_style": null,
+                "dealer_name": null,
+                "dealer_zip": null,
+                "seller_id": null,
+                "customer_id": "",
+                "dealer_street": null,
+                "dealer_city": null,
+                "dealer_state": null,
+                "dealer_phone": null,
+                "dealer_website": null,
+                "dealer_cars_com_url": null,
+                "dealer_rating": null
+              },
+              "carousel": []
+            },
+            {
+              "processor": "cars_detail_page__v1",
+              "artifact_id": 2467593,
+              "search_key": "2066ca80-a019-40eb-925a-bd01c4554123",
+              "status": "ok",
+              "message": "parsed primary + 0 carousel items",
+              "meta": {
+                "parser": "cars_detail_page__v1",
+                "html_len": 157058,
+                "primary_json_present": true,
+                "listing_id_source": "url",
+                "dealer_card_found": false,
+                "primary_keys_present": [
+                  "customer_id",
+                  "listing_id",
+                  "listing_id_source",
+                  "listing_state",
+                  "make",
+                  "model",
+                  "unlisted_message",
+                  "year"
+                ],
+                "carousel_found": false,
+                "cards_found": 0,
+                "cards_parsed": 0,
+                "missing_listing_id": 0,
+                "missing_price": 0,
+                "missing_body": 0,
+                "missing_mileage": 0,
+                "artifact_url": "https://www.cars.com/vehicle/2066ca80-a019-40eb-925a-bd01c4554123/"
+              },
+              "primary": {
+                "listing_state": "unlisted",
+                "unlisted_title": null,
+                "unlisted_message": "page contains 'no longer available/listed' marker text",
+                "listing_id": "2066ca80-a019-40eb-925a-bd01c4554123",
+                "listing_id_source": "url",
+                "vin": null,
+                "make": "",
+                "model": "",
+                "trim": null,
+                "year": "",
+                "price": null,
+                "mileage": null,
+                "msrp": null,
+                "stock_type": null,
+                "fuel_type": null,
+                "body_style": null,
+                "dealer_name": null,
+                "dealer_zip": null,
+                "seller_id": null,
+                "customer_id": "",
+                "dealer_street": null,
+                "dealer_city": null,
+                "dealer_state": null,
+                "dealer_phone": null,
+                "dealer_website": null,
+                "dealer_cars_com_url": null,
+                "dealer_rating": null
+              },
+              "carousel": []
+            },
+            {
+              "processor": "cars_detail_page__v1",
+              "artifact_id": 2467594,
+              "search_key": "3c2efe83-abda-41dd-adcb-50d7b3d4de0d",
+              "status": "ok",
+              "message": "parsed primary + 0 carousel items",
+              "meta": {
+                "parser": "cars_detail_page__v1",
+                "html_len": 162380,
+                "primary_json_present": true,
+                "listing_id_source": "url",
+                "dealer_card_found": false,
+                "primary_keys_present": [
+                  "customer_id",
+                  "listing_id",
+                  "listing_id_source",
+                  "listing_state",
+                  "make",
+                  "model",
+                  "unlisted_message",
+                  "year"
+                ],
+                "carousel_found": false,
+                "cards_found": 0,
+                "cards_parsed": 0,
+                "missing_listing_id": 0,
+                "missing_price": 0,
+                "missing_body": 0,
+                "missing_mileage": 0,
+                "artifact_url": "https://www.cars.com/vehicle/3c2efe83-abda-41dd-adcb-50d7b3d4de0d/"
+              },
+              "primary": {
+                "listing_state": "unlisted",
+                "unlisted_title": null,
+                "unlisted_message": "page contains 'no longer available/listed' marker text",
+                "listing_id": "3c2efe83-abda-41dd-adcb-50d7b3d4de0d",
+                "listing_id_source": "url",
+                "vin": null,
+                "make": "",
+                "model": "",
+                "trim": null,
+                "year": "",
+                "price": null,
+                "mileage": null,
+                "msrp": null,
+                "stock_type": null,
+                "fuel_type": null,
+                "body_style": null,
+                "dealer_name": null,
+                "dealer_zip": null,
+                "seller_id": null,
+                "customer_id": "",
+                "dealer_street": null,
+                "dealer_city": null,
+                "dealer_state": null,
+                "dealer_phone": null,
+                "dealer_website": null,
+                "dealer_cars_com_url": null,
+                "dealer_rating": null
+              },
+              "carousel": []
+            },
+            {
+              "processor": "cars_detail_page__v1",
+              "artifact_id": 2467595,
+              "search_key": "540088a4-c1cb-423f-91d9-cb69fb3c73bd",
+              "status": "ok",
+              "message": "parsed primary + 0 carousel items",
+              "meta": {
+                "parser": "cars_detail_page__v1",
+                "html_len": 163776,
+                "primary_json_present": true,
+                "listing_id_source": "url",
+                "dealer_card_found": false,
+                "primary_keys_present": [
+                  "customer_id",
+                  "listing_id",
+                  "listing_id_source",
+                  "listing_state",
+                  "make",
+                  "model",
+                  "unlisted_message",
+                  "year"
+                ],
+                "carousel_found": false,
+                "cards_found": 0,
+                "cards_parsed": 0,
+                "missing_listing_id": 0,
+                "missing_price": 0,
+                "missing_body": 0,
+                "missing_mileage": 0,
+                "artifact_url": "https://www.cars.com/vehicle/540088a4-c1cb-423f-91d9-cb69fb3c73bd/"
+              },
+              "primary": {
+                "listing_state": "unlisted",
+                "unlisted_title": null,
+                "unlisted_message": "page contains 'no longer available/listed' marker text",
+                "listing_id": "540088a4-c1cb-423f-91d9-cb69fb3c73bd",
+                "listing_id_source": "url",
+                "vin": null,
+                "make": "",
+                "model": "",
+                "trim": null,
+                "year": "",
+                "price": null,
+                "mileage": null,
+                "msrp": null,
+                "stock_type": null,
+                "fuel_type": null,
+                "body_style": null,
+                "dealer_name": null,
+                "dealer_zip": null,
+                "seller_id": null,
+                "customer_id": "",
+                "dealer_street": null,
+                "dealer_city": null,
+                "dealer_state": null,
+                "dealer_phone": null,
+                "dealer_website": null,
+                "dealer_cars_com_url": null,
+                "dealer_rating": null
+              },
+              "carousel": []
+            },
+            {
+              "processor": "cars_detail_page__v1",
+              "artifact_id": 2467596,
+              "search_key": "6643449b-df3b-4f69-9351-638a6e05b976",
+              "status": "ok",
+              "message": "parsed primary + 0 carousel items",
+              "meta": {
+                "parser": "cars_detail_page__v1",
+                "html_len": 156429,
+                "primary_json_present": true,
+                "listing_id_source": "url",
+                "dealer_card_found": false,
+                "primary_keys_present": [
+                  "customer_id",
+                  "listing_id",
+                  "listing_id_source",
+                  "listing_state",
+                  "make",
+                  "model",
+                  "unlisted_message",
+                  "year"
+                ],
+                "carousel_found": false,
+                "cards_found": 0,
+                "cards_parsed": 0,
+                "missing_listing_id": 0,
+                "missing_price": 0,
+                "missing_body": 0,
+                "missing_mileage": 0,
+                "artifact_url": "https://www.cars.com/vehicle/6643449b-df3b-4f69-9351-638a6e05b976/"
+              },
+              "primary": {
+                "listing_state": "unlisted",
+                "unlisted_title": null,
+                "unlisted_message": "page contains 'no longer available/listed' marker text",
+                "listing_id": "6643449b-df3b-4f69-9351-638a6e05b976",
+                "listing_id_source": "url",
+                "vin": null,
+                "make": "",
+                "model": "",
+                "trim": null,
+                "year": "",
+                "price": null,
+                "mileage": null,
+                "msrp": null,
+                "stock_type": null,
+                "fuel_type": null,
+                "body_style": null,
+                "dealer_name": null,
+                "dealer_zip": null,
+                "seller_id": null,
+                "customer_id": "",
+                "dealer_street": null,
+                "dealer_city": null,
+                "dealer_state": null,
+                "dealer_phone": null,
+                "dealer_website": null,
+                "dealer_cars_com_url": null,
+                "dealer_rating": null
+              },
+              "carousel": []
+            },
+            {
+              "processor": "cars_detail_page__v1",
+              "artifact_id": 2467597,
+              "search_key": "6943bddf-a59d-432a-80a6-c6bef8ae7583",
+              "status": "ok",
+              "message": "parsed primary + 0 carousel items",
+              "meta": {
+                "parser": "cars_detail_page__v1",
+                "html_len": 169304,
+                "primary_json_present": true,
+                "listing_id_source": "url",
+                "dealer_card_found": false,
+                "primary_keys_present": [
+                  "customer_id",
+                  "listing_id",
+                  "listing_id_source",
+                  "listing_state",
+                  "make",
+                  "model",
+                  "unlisted_message",
+                  "year"
+                ],
+                "carousel_found": false,
+                "cards_found": 0,
+                "cards_parsed": 0,
+                "missing_listing_id": 0,
+                "missing_price": 0,
+                "missing_body": 0,
+                "missing_mileage": 0,
+                "artifact_url": "https://www.cars.com/vehicle/6943bddf-a59d-432a-80a6-c6bef8ae7583/"
+              },
+              "primary": {
+                "listing_state": "unlisted",
+                "unlisted_title": null,
+                "unlisted_message": "page contains 'no longer available/listed' marker text",
+                "listing_id": "6943bddf-a59d-432a-80a6-c6bef8ae7583",
+                "listing_id_source": "url",
+                "vin": null,
+                "make": "",
+                "model": "",
+                "trim": null,
+                "year": "",
+                "price": null,
+                "mileage": null,
+                "msrp": null,
+                "stock_type": null,
+                "fuel_type": null,
+                "body_style": null,
+                "dealer_name": null,
+                "dealer_zip": null,
+                "seller_id": null,
+                "customer_id": "",
+                "dealer_street": null,
+                "dealer_city": null,
+                "dealer_state": null,
+                "dealer_phone": null,
+                "dealer_website": null,
+                "dealer_cars_com_url": null,
+                "dealer_rating": null
+              },
+              "carousel": []
+            },
+            {
+              "processor": "cars_detail_page__v1",
+              "artifact_id": 2467598,
+              "search_key": "6a416c2e-b31f-4782-9ee0-de7d4ce626ba",
+              "status": "ok",
+              "message": "parsed primary + 0 carousel items",
+              "meta": {
+                "parser": "cars_detail_page__v1",
+                "html_len": 158064,
+                "primary_json_present": true,
+                "listing_id_source": "url",
+                "dealer_card_found": false,
+                "primary_keys_present": [
+                  "customer_id",
+                  "listing_id",
+                  "listing_id_source",
+                  "listing_state",
+                  "make",
+                  "model",
+                  "unlisted_message",
+                  "year"
+                ],
+                "carousel_found": false,
+                "cards_found": 0,
+                "cards_parsed": 0,
+                "missing_listing_id": 0,
+                "missing_price": 0,
+                "missing_body": 0,
+                "missing_mileage": 0,
+                "artifact_url": "https://www.cars.com/vehicle/6a416c2e-b31f-4782-9ee0-de7d4ce626ba/"
+              },
+              "primary": {
+                "listing_state": "unlisted",
+                "unlisted_title": null,
+                "unlisted_message": "page contains 'no longer available/listed' marker text",
+                "listing_id": "6a416c2e-b31f-4782-9ee0-de7d4ce626ba",
+                "listing_id_source": "url",
+                "vin": null,
+                "make": "",
+                "model": "",
+                "trim": null,
+                "year": "",
+                "price": null,
+                "mileage": null,
+                "msrp": null,
+                "stock_type": null,
+                "fuel_type": null,
+                "body_style": null,
+                "dealer_name": null,
+                "dealer_zip": null,
+                "seller_id": null,
+                "customer_id": "",
+                "dealer_street": null,
+                "dealer_city": null,
+                "dealer_state": null,
+                "dealer_phone": null,
+                "dealer_website": null,
+                "dealer_cars_com_url": null,
+                "dealer_rating": null
+              },
+              "carousel": []
+            },
+            {
+              "processor": "cars_detail_page__v1",
+              "artifact_id": 2467599,
+              "search_key": "72fd4788-80ab-446d-b2fe-75781aab4338",
+              "status": "ok",
+              "message": "parsed primary + 0 carousel items",
+              "meta": {
+                "parser": "cars_detail_page__v1",
+                "html_len": 162040,
+                "primary_json_present": true,
+                "listing_id_source": "url",
+                "dealer_card_found": false,
+                "primary_keys_present": [
+                  "customer_id",
+                  "listing_id",
+                  "listing_id_source",
+                  "listing_state",
+                  "make",
+                  "model",
+                  "unlisted_message",
+                  "year"
+                ],
+                "carousel_found": false,
+                "cards_found": 0,
+                "cards_parsed": 0,
+                "missing_listing_id": 0,
+                "missing_price": 0,
+                "missing_body": 0,
+                "missing_mileage": 0,
+                "artifact_url": "https://www.cars.com/vehicle/72fd4788-80ab-446d-b2fe-75781aab4338/"
+              },
+              "primary": {
+                "listing_state": "unlisted",
+                "unlisted_title": null,
+                "unlisted_message": "page contains 'no longer available/listed' marker text",
+                "listing_id": "72fd4788-80ab-446d-b2fe-75781aab4338",
+                "listing_id_source": "url",
+                "vin": null,
+                "make": "",
+                "model": "",
+                "trim": null,
+                "year": "",
+                "price": null,
+                "mileage": null,
+                "msrp": null,
+                "stock_type": null,
+                "fuel_type": null,
+                "body_style": null,
+                "dealer_name": null,
+                "dealer_zip": null,
+                "seller_id": null,
+                "customer_id": "",
+                "dealer_street": null,
+                "dealer_city": null,
+                "dealer_state": null,
+                "dealer_phone": null,
+                "dealer_website": null,
+                "dealer_cars_com_url": null,
+                "dealer_rating": null
+              },
+              "carousel": []
+            },
+            {
+              "processor": "cars_detail_page__v1",
+              "artifact_id": 2467601,
+              "search_key": "792c5f07-ee14-4a52-987b-d3aa8f4000b6",
+              "status": "ok",
+              "message": "parsed primary + 0 carousel items",
+              "meta": {
+                "parser": "cars_detail_page__v1",
+                "html_len": 153754,
+                "primary_json_present": true,
+                "listing_id_source": "url",
+                "dealer_card_found": false,
+                "primary_keys_present": [
+                  "customer_id",
+                  "listing_id",
+                  "listing_id_source",
+                  "listing_state",
+                  "make",
+                  "model",
+                  "unlisted_message",
+                  "year"
+                ],
+                "carousel_found": false,
+                "cards_found": 0,
+                "cards_parsed": 0,
+                "missing_listing_id": 0,
+                "missing_price": 0,
+                "missing_body": 0,
+                "missing_mileage": 0,
+                "artifact_url": "https://www.cars.com/vehicle/792c5f07-ee14-4a52-987b-d3aa8f4000b6/"
+              },
+              "primary": {
+                "listing_state": "unlisted",
+                "unlisted_title": null,
+                "unlisted_message": "page contains 'no longer available/listed' marker text",
+                "listing_id": "792c5f07-ee14-4a52-987b-d3aa8f4000b6",
+                "listing_id_source": "url",
+                "vin": null,
+                "make": "",
+                "model": "",
+                "trim": null,
+                "year": "",
+                "price": null,
+                "mileage": null,
+                "msrp": null,
+                "stock_type": null,
+                "fuel_type": null,
+                "body_style": null,
+                "dealer_name": null,
+                "dealer_zip": null,
+                "seller_id": null,
+                "customer_id": "",
+                "dealer_street": null,
+                "dealer_city": null,
+                "dealer_state": null,
+                "dealer_phone": null,
+                "dealer_website": null,
+                "dealer_cars_com_url": null,
+                "dealer_rating": null
+              },
+              "carousel": []
+            },
+            {
+              "processor": "cars_detail_page__v1",
+              "artifact_id": 2467602,
+              "search_key": "7b5f05cf-29c2-4dff-98d0-85e0d150f5e0",
+              "status": "ok",
+              "message": "parsed primary + 0 carousel items",
+              "meta": {
+                "parser": "cars_detail_page__v1",
+                "html_len": 158723,
+                "primary_json_present": true,
+                "listing_id_source": "url",
+                "dealer_card_found": false,
+                "primary_keys_present": [
+                  "customer_id",
+                  "listing_id",
+                  "listing_id_source",
+                  "listing_state",
+                  "make",
+                  "model",
+                  "unlisted_message",
+                  "year"
+                ],
+                "carousel_found": false,
+                "cards_found": 0,
+                "cards_parsed": 0,
+                "missing_listing_id": 0,
+                "missing_price": 0,
+                "missing_body": 0,
+                "missing_mileage": 0,
+                "artifact_url": "https://www.cars.com/vehicle/7b5f05cf-29c2-4dff-98d0-85e0d150f5e0/"
+              },
+              "primary": {
+                "listing_state": "unlisted",
+                "unlisted_title": null,
+                "unlisted_message": "page contains 'no longer available/listed' marker text",
+                "listing_id": "7b5f05cf-29c2-4dff-98d0-85e0d150f5e0",
+                "listing_id_source": "url",
+                "vin": null,
+                "make": "",
+                "model": "",
+                "trim": null,
+                "year": "",
+                "price": null,
+                "mileage": null,
+                "msrp": null,
+                "stock_type": null,
+                "fuel_type": null,
+                "body_style": null,
+                "dealer_name": null,
+                "dealer_zip": null,
+                "seller_id": null,
+                "customer_id": "",
+                "dealer_street": null,
+                "dealer_city": null,
+                "dealer_state": null,
+                "dealer_phone": null,
+                "dealer_website": null,
+                "dealer_cars_com_url": null,
+                "dealer_rating": null
+              },
+              "carousel": []
+            },
+            {
+              "processor": "cars_detail_page__v1",
+              "artifact_id": 2467603,
+              "search_key": "7fff1fc8-7ba0-4881-9303-0d5e6374b3ac",
+              "status": "ok",
+              "message": "parsed primary + 0 carousel items",
+              "meta": {
+                "parser": "cars_detail_page__v1",
+                "html_len": 156948,
+                "primary_json_present": true,
+                "listing_id_source": "url",
+                "dealer_card_found": false,
+                "primary_keys_present": [
+                  "customer_id",
+                  "listing_id",
+                  "listing_id_source",
+                  "listing_state",
+                  "make",
+                  "model",
+                  "unlisted_message",
+                  "year"
+                ],
+                "carousel_found": false,
+                "cards_found": 0,
+                "cards_parsed": 0,
+                "missing_listing_id": 0,
+                "missing_price": 0,
+                "missing_body": 0,
+                "missing_mileage": 0,
+                "artifact_url": "https://www.cars.com/vehicle/7fff1fc8-7ba0-4881-9303-0d5e6374b3ac/"
+              },
+              "primary": {
+                "listing_state": "unlisted",
+                "unlisted_title": null,
+                "unlisted_message": "page contains 'no longer available/listed' marker text",
+                "listing_id": "7fff1fc8-7ba0-4881-9303-0d5e6374b3ac",
+                "listing_id_source": "url",
+                "vin": null,
+                "make": "",
+                "model": "",
+                "trim": null,
+                "year": "",
+                "price": null,
+                "mileage": null,
+                "msrp": null,
+                "stock_type": null,
+                "fuel_type": null,
+                "body_style": null,
+                "dealer_name": null,
+                "dealer_zip": null,
+                "seller_id": null,
+                "customer_id": "",
+                "dealer_street": null,
+                "dealer_city": null,
+                "dealer_state": null,
+                "dealer_phone": null,
+                "dealer_website": null,
+                "dealer_cars_com_url": null,
+                "dealer_rating": null
+              },
+              "carousel": []
+            },
+            {
+              "processor": "cars_detail_page__v1",
+              "artifact_id": 2467604,
+              "search_key": "97a0a94c-c204-42c3-975a-1befea5b60d4",
+              "status": "ok",
+              "message": "parsed primary + 0 carousel items",
+              "meta": {
+                "parser": "cars_detail_page__v1",
+                "html_len": 163564,
+                "primary_json_present": true,
+                "listing_id_source": "url",
+                "dealer_card_found": false,
+                "primary_keys_present": [
+                  "customer_id",
+                  "listing_id",
+                  "listing_id_source",
+                  "listing_state",
+                  "make",
+                  "model",
+                  "unlisted_message",
+                  "year"
+                ],
+                "carousel_found": false,
+                "cards_found": 0,
+                "cards_parsed": 0,
+                "missing_listing_id": 0,
+                "missing_price": 0,
+                "missing_body": 0,
+                "missing_mileage": 0,
+                "artifact_url": "https://www.cars.com/vehicle/97a0a94c-c204-42c3-975a-1befea5b60d4/"
+              },
+              "primary": {
+                "listing_state": "unlisted",
+                "unlisted_title": null,
+                "unlisted_message": "page contains 'no longer available/listed' marker text",
+                "listing_id": "97a0a94c-c204-42c3-975a-1befea5b60d4",
+                "listing_id_source": "url",
+                "vin": null,
+                "make": "",
+                "model": "",
+                "trim": null,
+                "year": "",
+                "price": null,
+                "mileage": null,
+                "msrp": null,
+                "stock_type": null,
+                "fuel_type": null,
+                "body_style": null,
+                "dealer_name": null,
+                "dealer_zip": null,
+                "seller_id": null,
+                "customer_id": "",
+                "dealer_street": null,
+                "dealer_city": null,
+                "dealer_state": null,
+                "dealer_phone": null,
+                "dealer_website": null,
+                "dealer_cars_com_url": null,
+                "dealer_rating": null
+              },
+              "carousel": []
+            },
+            {
+              "processor": "cars_detail_page__v1",
+              "artifact_id": 2467605,
+              "search_key": "a36fd59e-dd71-495a-a6b0-888ec90162a1",
+              "status": "ok",
+              "message": "parsed primary + 0 carousel items",
+              "meta": {
+                "parser": "cars_detail_page__v1",
+                "html_len": 163092,
+                "primary_json_present": true,
+                "listing_id_source": "url",
+                "dealer_card_found": false,
+                "primary_keys_present": [
+                  "customer_id",
+                  "listing_id",
+                  "listing_id_source",
+                  "listing_state",
+                  "make",
+                  "model",
+                  "unlisted_message",
+                  "year"
+                ],
+                "carousel_found": false,
+                "cards_found": 0,
+                "cards_parsed": 0,
+                "missing_listing_id": 0,
+                "missing_price": 0,
+                "missing_body": 0,
+                "missing_mileage": 0,
+                "artifact_url": "https://www.cars.com/vehicle/a36fd59e-dd71-495a-a6b0-888ec90162a1/"
+              },
+              "primary": {
+                "listing_state": "unlisted",
+                "unlisted_title": null,
+                "unlisted_message": "page contains 'no longer available/listed' marker text",
+                "listing_id": "a36fd59e-dd71-495a-a6b0-888ec90162a1",
+                "listing_id_source": "url",
+                "vin": null,
+                "make": "",
+                "model": "",
+                "trim": null,
+                "year": "",
+                "price": null,
+                "mileage": null,
+                "msrp": null,
+                "stock_type": null,
+                "fuel_type": null,
+                "body_style": null,
+                "dealer_name": null,
+                "dealer_zip": null,
+                "seller_id": null,
+                "customer_id": "",
+                "dealer_street": null,
+                "dealer_city": null,
+                "dealer_state": null,
+                "dealer_phone": null,
+                "dealer_website": null,
+                "dealer_cars_com_url": null,
+                "dealer_rating": null
+              },
+              "carousel": []
+            },
+            {
+              "processor": "cars_detail_page__v1",
+              "artifact_id": 2467606,
+              "search_key": "af0a3f63-92d5-4f5f-ac76-b5cd7e32ade0",
+              "status": "ok",
+              "message": "parsed primary + 0 carousel items",
+              "meta": {
+                "parser": "cars_detail_page__v1",
+                "html_len": 158280,
+                "primary_json_present": true,
+                "listing_id_source": "url",
+                "dealer_card_found": false,
+                "primary_keys_present": [
+                  "customer_id",
+                  "listing_id",
+                  "listing_id_source",
+                  "listing_state",
+                  "make",
+                  "model",
+                  "unlisted_message",
+                  "year"
+                ],
+                "carousel_found": false,
+                "cards_found": 0,
+                "cards_parsed": 0,
+                "missing_listing_id": 0,
+                "missing_price": 0,
+                "missing_body": 0,
+                "missing_mileage": 0,
+                "artifact_url": "https://www.cars.com/vehicle/af0a3f63-92d5-4f5f-ac76-b5cd7e32ade0/"
+              },
+              "primary": {
+                "listing_state": "unlisted",
+                "unlisted_title": null,
+                "unlisted_message": "page contains 'no longer available/listed' marker text",
+                "listing_id": "af0a3f63-92d5-4f5f-ac76-b5cd7e32ade0",
+                "listing_id_source": "url",
+                "vin": null,
+                "make": "",
+                "model": "",
+                "trim": null,
+                "year": "",
+                "price": null,
+                "mileage": null,
+                "msrp": null,
+                "stock_type": null,
+                "fuel_type": null,
+                "body_style": null,
+                "dealer_name": null,
+                "dealer_zip": null,
+                "seller_id": null,
+                "customer_id": "",
+                "dealer_street": null,
+                "dealer_city": null,
+                "dealer_state": null,
+                "dealer_phone": null,
+                "dealer_website": null,
+                "dealer_cars_com_url": null,
+                "dealer_rating": null
+              },
+              "carousel": []
+            },
+            {
+              "processor": "cars_detail_page__v1",
+              "artifact_id": 2467607,
+              "search_key": "ef819f37-e1c6-4d89-86f6-16c22f652efd",
+              "status": "ok",
+              "message": "parsed primary + 0 carousel items",
+              "meta": {
+                "parser": "cars_detail_page__v1",
+                "html_len": 163193,
+                "primary_json_present": true,
+                "listing_id_source": "url",
+                "dealer_card_found": false,
+                "primary_keys_present": [
+                  "customer_id",
+                  "listing_id",
+                  "listing_id_source",
+                  "listing_state",
+                  "make",
+                  "model",
+                  "unlisted_message",
+                  "year"
+                ],
+                "carousel_found": false,
+                "cards_found": 0,
+                "cards_parsed": 0,
+                "missing_listing_id": 0,
+                "missing_price": 0,
+                "missing_body": 0,
+                "missing_mileage": 0,
+                "artifact_url": "https://www.cars.com/vehicle/ef819f37-e1c6-4d89-86f6-16c22f652efd/"
+              },
+              "primary": {
+                "listing_state": "unlisted",
+                "unlisted_title": null,
+                "unlisted_message": "page contains 'no longer available/listed' marker text",
+                "listing_id": "ef819f37-e1c6-4d89-86f6-16c22f652efd",
+                "listing_id_source": "url",
+                "vin": null,
+                "make": "",
+                "model": "",
+                "trim": null,
+                "year": "",
+                "price": null,
+                "mileage": null,
+                "msrp": null,
+                "stock_type": null,
+                "fuel_type": null,
+                "body_style": null,
+                "dealer_name": null,
+                "dealer_zip": null,
+                "seller_id": null,
+                "customer_id": "",
+                "dealer_street": null,
+                "dealer_city": null,
+                "dealer_state": null,
+                "dealer_phone": null,
+                "dealer_website": null,
+                "dealer_cars_com_url": null,
+                "dealer_rating": null
+              },
+              "carousel": []
+            }
+          ]
+        },
+        "pairedItem": [
+          {
+            "item": 0
+          },
+          {
+            "item": 1
+          },
+          {
+            "item": 2
+          },
+          {
+            "item": 3
+          },
+          {
+            "item": 4
+          },
+          {
+            "item": 5
+          },
+          {
+            "item": 6
+          },
+          {
+            "item": 7
+          },
+          {
+            "item": 8
+          },
+          {
+            "item": 9
+          },
+          {
+            "item": 10
+          },
+          {
+            "item": 11
+          },
+          {
+            "item": 12
+          },
+          {
+            "item": 13
+          },
+          {
+            "item": 14
+          }
+        ]
+      }
+    ],
+    "Unlist Hints": [
+      {
+        "json": {
+          "artifact_id": "2300700"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      },
+      {
+        "json": {
+          "artifact_id": "2300759"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      },
+      {
+        "json": {
+          "artifact_id": "2307777"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      },
+      {
+        "json": {
+          "artifact_id": "2307922"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      },
+      {
+        "json": {
+          "artifact_id": "2307975"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      },
+      {
+        "json": {
+          "artifact_id": "2307804"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      },
+      {
+        "json": {
+          "artifact_id": "2307629"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      },
+      {
+        "json": {
+          "artifact_id": "2307704"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      },
+      {
+        "json": {
+          "artifact_id": "2307680"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      },
+      {
+        "json": {
+          "artifact_id": "2307144"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      },
+      {
+        "json": {
+          "artifact_id": "2307020"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      },
+      {
+        "json": {
+          "artifact_id": "2307323"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      },
+      {
+        "json": {
+          "artifact_id": "2309002"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      },
+      {
+        "json": {
+          "artifact_id": "2308740"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      },
+      {
+        "json": {
+          "artifact_id": "2308602"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      },
+      {
+        "json": {
+          "artifact_id": "2308918"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      },
+      {
+        "json": {
+          "artifact_id": "2308915"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      },
+      {
+        "json": {
+          "artifact_id": "2308911"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      },
+      {
+        "json": {
+          "artifact_id": "2309301"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      },
+      {
+        "json": {
+          "artifact_id": "2316174"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      },
+      {
+        "json": {
+          "artifact_id": "2319290"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      },
+      {
+        "json": {
+          "artifact_id": "2322392"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      },
+      {
+        "json": {
+          "artifact_id": "2322345"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      },
+      {
+        "json": {
+          "artifact_id": "2322396"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      },
+      {
+        "json": {
+          "artifact_id": "2322432"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      },
+      {
+        "json": {
+          "artifact_id": "2362107"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      },
+      {
+        "json": {
+          "artifact_id": "2370194"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      },
+      {
+        "json": {
+          "artifact_id": "2384182"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      },
+      {
+        "json": {
+          "artifact_id": "2384066"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      },
+      {
+        "json": {
+          "artifact_id": "2388295"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      },
+      {
+        "json": {
+          "artifact_id": "2413560"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      },
+      {
+        "json": {
+          "artifact_id": "2416529"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      },
+      {
+        "json": {
+          "artifact_id": "2416791"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      },
+      {
+        "json": {
+          "artifact_id": "2416742"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      },
+      {
+        "json": {
+          "artifact_id": "2416566"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      },
+      {
+        "json": {
+          "artifact_id": "2418712"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      },
+      {
+        "json": {
+          "artifact_id": "2418716"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      },
+      {
+        "json": {
+          "artifact_id": "2418710"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      },
+      {
+        "json": {
+          "artifact_id": "2418713"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      },
+      {
+        "json": {
+          "artifact_id": "2418721"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      },
+      {
+        "json": {
+          "artifact_id": "2424045"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      },
+      {
+        "json": {
+          "artifact_id": "2424753"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      },
+      {
+        "json": {
+          "artifact_id": "2424754"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      },
+      {
+        "json": {
+          "artifact_id": "2434715"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      },
+      {
+        "json": {
+          "artifact_id": "2435331"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      },
+      {
+        "json": {
+          "artifact_id": "2435342"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      },
+      {
+        "json": {
+          "artifact_id": "2435295"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      },
+      {
+        "json": {
+          "artifact_id": "2435254"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      },
+      {
+        "json": {
+          "artifact_id": "2435292"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ]
+  },
   "connections": {
     "After Scrape": {
       "main": [
@@ -1088,13 +2513,7 @@
     },
     "Switch1": {
       "main": [
-        [
-          {
-            "node": "Aggregate1",
-            "type": "main",
-            "index": 0
-          }
-        ],
+        [],
         [
           {
             "node": "Aggregate",
@@ -1206,6 +2625,28 @@
           }
         ]
       ]
+    },
+    "Unlist Hints": {
+      "main": [
+        [
+          {
+            "node": "Aggregate2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate2": {
+      "main": [
+        [
+          {
+            "node": "Unlist Hints1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": true,
@@ -1213,7 +2654,7 @@
     "executionOrder": "v1",
     "availableInMCP": false
   },
-  "versionId": "a9c2553a-5d9a-4dec-bb27-6ebf33a637b1",
+  "versionId": "bbf8394e-75ef-4e8c-b66e-3f64eebc2c53",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179"
