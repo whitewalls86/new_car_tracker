@@ -1,3 +1,5 @@
+import pytest
+
 from dbt_runner import app
 from datetime import datetime as dt
 
@@ -221,20 +223,109 @@ def test_lock_status_no_rows(mock_cursor_context):
     assert result['locked_at'] is None
 
 
-# def test_record_run_connection_error(mock_db_connection_error, mock_logger_error):
+def test_record_run_connection_error(mock_db_connection_error, mock_logger_error, record_run_defaults):
+    result = app._record_run(**record_run_defaults)
+    assert result is False
+    assert "Record-Run: Unable to connect to Postgres database." in mock_logger_error.call_args[0][0]
 
 
-# def test_record_run_sql_error(mock_db_sql_error, mock_logger_error):
+def test_record_run_sql_error(mock_db_sql_error, mock_logger_error, record_run_defaults):
+    result = app._record_run(**record_run_defaults)
+    assert result is False
+    assert "Record-Run: SQL execution failed." in mock_logger_error.call_args[0][0]
 
 
-# def test_record_run_database_error(mock_db_database_error, mock_logger_error):
+def test_record_run_database_error(mock_db_database_error, mock_logger_error, record_run_defaults):
+    result = app._record_run(**record_run_defaults)
+    assert result is False
+    assert "Record-Run: encountered DB error." in mock_logger_error.call_args[0][0]
 
 
-# def test_record_run_normal_std_out(mock_cursor_context):
+def test_record_run_success(mock_cursor_context, record_run_defaults):
+    _conn, _cursor = mock_cursor_context
+    result = app._record_run(**record_run_defaults)
+
+    assert result is True
 
 
-# def test_record_run_empty_std_out(mock_cursor_context):
+def test_record_run_empty_std_out(mock_cursor_context, record_run_defaults):
+    _conn, _cursor = mock_cursor_context
+    result = app._record_run(**{**record_run_defaults, "stdout": ""})
+
+    assert result is True
 
 
-# def test_record_run_wrong_data_types(mock_cursor_context):
+def test_record_run_wrong_returncode_type(mock_cursor_context, record_run_defaults):
+    _conn, _cursor = mock_cursor_context
+    result = app._record_run(**{**record_run_defaults, "returncode": 'ok'})
 
+    assert result is True
+
+
+def test_record_run_wrong_ok_type(mock_cursor_context, record_run_defaults):
+    _conn, _cursor = mock_cursor_context
+    result = app._record_run(**{**record_run_defaults, "ok": 'True'})
+
+    assert result is True
+
+
+def test_record_run_wrong_timestamp_types(mock_cursor_context, record_run_defaults):
+    _conn, _cursor = mock_cursor_context
+    with pytest.raises(TypeError):
+        app._record_run(**{**record_run_defaults, "started_at": "now", "finished_at": "when"})
+
+
+def test_load_intents_connection_error(mock_db_connection_error, mock_logger_error):
+    result = app._load_intents()
+    assert result == {
+        "after_srp": ["stg_raw_artifacts+", "stg_srp_observations+", "stg_detail_carousel_hints+"],
+        "after_detail": ["stg_raw_artifacts+", "stg_detail_observations+", "stg_detail_carousel_hints+"],
+    }
+    assert "Load-Intents: Unable to connect to Postgres database." in mock_logger_error.call_args[0][0]
+
+
+def test_load_intents_sql_error(mock_db_sql_error, mock_logger_error):
+    result = app._load_intents()
+    assert result == {
+        "after_srp": ["stg_raw_artifacts+", "stg_srp_observations+", "stg_detail_carousel_hints+"],
+        "after_detail": ["stg_raw_artifacts+", "stg_detail_observations+", "stg_detail_carousel_hints+"],
+    }
+    assert "Load-Intents: SQL execution failed." in mock_logger_error.call_args[0][0]
+
+
+def test_load_intents_database_error(mock_db_database_error, mock_logger_error):
+    result = app._load_intents()
+    assert result == {
+        "after_srp": ["stg_raw_artifacts+", "stg_srp_observations+", "stg_detail_carousel_hints+"],
+        "after_detail": ["stg_raw_artifacts+", "stg_detail_observations+", "stg_detail_carousel_hints+"],
+    }
+    assert "Load-Intents: encountered DB error." in mock_logger_error.call_args[0][0]
+
+
+def test_load_intents_success(mock_cursor_context):
+    conn, cursor = mock_cursor_context
+    cursor.fetchall.return_value = [
+        ("after_detail", ["stg_raw_artifacts+", "stg_detail_observations+", "stg_detail_carousel_hints+"]),
+        ("after_srp", ["stg_raw_artifacts+", "stg_srp_observations+", "stg_detail_carousel_hints+"])
+    ]
+
+    result = app._load_intents()
+
+    assert result == {
+        "after_srp": ["stg_raw_artifacts+", "stg_srp_observations+", "stg_detail_carousel_hints+"],
+        "after_detail": ["stg_raw_artifacts+", "stg_detail_observations+", "stg_detail_carousel_hints+"],
+    }
+
+
+def test_load_intents_empty(mock_cursor_context, mock_logger_warning):
+    conn, cursor = mock_cursor_context
+    cursor.fetchall.return_value = []
+
+    result = app._load_intents()
+
+    assert result == {
+        "after_srp": ["stg_raw_artifacts+", "stg_srp_observations+", "stg_detail_carousel_hints+"],
+        "after_detail": ["stg_raw_artifacts+", "stg_detail_observations+", "stg_detail_carousel_hints+"],
+    }
+    assert "Could not load intents from DB, using fallback" in mock_logger_warning.call_args[0][0]
+    assert cursor.fetchall.call_count == 1

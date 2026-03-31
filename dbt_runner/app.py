@@ -13,6 +13,7 @@ import psycopg2
 from fastapi import FastAPI, Body, HTTPException
 from fastapi.staticfiles import StaticFiles
 from enum import Enum
+import json
 
 
 class FetchMode(Enum):
@@ -162,39 +163,26 @@ def _lock_status() -> Dict[str, Any]:
 
 def _record_run(started_at: datetime, finished_at: datetime, ok: bool,
                 intent: Optional[str], select: List[str],
-                stdout: str, returncode: int) -> None:
+                stdout: str, returncode: int) -> bool:
     m = _MODEL_COUNTS_RE.search(stdout)
     models_pass = int(m.group(1)) if m else None
     models_error = int(m.group(2)) if m else None
     models_skip = int(m.group(3)) if m else None
     duration_s = (finished_at - started_at).total_seconds()
 
-    conn = None
-    try:
-        conn = psycopg2.connect(**DB_KWARGS)
-    except psycopg2.OperationalError:
-        logger.error("Record Run: Unable to connect to Postgres database.")
-        return
-    except Exception:
-        logger.error("Record Run: encountered DB error.")
-        return
-
-    try:
-        with conn, conn.cursor() as cur:
-            cur.execute(
-                """INSERT INTO dbt_runs
+    sql = """INSERT INTO dbt_runs
                    (started_at, finished_at, duration_s, ok, intent, select_args,
                     models_pass, models_error, models_skip, returncode)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
-                (started_at, finished_at, duration_s, ok, intent,
-                 " ".join(select), models_pass, models_error, models_skip, returncode),
-            )
-    except Exception:
-        logger.exception("Failed to record dbt run to DB")  # never let DB logging break the build response
-    finally:
-        if conn:
-            conn.close()
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"""
+    params = (started_at, finished_at, duration_s, ok, intent,
+              " ".join(select), models_pass, models_error, models_skip, returncode)
 
+    result = _db_execute(sql=sql, params=params, fetch=FetchMode.NONE, error_context='Record-Run')
+
+    if result is not True:
+        return False
+    else:
+        return result
 
 # ---------------------------------------------------------------------------
 # Intent management (DB-backed, replaces hardcoded INTENT_TO_SELECT)
@@ -209,17 +197,16 @@ _INTENT_FALLBACK: Dict[str, List[str]] = {
 
 def _load_intents() -> Dict[str, List[str]]:
     """Read intents from dbt_intents table. Falls back to hardcoded defaults."""
-    try:
-        conn = psycopg2.connect(**DB_KWARGS)
-        with conn, conn.cursor() as cur:
-            cur.execute("SELECT intent_name, select_args FROM dbt_intents ORDER BY intent_name")
-            rows = cur.fetchall()
-        conn.close()
-        if rows:
-            return {row[0]: list(row[1]) for row in rows}
-    except Exception:
-        logger.warning("Could not load intents from DB, using fallback", exc_info=True)
-    return dict(_INTENT_FALLBACK)
+
+    sql = """SELECT intent_name, select_args FROM dbt_intents ORDER BY intent_name"""
+
+    results = _db_execute(sql=sql, fetch=FetchMode.ALL, error_context='Load-Intents')
+
+    if not results:
+        logger.warning("Could not load intents from DB, using fallback")
+        return dict(_INTENT_FALLBACK)
+    else:
+        return {result[0]: list(result[1]) for result in results}
 
 
 def _save_intent(intent_name: str, select_args: List[str]) -> None:
@@ -417,7 +404,19 @@ def dbt_build(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
         finished_at = datetime.now(timezone.utc)
 
         ok = proc.returncode == 0
-        _record_run(started_at, finished_at, ok, intent, select, proc.stdout, proc.returncode)
+        is_successful = _record_run(started_at, finished_at, ok, intent, select, proc.stdout, proc.returncode)
+
+        if not is_successful:
+            data = {
+                "started_at": started_at,
+                "finished_at": finished_at,
+                "ok": ok,
+                "intent": intent,
+                "select": select,
+                "stdout": proc.stdout,
+                "returncode": proc.returncode
+            }
+            logger.error(f"Logging Run Failed. {json.dumps(data)}")
 
         result = {
             "ok": ok,
