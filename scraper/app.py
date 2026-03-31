@@ -603,3 +603,8 @@ def get_logs(lines: int = 200) -> Dict[str, Any]:
         return {"lines": all_lines[-lines:]}
     except FileNotFoundError:
         return {"lines": []}
+
+
+@app.get("/health")
+def health():
+    return {"ok": True}

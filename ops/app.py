@@ -27,3 +27,8 @@ app.include_router(admin_router, prefix="/admin")
 @app.get("/admin")
 def root():
     return RedirectResponse(url="/admin/searches/")
+
+
+@app.get("/health")
+def health():
+    return {"ok": True}

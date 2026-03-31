@@ -67,6 +67,8 @@
 | 14.11 | **Chrome fingerprint env var** — `fingerprint.py` rotates through `["132", "133", "134", "135"]`; no longer a hardcoded single value | 2026-03-26 |
 | 35 | **dbt schema audit** — all 9 sub-items complete: stg_raw_artifacts, stg_dealers, carousel hints incremental, deleted int_latest_dealer_name_by_vin, benchmarks→table, .yml docs, source descriptions, dashboard unlisted query | 2026-03-27 |
 | 54+58 | **Admin UI overhaul + DB responsibility consolidation** — run history (/admin/runs), dbt action panel (/admin/dbt), intent management (DB-backed), dbt docs generate/serve (/dbt-docs/), log viewer (/admin/logs), logger.exception() throughout, orphan recovery removed from lifespan (→ n8n Plan 59), search config routes → /admin/searches/, test containers (docker-compose.test.yml), port separation (override.yml) | 2026-03-27 |
+| 74 | **dbt logic flaw — new search configs** — traced full DAG; Kia Sportage PHEV now reaches mart tables | 2026-03-30 |
+| 60+75 | **Safe redeploy + admin migration to ops** — `deploy_intent` + `n8n_executions` tables, Check Deploy Intent + Update n8n Runs Table sub-workflows, `Deploy Allowed?` gate in all 7 workflows, `ops` container with all admin UI (searches, runs, dbt, logs, deploy panel), `redeploy.sh`, scraper stripped of all UI concerns | 2026-03-30 |
 
 ---
 
@@ -74,26 +76,26 @@
 
 | Priority | Item | Notes |
 |----------|------|-------|
-| 1 | **55** — Dashboard review | Audit current state, fix issues, improve UX |
-| 2 | **56** — Analytics next steps | Identify new insights, models, or views to build |
-| 3 | **60** — Safe redeploy / health gate | n8n waits for services to come back up after rebuild |
-| 4 | **61** — Python unit tests | pytest for scraper, dbt_runner, and admin logic |
-| 5 | **62** — CI/CD (GitHub Actions) | Automated lint, type check, pytest, docker build, dbt test on every PR |
-| 6 | **63** — Schema migration management | Alembic/Flyway/other — tool TBD, tradeoffs to explore |
-| 7 | **64** — PgBouncer connection pooling | Coordination layer in front of Postgres; fixes connection budget across all 8 services |
+| 1 | **76** — Service Health Gate | `/health` endpoints on scraper/ops/dbt_runner, Postgres SELECT 1 check, n8n health gate sub-workflow with Telegram on timeout |
+| 2 | **73** — Scraper code review & refactor | Full quality pass + structural split; includes SRP breakpoint fix |
+| 3 | **61** — Python unit tests | pytest for scraper, dbt_runner, and ops admin logic |
+| 4 | **62** — CI/CD (GitHub Actions) | Automated lint, type check, pytest, docker build, dbt test on every PR |
+| 5 | **63** — Schema migration management (Flyway) | SQL-first versioned migrations; CI spins up test DB from migration sequence |
+| 6 | **77** — SQL query tests | Smoke tests for mission-critical queries in scraper/ops/dashboard/dbt_runner; catches schema breakage on merge |
+| 7 | **64** — PgBouncer connection pooling | Coordination layer in front of Postgres; fixes connection budget across all services |
 | 8 | **65** — Auth stack (Authelia + Google OAuth + Postgres roles) | Required before any public deployment |
 | 9 | **66** — SQL injection audit | Verify all queries are parameterized; required before public deployment |
 | 10 | **29** — n8n API foundation | Unlocks credential automation, admin triggers, redeploy workflow pause, execution status |
 | 11 | **67** — n8n credential automation | Depends on Plan 29; closes silent fresh-install failure |
-| 12 | **74** — dbt logic flaw: new search configs not reaching mart tables | Active data bug; Kia Sportage PHEV not appearing in dashboard |
-| 13 | **73** — Scraper code review & refactor | Full quality pass + structural split; includes SRP breakpoint fix |
-| 14 | **68** — Cloud deployment (Oracle Free Tier) | Move project to real cloud infrastructure; free forever |
-| 15 | **69** — Terraform IaC | Describe cloud infrastructure as code; reproducible deployments |
-| 16 | **70** — Type annotations | Add type hints throughout scraper and dbt_runner; enforced by mypy in CI |
-| 17 | **71** — Airflow DAG translation | Translate n8n pipeline workflows into Airflow DAGs as parallel implementation |
-| 18 | **72** — Data lake / Parquet proof of concept | MinIO + Parquet for artifact storage; demonstrates data lake architecture |
-| 19 | **53** — Dashboard cleanup/optimization | Pipeline Health tab is bloated; consider collapsible sections or sub-tabs |
-| 20 | **58 (remainder)** — advance_rotation ownership | Pure orchestration logic still lives in scraper; low priority |
+| 12 | **68** — Cloud deployment (Oracle Free Tier) | Move project to real cloud infrastructure; free forever |
+| 13 | **69** — Terraform IaC | Describe cloud infrastructure as code; reproducible deployments |
+| 14 | **70** — Type annotations | Add type hints throughout scraper and dbt_runner; enforced by mypy in CI |
+| 15 | **71** — Airflow DAG translation | Translate n8n pipeline workflows into Airflow DAGs as parallel implementation |
+| 16 | **72** — Data lake / Parquet proof of concept | MinIO + Parquet for artifact storage; demonstrates data lake architecture |
+| 17 | **53** — Dashboard cleanup/optimization | Pipeline Health tab is bloated; consider collapsible sections or sub-tabs |
+| 18 | **58 (remainder)** — advance_rotation ownership | Pure orchestration logic still lives in scraper; low priority |
+| 19 | **55** — Dashboard review | Audit current state, fix issues, improve UX |
+| 20 | **56** — Analytics next steps | Identify new insights, models, or views to build |
 | 21 | **14.12** — max_safety_pages validator | No bounds check; low risk |
 
 ---
@@ -160,7 +162,7 @@ Add a GitHub Actions workflow that automatically validates every PR before it ca
 
 ---
 
-## Plan 63: Schema Migration Management
+## Plan 63: Schema Migration Management — Flyway
 
 **Status:** Not started
 **Priority:** Medium
@@ -171,34 +173,56 @@ Currently `schema_new.sql` is a pg_dump snapshot of the current state — it ans
 - Schema changes applied by hand with no rollback if something breaks
 - No ordered history of what changed and when
 - A fresh install runs the full dump fine, but an existing database that's one version behind has to figure out what changed manually
-- CI/CD (Plan 62) needs a reliable way to stand up a test database from scratch
+- CI/CD (Plan 62) needs a reliable way to stand up a test database from scratch for SQL query tests (Plan 77)
 
-### Current state
-The ingredients are mostly there already:
-- `db/schema/schema_new.sql` — full schema dump (source of truth for current state)
-- `db/schema/plan25_add_customer_id.sql` — example of a one-off migration script
-- `db/seed/` — seed data scripts
+### Tool: Flyway
+SQL-first migration tool — just numbered `.sql` files in `db/migrations/`. Flyway tracks applied migrations in a `flyway_schema_history` table and applies any unapplied ones in order. No Python required, no ORM dependency, no autogeneration complexity. Matches how we already write migrations.
 
-A migration tool would formalize the ordering and tracking of these changes in a version-controlled sequence.
+### Implementation
+- Add a `flyway` container to `docker-compose.yml` (or run as a one-shot job on deploy)
+- Rename existing ad-hoc migration scripts in `db/schema/` to Flyway naming convention: `V001__initial_schema.sql`, `V002__add_customer_id.sql`, etc.
+- All future schema changes go in `db/migrations/` as new versioned files — never edit existing ones
+- `schema_new.sql` retained as a reference for fresh installs and documentation
 
-### Tool options to evaluate
-
-| Tool | Language | Notes |
-|------|----------|-------|
-| **Alembic** | Python | Most common in FastAPI/SQLAlchemy stacks; can autogenerate migrations from model changes; overkill if not using SQLAlchemy ORM |
-| **Flyway** | Java (CLI available) | SQL-first; just numbered `.sql` files; no Python required; simple mental model |
-| **sqitch** | Perl (CLI) | SQL-first with deploy/revert/verify per change; more powerful than Flyway but steeper learning curve |
-| **Raw numbered SQL files** | SQL | No external tool; just a convention (`001_`, `002_`) + a small tracking table in Postgres; maximum simplicity |
-
-### Open questions
-- Do we want a Python-native tool (Alembic) that fits the existing stack, or a SQL-first tool (Flyway, sqitch) that matches how we already write migrations?
-- How important is autogeneration vs. hand-written SQL scripts?
-- Does CI/CD need to run migrations automatically, or is manual apply on deploy acceptable for now?
+### CI/CD integration (Plan 62)
+Flyway runs as a step in the GitHub Actions pipeline against the ephemeral test Postgres container, applying all migrations from scratch before SQL tests (Plan 77) and dbt tests run. This validates that migrations are correct and complete before any merge.
 
 ### Notes
-- Whatever tool is chosen, `schema_new.sql` stays as a reference for fresh installs
-- `db/schema/` and `db/seed/` structure maps naturally to a migration + seed convention
-- This is an area where tradeoffs should be explored before committing to a tool
+- Flyway community edition is free and sufficient for this project
+- `db/schema/` and `db/seed/` structure maps naturally to the migrations + seed convention with minimal reorganization
+
+---
+
+## Plan 77: SQL Query Tests
+
+**Status:** Not started
+**Priority:** Medium
+
+Mission-critical SQL queries live in four places outside dbt — scraper, dashboard, ops, and dbt_runner. These are never tested today. A schema change (column rename, type change, table drop) can silently break them and only surfaces at runtime.
+
+### Problem
+- `scraper/routers/admin.py` — queries `search_configs`, `runs`, `scrape_jobs`
+- `ops/routers/admin.py` — same queries, now the canonical location post-migration
+- `ops/routers/deploy.py` — queries `deploy_intent`, `n8n_executions`
+- `dashboard/pages/*.py` — complex analytical queries against mart tables and ops views
+- `dbt_runner/app.py` — queries `dbt_lock`, `dbt_build_log`
+
+None of these are covered by dbt tests (which only validate dbt model output) or pytest unit tests (which mock the DB).
+
+### Approach
+Integration tests that run against a real Postgres test database (spun up in CI via the Flyway migration sequence from Plan 63):
+
+- **Query smoke tests** — execute each mission-critical query against the test DB and assert it returns without error and with expected columns. No business logic assertions needed — the goal is catching schema breakage, not data correctness.
+- **Parameterized** — test queries with representative parameter values (valid run_id, known search_key, etc.) seeded into the test DB
+- **Organized by service** — `tests/sql/test_scraper_queries.py`, `tests/sql/test_ops_queries.py`, `tests/sql/test_dashboard_queries.py`, `tests/sql/test_dbt_runner_queries.py`
+
+### CI/CD integration (Plan 62)
+SQL tests run after Flyway migrations + seed data applied to the ephemeral test DB, before the dbt build step. A schema change that breaks a live query fails the pipeline before it can merge.
+
+### Notes
+- Depends on Plan 63 (Flyway) for the test DB setup pattern
+- Does not replace dbt tests — dbt tests validate model logic; SQL tests validate application query compatibility
+- Dashboard queries are the highest risk — they are the most complex and span the most tables
 
 ---
 
@@ -573,33 +597,6 @@ Currently raw HTML artifacts are stored on a Docker volume as files, with metada
 
 ---
 
-## Plan 74: dbt Logic Flaw — New Search Configs Not Reaching Mart Tables
-
-**Status:** ✅ Resolved
-**Priority:** High
-
-**Symptom:** Kia Sportage Plug-In Hybrid added as a new search config is not appearing in the dashboard. Suspected cause: a filtering step in the dbt DAG is excluding new make/model combinations that have no existing observations yet, preventing them from ever being scraped or surfacing in mart tables.
-
-### Working theory
-`stg_search_configs` or `int_scrape_targets` may filter based on existing observation data, creating a chicken-and-egg problem: a new search config needs observations to pass the filter, but it can't get observations until it passes the filter.
-
-### Investigation approach
-Trace the full DAG from dashboard query back to source:
-1. What does `mart_vehicle_snapshot` / `mart_deal_scores` filter on for make/model?
-2. Where does `int_scrape_targets` get its make/model values — is it from `search_configs` directly or from observation data?
-3. Does `stg_search_configs` introduce any filtering that could exclude configs with no history?
-4. Verify Kia Sportage PHEV is actually in `search_configs` and enabled
-5. Check `ops_detail_scrape_queue` — is it generating any jobs for this config?
-
-### Fix
-TBD pending DAG trace. Likely a filter condition that needs to be loosened or a join that needs to become a LEFT JOIN.
-
-### Notes
-- Do not guess and change — trace the full chain first per project convention
-- This is a pure dbt issue; no Python changes expected
-
----
-
 ## Plan 53: Dashboard cleanup/optimization
 
 **Status:** In progress
@@ -636,6 +633,107 @@ File split complete (Plan 50). Stale backlog query updated to use ops_detail_scr
 
 ---
 
+## Plan 76: Service Health Gate
+
+**Status:** Not started
+**Priority:** High
+
+After a redeploy, containers restart and n8n's schedule may fire before scraper/dbt_runner are fully accepting connections. Without a health check, the first workflow run post-deploy fails immediately. This plan adds `/health` endpoints to scraper and ops, and builds a `Service Health Gate` n8n sub-workflow that all 7 workflows call after the `Check Deploy Intent` gate.
+
+### Part 1: `/health` endpoints
+
+`dbt_runner` already has `GET /health → {"ok": true}`. Copy the identical pattern to scraper and ops.
+
+**`scraper/app.py`** — add at the bottom, same pattern as dbt_runner:
+```python
+@app.get("/health")
+def health():
+    return {"ok": True}
+```
+
+**`ops/app.py`** — same:
+```python
+@app.get("/health")
+def health():
+    return {"ok": True}
+```
+
+No DB check in the health endpoint — it is purely a liveness signal. If the process is up and responding, it's healthy. DB connectivity is checked separately in the n8n workflow via a direct Postgres node.
+
+### Part 2: `Service Health Gate` n8n sub-workflow
+
+**Trigger:** Called by all 7 workflows via `Execute Workflow` node, immediately after `Check Deploy Intent` returns `can_deploy = true`.
+
+**Workflow structure:**
+
+```
+[Set Attempt Counter = 0]
+    ↓
+[HTTP Request: GET scraper/health]  ←─────────────────────────────┐
+[HTTP Request: GET dbt_runner/health]                              │
+[HTTP Request: GET ops/health]                                     │
+[Postgres: SELECT 1]                                               │
+    ↓                                                              │
+[If: all 4 succeeded?]                                             │
+    ├─ Yes → return {"healthy": true}                              │
+    └─ No  → [Increment attempt counter]                           │
+                ↓                                                  │
+             [If: attempts < 20?]  (20 × 15s = 5 min max)         │
+                ├─ Yes → [Wait 15s] ──────────────────────────────┘
+                └─ No  → [Telegram alert: "Service health check timed out after 5 min"]
+                              ↓
+                         return {"healthy": false}
+```
+
+**Return value:** `{"healthy": true}` or `{"healthy": false}`
+
+**Caller pattern:** Each of the 7 workflows adds an `If` node after `Call 'Service Health Gate'`:
+- `healthy = true` → proceed to main workflow logic
+- `healthy = false` → exit cleanly (Telegram already sent by sub-workflow)
+
+**HTTP timeouts:** Each health request uses a 5s timeout. If a service is down, the attempt fails fast and moves to retry — it does not hang the loop for 5s per service (use parallel HTTP nodes or accept sequential with short timeouts).
+
+**Postgres check:** Use an existing Postgres credential node, `SELECT 1`. If the connection succeeds, Postgres is healthy. This covers the scenario where Postgres itself is slow to restart.
+
+### Part 3: Docker healthcheck on Postgres (optional bonus)
+
+Add to the `postgres` service in `docker-compose.yml`:
+```yaml
+healthcheck:
+  test: ["CMD-SHELL", "pg_isready -U cartracker -d cartracker"]
+  interval: 10s
+  timeout: 5s
+  retries: 5
+```
+
+This surfaces Postgres health in `docker ps` and `docker compose ps` without changing any application logic.
+
+### Files
+
+| File | Change |
+|------|--------|
+| `scraper/app.py` | Add `GET /health` → `{"ok": True}` |
+| `ops/app.py` | Add `GET /health` → `{"ok": True}` |
+| `n8n/workflows/Service Health Gate.json` | **Create** — new sub-workflow |
+| `n8n/workflows/Scrape Listings.json` | Add `Call 'Service Health Gate'` + `Healthy?` If node |
+| `n8n/workflows/Job Poller.json` | Same |
+| `n8n/workflows/Results Processing.json` | Same |
+| `n8n/workflows/Build DBT.json` | Same |
+| `n8n/workflows/Orphan Checker.json` | Same |
+| `n8n/workflows/Parse Detail Pages.json` | Same |
+| `n8n/workflows/Scrape Detail Pages.json` | Same |
+| `docker-compose.yml` | Add `healthcheck` to `postgres` service (optional) |
+
+### Verification
+
+1. Add `GET /health` to scraper and ops, rebuild both — confirm `curl http://localhost:8000/health` and `curl http://localhost:8060/health` return `{"ok": true}`
+2. Import `Service Health Gate` workflow into n8n, manually execute it — should return `{"healthy": true}` immediately when all services are up
+3. **Failure test:** Stop the scraper container, manually trigger `Service Health Gate` — should retry and eventually send Telegram alert after 5 min (or test with 2 attempts for speed)
+4. Import updated workflow JSONs, trigger any workflow manually — confirm it calls the health gate and proceeds normally
+5. Simulate post-deploy: stop and restart scraper, immediately trigger Scrape Listings — should wait for health gate to pass before proceeding
+
+---
+
 ## Plan 59: Orphan Checker — Add Stale detail_scrape_claims Cleanup
 
 **Status:** Not started
@@ -653,126 +751,6 @@ AND claimed_by NOT IN (
 );
 ```
 This releases any claims whose `run_id` doesn't match an actively running scrape — safe to run even while a scrape is in progress.
-
----
-
-## Plan 60: Safe Redeploy — Coordinated n8n Workflow Gating
-
-**Status:** Not started
-**Priority:** Medium
-
-When scraper or dbt_runner containers are rebuilt, n8n has no awareness — scheduled workflows fire regardless and fail mid-flight. This plan builds a coordination layer so deploys are safe, orderly, and environment-agnostic.
-
-### Design principles
-- The **coordination layer** (DB tables, API signals) is environment-agnostic — works the same on a home server, Oracle Cloud, or in a CI/CD pipeline
-- The **actual redeploy mechanism** is a swappable webhook — on a home server it calls a shell script; on cloud it calls an OCI/GCP restart API; in CI/CD GitHub Actions calls it
-- Never build the coordination into the deploy mechanism itself — they are separate concerns
-
----
-
-### DB schema additions
-
-**`n8n_executions` table** — tracks every workflow run, not just errors:
-```sql
-CREATE TABLE n8n_executions (
-    execution_id    TEXT PRIMARY KEY,   -- n8n's own execution ID
-    workflow_name   TEXT NOT NULL,
-    started_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    finished_at     TIMESTAMPTZ,
-    status          TEXT NOT NULL DEFAULT 'running'  -- running / completed / failed
-);
-```
-
-**`deploy_intent` table** — singleton row, like `dbt_lock`:
-```sql
-CREATE TABLE deploy_intent (
-    id              INT PRIMARY KEY DEFAULT 1,
-    intent          TEXT NOT NULL DEFAULT 'none',  -- none / pending / deploying / ready
-    requested_at    TIMESTAMPTZ,
-    requested_by    TEXT,
-    completed_at    TIMESTAMPTZ
-);
-INSERT INTO deploy_intent (id, intent) VALUES (1, 'none');
-```
-
----
-
-### Full flow
-
-```
-Normal operation:
-  n8n workflow fires
-    → check deploy_intent: is intent = 'none'?
-        ├─ Yes → INSERT into n8n_executions (status='running') → proceed
-        └─ No  → exit immediately, wait for next scheduled trigger
-
-Deploy initiated (admin UI "Deploy" button):
-  → SET deploy_intent.intent = 'pending'
-  → Poll n8n_executions WHERE status = 'running' until count = 0
-  → SET deploy_intent.intent = 'deploying'
-  → Call redeploy webhook (shell script / OCI API / GitHub Actions / etc.)
-
-n8n workflows in-flight during deploy:
-  → Finish their current work normally
-  → UPDATE n8n_executions SET status='completed', finished_at=now()
-
-After redeploy completes:
-  → Redeploy webhook signals back: SET deploy_intent.intent = 'none'
-  → n8n workflows resume on their next scheduled trigger
-```
-
----
-
-### Components
-
-**1. n8n workflow changes (all workflows)**
-- **Start of each workflow:** Postgres node checks `deploy_intent.intent`. If not `'none'`, exit immediately via IF node.
-- **Start of each workflow:** Postgres node INSERTs into `n8n_executions` with `status='running'`.
-- **End of each workflow (success + error paths):** Postgres node UPDATEs `n8n_executions` SET `status='completed'/'failed'`, `finished_at=now()`. Must be wired into both success and error branches to guarantee it always runs.
-
-**2. Scraper API — deploy coordination endpoints**
-- `POST /admin/deploy/start` — sets `deploy_intent = 'pending'`, returns immediately
-- `GET /admin/deploy/status` — returns intent state + count of in-flight executions
-- `POST /admin/deploy/complete` — called by redeploy webhook after build finishes; sets `deploy_intent = 'none'`
-
-**3. Admin UI — deploy panel**
-- "Initiate Deploy" button → calls `POST /admin/deploy/start`
-- Status card: shows current intent, count of in-flight workflows, last deploy time
-- "Ready to deploy" indicator when in-flight count = 0
-- Instructions for running the environment-specific redeploy command
-
-**4. Redeploy webhook (environment-specific, swappable)**
-- Home server: shell script (`./redeploy.sh`) runs `docker compose build scraper dbt_runner && docker compose up -d scraper dbt_runner`, then calls `POST /admin/deploy/complete`
-- Oracle Cloud (future): OCI instance action API, then `POST /admin/deploy/complete`
-- CI/CD (future): GitHub Actions workflow triggered by webhook, then `POST /admin/deploy/complete`
-
----
-
-### Health gate (post-deploy)
-After containers restart, n8n workflows that fire before services are fully up should wait rather than immediately fail:
-- `Service Health Gate` sub-workflow: polls `/health` every 15s, up to 5 min
-- Called at the top of each workflow after the deploy_intent check
-- On timeout: Telegram alert "scraper unreachable after redeploy"
-
----
-
-### Migration path
-- `n8n_executions` replaces/extends the current error-only execution tracking
-- Existing `pipeline_errors` table retained for error detail; `n8n_executions` adds the run-level wrapper
-- DDL added to `db/schema/schema_new.sql` and `db/seed/` where applicable
-
----
-
-### Files
-| File | Action |
-|------|--------|
-| `db/schema/schema_new.sql` | Add `n8n_executions` and `deploy_intent` tables |
-| `scraper/routers/admin.py` | Add deploy coordination endpoints |
-| `scraper/templates/admin/deploy.html` | New deploy panel page |
-| `scraper/templates/admin/base.html` | Add "Deploy" nav link |
-| `n8n/workflows/*.json` | Add deploy_intent check + execution logging to all workflows |
-| `n8n/workflows/Service Health Gate.json` | Create health gate sub-workflow |
-| `redeploy.sh` | Home server deploy script (calls docker compose + signals complete) |
 
 ---
 
