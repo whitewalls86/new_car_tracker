@@ -6,6 +6,7 @@ import os
 from logging.handlers import RotatingFileHandler
 
 from fastapi import FastAPI
+from fastapi.responses import RedirectResponse
 
 from routers.deploy import router as deploy_router
 from routers.admin import router as admin_router
@@ -20,3 +21,9 @@ logging.getLogger().setLevel(logging.INFO)
 app = FastAPI()
 app.include_router(deploy_router)
 app.include_router(admin_router, prefix="/admin")
+
+
+@app.get("/")
+@app.get("/admin")
+def root():
+    return RedirectResponse(url="/admin/searches/")
