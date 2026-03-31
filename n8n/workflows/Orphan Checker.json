@@ -292,7 +292,7 @@
     },
     {
       "parameters": {
-        "numberInputs": 3
+        "numberInputs": 4
       },
       "type": "n8n-nodes-base.merge",
       "typeVersion": 3.2,
@@ -443,9 +443,52 @@
           "name": "Postgres account"
         }
       }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "DELETE FROM detail_scrape_claims\nWHERE status = 'running'\n      AND claimed_by::uuid NOT IN (SELECT DISTINCT run_id FROM runs where status = 'running')\nRETURNING listing_id;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        448,
+        640
+      ],
+      "id": "a0f6fa31-d31b-4b03-82fc-705a1250de25",
+      "name": "Expire Orphaned Detail Claims",
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "l8Ecbn62FzXCDkF9",
+          "name": "Postgres account"
+        }
+      }
     }
   ],
-  "pinData": {},
+  "pinData": {
+    "Schedule Trigger": [
+      {
+        "json": {
+          "timestamp": "2026-03-30T21:10:25.001-04:00",
+          "Readable date": "March 30th 2026, 9:10:25 pm",
+          "Readable time": "9:10:25 pm",
+          "Day of week": "Monday",
+          "Year": "2026",
+          "Month": "March",
+          "Day of month": "30",
+          "Hour": "21",
+          "Minute": "10",
+          "Second": "25",
+          "Timezone": "America/New_York (UTC-04:00)"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ]
+  },
   "connections": {
     "Schedule Trigger": {
       "main": [
@@ -516,6 +559,11 @@
           },
           {
             "node": "Expire Orphaned n8n Runs",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Expire Orphaned Detail Claims",
             "type": "main",
             "index": 0
           }
@@ -638,14 +686,28 @@
           }
         ]
       ]
+    },
+    "Expire Orphaned Detail Claims": {
+      "main": [
+        [
+          {
+            "node": "Merge3",
+            "type": "main",
+            "index": 3
+          }
+        ]
+      ]
     }
   },
   "active": true,
   "settings": {
     "executionOrder": "v1",
-    "availableInMCP": false
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "rJfFKS2DGRAn_IPJR1xTc"
   },
-  "versionId": "a2687291-341c-4168-955b-ed88eb59f9ca",
+  "versionId": "0d11695f-cdc6-4778-8632-d34487179eb5",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179"

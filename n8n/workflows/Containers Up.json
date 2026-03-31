@@ -1,0 +1,831 @@
+{
+  "name": "Containers Up",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -336,
+        16
+      ],
+      "id": "2d1b9c31-a4f2-43b2-9c8a-d42209c5050c",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "5LVLf3b01e5HnDMoslGZJ",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/5LVLf3b01e5HnDMoslGZJ",
+          "cachedResultName": "Check Service Health"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "container_name": "dbt_runner",
+            "port_number": "8080"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "container_name",
+              "displayName": "container_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "port_number",
+              "displayName": "port_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        240,
+        -128
+      ],
+      "id": "9477f190-7505-4b5a-b0a4-ffe6bbed3442",
+      "name": "Check DBT Runner"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "5LVLf3b01e5HnDMoslGZJ",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/5LVLf3b01e5HnDMoslGZJ",
+          "cachedResultName": "Check Service Health"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "container_name": "scraper",
+            "port_number": "8000"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "container_name",
+              "displayName": "container_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "port_number",
+              "displayName": "port_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        240,
+        32
+      ],
+      "id": "51b44a70-b3f3-4bc6-8b50-5679e71d47c9",
+      "name": "Check Scraper"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "5LVLf3b01e5HnDMoslGZJ",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/5LVLf3b01e5HnDMoslGZJ",
+          "cachedResultName": "Check Service Health"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "container_name": "ops",
+            "port_number": "8060"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "container_name",
+              "displayName": "container_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "port_number",
+              "displayName": "port_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        240,
+        192
+      ],
+      "id": "d883e4c3-d0c8-4bc3-ac95-40b2b7456f50",
+      "name": "Check Ops"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT 200 as status;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        240,
+        384
+      ],
+      "id": "e5fc4a65-ffe5-4886-b27d-9ebf0ce2929f",
+      "name": "Check Postgres",
+      "credentials": {
+        "postgres": {
+          "id": "l8Ecbn62FzXCDkF9",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "numberInputs": 4
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        656,
+        0
+      ],
+      "id": "cd1f15ee-02e0-4b48-9788-7d948c65f45f",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "1821cd89-062d-494f-84b2-057fd682634c",
+              "leftValue": "={{ $now }}",
+              "rightValue": "={{ $('Started At').item.json.started_at.toDateTime().plus(5, 'minutes')}}",
+              "operator": {
+                "type": "dateTime",
+                "operation": "before"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        768,
+        480
+      ],
+      "id": "87f5bf77-289d-4f62-9214-9523e885e459",
+      "name": "< 5 min?"
+    },
+    {
+      "parameters": {
+        "amount": 15
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        928,
+        608
+      ],
+      "id": "32321ead-1eb7-4960-bd8b-273a6cd21365",
+      "name": "Wait 15s",
+      "webhookId": "146924f7-680b-42b3-ad97-274d4a8fcca7"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "6d482543-3e8f-4cd7-8a81-21734802ca8c",
+                    "leftValue": "={{ $json.status }}",
+                    "rightValue": 500,
+                    "operator": {
+                      "type": "number",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Unhealthy"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.status }}",
+                    "rightValue": 200,
+                    "operator": {
+                      "type": "number",
+                      "operation": "equals"
+                    },
+                    "id": "5251fc62-ad3a-49bc-b130-d2c07876b2ea"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Healthy"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        864,
+        32
+      ],
+      "id": "9abf67a7-7294-450b-9ac8-b6ab81252b3f",
+      "name": "Switch"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "6cac3719-1d83-4325-9e02-ca789bced7a8",
+              "name": "started_at",
+              "value": "={{ $now }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -16,
+        320
+      ],
+      "id": "a6b896e3-4485-4db5-9ba7-e4618f884545",
+      "name": "Started At"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "f12c29cd-fd83-4bc2-bfb2-2ecf9aa919ca",
+              "name": "status",
+              "value": 500,
+              "type": "number"
+            },
+            {
+              "id": "bc008edc-112a-4b23-a5eb-8de4961c65b9",
+              "name": "service",
+              "value": "postgress",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        768,
+        304
+      ],
+      "id": "09faee80-d8af-4669-8097-78de5ac75948",
+      "name": "Set Error Response"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "322443ac-e2d8-4e4d-aa75-d680c4c005ce",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": 200,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        416,
+        384
+      ],
+      "id": "6b2412eb-0376-4e30-b94e-1552d5a4ceca",
+      "name": "Is Postgres Healthy?"
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        1072,
+        -64
+      ],
+      "id": "a68a1b19-745c-482f-a8a4-0547c716de15",
+      "name": "Compress Errors"
+    },
+    {
+      "parameters": {
+        "fieldsToAggregate": {
+          "fieldToAggregate": [
+            {
+              "fieldToAggregate": "status"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        1072,
+        128
+      ],
+      "id": "c9a459ef-6478-4758-a914-4a51d5d48432",
+      "name": "Compress Success"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.first().json.data;\n\nconst message = items\n  .map(x => `Service: ${x.service} failed to build.`)\n  .join('\\n');\n\nreturn [\n  {\n    json: {\n      message\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1296,
+        -64
+      ],
+      "id": "4d49d4c8-3c93-40fe-a13d-5a2ba52c671c",
+      "name": "Create Error Message",
+      "executeOnce": false
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.first().json.status;\nlet count = 0;\n\nfor (const x of items) {\n  count += 1;\n}\n\nreturn [\n  {\n    json: {\n      count\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1312,
+        128
+      ],
+      "id": "4deff44b-caf4-4f04-beac-b5a670c1abde",
+      "name": "Count Successes"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "99ab5b9b-4ab1-4dd8-b2b5-e23aded245a9",
+              "leftValue": "={{ $json.count }}",
+              "rightValue": 4,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1504,
+        128
+      ],
+      "id": "ff289bb8-5e39-4cc3-9af8-6453af11ca51",
+      "name": "4 Successes?"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "422a7e1b-998b-45b5-9fd9-52521361a398",
+              "name": "healthy",
+              "value": true,
+              "type": "boolean"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1776,
+        80
+      ],
+      "id": "5b476f03-5194-4052-8658-18b0a4edfb6c",
+      "name": "Return Healthy"
+    },
+    {
+      "parameters": {
+        "chatId": "774819707",
+        "text": "=*Health Check Failure*\n\n{{ $json.message }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1504,
+        -64
+      ],
+      "id": "7bcec350-b8d8-4a01-bc52-5868111dbeee",
+      "name": "Send Fail Message",
+      "webhookId": "3f97844c-717f-4bcd-86d2-b10cba6f7a6c",
+      "credentials": {
+        "telegramApi": {
+          "id": "qoqqtiFUa4Dq2Wqp",
+          "name": "Cartracker Alerts"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1a15fac9-1269-476d-9eaf-d6a9d6182c43",
+              "name": "healthy",
+              "value": false,
+              "type": "boolean"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1712,
+        -64
+      ],
+      "id": "c5da2a48-8a2f-43eb-82c8-2ffd40f25f4a",
+      "name": "Return Unhealthy",
+      "executeOnce": true
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Check DBT Runner",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Check Ops",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Started At",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Check Scraper",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Postgres": {
+      "main": [
+        [
+          {
+            "node": "Is Postgres Healthy?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check DBT Runner": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Scraper": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Check Ops": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "< 5 min?": {
+      "main": [
+        [
+          {
+            "node": "Wait 15s",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Set Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 15s": {
+      "main": [
+        [
+          {
+            "node": "Check Postgres",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Started At": {
+      "main": [
+        [
+          {
+            "node": "Check Postgres",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Error Response": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 3
+          }
+        ]
+      ]
+    },
+    "Switch": {
+      "main": [
+        [
+          {
+            "node": "Compress Errors",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Compress Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Postgres Healthy?": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 3
+          }
+        ],
+        [
+          {
+            "node": "< 5 min?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compress Errors": {
+      "main": [
+        [
+          {
+            "node": "Create Error Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compress Success": {
+      "main": [
+        [
+          {
+            "node": "Count Successes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Error Message": {
+      "main": [
+        [
+          {
+            "node": "Send Fail Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Count Successes": {
+      "main": [
+        [
+          {
+            "node": "4 Successes?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "4 Successes?": {
+      "main": [
+        [
+          {
+            "node": "Return Healthy",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Unhealthy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Fail Message": {
+      "main": [
+        [
+          {
+            "node": "Return Unhealthy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "6c616458-9e4a-4b28-a4e3-9335e4674bb5",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179"
+  },
+  "id": "rVjVSPLmpj9ym-suqoVl9",
+  "tags": []
+}

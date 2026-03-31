@@ -143,7 +143,7 @@
             {
               "id": "4d5e1f1b-a294-4fef-b564-ebb5be201c5c",
               "name": "intent",
-              "value": "={{ $json.intent }}",
+              "value": "={{ $('When Executed by Another Workflow').item.json.intent }}",
               "type": "string"
             },
             {
@@ -1159,7 +1159,7 @@
     "executionOrder": "v1",
     "availableInMCP": false
   },
-  "versionId": "0498fcd9-d46e-4478-823c-da4edca53809",
+  "versionId": "b094e06b-110a-4e32-8388-1b5aab1a30e3",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179"
