@@ -21,6 +21,9 @@ def mock_cursor_context(mocker):
     conn = MagicMock()
     conn.cursor.return_value.__enter__ = lambda s: cursor
     conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+
+    mocker.patch("psycopg2.connect", return_value=conn)
+
     return conn, cursor
 
 

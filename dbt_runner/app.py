@@ -7,11 +7,19 @@ import re
 import shlex
 import subprocess
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple, Literal, overload
 
 import psycopg2
 from fastapi import FastAPI, Body, HTTPException
 from fastapi.staticfiles import StaticFiles
+from enum import Enum
+
+
+class FetchMode(Enum):
+    NONE = None       # No fetch
+    ONE = "one"       # fetchone()
+    ALL = "all"       # fetchall()
+    ROWCOUNT = "rowcount"  # cur.rowcount
 
 app = FastAPI()
 _LOG_PATH = "/usr/app/logs/app.log"
@@ -37,75 +45,115 @@ STALE_LOCK_MINUTES = 30
 
 
 # ---------------------------------------------------------------------------
-# Lock helpers
+# DB helpers
 # ---------------------------------------------------------------------------
 
-def _acquire_lock(caller: str) -> bool:
-    """Atomically try to acquire the dbt_lock. Returns True if acquired."""
+@overload
+def _db_execute(sql: str, params: tuple = None, fetch: Literal[FetchMode.NONE] = FetchMode.NONE,
+                error_context: str = 'DB Operation') -> bool | None: ...
+
+
+@overload
+def _db_execute(sql: str, params: tuple = None, fetch: Literal[FetchMode.ONE] = FetchMode.NONE,
+                error_context: str = 'DB Operation') -> tuple | None: ...
+
+
+@overload
+def _db_execute(sql: str, params: tuple = None, fetch: Literal[FetchMode.ALL] = FetchMode.NONE,
+                error_context: str = 'DB Operation') -> list | None: ...
+
+
+@overload
+def _db_execute(sql: str, params: tuple = None, fetch: Literal[FetchMode.ROWCOUNT] = FetchMode.NONE,
+                error_context: str = 'DB Operation') -> int | None: ...
+
+
+def _db_execute(sql: str, params: tuple = None, fetch: FetchMode = FetchMode.NONE,
+                error_context: str = 'DB Operation'):
     conn = None
     try:
         conn = psycopg2.connect(**DB_KWARGS)
     except psycopg2.OperationalError:
-        logger.error(f"Acquire-Lock: Unable to connect to Postgres database.")
-        return False
+        msg = f"{error_context}: Unable to connect to Postgres database."
+        logger.error(msg)
+        return
     except Exception:
-        logger.error(f"Acquire-Lock: encountered DB error.")
-        return False
+        msg = f"{error_context}: encountered DB error."
+        logger.error(msg)
+        return
 
     try:
         with conn, conn.cursor() as cur:
-            cur.execute(
-                """UPDATE dbt_lock
-                   SET locked = true, locked_at = now(), locked_by = %s
-                   WHERE id = 1
-                     AND (locked = false
-                          OR locked_at < now() - interval '%s minutes')
-                   RETURNING locked;""",
-                (caller, STALE_LOCK_MINUTES),
-            )
-            acquired = cur.fetchone() is not None
-        return acquired
-    except Exception:
-        logger.exception("Acquire-Lock: SQL execution failed.")
-        return False
+            cur.execute(sql, params or ())
+            if fetch == FetchMode.ONE:
+                return cur.fetchone() or ()
+            elif fetch == FetchMode.ALL:
+                return cur.fetchall() or []
+            elif fetch == FetchMode.ROWCOUNT:
+                return cur.rowcount or 0
+            elif fetch == FetchMode.NONE:
+                return True
+
+    except Exception as e:
+        msg = f"{error_context}: SQL execution failed."
+        logger.error(msg)
+        return
     finally:
         if conn:
             conn.close()
 
 
+# ---------------------------------------------------------------------------
+# Lock helpers
+# ---------------------------------------------------------------------------
+
+def _acquire_lock(caller: str) -> bool:
+    """Atomically try to acquire the dbt_lock. Returns True if acquired."""
+    sql = """
+        UPDATE dbt_lock
+        SET locked = true, locked_at = now(), locked_by = %s
+        WHERE id = 1
+            AND (locked = false
+            OR locked_at < now() - interval '%s minutes')
+       RETURNING locked;
+       """
+    params = (caller, STALE_LOCK_MINUTES)
+
+    acquired = _db_execute(sql=sql, params=params, fetch=FetchMode.ONE, error_context='Acquire-Lock')
+
+    return bool(acquired)
+
+
 def _release_lock() -> None:
     """Release the dbt_lock."""
-    try:
-        conn = psycopg2.connect(**DB_KWARGS)
-        with conn, conn.cursor() as cur:
-            cur.execute(
-                """UPDATE dbt_lock
+
+    sql = """UPDATE dbt_lock
                    SET locked = false, locked_at = null, locked_by = null
                    WHERE id = 1;"""
-            )
-        conn.close()
-    except Exception:
-        logger.exception("Failed to release dbt_lock")
+    released = _db_execute(sql=sql, fetch=FetchMode.NONE, error_context='Release-Lock')
+
+    if not released:
+        # Raise Error
+        return
 
 
 def _lock_status() -> Dict[str, Any]:
     """Return current lock state."""
-    try:
-        conn = psycopg2.connect(**DB_KWARGS)
-        with conn, conn.cursor() as cur:
-            cur.execute("SELECT locked, locked_at, locked_by FROM dbt_lock WHERE id = 1;")
-            row = cur.fetchone()
-        conn.close()
-        if row:
-            return {
-                "locked": row[0],
-                "locked_at": row[1].isoformat() if row[1] else None,
-                "locked_by": row[2],
-            }
+
+    sql = """SELECT locked, locked_at, locked_by FROM dbt_lock WHERE id = 1"""
+
+    status = _db_execute(sql=sql, fetch=FetchMode.ONE, error_context='Lock-Status')
+
+    if status is None:
+        return {"locked": True, "locked_at": None, "locked_by": "DB Error"}
+    elif status == ():
         return {"locked": False, "locked_at": None, "locked_by": None}
-    except Exception:
-        logger.exception("Failed to read dbt_lock status")
-        return {"locked": False, "locked_at": None, "locked_by": None}
+    else:
+        return {
+            "locked": status[0],
+            "locked_at": status[1].isoformat() if status[1] else None,
+            "locked_by": status[2],
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -120,8 +168,18 @@ def _record_run(started_at: datetime, finished_at: datetime, ok: bool,
     models_error = int(m.group(2)) if m else None
     models_skip = int(m.group(3)) if m else None
     duration_s = (finished_at - started_at).total_seconds()
+
+    conn = None
     try:
         conn = psycopg2.connect(**DB_KWARGS)
+    except psycopg2.OperationalError:
+        logger.error("Record Run: Unable to connect to Postgres database.")
+        return
+    except Exception:
+        logger.error("Record Run: encountered DB error.")
+        return
+
+    try:
         with conn, conn.cursor() as cur:
             cur.execute(
                 """INSERT INTO dbt_runs
@@ -131,9 +189,11 @@ def _record_run(started_at: datetime, finished_at: datetime, ok: bool,
                 (started_at, finished_at, duration_s, ok, intent,
                  " ".join(select), models_pass, models_error, models_skip, returncode),
             )
-        conn.close()
     except Exception:
         logger.exception("Failed to record dbt run to DB")  # never let DB logging break the build response
+    finally:
+        if conn:
+            conn.close()
 
 
 # ---------------------------------------------------------------------------
