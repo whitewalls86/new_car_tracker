@@ -22,5 +22,5 @@ def record_run_defaults():
         "intent": "after_srp",
         "select": ["model_a", "model_b"],
         "stdout": "PASS=5 WARN=0 ERROR=0 SKIP=1",
-        "returncode": 200,
+        "returncode": 0,
     }

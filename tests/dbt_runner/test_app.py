@@ -329,3 +329,108 @@ def test_load_intents_empty(mock_cursor_context, mock_logger_warning):
     }
     assert "Could not load intents from DB, using fallback" in mock_logger_warning.call_args[0][0]
     assert cursor.fetchall.call_count == 1
+
+
+def test_save_intent_connection_error(mock_db_connection_error, mock_logger_error):
+    result = app._save_intent(intent_name="after_detail", select_args=[])
+    assert result is False
+    assert "Save-Intent: Unable to connect to Postgres database." in mock_logger_error.call_args[0][0]
+
+
+def test_save_intent_sql_error(mock_db_sql_error, mock_logger_error):
+    result = app._save_intent(intent_name="after_detail", select_args=[])
+    assert result is False
+    assert "Save-Intent: SQL execution failed." in mock_logger_error.call_args[0][0]
+
+
+def test_save_intent_database_error(mock_db_database_error, mock_logger_error):
+    result = app._save_intent(intent_name="after_detail", select_args=[])
+    assert result is False
+    assert "Save-Intent: encountered DB error." in mock_logger_error.call_args[0][0]
+
+
+def test_save_intent_success(mock_cursor_context):
+    _conn, _cursor = mock_cursor_context
+    result = app._save_intent(intent_name="after_detail", select_args=[])
+    assert result is True
+
+
+def test_save_intent_no_intent(mock_cursor_context):
+    _conn, _cursor = mock_cursor_context
+    result = app._save_intent(intent_name="", select_args=[])
+    assert result is True
+
+
+def test_delete_intent_connection_error(mock_db_connection_error, mock_logger_error):
+    result = app._delete_intent(intent_name="after_detail")
+    assert result is False
+    assert "Delete-Intent: Unable to connect to Postgres database." in mock_logger_error.call_args[0][0]
+
+
+def test_delete_intent_sql_error(mock_db_sql_error, mock_logger_error):
+    result = app._delete_intent(intent_name="after_detail")
+    assert result is False
+    assert "Delete-Intent: SQL execution failed." in mock_logger_error.call_args[0][0]
+
+
+def test_delete_intent_database_error(mock_db_database_error, mock_logger_error):
+    result = app._delete_intent(intent_name="after_detail")
+    assert result is False
+    assert "Delete-Intent: encountered DB error." in mock_logger_error.call_args[0][0]
+
+
+def test_delete_intent_success(mock_cursor_context):
+    conn, cursor = mock_cursor_context
+    cursor.rowcount = 1
+    result = app._delete_intent(intent_name="after_detail")
+    assert result is True
+
+
+def test_delete_intent_no_rows_deleted(mock_cursor_context):
+    conn, cursor = mock_cursor_context
+    cursor.rowcount = 0
+    result = app._delete_intent(intent_name="after_detail")
+    assert result is False
+
+
+# def test_validate_tokens_is_valid_token():
+
+
+# def test_validate_tokens_is_invalid_token():
+
+
+# def test_validate_tokens_is_empty_token():
+
+# Invalid token patterns
+INVALID_TOKENS = [
+    "model one",          # space
+    "model!",             # exclamation
+    "model#tag",          # hash
+    "model$var",          # dollar
+    "model&other",        # ampersand
+    "model()",            # parentheses
+    "",                   # empty
+    "modèl",              # non-ASCII
+    "model@hostname#fail", # has #
+]
+
+# Valid token patterns
+VALID_TOKENS = [
+    "model",
+    "stg_raw_artifacts+",
+    "package.model",
+    "schema:table",
+    "s3://bucket/path",
+    "tag-with-dashes",
+]
+
+@pytest.mark.parametrize("token", INVALID_TOKENS)
+def test_validate_tokens_invalid(token):
+    with pytest.raises(HTTPException) as exc_info:
+        app._validate_tokens([token], "test_field")
+    assert exc_info.value.status_code == 400
+
+@pytest.mark.parametrize("token", VALID_TOKENS)
+def test_validate_tokens_valid(token):
+    # Should not raise
+    app._validate_tokens([token], "test_field")

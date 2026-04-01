@@ -209,26 +209,37 @@ def _load_intents() -> Dict[str, List[str]]:
         return {result[0]: list(result[1]) for result in results}
 
 
-def _save_intent(intent_name: str, select_args: List[str]) -> None:
-    conn = psycopg2.connect(**DB_KWARGS)
-    with conn, conn.cursor() as cur:
-        cur.execute(
-            """INSERT INTO dbt_intents (intent_name, select_args, updated_at)
+def _save_intent(intent_name: str, select_args: List[str]) -> bool:
+    """Adds a new intent to the DB"""
+
+    sql = """INSERT INTO dbt_intents (intent_name, select_args, updated_at)
                VALUES (%s, %s, now())
                ON CONFLICT (intent_name) DO UPDATE
-               SET select_args = EXCLUDED.select_args, updated_at = now()""",
-            (intent_name, select_args),
-        )
-    conn.close()
+               SET select_args = EXCLUDED.select_args, updated_at = now()"""
+    params = (intent_name, select_args)
+
+    result = _db_execute(sql=sql, params=params, fetch=FetchMode.NONE, error_context='Save-Intent')
+
+    if not result:
+        return False
+    else:
+        return result
 
 
 def _delete_intent(intent_name: str) -> bool:
-    conn = psycopg2.connect(**DB_KWARGS)
-    with conn, conn.cursor() as cur:
-        cur.execute("DELETE FROM dbt_intents WHERE intent_name = %s", (intent_name,))
-        deleted = cur.rowcount > 0
-    conn.close()
-    return deleted
+
+    sql = """DELETE FROM dbt_intents WHERE intent_name = %s"""
+    params = (intent_name,)
+
+    result = _db_execute(sql=sql, params=params, fetch=FetchMode.ROWCOUNT, error_context='Delete-Intent')
+
+    if not result:
+        return False
+    elif result > 0:
+        return True
+    else:
+        return False
+
 
 SAFE_TOKEN = re.compile(r"^[A-Za-z0-9_:+.@/-]+$")
 
