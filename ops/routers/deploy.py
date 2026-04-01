@@ -5,7 +5,7 @@ import logging
 from typing import Any, Dict
 from fastapi import APIRouter
 
-from db import get_conn
+from ..db import get_conn
 
 logger = logging.getLogger("pipeline_ops")
 router = APIRouter()

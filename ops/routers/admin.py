@@ -12,9 +12,9 @@ from fastapi import APIRouter, Request, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from db import get_conn
-from models.search_config import SearchConfigParams, SORT_OPTIONS, SORT_KEYS
-from routers.deploy import _intent_status, _set_intent, _intent_release
+from ..db import get_conn
+from ..models.search_config import SearchConfigParams, SORT_OPTIONS, SORT_KEYS
+from ..routers.deploy import _intent_status, _set_intent, _intent_release
 
 from psycopg2.extras import RealDictCursor
 
