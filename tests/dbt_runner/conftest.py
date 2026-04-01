@@ -6,12 +6,17 @@ from fastapi.testclient import TestClient
 
 @pytest.fixture
 def mock_logger_error(mocker):
-    """Mock ops logger.error (adjust path if ops has multiple logging modules)"""
+    """Mock shared.db logger.error for database operation error logging"""
+    return mocker.patch("shared.db.logger.error")
+
+@pytest.fixture
+def mock_app_logger_error(mocker):
+    """Mock dbt_runner.app logger.error for app-level error logging"""
     return mocker.patch("dbt_runner.app.logger.error")
 
 @pytest.fixture
 def mock_logger_warning(mocker):
-    """Mock ops logger.error (adjust path if ops has multiple logging modules)"""
+    """Mock dbt_runner.app logger.warning"""
     return mocker.patch("dbt_runner.app.logger.warning")
 
 

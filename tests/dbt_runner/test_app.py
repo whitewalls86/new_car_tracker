@@ -5,98 +5,6 @@ from datetime import datetime as dt
 from fastapi import HTTPException
 
 
-def test_db_execute_connect_error(mock_db_connection_error, mock_logger_error):
-    result = app._db_execute(sql='SELECT 1', fetch=app.FetchMode.NONE, error_context='PYTEST')
-
-    assert result is None
-    assert "PYTEST: Unable to connect to Postgres database." in mock_logger_error.call_args[0][0]
-
-
-def test_db_execute_database_error(mock_db_database_error, mock_logger_error):
-    result = app._db_execute(sql='SELECT 1', fetch=app.FetchMode.NONE, error_context='PYTEST')
-
-    assert result is None
-    assert "PYTEST: encountered DB error." in mock_logger_error.call_args[0][0]
-
-
-def test_db_execute_sql_error(mock_db_sql_error, mock_logger_error):
-    result = app._db_execute(sql='SELECT 1', fetch=app.FetchMode.NONE, error_context='PYTEST')
-
-    assert result is None
-    assert "PYTEST: SQL execution failed." in mock_logger_error.call_args[0][0]
-
-
-def test_db_fetch_one_with_results(mock_cursor_context):
-    conn, cursor = mock_cursor_context
-    cursor.fetchone.return_value = (1, 2, 3)
-
-    result = app._db_execute(sql='SELECT 1', fetch=app.FetchMode.ONE, error_context='PYTEST')
-
-    assert result == (1, 2, 3)
-    cursor.fetchall.assert_not_called()
-
-
-def test_db_fetch_one_no_results(mock_cursor_context):
-    conn, cursor = mock_cursor_context
-    cursor.fetchone.return_value = None
-
-    result = app._db_execute(sql='SELECT 1', fetch=app.FetchMode.ONE, error_context='PYTEST')
-
-    assert result == ()
-
-
-def test_db_fetch_none(mock_cursor_context):
-    conn, cursor = mock_cursor_context
-
-    result = app._db_execute(sql='SELECT 1', fetch=app.FetchMode.NONE, error_context='PYTEST')
-
-    assert result is True
-    cursor.fetchone.assert_not_called()
-    cursor.fetchall.assert_not_called()
-
-
-def test_db_fetch_all_with_results(mock_cursor_context):
-    conn, cursor = mock_cursor_context
-    cursor.fetchall.return_value = [(1, 2, 3), (4, 5, 6)]
-
-    result = app._db_execute(sql='SELECT 1', fetch=app.FetchMode.ALL, error_context='PYTEST')
-
-    assert result == [(1, 2, 3), (4, 5, 6)]
-    cursor.fetchone.assert_not_called()
-
-
-def test_db_fetch_all_no_results(mock_cursor_context):
-    conn, cursor = mock_cursor_context
-    cursor.fetchall.return_value = None
-
-    result = app._db_execute(sql='SELECT 1', fetch=app.FetchMode.ALL, error_context='PYTEST')
-
-    assert result == []
-    cursor.fetchone.assert_not_called()
-
-
-def test_db_fetch_rowcount_with_results(mock_cursor_context):
-    conn, cursor = mock_cursor_context
-    cursor.rowcount = 1
-
-    result = app._db_execute(sql='SELECT 1', fetch=app.FetchMode.ROWCOUNT, error_context='PYTEST')
-
-    assert result == 1
-    cursor.fetchone.assert_not_called()
-    cursor.fetchall.assert_not_called()
-
-
-def test_db_fetch_rowcount_no_results(mock_cursor_context):
-    conn, cursor = mock_cursor_context
-    cursor.rowcount = None
-
-    result = app._db_execute(sql='SELECT 1', fetch=app.FetchMode.ROWCOUNT, error_context='PYTEST')
-
-    assert result == 0
-    cursor.fetchone.assert_not_called()
-    cursor.fetchall.assert_not_called()
-
-
 def test_acquire_lock_connection_error(mock_db_connection_error, mock_logger_error):
     result = app._acquire_lock('test')
 
@@ -688,23 +596,23 @@ def test_dbt_build_record_run_called(mock_client, mock_dbt_build_happy_path, moc
     assert call_args[4] == ["model_a"]  # select
 
 
-def test_dbt_build_record_failed(mock_client, mock_dbt_build_happy_path, mock_logger_error, mocker):
+def test_dbt_build_record_failed(mock_client, mock_dbt_build_happy_path, mock_app_logger_error, mocker):
     mock_dbt_build_happy_path["subprocess_run"].return_value = \
         mocker.MagicMock(returncode=0, stdout="ok", stderr="")
     mock_dbt_build_happy_path["record_run"].return_value = False
     response = mock_client.post("/dbt/build", json={"select": ["model_a"]})
     assert response.status_code == 200  # Request succeeded despite record failure
-    assert "Logging Run Failed" in mock_logger_error.call_args[0][0]
+    assert "Logging Run Failed" in mock_app_logger_error.call_args[0][0]
 
 
-def test_dbt_build_lock_release_fails(mock_client, mocker, mock_logger_error, mock_dbt_build_happy_path):
+def test_dbt_build_lock_release_fails(mock_client, mocker, mock_app_logger_error, mock_dbt_build_happy_path):
     mock_dbt_build_happy_path["subprocess_run"].return_value = \
         mocker.MagicMock(returncode=0, stdout="ok", stderr="")
-    mock_dbt_build_happy_path["release_lock"].return_value = False
+    mock_dbt_build_happy_path["release_lock"].return_value = None
 
     response = mock_client.post("/dbt/build", json={"select": ["model_a"]})
     assert response.status_code == 200  # Build succeeded, but lock release failed
-    assert "Failed to release dbt lock" in mock_logger_error.call_args[0][0]
+    assert "Failed to release dbt lock" in mock_app_logger_error.call_args[0][0]
 
 
 def test_dbt_build_select_as_string(mock_client, mock_dbt_build_happy_path, mocker):

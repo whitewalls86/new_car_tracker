@@ -7,20 +7,13 @@ import re
 import shlex
 import subprocess
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple, Literal, overload
+from typing import Any, Dict, List, Optional
 
-import psycopg2
+import json
 from fastapi import FastAPI, Body, HTTPException
 from fastapi.staticfiles import StaticFiles
-from enum import Enum
-import json
 
-
-class FetchMode(Enum):
-    NONE = None       # No fetch
-    ONE = "one"       # fetchone()
-    ALL = "all"       # fetchall()
-    ROWCOUNT = "rowcount"  # cur.rowcount
+from shared.db import db_cursor
 
 app = FastAPI()
 _LOG_PATH = "/usr/app/logs/app.log"
@@ -31,13 +24,6 @@ logging.getLogger().addHandler(_log_handler)
 logging.getLogger().setLevel(logging.INFO)
 
 logger = logging.getLogger("dbt_runner")
-
-DB_KWARGS = {
-    "host": "postgres",
-    "dbname": "cartracker",
-    "user": "cartracker",
-    "password": os.environ.get("POSTGRES_PASSWORD", ""),
-}
 _MODEL_COUNTS_RE = re.compile(r"PASS=(\d+)\s+WARN=\d+\s+ERROR=(\d+)\s+SKIP=(\d+)")
 
 # Stale lock timeout in minutes — if a lock is held longer than this,
@@ -45,63 +31,6 @@ _MODEL_COUNTS_RE = re.compile(r"PASS=(\d+)\s+WARN=\d+\s+ERROR=(\d+)\s+SKIP=(\d+)
 STALE_LOCK_MINUTES = 30
 
 
-# ---------------------------------------------------------------------------
-# DB helpers
-# ---------------------------------------------------------------------------
-
-@overload
-def _db_execute(sql: str, params: tuple = None, fetch: Literal[FetchMode.NONE] = FetchMode.NONE,
-                error_context: str = 'DB Operation') -> bool | None: ...
-
-
-@overload
-def _db_execute(sql: str, params: tuple = None, fetch: Literal[FetchMode.ONE] = FetchMode.NONE,
-                error_context: str = 'DB Operation') -> tuple | None: ...
-
-
-@overload
-def _db_execute(sql: str, params: tuple = None, fetch: Literal[FetchMode.ALL] = FetchMode.NONE,
-                error_context: str = 'DB Operation') -> list | None: ...
-
-
-@overload
-def _db_execute(sql: str, params: tuple = None, fetch: Literal[FetchMode.ROWCOUNT] = FetchMode.NONE,
-                error_context: str = 'DB Operation') -> int | None: ...
-
-
-def _db_execute(sql: str, params: tuple = None, fetch: FetchMode = FetchMode.NONE,
-                error_context: str = 'DB Operation'):
-    conn = None
-    try:
-        conn = psycopg2.connect(**DB_KWARGS)
-    except psycopg2.OperationalError:
-        msg = f"{error_context}: Unable to connect to Postgres database."
-        logger.error(msg)
-        return
-    except Exception:
-        msg = f"{error_context}: encountered DB error."
-        logger.error(msg)
-        return
-
-    try:
-        with conn, conn.cursor() as cur:
-            cur.execute(sql, params or ())
-            if fetch == FetchMode.ONE:
-                return cur.fetchone() or ()
-            elif fetch == FetchMode.ALL:
-                return cur.fetchall() or []
-            elif fetch == FetchMode.ROWCOUNT:
-                return cur.rowcount or 0
-            elif fetch == FetchMode.NONE:
-                return True
-
-    except Exception as e:
-        msg = f"{error_context}: SQL execution failed."
-        logger.error(msg)
-        return
-    finally:
-        if conn:
-            conn.close()
 
 
 # ---------------------------------------------------------------------------
@@ -120,22 +49,28 @@ def _acquire_lock(caller: str) -> bool:
        """
     params = (caller, STALE_LOCK_MINUTES)
 
-    acquired = _db_execute(sql=sql, params=params, fetch=FetchMode.ONE, error_context='Acquire-Lock')
+    try:
+        with db_cursor(error_context='Acquire-Lock') as cur:
+            cur.execute(sql, params)
+            acquired = cur.fetchone()
+        return bool(acquired)
+    except Exception:
+        return False
 
-    return bool(acquired)
 
-
-def _release_lock() -> None:
-    """Release the dbt_lock."""
+def _release_lock():
+    """Release the dbt_lock. Returns True if released, None on error."""
 
     sql = """UPDATE dbt_lock
                    SET locked = false, locked_at = null, locked_by = null
                    WHERE id = 1;"""
-    released = _db_execute(sql=sql, fetch=FetchMode.NONE, error_context='Release-Lock')
 
-    if not released:
-        # Raise Error
-        return
+    try:
+        with db_cursor(error_context='Release-Lock') as cur:
+            cur.execute(sql)
+        return True
+    except Exception:
+        return None
 
 
 def _lock_status() -> Dict[str, Any]:
@@ -143,11 +78,14 @@ def _lock_status() -> Dict[str, Any]:
 
     sql = """SELECT locked, locked_at, locked_by FROM dbt_lock WHERE id = 1"""
 
-    status = _db_execute(sql=sql, fetch=FetchMode.ONE, error_context='Lock-Status')
-
-    if status is None:
+    try:
+        with db_cursor(error_context='Lock-Status') as cur:
+            cur.execute(sql)
+            status = cur.fetchone()
+    except Exception:
         return {"locked": True, "locked_at": None, "locked_by": "DB Error"}
-    elif status == ():
+
+    if status is None or status == ():
         return {"locked": False, "locked_at": None, "locked_by": None}
     else:
         return {
@@ -177,12 +115,12 @@ def _record_run(started_at: datetime, finished_at: datetime, ok: bool,
     params = (started_at, finished_at, duration_s, ok, intent,
               " ".join(select), models_pass, models_error, models_skip, returncode)
 
-    result = _db_execute(sql=sql, params=params, fetch=FetchMode.NONE, error_context='Record-Run')
-
-    if result is not True:
+    try:
+        with db_cursor(error_context='Record-Run') as cur:
+            cur.execute(sql, params)
+        return True
+    except Exception:
         return False
-    else:
-        return result
 
 # ---------------------------------------------------------------------------
 # Intent management (DB-backed, replaces hardcoded INTENT_TO_SELECT)
@@ -200,7 +138,13 @@ def _load_intents() -> Dict[str, List[str]]:
 
     sql = """SELECT intent_name, select_args FROM dbt_intents ORDER BY intent_name"""
 
-    results = _db_execute(sql=sql, fetch=FetchMode.ALL, error_context='Load-Intents')
+    try:
+        with db_cursor(error_context='Load-Intents') as cur:
+            cur.execute(sql)
+            results = cur.fetchall()
+    except Exception:
+        logger.warning("Could not load intents from DB, using fallback")
+        return dict(_INTENT_FALLBACK)
 
     if not results:
         logger.warning("Could not load intents from DB, using fallback")
@@ -218,12 +162,12 @@ def _save_intent(intent_name: str, select_args: List[str]) -> bool:
                SET select_args = EXCLUDED.select_args, updated_at = now()"""
     params = (intent_name, select_args)
 
-    result = _db_execute(sql=sql, params=params, fetch=FetchMode.NONE, error_context='Save-Intent')
-
-    if not result:
+    try:
+        with db_cursor(error_context='Save-Intent') as cur:
+            cur.execute(sql, params)
+        return True
+    except Exception:
         return False
-    else:
-        return result
 
 
 def _delete_intent(intent_name: str) -> bool:
@@ -231,9 +175,13 @@ def _delete_intent(intent_name: str) -> bool:
     sql = """DELETE FROM dbt_intents WHERE intent_name = %s"""
     params = (intent_name,)
 
-    result = _db_execute(sql=sql, params=params, fetch=FetchMode.ROWCOUNT, error_context='Delete-Intent')
-
-    return bool(result)
+    try:
+        with db_cursor(error_context='Delete-Intent') as cur:
+            cur.execute(sql, params)
+            rowcount = cur.rowcount
+        return bool(rowcount)
+    except Exception:
+        return False
 
 
 SAFE_TOKEN = re.compile(r"^[A-Za-z0-9_:+.@/-]+$")
