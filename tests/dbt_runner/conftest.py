@@ -1,5 +1,7 @@
 import pytest
 from datetime import datetime
+from dbt_runner.app import app
+from fastapi.testclient import TestClient
 
 
 @pytest.fixture
@@ -23,4 +25,37 @@ def record_run_defaults():
         "select": ["model_a", "model_b"],
         "stdout": "PASS=5 WARN=0 ERROR=0 SKIP=1",
         "returncode": 0,
+    }
+
+
+@pytest.fixture
+def mock_client():
+    return TestClient(app)
+
+
+@pytest.fixture
+def mock_log_file_not_found(mocker):
+    return mocker.patch("builtins.open", side_effect=FileNotFoundError)
+
+@pytest.fixture
+def mock_log_permission_error(mocker):
+    return mocker.patch("builtins.open", side_effect=PermissionError)
+
+@pytest.fixture
+def mock_log_file(mocker):
+    fake_lines = [f"line {i}\n" for i in range(300)]
+    mock_file = mocker.mock_open()
+    mock_file.return_value.__enter__.return_value.readlines.return_value = fake_lines
+    return mocker.patch("builtins.open", mock_file)
+
+
+@pytest.fixture
+def mock_dbt_build_happy_path(mocker):
+    """Standard mocks for dbt_build tests"""
+    return {
+        "acquire_lock": mocker.patch("dbt_runner.app._acquire_lock", return_value=True),
+        "release_lock": mocker.patch("dbt_runner.app._release_lock", return_value=True),
+        "record_run": mocker.patch("dbt_runner.app._record_run", return_value=True),
+        "load_intents": mocker.patch("dbt_runner.app._load_intents", return_value={"after_srp": ["model_a"]}),
+        "subprocess_run": mocker.patch("subprocess.run"),
     }

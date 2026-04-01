@@ -2,6 +2,7 @@ import pytest
 
 from dbt_runner import app
 from datetime import datetime as dt
+from fastapi import HTTPException
 
 
 def test_db_execute_connect_error(mock_db_connection_error, mock_logger_error):
@@ -393,14 +394,6 @@ def test_delete_intent_no_rows_deleted(mock_cursor_context):
     assert result is False
 
 
-# def test_validate_tokens_is_valid_token():
-
-
-# def test_validate_tokens_is_invalid_token():
-
-
-# def test_validate_tokens_is_empty_token():
-
 # Invalid token patterns
 INVALID_TOKENS = [
     "model one",          # space
@@ -430,7 +423,309 @@ def test_validate_tokens_invalid(token):
         app._validate_tokens([token], "test_field")
     assert exc_info.value.status_code == 400
 
+
 @pytest.mark.parametrize("token", VALID_TOKENS)
 def test_validate_tokens_valid(token):
     # Should not raise
     app._validate_tokens([token], "test_field")
+
+
+def test_cap_short_string():
+    result = app._cap("This is a short string.")
+    assert result == "This is a short string."
+
+
+def test_cap_short_limit():
+    result = app._cap(s="This is a short string.", limit=5)
+    assert result == "ring."
+
+
+def test_cap_max_length():
+    long_string = 'a' * 25000
+    result = app._cap(s=long_string)
+    assert len(result) == 20000
+    assert result == 'a'*20000
+
+
+def test_cap_none_value():
+    result = app._cap(s=None)
+    assert result == ""
+
+
+def test_cap_empty_string():
+    result = app._cap(s="")
+    assert result == ""
+    
+
+def test_get_health(mock_client):
+    response = mock_client.get("/health")
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
+
+
+def test_get_logs_file_not_found(mock_client, mock_log_file_not_found):
+    response = mock_client.get("/logs")
+    assert response.json() == {"lines": []}
+    assert response.status_code == 200
+
+
+def test_get_logs_permission_error(mock_client, mock_log_permission_error):
+    with pytest.raises(PermissionError):
+        response = mock_client.get("/logs")
+
+
+def test_get_logs_default(mock_client, mock_log_file):
+    response = mock_client.get("/logs")
+    assert response.status_code == 200
+    assert len(response.json()["lines"]) == 200
+
+
+def test_get_logs_custom_lines(mock_client, mock_log_file):
+    response = mock_client.get("/logs?lines=50")
+    assert len(response.json()["lines"]) == 50
+    assert response.status_code == 200
+
+
+def test_get_lock_status(mock_client, mocker):
+    mocker.patch("dbt_runner.app._lock_status", return_value={"locked": False, "locked_at": None, "locked_by": None})
+    response = mock_client.get("/dbt/lock")
+    assert response.status_code == 200
+
+
+def test_get_intents_normal(mock_client, mocker):
+    mocker.patch("dbt_runner.app._load_intents", return_value={"after_srp": ["model_a", "model_b"]})
+    response = mock_client.get("/dbt/intents")
+    assert response.status_code == 200
+    assert response.json() == {"intents": {"after_srp": {"select": ["model_a", "model_b"]}}}
+
+
+def test_get_intents_fallback(mock_client, mocker):
+    mocker.patch("dbt_runner.app._load_intents", return_value={
+                    "after_srp": ["stg_raw_artifacts+", "stg_srp_observations+", "stg_detail_carousel_hints+"],
+                    "after_detail": ["stg_raw_artifacts+", "stg_detail_observations+", "stg_detail_carousel_hints+"],
+    })
+    response = mock_client.get("/dbt/intents")
+    assert response.status_code == 200
+    assert response.json() == {"intents": {
+                                "after_srp": { "select": ["stg_raw_artifacts+", "stg_srp_observations+", "stg_detail_carousel_hints+"]},
+                                "after_detail": {"select": ["stg_raw_artifacts+", "stg_detail_observations+", "stg_detail_carousel_hints+"]},
+                                }}
+    
+
+def test_set_intents_no_select_args(mock_client, mocker):
+    mocker.patch("dbt_runner.app._save_intent", return_value=True)
+    response = mock_client.post("/dbt/intents", json={"intent_name": "after_srp"})
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "intent_name": "after_srp", "select_args": []}
+
+
+def test_set_intents_no_intent(mock_client, mocker):
+    response = mock_client.post("/dbt/intents", json={"select_args": ["model_a"]})
+    assert response.status_code == 400
+    assert "intent_name is required" in response.json()["detail"]
+
+
+def test_set_intents_with_select_args(mock_client, mocker):
+    mocker.patch("dbt_runner.app._save_intent", return_value=True)
+    response = mock_client.post("/dbt/intents", json={"intent_name": "after_srp", "select_args": "model_a model_b"})
+    assert response.status_code == 200
+    assert response.json()["select_args"] == ["model_a", "model_b"]
+
+
+def test_set_intents_invalid_tokens(mock_client, mocker):
+    response = mock_client.post("/dbt/intents", json={"intent_name": "after_srp", "select_args": ["model a"]})
+    assert response.status_code == 400
+
+
+def test_set_intents_failed_to_save(mock_client, mocker):
+    mocker.patch("dbt_runner.app._save_intent", return_value=False)
+    response = mock_client.post("/dbt/intents", json={"intent_name": "after_srp", "select_args": ["model_a"]})
+    assert response.status_code == 409
+    assert response.json()["detail"] == "failed to write to DB"
+
+
+def test_delete_intents_success(mock_client, mocker):
+    mocker.patch("dbt_runner.app._delete_intent", return_value=True)
+    response = mock_client.delete("/dbt/intents/after_srp")
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "deleted": "after_srp"}
+
+
+def test_delete_intents_failure(mock_client, mocker):
+    mocker.patch("dbt_runner.app._delete_intent", return_value=False)
+    response = mock_client.delete("/dbt/intents/nonexistent")
+    assert response.status_code == 404
+    assert "not found" in response.json()["detail"]
+
+
+def test_get_docs_status_available(mock_client, mocker):
+    mocker.patch("os.path.exists", return_value=True)
+    response = mock_client.get("/dbt/docs/status")
+    assert response.status_code == 200
+    assert response.json() == {"available": True}
+
+
+def test_get_docs_status_not_available(mock_client, mocker):
+    mocker.patch("os.path.exists", return_value=False)
+    response = mock_client.get("/dbt/docs/status")
+    assert response.status_code == 200
+    assert response.json() == {"available": False}
+
+
+def test_get_docs_status_permission_error(mock_client, mocker):
+    mocker.patch("os.path.exists", side_effect=PermissionError)
+    with pytest.raises(PermissionError):
+        response = mock_client.get("/dbt/docs/status")
+
+
+def test_dbt_docs_generate_success(mock_client, mocker):
+    mock_run = mocker.patch("subprocess.run")
+    # First call (dbt deps), second call (dbt docs generate)
+    mock_run.side_effect = [
+        mocker.MagicMock(returncode=0, stdout="deps ok", stderr=""),
+        mocker.MagicMock(returncode=0, stdout="docs ok", stderr=""),
+    ]
+    response = mock_client.post("/dbt/docs/generate")
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+
+
+def test_dbt_docs_generate_packages_missing(mock_client, mocker):
+    mocker.patch("subprocess.run", return_value=mocker.MagicMock(returncode=1, stdout="", stderr="error: packages not found"))
+    response = mock_client.post("/dbt/docs/generate")
+    assert response.status_code == 500
+
+
+def test_dbt_docs_generate_failed_to_generate(mock_client, mocker):
+    mock_run = mocker.patch("subprocess.run")
+    # First call (dbt deps) succeeds, second call (dbt docs generate) fails
+    mock_run.side_effect = [
+        mocker.MagicMock(returncode=0, stdout="deps ok", stderr=""),
+        mocker.MagicMock(returncode=1, stdout="", stderr="error: generation failed"),
+    ]
+    response = mock_client.post("/dbt/docs/generate")
+    assert response.status_code == 500
+
+
+def test_dbt_build_with_intent_no_select(mock_client, mock_dbt_build_happy_path, mocker):
+    mock_dbt_build_happy_path["subprocess_run"].return_value = \
+        mocker.MagicMock(returncode=0, stdout="ok", stderr="")
+    response = mock_client.post("/dbt/build", json={"intent": "after_srp"})
+    assert response.status_code == 200
+    assert response.json()["select"] == ["model_a"]
+
+
+def test_dbt_build_no_intent_with_select(mock_client, mock_dbt_build_happy_path, mocker):
+    mock_dbt_build_happy_path["subprocess_run"].return_value = \
+        mocker.MagicMock(returncode=0, stdout="ok", stderr="")
+    response = mock_client.post("/dbt/build", json={"select": ["model_a"]})
+    assert response.status_code == 200
+    assert response.json()["intent"] is None
+
+
+def test_dbt_build_with_intent_with_select(mock_client, mock_dbt_build_happy_path, mocker):
+    mock_dbt_build_happy_path["subprocess_run"].return_value = \
+        mocker.MagicMock(returncode=0, stdout="ok", stderr="")
+    response = mock_client.post("/dbt/build", json={"intent": "after_srp", "select": ["model_x"]})
+    assert response.status_code == 200
+    assert response.json()["select"] == ["model_x"]
+
+
+def test_dbt_build_no_intent_no_select(mock_client, mocker):
+    response = mock_client.post("/dbt/build", json={})
+    assert response.status_code == 400
+    assert "Provide either 'intent' or 'select'" in response.json()["detail"]
+
+
+def test_dbt_build_with_intent_no_select_bad_intent(mock_client, mocker):
+    mocker.patch("dbt_runner.app._load_intents", return_value={"after_srp": ["model_a"]})
+    response = mock_client.post("/dbt/build", json={"intent": "unknown_intent"})
+    assert response.status_code == 400
+    assert "Unknown intent" in response.json()["detail"]
+
+
+def test_dbt_build_select_invalid_tokens(mock_client):
+    response = mock_client.post("/dbt/build", json={"select": ["model a"]})
+    assert response.status_code == 400
+
+
+def test_dbt_build_exclude_invalid_tokens(mock_client):
+    response = mock_client.post("/dbt/build", json={"select": ["model_a"], "exclude": ["model#tag"]})
+    assert response.status_code == 400
+
+
+def test_dbt_build_succeeds(mock_client, mock_dbt_build_happy_path, mocker):
+    mock_dbt_build_happy_path["subprocess_run"].return_value = \
+        mocker.MagicMock(returncode=0, stdout="ok", stderr="")
+    response = mock_client.post("/dbt/build", json={"select": ["model_a"]})
+    assert response.status_code == 200
+    assert mock_dbt_build_happy_path["release_lock"].called
+
+
+def test_dbt_build_fails(mock_client, mock_dbt_build_happy_path, mocker):
+    mock_dbt_build_happy_path["subprocess_run"].return_value = \
+        mocker.MagicMock(returncode=1, stdout="error output", stderr="error")
+    response = mock_client.post("/dbt/build", json={"select": ["model_a"]})
+    assert response.status_code == 500
+
+
+def test_dbt_build_lock_held(mock_client, mocker):
+    mocker.patch("dbt_runner.app._acquire_lock", return_value=False)
+    mocker.patch("dbt_runner.app._lock_status", return_value={"locked": True, "locked_by": "other_caller"})
+    response = mock_client.post("/dbt/build", json={"select": ["model_a"]})
+    assert response.status_code == 409
+    assert response.json()["detail"]["error"] == "dbt_locked"
+
+
+def test_dbt_build_record_run_called(mock_client, mock_dbt_build_happy_path, mocker):
+    mock_dbt_build_happy_path["subprocess_run"].return_value = \
+        mocker.MagicMock(returncode=0, stdout="ok", stderr="")
+    response = mock_client.post("/dbt/build", json={"intent": "after_srp"})
+    assert response.status_code == 200
+    mock_dbt_build_happy_path["record_run"].assert_called_once()
+    call_args = mock_dbt_build_happy_path["record_run"].call_args[0]
+    assert call_args[3] == "after_srp"  # intent
+    assert call_args[4] == ["model_a"]  # select
+
+
+def test_dbt_build_record_failed(mock_client, mock_dbt_build_happy_path, mock_logger_error, mocker):
+    mock_dbt_build_happy_path["subprocess_run"].return_value = \
+        mocker.MagicMock(returncode=0, stdout="ok", stderr="")
+    mock_dbt_build_happy_path["record_run"].return_value = False
+    response = mock_client.post("/dbt/build", json={"select": ["model_a"]})
+    assert response.status_code == 200  # Request succeeded despite record failure
+    assert "Logging Run Failed" in mock_logger_error.call_args[0][0]
+
+
+def test_dbt_build_lock_release_fails(mock_client, mocker, mock_logger_error, mock_dbt_build_happy_path):
+    mock_dbt_build_happy_path["subprocess_run"].return_value = \
+        mocker.MagicMock(returncode=0, stdout="ok", stderr="")
+    mock_dbt_build_happy_path["release_lock"].return_value = False
+
+    response = mock_client.post("/dbt/build", json={"select": ["model_a"]})
+    assert response.status_code == 200  # Build succeeded, but lock release failed
+    assert "Failed to release dbt lock" in mock_logger_error.call_args[0][0]
+
+
+def test_dbt_build_select_as_string(mock_client, mock_dbt_build_happy_path, mocker):
+    mock_dbt_build_happy_path["subprocess_run"].return_value = \
+        mocker.MagicMock(returncode=0, stdout="ok", stderr="")
+    response = mock_client.post("/dbt/build", json={"select": "model_a"})
+    assert response.status_code == 200
+    assert response.json()["select"] == ["model_a"]
+
+
+def test_dbt_build_exclude_as_string(mock_client, mock_dbt_build_happy_path, mocker):
+    mock_dbt_build_happy_path["subprocess_run"].return_value = \
+        mocker.MagicMock(returncode=0, stdout="ok", stderr="")
+    response = mock_client.post("/dbt/build", json={"select": ["model_a"], "exclude": "model_b"})
+    assert response.status_code == 200
+    assert "--exclude" in response.json()["cmd"]
+
+
+def test_dbt_build_full_refresh_flag(mock_client, mock_dbt_build_happy_path, mocker):
+    mock_dbt_build_happy_path["subprocess_run"].return_value = \
+        mocker.MagicMock(returncode=0, stdout="ok", stderr="")
+    response = mock_client.post("/dbt/build", json={"select": ["model_a"], "full_refresh": True})
+    assert response.status_code == 200
+    assert "--full-refresh" in response.json()["cmd"]

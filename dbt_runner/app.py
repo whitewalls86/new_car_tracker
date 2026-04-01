@@ -233,12 +233,7 @@ def _delete_intent(intent_name: str) -> bool:
 
     result = _db_execute(sql=sql, params=params, fetch=FetchMode.ROWCOUNT, error_context='Delete-Intent')
 
-    if not result:
-        return False
-    elif result > 0:
-        return True
-    else:
-        return False
+    return bool(result)
 
 
 SAFE_TOKEN = re.compile(r"^[A-Za-z0-9_:+.@/-]+$")
@@ -299,8 +294,10 @@ def upsert_intent(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
     if isinstance(select_args, str):
         select_args = [t.strip() for t in select_args.split() if t.strip()]
     _validate_tokens(select_args, "select_args")
-    _save_intent(intent_name, select_args)
-    return {"ok": True, "intent_name": intent_name, "select_args": select_args}
+    if _save_intent(intent_name, select_args):
+        return {"ok": True, "intent_name": intent_name, "select_args": select_args}
+    else:
+        raise HTTPException(status_code=409, detail="failed to write to DB")
 
 
 @app.delete("/dbt/intents/{intent_name}")
@@ -326,22 +323,29 @@ def dbt_docs_generate() -> Dict[str, Any]:
     deps = subprocess.run(["dbt", "deps"], capture_output=True, text=True)
     if deps.returncode != 0:
         logger.error("dbt deps failed (rc=%d): %s", deps.returncode, deps.stderr)
-        return {
+        raise HTTPException(status_code=500, detail={
             "ok": False,
             "returncode": deps.returncode,
             "stdout": _cap(deps.stdout),
             "stderr": _cap(deps.stderr),
-        }
+        })
 
     proc = subprocess.run(["dbt", "docs", "generate"], capture_output=True, text=True)
     ok = proc.returncode == 0
     if not ok:
         logger.error("dbt docs generate failed (rc=%d): %s", proc.returncode, proc.stderr)
+        raise HTTPException(status_code=500, detail={
+            "ok": False,
+            "returncode": proc.returncode,
+            "stdout": _cap(deps.stdout + proc.stdout),
+            "stderr": _cap(proc.stderr),
+        })
+
     return {
-        "ok": ok,
-        "returncode": proc.returncode,
+        "ok": True,
+        "returncode": 0,
         "stdout": _cap(deps.stdout + proc.stdout),
-        "stderr": _cap(proc.stderr),
+        "stderr": "",
     }
 
 
@@ -419,8 +423,8 @@ def dbt_build(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
 
         if not is_successful:
             data = {
-                "started_at": started_at,
-                "finished_at": finished_at,
+                "started_at": started_at.isoformat(),
+                "finished_at": finished_at.isoformat(),
                 "ok": ok,
                 "intent": intent,
                 "select": select,
@@ -448,7 +452,9 @@ def dbt_build(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
 
     finally:
         # --- Always release lock ---
-        _release_lock()
+        if not _release_lock():
+            logger.error("Failed to release dbt lock")
+
 
 
 # ---------------------------------------------------------------------------

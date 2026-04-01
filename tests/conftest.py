@@ -1,6 +1,7 @@
 import pytest
 from unittest.mock import MagicMock
 from psycopg2 import OperationalError, ProgrammingError, DatabaseError
+from fastapi.testclient import TestClient
 
 
 @pytest.fixture
