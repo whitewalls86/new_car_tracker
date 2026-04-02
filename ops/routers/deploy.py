@@ -5,7 +5,6 @@ import logging
 from typing import Any, Dict
 from fastapi import APIRouter
 
-from ..db import get_conn
 from shared.db import db_cursor
 
 logger = logging.getLogger("pipeline_ops")
@@ -88,7 +87,11 @@ def _set_intent(caller: str) -> bool:
     try:
         with db_cursor(error_context="Set-Intent") as cur:
             cur.execute(sql, params)
-            return cur.fetchone() is not None  
+            if cur.fetchone() is not None:
+                return True
+            else:
+                logger.warning("Intent failed to set.")
+                return False
     except Exception:
         return False
 
@@ -104,7 +107,7 @@ def _intent_release() -> bool:
                    RETURNING intent;"""
     try:
         with db_cursor(error_context="Intent-Release") as cur:
-            cur.exectute(sql, ())
+            cur.execute(sql)
             return cur.fetchone() is not None
     except Exception:
         return False
