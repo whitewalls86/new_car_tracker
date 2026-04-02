@@ -132,18 +132,6 @@ def test_set_intent_no_return(mock_cursor_context, mock_router_logger_warning):
 
 
 
-def test_get_deploy_health(mock_client):
-    assert True
-
-
-def test_set_deploy_health(mock_client):
-    assert True
-
-
-def test_set_deploy_complete(mock_client):
-    assert True
-
-
 def test_get_deploy_health(mock_client, mock_intent_status):
     response = mock_client.get("/deploy/status")
     assert response.status_code == 200
@@ -154,9 +142,21 @@ def test_set_deploy_health(mock_client, mock_set_intent):
     response = mock_client.post("/deploy/start")
     assert response.status_code == 200
     mock_set_intent.assert_called_once()
-    
+
+
+def test_set_deploy_health_db_error(mock_client, mock_set_intent):
+    mock_set_intent.return_value = False
+    response = mock_client.post("/deploy/start")
+    assert response.status_code == 503
+
 
 def test_set_deploy_complete(mock_client, mock_intent_release):
     response = mock_client.post("/deploy/complete")
     assert response.status_code == 200
     mock_intent_release.assert_called_once()
+
+
+def test_set_deploy_complete_db_error(mock_client, mock_intent_release):
+    mock_intent_release.return_value = False
+    response = mock_client.post("/deploy/complete")
+    assert response.status_code == 503

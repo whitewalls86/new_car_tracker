@@ -4,6 +4,7 @@ Shared psycopg2 connection helper and context manager.
 import logging
 import os
 import psycopg2
+from psycopg2.extras import RealDictCursor
 from contextlib import contextmanager
 
 logger = logging.getLogger(__name__)
@@ -23,7 +24,7 @@ def get_conn():
 
 
 @contextmanager
-def db_cursor(error_context="DB Operation"):
+def db_cursor(error_context="DB Operation", dict_cursor=False):
     """
     Context manager that yields a cursor, handles commit/rollback, and logs errors.
 
@@ -45,7 +46,8 @@ def db_cursor(error_context="DB Operation"):
         raise
 
     try:
-        with conn.cursor() as cur:
+        cursor_factory = RealDictCursor if dict_cursor else None
+        with conn.cursor(cursor_factory=cursor_factory) as cur:
             yield cur
             conn.commit()
     except Exception:

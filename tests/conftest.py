@@ -56,10 +56,12 @@ def mock_logger_error(mocker):
 
 @pytest.fixture
 def mock_requests(mocker):
-    """Mock requests.get, requests.post for API tests"""
+    """Mock requests.get, requests.post, requests.delete for API tests"""
     post = mocker.patch("requests.post")
     get = mocker.patch("requests.get")
+    delete = mocker.patch("requests.delete")
     return {
         'post': post,
-        'get': get
+        'get': get,
+        'delete': delete,
     }

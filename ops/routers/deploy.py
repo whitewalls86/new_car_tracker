@@ -3,7 +3,7 @@ Deploy coordination API endpoints.
 """
 import logging
 from typing import Any, Dict
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 from shared.db import db_cursor
 
@@ -122,10 +122,19 @@ def get_current_intent() -> Dict[str, Any]:
 @router.post("/deploy/start")
 def start_deploy_intent() -> bool:
     """Signals deploy intent to the system."""
-    return _set_intent("Deploy Declared")
+    result = _set_intent("Deploy Declared")
+    if result:
+        return result
+    else:
+        raise HTTPException(status_code=503, detail="Database unavailable.")
 
 
 @router.post("/deploy/complete")
 def complete_deployment() -> bool:
     """Releases the intent lock on the DB."""
-    return _intent_release()
+    result = _intent_release()
+    if result:
+        return result
+    else:
+        raise HTTPException(status_code=503, detail="Database unavailable.")
+    

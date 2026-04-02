@@ -1,0 +1,11 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Error — Cartracker Admin{% endblock %}
+
+{% block content %}
+<article>
+    <header><strong>Service Unavailable</strong></header>
+    <p>{{ message }}</p>
+    <footer><a href="javascript:history.back()" role="button" class="outline">Go Back</a></footer>
+</article>
+{% endblock %}
