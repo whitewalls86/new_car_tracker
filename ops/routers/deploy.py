@@ -3,9 +3,9 @@ Deploy coordination API endpoints.
 """
 import logging
 from typing import Any, Dict
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
-from db import get_conn
+from shared.db import db_cursor
 
 logger = logging.getLogger("pipeline_ops")
 router = APIRouter()
@@ -15,11 +15,8 @@ STALE_LOCK_MINUTES = 30
 
 def _intent_status() -> Dict[str, Any]:
     """Return current deploy intent state plus in-flight counts."""
-    try:
-        conn = get_conn()
-        with conn, conn.cursor() as cur:
-            cur.execute("""
-                WITH current_executions AS (
+
+    sql = """WITH current_executions AS (
                     SELECT
                         COUNT(execution_id) as number_running,
                         MIN(started_at) as min_started_at
@@ -49,30 +46,34 @@ def _intent_status() -> Dict[str, Any]:
                 LEFT JOIN current_runs cr ON 1=1
                 LEFT JOIN current_processing_runs cpr ON 1=1
                 WHERE di.id = 1;
-            """)
+            """
+    
+    try:
+        with db_cursor(error_context='Intent-Status') as cur:
+            cur.execute(sql)
+        
             row = cur.fetchone()
-        conn.close()
+
         if row:
-            return {
+            results = {
                 "intent": row[0],
                 "requested_at": row[1].isoformat() if row[1] else None,
                 "requested_by": row[2],
                 "number_running": row[3],
                 "min_started_at": row[4].isoformat() if row[4] else None,
             }
-        return {"intent": "none", "requested_at": None, "requested_by": None}
+        else:
+            results = {"intent": "none", "requested_at": None, "requested_by": None}
     except Exception:
-        logger.exception("Failed to read deploy_intent status")
-        return {"intent": "none", "requested_at": None, "requested_by": None}
+        results = {"intent": "none", "requested_at": None, "requested_by": None}
+
+    return results
 
 
 def _set_intent(caller: str) -> bool:
     """Atomically try to set intent. Returns True if set, False if already set."""
-    try:
-        conn = get_conn()
-        with conn, conn.cursor() as cur:
-            cur.execute(
-                """UPDATE deploy_intent
+
+    sql = """UPDATE deploy_intent
                    SET
                         intent = 'pending',
                         requested_at = now(),
@@ -80,36 +81,35 @@ def _set_intent(caller: str) -> bool:
                    WHERE id = 1
                      AND (intent = 'none'
                           OR requested_at < now() - interval '%s minutes')
-                   RETURNING intent;""",
-                (caller, STALE_LOCK_MINUTES),
-            )
-            acquired = cur.fetchone() is not None
-        conn.close()
-        return acquired
+                   RETURNING intent;"""
+    params = (caller, STALE_LOCK_MINUTES)
+
+    try:
+        with db_cursor(error_context="Set-Intent") as cur:
+            cur.execute(sql, params)
+            if cur.fetchone() is not None:
+                return True
+            else:
+                logger.warning("Intent failed to set.")
+                return False
     except Exception:
-        logger.exception("Failed to set deploy intent")
         return False
 
 
 def _intent_release() -> bool:
     """Release the deploy intent lock."""
-    try:
-        conn = get_conn()
-        with conn, conn.cursor() as cur:
-            cur.execute(
-                """UPDATE deploy_intent
+    sql = """UPDATE deploy_intent
                    SET
                        intent = 'none',
                        requested_at = NULL,
                        requested_by = NULL
                    WHERE id = 1
                    RETURNING intent;"""
-            )
-            released = cur.fetchone() is not None
-        conn.close()
-        return released
+    try:
+        with db_cursor(error_context="Intent-Release") as cur:
+            cur.execute(sql)
+            return cur.fetchone() is not None
     except Exception:
-        logger.exception("Failed to release deploy intent")
         return False
 
 
@@ -122,10 +122,19 @@ def get_current_intent() -> Dict[str, Any]:
 @router.post("/deploy/start")
 def start_deploy_intent() -> bool:
     """Signals deploy intent to the system."""
-    return _set_intent("Deploy Declared")
+    result = _set_intent("Deploy Declared")
+    if result:
+        return result
+    else:
+        raise HTTPException(status_code=503, detail="Database unavailable.")
 
 
 @router.post("/deploy/complete")
 def complete_deployment() -> bool:
     """Releases the intent lock on the DB."""
-    return _intent_release()
+    result = _intent_release()
+    if result:
+        return result
+    else:
+        raise HTTPException(status_code=503, detail="Database unavailable.")
+    

@@ -12,11 +12,9 @@ from fastapi import APIRouter, Request, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from db import get_conn
-from models.search_config import SearchConfigParams, SORT_OPTIONS, SORT_KEYS
-from routers.deploy import _intent_status, _set_intent, _intent_release
-
-from psycopg2.extras import RealDictCursor
+from shared.db import db_cursor
+from ..models.search_config import SearchConfigParams, SORT_OPTIONS, SORT_KEYS
+from ..routers.deploy import _intent_status, _set_intent, _intent_release
 
 DBT_RUNNER_URL = os.environ.get("DBT_RUNNER_URL", "http://dbt_runner:8080")
 DBT_DOCS_URL = os.environ.get("DBT_DOCS_URL", "http://localhost:8081/dbt-docs/")
@@ -53,21 +51,31 @@ def _stringify_uuids(d: dict) -> dict:
     return {k: str(v) if hasattr(v, 'hex') and hasattr(v, 'bytes') else v for k, v in d.items()}
 
 
+def _db_error_response(request: Request):
+    return templates.TemplateResponse(request=request, name="admin/error.html", context={
+        "request": request,
+        "message": "Database unavailable. Please try again later.",
+    }, status_code=503)
+
 # ---------------------------------------------------------------------------
 # Search config list
 # ---------------------------------------------------------------------------
 
 @router.get("/searches/", response_class=HTMLResponse)
 def list_searches(request: Request):
-    conn = get_conn()
-    with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        cur.execute(
-            "SELECT search_key, enabled, source, params, rotation_order, last_queued_at, created_at, updated_at "
-            "FROM search_configs ORDER BY enabled DESC, rotation_order NULLS LAST, search_key"
-        )
-        rows = cur.fetchall()
-    conn.close()
+    sql = """SELECT search_key, enabled, source, params, rotation_order, last_queued_at, created_at, updated_at
+            FROM search_configs ORDER BY enabled DESC, rotation_order NULLS LAST, search_key"""
+    
+    try:
+        with db_cursor(error_context="List-Searches", dict_cursor=True) as cur:
+            cur.execute(sql)
+            rows = cur.fetchall()
+
+    except Exception:
+        return _db_error_response(request=request)
+    
     configs = [_row_to_dict(r) for r in rows]
+
     return templates.TemplateResponse(request=request, name="admin/list.html", context={
         "request": request,
         "configs": configs,
@@ -95,17 +103,20 @@ def new_search_form(request: Request):
 
 @router.get("/runs", response_class=HTMLResponse)
 def list_runs(request: Request):
-    conn = get_conn()
-    with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        cur.execute("""
-            SELECT run_id, started_at, finished_at, status, trigger,
+
+    sql = """SELECT run_id, started_at, finished_at, status, trigger,
                    progress_count, total_count, error_count, last_error, notes
             FROM runs
             ORDER BY started_at DESC
-            LIMIT 20
-        """)
-        rows = cur.fetchall()
-    conn.close()
+            LIMIT 20"""
+    
+    try:
+        with db_cursor(error_context="Get-Runs", dict_cursor=True) as cur:
+            cur.execute(sql)
+            rows = cur.fetchall()
+    except Exception:
+        return _db_error_response(request=request)
+
     runs = [_stringify_uuids(dict(r)) for r in rows]
     return templates.TemplateResponse(request=request, name="admin/runs.html", context={
         "request": request,
@@ -115,26 +126,35 @@ def list_runs(request: Request):
 
 @router.get("/runs/{run_id}", response_class=HTMLResponse)
 def run_detail(request: Request, run_id: str):
-    conn = get_conn()
-    with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        cur.execute("""
+    sql_runs = """
             SELECT run_id, started_at, finished_at, status, trigger,
                    progress_count, total_count, error_count, last_error, notes
             FROM runs WHERE run_id = %s
-        """, (run_id,))
-        run = cur.fetchone()
-        if not run:
-            conn.close()
-            return RedirectResponse(url="/admin/runs", status_code=303)
-        cur.execute("""
+        """
+    sql_jobs = """
             SELECT job_id, search_key, scope, status, created_at,
                    started_at, completed_at, artifact_count, error, retry_count
             FROM scrape_jobs
             WHERE run_id = %s
             ORDER BY created_at
-        """, (run_id,))
-        jobs = cur.fetchall()
-    conn.close()
+        """
+    params = (run_id,)
+    run = None
+    jobs = []
+
+    try:
+        with db_cursor(error_context="Get-Runs", dict_cursor=True) as cur:
+            cur.execute(sql=sql_runs, params=params)
+            run = cur.fetchone()
+
+            if not run:
+                return RedirectResponse(url="/admin/runs", status_code=303)
+            
+            cur.execute(sql=sql_jobs, params=params)
+            jobs = cur.fetchall()
+    except Exception:
+        return _db_error_response(request=request)
+
     return templates.TemplateResponse(request=request, name="admin/run_detail.html", context={
         "request": request,
         "run": _stringify_uuids(dict(run)),
@@ -341,15 +361,19 @@ def deploy_complete(request: Request):
 
 @router.get("/searches/{search_key}/edit", response_class=HTMLResponse)
 def edit_search_form(request: Request, search_key: str):
-    conn = get_conn()
-    with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        cur.execute(
-            "SELECT search_key, enabled, source, params, rotation_order, last_queued_at "
-            "FROM search_configs WHERE search_key = %s",
-            (search_key,),
-        )
-        row = cur.fetchone()
-    conn.close()
+
+    sql = """SELECT search_key, enabled, source, params, rotation_order, last_queued_at
+            FROM search_configs WHERE search_key = %s;"""
+    params = (search_key,)
+
+    try:
+        with db_cursor(error_context="Edit Searches", dict_cursor=True) as cur:
+            cur.execute(sql, params)
+            row = cur.fetchone()
+    
+    except Exception:
+        return _db_error_response(request=request)
+    
     if not row:
         return RedirectResponse(url="/admin/searches/", status_code=303)
 
@@ -421,32 +445,27 @@ def create_search(
             "sort_options": SORT_OPTIONS,
             "error": str(e),
         }, status_code=422)
+    
 
-    conn = get_conn()
+    sql = """INSERT INTO search_configs (search_key, enabled, params, rotation_order, created_at, updated_at)
+             VALUES (%s, %s, %s::jsonb, %s, now(), now());"""
+    
+    sql_params = (key, enabled, json.dumps(params.model_dump()), rotation_order)
+
     try:
-        with conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO search_configs (search_key, enabled, params, rotation_order, created_at, updated_at) "
-                "VALUES (%s, %s, %s::jsonb, %s, now(), now())",
-                (key, enabled, json.dumps(params.model_dump()), rotation_order),
-            )
-        conn.commit()
+        with db_cursor(error_context="Create-Search") as cur:
+            cur.execute(sql=sql, params=sql_params)
+
     except Exception as e:
-        conn.rollback()
         if "duplicate key" in str(e).lower():
-            error = f"Search key '{key}' already exists."
-        else:
-            error = str(e)
-        conn.close()
-        return templates.TemplateResponse(request=request, name="admin/form.html", context={
-            "request": request,
-            "editing": False,
-            "config": {"search_key": key, "enabled": enabled, "params": params.model_dump()},
-            "sort_options": SORT_OPTIONS,
-            "error": error,
-        }, status_code=422)
-    finally:
-        conn.close()
+            return templates.TemplateResponse(request=request, name="admin/form.html", context={
+                "request": request,
+                "editing": False,
+                "config": {"search_key": key, "enabled": enabled, "params": params.model_dump()},
+                "sort_options": SORT_OPTIONS,
+                "error": f"Search key '{key}' already exists.",
+            }, status_code=422)
+        return _db_error_response(request=request)
 
     return RedirectResponse(url="/admin/searches/", status_code=303)
 
@@ -508,16 +527,18 @@ def update_search(
             "sort_options": SORT_OPTIONS,
             "error": str(e),
         }, status_code=422)
+    
 
-    conn = get_conn()
-    with conn.cursor() as cur:
-        cur.execute(
-            "UPDATE search_configs SET enabled = %s, params = %s::jsonb, rotation_order = %s, updated_at = now() "
-            "WHERE search_key = %s",
-            (enabled, json.dumps(params.model_dump()), rotation_order, search_key),
-        )
-    conn.commit()
-    conn.close()
+    sql = """UPDATE search_configs SET enabled = %s, params = %s::jsonb, rotation_order = %s, rotation_slot = %s, updated_at = now()
+            WHERE search_key = %s;"""
+    sql_params = (enabled, json.dumps(params.model_dump()), rotation_order, search_key)
+
+    try:
+        with db_cursor(error_context="Update-Search") as cur:
+            cur.execute(sql=sql, params=sql_params)
+    except Exception:
+        return _db_error_response(request=request)
+
     return RedirectResponse(url="/admin/searches/", status_code=303)
 
 
@@ -526,16 +547,18 @@ def update_search(
 # ---------------------------------------------------------------------------
 
 @router.post("/searches/{search_key}/toggle")
-def toggle_search(search_key: str):
-    conn = get_conn()
-    with conn.cursor() as cur:
-        cur.execute(
-            "UPDATE search_configs SET enabled = NOT enabled, updated_at = now() "
-            "WHERE search_key = %s",
-            (search_key,),
-        )
-    conn.commit()
-    conn.close()
+def toggle_search(request: Request, search_key: str):
+
+    sql = """UPDATE search_configs SET enabled = NOT enabled, updated_at = now()
+             WHERE search_key = %s;"""
+    params = (search_key,)
+
+    try:
+        with db_cursor(error_context="Toggle-Search") as cur:
+            cur.execute(sql=sql, params=params)
+    except Exception:
+        return _db_error_response(request=request)
+    
     return RedirectResponse(url="/admin/searches/", status_code=303)
 
 
@@ -544,15 +567,17 @@ def toggle_search(search_key: str):
 # ---------------------------------------------------------------------------
 
 @router.post("/searches/{search_key}/delete")
-def delete_search(search_key: str):
-    conn = get_conn()
+def delete_search(request: Request, search_key: str):
     deleted_key = f"_deleted_{search_key}_{int(datetime.now(UTC).timestamp())}"
-    with conn.cursor() as cur:
-        cur.execute(
-            "UPDATE search_configs SET enabled = false, search_key = %s, updated_at = now() "
-            "WHERE search_key = %s",
-            (deleted_key, search_key),
-        )
-    conn.commit()
-    conn.close()
+
+    sql = """UPDATE search_configs SET enabled = false, search_key = %s, updated_at = now()
+            WHERE search_key = %s;"""
+    params = (deleted_key, search_key)
+
+    try:
+        with db_cursor(error_context="Delete-Search") as cur:
+            cur.execute(sql, params)
+    except Exception:
+        return _db_error_response(request=request)
+
     return RedirectResponse(url="/admin/searches/", status_code=303)

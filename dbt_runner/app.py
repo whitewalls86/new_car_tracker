@@ -181,7 +181,7 @@ def _delete_intent(intent_name: str) -> bool:
             rowcount = cur.rowcount
         return bool(rowcount)
     except Exception:
-        return False
+        return None
 
 
 SAFE_TOKEN = re.compile(r"^[A-Za-z0-9_:+.@/-]+$")
@@ -245,13 +245,15 @@ def upsert_intent(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
     if _save_intent(intent_name, select_args):
         return {"ok": True, "intent_name": intent_name, "select_args": select_args}
     else:
-        raise HTTPException(status_code=409, detail="failed to write to DB")
+        raise HTTPException(status_code=503, detail="Database unavailable.")
 
 
 @app.delete("/dbt/intents/{intent_name}")
 def delete_intent(intent_name: str) -> Dict[str, Any]:
     """Delete an intent by name."""
     deleted = _delete_intent(intent_name)
+    if deleted is None:
+        raise HTTPException(status_code=503, detail="Database unavailable.")
     if not deleted:
         raise HTTPException(status_code=404, detail=f"Intent {intent_name!r} not found")
     return {"ok": True, "deleted": intent_name}

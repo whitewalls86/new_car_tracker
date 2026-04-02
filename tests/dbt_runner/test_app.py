@@ -272,19 +272,19 @@ def test_save_intent_no_intent(mock_cursor_context):
 
 def test_delete_intent_connection_error(mock_db_connection_error, mock_logger_error):
     result = app._delete_intent(intent_name="after_detail")
-    assert result is False
+    assert result is None
     assert "Delete-Intent: Unable to connect to Postgres database." in mock_logger_error.call_args[0][0]
 
 
 def test_delete_intent_sql_error(mock_db_sql_error, mock_logger_error):
     result = app._delete_intent(intent_name="after_detail")
-    assert result is False
+    assert result is None
     assert "Delete-Intent: SQL execution failed." in mock_logger_error.call_args[0][0]
 
 
 def test_delete_intent_database_error(mock_db_database_error, mock_logger_error):
     result = app._delete_intent(intent_name="after_detail")
-    assert result is False
+    assert result is None
     assert "Delete-Intent: encountered DB error." in mock_logger_error.call_args[0][0]
 
 
@@ -448,8 +448,7 @@ def test_set_intents_invalid_tokens(mock_client, mocker):
 def test_set_intents_failed_to_save(mock_client, mocker):
     mocker.patch("dbt_runner.app._save_intent", return_value=False)
     response = mock_client.post("/dbt/intents", json={"intent_name": "after_srp", "select_args": ["model_a"]})
-    assert response.status_code == 409
-    assert response.json()["detail"] == "failed to write to DB"
+    assert response.status_code == 503
 
 
 def test_delete_intents_success(mock_client, mocker):
@@ -459,11 +458,17 @@ def test_delete_intents_success(mock_client, mocker):
     assert response.json() == {"ok": True, "deleted": "after_srp"}
 
 
-def test_delete_intents_failure(mock_client, mocker):
+def test_delete_intents_not_found(mock_client, mocker):
     mocker.patch("dbt_runner.app._delete_intent", return_value=False)
     response = mock_client.delete("/dbt/intents/nonexistent")
     assert response.status_code == 404
     assert "not found" in response.json()["detail"]
+
+
+def test_delete_intents_db_error(mock_client, mocker):
+    mocker.patch("dbt_runner.app._delete_intent", return_value=None)
+    response = mock_client.delete("/dbt/intents/after_srp")
+    assert response.status_code == 503
 
 
 def test_get_docs_status_available(mock_client, mocker):

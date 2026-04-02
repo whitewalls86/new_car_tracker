@@ -27,7 +27,7 @@ class SearchConfigParams(BaseModel):
     radius_miles: int = 150
     scopes: List[str] = ["local", "national"]
     max_listings: int = 2000
-    max_safety_pages: int = 500
+    max_safety_pages: int = 50
     sort_order: Optional[str] = "best_match_desc"
     sort_rotation: Optional[List[str]] = None
 
@@ -52,7 +52,7 @@ class SearchConfigParams(BaseModel):
         for s in v:
             if s not in valid:
                 raise ValueError(f"Invalid scope: {s}. Must be 'local' or 'national'")
-        if not v:
+        if not v or all(not item.strip() for item in v):
             raise ValueError("At least one scope is required")
         return v
 
