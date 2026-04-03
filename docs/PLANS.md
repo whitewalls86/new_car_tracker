@@ -76,6 +76,7 @@
 
 | Priority | Item | Notes |
 |----------|------|-------|
+| 1 | **79** — Multi-instance detail scraping + artifact pipeline refactor | Scraper writes artifacts to DB directly, batch detail endpoint, round-robin workers, retire Job Poller |
 | 2 | **73** — Scraper code review & refactor | Full quality pass + structural split; includes SRP breakpoint fix |
 | 3 | **61** — Python unit tests | pytest for scraper, dbt_runner, and ops admin logic |
 | 4 | **62** — CI/CD (GitHub Actions) | Automated lint, type check, pytest, docker build, dbt test on every PR |
@@ -760,4 +761,88 @@ This releases any claims whose `run_id` doesn't match an actively running scrape
 | `lifespan` startup | Orphan recovery | **Removed** — handled by n8n Orphan Checker (Plan 59) |
 | `_fetch_known_vins` | Reads `analytics.int_vehicle_attributes` | **Documented exception** — payload size makes HTTP impractical |
 | `POST /search_configs/advance_rotation` | Reads/writes `search_configs` + `runs` | **Remaining** — pure orchestration logic still in scraper |
+
+---
+
+## Plan 79: Multi-Instance Detail Scraping + Artifact Pipeline Refactor
+
+**Status:** Not started
+**Priority:** Highest — blocking on 403 rate limiting; prerequisite for Plan 68 (cloud deployment)
+
+Cars.com flagged our IP after sustained 50K+/day scraping over multiple days. Even at low rates the IP gets intermittent 403 blocks. The fix is distributing detail scraping across multiple Oracle Cloud Free Tier instances (each with its own public IP) at ~800/hr per instance (~2,400/hr total, enough for a 24h refresh of ~55K active listings).
+
+This requires a deeper refactor: both SRP and detail scrapes must write artifacts (including raw HTML) directly to Postgres so that n8n no longer needs to carry ~500KB-1.2MB HTML payloads through its JSON pipeline. This eliminates the Job Poller workflow entirely.
+
+### Architecture
+
+```
+Central VM
+  n8n:
+    "Scrape Listings"       -> POST http://scraper:8000/scrape_results (unchanged trigger)
+    "Scrape Detail Batch"   -> POST http://{{ round-robin worker }}/scrape_detail_batch
+    "Results Processing"    -> finds unprocessed artifacts, parses by type
+    (Job Poller removed, Parse Detail Pages folded into Results Processing)
+
+  postgres (central)
+  scraper (local — SRP + detail + parsing)
+
+Worker VM A (detail-scraper, slim)  -> own public IP
+Worker VM B (detail-scraper, slim)  -> own public IP
+```
+
+### Implementation Steps
+
+**Phase 1 — Schema:**
+1. Add `raw_html bytea` column to `raw_artifacts`
+2. Create `detail_worker_hosts` table (host_url PK, enabled, last_used_at) for round-robin routing
+
+**Phase 2 — Scraper writes artifacts to DB:**
+3a. `scrape_detail_fetch()` returns `raw_html` bytes in artifact dict
+3b. `scrape_results()` (SRP) returns `raw_html` bytes in artifact dict
+3c. New `insert_artifacts_sync()` function — psycopg2 batch INSERT with raw_html
+3d. `_run_scrape_job` (SRP) inserts artifacts to DB directly, stores metadata only in job store
+3e. Scraper background threads update `runs` table directly (progress, status, errors)
+4. New `POST /scrape_detail_batch` endpoint — accepts batch of listings, queues background job, writes artifacts to DB
+5. Simplify `/scrape_results/jobs/completed` to return metadata only (no artifacts, no HTML)
+
+**Phase 3 — n8n refactor:**
+6. New "Scrape Detail Batch" workflow — round-robin worker selection, batch submit, lightweight polling
+7. Update "Scrape Listings" — remove Job Poller dependency, add inline completion polling
+8. New unified "Results Processing" workflow — picks up unprocessed artifacts by type, routes to parsers, replaces Parse Detail Pages
+
+**Phase 4 — Parsing fallback:**
+9. `/process/detail_pages` falls back to `raw_html` from DB when filepath unavailable
+
+**Phase 5 — Slim image:**
+10. `detail_scraper/` service — FastAPI with batch endpoint + job management, curl_cffi + psycopg2 only (~200MB image), no Playwright/SRP/parsing
+
+**Phase 6 — Deploy:**
+Oracle Cloud ARM instances, each with own public IP, connect to central Postgres over VCN
+
+### n8n workflows retired
+| Workflow | Replaced by |
+|----------|-------------|
+| Job Poller | Inline polling in each scrape workflow |
+| Scrape Detail Pages | Scrape Detail Batch |
+| Parse Detail Pages | Results Processing |
+
+### Key design decisions
+- **Dual-write for now:** files still written to disk alongside DB storage; cut files later once DB path is proven
+- **Round-robin via DB table:** `detail_worker_hosts` — add/remove workers by editing rows, no workflow changes
+- **Lightweight polling:** n8n polls `/scrape_results/jobs/completed` for metadata (status, counts, errors) — no HTML in responses
+- **Unified parsing:** one "Results Processing" workflow handles both `detail_page` and `results_page` artifacts
+
+### Files to create
+- `detail_scraper/app.py`, `detail_scraper/processors/scrape_detail.py`, `detail_scraper/Dockerfile`, `detail_scraper/requirements.txt`
+- `docker-compose.worker.yml`
+- `db/seed/detail_worker_hosts.sql`
+- `n8n/workflows/Scrape Detail Batch.json`, `n8n/workflows/Results Processing.json`
+
+### Files to modify
+- `scraper/processors/scrape_detail.py` — add `raw_html`
+- `scraper/processors/scrape_results.py` — add `raw_html`
+- `scraper/app.py` — add `/scrape_detail_batch`, update `_run_scrape_job`, simplify `/jobs/completed`, DB fallback in `/process/detail_pages`
+- `db/schema/schema_new.sql` — `raw_html` column, `detail_worker_hosts` table
+- `n8n/workflows/Scrape Listings.json` — inline polling, remove Job Poller dependency
+- `docs/PLANS.md`
 
