@@ -7,7 +7,7 @@ from curl_cffi import requests as cf_requests
 
 # Browser fingerprint to impersonate — curl_cffi uses this for TLS fingerprinting
 # to bypass Cloudflare WAF. Rotate to newer versions if this gets blocked.
-BROWSER_IMPERSONATE = "chrome147"
+BROWSER_IMPERSONATE = "chrome131"
 
 
 def _sha256_bytes(b: bytes) -> str:
