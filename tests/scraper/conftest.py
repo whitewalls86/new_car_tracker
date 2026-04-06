@@ -106,6 +106,8 @@ def mock_async_pool(mocker):
 def mock_cf_session(mocker):
     """
     Mock for curl_cffi.requests.Session used by scrape_detail_fetch.
+    Also mocks _get_cf_session to return cached session (no bootstrap HTML),
+    forcing the code to use session.get() which can be verified in tests.
     Returns (mock_session, mock_response).
     """
     mock_resp = MagicMock()
@@ -118,4 +120,13 @@ def mock_cf_session(mocker):
     mock_session.get.return_value = mock_resp
 
     mocker.patch("processors.scrape_detail.cf_requests.Session", return_value=mock_session)
+
+    # Mock _get_cf_session to return (session, None, None) — cache hit, no bootstrap HTML.
+    # This forces _fetch_url to use session.get() instead of returning early,
+    # so tests can verify the URL passed to session.get().
+    mocker.patch(
+        "processors.scrape_detail._get_cf_session",
+        return_value=(mock_session, None, None),
+    )
+
     return mock_session, mock_resp

@@ -143,7 +143,7 @@ class TestExtractResultsPagingMeta:
 
 # ---------------------------------------------------------------------------
 # scrape_results orchestration
-# (mock _fetch_page, get_browser, close_browser, human_delay, time.sleep)
+# (mock _fetch_page, get_context, close_browser, human_delay, time.sleep)
 # ---------------------------------------------------------------------------
 
 def _make_fetch_result(paging=None, stop=False, break_no_save=False, new_vins=0, page_vins=None):
@@ -178,7 +178,7 @@ VALID_PAYLOAD = {"params": {"makes": ["Toyota"], "models": ["RAV4"]}}
 
 class TestScrapeResultsOrchestration:
     def _patch_infra(self, mocker, fetch_results):
-        mocker.patch("processors.scrape_results.get_browser", return_value=MagicMock())
+        mocker.patch("processors.scrape_results.get_context", return_value=MagicMock())
         mocker.patch("processors.scrape_results.close_browser")
         mocker.patch("processors.scrape_results.time.sleep")
         mocker.patch("processors.scrape_results.random_profile", return_value={
@@ -263,7 +263,7 @@ class TestScrapeResultsOrchestration:
         mock_close.assert_called_once()
 
     def test_close_browser_called_even_on_exception(self, mocker):
-        mocker.patch("processors.scrape_results.get_browser", return_value=MagicMock())
+        mocker.patch("processors.scrape_results.get_context", return_value=MagicMock())
         mock_close = mocker.patch("processors.scrape_results.close_browser")
         mocker.patch("processors.scrape_results.time.sleep")
         mocker.patch("processors.scrape_results.random_profile", return_value={

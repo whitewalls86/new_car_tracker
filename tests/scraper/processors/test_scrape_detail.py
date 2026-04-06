@@ -127,9 +127,15 @@ class TestScrapeDetailFetch:
         mocker.patch("os.makedirs")
         mock_open_fn = mock_open()
         mocker.patch("builtins.open", mock_open_fn)
+        mock_session = MagicMock(get=MagicMock(side_effect=ConnectionError("refused")))
         mocker.patch(
             "processors.scrape_detail.cf_requests.Session",
-            return_value=MagicMock(get=MagicMock(side_effect=ConnectionError("refused"))),
+            return_value=mock_session,
+        )
+        # Mock _get_cf_session to return cached session without bootstrap HTML
+        mocker.patch(
+            "processors.scrape_detail._get_cf_session",
+            return_value=(mock_session, None, None),
         )
 
         result = scrape_detail_fetch(run_id=RUN_ID, payload={"listing_id": LISTING_ID})
