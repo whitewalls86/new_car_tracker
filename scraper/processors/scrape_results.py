@@ -13,7 +13,7 @@ import time
 from typing import Set
 from urllib.parse import urlencode
 from bs4 import BeautifulSoup
-from processors.browser import get_browser, close_browser
+from processors.browser import get_context, close_browser
 from processors.fingerprint import random_profile, random_zip, human_delay
 
 
@@ -167,10 +167,13 @@ def extract_results_paging_meta(html_text: str) -> Optional[Dict[str, Any]]:
         return None
 
 
-def _fetch_page(browser, profile: Dict, url: str, run_dir: str,
+def _fetch_page(context, url: str, run_dir: str,
                 search_key: str, scope: str, page_num: int,
                 known_vins: Set[str]) -> Dict[str, Any]:
-    """Fetch a single SRP page using the given fingerprint profile.
+    """Fetch a single SRP page using the shared browser context.
+
+    The context is shared across all pages in a session so cookies (including
+    cf_clearance) persist between requests.
 
     Returns an artifact dict plus extra keys used by the caller:
       - _paging: parsed paging metadata (or None)
@@ -181,12 +184,6 @@ def _fetch_page(browser, profile: Dict, url: str, run_dir: str,
     """
     fetched_at = datetime.now(UTC).isoformat()
 
-    context = browser.new_context(
-        user_agent=profile["user_agent"],
-        extra_http_headers=profile["extra_http_headers"],
-        viewport=profile["viewport"],
-        locale=profile["locale"],
-    )
     page = context.new_page()
     try:
         response = page.goto(url, timeout=30000, wait_until="domcontentloaded")
@@ -299,7 +296,7 @@ def _fetch_page(browser, profile: Dict, url: str, run_dir: str,
             "_break_no_save": False,
         }
     finally:
-        context.close()
+        page.close()
 
 
 def _clean_artifact(artifact: Dict) -> Dict:
@@ -351,13 +348,13 @@ def scrape_results(
     profile = random_profile()
 
     artifacts: List[Dict[str, Any]] = []
-    browser = get_browser()
+    context = get_context(profile)
 
     try:
         # === Phase 1: Fetch page 1 to learn total page count ===
         time.sleep(human_delay(1))
         url_p1 = build_results_url(makes, models, zip_code, scope, radius_miles, 1, sort_order)
-        result_p1 = _fetch_page(browser, profile, url_p1, run_dir,
+        result_p1 = _fetch_page(context, url_p1, run_dir,
                                 search_key, scope, 1, known_vins)
 
         if result_p1["_break_no_save"]:
@@ -411,7 +408,7 @@ def scrape_results(
 
             url = build_results_url(makes, models, zip_code, scope,
                                     radius_miles, page_num, sort_order)
-            result = _fetch_page(browser, profile, url, run_dir,
+            result = _fetch_page(context, url, run_dir,
                                  search_key, scope, page_num, known_vins)
 
             if result["_break_no_save"]:

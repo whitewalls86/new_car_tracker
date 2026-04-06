@@ -11,7 +11,7 @@ from curl_cffi import requests as cf_requests
 
 # Browser fingerprint to impersonate — curl_cffi uses this for TLS fingerprinting
 # to bypass Cloudflare WAF. Rotate to newer versions if this gets blocked.
-BROWSER_IMPERSONATE = "chrome147"
+BROWSER_IMPERSONATE = "chrome146"
 
 # FlareSolverr is used to solve the Cloudflare JS challenge on the first request
 # of a batch, then we reuse the resulting cookies for all subsequent curl_cffi fetches.
