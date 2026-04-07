@@ -105,13 +105,13 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "UPDATE scrape_jobs\nSET status = 'fetched',\n    fetched_at = now(),\n    artifact_count = (\n      SELECT COUNT(*) FROM raw_artifacts ra\n      WHERE ra.run_id = scrape_jobs.run_id\n        AND ra.search_key = scrape_jobs.search_key\n        AND ra.search_scope = scrape_jobs.scope\n    )\nWHERE job_id = '{{ $json.job_id }}'::uuid\nRETURNING run_id;",
+        "query": "UPDATE scrape_jobs\nSET status = 'fetched',\n    fetched_at = now(),\n    artifact_count = (\n      SELECT COUNT(*) FROM raw_artifacts ra\n      WHERE ra.run_id = scrape_jobs.run_id\n        AND ra.search_key = scrape_jobs.search_key\n        AND ra.search_scope = scrape_jobs.scope\n    ),\n    error = {{ $json.error_count }}::text\nWHERE job_id = '{{ $json.job_id }}'::uuid\nRETURNING run_id;",
         "options": {}
       },
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        6704,
+        7072,
         1344
       ],
       "id": "b64cd0e8-d0ab-4160-8a97-186f410ea8f8",
@@ -130,7 +130,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        6896,
+        7264,
         1344
       ],
       "id": "6a3616d3-28ae-428b-b70d-05f1d4182637",
@@ -145,7 +145,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        7104,
+        7472,
         1344
       ],
       "id": "16036e09-ef68-4af5-987d-9961a9f72012",
@@ -184,7 +184,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        7312,
+        7680,
         1344
       ],
       "id": "80f29f3f-edee-4baa-bce5-6efbbd7b98c8",
@@ -193,13 +193,13 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "WITH run_errors AS (\n  SELECT\n    COUNT(*) FILTER (WHERE status = 'failed') AS error_count,\n    (array_agg(error ORDER BY completed_at DESC) FILTER (WHERE error IS NOT NULL))[1] AS last_error\n  FROM scrape_jobs\n  WHERE run_id = '{{ $json.run_id }}'::uuid\n)\nUPDATE runs\nSET status = CASE\n      WHEN (SELECT error_count FROM run_errors) > 0\n           AND NOT EXISTS (\n             SELECT 1 FROM scrape_jobs\n             WHERE run_id = '{{ $json.run_id }}'::uuid AND status NOT IN ('failed', 'fetched')\n           )\n      THEN 'failed'\n      ELSE 'success'\n    END,\n    finished_at = now(),\n    error_count = (SELECT error_count FROM run_errors),\n    last_error = (SELECT last_error FROM run_errors)\nWHERE run_id = '{{ $json.run_id }}'::uuid\n  AND status = 'running';",
+        "query": "WITH run_errors AS (\n  SELECT\n    SUM(error::int) FILTER (WHERE error is not NULL) AS error_count\n    ,SUM(artifact_count) as artifact_count\n  FROM scrape_jobs\n  WHERE run_id = '{{ $json.run_id }}'::uuid\n)\nUPDATE runs\nSET status = CASE\n      WHEN (SELECT error_count FROM run_errors) > 0\n           AND (SELECT error_count FROM run_errors) < (SELECT artifact_count FROM run_errors )\n      THEN 'partial'\n      WHEN (SELECT error_count FROM run_errors) = (SELECT artifact_count FROM run_errors ) THEN 'failed'\n      ELSE 'success'\n    END,\n    total_count = (SELECT artifact_count FROM run_errors ),\n    finished_at = now(),\n    error_count = (SELECT error_count FROM run_errors),\n    last_error = NULL\nWHERE run_id = '{{ $json.run_id }}'::uuid\n  AND status = 'running';",
         "options": {}
       },
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        7584,
+        7952,
         1248
       ],
       "id": "04148285-0dde-4bf4-a1c0-285f6d8e0ad7",
@@ -285,7 +285,7 @@
                   {
                     "id": "2ddb2a3a-857d-44a9-9243-2a48264f7db7",
                     "leftValue": "={{ $json.error }}",
-                    "rightValue": "4",
+                    "rightValue": "403",
                     "operator": {
                       "type": "string",
                       "operation": "contains"
@@ -354,8 +354,8 @@
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3.4,
       "position": [
-        6240,
-        1536
+        6224,
+        1728
       ],
       "id": "1f70382d-8747-48df-9aca-af61a16905ee",
       "name": "Switch"
@@ -367,8 +367,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        6576,
-        1488
+        6688,
+        1616
       ],
       "id": "86ce78a9-9340-43b0-b335-739a61ab309d",
       "name": "Summarize Errors"
@@ -384,8 +384,8 @@
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
-        6816,
-        1488
+        6928,
+        1616
       ],
       "id": "9b6af8d3-7c9b-4154-906c-8bc8d5eef302",
       "name": "Send Telegram Alert",
@@ -540,7 +540,7 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        7808,
+        8176,
         1248
       ],
       "id": "025920b8-edf4-4239-b3a7-741eebfba466",
@@ -614,7 +614,7 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        7584,
+        7952,
         1440
       ],
       "id": "835b3565-b0af-4434-bcdc-959b4dc442c1",
@@ -764,13 +764,13 @@
     },
     {
       "parameters": {
-        "jsCode": "// Aggregate all error items into a single summary message\nconst items = $input.all();\nconst total_errors = items.length;\nconst total_items = $input.first().json.total_artifacts;\nconst rate = total_items > 0 ? `${(total_errors / total_items * 100).toFixed(1)}%` : 'N/A';\nconst errors = [];\nconst seen = new Set();\n\nfor (const item of items) {\n  const d = item.json;\n  const key = `${d.search_key}|${d.scope}|${d.listing_id}`;\n  if (seen.has(key)) continue;\n  seen.add(key);\n  errors.push({\n    search_key: d.search_key || 'unknown',\n    scope: d.scope || '?',\n    listing_id: d.listing_id || '?',\n    http_status: d.http_status || 'N/A',\n    url: d.url || '',\n    error: (d.error || '').substring(0, 200),\n  });\n}\n\n// Group by search_key + scope\nconst groups = {};\nfor (const e of errors) {\n  const gk = `${e.search_key} (${e.scope})`;\n  if (!groups[gk]) groups[gk] = [];\n  groups[gk].push(e);\n}\n\nlet lines = [`\\u{1F6A8} <b>Cloudfare 403 — ${errors.length} error(s) - ${rate}</b>\\n`];\nfor (const [group, errs] of Object.entries(groups)) {\n  lines.push(`<b>${group}</b>: ${errs.length} blocked`);\n  for (const e of errs) {\n    lines.push(`  • page ${e.listing_id} — ${e.error}`);\n  }\n  lines.push('');\n}\n\nreturn [{ json: { summary: lines.join('\\n') } }];"
+        "jsCode": "// Aggregate all error items into a single summary message\nconst items = $input.all();\nconst total_errors = items.length;\nconst total_items = $input.first().json.total_artifacts;\nconst rate = total_items > 0 ? `${(total_errors / total_items * 100).toFixed(1)}%` : 'N/A';\nconst errors = [];\nconst seen = new Set();\n\nfor (const item of items) {\n  const d = item.json;\n  const key = `${d.search_key}|${d.scope}|${d.listing_id}`;\n  if (seen.has(key)) continue;\n  seen.add(key);\n  errors.push({\n    search_key: d.search_key || 'unknown',\n    scope: d.scope || '?',\n    listing_id: d.listing_id || '?',\n    http_status: d.http_status || 'N/A',\n    url: d.url || '',\n    error: (d.error || '').substring(0, 200),\n  });\n}\n\n// Group by search_key + scope\nconst groups = {};\nfor (const e of errors) {\n  const gk = `${e.search_key} (${e.scope})`;\n  if (!groups[gk]) groups[gk] = [];\n  groups[gk].push(e);\n}\n\nlet lines = [`\\u{1F6A8} <b>Cloudfare 403 — ${errors.length} error(s) - ${rate}</b>\\n`];\nfor (const [group, errs] of Object.entries(groups)) {\n  lines.push(`<b>${group}</b>: ${errs.length} blocked`);\n  lines.push('');\n}\n\nreturn [{ json: { summary: lines.join('\\n') } }];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        6576,
-        1632
+        6688,
+        1760
       ],
       "id": "5e3534dc-f8f0-4ab4-8119-adda1443354b",
       "name": "Summarize Errors1"
@@ -786,8 +786,8 @@
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
-        6816,
-        1632
+        6928,
+        1760
       ],
       "id": "642f3d33-bfdc-4a8a-b736-9f62ecdb6982",
       "name": "Send Telegram Alert1",
@@ -823,22 +823,244 @@
       ],
       "id": "a2fbe0a0-dfff-4ac3-9e4c-5caeaf3d6b3f",
       "name": "Set Length"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "422b8f4b-3e99-43eb-9203-2ec31f09e513",
+              "name": "update_type",
+              "value": "add",
+              "type": "string"
+            },
+            {
+              "id": "4a54de42-67d0-42a3-8d51-2bf061b758b7",
+              "name": "listing_id",
+              "value": "={{ $json.listing_id }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        6688,
+        1888
+      ],
+      "id": "7391a7a2-8749-47d6-af91-de273903f2c4",
+      "name": "Set Update to Add"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "422b8f4b-3e99-43eb-9203-2ec31f09e513",
+              "name": "update_type",
+              "value": "remove",
+              "type": "string"
+            },
+            {
+              "id": "4a54de42-67d0-42a3-8d51-2bf061b758b7",
+              "name": "listing_id",
+              "value": "={{ $json.listing_id }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        6688,
+        2016
+      ],
+      "id": "1fc5ed63-6d44-42c1-b5b9-444657a7c94f",
+      "name": "Set Update to Remove"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        6928,
+        1968
+      ],
+      "id": "289979b3-67e1-4237-b3dc-9f47124cf49c",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "jsCode": "const adds = $input.all()\n  .filter(i => i.json.update_type === 'add')\n  .map(i => i.json.listing_id)\n  .filter(Boolean);\n\nconst removes = $input.all()\n  .filter(i => i.json.update_type === 'remove')\n  .map(i => i.json.listing_id)\n  .filter(Boolean);\n\nreturn [{ json: { add_ids: adds, remove_ids: removes } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        7136,
+        1968
+      ],
+      "id": "1434f61f-b412-4513-8404-3212edaf7358",
+      "name": "Aggregate IDs"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO blocked_cooldown (listing_id, first_attempt_at, last_attempted_at, num_of_attempts)\nSELECT lid, now(), now(), 1\nFROM jsonb_array_elements_text('{{ JSON.stringify($json.add_ids) }}'::jsonb) AS lid\nON CONFLICT (listing_id) DO UPDATE\n  SET last_attempted_at = now(),\n      num_of_attempts   = blocked_cooldown.num_of_attempts + 1;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        7360,
+        1888
+      ],
+      "id": "06bcca8d-24b7-4b30-ac53-8c758323f5f3",
+      "name": "Upsert Blocked Cooldown",
+      "credentials": {
+        "postgres": {
+          "id": "l8Ecbn62FzXCDkF9",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "DELETE FROM blocked_cooldown\nWHERE listing_id IN (\n  SELECT jsonb_array_elements_text('{{ JSON.stringify($json.remove_ids) }}'::jsonb)\n);",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        7360,
+        2064
+      ],
+      "id": "7a3954b9-3128-42a1-94c9-e2eb7e27212d",
+      "name": "Clear Block Cooldown",
+      "credentials": {
+        "postgres": {
+          "id": "l8Ecbn62FzXCDkF9",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        7568,
+        1984
+      ],
+      "id": "8262908b-dbbd-47ae-96dd-4aef22b25d11",
+      "name": "Merge1"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "qdURL8XbEkdApnjdAcFFL",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/qdURL8XbEkdApnjdAcFFL",
+          "cachedResultName": "Build DBT"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "intent": "after_403"
+          },
+          "matchingColumns": [
+            "intent"
+          ],
+          "schema": [
+            {
+              "id": "intent",
+              "displayName": "intent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": false
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        7792,
+        1984
+      ],
+      "id": "9f7ad631-1f3e-46b2-ac90-0eaee18e5f8b",
+      "name": "Call 'Build DBT'",
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "numberInputs": 4
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        6480,
+        1520
+      ],
+      "id": "b9cd4cf2-8f91-4df9-a189-ad6076061285",
+      "name": "Merge2"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "fieldsToMatchString": "job_id",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        6848,
+        1344
+      ],
+      "id": "27239eb1-5f70-4cec-8cb6-76f140bc20aa",
+      "name": "Merge3"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get all incoming items\nconst items = $input.all();\n\n// Object to hold counts per job_id\nconst counts = {};\n\n// Loop through each item\nfor (const item of items) {\n  const jobId = item.json.job_id;\n  const error = item.json.error\n  if (!counts[jobId]) {\n    counts[jobId] = 0;\n  }\n\n  if (error != null) {\n    counts[jobId]++;\n  } \n}\n\n// Convert to desired output format\nconst result = Object.entries(counts).map(([job_id, error_count]) => ({\n  json: {\n    job_id,\n    error_count\n  }\n}));\n\nreturn result;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6672,
+        1456
+      ],
+      "id": "0414881a-4294-49cf-9363-5d33142694b0",
+      "name": "Job Error Counts"
     }
   ],
   "pinData": {
     "Schedule Trigger (1 min)": [
       {
         "json": {
-          "timestamp": "2026-03-18T11:24:42.001-04:00",
-          "Readable date": "March 18th 2026, 11:24:42 am",
-          "Readable time": "11:24:42 am",
-          "Day of week": "Wednesday",
+          "timestamp": "2026-04-07T12:50:10.004-04:00",
+          "Readable date": "April 7th 2026, 12:50:10 pm",
+          "Readable time": "12:50:10 pm",
+          "Day of week": "Tuesday",
           "Year": "2026",
-          "Month": "March",
-          "Day of month": "18",
-          "Hour": "11",
-          "Minute": "24",
-          "Second": "42",
+          "Month": "April",
+          "Day of month": "07",
+          "Hour": "12",
+          "Minute": "50",
+          "Second": "10",
           "Timezone": "America/New_York (UTC-04:00)"
         },
         "pairedItem": {
@@ -896,7 +1118,7 @@
       "main": [
         [
           {
-            "node": "Update scrape_jobs",
+            "node": "Merge3",
             "type": "main",
             "index": 0
           }
@@ -989,6 +1211,11 @@
             "node": "Summarize Errors",
             "type": "main",
             "index": 0
+          },
+          {
+            "node": "Merge2",
+            "type": "main",
+            "index": 2
           }
         ],
         [
@@ -996,10 +1223,37 @@
             "node": "Summarize Errors1",
             "type": "main",
             "index": 0
+          },
+          {
+            "node": "Set Update to Add",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge2",
+            "type": "main",
+            "index": 1
           }
         ],
-        [],
-        []
+        [
+          {
+            "node": "Set Update to Remove",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge2",
+            "type": "main",
+            "index": 3
+          }
+        ],
+        [
+          {
+            "node": "Merge2",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Summarize Errors": {
@@ -1090,6 +1344,121 @@
           }
         ]
       ]
+    },
+    "Set Update to Remove": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Set Update to Add": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Aggregate IDs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate IDs": {
+      "main": [
+        [
+          {
+            "node": "Upsert Blocked Cooldown",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Clear Block Cooldown",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert Blocked Cooldown": {
+      "main": [
+        [
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clear Block Cooldown": {
+      "main": [
+        [
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge1": {
+      "main": [
+        [
+          {
+            "node": "Call 'Build DBT'",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge2": {
+      "main": [
+        [
+          {
+            "node": "Job Error Counts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge3": {
+      "main": [
+        [
+          {
+            "node": "Update scrape_jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Job Error Counts": {
+      "main": [
+        [
+          {
+            "node": "Merge3",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
     }
   },
   "active": true,
@@ -1100,7 +1469,7 @@
     "callerPolicy": "workflowsFromSameOwner",
     "errorWorkflow": "rJfFKS2DGRAn_IPJR1xTc"
   },
-  "versionId": "91023f13-fbe4-41ca-823e-10c95c9f12a5",
+  "versionId": "9a566d6e-8e44-44e9-bc56-0144f908d3b2",
   "meta": {
     "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179",
     "templateCredsSetupCompleted": true

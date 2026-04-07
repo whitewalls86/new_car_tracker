@@ -4,7 +4,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "WITH batch AS (\n  SELECT q.*\n  FROM ops.ops_detail_scrape_queue q\n  LEFT JOIN detail_scrape_claims c\n    ON c.listing_id = q.listing_id\n   AND c.status = 'running'\n  WHERE c.listing_id IS NULL\n  ORDER BY q.priority, q.listing_id\n  LIMIT 450\n),\nclaimed AS (\n  --INSERT INTO detail_scrape_claims (listing_id, claimed_by, claimed_at, status)\n  SELECT b.listing_id, '{{ $('Create Run Id').first().json.run_id }}', now(), 'running'\n  FROM batch b\n  /*ON CONFLICT (listing_id) DO UPDATE\n    SET claimed_by = EXCLUDED.claimed_by,\n        claimed_at = EXCLUDED.claimed_at,\n        status     = 'running'\n    WHERE detail_scrape_claims.status != 'running'\n  RETURNING listing_id*/\n)\nSELECT b.* FROM batch b\nJOIN claimed c ON c.listing_id = b.listing_id;",
+        "query": "WITH batch AS (\n  SELECT q.*\n  FROM ops.ops_detail_scrape_queue q\n  LEFT JOIN detail_scrape_claims c\n    ON c.listing_id = q.listing_id\n   AND c.status = 'running'\n  WHERE c.listing_id IS NULL\n  ORDER BY q.priority, q.listing_id\n  LIMIT 450\n),\nclaimed AS (\n  INSERT INTO detail_scrape_claims (listing_id, claimed_by, claimed_at, status)\n  SELECT b.listing_id, '{{ $('Create Run Id').first().json.run_id }}', now(), 'running'\n  FROM batch b\n  ON CONFLICT (listing_id) DO UPDATE\n    SET claimed_by = EXCLUDED.claimed_by,\n        claimed_at = EXCLUDED.claimed_at,\n        status     = 'running'\n    WHERE detail_scrape_claims.status != 'running'\n  RETURNING listing_id\n)\nSELECT b.* FROM batch b\nJOIN claimed c ON c.listing_id = b.listing_id;",
         "options": {}
       },
       "type": "n8n-nodes-base.postgres",
@@ -31,7 +31,7 @@
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
       "position": [
-        -480,
+        -64,
         1296
       ],
       "id": "18d24174-3163-4afc-a1b4-0c0653d59061",
@@ -46,20 +46,20 @@
           "parameters": [
             {
               "name": "run_id",
-              "value": "={{ $('Create Run Id').first().json.run_id }}"
+              "value": "={{ $json.run_id }}"
             }
           ]
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ \n  JSON.stringify(        // ← opens (\n    {                    // ← opens outer object {\n      batch_id: \"be13fd2c-3054-4a3e-962e-9e7bc9f5bcbb\",\n      max_workers: 8,\n      listings: $('Loop Over Items').all().map(\n        i => ({          // ← opens arrow fn object ({\n          listing_id: i.json.listing_id,\n          ...(i.json.vin ? { vin: i.json.vin } : {})\n        })               // ← closes arrow fn object })\n      )                  // ← closes .map(\n    }                    // ← closes outer object }\n  )                      // ← closes JSON.stringify(\n}}",
+        "jsonBody": "={{ $json.body }}",
         "options": {}
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        -144,
-        1312
+        320,
+        1344
       ],
       "id": "5cfb4728-32cb-4271-bc86-93f6fca1c195",
       "name": "HTTP Request"
@@ -91,27 +91,6 @@
       ],
       "id": "6687e1bd-0cbf-4968-b79f-78589786a358",
       "name": "Insert Run Row",
-      "credentials": {
-        "postgres": {
-          "id": "l8Ecbn62FzXCDkF9",
-          "name": "Postgres account"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "UPDATE runs\nSET status = 'success', finished_at = now()\nWHERE run_id = '{{ $('Create Run Id').first().json.run_id }}'::uuid;",
-        "options": {}
-      },
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.6,
-      "position": [
-        -128,
-        944
-      ],
-      "id": "87046a01-302e-4c41-ba52-4e5820d470e3",
-      "name": "Mark Run Done",
       "credentials": {
         "postgres": {
           "id": "l8Ecbn62FzXCDkF9",
@@ -518,7 +497,7 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        80,
+        480,
         944
       ],
       "id": "1eb3e195-16d4-480e-90ba-6d9ad4d9f11d",
@@ -560,28 +539,15 @@
     },
     {
       "parameters": {
-        "jsCode": "function uuidv4() {\n  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {\n    const r = Math.random() * 16 | 0;\n    const v = c === 'x' ? r : (r & 0x3 | 0x8);\n    return v.toString(16);\n  });\n}\n\nreturn [{ batch_id: uuidv4() }];"
-      },
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        -304,
-        1312
-      ],
-      "id": "5ef7d62c-f461-4c27-86bd-f80cf1804c9d",
-      "name": "Create Batch Id"
-    },
-    {
-      "parameters": {
         "operation": "executeQuery",
-        "query": "INSERT INTO scrape_jobs (job_id, run_id, search_key, scope, status)\nVALUES (\n  '{{ $json.job_id }}'::uuid,\n  '{{ $('Create Run Id').first().json.run_id }}'::uuid,\n  '{{ $('Create Batch Id').item.json.batch_id }}}',\n  'detail_scrape',\n  'queued'\n)\nON CONFLICT DO NOTHING;",
+        "query": "INSERT INTO scrape_jobs (job_id, run_id, search_key, scope, status)\nVALUES (\n  '{{ $json.job_id }}'::uuid,\n  '{{ $('Create Run Id').first().json.run_id }}'::uuid,\n  '{{ $('Set Up Request').item.json.body.batch_id }}',\n  'detail',\n  'queued'\n)\nON CONFLICT DO NOTHING;",
         "options": {}
       },
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        48,
-        1312
+        512,
+        1344
       ],
       "id": "e41e4143-65c2-4343-849b-634b5aed95dc",
       "name": "Execute a SQL query1",
@@ -591,6 +557,19 @@
           "name": "Postgres account"
         }
       }
+    },
+    {
+      "parameters": {
+        "jsCode": "function uuidv4() {\n  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {\n    const r = Math.random() * 16 | 0;\n    const v = c === 'x' ? r : (r & 0x3 | 0x8);\n    return v.toString(16);\n  });\n}\n\nreturn [{\n  json: {\n    run_id: $(\"Create Run Id\").first().json.run_id,\n    body: {\n    batch_id: uuidv4(),\n    max_workers: 8,\n    listings: $input.all().map(i => ({\n      listing_id: i.json.listing_id,\n      vin: i.json.vin,\n    }))\n    }}\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        160,
+        1344
+      ],
+      "id": "65009abe-a4d2-4620-bf07-394fc510468d",
+      "name": "Set Up Request"
     }
   ],
   "pinData": {
@@ -638,14 +617,14 @@
       "main": [
         [
           {
-            "node": "Mark Run Done",
+            "node": "Call 'Update n8n Runs Table'2",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "Create Batch Id",
+            "node": "Set Up Request",
             "type": "main",
             "index": 0
           }
@@ -679,17 +658,6 @@
         [
           {
             "node": "Get Batch to Process",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Mark Run Done": {
-      "main": [
-        [
-          {
-            "node": "Call 'Update n8n Runs Table'2",
             "type": "main",
             "index": 0
           }
@@ -780,17 +748,6 @@
         ]
       ]
     },
-    "Create Batch Id": {
-      "main": [
-        [
-          {
-            "node": "HTTP Request",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Execute a SQL query1": {
       "main": [
         [
@@ -801,9 +758,20 @@
           }
         ]
       ]
+    },
+    "Set Up Request": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
-  "active": false,
+  "active": true,
   "settings": {
     "executionOrder": "v1",
     "availableInMCP": false,
@@ -811,7 +779,7 @@
     "callerPolicy": "workflowsFromSameOwner",
     "errorWorkflow": "rJfFKS2DGRAn_IPJR1xTc"
   },
-  "versionId": "9d9964f5-a878-4910-a0b1-05d9dfb14ada",
+  "versionId": "9996fc49-6355-408d-9551-0c7508d5ceb9",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179"

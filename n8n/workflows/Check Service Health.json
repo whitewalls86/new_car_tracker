@@ -50,8 +50,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
-        864,
-        -160
+        880,
+        -192
       ],
       "id": "71d0ad89-bab2-45fe-922a-19ffd47a7844",
       "name": "Container Ok?"
@@ -175,7 +175,8 @@
         -192
       ],
       "id": "3312615c-4e35-4288-846e-883033553e02",
-      "name": "Health Check"
+      "name": "Health Check",
+      "onError": "continueErrorOutput"
     },
     {
       "parameters": {
@@ -278,6 +279,13 @@
             "type": "main",
             "index": 0
           }
+        ],
+        [
+          {
+            "node": "< 5 min?",
+            "type": "main",
+            "index": 0
+          }
         ]
       ]
     },
@@ -298,7 +306,7 @@
     "executionOrder": "v1",
     "availableInMCP": false
   },
-  "versionId": "9ed5814e-9855-417f-97f1-5df3b18ea4f6",
+  "versionId": "9bcef807-ff3e-455f-ac12-66451b3e33ad",
   "meta": {
     "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179"
   },

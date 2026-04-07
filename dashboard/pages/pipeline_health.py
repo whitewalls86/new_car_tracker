@@ -44,35 +44,6 @@ def render():
         lock_str = lock_at.strftime('%H:%M') if pd.notna(lock_at) else "?"
         st.info(f"dbt building ({lock_by}) — started {lock_str}")
 
-    # -- Processing Status
-    active_processing_runs = run_query("""
-            SELECT r.started_at AT TIME ZONE 'America/Chicago' AS started_at,
-                   ROUND(EXTRACT(EPOCH FROM now() - r.started_at) / 60) AS elapsed_min,
-                   r.progress_count, r.total_count,
-                   CASE WHEN r.total_count > 0
-                        THEN ROUND(r.progress_count::numeric / (EXTRACT(EPOCH FROM now() - r.started_at) / 60), 1)
-                   END AS vins_per_min,
-                   (SELECT COUNT(*) FROM scrape_jobs j
-                    WHERE j.run_id = r.run_id AND j.status = 'failed') AS failed_jobs
-            FROM processing_runs r WHERE r.status = 'processing' ORDER BY r.started_at
-        """)
-    if not active_processing_runs.empty:
-        for _, row in active_processing_runs.iterrows():
-            progress_str = ""
-            if pd.notna(row['total_count']) and int(row['total_count']) > 0:
-                pct = int(row['progress_count'] / row['total_count'] * 100)
-                progress_str = f" — {int(row['progress_count']):,} / {int(row['total_count']):,} ({pct}%)"
-                if pd.notna(row['vins_per_min']) and row['vins_per_min'] > 0:
-                    remaining = (int(row['total_count']) - int(row['progress_count'])) / row['vins_per_min']
-                    progress_str += f" ~{remaining:.0f}m remaining"
-            err_str = f" | {int(row['failed_jobs'])} errors" if pd.notna(row['failed_jobs']) and int(row['failed_jobs']) > 0 else ""
-            st.warning(f"Running Processor — {int(row['elapsed_min'])}m elapsed (started {row['started_at'].strftime('%H:%M')}){progress_str}{err_str}")
-    else:
-        st.success("No active processing")
-
-    # -- Recent runs ---------------------------------------------------------
-    _section_recent_runs()
-
     # -- Detail scrape runs --------------------------------------------------
     _section_detail_runs()
 
@@ -122,62 +93,6 @@ def render():
 
 
 # ---- helpers ---------------------------------------------------------------
-
-def _section_recent_runs():
-    st.subheader("Recent Runs (All Types)")
-    df = run_query("""
-        With run_data AS (
-            SELECT
-                r.started_at AT TIME ZONE 'America/Chicago' AS started,
-                r.trigger,
-                CASE
-                    WHEN r.finished_at IS NOT NULL
-                    THEN ROUND(EXTRACT(EPOCH FROM (r.finished_at - r.started_at)) / 60, 1)::text || 'm'
-                    ELSE ROUND(EXTRACT(EPOCH FROM (now() - r.started_at)) / 60)::text || 'm'
-                END AS duration,
-                r.status,
-                r.total_count AS batch,
-                r.progress_count AS processed,
-                CASE WHEN r.finished_at IS NOT NULL AND r.progress_count > 0
-                     THEN ROUND(r.progress_count / (EXTRACT(EPOCH FROM (r.finished_at - r.started_at)) / 60), 1)
-                END AS rate_per_min,
-                COALESCE(r.error_count, 0) AS errors,
-                r.last_error
-            FROM runs r
-            WHERE r.started_at > now() - interval '48 hours'
-              AND r.status != 'skipped'
-            UNION ALL
-            SELECT
-                r.started_at AT TIME ZONE 'America/Chicago' AS started,
-                NULL,
-                CASE
-                    WHEN r.finished_at IS NOT NULL
-                    THEN ROUND(EXTRACT(EPOCH FROM (r.finished_at - r.started_at)) / 60, 1)::text || 'm'
-                    ELSE ROUND(EXTRACT(EPOCH FROM (now() - r.started_at)) / 60)::text || 'm'
-                END AS duration,
-                r.status,
-                r.total_count AS batch,
-                r.progress_count AS processed,
-                CASE WHEN r.finished_at IS NOT NULL AND r.progress_count > 0
-                     THEN ROUND(r.progress_count / (EXTRACT(EPOCH FROM (r.finished_at - r.started_at)) / 60), 1)
-                END AS rate_per_min,
-                COALESCE(r.error_count, 0) AS errors,
-                r.last_error
-            FROM processing_runs r
-            WHERE r.started_at > now() - interval '48 hours'
-              AND r.status != 'skipped'
-            )
-        SELECT
-            *
-        from run_data
-        ORDER BY run_data.started DESC
-        LIMIT 30;
-    """)
-    if not df.empty:
-        st.dataframe(df, use_container_width=True, hide_index=True)
-    else:
-        st.info("No runs in the last 48 hours.")
-
 
 def _section_rotation_schedule():
     st.subheader("Search Scrape Rotation Schedule")
@@ -261,9 +176,8 @@ def _section_detail_runs():
                 runs
             WHERE
                 trigger = 'detail scrape'
-                AND status = 'success'
             ORDER BY started_at DESC
-            LIMIT 10
+            LIMIT 20
         )
         SELECT
             r.started_at AT TIME ZONE 'America/Chicago' AS started,
@@ -274,6 +188,7 @@ def _section_detail_runs():
             END AS duration,
             r.status,
             r.total_count AS batch_size,
+            r.error_count as num_errors,
             COUNT(DISTINCT d.vin) FILTER (WHERE d.price IS NOT NULL) AS prices_refreshed,
             COUNT(DISTINCT ra.artifact_id) FILTER (WHERE d.listing_state = 'unlisted') AS newly_unlisted,
             COUNT(DISTINCT ra.artifact_id) FILTER (WHERE ap.message = 'unlisted' AND d.artifact_id IS NULL) AS unlisted_carousel_hit,

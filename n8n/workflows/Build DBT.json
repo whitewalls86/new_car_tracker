@@ -26,7 +26,7 @@
         "url": "http://dbt_runner:8080/dbt/build",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"intent\": \"{{$json.intent}}\",\n  \"full_refresh\": false\n}",
+        "jsonBody": "={\n  \"intent\": \"{{ $('When Executed by Another Workflow').item.json.intent }}\",\n  \"full_refresh\": false\n}",
         "options": {
           "timeout": 300000
         }
@@ -1159,7 +1159,7 @@
     "executionOrder": "v1",
     "availableInMCP": false
   },
-  "versionId": "b094e06b-110a-4e32-8388-1b5aab1a30e3",
+  "versionId": "4d9bfce5-9b56-4e30-a940-4d98ad859fc3",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179"
