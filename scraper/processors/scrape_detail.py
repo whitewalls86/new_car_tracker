@@ -10,9 +10,56 @@ import time
 
 from curl_cffi import requests as cf_requests
 
-# Browser fingerprint to impersonate — curl_cffi uses this for TLS fingerprinting
-# to bypass Cloudflare WAF. Rotate to newer versions if this gets blocked.
-BROWSER_IMPERSONATE = "chrome146"
+# Fallback curl_cffi impersonation target used when FlareSolverr is disabled or
+# before credentials have been bootstrapped.  The active target is derived
+# dynamically from FlareSolverr's reported user-agent so the TLS fingerprint
+# always matches the browser that generated the cf_clearance cookie.
+_BROWSER_IMPERSONATE_FALLBACK = "chrome142"
+
+# Sorted list of (major_version, curl_cffi_target) for desktop Chrome targets only.
+# Update when new curl_cffi releases add targets.
+_CHROME_CFFI_TARGETS: List[Tuple[int, str]] = sorted([
+    (99,  "chrome99"),
+    (100, "chrome100"),
+    (101, "chrome101"),
+    (104, "chrome104"),
+    (107, "chrome107"),
+    (110, "chrome110"),
+    (116, "chrome116"),
+    (119, "chrome119"),
+    (120, "chrome120"),
+    (123, "chrome123"),
+    (124, "chrome124"),
+    (131, "chrome131"),
+    (136, "chrome136"),
+    (142, "chrome142"),
+    (145, "chrome145"),
+    (146, "chrome146"),
+])
+
+
+def _cffi_target_for_ua(user_agent: str) -> str:
+    """Return the best curl_cffi impersonation target for a given user-agent string.
+
+    Parses the Chrome major version and picks an exact match, falling back to the
+    nearest lower version so the TLS fingerprint stays consistent with the browser
+    that generated the cf_clearance cookie.
+    """
+    import re
+    m = re.search(r"Chrome/(\d+)\.", user_agent)
+    if not m:
+        return _BROWSER_IMPERSONATE_FALLBACK
+    version = int(m.group(1))
+    # Exact match
+    for v, target in _CHROME_CFFI_TARGETS:
+        if v == version:
+            return target
+    # Nearest lower version
+    lower = [(v, t) for v, t in _CHROME_CFFI_TARGETS if v < version]
+    if lower:
+        return lower[-1][1]
+    # Nearest higher version (version is older than anything we know)
+    return _CHROME_CFFI_TARGETS[0][1]
 
 # FlareSolverr is used to solve the Cloudflare JS challenge on the first request
 # of a batch, then we reuse the resulting cookies for all subsequent curl_cffi fetches.
@@ -147,7 +194,8 @@ def _fetch_url(url: str, timeout_s: int) -> Tuple[bytes, int, Optional[str], str
                 # FlareSolverr fetched this URL for us — reuse the response
                 return bootstrap_html, bootstrap_status, "text/html; charset=utf-8", url
             # Cache hit — build a fresh session from shared credentials
-            session = cf_requests.Session(impersonate=BROWSER_IMPERSONATE)
+            impersonate = _cffi_target_for_ua(credentials["user_agent"]) if credentials else _BROWSER_IMPERSONATE_FALLBACK
+            session = cf_requests.Session(impersonate=impersonate)
             if credentials:
                 session.headers.update({"User-Agent": credentials["user_agent"]})
                 for name, value in credentials["cookies"].items():
@@ -159,7 +207,7 @@ def _fetch_url(url: str, timeout_s: int) -> Tuple[bytes, int, Optional[str], str
             logger.warning("FlareSolverr/CF session failed (%s), falling back to plain curl_cffi", e)
 
     # Plain curl_cffi fallback (no FlareSolverr)
-    session = cf_requests.Session(impersonate=BROWSER_IMPERSONATE)
+    session = cf_requests.Session(impersonate=_BROWSER_IMPERSONATE_FALLBACK)
     resp = session.get(url, timeout=timeout_s, allow_redirects=True)
     content = resp.content or b""
     return content, resp.status_code, resp.headers.get("content-type"), str(resp.url)
