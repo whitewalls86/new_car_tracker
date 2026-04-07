@@ -418,3 +418,24 @@ sources:
 
           - name: created_at
             description: "Timestamp when row was inserted"
+
+      - name: blocked_cooldown
+        description: "Listing IDs that need a timeout before we try them again."
+        columns:
+          - name: listing_id
+            description: "uuid of the listing (primary key)"
+            data_tests:
+              - not_null
+              - unique
+          - name: first_attempt_at
+            description: "When was the first 403 block"
+            data_tests:
+              - not_null
+          - name: last_attempted_at
+            description: "When did we get the most recent 403 block"
+            data_tests:
+              - not_null
+          - name: num_of_attempts
+            description: "How many times have we attempted to fetch it without success"
+            data_tests:
+              - not_null

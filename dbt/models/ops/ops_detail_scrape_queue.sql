@@ -103,11 +103,16 @@ combined as (
 )
 
 select distinct on (listing_id)
-    vin,
-    current_listing_url,
-    listing_id,
-    seller_customer_id,
-    stale_reason,
-    priority
-from combined
+    c.vin,
+    c.current_listing_url,
+    c.listing_id,
+    c.seller_customer_id,
+    c.stale_reason,
+    c.priority
+from combined c
+LEFT JOIN {{ ref('stg_blocked_cooldown')}} bc
+    on bc.listing_id = c.listing_id
+where
+    bc.listing_id is null
+    or (bc.fully_blocked = false and bc.next_eligible_at < now())
 order by listing_id, priority

@@ -7,7 +7,7 @@ Detail page fetches occasionally return 403s from Cloudflare. Currently these li
 - **Raw table** (`blocked_cooldown`): just tracks counts and timestamps — no business logic
 - **dbt** (`stg_blocked_cooldown`): computes `next_eligible_at`, `fully_blocked` — all backoff logic lives here, easy to tune
 - **`ops_detail_scrape_queue`**: joins `stg_blocked_cooldown`, filters out cooling/blocked listings
-- **Job Poller V2**: upserts into `blocked_cooldown` on the existing "403 Error" Switch branch, then calls Build DBT
+- **Job Poller V2**: tags artifacts by outcome, merges, runs bulk upsert + delete, then calls Build DBT
 
 ---
 
@@ -94,7 +94,7 @@ order by c.listing_id, c.priority
 
 ---
 
-## 5. `n8n/workflows/Job Poller V2.json` — upsert node
+## 5. `n8n/workflows/Job Poller V2.json` — blocked cooldown sync
 
 ### Current Switch node outputs (4 outputs, already updated):
 - output 0: "Has Backoff Error" (error contains ERR_HTTP2) → Summarize Errors → Send Telegram Alert
@@ -102,23 +102,71 @@ order by c.listing_id, c.priority
 - output 2: "No Error" (error is empty) → nothing
 - output 3: "Other Error" (error not empty) → nothing
 
-### Change: Add "Upsert Blocked Cooldown" Postgres node
+### Full flow
 
-Wire **Switch output 1 ("403 Error")** to both:
-- (existing) Summarize Errors1
-- (new) **"Upsert Blocked Cooldown"** Postgres node
+```
+Switch "403 Error"  → Set update_type='add'    ──┐
+Switch "No Error"   → Set update_type='remove' ──┤
+                                                  ↓
+                                            Merge (all items)
+                                                  ↓
+                                       Code "Aggregate IDs"
+                                   { add_ids: [...], remove_ids: [...] }
+                                          ↙              ↘
+                                     Upsert            Delete
+                                    (add_ids)        (remove_ids)
+                                          ↘              ↙
+                                       Merge (wait both)
+                                                ↓
+                                        Call 'Build DBT'
+```
 
-The upsert runs per-artifact (before Summarize Errors1 collapses items), so parallel from the Switch is the right attachment point.
+The Summarize Errors1 → Send Telegram Alert1 path remains a separate parallel branch off Switch output 1 — untouched.
 
+### Node: "Set update_type add" (Set node, off Switch output 1)
+Sets `update_type = 'add'` on each 403 artifact item.
+
+### Node: "Set update_type remove" (Set node, off Switch output 2)
+Sets `update_type = 'remove'` on each successful artifact item.
+
+### Node: "Merge" (Merge node, wait for all inputs)
+Collects all tagged items from both branches.
+
+### Node: "Aggregate IDs" (Code node)
+```js
+const adds = $input.all()
+  .filter(i => i.json.update_type === 'add')
+  .map(i => i.json.listing_id)
+  .filter(Boolean);
+
+const removes = $input.all()
+  .filter(i => i.json.update_type === 'remove')
+  .map(i => i.json.listing_id)
+  .filter(Boolean);
+
+return [{ json: { add_ids: adds, remove_ids: removes } }];
+```
+
+### Node: "Upsert Blocked Cooldown" (Postgres, parallel off Aggregate IDs)
 ```sql
 INSERT INTO blocked_cooldown (listing_id, first_attempted_at, last_attempted_at, num_of_attempts)
-VALUES ('{{ $json.listing_id }}', now(), now(), 1)
+SELECT lid, now(), now(), 1
+FROM jsonb_array_elements_text('{{ JSON.stringify($json.add_ids) }}'::jsonb) AS lid
 ON CONFLICT (listing_id) DO UPDATE
   SET last_attempted_at = now(),
       num_of_attempts   = blocked_cooldown.num_of_attempts + 1;
 ```
 
-"Upsert Blocked Cooldown" is terminal — no further wiring needed.
+### Node: "Clear Blocked Cooldown" (Postgres, parallel off Aggregate IDs)
+```sql
+DELETE FROM blocked_cooldown
+WHERE listing_id IN (
+  SELECT jsonb_array_elements_text('{{ JSON.stringify($json.remove_ids) }}'::jsonb)
+);
+```
+
+### Node: "Merge1" (Merge node, wait for both Postgres nodes)
+Waits for both Upsert and Delete to complete before proceeding.
 
 ---
 
@@ -130,17 +178,13 @@ ON CONFLICT (listing_id) DO UPDATE
 
 ---
 
-## 7. `n8n/workflows/Job Poller V2.json` — call Build DBT after 403 alert
+## 7. `n8n/workflows/Job Poller V2.json` — call Build DBT
 
-**Placement:** After "Send Telegram Alert1". One dbt build per batch of 403s, not one per artifact.
-
-Add a new **`executeWorkflow` node "Call 'Build DBT'"**:
+Wire: Merge1 → **"Call 'Build DBT'"** (`executeWorkflow` node)
 - Workflow: Build DBT (id `qdURL8XbEkdApnjdAcFFL`)
 - Input: `{"intent": "after_403"}`
 
-Wire: Send Telegram Alert1 → Call 'Build DBT'
-
-Reuses the Build DBT workflow's existing lock-handling and retry logic. No changes to Build DBT needed.
+Reuses Build DBT's existing lock-handling and retry logic. No changes to Build DBT needed.
 
 ---
 
@@ -151,3 +195,4 @@ Reuses the Build DBT workflow's existing lock-handling and retry logic. No chang
 3. Run `dbt run --select stg_blocked_cooldown+ ops_detail_scrape_queue`. Confirm those listing_ids are **absent** from `ops.ops_detail_scrape_queue`.
 4. `UPDATE blocked_cooldown SET last_attempted_at = now() - interval '13 hours' WHERE listing_id = '<id>';` then re-run dbt. Confirm listing **reappears** in queue.
 5. Repeat until `num_of_attempts = 5`, confirm `stg_blocked_cooldown.fully_blocked = true` and listing stays absent regardless of `last_attempted_at`.
+6. Run a successful detail scrape for a blocked listing. Confirm it is removed from `blocked_cooldown` and reappears in the queue after the next dbt build.

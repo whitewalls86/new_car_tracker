@@ -10,6 +10,7 @@ ENV PYTHONUNBUFFERED=1
 # Copy dbt project files and the runner app from committed code
 COPY dbt/ /usr/app/
 COPY dbt_runner/app.py /usr/app/app.py
+COPY shared/ /usr/app/shared/
 
 EXPOSE 8080
 ENTRYPOINT []
