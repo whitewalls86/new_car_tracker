@@ -2,12 +2,14 @@
 import pytest
 from unittest.mock import MagicMock, mock_open, call
 
-from processors.scrape_detail import scrape_detail_fetch, scrape_detail_dummy
+import processors.scrape_detail as sd
+from processors.scrape_detail import scrape_detail_fetch, scrape_detail_dummy, scrape_detail_batch
 
-# n8n reads all 13 of these keys from every artifact
+# n8n reads all 14 of these keys from every artifact
 N8N_ARTIFACT_KEYS = {
     "source",
     "artifact_type",
+    "listing_id",
     "search_key",
     "search_scope",
     "page_num",
@@ -22,6 +24,7 @@ N8N_ARTIFACT_KEYS = {
 }
 
 RUN_ID = "run-test-0000-0000-000000000001"
+BATCH_ID = "batch-test-0000-0000-000000000001"
 LISTING_ID = "listing-0000-0000-0000-000000000001"
 VIN = "1HGCM82633A123456"
 
@@ -132,10 +135,10 @@ class TestScrapeDetailFetch:
             "processors.scrape_detail.cf_requests.Session",
             return_value=mock_session,
         )
-        # Mock _get_cf_session to return cached session without bootstrap HTML
+        # Mock _get_cf_credentials to return a cache hit so _fetch_url calls session.get()
         mocker.patch(
-            "processors.scrape_detail._get_cf_session",
-            return_value=(mock_session, None, None),
+            "processors.scrape_detail._get_cf_credentials",
+            return_value=({"cookies": {}, "user_agent": "test-ua"}, None, None),
         )
 
         result = scrape_detail_fetch(run_id=RUN_ID, payload={"listing_id": LISTING_ID})
@@ -146,7 +149,7 @@ class TestScrapeDetailFetch:
         open_calls = mock_open_fn.call_args_list
         assert any("ERROR.txt" in str(c) for c in open_calls)
 
-    def test_vin_used_as_search_key(self, mock_cf_session, mocker):
+    def test_batch_id_used_as_search_key(self, mock_cf_session, mocker):
         mocker.patch("os.makedirs")
         mocker.patch("builtins.open", mock_open())
         mock_session, mock_resp = mock_cf_session
@@ -155,8 +158,21 @@ class TestScrapeDetailFetch:
         mock_resp.url = "https://example.com/"
         mock_resp.headers = {}
 
-        result = scrape_detail_fetch(run_id=RUN_ID, payload={"listing_id": LISTING_ID, "vin": VIN})
-        assert result["artifacts"][0]["search_key"] == VIN
+        result = scrape_detail_fetch(run_id=RUN_ID, payload={"listing_id": LISTING_ID, "vin": VIN, "batch_id": BATCH_ID})
+        assert result["artifacts"][0]["search_key"] == BATCH_ID
+        assert result["artifacts"][0]["listing_id"] == LISTING_ID
+
+    def test_batch_id_defaults_to_run_id(self, mock_cf_session, mocker):
+        mocker.patch("os.makedirs")
+        mocker.patch("builtins.open", mock_open())
+        mock_session, mock_resp = mock_cf_session
+        mock_resp.status_code = 200
+        mock_resp.content = b"ok"
+        mock_resp.url = "https://example.com/"
+        mock_resp.headers = {}
+
+        result = scrape_detail_fetch(run_id=RUN_ID, payload={"listing_id": LISTING_ID})
+        assert result["artifacts"][0]["search_key"] == RUN_ID
 
     def test_artifact_keys_match_n8n_contract(self, mock_cf_session, mocker):
         mocker.patch("os.makedirs")
@@ -253,3 +269,89 @@ class TestScrapeDetailDummy:
         mocker.patch("builtins.open", mock_open())
         result = scrape_detail_dummy(run_id=RUN_ID, payload={"listing_id": LISTING_ID})
         assert result["meta"]["listing_id"] == LISTING_ID
+
+
+# ---------------------------------------------------------------------------
+# scrape_detail_batch
+# ---------------------------------------------------------------------------
+
+class TestScrapeDetailBatch:
+    def test_empty_batch_returns_empty_artifacts(self, mocker):
+        mocker.patch("os.makedirs")
+        result = scrape_detail_batch(run_id=RUN_ID, batch_id=BATCH_ID, listings=[])
+        assert result["artifacts"] == []
+        assert result["meta"]["total"] == 0
+        assert result["meta"]["errors"] == 0
+
+    def test_batch_returns_artifact_per_listing(self, mock_cf_session, mocker):
+        mocker.patch("os.makedirs")
+        mocker.patch("builtins.open", mock_open())
+        mock_session, mock_resp = mock_cf_session
+        mock_resp.status_code = 200
+        mock_resp.content = b"<html>detail</html>"
+        mock_resp.url = "https://www.cars.com/vehicledetail/l1/"
+        mock_resp.headers = {"content-type": "text/html; charset=utf-8"}
+
+        listings = [
+            {"listing_id": "l1", "vin": "VIN1"},
+            {"listing_id": "l2", "vin": "VIN2"},
+        ]
+        result = scrape_detail_batch(run_id=RUN_ID, batch_id=BATCH_ID, listings=listings)
+
+        assert len(result["artifacts"]) == 2
+        assert result["meta"]["total"] == 2
+        assert result["meta"]["succeeded"] == 2
+        assert result["meta"]["errors"] == 0
+
+    def test_403_increments_adaptive_delay(self, mock_cf_session, mocker):
+        mocker.patch("os.makedirs")
+        mocker.patch("builtins.open", mock_open())
+        mock_session, mock_resp = mock_cf_session
+        mock_resp.status_code = 403
+        mock_resp.content = b"<html>blocked</html>"
+        mock_resp.url = "https://www.cars.com/vehicledetail/l3/"
+        mock_resp.headers = {}
+
+        sd._detail_adaptive_delay = 0.0
+        scrape_detail_batch(run_id=RUN_ID, batch_id=BATCH_ID, listings=[{"listing_id": "l3"}])
+        assert sd._detail_adaptive_delay > 0
+
+    def test_403_invalidates_credentials(self, mock_cf_session, mocker):
+        mocker.patch("os.makedirs")
+        mocker.patch("builtins.open", mock_open())
+        mock_session, mock_resp = mock_cf_session
+        mock_resp.status_code = 403
+        mock_resp.content = b"blocked"
+        mock_resp.url = "https://www.cars.com/vehicledetail/l4/"
+        mock_resp.headers = {}
+
+        sd._cf_credentials_expires_at = 9999999999.0  # set far future
+        scrape_detail_batch(run_id=RUN_ID, batch_id=BATCH_ID, listings=[{"listing_id": "l4"}])
+        assert sd._cf_credentials_expires_at == 0.0
+
+    def test_meta_has_required_keys(self, mock_cf_session, mocker):
+        mocker.patch("os.makedirs")
+        mocker.patch("builtins.open", mock_open())
+        mock_session, mock_resp = mock_cf_session
+        mock_resp.status_code = 200
+        mock_resp.content = b"ok"
+        mock_resp.url = "https://example.com/"
+        mock_resp.headers = {}
+
+        result = scrape_detail_batch(run_id=RUN_ID, batch_id=BATCH_ID, listings=[{"listing_id": "l5"}])
+        for key in ("mode", "total", "succeeded", "errors"):
+            assert key in result["meta"], f"meta missing key: {key}"
+
+    def test_artifacts_have_n8n_keys(self, mock_cf_session, mocker):
+        mocker.patch("os.makedirs")
+        mocker.patch("builtins.open", mock_open())
+        mock_session, mock_resp = mock_cf_session
+        mock_resp.status_code = 200
+        mock_resp.content = b"ok"
+        mock_resp.url = "https://example.com/"
+        mock_resp.headers = {"content-type": "text/html"}
+
+        result = scrape_detail_batch(run_id=RUN_ID, batch_id=BATCH_ID, listings=[{"listing_id": "l6", "vin": VIN}])
+        art = result["artifacts"][0]
+        missing = N8N_ARTIFACT_KEYS - art.keys()
+        assert missing == set(), f"Batch artifact missing n8n fields: {missing}"

@@ -130,6 +130,7 @@ def _record_run(started_at: datetime, finished_at: datetime, ok: bool,
 _INTENT_FALLBACK: Dict[str, List[str]] = {
     "after_srp": ["stg_raw_artifacts+", "stg_srp_observations+", "stg_detail_carousel_hints+"],
     "after_detail": ["stg_raw_artifacts+", "stg_detail_observations+", "stg_detail_carousel_hints+"],
+    "both": ["stg_raw_artifacts+", "stg_srp_observations+", "stg_detail_observations+", "stg_detail_carousel_hints+"],
 }
 
 

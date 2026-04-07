@@ -10,7 +10,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from processors.scrape_results import scrape_results
 from processors.results_page_cards import (parse_cars_results_page_html, parse_cars_results_page_html_v2, parse_cars_results_page_html_v3)
-from processors.scrape_detail import (scrape_detail_dummy, scrape_detail_fetch)
+from processors.scrape_detail import (scrape_detail_dummy, scrape_detail_fetch, scrape_detail_batch)
 from processors.parse_detail_page import parse_cars_detail_page_html_v1
 from db import get_pool, close_pool
 
@@ -99,6 +99,32 @@ def _run_scrape_job(job_id: str, run_id: str, search_key: str, scope: str, paylo
             _jobs[job_id]["artifact_count"] = len(artifacts)
     except Exception as e:
         logger.exception("Scrape job %s failed (run_id=%s, search_key=%s, scope=%s)", job_id, run_id, search_key, scope)
+        with _jobs_lock:
+            _jobs[job_id]["status"] = "failed"
+            _jobs[job_id]["error"] = str(e)
+
+
+def _run_detail_batch_job(job_id: str, run_id: str, batch_id: str, listings: List[Dict[str, Any]], max_workers: int):
+    """Runs in background thread. Updates in-memory job store."""
+    import asyncio
+    asyncio.set_event_loop(asyncio.new_event_loop())
+
+    with _jobs_lock:
+        _jobs[job_id]["status"] = "running"
+        _jobs[job_id]["started_at"] = __import__("datetime").datetime.utcnow().isoformat()
+    try:
+        logger.info(
+            "detail batch job %s starting: run_id=%s batch_id=%s listing_count=%s",
+            job_id, run_id, batch_id, len(listings),
+        )
+        result = scrape_detail_batch(run_id=run_id, batch_id=batch_id, listings=listings, max_workers=max_workers)
+        artifacts = result.get("artifacts", [])
+        with _jobs_lock:
+            _jobs[job_id]["status"] = "completed"
+            _jobs[job_id]["artifacts"] = artifacts
+            _jobs[job_id]["artifact_count"] = len(artifacts)
+    except Exception as e:
+        logger.exception("Detail batch job %s failed (run_id=%s)", job_id, run_id)
         with _jobs_lock:
             _jobs[job_id]["status"] = "failed"
             _jobs[job_id]["error"] = str(e)
@@ -442,6 +468,47 @@ def scrape_detail(run_id: str, payload: dict = Body(...)) -> Dict[str, Any]:
         "artifacts": [],
         "meta": {"mode": mode},
     }
+
+
+@app.post("/scrape_detail/batch")
+def scrape_detail_batch_endpoint(
+    run_id: str,
+    payload: dict = Body(...),
+) -> Dict[str, Any]:
+    """
+    Queues an async detail-batch scrape job. Returns job_id immediately.
+    payload.listings: [{listing_id, vin?, url?}, ...]
+    payload.max_workers: optional int (default 8)
+    Poll GET /scrape_results/jobs/completed to retrieve results.
+    """
+    listings = (payload or {}).get("listings") or []
+    if not listings:
+        raise HTTPException(status_code=400, detail="payload.listings is required and must be non-empty")
+
+    max_workers = int((payload or {}).get("max_workers") or 8)
+    batch_id = (payload or {}).get("batch_id") or str(uuid.uuid4())
+
+    logger.info(
+        "scrape_detail/batch received run_id=%s batch_id=%s listing_count=%s payload_keys=%s",
+        run_id, batch_id, len(listings), list((payload or {}).keys()),
+    )
+
+    job_id = str(uuid.uuid4())
+    with _jobs_lock:
+        _jobs[job_id] = {
+            "job_id": job_id,
+            "run_id": run_id,
+            "batch_id": batch_id,
+            "job_type": "detail_batch",
+            "listing_count": len(listings),
+            "status": "queued",
+            "artifacts": [],
+            "artifact_count": 0,
+            "error": None,
+            "started_at": None,
+        }
+    _executor.submit(_run_detail_batch_job, job_id, run_id, batch_id, listings, max_workers)
+    return {"job_id": job_id, "batch_id": batch_id, "status": "queued", "listing_count": len(listings)}
 
 
 @app.post("/process/detail_pages")

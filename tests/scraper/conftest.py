@@ -121,12 +121,12 @@ def mock_cf_session(mocker):
 
     mocker.patch("processors.scrape_detail.cf_requests.Session", return_value=mock_session)
 
-    # Mock _get_cf_session to return (session, None, None) — cache hit, no bootstrap HTML.
-    # This forces _fetch_url to use session.get() instead of returning early,
-    # so tests can verify the URL passed to session.get().
+    # Mock _get_cf_credentials to return a cache hit with dummy credentials.
+    # This forces _fetch_url to build a fresh Session (intercepted above) and call
+    # session.get(), so tests can verify the URL and kwargs passed to session.get().
     mocker.patch(
-        "processors.scrape_detail._get_cf_session",
-        return_value=(mock_session, None, None),
+        "processors.scrape_detail._get_cf_credentials",
+        return_value=({"cookies": {}, "user_agent": "test-ua"}, None, None),
     )
 
     return mock_session, mock_resp

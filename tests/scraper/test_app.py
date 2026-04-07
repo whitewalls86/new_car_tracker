@@ -499,6 +499,58 @@ class TestProcessDetailPages:
 
 
 # ---------------------------------------------------------------------------
+# POST /scrape_detail/batch
+# ---------------------------------------------------------------------------
+class TestScrapeDetailBatch:
+    def test_queues_job_returns_job_id(self, mock_scraper_client, mocker):
+        mocker.patch.object(scraper_app._executor, "submit")
+        resp = mock_scraper_client.post(
+            "/scrape_detail/batch?run_id=r1",
+            json={"listings": [{"listing_id": "l1"}, {"listing_id": "l2"}]},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "job_id" in data
+        assert data["status"] == "queued"
+        assert data["listing_count"] == 2
+
+    def test_empty_listings_returns_400(self, mock_scraper_client, mocker):
+        mocker.patch.object(scraper_app._executor, "submit")
+        resp = mock_scraper_client.post(
+            "/scrape_detail/batch?run_id=r1",
+            json={"listings": []},
+        )
+        assert resp.status_code == 400
+
+    def test_job_stored_with_correct_metadata(self, mock_scraper_client, mocker):
+        mocker.patch.object(scraper_app._executor, "submit")
+        resp = mock_scraper_client.post(
+            "/scrape_detail/batch?run_id=myrun",
+            json={"listings": [{"listing_id": "l1"}]},
+        )
+        job_id = resp.json()["job_id"]
+        job = scraper_app._jobs[job_id]
+        assert job["job_type"] == "detail_batch"
+        assert job["run_id"] == "myrun"
+        assert job["listing_count"] == 1
+        assert job["status"] == "queued"
+
+    def test_completed_job_surfaces_in_jobs_endpoint(self, mock_scraper_client):
+        _inject_job("db1", status="completed")
+        scraper_app._jobs["db1"]["job_type"] = "detail_batch"
+        resp = mock_scraper_client.get("/scrape_results/jobs/completed")
+        ids = [j["job_id"] for j in resp.json()]
+        assert "db1" in ids
+
+    def test_job_can_be_fetched(self, mock_scraper_client):
+        _inject_job("db2", status="completed")
+        scraper_app._jobs["db2"]["job_type"] = "detail_batch"
+        resp = mock_scraper_client.post("/scrape_results/jobs/db2/fetched")
+        assert resp.status_code == 200
+        assert "db2" not in scraper_app._jobs
+
+
+# ---------------------------------------------------------------------------
 # POST /cleanup/artifacts
 # ---------------------------------------------------------------------------
 class TestCleanupArtifacts:
