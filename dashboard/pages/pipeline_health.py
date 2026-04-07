@@ -52,6 +52,7 @@ def render():
 
     # -- Price freshness -----------------------------------------------------
     _section_price_freshness()
+    _section_blocked_cooldown()
 
     # -- Rotation schedule ---------------------------------------------------
     _section_rotation_schedule()
@@ -178,7 +179,15 @@ def _section_detail_runs():
                 trigger = 'detail scrape'
             ORDER BY started_at DESC
             LIMIT 20
-        )
+        ), price_min AS (
+			SELECT vin, MIN(observed_at) as min_observed_at
+			FROM analytics.int_price_events
+			GROUP BY vin
+		), filtered_artifacts AS (
+			SELECT ra.*
+			FROM raw_artifacts ra
+			JOIN my_runs r USING (run_id)
+		)
         SELECT
             r.started_at AT TIME ZONE 'America/Chicago' AS started,
             CASE
@@ -195,58 +204,18 @@ def _section_detail_runs():
             COUNT(DISTINCT d.vin17) FILTER (WHERE pe.vin IS NULL) AS newly_mapped_vins
         FROM
             my_runs r
-        LEFT JOIN raw_artifacts ra on r.run_id = ra.run_id
+        LEFT JOIN filtered_artifacts ra on r.run_id = ra.run_id
         LEFT JOIN artifact_processing ap ON ra.artifact_id = ap.artifact_id
         LEFT JOIN analytics.stg_detail_observations d on ra.artifact_id = d.artifact_id
-        LEFT JOIN (
-            SELECT
-                vin
-                ,min(observed_at) as first_price
-            FROM
-                analytics.int_price_events
-            GROUP BY
-                vin
-        ) pe on d.vin = pe.vin AND pe.first_price <= r.started_at
+        LEFT JOIN price_min pe on d.vin = pe.vin AND pe.min_observed_at <= r.started_at
         GROUP BY r.run_id, r.started_at, r.finished_at, r.status, r.total_count, r.error_count, r.last_error
-        ORDER BY started DESC
+        ORDER BY started DESC;
     """)
     if not df.empty:
         st.dataframe(df, use_container_width=True, hide_index=True)
     else:
         st.info("No detail scrape runs found.")
 
-    # Last detail run summary metrics
-#    st.subheader("Last Detail Run Results")
-#    last_df = run_query("""
-#        WITH last_run AS (
-#            SELECT run_id, started_at, finished_at
-#            FROM runs
-#            WHERE trigger = 'detail scrape' AND status = 'success'
-#            ORDER BY started_at DESC LIMIT 1
-#        ),
-#        run_obs AS (
-#            SELECT d.vin, d.listing_state, d.price
-#            FROM detail_observations d
-#            JOIN last_run lr ON d.fetched_at BETWEEN lr.started_at AND lr.finished_at
-#        )
-#        SELECT
-#            (SELECT COUNT(*) FROM run_obs) AS total_observed,
-#            (SELECT COUNT(DISTINCT vin) FILTER (WHERE price IS NOT NULL) FROM run_obs) AS prices_refreshed,
-#            (SELECT COUNT(DISTINCT vin) FILTER (WHERE listing_state = 'unlisted') FROM run_obs) AS newly_unlisted,
-#            (SELECT started_at AT TIME ZONE 'America/Chicago' FROM last_run) AS run_started
-#    """)
-#    if not last_df.empty and pd.notna(last_df["run_started"].iloc[0]):
-#        r = last_df.iloc[0]
-#        st.caption(f"Run started: {r['run_started'].strftime('%b %d %H:%M')}")
-#        c1, c2, c3 = st.columns(3)
-#        with c1:
-#            st.metric("Total Observed", f"{int(r['total_observed']):,}")
-#        with c2:
-#            st.metric("Prices Refreshed", f"{int(r['prices_refreshed']):,}")
-#        with c3:
-#            st.metric("Newly Unlisted", f"{int(r['newly_unlisted']):,}")
-#    else:
-#        st.info("No completed detail runs found.")
 
 
 def _section_stale_backlog():
@@ -300,6 +269,35 @@ def _section_price_freshness():
         )
         fig.update_layout(xaxis_title="Hours until stale", yaxis_title="Active VINs", legend_title="Price Tier",
                           xaxis={"categoryorder": "array", "categoryarray": df["expiry_bucket"].tolist()})
+        st.plotly_chart(fig, use_container_width=True)
+
+
+def _section_blocked_cooldown():
+    st.subheader("Blocked Listings — Next Eligible Count")
+    df = run_query("""
+        WITH buckets AS (
+            SELECT
+                FLOOR((EXTRACT(EPOCH FROM (next_eligible_at - now())) / 3600) / 2) * 2 AS age_floor
+            FROM analytics.stg_blocked_cooldown
+            WHERE next_eligible_at IS NOT NULL
+        )
+        SELECT
+            age_floor::numeric AS hours_until_eligible,
+            TO_CHAR(age_floor::numeric, 'FM90.0') || 'h' AS eligible_bucket,
+            COUNT(*) AS total
+        FROM buckets
+        GROUP BY age_floor
+        ORDER BY age_floor DESC
+    """)
+    if not df.empty:
+        df = df.sort_values("hours_until_eligible")
+        fig = px.bar(
+            df, x="eligible_bucket", y=["total"],
+            labels={"value": "VINs", "eligible_bucket": "Eligible In"},
+            color_discrete_map={"total": "#3498db"},
+        )
+        fig.update_layout(xaxis_title="Hours until eligible", yaxis_title="Listing Ids",
+                          xaxis={"categoryorder": "array", "categoryarray": df["eligible_bucket"].tolist()})
         st.plotly_chart(fig, use_container_width=True)
 
 
