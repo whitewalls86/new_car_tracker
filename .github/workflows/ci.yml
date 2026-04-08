@@ -31,13 +31,16 @@ jobs:
       - name: Install test dependencies
         run: |
           pip install \
-            pytest pytest-mock \
+            pytest pytest-mock pytest-asyncio \
             fastapi httpx \
             psycopg2-binary asyncpg \
             requests pydantic jinja2 python-multipart \
             pyarrow \
-            bs4 lxml
+            bs4 lxml \
+            s3fs minio
       - run: pytest tests/ -v
+        env:
+          PYTHONPATH: ${{ github.workspace }}
 
   docker-build:
     name: Docker build (all services)
