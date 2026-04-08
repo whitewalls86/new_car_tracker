@@ -36,15 +36,10 @@ Fast gates (lint, unit tests) run in parallel with Docker build. The dbt job run
 |------|--------|
 | `.github/workflows/ci.yml` | Create — full pipeline |
 | `pyproject.toml` | Create — ruff + pytest config |
-| `db/migrations/V001__initial_schema.sql` | Create — copy of current `schema_new.sql` |
-| `db/migrations/V002__add_customer_id.sql` | Create — from `db/schema/plan25_add_customer_id.sql` |
-| `db/migrations/V003__add_dbt_intents.sql` | Create — from `db/schema/dbt_intents.sql` |
-| `db/migrations/V004__add_dbt_lock.sql` | Create — from `db/schema/dbt_lock.sql` |
-| `db/migrations/V005__add_detail_scrape_claims.sql` | Create — from `db/schema/detail_scrape_claims.sql` |
-| `db/migrations/V006__add_archived_at.sql` | Create — from `db/schema/plan72_add_archived_at.sql` |
+| `db/migrations/V001__initial_schema.sql` | Create — schema from `schema_new.sql` + seed data from `db/seed/*.sql` |
 | `dbt/profiles.yml` | Add `ci` target |
 
-> **Note:** `schema_new.sql` is NOT replaced — it stays as a human-readable reference and fast fresh-install option. Flyway is the authoritative migration source going forward. New schema changes go in `db/migrations/` as `V007__*.sql`, never editing existing files.
+> **Note:** `schema_new.sql` is NOT replaced — it stays as a human-readable reference and fast fresh-install option. Flyway is the authoritative migration source going forward. New schema changes go in `db/migrations/` as `V002__*.sql`, `V003__*.sql`, etc., never editing existing files.
 
 ---
 
@@ -118,11 +113,9 @@ cartracker:
 
 Each file is `V{NNN}__{description}.sql` — three-digit zero-padded version, double underscore separator, lowercase snake_case description.
 
-**V001__initial_schema.sql** — the full pg_dump from `schema_new.sql`. This is the only migration that starts from scratch; all others are incremental deltas.
+**V001__initial_schema.sql** — the full schema from `schema_new.sql` plus initial seed data (dbt_intents inserts, dbt_lock table + initial row, detail_scrape_claims table, example_search_config insert). This is a complete baseline; all future migrations will be incremental deltas starting from V002.
 
-**V002–V006** — extract the `ALTER TABLE` / `CREATE TABLE` statements from the corresponding `db/schema/` ad-hoc files. Strip the surrounding comments but keep the SQL unchanged.
-
-After creating these files, the `db/schema/` ad-hoc files (`plan25_add_customer_id.sql`, `plan72_add_archived_at.sql`, etc.) are no longer needed and can be deleted.
+After creating V001, the `db/schema/` ad-hoc files (`plan25_add_customer_id.sql`, `plan72_add_archived_at.sql`, etc.) are no longer needed and can be deleted (they've been absorbed into V001).
 
 ---
 
@@ -262,5 +255,5 @@ A Flyway service entry in `docker-compose.yml` is **not** needed — Flyway is a
 
 - GitHub provides 2,000 free CI minutes/month for private repos. This pipeline runs ~4-6 min per PR (lint ~30s, tests ~1m, Docker build ~2-3m, dbt ~1m). At several PRs/day it stays well within the free tier.
 - `docker-build` does not push images — it just validates the Dockerfiles are buildable. Image push (for CD) is a later plan.
-- The `dbt seeds/` directory contains `scrape_targets.csv`. Seeds run as part of `dbt build` so the dbt job needs no extra setup for seed data.
-- `dbt_lock` table is created by V004 migration; the `dbt build` in CI will not conflict because the CI Postgres has no running dbt_runner.
+- Initial seed data (dbt_intents, dbt_lock, detail_scrape_claims, search_configs) is included in V001 migrations via `db/seed/*.sql` files.
+- `dbt_lock` table is initialized with a single row by V001; the `dbt build` in CI will not conflict because the CI Postgres has no running dbt_runner.
