@@ -162,7 +162,7 @@ def _section_rotation_schedule():
         ORDER BY c.rotation_slot
     """)
     if not df.empty:
-        st.dataframe(df, use_container_width=True, hide_index=True)
+        st.dataframe(df, width="stretch", hide_index=True)
     else:
         st.info("No rotation slots configured.")
 
@@ -219,23 +219,93 @@ def _section_detail_runs():
 
 
 def _section_stale_backlog():
-    st.subheader("Stale Vehicle Backlog")
-    df = run_query("""
-        SELECT
-            q.stale_reason,
-            COUNT(*) AS vehicle_count,
-            ROUND(AVG(s.tier1_age_hours)::numeric, 1) AS avg_tier1_age_hours,
-            ROUND(AVG(s.price_age_hours)::numeric, 1) AS avg_price_age_hours
-        FROM ops.ops_detail_scrape_queue q
-        LEFT JOIN detail_scrape_claims c
-            ON c.listing_id = q.listing_id AND c.status = 'running'
-        LEFT JOIN ops.ops_vehicle_staleness s
-            ON q.listing_id = s.listing_id
-        WHERE c.listing_id IS NULL
-        GROUP BY q.stale_reason
-        ORDER BY vehicle_count DESC
+    left_col, right_col = st.columns([1, 1])
+
+    df_stale = run_query("""
+        WITH batch_marking AS (
+            SELECT 
+                q.listing_id,
+                q.stale_reason,
+                ROW_NUMBER() OVER (PARTITION BY 1 ORDER BY q.priority, q.listing_id) as priority_row
+            FROM ops.ops_detail_scrape_queue q
+            LEFT JOIN detail_scrape_claims c
+                ON c.listing_id = q.listing_id AND c.status = 'running'
+            WHERE c.listing_id IS NULL
+        ), first_part AS (
+            SELECT
+                CASE 
+                    WHEN priority_row < 501 THEN '00_next_batch' 
+                    WHEN priority_row < 1001 THEN '01_following_batch'
+                    WHEN priority_row < 1501 THEN '02_third_batch'
+                    ELSE '03_backlog' END as batch_param,
+                COUNT(*) FILTER (WHERE stale_reason LIKE 'price_only%')::varchar as price_only,
+                COUNT(*) FILTER (WHERE stale_reason LIKE 'force_stale_36h')::varchar as force_stale,
+                COUNT(*) FILTER (WHERE stale_reason LIKE 'full_details')::varchar AS full_details,
+                COUNT(*) FILTER (WHERE stale_reason LIKE 'unmapped_carousel')::varchar as unmapped_carousel,
+                COUNT(*) FILTER (WHERE stale_reason LIKE 'dealer_unenriched')::varchar as dealer_unenriched,
+                COUNT(*)::varchar AS total_count
+            FROM batch_marking q
+            GROUP BY 1
+			ORDER BY batch_param ASC
+        ), second_part AS (
+            SELECT
+                'Grand Total' as batch_param,
+                COUNT(*) FILTER (WHERE stale_reason LIKE 'price_only%')::varchar as price_only,
+                COUNT(*) FILTER (WHERE stale_reason LIKE 'force_stale_36h')::varchar as force_stale,
+                COUNT(*) FILTER (WHERE stale_reason LIKE 'full_details')::varchar AS full_details,
+                COUNT(*) FILTER (WHERE stale_reason LIKE 'unmapped_carousel')::varchar as unmapped_carousel,
+                COUNT(*) FILTER (WHERE stale_reason LIKE 'dealer_unenriched')::varchar as dealer_unenriched,
+                COUNT(*)::varchar AS total_count
+            FROM batch_marking q
+            GROUP BY 1
+        )
+        SELECT * FROM first_part
+        UNION ALL
+        SELECT 
+            '----------' as batch_param, 
+            '----------' as price_only,
+            '----------' as force_stale,
+            '----------' as full_details,
+            '----------' as unmapped_carousel,
+            '----------' as dealer_unenriched,
+            '----------' as total_count
+        UNION ALL       
+        SELECT * FROM second_part
     """)
-    st.dataframe(df, use_container_width=True, hide_index=True)
+
+    df_cooldown = run_query("""
+        WITH batch_marking AS (
+            SELECT 
+                q.listing_id,
+                q.stale_reason,
+                ROW_NUMBER() OVER (PARTITION BY 1 ORDER BY q.priority, q.listing_id) as priority_row
+            FROM ops.ops_detail_scrape_queue q
+            LEFT JOIN detail_scrape_claims c
+                ON c.listing_id = q.listing_id AND c.status = 'running'
+            WHERE c.listing_id IS NULL
+        )
+        SELECT
+            bc.num_of_attempts
+            ,MIN(bc.next_eligible_at)  AT TIME ZONE 'America/Chicago' as next_attempt_at
+            ,COUNT(bc.listing_id) as num_listings
+            ,COUNT(bc.listing_id) FILTER (WHERE q.priority_row < 501 AND q.priority_row IS NOT NULL) as num_in_next_batch
+        FROM
+            analytics.stg_blocked_cooldown bc
+        LEFT JOIN batch_marking q ON q.listing_id = bc.listing_id
+        GROUP BY
+            bc.num_of_attempts
+        ORDER BY
+            bc.num_of_attempts
+    """)
+
+    with left_col:
+        st.subheader("Stale Vehicle Backlog")
+        st.dataframe(df_stale, width="stretch", hide_index=True)
+
+    with right_col:
+        st.subheader("Cooldown Backlog")
+        st.dataframe(df_cooldown, width="stretch", hide_index=True)
+
 
 
 def _section_price_freshness():
@@ -491,7 +561,7 @@ def _section_processor_activity():
         SELECT date_trunc('day', ap.processed_at AT TIME ZONE 'America/Chicago') AS day,
                COUNT(*) AS total_processed,
                COUNT(*) FILTER (WHERE ap.meta->>'primary_json_present' = 'true') AS has_vehicle_data,
-               COUNT(*) FILTER (WHERE ap.message ILIKE '%cloudflare%') AS cloudflare_blocked,
+               COUNT(*) FILTER (WHERE ap.message LIKE '%403%') AS cloudflare_blocked,
                COUNT(*) FILTER (WHERE ap.meta->>'primary_json_present' = 'false'
                    AND (ap.message IS NULL OR ap.message NOT ILIKE '%cloudflare%')) AS no_data,
                ROUND(100.0 * COUNT(*) FILTER (WHERE ap.meta->>'primary_json_present' = 'true')

@@ -6,8 +6,7 @@
         "rule": {
           "interval": [
             {
-              "triggerAtHour": 3,
-              "triggerAtMinute": 0
+              "triggerAtHour": 3
             }
           ]
         }
@@ -15,10 +14,10 @@
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
       "position": [
-        -1200,
-        800
+        -80,
+        -48
       ],
-      "id": "p1a2b3c4-d5e6-f7a8-b9c0-d1e2f3a4b5c6",
+      "id": "9b28bf38-1dda-47dd-8140-18153f5f4fed",
       "name": "Schedule Trigger"
     },
     {
@@ -89,10 +88,10 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        -1024,
-        800
+        96,
+        -48
       ],
-      "id": "p2a3b4c5-d6e7-f8a9-b0c1-d2e3f4a5b6c7",
+      "id": "94d9c4aa-e15d-4706-bbf6-fdde59c96d37",
       "name": "Call 'Check Deploy Intent'"
     },
     {
@@ -123,10 +122,10 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
-        -848,
-        800
+        272,
+        -48
       ],
-      "id": "p4a5b6c7-d8e9-f0a1-b2c3-d4e5f6a7b8c9",
+      "id": "e04a327f-35d4-47d6-8aeb-7922c1b54721",
       "name": "Can Deploy?"
     },
     {
@@ -138,10 +137,10 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        -672,
-        800
+        448,
+        -48
       ],
-      "id": "p5a6b7c8-d9e0-f1a2-b3c4-d5e6f7a8b9c0",
+      "id": "3aa52250-10a4-469b-a895-d339b653cf54",
       "name": "Get Expired Months",
       "credentials": {
         "postgres": {
@@ -159,10 +158,10 @@
       "type": "n8n-nodes-base.aggregate",
       "typeVersion": 1,
       "position": [
-        -496,
-        800
+        624,
+        -48
       ],
-      "id": "p6a7b8c9-d0e1-f2a3-b4c5-d6e7f8a9b0c1",
+      "id": "7417931c-b0d7-4893-973c-fda6b52c480f",
       "name": "Aggregate Months"
     },
     {
@@ -192,10 +191,10 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        -320,
-        800
+        800,
+        -48
       ],
-      "id": "p8a9b0c1-d2e3-f4a5-b6c7-d8e9f0a1b2c3",
+      "id": "ba3bff81-e98e-4cdd-bf9d-d25549079ef0",
       "name": "Any Expired Months?"
     },
     {
@@ -210,10 +209,10 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        -112,
-        704
+        1008,
+        -144
       ],
-      "id": "p9a0b1c2-d3e4-f5a6-b7c8-d9e0f1a2b3c4",
+      "id": "a4ec6e72-a602-4357-bb70-4298cb33df5e",
       "name": "Call Cleanup Parquet API"
     },
     {
@@ -225,10 +224,10 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        96,
-        704
+        1216,
+        -144
       ],
-      "id": "pc3d4e5f-a6b7-c8d9-e0f1-a2b3c4d5e6f7",
+      "id": "0c1545ca-9281-474a-8428-ee6dc42e1fda",
       "name": "Mark Parquet Deleted",
       "credentials": {
         "postgres": {
@@ -305,10 +304,10 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        304,
-        704
+        1424,
+        -144
       ],
-      "id": "pa1b2c3d-e4f5-a6b7-c8d9-e0f1a2b3c4d5",
+      "id": "3d9ab688-39e8-4b1a-88a7-a629ece93e55",
       "name": "Call 'Update n8n Runs Table'"
     },
     {
@@ -379,10 +378,10 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        -112,
-        896
+        1008,
+        48
       ],
-      "id": "pb2c3d4e-f5a6-b7c8-d9e0-f1a2b3c4d5e6",
+      "id": "51a56085-3a15-414d-a4da-67f0e8018bfa",
       "name": "Call 'Update n8n Runs Table'1"
     }
   ],
@@ -489,10 +488,10 @@
     "executionOrder": "v1",
     "availableInMCP": false
   },
-  "versionId": "00000000-0000-0000-0000-000000000002",
+  "versionId": "85295808-ae33-44da-be12-f480068a7c3c",
   "meta": {
     "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179"
   },
-  "id": "cleanup-parquet-workflow-001",
+  "id": "jvEn294314DC3anz9oE5Q",
   "tags": []
 }

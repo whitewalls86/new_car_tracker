@@ -12,7 +12,7 @@ MINIO_ENDPOINT = os.environ.get("MINIO_ENDPOINT", "http://minio:9000")
 MINIO_ACCESS_KEY = os.environ.get("MINIO_ROOT_USER", "cartracker")
 MINIO_SECRET_KEY = os.environ.get("MINIO_ROOT_PASSWORD", "")
 MINIO_BUCKET = os.environ.get("MINIO_BUCKET", "bronze")
-CHUNK_SIZE = 2_000
+CHUNK_SIZE = 1000
 
 _SCHEMA = pa.schema([
     pa.field("artifact_id", pa.int64()),
@@ -152,13 +152,15 @@ def archive_artifacts(
             archived_ids = [r["artifact_id"] for r in rows]
             try:
                 _write_chunk(rows, fs)
+                rows.clear()
+                pa.default_memory_pool().release_unused()
                 with conn.cursor() as cur:
                     cur.execute(
                         "UPDATE raw_artifacts SET archived_at = now() WHERE artifact_id = ANY(%s)",
                         (archived_ids,),
                     )
                 conn.commit()
-                logger.info("Archived chunk %d-%d (%d artifacts)", i, i + len(chunk_ids), len(rows))
+                logger.info("Archived chunk %d-%d (%d artifacts)", i, i + len(chunk_ids), len(archived_ids))
             except Exception as e:
                 conn.rollback()
                 logger.error("Write failed for chunk %d-%d: %s", i, i + len(chunk_ids), e)

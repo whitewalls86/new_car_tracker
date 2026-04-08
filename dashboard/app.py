@@ -17,8 +17,9 @@ if st.sidebar.button("Refresh Data"):
 st.sidebar.markdown("---")
 st.sidebar.markdown("**Quick Links**")
 st.sidebar.markdown("[n8n Workflows](http://localhost:5678)")
-st.sidebar.markdown("[Search Config Admin](http://localhost:8000/admin)")
+st.sidebar.markdown("[Search Config Admin](http://localhost:8060/admin)")
 st.sidebar.markdown("[pgAdmin](http://localhost:5050)")
+st.sidebar.markdown("[minio](http://localhost:9001)")
 
 # Data freshness
 _freshness_df = run_query("""

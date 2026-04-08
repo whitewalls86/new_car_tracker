@@ -6,8 +6,7 @@
         "rule": {
           "interval": [
             {
-              "field": "hours",
-              "hoursInterval": 4
+              "field": "minutes"
             }
           ]
         }
@@ -15,10 +14,10 @@
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
       "position": [
-        -1760,
-        1344
+        -1136,
+        2016
       ],
-      "id": "a3ac94fa-e324-432e-823a-de917f15fd81",
+      "id": "9cff085f-a72d-44e5-91fe-cf21b8988576",
       "name": "Schedule Trigger1"
     },
     {
@@ -30,11 +29,12 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        -1168,
-        1344
+        -544,
+        2016
       ],
-      "id": "16d488d4-59e2-4347-814a-46dea56da67e",
+      "id": "5383b158-081f-4c09-a377-50fc70e99b17",
       "name": "Pipeline Maintenance",
+      "alwaysOutputData": true,
       "credentials": {
         "postgres": {
           "id": "l8Ecbn62FzXCDkF9",
@@ -45,16 +45,16 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT ra.artifact_id, ra.filepath\nFROM raw_artifacts ra\nWHERE ra.deleted_at IS NULL\n  AND ra.filepath IS NOT NULL\n  AND (\n    -- ok: delete after 48 hours\n    EXISTS (\n      SELECT 1 FROM artifact_processing ap\n      WHERE ap.artifact_id = ra.artifact_id\n        AND ap.status = 'ok'\n        AND ra.fetched_at < now() - interval '48 hours'\n    )\n    OR\n    -- skip (no ok): delete immediately\n    (\n      EXISTS (\n        SELECT 1 FROM artifact_processing ap\n        WHERE ap.artifact_id = ra.artifact_id AND ap.status = 'skip'\n      )\n      AND NOT EXISTS (\n        SELECT 1 FROM artifact_processing ap\n        WHERE ap.artifact_id = ra.artifact_id AND ap.status = 'ok'\n      )\n    )\n    OR\n    -- retry (no ok): delete after 7 days\n    (\n      EXISTS (\n        SELECT 1 FROM artifact_processing ap\n        WHERE ap.artifact_id = ra.artifact_id AND ap.status = 'retry'\n      )\n      AND NOT EXISTS (\n        SELECT 1 FROM artifact_processing ap\n        WHERE ap.artifact_id = ra.artifact_id AND ap.status = 'ok'\n      )\n      AND ra.fetched_at < now() - interval '7 days'\n    )\n  )\nLIMIT 200000;",
+        "query": "SELECT ra.artifact_id, ra.filepath\nFROM raw_artifacts ra\nWHERE ra.deleted_at IS NULL\n  AND ra.filepath IS NOT NULL\n  AND (\n    -- ok: delete after 48 hours\n    EXISTS (\n      SELECT 1 FROM artifact_processing ap\n      WHERE ap.artifact_id = ra.artifact_id\n        AND ap.status = 'ok'\n        AND ra.fetched_at < now() - interval '48 hours'\n    )\n    OR\n    -- skip (no ok): delete immediately\n    (\n      EXISTS (\n        SELECT 1 FROM artifact_processing ap\n        WHERE ap.artifact_id = ra.artifact_id AND ap.status = 'skip'\n      )\n      AND NOT EXISTS (\n        SELECT 1 FROM artifact_processing ap\n        WHERE ap.artifact_id = ra.artifact_id AND ap.status = 'ok'\n      )\n    )\n    OR\n    -- retry (no ok): delete after 7 days\n    (\n      EXISTS (\n        SELECT 1 FROM artifact_processing ap\n        WHERE ap.artifact_id = ra.artifact_id AND ap.status = 'retry'\n      )\n      AND NOT EXISTS (\n        SELECT 1 FROM artifact_processing ap\n        WHERE ap.artifact_id = ra.artifact_id AND ap.status = 'ok'\n      )\n      AND ra.fetched_at < now() - interval '7 days'\n    )\n  )\nLIMIT 10000;",
         "options": {}
       },
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        -992,
-        1344
+        -368,
+        2016
       ],
-      "id": "9e14840e-fea7-4527-84c8-487a400bda77",
+      "id": "6a67303a-775b-477a-a8e5-5f87d9d58e50",
       "name": "Get Candidates1",
       "credentials": {
         "postgres": {
@@ -72,10 +72,10 @@
       "type": "n8n-nodes-base.aggregate",
       "typeVersion": 1,
       "position": [
-        -816,
-        1344
+        -192,
+        2016
       ],
-      "id": "3d40e8b9-fcb9-4d85-bf3c-8a778fe8d986",
+      "id": "6b70f888-1bd1-4592-8e2c-7e9b1988ae66",
       "name": "Aggregate Rows"
     },
     {
@@ -105,10 +105,10 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        -608,
-        1344
+        16,
+        2016
       ],
-      "id": "2f08c0aa-a3fb-43ca-ac36-8d239f722fca",
+      "id": "c9cd22b4-42b5-453d-a90c-52b665e2b15b",
       "name": "Any Candidates?1"
     },
     {
@@ -129,10 +129,10 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        -400,
-        1248
+        224,
+        1920
       ],
-      "id": "c1a2b3c4-d5e6-f7a8-b9c0-d1e2f3a4b5c6",
+      "id": "f7214d5c-c2e6-480e-b593-262c99f2f33c",
       "name": "Call Archive API"
     },
     {
@@ -147,10 +147,10 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        -192,
-        1248
+        432,
+        1920
       ],
-      "id": "2a2e9bc1-44ef-4c20-9974-6559c69d62e6",
+      "id": "c0dd2bd0-ade5-4fe3-85b9-2caf1bfceb05",
       "name": "Call Cleanup API1"
     },
     {
@@ -161,10 +161,10 @@
       "type": "n8n-nodes-base.splitOut",
       "typeVersion": 1,
       "position": [
-        16,
-        1248
+        640,
+        1920
       ],
-      "id": "1c6adc1d-d802-4631-93ea-636a36dfb0c6",
+      "id": "868d058e-2cf3-46f1-8e71-e1e932304c5e",
       "name": "Split Results1"
     },
     {
@@ -193,10 +193,10 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        224,
-        1248
+        848,
+        1920
       ],
-      "id": "3a9d3e31-df00-443e-9307-8ea0d32d6dc3",
+      "id": "391d761c-350c-4852-b3e2-7470bd5cd192",
       "name": "Was Deleted?1"
     },
     {
@@ -208,10 +208,10 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        432,
-        1136
+        1056,
+        1808
       ],
-      "id": "a9be451c-5799-4601-b0d1-a979dfd06b13",
+      "id": "433eaa8e-be86-44c0-bc2a-bc0554a35535",
       "name": "Mark Deleted1",
       "credentials": {
         "postgres": {
@@ -288,10 +288,10 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        -1584,
-        1344
+        -960,
+        2016
       ],
-      "id": "b17a529a-00cc-4cbe-bf5e-9aabd2072e0d",
+      "id": "c9bb3441-0047-41de-8d05-0830a8676f0a",
       "name": "Call 'Check Deploy Intent'"
     },
     {
@@ -362,10 +362,10 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        -400,
-        1440
+        224,
+        2112
       ],
-      "id": "2aa6644a-efdd-44b7-88e2-a55b35acf02e",
+      "id": "e10148f9-0d08-4a14-b3be-784f17fee51c",
       "name": "Call 'Update n8n Runs Table'"
     },
     {
@@ -428,7 +428,7 @@
               "removed": false
             }
           ],
-          "attemptToConvertTypes": false,
+          "attemptToConvertTypes": true,
           "convertFieldsToString": true
         },
         "options": {}
@@ -436,10 +436,10 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        224,
-        1344
+        1088,
+        2000
       ],
-      "id": "8422a9c3-475c-4b7c-b4cd-de916af3d040",
+      "id": "6faf32d3-2a1a-458a-8c5e-f72527cf0122",
       "name": "Call 'Update n8n Runs Table'1"
     },
     {
@@ -502,7 +502,7 @@
               "removed": false
             }
           ],
-          "attemptToConvertTypes": false,
+          "attemptToConvertTypes": true,
           "convertFieldsToString": true
         },
         "options": {}
@@ -510,10 +510,10 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        640,
-        1136
+        1264,
+        1808
       ],
-      "id": "a7e0c1ce-c899-4fe3-bd0f-ea0fbe2c7831",
+      "id": "9394e6ff-b312-4b67-9527-0343d8ae7084",
       "name": "Call 'Update n8n Runs Table'2"
     },
     {
@@ -544,10 +544,10 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
-        -1392,
-        1360
+        -768,
+        2032
       ],
-      "id": "0cfd9259-3971-4f6b-a65d-a65ab370a7e3",
+      "id": "bc03cd32-2030-4ab3-9621-e578754d6580",
       "name": "Can Deploy?"
     }
   ],
@@ -703,9 +703,12 @@
   "active": true,
   "settings": {
     "executionOrder": "v1",
-    "availableInMCP": false
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "rJfFKS2DGRAn_IPJR1xTc"
   },
-  "versionId": "e8345722-1d6b-40d2-b992-fdc36fcd5814",
+  "versionId": "524d82a1-285e-4fc8-8b67-05e353f04911",
   "meta": {
     "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179"
   },
