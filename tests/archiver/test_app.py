@@ -1,0 +1,180 @@
+"""Unit tests for archiver/app.py — all four HTTP endpoints."""
+import pytest
+from unittest.mock import MagicMock, patch
+
+
+# ---------------------------------------------------------------------------
+# GET /health
+# ---------------------------------------------------------------------------
+
+class TestHealth:
+    def test_health_returns_ok(self, mock_archiver_client):
+        resp = mock_archiver_client.get("/health")
+        assert resp.status_code == 200
+        assert resp.json() == {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# POST /archive/artifacts
+# ---------------------------------------------------------------------------
+
+class TestArchiveArtifactsEndpoint:
+    def test_empty_artifacts_returns_zero_counts(self, mock_archiver_client, mocker):
+        mocker.patch("app._archive_artifacts", return_value=[])
+        resp = mock_archiver_client.post("/archive/artifacts", json={"artifacts": []})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total"] == 0
+        assert data["archived"] == 0
+        assert data["failed"] == 0
+
+    def test_all_archived(self, mock_archiver_client, mocker):
+        mocker.patch("app._archive_artifacts", return_value=[
+            {"artifact_id": 1, "archived": True, "reason": None},
+            {"artifact_id": 2, "archived": True, "reason": None},
+        ])
+        resp = mock_archiver_client.post("/archive/artifacts", json={
+            "artifacts": [
+                {"artifact_id": 1, "filepath": "/a.html"},
+                {"artifact_id": 2, "filepath": "/b.html"},
+            ]
+        })
+        data = resp.json()
+        assert data["total"] == 2
+        assert data["archived"] == 2
+        assert data["failed"] == 0
+
+    def test_partial_failure(self, mock_archiver_client, mocker):
+        mocker.patch("app._archive_artifacts", return_value=[
+            {"artifact_id": 1, "archived": True, "reason": None},
+            {"artifact_id": 2, "archived": False, "reason": "parquet_write_error: boom"},
+        ])
+        resp = mock_archiver_client.post("/archive/artifacts", json={
+            "artifacts": [
+                {"artifact_id": 1, "filepath": "/a.html"},
+                {"artifact_id": 2, "filepath": "/b.html"},
+            ]
+        })
+        data = resp.json()
+        assert data["archived"] == 1
+        assert data["failed"] == 1
+
+    def test_results_list_included(self, mock_archiver_client, mocker):
+        fake = [{"artifact_id": 1, "archived": True, "reason": None}]
+        mocker.patch("app._archive_artifacts", return_value=fake)
+        resp = mock_archiver_client.post("/archive/artifacts", json={"artifacts": [{"artifact_id": 1, "filepath": "/a.html"}]})
+        assert resp.json()["results"] == fake
+
+    def test_artifacts_forwarded_to_processor(self, mock_archiver_client, mocker):
+        mock_fn = mocker.patch("app._archive_artifacts", return_value=[])
+        payload = {"artifacts": [{"artifact_id": 7, "filepath": "/x.html"}]}
+        mock_archiver_client.post("/archive/artifacts", json=payload)
+        call_artifacts = mock_fn.call_args[0][0]
+        assert call_artifacts == payload["artifacts"]
+
+
+# ---------------------------------------------------------------------------
+# POST /cleanup/artifacts
+# ---------------------------------------------------------------------------
+
+class TestCleanupArtifactsEndpoint:
+    def test_empty_artifacts(self, mock_archiver_client, mocker):
+        mocker.patch("app.cleanup_artifacts", return_value=[])
+        resp = mock_archiver_client.post("/cleanup/artifacts", json={"artifacts": []})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total"] == 0
+        assert data["deleted"] == 0
+        assert data["failed"] == 0
+
+    def test_all_deleted(self, mock_archiver_client, mocker):
+        mocker.patch("app.cleanup_artifacts", return_value=[
+            {"artifact_id": 1, "deleted": True, "reason": None},
+            {"artifact_id": 2, "deleted": True, "reason": None},
+        ])
+        resp = mock_archiver_client.post("/cleanup/artifacts", json={
+            "artifacts": [
+                {"artifact_id": 1, "filepath": "/a.html"},
+                {"artifact_id": 2, "filepath": "/b.html"},
+            ]
+        })
+        data = resp.json()
+        assert data["total"] == 2
+        assert data["deleted"] == 2
+        assert data["failed"] == 0
+
+    def test_partial_failure(self, mock_archiver_client, mocker):
+        mocker.patch("app.cleanup_artifacts", return_value=[
+            {"artifact_id": 1, "deleted": True, "reason": None},
+            {"artifact_id": 2, "deleted": False, "reason": "PermissionError: denied"},
+        ])
+        resp = mock_archiver_client.post("/cleanup/artifacts", json={
+            "artifacts": [
+                {"artifact_id": 1, "filepath": "/a.html"},
+                {"artifact_id": 2, "filepath": "/b.html"},
+            ]
+        })
+        data = resp.json()
+        assert data["deleted"] == 1
+        assert data["failed"] == 1
+
+
+# ---------------------------------------------------------------------------
+# POST /cleanup/parquet
+# ---------------------------------------------------------------------------
+
+class TestCleanupParquetEndpoint:
+    def test_empty_paths(self, mock_archiver_client, mocker):
+        mocker.patch("app._cleanup_parquet", return_value=[])
+        resp = mock_archiver_client.post("/cleanup/parquet", json={"paths": []})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total"] == 0
+        assert data["deleted"] == 0
+        assert data["failed"] == 0
+
+    def test_all_deleted(self, mock_archiver_client, mocker):
+        mocker.patch("app._cleanup_parquet", return_value=[
+            {"path": "bronze/html/year=2025/month=11/", "deleted": True, "reason": None},
+            {"path": "bronze/html/year=2025/month=12/", "deleted": True, "reason": None},
+        ])
+        resp = mock_archiver_client.post("/cleanup/parquet", json={
+            "paths": [
+                "bronze/html/year=2025/month=11/",
+                "bronze/html/year=2025/month=12/",
+            ]
+        })
+        data = resp.json()
+        assert data["total"] == 2
+        assert data["deleted"] == 2
+        assert data["failed"] == 0
+
+    def test_partial_failure(self, mock_archiver_client, mocker):
+        mocker.patch("app._cleanup_parquet", return_value=[
+            {"path": "bronze/html/year=2025/month=11/", "deleted": True, "reason": None},
+            {"path": "bronze/html/year=2025/month=10/", "deleted": False, "reason": "timeout"},
+        ])
+        resp = mock_archiver_client.post("/cleanup/parquet", json={
+            "paths": [
+                "bronze/html/year=2025/month=11/",
+                "bronze/html/year=2025/month=10/",
+            ]
+        })
+        data = resp.json()
+        assert data["deleted"] == 1
+        assert data["failed"] == 1
+
+    def test_paths_forwarded_to_processor(self, mock_archiver_client, mocker):
+        mock_fn = mocker.patch("app._cleanup_parquet", return_value=[])
+        paths = ["bronze/html/year=2025/month=09/"]
+        mock_archiver_client.post("/cleanup/parquet", json={"paths": paths})
+        assert mock_fn.call_args[0][0] == paths
+
+    def test_already_deleted_counts_as_deleted(self, mock_archiver_client, mocker):
+        mocker.patch("app._cleanup_parquet", return_value=[
+            {"path": "bronze/html/year=2025/month=08/", "deleted": True, "reason": "already_deleted"},
+        ])
+        resp = mock_archiver_client.post("/cleanup/parquet", json={"paths": ["bronze/html/year=2025/month=08/"]})
+        data = resp.json()
+        assert data["deleted"] == 1
+        assert data["failed"] == 0

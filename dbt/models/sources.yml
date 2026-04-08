@@ -66,7 +66,11 @@ sources:
           - name: page_num
             description: "Page number for SRP results (1-indexed)"
           - name: deleted_at
-            description: "Timestamp when artifact was soft-deleted by cleanup pipeline"
+            description: "Timestamp when artifact was hard-deleted by cleanup pipeline."
+          - name: listing_id
+            description: "For detail artifacts only, the listing ID of the artifact"
+          - name: archived_at
+            description: "Timestamp when the artifact raw file was deleted, and moved to parquet"
 
 
       - name: srp_observations
