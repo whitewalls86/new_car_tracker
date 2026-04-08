@@ -92,6 +92,10 @@ jobs:
       - name: Install dbt
         run: pip install dbt-postgres
 
+      - name: Install dbt packages
+        working-directory: dbt
+        run: dbt deps
+
       - name: dbt build
         working-directory: dbt
         run: dbt build --profiles-dir . --target ci
