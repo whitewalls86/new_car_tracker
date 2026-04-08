@@ -1,7 +1,7 @@
-import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+import streamlit as st
 from plotly.subplots import make_subplots
 
 from db import run_query
@@ -16,7 +16,8 @@ def render():
                ROUND(EXTRACT(EPOCH FROM now() - r.started_at) / 60) AS elapsed_min,
                r.progress_count, r.total_count,
                CASE WHEN r.total_count > 0
-                    THEN ROUND(r.progress_count::numeric / (EXTRACT(EPOCH FROM now() - r.started_at) / 60), 1)
+                    THEN ROUND(r.progress_count::numeric / 
+                               (EXTRACT(EPOCH FROM now() - r.started_at) / 60), 1)
                END AS vins_per_min,
                (SELECT COUNT(*) FROM scrape_jobs j
                 WHERE j.run_id = r.run_id AND j.status = 'failed') AS failed_jobs
@@ -27,17 +28,40 @@ def render():
             progress_str = ""
             if pd.notna(row['total_count']) and int(row['total_count']) > 0:
                 pct = int(row['progress_count'] / row['total_count'] * 100)
-                progress_str = f" — {int(row['progress_count']):,} / {int(row['total_count']):,} ({pct}%)"
+                progress_str = f" — {int(row['progress_count']):,} \
+                    / {int(row['total_count']):,} ({pct}%)"
                 if pd.notna(row['vins_per_min']) and row['vins_per_min'] > 0:
-                    remaining = (int(row['total_count']) - int(row['progress_count'])) / row['vins_per_min']
+                    remaining = (int(row['total_count']) - int(row['progress_count'])) \
+                        / row['vins_per_min']
                     progress_str += f" ~{remaining:.0f}m remaining"
-            err_str = f" | {int(row['failed_jobs'])} errors" if pd.notna(row['failed_jobs']) and int(row['failed_jobs']) > 0 else ""
-            st.warning(f"Running: {row['trigger']} — {int(row['elapsed_min'])}m elapsed (started {row['started_at'].strftime('%H:%M')}){progress_str}{err_str}")
+            has_errors = (
+                pd.notna(row['failed_jobs'])
+                and int(row['failed_jobs']) > 0
+            )
+            err_str = (
+                f" | {int(row['failed_jobs'])} errors"
+                if has_errors
+                else ""
+            )
+            started_time = row['started_at'].strftime('%H:%M')
+            warning_msg = (
+                f"Running: {row['trigger']} — "
+                f"{int(row['elapsed_min'])}m elapsed "
+                f"(started {started_time})"
+                f"{progress_str}{err_str}"
+            )
+            st.warning(warning_msg)
     else:
         st.success("No active runs")
 
     # -- dbt build status ----------------------------------------------------
-    dbt_lock_df = run_query("SELECT locked, locked_at AT TIME ZONE 'America/Chicago' AS locked_at, locked_by FROM dbt_lock WHERE id = 1")
+    dbt_lock_df = run_query("""
+        SELECT 
+            locked, 
+            locked_at AT TIME ZONE 'America/Chicago' AS locked_at, 
+            locked_by 
+        FROM dbt_lock 
+        WHERE id = 1""")
     if not dbt_lock_df.empty and dbt_lock_df["locked"].iloc[0]:
         lock_at = dbt_lock_df["locked_at"].iloc[0]
         lock_by = dbt_lock_df["locked_by"].iloc[0] or "unknown"
@@ -150,11 +174,17 @@ def _section_rotation_schedule():
             COALESCE(res.pages, 0) AS pages,
             COALESCE(res.errors, 0) AS errors,
             COALESCE(res.vins_observed, 0) AS vins_observed,
-            (c.last_queued_at + interval '1439 minutes') AT TIME ZONE 'America/Chicago' AS next_eligible,
+            (c.last_queued_at + interval '1439 minutes') 
+                   AT TIME ZONE 'America/Chicago' AS next_eligible,
             CASE
                 WHEN c.last_queued_at IS NULL THEN 'Ready now'
-                WHEN now() > c.last_queued_at + interval '1439 minutes' THEN 'Ready now'
-                ELSE 'In ' || ROUND(EXTRACT(EPOCH FROM (c.last_queued_at + interval '1439 minutes' - now())) / 3600, 1)::text || 'h'
+                WHEN now() > c.last_queued_at + interval '1439 minutes'
+                    THEN 'Ready now'
+                ELSE 'In ' || ROUND(
+                    EXTRACT(EPOCH FROM (
+                        c.last_queued_at + interval '1439 minutes' - now()
+                    )) / 3600, 1
+                )::text || 'h'
             END AS next_status
         FROM slot_configs c
         LEFT JOIN slot_last_run slr ON slr.rotation_slot = c.rotation_slot
@@ -199,8 +229,13 @@ def _section_detail_runs():
             r.total_count AS batch_size,
             r.error_count as num_errors,
             COUNT(DISTINCT d.vin) FILTER (WHERE d.price IS NOT NULL) AS prices_refreshed,
-            COUNT(DISTINCT ra.artifact_id) FILTER (WHERE d.listing_state = 'unlisted') AS newly_unlisted,
-            COUNT(DISTINCT ra.artifact_id) FILTER (WHERE ap.message = 'unlisted' AND d.artifact_id IS NULL) AS unlisted_carousel_hit,
+            COUNT(DISTINCT ra.artifact_id) 
+                FILTER (WHERE d.listing_state = 'unlisted') AS newly_unlisted,
+            COUNT(DISTINCT ra.artifact_id) 
+                FILTER (
+                   WHERE ap.message = 'unlisted' 
+                   AND d.artifact_id IS NULL
+                   ) AS unlisted_carousel_hit,
             COUNT(DISTINCT d.vin17) FILTER (WHERE pe.vin IS NULL) AS newly_mapped_vins
         FROM
             my_runs r
@@ -208,7 +243,14 @@ def _section_detail_runs():
         LEFT JOIN artifact_processing ap ON ra.artifact_id = ap.artifact_id
         LEFT JOIN analytics.stg_detail_observations d on ra.artifact_id = d.artifact_id
         LEFT JOIN price_min pe on d.vin = pe.vin AND pe.min_observed_at <= r.started_at
-        GROUP BY r.run_id, r.started_at, r.finished_at, r.status, r.total_count, r.error_count, r.last_error
+        GROUP BY 
+            r.run_id, 
+            r.started_at, 
+            r.finished_at, 
+            r.status, 
+            r.total_count, 
+            r.error_count, 
+            r.last_error
         ORDER BY started DESC;
     """)
     if not df.empty:
@@ -241,8 +283,12 @@ def _section_stale_backlog():
                 COUNT(*) FILTER (WHERE stale_reason LIKE 'price_only%')::varchar as price_only,
                 COUNT(*) FILTER (WHERE stale_reason LIKE 'force_stale_36h')::varchar as force_stale,
                 COUNT(*) FILTER (WHERE stale_reason LIKE 'full_details')::varchar AS full_details,
-                COUNT(*) FILTER (WHERE stale_reason LIKE 'unmapped_carousel')::varchar as unmapped_carousel,
-                COUNT(*) FILTER (WHERE stale_reason LIKE 'dealer_unenriched')::varchar as dealer_unenriched,
+                COUNT(*) FILTER (
+                            WHERE stale_reason LIKE 'unmapped_carousel'
+                         )::varchar as unmapped_carousel,
+                COUNT(*) FILTER (
+                            WHERE stale_reason LIKE 'dealer_unenriched'
+                         )::varchar as dealer_unenriched,
                 COUNT(*)::varchar AS total_count
             FROM batch_marking q
             GROUP BY 1
@@ -253,8 +299,12 @@ def _section_stale_backlog():
                 COUNT(*) FILTER (WHERE stale_reason LIKE 'price_only%')::varchar as price_only,
                 COUNT(*) FILTER (WHERE stale_reason LIKE 'force_stale_36h')::varchar as force_stale,
                 COUNT(*) FILTER (WHERE stale_reason LIKE 'full_details')::varchar AS full_details,
-                COUNT(*) FILTER (WHERE stale_reason LIKE 'unmapped_carousel')::varchar as unmapped_carousel,
-                COUNT(*) FILTER (WHERE stale_reason LIKE 'dealer_unenriched')::varchar as dealer_unenriched,
+                COUNT(*) FILTER (
+                            WHERE stale_reason LIKE 'unmapped_carousel'
+                         )::varchar as unmapped_carousel,
+                COUNT(*) FILTER (
+                            WHERE stale_reason LIKE 'dealer_unenriched'
+                         )::varchar as dealer_unenriched,
                 COUNT(*)::varchar AS total_count
             FROM batch_marking q
             GROUP BY 1
@@ -286,10 +336,14 @@ def _section_stale_backlog():
         )
         SELECT
             bc.num_of_attempts
-            ,MIN(bc.next_eligible_at) FILTER (WHERE bc.next_eligible_at > now() ) AT TIME ZONE 'America/Chicago' as next_attempt_at
+            ,MIN(bc.next_eligible_at) FILTER (
+                                        WHERE bc.next_eligible_at > now() 
+                                      ) AT TIME ZONE 'America/Chicago' as next_attempt_at
             ,COUNT(bc.listing_id) as num_listings
             ,COUNT(bc.listing_id) FILTER (WHERE bc.next_eligible_at < now()) as eligible_now
-            ,COUNT(bc.listing_id) FILTER (WHERE q.priority_row < 501 AND q.priority_row IS NOT NULL) as num_in_next_batch
+            ,COUNT(bc.listing_id) FILTER (
+                                    WHERE q.priority_row < 501 AND q.priority_row IS NOT NULL
+                                    ) as num_in_next_batch
         FROM
             analytics.stg_blocked_cooldown bc
         LEFT JOIN batch_marking q ON q.listing_id = bc.listing_id
@@ -336,10 +390,21 @@ def _section_price_freshness():
         fig = px.bar(
             df, x="expiry_bucket", y=["tier1", "tier2", "full_details_stale"], barmode="stack",
             labels={"value": "VINs", "expiry_bucket": "Expires In"},
-            color_discrete_map={"tier1": "#3498db", "tier2": "#95a5a6", "full_details_stale": "#e67e22"},
+            color_discrete_map={
+                "tier1": "#3498db", 
+                "tier2": "#95a5a6", 
+                "full_details_stale": "#e67e22"
+            },
         )
-        fig.update_layout(xaxis_title="Hours until stale", yaxis_title="Active VINs", legend_title="Price Tier",
-                          xaxis={"categoryorder": "array", "categoryarray": df["expiry_bucket"].tolist()})
+        fig.update_layout(
+            xaxis_title="Hours until stale",
+            yaxis_title="Active VINs",
+            legend_title="Price Tier",
+            xaxis={
+                "categoryorder": "array", 
+                "categoryarray": df["expiry_bucket"].tolist()
+            }
+        )
         st.plotly_chart(fig, use_container_width=True)
 
 
@@ -348,7 +413,12 @@ def _section_blocked_cooldown():
     df = run_query("""
         WITH buckets AS (
             SELECT
-                FLOOR(GREATEST((EXTRACT(EPOCH FROM (next_eligible_at - now())) / 3600),0) / 2) * 2 AS age_floor
+                FLOOR(
+                    GREATEST(
+                        (EXTRACT(EPOCH FROM (next_eligible_at - now())) / 3600),
+                        0
+                    ) / 2
+                ) * 2 AS age_floor
             FROM analytics.stg_blocked_cooldown
             WHERE next_eligible_at IS NOT NULL
         )
@@ -367,8 +437,14 @@ def _section_blocked_cooldown():
             labels={"value": "VINs", "eligible_bucket": "Eligible In"},
             color_discrete_map={"total": "#3498db"},
         )
-        fig.update_layout(xaxis_title="Hours until eligible", yaxis_title="Listing Ids",
-                          xaxis={"categoryorder": "array", "categoryarray": df["eligible_bucket"].tolist()})
+        fig.update_layout(
+            xaxis_title="Hours until eligible", 
+            yaxis_title="Listing Ids",
+            xaxis={
+                "categoryorder": "array", 
+                "categoryarray": df["eligible_bucket"].tolist()
+            }
+        )
         st.plotly_chart(fig, use_container_width=True)
 
 
@@ -392,7 +468,11 @@ def _section_success_rate(title: str, artifact_type: str, interval: str):
     """)
     if not df.empty:
         fig = make_subplots(specs=[[{"secondary_y": True}]])
-        for result, color in [("200 OK", "#2ecc71"), ("403 Blocked", "#e74c3c"), ("Error/Timeout", "#95a5a6")]:
+        for result, color in [
+            ("200 OK", "#2ecc71"),
+            ("403 Blocked", "#e74c3c"),
+            ("Error/Timeout", "#95a5a6")
+        ]:
             subset = df[df["result"] == result]
             if not subset.empty:
                 fig.add_trace(go.Bar(x=subset["day"], y=subset["fetches"], name=result,
@@ -405,7 +485,11 @@ def _section_success_rate(title: str, artifact_type: str, interval: str):
                                   name="Success %", mode="lines+markers",
                                   line=dict(color="black", width=2),
                                   marker=dict(size=6)), secondary_y=True)
-        fig.update_layout(barmode="stack", xaxis_title=None, legend=dict(orientation="h", y=-0.15))
+        fig.update_layout(
+            barmode="stack", 
+            xaxis_title=None, 
+            legend=dict(orientation="h", y=-0.15)
+        )
         fig.update_yaxes(title_text="Fetches", secondary_y=False)
         fig.update_yaxes(title_text="Success %", secondary_y=True, range=[0, 103])
         st.plotly_chart(fig, use_container_width=True)
@@ -426,9 +510,13 @@ def _section_search_jobs():
             COUNT(srp.vin) FILTER (WHERE pe.vin IS NULL) as new_vins_recorded
         FROM runs r
         JOIN scrape_jobs j ON j.run_id = r.run_id
-        LEFT JOIN raw_artifacts ra on j.scope = ra.search_scope and ra.run_id = r.run_id and ra.search_key = j.search_key
+        LEFT JOIN raw_artifacts ra 
+            on j.scope = ra.search_scope and ra.run_id = r.run_id and ra.search_key = j.search_key
         LEFT JOIN analytics.stg_srp_observations srp on ra.artifact_id = srp.artifact_id
-        LEFT JOIN ( SELECT vin, min(observed_at) as first_seen FROM  analytics.int_price_events group by vin) pe ON srp.vin17 = pe.vin AND pe.first_seen < r.started_at
+        LEFT JOIN ( 
+            SELECT vin, min(observed_at) as first_seen 
+            FROM  analytics.int_price_events group by vin
+        ) pe ON srp.vin17 = pe.vin AND pe.first_seen < r.started_at
         WHERE r.trigger = 'search scrape'
           AND r.started_at > now() - interval '7 days'
         GROUP BY
@@ -512,16 +600,37 @@ def _section_dbt_history():
         ts = pd.to_datetime(last["started_at"]).tz_convert("America/Chicago")
         st.metric("Last Build", ts.strftime("%b %d %H:%M"))
     with c2:
-        st.metric("Duration", f"{last['duration_s']:.0f}s" if pd.notna(last["duration_s"]) else "—")
+        duration = (
+            f"{last['duration_s']:.0f}s"
+            if pd.notna(last["duration_s"])
+            else "—"
+        )
+        st.metric("Duration", duration)
     with c3:
-        st.metric("Status", "✓ OK" if last["ok"] else "✗ Failed")
+        status = "✓ OK" if last["ok"] else "✗ Failed"
+        st.metric("Status", status)
     with c4:
-        st.metric("Models Passed", int(last["models_pass"]) if pd.notna(last["models_pass"]) else "—")
+        models_passed = (
+            int(last["models_pass"])
+            if pd.notna(last["models_pass"])
+            else "—"
+        )
+        st.metric("Models Passed", models_passed)
 
-    display = df[["started_at", "duration_s", "ok", "intent", "models_pass", "models_error"]].copy()
-    display["started_at"] = pd.to_datetime(display["started_at"]).dt.tz_convert("America/Chicago").dt.strftime("%b %d %H:%M")
-    display["status"] = display["ok"].map({True: "✓ OK", False: "✗ Failed"})
-    display = display[["started_at", "duration_s", "status", "intent", "models_pass", "models_error"]]
+    display = df[
+        ["started_at", "duration_s", "ok", "intent", "models_pass", "models_error"]
+    ].copy()
+    display["started_at"] = (
+        pd.to_datetime(display["started_at"])
+        .dt.tz_convert("America/Chicago")
+        .dt.strftime("%b %d %H:%M")
+    )
+    display["status"] = display["ok"].map(
+        {True: "✓ OK", False: "✗ Failed"}
+    )
+    display = display[
+        ["started_at", "duration_s", "status", "intent", "models_pass", "models_error"]
+    ]
     display.columns = ["Time", "Duration (s)", "Status", "Intent", "Pass", "Error"]
     st.dataframe(display, use_container_width=True, hide_index=True)
 
@@ -531,9 +640,15 @@ def _section_processor_activity():
     proc_summary_df = run_query("""
         SELECT processor,
                COUNT(*) FILTER (WHERE status = 'ok') AS ok,
-               COUNT(*) FILTER (WHERE status IN ('retry', 'processing')) AS pending,
-               COUNT(*) FILTER (WHERE status = 'ok' AND message ILIKE '%cloudflare%') AS cloudflare_blocked,
-               COUNT(*) FILTER (WHERE status = 'ok' AND meta->>'primary_json_present' = 'true') AS has_primary_data,
+               COUNT(*) FILTER (
+                            WHERE status IN ('retry', 'processing')
+                        ) AS pending,
+               COUNT(*) FILTER (
+                            WHERE status = 'ok' AND message ILIKE '%cloudflare%'
+                        ) AS cloudflare_blocked,
+               COUNT(*) FILTER (
+                            WHERE status = 'ok' AND meta->>'primary_json_present' = 'true'
+                            ) AS has_primary_data,
                MAX(processed_at) AT TIME ZONE 'America/Chicago' AS last_processed
         FROM artifact_processing GROUP BY processor ORDER BY processor
     """)
@@ -561,7 +676,9 @@ def _section_processor_activity():
     proc_coverage_df = run_query("""
         SELECT date_trunc('day', ap.processed_at AT TIME ZONE 'America/Chicago') AS day,
                COUNT(*) AS total_processed,
-               COUNT(*) FILTER (WHERE ap.meta->>'primary_json_present' = 'true') AS has_vehicle_data,
+               COUNT(*) FILTER (
+                            WHERE ap.meta->>'primary_json_present' = 'true'
+                        ) AS has_vehicle_data,
                COUNT(*) FILTER (WHERE ap.message LIKE '%403%') AS cloudflare_blocked,
                COUNT(*) FILTER (WHERE ap.meta->>'primary_json_present' = 'false'
                    AND (ap.message IS NULL OR ap.message NOT ILIKE '%cloudflare%')) AS no_data,
@@ -583,8 +700,12 @@ def _section_postgres_health():
     df_conn = run_query("""
         SELECT COUNT(*) FILTER (WHERE state = 'active') AS active,
                COUNT(*) FILTER (WHERE state = 'idle in transaction') AS idle_in_tx,
-               ROUND(MAX(CASE WHEN state = 'active' AND query_start IS NOT NULL
-                             THEN EXTRACT(EPOCH FROM (now() - query_start)) END)::numeric, 1) AS longest_query_s
+               ROUND(MAX(
+                    CASE 
+                        WHEN state = 'active' AND query_start IS NOT NULL
+                            THEN EXTRACT(EPOCH FROM (now() - query_start)) 
+                    END
+                )::numeric, 1) AS longest_query_s
         FROM pg_stat_activity WHERE backend_type = 'client backend'
     """)
     if not df_conn.empty:

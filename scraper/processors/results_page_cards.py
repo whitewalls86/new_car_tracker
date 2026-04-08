@@ -1,11 +1,10 @@
 from __future__ import annotations
 
+import json
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from bs4 import BeautifulSoup
-import json
-import html as html_lib
 
 # Matches "(1,498 mi.)" (with optional decimals)
 _MILES_RE = re.compile(r"\(([\d,]+(?:\.\d+)?)\s*mi\.\)", re.IGNORECASE)
@@ -214,7 +213,11 @@ def parse_cars_results_page_html_v2(html: str) -> Tuple[List[Dict[str, Any]], Di
         canonical_detail_url = f"https://www.cars.com/vehicledetail/{listing_id}/"
 
         sponsored_type = v.get("sponsored_type")
-        isa_context = sponsored_type.upper() if isinstance(sponsored_type, str) and sponsored_type else None
+        isa_context = (
+            sponsored_type.upper() 
+            if isinstance(sponsored_type, str) and sponsored_type 
+            else None
+        )
 
         out = {
             "listing_id": listing_id,

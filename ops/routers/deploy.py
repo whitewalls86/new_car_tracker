@@ -3,6 +3,7 @@ Deploy coordination API endpoints.
 """
 import logging
 from typing import Any, Dict
+
 from fastapi import APIRouter, HTTPException
 
 from shared.db import db_cursor
@@ -16,36 +17,37 @@ STALE_LOCK_MINUTES = 30
 def _intent_status() -> Dict[str, Any]:
     """Return current deploy intent state plus in-flight counts."""
 
-    sql = """WITH current_executions AS (
-                    SELECT
-                        COUNT(execution_id) as number_running,
-                        MIN(started_at) as min_started_at
-                    FROM n8n_executions
-                    WHERE status = 'running'
-                ), current_runs AS (
-                    SELECT
-                        COUNT(*) as number_running,
-                        MIN(started_at) as min_started_at
-                    FROM runs
-                    WHERE status = 'running'
-                ), current_processing_runs AS (
-                    SELECT
-                        COUNT(*) as number_running,
-                        MIN(started_at) as min_started_at
-                    FROM processing_runs
-                    WHERE status = 'processing'
-                )
-                SELECT
-                    di.intent,
-                    di.requested_at,
-                    di.requested_by,
-                    ce.number_running + cr.number_running + cpr.number_running as number_running,
-                    LEAST(ce.min_started_at, cr.min_started_at, cpr.min_started_at) as min_started_at
-                FROM deploy_intent di
-                LEFT JOIN current_executions ce ON 1=1
-                LEFT JOIN current_runs cr ON 1=1
-                LEFT JOIN current_processing_runs cpr ON 1=1
-                WHERE di.id = 1;
+    sql = """
+        WITH current_executions AS (
+            SELECT
+                COUNT(execution_id) as number_running,
+                MIN(started_at) as min_started_at
+            FROM n8n_executions
+            WHERE status = 'running'
+        ), current_runs AS (
+            SELECT
+                COUNT(*) as number_running,
+                MIN(started_at) as min_started_at
+            FROM runs
+            WHERE status = 'running'
+        ), current_processing_runs AS (
+            SELECT
+                COUNT(*) as number_running,
+                MIN(started_at) as min_started_at
+            FROM processing_runs
+            WHERE status = 'processing'
+        )
+        SELECT
+            di.intent,
+            di.requested_at,
+            di.requested_by,
+            ce.number_running + cr.number_running + cpr.number_running as number_running,
+            LEAST(ce.min_started_at, cr.min_started_at, cpr.min_started_at) as min_started_at
+        FROM deploy_intent di
+        LEFT JOIN current_executions ce ON 1=1
+        LEFT JOIN current_runs cr ON 1=1
+        LEFT JOIN current_processing_runs cpr ON 1=1
+        WHERE di.id = 1;
             """
     
     try:

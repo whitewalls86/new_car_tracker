@@ -5,16 +5,18 @@ All routes use sync psycopg2 (FastAPI threadpools them automatically).
 import json
 import os
 import re
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from typing import Optional
+
 import requests as http_requests
-from fastapi import APIRouter, Request, Form
+from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from shared.db import db_cursor
-from ..models.search_config import SearchConfigParams, SORT_OPTIONS, SORT_KEYS
-from ..routers.deploy import _intent_status, _set_intent, _intent_release
+
+from ..models.search_config import SORT_KEYS, SORT_OPTIONS, SearchConfigParams
+from ..routers.deploy import _intent_release, _intent_status, _set_intent
 
 DBT_RUNNER_URL = os.environ.get("DBT_RUNNER_URL", "http://dbt_runner:8080")
 DBT_DOCS_URL = os.environ.get("DBT_DOCS_URL", "http://localhost:8081/dbt-docs/")
@@ -63,7 +65,15 @@ def _db_error_response(request: Request):
 
 @router.get("/searches/", response_class=HTMLResponse)
 def list_searches(request: Request):
-    sql = """SELECT search_key, enabled, source, params, rotation_order, last_queued_at, created_at, updated_at
+    sql = """SELECT 
+                search_key, 
+                enabled, 
+                source, 
+                params, 
+                rotation_order, 
+                last_queued_at, 
+                created_at, 
+                updated_at
             FROM search_configs ORDER BY enabled DESC, rotation_order NULLS LAST, search_key"""
     
     try:
@@ -447,7 +457,14 @@ def create_search(
         }, status_code=422)
     
 
-    sql = """INSERT INTO search_configs (search_key, enabled, params, rotation_order, created_at, updated_at)
+    sql = """INSERT INTO search_configs (
+                search_key, 
+                enabled, 
+                params, 
+                rotation_order, 
+                created_at, 
+                updated_at
+            )
              VALUES (%s, %s, %s::jsonb, %s, now(), now());"""
     
     sql_params = (key, enabled, json.dumps(params.model_dump()), rotation_order)
@@ -529,8 +546,14 @@ def update_search(
         }, status_code=422)
     
 
-    sql = """UPDATE search_configs SET enabled = %s, params = %s::jsonb, rotation_order = %s, rotation_slot = %s, updated_at = now()
-            WHERE search_key = %s;"""
+    sql = """UPDATE search_configs 
+             SET 
+                enabled = %s, 
+                params = %s::jsonb, 
+                rotation_order = %s, 
+                rotation_slot = %s, 
+                updated_at = now()
+             WHERE search_key = %s;"""
     sql_params = (enabled, json.dumps(params.model_dump()), rotation_order, search_key)
 
     try:

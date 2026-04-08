@@ -1,10 +1,10 @@
 """
 Pydantic models for search_configs CRUD.
 """
-from pydantic import BaseModel, field_validator
-from typing import List, Optional
 import re
+from typing import List, Optional
 
+from pydantic import BaseModel, field_validator
 
 # Valid sort options for Cars.com
 SORT_OPTIONS = [

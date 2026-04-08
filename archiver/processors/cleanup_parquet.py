@@ -1,5 +1,7 @@
-import logging, os
+import logging
+import os
 from typing import Any, Dict, List
+
 import s3fs
 
 logger = logging.getLogger("archiver")

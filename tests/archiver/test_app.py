@@ -1,6 +1,4 @@
 """Unit tests for archiver/app.py — all four HTTP endpoints."""
-import pytest
-from unittest.mock import MagicMock, patch
 
 
 # ---------------------------------------------------------------------------
@@ -62,7 +60,8 @@ class TestArchiveArtifactsEndpoint:
     def test_results_list_included(self, mock_archiver_client, mocker):
         fake = [{"artifact_id": 1, "archived": True, "reason": None}]
         mocker.patch("app._archive_artifacts", return_value=fake)
-        resp = mock_archiver_client.post("/archive/artifacts", json={"artifacts": [{"artifact_id": 1, "filepath": "/a.html"}]})
+        payload = {"artifacts": [{"artifact_id": 1, "filepath": "/a.html"}]}
+        resp = mock_archiver_client.post("/archive/artifacts", json=payload)
         assert resp.json()["results"] == fake
 
     def test_artifacts_forwarded_to_processor(self, mock_archiver_client, mocker):
@@ -171,10 +170,14 @@ class TestCleanupParquetEndpoint:
         assert mock_fn.call_args[0][0] == paths
 
     def test_already_deleted_counts_as_deleted(self, mock_archiver_client, mocker):
-        mocker.patch("app._cleanup_parquet", return_value=[
-            {"path": "bronze/html/year=2025/month=08/", "deleted": True, "reason": "already_deleted"},
-        ])
-        resp = mock_archiver_client.post("/cleanup/parquet", json={"paths": ["bronze/html/year=2025/month=08/"]})
+        cleanup_result = [{
+            "path": "bronze/html/year=2025/month=08/",
+            "deleted": True,
+            "reason": "already_deleted",
+        }]
+        mocker.patch("app._cleanup_parquet", return_value=cleanup_result)
+        paths_payload = {"paths": ["bronze/html/year=2025/month=08/"]}
+        resp = mock_archiver_client.post("/cleanup/parquet", json=paths_payload)
         data = resp.json()
         assert data["deleted"] == 1
         assert data["failed"] == 0

@@ -1,6 +1,3 @@
-from ops.app import app
-import pytest
-from fastapi.responses import RedirectResponse
 
 
 def test_get_health(mock_client):

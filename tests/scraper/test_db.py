@@ -1,7 +1,8 @@
 """Unit tests for scraper/db.py — async asyncpg pool singleton."""
 import os
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
-from unittest.mock import MagicMock, AsyncMock
 
 
 # ---------------------------------------------------------------------------
@@ -21,7 +22,11 @@ def reset_pool():
 @pytest.mark.asyncio
 async def test_get_pool_creates_pool_on_first_call(mocker):
     mock_pool = MagicMock()
-    mock_create = mocker.patch("asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool)
+    mock_create = mocker.patch(
+        "asyncpg.create_pool",
+        new_callable=AsyncMock,
+        return_value=mock_pool,
+    )
     import db
 
     pool = await db.get_pool()
@@ -33,7 +38,11 @@ async def test_get_pool_creates_pool_on_first_call(mocker):
 @pytest.mark.asyncio
 async def test_get_pool_returns_cached_instance_on_second_call(mocker):
     mock_pool = MagicMock()
-    mock_create = mocker.patch("asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool)
+    mock_create = mocker.patch(
+        "asyncpg.create_pool",
+        new_callable=AsyncMock,
+        return_value=mock_pool,
+    )
     import db
 
     p1 = await db.get_pool()
@@ -47,7 +56,11 @@ async def test_get_pool_returns_cached_instance_on_second_call(mocker):
 async def test_get_pool_uses_database_url_env(mocker):
     custom_dsn = "postgresql://user:pass@myhost:5433/mydb"
     mocker.patch.dict(os.environ, {"DATABASE_URL": custom_dsn})
-    mock_create = mocker.patch("asyncpg.create_pool", new_callable=AsyncMock, return_value=MagicMock())
+    mock_create = mocker.patch(
+        "asyncpg.create_pool",
+        new_callable=AsyncMock,
+        return_value=MagicMock(),
+    )
     import db
 
     await db.get_pool()
@@ -59,9 +72,15 @@ async def test_get_pool_uses_database_url_env(mocker):
 @pytest.mark.asyncio
 async def test_get_pool_uses_default_dsn_when_no_env(mocker):
     # Remove DATABASE_URL from env so the default DSN is used
-    env_without_db_url = {k: v for k, v in os.environ.items() if k != "DATABASE_URL"}
+    env_without_db_url = {
+        k: v for k, v in os.environ.items() if k != "DATABASE_URL"
+    }
     mocker.patch.dict(os.environ, env_without_db_url, clear=True)
-    mock_create = mocker.patch("asyncpg.create_pool", new_callable=AsyncMock, return_value=MagicMock())
+    mock_create = mocker.patch(
+        "asyncpg.create_pool",
+        new_callable=AsyncMock,
+        return_value=MagicMock(),
+    )
     import db
 
     await db.get_pool()
@@ -72,7 +91,11 @@ async def test_get_pool_uses_default_dsn_when_no_env(mocker):
 
 @pytest.mark.asyncio
 async def test_get_pool_passes_min_max_size(mocker):
-    mock_create = mocker.patch("asyncpg.create_pool", new_callable=AsyncMock, return_value=MagicMock())
+    mock_create = mocker.patch(
+        "asyncpg.create_pool",
+        new_callable=AsyncMock,
+        return_value=MagicMock(),
+    )
     import db
 
     await db.get_pool()

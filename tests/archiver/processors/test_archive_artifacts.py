@@ -1,9 +1,8 @@
 """Unit tests for archiver/processors/archive_artifacts.py"""
-import pytest
 from datetime import datetime, timezone
-from unittest.mock import MagicMock, mock_open, patch
-from processors.archive_artifacts import archive_artifacts
+from unittest.mock import MagicMock, mock_open
 
+from processors.archive_artifacts import archive_artifacts
 
 # ---------------------------------------------------------------------------
 # Helpers

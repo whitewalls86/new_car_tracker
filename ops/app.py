@@ -8,8 +8,8 @@ from logging.handlers import RotatingFileHandler
 from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 
-from .routers.deploy import router as deploy_router
 from .routers.admin import router as admin_router
+from .routers.deploy import router as deploy_router
 
 _LOG_PATH = "/usr/app/logs/app.log"
 os.makedirs(os.path.dirname(_LOG_PATH), exist_ok=True)

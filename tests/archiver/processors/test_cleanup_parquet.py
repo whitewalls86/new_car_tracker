@@ -1,6 +1,4 @@
 """Unit tests for archiver/processors/cleanup_parquet.py"""
-import pytest
-from unittest.mock import MagicMock
 from processors.cleanup_parquet import cleanup_parquet
 
 
@@ -12,8 +10,15 @@ class TestCleanupParquet:
 
     def test_single_path_deleted(self, mock_s3fs):
         result = cleanup_parquet(["bronze/html/year=2026/month=01/"])
-        assert result == [{"path": "bronze/html/year=2026/month=01/", "deleted": True, "reason": None}]
-        mock_s3fs.rm.assert_called_once_with("bronze/html/year=2026/month=01/", recursive=True)
+        expected = [{
+            "path": "bronze/html/year=2026/month=01/",
+            "deleted": True,
+            "reason": None,
+        }]
+        assert result == expected
+        mock_s3fs.rm.assert_called_once_with(
+            "bronze/html/year=2026/month=01/", recursive=True
+        )
 
     def test_multiple_paths_all_deleted(self, mock_s3fs):
         paths = [

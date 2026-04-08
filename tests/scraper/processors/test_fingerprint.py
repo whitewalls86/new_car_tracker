@@ -1,13 +1,12 @@
 """Unit tests for processors/fingerprint.py"""
-import pytest
 from processors.fingerprint import (
-    random_profile,
-    random_zip,
-    human_delay,
     _CHROME_VERSIONS,
     _VIEWPORTS,
-    ZIP_POOL_NATIONAL,
     ZIP_POOL_LOCAL,
+    ZIP_POOL_NATIONAL,
+    human_delay,
+    random_profile,
+    random_zip,
 )
 
 

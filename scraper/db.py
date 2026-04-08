@@ -2,6 +2,7 @@
 Async database connection pool for the scraper admin UI.
 """
 import os
+
 import asyncpg
 
 _pool: asyncpg.Pool | None = None

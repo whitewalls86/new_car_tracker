@@ -1,6 +1,6 @@
 """Unit tests for processors/parse_detail_page.py"""
 import json
-import pytest
+
 from processors.parse_detail_page import parse_cars_detail_page_html_v1
 
 # Fields that n8n reads from `primary` (from Parse Detail Pages.json workflow)
@@ -168,7 +168,10 @@ class TestDealerCardParsing:
         assert primary["dealer_zip"] == "77002"
 
     def test_dealer_address_missing_gracefully(self):
-        html = _activity_script({"listing_id": "a"}) + "<div class='dealer-card'><h3>No Address</h3></div>"
+        html = (
+            _activity_script({"listing_id": "a"})
+            + "<div class='dealer-card'><h3>No Address</h3></div>"
+        )
         primary, _, _ = parse_cars_detail_page_html_v1(html)
         assert primary.get("dealer_street") is None
 

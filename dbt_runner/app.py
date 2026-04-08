@@ -1,16 +1,16 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
-from logging.handlers import RotatingFileHandler
 import re
 import shlex
 import subprocess
 from datetime import datetime, timezone
+from logging.handlers import RotatingFileHandler
 from typing import Any, Dict, List, Optional
 
-import json
-from fastapi import FastAPI, Body, HTTPException
+from fastapi import Body, FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 
 from shared.db import db_cursor
@@ -129,8 +129,10 @@ def _record_run(started_at: datetime, finished_at: datetime, ok: bool,
 # Fallback used if the dbt_intents table doesn't exist yet (before migration).
 _INTENT_FALLBACK: Dict[str, List[str]] = {
     "after_srp": ["stg_raw_artifacts+", "stg_srp_observations+", "stg_detail_carousel_hints+"],
-    "after_detail": ["stg_raw_artifacts+", "stg_detail_observations+", "stg_detail_carousel_hints+"],
-    "both": ["stg_raw_artifacts+", "stg_srp_observations+", "stg_detail_observations+", "stg_detail_carousel_hints+"],
+    "after_detail": ["stg_raw_artifacts+", "stg_detail_observations+", 
+                     "stg_detail_carousel_hints+"],
+    "both": ["stg_raw_artifacts+", "stg_srp_observations+", "stg_detail_observations+", 
+             "stg_detail_carousel_hints+"],
 }
 
 
@@ -370,7 +372,8 @@ def dbt_build(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
         finished_at = datetime.now(timezone.utc)
 
         ok = proc.returncode == 0
-        is_successful = _record_run(started_at, finished_at, ok, intent, select, proc.stdout, proc.returncode)
+        is_successful = _record_run(started_at, finished_at, ok, intent, 
+                                    select, proc.stdout, proc.returncode)
 
         if not is_successful:
             data = {

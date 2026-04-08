@@ -1,7 +1,7 @@
-import pytest
 from unittest.mock import MagicMock
-from psycopg2 import OperationalError, ProgrammingError, DatabaseError
-from fastapi.testclient import TestClient
+
+import pytest
+from psycopg2 import DatabaseError, OperationalError, ProgrammingError
 
 
 @pytest.fixture
@@ -10,8 +10,10 @@ def mock_db_conn(mocker):
     mock_cursor = MagicMock()
     mock_conn = MagicMock()
     mock_connect = mocker.patch("psycopg2.connect")
-    mock_connect.return_value = mock_conn  # When psycopg2.connect() is called, return mock_conn
-    mock_conn.cursor.return_value = mock_cursor  # When mock_conn.cursor() is called, return mock_cursor
+    # When psycopg2.connect() is called, return mock_conn
+    mock_connect.return_value = mock_conn
+    # When mock_conn.cursor() is called, return mock_cursor
+    mock_conn.cursor.return_value = mock_cursor
     return mock_connect, mock_conn, mock_cursor
 
 
@@ -38,7 +40,8 @@ def mock_db_connection_error(mocker):
 def mock_db_sql_error(mocker):
     """Mock psycopg2 cursor to raise ProgrammingError (bad SQL)"""
     mock_conn = MagicMock()
-    mock_conn.cursor.return_value.__enter__.return_value.execute.side_effect = ProgrammingError("Bad SQL")
+    cursor_enter = mock_conn.cursor.return_value.__enter__.return_value
+    cursor_enter.execute.side_effect = ProgrammingError("Bad SQL")
     return mocker.patch("psycopg2.connect", return_value=mock_conn)
 
 

@@ -1,14 +1,14 @@
 """Unit tests for processors/scrape_results.py"""
-import json
 import html as html_lib
-import pytest
-from unittest.mock import MagicMock, patch, call
+import json
+from unittest.mock import MagicMock
 
+import pytest
 from processors.scrape_results import (
+    BASE_URL,
     build_results_url,
     extract_results_paging_meta,
     scrape_results,
-    BASE_URL,
 )
 
 
@@ -65,7 +65,11 @@ class TestExtractResultsPagingMeta:
                 }
             }
         }
-        html = f'<script id="CarsWeb.SearchController.index" type="application/json">{json.dumps(data)}</script>'
+        json_str = json.dumps(data)
+        html = (
+            f'<script id="CarsWeb.SearchController.index" '
+            f'type="application/json">{json_str}</script>'
+        )
         result = extract_results_paging_meta(html)
         assert result is not None
         assert result["result_page_number"] == 2
@@ -137,7 +141,14 @@ class TestExtractResultsPagingMeta:
         }
         html = f'<script id="CarsWeb.SearchController.index">{json.dumps(data)}</script>'
         result = extract_results_paging_meta(html)
-        for key in ("total_listings", "total_results", "result_per_page", "result_page_number", "result_page_count"):
+        required_keys = (
+            "total_listings",
+            "total_results",
+            "result_per_page",
+            "result_page_number",
+            "result_page_count",
+        )
+        for key in required_keys:
             assert key in result
 
 

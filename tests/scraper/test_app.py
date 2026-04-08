@@ -4,9 +4,8 @@ Import strategy:
   mock_scraper_client fixture (from conftest.py) provides a TestClient whose
   async lifespan hook is intercepted so no real DB pool is created.
 """
-import json
-import pytest
-from unittest.mock import MagicMock, AsyncMock, mock_open
+from unittest.mock import AsyncMock, MagicMock, mock_open
+
 import app as scraper_app
 
 N8N_ARTIFACT_KEYS = {
@@ -233,7 +232,10 @@ class TestAdvanceRotation:
         mock_pool, _ = _make_rotation_pool(mocker, [last_run_row])
         mocker.patch("app.get_pool", new_callable=AsyncMock, return_value=mock_pool)
 
-        resp = mock_scraper_client.post("/search_configs/advance_rotation?min_idle_minutes=1439&min_gap_minutes=230")
+        resp = mock_scraper_client.post(
+            "/search_configs/advance_rotation"
+            "?min_idle_minutes=1439&min_gap_minutes=230"
+        )
         assert resp.status_code == 200
         data = resp.json()
         assert data["slot"] is None
@@ -288,9 +290,13 @@ class TestProcessResultsPages:
         assert "not found" in data["message"]
 
     def test_invalid_artifact_id_returns_failed(self, mock_scraper_client):
+        payload = {
+            "processor": "cars_results_page__listings_v3",
+            "artifact": {"artifact_id": "bad"},
+        }
         resp = mock_scraper_client.post(
             "/process/results_pages",
-            json={"processor": "cars_results_page__listings_v3", "artifact": {"artifact_id": "bad"}},
+            json=payload,
         )
         data = resp.json()
         assert data["status"] == "failed"
@@ -443,13 +449,21 @@ class TestProcessDetailPages:
 
     def test_v1_success(self, mock_scraper_client, mocker):
         mocker.patch("os.path.exists", return_value=True)
-        mocker.patch("builtins.open", mock_open(read_data=self.DETAIL_HTML.encode()))
+        mocker.patch(
+            "builtins.open",
+            mock_open(read_data=self.DETAIL_HTML.encode()),
+        )
+        payload = {
+            "processor": "cars_detail_page__v1",
+            "artifact": {
+                "artifact_id": 10,
+                "filepath": "/data/detail.html",
+                "search_key": "sk1",
+            },
+        }
         resp = mock_scraper_client.post(
             "/process/detail_pages",
-            json={
-                "processor": "cars_detail_page__v1",
-                "artifact": {"artifact_id": 10, "filepath": "/data/detail.html", "search_key": "sk1"},
-            },
+            json=payload,
         )
         data = resp.json()
         assert data["status"] == "ok"
@@ -494,7 +508,17 @@ class TestProcessDetailPages:
             },
         )
         data = resp.json()
-        for key in ("artifact_id", "status", "message", "processor", "search_key", "meta", "primary", "carousel"):
+        required_keys = (
+            "artifact_id",
+            "status",
+            "message",
+            "processor",
+            "search_key",
+            "meta",
+            "primary",
+            "carousel",
+        )
+        for key in required_keys:
             assert key in data, f"Response missing key: {key}"
 
 

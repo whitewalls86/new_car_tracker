@@ -7,9 +7,10 @@ Sets up:
 2. sys.modules stubs for heavy native deps that are only present inside Docker
    (patchright, playwright, curl_cffi).
 """
-import sys
 import os
-from unittest.mock import MagicMock, AsyncMock
+import sys
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
 
 # ---------------------------------------------------------------------------
@@ -82,8 +83,8 @@ def mock_scraper_client(mocker):
     # the names in the app module, not the db module.
     mocker.patch("app.get_pool", new_callable=AsyncMock, return_value=MagicMock())
     mocker.patch("app.close_pool", new_callable=AsyncMock)
-    from fastapi.testclient import TestClient
     import app as scraper_app
+    from fastapi.testclient import TestClient
     return TestClient(scraper_app.app)
 
 
@@ -95,10 +96,12 @@ def mock_async_pool(mocker):
     """
     mock_conn = AsyncMock()
     mock_pool = MagicMock()
-    mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
-    mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
-    mock_pool.acquire.return_value.transaction.return_value.__aenter__ = AsyncMock(return_value=None)
-    mock_pool.acquire.return_value.transaction.return_value.__aexit__ = AsyncMock(return_value=False)
+    acquire_cm = mock_pool.acquire.return_value
+    acquire_cm.__aenter__ = AsyncMock(return_value=mock_conn)
+    acquire_cm.__aexit__ = AsyncMock(return_value=False)
+    transaction_cm = acquire_cm.transaction.return_value
+    transaction_cm.__aenter__ = AsyncMock(return_value=None)
+    transaction_cm.__aexit__ = AsyncMock(return_value=False)
     return mock_pool, mock_conn
 
 

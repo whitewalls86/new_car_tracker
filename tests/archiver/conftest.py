@@ -7,9 +7,10 @@ Sets up sys.path so tests can import from archiver/ directly
 pyarrow and s3fs are real packages available in the dev environment.
 psycopg2 calls are mocked per-test.
 """
-import sys
 import os
+import sys
 from unittest.mock import MagicMock
+
 import pytest
 
 # ---------------------------------------------------------------------------
@@ -29,8 +30,8 @@ if _ARCHIVER_DIR not in sys.path:
 @pytest.fixture
 def mock_archiver_client():
     """TestClient for the archiver FastAPI app (no lifespan hooks to patch)."""
-    from fastapi.testclient import TestClient
     import app as archiver_app
+    from fastapi.testclient import TestClient
     return TestClient(archiver_app.app)
 
 

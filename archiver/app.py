@@ -1,8 +1,9 @@
-from fastapi import FastAPI, Body
-from typing import Any, Dict, List
-import logging, os
+import logging
+import os
+from typing import Any, Dict
 from urllib.parse import urlparse
 
+from fastapi import Body, FastAPI
 from processors.archive_artifacts import archive_artifacts as _archive_artifacts
 from processors.cleanup_artifacts import cleanup_artifacts
 from processors.cleanup_parquet import cleanup_parquet as _cleanup_parquet

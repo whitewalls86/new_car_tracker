@@ -6,7 +6,6 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from bs4 import BeautifulSoup
 
-
 _UUID_RE = re.compile(
     r"[0-9a-fA-F]{8}-"
     r"[0-9a-fA-F]{4}-"
@@ -38,7 +37,11 @@ def _extract_script_json_by_id(soup: BeautifulSoup, script_id: str) -> Optional[
 def _detect_unlisted(soup: BeautifulSoup, html: str) -> Optional[Dict[str, Any]]:
     """
     Cars.com "no longer listed" pages include a spark-notification like:
-      <spark-notification class="unlisted-notification" title="No longer listed"> ... </spark-notification>
+      <spark-notification 
+        class="unlisted-notification" 
+        title="No longer listed"> 
+        ... 
+    </spark-notification>
 
     Return a dict describing the unlisted state if found, else None.
     """
@@ -121,8 +124,6 @@ def _parse_dealer_card(soup: BeautifulSoup) -> Dict[str, Any]:
         except (ValueError, TypeError):
             pass
 
-    # Seller JSON (phone, zipcode) from embedded JSON in page
-    seller_el = soup.select_one("script#initial-activity-data")
     # Phone is in a separate seller JSON block, already extracted via activity data
     # Try the seller JSON pattern in the HTML for phone
     seller_match = re.search(
@@ -257,7 +258,8 @@ def parse_cars_detail_page_html_v1(
     Cars.com detail page parser v1.
 
     Primary listing:
-      - script#initial-activity-data (JSON, top-level keys include listing_id, vin, price, mileage, etc.)
+      - script#initial-activity-data 
+        (JSON, top-level keys include listing_id, vin, price, mileage, etc.)
 
     Carousel:
       - div.listings-carousel spark-card (HTML)
