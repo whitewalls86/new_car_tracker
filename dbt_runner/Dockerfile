@@ -1,5 +1,9 @@
-FROM ghcr.io/dbt-labs/dbt-postgres:1.8.2
+FROM python:3.13-slim
 
+# Install dbt-postgres and uvicorn
+RUN pip install dbt-postgres==1.8.2 uvicorn --no-cache-dir
+
+# Install additional dependencies
 COPY dbt_runner/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 

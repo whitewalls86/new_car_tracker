@@ -4,8 +4,8 @@ Each plan has its own file in `docs/`. This file is the index only.
 
 ## READ ME FIRST ##
 
-Updates since last work: Plan 72 complete (archiver service live, MinIO running, Parquet pipeline operational).
-Starting plan 62 + 63 next.
+Updates since last work: Plan 62 + 63 complete (CI/CD pipeline green, Flyway migrations implemented).
+Plan 68 (Cloud deployment) is next priority.
 
 ---
 
@@ -13,9 +13,9 @@ Starting plan 62 + 63 next.
 
 | Plan | Title | Status | Notes |
 |------|-------|--------|-------|
-| [62](plan_62_cicd.md) + [63](plan_63_flyway.md) | CI/CD + Flyway (bundle) | **Top priority** | Flyway first; together they add the CI badge and schema versioning |
-| [53](plan_53_dashboard_cleanup.md) | Dashboard cleanup | **In progress** | File split done; Pipeline Health tab layout remaining — close out |
-| [73](plan_73_scraper_refactor.md) | Scraper refactor | **Deferred** | Review after Plan 72; linting pass will inform whether full structural split is worth pursuing |
+| [68](plan_68_cloud_deployment.md) | Cloud deployment — Oracle Free Tier | **Top priority** | Live URL is the #1 portfolio artifact |
+| [65](plan_65_auth.md) | Auth stack (Authelia + Google OAuth) | **Next** | Required before sharing live demo publicly |
+| [66](plan_66_sql_injection.md) | SQL injection audit | **Planned** | Required before public exposure |
 
 ---
 
