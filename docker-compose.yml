@@ -173,9 +173,7 @@ services:
       - cartracker-net
 
   archiver:
-    build:
-      context: .
-      dockerfile: archiver/Dockerfile
+    build: ./archiver
     image: cartracker-archiver
     container_name: cartracker-archiver
     volumes:
