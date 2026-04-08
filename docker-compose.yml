@@ -228,7 +228,7 @@ services:
       - "80:80"
       - "443:443"
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./Caddyfile:/etc/caddy/CaddyFile:ro
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
@@ -236,7 +236,7 @@ services:
       - ops
       - n8n
     networks:
-      - cartracker
+      - cartracker-net
 
 volumes:
   cartracker_pgdata:

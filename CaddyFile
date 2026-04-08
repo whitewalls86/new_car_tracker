@@ -1,4 +1,4 @@
-cartracker.duckdns.org {
+cartracker-scraper.duckdns.org {
   reverse_proxy / dashboard:8501
   reverse_proxy /admin* ops:5005
   reverse_proxy /api* ops:5005
