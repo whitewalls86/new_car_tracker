@@ -11,7 +11,7 @@ from fastapi.responses import RedirectResponse
 from .routers.admin import router as admin_router
 from .routers.deploy import router as deploy_router
 
-_LOG_PATH = "/usr/app/logs/app.log"
+_LOG_PATH = os.getenv("LOG_PATH", "/usr/app/logs/app.log")
 os.makedirs(os.path.dirname(_LOG_PATH), exist_ok=True)
 _log_handler = RotatingFileHandler(_LOG_PATH, maxBytes=5_000_000, backupCount=3)
 _log_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))

@@ -304,7 +304,7 @@ def dbt_docs_generate(request: Request):
 # Log viewer
 # ---------------------------------------------------------------------------
 
-_OPS_LOG_PATH = "/usr/app/logs/app.log"
+_OPS_LOG_PATH = os.getenv("LOG_PATH", "/usr/app/logs/app.log")
 
 
 @router.get("/logs", response_class=HTMLResponse)
