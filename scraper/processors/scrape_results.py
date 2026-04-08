@@ -12,6 +12,7 @@ from urllib.parse import urlencode
 
 from bs4 import BeautifulSoup
 from fastapi import Body
+
 from scraper.processors.browser import close_browser, get_context
 from scraper.processors.fingerprint import human_delay, random_profile, random_zip
 

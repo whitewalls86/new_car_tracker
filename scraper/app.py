@@ -9,16 +9,20 @@ from logging.handlers import RotatingFileHandler
 from typing import Any, Dict, List, Optional
 
 from fastapi import Body, FastAPI, HTTPException
+
+from db import close_pool, get_pool
 from scraper.processors.parse_detail_page import parse_cars_detail_page_html_v1
 from scraper.processors.results_page_cards import (
     parse_cars_results_page_html,
     parse_cars_results_page_html_v2,
     parse_cars_results_page_html_v3,
 )
-from scraper.processors.scrape_detail import scrape_detail_batch, scrape_detail_dummy, scrape_detail_fetch
+from scraper.processors.scrape_detail import (
+    scrape_detail_batch,
+    scrape_detail_dummy,
+    scrape_detail_fetch,
+)
 from scraper.processors.scrape_results import scrape_results
-
-from db import close_pool, get_pool
 
 _LOG_PATH = os.getenv("LOG_PATH", "/usr/app/logs/app.log")
 os.makedirs(os.path.dirname(_LOG_PATH), exist_ok=True)

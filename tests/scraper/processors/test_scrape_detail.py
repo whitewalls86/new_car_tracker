@@ -2,8 +2,13 @@
 from unittest.mock import MagicMock, mock_open
 
 import pytest
+
 import scraper.processors.scrape_detail as sd
-from scraper.processors.scrape_detail import scrape_detail_batch, scrape_detail_dummy, scrape_detail_fetch
+from scraper.processors.scrape_detail import (
+    scrape_detail_batch,
+    scrape_detail_dummy,
+    scrape_detail_fetch,
+)
 
 
 @pytest.fixture(autouse=True)

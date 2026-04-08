@@ -4,6 +4,7 @@ import json
 from unittest.mock import MagicMock
 
 import pytest
+
 from scraper.processors.scrape_results import (
     BASE_URL,
     build_results_url,

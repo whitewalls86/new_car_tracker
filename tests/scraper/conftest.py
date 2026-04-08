@@ -83,8 +83,9 @@ def mock_scraper_client(mocker):
     # the names in the app module, not the db module.
     mocker.patch("scraper.app.get_pool", new_callable=AsyncMock, return_value=MagicMock())
     mocker.patch("scraper.app.close_pool", new_callable=AsyncMock)
-    import scraper.app as scraper_app
     from fastapi.testclient import TestClient
+
+    import scraper.app as scraper_app
     return TestClient(scraper_app.app)
 
 

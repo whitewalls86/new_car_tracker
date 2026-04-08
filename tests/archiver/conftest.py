@@ -30,8 +30,9 @@ if _ARCHIVER_DIR not in sys.path:
 @pytest.fixture
 def mock_archiver_client():
     """TestClient for the archiver FastAPI app (no lifespan hooks to patch)."""
-    import archiver.app as archiver_app
     from fastapi.testclient import TestClient
+
+    import archiver.app as archiver_app
     return TestClient(archiver_app.app)
 
 

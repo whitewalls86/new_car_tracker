@@ -88,7 +88,10 @@ class TestHumanDelay:
     def test_page1_minimum_is_base_plus_early_bonus(self, mocker):
         # Patch random.uniform to return minimum values: 8 (base), 5 (early bonus)
         mocker.patch("scraper.processors.fingerprint.random.uniform", side_effect=[8.0, 5.0])
-        mocker.patch("scraper.processors.fingerprint.random.random", return_value=0.5)  # no distraction
+        mocker.patch(
+            "scraper.processors.fingerprint.random.random", 
+            return_value=0.5
+        )  # no distraction
         result = human_delay(1)
         assert result == 13.0  # 8 + 5
 
