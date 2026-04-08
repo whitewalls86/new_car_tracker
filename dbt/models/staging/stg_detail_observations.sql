@@ -2,7 +2,13 @@
   config(
     materialized = 'incremental',
     unique_key = 'id',
-    incremental_strategy = 'merge'
+    incremental_strategy = 'merge',
+    indexes = [
+      {'columns': ['artifact_id'], 'type': 'btree'},
+    ],
+    post_hook = [
+      "CREATE INDEX IF NOT EXISTS idx_stg_detail_observations_artifact_id ON {{ this }} (artifact_id)"
+    ]
   )
 }}
 

@@ -3,7 +3,13 @@
     materialized = 'incremental',
     unique_key = ['artifact_id', 'vin', 'source'],
     incremental_strategy = 'merge',
-    on_schema_change = 'sync_all_columns'
+    on_schema_change = 'sync_all_columns',
+    indexes = [
+      {'columns': ['vin', 'observed_at'], 'type': 'btree'},
+    ],
+    post_hook = [
+      "CREATE INDEX IF NOT EXISTS idx_int_price_events_vin_observed ON {{ this }} (vin, observed_at)"
+    ]
   )
 }}
 

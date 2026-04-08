@@ -1569,6 +1569,27 @@ CREATE UNIQUE INDEX uq_artifact_processing_artifact_processor ON public.artifact
 
 
 --
+-- Name: idx_raw_artifacts_run_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_raw_artifacts_run_id ON public.raw_artifacts USING btree (run_id);
+
+
+--
+-- Name: idx_runs_trigger_started_at; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_runs_trigger_started_at ON public.runs USING btree (trigger, started_at DESC);
+
+
+--
+-- Name: idx_artifact_processing_artifact_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_artifact_processing_artifact_id ON public.artifact_processing USING btree (artifact_id);
+
+
+--
 -- Name: artifact_processing artifact_processing_artifact_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
