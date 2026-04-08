@@ -76,8 +76,8 @@ services:
 
   scraper:
     build:
-      context: ./scraper
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: scraper/Dockerfile
     image: cartracker-scraper
     container_name: cartracker-scraper
     restart: unless-stopped
