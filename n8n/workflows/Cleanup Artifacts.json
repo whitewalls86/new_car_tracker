@@ -6,8 +6,8 @@
         "rule": {
           "interval": [
             {
-              "triggerAtHour": 2,
-              "triggerAtMinute": 30
+              "field": "hours",
+              "hoursInterval": 4
             }
           ]
         }
@@ -45,7 +45,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT ra.artifact_id, ra.filepath\nFROM raw_artifacts ra\nWHERE ra.deleted_at IS NULL\n  AND ra.filepath IS NOT NULL\n  AND (\n    -- ok: delete after 15 days\n    EXISTS (\n      SELECT 1 FROM artifact_processing ap\n      WHERE ap.artifact_id = ra.artifact_id\n        AND ap.status = 'ok'\n        AND ra.fetched_at < now() - interval '15 days'\n    )\n    OR\n    -- skip (no ok): delete immediately\n    (\n      EXISTS (\n        SELECT 1 FROM artifact_processing ap\n        WHERE ap.artifact_id = ra.artifact_id AND ap.status = 'skip'\n      )\n      AND NOT EXISTS (\n        SELECT 1 FROM artifact_processing ap\n        WHERE ap.artifact_id = ra.artifact_id AND ap.status = 'ok'\n      )\n    )\n    OR\n    -- retry (no ok): delete after 30 days\n    (\n      EXISTS (\n        SELECT 1 FROM artifact_processing ap\n        WHERE ap.artifact_id = ra.artifact_id AND ap.status = 'retry'\n      )\n      AND NOT EXISTS (\n        SELECT 1 FROM artifact_processing ap\n        WHERE ap.artifact_id = ra.artifact_id AND ap.status = 'ok'\n      )\n      AND ra.fetched_at < now() - interval '30 days'\n    )\n  )\nLIMIT 200000;",
+        "query": "SELECT ra.artifact_id, ra.filepath\nFROM raw_artifacts ra\nWHERE ra.deleted_at IS NULL\n  AND ra.filepath IS NOT NULL\n  AND (\n    -- ok: delete after 48 hours\n    EXISTS (\n      SELECT 1 FROM artifact_processing ap\n      WHERE ap.artifact_id = ra.artifact_id\n        AND ap.status = 'ok'\n        AND ra.fetched_at < now() - interval '48 hours'\n    )\n    OR\n    -- skip (no ok): delete immediately\n    (\n      EXISTS (\n        SELECT 1 FROM artifact_processing ap\n        WHERE ap.artifact_id = ra.artifact_id AND ap.status = 'skip'\n      )\n      AND NOT EXISTS (\n        SELECT 1 FROM artifact_processing ap\n        WHERE ap.artifact_id = ra.artifact_id AND ap.status = 'ok'\n      )\n    )\n    OR\n    -- retry (no ok): delete after 7 days\n    (\n      EXISTS (\n        SELECT 1 FROM artifact_processing ap\n        WHERE ap.artifact_id = ra.artifact_id AND ap.status = 'retry'\n      )\n      AND NOT EXISTS (\n        SELECT 1 FROM artifact_processing ap\n        WHERE ap.artifact_id = ra.artifact_id AND ap.status = 'ok'\n      )\n      AND ra.fetched_at < now() - interval '7 days'\n    )\n  )\nLIMIT 200000;",
         "options": {}
       },
       "type": "n8n-nodes-base.postgres",
@@ -114,16 +114,40 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://cartracker-scraper:8000/cleanup/artifacts",
+        "url": "http://archiver:8001/archive/artifacts",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={\n  \"artifacts\": {{ JSON.stringify($json.artifacts.map(r => ({ artifact_id: r.artifact_id, filepath: r.filepath }))) }}\n}",
-        "options": {}
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
         -400,
+        1248
+      ],
+      "id": "c1a2b3c4-d5e6-f7a8-b9c0-d1e2f3a4b5c6",
+      "name": "Call Archive API"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://archiver:8001/cleanup/artifacts",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"artifacts\": {{ JSON.stringify($('Any Candidates?1').first().json.artifacts.map(r => ({ artifact_id: r.artifact_id, filepath: r.filepath }))) }}\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -192,
         1248
       ],
       "id": "2a2e9bc1-44ef-4c20-9974-6559c69d62e6",
@@ -137,7 +161,7 @@
       "type": "n8n-nodes-base.splitOut",
       "typeVersion": 1,
       "position": [
-        -192,
+        16,
         1248
       ],
       "id": "1c6adc1d-d802-4631-93ea-636a36dfb0c6",
@@ -169,7 +193,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        16,
+        224,
         1248
       ],
       "id": "3a9d3e31-df00-443e-9307-8ea0d32d6dc3",
@@ -184,7 +208,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        224,
+        432,
         1136
       ],
       "id": "a9be451c-5799-4601-b0d1-a979dfd06b13",
@@ -486,7 +510,7 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        432,
+        640,
         1136
       ],
       "id": "a7e0c1ce-c899-4fe3-bd0f-ea0fbe2c7831",
@@ -577,7 +601,7 @@
       "main": [
         [
           {
-            "node": "Call Cleanup API1",
+            "node": "Call Archive API",
             "type": "main",
             "index": 0
           }
@@ -585,6 +609,17 @@
         [
           {
             "node": "Call 'Update n8n Runs Table'",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Archive API": {
+      "main": [
+        [
+          {
+            "node": "Call Cleanup API1",
             "type": "main",
             "index": 0
           }

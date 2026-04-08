@@ -1125,7 +1125,8 @@ CREATE TABLE public.raw_artifacts (
     error text,
     page_num integer,
     deleted_at timestamp with time zone,
-    listing_id uuid
+    listing_id uuid,
+    archived_at timestamp with time zone
 );
 
 
