@@ -174,13 +174,14 @@ services:
 
   archiver:
     build: ./archiver
+    image: cartracker-archiver
     container_name: cartracker-archiver
     volumes:
-      - cartracker_raw:/data/raw:ro          # read-only access to HTML files
+      - cartracker_raw:/data/raw
     environment:
       DATABASE_URL: postgresql://cartracker:${POSTGRES_PASSWORD}@postgres:5432/cartracker
       MINIO_ENDPOINT: http://minio:9000
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-cartracker}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
       MINIO_BUCKET: bronze
     depends_on:

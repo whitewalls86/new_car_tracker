@@ -141,7 +141,7 @@
         "url": "http://archiver:8001/cleanup/artifacts",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"artifacts\": {{ JSON.stringify($('Any Candidates?1').first().json.artifacts.map(r => ({ artifact_id: r.artifact_id, filepath: r.filepath }))) }}\n}",
+        "jsonBody": "={\n  \"artifacts\": {{ JSON.stringify((() => { const archivedIds = new Set($json.results.filter(r => r.archived).map(r => String(r.artifact_id))); return $('Any Candidates?1').first().json.artifacts.filter(c => archivedIds.has(String(c.artifact_id))).map(c => ({ artifact_id: c.artifact_id, filepath: c.filepath })); })()) }}\n}",
         "options": {}
       },
       "type": "n8n-nodes-base.httpRequest",
