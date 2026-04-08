@@ -2,14 +2,18 @@
 
 Each plan has its own file in `docs/`. This file is the index only.
 
+## READ ME FIRST ##
+
+Updates since last work: Plan 72 complete (archiver service live, MinIO running, Parquet pipeline operational).
+Starting plan 62 + 63 next.
+
 ---
 
 ## Active
 
 | Plan | Title | Status | Notes |
 |------|-------|--------|-------|
-| [72](plan_72_parquet_archival.md) | Parquet archival (MinIO) | **Top priority** | Biggest DE portfolio showcase; `archiver/` service not yet built |
-| [62](plan_62_cicd.md) + [63](plan_63_flyway.md) | CI/CD + Flyway (bundle) | **Planned** | Flyway first; together they add the CI badge and schema versioning |
+| [62](plan_62_cicd.md) + [63](plan_63_flyway.md) | CI/CD + Flyway (bundle) | **Top priority** | Flyway first; together they add the CI badge and schema versioning |
 | [53](plan_53_dashboard_cleanup.md) | Dashboard cleanup | **In progress** | File split done; Pipeline Health tab layout remaining — close out |
 | [73](plan_73_scraper_refactor.md) | Scraper refactor | **Deferred** | Review after Plan 72; linting pass will inform whether full structural split is worth pursuing |
 

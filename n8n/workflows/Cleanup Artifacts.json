@@ -6,7 +6,7 @@
         "rule": {
           "interval": [
             {
-              "field": "minutes"
+              "field": "hours"
             }
           ]
         }
@@ -708,7 +708,7 @@
     "callerPolicy": "workflowsFromSameOwner",
     "errorWorkflow": "rJfFKS2DGRAn_IPJR1xTc"
   },
-  "versionId": "524d82a1-285e-4fc8-8b67-05e353f04911",
+  "versionId": "1b57f62a-5c26-4bea-8596-cc3dae3e5dfc",
   "meta": {
     "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179"
   },

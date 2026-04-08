@@ -286,8 +286,9 @@ def _section_stale_backlog():
         )
         SELECT
             bc.num_of_attempts
-            ,MIN(bc.next_eligible_at)  AT TIME ZONE 'America/Chicago' as next_attempt_at
+            ,MIN(bc.next_eligible_at) FILTER (WHERE bc.next_eligible_at > now() ) AT TIME ZONE 'America/Chicago' as next_attempt_at
             ,COUNT(bc.listing_id) as num_listings
+            ,COUNT(bc.listing_id) FILTER (WHERE bc.next_eligible_at < now()) as eligible_now
             ,COUNT(bc.listing_id) FILTER (WHERE q.priority_row < 501 AND q.priority_row IS NOT NULL) as num_in_next_batch
         FROM
             analytics.stg_blocked_cooldown bc
@@ -347,7 +348,7 @@ def _section_blocked_cooldown():
     df = run_query("""
         WITH buckets AS (
             SELECT
-                FLOOR((EXTRACT(EPOCH FROM (next_eligible_at - now())) / 3600) / 2) * 2 AS age_floor
+                FLOOR(GREATEST((EXTRACT(EPOCH FROM (next_eligible_at - now())) / 3600),0) / 2) * 2 AS age_floor
             FROM analytics.stg_blocked_cooldown
             WHERE next_eligible_at IS NOT NULL
         )

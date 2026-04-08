@@ -819,9 +819,12 @@
   "active": true,
   "settings": {
     "executionOrder": "v1",
-    "availableInMCP": false
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "callerPolicy": "workflowsFromSameOwner",
+    "saveDataSuccessExecution": "none"
   },
-  "versionId": "9eb99408-e0c7-49af-857d-eed0c3f35b1e",
+  "versionId": "5f0a99da-6719-4b6e-a967-7e9ccd3dd4bc",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179"

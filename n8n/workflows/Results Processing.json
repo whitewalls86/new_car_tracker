@@ -1143,11 +1143,11 @@
           "conditions": [
             {
               "id": "5418f975-4e34-4807-83e5-8d06862df05a",
-              "leftValue": "={{ $('NO_SRP_SET').first().json.intent }}",
+              "leftValue": "={{ $('NO_SRP_SET').isExecuted }}",
               "rightValue": "",
               "operator": {
-                "type": "string",
-                "operation": "exists",
+                "type": "boolean",
+                "operation": "true",
                 "singleValue": true
               }
             }
@@ -1216,16 +1216,16 @@
     "Schedule Trigger": [
       {
         "json": {
-          "timestamp": "2026-04-07T10:05:37.001-04:00",
-          "Readable date": "April 7th 2026, 10:05:37 am",
-          "Readable time": "10:05:37 am",
-          "Day of week": "Tuesday",
+          "timestamp": "2026-04-08T01:35:32.002-04:00",
+          "Readable date": "April 8th 2026, 1:35:32 am",
+          "Readable time": "1:35:32 am",
+          "Day of week": "Wednesday",
           "Year": "2026",
           "Month": "April",
-          "Day of month": "07",
-          "Hour": "10",
-          "Minute": "05",
-          "Second": "37",
+          "Day of month": "08",
+          "Hour": "01",
+          "Minute": "35",
+          "Second": "32",
           "Timezone": "America/New_York (UTC-04:00)"
         },
         "pairedItem": {
@@ -1795,7 +1795,7 @@
     "callerPolicy": "workflowsFromSameOwner",
     "errorWorkflow": "rJfFKS2DGRAn_IPJR1xTc"
   },
-  "versionId": "9d9eef4f-aed5-4625-b6fa-7906b8179c8f",
+  "versionId": "dcf20b2b-78f2-40b5-b100-cd229dd53ddd",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179"
