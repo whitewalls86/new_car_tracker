@@ -9,14 +9,14 @@ from logging.handlers import RotatingFileHandler
 from typing import Any, Dict, List, Optional
 
 from fastapi import Body, FastAPI, HTTPException
-from processors.parse_detail_page import parse_cars_detail_page_html_v1
-from processors.results_page_cards import (
+from scraper.processors.parse_detail_page import parse_cars_detail_page_html_v1
+from scraper.processors.results_page_cards import (
     parse_cars_results_page_html,
     parse_cars_results_page_html_v2,
     parse_cars_results_page_html_v3,
 )
-from processors.scrape_detail import scrape_detail_batch, scrape_detail_dummy, scrape_detail_fetch
-from processors.scrape_results import scrape_results
+from scraper.processors.scrape_detail import scrape_detail_batch, scrape_detail_dummy, scrape_detail_fetch
+from scraper.processors.scrape_results import scrape_results
 
 from db import close_pool, get_pool
 

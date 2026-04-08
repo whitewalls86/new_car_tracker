@@ -40,7 +40,7 @@ jobs:
             s3fs minio
       - run: pytest tests/ -v
         env:
-          PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/scraper
+          PYTHONPATH: ${{ github.workspace }}
           LOG_PATH: /tmp/app.log
 
   docker-build:

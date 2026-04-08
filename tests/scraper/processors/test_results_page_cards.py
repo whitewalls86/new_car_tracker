@@ -1,7 +1,7 @@
 """Unit tests for processors/results_page_cards.py — v3 parser only (v1/v2 deprecated)."""
 import json
 
-from processors.results_page_cards import parse_cars_results_page_html_v3
+from scraper.processors.results_page_cards import parse_cars_results_page_html_v3
 
 # n8n consumes all of these fields from every listing
 N8N_LISTING_FIELDS = {

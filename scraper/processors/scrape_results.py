@@ -12,8 +12,8 @@ from urllib.parse import urlencode
 
 from bs4 import BeautifulSoup
 from fastapi import Body
-from processors.browser import close_browser, get_context
-from processors.fingerprint import human_delay, random_profile, random_zip
+from scraper.processors.browser import close_browser, get_context
+from scraper.processors.fingerprint import human_delay, random_profile, random_zip
 
 RAW_BASE = "/data/raw"
 BASE_URL = "https://www.cars.com/shopping/results/"  # adjust if your real base differs

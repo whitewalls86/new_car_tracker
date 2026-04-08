@@ -211,6 +211,12 @@ def test_load_intents_connection_error(mock_db_connection_error, mock_logger_err
             "stg_detail_observations+",
             "stg_detail_carousel_hints+",
         ],
+        "both": [
+            "stg_raw_artifacts+",
+            "stg_srp_observations+",
+            "stg_detail_observations+",
+            "stg_detail_carousel_hints+",
+        ],
     }
     assert result == expected
     error_msg = mock_logger_error.call_args[0][0]
@@ -230,6 +236,12 @@ def test_load_intents_sql_error(mock_db_sql_error, mock_logger_error):
             "stg_detail_observations+",
             "stg_detail_carousel_hints+",
         ],
+        "both": [
+            "stg_raw_artifacts+",
+            "stg_srp_observations+",
+            "stg_detail_observations+",
+            "stg_detail_carousel_hints+",
+        ],
     }
     assert result == expected
     error_msg = mock_logger_error.call_args[0][0]
@@ -246,6 +258,12 @@ def test_load_intents_database_error(mock_db_database_error, mock_logger_error):
         ],
         "after_detail": [
             "stg_raw_artifacts+",
+            "stg_detail_observations+",
+            "stg_detail_carousel_hints+",
+        ],
+        "both": [
+            "stg_raw_artifacts+",
+            "stg_srp_observations+",
             "stg_detail_observations+",
             "stg_detail_carousel_hints+",
         ],
@@ -307,6 +325,12 @@ def test_load_intents_empty(mock_cursor_context, mock_logger_warning):
         ],
         "after_detail": [
             "stg_raw_artifacts+",
+            "stg_detail_observations+",
+            "stg_detail_carousel_hints+",
+        ],
+        "both": [
+            "stg_raw_artifacts+",
+            "stg_srp_observations+",
             "stg_detail_observations+",
             "stg_detail_carousel_hints+",
         ],

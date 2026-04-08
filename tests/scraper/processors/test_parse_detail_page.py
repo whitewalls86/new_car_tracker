@@ -1,7 +1,7 @@
 """Unit tests for processors/parse_detail_page.py"""
 import json
 
-from processors.parse_detail_page import parse_cars_detail_page_html_v1
+from scraper.processors.parse_detail_page import parse_cars_detail_page_html_v1
 
 # Fields that n8n reads from `primary` (from Parse Detail Pages.json workflow)
 N8N_PRIMARY_FIELDS = {

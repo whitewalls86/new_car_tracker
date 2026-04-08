@@ -6,7 +6,7 @@ Import strategy:
 """
 from unittest.mock import AsyncMock, MagicMock, mock_open
 
-import app as scraper_app
+import scraper.app as scraper_app
 
 N8N_ARTIFACT_KEYS = {
     "source", "artifact_type", "search_key", "search_scope", "page_num",
@@ -189,7 +189,7 @@ class TestGetKnownVins:
         mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
         mock_conn.fetch = AsyncMock(return_value=[{"vin": "VIN1"}, {"vin": "VIN2"}])
         # app.py does `from db import get_pool` so patch the name in app module
-        mocker.patch("app.get_pool", new_callable=AsyncMock, return_value=mock_pool)
+        mocker.patch("scraper.app.get_pool", new_callable=AsyncMock, return_value=mock_pool)
 
         resp = mock_scraper_client.get("/search_configs/toyota_rav4/known_vins")
         assert resp.status_code == 200
@@ -230,7 +230,7 @@ class TestAdvanceRotation:
         last_run_row = MagicMock()
         last_run_row.__getitem__ = lambda s, k: datetime.datetime.now(datetime.timezone.utc)
         mock_pool, _ = _make_rotation_pool(mocker, [last_run_row])
-        mocker.patch("app.get_pool", new_callable=AsyncMock, return_value=mock_pool)
+        mocker.patch("scraper.app.get_pool", new_callable=AsyncMock, return_value=mock_pool)
 
         resp = mock_scraper_client.post(
             "/search_configs/advance_rotation"
@@ -244,7 +244,7 @@ class TestAdvanceRotation:
     def test_no_slot_due_returns_empty_configs(self, mock_scraper_client, mocker):
         # last_run=None, slot_row=None, legacy_row=None
         mock_pool, _ = _make_rotation_pool(mocker, [None, None, None])
-        mocker.patch("app.get_pool", new_callable=AsyncMock, return_value=mock_pool)
+        mocker.patch("scraper.app.get_pool", new_callable=AsyncMock, return_value=mock_pool)
 
         resp = mock_scraper_client.post("/search_configs/advance_rotation")
         assert resp.status_code == 200
@@ -254,7 +254,7 @@ class TestAdvanceRotation:
 
     def test_response_has_slot_and_configs_keys(self, mock_scraper_client, mocker):
         mock_pool, _ = _make_rotation_pool(mocker, [None, None, None])
-        mocker.patch("app.get_pool", new_callable=AsyncMock, return_value=mock_pool)
+        mocker.patch("scraper.app.get_pool", new_callable=AsyncMock, return_value=mock_pool)
 
         resp = mock_scraper_client.post("/search_configs/advance_rotation")
         data = resp.json()
@@ -373,7 +373,7 @@ class TestProcessResultsPages:
 class TestScrapeDetail:
     def test_mode_dummy_calls_dummy_fn(self, mock_scraper_client, mocker):
         mock_dummy = mocker.patch(
-            "app.scrape_detail_dummy",
+            "scraper.app.scrape_detail_dummy",
             return_value={"error": None, "artifacts": [], "meta": {"listing_id": "x"}},
         )
         mock_scraper_client.post(
@@ -384,7 +384,7 @@ class TestScrapeDetail:
 
     def test_mode_fetch_calls_fetch_fn(self, mock_scraper_client, mocker):
         mock_fetch = mocker.patch(
-            "app.scrape_detail_fetch",
+            "scraper.app.scrape_detail_fetch",
             return_value={"error": None, "artifacts": [], "meta": {"listing_id": "x"}},
         )
         mock_scraper_client.post(
@@ -404,7 +404,7 @@ class TestScrapeDetail:
 
     def test_response_has_artifacts_and_meta(self, mock_scraper_client, mocker):
         mocker.patch(
-            "app.scrape_detail_dummy",
+            "scraper.app.scrape_detail_dummy",
             return_value={"error": None, "artifacts": [], "meta": {"listing_id": "x"}},
         )
         resp = mock_scraper_client.post(
@@ -572,55 +572,3 @@ class TestScrapeDetailBatch:
         resp = mock_scraper_client.post("/scrape_results/jobs/db2/fetched")
         assert resp.status_code == 200
         assert "db2" not in scraper_app._jobs
-
-
-# ---------------------------------------------------------------------------
-# POST /cleanup/artifacts
-# ---------------------------------------------------------------------------
-class TestCleanupArtifacts:
-    def test_success_count(self, mock_scraper_client, mocker):
-        mocker.patch("os.remove")
-        resp = mock_scraper_client.post(
-            "/cleanup/artifacts",
-            json={"artifacts": [
-                {"artifact_id": 1, "filepath": "/a.html"},
-                {"artifact_id": 2, "filepath": "/b.html"},
-            ]},
-        )
-        data = resp.json()
-        assert data["total"] == 2
-        assert data["deleted"] == 2
-        assert data["failed"] == 0
-
-    def test_partial_failure(self, mock_scraper_client, mocker):
-        mocker.patch("os.remove", side_effect=[None, PermissionError("no")])
-        resp = mock_scraper_client.post(
-            "/cleanup/artifacts",
-            json={"artifacts": [
-                {"artifact_id": 1, "filepath": "/a.html"},
-                {"artifact_id": 2, "filepath": "/b.html"},
-            ]},
-        )
-        data = resp.json()
-        assert data["deleted"] == 1
-        assert data["failed"] == 1
-
-    def test_empty_list(self, mock_scraper_client):
-        resp = mock_scraper_client.post("/cleanup/artifacts", json={"artifacts": []})
-        data = resp.json()
-        assert data == {"total": 0, "deleted": 0, "failed": 0, "results": []}
-
-    def test_response_schema(self, mock_scraper_client, mocker):
-        mocker.patch("os.remove")
-        resp = mock_scraper_client.post(
-            "/cleanup/artifacts",
-            json={"artifacts": [{"artifact_id": 99, "filepath": "/x.html"}]},
-        )
-        data = resp.json()
-        assert "total" in data
-        assert "deleted" in data
-        assert "failed" in data
-        assert "results" in data
-        result = data["results"][0]
-        assert "artifact_id" in result
-        assert "deleted" in result

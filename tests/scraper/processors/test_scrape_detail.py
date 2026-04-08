@@ -1,8 +1,17 @@
 """Unit tests for processors/scrape_detail.py"""
 from unittest.mock import MagicMock, mock_open
 
-import processors.scrape_detail as sd
-from processors.scrape_detail import scrape_detail_batch, scrape_detail_dummy, scrape_detail_fetch
+import pytest
+import scraper.processors.scrape_detail as sd
+from scraper.processors.scrape_detail import scrape_detail_batch, scrape_detail_dummy, scrape_detail_fetch
+
+
+@pytest.fixture(autouse=True)
+def reset_adaptive_delay():
+    """Reset the module-level adaptive delay before each test so tests don't bleed state."""
+    sd._detail_adaptive_delay = 0.0
+    yield
+    sd._detail_adaptive_delay = 0.0
 
 # n8n reads all 14 of these keys from every artifact
 N8N_ARTIFACT_KEYS = {
@@ -131,12 +140,12 @@ class TestScrapeDetailFetch:
         mocker.patch("builtins.open", mock_open_fn)
         mock_session = MagicMock(get=MagicMock(side_effect=ConnectionError("refused")))
         mocker.patch(
-            "processors.scrape_detail.cf_requests.Session",
+            "scraper.processors.scrape_detail.cf_requests.Session",
             return_value=mock_session,
         )
         # Mock _get_cf_credentials to return a cache hit so _fetch_url calls session.get()
         mocker.patch(
-            "processors.scrape_detail._get_cf_credentials",
+            "scraper.processors.scrape_detail._get_cf_credentials",
             return_value=({"cookies": {}, "user_agent": "test-ua"}, None, None),
         )
 

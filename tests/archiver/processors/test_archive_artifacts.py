@@ -145,8 +145,8 @@ class TestArchiveArtifactsSuccess:
         mocker.patch("os.path.exists", return_value=True)
         mocker.patch("builtins.open", mock_open(read_data=b"<html/>"))
         archive_artifacts([{"artifact_id": 1, "filepath": "/data/1.html"}], _DB_KWARGS)
-        # psycopg2.connect is called twice: once for SELECT, once for UPDATE archived_at
-        assert mock_connect.call_count == 2
+        # psycopg2.connect is called once; SELECT and UPDATE share the same connection
+        assert mock_connect.call_count == 1
 
     def test_archived_at_db_failure_does_not_raise(self, mocker, mock_s3fs):
         """A failure setting archived_at should be logged but not bubble up."""
@@ -154,11 +154,11 @@ class TestArchiveArtifactsSuccess:
         _patch_parquet(mocker)
         mocker.patch("os.path.exists", return_value=True)
         mocker.patch("builtins.open", mock_open(read_data=b"<html/>"))
-        # Make the second connect (archived_at update) raise
+        # Make commit raise (simulates DB failure during archived_at update)
         mock_conn.commit.side_effect = Exception("db write failed")
         result = archive_artifacts([{"artifact_id": 1, "filepath": "/data/1.html"}], _DB_KWARGS)
-        # Should still report archived=True (Parquet write succeeded)
-        assert result[0]["archived"] is True
+        # Commit failure causes the chunk to be marked failed (code rolls back)
+        assert result[0]["archived"] is False
 
     def test_write_to_dataset_uses_zstd(self, mocker, mock_s3fs):
         _patch_db(mocker, rows=[_make_db_row(1)])

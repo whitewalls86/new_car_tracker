@@ -4,7 +4,7 @@ import json
 from unittest.mock import MagicMock
 
 import pytest
-from processors.scrape_results import (
+from scraper.processors.scrape_results import (
     BASE_URL,
     build_results_url,
     extract_results_paging_meta,
@@ -189,17 +189,17 @@ VALID_PAYLOAD = {"params": {"makes": ["Toyota"], "models": ["RAV4"]}}
 
 class TestScrapeResultsOrchestration:
     def _patch_infra(self, mocker, fetch_results):
-        mocker.patch("processors.scrape_results.get_context", return_value=MagicMock())
-        mocker.patch("processors.scrape_results.close_browser")
-        mocker.patch("processors.scrape_results.time.sleep")
-        mocker.patch("processors.scrape_results.random_profile", return_value={
+        mocker.patch("scraper.processors.scrape_results.get_context", return_value=MagicMock())
+        mocker.patch("scraper.processors.scrape_results.close_browser")
+        mocker.patch("scraper.processors.scrape_results.time.sleep")
+        mocker.patch("scraper.processors.scrape_results.random_profile", return_value={
             "user_agent": "ua", "extra_http_headers": {}, "viewport": {}, "locale": "en-US"
         })
-        mocker.patch("processors.scrape_results.random_zip", return_value="77002")
-        mocker.patch("processors.scrape_results.human_delay", return_value=0.0)
+        mocker.patch("scraper.processors.scrape_results.random_zip", return_value="77002")
+        mocker.patch("scraper.processors.scrape_results.human_delay", return_value=0.0)
         mocker.patch("os.makedirs")
         mocker.patch(
-            "processors.scrape_results._fetch_page",
+            "scraper.processors.scrape_results._fetch_page",
             side_effect=fetch_results,
         )
 
@@ -269,22 +269,22 @@ class TestScrapeResultsOrchestration:
     def test_close_browser_called_on_success(self, mocker):
         p1 = _make_fetch_result(stop=True)
         self._patch_infra(mocker, [p1])
-        mock_close = mocker.patch("processors.scrape_results.close_browser")
+        mock_close = mocker.patch("scraper.processors.scrape_results.close_browser")
         scrape_results("run1", "sk", "national", VALID_PAYLOAD)
         mock_close.assert_called_once()
 
     def test_close_browser_called_even_on_exception(self, mocker):
-        mocker.patch("processors.scrape_results.get_context", return_value=MagicMock())
-        mock_close = mocker.patch("processors.scrape_results.close_browser")
-        mocker.patch("processors.scrape_results.time.sleep")
-        mocker.patch("processors.scrape_results.random_profile", return_value={
+        mocker.patch("scraper.processors.scrape_results.get_context", return_value=MagicMock())
+        mock_close = mocker.patch("scraper.processors.scrape_results.close_browser")
+        mocker.patch("scraper.processors.scrape_results.time.sleep")
+        mocker.patch("scraper.processors.scrape_results.random_profile", return_value={
             "user_agent": "ua", "extra_http_headers": {}, "viewport": {}, "locale": "en-US"
         })
-        mocker.patch("processors.scrape_results.random_zip", return_value="77002")
-        mocker.patch("processors.scrape_results.human_delay", return_value=0.0)
+        mocker.patch("scraper.processors.scrape_results.random_zip", return_value="77002")
+        mocker.patch("scraper.processors.scrape_results.human_delay", return_value=0.0)
         mocker.patch("os.makedirs")
         mocker.patch(
-            "processors.scrape_results._fetch_page",
+            "scraper.processors.scrape_results._fetch_page",
             side_effect=RuntimeError("boom"),
         )
         with pytest.raises(RuntimeError):

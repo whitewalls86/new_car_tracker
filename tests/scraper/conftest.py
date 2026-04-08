@@ -64,7 +64,7 @@ def clear_jobs():
     Clear it before and after each test so tests don't bleed state.
     """
     try:
-        import app as scraper_app
+        import scraper.app as scraper_app
         scraper_app._jobs.clear()
         yield
         scraper_app._jobs.clear()
@@ -81,9 +81,9 @@ def mock_scraper_client(mocker):
     """
     # app.py does `from db import get_pool, close_pool` so we must patch
     # the names in the app module, not the db module.
-    mocker.patch("app.get_pool", new_callable=AsyncMock, return_value=MagicMock())
-    mocker.patch("app.close_pool", new_callable=AsyncMock)
-    import app as scraper_app
+    mocker.patch("scraper.app.get_pool", new_callable=AsyncMock, return_value=MagicMock())
+    mocker.patch("scraper.app.close_pool", new_callable=AsyncMock)
+    import scraper.app as scraper_app
     from fastapi.testclient import TestClient
     return TestClient(scraper_app.app)
 
@@ -122,13 +122,13 @@ def mock_cf_session(mocker):
     mock_session = MagicMock()
     mock_session.get.return_value = mock_resp
 
-    mocker.patch("processors.scrape_detail.cf_requests.Session", return_value=mock_session)
+    mocker.patch("scraper.processors.scrape_detail.cf_requests.Session", return_value=mock_session)
 
     # Mock _get_cf_credentials to return a cache hit with dummy credentials.
     # This forces _fetch_url to build a fresh Session (intercepted above) and call
     # session.get(), so tests can verify the URL and kwargs passed to session.get().
     mocker.patch(
-        "processors.scrape_detail._get_cf_credentials",
+        "scraper.processors.scrape_detail._get_cf_credentials",
         return_value=({"cookies": {}, "user_agent": "test-ua"}, None, None),
     )
 
