@@ -221,6 +221,23 @@ services:
     networks:
       - cartracker-net
 
+  caddy:
+    image: caddy:latest
+    container_name: caddy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - dashboard
+      - ops
+      - n8n
+    networks:
+      - cartracker
+
 volumes:
   cartracker_pgdata:
     external: true
@@ -243,6 +260,9 @@ volumes:
   ops_logs:
 
   parquet_data:
+
+  caddy_data:
+  caddy_config:
 
 networks:
   cartracker-net:

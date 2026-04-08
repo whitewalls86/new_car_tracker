@@ -1,0 +1,7 @@
+cartracker.duckdns.org {
+  reverse_proxy / dashboard:8501
+  reverse_proxy /admin* ops:5005
+  reverse_proxy /api* ops:5005
+  reverse_proxy /n8n* n8n:5678
+  reverse_proxy /pgadmin* pgadmin:80
+}
