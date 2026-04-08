@@ -76,13 +76,13 @@ jobs:
         uses: docker://flyway/flyway:10-alpine
         with:
           args: >-
-            -url=jdbc:postgresql://localhost:5432/cartracker
+            -url=jdbc:postgresql://postgres:5432/cartracker
             -user=cartracker
             -password=cartracker
             -locations=filesystem:/github/workspace/db/migrations
             migrate
-        # Flyway action runs as a Docker container; /github/workspace is the
-        # mounted repo checkout path used by GitHub Actions container steps.
+        # Flyway runs as a Docker container step; it must reach the postgres
+        # service by its service name ("postgres"), not localhost.
 
       - uses: actions/setup-python@v5
         with:
