@@ -1,7 +1,7 @@
 """Unit tests for processors/results_page_cards.py — v3 parser only (v1/v2 deprecated)."""
 import json
-import pytest
-from processors.results_page_cards import parse_cars_results_page_html_v3
+
+from scraper.processors.results_page_cards import parse_cars_results_page_html_v3
 
 # n8n consumes all of these fields from every listing
 N8N_LISTING_FIELDS = {
@@ -28,7 +28,11 @@ N8N_LISTING_FIELDS = {
 }
 
 
-def _make_v3_card(tag: str, listing_id: str = "abc-1111-2222-3333-444444444444", **overrides) -> str:
+def _make_v3_card(
+    tag: str,
+    listing_id: str = "abc-1111-2222-3333-444444444444",
+    **overrides,
+) -> str:
     """Build a minimal <spark-card> or <fuse-card> with data-vehicle-details JSON."""
     data = {
         "listingId": listing_id,
@@ -75,7 +79,7 @@ class TestV3ParserSparkCard:
         )
         listings, meta = parse_cars_results_page_html_v3(html)
         assert len(listings) == 2
-        ids = {l["listing_id"] for l in listings}
+        ids = {listing["listing_id"] for listing in listings}
         assert "aaaa-0000-0000-0000-000000000001" in ids
         assert "bbbb-0000-0000-0000-000000000002" in ids
 

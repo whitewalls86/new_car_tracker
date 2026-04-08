@@ -1,6 +1,8 @@
 import pytest
 from pydantic import ValidationError
+
 from ops.models import search_config as sc
+
 
 @pytest.fixture
 def valid_config_defaults():

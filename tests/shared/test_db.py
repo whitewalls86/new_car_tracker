@@ -2,6 +2,7 @@
 Unit tests for shared.db module (db_cursor context manager).
 """
 import pytest
+
 from shared.db import db_cursor
 
 

@@ -1,5 +1,6 @@
 import pytest
 from fastapi.testclient import TestClient
+
 from ops.app import app
 
 
@@ -16,7 +17,14 @@ def mock_router_logger_warning(mocker):
 
 @pytest.fixture
 def mock_intent_status(mocker):
-    return mocker.patch("ops.routers.deploy._intent_status", return_value={"intent": "pending", "requested_at": None, "requested_by": None})
+    intent_status = {
+        "intent": "pending",
+        "requested_at": None,
+        "requested_by": None,
+    }
+    return mocker.patch(
+        "ops.routers.deploy._intent_status", return_value=intent_status
+    )
 
 @pytest.fixture
 def mock_set_intent(mocker):

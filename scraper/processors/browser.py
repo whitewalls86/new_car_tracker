@@ -16,9 +16,9 @@ import threading
 from typing import Dict
 
 try:
-    from patchright.sync_api import sync_playwright, BrowserContext
+    from patchright.sync_api import BrowserContext, sync_playwright
 except ImportError:
-    from playwright.sync_api import sync_playwright, BrowserContext
+    from playwright.sync_api import BrowserContext, sync_playwright
 
 _local = threading.local()
 

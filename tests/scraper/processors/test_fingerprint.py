@@ -1,13 +1,12 @@
 """Unit tests for processors/fingerprint.py"""
-import pytest
-from processors.fingerprint import (
-    random_profile,
-    random_zip,
-    human_delay,
+from scraper.processors.fingerprint import (
     _CHROME_VERSIONS,
     _VIEWPORTS,
-    ZIP_POOL_NATIONAL,
     ZIP_POOL_LOCAL,
+    ZIP_POOL_NATIONAL,
+    human_delay,
+    random_profile,
+    random_zip,
 )
 
 
@@ -88,34 +87,37 @@ class TestHumanDelay:
 
     def test_page1_minimum_is_base_plus_early_bonus(self, mocker):
         # Patch random.uniform to return minimum values: 8 (base), 5 (early bonus)
-        mocker.patch("processors.fingerprint.random.uniform", side_effect=[8.0, 5.0])
-        mocker.patch("processors.fingerprint.random.random", return_value=0.5)  # no distraction
+        mocker.patch("scraper.processors.fingerprint.random.uniform", side_effect=[8.0, 5.0])
+        mocker.patch(
+            "scraper.processors.fingerprint.random.random", 
+            return_value=0.5
+        )  # no distraction
         result = human_delay(1)
         assert result == 13.0  # 8 + 5
 
     def test_page2_gets_early_page_bonus(self, mocker):
-        mocker.patch("processors.fingerprint.random.uniform", side_effect=[10.0, 7.0])
-        mocker.patch("processors.fingerprint.random.random", return_value=0.5)
+        mocker.patch("scraper.processors.fingerprint.random.uniform", side_effect=[10.0, 7.0])
+        mocker.patch("scraper.processors.fingerprint.random.random", return_value=0.5)
         result = human_delay(2)
         assert result == 17.0  # 10 + 7
 
     def test_page3_no_early_page_bonus(self, mocker):
-        mocker.patch("processors.fingerprint.random.uniform", return_value=10.0)
-        mocker.patch("processors.fingerprint.random.random", return_value=0.5)
+        mocker.patch("scraper.processors.fingerprint.random.uniform", return_value=10.0)
+        mocker.patch("scraper.processors.fingerprint.random.random", return_value=0.5)
         result = human_delay(3)
         assert result == 10.0  # no early-page bonus
 
     def test_distraction_pause_branch_triggered(self, mocker):
         # random.random() < 0.10 → distraction branch fires
-        mocker.patch("processors.fingerprint.random.random", return_value=0.05)
+        mocker.patch("scraper.processors.fingerprint.random.random", return_value=0.05)
         # side_effect: [base, distraction_extra]  (no early bonus since page_num=5)
-        mocker.patch("processors.fingerprint.random.uniform", side_effect=[10.0, 20.0])
+        mocker.patch("scraper.processors.fingerprint.random.uniform", side_effect=[10.0, 20.0])
         result = human_delay(5)
         assert result == 30.0  # 10 + 20
 
     def test_distraction_pause_not_triggered(self, mocker):
-        mocker.patch("processors.fingerprint.random.random", return_value=0.5)
-        mocker.patch("processors.fingerprint.random.uniform", return_value=12.0)
+        mocker.patch("scraper.processors.fingerprint.random.random", return_value=0.5)
+        mocker.patch("scraper.processors.fingerprint.random.uniform", return_value=12.0)
         result = human_delay(5)
         assert result == 12.0  # no distraction bonus
 

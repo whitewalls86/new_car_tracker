@@ -1,7 +1,8 @@
 """Unit tests for processors/browser.py"""
 import threading
-import pytest
 from unittest.mock import MagicMock
+
+import pytest
 
 import scraper.processors.browser as browser_mod
 
@@ -196,8 +197,10 @@ class TestThreadIsolation:
 
         t1 = threading.Thread(target=worker)
         t2 = threading.Thread(target=worker)
-        t1.start(); t2.start()
-        t1.join(); t2.join()
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
 
         assert len(contexts_seen) == 2
         # The two threads should have gotten different context objects

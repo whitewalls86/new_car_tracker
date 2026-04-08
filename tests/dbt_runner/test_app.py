@@ -1,27 +1,31 @@
+from datetime import datetime as dt
+
 import pytest
+from fastapi import HTTPException
 
 from dbt_runner import app
-from datetime import datetime as dt
-from fastapi import HTTPException
 
 
 def test_acquire_lock_connection_error(mock_db_connection_error, mock_logger_error):
     result = app._acquire_lock('test')
 
     assert result is False
-    assert "Acquire-Lock: Unable to connect to Postgres database." in mock_logger_error.call_args[0][0]
+    error_msg = mock_logger_error.call_args[0][0]
+    assert "Acquire-Lock: Unable to connect to Postgres database." in error_msg
 
 
 def test_acquire_lock_execution_error(mock_db_sql_error, mock_logger_error):
     result = app._acquire_lock('test')
     assert result is False
-    assert "Acquire-Lock: SQL execution failed." in mock_logger_error.call_args[0][0]
+    error_msg = mock_logger_error.call_args[0][0]
+    assert "Acquire-Lock: SQL execution failed." in error_msg
 
 
 def test_acquire_lock_db_error(mock_db_database_error, mock_logger_error):
     result = app._acquire_lock('test')
     assert result is False
-    assert "Acquire-Lock: encountered DB error." in mock_logger_error.call_args[0][0]
+    error_msg = mock_logger_error.call_args[0][0]
+    assert "Acquire-Lock: encountered DB error." in error_msg
 
 
 def test_acquire_lock_known_values(mock_cursor_context):
@@ -53,19 +57,22 @@ def test_acquire_lock_unknown_value(mock_cursor_context):
 def test_release_lock_connection_error(mock_db_connection_error, mock_logger_error):
     result = app._release_lock()
     assert result is None
-    assert "Release-Lock: Unable to connect to Postgres database." in mock_logger_error.call_args[0][0]
+    error_msg = mock_logger_error.call_args[0][0]
+    assert "Release-Lock: Unable to connect to Postgres database." in error_msg
 
 
 def test_release_lock_execution_error(mock_db_sql_error, mock_logger_error):
     result = app._release_lock()
     assert result is None
-    assert "Release-Lock: SQL execution failed." in mock_logger_error.call_args[0][0]
+    error_msg = mock_logger_error.call_args[0][0]
+    assert "Release-Lock: SQL execution failed." in error_msg
 
 
 def test_release_lock_db_error(mock_db_database_error, mock_logger_error):
     result = app._release_lock()
     assert result is None
-    assert "Release-Lock: encountered DB error." in mock_logger_error.call_args[0][0]
+    error_msg = mock_logger_error.call_args[0][0]
+    assert "Release-Lock: encountered DB error." in error_msg
 
 
 def test_release_lock_success(mock_cursor_context):
@@ -77,7 +84,8 @@ def test_release_lock_success(mock_cursor_context):
 def test_lock_status_connection_error(mock_db_connection_error, mock_logger_error):
     result = app._lock_status()
     assert result['locked_by'] == "DB Error"
-    assert "Lock-Status: Unable to connect to Postgres database." in mock_logger_error.call_args[0][0]
+    error_msg = mock_logger_error.call_args[0][0]
+    assert "Lock-Status: Unable to connect to Postgres database." in error_msg
 
 
 def test_lock_status_execution_error(mock_db_sql_error, mock_logger_error):
@@ -94,7 +102,8 @@ def test_lock_status_database_error(mock_db_database_error, mock_logger_error):
 
 def test_lock_status_is_locked(mock_cursor_context):
     conn, cursor = mock_cursor_context
-    cursor.fetchone.return_value = (True, dt.fromisoformat("2026-03-30T12:00:03.237000+00:00"), "Some Process")
+    locked_at = dt.fromisoformat("2026-03-30T12:00:03.237000+00:00")
+    cursor.fetchone.return_value = (True, locked_at, "Some Process")
     result = app._lock_status()
 
     assert result['locked_by'] == "Some Process"
@@ -132,22 +141,27 @@ def test_lock_status_no_rows(mock_cursor_context):
     assert result['locked_at'] is None
 
 
-def test_record_run_connection_error(mock_db_connection_error, mock_logger_error, record_run_defaults):
+def test_record_run_connection_error(
+    mock_db_connection_error, mock_logger_error, record_run_defaults
+):
     result = app._record_run(**record_run_defaults)
     assert result is False
-    assert "Record-Run: Unable to connect to Postgres database." in mock_logger_error.call_args[0][0]
+    error_msg = mock_logger_error.call_args[0][0]
+    assert "Record-Run: Unable to connect to Postgres database." in error_msg
 
 
 def test_record_run_sql_error(mock_db_sql_error, mock_logger_error, record_run_defaults):
     result = app._record_run(**record_run_defaults)
     assert result is False
-    assert "Record-Run: SQL execution failed." in mock_logger_error.call_args[0][0]
+    error_msg = mock_logger_error.call_args[0][0]
+    assert "Record-Run: SQL execution failed." in error_msg
 
 
 def test_record_run_database_error(mock_db_database_error, mock_logger_error, record_run_defaults):
     result = app._record_run(**record_run_defaults)
     assert result is False
-    assert "Record-Run: encountered DB error." in mock_logger_error.call_args[0][0]
+    error_msg = mock_logger_error.call_args[0][0]
+    assert "Record-Run: encountered DB error." in error_msg
 
 
 def test_record_run_success(mock_cursor_context, record_run_defaults):
@@ -186,44 +200,115 @@ def test_record_run_wrong_timestamp_types(mock_cursor_context, record_run_defaul
 
 def test_load_intents_connection_error(mock_db_connection_error, mock_logger_error):
     result = app._load_intents()
-    assert result == {
-        "after_srp": ["stg_raw_artifacts+", "stg_srp_observations+", "stg_detail_carousel_hints+"],
-        "after_detail": ["stg_raw_artifacts+", "stg_detail_observations+", "stg_detail_carousel_hints+"],
+    expected = {
+        "after_srp": [
+            "stg_raw_artifacts+",
+            "stg_srp_observations+",
+            "stg_detail_carousel_hints+",
+        ],
+        "after_detail": [
+            "stg_raw_artifacts+",
+            "stg_detail_observations+",
+            "stg_detail_carousel_hints+",
+        ],
+        "both": [
+            "stg_raw_artifacts+",
+            "stg_srp_observations+",
+            "stg_detail_observations+",
+            "stg_detail_carousel_hints+",
+        ],
     }
-    assert "Load-Intents: Unable to connect to Postgres database." in mock_logger_error.call_args[0][0]
+    assert result == expected
+    error_msg = mock_logger_error.call_args[0][0]
+    assert "Load-Intents: Unable to connect to Postgres database." in error_msg
 
 
 def test_load_intents_sql_error(mock_db_sql_error, mock_logger_error):
     result = app._load_intents()
-    assert result == {
-        "after_srp": ["stg_raw_artifacts+", "stg_srp_observations+", "stg_detail_carousel_hints+"],
-        "after_detail": ["stg_raw_artifacts+", "stg_detail_observations+", "stg_detail_carousel_hints+"],
+    expected = {
+        "after_srp": [
+            "stg_raw_artifacts+",
+            "stg_srp_observations+",
+            "stg_detail_carousel_hints+",
+        ],
+        "after_detail": [
+            "stg_raw_artifacts+",
+            "stg_detail_observations+",
+            "stg_detail_carousel_hints+",
+        ],
+        "both": [
+            "stg_raw_artifacts+",
+            "stg_srp_observations+",
+            "stg_detail_observations+",
+            "stg_detail_carousel_hints+",
+        ],
     }
-    assert "Load-Intents: SQL execution failed." in mock_logger_error.call_args[0][0]
+    assert result == expected
+    error_msg = mock_logger_error.call_args[0][0]
+    assert "Load-Intents: SQL execution failed." in error_msg
 
 
 def test_load_intents_database_error(mock_db_database_error, mock_logger_error):
     result = app._load_intents()
-    assert result == {
-        "after_srp": ["stg_raw_artifacts+", "stg_srp_observations+", "stg_detail_carousel_hints+"],
-        "after_detail": ["stg_raw_artifacts+", "stg_detail_observations+", "stg_detail_carousel_hints+"],
+    expected = {
+        "after_srp": [
+            "stg_raw_artifacts+",
+            "stg_srp_observations+",
+            "stg_detail_carousel_hints+",
+        ],
+        "after_detail": [
+            "stg_raw_artifacts+",
+            "stg_detail_observations+",
+            "stg_detail_carousel_hints+",
+        ],
+        "both": [
+            "stg_raw_artifacts+",
+            "stg_srp_observations+",
+            "stg_detail_observations+",
+            "stg_detail_carousel_hints+",
+        ],
     }
-    assert "Load-Intents: encountered DB error." in mock_logger_error.call_args[0][0]
+    assert result == expected
+    error_msg = mock_logger_error.call_args[0][0]
+    assert "Load-Intents: encountered DB error." in error_msg
 
 
 def test_load_intents_success(mock_cursor_context):
     conn, cursor = mock_cursor_context
     cursor.fetchall.return_value = [
-        ("after_detail", ["stg_raw_artifacts+", "stg_detail_observations+", "stg_detail_carousel_hints+"]),
-        ("after_srp", ["stg_raw_artifacts+", "stg_srp_observations+", "stg_detail_carousel_hints+"])
+        (
+            "after_detail",
+            [
+                "stg_raw_artifacts+",
+                "stg_detail_observations+",
+                "stg_detail_carousel_hints+",
+            ],
+        ),
+        (
+            "after_srp",
+            [
+                "stg_raw_artifacts+",
+                "stg_srp_observations+",
+                "stg_detail_carousel_hints+",
+            ],
+        ),
     ]
 
     result = app._load_intents()
 
-    assert result == {
-        "after_srp": ["stg_raw_artifacts+", "stg_srp_observations+", "stg_detail_carousel_hints+"],
-        "after_detail": ["stg_raw_artifacts+", "stg_detail_observations+", "stg_detail_carousel_hints+"],
+    expected = {
+        "after_srp": [
+            "stg_raw_artifacts+",
+            "stg_srp_observations+",
+            "stg_detail_carousel_hints+",
+        ],
+        "after_detail": [
+            "stg_raw_artifacts+",
+            "stg_detail_observations+",
+            "stg_detail_carousel_hints+",
+        ],
     }
+    assert result == expected
 
 
 def test_load_intents_empty(mock_cursor_context, mock_logger_warning):
@@ -232,30 +317,49 @@ def test_load_intents_empty(mock_cursor_context, mock_logger_warning):
 
     result = app._load_intents()
 
-    assert result == {
-        "after_srp": ["stg_raw_artifacts+", "stg_srp_observations+", "stg_detail_carousel_hints+"],
-        "after_detail": ["stg_raw_artifacts+", "stg_detail_observations+", "stg_detail_carousel_hints+"],
+    expected = {
+        "after_srp": [
+            "stg_raw_artifacts+",
+            "stg_srp_observations+",
+            "stg_detail_carousel_hints+",
+        ],
+        "after_detail": [
+            "stg_raw_artifacts+",
+            "stg_detail_observations+",
+            "stg_detail_carousel_hints+",
+        ],
+        "both": [
+            "stg_raw_artifacts+",
+            "stg_srp_observations+",
+            "stg_detail_observations+",
+            "stg_detail_carousel_hints+",
+        ],
     }
-    assert "Could not load intents from DB, using fallback" in mock_logger_warning.call_args[0][0]
+    assert result == expected
+    warning_msg = mock_logger_warning.call_args[0][0]
+    assert "Could not load intents from DB, using fallback" in warning_msg
     assert cursor.fetchall.call_count == 1
 
 
 def test_save_intent_connection_error(mock_db_connection_error, mock_logger_error):
     result = app._save_intent(intent_name="after_detail", select_args=[])
     assert result is False
-    assert "Save-Intent: Unable to connect to Postgres database." in mock_logger_error.call_args[0][0]
+    error_msg = mock_logger_error.call_args[0][0]
+    assert "Save-Intent: Unable to connect to Postgres database." in error_msg
 
 
 def test_save_intent_sql_error(mock_db_sql_error, mock_logger_error):
     result = app._save_intent(intent_name="after_detail", select_args=[])
     assert result is False
-    assert "Save-Intent: SQL execution failed." in mock_logger_error.call_args[0][0]
+    error_msg = mock_logger_error.call_args[0][0]
+    assert "Save-Intent: SQL execution failed." in error_msg
 
 
 def test_save_intent_database_error(mock_db_database_error, mock_logger_error):
     result = app._save_intent(intent_name="after_detail", select_args=[])
     assert result is False
-    assert "Save-Intent: encountered DB error." in mock_logger_error.call_args[0][0]
+    error_msg = mock_logger_error.call_args[0][0]
+    assert "Save-Intent: encountered DB error." in error_msg
 
 
 def test_save_intent_success(mock_cursor_context):
@@ -273,19 +377,22 @@ def test_save_intent_no_intent(mock_cursor_context):
 def test_delete_intent_connection_error(mock_db_connection_error, mock_logger_error):
     result = app._delete_intent(intent_name="after_detail")
     assert result is None
-    assert "Delete-Intent: Unable to connect to Postgres database." in mock_logger_error.call_args[0][0]
+    error_msg = mock_logger_error.call_args[0][0]
+    assert "Delete-Intent: Unable to connect to Postgres database." in error_msg
 
 
 def test_delete_intent_sql_error(mock_db_sql_error, mock_logger_error):
     result = app._delete_intent(intent_name="after_detail")
     assert result is None
-    assert "Delete-Intent: SQL execution failed." in mock_logger_error.call_args[0][0]
+    error_msg = mock_logger_error.call_args[0][0]
+    assert "Delete-Intent: SQL execution failed." in error_msg
 
 
 def test_delete_intent_database_error(mock_db_database_error, mock_logger_error):
     result = app._delete_intent(intent_name="after_detail")
     assert result is None
-    assert "Delete-Intent: encountered DB error." in mock_logger_error.call_args[0][0]
+    error_msg = mock_logger_error.call_args[0][0]
+    assert "Delete-Intent: encountered DB error." in error_msg
 
 
 def test_delete_intent_success(mock_cursor_context):
@@ -379,7 +486,7 @@ def test_get_logs_file_not_found(mock_client, mock_log_file_not_found):
 
 def test_get_logs_permission_error(mock_client, mock_log_permission_error):
     with pytest.raises(PermissionError):
-        response = mock_client.get("/logs")
+        mock_client.get("/logs")
 
 
 def test_get_logs_default(mock_client, mock_log_file):
@@ -395,7 +502,8 @@ def test_get_logs_custom_lines(mock_client, mock_log_file):
 
 
 def test_get_lock_status(mock_client, mocker):
-    mocker.patch("dbt_runner.app._lock_status", return_value={"locked": False, "locked_at": None, "locked_by": None})
+    lock_status = {"locked": False, "locked_at": None, "locked_by": None}
+    mocker.patch("dbt_runner.app._lock_status", return_value=lock_status)
     response = mock_client.get("/dbt/lock")
     assert response.status_code == 200
 
@@ -408,16 +516,40 @@ def test_get_intents_normal(mock_client, mocker):
 
 
 def test_get_intents_fallback(mock_client, mocker):
-    mocker.patch("dbt_runner.app._load_intents", return_value={
-                    "after_srp": ["stg_raw_artifacts+", "stg_srp_observations+", "stg_detail_carousel_hints+"],
-                    "after_detail": ["stg_raw_artifacts+", "stg_detail_observations+", "stg_detail_carousel_hints+"],
-    })
+    intents_return = {
+        "after_srp": [
+            "stg_raw_artifacts+",
+            "stg_srp_observations+",
+            "stg_detail_carousel_hints+",
+        ],
+        "after_detail": [
+            "stg_raw_artifacts+",
+            "stg_detail_observations+",
+            "stg_detail_carousel_hints+",
+        ],
+    }
+    mocker.patch("dbt_runner.app._load_intents", return_value=intents_return)
     response = mock_client.get("/dbt/intents")
     assert response.status_code == 200
-    assert response.json() == {"intents": {
-                                "after_srp": { "select": ["stg_raw_artifacts+", "stg_srp_observations+", "stg_detail_carousel_hints+"]},
-                                "after_detail": {"select": ["stg_raw_artifacts+", "stg_detail_observations+", "stg_detail_carousel_hints+"]},
-                                }}
+    expected_json = {
+        "intents": {
+            "after_srp": {
+                "select": [
+                    "stg_raw_artifacts+",
+                    "stg_srp_observations+",
+                    "stg_detail_carousel_hints+",
+                ]
+            },
+            "after_detail": {
+                "select": [
+                    "stg_raw_artifacts+",
+                    "stg_detail_observations+",
+                    "stg_detail_carousel_hints+",
+                ]
+            },
+        }
+    }
+    assert response.json() == expected_json
     
 
 def test_set_intents_no_select_args(mock_client, mocker):
@@ -435,19 +567,31 @@ def test_set_intents_no_intent(mock_client, mocker):
 
 def test_set_intents_with_select_args(mock_client, mocker):
     mocker.patch("dbt_runner.app._save_intent", return_value=True)
-    response = mock_client.post("/dbt/intents", json={"intent_name": "after_srp", "select_args": "model_a model_b"})
+    payload = {
+        "intent_name": "after_srp",
+        "select_args": "model_a model_b",
+    }
+    response = mock_client.post("/dbt/intents", json=payload)
     assert response.status_code == 200
     assert response.json()["select_args"] == ["model_a", "model_b"]
 
 
 def test_set_intents_invalid_tokens(mock_client, mocker):
-    response = mock_client.post("/dbt/intents", json={"intent_name": "after_srp", "select_args": ["model a"]})
+    payload = {
+        "intent_name": "after_srp",
+        "select_args": ["model a"],
+    }
+    response = mock_client.post("/dbt/intents", json=payload)
     assert response.status_code == 400
 
 
 def test_set_intents_failed_to_save(mock_client, mocker):
     mocker.patch("dbt_runner.app._save_intent", return_value=False)
-    response = mock_client.post("/dbt/intents", json={"intent_name": "after_srp", "select_args": ["model_a"]})
+    payload = {
+        "intent_name": "after_srp",
+        "select_args": ["model_a"],
+    }
+    response = mock_client.post("/dbt/intents", json=payload)
     assert response.status_code == 503
 
 
@@ -488,7 +632,7 @@ def test_get_docs_status_not_available(mock_client, mocker):
 def test_get_docs_status_permission_error(mock_client, mocker):
     mocker.patch("os.path.exists", side_effect=PermissionError)
     with pytest.raises(PermissionError):
-        response = mock_client.get("/dbt/docs/status")
+        mock_client.get("/dbt/docs/status")
 
 
 def test_dbt_docs_generate_success(mock_client, mocker):
@@ -504,7 +648,10 @@ def test_dbt_docs_generate_success(mock_client, mocker):
 
 
 def test_dbt_docs_generate_packages_missing(mock_client, mocker):
-    mocker.patch("subprocess.run", return_value=mocker.MagicMock(returncode=1, stdout="", stderr="error: packages not found"))
+    mock_result = mocker.MagicMock(
+        returncode=1, stdout="", stderr="error: packages not found"
+    )
+    mocker.patch("subprocess.run", return_value=mock_result)
     response = mock_client.post("/dbt/docs/generate")
     assert response.status_code == 500
 
@@ -536,10 +683,14 @@ def test_dbt_build_no_intent_with_select(mock_client, mock_dbt_build_happy_path,
     assert response.json()["intent"] is None
 
 
-def test_dbt_build_with_intent_with_select(mock_client, mock_dbt_build_happy_path, mocker):
-    mock_dbt_build_happy_path["subprocess_run"].return_value = \
+def test_dbt_build_with_intent_with_select(
+    mock_client, mock_dbt_build_happy_path, mocker
+):
+    mock_dbt_build_happy_path["subprocess_run"].return_value = (
         mocker.MagicMock(returncode=0, stdout="ok", stderr="")
-    response = mock_client.post("/dbt/build", json={"intent": "after_srp", "select": ["model_x"]})
+    )
+    payload = {"intent": "after_srp", "select": ["model_x"]}
+    response = mock_client.post("/dbt/build", json=payload)
     assert response.status_code == 200
     assert response.json()["select"] == ["model_x"]
 
@@ -563,7 +714,11 @@ def test_dbt_build_select_invalid_tokens(mock_client):
 
 
 def test_dbt_build_exclude_invalid_tokens(mock_client):
-    response = mock_client.post("/dbt/build", json={"select": ["model_a"], "exclude": ["model#tag"]})
+    payload = {
+        "select": ["model_a"],
+        "exclude": ["model#tag"],
+    }
+    response = mock_client.post("/dbt/build", json=payload)
     assert response.status_code == 400
 
 
@@ -584,7 +739,8 @@ def test_dbt_build_fails(mock_client, mock_dbt_build_happy_path, mocker):
 
 def test_dbt_build_lock_held(mock_client, mocker):
     mocker.patch("dbt_runner.app._acquire_lock", return_value=False)
-    mocker.patch("dbt_runner.app._lock_status", return_value={"locked": True, "locked_by": "other_caller"})
+    lock_status = {"locked": True, "locked_by": "other_caller"}
+    mocker.patch("dbt_runner.app._lock_status", return_value=lock_status)
     response = mock_client.post("/dbt/build", json={"select": ["model_a"]})
     assert response.status_code == 409
     assert response.json()["detail"]["error"] == "dbt_locked"
@@ -601,7 +757,12 @@ def test_dbt_build_record_run_called(mock_client, mock_dbt_build_happy_path, moc
     assert call_args[4] == ["model_a"]  # select
 
 
-def test_dbt_build_record_failed(mock_client, mock_dbt_build_happy_path, mock_app_logger_error, mocker):
+def test_dbt_build_record_failed(
+    mock_client,
+    mock_dbt_build_happy_path,
+    mock_app_logger_error,
+    mocker,
+):
     mock_dbt_build_happy_path["subprocess_run"].return_value = \
         mocker.MagicMock(returncode=0, stdout="ok", stderr="")
     mock_dbt_build_happy_path["record_run"].return_value = False
@@ -610,7 +771,12 @@ def test_dbt_build_record_failed(mock_client, mock_dbt_build_happy_path, mock_ap
     assert "Logging Run Failed" in mock_app_logger_error.call_args[0][0]
 
 
-def test_dbt_build_lock_release_fails(mock_client, mocker, mock_app_logger_error, mock_dbt_build_happy_path):
+def test_dbt_build_lock_release_fails(
+    mock_client,
+    mocker,
+    mock_app_logger_error,
+    mock_dbt_build_happy_path,
+):
     mock_dbt_build_happy_path["subprocess_run"].return_value = \
         mocker.MagicMock(returncode=0, stdout="ok", stderr="")
     mock_dbt_build_happy_path["release_lock"].return_value = None

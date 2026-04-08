@@ -19,3 +19,12 @@ cartracker:
       dbname: cartracker
       schema: analytics
       threads: 2
+    ci:
+      type: postgres
+      host: "{{ env_var('DBT_HOST', 'localhost') }}"
+      port: "{{ env_var('DBT_PORT', '5432') | int }}"
+      user: "{{ env_var('DBT_USER', 'cartracker') }}"
+      password: "{{ env_var('DBT_PASSWORD', 'cartracker') }}"
+      dbname: "{{ env_var('DBT_DBNAME', 'cartracker') }}"
+      schema: analytics_ci
+      threads: 4

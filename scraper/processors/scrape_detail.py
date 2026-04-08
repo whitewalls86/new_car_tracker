@@ -1,12 +1,13 @@
 from __future__ import annotations
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, UTC
-from typing import Any, Dict, List, Optional, Tuple
+
 import hashlib
 import logging
 import os
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import UTC, datetime
+from typing import Any, Dict, List, Optional, Tuple
 
 from curl_cffi import requests as cf_requests
 
@@ -88,7 +89,8 @@ def _sha256_bytes(b: bytes) -> str:
     return hashlib.sha256(b).hexdigest()
 
 
-def _get_cf_credentials(url: str, timeout_s: int) -> Tuple[Optional[Dict[str, Any]], Optional[bytes], Optional[int]]:
+def _get_cf_credentials(url: str, timeout_s: int) \
+    -> Tuple[Optional[Dict[str, Any]], Optional[bytes], Optional[int]]:
     """
     Returns CF credentials (cookies + user-agent) needed to bypass Cloudflare.
 
@@ -194,7 +196,11 @@ def _fetch_url(url: str, timeout_s: int) -> Tuple[bytes, int, Optional[str], str
                 # FlareSolverr fetched this URL for us — reuse the response
                 return bootstrap_html, bootstrap_status, "text/html; charset=utf-8", url
             # Cache hit — build a fresh session from shared credentials
-            impersonate = _cffi_target_for_ua(credentials["user_agent"]) if credentials else _BROWSER_IMPERSONATE_FALLBACK
+            impersonate = (
+                _cffi_target_for_ua(credentials["user_agent"]) 
+                if credentials 
+                else _BROWSER_IMPERSONATE_FALLBACK
+            )
             session = cf_requests.Session(impersonate=impersonate)
             if credentials:
                 session.headers.update({"User-Agent": credentials["user_agent"]})
@@ -204,7 +210,9 @@ def _fetch_url(url: str, timeout_s: int) -> Tuple[bytes, int, Optional[str], str
             content = resp.content or b""
             return content, resp.status_code, resp.headers.get("content-type"), str(resp.url)
         except Exception as e:
-            logger.warning("FlareSolverr/CF session failed (%s), falling back to plain curl_cffi", e)
+            logger.warning(
+                "FlareSolverr/CF session failed (%s), falling back to plain curl_cffi", e
+            )
 
     # Plain curl_cffi fallback (no FlareSolverr)
     session = cf_requests.Session(impersonate=_BROWSER_IMPERSONATE_FALLBACK)
@@ -233,7 +241,12 @@ def scrape_detail_fetch(*, run_id: str, payload: Dict[str, Any]) -> Dict[str, An
     listing_id = (payload or {}).get("listing_id")
     vin = (payload or {}).get("vin")
     batch_id = (payload or {}).get("batch_id") or run_id
-    url = (payload or {}).get("url") or (f"https://www.cars.com/vehicledetail/{listing_id}/" if listing_id else None)
+    default_url = (
+        f"https://www.cars.com/vehicledetail/{listing_id}/"
+        if listing_id
+        else None
+    )
+    url = (payload or {}).get("url") or default_url
 
     logger.info(
         "scrape_detail_fetch: listing_id=%s run_id=%s payload_batch_id=%s resolved_batch_id=%s",
@@ -241,9 +254,17 @@ def scrape_detail_fetch(*, run_id: str, payload: Dict[str, Any]) -> Dict[str, An
     )
 
     if not listing_id:
-        return {"error": "payload.listing_id is required", "artifacts": [], "meta": {"mode": "fetch"}}
+        return {
+            "error": "payload.listing_id is required", 
+            "artifacts": [], 
+            "meta": {"mode": "fetch"}
+        }
     if not url:
-        return {"error": "payload.url could not be derived", "artifacts": [], "meta": {"mode": "fetch", "listing_id": listing_id}}
+        return {
+            "error": "payload.url could not be derived", 
+            "artifacts": [], 
+            "meta": {"mode": "fetch", "listing_id": listing_id}
+        }
 
     raw_base = os.environ.get("RAW_BASE", "/data/raw")
     run_dir = os.path.join(raw_base, f"run_{run_id}")
@@ -439,7 +460,11 @@ def scrape_detail_dummy(*, run_id: str, payload: Dict[str, Any]) -> Dict[str, An
     url = (payload or {}).get("url") or f"https://www.cars.com/vehicledetail/{listing_id}/"
 
     if not listing_id:
-        return {"error": "payload.listing_id is required", "artifacts": [], "meta": {"mode": "dummy"}}
+        return {
+            "error": "payload.listing_id is required", 
+            "artifacts": [], 
+            "meta": {"mode": "dummy"}
+        }
 
     raw_base = os.environ.get("RAW_BASE", "/data/raw")
     run_dir = os.path.join(raw_base, f"run_{run_id}")

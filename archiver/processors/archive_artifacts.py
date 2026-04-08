@@ -1,4 +1,6 @@
-import logging, os, uuid
+import logging
+import os
+import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List
 
@@ -121,8 +123,13 @@ def archive_artifacts(
                         }
             except Exception as e:
                 logger.error("DB fetch failed for chunk %d-%d: %s", i, i + len(chunk_ids), e)
+                error_result = {
+                    "artifact_id": None,
+                    "archived": False,
+                    "reason": f"db_error: {e}",
+                }
                 for aid in chunk_ids:
-                    results[aid] = {"artifact_id": aid, "archived": False, "reason": f"db_error: {e}"}
+                    results[aid] = {**error_result, "artifact_id": aid}
                 continue
 
             # 2. Read HTML files for this chunk
@@ -130,7 +137,11 @@ def archive_artifacts(
             for artifact_id in chunk_ids:
                 meta = meta_by_id.get(artifact_id)
                 if not meta:
-                    results[artifact_id] = {"artifact_id": artifact_id, "archived": False, "reason": "not_found_in_db"}
+                    results[artifact_id] = {
+                        "artifact_id": artifact_id,
+                        "archived": False,
+                        "reason": "not_found_in_db",
+                    }
                     continue
                 filepath = filepath_by_id.get(artifact_id)
                 html = b""
@@ -139,11 +150,24 @@ def archive_artifacts(
                         with open(filepath, "rb") as f:
                             html = f.read()
                     except Exception as e:
-                        results[artifact_id] = {"artifact_id": artifact_id, "archived": False, "reason": f"read_error: {e}"}
+                        results[artifact_id] = {
+                            "artifact_id": artifact_id,
+                            "archived": False,
+                            "reason": f"read_error: {e}",
+                        }
                         continue
                 fetched_at = meta["fetched_at"] or datetime.now(timezone.utc)
-                rows.append({**meta, "html": html, "year": fetched_at.year, "month": fetched_at.month})
-                results[artifact_id] = {"artifact_id": artifact_id, "archived": True, "reason": None}
+                rows.append({
+                    **meta,
+                    "html": html,
+                    "year": fetched_at.year,
+                    "month": fetched_at.month,
+                })
+                results[artifact_id] = {
+                    "artifact_id": artifact_id,
+                    "archived": True,
+                    "reason": None,
+                }
 
             if not rows:
                 continue
@@ -160,12 +184,24 @@ def archive_artifacts(
                         (archived_ids,),
                     )
                 conn.commit()
-                logger.info("Archived chunk %d-%d (%d artifacts)", i, i + len(chunk_ids), len(archived_ids))
+                logger.info(
+                    "Archived chunk %d-%d (%d artifacts)",
+                    i,
+                    i + len(chunk_ids),
+                    len(archived_ids),
+                )
             except Exception as e:
                 conn.rollback()
-                logger.error("Write failed for chunk %d-%d: %s", i, i + len(chunk_ids), e)
+                logger.error(
+                    "Write failed for chunk %d-%d: %s", i, i + len(chunk_ids), e
+                )
+                pw_error = {
+                    "artifact_id": None,
+                    "archived": False,
+                    "reason": f"parquet_write_error: {e}",
+                }
                 for aid in archived_ids:
-                    results[aid] = {"artifact_id": aid, "archived": False, "reason": f"parquet_write_error: {e}"}
+                    results[aid] = {**pw_error, "artifact_id": aid}
     finally:
         conn.close()
 

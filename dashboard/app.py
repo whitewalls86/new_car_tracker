@@ -1,8 +1,8 @@
-import streamlit as st
 import pandas as pd
+import streamlit as st
+from pages import deals, inventory, market_trends, pipeline_health
 
 from db import run_query
-from pages import pipeline_health, inventory, deals, market_trends
 
 st.set_page_config(page_title="Cartracker Dashboard", layout="wide")
 

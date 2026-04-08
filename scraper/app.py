@@ -1,20 +1,30 @@
-from contextlib import asynccontextmanager
-from fastapi import FastAPI, Body, HTTPException
-from typing import Any, Dict, List, Optional
 import json
 import logging
 import os
-from logging.handlers import RotatingFileHandler
-import uuid
 import threading
+import uuid
 from concurrent.futures import ThreadPoolExecutor
-from processors.scrape_results import scrape_results
-from processors.results_page_cards import (parse_cars_results_page_html, parse_cars_results_page_html_v2, parse_cars_results_page_html_v3)
-from processors.scrape_detail import (scrape_detail_dummy, scrape_detail_fetch, scrape_detail_batch)
-from processors.parse_detail_page import parse_cars_detail_page_html_v1
-from db import get_pool, close_pool
+from contextlib import asynccontextmanager
+from logging.handlers import RotatingFileHandler
+from typing import Any, Dict, List, Optional
 
-_LOG_PATH = "/usr/app/logs/app.log"
+from fastapi import Body, FastAPI, HTTPException
+
+from db import close_pool, get_pool
+from scraper.processors.parse_detail_page import parse_cars_detail_page_html_v1
+from scraper.processors.results_page_cards import (
+    parse_cars_results_page_html,
+    parse_cars_results_page_html_v2,
+    parse_cars_results_page_html_v3,
+)
+from scraper.processors.scrape_detail import (
+    scrape_detail_batch,
+    scrape_detail_dummy,
+    scrape_detail_fetch,
+)
+from scraper.processors.scrape_results import scrape_results
+
+_LOG_PATH = os.getenv("LOG_PATH", "/usr/app/logs/app.log")
 os.makedirs(os.path.dirname(_LOG_PATH), exist_ok=True)
 _log_handler = RotatingFileHandler(_LOG_PATH, maxBytes=5_000_000, backupCount=3)
 _log_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
@@ -98,13 +108,25 @@ def _run_scrape_job(job_id: str, run_id: str, search_key: str, scope: str, paylo
             _jobs[job_id]["artifacts"] = artifacts
             _jobs[job_id]["artifact_count"] = len(artifacts)
     except Exception as e:
-        logger.exception("Scrape job %s failed (run_id=%s, search_key=%s, scope=%s)", job_id, run_id, search_key, scope)
+        logger.exception(
+            "Scrape job %s failed (run_id=%s, search_key=%s, scope=%s)", 
+            job_id, 
+            run_id, 
+            search_key, 
+            scope
+        )
         with _jobs_lock:
             _jobs[job_id]["status"] = "failed"
             _jobs[job_id]["error"] = str(e)
 
 
-def _run_detail_batch_job(job_id: str, run_id: str, batch_id: str, listings: List[Dict[str, Any]], max_workers: int):
+def _run_detail_batch_job(
+        job_id: str, 
+        run_id: str, 
+        batch_id: str, 
+        listings: List[Dict[str, Any]], 
+        max_workers: int
+    ):
     """Runs in background thread. Updates in-memory job store."""
     import asyncio
     asyncio.set_event_loop(asyncio.new_event_loop())
@@ -117,7 +139,12 @@ def _run_detail_batch_job(job_id: str, run_id: str, batch_id: str, listings: Lis
             "detail batch job %s starting: run_id=%s batch_id=%s listing_count=%s",
             job_id, run_id, batch_id, len(listings),
         )
-        result = scrape_detail_batch(run_id=run_id, batch_id=batch_id, listings=listings, max_workers=max_workers)
+        result = scrape_detail_batch(
+            run_id=run_id, 
+            batch_id=batch_id, 
+            listings=listings, 
+            max_workers=max_workers
+        )
         artifacts = result.get("artifacts", [])
         with _jobs_lock:
             _jobs[job_id]["status"] = "completed"
@@ -213,7 +240,12 @@ async def get_known_vins(search_key: str, scope: str = "national") -> Dict[str, 
         rows = await conn.fetch("""
             SELECT vin FROM analytics.int_vehicle_attributes WHERE vin IS NOT NULL
         """)
-    return {"search_key": search_key, "scope": scope, "count": len(rows), "vins": [r["vin"] for r in rows]}
+    return {
+        "search_key": search_key, 
+        "scope": scope, 
+        "count": len(rows), 
+        "vins": [r["vin"] for r in rows]
+    }
 
 
 @app.post("/search_configs/advance_rotation")
@@ -427,7 +459,12 @@ def process_results_pages(payload: dict = Body(...)) -> Dict[str, Any]:
                 "listings": [],
             }
     except Exception as e:
-        logger.exception("Results page parsing failed (artifact_id=%s, processor=%s, filepath=%s)", artifact_id, processor, filepath)
+        logger.exception(
+            "Results page parsing failed (artifact_id=%s, processor=%s, filepath=%s)",
+            artifact_id, 
+            processor, 
+            filepath
+        )
         # If you prefer transient behavior, change status to "retry"
         return {
             "processor": processor,
@@ -483,7 +520,10 @@ def scrape_detail_batch_endpoint(
     """
     listings = (payload or {}).get("listings") or []
     if not listings:
-        raise HTTPException(status_code=400, detail="payload.listings is required and must be non-empty")
+        raise HTTPException(
+            status_code=400, 
+            detail="payload.listings is required and must be non-empty"
+        )
 
     max_workers = int((payload or {}).get("max_workers") or 8)
     batch_id = (payload or {}).get("batch_id") or str(uuid.uuid4())
@@ -508,7 +548,12 @@ def scrape_detail_batch_endpoint(
             "started_at": None,
         }
     _executor.submit(_run_detail_batch_job, job_id, run_id, batch_id, listings, max_workers)
-    return {"job_id": job_id, "batch_id": batch_id, "status": "queued", "listing_count": len(listings)}
+    return {
+        "job_id": job_id, 
+        "batch_id": batch_id, 
+        "status": "queued", 
+        "listing_count": len(listings)
+    }
 
 
 @app.post("/process/detail_pages")
@@ -605,12 +650,20 @@ def process_detail_pages(payload: dict = Body(...)) -> Dict[str, Any]:
                 "search_key": search_key,
                 "status": "failed",
                 "message": "detail page parsing failed",
-                "meta": {"error": "Invalid Processor", "error_message": "Please use a valid processor."},
+                "meta": {
+                    "error": "Invalid Processor", 
+                    "error_message": "Please use a valid processor."
+                },
                 "primary": {},
                 "carousel": [],
             }
     except Exception as e:
-        logger.exception("Detail page parsing failed (artifact_id=%s, processor=%s, filepath=%s)", artifact_id, processor, filepath)
+        logger.exception(
+            "Detail page parsing failed (artifact_id=%s, processor=%s, filepath=%s)",
+             artifact_id, 
+             processor, 
+             filepath
+        )
         return {
             "processor": processor,
             "artifact_id": artifact_id,

@@ -1,7 +1,9 @@
-import pytest
 from datetime import datetime
-from dbt_runner.app import app
+
+import pytest
 from fastapi.testclient import TestClient
+
+from dbt_runner.app import app
 
 
 @pytest.fixture
@@ -58,9 +60,18 @@ def mock_log_file(mocker):
 def mock_dbt_build_happy_path(mocker):
     """Standard mocks for dbt_build tests"""
     return {
-        "acquire_lock": mocker.patch("dbt_runner.app._acquire_lock", return_value=True),
-        "release_lock": mocker.patch("dbt_runner.app._release_lock", return_value=True),
-        "record_run": mocker.patch("dbt_runner.app._record_run", return_value=True),
-        "load_intents": mocker.patch("dbt_runner.app._load_intents", return_value={"after_srp": ["model_a"]}),
+        "acquire_lock": mocker.patch(
+            "dbt_runner.app._acquire_lock", return_value=True
+        ),
+        "release_lock": mocker.patch(
+            "dbt_runner.app._release_lock", return_value=True
+        ),
+        "record_run": mocker.patch(
+            "dbt_runner.app._record_run", return_value=True
+        ),
+        "load_intents": mocker.patch(
+            "dbt_runner.app._load_intents",
+            return_value={"after_srp": ["model_a"]},
+        ),
         "subprocess_run": mocker.patch("subprocess.run"),
     }

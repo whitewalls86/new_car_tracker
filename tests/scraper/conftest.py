@@ -7,9 +7,10 @@ Sets up:
 2. sys.modules stubs for heavy native deps that are only present inside Docker
    (patchright, playwright, curl_cffi).
 """
-import sys
 import os
-from unittest.mock import MagicMock, AsyncMock
+import sys
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
 
 # ---------------------------------------------------------------------------
@@ -63,7 +64,7 @@ def clear_jobs():
     Clear it before and after each test so tests don't bleed state.
     """
     try:
-        import app as scraper_app
+        import scraper.app as scraper_app
         scraper_app._jobs.clear()
         yield
         scraper_app._jobs.clear()
@@ -80,10 +81,11 @@ def mock_scraper_client(mocker):
     """
     # app.py does `from db import get_pool, close_pool` so we must patch
     # the names in the app module, not the db module.
-    mocker.patch("app.get_pool", new_callable=AsyncMock, return_value=MagicMock())
-    mocker.patch("app.close_pool", new_callable=AsyncMock)
+    mocker.patch("scraper.app.get_pool", new_callable=AsyncMock, return_value=MagicMock())
+    mocker.patch("scraper.app.close_pool", new_callable=AsyncMock)
     from fastapi.testclient import TestClient
-    import app as scraper_app
+
+    import scraper.app as scraper_app
     return TestClient(scraper_app.app)
 
 
@@ -95,10 +97,12 @@ def mock_async_pool(mocker):
     """
     mock_conn = AsyncMock()
     mock_pool = MagicMock()
-    mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
-    mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
-    mock_pool.acquire.return_value.transaction.return_value.__aenter__ = AsyncMock(return_value=None)
-    mock_pool.acquire.return_value.transaction.return_value.__aexit__ = AsyncMock(return_value=False)
+    acquire_cm = mock_pool.acquire.return_value
+    acquire_cm.__aenter__ = AsyncMock(return_value=mock_conn)
+    acquire_cm.__aexit__ = AsyncMock(return_value=False)
+    transaction_cm = acquire_cm.transaction.return_value
+    transaction_cm.__aenter__ = AsyncMock(return_value=None)
+    transaction_cm.__aexit__ = AsyncMock(return_value=False)
     return mock_pool, mock_conn
 
 
@@ -119,13 +123,13 @@ def mock_cf_session(mocker):
     mock_session = MagicMock()
     mock_session.get.return_value = mock_resp
 
-    mocker.patch("processors.scrape_detail.cf_requests.Session", return_value=mock_session)
+    mocker.patch("scraper.processors.scrape_detail.cf_requests.Session", return_value=mock_session)
 
     # Mock _get_cf_credentials to return a cache hit with dummy credentials.
     # This forces _fetch_url to build a fresh Session (intercepted above) and call
     # session.get(), so tests can verify the URL and kwargs passed to session.get().
     mocker.patch(
-        "processors.scrape_detail._get_cf_credentials",
+        "scraper.processors.scrape_detail._get_cf_credentials",
         return_value=({"cookies": {}, "user_agent": "test-ua"}, None, None),
     )
 

@@ -1,18 +1,24 @@
-import pytest
-from ops.routers import deploy
 from datetime import datetime as dt
 
+from ops.routers import deploy
 
-def test_intent_status_connection_error(mock_db_connection_error,mock_logger_error):
+
+def test_intent_status_connection_error(
+    mock_db_connection_error, mock_logger_error
+):
     result = deploy._intent_status()
-    assert result == {"intent": "none", "requested_at": None, "requested_by": None}
-    assert "Intent-Status: Unable to connect to Postgres database." in mock_logger_error.call_args[0][0]
+    expected = {"intent": "none", "requested_at": None, "requested_by": None}
+    assert result == expected
+    error_msg = mock_logger_error.call_args[0][0]
+    assert "Intent-Status: Unable to connect to Postgres database." in error_msg
 
 
 def test_intent_status_db_error(mock_db_database_error, mock_logger_error):
     result = deploy._intent_status()
-    assert result == {"intent": "none", "requested_at": None, "requested_by": None}
-    assert "Intent-Status: encountered DB error." in mock_logger_error.call_args[0][0]
+    expected = {"intent": "none", "requested_at": None, "requested_by": None}
+    assert result == expected
+    error_msg = mock_logger_error.call_args[0][0]
+    assert "Intent-Status: encountered DB error." in error_msg
 
 
 def test_intent_status_execution_error(mock_db_sql_error, mock_logger_error):
@@ -62,16 +68,20 @@ def test_intent_status_no_row(mock_cursor_context):
     assert result == {"intent": "none", "requested_at": None, "requested_by": None}
 
 
-def test_intent_release_connection_error(mock_db_connection_error,mock_logger_error):
+def test_intent_release_connection_error(
+    mock_db_connection_error, mock_logger_error
+):
     result = deploy._intent_release()
     assert result is False
-    assert "Intent-Release: Unable to connect to Postgres database." in mock_logger_error.call_args[0][0]
+    error_msg = mock_logger_error.call_args[0][0]
+    assert "Intent-Release: Unable to connect to Postgres database." in error_msg
 
 
 def test_intent_release_db_error(mock_db_database_error, mock_logger_error):
     result = deploy._intent_release()
     assert result is False
-    assert "Intent-Release: encountered DB error." in mock_logger_error.call_args[0][0]
+    error_msg = mock_logger_error.call_args[0][0]
+    assert "Intent-Release: encountered DB error." in error_msg
 
 
 def test_intent_release_execution_error(mock_db_sql_error, mock_logger_error):
@@ -96,10 +106,13 @@ def test_intent_release_no_return(mock_cursor_context):
     assert result is True
 
 
-def test_set_intent_connection_error(mock_db_connection_error,mock_logger_error):
+def test_set_intent_connection_error(
+    mock_db_connection_error, mock_logger_error
+):
     result = deploy._set_intent('test')
     assert result is False
-    assert "Set-Intent: Unable to connect to Postgres database." in mock_logger_error.call_args[0][0]
+    error_msg = mock_logger_error.call_args[0][0]
+    assert "Set-Intent: Unable to connect to Postgres database." in error_msg
 
 
 def test_set_intent_db_error(mock_db_database_error, mock_logger_error):

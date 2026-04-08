@@ -114,11 +114,12 @@
 
 import json
 import uuid
-import pytest
 from unittest.mock import MagicMock
-from fastapi.responses import HTMLResponse
-from ops.routers import admin
 
+import pytest
+from fastapi.responses import HTMLResponse
+
+from ops.routers import admin
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -157,9 +158,16 @@ def mock_dbt_context(mocker):
 @pytest.fixture
 def mock_deploy_functions(mocker):
     return {
-        "intent_status": mocker.patch("ops.routers.admin._intent_status", return_value={"intent": "none"}),
-        "set_intent": mocker.patch("ops.routers.admin._set_intent", return_value=True),
-        "intent_release": mocker.patch("ops.routers.admin._intent_release", return_value=True),
+        "intent_status": mocker.patch(
+            "ops.routers.admin._intent_status",
+            return_value={"intent": "none"},
+        ),
+        "set_intent": mocker.patch(
+            "ops.routers.admin._set_intent", return_value=True
+        ),
+        "intent_release": mocker.patch(
+            "ops.routers.admin._intent_release", return_value=True
+        ),
     }
 
 
@@ -400,7 +408,9 @@ def test_dbt_trigger_with_intent(mock_client, mock_requests, mock_dbt_context, m
     assert payload["intent"] == "after_srp"
 
 
-def test_dbt_trigger_with_select_override(mock_client, mock_requests, mock_dbt_context, mock_templates):
+def test_dbt_trigger_with_select_override(
+    mock_client, mock_requests, mock_dbt_context, mock_templates
+):
     mock_requests["post"].return_value.status_code = 200
     mock_requests["post"].return_value.json.return_value = {"ok": True}
 
@@ -641,7 +651,11 @@ def test_create_search_scope_defaults(mock_client, mock_cursor_context, mock_tem
 # ---------------------------------------------------------------------------
 
 def test_update_search_ok(mock_client, mock_cursor_context, mock_templates):
-    response = mock_client.post("/admin/searches/honda-crv", data=VALID_SEARCH_FORM, follow_redirects=False)
+    response = mock_client.post(
+        "/admin/searches/honda-crv",
+        data=VALID_SEARCH_FORM,
+        follow_redirects=False,
+    )
 
     assert response.status_code == 303
     assert response.headers["location"] == "/admin/searches/"

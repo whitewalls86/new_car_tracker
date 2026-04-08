@@ -1,9 +1,22 @@
 """Unit tests for processors/scrape_detail.py"""
-import pytest
-from unittest.mock import MagicMock, mock_open, call
+from unittest.mock import MagicMock, mock_open
 
-import processors.scrape_detail as sd
-from processors.scrape_detail import scrape_detail_fetch, scrape_detail_dummy, scrape_detail_batch
+import pytest
+
+import scraper.processors.scrape_detail as sd
+from scraper.processors.scrape_detail import (
+    scrape_detail_batch,
+    scrape_detail_dummy,
+    scrape_detail_fetch,
+)
+
+
+@pytest.fixture(autouse=True)
+def reset_adaptive_delay():
+    """Reset the module-level adaptive delay before each test so tests don't bleed state."""
+    sd._detail_adaptive_delay = 0.0
+    yield
+    sd._detail_adaptive_delay = 0.0
 
 # n8n reads all 14 of these keys from every artifact
 N8N_ARTIFACT_KEYS = {
@@ -132,12 +145,12 @@ class TestScrapeDetailFetch:
         mocker.patch("builtins.open", mock_open_fn)
         mock_session = MagicMock(get=MagicMock(side_effect=ConnectionError("refused")))
         mocker.patch(
-            "processors.scrape_detail.cf_requests.Session",
+            "scraper.processors.scrape_detail.cf_requests.Session",
             return_value=mock_session,
         )
         # Mock _get_cf_credentials to return a cache hit so _fetch_url calls session.get()
         mocker.patch(
-            "processors.scrape_detail._get_cf_credentials",
+            "scraper.processors.scrape_detail._get_cf_credentials",
             return_value=({"cookies": {}, "user_agent": "test-ua"}, None, None),
         )
 
@@ -158,7 +171,12 @@ class TestScrapeDetailFetch:
         mock_resp.url = "https://example.com/"
         mock_resp.headers = {}
 
-        result = scrape_detail_fetch(run_id=RUN_ID, payload={"listing_id": LISTING_ID, "vin": VIN, "batch_id": BATCH_ID})
+        payload = {
+            "listing_id": LISTING_ID,
+            "vin": VIN,
+            "batch_id": BATCH_ID,
+        }
+        result = scrape_detail_fetch(run_id=RUN_ID, payload=payload)
         assert result["artifacts"][0]["search_key"] == BATCH_ID
         assert result["artifacts"][0]["listing_id"] == LISTING_ID
 
@@ -338,7 +356,10 @@ class TestScrapeDetailBatch:
         mock_resp.url = "https://example.com/"
         mock_resp.headers = {}
 
-        result = scrape_detail_batch(run_id=RUN_ID, batch_id=BATCH_ID, listings=[{"listing_id": "l5"}])
+        listings = [{"listing_id": "l5"}]
+        result = scrape_detail_batch(
+            run_id=RUN_ID, batch_id=BATCH_ID, listings=listings
+        )
         for key in ("mode", "total", "succeeded", "errors"):
             assert key in result["meta"], f"meta missing key: {key}"
 
@@ -351,7 +372,10 @@ class TestScrapeDetailBatch:
         mock_resp.url = "https://example.com/"
         mock_resp.headers = {"content-type": "text/html"}
 
-        result = scrape_detail_batch(run_id=RUN_ID, batch_id=BATCH_ID, listings=[{"listing_id": "l6", "vin": VIN}])
+        listings = [{"listing_id": "l6", "vin": VIN}]
+        result = scrape_detail_batch(
+            run_id=RUN_ID, batch_id=BATCH_ID, listings=listings
+        )
         art = result["artifacts"][0]
         missing = N8N_ARTIFACT_KEYS - art.keys()
         assert missing == set(), f"Batch artifact missing n8n fields: {missing}"

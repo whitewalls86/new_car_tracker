@@ -3,9 +3,10 @@ Shared psycopg2 connection helper and context manager.
 """
 import logging
 import os
+from contextlib import contextmanager
+
 import psycopg2
 from psycopg2.extras import RealDictCursor
-from contextlib import contextmanager
 
 logger = logging.getLogger(__name__)
 

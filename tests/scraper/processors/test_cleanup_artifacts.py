@@ -1,5 +1,4 @@
 """Unit tests for processors/cleanup_artifacts.py"""
-import pytest
 from processors.cleanup_artifacts import cleanup_artifacts
 
 

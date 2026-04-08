@@ -1,21 +1,20 @@
-from fastapi import FastAPI, Body
-from datetime import datetime, UTC
-from typing import Any, Dict, List, Optional
-import os
 import hashlib
-import json
 import html as html_lib
+import json
 import math
-import re
-
+import os
 import random
+import re
 import time
-from typing import Set
+from datetime import UTC, datetime
+from typing import Any, Dict, List, Optional, Set
 from urllib.parse import urlencode
-from bs4 import BeautifulSoup
-from processors.browser import get_context, close_browser
-from processors.fingerprint import random_profile, random_zip, human_delay
 
+from bs4 import BeautifulSoup
+from fastapi import Body
+
+from scraper.processors.browser import close_browser, get_context
+from scraper.processors.fingerprint import human_delay, random_profile, random_zip
 
 RAW_BASE = "/data/raw"
 BASE_URL = "https://www.cars.com/shopping/results/"  # adjust if your real base differs
@@ -36,7 +35,8 @@ def build_results_url(makes: List[str], models: List[str], zip_code: str, scope:
         "stock_type": "new",              # keep as-is or make configurable later
         "zip": zip_code,
         "page": page_num,
-        "page_size": 100,                 # Cars.com ignores this (returns ~22/page) but we send it for API compat
+        "page_size": 100,  # Cars.com ignores this (returns ~22/page)
+                           # but we send it for API compat
         "maximum_distance": radius_miles if scope == "local" else "all",
     }
     if sort_order:
@@ -142,7 +142,11 @@ def extract_results_paging_meta(html_text: str) -> Optional[Dict[str, Any]]:
         if total_results is None:
             meta_desc = soup.select_one('meta[name="description"]')
             if meta_desc:
-                m2 = re.search(r'from\s+([\d,]+)\s+.+?\s+models?\s+in', meta_desc.get("content", ""), re.IGNORECASE)
+                m2 = re.search(
+                        r'from\s+([\d,]+)\s+.+?\s+models?\s+in', 
+                        meta_desc.get("content", ""), 
+                        re.IGNORECASE
+                    )
                 if m2:
                     total_results = to_int(m2.group(1).replace(",", ""))
 
@@ -271,7 +275,10 @@ def _fetch_page(context, url: str, run_dir: str,
         return artifact
 
     except Exception as e:
-        error_filepath = os.path.join(run_dir, f"{search_key}__{scope}__page_{page_num:04d}__ERROR.txt")
+        error_filepath = os.path.join(
+            run_dir, 
+            f"{search_key}__{scope}__page_{page_num:04d}__ERROR.txt"
+        )
         return {
             "source": "cars.com",
             "artifact_type": "results_page",
