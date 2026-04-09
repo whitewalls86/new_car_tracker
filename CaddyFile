@@ -25,4 +25,4 @@ http://cartracker-scaper.duckdns.org {
   handle_path /pgadmin* {
     reverse_proxy pgadmin:80
   }
-}
+  }

@@ -228,7 +228,7 @@ services:
       - "80:80"
       - "443:443"
     volumes:
-      - ./Caddyfile:/etc/caddy/CaddyFile:ro
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
@@ -240,7 +240,7 @@ services:
 
 volumes:
   cartracker_pgdata:
-    external: true
+    external: truegit a
     name: cartracker_pgdata
 
   cartracker_raw:
