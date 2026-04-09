@@ -26,6 +26,7 @@ services:
 
   flyway:
     image: flyway/flyway:10-alpine
+    platform: linux/amd64
     container_name: cartracker-flyway
     restart: "no"
     command: >
