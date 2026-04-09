@@ -23,6 +23,7 @@ https://cartracker-scraper.duckdns.org {
 
     # n8n routes
     handle_path /n8n* {
+        uri strip_prefix /n8n
         reverse_proxy n8n:5678
     }
 
