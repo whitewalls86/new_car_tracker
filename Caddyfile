@@ -12,7 +12,7 @@ https://cartracker-scraper.duckdns.org {
 
     # Admin routes
     handle_path /admin* {
-        reverse_proxy ops:8060/admin
+        reverse_proxy ops:8060
     }
 
 
