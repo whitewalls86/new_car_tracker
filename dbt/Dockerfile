@@ -8,3 +8,5 @@ ENTRYPOINT ["dbt"]
 
 # Copy all dbt project files (models, seeds, profiles, packages, etc.)
 COPY dbt/ /usr/app/
+
+RUN dbt deps
