@@ -469,7 +469,13 @@ def create_search(
             )
              VALUES (%s, %s, %s::jsonb, %s, %s, now(), now());"""
 
-    sql_params = (key, enabled, json.dumps(params.model_dump()), rotation_order, params.rotation_slot)
+    sql_params = (
+        key, 
+        enabled, 
+        json.dumps(
+        params.model_dump()), 
+        rotation_order, 
+        params.rotation_slot)
 
     try:
         with db_cursor(error_context="Create-Search") as cur:
@@ -556,7 +562,11 @@ def update_search(
                 rotation_slot = %s,
                 updated_at = now()
              WHERE search_key = %s;"""
-    sql_params = (enabled, json.dumps(params.model_dump()), rotation_order, params.rotation_slot, search_key)
+    sql_params = (enabled, 
+                  json.dumps(params.model_dump()), 
+                  rotation_order, 
+                  params.rotation_slot, 
+                  search_key)
 
     try:
         with db_cursor(error_context="Update-Search") as cur:
