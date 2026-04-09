@@ -1,5 +1,28 @@
-reverse_proxy https://cartracker-scraper.duckdns.org/ dashboard:8501
-reverse_proxy /admin* ops:8060
-reverse_proxy /api* ops:8060
-reverse_proxy /n8n* n8n:5678
-reverse_proxy /pgadmin* pgadmin:80
+https://cartracker-scaper.duckdns.org {
+
+  # Root → dashboard
+  handle {
+    reverse_proxy dashboard:8501
+  }
+
+  # Explicit dashboard path (optional but nice)
+  handle_path /dashboard* {
+    reverse_proxy dashboard:8501
+  }
+
+  handle_path /admin* {
+    reverse_proxy ops:5005
+  }
+
+  handle_path /api* {
+    reverse_proxy ops:5005
+  }
+
+  handle_path /n8n* {
+    reverse_proxy n8n:5678
+  }
+
+  handle_path /pgadmin* {
+    reverse_proxy pgadmin:80
+  }
+}
