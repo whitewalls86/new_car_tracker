@@ -16,6 +16,9 @@ COPY dbt/ /usr/app/
 COPY dbt_runner/app.py /usr/app/app.py
 COPY shared/ /usr/app/shared/
 
+# Install dbt packages (dbt_packages/ is gitignored so not in the COPY above)
+RUN dbt deps
+
 EXPOSE 8080
 ENTRYPOINT []
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8080"]
