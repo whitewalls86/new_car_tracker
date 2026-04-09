@@ -155,13 +155,13 @@ def run_detail(request: Request, run_id: str):
 
     try:
         with db_cursor(error_context="Get-Runs", dict_cursor=True) as cur:
-            cur.execute(sql=sql_runs, params=params)
+            cur.execute(sql_runs, params)
             run = cur.fetchone()
 
             if not run:
                 return RedirectResponse(url="/admin/runs", status_code=303)
-            
-            cur.execute(sql=sql_jobs, params=params)
+
+            cur.execute(sql_jobs, params)
             jobs = cur.fetchall()
     except Exception:
         return _db_error_response(request=request)
@@ -459,20 +459,21 @@ def create_search(
     
 
     sql = """INSERT INTO search_configs (
-                search_key, 
-                enabled, 
-                params, 
-                rotation_order, 
-                created_at, 
+                search_key,
+                enabled,
+                params,
+                rotation_order,
+                rotation_slot,
+                created_at,
                 updated_at
             )
-             VALUES (%s, %s, %s::jsonb, %s, now(), now());"""
-    
-    sql_params = (key, enabled, json.dumps(params.model_dump()), rotation_order)
+             VALUES (%s, %s, %s::jsonb, %s, %s, now(), now());"""
+
+    sql_params = (key, enabled, json.dumps(params.model_dump()), rotation_order, params.rotation_slot)
 
     try:
         with db_cursor(error_context="Create-Search") as cur:
-            cur.execute(sql=sql, params=sql_params)
+            cur.execute(sql, sql_params)
 
     except Exception as e:
         if "duplicate key" in str(e).lower():
@@ -547,19 +548,19 @@ def update_search(
         }, status_code=422)
     
 
-    sql = """UPDATE search_configs 
-             SET 
-                enabled = %s, 
-                params = %s::jsonb, 
-                rotation_order = %s, 
-                rotation_slot = %s, 
+    sql = """UPDATE search_configs
+             SET
+                enabled = %s,
+                params = %s::jsonb,
+                rotation_order = %s,
+                rotation_slot = %s,
                 updated_at = now()
              WHERE search_key = %s;"""
-    sql_params = (enabled, json.dumps(params.model_dump()), rotation_order, search_key)
+    sql_params = (enabled, json.dumps(params.model_dump()), rotation_order, params.rotation_slot, search_key)
 
     try:
         with db_cursor(error_context="Update-Search") as cur:
-            cur.execute(sql=sql, params=sql_params)
+            cur.execute(sql, sql_params)
     except Exception:
         return _db_error_response(request=request)
 
@@ -579,7 +580,7 @@ def toggle_search(request: Request, search_key: str):
 
     try:
         with db_cursor(error_context="Toggle-Search") as cur:
-            cur.execute(sql=sql, params=params)
+            cur.execute(sql, params)
     except Exception:
         return _db_error_response(request=request)
     
