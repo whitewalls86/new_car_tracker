@@ -1,28 +1,32 @@
-http://cartracker-scaper.duckdns.org {
+https://cartracker-scaper.duckdns.org {
 
-  # Root → dashboard
-  handle {
-    reverse_proxy dashboard:8501
-  }
+    # Root → dashboard
+    handle {
+        reverse_proxy dashboard:8501
+    }
 
-  # Explicit dashboard path (optional but nice)
-  handle_path /dashboard* {
-    reverse_proxy dashboard:8501
-  }
+    # Explicit dashboard path (optional but nice)
+    handle_path /dashboard* {
+        reverse_proxy dashboard:8501
+    }
 
-  handle_path /admin* ops:8060
-    reverse_proxy ops:
-  }
+    # Admin routes
+    handle_path /admin* {
+        reverse_proxy ops:8060
+    }
 
-  handle_path /api* {
-    reverse_proxy ops:5005
-  }
+    # API routes
+    handle_path /api* {
+        reverse_proxy ops:5005
+    }
 
-  handle_path /n8n* {
-    reverse_proxy n8n:5678
-  }
+    # n8n routes
+    handle_path /n8n* {
+        reverse_proxy n8n:5678
+    }
 
-  handle_path /pgadmin* {
-    reverse_proxy pgadmin:80
-  }
-  }
+    # pgAdmin routes
+    handle_path /pgadmin* {
+        reverse_proxy pgadmin:80
+    }
+}
