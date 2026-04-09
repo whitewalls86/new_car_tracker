@@ -1,7 +1,8 @@
 # Plan 68: Cloud Deployment — Oracle Free Tier
 
-**Status:** Not started
+**Status:** ✅ Complete
 **Priority:** 1 — Live URL is the #1 portfolio artifact
+**Live URL:** https://cartracker-scraper.duckdns.org
 
 Deploy the full cartracker stack to Oracle Cloud's Always Free tier. Oracle's free tier is the most generous available — 4 Ampere ARM cores, 24GB RAM, 200GB storage, no time limit. The full stack (scraper, dbt_runner, ops, dashboard, dbt, Postgres, n8n, MinIO, archiver, pgAdmin, FlareSolverr) runs comfortably with no cost.
 
