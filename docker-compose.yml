@@ -24,6 +24,25 @@ services:
     networks:
       - cartracker-net
 
+  flyway:
+    image: flyway/flyway:10-alpine
+    container_name: cartracker-flyway
+    restart: "no"
+    command: >
+      -url=jdbc:postgresql://postgres:5432/cartracker
+      -user=cartracker
+      -password=${POSTGRES_PASSWORD}
+      -locations=filesystem:/flyway/sql
+      -detectEncoding=true
+      migrate
+    volumes:
+      - ./db/migrations:/flyway/sql:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - cartracker-net
+
   n8n:
     image: n8nio/n8n:latest
     container_name: cartracker-n8n
@@ -69,6 +88,9 @@ services:
       SCRAPER_URL: http://scraper:8000
     networks:
       - cartracker-net
+    depends_on:
+      flyway:
+        condition: service_completed_successfully
 
   flaresolverr:
     image: ghcr.io/flaresolverr/flaresolverr:latest
@@ -154,7 +176,8 @@ services:
     networks:
       - cartracker-net
     depends_on:
-      - postgres
+      flyway:
+        condition: service_completed_successfully
     volumes:
       - ./target:/usr/app/target
       - dbt_runner_logs:/usr/app/logs
@@ -190,8 +213,10 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
       MINIO_BUCKET: bronze
     depends_on:
-      - postgres
-      - minio
+      flyway:
+        condition: service_completed_successfully
+      minio:
+        condition: service_started
     restart: unless-stopped
     networks:
       - cartracker-net
@@ -208,7 +233,8 @@ services:
     environment:
       DATABASE_URL: postgresql://cartracker:${POSTGRES_PASSWORD}@postgres:5432/cartracker
     depends_on:
-      - postgres
+      flyway:
+        condition: service_completed_successfully
     networks:
       - cartracker-net
 
