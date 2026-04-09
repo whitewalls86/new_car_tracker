@@ -41,6 +41,9 @@ services:
       - EXECUTIONS_DATA_PRUNE=true
       - EXECUTIONS_DATA_MAX_AGE=168
       - EXECUTIONS_DATA_PRUNE_MAX=1000
+      - N8N_HOST=cartracker-scraper.duckdns.org
+      - N8N_PROTOCOL=https
+      - N8N_PATH=/n8n
 
   ops:
     build:
