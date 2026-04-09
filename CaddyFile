@@ -1,4 +1,4 @@
-https://cartracker-scaper.duckdns.org {
+http://cartracker-scaper.duckdns.org {
 
   # Root → dashboard
   handle {
@@ -10,8 +10,8 @@ https://cartracker-scaper.duckdns.org {
     reverse_proxy dashboard:8501
   }
 
-  handle_path /admin* {
-    reverse_proxy ops:5005
+  handle_path /admin* ops:8060
+    reverse_proxy ops:
   }
 
   handle_path /api* {
