@@ -240,7 +240,7 @@ services:
 
 volumes:
   cartracker_pgdata:
-    external: truegit a
+    external: true
     name: cartracker_pgdata
 
   cartracker_raw:
