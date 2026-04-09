@@ -44,6 +44,8 @@ services:
       - N8N_HOST=cartracker-scraper.duckdns.org
       - N8N_PROTOCOL=https
       - N8N_PATH=/n8n/
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - TELEGRAM_API=${TELEGRAM_API}
 
   ops:
     build:
