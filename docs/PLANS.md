@@ -33,6 +33,7 @@ Updates since last work: Plan 68 (Cloud deployment) phases 1-4 complete — Orac
 | 9 | [70](plan_70_type_annotations.md) | Type annotations | Code quality; coordinate with Plan 73 linting pass |
 | 10 | [29](plan_29_n8n_api.md) | n8n API foundation | Low portfolio value |
 | 11 | **14.12** | `max_safety_pages` validator | No bounds check; low risk |
+| — | [82](plan_82_self_hosted_runner.md) | Self-hosted GitHub Actions runner (ARM64) | Unprioritized; eliminates CI/prod platform divergence |
 
 ---
 

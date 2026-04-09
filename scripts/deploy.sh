@@ -11,6 +11,11 @@ OPS_URL="http://localhost:8060"
 
 cd "$REPO_DIR"
 
+echo "==> Ensuring external volumes exist..."
+docker volume inspect cartracker_pgdata > /dev/null 2>&1 || docker volume create cartracker_pgdata
+docker volume inspect cartracker_raw > /dev/null 2>&1 || docker volume create cartracker_raw
+docker volume inspect n8n_data > /dev/null 2>&1 || docker volume create n8n_data
+
 echo "==> Pulling latest code..."
 git fetch origin
 git checkout master
