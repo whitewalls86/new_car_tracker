@@ -1,0 +1,38 @@
+https://cartracker-scraper.duckdns.org {
+
+    # Root → dashboard
+    handle {
+        reverse_proxy dashboard:8501
+    }
+
+    # Explicit dashboard path (optional but nice)
+    handle_path /dashboard* {
+        reverse_proxy dashboard:8501
+    }
+
+    # Admin routes
+    handle /admin* {
+        reverse_proxy ops:8060
+    }
+
+
+    # API routes
+    handle_path /api* {
+        reverse_proxy ops:5005
+    }
+
+    # n8n routes
+    handle_path /n8n* {
+        reverse_proxy n8n:5678
+    }
+
+    # pgAdmin routes
+    handle_path /pgadmin* {
+        reverse_proxy pgadmin:80
+    }
+
+    # minio routes
+    handle_path /minio* {
+        reverse_proxy minio:9001
+    }
+}

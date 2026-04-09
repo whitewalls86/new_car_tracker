@@ -24,6 +24,25 @@ services:
     networks:
       - cartracker-net
 
+  flyway:
+    image: flyway/flyway:10-alpine
+    container_name: cartracker-flyway
+    restart: "no"
+    command: >
+      -url=jdbc:postgresql://postgres:5432/cartracker
+      -user=cartracker
+      -password=${POSTGRES_PASSWORD}
+      -locations=filesystem:/flyway/sql
+      -detectEncoding=true
+      migrate
+    volumes:
+      - ./db/migrations:/flyway/sql:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - cartracker-net
+
   n8n:
     image: n8nio/n8n:latest
     container_name: cartracker-n8n
@@ -41,6 +60,11 @@ services:
       - EXECUTIONS_DATA_PRUNE=true
       - EXECUTIONS_DATA_MAX_AGE=168
       - EXECUTIONS_DATA_PRUNE_MAX=1000
+      - N8N_HOST=cartracker-scraper.duckdns.org
+      - N8N_PROTOCOL=https
+      - N8N_PATH=/n8n/
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - TELEGRAM_API=${TELEGRAM_API}
 
   ops:
     build:
@@ -64,6 +88,9 @@ services:
       SCRAPER_URL: http://scraper:8000
     networks:
       - cartracker-net
+    depends_on:
+      flyway:
+        condition: service_completed_successfully
 
   flaresolverr:
     image: ghcr.io/flaresolverr/flaresolverr:latest
@@ -76,8 +103,8 @@ services:
 
   scraper:
     build:
-      context: ./scraper
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: scraper/Dockerfile
     image: cartracker-scraper
     container_name: cartracker-scraper
     restart: unless-stopped
@@ -149,7 +176,8 @@ services:
     networks:
       - cartracker-net
     depends_on:
-      - postgres
+      flyway:
+        condition: service_completed_successfully
     volumes:
       - ./target:/usr/app/target
       - dbt_runner_logs:/usr/app/logs
@@ -185,8 +213,10 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
       MINIO_BUCKET: bronze
     depends_on:
-      - postgres
-      - minio
+      flyway:
+        condition: service_completed_successfully
+      minio:
+        condition: service_started
     restart: unless-stopped
     networks:
       - cartracker-net
@@ -203,7 +233,8 @@ services:
     environment:
       DATABASE_URL: postgresql://cartracker:${POSTGRES_PASSWORD}@postgres:5432/cartracker
     depends_on:
-      - postgres
+      flyway:
+        condition: service_completed_successfully
     networks:
       - cartracker-net
 
@@ -218,6 +249,23 @@ services:
       PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD}
     volumes:
       - pgadmin_data:/var/lib/pgadmin
+    networks:
+      - cartracker-net
+
+  caddy:
+    image: caddy:latest
+    container_name: caddy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - dashboard
+      - ops
+      - n8n
     networks:
       - cartracker-net
 
@@ -243,6 +291,9 @@ volumes:
   ops_logs:
 
   parquet_data:
+
+  caddy_data:
+  caddy_config:
 
 networks:
   cartracker-net:

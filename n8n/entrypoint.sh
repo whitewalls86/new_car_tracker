@@ -1,9 +1,42 @@
 #!/bin/sh
-# Import all workflow JSON files from /workflows/ into n8n on startup.
-# Existing workflows with matching IDs are updated; new ones are created.
-# Credentials are NOT overwritten — they stay in the n8n database.
+# Import credentials and workflow JSON files from /workflows/ into n8n on startup.
+# Existing workflows/credentials with matching IDs are updated; new ones are created.
 
 set -e
+
+# --- Credentials ---
+echo "[entrypoint] Importing credentials ..."
+
+cat > /tmp/n8n-credentials.json << CREDS
+[
+  {
+    "id": "cred-postgres-main",
+    "name": "Postgres account",
+    "type": "postgres",
+    "data": {
+      "host": "postgres",
+      "port": 5432,
+      "database": "cartracker",
+      "user": "cartracker",
+      "password": "${POSTGRES_PASSWORD}",
+      "ssl": "disable"
+    }
+  },
+  {
+    "id": "cred-telegram-main",
+    "name": "Cartracker Alerts",
+    "type": "telegramApi",
+    "data": {
+      "accessToken": "${TELEGRAM_API}"
+    }
+  }
+]
+CREDS
+
+n8n import:credentials --input=/tmp/n8n-credentials.json 2>&1 \
+    && echo "[entrypoint] Credentials imported." \
+    || echo "[entrypoint] WARNING: credential import failed"
+rm -f /tmp/n8n-credentials.json
 
 echo "[entrypoint] Importing workflows from /workflows/ ..."
 if [ -d /workflows ] && ls /workflows/*.json 1>/dev/null 2>&1; then

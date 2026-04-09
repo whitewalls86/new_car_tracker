@@ -642,7 +642,7 @@ def test_create_search_scope_defaults(mock_client, mock_cursor_context, mock_tem
 
     assert response.status_code == 303
     insert_call = cursor.execute.call_args
-    params_json = json.loads(insert_call.kwargs["params"][2])
+    params_json = json.loads(insert_call.args[1][2])
     assert set(params_json["scopes"]) == {"local", "national"}
 
 
@@ -735,5 +735,5 @@ def test_update_search_scope_defaults(mock_client, mock_cursor_context):
 
     assert response.status_code == 303
     update_call = cursor.execute.call_args
-    params_json = json.loads(update_call.kwargs["params"][1])
+    params_json = json.loads(update_call.args[1][1])
     assert set(params_json["scopes"]) == {"local", "national"}

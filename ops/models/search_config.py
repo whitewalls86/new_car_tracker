@@ -30,6 +30,7 @@ class SearchConfigParams(BaseModel):
     max_safety_pages: int = 50
     sort_order: Optional[str] = "best_match_desc"
     sort_rotation: Optional[List[str]] = None
+    rotation_slot: Optional[int] = None
 
     @field_validator("zip")
     @classmethod
