@@ -38,7 +38,7 @@ CREATE INDEX IF NOT EXISTS access_requests_pending_idx
 
 INSERT INTO authorized_users (email_hash, role, display_name)
 VALUES (
-    encode(digest('${authEmailSalt}' || lower('${adminEmail}'), 'sha256'), 'hex'),
+    encode(sha256(('${authEmailSalt}' || lower('${adminEmail}'))::bytea), 'hex'),
     'admin',
     'Initial admin'
 )
