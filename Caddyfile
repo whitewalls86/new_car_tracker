@@ -1,38 +1,128 @@
 https://cartracker-scraper.duckdns.org {
 
-    # Root → dashboard
-    handle {
-        reverse_proxy dashboard:8501
+    # ── OAuth2 flow routes (must be unauthenticated) ──────────────────────────
+    # These handle the Google OAuth redirect/callback — no auth gate here.
+    handle /oauth2/* {
+        reverse_proxy oauth2-proxy:4180
     }
 
-    # Explicit dashboard path (optional but nice)
-    handle_path /dashboard* {
-        reverse_proxy dashboard:8501
-    }
+    # ── Auth subrequest snippet ───────────────────────────────────────────────
+    # All protected routes call this before proxying. oauth2-proxy returns:
+    #   200 + X-Auth-Request-Email header  → authenticated
+    #   302 to /oauth2/sign_in             → not authenticated (Caddy forwards the redirect)
+    #
+    # Named matchers reference {http.auth.user.email} (set by forward_auth) for
+    # coarse authorization below.
 
-    # Admin routes
-    handle /admin* {
+    # ── ADMIN-ONLY routes ─────────────────────────────────────────────────────
+    # /admin/dbt*, /n8n/*, /pgadmin/*, /minio/* require ADMIN_PATTERN match.
+
+    handle /admin/dbt* {
+        forward_auth oauth2-proxy:4180 {
+            uri /oauth2/auth
+            copy_headers X-Auth-Request-Email X-Auth-Request-User
+        }
+        @not_admin {
+            not header_regexp X-Auth-Request-Email {$ADMIN_PATTERN}
+        }
+        respond @not_admin 403
         reverse_proxy ops:8060
     }
 
-
-    # API routes
-    handle_path /api* {
-        reverse_proxy ops:5005
-    }
-
-    # n8n routes
     handle_path /n8n* {
+        forward_auth oauth2-proxy:4180 {
+            uri /oauth2/auth
+            copy_headers X-Auth-Request-Email X-Auth-Request-User
+        }
+        @not_admin {
+            not header_regexp X-Auth-Request-Email {$ADMIN_PATTERN}
+        }
+        respond @not_admin 403
         reverse_proxy n8n:5678
     }
 
-    # pgAdmin routes
     handle_path /pgadmin* {
+        forward_auth oauth2-proxy:4180 {
+            uri /oauth2/auth
+            copy_headers X-Auth-Request-Email X-Auth-Request-User
+        }
+        @not_admin {
+            not header_regexp X-Auth-Request-Email {$ADMIN_PATTERN}
+        }
+        respond @not_admin 403
         reverse_proxy pgadmin:80
     }
 
-    # minio routes
     handle_path /minio* {
+        forward_auth oauth2-proxy:4180 {
+            uri /oauth2/auth
+            copy_headers X-Auth-Request-Email X-Auth-Request-User
+        }
+        @not_admin {
+            not header_regexp X-Auth-Request-Email {$ADMIN_PATTERN}
+        }
+        respond @not_admin 403
         reverse_proxy minio:9001
+    }
+
+    # ── POWER-USER routes ─────────────────────────────────────────────────────
+    # /admin/searches*, /admin/runs* — power_user and admin.
+    # POWER_USER_PATTERN should include admin emails.
+
+    handle /admin/searches* {
+        forward_auth oauth2-proxy:4180 {
+            uri /oauth2/auth
+            copy_headers X-Auth-Request-Email X-Auth-Request-User
+        }
+        @not_power_user {
+            not header_regexp X-Auth-Request-Email {$POWER_USER_PATTERN}
+        }
+        respond @not_power_user 403
+        reverse_proxy ops:8060
+    }
+
+    handle /admin/runs* {
+        forward_auth oauth2-proxy:4180 {
+            uri /oauth2/auth
+            copy_headers X-Auth-Request-Email X-Auth-Request-User
+        }
+        @not_power_user {
+            not header_regexp X-Auth-Request-Email {$POWER_USER_PATTERN}
+        }
+        respond @not_power_user 403
+        reverse_proxy ops:8060
+    }
+
+    # Remaining /admin/* routes — admin only (conservative default)
+    handle /admin* {
+        forward_auth oauth2-proxy:4180 {
+            uri /oauth2/auth
+            copy_headers X-Auth-Request-Email X-Auth-Request-User
+        }
+        @not_admin {
+            not header_regexp X-Auth-Request-Email {$ADMIN_PATTERN}
+        }
+        respond @not_admin 403
+        reverse_proxy ops:8060
+    }
+
+    # ── VIEWER routes ─────────────────────────────────────────────────────────
+    # Dashboard — any authenticated Google user.
+
+    handle /dashboard* {
+        forward_auth oauth2-proxy:4180 {
+            uri /oauth2/auth
+            copy_headers X-Auth-Request-Email X-Auth-Request-User
+        }
+        reverse_proxy dashboard:8501
+    }
+
+    # Root → dashboard (same tier)
+    handle {
+        forward_auth oauth2-proxy:4180 {
+            uri /oauth2/auth
+            copy_headers X-Auth-Request-Email X-Auth-Request-User
+        }
+        reverse_proxy dashboard:8501
     }
 }

@@ -81,6 +81,9 @@ jobs:
             -password=cartracker
             -locations=filesystem:/github/workspace/db/migrations
             -detectEncoding=true
+            -placeholders.viewerPassword=ci_viewer
+            -placeholders.scraperPassword=ci_scraper
+            -placeholders.dbtPassword=ci_dbt
             migrate
         # Flyway runs as a Docker container step; it must reach the postgres
         # service by its service name ("postgres"), not localhost.
