@@ -36,17 +36,13 @@ https://cartracker.info {
             }
         }
         forward_auth ops:8060 {
-            uri /auth/check
+            uri /auth/check?require=admin
             copy_headers X-User-Role
             @unauth status 403
             handle_response @unauth {
                 redir * /request-access
             }
         }
-        @not_admin {
-            not header X-User-Role admin
-        }
-        respond @not_admin 403
         reverse_proxy ops:8060
     }
 
@@ -60,17 +56,13 @@ https://cartracker.info {
             }
         }
         forward_auth ops:8060 {
-            uri /auth/check
+            uri /auth/check?require=admin
             copy_headers X-User-Role
             @unauth status 403
             handle_response @unauth {
                 redir * /request-access
             }
         }
-        @not_admin {
-            not header X-User-Role admin
-        }
-        respond @not_admin 403
         reverse_proxy n8n:5678
     }
 
@@ -84,17 +76,13 @@ https://cartracker.info {
             }
         }
         forward_auth ops:8060 {
-            uri /auth/check
+            uri /auth/check?require=admin
             copy_headers X-User-Role
             @unauth status 403
             handle_response @unauth {
                 redir * /request-access
             }
         }
-        @not_admin {
-            not header X-User-Role admin
-        }
-        respond @not_admin 403
         reverse_proxy pgadmin:80 {
             header_up X-Auth-Request-Email {http.request.header.X-Auth-Request-Email}
         }
@@ -110,17 +98,13 @@ https://cartracker.info {
             }
         }
         forward_auth ops:8060 {
-            uri /auth/check
+            uri /auth/check?require=admin
             copy_headers X-User-Role
             @unauth status 403
             handle_response @unauth {
                 redir * /request-access
             }
         }
-        @not_admin {
-            not header X-User-Role admin
-        }
-        respond @not_admin 403
         reverse_proxy minio:9001
     }
 
@@ -136,17 +120,13 @@ https://cartracker.info {
             }
         }
         forward_auth ops:8060 {
-            uri /auth/check
+            uri /auth/check?require=power_user
             copy_headers X-User-Role
             @unauth status 403
             handle_response @unauth {
                 redir * /request-access
             }
         }
-        @not_power_user {
-            not header_regexp X-User-Role ^(admin|power_user)$
-        }
-        respond @not_power_user 403
         reverse_proxy ops:8060
     }
 
@@ -160,17 +140,13 @@ https://cartracker.info {
             }
         }
         forward_auth ops:8060 {
-            uri /auth/check
+            uri /auth/check?require=power_user
             copy_headers X-User-Role
             @unauth status 403
             handle_response @unauth {
                 redir * /request-access
             }
         }
-        @not_power_user {
-            not header_regexp X-User-Role ^(admin|power_user)$
-        }
-        respond @not_power_user 403
         reverse_proxy ops:8060
     }
 
@@ -186,17 +162,13 @@ https://cartracker.info {
             }
         }
         forward_auth ops:8060 {
-            uri /auth/check
+            uri /auth/check?require=observer
             copy_headers X-User-Role
             @unauth status 403
             handle_response @unauth {
                 redir * /request-access
             }
         }
-        @not_observer {
-            not header_regexp X-User-Role ^(admin|power_user|observer)$
-        }
-        respond @not_observer 403
         reverse_proxy ops:8060
     }
 
