@@ -1,26 +1,20 @@
 https://cartracker.info {
 
     # ── OAuth2 flow routes (must be unauthenticated) ──────────────────────────
-    # These handle the Google OAuth redirect/callback — no auth gate here.
     handle /oauth2/* {
         reverse_proxy oauth2-proxy:4180
     }
 
-    # ── Auth subrequest snippet ───────────────────────────────────────────────
-    # All protected routes call this before proxying. oauth2-proxy returns:
-    #   200 + X-Auth-Request-Email header  → authenticated
-    #   302 to /oauth2/sign_in             → not authenticated (Caddy forwards the redirect)
-    #
-    # Named matchers reference {http.auth.user.email} (set by forward_auth) for
-    # coarse authorization below.
-
     # ── ADMIN-ONLY routes ─────────────────────────────────────────────────────
-    # /admin/dbt*, /n8n/*, /pgadmin/*, /minio/* require ADMIN_PATTERN match.
 
     handle /admin/dbt* {
         forward_auth oauth2-proxy:4180 {
             uri /oauth2/auth
             copy_headers X-Auth-Request-Email X-Auth-Request-User
+            @error status 401
+            handle_response @error {
+                redir * /oauth2/sign_in?rd={scheme}://{host}{uri}
+            }
         }
         @not_admin {
             not header_regexp X-Auth-Request-Email {$ADMIN_PATTERN}
@@ -33,6 +27,10 @@ https://cartracker.info {
         forward_auth oauth2-proxy:4180 {
             uri /oauth2/auth
             copy_headers X-Auth-Request-Email X-Auth-Request-User
+            @error status 401
+            handle_response @error {
+                redir * /oauth2/sign_in?rd={scheme}://{host}{uri}
+            }
         }
         @not_admin {
             not header_regexp X-Auth-Request-Email {$ADMIN_PATTERN}
@@ -41,10 +39,14 @@ https://cartracker.info {
         reverse_proxy n8n:5678
     }
 
-    handle_path /pgadmin* {
+    handle /pgadmin* {
         forward_auth oauth2-proxy:4180 {
             uri /oauth2/auth
             copy_headers X-Auth-Request-Email X-Auth-Request-User
+            @error status 401
+            handle_response @error {
+                redir * /oauth2/sign_in?rd={scheme}://{host}{uri}
+            }
         }
         @not_admin {
             not header_regexp X-Auth-Request-Email {$ADMIN_PATTERN}
@@ -57,6 +59,10 @@ https://cartracker.info {
         forward_auth oauth2-proxy:4180 {
             uri /oauth2/auth
             copy_headers X-Auth-Request-Email X-Auth-Request-User
+            @error status 401
+            handle_response @error {
+                redir * /oauth2/sign_in?rd={scheme}://{host}{uri}
+            }
         }
         @not_admin {
             not header_regexp X-Auth-Request-Email {$ADMIN_PATTERN}
@@ -66,13 +72,15 @@ https://cartracker.info {
     }
 
     # ── POWER-USER routes ─────────────────────────────────────────────────────
-    # /admin/searches*, /admin/runs* — power_user and admin.
-    # POWER_USER_PATTERN should include admin emails.
 
     handle /admin/searches* {
         forward_auth oauth2-proxy:4180 {
             uri /oauth2/auth
             copy_headers X-Auth-Request-Email X-Auth-Request-User
+            @error status 401
+            handle_response @error {
+                redir * /oauth2/sign_in?rd={scheme}://{host}{uri}
+            }
         }
         @not_power_user {
             not header_regexp X-Auth-Request-Email {$POWER_USER_PATTERN}
@@ -85,6 +93,10 @@ https://cartracker.info {
         forward_auth oauth2-proxy:4180 {
             uri /oauth2/auth
             copy_headers X-Auth-Request-Email X-Auth-Request-User
+            @error status 401
+            handle_response @error {
+                redir * /oauth2/sign_in?rd={scheme}://{host}{uri}
+            }
         }
         @not_power_user {
             not header_regexp X-Auth-Request-Email {$POWER_USER_PATTERN}
@@ -93,11 +105,14 @@ https://cartracker.info {
         reverse_proxy ops:8060
     }
 
-    # Remaining /admin/* routes — admin only (conservative default)
     handle /admin* {
         forward_auth oauth2-proxy:4180 {
             uri /oauth2/auth
             copy_headers X-Auth-Request-Email X-Auth-Request-User
+            @error status 401
+            handle_response @error {
+                redir * /oauth2/sign_in?rd={scheme}://{host}{uri}
+            }
         }
         @not_admin {
             not header_regexp X-Auth-Request-Email {$ADMIN_PATTERN}
@@ -107,21 +122,27 @@ https://cartracker.info {
     }
 
     # ── VIEWER routes ─────────────────────────────────────────────────────────
-    # Dashboard — any authenticated Google user.
 
     handle /dashboard* {
         forward_auth oauth2-proxy:4180 {
             uri /oauth2/auth
             copy_headers X-Auth-Request-Email X-Auth-Request-User
+            @error status 401
+            handle_response @error {
+                redir * /oauth2/sign_in?rd={scheme}://{host}{uri}
+            }
         }
         reverse_proxy dashboard:8501
     }
 
-    # Root → dashboard (same tier)
     handle {
         forward_auth oauth2-proxy:4180 {
             uri /oauth2/auth
             copy_headers X-Auth-Request-Email X-Auth-Request-User
+            @error status 401
+            handle_response @error {
+                redir * /oauth2/sign_in?rd={scheme}://{host}{uri}
+            }
         }
         reverse_proxy dashboard:8501
     }
