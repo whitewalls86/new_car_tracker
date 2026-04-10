@@ -84,6 +84,8 @@ jobs:
             -placeholders.viewerPassword=ci_viewer
             -placeholders.scraperPassword=ci_scraper
             -placeholders.dbtPassword=ci_dbt
+            -placeholders.authEmailSalt=ci_salt
+            -placeholders.adminEmail=ci@example.com
             migrate
         # Flyway runs as a Docker container step; it must reach the postgres
         # service by its service name ("postgres"), not localhost.
