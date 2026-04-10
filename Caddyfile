@@ -1,4 +1,4 @@
-https://cartracker-scraper.duckdns.org {
+https://cartracker.info {
 
     # ── OAuth2 flow routes (must be unauthenticated) ──────────────────────────
     # These handle the Google OAuth redirect/callback — no auth gate here.
