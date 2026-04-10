@@ -379,3 +379,23 @@ class TestScrapeDetailBatch:
         art = result["artifacts"][0]
         missing = N8N_ARTIFACT_KEYS - art.keys()
         assert missing == set(), f"Batch artifact missing n8n fields: {missing}"
+
+
+# ---------------------------------------------------------------------------
+# _cffi_target_for_ua
+# ---------------------------------------------------------------------------
+class TestCffiTargetForUa:
+    def test_exact_match(self):
+        assert sd._cffi_target_for_ua("Mozilla/5.0 Chrome/142.0.0.0") == "chrome142"
+
+    def test_non_chrome_returns_fallback(self):
+        result = sd._cffi_target_for_ua("Mozilla/5.0 Firefox/120.0")
+        assert result == sd._BROWSER_IMPERSONATE_FALLBACK
+
+    def test_version_between_targets_returns_nearest_lower(self):
+        # 135 is between 131 and 136 in _CHROME_CFFI_TARGETS
+        assert sd._cffi_target_for_ua("Chrome/135.0.0.0") == "chrome131"
+
+    def test_version_older_than_all_targets(self):
+        # 50 is older than the lowest known target (99)
+        assert sd._cffi_target_for_ua("Chrome/50.0.0.0") == "chrome99"

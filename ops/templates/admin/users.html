@@ -1,0 +1,51 @@
+{% extends "admin/base.html" %}
+{% block title %}Users — Cartracker Admin{% endblock %}
+
+{% block content %}
+<h2>Authorised Users</h2>
+
+{% if not users %}
+<p>No users found.</p>
+{% else %}
+<figure>
+<table>
+    <thead>
+        <tr>
+            <th>Display Name</th>
+            <th>Email Hash</th>
+            <th>Role</th>
+            <th>Added</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for u in users %}
+    <tr>
+        <td>{{ u.display_name or "—" }}</td>
+        <td style="font-family:monospace;font-size:0.8em;">{{ u.email_hash[:16] }}…</td>
+        <td>
+            <form method="post" action="/admin/users/{{ u.id }}/role" style="display:inline-flex;gap:0.4rem;align-items:center;margin:0;">
+                <select name="role" style="padding:0.2rem 0.4rem;font-size:0.85rem;height:auto;">
+                    {% for r in roles %}
+                    <option value="{{ r }}" {% if r == u.role %}selected{% endif %}>{{ role_labels[r] }}</option>
+                    {% endfor %}
+                </select>
+                <button type="submit" class="btn-sm outline" style="margin:0;">Save</button>
+            </form>
+        </td>
+        <td>{{ u.created_at.strftime("%Y-%m-%d") if u.created_at else "—" }}</td>
+        <td>
+            <form method="post" action="/admin/users/{{ u.id }}/revoke" style="margin:0;"
+                  onsubmit="return confirm('Revoke access for this user?')">
+                <button type="submit" class="btn-sm btn-danger">Revoke</button>
+            </form>
+        </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+</table>
+</figure>
+{% endif %}
+
+<p><a href="/admin/access-requests">View access requests</a></p>
+{% endblock %}

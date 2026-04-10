@@ -12,11 +12,7 @@ from fastapi import Body, FastAPI, HTTPException
 
 from db import close_pool, get_pool
 from scraper.processors.parse_detail_page import parse_cars_detail_page_html_v1
-from scraper.processors.results_page_cards import (
-    parse_cars_results_page_html,
-    parse_cars_results_page_html_v2,
-    parse_cars_results_page_html_v3,
-)
+from scraper.processors.results_page_cards import parse_cars_results_page_html_v3
 from scraper.processors.scrape_detail import (
     scrape_detail_batch,
     scrape_detail_dummy,
@@ -367,7 +363,7 @@ async def advance_search_rotation(
 
 @app.post("/process/results_pages")
 def process_results_pages(payload: dict = Body(...)) -> Dict[str, Any]:
-    processor = (payload or {}).get("processor") or "cars_results_page__listings_v1"
+    processor = (payload or {}).get("processor") or "cars_results_page__listings_v3"
     artifact = (payload or {}).get("artifact") or {}
     options = (payload or {}).get("options") or {}
 
@@ -438,11 +434,7 @@ def process_results_pages(payload: dict = Body(...)) -> Dict[str, Any]:
 
     # --- Parse ---
     try:
-        if processor == "cars_results_page__listings_v1":
-            listings, parse_meta = parse_cars_results_page_html(html)
-        elif processor == "cars_results_page__listings_v2":
-            listings, parse_meta = parse_cars_results_page_html_v2(html)
-        elif processor == "cars_results_page__listings_v3":
+        if processor == "cars_results_page__listings_v3":
             listings, parse_meta = parse_cars_results_page_html_v3(html)
         else:
             return {

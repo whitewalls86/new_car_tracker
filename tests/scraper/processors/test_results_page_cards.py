@@ -1,7 +1,7 @@
 """Unit tests for processors/results_page_cards.py — v3 parser only (v1/v2 deprecated)."""
 import json
 
-from scraper.processors.results_page_cards import parse_cars_results_page_html_v3
+from scraper.processors.results_page_cards import _digits_to_int, parse_cars_results_page_html_v3
 
 # n8n consumes all of these fields from every listing
 N8N_LISTING_FIELDS = {
@@ -193,3 +193,23 @@ class TestV3N8nContract:
         assert len(listings) == 1
         missing = N8N_LISTING_FIELDS - listings[0].keys()
         assert missing == set(), f"Missing n8n-consumed fields: {missing}"
+
+
+# ---------------------------------------------------------------------------
+# _digits_to_int
+# ---------------------------------------------------------------------------
+class TestDigitsToInt:
+    def test_none_returns_none(self):
+        assert _digits_to_int(None) is None
+
+    def test_int_passthrough(self):
+        assert _digits_to_int(42) == 42
+
+    def test_float_truncated(self):
+        assert _digits_to_int(12.9) == 12
+
+    def test_string_with_digits(self):
+        assert _digits_to_int("$12,345") == 12345
+
+    def test_string_no_digits(self):
+        assert _digits_to_int("N/A") is None

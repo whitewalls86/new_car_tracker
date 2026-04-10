@@ -1,0 +1,59 @@
+{% extends "admin/base.html" %}
+{% block title %}Access Requests — Cartracker Admin{% endblock %}
+
+{% block content %}
+<h2>Access Requests</h2>
+
+{% if not access_requests %}
+<p>No access requests.</p>
+{% else %}
+<figure>
+<table>
+    <thead>
+        <tr>
+            <th>Email Hash</th>
+            <th>Requested Role</th>
+            <th>Requested At</th>
+            <th>Status</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for r in access_requests %}
+    <tr {% if r.status == 'pending' %}class="row-pending"{% endif %}>
+        <td style="font-family:monospace;font-size:0.8em;">{{ r.email_hash[:16] }}…</td>
+        <td>{{ role_labels.get(r.requested_role, r.requested_role) }}</td>
+        <td>{{ r.requested_at.strftime("%Y-%m-%d %H:%M") if r.requested_at else "—" }}</td>
+        <td>
+            {% if r.status == 'pending' %}
+            <span class="badge badge-pending">Pending</span>
+            {% elif r.status == 'approved' %}
+            <span class="badge badge-ok">Approved</span>
+            {% else %}
+            <span class="badge badge-failed">Denied</span>
+            {% endif %}
+        </td>
+        <td>
+            {% if r.status == 'pending' %}
+            <div style="display:flex;gap:0.4rem;align-items:center;">
+                <form method="post" action="/admin/access-requests/{{ r.id }}/approve" style="margin:0;">
+                    <input type="hidden" name="display_name" value="">
+                    <button type="submit" class="btn-sm">Approve</button>
+                </form>
+                <form method="post" action="/admin/access-requests/{{ r.id }}/deny" style="margin:0;">
+                    <button type="submit" class="btn-sm btn-danger">Deny</button>
+                </form>
+            </div>
+            {% else %}
+            —
+            {% endif %}
+        </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+</table>
+</figure>
+{% endif %}
+
+<p><a href="/admin/users">Manage users</a></p>
+{% endblock %}

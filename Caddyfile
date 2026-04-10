@@ -1,9 +1,28 @@
 https://cartracker.info {
 
-    # ── OAuth2 flow routes (must be unauthenticated) ──────────────────────────
+    # ── OAuth2 flow routes (unauthenticated) ──────────────────────────────────
     handle /oauth2/* {
         reverse_proxy oauth2-proxy:4180
     }
+
+    # ── Access-request flow (authenticated via Google, but not yet authorised) ─
+    # Must come before the generic /admin* block.
+    handle /request-access* {
+        forward_auth oauth2-proxy:4180 {
+            uri /oauth2/auth
+            copy_headers X-Auth-Request-Email X-Auth-Request-User
+            @error status 401
+            handle_response @error {
+                redir * /oauth2/sign_in?rd={scheme}://{host}{uri}
+            }
+        }
+        reverse_proxy ops:8060
+    }
+
+    # ── Shared snippets ───────────────────────────────────────────────────────
+    # Step 1: Authenticate with Google via oauth2-proxy.
+    # Step 2: Authorise against the DB via /auth/check (ops service).
+    #         Returns X-User-Role; on 403 redirects to /request-access.
 
     # ── ADMIN-ONLY routes ─────────────────────────────────────────────────────
 
@@ -16,8 +35,16 @@ https://cartracker.info {
                 redir * /oauth2/sign_in?rd={scheme}://{host}{uri}
             }
         }
+        forward_auth ops:8060 {
+            uri /auth/check
+            copy_headers X-User-Role
+            @unauth status 403
+            handle_response @unauth {
+                redir * /request-access
+            }
+        }
         @not_admin {
-            not header_regexp X-Auth-Request-Email {$ADMIN_PATTERN}
+            not header X-User-Role admin
         }
         respond @not_admin 403
         reverse_proxy ops:8060
@@ -32,8 +59,16 @@ https://cartracker.info {
                 redir * /oauth2/sign_in?rd={scheme}://{host}{uri}
             }
         }
+        forward_auth ops:8060 {
+            uri /auth/check
+            copy_headers X-User-Role
+            @unauth status 403
+            handle_response @unauth {
+                redir * /request-access
+            }
+        }
         @not_admin {
-            not header_regexp X-Auth-Request-Email {$ADMIN_PATTERN}
+            not header X-User-Role admin
         }
         respond @not_admin 403
         reverse_proxy n8n:5678
@@ -48,11 +83,21 @@ https://cartracker.info {
                 redir * /oauth2/sign_in?rd={scheme}://{host}{uri}
             }
         }
+        forward_auth ops:8060 {
+            uri /auth/check
+            copy_headers X-User-Role
+            @unauth status 403
+            handle_response @unauth {
+                redir * /request-access
+            }
+        }
         @not_admin {
-            not header_regexp X-Auth-Request-Email {$ADMIN_PATTERN}
+            not header X-User-Role admin
         }
         respond @not_admin 403
-        reverse_proxy pgadmin:80
+        reverse_proxy pgadmin:80 {
+            header_up X-Auth-Request-Email {http.request.header.X-Auth-Request-Email}
+        }
     }
 
     handle_path /minio* {
@@ -64,14 +109,22 @@ https://cartracker.info {
                 redir * /oauth2/sign_in?rd={scheme}://{host}{uri}
             }
         }
+        forward_auth ops:8060 {
+            uri /auth/check
+            copy_headers X-User-Role
+            @unauth status 403
+            handle_response @unauth {
+                redir * /request-access
+            }
+        }
         @not_admin {
-            not header_regexp X-Auth-Request-Email {$ADMIN_PATTERN}
+            not header X-User-Role admin
         }
         respond @not_admin 403
         reverse_proxy minio:9001
     }
 
-    # ── POWER-USER routes ─────────────────────────────────────────────────────
+    # ── POWER-USER+ routes ────────────────────────────────────────────────────
 
     handle /admin/searches* {
         forward_auth oauth2-proxy:4180 {
@@ -82,8 +135,16 @@ https://cartracker.info {
                 redir * /oauth2/sign_in?rd={scheme}://{host}{uri}
             }
         }
+        forward_auth ops:8060 {
+            uri /auth/check
+            copy_headers X-User-Role
+            @unauth status 403
+            handle_response @unauth {
+                redir * /request-access
+            }
+        }
         @not_power_user {
-            not header_regexp X-Auth-Request-Email {$POWER_USER_PATTERN}
+            not header_regexp X-User-Role ^(admin|power_user)$
         }
         respond @not_power_user 403
         reverse_proxy ops:8060
@@ -98,12 +159,22 @@ https://cartracker.info {
                 redir * /oauth2/sign_in?rd={scheme}://{host}{uri}
             }
         }
+        forward_auth ops:8060 {
+            uri /auth/check
+            copy_headers X-User-Role
+            @unauth status 403
+            handle_response @unauth {
+                redir * /request-access
+            }
+        }
         @not_power_user {
-            not header_regexp X-Auth-Request-Email {$POWER_USER_PATTERN}
+            not header_regexp X-User-Role ^(admin|power_user)$
         }
         respond @not_power_user 403
         reverse_proxy ops:8060
     }
+
+    # ── OBSERVER+ routes (all remaining /admin/*) ─────────────────────────────
 
     handle /admin* {
         forward_auth oauth2-proxy:4180 {
@@ -114,10 +185,18 @@ https://cartracker.info {
                 redir * /oauth2/sign_in?rd={scheme}://{host}{uri}
             }
         }
-        @not_admin {
-            not header_regexp X-Auth-Request-Email {$ADMIN_PATTERN}
+        forward_auth ops:8060 {
+            uri /auth/check
+            copy_headers X-User-Role
+            @unauth status 403
+            handle_response @unauth {
+                redir * /request-access
+            }
         }
-        respond @not_admin 403
+        @not_observer {
+            not header_regexp X-User-Role ^(admin|power_user|observer)$
+        }
+        respond @not_observer 403
         reverse_proxy ops:8060
     }
 
@@ -132,6 +211,14 @@ https://cartracker.info {
                 redir * /oauth2/sign_in?rd={scheme}://{host}{uri}
             }
         }
+        forward_auth ops:8060 {
+            uri /auth/check
+            copy_headers X-User-Role
+            @unauth status 403
+            handle_response @unauth {
+                redir * /request-access
+            }
+        }
         reverse_proxy dashboard:8501
     }
 
@@ -142,6 +229,14 @@ https://cartracker.info {
             @error status 401
             handle_response @error {
                 redir * /oauth2/sign_in?rd={scheme}://{host}{uri}
+            }
+        }
+        forward_auth ops:8060 {
+            uri /auth/check
+            copy_headers X-User-Role
+            @unauth status 403
+            handle_response @unauth {
+                redir * /request-access
             }
         }
         reverse_proxy dashboard:8501

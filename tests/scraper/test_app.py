@@ -261,6 +261,51 @@ class TestAdvanceRotation:
         assert "slot" in data
         assert "configs" in data
 
+    def test_legacy_fallback_returns_single_config(self, mock_scraper_client, mocker):
+        """When no slot_row exists but a legacy (no rotation_slot) config does."""
+        import json as _json
+        legacy_row = {
+            "search_key": "legacy-search",
+            "params": _json.dumps({
+                "makes": ["Toyota"], "models": ["RAV4"],
+                "zip_code": "77002", "scopes": ["local"],
+            }),
+        }
+        # fetchrow calls: last_run=None, slot_row=None, legacy_row=legacy_row
+        mock_pool, _ = _make_rotation_pool(mocker, [None, None, legacy_row])
+        mocker.patch("scraper.app.get_pool", new_callable=AsyncMock, return_value=mock_pool)
+
+        resp = mock_scraper_client.post("/search_configs/advance_rotation")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["slot"] is None
+        assert len(data["configs"]) == 1
+        assert data["configs"][0]["search_key"] == "legacy-search"
+        assert data["configs"][0]["scopes"] == ["local"]
+
+    def test_slot_path_returns_slot_and_configs(self, mock_scraper_client, mocker):
+        """When a rotation slot is found, return all configs in that slot."""
+        import json as _json
+        slot_row = {"rotation_slot": 3}
+        params_a = _json.dumps({"makes": ["Honda"], "scopes": ["national"]})
+        params_b = _json.dumps({"makes": ["Toyota"], "scopes": ["local"]})
+        config_rows = [
+            {"search_key": "slot3-a", "params": params_a},
+            {"search_key": "slot3-b", "params": params_b},
+        ]
+        # fetchrow calls: last_run=None, slot_row=slot_row (no third fetchrow)
+        mock_pool, mock_conn = _make_rotation_pool(mocker, [None, slot_row])
+        mock_conn.fetch = AsyncMock(return_value=config_rows)
+        mocker.patch("scraper.app.get_pool", new_callable=AsyncMock, return_value=mock_pool)
+
+        resp = mock_scraper_client.post("/search_configs/advance_rotation")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["slot"] == 3
+        assert len(data["configs"]) == 2
+        assert data["configs"][0]["search_key"] == "slot3-a"
+        assert data["configs"][1]["search_key"] == "slot3-b"
+
 
 # ---------------------------------------------------------------------------
 # POST /process/results_pages
