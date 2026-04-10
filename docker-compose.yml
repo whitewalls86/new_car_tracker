@@ -280,6 +280,9 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
+    environment:
+      ADMIN_PATTERN: ${ADMIN_PATTERN}
+      POWER_USER_PATTERN: ${POWER_USER_PATTERN}
     depends_on:
       - dashboard
       - ops
