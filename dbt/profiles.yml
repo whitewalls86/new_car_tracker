@@ -14,7 +14,7 @@ cartracker:
       type: postgres
       host: postgres
       port: 5432
-      user: cartracker
+      user: dbt_user
       password: "{{ env_var('POSTGRES_PASSWORD') }}"
       dbname: cartracker
       schema: analytics
