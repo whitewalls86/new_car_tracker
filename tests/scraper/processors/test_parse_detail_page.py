@@ -1,7 +1,11 @@
 """Unit tests for processors/parse_detail_page.py"""
 import json
 
-from scraper.processors.parse_detail_page import parse_cars_detail_page_html_v1
+from scraper.processors.parse_detail_page import (
+    _parse_carousel_cards,
+    _parse_dealer_card,
+    parse_cars_detail_page_html_v1,
+)
 
 # Fields that n8n reads from `primary` (from Parse Detail Pages.json workflow)
 N8N_PRIMARY_FIELDS = {
@@ -295,3 +299,58 @@ class TestN8nContract:
         primary, _, _ = parse_cars_detail_page_html_v1(ACTIVE_DETAIL_HTML)
         missing = N8N_PRIMARY_FIELDS - primary.keys()
         assert missing == set(), f"Missing n8n-consumed primary fields: {missing}"
+
+
+# ---------------------------------------------------------------------------
+# _parse_dealer_card — seller JSON fallback
+# ---------------------------------------------------------------------------
+class TestDealerCardSellerJson:
+    def test_malformed_seller_json_does_not_crash(self):
+        """When the seller regex matches but the JSON is invalid, gracefully skip."""
+        from bs4 import BeautifulSoup
+        html = """
+        <div class="dealer-card"><h3>Test Dealer</h3></div>
+        <script>"seller": {not valid json at all}</script>
+        """
+        soup = BeautifulSoup(html, "lxml")
+        info = _parse_dealer_card(soup)
+        assert info["dealer_card_name"] == "Test Dealer"
+        assert "dealer_phone" not in info
+
+    def test_valid_seller_json_extracts_phone(self):
+        from bs4 import BeautifulSoup
+        html = """
+        <div class="dealer-card"><h3>Good Dealer</h3></div>
+        <script>"seller": {"phoneNumber": "555-1234", "zipcode": "90210"}</script>
+        """
+        soup = BeautifulSoup(html, "lxml")
+        info = _parse_dealer_card(soup)
+        assert info["dealer_phone"] == "555-1234"
+        assert info["dealer_zip_parsed"] == "90210"
+
+
+# ---------------------------------------------------------------------------
+# _parse_carousel_cards — listing_id from href fallback
+# ---------------------------------------------------------------------------
+class TestCarouselListingIdFallback:
+    def test_listing_id_from_href_when_no_data_attribute(self):
+        """When fuse-save has no data-listing-id, extract UUID from href."""
+        from bs4 import BeautifulSoup
+        uuid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+        html = f"""
+        <div class="listings-carousel">
+          <fuse-card-carousel>
+            <fuse-card>
+              <fuse-save></fuse-save>
+              <a href="/vehicledetail/{uuid}/">Details</a>
+              <span class="price">$25,000</span>
+              <span class="body">LE</span>
+              <span slot="footer">15,000 mi.</span>
+            </fuse-card>
+          </fuse-card-carousel>
+        </div>
+        """
+        soup = BeautifulSoup(html, "lxml")
+        cards, meta = _parse_carousel_cards(soup)
+        assert len(cards) == 1
+        assert cards[0]["listing_id"] == uuid

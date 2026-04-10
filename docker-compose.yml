@@ -38,6 +38,8 @@ services:
       -placeholders.viewerPassword=${VIEWER_DB_PASSWORD}
       -placeholders.scraperPassword=${SCRAPER_DB_PASSWORD}
       -placeholders.dbtPassword=${DBT_DB_PASSWORD}
+      -placeholders.authEmailSalt=${AUTH_EMAIL_SALT}
+      -placeholders.adminEmail=${ADMIN_EMAIL}
       migrate
     volumes:
       - ./db/migrations:/flyway/sql:ro
@@ -69,6 +71,7 @@ services:
       - N8N_PATH=/n8n/
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
       - TELEGRAM_API=${TELEGRAM_API}
+      - N8N_USER_MANAGEMENT_DISABLED=true
 
   ops:
     build:
@@ -87,6 +90,9 @@ services:
       PGDATABASE: cartracker
       PGUSER: cartracker
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      AUTH_EMAIL_SALT: ${AUTH_EMAIL_SALT}
+      TELEGRAM_API: ${TELEGRAM_API}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
       DBT_RUNNER_URL: http://dbt_runner:8080
       DBT_DOCS_URL: http://localhost:8081/dbt-docs/
       SCRAPER_URL: http://scraper:8000
@@ -200,6 +206,12 @@ services:
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-cartracker}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_IDENTITY_OPENID_CONFIG_URL: "https://accounts.google.com/.well-known/openid-configuration"
+      MINIO_IDENTITY_OPENID_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      MINIO_IDENTITY_OPENID_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+      MINIO_IDENTITY_OPENID_REDIRECT_URI: "https://cartracker.info/minio/oauth_callback"
+      MINIO_IDENTITY_OPENID_CLAIM_NAME: "email"
+      MINIO_IDENTITY_OPENID_SCOPES: "openid,email,profile"
     restart: unless-stopped
     networks:
       - cartracker-net
@@ -252,6 +264,9 @@ services:
       PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL}
       PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD}
       SCRIPT_NAME: /pgadmin
+      PGADMIN_CONFIG_AUTHENTICATION_SOURCES: "['webserver']"
+      PGADMIN_CONFIG_WEBSERVER_REMOTE_USER: "X-Auth-Request-Email"
+      PGADMIN_CONFIG_WEBSERVER_AUTO_CREATE_USER: "True"
     volumes:
       - pgadmin_data:/var/lib/pgadmin
     networks:
@@ -281,9 +296,6 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
-    environment:
-      ADMIN_PATTERN: ${ADMIN_PATTERN}
-      POWER_USER_PATTERN: ${POWER_USER_PATTERN}
     depends_on:
       - dashboard
       - ops

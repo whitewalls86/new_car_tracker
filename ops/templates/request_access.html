@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Request Access — Cartracker</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+</head>
+<body>
+    <main class="container" style="max-width: 480px; margin-top: 4rem;">
+        <h2>Request Access</h2>
+
+        {% if submitted %}
+            <p>Your request has been submitted. An admin will review it shortly.</p>
+        {% else %}
+            <p>You don't have access yet. Fill in the form below to request it.</p>
+
+            {% if error %}
+            <div style="background:#fdecea;border:1px solid #e74c3c;color:#c0392b;padding:0.75rem 1rem;border-radius:8px;margin-bottom:1rem;">
+                {{ error }}
+            </div>
+            {% endif %}
+
+            <form method="post" action="/request-access">
+                <label for="requested_role">
+                    Role
+                    <select name="requested_role" id="requested_role" required>
+                        {% for role in roles %}
+                        <option value="{{ role }}">{{ role | replace("_", " ") | title }}</option>
+                        {% endfor %}
+                    </select>
+                </label>
+                <small>
+                    <strong>Viewer</strong> — dashboard only.<br>
+                    <strong>Observer</strong> — read-only access to the admin UI.<br>
+                    <strong>Power User</strong> — can edit search configs and trigger runs.
+                </small>
+                <br><br>
+                <button type="submit">Submit Request</button>
+            </form>
+        {% endif %}
+    </main>
+</body>
+</html>
