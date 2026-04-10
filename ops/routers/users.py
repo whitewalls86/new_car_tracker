@@ -76,6 +76,7 @@ def request_access_form(request: Request):
 @public_router.post("/request-access", response_class=HTMLResponse)
 def submit_access_request(
     request: Request,
+    display_name: str = Form(...),
     requested_role: str = Form(...),
 ):
     email = request.headers.get("x-auth-request-email", "")
@@ -100,9 +101,9 @@ def submit_access_request(
     try:
         with db_cursor(error_context="Submit-Access-Request", dict_cursor=True) as cur:
             cur.execute(
-                """INSERT INTO access_requests (email_hash, requested_role)
-                   VALUES (%s, %s)""",
-                (email_hash, requested_role),
+                """INSERT INTO access_requests (email_hash, requested_role, display_name)
+                   VALUES (%s, %s, %s)""",
+                (email_hash, requested_role, display_name.strip() or None),
             )
     except Exception:
         logger.exception("Failed to insert access request")
@@ -186,7 +187,7 @@ def list_access_requests(request: Request):
     try:
         with db_cursor(error_context="List-Access-Requests", dict_cursor=True) as cur:
             cur.execute(
-                """SELECT id, email_hash, requested_role, requested_at, status,
+                """SELECT id, email_hash, display_name, requested_role, requested_at, status,
                           resolved_at, resolved_by
                    FROM access_requests
                    ORDER BY
@@ -208,7 +209,6 @@ def list_access_requests(request: Request):
 def approve_access_request(
     request: Request,
     req_id: int,
-    display_name: str = Form(""),
 ):
     admin_email = request.headers.get("x-auth-request-email", "")
     admin_hash = _hash_email(admin_email) if admin_email else None
@@ -216,7 +216,7 @@ def approve_access_request(
     try:
         with db_cursor(error_context="Approve-Access-Request", dict_cursor=True) as cur:
             cur.execute(
-                """SELECT email_hash, requested_role
+                """SELECT email_hash, requested_role, display_name
                    FROM access_requests WHERE id = %s AND status = 'pending'""",
                 (req_id,),
             )
@@ -231,7 +231,7 @@ def approve_access_request(
                    ON CONFLICT (email_hash) DO UPDATE
                        SET role = EXCLUDED.role,
                            created_by = EXCLUDED.created_by""",
-                (row["email_hash"], row["requested_role"], display_name or None, admin_hash),
+                (row["email_hash"], row["requested_role"], row["display_name"], admin_hash),
             )
             cur.execute(
                 """UPDATE access_requests

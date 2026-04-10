@@ -11,7 +11,7 @@
 <table>
     <thead>
         <tr>
-            <th>Email Hash</th>
+            <th>Name</th>
             <th>Requested Role</th>
             <th>Requested At</th>
             <th>Status</th>
@@ -21,7 +21,7 @@
     <tbody>
     {% for r in access_requests %}
     <tr {% if r.status == 'pending' %}class="row-pending"{% endif %}>
-        <td style="font-family:monospace;font-size:0.8em;">{{ r.email_hash[:16] }}…</td>
+        <td>{{ r.display_name or "—" }}</td>
         <td>{{ role_labels.get(r.requested_role, r.requested_role) }}</td>
         <td>{{ r.requested_at.strftime("%Y-%m-%d %H:%M") if r.requested_at else "—" }}</td>
         <td>
@@ -37,7 +37,6 @@
             {% if r.status == 'pending' %}
             <div style="display:flex;gap:0.4rem;align-items:center;">
                 <form method="post" action="/admin/access-requests/{{ r.id }}/approve" style="margin:0;">
-                    <input type="hidden" name="display_name" value="">
                     <button type="submit" class="btn-sm">Approve</button>
                 </form>
                 <form method="post" action="/admin/access-requests/{{ r.id }}/deny" style="margin:0;">
