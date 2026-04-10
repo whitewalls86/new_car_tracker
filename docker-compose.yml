@@ -35,6 +35,9 @@ services:
       -password=${POSTGRES_PASSWORD}
       -locations=filesystem:/flyway/sql
       -detectEncoding=true
+      -placeholders.viewerPassword=${VIEWER_DB_PASSWORD}
+      -placeholders.scraperPassword=${SCRAPER_DB_PASSWORD}
+      -placeholders.dbtPassword=${DBT_DB_PASSWORD}
       migrate
     volumes:
       - ./db/migrations:/flyway/sql:ro
@@ -113,7 +116,7 @@ services:
       - cartracker_raw:/data/raw
       - scraper_logs:/usr/app/logs
     environment:
-      DATABASE_URL: postgresql://cartracker:${POSTGRES_PASSWORD}@postgres:5432/cartracker
+      DATABASE_URL: postgresql://scraper_user:${SCRAPER_DB_PASSWORD}@postgres:5432/cartracker
       DBT_RUNNER_URL: http://dbt_runner:8080
       DBT_DOCS_URL: http://localhost:8081/dbt-docs/
       FLARESOLVERR_URL: http://flaresolverr:8191
@@ -133,8 +136,8 @@ services:
       PGHOST: postgres
       PGPORT: 5432
       PGDATABASE: cartracker
-      PGUSER: cartracker
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      PGUSER: dbt_user
+      POSTGRES_PASSWORD: ${DBT_DB_PASSWORD}
     networks:
       - cartracker-net
     profiles: ["tools"]
@@ -152,8 +155,8 @@ services:
       PGHOST: postgres
       PGPORT: 5432
       PGDATABASE: cartracker
-      PGUSER: cartracker
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      PGUSER: dbt_user
+      POSTGRES_PASSWORD: ${DBT_DB_PASSWORD}
     networks:
       - cartracker-net
     profiles: [ "tools" ]
@@ -172,8 +175,8 @@ services:
       PGHOST: postgres
       PGPORT: 5432
       PGDATABASE: cartracker
-      PGUSER: cartracker
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      PGUSER: dbt_user
+      POSTGRES_PASSWORD: ${DBT_DB_PASSWORD}
     networks:
       - cartracker-net
     depends_on:
@@ -208,7 +211,7 @@ services:
     volumes:
       - cartracker_raw:/data/raw
     environment:
-      DATABASE_URL: postgresql://cartracker:${POSTGRES_PASSWORD}@postgres:5432/cartracker
+      DATABASE_URL: postgresql://scraper_user:${SCRAPER_DB_PASSWORD}@postgres:5432/cartracker
       MINIO_ENDPOINT: http://minio:9000
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
@@ -232,7 +235,7 @@ services:
     ports:
       - "8501:8501"
     environment:
-      DATABASE_URL: postgresql://cartracker:${POSTGRES_PASSWORD}@postgres:5432/cartracker
+      DATABASE_URL: postgresql://viewer:${VIEWER_DB_PASSWORD}@postgres:5432/cartracker
     depends_on:
       flyway:
         condition: service_completed_successfully
@@ -253,6 +256,20 @@ services:
     networks:
       - cartracker-net
 
+  oauth2-proxy:
+    image: quay.io/oauth2-proxy/oauth2-proxy:latest
+    container_name: cartracker-oauth2-proxy
+    restart: unless-stopped
+    command: --config=/etc/oauth2-proxy/oauth2-proxy.cfg
+    volumes:
+      - ./oauth2-proxy/oauth2-proxy.cfg:/etc/oauth2-proxy/oauth2-proxy.cfg:ro
+    environment:
+      OAUTH2_PROXY_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      OAUTH2_PROXY_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+      OAUTH2_PROXY_COOKIE_SECRET: ${OAUTH2_COOKIE_SECRET}
+    networks:
+      - cartracker-net
+
   caddy:
     image: caddy:latest
     container_name: caddy
@@ -267,6 +284,7 @@ services:
       - dashboard
       - ops
       - n8n
+      - oauth2-proxy
     networks:
       - cartracker-net
 
