@@ -23,7 +23,7 @@ def test_request_access_form_renders(mock_client):
 def test_submit_access_request_no_email(mock_client):
     resp = mock_client.post(
         "/request-access",
-        data={"requested_role": "viewer"},
+        data={"display_name": "Test User", "requested_role": "viewer"},
     )
     assert resp.status_code == 400
     assert "Could not determine your email" in resp.text
@@ -32,7 +32,7 @@ def test_submit_access_request_no_email(mock_client):
 def test_submit_access_request_invalid_role(mock_client):
     resp = mock_client.post(
         "/request-access",
-        data={"requested_role": "admin"},
+        data={"display_name": "Test User", "requested_role": "admin"},
         headers={"X-Auth-Request-Email": "user@gmail.com"},
     )
     assert resp.status_code == 400
@@ -43,7 +43,7 @@ def test_submit_access_request_ok(mock_client, mock_cursor_context, monkeypatch)
     monkeypatch.setattr("ops.routers.auth._SALT", SALT)
     resp = mock_client.post(
         "/request-access",
-        data={"requested_role": "viewer"},
+        data={"display_name": "Test User", "requested_role": "viewer"},
         headers={"X-Auth-Request-Email": "user@gmail.com"},
     )
     assert resp.status_code == 200
@@ -61,7 +61,7 @@ def test_submit_access_request_db_error(
     monkeypatch.setattr("ops.routers.auth._SALT", SALT)
     resp = mock_client.post(
         "/request-access",
-        data={"requested_role": "observer"},
+        data={"display_name": "Test User", "requested_role": "observer"},
         headers={"X-Auth-Request-Email": "user@gmail.com"},
     )
     assert resp.status_code == 503
@@ -78,7 +78,7 @@ def test_submit_access_request_sends_telegram(
 
     resp = mock_client.post(
         "/request-access",
-        data={"requested_role": "viewer"},
+        data={"display_name": "Test User", "requested_role": "viewer"},
         headers={"X-Auth-Request-Email": "user@gmail.com"},
     )
     assert resp.status_code == 200
@@ -98,7 +98,7 @@ def test_submit_access_request_no_telegram_when_unconfigured(
 
     mock_client.post(
         "/request-access",
-        data={"requested_role": "viewer"},
+        data={"display_name": "Test User", "requested_role": "viewer"},
         headers={"X-Auth-Request-Email": "user@gmail.com"},
     )
     mock_post.assert_not_called()
@@ -188,6 +188,7 @@ def test_list_access_requests_ok(mock_client, mock_cursor_context):
         {
             "id": 1,
             "email_hash": "abc123def456abc1",
+            "display_name": "Jane Smith",
             "requested_role": "viewer",
             "requested_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
             "status": "pending",
@@ -197,7 +198,7 @@ def test_list_access_requests_ok(mock_client, mock_cursor_context):
     ]
     resp = mock_client.get("/admin/access-requests")
     assert resp.status_code == 200
-    assert "abc123def456" in resp.text
+    assert "Jane Smith" in resp.text
     assert "Pending" in resp.text
 
 
@@ -214,11 +215,14 @@ def test_list_access_requests_empty(mock_client, mock_db_connection_error, mock_
 def test_approve_access_request_ok(mock_client, mock_cursor_context, monkeypatch):
     monkeypatch.setattr("ops.routers.auth._SALT", SALT)
     _, cursor = mock_cursor_context
-    cursor.fetchone.return_value = {"email_hash": "abc123", "requested_role": "viewer"}
+    cursor.fetchone.return_value = {
+        "email_hash": "abc123",
+        "requested_role": "viewer",
+        "display_name": "New User",
+    }
 
     resp = mock_client.post(
         "/admin/access-requests/1/approve",
-        data={"display_name": "New User"},
         headers={"X-Auth-Request-Email": "admin@gmail.com"},
         follow_redirects=False,
     )
@@ -235,7 +239,6 @@ def test_approve_access_request_not_found(mock_client, mock_cursor_context, monk
 
     resp = mock_client.post(
         "/admin/access-requests/999/approve",
-        data={"display_name": ""},
         follow_redirects=False,
     )
     assert resp.status_code == 303

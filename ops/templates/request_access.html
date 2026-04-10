@@ -22,6 +22,10 @@
             {% endif %}
 
             <form method="post" action="/request-access">
+                <label for="display_name">
+                    Your name
+                    <input type="text" name="display_name" id="display_name" placeholder="e.g. Jane Smith" required>
+                </label>
                 <label for="requested_role">
                     Role
                     <select name="requested_role" id="requested_role" required>
