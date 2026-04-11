@@ -25,8 +25,29 @@ https://cartracker.info {
     #         Returns X-User-Role; on 403 redirects to /request-access.
 
     # ── ADMIN-ONLY routes ─────────────────────────────────────────────────────
+    # User management and infra tools — admins only.
 
-    handle /admin/dbt* {
+    handle /admin/users* {
+        forward_auth oauth2-proxy:4180 {
+            uri /oauth2/auth
+            copy_headers X-Auth-Request-Email X-Auth-Request-User
+            @error status 401
+            handle_response @error {
+                redir * /oauth2/sign_in?rd={scheme}://{host}{uri}
+            }
+        }
+        forward_auth ops:8060 {
+            uri /auth/check?require=admin
+            copy_headers X-User-Role
+            @unauth status 403
+            handle_response @unauth {
+                redir * /request-access
+            }
+        }
+        reverse_proxy ops:8060
+    }
+
+    handle /admin/access-requests* {
         forward_auth oauth2-proxy:4180 {
             uri /oauth2/auth
             copy_headers X-Auth-Request-Email X-Auth-Request-User
@@ -108,49 +129,9 @@ https://cartracker.info {
         reverse_proxy minio:9001
     }
 
-    # ── POWER-USER+ routes ────────────────────────────────────────────────────
-
-    handle /admin/searches* {
-        forward_auth oauth2-proxy:4180 {
-            uri /oauth2/auth
-            copy_headers X-Auth-Request-Email X-Auth-Request-User
-            @error status 401
-            handle_response @error {
-                redir * /oauth2/sign_in?rd={scheme}://{host}{uri}
-            }
-        }
-        forward_auth ops:8060 {
-            uri /auth/check?require=power_user
-            copy_headers X-User-Role
-            @unauth status 403
-            handle_response @unauth {
-                redir * /request-access
-            }
-        }
-        reverse_proxy ops:8060
-    }
-
-    handle /admin/runs* {
-        forward_auth oauth2-proxy:4180 {
-            uri /oauth2/auth
-            copy_headers X-Auth-Request-Email X-Auth-Request-User
-            @error status 401
-            handle_response @error {
-                redir * /oauth2/sign_in?rd={scheme}://{host}{uri}
-            }
-        }
-        forward_auth ops:8060 {
-            uri /auth/check?require=power_user
-            copy_headers X-User-Role
-            @unauth status 403
-            handle_response @unauth {
-                redir * /request-access
-            }
-        }
-        reverse_proxy ops:8060
-    }
-
-    # ── OBSERVER+ routes (all remaining /admin/*) ─────────────────────────────
+    # ── OBSERVER+ routes (all /admin/* not matched above) ────────────────────
+    # Includes dbt, searches, runs, etc.
+    # Mutations are blocked for observers by ops middleware.
 
     handle /admin* {
         forward_auth oauth2-proxy:4180 {
