@@ -108,7 +108,9 @@ def test_auth_check_require_admin_rejects_power_user(mock_client, mock_cursor_co
     assert resp.status_code == 403
 
 
-def test_auth_check_require_observer_allows_power_user(mock_client, mock_cursor_context, monkeypatch):
+def test_auth_check_require_observer_allows_power_user(
+    mock_client, mock_cursor_context, monkeypatch
+):
     monkeypatch.setattr("ops.routers.auth._SALT", SALT)
     _, cursor = mock_cursor_context
     cursor.fetchone.return_value = {"role": "power_user"}
