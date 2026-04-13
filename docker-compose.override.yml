@@ -3,6 +3,12 @@
 # Not loaded when using explicit -f flags (e.g. test commands).
 
 services:
+  n8n:
+    environment:
+      - N8N_HOST=localhost
+      - N8N_PROTOCOL=http
+      - N8N_PATH=/
+
   scraper:
     ports:
       - "8000:8000"
@@ -10,3 +16,9 @@ services:
   dbt_runner:
     ports:
       - "8081:8080"
+
+  pgadmin:
+    environment:
+      PGADMIN_CONFIG_AUTHENTICATION_SOURCES: "['internal']"
+      PGADMIN_CONFIG_WEBSERVER_REMOTE_USER: "''"
+      SCRIPT_NAME: ""
