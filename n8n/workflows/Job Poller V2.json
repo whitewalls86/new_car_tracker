@@ -67,7 +67,7 @@
       "name": "Insert Artifact",
       "credentials": {
         "postgres": {
-          "id": "l8Ecbn62FzXCDkF9",
+          "id": "cred-postgres-main",
           "name": "Postgres account"
         }
       }
@@ -118,7 +118,7 @@
       "name": "Update scrape_jobs",
       "credentials": {
         "postgres": {
-          "id": "l8Ecbn62FzXCDkF9",
+          "id": "cred-postgres-main",
           "name": "Postgres account"
         }
       }
@@ -152,7 +152,7 @@
       "name": "Check Pending Jobs",
       "credentials": {
         "postgres": {
-          "id": "l8Ecbn62FzXCDkF9",
+          "id": "cred-postgres-main",
           "name": "Postgres account"
         }
       }
@@ -206,7 +206,7 @@
       "name": "Mark Run Done",
       "credentials": {
         "postgres": {
-          "id": "l8Ecbn62FzXCDkF9",
+          "id": "cred-postgres-main",
           "name": "Postgres account"
         }
       }
@@ -392,7 +392,7 @@
       "webhookId": "d77f6cce-4c96-4c1c-9fb8-d6f31a8e4a84",
       "credentials": {
         "telegramApi": {
-          "id": "qoqqtiFUa4Dq2Wqp",
+          "id": "cred-telegram-main",
           "name": "Cartracker Alerts"
         }
       },
@@ -794,7 +794,7 @@
       "webhookId": "d77f6cce-4c96-4c1c-9fb8-d6f31a8e4a84",
       "credentials": {
         "telegramApi": {
-          "id": "qoqqtiFUa4Dq2Wqp",
+          "id": "cred-telegram-main",
           "name": "Cartracker Alerts"
         }
       },
@@ -922,7 +922,7 @@
       "name": "Upsert Blocked Cooldown",
       "credentials": {
         "postgres": {
-          "id": "l8Ecbn62FzXCDkF9",
+          "id": "cred-postgres-main",
           "name": "Postgres account"
         }
       }
@@ -943,7 +943,7 @@
       "name": "Clear Block Cooldown",
       "credentials": {
         "postgres": {
-          "id": "l8Ecbn62FzXCDkF9",
+          "id": "cred-postgres-main",
           "name": "Postgres account"
         }
       }
@@ -998,7 +998,7 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.3,
       "position": [
-        7792,
+        8064,
         1984
       ],
       "id": "9f7ad631-1f3e-46b2-ac90-0eaee18e5f8b",
@@ -1045,6 +1045,27 @@
       ],
       "id": "0414881a-4294-49cf-9363-5d33142694b0",
       "name": "Job Error Counts"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "DELETE FROM blocked_cooldown bc\nUSING (\n    SELECT bc.listing_id\n    FROM blocked_cooldown bc\n    LEFT JOIN ops.ops_vehicle_staleness vs\n        ON bc.listing_id = vs.listing_id\n    LEFT JOIN analytics.int_latest_price_by_vin pr\n        ON bc.listing_id = pr.price_listing_id\n    WHERE\n        vs.listing_id IS NULL\n        OR (\n            pr.price_observed_at > bc.last_attempted_at\n            AND pr.price IS NOT NULL\n        )\n) stale\nWHERE bc.listing_id = stale.listing_id;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        7792,
+        1984
+      ],
+      "id": "087a8707-cacd-4d50-ae67-36e157192c2a",
+      "name": "Remove Invalid Blocked Listings",
+      "credentials": {
+        "postgres": {
+          "id": "cred-postgres-main",
+          "name": "Postgres account"
+        }
+      }
     }
   ],
   "pinData": {
@@ -1420,7 +1441,7 @@
       "main": [
         [
           {
-            "node": "Call 'Build DBT'",
+            "node": "Remove Invalid Blocked Listings",
             "type": "main",
             "index": 0
           }
@@ -1459,19 +1480,31 @@
           }
         ]
       ]
+    },
+    "Remove Invalid Blocked Listings": {
+      "main": [
+        [
+          {
+            "node": "Call 'Build DBT'",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": true,
   "settings": {
     "executionOrder": "v1",
+    "binaryMode": "separate",
     "availableInMCP": false,
     "timeSavedMode": "fixed",
     "callerPolicy": "workflowsFromSameOwner",
     "errorWorkflow": "rJfFKS2DGRAn_IPJR1xTc"
   },
-  "versionId": "9a566d6e-8e44-44e9-bc56-0144f908d3b2",
+  "versionId": "4a6afc3e-4968-45f4-9fb2-70128038243e",
   "meta": {
-    "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179",
+    "instanceId": "1b1b06b146464bd11598b953bd26f240b76d29c4f3fd6e8e80dcdf99cedf67d4",
     "templateCredsSetupCompleted": true
   },
   "id": "LpogDbgYGx306LZr",
