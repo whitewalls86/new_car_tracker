@@ -4,7 +4,7 @@ CarTracker tracks local and national new car inventory on Cars.com, collecting a
 
 ## Architecture
 
-Nine containerized services orchestrated via Docker Compose:
+Ten containerized services orchestrated via Docker Compose:
 
 ```
 Schedule Trigger (30 min)            Schedule Trigger (15 min)
@@ -53,6 +53,7 @@ Schedule Trigger (30 min)            Schedule Trigger (15 min)
 | **dbt_runner** | internal | FastAPI wrapper that lets n8n trigger `dbt build` via HTTP. Database-level mutex (`dbt_lock` table) prevents concurrent builds — returns 409 if locked. Intent-based partial builds (e.g. `after_403` rebuilds only `stg_blocked_cooldown+`) |
 | **dashboard** | 8501 | Streamlit — 4-tab analytics dashboard (Pipeline Health, Inventory Overview, Deal Finder, Market Trends). Sidebar quicklinks to n8n, ops admin, pgAdmin |
 | **pgadmin** | 5050 | pgAdmin 4 — web-based SQL IDE for querying and browsing the database |
+| **caddy** | 80/443 | Caddy — reverse proxy, TLS termination, OAuth2 gating, and role-based route enforcement |
 
 ### n8n Workflows
 
@@ -71,6 +72,32 @@ Schedule Trigger (30 min)            Schedule Trigger (15 min)
 | **Update n8n Runs Table** | Sub-workflow | Syncs n8n execution history to `n8n_executions` Postgres table for dashboard visibility |
 | **Cleanup Artifacts** | Daily 2:30 AM | Archives eligible HTML to MinIO Parquet (if archiver running), then deletes from disk per retention rules |
 | **Error Handler** | On error | Logs to `pipeline_errors` table and sends Telegram alert when any workflow fails |
+
+## Auth & Access Control
+
+Authentication and authorization are split into two layers:
+
+- **Authentication** — Google OAuth2 via [oauth2-proxy](https://github.com/oauth2-proxy/oauth2-proxy). Every request passes through Caddy → oauth2-proxy before reaching any service. Unauthenticated requests are redirected to `/oauth2/sign_in`.
+- **Authorization** — the ops service owns a `GET /auth/check` endpoint. Caddy calls it (internally, not exposed publicly) after authentication passes. It hashes the incoming `X-Auth-Request-Email` header with a fixed app-level salt (`AUTH_EMAIL_SALT`) and looks up the result in `authorized_users`. Returns `200 + X-User-Role` if authorized, `403` if not.
+
+### Roles
+
+| Role | Access |
+|---|---|
+| `admin` | Everything — deploy, dbt, search config edits, pgAdmin, n8n, MinIO |
+| `power_user` | `/admin/searches`, `/admin/runs` — can edit configs and trigger runs |
+| `observer` | All `/admin/*` pages read-only — can view but not mutate anything |
+| `viewer` | Dashboard only |
+
+`observer` is the portfolio-safe role: shows off the ops UI without giving control over the live pipeline.
+
+### Access Request Flow
+
+Users who authenticate with Google but aren't in `authorized_users` are redirected to `/request-access`. They can submit their name, desired role, and a reason. The request is stored in `access_requests` and an admin is notified via Telegram. Admins approve or deny from `/admin/access-requests`.
+
+### Email Hashing
+
+Emails are stored as `SHA-256(AUTH_EMAIL_SALT + lowercase_email)` — not plaintext. This prevents casual DB read access (compromised credential, SQL injection) from revealing who has privileged access.
 
 ## Data Model
 
@@ -95,6 +122,8 @@ Schedule Trigger (30 min)            Schedule Trigger (15 min)
 - `artifact_processing` — tracks which artifacts have been parsed
 - `pipeline_errors` — error log for n8n Error Handler
 - `processing_runs` — detail-page parse run lifecycle (status, progress, error_count)
+- `authorized_users` — email hashes + roles for DB-backed authorization
+- `access_requests` — pending/approved/denied access requests submitted via `/request-access`
 
 ### dbt Models (25 active)
 
@@ -211,10 +240,23 @@ Use `scripts/redeploy.sh` for planned redeployments. It sets the `deploy_intent`
 | dbt Docs | http://localhost:8060/dbt-docs/ |
 | Dashboard | http://localhost:8501 |
 | pgAdmin | http://localhost:5050 |
+| Project Info | https://cartracker.info/info |
+
+### Environment Variables
+
+Key variables in `.env`:
+
+| Variable | Purpose |
+|---|---|
+| `POSTGRES_PASSWORD` | Primary DB password |
+| `AUTH_EMAIL_SALT` | Salt for SHA-256 email hashing in `authorized_users` |
+| `ADMIN_EMAIL` | Bootstrap admin email (used once in Flyway V009 migration) |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | OAuth2 credentials for oauth2-proxy and MinIO OIDC |
+| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | Alert channel for pipeline errors and access requests |
 
 ## Testing
 
-407 tests across 4 test suites. Run from repo root:
+459 tests across 4 test suites. Run from repo root:
 
 ```bash
 pytest tests/

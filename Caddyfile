@@ -1,5 +1,10 @@
 https://cartracker.info {
 
+    # ── Public routes (no auth required) ─────────────────────────────────────
+    handle /info {
+        reverse_proxy ops:8060
+    }
+
     # ── OAuth2 flow routes (unauthenticated) ──────────────────────────────────
     handle /oauth2/* {
         reverse_proxy oauth2-proxy:4180
