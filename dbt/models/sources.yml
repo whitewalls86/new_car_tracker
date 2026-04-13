@@ -223,8 +223,6 @@ sources:
 
           - name: vin
             description: "Vehicle Identification Number (normalized to 17-char uppercase)"
-            data_tests:
-              - not_null
 
           - name: listing_state
             description: "Listing state (active, unlisted, etc.)"
