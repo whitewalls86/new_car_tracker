@@ -22,7 +22,12 @@ except ImportError:
 
 _local = threading.local()
 
-_USER_DATA_DIR = os.environ.get("PATCHRIGHT_PROFILE_DIR", "/tmp/patchright-profile")
+_USER_DATA_BASE = os.environ.get("PATCHRIGHT_PROFILE_DIR", "/tmp/patchright-profile")
+
+
+def _user_data_dir() -> str:
+    """Per-thread profile dir so parallel workers don't corrupt each other's state."""
+    return f"{_USER_DATA_BASE}-{threading.get_ident()}"
 
 
 def get_context(profile: Dict) -> BrowserContext:
@@ -31,8 +36,8 @@ def get_context(profile: Dict) -> BrowserContext:
     if ctx is None:
         _local.pw = sync_playwright().start()
         _local.context = _local.pw.chromium.launch_persistent_context(
-            user_data_dir=_USER_DATA_DIR,
-            headless=True,
+            user_data_dir=_user_data_dir(),
+            headless=False,
             user_agent=profile["user_agent"],
             extra_http_headers=profile["extra_http_headers"],
             viewport=profile["viewport"],
@@ -41,6 +46,7 @@ def get_context(profile: Dict) -> BrowserContext:
                 "--disable-blink-features=AutomationControlled",
                 "--no-sandbox",
                 "--disable-dev-shm-usage",
+                "--window-position=-2000,-2000",
             ],
         )
     return _local.context

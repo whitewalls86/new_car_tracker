@@ -34,7 +34,7 @@ Schedule Trigger (30 min)            Schedule Trigger (15 min)
   srp_observations                  dealers
 ```
 
-**Discovery mode:** SRP pages are sorted `listed_at_desc`. Page 1 is fetched first to learn the total page count, then remaining pages are fetched in **randomized order** to avoid sequential pagination fingerprinting. Pagination stops when ≥80% of VINs on a page are already known (seen in the last 14 days) or a rolling 5-page window averages < 1 new VIN per page. Max 30 pages per job. On Akamai rate-limit (`ERR_HTTP2_PROTOCOL_ERROR`), the scraper stops immediately and the job fails.
+**Discovery mode:** SRP pages are sorted `listed_at_desc`. Page 1 is fetched first to learn the total page count, then remaining pages are fetched in **randomized order** to avoid sequential pagination fingerprinting. Pagination stops when a full 5-page rolling window averages < 1 new VIN per page. A single zero-new-VIN page does not stop the session — with random ordering, a high-numbered (older) page can appear before low-numbered pages that still have fresh listings. Max 30 pages per job. On Akamai rate-limit (`ERR_HTTP2_PROTOCOL_ERROR`), the scraper stops immediately and the job fails.
 
 **403 cooldown:** Detail page 403s are tracked in `blocked_cooldown` with exponential backoff (12h base, doubles each attempt, fully blocked at 5 attempts). The `stg_blocked_cooldown` dbt model owns all backoff logic. `ops_detail_scrape_queue` filters out cooling and fully-blocked listings automatically.
 
@@ -45,7 +45,7 @@ Schedule Trigger (30 min)            Schedule Trigger (15 min)
 | Service | Port | Description |
 |---------|------|-------------|
 | **postgres** | 5432 | PostgreSQL 16 — all config, raw data, parsed observations, and analytics |
-| **scraper** | internal | FastAPI — fetches SRP pages via Patchright (Playwright fork) and detail pages via curl_cffi. Anti-fingerprinting: rotates Chrome UA + sec-ch-ua headers, ZIP codes, viewports, human-like pacing (8–20s). Async job queue with ThreadPoolExecutor. `/health` endpoint for service gate checks |
+| **scraper** | internal | FastAPI — fetches SRP pages via Patchright (Playwright fork) and detail pages via curl_cffi. Anti-fingerprinting: runs headed (non-headless) with a homepage warmup per session to establish Akamai cookies before hitting SRP URLs; rotates Chrome UA + sec-ch-ua headers, ZIP codes, viewports, human-like pacing (8–20s); per-thread profile directories. Async job queue with ThreadPoolExecutor. `/health` endpoint for service gate checks |
 | **ops** | 8060 | FastAPI — admin UI (search config CRUD, run history, dbt action panel, log viewer, deploy coordination). Routes: `/admin/searches/`, `/admin/runs`, `/admin/dbt`, `/admin/logs`, `/admin/deploy` |
 | **n8n** | 5678 | Workflow orchestration — 13 workflows handle scraping, polling, parsing, cleanup, deploy gating, and error handling |
 | **flaresolverr** | internal | FlareSolverr — Cloudflare challenge solver used as a fallback for SRP pages that return 403s |

@@ -190,7 +190,7 @@ def _fetch_page(context, url: str, run_dir: str,
 
     page = context.new_page()
     try:
-        response = page.goto(url, timeout=30000, wait_until="domcontentloaded")
+        response = page.goto(url, timeout=30000, wait_until="networkidle")
         # Wait for SRP cards to render (Akamai JS challenge + React hydration)
         try:
             page.wait_for_selector("spark-card[data-vehicle-details]", timeout=10000)
@@ -358,21 +358,30 @@ def scrape_results(
     context = get_context(profile)
 
     try:
+        # === Phase 0: Warmup ===
+        warmup = context.new_page()
+        warmup.goto("https://www.cars.com/", wait_until="networkidle", timeout=30000)
+        time.sleep(human_delay(0))
+        warmup.close()
+
         # === Phase 1: Fetch page 1 to learn total page count ===
         time.sleep(human_delay(1))
+
         url_p1 = build_results_url(makes, models, zip_code, scope, radius_miles, 1, sort_order)
         result_p1 = _fetch_page(context, url_p1, run_dir,
                                 search_key, scope, 1, known_vins)
 
         if result_p1["_break_no_save"]:
             return {"run_id": run_id, "search_key": search_key,
-                    "scope": scope, "artifacts": []}
+                    "scope": scope, "artifacts": [], "page_1_blocked": False}
 
         artifacts.append(_clean_artifact(result_p1))
 
         if result_p1["_stop"]:
+            page_1_blocked = result_p1.get("http_status") == 403
             return {"run_id": run_id, "search_key": search_key,
-                    "scope": scope, "artifacts": artifacts}
+                    "scope": scope, "artifacts": artifacts,
+                    "page_1_blocked": page_1_blocked}
 
         # --- Determine remaining pages ---
         paging = result_p1["_paging"]
@@ -397,7 +406,7 @@ def scrape_results(
 
         if page_count <= 1:
             return {"run_id": run_id, "search_key": search_key,
-                    "scope": scope, "artifacts": artifacts}
+                    "scope": scope, "artifacts": artifacts, "page_1_blocked": False}
 
         # === Phase 2: Fetch remaining pages in randomized order ===
         remaining_pages = list(range(2, page_count + 1))
@@ -428,6 +437,9 @@ def scrape_results(
                 break
 
             # --- VIN breakpoint for randomized pages ---
+            # Only use rolling average — no single-page check. With random page
+            # ordering we may hit high-numbered (older) pages before low-numbered
+            # ones; a single zero-new-VIN page does not mean we've caught up.
             if known_vins and result["_page_vins"]:
                 recent_new_vin_counts.append(result["_new_vins_count"])
 
@@ -437,19 +449,13 @@ def scrape_results(
 
                 # If the last 5 pages averaged < 1 new VIN each, we've
                 # caught up to known inventory — stop early
-                if len(recent_new_vin_counts) >= 3:
+                if len(recent_new_vin_counts) >= 5:
                     avg_new = sum(recent_new_vin_counts) / len(recent_new_vin_counts)
                     if avg_new < 1.0:
-                        break
-
-                # Single-page check: >=80% known VINs
-                page_vins = result["_page_vins"]
-                if len(page_vins) > 0:
-                    new_ratio = result["_new_vins_count"] / len(page_vins)
-                    if new_ratio <= 0.2:
                         break
 
     finally:
         close_browser()
 
-    return {"run_id": run_id, "search_key": search_key, "scope": scope, "artifacts": artifacts}
+    return {"run_id": run_id, "search_key": search_key, "scope": scope,
+            "artifacts": artifacts, "page_1_blocked": False}

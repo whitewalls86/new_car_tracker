@@ -27,6 +27,8 @@ def _inject_job(job_id, status="queued", artifacts=None):
         "status": status,
         "artifacts": artifacts or [],
         "artifact_count": len(artifacts or []),
+        "page_1_blocked": False,
+        "attempt": 1,
         "error": None,
         "started_at": None,
     }
@@ -617,3 +619,95 @@ class TestScrapeDetailBatch:
         resp = mock_scraper_client.post("/scrape_results/jobs/db2/fetched")
         assert resp.status_code == 200
         assert "db2" not in scraper_app._jobs
+
+
+# ---------------------------------------------------------------------------
+# POST /scrape_results/retry
+# ---------------------------------------------------------------------------
+class TestPostScrapeResultsRetry:
+    def test_queues_job_returns_job_id(self, mock_scraper_client, mocker):
+        mocker.patch.object(scraper_app._executor, "submit")
+        resp = mock_scraper_client.post(
+            "/scrape_results/retry?run_id=r1&search_key=sk1&scope=national",
+            json={"params": {"makes": ["Toyota"], "models": ["RAV4"]}, "attempt": 2},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "job_id" in data
+        assert data["status"] == "queued"
+
+    def test_attempt_stored_on_job(self, mock_scraper_client, mocker):
+        mocker.patch.object(scraper_app._executor, "submit")
+        resp = mock_scraper_client.post(
+            "/scrape_results/retry?run_id=r1&search_key=sk1&scope=national",
+            json={"params": {}, "attempt": 2},
+        )
+        job_id = resp.json()["job_id"]
+        assert scraper_app._jobs[job_id]["attempt"] == 2
+
+    def test_attempt_defaults_to_1_when_absent(self, mock_scraper_client, mocker):
+        mocker.patch.object(scraper_app._executor, "submit")
+        resp = mock_scraper_client.post(
+            "/scrape_results/retry?run_id=r1&search_key=sk1&scope=national",
+            json={"params": {}},
+        )
+        job_id = resp.json()["job_id"]
+        assert scraper_app._jobs[job_id]["attempt"] == 1
+
+    def test_page_1_blocked_initialized_false(self, mock_scraper_client, mocker):
+        mocker.patch.object(scraper_app._executor, "submit")
+        resp = mock_scraper_client.post(
+            "/scrape_results/retry?run_id=r1&search_key=sk1&scope=national",
+            json={"params": {}},
+        )
+        job_id = resp.json()["job_id"]
+        assert scraper_app._jobs[job_id]["page_1_blocked"] is False
+
+    def test_job_appears_in_jobs_list(self, mock_scraper_client, mocker):
+        mocker.patch.object(scraper_app._executor, "submit")
+        resp = mock_scraper_client.post(
+            "/scrape_results/retry?run_id=r1&search_key=sk1&scope=national",
+            json={"params": {}},
+        )
+        job_id = resp.json()["job_id"]
+        list_resp = mock_scraper_client.get("/scrape_results/jobs")
+        ids = [j["job_id"] for j in list_resp.json()]
+        assert job_id in ids
+
+
+# ---------------------------------------------------------------------------
+# page_1_blocked + attempt on /scrape_results jobs
+# ---------------------------------------------------------------------------
+class TestJobFields:
+    def test_scrape_results_job_has_page_1_blocked(self, mock_scraper_client, mocker):
+        mocker.patch.object(scraper_app._executor, "submit")
+        resp = mock_scraper_client.post(
+            "/scrape_results?run_id=r1&search_key=sk1&scope=national",
+            json={"params": {}},
+        )
+        job_id = resp.json()["job_id"]
+        assert "page_1_blocked" in scraper_app._jobs[job_id]
+        assert scraper_app._jobs[job_id]["page_1_blocked"] is False
+
+    def test_scrape_results_job_has_attempt(self, mock_scraper_client, mocker):
+        mocker.patch.object(scraper_app._executor, "submit")
+        resp = mock_scraper_client.post(
+            "/scrape_results?run_id=r1&search_key=sk1&scope=national",
+            json={"params": {}, "attempt": 3},
+        )
+        job_id = resp.json()["job_id"]
+        assert scraper_app._jobs[job_id]["attempt"] == 3
+
+    def test_completed_job_exposes_page_1_blocked(self, mock_scraper_client):
+        _inject_job("c3", status="completed")
+        scraper_app._jobs["c3"]["page_1_blocked"] = True
+        resp = mock_scraper_client.get("/scrape_results/jobs/completed")
+        job = next(j for j in resp.json() if j["job_id"] == "c3")
+        assert job["page_1_blocked"] is True
+
+    def test_completed_job_exposes_attempt(self, mock_scraper_client):
+        _inject_job("c4", status="completed")
+        scraper_app._jobs["c4"]["attempt"] = 2
+        resp = mock_scraper_client.get("/scrape_results/jobs/completed")
+        job = next(j for j in resp.json() if j["job_id"] == "c4")
+        assert job["attempt"] == 2

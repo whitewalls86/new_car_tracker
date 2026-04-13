@@ -103,6 +103,8 @@ def _run_scrape_job(job_id: str, run_id: str, search_key: str, scope: str, paylo
             _jobs[job_id]["status"] = "completed"
             _jobs[job_id]["artifacts"] = artifacts
             _jobs[job_id]["artifact_count"] = len(artifacts)
+            _jobs[job_id]["page_1_blocked"] = result.get("page_1_blocked", False)
+            _jobs[job_id]["attempt"] = payload.get("attempt", 1)
     except Exception as e:
         logger.exception(
             "Scrape job %s failed (run_id=%s, search_key=%s, scope=%s)", 
@@ -190,6 +192,39 @@ def run_scrape_results(
             "status": "queued",
             "artifacts": [],
             "artifact_count": 0,
+            "page_1_blocked": False,
+            "attempt": payload.get("attempt", 1),
+            "error": None,
+            "started_at": None,
+        }
+    _executor.submit(_run_scrape_job, job_id, run_id, search_key, scope, payload)
+    return {"job_id": job_id, "status": "queued"}
+
+
+@app.post("/scrape_results/retry")
+def retry_scrape_results(
+    run_id: str,
+    search_key: str,
+    scope: str,
+    payload: dict = Body(...),
+) -> Dict[str, Any]:
+    """
+    Retry a search that was blocked (page_1_blocked=True) without going through
+    advance_search_rotation. Identical to /scrape_results but semantically distinct
+    so n8n can route retries separately from normal scrape jobs.
+    """
+    job_id = str(uuid.uuid4())
+    with _jobs_lock:
+        _jobs[job_id] = {
+            "job_id": job_id,
+            "run_id": run_id,
+            "search_key": search_key,
+            "scope": scope,
+            "status": "queued",
+            "artifacts": [],
+            "artifact_count": 0,
+            "page_1_blocked": False,
+            "attempt": payload.get("attempt", 1),
             "error": None,
             "started_at": None,
         }
