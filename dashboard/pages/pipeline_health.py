@@ -276,9 +276,9 @@ def _section_stale_backlog():
         ), first_part AS (
             SELECT
                 CASE 
-                    WHEN priority_row < 501 THEN '00_next_batch' 
-                    WHEN priority_row < 1001 THEN '01_following_batch'
-                    WHEN priority_row < 1501 THEN '02_third_batch'
+                    WHEN priority_row < 601 THEN '00_next_batch' 
+                    WHEN priority_row < 1201 THEN '01_following_batch'
+                    WHEN priority_row < 1801 THEN '02_third_batch'
                     ELSE '03_backlog' END as batch_param,
                 COUNT(*) FILTER (WHERE stale_reason LIKE 'price_only%')::varchar as price_only,
                 COUNT(*) FILTER (WHERE stale_reason LIKE 'force_stale_36h')::varchar as force_stale,
@@ -342,7 +342,7 @@ def _section_stale_backlog():
             ,COUNT(bc.listing_id) as num_listings
             ,COUNT(bc.listing_id) FILTER (WHERE bc.next_eligible_at < now()) as eligible_now
             ,COUNT(bc.listing_id) FILTER (
-                                    WHERE q.priority_row < 501 AND q.priority_row IS NOT NULL
+                                    WHERE q.priority_row < 601 AND q.priority_row IS NOT NULL
                                     ) as num_in_next_batch
         FROM
             analytics.stg_blocked_cooldown bc
@@ -368,11 +368,14 @@ def _section_price_freshness():
     df = run_query("""
         WITH buckets AS (
             SELECT
-                FLOOR(LEAST(price_age_hours, 24) * 2) / 2 AS age_floor,
-                price_tier,
-                is_full_details_stale
-            FROM ops.ops_vehicle_staleness
-            WHERE price_age_hours IS NOT NULL
+                FLOOR(LEAST(vs.price_age_hours, 24) * 2) / 2 AS age_floor,
+                vs.price_tier,
+                vs.is_full_details_stale
+            FROM ops.ops_vehicle_staleness vs
+            LEFT JOIN analytics.stg_blocked_cooldown bc
+                   ON bc.listing_id = vs.listing_id
+            WHERE vs.price_age_hours IS NOT NULL
+                  AND bc.listing_id IS NULL
         )
         SELECT
             (24 - age_floor)::numeric AS hours_until_stale,
