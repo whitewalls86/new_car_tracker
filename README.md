@@ -60,7 +60,7 @@ Schedule Trigger (30 min)            Schedule Trigger (15 min)
 | Workflow | Trigger | Description |
 |----------|---------|-------------|
 | **Scrape Listings** | Every 30 min | Polls `POST /advance_rotation` — claims the next due rotation slot (6 slots, ≥1439 min idle, ≥230 min gap). Explodes slot configs × scopes into async scrape jobs. Checks deploy intent gate before starting. |
-| **Job Poller V2** | Every 1 min | Expires orphaned jobs (>30 min), polls `/jobs/completed`, inserts artifacts, syncs `blocked_cooldown` (upsert 403s, delete successes), triggers dbt `after_403` intent build. Sends Telegram alert on Akamai kills. |
+| **Job Poller V2** | Every 1 min | Expires orphaned jobs (>30 min), polls `/jobs/completed`, inserts artifacts, syncs `blocked_cooldown` (upsert 403s, delete successes), triggers dbt `after_403` intent build. Sends Telegram alert on Akamai kills. Routes jobs with `page_1_blocked=true` to `/scrape_results/retry` after a 30–60s wait (capped at 2 attempts via `attempt` counter). |
 | **Scrape Detail Pages V2** | Every 15 min | Queries `ops_detail_scrape_queue`, atomically claims batch via `detail_scrape_claims`, fetches detail pages, triggers parse + dbt build. Batch capped at 1,500 listings. Telegram alert if error rate ≥2.5%. Checks deploy intent gate. |
 | **Results Processing** | Sub-workflow | Unified artifact handler — parses both SRP HTML (`srp_observations`) and detail HTML (`detail_observations`, `detail_carousel_hints`, `dealers`) |
 | **Parse Detail Pages** | Sub-workflow | Legacy detail parse sub-workflow (superseded by Results Processing) |
@@ -159,7 +159,7 @@ Emails are stored as `SHA-256(AUTH_EMAIL_SALT + lowercase_email)` — not plaint
 ## Refresh Strategy
 
 - **Search scrapes** use slot-based rotation: 6 slots of 1-2 search configs each fire ~once per day. Two guards enforce spacing: `min_idle_minutes=1439` (23h59m per slot) and `min_gap_minutes=230` (~4h between any runs). The 30-min n8n schedule is a dumb clock; the scraper API is authoritative. Sort order is `listed_at_desc` (discovery mode).
-- **Discovery mode** stops pagination early when ≥80% of VINs on a page were seen in the last 14 days, or a rolling 5-page window averages < 1 new VIN per page. Pages are fetched in **randomized order** after page 1. Max 30 pages per job. SRP scraping uses FlareSolverr as a fallback for 403 responses.
+- **Discovery mode** stops pagination early when a full 5-page rolling window averages < 1 new VIN per page. Pages are fetched in **randomized order** after page 1 — a single zero-new-VIN page does not stop the session to avoid false-stopping on older pages sampled before newer ones. Max 30 pages per job. SRP scraping uses FlareSolverr as a fallback for 403 responses.
 - **Detail scrapes** run every 15 minutes from `ops_detail_scrape_queue`. Priority 1: one stale VIN per dealer. Priority 2: force-grab vehicles >36h stale (bypasses one-per-dealer rule). Priority 3: unmapped carousel hints fill remaining capacity. Batch capped at 1,500 listings. Atomic `detail_scrape_claims` prevents duplicate work across parallel runs. 403'd listings enter exponential backoff cooldown.
 - **Price data** is stale after 24 hours; **full details** after 7 days.
 - **dbt builds** run incrementally after each detail scrape. The `dbt_lock` mutex prevents concurrent builds — if locked, n8n retries every 30 seconds. Intent-based partial builds (e.g. `after_403`) rebuild only the affected model subgraph.
@@ -256,7 +256,7 @@ Key variables in `.env`:
 
 ## Testing
 
-459 tests across 4 test suites. Run from repo root:
+503 tests across 4 test suites. Run from repo root:
 
 ```bash
 pytest tests/
@@ -264,7 +264,7 @@ pytest tests/
 
 | Suite | Coverage |
 |-------|----------|
-| `tests/scraper/` | Rotation guards, discovery mode, VIN breakpoint, processors, browser/fingerprint |
+| `tests/scraper/` | Rotation guards, discovery mode, VIN breakpoint (rolling average, random-order safety), page_1_blocked retry signal, processors, browser/fingerprint |
 | `tests/dbt_runner/` | Token validation, intent logic, lock behavior |
 | `tests/ops/` | Admin form parsing, deploy intent coordination |
 | `tests/shared/` | DB connection helpers |
@@ -317,7 +317,7 @@ cartracker-scraper/
   db/
     schema/schema_new.sql       # Full database schema (pg_dump)
     seed/                       # Seed data (search config, dbt_lock, intents, claims)
-  tests/                        # 407 pytest unit tests
+  tests/                        # 503 pytest unit tests
   scripts/
     setup.ps1                   # Windows first-time setup
     redeploy.sh                 # Safe redeploy with deploy_intent gating
