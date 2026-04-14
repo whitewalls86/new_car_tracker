@@ -11,7 +11,13 @@
         <h2>Request Access</h2>
 
         {% if submitted %}
-            <p>Your request has been submitted. An admin will review it shortly.</p>
+            <p>Your request has been submitted. You'll receive an email when an admin reviews it.</p>
+            <a href="/info">← Back to project info</a>
+
+        {% elif pending %}
+            <p>You already have a <strong>{{ pending.status }}</strong> access request. You'll be notified when it's reviewed.</p>
+            <a href="/info">← Back to project info</a>
+
         {% else %}
             <p>You don't have access yet. Fill in the form below to request it.</p>
 
@@ -40,7 +46,20 @@
                     <strong>Power User</strong> — can edit search configs and trigger runs.
                 </small>
                 <br><br>
+                <label for="notify_email" id="notify-label">
+                    <input type="checkbox" name="notify_email" id="notify_email" role="switch">
+                    Notify me by email when my request is reviewed
+                </label>
+                <small id="notify-disclaimer" style="display:none; color: var(--pico-muted-color);">
+                    Your email address will be used only to send this notification and deleted within 48 hours.
+                </small>
+                <br><br>
                 <button type="submit">Submit Request</button>
+                <script>
+                    document.getElementById("notify_email").addEventListener("change", function() {
+                        document.getElementById("notify-disclaimer").style.display = this.checked ? "block" : "none";
+                    });
+                </script>
             </form>
         {% endif %}
     </main>

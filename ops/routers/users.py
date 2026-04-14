@@ -17,6 +17,7 @@ from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
+from ops.email import send_access_approved, send_access_denied
 from shared.db import db_cursor
 
 from .auth import _hash_email
@@ -63,13 +64,45 @@ def _notify_access_request(email_hash: str, requested_role: str) -> None:
 # Public: request-access
 # ---------------------------------------------------------------------------
 
+def _redirect_for_role(role: str) -> RedirectResponse:
+    if role in ("admin", "power_user", "observer"):
+        return RedirectResponse(url="/admin", status_code=303)
+    return RedirectResponse(url="/dashboard", status_code=303)
+
+
 @public_router.get("/request-access", response_class=HTMLResponse)
 def request_access_form(request: Request):
+    email = request.headers.get("x-auth-request-email", "")
+    if email:
+        email_hash = _hash_email(email)
+        try:
+            with db_cursor(error_context="Request-Access-Check", dict_cursor=True) as cur:
+                cur.execute(
+                    "SELECT role FROM authorized_users WHERE email_hash = %s",
+                    (email_hash,),
+                )
+                row = cur.fetchone()
+                if row:
+                    return _redirect_for_role(row["role"])
+
+                cur.execute(
+                    "SELECT status FROM access_requests"
+                    " WHERE email_hash = %s AND status = 'pending'"
+                    " ORDER BY requested_at DESC LIMIT 1",
+                    (email_hash,),
+                )
+                pending = cur.fetchone()
+        except Exception:
+            pending = None
+    else:
+        pending = None
+
     return templates.TemplateResponse(request=request, name="request_access.html", context={
         "request": request,
         "roles": REQUESTABLE_ROLES,
         "error": None,
         "submitted": False,
+        "pending": pending,
     })
 
 
@@ -78,6 +111,7 @@ def submit_access_request(
     request: Request,
     display_name: str = Form(...),
     requested_role: str = Form(...),
+    notify_email: str = Form(default=None),
 ):
     email = request.headers.get("x-auth-request-email", "")
     if not email:
@@ -86,6 +120,7 @@ def submit_access_request(
             "roles": REQUESTABLE_ROLES,
             "error": "Could not determine your email. Please try signing in again.",
             "submitted": False,
+            "pending": None,
         }, status_code=400)
 
     if requested_role not in REQUESTABLE_ROLES:
@@ -94,16 +129,46 @@ def submit_access_request(
             "roles": REQUESTABLE_ROLES,
             "error": "Invalid role selected.",
             "submitted": False,
+            "pending": None,
         }, status_code=400)
 
     email_hash = _hash_email(email)
 
     try:
         with db_cursor(error_context="Submit-Access-Request", dict_cursor=True) as cur:
+            # Redirect if already authorised
             cur.execute(
-                """INSERT INTO access_requests (email_hash, requested_role, display_name)
-                   VALUES (%s, %s, %s)""",
-                (email_hash, requested_role, display_name.strip() or None),
+                "SELECT role FROM authorized_users WHERE email_hash = %s",
+                (email_hash,),
+            )
+            existing = cur.fetchone()
+            if existing:
+                return _redirect_for_role(existing["role"])
+
+            # Guard against duplicate pending requests
+            cur.execute(
+                "SELECT id FROM access_requests WHERE email_hash = %s AND status = 'pending'",
+                (email_hash,),
+            )
+            if cur.fetchone():
+                return templates.TemplateResponse(
+                    request=request,
+                    name="request_access.html",
+                    context={
+                        "request": request,
+                        "roles": REQUESTABLE_ROLES,
+                        "error": None,
+                        "submitted": False,
+                        "pending": {"status": "pending"},
+                    },
+                )
+
+            stored_email = email if notify_email == "on" else None
+            cur.execute(
+                """INSERT INTO access_requests
+                       (email_hash, requested_role, display_name, notification_email)
+                   VALUES (%s, %s, %s, %s)""",
+                (email_hash, requested_role, display_name.strip() or None, stored_email),
             )
     except Exception:
         logger.exception("Failed to insert access request")
@@ -112,6 +177,7 @@ def submit_access_request(
             "roles": REQUESTABLE_ROLES,
             "error": "Database error. Please try again later.",
             "submitted": False,
+            "pending": None,
         }, status_code=503)
 
     _notify_access_request(email_hash, requested_role)
@@ -121,6 +187,7 @@ def submit_access_request(
         "roles": REQUESTABLE_ROLES,
         "error": None,
         "submitted": True,
+        "pending": None,
     })
 
 
@@ -216,7 +283,7 @@ def approve_access_request(
     try:
         with db_cursor(error_context="Approve-Access-Request", dict_cursor=True) as cur:
             cur.execute(
-                """SELECT email_hash, requested_role, display_name
+                """SELECT email_hash, requested_role, display_name, notification_email
                    FROM access_requests WHERE id = %s AND status = 'pending'""",
                 (req_id,),
             )
@@ -235,12 +302,17 @@ def approve_access_request(
             )
             cur.execute(
                 """UPDATE access_requests
-                   SET status = 'approved', resolved_at = now(), resolved_by = %s
+                   SET status = 'approved', resolved_at = now(), resolved_by = %s,
+                       notification_email = NULL
                    WHERE id = %s""",
                 (admin_hash, req_id),
             )
     except Exception:
         logger.exception("Failed to approve access request")
+        return RedirectResponse(url="/admin/access-requests", status_code=303)
+
+    if row and row.get("notification_email"):
+        send_access_approved(row["notification_email"], row["requested_role"])
 
     return RedirectResponse(url="/admin/access-requests", status_code=303)
 
@@ -249,16 +321,30 @@ def approve_access_request(
 def deny_access_request(request: Request, req_id: int):
     admin_email = request.headers.get("x-auth-request-email", "")
     admin_hash = _hash_email(admin_email) if admin_email else None
+    notification_email = None
 
     try:
-        with db_cursor(error_context="Deny-Access-Request") as cur:
+        with db_cursor(error_context="Deny-Access-Request", dict_cursor=True) as cur:
+            cur.execute(
+                "SELECT notification_email FROM access_requests"
+                " WHERE id = %s AND status = 'pending'",
+                (req_id,),
+            )
+            row = cur.fetchone()
+            if row:
+                notification_email = row.get("notification_email")
             cur.execute(
                 """UPDATE access_requests
-                   SET status = 'denied', resolved_at = now(), resolved_by = %s
+                   SET status = 'denied', resolved_at = now(), resolved_by = %s,
+                       notification_email = NULL
                    WHERE id = %s AND status = 'pending'""",
                 (admin_hash, req_id),
             )
     except Exception:
         logger.exception("Failed to deny access request")
+        return RedirectResponse(url="/admin/access-requests", status_code=303)
+
+    if notification_email:
+        send_access_denied(notification_email)
 
     return RedirectResponse(url="/admin/access-requests", status_code=303)

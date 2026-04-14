@@ -44,10 +44,23 @@ def info_page():
         h1, h2, h3 {{ margin-top: 2rem; }}
         h1 {{ border-bottom: 2px solid var(--pico-muted-border-color); padding-bottom: 0.4rem; }}
         h2 {{ border-bottom: 1px solid var(--pico-muted-border-color); padding-bottom: 0.3rem; }}
+        .top-bar {{
+            max-width: 860px;
+            margin: 0 auto 1.5rem auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }}
+        .top-bar a {{ text-decoration: none; }}
     </style>
 </head>
 <body>
     <main class="container">
+        <div class="top-bar">
+            <a href="/request-access" role="button">Request Access</a>
+            <a href="https://github.com/whitewalls86/new_car_tracker"
+               target="_blank" rel="noopener">GitHub →</a>
+        </div>
         <article class="prose" id="content"></article>
     </main>
     <script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>

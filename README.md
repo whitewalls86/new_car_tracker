@@ -71,6 +71,7 @@ Schedule Trigger (30 min)            Schedule Trigger (15 min)
 | **Containers Up** | On startup | Fires after container restart to verify services are healthy before workflows activate |
 | **Update n8n Runs Table** | Sub-workflow | Syncs n8n execution history to `n8n_executions` Postgres table for dashboard visibility |
 | **Cleanup Artifacts** | Daily 2:30 AM | Archives eligible HTML to MinIO Parquet (if archiver running), then deletes from disk per retention rules |
+| **Delete Stale Request Emails** | Every 2 hours | Nulls `notification_email` on access requests older than 48 hours — enforces opt-in email retention policy |
 | **Error Handler** | On error | Logs to `pipeline_errors` table and sends Telegram alert when any workflow fails |
 
 ## Auth & Access Control
@@ -180,7 +181,7 @@ Access is gated by Google OAuth2 + role-based authorization. Request access at h
 
 ## Testing
 
-503 tests across 4 test suites. Run from repo root:
+518 tests across 4 test suites. Run from repo root:
 
 ```bash
 pytest tests/

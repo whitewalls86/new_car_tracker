@@ -41,6 +41,8 @@ def test_submit_access_request_invalid_role(mock_client):
 
 def test_submit_access_request_ok(mock_client, mock_cursor_context, monkeypatch):
     monkeypatch.setattr("ops.routers.auth._SALT", SALT)
+    _, cursor = mock_cursor_context
+    cursor.fetchone.side_effect = [None, None]  # not authorized, no pending
     resp = mock_client.post(
         "/request-access",
         data={"display_name": "Test User", "requested_role": "viewer"},
@@ -49,10 +51,8 @@ def test_submit_access_request_ok(mock_client, mock_cursor_context, monkeypatch)
     assert resp.status_code == 200
     assert "request has been submitted" in resp.text
 
-    _, cursor = mock_cursor_context
-    cursor.execute.assert_called_once()
-    sql = cursor.execute.call_args[0][0]
-    assert "INSERT INTO access_requests" in sql
+    sql_calls = [call[0][0] for call in cursor.execute.call_args_list]
+    assert any("INSERT INTO access_requests" in sql for sql in sql_calls)
 
 
 def test_submit_access_request_db_error(
@@ -75,6 +75,8 @@ def test_submit_access_request_sends_telegram(
     monkeypatch.setattr("ops.routers.users._TELEGRAM_API", "fake-token")
     monkeypatch.setattr("ops.routers.users._TELEGRAM_CHAT_ID", "12345")
     mock_post = mocker.patch("ops.routers.users.http_requests.post")
+    _, cursor = mock_cursor_context
+    cursor.fetchone.side_effect = [None, None]  # not authorized, no pending
 
     resp = mock_client.post(
         "/request-access",
@@ -252,6 +254,8 @@ def test_approve_access_request_not_found(mock_client, mock_cursor_context, monk
 
 def test_deny_access_request_ok(mock_client, mock_cursor_context, monkeypatch):
     monkeypatch.setattr("ops.routers.auth._SALT", SALT)
+    _, cursor = mock_cursor_context
+    cursor.fetchone.return_value = {"notification_email": None}
     resp = mock_client.post(
         "/admin/access-requests/1/deny",
         headers={"X-Auth-Request-Email": "admin@gmail.com"},
@@ -259,7 +263,5 @@ def test_deny_access_request_ok(mock_client, mock_cursor_context, monkeypatch):
     )
     assert resp.status_code == 303
 
-    _, cursor = mock_cursor_context
-    cursor.execute.assert_called_once()
-    sql = cursor.execute.call_args[0][0]
-    assert "status = 'denied'" in sql
+    sql_calls = [call[0][0] for call in cursor.execute.call_args_list]
+    assert any("status = 'denied'" in sql for sql in sql_calls)
