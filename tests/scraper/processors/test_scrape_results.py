@@ -198,6 +198,7 @@ class TestScrapeResultsOrchestration:
         })
         mocker.patch("scraper.processors.scrape_results.random_zip", return_value="77002")
         mocker.patch("scraper.processors.scrape_results.human_delay", return_value=0.0)
+        mocker.patch("scraper.processors.scrape_results._bootstrap_cf_cookies", return_value=None)
         mocker.patch("os.makedirs")
         mocker.patch(
             "scraper.processors.scrape_results._fetch_page",
@@ -283,6 +284,7 @@ class TestScrapeResultsOrchestration:
         })
         mocker.patch("scraper.processors.scrape_results.random_zip", return_value="77002")
         mocker.patch("scraper.processors.scrape_results.human_delay", return_value=0.0)
+        mocker.patch("scraper.processors.scrape_results._bootstrap_cf_cookies", return_value=None)
         mocker.patch("os.makedirs")
         mocker.patch(
             "scraper.processors.scrape_results._fetch_page",
@@ -379,6 +381,7 @@ class TestPage1Blocked:
         })
         mocker.patch("scraper.processors.scrape_results.random_zip", return_value="77002")
         mocker.patch("scraper.processors.scrape_results.human_delay", return_value=0.0)
+        mocker.patch("scraper.processors.scrape_results._bootstrap_cf_cookies", return_value=None)
         mocker.patch("os.makedirs")
         mocker.patch(
             "scraper.processors.scrape_results._fetch_page",

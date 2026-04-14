@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from typing import Any, Dict, List, Optional, Set
 from urllib.parse import urlencode
 
+import requests as stdlib_requests
 from bs4 import BeautifulSoup
 from fastapi import Body
 
@@ -23,6 +24,46 @@ RAW_BASE = "/data/raw"
 BASE_URL = "https://www.cars.com/shopping/results/"  # adjust if your real base differs
 _SITE_ACTIVITY_RE = re.compile(r'data-site-activity="([^"]+)"')
 _VIN_RE = re.compile(r'"vin"\s*:\s*"([A-HJ-NPR-Z0-9]{17})"')
+
+FLARESOLVERR_URL = os.environ.get("FLARESOLVERR_URL", "http://flaresolverr:8191")
+
+
+def _bootstrap_cf_cookies() -> Optional[Dict[str, Any]]:
+    """Call FlareSolverr to solve the Cloudflare challenge on cars.com homepage.
+
+    Returns a dict with 'cookies' (list of Playwright-format cookie dicts) and
+    'user_agent', or None if FlareSolverr is not configured or fails.
+    """
+    if not FLARESOLVERR_URL:
+        return None
+    try:
+        resp = stdlib_requests.post(
+            f"{FLARESOLVERR_URL}/v1",
+            json={"cmd": "request.get", "url": "https://www.cars.com/", "maxTimeout": 60000},
+            timeout=75,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        if data.get("status") != "ok":
+            logger.warning("FlareSolverr returned non-ok status: %s", data.get("message"))
+            return None
+        solution = data["solution"]
+        user_agent = solution.get("userAgent", "")
+        # Convert to Playwright cookie format
+        cookies = [
+            {
+                "name": c["name"],
+                "value": c["value"],
+                "domain": c.get("domain", ".cars.com"),
+                "path": c.get("path", "/"),
+            }
+            for c in solution.get("cookies", [])
+        ]
+        logger.info("FlareSolverr bootstrapped %d cookies (ua=%s)", len(cookies), user_agent[:40])
+        return {"cookies": cookies, "user_agent": user_agent}
+    except Exception as e:
+        logger.warning("FlareSolverr bootstrap failed: %s", e)
+        return None
 
 
 def sha256_bytes(b: bytes) -> str:
@@ -364,13 +405,15 @@ def scrape_results(
     context = get_context(profile)
 
     try:
-        # === Phase 0: Warmup ===
-        logger.info("warmup start: search_key=%s", search_key)
-        warmup = context.new_page()
-        warmup.goto("https://www.cars.com/", wait_until="networkidle", timeout=30000)
-        time.sleep(human_delay(0))
-        warmup.close()
-        logger.info("warmup done: search_key=%s", search_key)
+        # === Phase 0: Bootstrap CF cookies via FlareSolverr ===
+        logger.info("cf bootstrap start: search_key=%s", search_key)
+        cf = _bootstrap_cf_cookies()
+        if cf and cf["cookies"]:
+            context.add_cookies(cf["cookies"])
+            logger.info("cf bootstrap done: injected %d cookies: search_key=%s",
+                        len(cf["cookies"]), search_key)
+        else:
+            logger.warning("cf bootstrap skipped (no cookies): search_key=%s", search_key)
 
         # === Phase 1: Fetch page 1 to learn total page count ===
         time.sleep(human_delay(1))
