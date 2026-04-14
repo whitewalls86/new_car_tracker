@@ -87,7 +87,8 @@ def request_access_form(request: Request):
 
                 cur.execute(
                     "SELECT status FROM access_requests"
-                    " WHERE email_hash = %s ORDER BY requested_at DESC LIMIT 1",
+                    " WHERE email_hash = %s AND status = 'pending'"
+                    " ORDER BY requested_at DESC LIMIT 1",
                     (email_hash,),
                 )
                 pending = cur.fetchone()
