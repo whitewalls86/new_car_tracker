@@ -164,95 +164,19 @@ Emails are stored as `SHA-256(AUTH_EMAIL_SALT + lowercase_email)` — not plaint
 - **Price data** is stale after 24 hours; **full details** after 7 days.
 - **dbt builds** run incrementally after each detail scrape. The `dbt_lock` mutex prevents concurrent builds — if locked, n8n retries every 30 seconds. Intent-based partial builds (e.g. `after_403`) rebuild only the affected model subgraph.
 
-## Running Locally
-
-### Prerequisites
-
-- Docker Desktop (Windows) or Docker Engine + Docker Compose (Linux/macOS)
-- Git
-
-### Quick start (Windows PowerShell)
-
-```powershell
-git clone https://github.com/whitewalls86/new_car_tracker.git
-cd new_car_tracker
-cp .env.example .env        # Edit .env to set a strong POSTGRES_PASSWORD
-.\scripts\setup.ps1          # Creates volumes, starts services, inits DB, runs dbt
-```
-
-### Manual setup
-
-```bash
-# 1. Create .env from template
-cp .env.example .env
-# Edit .env — set POSTGRES_PASSWORD at minimum
-
-# 2. Create external Docker resources
-docker network create cartracker-net
-docker volume create cartracker_pgdata
-docker volume create cartracker_raw
-docker volume create n8n_data
-
-# 3. Start all services
-docker compose up -d
-
-# 4. Initialize the database schema
-docker exec -i cartracker-postgres psql -U cartracker -d cartracker < db/schema/schema_new.sql
-
-# 5. Load seed data
-docker exec -i cartracker-postgres psql -U cartracker -d cartracker < db/seed/example_search_config.sql
-docker exec -i cartracker-postgres psql -U cartracker -d cartracker < db/seed/dbt_lock.sql
-docker exec -i cartracker-postgres psql -U cartracker -d cartracker < db/seed/detail_scrape_claims.sql
-docker exec -i cartracker-postgres psql -U cartracker -d cartracker < db/seed/dbt_intents.sql
-
-# 6. Install dbt packages and run initial build
-docker compose run --rm dbt deps
-docker compose run --rm dbt build
-```
-
-### Configure n8n workflows
-
-Workflows are auto-imported from `n8n/workflows/` and activated on container startup via the custom entrypoint. On first setup you still need to create and wire the database credential:
-
-1. Open n8n at `http://localhost:5678`
-2. Create a **Postgres credential** (host: `postgres`, user: `cartracker`, password: from `.env`, database: `cartracker`)
-3. Open each workflow and wire the Postgres credential into the Postgres nodes
-4. Verify all workflows are active (the entrypoint activates them automatically)
-
-### Add search configurations
-
-Use the admin UI at `http://localhost:8060/admin` to add make/model searches. The setup script loads one example (Honda CR-V Hybrid). Each config defines a zip code, radius, make/model filters, and a `rotation_slot` (1–6) that controls which daily firing window it belongs to. Configs sharing a slot fire together; slots fire ~4 hours apart.
-
-### Redeploying
-
-Use `scripts/redeploy.sh` for planned redeployments. It sets the `deploy_intent` flag (blocking new workflow runs), waits for in-flight runs to finish, pulls new code, rebuilds containers, and clears the flag.
-
-```bash
-./scripts/redeploy.sh
-```
-
-### Service URLs
+## Live Site
 
 | Service | URL |
 |---------|-----|
-| n8n | http://localhost:5678 |
-| Ops Admin UI | http://localhost:8060/admin |
-| dbt Docs | http://localhost:8060/dbt-docs/ |
-| Dashboard | http://localhost:8501 |
-| pgAdmin | http://localhost:5050 |
+| Dashboard | https://cartracker.info |
+| Ops Admin UI | https://cartracker.info/admin |
+| dbt Docs | https://cartracker.info/admin/dbt-docs/ |
+| n8n | https://cartracker.info/n8n |
+| pgAdmin | https://cartracker.info/pgadmin |
+| MinIO (Parquet) | https://cartracker.info/minio |
 | Project Info | https://cartracker.info/info |
 
-### Environment Variables
-
-Key variables in `.env`:
-
-| Variable | Purpose |
-|---|---|
-| `POSTGRES_PASSWORD` | Primary DB password |
-| `AUTH_EMAIL_SALT` | Salt for SHA-256 email hashing in `authorized_users` |
-| `ADMIN_EMAIL` | Bootstrap admin email (used once in Flyway V009 migration) |
-| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | OAuth2 credentials for oauth2-proxy and MinIO OIDC |
-| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | Alert channel for pipeline errors and access requests |
+Access is gated by Google OAuth2 + role-based authorization. Request access at https://cartracker.info/request-access.
 
 ## Testing
 
