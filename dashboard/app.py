@@ -16,10 +16,11 @@ if st.sidebar.button("Refresh Data"):
 # Quicklinks
 st.sidebar.markdown("---")
 st.sidebar.markdown("**Quick Links**")
-st.sidebar.markdown("[n8n Workflows](http://localhost:5678)")
-st.sidebar.markdown("[Search Config Admin](http://localhost:8060/admin)")
-st.sidebar.markdown("[pgAdmin](http://localhost:5050)")
-st.sidebar.markdown("[minio](http://localhost:9001)")
+st.sidebar.markdown("[Project Info](https://cartracker.info/info)")
+st.sidebar.markdown("[n8n Workflows](https://cartracker.info/n8n)")
+st.sidebar.markdown("[Search Config Admin](https://cartracker.info/admin)")
+st.sidebar.markdown("[pgAdmin](https://cartracker.info/pgadmin)")
+st.sidebar.markdown("[MinIO](https://cartracker.info/minio)")
 
 # Data freshness
 _freshness_df = run_query("""
