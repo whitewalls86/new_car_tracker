@@ -127,7 +127,7 @@ def seed_authorized_user(cur):
         """,
         (email_hash,),
     )
-    user_id = cur.fetchone()[0]
+    user_id = cur.fetchone()["id"]
     return user_id, email_hash
 
 
@@ -143,5 +143,5 @@ def seed_access_request(cur):
         """,
         (email_hash,),
     )
-    req_id = cur.fetchone()[0]
+    req_id = cur.fetchone()["id"]
     return req_id, email_hash

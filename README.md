@@ -181,11 +181,18 @@ Access is gated by Google OAuth2 + role-based authorization. Request access at h
 
 ## Testing
 
-518 tests across 4 test suites. Run from repo root:
+589 tests across two categories. Run from repo root:
 
 ```bash
-pytest tests/
+# Unit tests only (no database required)
+pytest tests/ -m "not integration"
+
+# Integration tests (requires Postgres with Flyway migrations applied)
+TEST_DATABASE_URL=postgresql://cartracker:cartracker@localhost:5432/cartracker \
+  pytest tests/integration/ -m integration
 ```
+
+### Unit Tests (518)
 
 | Suite | Coverage |
 |-------|----------|
@@ -194,7 +201,17 @@ pytest tests/
 | `tests/ops/` | Admin form parsing, deploy intent coordination |
 | `tests/shared/` | DB connection helpers |
 
-All tests are pure unit tests — no database, no Docker, no network required.
+Pure unit tests — no database, no Docker, no network required.
+
+### Integration Tests (71)
+
+| Suite | Coverage |
+|-------|----------|
+| `tests/integration/sql/test_ops_queries.py` | All 37 ops service queries — search config CRUD, run history, deploy intent, auth check, user management, access requests |
+| `tests/integration/sql/test_dbt_runner_queries.py` | All dbt_runner queries — lock acquire/release/status, build history, intent CRUD |
+| `tests/integration/sql/test_dashboard_queries.py` | All 39 dashboard queries — deal scores, inventory, market trends, pipeline health (including complex multi-CTE queries) |
+
+Every SQL query across all three services is executed against a real Postgres schema. Per-test transaction rollback keeps the DB clean between tests. CI runs these in a dedicated job after Flyway migrations are applied.
 
 ## Project Structure
 
@@ -242,7 +259,9 @@ cartracker-scraper/
   db/
     schema/schema_new.sql       # Full database schema (pg_dump)
     seed/                       # Seed data (search config, dbt_lock, intents, claims)
-  tests/                        # 503 pytest unit tests
+  tests/                        # 589 pytest tests
+    integration/                # 71 integration tests (real Postgres)
+      sql/                      # SQL smoke tests for ops, dbt_runner, dashboard
   scripts/
     setup.ps1                   # Windows first-time setup
     redeploy.sh                 # Safe redeploy with deploy_intent gating
