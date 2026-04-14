@@ -37,7 +37,8 @@ jobs:
             requests pydantic jinja2 python-multipart \
             pyarrow \
             bs4 lxml \
-            s3fs minio
+            s3fs minio \
+            resend
       - run: pytest tests/ -v
         env:
           PYTHONPATH: ${{ github.workspace }}
