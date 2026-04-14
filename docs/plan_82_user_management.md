@@ -1,6 +1,6 @@
 # Plan 82: User Management — DB-backed Auth with Access Requests
 
-**Status:** Planned
+**Status:** Complete — shipped via PRs #64–#67, merged 2026-04-14
 **Priority:** Medium — current ADMIN_PATTERN works but doesn't scale past 1-2 people
 
 ## Overview

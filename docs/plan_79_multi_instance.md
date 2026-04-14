@@ -1,7 +1,7 @@
 # Plan 79: Multi-Instance Detail Scraping
 
-**Status:** Active — top priority
-**Priority:** 1
+**Status:** On hold — partial implementation done, not currently needed
+**Priority:** Low
 
 Cars.com flagged the home server IP after sustained 50K+/day scraping (cumulative IP reputation, not per-request rate limiting). ~55K active listings need refreshing. The fix is to distribute detail scraping across multiple Oracle Cloud instances so no single IP exceeds the safe threshold (~20K/day).
 

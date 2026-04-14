@@ -1,7 +1,7 @@
 # Plan 77: SQL Query Tests
 
-**Status:** Not started
-**Priority:** Medium
+**Status:** Superseded by Plan 84 (Integration Testing)
+**Priority:** N/A — SQL smoke tests are Layer 1 of Plan 84
 
 Mission-critical SQL queries live in four places outside dbt — scraper, dashboard, ops, and dbt_runner. These are never tested today. A schema change (column rename, type change, table drop) can silently break them and only surfaces at runtime.
 
