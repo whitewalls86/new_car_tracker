@@ -340,13 +340,17 @@ def _section_stale_backlog():
                                         WHERE bc.next_eligible_at > now() 
                                       ) AT TIME ZONE 'America/Chicago' as next_attempt_at
             ,COUNT(bc.listing_id) as num_listings
-            ,COUNT(bc.listing_id) FILTER (WHERE bc.next_eligible_at < now()) as eligible_now
+            ,COUNT(bc.listing_id) FILTER (
+                                WHERE bc.next_eligible_at < now() 
+                                AND ovs.stale_reason != 'not_stale'
+                            ) as eligible_now
             ,COUNT(bc.listing_id) FILTER (
                                     WHERE q.priority_row < 601 AND q.priority_row IS NOT NULL
                                     ) as num_in_next_batch
         FROM
             analytics.stg_blocked_cooldown bc
         LEFT JOIN batch_marking q ON q.listing_id = bc.listing_id
+        LEFT JOIN ops.ops_vehicle_staleness ovs ON bc.listing_id = ovs.listing_id
         GROUP BY
             bc.num_of_attempts
         ORDER BY

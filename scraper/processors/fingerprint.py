@@ -62,18 +62,22 @@ def random_profile() -> Dict:
     width, height = random.choice(_VIEWPORTS)
     return {
         "user_agent": (
-            f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            f"AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
             f"Chrome/{version}.0.0.0 Safari/537.36"
         ),
         "extra_http_headers": {
             "sec-ch-ua": (
                 f'"Chromium";v="{version}", '
                 f'"Google Chrome";v="{version}", '
-                f'"Not:A-Brand";v="99"'
+                '"Not:A-Brand";v="99"'
             ),
             "sec-ch-ua-mobile": "?0",
             "sec-ch-ua-platform": '"Windows"',
+            # sec-fetch-* headers are intentionally omitted: the browser sets them
+            # correctly per-request (navigation vs. subresource). Forcing them via
+            # extra_http_headers applies the same values to every request, which
+            # is incorrect and a detectable bot signal.
         },
         "viewport": {"width": width, "height": height},
         "locale": "en-US",

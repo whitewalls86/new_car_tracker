@@ -299,3 +299,125 @@ class TestScrapeResultsOrchestration:
         assert result["run_id"] == "myrun"
         assert result["search_key"] == "mykey"
         assert result["scope"] == "local"
+
+    def test_single_zero_new_vin_page_does_not_stop_early(self, mocker):
+        # Regression: with random page ordering we may hit a high-numbered
+        # (old) page before low-numbered pages that have new VINs.
+        # A single zero-new-VIN page must not terminate the loop.
+        known = {"VIN" + str(i) for i in range(100)}
+        paging = {"result_page_number": 1, "result_page_count": 6,
+                  "total_listings": 120, "result_per_page": 20}
+
+        def make_page(page_num, new_vin_count, vins):
+            r = _make_fetch_result(
+                paging={**paging, "result_page_number": page_num},
+                new_vins=new_vin_count,
+                page_vins=list(vins),
+            )
+            r["page_num"] = page_num
+            return r
+
+        # Page 1: 20 new VINs (already appended by orchestrator before loop)
+        p1_vins = {"NEW" + str(i) for i in range(20)}
+        p1 = make_page(1, 20, p1_vins)
+
+        # Pages 2 and 3 (fetched first in shuffled order): 0 new VINs
+        p2 = make_page(2, 0, set(list(known)[:20]))
+        p3 = make_page(3, 0, set(list(known)[20:40]))
+
+        # Pages 4, 5, 6: more new VINs — should be reached despite p2/p3 zeros
+        extra_new = {"EXTRA" + str(i) for i in range(10)}
+        p4 = make_page(4, 10, extra_new)
+        p5 = make_page(5, 0, set(list(known)[40:60]))
+        p6 = make_page(6, 0, set(list(known)[60:80]))
+
+        payload = {**VALID_PAYLOAD, "known_vins": list(known)}
+        # _fetch_page is called for pages 1-6 in whatever shuffle order;
+        # the orchestrator always fetches p1 first then shuffles the rest.
+        # We control the side_effect sequence: p1, then p2..p6 in order.
+        self._patch_infra(mocker, [p1, p2, p3, p4, p5, p6])
+        result = scrape_results("run1", "sk", "national", payload)
+
+        # Must have fetched more than just p1 + the two zero pages
+        assert len(result["artifacts"]) > 3
+
+    def test_rolling_average_stops_after_five_zero_new_vin_pages(self, mocker):
+        # The rolling average over 5 pages should still terminate the loop
+        # once sustained low novelty is confirmed.
+        known = {"VIN" + str(i) for i in range(200)}
+        paging = {"result_page_number": 1, "result_page_count": 10,
+                  "total_listings": 200, "result_per_page": 20}
+
+        def make_page(page_num):
+            r = _make_fetch_result(
+                paging={**paging, "result_page_number": page_num},
+                new_vins=0,
+                page_vins=list(known)[page_num * 20: page_num * 20 + 20],
+            )
+            r["page_num"] = page_num
+            return r
+
+        pages = [make_page(i) for i in range(1, 11)]
+        payload = {**VALID_PAYLOAD, "known_vins": list(known)}
+        self._patch_infra(mocker, pages)
+        result = scrape_results("run1", "sk", "national", payload)
+
+        # Should stop before fetching all 10 pages once 5 consecutive zero pages seen
+        assert len(result["artifacts"]) < 10
+
+
+# ---------------------------------------------------------------------------
+# page_1_blocked flag
+# ---------------------------------------------------------------------------
+class TestPage1Blocked:
+    def _patch_infra(self, mocker, fetch_results):
+        mocker.patch("scraper.processors.scrape_results.get_context", return_value=MagicMock())
+        mocker.patch("scraper.processors.scrape_results.close_browser")
+        mocker.patch("scraper.processors.scrape_results.time.sleep")
+        mocker.patch("scraper.processors.scrape_results.random_profile", return_value={
+            "user_agent": "ua", "extra_http_headers": {}, "viewport": {}, "locale": "en-US"
+        })
+        mocker.patch("scraper.processors.scrape_results.random_zip", return_value="77002")
+        mocker.patch("scraper.processors.scrape_results.human_delay", return_value=0.0)
+        mocker.patch("os.makedirs")
+        mocker.patch(
+            "scraper.processors.scrape_results._fetch_page",
+            side_effect=fetch_results,
+        )
+
+    def test_true_when_page_1_is_403(self, mocker):
+        p1 = _make_fetch_result(stop=True)
+        p1["http_status"] = 403
+        self._patch_infra(mocker, [p1])
+        result = scrape_results("run1", "sk", "national", VALID_PAYLOAD)
+        assert result["page_1_blocked"] is True
+
+    def test_false_when_page_1_is_200_but_stops(self, mocker):
+        p1 = _make_fetch_result(stop=True)  # http_status=200
+        self._patch_infra(mocker, [p1])
+        result = scrape_results("run1", "sk", "national", VALID_PAYLOAD)
+        assert result["page_1_blocked"] is False
+
+    def test_false_on_break_no_save(self, mocker):
+        p1 = _make_fetch_result(break_no_save=True)
+        self._patch_infra(mocker, [p1])
+        result = scrape_results("run1", "sk", "national", VALID_PAYLOAD)
+        assert result["page_1_blocked"] is False
+
+    def test_false_on_multi_page_success(self, mocker):
+        paging = {"result_page_number": 1, "result_page_count": 2,
+                  "total_listings": 40, "result_per_page": 20}
+        p1 = _make_fetch_result(paging=paging)
+        p2 = _make_fetch_result(paging={**paging, "result_page_number": 2}, stop=True)
+        self._patch_infra(mocker, [p1, p2])
+        result = scrape_results("run1", "sk", "national", VALID_PAYLOAD)
+        assert result["page_1_blocked"] is False
+
+    def test_always_present_in_response(self, mocker):
+        for fetch in [
+            [_make_fetch_result(stop=True)],
+            [_make_fetch_result(break_no_save=True)],
+        ]:
+            self._patch_infra(mocker, fetch)
+            result = scrape_results("run1", "sk", "national", VALID_PAYLOAD)
+            assert "page_1_blocked" in result, "page_1_blocked missing from response"

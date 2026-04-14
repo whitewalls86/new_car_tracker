@@ -11,7 +11,7 @@ import scraper.processors.browser as browser_mod
 def reset_thread_local():
     """
     The module-level `_local = threading.local()` persists between tests that
-    run on the same thread.  Reset context and pw before/after every test so
+    run on the same thread.  Reset all session state before/after every test so
     state doesn't leak.
     """
     browser_mod._local.context = None
@@ -205,3 +205,5 @@ class TestThreadIsolation:
         assert len(contexts_seen) == 2
         # The two threads should have gotten different context objects
         assert contexts_seen[0] != contexts_seen[1]
+
+

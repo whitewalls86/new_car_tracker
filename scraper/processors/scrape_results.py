@@ -1,6 +1,7 @@
 import hashlib
 import html as html_lib
 import json
+import logging
 import math
 import os
 import random
@@ -15,6 +16,8 @@ from fastapi import Body
 
 from scraper.processors.browser import close_browser, get_context
 from scraper.processors.fingerprint import human_delay, random_profile, random_zip
+
+logger = logging.getLogger(__name__)
 
 RAW_BASE = "/data/raw"
 BASE_URL = "https://www.cars.com/shopping/results/"  # adjust if your real base differs
@@ -190,7 +193,7 @@ def _fetch_page(context, url: str, run_dir: str,
 
     page = context.new_page()
     try:
-        response = page.goto(url, timeout=30000, wait_until="domcontentloaded")
+        response = page.goto(url, timeout=30000, wait_until="networkidle")
         # Wait for SRP cards to render (Akamai JS challenge + React hydration)
         try:
             page.wait_for_selector("spark-card[data-vehicle-details]", timeout=10000)
@@ -354,25 +357,51 @@ def scrape_results(
     # --- Pick a consistent fingerprint for this entire session ---
     profile = random_profile()
 
+    logger.info("scrape_results start: search_key=%s scope=%s zip=%s known_vins=%d",
+                search_key, scope, zip_code, len(known_vins))
+
     artifacts: List[Dict[str, Any]] = []
     context = get_context(profile)
 
     try:
+        # === Phase 0: Warmup ===
+        logger.info("warmup start: search_key=%s", search_key)
+        warmup = context.new_page()
+        warmup.goto("https://www.cars.com/", wait_until="networkidle", timeout=30000)
+        time.sleep(human_delay(0))
+        warmup.close()
+        logger.info("warmup done: search_key=%s", search_key)
+
         # === Phase 1: Fetch page 1 to learn total page count ===
         time.sleep(human_delay(1))
+
         url_p1 = build_results_url(makes, models, zip_code, scope, radius_miles, 1, sort_order)
         result_p1 = _fetch_page(context, url_p1, run_dir,
                                 search_key, scope, 1, known_vins)
 
+        logger.info(
+            "page 1: search_key=%s status=%s paging=%s vins=%d new_vins=%d stop=%s break=%s",
+            search_key, result_p1.get("http_status"),
+            result_p1["_paging"], len(result_p1["_page_vins"]),
+            result_p1["_new_vins_count"], result_p1["_stop"], result_p1["_break_no_save"],
+        )
+
         if result_p1["_break_no_save"]:
+            logger.info("page 1 break_no_save — aborting: search_key=%s", search_key)
             return {"run_id": run_id, "search_key": search_key,
-                    "scope": scope, "artifacts": []}
+                    "scope": scope, "artifacts": [], "page_1_blocked": False}
 
         artifacts.append(_clean_artifact(result_p1))
 
         if result_p1["_stop"]:
+            page_1_blocked = result_p1.get("http_status") == 403
+            logger.info(
+                "page 1 stop — returning: search_key=%s page_1_blocked=%s",
+                search_key, page_1_blocked,
+            )
             return {"run_id": run_id, "search_key": search_key,
-                    "scope": scope, "artifacts": artifacts}
+                    "scope": scope, "artifacts": artifacts,
+                    "page_1_blocked": page_1_blocked}
 
         # --- Determine remaining pages ---
         paging = result_p1["_paging"]
@@ -395,9 +424,12 @@ def scrape_results(
 
         page_count = min(page_count, max_safety_pages)
 
+        logger.info("page count determined: search_key=%s page_count=%s", search_key, page_count)
+
         if page_count <= 1:
+            logger.info("single page result — returning: search_key=%s", search_key)
             return {"run_id": run_id, "search_key": search_key,
-                    "scope": scope, "artifacts": artifacts}
+                    "scope": scope, "artifacts": artifacts, "page_1_blocked": False}
 
         # === Phase 2: Fetch remaining pages in randomized order ===
         remaining_pages = list(range(2, page_count + 1))
@@ -418,16 +450,26 @@ def scrape_results(
             result = _fetch_page(context, url, run_dir,
                                  search_key, scope, page_num, known_vins)
 
+            logger.info("page %d: search_key=%s status=%s vins=%d new_vins=%d stop=%s break=%s",
+                        page_num, search_key, result.get("http_status"),
+                        len(result["_page_vins"]), result["_new_vins_count"],
+                        result["_stop"], result["_break_no_save"])
+
             if result["_break_no_save"]:
                 # Cars.com clamped page — we've gone past the end
+                logger.info("page %d break_no_save — stopping: search_key=%s", page_num, search_key)
                 break
 
             artifacts.append(_clean_artifact(result))
 
             if result["_stop"]:
+                logger.info("page %d stop signal — stopping: search_key=%s", page_num, search_key)
                 break
 
             # --- VIN breakpoint for randomized pages ---
+            # Only use rolling average — no single-page check. With random page
+            # ordering we may hit high-numbered (older) pages before low-numbered
+            # ones; a single zero-new-VIN page does not mean we've caught up.
             if known_vins and result["_page_vins"]:
                 recent_new_vin_counts.append(result["_new_vins_count"])
 
@@ -437,19 +479,19 @@ def scrape_results(
 
                 # If the last 5 pages averaged < 1 new VIN each, we've
                 # caught up to known inventory — stop early
-                if len(recent_new_vin_counts) >= 3:
+                if len(recent_new_vin_counts) >= 5:
                     avg_new = sum(recent_new_vin_counts) / len(recent_new_vin_counts)
                     if avg_new < 1.0:
-                        break
-
-                # Single-page check: >=80% known VINs
-                page_vins = result["_page_vins"]
-                if len(page_vins) > 0:
-                    new_ratio = result["_new_vins_count"] / len(page_vins)
-                    if new_ratio <= 0.2:
+                        logger.info(
+                            "VIN breakpoint triggered (avg_new=%.2f) — stopping: search_key=%s",
+                            avg_new, search_key,
+                        )
                         break
 
     finally:
         close_browser()
 
-    return {"run_id": run_id, "search_key": search_key, "scope": scope, "artifacts": artifacts}
+    logger.info("scrape_results done: search_key=%s scope=%s artifacts=%d",
+                search_key, scope, len(artifacts))
+    return {"run_id": run_id, "search_key": search_key, "scope": scope,
+            "artifacts": artifacts, "page_1_blocked": False}
