@@ -1,7 +1,6 @@
 """
 Tests for access request flow: GET/POST /request-access, email notifications.
 """
-from unittest.mock import MagicMock, patch
 
 
 # ---------------------------------------------------------------------------
