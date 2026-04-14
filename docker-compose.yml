@@ -266,7 +266,7 @@ services:
       PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD}
       SCRIPT_NAME: /pgadmin
       PGADMIN_CONFIG_AUTHENTICATION_SOURCES: "['webserver']"
-      PGADMIN_CONFIG_WEBSERVER_REMOTE_USER: "X-Auth-Request-Email"
+      PGADMIN_CONFIG_WEBSERVER_REMOTE_USER: "'X-Auth-Request-Email'"
       PGADMIN_CONFIG_WEBSERVER_AUTO_CREATE_USER: "True"
     volumes:
       - pgadmin_data:/var/lib/pgadmin
