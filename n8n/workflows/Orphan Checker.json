@@ -37,7 +37,7 @@
       "alwaysOutputData": false,
       "credentials": {
         "postgres": {
-          "id": "l8Ecbn62FzXCDkF9",
+          "id": "cred-postgres-main",
           "name": "Postgres account"
         }
       }
@@ -59,7 +59,7 @@
       "alwaysOutputData": true,
       "credentials": {
         "postgres": {
-          "id": "l8Ecbn62FzXCDkF9",
+          "id": "cred-postgres-main",
           "name": "Postgres account"
         }
       }
@@ -81,7 +81,7 @@
       "alwaysOutputData": true,
       "credentials": {
         "postgres": {
-          "id": "l8Ecbn62FzXCDkF9",
+          "id": "cred-postgres-main",
           "name": "Postgres account"
         }
       }
@@ -122,7 +122,7 @@
       "name": "Orphan Expired Scrape Jobs",
       "credentials": {
         "postgres": {
-          "id": "l8Ecbn62FzXCDkF9",
+          "id": "cred-postgres-main",
           "name": "Postgres account"
         }
       }
@@ -143,7 +143,7 @@
       "name": "Orphan Expired Scrape Claims",
       "credentials": {
         "postgres": {
-          "id": "l8Ecbn62FzXCDkF9",
+          "id": "cred-postgres-main",
           "name": "Postgres account"
         }
       }
@@ -177,7 +177,7 @@
           "options": {
             "caseSensitive": true,
             "leftValue": "",
-            "typeValidation": "strict",
+            "typeValidation": "loose",
             "version": 3
           },
           "conditions": [
@@ -186,14 +186,15 @@
               "leftValue": "={{ $json.run_id }}",
               "rightValue": false,
               "operator": {
-                "type": "object",
-                "operation": "exists",
+                "type": "string",
+                "operation": "notEmpty",
                 "singleValue": true
               }
             }
           ],
           "combinator": "and"
         },
+        "looseTypeValidation": true,
         "options": {}
       },
       "type": "n8n-nodes-base.if",
@@ -439,7 +440,7 @@
       "alwaysOutputData": true,
       "credentials": {
         "postgres": {
-          "id": "l8Ecbn62FzXCDkF9",
+          "id": "cred-postgres-main",
           "name": "Postgres account"
         }
       }
@@ -461,7 +462,7 @@
       "alwaysOutputData": true,
       "credentials": {
         "postgres": {
-          "id": "l8Ecbn62FzXCDkF9",
+          "id": "cred-postgres-main",
           "name": "Postgres account"
         }
       }
@@ -471,16 +472,16 @@
     "Schedule Trigger": [
       {
         "json": {
-          "timestamp": "2026-03-30T21:10:25.001-04:00",
-          "Readable date": "March 30th 2026, 9:10:25 pm",
-          "Readable time": "9:10:25 pm",
-          "Day of week": "Monday",
+          "timestamp": "2026-04-14T11:30:48.003-04:00",
+          "Readable date": "April 14th 2026, 11:30:48 am",
+          "Readable time": "11:30:48 am",
+          "Day of week": "Tuesday",
           "Year": "2026",
-          "Month": "March",
-          "Day of month": "30",
-          "Hour": "21",
-          "Minute": "10",
-          "Second": "25",
+          "Month": "April",
+          "Day of month": "14",
+          "Hour": "11",
+          "Minute": "30",
+          "Second": "48",
           "Timezone": "America/New_York (UTC-04:00)"
         },
         "pairedItem": {
@@ -702,15 +703,16 @@
   "active": true,
   "settings": {
     "executionOrder": "v1",
+    "binaryMode": "separate",
     "availableInMCP": false,
     "timeSavedMode": "fixed",
     "callerPolicy": "workflowsFromSameOwner",
     "errorWorkflow": "rJfFKS2DGRAn_IPJR1xTc"
   },
-  "versionId": "dbd1a022-dbf9-4da6-930d-ce03a6aedd70",
+  "versionId": "9c59f993-a0f8-49b6-a1c4-dec3c849617f",
   "meta": {
     "templateCredsSetupCompleted": true,
-    "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179"
+    "instanceId": "1b1b06b146464bd11598b953bd26f240b76d29c4f3fd6e8e80dcdf99cedf67d4"
   },
   "id": "elrLcKZaLC75BAcLQdz49",
   "tags": []

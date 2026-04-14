@@ -147,7 +147,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "INSERT INTO n8n_executions\n(\n  execution_id,\n  workflow_name,\n  started_at,\n  status\n)\nSELECT\n  '{{ $json.parent_workflow_id }}' as execution_id,\n  '{{ $json.parent_workflow_name }}' as workflow_name,\n  '{{ $json.parent_workflow_timestamp }}' as started_at,\n  'running' as status\n",
+        "query": "INSERT INTO n8n_executions\n(\n  execution_id,\n  workflow_name,\n  started_at,\n  status\n)\nSELECT\n  '{{ $json.parent_workflow_id }}' as execution_id,\n  '{{ $json.parent_workflow_name }}' as workflow_name,\n  '{{ $json.parent_workflow_timestamp }}' as started_at,\n  'running' as status\nON CONFLICT (execution_id) DO UPDATE\n  SET workflow_name = EXCLUDED.workflow_name,\n      started_at = EXCLUDED.started_at,\n      status = EXCLUDED.status\n",
         "options": {}
       },
       "type": "n8n-nodes-base.postgres",
@@ -160,7 +160,7 @@
       "name": "Add new Entry",
       "credentials": {
         "postgres": {
-          "id": "l8Ecbn62FzXCDkF9",
+          "id": "cred-postgres-main",
           "name": "Postgres account"
         }
       }
@@ -194,7 +194,7 @@
       "name": "Mark Entry Done",
       "credentials": {
         "postgres": {
-          "id": "l8Ecbn62FzXCDkF9",
+          "id": "cred-postgres-main",
           "name": "Postgres account"
         }
       }
@@ -204,10 +204,13 @@
     "When Executed by Another Workflow": [
       {
         "json": {
-          "parent_workflow_name": "Detail Scrape",
-          "parent_workflow_id": 123456789,
-          "parent_workflow_timestamp": "2026-03-29T11:15:47.000",
-          "parent_workflow_status": "completed"
+          "parent_workflow_name": "Build DBT",
+          "parent_workflow_id": 67038,
+          "parent_workflow_timestamp": "2026-04-14T11:36:44.389-04:00",
+          "parent_workflow_status": "started"
+        },
+        "pairedItem": {
+          "item": 0
         }
       }
     ]
@@ -260,15 +263,17 @@
   "active": true,
   "settings": {
     "executionOrder": "v1",
+    "binaryMode": "separate",
     "availableInMCP": false,
     "timeSavedMode": "fixed",
     "saveDataSuccessExecution": "none",
-    "callerPolicy": "workflowsFromSameOwner"
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "rJfFKS2DGRAn_IPJR1xTc"
   },
-  "versionId": "fd62d3db-faf7-4b1b-82b9-33e8a0c047f0",
+  "versionId": "c53fcf91-32de-4e7c-b5f5-de4a35918e7e",
   "meta": {
     "templateCredsSetupCompleted": true,
-    "instanceId": "6819133d7d7a8c3c6c728508316cdaac6420c5bbe2de9a1439bbb952efe61179"
+    "instanceId": "1b1b06b146464bd11598b953bd26f240b76d29c4f3fd6e8e80dcdf99cedf67d4"
   },
   "id": "QaFnwxOQopzO-wVjL64dl",
   "tags": []
