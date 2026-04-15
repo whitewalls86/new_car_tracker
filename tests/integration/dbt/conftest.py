@@ -352,9 +352,11 @@ def _seed_all(cur):
             -- now()-interval evaluated across separate cur.execute() calls would differ by
             -- microseconds, preventing dedup.
             (801, %s, 'cars.com', 'results_page', 'https://www.dummy.com',
-             '2026-01-10 12:00:00+00'::timestamptz, '/data/raw/fakefile.html', 'pe-test', 'national'),
+             '2026-01-10 12:00:00+00'::timestamptz, '/data/raw/fakefile.html', 
+             'pe-test', 'national'),
             (802, %s, 'cars.com', 'detail_page',  'https://www.dummy.com',
-             '2026-01-10 12:00:00+00'::timestamptz, '/data/raw/fakefile.html', 'pe-test', 'national'),
+             '2026-01-10 12:00:00+00'::timestamptz, '/data/raw/fakefile.html', 
+             'pe-test', 'national'),
 
             -- 900s: mart_vehicle_snapshot listing_state='unlisted'
             -- SRP-only honda/crv VIN last seen 10 days ago → inferred 'unlisted'(> 7-day threshold)
@@ -412,7 +414,8 @@ def _seed_all(cur):
              'DOM0NATLOCALSPLIT', 'DOM-Make', 'DOM-Model', NULL, NULL, 'https://nowhere.com'),
 
             -- 800s: int_price_events dedup — SRP side; pinned timestamp matches detail obs
-            (801, 801, %s, 'PE1', '2026-01-10 12:00:00+00'::timestamptz, '2026-01-10 12:00:00+00'::timestamptz,
+            (801, 801, %s, 'PE1', '2026-01-10 12:00:00+00'::timestamptz, 
+             '2026-01-10 12:00:00+00'::timestamptz,
              'PE0PRICEEVTDEDUP1', 'PE-Make', 'PE-Model', NULL, 22000, 'https://nowhere.com'),
 
             -- 900s: mart_vehicle_snapshot — honda/crv SRP-only, last seen 10 days ago
