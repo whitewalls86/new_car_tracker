@@ -429,7 +429,7 @@ def _seed_all(cur):
             -- AL1: detail (1h ago) fresher than SRP (2h ago) → detail wins
             (501, 502, 'AL1', now()-interval '1 hour',  'active',
              'VA0ATTRDETAIL0001', 'Attr-Make-DET', 'Attr-Model', 'DET-Trim', 28000, 45000),
-            -- AL3: detail (2h ago) older than SRP (1h ago), but detail source_priority=0 always wins
+            -- AL3: detail (2h ago) older than SRP (1h ago), detail source_priority=0 always wins
             (502, 505, 'AL3', now()-interval '2 hours', 'active',
              'VC0ATTRSRPFRESHER', 'Attr-Make-DET', 'Attr-Model', 'DET-Trim', 28000, 45000),
 

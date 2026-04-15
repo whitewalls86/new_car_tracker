@@ -51,7 +51,8 @@ def test_srp_only_attributes_source(analytics_ci_cur):
 
 
 def test_detail_wins_even_when_srp_fresher(analytics_ci_cur):
-    """VC0ATTRSRPFRESHER: SRP (1h) is fresher than detail (2h), but detail source_priority always wins."""
+    """VC0ATTRSRPFRESHER: SRP (1h) is fresher than detail (2h), 
+       detail source_priority always wins."""
     analytics_ci_cur.execute("""
         SELECT attributes_source, make, msrp
         FROM int_vehicle_attributes
