@@ -1,12 +1,14 @@
 """Unit tests for processors/scrape_results.py"""
 import html as html_lib
 import json
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, mock_open
 
 import pytest
 
+import scraper.processors.scrape_results as sr
 from scraper.processors.scrape_results import (
     BASE_URL,
+    _fetch_page,
     build_results_url,
     extract_results_paging_meta,
     scrape_results,
@@ -182,6 +184,7 @@ def _make_fetch_result(paging=None, stop=False, break_no_save=False, new_vins=0,
         "_new_vins_count": new_vins,
         "_stop": stop,
         "_break_no_save": break_no_save,
+        "_is_error": False,
     }
 
 
@@ -190,15 +193,9 @@ VALID_PAYLOAD = {"params": {"makes": ["Toyota"], "models": ["RAV4"]}}
 
 class TestScrapeResultsOrchestration:
     def _patch_infra(self, mocker, fetch_results):
-        mocker.patch("scraper.processors.scrape_results.get_context", return_value=MagicMock())
-        mocker.patch("scraper.processors.scrape_results.close_browser")
         mocker.patch("scraper.processors.scrape_results.time.sleep")
-        mocker.patch("scraper.processors.scrape_results.random_profile", return_value={
-            "user_agent": "ua", "extra_http_headers": {}, "viewport": {}, "locale": "en-US"
-        })
         mocker.patch("scraper.processors.scrape_results.random_zip", return_value="77002")
         mocker.patch("scraper.processors.scrape_results.human_delay", return_value=0.0)
-        mocker.patch("scraper.processors.scrape_results._bootstrap_cf_cookies", return_value=None)
         mocker.patch("os.makedirs")
         mocker.patch(
             "scraper.processors.scrape_results._fetch_page",
@@ -268,23 +265,10 @@ class TestScrapeResultsOrchestration:
             for key in artifact:
                 assert not key.startswith("_"), f"Private key leaked: {key}"
 
-    def test_close_browser_called_on_success(self, mocker):
-        p1 = _make_fetch_result(stop=True)
-        self._patch_infra(mocker, [p1])
-        mock_close = mocker.patch("scraper.processors.scrape_results.close_browser")
-        scrape_results("run1", "sk", "national", VALID_PAYLOAD)
-        mock_close.assert_called_once()
-
-    def test_close_browser_called_even_on_exception(self, mocker):
-        mocker.patch("scraper.processors.scrape_results.get_context", return_value=MagicMock())
-        mock_close = mocker.patch("scraper.processors.scrape_results.close_browser")
+    def test_exception_in_fetch_page_propagates(self, mocker):
         mocker.patch("scraper.processors.scrape_results.time.sleep")
-        mocker.patch("scraper.processors.scrape_results.random_profile", return_value={
-            "user_agent": "ua", "extra_http_headers": {}, "viewport": {}, "locale": "en-US"
-        })
         mocker.patch("scraper.processors.scrape_results.random_zip", return_value="77002")
         mocker.patch("scraper.processors.scrape_results.human_delay", return_value=0.0)
-        mocker.patch("scraper.processors.scrape_results._bootstrap_cf_cookies", return_value=None)
         mocker.patch("os.makedirs")
         mocker.patch(
             "scraper.processors.scrape_results._fetch_page",
@@ -292,7 +276,6 @@ class TestScrapeResultsOrchestration:
         )
         with pytest.raises(RuntimeError):
             scrape_results("run1", "sk", "national", VALID_PAYLOAD)
-        mock_close.assert_called_once()
 
     def test_result_includes_run_id_search_key_scope(self, mocker):
         p1 = _make_fetch_result(stop=True)
@@ -373,15 +356,9 @@ class TestScrapeResultsOrchestration:
 # ---------------------------------------------------------------------------
 class TestPage1Blocked:
     def _patch_infra(self, mocker, fetch_results):
-        mocker.patch("scraper.processors.scrape_results.get_context", return_value=MagicMock())
-        mocker.patch("scraper.processors.scrape_results.close_browser")
         mocker.patch("scraper.processors.scrape_results.time.sleep")
-        mocker.patch("scraper.processors.scrape_results.random_profile", return_value={
-            "user_agent": "ua", "extra_http_headers": {}, "viewport": {}, "locale": "en-US"
-        })
         mocker.patch("scraper.processors.scrape_results.random_zip", return_value="77002")
         mocker.patch("scraper.processors.scrape_results.human_delay", return_value=0.0)
-        mocker.patch("scraper.processors.scrape_results._bootstrap_cf_cookies", return_value=None)
         mocker.patch("os.makedirs")
         mocker.patch(
             "scraper.processors.scrape_results._fetch_page",
@@ -424,3 +401,295 @@ class TestPage1Blocked:
             self._patch_infra(mocker, fetch)
             result = scrape_results("run1", "sk", "national", VALID_PAYLOAD)
             assert "page_1_blocked" in result, "page_1_blocked missing from response"
+
+
+# ---------------------------------------------------------------------------
+# _fetch_page — inner SRP page fetcher
+# ---------------------------------------------------------------------------
+
+_PAGE_URL = "https://www.cars.com/shopping/results/?page=3"
+_RUN_DIR = "/data/raw/run_test"
+_SEARCH_KEY = "ford-escape"
+_SCOPE = "national"
+_PAGE_NUM = 3
+
+
+def _make_ctrl_html(page_num: int, total_pages: int = 5, page_size: int = 20,
+                    total_listings: int = 100) -> bytes:
+    """Minimal Cars.com SearchController JSON block for paging tests."""
+    data = {
+        "srp_results": {
+            "metadata": {
+                "page": page_num,
+                "total_listings": total_listings,
+                "page_size": page_size,
+                "total_pages": total_pages,
+            }
+        }
+    }
+    return (
+        f'<script id="CarsWeb.SearchController.index" type="application/json">'
+        f'{json.dumps(data)}</script>'
+    ).encode()
+
+
+class TestFetchPage:
+    @pytest.fixture(autouse=True)
+    def reset_penalty(self):
+        sr._srp_adaptive_penalty = 0.0
+        yield
+        sr._srp_adaptive_penalty = 0.0
+
+    def _mock_http(self, mocker, status=200, content=b"<html></html>",
+                   content_type="text/html"):
+        """Wire up a fake HTTP response via make_cf_session / get_cf_credentials."""
+        mock_resp = MagicMock()
+        mock_resp.status_code = status
+        mock_resp.content = content
+        mock_resp.headers = {"content-type": content_type}
+
+        mock_session = MagicMock()
+        mock_session.get.return_value = mock_resp
+
+        mocker.patch(
+            "scraper.processors.scrape_results.get_cf_credentials",
+            return_value=({"cookies": {}, "user_agent": "ua"}, None, None),
+        )
+        mocker.patch(
+            "scraper.processors.scrape_results.make_cf_session",
+            return_value=mock_session,
+        )
+        return mock_session, mock_resp
+
+    def test_success_200_artifact_fields(self, mocker):
+        mocker.patch("builtins.open", mock_open())
+        self._mock_http(mocker, 200, b"<html></html>")
+
+        result = _fetch_page(_PAGE_URL, _RUN_DIR, _SEARCH_KEY, _SCOPE, _PAGE_NUM, set())
+
+        assert result["http_status"] == 200
+        assert result["error"] is None
+        assert result["_is_error"] is False
+        assert result["source"] == "cars.com"
+        assert result["artifact_type"] == "results_page"
+        assert result["search_key"] == _SEARCH_KEY
+        assert result["search_scope"] == _SCOPE
+        assert result["page_num"] == _PAGE_NUM
+
+    def test_success_sha256_populated(self, mocker):
+        mocker.patch("builtins.open", mock_open())
+        self._mock_http(mocker, 200, b"<html>content</html>")
+
+        result = _fetch_page(_PAGE_URL, _RUN_DIR, _SEARCH_KEY, _SCOPE, _PAGE_NUM, set())
+
+        assert result["sha256"] is not None
+        assert len(result["sha256"]) == 64
+
+    def test_file_written_with_status_in_name(self, mocker):
+        mock_open_fn = mock_open()
+        mocker.patch("builtins.open", mock_open_fn)
+        self._mock_http(mocker, 200, b"<html></html>")
+
+        _fetch_page(_PAGE_URL, _RUN_DIR, _SEARCH_KEY, _SCOPE, _PAGE_NUM, set())
+
+        open_calls = [str(c) for c in mock_open_fn.call_args_list]
+        assert any(f"page_{_PAGE_NUM:04d}" in c and "__200" in c for c in open_calls)
+
+    def test_non_200_sets_is_error_and_stop(self, mocker):
+        mocker.patch("builtins.open", mock_open())
+        self._mock_http(mocker, 404, b"not found")
+
+        result = _fetch_page(_PAGE_URL, _RUN_DIR, _SEARCH_KEY, _SCOPE, _PAGE_NUM, set())
+
+        assert result["http_status"] == 404
+        assert result["_is_error"] is True
+        assert result["_stop"] is True
+        assert result["error"] == "HTTP 404"
+
+    def test_403_retry_succeeds_and_invalidates_credentials(self, mocker):
+        mocker.patch("builtins.open", mock_open())
+
+        resp_403 = MagicMock()
+        resp_403.status_code = 403
+        resp_403.content = b"blocked"
+        resp_403.headers = {}
+
+        resp_200 = MagicMock()
+        resp_200.status_code = 200
+        resp_200.content = b"<html></html>"
+        resp_200.headers = {"content-type": "text/html"}
+
+        mock_session = MagicMock()
+        mock_session.get.side_effect = [resp_403, resp_200]
+
+        mocker.patch(
+            "scraper.processors.scrape_results.get_cf_credentials",
+            return_value=({"cookies": {}, "user_agent": "ua"}, None, None),
+        )
+        mocker.patch(
+            "scraper.processors.scrape_results.make_cf_session",
+            return_value=mock_session,
+        )
+        mock_invalidate = mocker.patch(
+            "scraper.processors.scrape_results.invalidate_cf_credentials"
+        )
+
+        result = _fetch_page(_PAGE_URL, _RUN_DIR, _SEARCH_KEY, _SCOPE, _PAGE_NUM, set())
+
+        mock_invalidate.assert_called_once()
+        assert result["http_status"] == 200
+        assert result["_is_error"] is False
+
+    def test_403_retry_still_403_returns_error(self, mocker):
+        mocker.patch("builtins.open", mock_open())
+
+        resp_403 = MagicMock()
+        resp_403.status_code = 403
+        resp_403.content = b"blocked"
+        resp_403.headers = {}
+
+        mock_session = MagicMock()
+        mock_session.get.return_value = resp_403
+
+        mocker.patch(
+            "scraper.processors.scrape_results.get_cf_credentials",
+            return_value=({"cookies": {}, "user_agent": "ua"}, None, None),
+        )
+        mocker.patch(
+            "scraper.processors.scrape_results.make_cf_session",
+            return_value=mock_session,
+        )
+        mocker.patch("scraper.processors.scrape_results.invalidate_cf_credentials")
+
+        result = _fetch_page(_PAGE_URL, _RUN_DIR, _SEARCH_KEY, _SCOPE, _PAGE_NUM, set())
+
+        assert result["_is_error"] is True
+        assert "403" in result["error"]
+
+    def test_403_backs_off_srp_penalty(self, mocker):
+        mocker.patch("builtins.open", mock_open())
+
+        resp_403 = MagicMock()
+        resp_403.status_code = 403
+        resp_403.content = b"blocked"
+        resp_403.headers = {}
+
+        mock_session = MagicMock()
+        mock_session.get.return_value = resp_403
+
+        mocker.patch(
+            "scraper.processors.scrape_results.get_cf_credentials",
+            return_value=({"cookies": {}, "user_agent": "ua"}, None, None),
+        )
+        mocker.patch(
+            "scraper.processors.scrape_results.make_cf_session",
+            return_value=mock_session,
+        )
+        mocker.patch("scraper.processors.scrape_results.invalidate_cf_credentials")
+
+        sr._srp_adaptive_penalty = 0.0
+        _fetch_page(_PAGE_URL, _RUN_DIR, _SEARCH_KEY, _SCOPE, _PAGE_NUM, set())
+        assert sr._srp_adaptive_penalty >= 45.0
+
+    def test_transient_error_retries_after_sleep(self, mocker):
+        mocker.patch("builtins.open", mock_open())
+        mock_sleep = mocker.patch("scraper.processors.scrape_results.time.sleep")
+
+        resp_200 = MagicMock()
+        resp_200.status_code = 200
+        resp_200.content = b"<html></html>"
+        resp_200.headers = {}
+
+        mock_session = MagicMock()
+        mock_session.get.side_effect = [ConnectionError("timeout"), resp_200]
+
+        mocker.patch(
+            "scraper.processors.scrape_results.get_cf_credentials",
+            return_value=({"cookies": {}, "user_agent": "ua"}, None, None),
+        )
+        mocker.patch(
+            "scraper.processors.scrape_results.make_cf_session",
+            return_value=mock_session,
+        )
+
+        result = _fetch_page(_PAGE_URL, _RUN_DIR, _SEARCH_KEY, _SCOPE, _PAGE_NUM, set())
+
+        mock_sleep.assert_called_with(10)
+        assert result["http_status"] == 200
+        assert result["_is_error"] is False
+
+    def test_transient_error_both_attempts_returns_error(self, mocker):
+        mocker.patch("builtins.open", mock_open())
+        mocker.patch("scraper.processors.scrape_results.time.sleep")
+
+        mock_session = MagicMock()
+        mock_session.get.side_effect = ConnectionError("refused")
+
+        mocker.patch(
+            "scraper.processors.scrape_results.get_cf_credentials",
+            return_value=({"cookies": {}, "user_agent": "ua"}, None, None),
+        )
+        mocker.patch(
+            "scraper.processors.scrape_results.make_cf_session",
+            return_value=mock_session,
+        )
+
+        result = _fetch_page(_PAGE_URL, _RUN_DIR, _SEARCH_KEY, _SCOPE, _PAGE_NUM, set())
+
+        assert result["_is_error"] is True
+        assert "ConnectionError" in result["error"]
+
+    def test_break_no_save_when_page_clamped(self, mocker):
+        # Cars.com returned page 1 but we requested page 3 → duplicate territory
+        html = _make_ctrl_html(page_num=1, total_pages=5)
+        mocker.patch("builtins.open", mock_open())
+        self._mock_http(mocker, 200, html)
+
+        result = _fetch_page(_PAGE_URL, _RUN_DIR, _SEARCH_KEY, _SCOPE, _PAGE_NUM, set())
+
+        assert result["_break_no_save"] is True
+
+    def test_stop_when_no_cards_on_page(self, mocker):
+        html = _make_ctrl_html(page_num=_PAGE_NUM, total_pages=5, page_size=0)
+        mocker.patch("builtins.open", mock_open())
+        self._mock_http(mocker, 200, html)
+
+        result = _fetch_page(_PAGE_URL, _RUN_DIR, _SEARCH_KEY, _SCOPE, _PAGE_NUM, set())
+
+        assert result["_stop"] is True
+
+    def test_stop_on_last_page(self, mocker):
+        # actual_page == total_pages → stop
+        html = _make_ctrl_html(page_num=5, total_pages=5)
+        mocker.patch("builtins.open", mock_open())
+        self._mock_http(mocker, 200, html)
+
+        result = _fetch_page(_PAGE_URL, _RUN_DIR, _SEARCH_KEY, _SCOPE, 5, set())
+
+        assert result["_stop"] is True
+
+    def test_vin_extraction(self, mocker):
+        vin = "1HGCM82633A123456"
+        html = f'<html><body><script>{{"vin": "{vin}"}}</script></body></html>'.encode()
+        mocker.patch("builtins.open", mock_open())
+        self._mock_http(mocker, 200, html)
+
+        result = _fetch_page(_PAGE_URL, _RUN_DIR, _SEARCH_KEY, _SCOPE, _PAGE_NUM, set())
+
+        assert vin in result["_page_vins"]
+        assert result["page_vins_total"] == 1
+
+    def test_known_vins_counted_as_new(self, mocker):
+        vin_known = "1HGCM82633A000001"
+        vin_new = "1HGCM82633A000002"
+        html = (
+            f'<script>{{"vin": "{vin_known}"}}{{"vin": "{vin_new}"}}</script>'
+        ).encode()
+        mocker.patch("builtins.open", mock_open())
+        self._mock_http(mocker, 200, html)
+
+        known = {vin_known}
+        result = _fetch_page(_PAGE_URL, _RUN_DIR, _SEARCH_KEY, _SCOPE, _PAGE_NUM, known)
+
+        assert result["page_vins_new"] == 1
+        assert result["page_vins_total"] == 2

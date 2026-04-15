@@ -110,8 +110,9 @@ def mock_async_pool(mocker):
 def mock_cf_session(mocker):
     """
     Mock for curl_cffi.requests.Session used by scrape_detail_fetch.
-    Also mocks _get_cf_session to return cached session (no bootstrap HTML),
-    forcing the code to use session.get() which can be verified in tests.
+    Patches make_cf_session (where it's imported in scrape_detail) to return a
+    controllable mock session, and patches get_cf_credentials to return a cache hit
+    (no bootstrap HTML), forcing the code into the session.get() path.
     Returns (mock_session, mock_response).
     """
     mock_resp = MagicMock()
@@ -123,13 +124,10 @@ def mock_cf_session(mocker):
     mock_session = MagicMock()
     mock_session.get.return_value = mock_resp
 
-    mocker.patch("scraper.processors.scrape_detail.cf_requests.Session", return_value=mock_session)
-
-    # Mock _get_cf_credentials to return a cache hit with dummy credentials.
-    # This forces _fetch_url to build a fresh Session (intercepted above) and call
-    # session.get(), so tests can verify the URL and kwargs passed to session.get().
+    # Patch where the names are used, not where they are defined.
+    mocker.patch("scraper.processors.scrape_detail.make_cf_session", return_value=mock_session)
     mocker.patch(
-        "scraper.processors.scrape_detail._get_cf_credentials",
+        "scraper.processors.scrape_detail.get_cf_credentials",
         return_value=({"cookies": {}, "user_agent": "test-ua"}, None, None),
     )
 

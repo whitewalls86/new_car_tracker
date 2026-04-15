@@ -34,7 +34,7 @@ Schedule Trigger (30 min)            Schedule Trigger (15 min)
   srp_observations                  dealers
 ```
 
-**Discovery mode:** SRP pages are sorted `listed_at_desc`. Page 1 is fetched first to learn the total page count, then remaining pages are fetched in **randomized order** to avoid sequential pagination fingerprinting. Pagination stops when a full 5-page rolling window averages < 1 new VIN per page. A single zero-new-VIN page does not stop the session — with random ordering, a high-numbered (older) page can appear before low-numbered pages that still have fresh listings. Max 30 pages per job. On Akamai rate-limit (`ERR_HTTP2_PROTOCOL_ERROR`), the scraper stops immediately and the job fails.
+**Discovery mode:** SRP pages are sorted `listed_at_desc`. Page 1 is fetched first to learn the total page count, then remaining pages are fetched in **randomized order** to avoid sequential pagination fingerprinting. Pagination stops when a full 5-page rolling window averages < 1 new VIN per page. A single zero-new-VIN page does not stop the session — with random ordering, a high-numbered (older) page can appear before low-numbered pages that still have fresh listings. Max 30 pages per job. On 3 consecutive page errors the job aborts and returns partial results.
 
 **403 cooldown:** Detail page 403s are tracked in `blocked_cooldown` with exponential backoff (12h base, doubles each attempt, fully blocked at 5 attempts). The `stg_blocked_cooldown` dbt model owns all backoff logic. `ops_detail_scrape_queue` filters out cooling and fully-blocked listings automatically.
 
@@ -45,10 +45,10 @@ Schedule Trigger (30 min)            Schedule Trigger (15 min)
 | Service | Port | Description |
 |---------|------|-------------|
 | **postgres** | 5432 | PostgreSQL 16 — all config, raw data, parsed observations, and analytics |
-| **scraper** | internal | FastAPI — fetches SRP pages via Patchright (Playwright fork) and detail pages via curl_cffi. Anti-fingerprinting: runs headed (non-headless) with a homepage warmup per session to establish Akamai cookies before hitting SRP URLs; rotates Chrome UA + sec-ch-ua headers, ZIP codes, viewports, human-like pacing (8–20s); per-thread profile directories. Async job queue with ThreadPoolExecutor. `/health` endpoint for service gate checks |
+| **scraper** | internal | FastAPI — fetches SRP and detail pages via curl_cffi (Chrome TLS fingerprint impersonation). FlareSolverr bootstraps `cf_clearance` cookies shared across both scrapers via a process-wide credential cache (25-min TTL). SRP: process-wide adaptive backoff (45–120s) on 403, per-job 40-min hard deadline, randomized page order, ZIP rotation, human-like pacing (8–20s). Detail: per-request adaptive delay, batch concurrency via ThreadPoolExecutor. Async job queue. `/health` endpoint for service gate checks |
 | **ops** | 8060 | FastAPI — admin UI (search config CRUD, run history, dbt action panel, log viewer, deploy coordination). Routes: `/admin/searches/`, `/admin/runs`, `/admin/dbt`, `/admin/logs`, `/admin/deploy` |
 | **n8n** | 5678 | Workflow orchestration — 13 workflows handle scraping, polling, parsing, cleanup, deploy gating, and error handling |
-| **flaresolverr** | internal | FlareSolverr — Cloudflare challenge solver used as a fallback for SRP pages that return 403s |
+| **flaresolverr** | internal | FlareSolverr — Cloudflare JS challenge solver. Bootstraps `cf_clearance` cookies used by both the SRP and detail scrapers. Process-wide credential cache; re-bootstraps automatically on 403 |
 | **dbt** | — | dbt-postgres — 25 models across staging/intermediate/mart/ops schemas. Code baked into image at build time. Runs on-demand via dbt_runner |
 | **dbt_runner** | internal | FastAPI wrapper that lets n8n trigger `dbt build` via HTTP. Database-level mutex (`dbt_lock` table) prevents concurrent builds — returns 409 if locked. Intent-based partial builds (e.g. `after_403` rebuilds only `stg_blocked_cooldown+`) |
 | **dashboard** | 8501 | Streamlit — 4-tab analytics dashboard (Pipeline Health, Inventory Overview, Deal Finder, Market Trends). Sidebar quicklinks to n8n, ops admin, pgAdmin |
@@ -160,7 +160,7 @@ Emails are stored as `SHA-256(AUTH_EMAIL_SALT + lowercase_email)` — not plaint
 ## Refresh Strategy
 
 - **Search scrapes** use slot-based rotation: 6 slots of 1-2 search configs each fire ~once per day. Two guards enforce spacing: `min_idle_minutes=1439` (23h59m per slot) and `min_gap_minutes=230` (~4h between any runs). The 30-min n8n schedule is a dumb clock; the scraper API is authoritative. Sort order is `listed_at_desc` (discovery mode).
-- **Discovery mode** stops pagination early when a full 5-page rolling window averages < 1 new VIN per page. Pages are fetched in **randomized order** after page 1 — a single zero-new-VIN page does not stop the session to avoid false-stopping on older pages sampled before newer ones. Max 30 pages per job. SRP scraping uses FlareSolverr as a fallback for 403 responses.
+- **Discovery mode** stops pagination early when a full 5-page rolling window averages < 1 new VIN per page. Pages are fetched in **randomized order** after page 1 — a single zero-new-VIN page does not stop the session to avoid false-stopping on older pages sampled before newer ones. Max 30 pages per job. SRP scraping uses curl_cffi + FlareSolverr-bootstrapped cookies; 403s trigger credential re-bootstrap and one inline retry before counting as a consecutive error.
 - **Detail scrapes** run every 15 minutes from `ops_detail_scrape_queue`. Priority 1: one stale VIN per dealer. Priority 2: force-grab vehicles >36h stale (bypasses one-per-dealer rule). Priority 3: unmapped carousel hints fill remaining capacity. Batch capped at 1,500 listings. Atomic `detail_scrape_claims` prevents duplicate work across parallel runs. 403'd listings enter exponential backoff cooldown.
 - **Price data** is stale after 24 hours; **full details** after 7 days.
 - **dbt builds** run incrementally after each detail scrape. The `dbt_lock` mutex prevents concurrent builds — if locked, n8n retries every 30 seconds. Intent-based partial builds (e.g. `after_403`) rebuild only the affected model subgraph.
@@ -181,7 +181,7 @@ Access is gated by Google OAuth2 + role-based authorization. Request access at h
 
 ## Testing
 
-589 tests across two categories. Run from repo root:
+606 tests across two categories. Run from repo root:
 
 ```bash
 # Unit tests only (no database required)
@@ -192,11 +192,11 @@ TEST_DATABASE_URL=postgresql://cartracker:cartracker@localhost:5432/cartracker \
   pytest tests/integration/ -m integration
 ```
 
-### Unit Tests (518)
+### Unit Tests (535)
 
 | Suite | Coverage |
 |-------|----------|
-| `tests/scraper/` | Rotation guards, discovery mode, VIN breakpoint (rolling average, random-order safety), page_1_blocked retry signal, processors, browser/fingerprint |
+| `tests/scraper/` | Rotation guards, discovery mode, VIN breakpoint (rolling average, random-order safety), page_1_blocked retry signal, processors (`_fetch_page` retry/403/timeout paths, `cf_session` credential cache + FlareSolverr bootstrap, fingerprint) |
 | `tests/dbt_runner/` | Token validation, intent logic, lock behavior |
 | `tests/ops/` | Admin form parsing, deploy intent coordination |
 | `tests/shared/` | DB connection helpers |
@@ -221,12 +221,12 @@ cartracker-scraper/
     app.py                      # FastAPI — async job queue, scrape endpoints, /health
     db.py                       # asyncpg connection pool
     processors/
-      scrape_results.py         # SRP fetcher — discovery mode, VIN breakpoint
-      scrape_detail.py          # Detail fetcher (curl_cffi, FlareSolverr fallback)
+      scrape_results.py         # SRP fetcher — discovery mode, VIN breakpoint, adaptive backoff
+      scrape_detail.py          # Detail fetcher — curl_cffi, adaptive delay, batch concurrency
+      cf_session.py             # Shared CF session utilities — FlareSolverr bootstrap, credential cache
       parse_detail_page.py      # Detail HTML parser
       results_page_cards.py     # SRP HTML parser
-      browser.py                # Patchright browser (per-thread singleton)
-      fingerprint.py            # UA/sec-ch-ua/viewport/ZIP rotation
+      fingerprint.py            # ZIP rotation, human-like pacing
       cleanup_artifacts.py      # Artifact retention logic
     models/                     # Pydantic models
   ops/                          # Admin UI + deploy coordination

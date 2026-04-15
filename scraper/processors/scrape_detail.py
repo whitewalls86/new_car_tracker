@@ -7,76 +7,14 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
-from curl_cffi import requests as cf_requests
-
-# Fallback curl_cffi impersonation target used when FlareSolverr is disabled or
-# before credentials have been bootstrapped.  The active target is derived
-# dynamically from FlareSolverr's reported user-agent so the TLS fingerprint
-# always matches the browser that generated the cf_clearance cookie.
-_BROWSER_IMPERSONATE_FALLBACK = "chrome142"
-
-# Sorted list of (major_version, curl_cffi_target) for desktop Chrome targets only.
-# Update when new curl_cffi releases add targets.
-_CHROME_CFFI_TARGETS: List[Tuple[int, str]] = sorted([
-    (99,  "chrome99"),
-    (100, "chrome100"),
-    (101, "chrome101"),
-    (104, "chrome104"),
-    (107, "chrome107"),
-    (110, "chrome110"),
-    (116, "chrome116"),
-    (119, "chrome119"),
-    (120, "chrome120"),
-    (123, "chrome123"),
-    (124, "chrome124"),
-    (131, "chrome131"),
-    (136, "chrome136"),
-    (142, "chrome142"),
-    (145, "chrome145"),
-    (146, "chrome146"),
-])
-
-
-def _cffi_target_for_ua(user_agent: str) -> str:
-    """Return the best curl_cffi impersonation target for a given user-agent string.
-
-    Parses the Chrome major version and picks an exact match, falling back to the
-    nearest lower version so the TLS fingerprint stays consistent with the browser
-    that generated the cf_clearance cookie.
-    """
-    import re
-    m = re.search(r"Chrome/(\d+)\.", user_agent)
-    if not m:
-        return _BROWSER_IMPERSONATE_FALLBACK
-    version = int(m.group(1))
-    # Exact match
-    for v, target in _CHROME_CFFI_TARGETS:
-        if v == version:
-            return target
-    # Nearest lower version
-    lower = [(v, t) for v, t in _CHROME_CFFI_TARGETS if v < version]
-    if lower:
-        return lower[-1][1]
-    # Nearest higher version (version is older than anything we know)
-    return _CHROME_CFFI_TARGETS[0][1]
-
-# FlareSolverr is used to solve the Cloudflare JS challenge on the first request
-# of a batch, then we reuse the resulting cookies for all subsequent curl_cffi fetches.
-# Set FLARESOLVERR_URL to empty string to disable and fall back to plain curl_cffi.
-FLARESOLVERR_URL = os.environ.get("FLARESOLVERR_URL", "http://flaresolverr:8191")
-
-# cf_clearance cookies are typically valid for ~30 minutes from the same IP.
-# We conservatively expire the cached credentials at 25 minutes to avoid edge cases.
-_CF_SESSION_TTL = 25 * 60  # seconds
-
-# Credentials cache: cookies + user-agent from FlareSolverr.
-# Each _fetch_url call creates a fresh curl_cffi Session from these — curl_cffi
-# Sessions are not thread-safe for concurrent use, so we never share Session objects.
-_cf_credentials_lock = threading.Lock()
-_cf_credentials: Optional[Dict[str, Any]] = None  # {"cookies": {...}, "user_agent": "..."}
-_cf_credentials_expires_at: float = 0.0
+from scraper.processors.cf_session import (
+    FLARESOLVERR_URL,
+    get_cf_credentials,
+    invalidate_cf_credentials,
+    make_cf_session,
+)
 
 # Adaptive delay for detail fetches: backs off on 403, recovers on success.
 _detail_delay_lock = threading.Lock()
@@ -87,75 +25,6 @@ logger = logging.getLogger("scraper")
 
 def _sha256_bytes(b: bytes) -> str:
     return hashlib.sha256(b).hexdigest()
-
-
-def _get_cf_credentials(url: str, timeout_s: int) \
-    -> Tuple[Optional[Dict[str, Any]], Optional[bytes], Optional[int]]:
-    """
-    Returns CF credentials (cookies + user-agent) needed to bypass Cloudflare.
-
-    Two cases:
-    - Cache hit (credentials still valid): returns (credentials, None, None).
-      Caller must fetch url itself using a fresh Session built from credentials.
-    - Cache miss (expired or first call): calls FlareSolverr, returns
-      (credentials, html_bytes, http_status). Caller should use html_bytes directly
-      as the artifact for url — no duplicate fetch needed.
-
-    Returns (None, None, None) if FLARESOLVERR_URL is not configured.
-    """
-    global _cf_credentials, _cf_credentials_expires_at
-
-    if not FLARESOLVERR_URL:
-        return None, None, None
-
-    with _cf_credentials_lock:
-        now = time.monotonic()
-        if _cf_credentials is not None and now < _cf_credentials_expires_at:
-            return _cf_credentials, None, None
-
-        # Cache miss — call FlareSolverr
-        import requests as stdlib_requests
-
-        resp = stdlib_requests.post(
-            f"{FLARESOLVERR_URL}/v1",
-            json={"cmd": "request.get", "url": url, "maxTimeout": timeout_s * 1000},
-            timeout=timeout_s + 15,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-
-        if data.get("status") != "ok":
-            raise RuntimeError(f"FlareSolverr failed: {data.get('message', data)}")
-
-        solution = data["solution"]
-        user_agent = solution["userAgent"]
-        html = (solution.get("response") or "").encode("utf-8")
-        http_status = solution.get("status", 200)
-        cookies = {c["name"]: c["value"] for c in solution.get("cookies", [])}
-
-        _cf_credentials = {"cookies": cookies, "user_agent": user_agent}
-        _cf_credentials_expires_at = now + _CF_SESSION_TTL
-
-        logger.info(
-            "FlareSolverr bootstrapped CF credentials (status=%s, cookies=%s)",
-            http_status,
-            list(cookies.keys()),
-        )
-        return _cf_credentials, html, http_status
-
-
-def _invalidate_cf_credentials() -> None:
-    """
-    Force-expire cached CF credentials so the next _get_cf_credentials call
-    triggers a FlareSolverr re-bootstrap.
-
-    Called after a 403 response to handle the case where Cloudflare invalidated
-    the cf_clearance cookie before the normal 25-minute TTL.
-    """
-    global _cf_credentials_expires_at
-    with _cf_credentials_lock:
-        _cf_credentials_expires_at = 0.0
-    logger.warning("CF credentials invalidated — next fetch will re-bootstrap via FlareSolverr")
 
 
 def _update_detail_delay(is_403: bool) -> None:
@@ -179,33 +48,17 @@ def _update_detail_delay(is_403: bool) -> None:
         logger.info("Adaptive delay recovering: %.2fs → %.2fs (success)", old, new)
 
 
-def _fetch_url(url: str, timeout_s: int) -> Tuple[bytes, int, Optional[str], str]:
-    """
-    Fetches url using a Cloudflare-bootstrapped curl_cffi session (if FLARESOLVERR_URL
-    is set), or a plain curl_cffi session as fallback.
-
-    A fresh Session is created per call from the cached credentials so concurrent
-    callers never share a Session object (curl_cffi Sessions are not thread-safe).
+def _fetch_url(url: str, timeout_s: int) -> tuple[bytes, int, Optional[str], str]:
+    """Fetch url using a CF-bootstrapped curl_cffi session, or plain curl_cffi fallback.
 
     Returns (content_bytes, http_status, content_type, final_url).
     """
     if FLARESOLVERR_URL:
         try:
-            credentials, bootstrap_html, bootstrap_status = _get_cf_credentials(url, timeout_s)
+            credentials, bootstrap_html, bootstrap_status = get_cf_credentials(url, timeout_s)
             if bootstrap_html is not None:
-                # FlareSolverr fetched this URL for us — reuse the response
                 return bootstrap_html, bootstrap_status, "text/html; charset=utf-8", url
-            # Cache hit — build a fresh session from shared credentials
-            impersonate = (
-                _cffi_target_for_ua(credentials["user_agent"]) 
-                if credentials 
-                else _BROWSER_IMPERSONATE_FALLBACK
-            )
-            session = cf_requests.Session(impersonate=impersonate)
-            if credentials:
-                session.headers.update({"User-Agent": credentials["user_agent"]})
-                for name, value in credentials["cookies"].items():
-                    session.cookies.set(name, value)
+            session = make_cf_session(credentials)
             resp = session.get(url, timeout=timeout_s, allow_redirects=True)
             content = resp.content or b""
             return content, resp.status_code, resp.headers.get("content-type"), str(resp.url)
@@ -214,8 +67,7 @@ def _fetch_url(url: str, timeout_s: int) -> Tuple[bytes, int, Optional[str], str
                 "FlareSolverr/CF session failed (%s), falling back to plain curl_cffi", e
             )
 
-    # Plain curl_cffi fallback (no FlareSolverr)
-    session = cf_requests.Session(impersonate=_BROWSER_IMPERSONATE_FALLBACK)
+    session = make_cf_session(None)
     resp = session.get(url, timeout=timeout_s, allow_redirects=True)
     content = resp.content or b""
     return content, resp.status_code, resp.headers.get("content-type"), str(resp.url)
@@ -383,7 +235,7 @@ def scrape_detail_batch(
         is_403 = any(a.get("http_status") == 403 for a in result.get("artifacts", []))
         _update_detail_delay(is_403)
         if is_403:
-            _invalidate_cf_credentials()
+            invalidate_cf_credentials()
         return result
 
     all_artifacts: List[Dict[str, Any]] = []

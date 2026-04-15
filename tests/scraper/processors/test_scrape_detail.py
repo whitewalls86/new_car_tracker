@@ -3,6 +3,7 @@ from unittest.mock import MagicMock, mock_open
 
 import pytest
 
+import scraper.processors.cf_session as cf_session
 import scraper.processors.scrape_detail as sd
 from scraper.processors.scrape_detail import (
     scrape_detail_batch,
@@ -145,12 +146,11 @@ class TestScrapeDetailFetch:
         mocker.patch("builtins.open", mock_open_fn)
         mock_session = MagicMock(get=MagicMock(side_effect=ConnectionError("refused")))
         mocker.patch(
-            "scraper.processors.scrape_detail.cf_requests.Session",
+            "scraper.processors.scrape_detail.make_cf_session",
             return_value=mock_session,
         )
-        # Mock _get_cf_credentials to return a cache hit so _fetch_url calls session.get()
         mocker.patch(
-            "scraper.processors.scrape_detail._get_cf_credentials",
+            "scraper.processors.scrape_detail.get_cf_credentials",
             return_value=({"cookies": {}, "user_agent": "test-ua"}, None, None),
         )
 
@@ -343,9 +343,9 @@ class TestScrapeDetailBatch:
         mock_resp.url = "https://www.cars.com/vehicledetail/l4/"
         mock_resp.headers = {}
 
-        sd._cf_credentials_expires_at = 9999999999.0  # set far future
+        cf_session._cf_credentials_expires_at = 9999999999.0  # set far future
         scrape_detail_batch(run_id=RUN_ID, batch_id=BATCH_ID, listings=[{"listing_id": "l4"}])
-        assert sd._cf_credentials_expires_at == 0.0
+        assert cf_session._cf_credentials_expires_at == 0.0
 
     def test_meta_has_required_keys(self, mock_cf_session, mocker):
         mocker.patch("os.makedirs")
@@ -382,20 +382,20 @@ class TestScrapeDetailBatch:
 
 
 # ---------------------------------------------------------------------------
-# _cffi_target_for_ua
+# cffi_target_for_ua  (lives in cf_session after refactor)
 # ---------------------------------------------------------------------------
 class TestCffiTargetForUa:
     def test_exact_match(self):
-        assert sd._cffi_target_for_ua("Mozilla/5.0 Chrome/142.0.0.0") == "chrome142"
+        assert cf_session.cffi_target_for_ua("Mozilla/5.0 Chrome/142.0.0.0") == "chrome142"
 
     def test_non_chrome_returns_fallback(self):
-        result = sd._cffi_target_for_ua("Mozilla/5.0 Firefox/120.0")
-        assert result == sd._BROWSER_IMPERSONATE_FALLBACK
+        result = cf_session.cffi_target_for_ua("Mozilla/5.0 Firefox/120.0")
+        assert result == cf_session.BROWSER_IMPERSONATE_FALLBACK
 
     def test_version_between_targets_returns_nearest_lower(self):
         # 135 is between 131 and 136 in _CHROME_CFFI_TARGETS
-        assert sd._cffi_target_for_ua("Chrome/135.0.0.0") == "chrome131"
+        assert cf_session.cffi_target_for_ua("Chrome/135.0.0.0") == "chrome131"
 
     def test_version_older_than_all_targets(self):
         # 50 is older than the lowest known target (99)
-        assert sd._cffi_target_for_ua("Chrome/50.0.0.0") == "chrome99"
+        assert cf_session.cffi_target_for_ua("Chrome/50.0.0.0") == "chrome99"
