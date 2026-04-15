@@ -1,6 +1,6 @@
 # Plan 84: Integration Testing
 
-**Status:** In Progress — Layer 1 complete (71 tests), Layer 2 planned, Layer 3 planned
+**Status:** In Progress — Layer 1 complete (71 tests), Layer 2 Phase 1–2 complete, Layer 2 Phase 3 planned, Layer 3 planned
 **Priority:** High — fills the largest credibility gap in the test suite
 **Absorbs:** Plan 77 (SQL query smoke tests)
 
@@ -190,27 +190,46 @@ Assert within a small tolerance (±0.01) to handle floating-point representation
 
 ---
 
-#### Test 6 — `mart_deal_scores` (table model — deferred to Phase 2)
+#### Test 6 — `mart_deal_scores` ✅
 
-`mart_deal_scores` has the widest DAG of any model — it depends on `mart_vehicle_snapshot`, `int_vehicle_attributes`, `int_listing_days_on_market`, `int_price_history_by_vin`, `int_model_price_benchmarks`, `int_dealer_inventory`, `int_price_percentiles_by_vin`, and `stg_dealers`. A meaningful test requires seeding all of these source chains.
+Implemented in `test_deal_scores.py`. Seed uses a unified session fixture shared with all other Layer 2 tests (see Infrastructure notes below).
 
-**Defer until after tests 1–5 are stable.** The deal score formula is fully deterministic once upstream models are correct, so tests on `int_price_percentiles_by_vin` and `ops_vehicle_staleness` provide intermediate coverage.
+- **Seed:** 1 target VIN in a 5-listing honda/crv/Hybrid national cohort; msrp=50000, price=35000 (30% discount); first SRP obs 45 days ago; price history 40k→38k→35k (2 drops); detail obs active at 1h ago.
+- **Assertions:**
+  - `test_deal_score_value` — score within ±3 of manually calculated 79.2
+  - `test_deal_tier_excellent` — `deal_tier = 'excellent'` (score ≥ 70)
+  - `test_deal_score_in_bounds` — all rows in table have `deal_score` between 0 and 100
+  - `test_msrp_discount_component` — `msrp_discount_pct` ≈ 30%
+  - `test_price_drop_count` — exactly 2 drops
+  - `test_days_on_market` — 44–46 days
 
-When implemented:
-- Seed: 1 VIN in a 5-listing national cohort at the 10th percentile; 30% MSRP discount; 45 days on market; 2 price drops
-- Assert: `deal_score` within ±2 of the manually calculated value; `deal_tier = 'excellent'`
+**Score breakdown:** MSRP (35) + percentile (30) + DOM (7.5) + drops (6.67) + supply (0.05) ≈ 79.2
+
+---
+
+#### Infrastructure change: unified session seed
+
+All Layer 2 dbt tests share a single session-scoped `seed_and_build` fixture in `conftest.py`. One `dbt build` runs at session start; all test modules only contain assertions.
+
+Seed ID scheme prevents primary key conflicts across groups:
+- `1xx` — VIN mapping scenarios
+- `2xx` — price percentile cohort (Test-Make/Test-Model)
+- `3xx` — ops/staleness scenarios (honda/crv)
+- `4xx` — deal scores target + cohort (honda/crv/Hybrid)
+
+dbt selector: `+mart_deal_scores +ops_detail_scrape_queue` — covers the full DAG for all implemented tests.
 
 ---
 
 #### Files
 
 ```
-tests/integration/dbt/conftest.py          # autocommit conn, run_dbt(), analytics_ci_cur
-tests/integration/dbt/test_cooldown.py     # stg_blocked_cooldown scenarios (no dbt build)
-tests/integration/dbt/test_vin_mapping.py  # int_listing_to_vin
-tests/integration/dbt/test_price_percentiles.py  # int_price_percentiles_by_vin
-tests/integration/dbt/test_vehicle_staleness.py  # ops_vehicle_staleness
-tests/integration/dbt/test_scrape_queue.py # ops_detail_scrape_queue
+tests/integration/dbt/conftest.py               # session seed + dbt build, analytics_ci_cur
+tests/integration/dbt/test_cooldown.py          # stg_blocked_cooldown (Layer 1 fixtures, no dbt build)
+tests/integration/dbt/test_vin_mapping.py       # int_listing_to_vin
+tests/integration/dbt/test_price_percentiles.py # int_price_percentiles_by_vin
+tests/integration/dbt/test_ops.py               # ops_vehicle_staleness + ops_detail_scrape_queue
+tests/integration/dbt/test_deal_scores.py       # mart_deal_scores
 ```
 
 #### CI changes needed for Layer 2
@@ -317,11 +336,127 @@ integration-tests:
 ## Rollout Order
 
 1. **Layer 1** ✅ — 71 SQL smoke tests implemented. Catches the next schema-breaking migration before it merges.
-2. **Layer 2a** — `test_cooldown.py` (no dbt build, uses Layer 1 fixtures), then `test_vin_mapping.py` (simplest DAG). Builds Layer 2 conftest infrastructure.
-3. **Layer 2b** — `test_price_percentiles.py` + `test_vehicle_staleness.py`. Operationally critical; if `ops_vehicle_staleness` is wrong, the scrape queue misfires.
-4. **Layer 2c** — `test_scrape_queue.py`. Depends on 2b being stable.
-5. **Layer 2d** — `test_deal_scores.py` (wide DAG, defer until 2a–2c are done).
+2. **Layer 2a** ✅ — `test_cooldown.py` + `test_vin_mapping.py`. Built Layer 2 conftest infrastructure.
+3. **Layer 2b** ✅ — `test_price_percentiles.py` + `test_ops.py` (staleness + queue).
+4. **Layer 2c** ✅ — `test_deal_scores.py`. Unified session seed introduced; all modules share one dbt build.
+5. **Layer 2d** — Intermediate model coverage (see Phase 3 below).
 6. **Layer 3** — ops API integration tests. Builds on DB fixture infrastructure from Layers 1–2.
+
+---
+
+---
+
+## Layer 2 Phase 3 — Intermediate Model Coverage
+
+The tests above exercise the operational outputs (`ops_*`) and the final mart (`mart_deal_scores`). The intermediate models that feed them contain their own logic that is currently invisible to the test suite. Errors in these models corrupt deal scores and ops queues in ways the existing tests would not catch.
+
+All Phase 3 tests extend the existing session seed and `conftest.py` — no new infrastructure required.
+
+---
+
+### High-priority gaps
+
+#### Test 7 — `int_vehicle_attributes` — source priority
+
+**Why it matters:** `int_vehicle_attributes` resolves the authoritative make/model/trim/msrp/dealer per VIN using `detail > SRP` priority. If SRP data overwrites a detail scrape, dealer enrichment breaks and downstream deal scores use wrong attributes.
+
+**Scenarios:**
+| Scenario | Seed | Expected |
+|---|---|---|
+| Detail wins | SRP + detail for same VIN, detail is fresher | `attributes_source = 'detail'` |
+| SRP-only | SRP observation, no detail | `attributes_source = 'srp'` |
+| Detail older than SRP | Both present, SRP is fresher | `attributes_source = 'detail'` (detail always wins regardless of recency) |
+
+**Assertions:** query `analytics_ci.int_vehicle_attributes` by VIN; assert `attributes_source`, `make`, `model`, `msrp` match the detail observation values in the detail-wins scenarios.
+
+**File:** `tests/integration/dbt/test_vehicle_attributes.py`
+
+---
+
+#### Test 8 — `int_price_history_by_vin` — price trajectory
+
+**Why it matters:** `price_drop_count` feeds 10 pts of the deal score. The `LAG()` ordering uses `(observed_at, artifact_id)` — if ordering is wrong, drops are miscounted. The deal score test seeds a known sequence but doesn't isolate this model.
+
+**Scenario:** Seed 1 VIN with 5 price events in known order: 100 → 120 → 90 → 90 → 110.
+
+**Expected:**
+- `price_drop_count = 1` (120→90 is the only drop; 90→90 is flat; 90→110 is an increase)
+- `price_increase_count = 2` (100→120, 90→110)
+- `first_price = 100`
+- `min_price = 90`, `max_price = 120`
+
+**File:** `tests/integration/dbt/test_price_history.py`
+
+---
+
+#### Test 9 — `int_listing_days_on_market` — first-seen correctness
+
+**Why it matters:** `days_on_market` is 15 pts of the deal score. `first_seen_at` is computed as the minimum `fetched_at` across SRP, detail, and carousel observations. If carousel or a later SRP observation backdates it incorrectly, DOM is inflated.
+
+**Scenarios:**
+| Scenario | Seed | Expected |
+|---|---|---|
+| SRP only | 3 SRP obs at t-10d, t-5d, t-1d | `first_seen_at ≈ t-10d`, `days_on_market ≈ 10` |
+| Detail extends | Add detail at t-3d | `first_seen_at` unchanged (SRP was earlier) |
+| National vs local | Add local SRP at t-2d | `first_seen_local_at ≈ t-2d`, `first_seen_national_at ≈ t-10d` |
+
+**Assertions:** `first_seen_at ≤ all individual observation timestamps`; `first_seen_national_at ≤ first_seen_local_at` when both present.
+
+**File:** `tests/integration/dbt/test_days_on_market.py`
+
+---
+
+#### Test 10 — `int_price_events` — union completeness and dedup
+
+**Why it matters:** `int_price_events` is the canonical price feed unioning SRP, detail, and carousel sources. Dedup uses `DISTINCT ON (vin, observed_at, price)` with detail > SRP > carousel priority. If a price event is dropped or duplicated, `int_price_history_by_vin` and `int_latest_price_by_vin` are silently wrong.
+
+**Scenarios:**
+| Scenario | Seed | Expected |
+|---|---|---|
+| SRP-only price | SRP obs with price | 1 row in output |
+| Detail-only price | Detail obs with price | 1 row in output |
+| Same VIN, same timestamp, same price from SRP + detail | Both sources | 1 row (deduped), `source = 'detail'` |
+| Two distinct prices for same VIN at different times | SRP @t-2d + SRP @t-1d | 2 rows |
+
+**Assertions:** count of output rows matches expected; `source` field reflects priority correctly on deduped rows.
+
+**File:** `tests/integration/dbt/test_price_events.py`
+
+---
+
+#### Test 11 — `mart_vehicle_snapshot` — listing state inference
+
+**Why it matters:** `mart_vehicle_snapshot` infers `listing_state = 'active'` for SRP-only VINs seen within 7 days, and `'unlisted'` for older ones. `ops_vehicle_staleness` filters out `unlisted` VINs, so wrong state = missing scrape targets.
+
+**Scenarios:**
+| Scenario | Seed | Expected `listing_state` |
+|---|---|---|
+| Detail with explicit state | Detail obs, `listing_state='active'` | `'active'` |
+| SRP-only, seen 2 days ago | SRP only, `fetched_at = now()-2d` | `'active'` (inferred) |
+| SRP-only, seen 10 days ago | SRP only, `fetched_at = now()-10d` | `'unlisted'` (inferred) |
+
+**Assertions:** query `analytics_ci.mart_vehicle_snapshot` by VIN; assert `listing_state` matches expected for each scenario.
+
+**File:** `tests/integration/dbt/test_vehicle_snapshot.py`
+
+---
+
+### Lower-priority gaps (existing test coverage holes)
+
+#### `ops_vehicle_staleness` — stale reason precedence
+
+The existing tests only check single-reason scenarios. The precedence order (`dealer_unenriched` > `full_details` > `price_only`) is untested when multiple conditions are true simultaneously.
+
+**Add to `test_ops.py`:**
+- Seed a VIN where both `tier1_age > 168h` AND `price_age > 24h` are true → assert `stale_reason = 'full_details'` (not `price_only`)
+
+#### `int_price_percentiles_by_vin` — edge cases
+
+The existing tests only spot-check 3 ranks in a 5-VIN cohort.
+
+**Add to `test_price_percentiles.py`:**
+- Single-VIN cohort → `national_price_percentile = 0.0`
+- Two VINs with identical prices → both should have `percentile = 0.0` (PERCENT_RANK behavior for ties)
 
 ---
 
