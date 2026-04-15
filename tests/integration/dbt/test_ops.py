@@ -103,7 +103,7 @@ def seed_and_build(dbt_conn, run_dbt):
     with dbt_conn.cursor() as cur:
         cur.execute("""
             TRUNCATE public.runs, public.raw_artifacts, public.srp_observations,
-                     public.detail_observations, public.blocked_cooldown
+                     public.detail_observations, public.blocked_cooldown CASCADE
         """)
 
 
