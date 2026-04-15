@@ -347,11 +347,14 @@ def _seed_all(cur):
              now() - interval '3 days',  '/data/raw/fakefile.html', 'dom-test', 'national'),
 
             -- 800s: int_price_events dedup
-            -- Both artifacts share the same fetched_at so (vin, observed_at, price) matches
+            -- Pinned timestamp ensures SRP and detail share an IDENTICAL fetched_at so that
+            -- (vin, observed_at, price) matches exactly and DISTINCT ON collapses to 1 row.
+            -- now()-interval evaluated across separate cur.execute() calls would differ by
+            -- microseconds, preventing dedup.
             (801, %s, 'cars.com', 'results_page', 'https://www.dummy.com',
-             now() - interval '5 days', '/data/raw/fakefile.html', 'pe-test', 'national'),
+             '2026-01-10 12:00:00+00'::timestamptz, '/data/raw/fakefile.html', 'pe-test', 'national'),
             (802, %s, 'cars.com', 'detail_page',  'https://www.dummy.com',
-             now() - interval '5 days', '/data/raw/fakefile.html', 'pe-test', 'national'),
+             '2026-01-10 12:00:00+00'::timestamptz, '/data/raw/fakefile.html', 'pe-test', 'national'),
 
             -- 900s: mart_vehicle_snapshot listing_state='unlisted'
             -- SRP-only honda/crv VIN last seen 10 days ago → inferred 'unlisted'(> 7-day threshold)
@@ -408,8 +411,8 @@ def _seed_all(cur):
             (705, 705, %s, 'DOM2', now()-interval '2 days',  now()-interval '2 days',
              'DOM0NATLOCALSPLIT', 'DOM-Make', 'DOM-Model', NULL, NULL, 'https://nowhere.com'),
 
-            -- 800s: int_price_events dedup — SRP side of the same-timestamp pair
-            (801, 801, %s, 'PE1', now()-interval '5 days', now()-interval '5 days',
+            -- 800s: int_price_events dedup — SRP side; pinned timestamp matches detail obs
+            (801, 801, %s, 'PE1', '2026-01-10 12:00:00+00'::timestamptz, '2026-01-10 12:00:00+00'::timestamptz,
              'PE0PRICEEVTDEDUP1', 'PE-Make', 'PE-Model', NULL, 22000, 'https://nowhere.com'),
 
             -- 900s: mart_vehicle_snapshot — honda/crv SRP-only, last seen 10 days ago
@@ -438,9 +441,9 @@ def _seed_all(cur):
             (701, 706, 'DOM1', now()-interval '3 days', 'active',
              'DOM0SRPONLYMULT01', NULL, NULL, NULL, NULL, NULL),
 
-            -- 800s: int_price_events dedup — detail side of the same-timestamp pair
+            -- 800s: int_price_events dedup — detail side; pinned timestamp matches SRP obs
             -- Same (vin, observed_at, price) as SRP obs 801 → expect 1 output row, source='detail'
-            (801, 802, 'PE1', now()-interval '5 days', 'active',
+            (801, 802, 'PE1', '2026-01-10 12:00:00+00'::timestamptz, 'active',
              'PE0PRICEEVTDEDUP1', 'PE-Make', 'PE-Model', NULL, 22000, NULL)
     """)
 
