@@ -80,7 +80,7 @@ def _seed_ops(dbt_cur):
     dbt_cur.execute(
         """
             INSERT INTO public.blocked_cooldown (
-                listing_id, first_attempt_at, last_attempt_at, num_of_attempts
+                listing_id, first_attempt_at, last_attempted_at, num_of_attempts
             )
             VALUES
                 ('L5', now() - interval '5 days', now() - interval '1 hour', 5),
