@@ -78,7 +78,8 @@ def _seed_price_data(dbt_cur):
                             'L7', now() - interval '4 days', now() - interval '4 days',
                             'Test-Make', 'Test-Model', 'Test-Trim', 25000,
                             'SRPL7000000025000'),
-                        (8, 8, 'L8', now() - interval '2 days', now() - interval '2 days',
+                        (8, 8, 'aa57b5bc-c909-4fc7-8965-dfe9657c4e7d',
+                             'L8', now() - interval '2 days', now() - interval '2 days',
                             'Test-Make-Two', 'Test-Model', 'Test-Trim', 35000,
                             'SRPL8000000035000')
                     """)
