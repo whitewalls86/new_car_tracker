@@ -112,7 +112,7 @@ def seed_and_build(dbt_conn, run_dbt):
 def test_price_stale_vin_is_stale(analytics_ci_cur):
     analytics_ci_cur.execute("""
         SELECT is_price_stale, stale_reason
-        FROM analytics_ci.ops_vehicle_staleness
+        FROM ops.ops_vehicle_staleness
         WHERE vin = 'L100000PRICESTALE'
     """)
     row = analytics_ci_cur.fetchone()
@@ -123,7 +123,7 @@ def test_price_stale_vin_is_stale(analytics_ci_cur):
 def test_full_details_stale_vin(analytics_ci_cur):
     analytics_ci_cur.execute("""
         SELECT is_full_details_stale, stale_reason
-        FROM analytics_ci.ops_vehicle_staleness
+        FROM ops.ops_vehicle_staleness
         WHERE vin = 'L20000FULLDETAILS'
     """)
     row = analytics_ci_cur.fetchone()
@@ -135,7 +135,7 @@ def test_full_details_stale_vin(analytics_ci_cur):
 def test_not_stale_vin(analytics_ci_cur):
     analytics_ci_cur.execute("""
         SELECT is_price_stale, is_full_details_stale
-        FROM analytics_ci.ops_vehicle_staleness
+        FROM ops.ops_vehicle_staleness
         WHERE vin = 'L30000000NOTSTALE'
     """)
     row = analytics_ci_cur.fetchone()
@@ -147,7 +147,7 @@ def test_not_stale_vin(analytics_ci_cur):
 def test_price_only_stale_reason(analytics_ci_cur):
     analytics_ci_cur.execute("""
         SELECT is_price_stale, stale_reason
-        FROM analytics_ci.ops_vehicle_staleness
+        FROM ops.ops_vehicle_staleness
         WHERE vin = 'L4STALEONCOOLDOWN'
     """)
     row = analytics_ci_cur.fetchone()
@@ -159,7 +159,7 @@ def test_price_only_stale_reason(analytics_ci_cur):
 def test_fully_blocked_vin_is_stale(analytics_ci_cur):
     analytics_ci_cur.execute("""
         SELECT is_price_stale, stale_reason
-        FROM analytics_ci.ops_vehicle_staleness
+        FROM ops.ops_vehicle_staleness
         WHERE vin = 'L50STALEFULLBLOCK'
     """)
     row = analytics_ci_cur.fetchone()
@@ -173,7 +173,7 @@ def test_fully_blocked_vin_is_stale(analytics_ci_cur):
 def test_stale_no_cooldown_in_queue(analytics_ci_cur):
     analytics_ci_cur.execute("""
         SELECT listing_id, priority
-        FROM analytics_ci.ops_detail_scrape_queue
+        FROM ops.ops_detail_scrape_queue
         WHERE listing_id = 'L1'
     """)
     row = analytics_ci_cur.fetchone()
@@ -184,7 +184,7 @@ def test_stale_no_cooldown_in_queue(analytics_ci_cur):
 def test_eligible_cooldown_in_queue(analytics_ci_cur):
     analytics_ci_cur.execute("""
         SELECT listing_id
-        FROM analytics_ci.ops_detail_scrape_queue
+        FROM ops.ops_detail_scrape_queue
         WHERE listing_id = 'L2'
     """)
     row = analytics_ci_cur.fetchone()
@@ -194,7 +194,7 @@ def test_eligible_cooldown_in_queue(analytics_ci_cur):
 def test_not_stale_not_in_queue(analytics_ci_cur):
     analytics_ci_cur.execute("""
         SELECT listing_id
-        FROM analytics_ci.ops_detail_scrape_queue
+        FROM ops.ops_detail_scrape_queue
         WHERE listing_id = 'L3'
     """)
     row = analytics_ci_cur.fetchone()
@@ -204,7 +204,7 @@ def test_not_stale_not_in_queue(analytics_ci_cur):
 def test_cooldown_ineligible_not_in_queue(analytics_ci_cur):
     analytics_ci_cur.execute("""
         SELECT listing_id
-        FROM analytics_ci.ops_detail_scrape_queue
+        FROM ops.ops_detail_scrape_queue
         WHERE listing_id = 'L4'
     """)
     row = analytics_ci_cur.fetchone()
@@ -214,7 +214,7 @@ def test_cooldown_ineligible_not_in_queue(analytics_ci_cur):
 def test_fully_blocked_not_in_queue(analytics_ci_cur):
     analytics_ci_cur.execute("""
         SELECT listing_id
-        FROM analytics_ci.ops_detail_scrape_queue
+        FROM ops.ops_detail_scrape_queue
         WHERE listing_id = 'L5'
     """)
     row = analytics_ci_cur.fetchone()
