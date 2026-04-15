@@ -15,30 +15,31 @@ def _seed_ops(dbt_cur):
     dbt_cur.execute(
         """
             INSERT INTO public.raw_artifacts (
-                artifact_id, run_id, source, artifact_type, url, fetched_at, filepath, search_key
+                artifact_id, run_id, source, artifact_type, url, fetched_at, filepath,
+                search_key, search_scope
             )
             VALUES
-                (1, 'aa57b5bc-c909-4fc7-8965-dfe9657c4e7d', 'cars.com', 'results_page', 
+                (1, 'aa57b5bc-c909-4fc7-8965-dfe9657c4e7d', 'cars.com', 'results_page',
                 'https://www.dummy.com', now() - interval '25 hours', '/data/raw/fakefile.html',
-                'honda-cr_v_hybrid'),
-                (2, 'aa57b5bc-c909-4fc7-8965-dfe9657c4e7d', 'cars.com', 'results_page', 
+                'honda-cr_v_hybrid', 'national'),
+                (2, 'aa57b5bc-c909-4fc7-8965-dfe9657c4e7d', 'cars.com', 'results_page',
                 'https://www.dummy.com', now() - interval '200 hours', '/data/raw/fakefile.html',
-                'honda-cr_v_hybrid'),
-                (3, 'aa57b5bc-c909-4fc7-8965-dfe9657c4e7d', 'cars.com', 'results_page', 
+                'honda-cr_v_hybrid', 'national'),
+                (3, 'aa57b5bc-c909-4fc7-8965-dfe9657c4e7d', 'cars.com', 'results_page',
                 'https://www.dummy.com', now() - interval '2 hours', '/data/raw/fakefile.html',
-                'honda-cr_v_hybrid'),
-                (4, 'aa57b5bc-c909-4fc7-8965-dfe9657c4e7d', 'cars.com', 'detail_page', 
+                'honda-cr_v_hybrid', 'national'),
+                (4, 'aa57b5bc-c909-4fc7-8965-dfe9657c4e7d', 'cars.com', 'detail_page',
                 'https://www.dummy.com', now() - interval '1 hour', '/data/raw/fakefile.html',
-                'honda-cr_v_hybrid'),
-                (5, 'aa57b5bc-c909-4fc7-8965-dfe9657c4e7d', 'cars.com', 'detail_page', 
+                'honda-cr_v_hybrid', 'national'),
+                (5, 'aa57b5bc-c909-4fc7-8965-dfe9657c4e7d', 'cars.com', 'detail_page',
                 'https://www.dummy.com', now() - interval '25 hours', '/data/raw/fakefile.html',
-                'honda-cr_v_hybrid'),
-                (6, 'aa57b5bc-c909-4fc7-8965-dfe9657c4e7d', 'cars.com', 'detail_page', 
+                'honda-cr_v_hybrid', 'national'),
+                (6, 'aa57b5bc-c909-4fc7-8965-dfe9657c4e7d', 'cars.com', 'detail_page',
                 'https://www.dummy.com', now() - interval '36 hours', '/data/raw/fakefile.html',
-                'honda-cr_v_hybrid'),
-                (7, 'aa57b5bc-c909-4fc7-8965-dfe9657c4e7d', 'cars.com', 'detail_page', 
+                'honda-cr_v_hybrid', 'national'),
+                (7, 'aa57b5bc-c909-4fc7-8965-dfe9657c4e7d', 'cars.com', 'detail_page',
                 'https://www.dummy.com', now() - interval '170 hours', '/data/raw/fakefile.html',
-                'honda-cr_v_hybrid')
+                'honda-cr_v_hybrid', 'national')
 
         """
     )
@@ -46,15 +47,18 @@ def _seed_ops(dbt_cur):
     dbt_cur.execute(
         """
             INSERT INTO public.srp_observations (
-                id, artifact_id, listing_id, created_at, fetched_at, vin, make, model,
+                id, artifact_id, run_id, listing_id, created_at, fetched_at, vin, make, model,
                 canonical_detail_url
             )
             VALUES
-                (1, 1, 'L1', now() - interval '25 hours', now() - interval '25 hours',
+                (1, 1, 'aa57b5bc-c909-4fc7-8965-dfe9657c4e7d', 'L1',
+                 now() - interval '25 hours', now() - interval '25 hours',
                  'L100000PRICESTALE', 'honda', 'crv', 'https://nowhere.com'),
-                (2, 2, 'L2', now() - interval '200 hours', now() - interval '200 hours',
+                (2, 2, 'aa57b5bc-c909-4fc7-8965-dfe9657c4e7d', 'L2',
+                 now() - interval '200 hours', now() - interval '200 hours',
                  'L20000FULLDETAILS', 'honda', 'crv', 'https://nowhere.com'),
-                (3, 3, 'L3', now() - interval '2 hours', now() - interval '2 hours',
+                (3, 3, 'aa57b5bc-c909-4fc7-8965-dfe9657c4e7d', 'L3',
+                 now() - interval '2 hours', now() - interval '2 hours',
                  'L30000000NOTSTALE', 'honda', 'crv', 'https://nowhere.com')
         """
     )

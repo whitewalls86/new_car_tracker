@@ -37,13 +37,16 @@ def _seed_int_listing_to_vin(dbt_cur):
     
     dbt_cur.execute("""
                     INSERT INTO public.srp_observations
-                        (id, artifact_id, listing_id, created_at, fetched_at, vin)
+                        (id, artifact_id, run_id, listing_id, created_at, fetched_at, vin)
                     VALUES
-                        (1, 1, 'L1', now() - interval '1 hour', now() - interval '1 hour', 
+                        (1, 1, 'aa57b5bc-c909-4fc7-8965-dfe9657c4e7d',
+                            'L1', now() - interval '1 hour', now() - interval '1 hour',
                             'L1SRP000000000001'),
-                        (2, 3, 'L2', now() - interval '2 hours', now() - interval '2 hours', 
+                        (2, 3, 'aa57b5bc-c909-4fc7-8965-dfe9657c4e7d',
+                            'L2', now() - interval '2 hours', now() - interval '2 hours',
                             'L2SRP000000000001'),
-                        (3, 5, 'L3', now() - interval '1 hour', now() - interval '1 hour', 
+                        (3, 5, 'aa57b5bc-c909-4fc7-8965-dfe9657c4e7d',
+                            'L3', now() - interval '1 hour', now() - interval '1 hour',
                             'L3SRP000000000001')
                     """)
     
