@@ -5,6 +5,11 @@ pytestmark = pytest.mark.integration
 
 def _seed_int_listing_to_vin(dbt_cur):
     dbt_cur.execute("""
+                    INSERT INTO public.runs (run_id, started_at, status, trigger)
+                    VALUES ('aa57b5bc-c909-4fc7-8965-dfe9657c4e7d', now(), 'running', 'integration_test')
+                    """)
+
+    dbt_cur.execute("""
                     INSERT INTO public.raw_artifacts
                         (artifact_id, run_id, source, artifact_type, url, fetched_at, filepath)
                     VALUES
@@ -55,7 +60,7 @@ def seed_and_build(dbt_conn, run_dbt):
     yield
     with dbt_conn.cursor() as cur:
         cur.execute("""
-            TRUNCATE public.raw_artifacts, public.srp_observations, public.detail_observations
+            TRUNCATE public.runs, public.raw_artifacts, public.srp_observations, public.detail_observations
         """)
 
 
