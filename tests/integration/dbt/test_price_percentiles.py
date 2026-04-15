@@ -8,9 +8,10 @@ def _seed_price_data(dbt_cur):
                     INSERT INTO public.runs (
                         run_id, started_at, status, trigger
                     )
-                    VALUES 
-                        ('aa57b5bc-c909-4fc7-8965-dfe9657c4e7d', now(), 'running', 
+                    VALUES
+                        ('aa57b5bc-c909-4fc7-8965-dfe9657c4e7d', now(), 'running',
                          'integration_test')
+                    ON CONFLICT (run_id) DO NOTHING
                     """)
 
     dbt_cur.execute("""

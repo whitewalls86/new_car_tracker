@@ -8,6 +8,7 @@ def _seed_ops(dbt_cur):
         """
             INSERT INTO public.runs (run_id, started_at, status, trigger)
             VALUES ('aa57b5bc-c909-4fc7-8965-dfe9657c4e7d', now(), 'running', 'integration_test')
+            ON CONFLICT (run_id) DO NOTHING
         """
     )
 
@@ -61,18 +62,17 @@ def _seed_ops(dbt_cur):
     dbt_cur.execute(
         """
             INSERT INTO public.detail_observations (
-                id, artifact_id, listing_id, fetched_at, listing_state, vin, make, model, price,
-                canonical_detail_url
+                id, artifact_id, listing_id, fetched_at, listing_state, vin, make, model, price
             )
             VALUES
                 (1, 4, 'L3', now() - interval '1 hour', 'active', 'L30000000NOTSTALE', 
-                'honda', 'crv', 10000, 'https://nowhere.com'),
+                'honda', 'crv', 10000),
                 (2, 5, 'L4', now() - interval '25 hours', 'active', 'L4STALEONCOOLDOWN', 
-                'honda', 'crv', 10000, 'https://nowhere.com'),
+                'honda', 'crv', 10000),
                 (3, 6, 'L5', now() - interval '36 hours', 'active', 'L50STALEFULLBLOCK', 
-                'honda', 'crv', 10000, 'https://nowhere.com'),
+                'honda', 'crv', 10000),
                 (4, 7, 'L2', now() - interval '170 hours', 'active', 'L20000FULLDETAILS', 
-                'honda', 'crv', 10000, 'https://nowhere.com')
+                'honda', 'crv', 10000)
                 
         """
     )
