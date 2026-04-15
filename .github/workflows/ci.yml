@@ -115,8 +115,19 @@ jobs:
       - name: Install pytests
         run: pip install pytest psycopg2-binary
 
-      - name: Run integration tests
-        run: pytest tests/integration/ -v -m integration
+      - name: Run SQL smoke tests (Layer 1)
+        run: pytest tests/integration/sql/ -v -m integration
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          TEST_DATABASE_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
+          DBT_HOST: localhost
+          DBT_PORT: "5432"
+          DBT_USER: cartracker
+          DBT_PASSWORD: cartracker
+          DBT_DBNAME: cartracker
+
+      - name: Run dbt integration tests (Layer 2)
+        run: pytest tests/integration/dbt/ -v -m integration
         env:
           PYTHONPATH: ${{ github.workspace }}
           TEST_DATABASE_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
