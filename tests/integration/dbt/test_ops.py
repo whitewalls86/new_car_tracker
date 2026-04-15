@@ -3,113 +3,12 @@ import pytest
 pytestmark = pytest.mark.integration
 
 
-def _seed_ops(dbt_cur):
-    dbt_cur.execute(
-        """
-            INSERT INTO public.runs (run_id, started_at, status, trigger)
-            VALUES ('aa57b5bc-c909-4fc7-8965-dfe9657c4e7d', now(), 'running', 'integration_test')
-            ON CONFLICT (run_id) DO NOTHING
-        """
-    )
-
-    dbt_cur.execute(
-        """
-            INSERT INTO public.raw_artifacts (
-                artifact_id, run_id, source, artifact_type, url, fetched_at, filepath,
-                search_key, search_scope
-            )
-            VALUES
-                (1, 'aa57b5bc-c909-4fc7-8965-dfe9657c4e7d', 'cars.com', 'results_page',
-                'https://www.dummy.com', now() - interval '25 hours', '/data/raw/fakefile.html',
-                'honda-cr_v_hybrid', 'national'),
-                (2, 'aa57b5bc-c909-4fc7-8965-dfe9657c4e7d', 'cars.com', 'results_page',
-                'https://www.dummy.com', now() - interval '200 hours', '/data/raw/fakefile.html',
-                'honda-cr_v_hybrid', 'national'),
-                (3, 'aa57b5bc-c909-4fc7-8965-dfe9657c4e7d', 'cars.com', 'results_page',
-                'https://www.dummy.com', now() - interval '2 hours', '/data/raw/fakefile.html',
-                'honda-cr_v_hybrid', 'national'),
-                (4, 'aa57b5bc-c909-4fc7-8965-dfe9657c4e7d', 'cars.com', 'detail_page',
-                'https://www.dummy.com', now() - interval '1 hour', '/data/raw/fakefile.html',
-                'honda-cr_v_hybrid', 'national'),
-                (5, 'aa57b5bc-c909-4fc7-8965-dfe9657c4e7d', 'cars.com', 'detail_page',
-                'https://www.dummy.com', now() - interval '25 hours', '/data/raw/fakefile.html',
-                'honda-cr_v_hybrid', 'national'),
-                (6, 'aa57b5bc-c909-4fc7-8965-dfe9657c4e7d', 'cars.com', 'detail_page',
-                'https://www.dummy.com', now() - interval '36 hours', '/data/raw/fakefile.html',
-                'honda-cr_v_hybrid', 'national'),
-                (7, 'aa57b5bc-c909-4fc7-8965-dfe9657c4e7d', 'cars.com', 'detail_page',
-                'https://www.dummy.com', now() - interval '170 hours', '/data/raw/fakefile.html',
-                'honda-cr_v_hybrid', 'national')
-
-        """
-    )
-
-    dbt_cur.execute(
-        """
-            INSERT INTO public.srp_observations (
-                id, artifact_id, run_id, listing_id, created_at, fetched_at, vin, make, model,
-                canonical_detail_url
-            )
-            VALUES
-                (1, 1, 'aa57b5bc-c909-4fc7-8965-dfe9657c4e7d', 'L1',
-                 now() - interval '25 hours', now() - interval '25 hours',
-                 'L100000PRICESTALE', 'honda', 'crv', 'https://nowhere.com'),
-                (2, 2, 'aa57b5bc-c909-4fc7-8965-dfe9657c4e7d', 'L2',
-                 now() - interval '200 hours', now() - interval '200 hours',
-                 'L20000FULLDETAILS', 'honda', 'crv', 'https://nowhere.com'),
-                (3, 3, 'aa57b5bc-c909-4fc7-8965-dfe9657c4e7d', 'L3',
-                 now() - interval '2 hours', now() - interval '2 hours',
-                 'L30000000NOTSTALE', 'honda', 'crv', 'https://nowhere.com')
-        """
-    )
-
-    dbt_cur.execute(
-        """
-            INSERT INTO public.detail_observations (
-                id, artifact_id, listing_id, fetched_at, listing_state, vin, make, model, price
-            )
-            VALUES
-                (1, 4, 'L3', now() - interval '1 hour', 'active', 'L30000000NOTSTALE', 
-                'honda', 'crv', 10000),
-                (2, 5, 'L4', now() - interval '25 hours', 'active', 'L4STALEONCOOLDOWN', 
-                'honda', 'crv', 10000),
-                (3, 6, 'L5', now() - interval '36 hours', 'active', 'L50STALEFULLBLOCK', 
-                'honda', 'crv', 10000),
-                (4, 7, 'L2', now() - interval '170 hours', 'active', 'L20000FULLDETAILS', 
-                'honda', 'crv', 10000)
-                
-        """
-    )
-
-    dbt_cur.execute(
-        """
-            INSERT INTO public.blocked_cooldown (
-                listing_id, first_attempt_at, last_attempted_at, num_of_attempts
-            )
-            VALUES
-                ('L5', now() - interval '5 days', now() - interval '1 hour', 5),
-                ('L4', now() - interval '2 days', now() - interval '1 hour', 2),
-                ('L2', now() - interval '3 days', now() - interval '13 hours', 1)
-        """
-    )
-
-
-@pytest.fixture(scope="module", autouse=True)
-def seed_and_build(dbt_conn, run_dbt):
-    with dbt_conn.cursor() as cur:
-        _seed_ops(cur)
-    run_dbt("+ops_detail_scrape_queue")
-    yield
-    with dbt_conn.cursor() as cur:
-        cur.execute("""
-            TRUNCATE public.runs, public.raw_artifacts, public.srp_observations,
-                     public.detail_observations, public.blocked_cooldown CASCADE
-        """)
-
-
-# --- ops_vehicle_staleness ---
+# ---------------------------------------------------------------------------
+# ops_vehicle_staleness
+# ---------------------------------------------------------------------------
 
 def test_price_stale_vin_is_stale(analytics_ci_cur):
+    """OL1/L100000PRICESTALE: SRP-only, 25h old, no price event → is_price_stale."""
     analytics_ci_cur.execute("""
         SELECT is_price_stale, stale_reason
         FROM ops.ops_vehicle_staleness
@@ -121,6 +20,7 @@ def test_price_stale_vin_is_stale(analytics_ci_cur):
 
 
 def test_full_details_stale_vin(analytics_ci_cur):
+    """OL2/L20000FULLDETAILS: tier-1 observation 170h old → full_details stale."""
     analytics_ci_cur.execute("""
         SELECT is_full_details_stale, stale_reason
         FROM ops.ops_vehicle_staleness
@@ -133,6 +33,7 @@ def test_full_details_stale_vin(analytics_ci_cur):
 
 
 def test_not_stale_vin(analytics_ci_cur):
+    """OL3/L30000000NOTSTALE: fresh SRP (2h) + fresh detail (1h) → neither flag set."""
     analytics_ci_cur.execute("""
         SELECT is_price_stale, is_full_details_stale
         FROM ops.ops_vehicle_staleness
@@ -145,6 +46,7 @@ def test_not_stale_vin(analytics_ci_cur):
 
 
 def test_price_only_stale_reason(analytics_ci_cur):
+    """OL4/L4STALEONCOOLDOWN: detail price 25h old → price_only stale_reason."""
     analytics_ci_cur.execute("""
         SELECT is_price_stale, stale_reason
         FROM ops.ops_vehicle_staleness
@@ -157,6 +59,7 @@ def test_price_only_stale_reason(analytics_ci_cur):
 
 
 def test_fully_blocked_vin_is_stale(analytics_ci_cur):
+    """OL5/L50STALEFULLBLOCK: detail price 36h old → price_only stale_reason."""
     analytics_ci_cur.execute("""
         SELECT is_price_stale, stale_reason
         FROM ops.ops_vehicle_staleness
@@ -168,13 +71,16 @@ def test_fully_blocked_vin_is_stale(analytics_ci_cur):
     assert row["stale_reason"] == "price_only"
 
 
-# --- ops_detail_scrape_queue ---
+# ---------------------------------------------------------------------------
+# ops_detail_scrape_queue
+# ---------------------------------------------------------------------------
 
 def test_stale_no_cooldown_in_queue(analytics_ci_cur):
+    """OL1: stale, no cooldown record → must appear in queue at priority 1."""
     analytics_ci_cur.execute("""
         SELECT listing_id, priority
         FROM ops.ops_detail_scrape_queue
-        WHERE listing_id = 'L1'
+        WHERE listing_id = 'OL1'
     """)
     row = analytics_ci_cur.fetchone()
     assert row is not None
@@ -182,40 +88,44 @@ def test_stale_no_cooldown_in_queue(analytics_ci_cur):
 
 
 def test_eligible_cooldown_in_queue(analytics_ci_cur):
+    """OL2: stale, cooldown elapsed (next_eligible_at in the past) → must appear in queue."""
     analytics_ci_cur.execute("""
         SELECT listing_id
         FROM ops.ops_detail_scrape_queue
-        WHERE listing_id = 'L2'
+        WHERE listing_id = 'OL2'
     """)
     row = analytics_ci_cur.fetchone()
     assert row is not None
 
 
 def test_not_stale_not_in_queue(analytics_ci_cur):
+    """OL3: fresh, not stale → must not appear in queue."""
     analytics_ci_cur.execute("""
         SELECT listing_id
         FROM ops.ops_detail_scrape_queue
-        WHERE listing_id = 'L3'
+        WHERE listing_id = 'OL3'
     """)
     row = analytics_ci_cur.fetchone()
     assert row is None
 
 
 def test_cooldown_ineligible_not_in_queue(analytics_ci_cur):
+    """OL4: stale but cooldown not yet elapsed → must not appear in queue."""
     analytics_ci_cur.execute("""
         SELECT listing_id
         FROM ops.ops_detail_scrape_queue
-        WHERE listing_id = 'L4'
+        WHERE listing_id = 'OL4'
     """)
     row = analytics_ci_cur.fetchone()
     assert row is None
 
 
 def test_fully_blocked_not_in_queue(analytics_ci_cur):
+    """OL5: fully blocked (5 attempts) → must not appear in queue."""
     analytics_ci_cur.execute("""
         SELECT listing_id
         FROM ops.ops_detail_scrape_queue
-        WHERE listing_id = 'L5'
+        WHERE listing_id = 'OL5'
     """)
     row = analytics_ci_cur.fetchone()
     assert row is None

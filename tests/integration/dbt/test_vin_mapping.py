@@ -3,98 +3,31 @@ import pytest
 pytestmark = pytest.mark.integration
 
 
-def _seed_int_listing_to_vin(dbt_cur):
-    dbt_cur.execute("""
-                    INSERT INTO public.runs (
-                        run_id, started_at, status, trigger
-                    )
-                    VALUES
-                        ('aa57b5bc-c909-4fc7-8965-dfe9657c4e7d', now(), 'running',
-                         'integration_test')
-                    ON CONFLICT (run_id) DO NOTHING
-                    """)
-
-    dbt_cur.execute("""
-                    INSERT INTO public.raw_artifacts
-                        (artifact_id, run_id, source, artifact_type, url, fetched_at, filepath)
-                    VALUES
-                        (1, 'aa57b5bc-c909-4fc7-8965-dfe9657c4e7d', 'cars.com', 
-                            'results_page', 'https://www.dummy.com', now() - interval '1 hour', 
-                            '/data/raw/fakefile.html'),
-                        (2, 'aa57b5bc-c909-4fc7-8965-dfe9657c4e7d', 'cars.com', 
-                            'detail_page', 'https://www.dummy.com', now() - interval '1 hour', 
-                            '/data/raw/fakefile.html'),
-                        (3, 'aa57b5bc-c909-4fc7-8965-dfe9657c4e7d', 'cars.com', 
-                            'results_page', 'https://www.dummy.com', now() - interval '2 hours', 
-                            '/data/raw/fakefile.html'),
-                        (4, 'aa57b5bc-c909-4fc7-8965-dfe9657c4e7d', 'cars.com', 
-                            'detail_page', 'https://www.dummy.com', now() - interval '2 hours', 
-                            '/data/raw/fakefile.html'),
-                        (5, 'aa57b5bc-c909-4fc7-8965-dfe9657c4e7d', 'cars.com', 
-                            'results_page', 'https://www.dummy.com', now() - interval '1 hour', 
-                            '/data/raw/fakefile.html')
-                    """)
-    
-    dbt_cur.execute("""
-                    INSERT INTO public.srp_observations
-                        (id, artifact_id, run_id, listing_id, created_at, fetched_at, vin)
-                    VALUES
-                        (1, 1, 'aa57b5bc-c909-4fc7-8965-dfe9657c4e7d',
-                            'L1', now() - interval '1 hour', now() - interval '1 hour',
-                            'L1SRP000000000001'),
-                        (2, 3, 'aa57b5bc-c909-4fc7-8965-dfe9657c4e7d',
-                            'L2', now() - interval '2 hours', now() - interval '2 hours',
-                            'L2SRP000000000001'),
-                        (3, 5, 'aa57b5bc-c909-4fc7-8965-dfe9657c4e7d',
-                            'L3', now() - interval '1 hour', now() - interval '1 hour',
-                            'L3SRP000000000001')
-                    """)
-    
-    dbt_cur.execute("""
-                    INSERT INTO public.detail_observations
-                        (id, artifact_id, listing_id, fetched_at, listing_state, vin)
-                    VALUES
-                        (1, 2, 'L2', now() - interval '1 hour', 'active', 'L2DET000000000001'),
-                        (2, 4, 'L3', now() - interval '2 hours', 'active', 'L3DET000000000001')
-                    """)
-    
-
-@pytest.fixture(scope="module", autouse=True)
-def seed_and_build(dbt_conn, run_dbt):
-    with dbt_conn.cursor() as cur:
-        _seed_int_listing_to_vin(cur)
-    
-    run_dbt("stg_raw_artifacts stg_srp_observations stg_detail_observations int_listing_to_vin")
-    yield
-    with dbt_conn.cursor() as cur:
-        cur.execute("""
-            TRUNCATE public.runs, public.raw_artifacts,
-                     public.srp_observations, public.detail_observations CASCADE
-        """)
-
-
 def test_srp_only(analytics_ci_cur):
+    """VML1 has only an SRP observation — SRP VIN must be returned."""
     analytics_ci_cur.execute("""
-                             SELECT vin FROM analytics_ci.int_listing_to_vin WHERE listing_id = 'L1'
-                             """)
+        SELECT vin FROM int_listing_to_vin WHERE listing_id = 'VML1'
+    """)
     row = analytics_ci_cur.fetchone()
     assert row is not None
     assert row["vin"] == "L1SRP000000000001"
 
 
 def test_detail_fresh(analytics_ci_cur):
+    """VML2: detail observation (1h ago) is fresher than SRP (2h ago) — detail VIN wins."""
     analytics_ci_cur.execute("""
-                             SELECT vin FROM analytics_ci.int_listing_to_vin WHERE listing_id = 'L2'
-                             """)
+        SELECT vin FROM int_listing_to_vin WHERE listing_id = 'VML2'
+    """)
     row = analytics_ci_cur.fetchone()
     assert row is not None
     assert row["vin"] == "L2DET000000000001"
 
 
 def test_srp_fresh(analytics_ci_cur):
+    """VML3: SRP observation (1h ago) is fresher than detail (2h ago) — SRP VIN wins."""
     analytics_ci_cur.execute("""
-                             SELECT vin FROM analytics_ci.int_listing_to_vin WHERE listing_id = 'L3'
-                             """)
+        SELECT vin FROM int_listing_to_vin WHERE listing_id = 'VML3'
+    """)
     row = analytics_ci_cur.fetchone()
     assert row is not None
     assert row["vin"] == "L3SRP000000000001"
