@@ -48,38 +48,38 @@ def _seed_price_data(dbt_cur):
     dbt_cur.execute("""
                     INSERT INTO public.srp_observations
                         (id, artifact_id, run_id, listing_id, created_at, fetched_at,
-                         make, model, trim, price, search_scope, vin)
+                         make, model, trim, price, vin)
                     VALUES
                         (1, 1, 'aa57b5bc-c909-4fc7-8965-dfe9657c4e7d',
                             'L1', now() - interval '1 day', now() - interval '1 day',
-                            'Test-Make', 'Test-Model', 'Test-Trim', 10000, 'national',
+                            'Test-Make', 'Test-Model', 'Test-Trim', 10000,
                             'SRPL1000000010000'),
                         (2, 2, 'aa57b5bc-c909-4fc7-8965-dfe9657c4e7d',
                             'L2', now() - interval '1 day', now() - interval '1 day',
-                            'Test-Make', 'Test-Model', 'Test-Trim', 20000, 'national',
+                            'Test-Make', 'Test-Model', 'Test-Trim', 20000,
                             'SRPL2000000020000'),
                         (3, 3, 'aa57b5bc-c909-4fc7-8965-dfe9657c4e7d',
                             'L3', now() - interval '1 day', now() - interval '1 day',
-                            'Test-Make', 'Test-Model', 'Test-Trim', 30000, 'national',
+                            'Test-Make', 'Test-Model', 'Test-Trim', 30000,
                             'SRPL3000000030000'),
                         (4, 4, 'aa57b5bc-c909-4fc7-8965-dfe9657c4e7d',
                             'L4', now() - interval '2 days', now() - interval '2 days',
-                            'Test-Make', 'Test-Model', 'Test-Trim', 40000, 'national',
+                            'Test-Make', 'Test-Model', 'Test-Trim', 40000,
                             'SRPL4000000040000'),
                         (5, 5, 'aa57b5bc-c909-4fc7-8965-dfe9657c4e7d',
                             'L5', now() - interval '2 days', now() - interval '2 days',
-                            'Test-Make', 'Test-Model', 'Test-Trim', 50000, 'national',
+                            'Test-Make', 'Test-Model', 'Test-Trim', 50000,
                             'SRPL5000000050000'),
                         (6, 6, 'aa57b5bc-c909-4fc7-8965-dfe9657c4e7d',
                             'L6', now() - interval '4 days', now() - interval '4 days',
-                            'Test-Make', 'Test-Model', 'Test-Trim', 15000, 'national',
+                            'Test-Make', 'Test-Model', 'Test-Trim', 15000,
                             'SRPL6000000015000'),
                         (7, 7, 'aa57b5bc-c909-4fc7-8965-dfe9657c4e7d',
                             'L7', now() - interval '4 days', now() - interval '4 days',
-                            'Test-Make', 'Test-Model', 'Test-Trim', 25000, 'national',
+                            'Test-Make', 'Test-Model', 'Test-Trim', 25000,
                             'SRPL7000000025000'),
                         (8, 8, 'L8', now() - interval '2 days', now() - interval '2 days',
-                            'Test-Make-Two', 'Test-Model', 'Test-Trim', 35000, 'national',
+                            'Test-Make-Two', 'Test-Model', 'Test-Trim', 35000,
                             'SRPL8000000035000')
                     """)
     
