@@ -14,3 +14,4 @@ dbt/.*.yml
 .coverage
 GPT-Review-*.md.txt
 target/
+ssh-key*
