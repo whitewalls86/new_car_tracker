@@ -224,7 +224,7 @@ def _seed_all(cur):
     cur.execute("""
         INSERT INTO public.detail_observations
             (id, artifact_id, listing_id, fetched_at, listing_state,
-             vin, make, model, vehicle_trim, price, msrp)
+             vin, make, model, "trim", price, msrp)
         VALUES
             -- VIN mapping group: listing_id determines VIN priority vs SRP
             -- VML2: detail (1h ago) fresher than SRP (2h ago) → detail VIN wins
