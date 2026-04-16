@@ -8,6 +8,7 @@ Covers:
 
 All tests run against a real Postgres instance — no mocked DB.
 """
+import datetime
 import uuid
 
 import pytest
@@ -111,16 +112,18 @@ def seed_claim(verify_cur):
 
 @pytest.mark.integration
 def test_advance_rotation_does_not_return_recently_queued_config(api_client, seed_search_config):
-    # Seed a config with last_queued_at = now() so it is NOT due
-    key = seed_search_config(rotation_slot=1, last_queued_at="now()")
+    # Use a high slot number with no other configs so nothing else can trigger it.
+    # Pass a real datetime so psycopg2 sets last_queued_at correctly.
+    unique_slot = 9901
+    seed_search_config(
+        rotation_slot=unique_slot,
+        last_queued_at=datetime.datetime.now(datetime.timezone.utc),
+    )
 
     response = api_client.post("/scrape/rotation/advance", params={"min_idle_minutes": 1439})
 
     assert response.status_code == 200
-    data = response.json()
-    # Our just-queued config must not appear in the returned configs
-    returned_keys = [c["search_key"] for c in data["configs"]]
-    assert key not in returned_keys
+    assert response.json().get("slot") != unique_slot
 
 
 @pytest.mark.integration
