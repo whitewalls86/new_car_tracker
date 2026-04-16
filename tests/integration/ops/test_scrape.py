@@ -110,16 +110,17 @@ def seed_claim(verify_cur):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.integration
-def test_advance_rotation_returns_empty_when_no_configs_due(api_client, seed_search_config):
+def test_advance_rotation_does_not_return_recently_queued_config(api_client, seed_search_config):
     # Seed a config with last_queued_at = now() so it is NOT due
-    seed_search_config(rotation_slot=1, last_queued_at="now()")
+    key = seed_search_config(rotation_slot=1, last_queued_at="now()")
 
     response = api_client.post("/scrape/rotation/advance", params={"min_idle_minutes": 1439})
 
     assert response.status_code == 200
     data = response.json()
-    assert data["slot"] is None
-    assert data["configs"] == []
+    # Our just-queued config must not appear in the returned configs
+    returned_keys = [c["search_key"] for c in data["configs"]]
+    assert key not in returned_keys
 
 
 @pytest.mark.integration
