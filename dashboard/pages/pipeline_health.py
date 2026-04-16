@@ -281,8 +281,10 @@ def _section_stale_backlog():
                     WHEN priority_row < 1801 THEN '02_third_batch'
                     ELSE '03_backlog' END as batch_param,
                 COUNT(*) FILTER (WHERE stale_reason LIKE 'price_only%')::varchar as price_only,
-                COUNT(*) FILTER (WHERE stale_reason LIKE 'force_stale_36h')::varchar as force_stale,
-                COUNT(*) FILTER (WHERE stale_reason LIKE 'full_details')::varchar AS full_details,
+                COUNT(*) FILTER (
+                            WHERE stale_reason LIKE 'force_stale_36h%'
+                         )::varchar as force_stale,
+                COUNT(*) FILTER (WHERE stale_reason LIKE 'full_details%')::varchar AS full_details,
                 COUNT(*) FILTER (
                             WHERE stale_reason LIKE 'unmapped_carousel'
                          )::varchar as unmapped_carousel,
@@ -297,13 +299,15 @@ def _section_stale_backlog():
             SELECT
                 'Grand Total' as batch_param,
                 COUNT(*) FILTER (WHERE stale_reason LIKE 'price_only%')::varchar as price_only,
-                COUNT(*) FILTER (WHERE stale_reason LIKE 'force_stale_36h')::varchar as force_stale,
-                COUNT(*) FILTER (WHERE stale_reason LIKE 'full_details')::varchar AS full_details,
                 COUNT(*) FILTER (
-                            WHERE stale_reason LIKE 'unmapped_carousel'
+                            WHERE stale_reason LIKE 'force_stale_36h%'
+                         )::varchar as force_stale,
+                COUNT(*) FILTER (WHERE stale_reason LIKE 'full_details%')::varchar AS full_details,
+                COUNT(*) FILTER (
+                            WHERE stale_reason LIKE 'unmapped_carousel%'
                          )::varchar as unmapped_carousel,
                 COUNT(*) FILTER (
-                            WHERE stale_reason LIKE 'dealer_unenriched'
+                            WHERE stale_reason LIKE 'dealer_unenriched%'
                          )::varchar as dealer_unenriched,
                 COUNT(*)::varchar AS total_count
             FROM batch_marking q
