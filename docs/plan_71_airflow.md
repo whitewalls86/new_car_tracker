@@ -7,7 +7,93 @@
 
 Replace n8n with Apache Airflow. The n8n workflows are opaque JSON blobs — not reviewable in PRs, not unit-testable, not recognizable to hiring managers. Airflow DAGs are Python code: readable, diffable, testable, and on nearly every DE job description.
 
-Estimated effort: **40–55 hours**. Several workflows that look complex in n8n collapse to Airflow primitives (Sensors, callbacks, native retry config).
+This migration is also the right moment to move business logic out of n8n Postgres nodes and into Python services. The goal is not just to replicate what n8n does in Airflow — it's to end up with a system where the orchestrator (Airflow) is thin and dumb, and the services are fat and testable.
+
+Estimated effort: **55–70 hours** (increased from original estimate to account for the processing service and scraper slimming).
+
+---
+
+## Design Principles
+
+### Fat services, thin DAGs
+
+Logic lives in service endpoints. DAG tasks call those endpoints via HTTP. The DAG is a dependency graph, not a logic container.
+
+This is what enables two planned future states:
+- **Kafka**: when events replace schedules, a Kafka consumer calls the same endpoint the DAG task calls today. The service doesn't change; the trigger does.
+- **Multi-VM scrapers**: stateless scrapers on separate VMs call a central coordinator. No shared state, no shared filesystem required on the scraper VM.
+
+If logic is placed in Airflow task functions instead of service endpoints, both of those future states require rewriting the logic. That's the mistake to avoid.
+
+### Thin DAG tasks look like this
+
+```python
+def process_artifacts(run_id: str):
+    requests.post(f"{PROCESSING_URL}/artifacts/process", json={"run_id": run_id})
+
+def advance_rotation():
+    return requests.post(f"{OPS_URL}/scrape/rotation/advance").json()
+```
+
+The DAG orchestrates; the services act.
+
+---
+
+## Service Architecture Changes
+
+This migration introduces one new service and redistributes responsibilities across existing services.
+
+### New: `processing` service (main VM)
+
+Extracts all Results Processing logic from n8n into a dedicated Python/FastAPI service. Stays on the main VM because it needs access to the local filesystem where raw artifact files are stored.
+
+**Responsibilities:**
+- Read unprocessed artifacts from `raw_artifacts` (by filepath)
+- Parse HTML/JSON → write `srp_observations`, `detail_observations`
+- Extract and write `detail_carousel_hints` and `dealers`
+- Handle unlisted vehicle logic and multi-table deletes
+- Manage `artifact_processing` status (ok / retry / skip)
+
+**Key endpoints:**
+```
+POST /artifacts/process          { run_id }   → processes all unprocessed artifacts for a run
+POST /artifacts/process/{id}     { }          → processes a single artifact by artifact_id
+GET  /artifacts/status/{run_id}  { }          → returns processing progress for a run
+```
+
+The `artifact_id`-based endpoint is intentional: when Kafka arrives, the consumer receives an event containing an `artifact_id` and calls this endpoint. The service fetches the file itself. The message is a pointer, not a payload.
+
+**File storage:** Raw artifact files stay on disk. The processing service reads them by the `filepath` column in `raw_artifacts`. No change to the file-based architecture, cleanup workflows, or MinIO archiving. When scrapers move to separate VMs, the file store migrates to MinIO as the primary store (already in the stack) — the `filepath` column becomes an S3 URI. That is a separate migration gated on multi-VM scrapers, not this plan.
+
+### Scraper: slimmed to a fetch machine
+
+The scraper loses all logic that isn't directly about fetching pages. It becomes: receive work → fetch URLs → write raw artifacts → report done.
+
+**Moves out of the scraper:**
+- `advance_rotation` endpoint → ops service
+- Claim management (batch claiming, claim release) → ops service
+- Run lifecycle writes → ops service
+- All JSON/HTML parsing → processing service
+- All observation writing → processing service
+
+**What stays in the scraper:**
+- Browser stack (Patchright, FlareSolverr, curl_cffi impersonation)
+- The fetch loop
+- `raw_artifacts` writes (scraper still writes the file and the metadata row)
+- A simple "job done" callback
+
+### Ops service: gains coordination responsibilities
+
+Becomes the central coordinator for scrape work. This is required for multi-VM scrapers — each scraper instance on any VM calls ops to claim work; no scraper owns the rotation or claim logic.
+
+**New endpoints:**
+```
+POST /scrape/rotation/advance    → claims next due rotation slot; returns {slot, configs}
+POST /scrape/claims/claim-batch  → returns a batch of listing_ids for a scraper instance
+POST /scrape/claims/release      { run_id, results } → releases claims after completion
+```
+
+These wrap the existing DB-level coordination (`FOR UPDATE SKIP LOCKED`, `ON CONFLICT`) that already handles concurrency correctly. The logic doesn't change; the owner does.
 
 ---
 
@@ -28,46 +114,80 @@ Estimated effort: **40–55 hours**. Several workflows that look complex in n8n 
 
 | DAG | Replaces | Notes |
 |---|---|---|
-| `scrape_listings` | Scrape Listings | Advance rotation → get configs → fan-out scrape jobs |
-| `scrape_detail_pages` | Scrape Detail Pages V2 | Claim queue → batch → call scraper API |
-| `results_processing` | Results Processing + Job Poller V2 | HttpSensor awaits jobs; per-artifact ok/retry/skip branching |
-| `dbt_build` | Build DBT | HttpOperator + retry logic for 409 lock conflicts |
-| `cleanup_artifacts` | Cleanup Artifacts | Archive → cleanup → mark-deleted chain |
-| `cleanup_parquet` | Cleanup Parquet | Simple: find expired → API call → DB update |
-| `orphan_checker` | Orphan Checker | Parallel SQL updates across 5 tables |
-| `delete_stale_emails` | Delete Stale Request Emails | Single SQLExecuteOperator |
+| `scrape_listings` | Scrape Listings | `POST /ops/scrape/rotation/advance` → fan-out scrape tasks → `POST /scraper/run-search` per config |
+| `scrape_detail_pages` | Scrape Detail Pages V2 | `POST /ops/scrape/claims/claim-batch` → scraper fetches → `POST /ops/scrape/claims/release` |
+| `results_processing` | Results Processing + Job Poller V2 | HttpSensor awaits scrape completion; `POST /processing/artifacts/process` per run; dbt trigger after |
+| `dbt_build` | Build DBT | HttpOperator → dbt_runner; retry on 409 lock conflict |
+| `cleanup_artifacts` | Cleanup Artifacts | Archive → cleanup → mark-deleted chain; logic stays as SQL in task functions (cleanup-only, no Kafka path needed) |
+| `cleanup_parquet` | Cleanup Parquet | Find expired months → delete from MinIO → mark deleted in DB |
+| `orphan_checker` | Orphan Checker | Parallel SQL updates across runs/scrape_jobs/claims/artifact_processing; task functions are fine here |
+| `delete_stale_emails` | Delete Stale Request Emails | Single `SQLExecuteQueryOperator` |
 
-Workflows that disappear: **Job Poller V2** (becomes a Sensor inside `results_processing`), **Update n8n Runs Table** (Airflow metadata DB handles this natively), **Error Handler** (becomes `on_failure_callback`), **Check Service Health / Containers Up / Check Deploy Intent** (become Sensors).
+**Workflows that disappear entirely:**
+- **Job Poller V2** → becomes an `HttpSensor` inside `results_processing`
+- **Update n8n Runs Table** → Airflow metadata DB handles run history natively
+- **Error Handler** → `on_failure_callback` on each DAG
+- **Check Service Health / Containers Up / Check Deploy Intent** → become Sensors
+
+**Note on cleanup and orphan DAGs:** These workflows contain SQL logic (retention rules, timeout queries) but have no Kafka future and no multi-service consumers. Putting their SQL directly in Airflow task functions is fine — they don't benefit from the endpoint pattern and don't need to be independently callable.
+
+---
+
+## Staleness Detection and the Kafka Bridge
+
+`ops_vehicle_staleness` and `ops_detail_scrape_queue` are dbt models — the detection logic stays in dbt. What the Airflow DAG adds is an "emit" step after the dbt build:
+
+```
+dbt build → read ops_vehicle_staleness → fan out scrape tasks (Airflow)
+                                        → publish listing_goes_stale events (Kafka, later)
+```
+
+The detection logic doesn't move. Only the output mechanism changes. Design the Airflow task as "read view, emit work items" so the emit target can be swapped.
 
 ---
 
 ## Architecture
 
-- Airflow runs in Docker Compose alongside the existing stack (official `apache/airflow` image)
+- Airflow runs in Docker Compose alongside the existing stack (`apache/airflow` image)
 - Uses the **existing Postgres instance** as the Airflow metadata DB (separate schema)
 - DAGs live in `airflow/dags/` — Python files, checked into git, reviewed in PRs
-- Shared DB helpers in `shared/` reused across DAG tasks
+- `processing/` — new service directory alongside `scraper/`, `ops/`, `dbt_runner/`
+- `shared/db.py` reused by the processing service; no new DB connection patterns
 - n8n stays running until all DAGs are validated, then decommissioned
 
 ---
 
 ## Rollout Order
 
-1. **Airflow service** — add to `docker-compose.yml`, Flyway migration for metadata schema
-2. **`dbt_build` DAG** — simplest standalone DAG; validates Airflow → dbt_runner connection
-3. **`scrape_listings` DAG** — schedule-driven, linear flow, low risk
-4. **`orphan_checker` + `delete_stale_emails` + `cleanup_parquet`** — maintenance DAGs, safe to run in parallel with n8n
-5. **`cleanup_artifacts` DAG** — more complex, validate thoroughly before cutover
-6. **`scrape_detail_pages` DAG** — validate against n8n output before switching
-7. **`results_processing` DAG** — most complex; run shadowed against n8n until row counts match
-8. **Disable n8n schedules** — cutover; n8n container stays up briefly as fallback
-9. **Decommission n8n** — remove from docker-compose, archive workflow JSONs
+1. **Airflow service** — add to `docker-compose.yml`, Flyway migration for Airflow metadata schema
+2. **Processing service scaffold** — FastAPI skeleton, Docker Compose entry, `/health` endpoint, CI job
+3. **Ops service: coordination endpoints** — `advance_rotation`, `claim-batch`, `release-claims` (move from scraper)
+4. **`dbt_build` DAG** — simplest standalone DAG; validates Airflow → dbt_runner connection
+5. **`orphan_checker` + `delete_stale_emails` + `cleanup_parquet`** — maintenance DAGs, safe to shadow-run alongside n8n
+6. **`cleanup_artifacts` DAG** — validate archive → delete chain before cutover
+7. **Processing service: core logic** — port Results Processing SQL → Python (SRP observations, detail observations, carousel hints, dealers, unlisted vehicles, artifact_processing status)
+8. **`results_processing` DAG** — calls processing service; shadow-run against n8n until observation row counts match
+9. **`scrape_listings` DAG** — uses new ops rotation endpoint; validate rotation slot claims
+10. **`scrape_detail_pages` DAG** — uses new ops claim endpoints; slim scraper no longer owns this
+11. **Scraper: remove ported logic** — delete `advance_rotation`, claim endpoints, parsing code
+12. **Disable n8n schedules** — cutover; n8n container stays up briefly as fallback
+13. **Decommission n8n** — remove from docker-compose, archive workflow JSONs to `docs/n8n_archive/`
 
 ---
 
 ## What Stays the Same
 
-- All scraper API endpoints (`/scrape_results`, `/scrape/detail/batch`, `/jobs/completed`)
-- dbt_runner HTTP interface
-- Deploy intent flag and ops service
 - Postgres schema — no migrations needed for the migration itself
+- `raw_artifacts` file storage and MinIO archiving architecture
+- dbt models and dbt_runner HTTP interface
+- Deploy intent flag and ops admin UI
+- `detail_scrape_claims` concurrency model (`FOR UPDATE SKIP LOCKED`) — just moves to an ops endpoint
+- `blocked_cooldown` / `stg_blocked_cooldown` logic
+
+## What Changes
+
+- `advance_rotation` moves from scraper → ops
+- Claim management moves from scraper → ops
+- Results Processing SQL logic moves from n8n → processing service (Python)
+- Scraper loses everything except the browser stack and fetch loop
+- n8n decommissioned

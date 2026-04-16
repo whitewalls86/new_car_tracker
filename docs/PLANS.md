@@ -2,17 +2,15 @@
 
 Each plan has its own file in `docs/`. This file is the index only.
 
-## Current State (as of 2026-04-14)
+## Current State (as of 2026-04-16)
 
-Site is live at https://cartracker.info. Auth (Plan 82), data migration (Plan 81), CI/CD (Plans 62+63), and user management are all complete. Integration testing (Plan 84) is in progress — Layer 1 (71 SQL smoke tests) is done, Layer 2 (dbt model logic tests) is underway on the `feature/integration-testing` branch.
+Site is live at https://cartracker.info. Auth (Plan 82), data migration (Plan 81), CI/CD (Plans 62+63), user management, and integration testing (Plan 84) are all complete. 71 SQL smoke tests (Layer 1), full dbt model logic tests (Layer 2), and ops API integration tests (Layer 3, 5 files, 37 tests) are in CI on `feature/integration-testing`.
 
 ---
 
 ## Active
 
-| Plan | Title | Status | Notes |
-|------|-------|--------|-------|
-| [84](plan_84_integration_testing.md) | Integration testing | **In progress** | Layer 1 done (71 tests). Layer 2: `test_cooldown` + `test_vin_mapping` written. Remaining: price percentiles, vehicle staleness, scrape queue. Layer 3 (API tests) after. |
+_No active plans._
 
 ---
 
@@ -20,9 +18,10 @@ Site is live at https://cartracker.info. Auth (Plan 82), data migration (Plan 81
 
 | Priority | Plan | Title | Notes |
 |----------|------|-------|-------|
-| 1 | [84](plan_84_integration_testing.md) | Integration testing — Layer 2 remainder | `test_price_percentiles`, `test_vehicle_staleness`, `test_scrape_queue`. Then Layer 3 (ops API tests). |
-| 2 | [83](plan_83_n8n_workflow_viewer.md) | n8n workflow viewer | Read-only portfolio page. Plan 82 (auth) is complete — this is unblocked. Quick win. |
-| 3 | [71](plan_71_airflow.md) | Airflow migration | Replaces n8n with Python DAGs — code-reviewable, testable, on every DE job description. Prerequisite for orchestration integration tests and Grafana DAG metrics. |
+| 1 | [83](plan_83_n8n_workflow_viewer.md) | n8n workflow viewer | Read-only portfolio page. Plan 82 (auth) is complete — this is unblocked. Quick win. |
+| 2 | [89](plan_89_ops_analytics_split.md) | Operational/analytics dbt split | Pull operational state (VIN mapping, price log, vin_state) out of dbt into app-owned tables. Prerequisite for Kafka and for clean Plan 71 processing service design. Implementation scope overlaps Plan 71. |
+| 3 | [71](plan_71_airflow.md) | Airflow migration | Replaces n8n with Python DAGs — code-reviewable, testable, on every DE job description. Prerequisite for orchestration integration tests and Grafana DAG metrics. Plan 89 write path is implemented here. |
+| 3.5 | [90](plan_90_dbt_cleanup.md) | dbt intermediate cleanup | Delete redundant dbt models after Plan 89 shadow period validates app-owned tables. Blocked on Plan 89. |
 | 4 | **86** | Grafana observability stack | Prometheus + Loki + Tempo + Grafana. Best sequenced after Airflow so there are real DAG metrics to observe. Grafana is the right long-term choice (aligns with K8s + Kafka + enterprise DE stack). |
 | 5 | **87** | Kafka event-driven layer | Replace n8n-schedule → scraper-API with `listing_updated` / `price_changed` events. Justified once Airflow DAGs produce events and multiple consumers exist (alerting, enrichment, dbt trigger). Do not add before Airflow — the "why Kafka" story isn't defensible yet. |
 | 6 | **88** | Kubernetes | Orchestration upgrade over Docker Compose — scheduling, scaling, self-healing. Portfolio + scalability layer. Makes most sense once Airflow is running and 5+ services need managing. |
@@ -40,7 +39,9 @@ Site is live at https://cartracker.info. Auth (Plan 82), data migration (Plan 81
 
 2. **Plan 83 after** — self-contained, quick, makes the live site more useful for portfolio visitors.
 
-3. **Plan 71 (Airflow) next** — once Airflow runs, orchestration logic moves from n8n JSON blobs into Python DAGs that are reviewable, diffable, and directly testable. This is the prerequisite that unblocks orchestration integration tests and makes observability meaningful.
+3. **Plan 89 (dbt split) before Plan 71** — the processing service built in Plan 71 needs a clear write path. Plan 89 defines the three application-owned tables (`listing_to_vin`, `price_observations`, `vin_state`) and the SQL file pattern. Implementing Plan 89 as part of Plan 71 avoids retrofitting.
+
+4. **Plan 71 (Airflow) next** — once Airflow runs, orchestration logic moves from n8n JSON blobs into Python DAGs that are reviewable, diffable, and directly testable. The processing service implements the Plan 89 write path from day one. This is the prerequisite that unblocks orchestration integration tests and makes observability meaningful.
 
 4. **Plan 86 (Grafana) after Airflow** — there need to be real DAG-level metrics before observability infrastructure pays off. Grafana + Loki + Prometheus is the right long-term stack (aligns with K8s and Kafka when those come later).
 
@@ -56,6 +57,7 @@ Currently all INSERT/UPDATE/DELETE logic lives inside n8n workflow JSON — not 
 ## Completed
 
 See [completed_plans.md](completed_plans.md) for full list. Notable recent completions:
+- **84** — Integration testing: 71 SQL smoke tests + full dbt model logic coverage + ops API tests (2026-04-16)
 - **82** — DB-backed auth with access requests (PRs #64–#67, 2026-04-14)
 - **81** — Data migration local → cloud (2026-04-14)
 - **62+63** — CI/CD + Flyway schema migrations
