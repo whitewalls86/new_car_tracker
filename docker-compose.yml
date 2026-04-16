@@ -1,6 +1,9 @@
 x-airflow-common:
   &airflow-common
-  image: apache/airflow:3.2.0
+  build:
+    context: ./airflow
+    dockerfile: Dockerfile
+  image: cartracker-airflow
   environment:
     &airflow-common-env
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
@@ -12,6 +15,7 @@ x-airflow-common:
     AIRFLOW__CORE__EXECUTION_API_SERVER_URL: 'http://airflow-apiserver:8080/execution/'
     AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: 'true'
     AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET}
+    AIRFLOW_CONN_CARTRACKER_DB: postgresql://airflow_app_user:${AIRFLOW_APP_DB_PASSWORD}@postgres:5432/cartracker
   volumes:
     - ./airflow/dags:/opt/airflow/dags
     - airflow_logs:/opt/airflow/logs
@@ -67,6 +71,7 @@ services:
       -placeholders.authEmailSalt=${AUTH_EMAIL_SALT}
       -placeholders.adminEmail=${ADMIN_EMAIL}
       -placeholders.airflowPassword=${AIRFLOW_DB_PASSWORD}
+      -placeholders.airflowAppPassword=${AIRFLOW_APP_DB_PASSWORD}
       -baselineOnMigrate=true
       migrate
     volumes:
@@ -246,13 +251,19 @@ services:
       - cartracker-net
 
   archiver:
-    build: ./archiver
+    build:
+      context: .
+      dockerfile: archiver/Dockerfile
     image: cartracker-archiver
     container_name: cartracker-archiver
     volumes:
       - cartracker_raw:/data/raw
     environment:
-      DATABASE_URL: postgresql://scraper_user:${SCRAPER_DB_PASSWORD}@postgres:5432/cartracker
+      PGHOST: postgres
+      PGPORT: 5432
+      PGDATABASE: cartracker
+      PGUSER: scraper_user
+      POSTGRES_PASSWORD: ${SCRAPER_DB_PASSWORD}
       MINIO_ENDPOINT: http://minio:9000
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}

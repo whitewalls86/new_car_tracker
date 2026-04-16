@@ -181,3 +181,24 @@ class TestCleanupParquetEndpoint:
         data = resp.json()
         assert data["deleted"] == 1
         assert data["failed"] == 0
+
+
+# ---------------------------------------------------------------------------
+# POST /cleanup/parquet/run
+# ---------------------------------------------------------------------------
+
+class TestCleanupParquetRunEndpoint:
+    def test_delegates_to_run_cleanup_parquet(self, mock_archiver_client, mocker):
+        fake = {"total": 2, "deleted": 2, "failed": 0, "results": []}
+        mocker.patch("archiver.app._run_cleanup_parquet", return_value=fake)
+        resp = mock_archiver_client.post("/cleanup/parquet/run")
+        assert resp.status_code == 200
+        assert resp.json() == fake
+
+    def test_no_work_returns_zeros(self, mock_archiver_client, mocker):
+        mocker.patch(
+            "archiver.app._run_cleanup_parquet",
+            return_value={"total": 0, "deleted": 0, "failed": 0, "results": []},
+        )
+        resp = mock_archiver_client.post("/cleanup/parquet/run")
+        assert resp.json()["total"] == 0

@@ -1,29 +1,15 @@
 import logging
-import os
 from typing import Any, Dict
-from urllib.parse import urlparse
 
 from fastapi import Body, FastAPI
-from processors.archive_artifacts import archive_artifacts as _archive_artifacts
-from processors.cleanup_artifacts import cleanup_artifacts
-from processors.cleanup_parquet import cleanup_parquet as _cleanup_parquet
+
+from archiver.processors.archive_artifacts import archive_artifacts as _archive_artifacts
+from archiver.processors.cleanup_artifacts import cleanup_artifacts
+from archiver.processors.cleanup_parquet import cleanup_parquet as _cleanup_parquet
+from archiver.processors.cleanup_parquet import run_cleanup_parquet as _run_cleanup_parquet
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("archiver")
-
-_DATABASE_URL = os.environ.get("DATABASE_URL", "")
-if _DATABASE_URL:
-    _p = urlparse(_DATABASE_URL)
-    _SYNC_DB_KWARGS = {
-        "host": _p.hostname or "postgres", "port": _p.port or 5432,
-        "dbname": _p.path.lstrip("/") or "cartracker",
-        "user": _p.username or "cartracker", "password": _p.password or "",
-    }
-else:
-    _SYNC_DB_KWARGS = {
-        "host": "postgres", "dbname": "cartracker", "user": "cartracker",
-        "password": os.environ.get("POSTGRES_PASSWORD", ""),
-    }
 
 app = FastAPI()
 
@@ -31,7 +17,7 @@ app = FastAPI()
 @app.post("/archive/artifacts")
 def run_archive_artifacts(payload: dict = Body(...)) -> Dict[str, Any]:
     artifacts = (payload or {}).get("artifacts", [])
-    results = _archive_artifacts(artifacts, _SYNC_DB_KWARGS)
+    results = _archive_artifacts(artifacts)
     archived_count = sum(1 for r in results if r.get("archived"))
     return {"total": len(results), "archived": archived_count,
             "failed": len(results) - archived_count, "results": results}
@@ -53,6 +39,11 @@ def run_cleanup_parquet(payload: dict = Body(...)) -> Dict[str, Any]:
     deleted_count = sum(1 for r in results if r.get("deleted"))
     return {"total": len(results), "deleted": deleted_count,
             "failed": len(results) - deleted_count, "results": results}
+
+
+@app.post("/cleanup/parquet/run")
+def trigger_cleanup_parquet() -> Dict[str, Any]:
+    return _run_cleanup_parquet()
 
 
 @app.get("/health")

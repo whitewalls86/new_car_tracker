@@ -8,6 +8,8 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import s3fs
 
+from shared.db import get_conn
+
 logger = logging.getLogger("archiver")
 
 MINIO_ENDPOINT = os.environ.get("MINIO_ENDPOINT", "http://minio:9000")
@@ -66,7 +68,6 @@ def _write_chunk(rows: List[Dict], fs: s3fs.S3FileSystem) -> None:
 
 def archive_artifacts(
     artifacts: List[Dict[str, Any]],
-    db_kwargs: Dict[str, Any],
 ) -> List[Dict[str, Any]]:
     """
     Archive a batch of raw HTML artifacts to MinIO as hive-partitioned Parquet.
@@ -74,12 +75,8 @@ def archive_artifacts(
     own DB fetch, HTML read, parquet write, and archived_at commit before moving on.
 
     artifacts: [{"artifact_id": int, "filepath": str}, ...]
-    db_kwargs: psycopg2 connection kwargs
-
     Returns: [{"artifact_id": int, "archived": bool, "reason": str|None}]
     """
-    import psycopg2
-
     if not artifacts:
         return []
 
@@ -92,7 +89,7 @@ def archive_artifacts(
     results: Dict[int, Dict] = {}
 
     try:
-        conn = psycopg2.connect(**db_kwargs)
+        conn = get_conn()
     except Exception as e:
         logger.error("DB connection failed: %s", e)
         return [{"artifact_id": a, "archived": False, "reason": f"db_error: {e}"}

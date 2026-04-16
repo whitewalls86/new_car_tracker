@@ -1,5 +1,26 @@
 """Unit tests for archiver/processors/cleanup_parquet.py"""
-from processors.cleanup_parquet import cleanup_parquet
+from unittest.mock import MagicMock
+
+from archiver.processors.cleanup_parquet import cleanup_parquet, run_cleanup_parquet
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _patch_db_cursor(mocker, months):
+    """
+    Mock db_cursor so the first call (SELECT) returns `months` from fetchall,
+    and the second call (UPDATE) is a no-op. Both share the same mock cursor.
+    """
+    mock_cursor = MagicMock()
+    mock_cursor.fetchall.return_value = months
+    mock_cm = MagicMock()
+    mock_cm.__enter__ = MagicMock(return_value=mock_cursor)
+    mock_cm.__exit__ = MagicMock(return_value=False)
+    mock_db_cursor = mocker.patch(
+        "archiver.processors.cleanup_parquet.db_cursor", return_value=mock_cm
+    )
+    return mock_db_cursor, mock_cursor
 
 
 class TestCleanupParquet:
@@ -69,3 +90,62 @@ class TestCleanupParquet:
         path = "bronze/html/year=2026/month=02/"
         result = cleanup_parquet([path])
         assert result[0]["path"] == path
+
+
+# ---------------------------------------------------------------------------
+# run_cleanup_parquet
+# ---------------------------------------------------------------------------
+
+class TestRunCleanupParquet:
+    def test_no_expired_months_returns_zeros(self, mocker, mock_s3fs):
+        _patch_db_cursor(mocker, months=[])
+        result = run_cleanup_parquet()
+        assert result == {"total": 0, "deleted": 0, "failed": 0, "results": []}
+        mock_s3fs.rm.assert_not_called()
+
+    def test_no_expired_months_skips_mark_deleted(self, mocker, mock_s3fs):
+        mock_db_cursor, _ = _patch_db_cursor(mocker, months=[])
+        run_cleanup_parquet()
+        # db_cursor called once (SELECT), never a second time (UPDATE)
+        assert mock_db_cursor.call_count == 1
+
+    def test_paths_built_from_expired_months(self, mocker, mock_s3fs):
+        _patch_db_cursor(mocker, months=[(2025, 11), (2025, 12)])
+        run_cleanup_parquet()
+        deleted_paths = [call.args[0] for call in mock_s3fs.rm.call_args_list]
+        assert "bronze/html/year=2025/month=11/" in deleted_paths
+        assert "bronze/html/year=2025/month=12/" in deleted_paths
+
+    def test_mark_deleted_called_after_minio_cleanup(self, mocker, mock_s3fs):
+        mock_db_cursor, _ = _patch_db_cursor(mocker, months=[(2026, 1)])
+        run_cleanup_parquet()
+        # db_cursor called twice: SELECT then UPDATE
+        assert mock_db_cursor.call_count == 2
+
+    def test_returns_correct_counts(self, mocker, mock_s3fs):
+        _patch_db_cursor(mocker, months=[(2025, 10), (2025, 11)])
+        result = run_cleanup_parquet()
+        assert result["total"] == 2
+        assert result["deleted"] == 2
+        assert result["failed"] == 0
+
+    def test_partial_minio_failure_reflected_in_counts(self, mocker, mock_s3fs):
+        _patch_db_cursor(mocker, months=[(2025, 10), (2025, 11)])
+        mock_s3fs.rm.side_effect = [None, Exception("timeout")]
+        result = run_cleanup_parquet()
+        assert result["total"] == 2
+        assert result["deleted"] == 1
+        assert result["failed"] == 1
+
+    def test_mark_deleted_still_called_on_partial_minio_failure(self, mocker, mock_s3fs):
+        """DB mark-deleted runs regardless of MinIO failures."""
+        mock_db_cursor, _ = _patch_db_cursor(mocker, months=[(2025, 10)])
+        mock_s3fs.rm.side_effect = Exception("timeout")
+        run_cleanup_parquet()
+        assert mock_db_cursor.call_count == 2
+
+    def test_results_list_included_in_response(self, mocker, mock_s3fs):
+        _patch_db_cursor(mocker, months=[(2026, 3)])
+        result = run_cleanup_parquet()
+        assert len(result["results"]) == 1
+        assert result["results"][0]["path"] == "bronze/html/year=2026/month=3/"
