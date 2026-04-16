@@ -200,14 +200,18 @@ def test_approve_access_request_conflict_upserts(
 ):
     """ON CONFLICT (email_hash) DO UPDATE fires when user already exists."""
     email = req_emails["conflict"]
-    seed_user_committed(_hash(email), "viewer")
 
+    # Submit the access request first — the route redirects if the user already
+    # exists in authorized_users, so we must create the request before seeding.
     api_client.post(
         "/request-access",
         data={"display_name": "Conflict User", "requested_role": "power_user"},
         headers={"X-Auth-Request-Email": email},
         follow_redirects=False,
     )
+
+    # Now seed the existing user so the ON CONFLICT path fires on approve.
+    seed_user_committed(_hash(email), "viewer")
     verify_cur.execute(
         "SELECT id FROM access_requests WHERE email_hash = %s AND status = 'pending'",
         (_hash(email),),
