@@ -9,8 +9,6 @@ Seeds raw_artifacts rows covering three cases:
   - recent:  archived_at < 28 days ago                      → should be ignored
   - already deleted: archived_at > 28 days ago, deleted_at set → should be ignored
 """
-import uuid
-
 import pytest
 
 from archiver.queries import GET_EXPIRED_PARQUET_MONTHS, MARK_PARQUET_DELETED
@@ -23,13 +21,11 @@ pytestmark = pytest.mark.integration
 # ---------------------------------------------------------------------------
 
 @pytest.fixture()
-def seeded_artifacts(cur):
+def seeded_artifacts(cur, seed_run):
     """
     Seeds three raw_artifacts rows representing expired, recent, and
     already-deleted states. Returns (expired_id, recent_id, already_deleted_id).
     """
-    run_id = str(uuid.uuid4())
-
     cur.execute(
         """
         INSERT INTO raw_artifacts
@@ -46,7 +42,7 @@ def seeded_artifacts(cur):
              now() - interval '40 days', now() - interval '1 day')
         RETURNING artifact_id
         """,
-        (run_id, run_id, run_id),
+        (seed_run, seed_run, seed_run),
     )
     rows = cur.fetchall()
     return rows[0]["artifact_id"], rows[1]["artifact_id"], rows[2]["artifact_id"]
@@ -141,15 +137,14 @@ class TestMarkParquetDeleted:
         )
         assert cur.fetchone()["deleted_at"] == original_deleted_at
 
-    def test_artifact_with_no_archived_at_not_marked(self, cur):
-        run_id = str(uuid.uuid4())
+    def test_artifact_with_no_archived_at_not_marked(self, cur, seed_run):
         cur.execute(
             """
             INSERT INTO raw_artifacts (run_id, source, artifact_type, url, filepath)
             VALUES (%s, 'cars.com', 'srp', 'http://test/4', '/tmp/4.html')
             RETURNING artifact_id
             """,
-            (run_id,),
+            (seed_run,),
         )
         artifact_id = cur.fetchone()["artifact_id"]
         cur.execute(MARK_PARQUET_DELETED)
