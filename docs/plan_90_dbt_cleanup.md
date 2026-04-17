@@ -1,72 +1,95 @@
-# Plan 90: dbt Intermediate Cleanup
+# Plan 90: dbt Decommission
 
-**Status:** Planned — blocked on Plan 89 shadow period completing
-**Priority:** Medium — follow-on to Plan 89; do not start until app-owned tables are validated
+**Status:** Planned — blocked on Plan 96 validation
+**Priority:** Medium — do not start until silver has 2+ weeks of production data
+**Previously titled:** "dbt Intermediate Cleanup"
 
 ---
 
 ## Overview
 
-After Plan 89's shadow period confirms that `listing_to_vin`, `price_observations`, and `vin_state` are correctly populated and agree with the dbt-derived equivalents, the now-redundant dbt intermediate models can be removed and the analytics marts updated to read from the application-owned tables directly.
+With the processing service (Plan 93) writing all observations to MinIO silver as the primary store, dbt's source tables (`srp_observations`, `detail_observations`) are no longer populated. This plan decides dbt's fate and migrates the analytics layer accordingly.
 
-This is a cleanup plan, not a feature plan. Nothing operationally changes — the ops views were already rewritten as live Postgres views in Plan 89. This plan tidies dbt so it only contains analytics logic.
+---
+
+## The Decision
+
+**Option A — Full decommission (recommended):** Replace all dbt models with DuckDB queries against MinIO silver and the Postgres HOT tables. Remove `dbt_runner` from docker-compose. Remove the `dbt_build` Airflow DAG.
+
+**Option B — Reduced dbt:** Keep dbt for complex derived models (deal scores, market benchmarks). Point dbt at silver via DuckDB FDW or materialized Postgres tables populated from silver. More moving parts, harder to justify.
+
+**Recommended: Option A.** Dashboard charts map cleanly to DuckDB queries. With Airflow handling orchestration, dbt adds complexity without adding value. The portfolio signal from dbt is already captured in git history — the story becomes "I replaced a batch transformation layer with a streaming write path and event-log analytics."
 
 ---
 
 ## Prerequisites
 
-- Plan 89 complete: app-owned tables live, ops views rewritten as Postgres views
-- Shadow validation passed: `listing_to_vin` matches `int_listing_to_vin`, `price_observations` matches `int_price_events`, for at least one full scrape cycle
-- Layer 3 integration tests covering the write path are green in CI
+- Plan 96 complete: silver validated, DuckDB queries confirmed correct against production data
+- At least 2 weeks of silver data in production
+- All dashboard charts confirmed serviceable from DuckDB queries
 
 ---
 
-## Models to Delete
+## What Gets Removed
 
-| Model | Replacement |
+| Component | Replacement |
 |---|---|
-| `int_listing_to_vin` | `listing_to_vin` app table |
-| `int_price_events` | `price_observations` app table |
-| `int_latest_price_by_vin` | Query against `price_observations` |
-| `int_latest_tier1_observation_by_vin` | `vin_state` app table |
-| `int_carousel_hints_filtered` | Validation moved inline to processing service |
-| `int_carousel_price_events_mapped` | Subsumed by `price_observations` write path |
-| `int_carousel_price_events_unmapped` | Subsumed by `price_observations` write path |
-| `ops_vehicle_staleness` (dbt model) | Already a live Postgres view after Plan 89 |
-| `ops_detail_scrape_queue` (dbt model) | Already a live Postgres view after Plan 89 |
+| All dbt models | DuckDB queries against silver |
+| `dbt_runner` service | Removed from docker-compose |
+| `dbt_build` Airflow DAG | Removed |
+| `dbt_intents` table | Removed |
+| Layer 2 dbt logic tests in CI | Replaced by DuckDB query validation tests |
+| `srp_observations` Postgres table | Dropped (data preserved in silver) |
+| `detail_observations` Postgres table | Dropped (data preserved in silver) |
+| `detail_carousel_hints` Postgres table | Dropped (carousel observations in silver) |
+| `raw_artifacts` table | Dropped (replaced by `artifacts_queue` in Plan 97) |
+| `artifact_processing` table | Dropped (replaced by `artifacts_queue` in Plan 97) |
 
 ---
 
-## Models to Update
+## What the Analytics Layer Looks Like After
 
-### `mart_vehicle_snapshot`
-Currently joins `int_latest_tier1_observation_by_vin` and `int_latest_price_by_vin`. Update to join `vin_state` and query `price_observations` directly as dbt sources.
+DuckDB pointed at MinIO silver + Postgres HOT tables via `postgres_scan()`.
 
-### `mart_deal_scores`
-Reads through `mart_vehicle_snapshot`. Update follows automatically once the snapshot mart is updated.
+```sql
+-- Vehicle snapshot (replaces mart_vehicle_snapshot)
+SELECT
+    p.vin, p.listing_id, p.price, p.make, p.model, p.last_seen_at,
+    attrs.trim, attrs.year, attrs.fuel_type, attrs.body_style
+FROM postgres_scan('postgresql://...', 'public', 'price_observations') p
+LEFT JOIN (
+    SELECT DISTINCT ON (vin) vin, trim, year, fuel_type, body_style
+    FROM read_parquet('s3://bucket/silver/observations/year=*/month=*/*.parquet',
+                      hive_partitioning=true)
+    WHERE source = 'detail'
+    ORDER BY vin, fetched_at DESC
+) attrs USING (vin);
 
-### `int_price_history_by_vin`
-Currently reads from `int_price_events`. Update to read from `price_observations` as a source.
-
-### `int_vehicle_attributes`
-Reads from `stg_srp_observations` and `stg_detail_observations` — no change needed.
-
----
-
-## Other Cleanup
-
-- Remove `after_srp`, `after_detail`, `both` entries from `dbt_intents` that reference deleted models, or update their `select_args` to reflect the narrowed dbt DAG
-- Remove the shadow comparison tests added during Plan 89's validation period
-- Run the full dbt test suite after deletions to confirm the analytics layer is intact
-- Update Layer 2 dbt integration tests to remove any tests that covered the deleted models
+-- Deal score (replaces mart_deal_scores)
+SELECT
+    p.vin, p.price, p.make, p.model,
+    market.median_price,
+    round(p.price::numeric / NULLIF(market.median_price, 0), 2) AS price_to_market_ratio
+FROM postgres_scan('postgresql://...', 'public', 'price_observations') p
+JOIN (
+    SELECT make, model, median(price)::integer AS median_price
+    FROM read_parquet('s3://bucket/silver/observations/year=*/month=*/*.parquet',
+                      hive_partitioning=true)
+    WHERE source = 'detail'
+      AND listing_state = 'active'
+      AND price IS NOT NULL
+    GROUP BY make, model
+) market USING (make, model);
+```
 
 ---
 
 ## Rollout Order
 
-1. Update `mart_vehicle_snapshot` and `mart_deal_scores` to read from app tables — verify marts produce correct output against the shadow data
-2. Update `int_price_history_by_vin` source
-3. Delete the redundant intermediate models one at a time, running `dbt build` after each deletion to catch downstream breakage early
-4. Update `dbt_intents`
-5. Remove shadow comparison tests from CI
-6. Full dbt test suite pass
+1. Confirm all dashboard queries can be served from DuckDB (test in staging against production silver data)
+2. Remove dbt models one layer at a time, running dashboard spot-checks after each deletion
+3. Drop `srp_observations`, `detail_observations`, `detail_carousel_hints` Postgres tables
+4. Drop `raw_artifacts`, `artifact_processing` tables
+5. Remove `dbt_runner` from docker-compose
+6. Remove `dbt_build` DAG from Airflow
+7. Remove Layer 2 dbt tests from CI; add DuckDB query validation tests
