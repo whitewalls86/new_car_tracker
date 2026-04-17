@@ -17,3 +17,6 @@ def _q(name: str) -> str:
 
 GET_EXPIRED_PARQUET_MONTHS = _q("get_expired_parquet_months")
 MARK_PARQUET_DELETED       = _q("mark_parquet_deleted")
+
+GET_CLEANUP_CANDIDATES = _q("get_cleanup_candidates")
+MARK_ARTIFACTS_DELETED = _q("mark_artifacts_deleted")
