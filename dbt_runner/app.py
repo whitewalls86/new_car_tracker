@@ -14,6 +14,7 @@ from fastapi import Body, FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 
 from shared.db import db_cursor
+from shared.job_counter import active_job, is_idle
 
 app = FastAPI()
 _LOG_PATH = os.getenv("LOG_PATH", "/usr/app/logs/app.log")
@@ -211,6 +212,13 @@ def health() -> Dict[str, Any]:
     return {"ok": True}
 
 
+@app.get("/ready")
+def ready() -> Dict[str, Any]:
+    if is_idle():
+        return {"ready": True}
+    return {"ready": False, "reason": "jobs in flight"}
+
+
 @app.get("/logs")
 def get_logs(lines: int = 200) -> Dict[str, Any]:
     """Return the last N lines of the application log file."""
@@ -316,98 +324,100 @@ def dbt_build(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
     regardless of success or failure. If the lock is already held,
     returns 409 Conflict so the caller can retry.
     """
-    intent: Optional[str] = payload.get("intent")
-    full_refresh: bool = bool(payload.get("full_refresh", False))
-    fail_fast: bool = bool(payload.get("fail_fast", True))
+    with active_job():
+        intent: Optional[str] = payload.get("intent")
+        full_refresh: bool = bool(payload.get("full_refresh", False))
+        fail_fast: bool = bool(payload.get("fail_fast", True))
 
-    select = payload.get("select")
-    exclude = payload.get("exclude")
+        select = payload.get("select")
+        exclude = payload.get("exclude")
 
-    if select is None:
-        if not intent:
-            raise HTTPException(status_code=400, detail="Provide either 'intent' or 'select'.")
-        intent_map = _load_intents()
-        if intent not in intent_map:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Unknown intent {intent!r}. Allowed: {sorted(intent_map.keys())}",
-            )
-        select = intent_map[intent]
+        if select is None:
+            if not intent:
+                raise HTTPException(status_code=400, detail="Provide either 'intent' or 'select'.")
+            intent_map = _load_intents()
+            if intent not in intent_map:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Unknown intent {intent!r}. Allowed: {sorted(intent_map.keys())}",
+                )
+            select = intent_map[intent]
 
-    if isinstance(select, str):
-        select = [select]
-    if exclude is not None and isinstance(exclude, str):
-        exclude = [exclude]
+        if isinstance(select, str):
+            select = [select]
+        if exclude is not None and isinstance(exclude, str):
+            exclude = [exclude]
 
-    _validate_tokens(select, "select")
-    if exclude:
-        _validate_tokens(exclude, "exclude")
-
-    # --- Acquire lock ---
-    caller = intent or "manual"
-    if not _acquire_lock(caller):
-        status = _lock_status()
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "error": "dbt_locked",
-                "message": f"dbt build already in progress (locked by: {status.get('locked_by')})",
-                "lock": status,
-            },
-        )
-
-    try:
-        cmd: List[str] = ["dbt", "build"]
-        if fail_fast:
-            cmd.append("--fail-fast")
-        if full_refresh:
-            cmd.append("--full-refresh")
-
-        cmd += ["--select", *select]
+        _validate_tokens(select, "select")
         if exclude:
-            cmd += ["--exclude", *exclude]
+            _validate_tokens(exclude, "exclude")
 
-        started_at = datetime.now(timezone.utc)
-        proc = subprocess.run(cmd, capture_output=True, text=True)
-        finished_at = datetime.now(timezone.utc)
+        # --- Acquire lock ---
+        caller = intent or "manual"
+        if not _acquire_lock(caller):
+            status = _lock_status()
+            locked_by = status.get('locked_by')
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "dbt_locked",
+                    "message": f"dbt build already in progress (locked by: {locked_by})",
+                    "lock": status,
+                },
+            )
 
-        ok = proc.returncode == 0
-        is_successful = _record_run(started_at, finished_at, ok, intent, 
-                                    select, proc.stdout, proc.returncode)
+        try:
+            cmd: List[str] = ["dbt", "build"]
+            if fail_fast:
+                cmd.append("--fail-fast")
+            if full_refresh:
+                cmd.append("--full-refresh")
 
-        if not is_successful:
-            data = {
-                "started_at": started_at.isoformat(),
-                "finished_at": finished_at.isoformat(),
+            cmd += ["--select", *select]
+            if exclude:
+                cmd += ["--exclude", *exclude]
+
+            started_at = datetime.now(timezone.utc)
+            proc = subprocess.run(cmd, capture_output=True, text=True)
+            finished_at = datetime.now(timezone.utc)
+
+            ok = proc.returncode == 0
+            is_successful = _record_run(started_at, finished_at, ok, intent,
+                                        select, proc.stdout, proc.returncode)
+
+            if not is_successful:
+                data = {
+                    "started_at": started_at.isoformat(),
+                    "finished_at": finished_at.isoformat(),
+                    "ok": ok,
+                    "intent": intent,
+                    "select": select,
+                    "stdout": proc.stdout,
+                    "returncode": proc.returncode
+                }
+                logger.error(f"Logging Run Failed. {json.dumps(data)}")
+
+            result = {
                 "ok": ok,
+                "returncode": proc.returncode,
                 "intent": intent,
                 "select": select,
-                "stdout": proc.stdout,
-                "returncode": proc.returncode
+                "exclude": exclude or [],
+                "cmd": " ".join(shlex.quote(x) for x in cmd),
+                "stdout": _cap(proc.stdout),
+                "stderr": _cap(proc.stderr),
             }
-            logger.error(f"Logging Run Failed. {json.dumps(data)}")
 
-        result = {
-            "ok": ok,
-            "returncode": proc.returncode,
-            "intent": intent,
-            "select": select,
-            "exclude": exclude or [],
-            "cmd": " ".join(shlex.quote(x) for x in cmd),
-            "stdout": _cap(proc.stdout),
-            "stderr": _cap(proc.stderr),
-        }
+            # HARD FAIL: make n8n fail via non-2xx
+            if proc.returncode != 0:
+                raise HTTPException(status_code=500, detail=result)
 
-        # HARD FAIL: make n8n fail via non-2xx
-        if proc.returncode != 0:
-            raise HTTPException(status_code=500, detail=result)
+            return result
 
-        return result
-
-    finally:
-        # --- Always release lock ---
-        if not _release_lock():
-            logger.error("Failed to release dbt lock")
+        finally:
+            # --- Always release lock ---
+            if not _release_lock():
+                logger.error("Failed to release dbt lock")
 
 
 

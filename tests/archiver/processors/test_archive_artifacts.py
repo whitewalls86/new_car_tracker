@@ -2,13 +2,11 @@
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, mock_open
 
-from processors.archive_artifacts import archive_artifacts
+from archiver.processors.archive_artifacts import archive_artifacts
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-_DB_KWARGS = {"host": "localhost", "dbname": "test", "user": "test", "password": "test"}
 
 _FETCHED_AT = datetime(2026, 3, 15, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -33,7 +31,7 @@ def _make_db_row(artifact_id=1):
 
 def _patch_db(mocker, rows):
     """
-    Patch psycopg2.connect for both calls archive_artifacts makes:
+    Patch shared.db.get_conn for both calls archive_artifacts makes:
       1. SELECT metadata (returns rows)
       2. UPDATE archived_at (no return value needed)
     Both calls return the same mock_conn; the cursor context manager
@@ -44,8 +42,10 @@ def _patch_db(mocker, rows):
     mock_conn = MagicMock()
     mock_conn.cursor.return_value.__enter__ = lambda s: mock_cursor
     mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
-    mock_connect = mocker.patch("psycopg2.connect", return_value=mock_conn)
-    return mock_conn, mock_cursor, mock_connect
+    mock_get_conn = mocker.patch(
+        "archiver.processors.archive_artifacts.get_conn", return_value=mock_conn
+    )
+    return mock_conn, mock_cursor, mock_get_conn
 
 
 def _patch_parquet(mocker):
@@ -59,7 +59,7 @@ def _patch_parquet(mocker):
 
 class TestArchiveArtifactsEmpty:
     def test_empty_list_returns_empty(self):
-        result = archive_artifacts([], _DB_KWARGS)
+        result = archive_artifacts([])
         assert result == []
 
 
@@ -69,20 +69,25 @@ class TestArchiveArtifactsEmpty:
 
 class TestArchiveArtifactsDbError:
     def test_db_connect_error_marks_all_failed(self, mocker, mock_s3fs):
-        mocker.patch("psycopg2.connect", side_effect=Exception("connection refused"))
+        mocker.patch(
+            "archiver.processors.archive_artifacts.get_conn",
+            side_effect=Exception("connection refused"),
+        )
         artifacts = [{"artifact_id": 1, "filepath": "/data/1.html"}]
-        results = archive_artifacts(artifacts, _DB_KWARGS)
+        results = archive_artifacts(artifacts)
         assert len(results) == 1
         assert results[0]["archived"] is False
         assert "db_error" in results[0]["reason"]
 
     def test_db_error_covers_all_artifact_ids(self, mocker, mock_s3fs):
-        mocker.patch("psycopg2.connect", side_effect=Exception("boom"))
+        mocker.patch(
+            "archiver.processors.archive_artifacts.get_conn", side_effect=Exception("boom")
+        )
         artifacts = [
             {"artifact_id": 1, "filepath": "/a.html"},
             {"artifact_id": 2, "filepath": "/b.html"},
         ]
-        results = archive_artifacts(artifacts, _DB_KWARGS)
+        results = archive_artifacts(artifacts)
         assert {r["artifact_id"] for r in results} == {1, 2}
         assert all(r["archived"] is False for r in results)
 
@@ -95,7 +100,7 @@ class TestArchiveArtifactsNotInDb:
     def test_artifact_missing_from_db_marked_not_found(self, mocker, mock_s3fs):
         _patch_db(mocker, rows=[])  # DB returns no rows
         _patch_parquet(mocker)
-        result = archive_artifacts([{"artifact_id": 99, "filepath": "/x.html"}], _DB_KWARGS)
+        result = archive_artifacts([{"artifact_id": 99, "filepath": "/x.html"}])
         assert result[0]["archived"] is False
         assert result[0]["reason"] == "not_found_in_db"
 
@@ -110,7 +115,7 @@ class TestArchiveArtifactsFileRead:
         _patch_parquet(mocker)
         mocker.patch("os.path.exists", return_value=True)
         mocker.patch("builtins.open", side_effect=OSError("disk error"))
-        result = archive_artifacts([{"artifact_id": 1, "filepath": "/data/1.html"}], _DB_KWARGS)
+        result = archive_artifacts([{"artifact_id": 1, "filepath": "/data/1.html"}])
         assert result[0]["archived"] is False
         assert "read_error" in result[0]["reason"]
 
@@ -119,7 +124,7 @@ class TestArchiveArtifactsFileRead:
         _patch_db(mocker, rows=[_make_db_row(1)])
         mock_write = _patch_parquet(mocker)
         mocker.patch("os.path.exists", return_value=False)
-        result = archive_artifacts([{"artifact_id": 1, "filepath": "/data/1.html"}], _DB_KWARGS)
+        result = archive_artifacts([{"artifact_id": 1, "filepath": "/data/1.html"}])
         assert result[0]["archived"] is True
         mock_write.assert_called_once()
 
@@ -134,19 +139,19 @@ class TestArchiveArtifactsSuccess:
         mock_write = _patch_parquet(mocker)
         mocker.patch("os.path.exists", return_value=True)
         mocker.patch("builtins.open", mock_open(read_data=b"<html/>"))
-        result = archive_artifacts([{"artifact_id": 1, "filepath": "/data/1.html"}], _DB_KWARGS)
+        result = archive_artifacts([{"artifact_id": 1, "filepath": "/data/1.html"}])
         assert result == [{"artifact_id": 1, "archived": True, "reason": None}]
         mock_write.assert_called_once()
 
     def test_archived_at_updated_on_success(self, mocker, mock_s3fs):
         """archived_at should be set in DB for successfully archived artifacts."""
-        _, _, mock_connect = _patch_db(mocker, rows=[_make_db_row(1)])
+        _, _, mock_get_conn = _patch_db(mocker, rows=[_make_db_row(1)])
         _patch_parquet(mocker)
         mocker.patch("os.path.exists", return_value=True)
         mocker.patch("builtins.open", mock_open(read_data=b"<html/>"))
-        archive_artifacts([{"artifact_id": 1, "filepath": "/data/1.html"}], _DB_KWARGS)
-        # psycopg2.connect is called once; SELECT and UPDATE share the same connection
-        assert mock_connect.call_count == 1
+        archive_artifacts([{"artifact_id": 1, "filepath": "/data/1.html"}])
+        # get_conn is called once; SELECT and UPDATE share the same connection
+        assert mock_get_conn.call_count == 1
 
     def test_archived_at_db_failure_does_not_raise(self, mocker, mock_s3fs):
         """A failure setting archived_at should be logged but not bubble up."""
@@ -156,7 +161,7 @@ class TestArchiveArtifactsSuccess:
         mocker.patch("builtins.open", mock_open(read_data=b"<html/>"))
         # Make commit raise (simulates DB failure during archived_at update)
         mock_conn.commit.side_effect = Exception("db write failed")
-        result = archive_artifacts([{"artifact_id": 1, "filepath": "/data/1.html"}], _DB_KWARGS)
+        result = archive_artifacts([{"artifact_id": 1, "filepath": "/data/1.html"}])
         # Commit failure causes the chunk to be marked failed (code rolls back)
         assert result[0]["archived"] is False
 
@@ -165,7 +170,7 @@ class TestArchiveArtifactsSuccess:
         mock_write = _patch_parquet(mocker)
         mocker.patch("os.path.exists", return_value=True)
         mocker.patch("builtins.open", mock_open(read_data=b"<html/>"))
-        archive_artifacts([{"artifact_id": 1, "filepath": "/data/1.html"}], _DB_KWARGS)
+        archive_artifacts([{"artifact_id": 1, "filepath": "/data/1.html"}])
         _, kwargs = mock_write.call_args
         assert kwargs.get("compression") == "zstd"
 
@@ -174,7 +179,7 @@ class TestArchiveArtifactsSuccess:
         mock_write = _patch_parquet(mocker)
         mocker.patch("os.path.exists", return_value=True)
         mocker.patch("builtins.open", mock_open(read_data=b"<html/>"))
-        archive_artifacts([{"artifact_id": 1, "filepath": "/data/1.html"}], _DB_KWARGS)
+        archive_artifacts([{"artifact_id": 1, "filepath": "/data/1.html"}])
         _, kwargs = mock_write.call_args
         assert "year" in kwargs.get("partition_cols", [])
         assert "month" in kwargs.get("partition_cols", [])
@@ -186,7 +191,7 @@ class TestArchiveArtifactsSuccess:
         mock_write = _patch_parquet(mocker)
         mocker.patch("os.path.exists", return_value=True)
         mocker.patch("builtins.open", mock_open(read_data=b"<html/>"))
-        archive_artifacts([{"artifact_id": 1, "filepath": "/data/1.html"}], _DB_KWARGS)
+        archive_artifacts([{"artifact_id": 1, "filepath": "/data/1.html"}])
         # The table passed to write_to_dataset should have year=2026, month=3
         table_arg = mock_write.call_args[0][0]
         years = table_arg.column("year").to_pylist()
@@ -200,7 +205,7 @@ class TestArchiveArtifactsSuccess:
         _patch_parquet(mocker)
         mocker.patch("os.path.exists", return_value=True)
         mocker.patch("builtins.open", mock_open(read_data=b"<html/>"))
-        archive_artifacts([{"artifact_id": 1, "filepath": "/data/1.html"}], _DB_KWARGS)
+        archive_artifacts([{"artifact_id": 1, "filepath": "/data/1.html"}])
         mock_s3fs.mkdir.assert_called_once()
 
     def test_bucket_not_recreated_when_exists(self, mocker, mock_s3fs):
@@ -209,7 +214,7 @@ class TestArchiveArtifactsSuccess:
         _patch_parquet(mocker)
         mocker.patch("os.path.exists", return_value=True)
         mocker.patch("builtins.open", mock_open(read_data=b"<html/>"))
-        archive_artifacts([{"artifact_id": 1, "filepath": "/data/1.html"}], _DB_KWARGS)
+        archive_artifacts([{"artifact_id": 1, "filepath": "/data/1.html"}])
         mock_s3fs.mkdir.assert_not_called()
 
 
@@ -227,6 +232,6 @@ class TestArchiveArtifactsParquetError:
             {"artifact_id": 1, "filepath": "/1.html"},
             {"artifact_id": 2, "filepath": "/2.html"},
         ]
-        results = archive_artifacts(artifacts, _DB_KWARGS)
+        results = archive_artifacts(artifacts)
         assert all(r["archived"] is False for r in results)
         assert all("parquet_write_error" in r["reason"] for r in results)

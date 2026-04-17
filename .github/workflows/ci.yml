@@ -87,6 +87,8 @@ jobs:
             -placeholders.dbtPassword=ci_dbt
             -placeholders.authEmailSalt=ci_salt
             -placeholders.adminEmail=ci@example.com
+            -placeholders.airflowPassword=ci_airflow
+            -placeholders.airflowAppPassword=ci_airflow_app
             migrate
         # Flyway runs as a Docker container step; it must reach the postgres
         # service by its service name ("postgres"), not localhost.
@@ -146,4 +148,27 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}
           TEST_DATABASE_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
           LOG_PATH: /tmp/ops_test.log
-          
+
+      - name: Run Airflow integration tests
+        run: pytest tests/integration/airflow/ -v -m integration
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          TEST_DATABASE_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
+
+      - name: Run Archiver integration tests
+        run: pytest tests/integration/archiver/ -v -m integration
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          TEST_DATABASE_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
+
+      - name: Run dbt_runner integration tests
+        run: pytest tests/integration/dbt_runner/ -v -m integration
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          TEST_DATABASE_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
+          DBT_HOST: localhost
+          DBT_PORT: "5432"
+          DBT_USER: cartracker
+          DBT_PASSWORD: cartracker
+          DBT_DBNAME: cartracker
+          LOG_PATH: /tmp/dbt_runner_test.log
