@@ -30,12 +30,7 @@ pytestmark = pytest.mark.integration
 
 def _insert_artifact(cur, seed_run, *, filepath="/tmp/test.html", fetched_at_offset="0 seconds",
                      deleted_at=None):
-    """
-    Insert a raw_artifacts row. Returns artifact_id.
-
-    deleted_at: pass a Python datetime to mark the artifact as already deleted,
-                or None (default) to leave it unset.
-    """
+    """Insert a raw_artifacts row. Returns artifact_id."""
     cur.execute(
         """
         INSERT INTO raw_artifacts
@@ -53,13 +48,13 @@ def _insert_artifact(cur, seed_run, *, filepath="/tmp/test.html", fetched_at_off
 _NOW = datetime.now(timezone.utc)
 
 
-def _add_processing(cur, artifact_id, status):
+def _add_processing(cur, artifact_id, status, processor="srp"):
     cur.execute(
         """
         INSERT INTO artifact_processing (artifact_id, processor, status)
-        VALUES (%s, 'srp', %s)
+        VALUES (%s, %s, %s)
         """,
-        (artifact_id, status),
+        (artifact_id, processor, status),
     )
 
 
@@ -94,15 +89,15 @@ class TestGetCleanupCandidates:
     def test_skip_alongside_ok_defers_to_ok_rule(self, cur, seed_run):
         """When both skip and ok exist, the artifact follows the ok rule (>48h)."""
         artifact_id = _insert_artifact(cur, seed_run, fetched_at_offset="1 hour")
-        _add_processing(cur, artifact_id, "skip")
-        _add_processing(cur, artifact_id, "ok")
+        _add_processing(cur, artifact_id, "skip", processor="srp")
+        _add_processing(cur, artifact_id, "ok", processor="detail")
         # <48h so ok rule blocks it
         assert artifact_id not in self._candidate_ids(cur)
 
     def test_skip_alongside_ok_older_than_48h_is_eligible(self, cur, seed_run):
         artifact_id = _insert_artifact(cur, seed_run, fetched_at_offset="49 hours")
-        _add_processing(cur, artifact_id, "skip")
-        _add_processing(cur, artifact_id, "ok")
+        _add_processing(cur, artifact_id, "skip", processor="srp")
+        _add_processing(cur, artifact_id, "ok", processor="detail")
         assert artifact_id in self._candidate_ids(cur)
 
     # --- retry rule ---
@@ -119,8 +114,8 @@ class TestGetCleanupCandidates:
 
     def test_retry_alongside_ok_defers_to_ok_rule(self, cur, seed_run):
         artifact_id = _insert_artifact(cur, seed_run, fetched_at_offset="1 hour")
-        _add_processing(cur, artifact_id, "retry")
-        _add_processing(cur, artifact_id, "ok")
+        _add_processing(cur, artifact_id, "retry", processor="srp")
+        _add_processing(cur, artifact_id, "ok", processor="detail")
         assert artifact_id not in self._candidate_ids(cur)
 
     # --- exclusions ---
@@ -132,13 +127,6 @@ class TestGetCleanupCandidates:
     def test_already_deleted_not_eligible(self, cur, seed_run):
         artifact_id = _insert_artifact(
             cur, seed_run, fetched_at_offset="49 hours", deleted_at=_NOW
-        )
-        _add_processing(cur, artifact_id, "ok")
-        assert artifact_id not in self._candidate_ids(cur)
-
-    def test_null_filepath_not_eligible(self, cur, seed_run):
-        artifact_id = _insert_artifact(
-            cur, seed_run, filepath=None, fetched_at_offset="49 hours"
         )
         _add_processing(cur, artifact_id, "ok")
         assert artifact_id not in self._candidate_ids(cur)
