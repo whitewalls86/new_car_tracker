@@ -63,7 +63,9 @@ def _insert_artifact(cur, run_id):
     return cur.fetchone()["artifact_id"]
 
 
-def _insert_artifact_processing(cur, artifact_id, *, status="processing", processed_at_offset="0 seconds"):
+def _insert_artifact_processing(
+        cur, artifact_id, *, status="processing", processed_at_offset="0 seconds"
+    ):
     cur.execute(
         """
         INSERT INTO artifact_processing (artifact_id, processor, status, processed_at)
@@ -162,7 +164,13 @@ class TestExpireOrphanProcessingRuns:
     def test_terminated_run_has_error_recorded(self, cur):
         run_id = _insert_processing_run(cur, started_at_offset="61 minutes")
         self._run_query(cur)
-        cur.execute("SELECT status, error_count, last_error FROM processing_runs WHERE run_id = %s", (run_id,))
+        cur.execute(
+            """
+            SELECT status, error_count, last_error 
+            FROM processing_runs 
+            WHERE run_id = %s
+            """, (run_id,)
+        )
         row = cur.fetchone()
         assert row["status"] == "terminated"
         assert row["error_count"] >= 1
@@ -190,7 +198,9 @@ class TestResetStaleArtifactProcessing:
 
     def test_already_ok_record_not_affected(self, cur, seed_run):
         artifact_id = _insert_artifact(cur, seed_run)
-        _insert_artifact_processing(cur, artifact_id, status="ok", processed_at_offset="120 minutes")
+        _insert_artifact_processing(
+            cur, artifact_id, status="ok", processed_at_offset="120 minutes"
+        )
         assert artifact_id not in self._run_query(cur)
 
     def test_reset_record_has_retry_status_and_message(self, cur, seed_run):
@@ -198,8 +208,11 @@ class TestResetStaleArtifactProcessing:
         _insert_artifact_processing(cur, artifact_id, processed_at_offset="61 minutes")
         self._run_query(cur)
         cur.execute(
-            "SELECT status, message FROM artifact_processing WHERE artifact_id = %s AND processor = 'srp'",
-            (artifact_id,),
+            """
+            SELECT status, message 
+            FROM artifact_processing 
+            WHERE artifact_id = %s AND processor = 'srp'
+            """, (artifact_id,),
         )
         row = cur.fetchone()
         assert row["status"] == "retry"

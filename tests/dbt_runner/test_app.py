@@ -478,6 +478,20 @@ def test_get_health(mock_client):
     assert response.json() == {"ok": True}
 
 
+def test_get_ready_when_idle(mock_client, mocker):
+    mocker.patch("dbt_runner.app.is_idle", return_value=True)
+    response = mock_client.get("/ready")
+    assert response.status_code == 200
+    assert response.json() == {"ready": True}
+
+
+def test_get_ready_when_busy(mock_client, mocker):
+    mocker.patch("dbt_runner.app.is_idle", return_value=False)
+    response = mock_client.get("/ready")
+    assert response.status_code == 200
+    assert response.json() == {"ready": False, "reason": "jobs in flight"}
+
+
 def test_get_logs_file_not_found(mock_client, mock_log_file_not_found):
     response = mock_client.get("/logs")
     assert response.json() == {"lines": []}

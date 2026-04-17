@@ -160,3 +160,15 @@ jobs:
         env:
           PYTHONPATH: ${{ github.workspace }}
           TEST_DATABASE_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
+
+      - name: Run dbt_runner integration tests
+        run: pytest tests/integration/dbt_runner/ -v -m integration
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          TEST_DATABASE_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
+          DBT_HOST: localhost
+          DBT_PORT: "5432"
+          DBT_USER: cartracker
+          DBT_PASSWORD: cartracker
+          DBT_DBNAME: cartracker
+          LOG_PATH: /tmp/dbt_runner_test.log
