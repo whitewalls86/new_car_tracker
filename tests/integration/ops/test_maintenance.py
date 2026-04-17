@@ -40,7 +40,7 @@ def _insert_run(cur, *, status="running", started_at_offset="0 seconds"):
 
 
 def _insert_processing_run(cur, *, status="processing", started_at_offset="0 seconds"):
-    run_id = uuid.uuid4()
+    run_id = str(uuid.uuid4())
     cur.execute(
         """
         INSERT INTO processing_runs (run_id, status, started_at)
@@ -48,7 +48,7 @@ def _insert_processing_run(cur, *, status="processing", started_at_offset="0 sec
         """,
         (run_id, status, started_at_offset),
     )
-    return str(run_id)
+    return run_id
 
 
 def _insert_artifact(cur, run_id):

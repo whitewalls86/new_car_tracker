@@ -191,6 +191,7 @@ class TestResetStaleArtifactProcessingApi:
         )
         assert verify_cur.fetchone()["status"] == "retry"
 
+        verify_cur.execute("DELETE FROM artifact_processing WHERE artifact_id = %s", (artifact_id,))
         verify_cur.execute("DELETE FROM raw_artifacts WHERE artifact_id = %s", (artifact_id,))
         verify_cur.execute("DELETE FROM runs WHERE run_id = %s", (run_id,))
 
@@ -209,6 +210,7 @@ class TestResetStaleArtifactProcessingApi:
         )
         assert verify_cur.fetchone()["status"] == "processing"
 
+        verify_cur.execute("DELETE FROM artifact_processing WHERE artifact_id = %s", (artifact_id,))
         verify_cur.execute("DELETE FROM raw_artifacts WHERE artifact_id = %s", (artifact_id,))
         verify_cur.execute("DELETE FROM runs WHERE run_id = %s", (run_id,))
 
