@@ -348,6 +348,7 @@ services:
       - ops
       - n8n
       - oauth2-proxy
+      - airflow-apiserver
     networks:
       - cartracker-net
 
