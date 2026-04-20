@@ -78,7 +78,6 @@ def test_dag_imports_without_error(filename):
 @pytest.mark.parametrize("filename,spec", DAG_SPECS.items())
 def test_dag_id_and_tasks(filename, spec):
     """Each DAG must expose the expected dag_id and task set."""
-    from airflow.models import DAG
     from airflow.models.dagbag import DagBag
 
     dagbag = DagBag(dag_folder=str(DAGS_DIR), include_examples=False)
