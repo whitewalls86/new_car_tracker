@@ -1,7 +1,7 @@
 from datetime import datetime
 from pathlib import Path
 
-from airflow.providers.postgres.operators.postgres import PostgresOperator
+from airflow.providers.common.sql.operators.sql import SQLExecuteQueryOperator
 from sensors import deploy_intent_sensor
 
 from airflow import DAG
@@ -19,9 +19,9 @@ with DAG(
 ):
     ready = deploy_intent_sensor()
 
-    cleanup = PostgresOperator(
+    cleanup = SQLExecuteQueryOperator(
         task_id="delete_stale_emails",
-        postgres_conn_id="cartracker_db",
+        conn_id="cartracker_db",
         sql=SQL_DELETE_STALE_EMAILS,
     )
 

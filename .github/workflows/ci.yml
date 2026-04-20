@@ -53,7 +53,7 @@ jobs:
         with:
           python-version: "3.13"
       - name: Install dependencies
-        run: pip install apache-airflow apache-airflow-providers-postgres apache-airflow-providers-http requests pytest
+        run: pip install apache-airflow apache-airflow-providers-postgres apache-airflow-providers-http apache-airflow-providers-common-sql apache-airflow-providers-standard requests pytest
       - name: Run DAG integrity tests
         run: pytest tests/airflow/ -v
         env:
