@@ -250,6 +250,7 @@ services:
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-cartracker}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_BROWSER_REDIRECT_URL: "https://cartracker.info/minio"
       MINIO_IDENTITY_OPENID_CONFIG_URL: "https://accounts.google.com/.well-known/openid-configuration"
       MINIO_IDENTITY_OPENID_CLIENT_ID: ${GOOGLE_CLIENT_ID}
       MINIO_IDENTITY_OPENID_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
