@@ -76,7 +76,10 @@ def run_cleanup_artifacts() -> Dict[str, Any]:
         for row in rows
     ]
 
-    needs_archive = [c for c in candidates if c["archived_at"] is None]
+    needs_archive = [
+        {"artifact_id": c["artifact_id"], "filepath": c["filepath"]}
+        for c in candidates if c["archived_at"] is None
+    ]
     already_archived = [c for c in candidates if c["archived_at"] is not None]
 
     filepath_by_id = {c["artifact_id"]: c["filepath"] for c in candidates}
