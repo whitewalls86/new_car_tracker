@@ -13,7 +13,6 @@ import sys
 from pathlib import Path
 
 import pytest
-from airflow.models import DAG
 
 DAGS_DIR = Path(__file__).parents[3] / "airflow" / "dags"
 
@@ -79,6 +78,7 @@ def test_dag_imports_without_error(filename):
 @pytest.mark.parametrize("filename,spec", DAG_SPECS.items())
 def test_dag_id_and_tasks(filename, spec):
     """Each DAG must expose the expected dag_id and task set."""
+    from airflow.models import DAG
     from airflow.models.dagbag import DagBag
 
     dagbag = DagBag(dag_folder=str(DAGS_DIR), include_examples=False)
@@ -90,7 +90,7 @@ def test_dag_id_and_tasks(filename, spec):
     dag_id = spec["dag_id"]
     assert dag_id in dagbag.dags, f"DAG '{dag_id}' not found in DagBag"
 
-    dag: DAG = dagbag.dags[dag_id]
+    dag = dagbag.dags[dag_id]
     actual_tasks = {t.task_id for t in dag.tasks}
     assert actual_tasks == spec["tasks"], (
         f"Task mismatch for '{dag_id}':\n"
