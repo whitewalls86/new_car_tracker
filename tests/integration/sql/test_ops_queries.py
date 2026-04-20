@@ -339,8 +339,8 @@ class TestArtifactsQueueSchema:
     def test_insert_valid_row_succeeds(self, cur):
         minio_path = f"s3://bronze/html/year=2026/month=4/artifact_type=results_page/{uuid.uuid4()}.html.zst"
         cur.execute(
-            """INSERT INTO artifacts_queue (minio_path, artifact_type, status)
-               VALUES (%s, 'results_page', 'pending') RETURNING artifact_id""",
+            """INSERT INTO artifacts_queue (minio_path, artifact_type, fetched_at, status)
+               VALUES (%s, 'results_page', now(), 'pending') RETURNING artifact_id""",
             (minio_path,),
         )
         row = cur.fetchone()
@@ -351,8 +351,8 @@ class TestArtifactsQueueSchema:
         minio_path = f"s3://bronze/test/{uuid.uuid4()}.html.zst"
         with pytest.raises(psycopg2.errors.CheckViolation):
             cur.execute(
-                """INSERT INTO artifacts_queue (minio_path, artifact_type, status)
-                   VALUES (%s, 'results_page', 'invalid_status')""",
+                """INSERT INTO artifacts_queue (minio_path, artifact_type, fetched_at, status)
+                   VALUES (%s, 'results_page', now(), 'invalid_status')""",
                 (minio_path,),
             )
 
@@ -361,8 +361,8 @@ class TestArtifactsQueueSchema:
         minio_path = f"s3://bronze/test/{uuid.uuid4()}.html.zst"
         with pytest.raises(psycopg2.errors.CheckViolation):
             cur.execute(
-                """INSERT INTO artifacts_queue (minio_path, artifact_type, status)
-                   VALUES (%s, 'bad_type', 'pending')""",
+                """INSERT INTO artifacts_queue (minio_path, artifact_type, fetched_at, status)
+                   VALUES (%s, 'bad_type', now(), 'pending')""",
                 (minio_path,),
             )
 
