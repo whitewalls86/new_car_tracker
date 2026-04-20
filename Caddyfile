@@ -114,7 +114,7 @@ https://cartracker.info {
         }
     }
 
-    handle_path /airflow* {
+    handle /airflow* {
         forward_auth oauth2-proxy:4180 {
             uri /oauth2/auth
             copy_headers X-Auth-Request-Email X-Auth-Request-User
@@ -131,7 +131,11 @@ https://cartracker.info {
                 redir * /request-access
             }
         }
-        reverse_proxy airflow-apiserver:8080
+        reverse_proxy airflow-apiserver:8080 {
+            header_up X-Forwarded-Proto {scheme}
+            header_up X-Forwarded-For {remote_host}
+            header_up Host {host}
+        }
     }
 
     handle_path /minio* {

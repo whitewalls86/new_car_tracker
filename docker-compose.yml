@@ -400,7 +400,7 @@ services:
 
   airflow-apiserver:
     <<: *airflow-common
-    command: api-server
+    command: api-server --proxy-headers
     container_name: cartracker-airflow-apiserver
     ports:
       - "8080:8080"
