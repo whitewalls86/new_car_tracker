@@ -71,12 +71,27 @@ def run_cleanup_artifacts() -> Dict[str, Any]:
     if not rows:
         return {"total": 0, "archived": 0, "deleted": 0, "failed": 0, "results": []}
 
-    candidates = [{"artifact_id": row[0], "filepath": row[1]} for row in rows]
+    candidates = [
+        {"artifact_id": row[0], "filepath": row[1], "archived_at": row[2]}
+        for row in rows
+    ]
 
-    archive_results = archive_artifacts(candidates)
-    archived = [r for r in archive_results if r.get("archived")]
+    needs_archive = [c for c in candidates if c["archived_at"] is None]
+    already_archived = [c for c in candidates if c["archived_at"] is not None]
 
-    delete_results = cleanup_artifacts(archived)
+    filepath_by_id = {c["artifact_id"]: c["filepath"] for c in candidates}
+
+    archive_results = archive_artifacts(needs_archive) if needs_archive else []
+    newly_archived = [
+        {"artifact_id": r["artifact_id"], "filepath": filepath_by_id.get(r["artifact_id"])}
+        for r in archive_results if r.get("archived")
+    ]
+    ready_to_delete = newly_archived + [
+        {"artifact_id": c["artifact_id"], "filepath": c["filepath"]}
+        for c in already_archived
+    ]
+
+    delete_results = cleanup_artifacts(ready_to_delete)
     deleted_ids = [r["artifact_id"] for r in delete_results if r.get("deleted")]
 
     if deleted_ids:
@@ -84,14 +99,15 @@ def run_cleanup_artifacts() -> Dict[str, Any]:
             cur.execute(MARK_ARTIFACTS_DELETED, (deleted_ids,))
 
     deleted_count = len(deleted_ids)
+    newly_archived_count = len(newly_archived)
     failed_count = len(candidates) - deleted_count
     logger.info(
         "cleanup_artifacts: total=%d archived=%d deleted=%d failed=%d",
-        len(candidates), len(archived), deleted_count, failed_count,
+        len(candidates), newly_archived_count, deleted_count, failed_count,
     )
     return {
         "total": len(candidates),
-        "archived": len(archived),
+        "archived": newly_archived_count,
         "deleted": deleted_count,
         "failed": failed_count,
         "results": delete_results,
