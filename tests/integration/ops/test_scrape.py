@@ -255,7 +255,7 @@ def test_claim_batch_marks_run_skipped_when_queue_empty(api_client, verify_cur):
 @pytest.mark.integration
 def test_release_claims_marks_run_completed(api_client, verify_cur, seed_run, seed_claim):
     run_id = seed_run(status="running")
-    listing_id = f"l3test-listing-{uuid.uuid4().hex[:8]}"
+    listing_id = str(uuid.uuid4())
     seed_claim(listing_id=listing_id, claimed_by=run_id)
 
     response = api_client.post("/scrape/claims/release", json={
@@ -276,7 +276,7 @@ def test_release_claims_marks_run_completed(api_client, verify_cur, seed_run, se
 @pytest.mark.integration
 def test_release_claims_deletes_claim_rows(api_client, verify_cur, seed_run, seed_claim):
     run_id = seed_run(status="running")
-    listing_id = f"l3test-listing-{uuid.uuid4().hex[:8]}"
+    listing_id = str(uuid.uuid4())
     seed_claim(listing_id=listing_id, claimed_by=run_id)
 
     api_client.post("/scrape/claims/release", json={
@@ -295,8 +295,8 @@ def test_release_claims_marks_run_failed_when_all_results_failed(
     api_client, verify_cur, seed_run, seed_claim
 ):
     run_id = seed_run(status="running")
-    listing_a = f"l3test-listing-{uuid.uuid4().hex[:8]}"
-    listing_b = f"l3test-listing-{uuid.uuid4().hex[:8]}"
+    listing_a = str(uuid.uuid4())
+    listing_b = str(uuid.uuid4())
     seed_claim(listing_id=listing_a, claimed_by=run_id)
     seed_claim(listing_id=listing_b, claimed_by=run_id)
 
@@ -320,8 +320,8 @@ def test_release_claims_completed_when_mix_of_ok_and_failed(
     api_client, verify_cur, seed_run, seed_claim
 ):
     run_id = seed_run(status="running")
-    listing_ok = f"l3test-listing-{uuid.uuid4().hex[:8]}"
-    listing_fail = f"l3test-listing-{uuid.uuid4().hex[:8]}"
+    listing_ok = str(uuid.uuid4())
+    listing_fail = str(uuid.uuid4())
     seed_claim(listing_id=listing_ok, claimed_by=run_id)
     seed_claim(listing_id=listing_fail, claimed_by=run_id)
 

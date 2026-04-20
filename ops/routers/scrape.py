@@ -178,7 +178,7 @@ def claim_batch(batch_size: int = 450) -> Dict[str, Any]:
                 SELECT q.*
                 FROM ops.ops_detail_scrape_queue q
                 LEFT JOIN detail_scrape_claims c
-                    ON c.listing_id = q.listing_id
+                    ON c.listing_id = q.listing_id::uuid
                    AND c.status = 'running'
                 WHERE c.listing_id IS NULL
                 ORDER BY q.priority, q.listing_id
@@ -196,7 +196,7 @@ def claim_batch(batch_size: int = 450) -> Dict[str, Any]:
                 RETURNING listing_id
             )
             SELECT b.* FROM batch b
-            JOIN claimed c ON c.listing_id = b.listing_id
+            JOIN claimed c ON c.listing_id = b.listing_id::uuid
         """, (batch_size, run_id))
 
         rows = cur.fetchall()
