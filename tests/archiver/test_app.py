@@ -1,4 +1,4 @@
-"""Unit tests for archiver/app.py — all four HTTP endpoints."""
+"""Unit tests for archiver/app.py — all HTTP endpoints."""
 
 
 # ---------------------------------------------------------------------------
@@ -222,6 +222,80 @@ class TestCleanupArtifactsRunEndpoint:
             return_value={"total": 0, "archived": 0, "deleted": 0, "failed": 0, "results": []},
         )
         resp = mock_archiver_client.post("/cleanup/artifacts/run")
+        assert resp.json()["total"] == 0
+
+
+# ---------------------------------------------------------------------------
+# POST /cleanup/queue  (Plan 97 — batch delete by caller-supplied IDs)
+# ---------------------------------------------------------------------------
+
+class TestCleanupQueueEndpoint:
+    def test_empty_artifact_ids_returns_zeros(self, mock_archiver_client, mocker):
+        mocker.patch("archiver.app._cleanup_queue", return_value=[])
+        resp = mock_archiver_client.post("/cleanup/queue", json={"artifact_ids": []})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total"] == 0
+        assert data["deleted"] == 0
+        assert data["failed"] == 0
+
+    def test_all_deleted(self, mock_archiver_client, mocker):
+        mocker.patch("archiver.app._cleanup_queue", return_value=[
+            {"artifact_id": 1, "deleted": True, "reason": None},
+            {"artifact_id": 2, "deleted": True, "reason": None},
+        ])
+        resp = mock_archiver_client.post("/cleanup/queue", json={"artifact_ids": [1, 2]})
+        data = resp.json()
+        assert data["total"] == 2
+        assert data["deleted"] == 2
+        assert data["failed"] == 0
+
+    def test_partial_failure(self, mock_archiver_client, mocker):
+        mocker.patch("archiver.app._cleanup_queue", return_value=[
+            {"artifact_id": 1, "deleted": True, "reason": None},
+            {
+                "artifact_id": 2, 
+                "deleted": False, 
+                "reason": "not deleted — row missing or status not in (complete, skip)"
+            },
+        ])
+        resp = mock_archiver_client.post("/cleanup/queue", json={"artifact_ids": [1, 2]})
+        data = resp.json()
+        assert data["deleted"] == 1
+        assert data["failed"] == 1
+
+    def test_artifact_ids_forwarded_as_ints(self, mock_archiver_client, mocker):
+        mock_fn = mocker.patch("archiver.app._cleanup_queue", return_value=[])
+        mock_archiver_client.post("/cleanup/queue", json={"artifact_ids": [10, 20]})
+        called_ids = mock_fn.call_args[0][0]
+        assert called_ids == [10, 20]
+        assert all(isinstance(i, int) for i in called_ids)
+
+    def test_results_included_in_response(self, mock_archiver_client, mocker):
+        fake = [{"artifact_id": 5, "deleted": True, "reason": None}]
+        mocker.patch("archiver.app._cleanup_queue", return_value=fake)
+        resp = mock_archiver_client.post("/cleanup/queue", json={"artifact_ids": [5]})
+        assert resp.json()["results"] == fake
+
+
+# ---------------------------------------------------------------------------
+# POST /cleanup/queue/run  (Plan 97 — full sweep of complete/skip rows)
+# ---------------------------------------------------------------------------
+
+class TestCleanupQueueRunEndpoint:
+    def test_delegates_to_run_cleanup_queue(self, mock_archiver_client, mocker):
+        fake = {"total": 3, "deleted": 3, "failed": 0, "results": []}
+        mocker.patch("archiver.app._run_cleanup_queue", return_value=fake)
+        resp = mock_archiver_client.post("/cleanup/queue/run")
+        assert resp.status_code == 200
+        assert resp.json() == fake
+
+    def test_no_work_returns_zeros(self, mock_archiver_client, mocker):
+        mocker.patch(
+            "archiver.app._run_cleanup_queue",
+            return_value={"total": 0, "deleted": 0, "failed": 0, "results": []},
+        )
+        resp = mock_archiver_client.post("/cleanup/queue/run")
         assert resp.json()["total"] == 0
 
 

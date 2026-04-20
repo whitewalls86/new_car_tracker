@@ -306,3 +306,164 @@ class TestUserManagementQueries:
         )
         row = cur.fetchone()
         assert row is not None
+
+
+# ============================================================================
+# Plan 97 — artifacts_queue schema smoke tests
+# ============================================================================
+
+class TestArtifactsQueueSchema:
+    """Layer 1 smoke tests: verify ops.artifacts_queue table and constraints exist."""
+
+    def test_table_exists_and_has_expected_columns(self, cur):
+        cur.execute("""
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = 'ops' AND table_name = 'artifacts_queue'
+            ORDER BY ordinal_position
+        """)
+        cols = {row["column_name"] for row in cur.fetchall()}
+        for expected in ("artifact_id", "minio_path", "artifact_type", "status", "created_at"):
+            assert expected in cols, f"ops.artifacts_queue missing column: {expected}"
+
+    def test_minio_path_is_not_nullable(self, cur):
+        cur.execute("""
+            SELECT is_nullable FROM information_schema.columns
+            WHERE table_schema = 'ops' AND table_name = 'artifacts_queue'
+              AND column_name = 'minio_path'
+        """)
+        row = cur.fetchone()
+        assert row is not None
+        assert row["is_nullable"] == "NO"
+
+    def test_insert_valid_row_succeeds(self, cur):
+        minio_path = f"s3://bronze/html/year=2026/month=4/artifact_type=results_page/{uuid.uuid4()}.html.zst"
+        cur.execute(
+            """INSERT INTO artifacts_queue (minio_path, artifact_type, status)
+               VALUES (%s, 'results_page', 'pending') RETURNING artifact_id""",
+            (minio_path,),
+        )
+        row = cur.fetchone()
+        assert row["artifact_id"] is not None
+
+    def test_status_check_constraint_rejects_invalid_value(self, cur):
+        import psycopg2
+        minio_path = f"s3://bronze/test/{uuid.uuid4()}.html.zst"
+        with pytest.raises(psycopg2.errors.CheckViolation):
+            cur.execute(
+                """INSERT INTO artifacts_queue (minio_path, artifact_type, status)
+                   VALUES (%s, 'results_page', 'invalid_status')""",
+                (minio_path,),
+            )
+
+    def test_artifact_type_check_constraint_rejects_invalid_value(self, cur):
+        import psycopg2
+        minio_path = f"s3://bronze/test/{uuid.uuid4()}.html.zst"
+        with pytest.raises(psycopg2.errors.CheckViolation):
+            cur.execute(
+                """INSERT INTO artifacts_queue (minio_path, artifact_type, status)
+                   VALUES (%s, 'bad_type', 'pending')""",
+                (minio_path,),
+            )
+
+    def test_raw_artifacts_has_nullable_minio_path_column(self, cur):
+        cur.execute("""
+            SELECT is_nullable FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = 'raw_artifacts'
+              AND column_name = 'minio_path'
+        """)
+        row = cur.fetchone()
+        assert row is not None, "raw_artifacts.minio_path column missing"
+        assert row["is_nullable"] == "YES"
+
+
+# ============================================================================
+# Plan 98 — staging.artifacts_queue_events schema smoke tests
+# ============================================================================
+
+class TestArtifactsQueueEventsSchema:
+    """Layer 1 smoke tests: verify staging.artifacts_queue_events exists."""
+
+    def _insert_queue_row(self, cur) -> int:
+        minio_path = f"s3://bronze/html/year=2026/month=4/artifact_type=results_page/{uuid.uuid4()}.html.zst"
+        cur.execute(
+            """INSERT INTO artifacts_queue (minio_path, artifact_type, fetched_at, status)
+               VALUES (%s, 'results_page', now(), 'pending') RETURNING artifact_id""",
+            (minio_path,),
+        )
+        return cur.fetchone()["artifact_id"]
+
+    def test_table_exists_and_has_expected_columns(self, cur):
+        cur.execute("""
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = 'staging' AND table_name = 'artifacts_queue_events'
+            ORDER BY ordinal_position
+        """)
+        cols = {row["column_name"] for row in cur.fetchall()}
+        for expected in ("event_id", "artifact_id", "status", "event_at",
+                         "minio_path", "artifact_type", "fetched_at", "listing_id", "run_id"):
+            assert expected in cols, f"staging.artifacts_queue_events missing column: {expected}"
+
+    def test_insert_event_row_succeeds(self, cur):
+        artifact_id = self._insert_queue_row(cur)
+        minio_path = f"s3://bronze/html/year=2026/month=4/artifact_type=results_page/{uuid.uuid4()}.html.zst"
+        cur.execute(
+            """INSERT INTO artifacts_queue_events
+                   (artifact_id, status, minio_path, artifact_type, fetched_at)
+               VALUES (%s, 'pending', %s, 'results_page', now())
+               RETURNING event_id""",
+            (artifact_id, minio_path),
+        )
+        row = cur.fetchone()
+        assert row["event_id"] is not None
+
+    def test_event_at_defaults_to_now(self, cur):
+        artifact_id = self._insert_queue_row(cur)
+        minio_path = f"s3://bronze/test/{uuid.uuid4()}.html.zst"
+        cur.execute(
+            """INSERT INTO artifacts_queue_events
+                   (artifact_id, status, minio_path, artifact_type)
+               VALUES (%s, 'pending', %s, 'results_page')
+               RETURNING event_at""",
+            (artifact_id, minio_path),
+        )
+        row = cur.fetchone()
+        assert row["event_at"] is not None
+
+    def test_multiple_events_per_artifact(self, cur):
+        artifact_id = self._insert_queue_row(cur)
+        minio_path = f"s3://bronze/test/{uuid.uuid4()}.html.zst"
+        for status in ("pending", "processing", "complete"):
+            cur.execute(
+                """INSERT INTO artifacts_queue_events
+                       (artifact_id, status, minio_path, artifact_type)
+                   VALUES (%s, %s, %s, 'results_page')""",
+                (artifact_id, status, minio_path),
+            )
+        cur.execute(
+            "SELECT COUNT(*) as cnt FROM artifacts_queue_events WHERE artifact_id = %s",
+            (artifact_id,),
+        )
+        assert cur.fetchone()["cnt"] == 3
+
+    def test_both_inserts_in_same_transaction(self, cur):
+        """Verifies the scraper write pattern: artifacts_queue + event in one transaction."""
+        minio_path = f"s3://bronze/test/{uuid.uuid4()}.html.zst"
+        cur.execute(
+            """INSERT INTO artifacts_queue (minio_path, artifact_type, fetched_at, status)
+               VALUES (%s, 'detail_page', now(), 'pending') RETURNING artifact_id""",
+            (minio_path,),
+        )
+        artifact_id = cur.fetchone()["artifact_id"]
+        cur.execute(
+            """INSERT INTO artifacts_queue_events
+                   (artifact_id, status, minio_path, artifact_type, fetched_at)
+               VALUES (%s, 'pending', %s, 'detail_page', now())""",
+            (artifact_id, minio_path),
+        )
+        cur.execute(
+            "SELECT status FROM artifacts_queue_events WHERE artifact_id = %s",
+            (artifact_id,),
+        )
+        assert cur.fetchone()["status"] == "pending"

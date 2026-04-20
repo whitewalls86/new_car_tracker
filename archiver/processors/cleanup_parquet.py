@@ -1,18 +1,11 @@
 import logging
-import os
 from typing import Any, Dict, List
-
-import s3fs
 
 from archiver.queries import GET_EXPIRED_PARQUET_MONTHS, MARK_PARQUET_DELETED
 from shared.db import db_cursor
+from shared.minio import BUCKET, get_s3fs
 
 logger = logging.getLogger("archiver")
-
-MINIO_ENDPOINT = os.environ.get("MINIO_ENDPOINT", "http://minio:9000")
-MINIO_ACCESS_KEY = os.environ.get("MINIO_ROOT_USER", "cartracker")
-MINIO_SECRET_KEY = os.environ.get("MINIO_ROOT_PASSWORD", "")
-MINIO_BUCKET = os.environ.get("MINIO_BUCKET", "bronze")
 
 
 def cleanup_parquet(parquet_paths: List[str]) -> List[Dict[str, Any]]:
@@ -22,12 +15,7 @@ def cleanup_parquet(parquet_paths: List[str]) -> List[Dict[str, Any]]:
     parquet_paths: list of partition prefixes (e.g. "bronze/html/year=2026/month=03/")
     Returns: [{"path": str, "deleted": bool, "reason": str|None}]
     """
-    fs = s3fs.S3FileSystem(
-        endpoint_url=MINIO_ENDPOINT,
-        key=MINIO_ACCESS_KEY,
-        secret=MINIO_SECRET_KEY,
-        use_ssl=False,
-    )
+    fs = get_s3fs()
     results = []
     for path in parquet_paths:
         try:
@@ -55,7 +43,7 @@ def run_cleanup_parquet() -> Dict[str, Any]:
     if not months:
         return {"total": 0, "deleted": 0, "failed": 0, "results": []}
 
-    paths = [f"{MINIO_BUCKET}/html/year={y}/month={m}/" for y, m in months]
+    paths = [f"{BUCKET}/html/year={y}/month={m}/" for y, m in months]
     results = cleanup_parquet(paths)
 
     with db_cursor(error_context="run_cleanup_parquet: mark deleted") as cur:

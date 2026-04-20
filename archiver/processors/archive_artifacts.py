@@ -6,16 +6,12 @@ from typing import Any, Dict, List
 
 import pyarrow as pa
 import pyarrow.parquet as pq
-import s3fs
 
 from shared.db import get_conn
+from shared.minio import BUCKET, get_s3fs
 
 logger = logging.getLogger("archiver")
 
-MINIO_ENDPOINT = os.environ.get("MINIO_ENDPOINT", "http://minio:9000")
-MINIO_ACCESS_KEY = os.environ.get("MINIO_ROOT_USER", "cartracker")
-MINIO_SECRET_KEY = os.environ.get("MINIO_ROOT_PASSWORD", "")
-MINIO_BUCKET = os.environ.get("MINIO_BUCKET", "bronze")
 CHUNK_SIZE = 1000
 
 _SCHEMA = pa.schema([
@@ -38,26 +34,17 @@ _SCHEMA = pa.schema([
 ])
 
 
-def _get_fs() -> s3fs.S3FileSystem:
-    return s3fs.S3FileSystem(
-        endpoint_url=MINIO_ENDPOINT,
-        key=MINIO_ACCESS_KEY,
-        secret=MINIO_SECRET_KEY,
-        use_ssl=False,
-    )
+def _ensure_bucket(fs) -> None:
+    if not fs.exists(BUCKET):
+        fs.mkdir(BUCKET)
+        logger.info("Created MinIO bucket: %s", BUCKET)
 
 
-def _ensure_bucket(fs: s3fs.S3FileSystem) -> None:
-    if not fs.exists(MINIO_BUCKET):
-        fs.mkdir(MINIO_BUCKET)
-        logger.info("Created MinIO bucket: %s", MINIO_BUCKET)
-
-
-def _write_chunk(rows: List[Dict], fs: s3fs.S3FileSystem) -> None:
+def _write_chunk(rows: List[Dict], fs) -> None:
     table = pa.Table.from_pylist(rows, schema=_SCHEMA)
     pq.write_to_dataset(
         table,
-        root_path=f"s3://{MINIO_BUCKET}/html",
+        root_path=f"s3://{BUCKET}/html",
         partition_cols=["year", "month", "artifact_type"],
         filesystem=fs,
         compression="zstd",
@@ -83,7 +70,7 @@ def archive_artifacts(
     artifact_ids = [int(a["artifact_id"]) for a in artifacts]
     filepath_by_id = {int(a["artifact_id"]): a.get("filepath") for a in artifacts}
 
-    fs = _get_fs()
+    fs = get_s3fs()
     _ensure_bucket(fs)
 
     results: Dict[int, Dict] = {}

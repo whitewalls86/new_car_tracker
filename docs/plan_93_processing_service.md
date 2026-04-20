@@ -107,6 +107,39 @@ CREATE INDEX ON vin_to_listing (listing_id);
 
 ---
 
+## MinIO Audit Log: `artifacts_queue_events`
+
+Append-only Parquet event log — one row per status transition. This is the
+durable, replayable record of every artifact's lifecycle. Postgres
+`artifacts_queue` holds only the current hot state; this dataset holds the
+full history.
+
+```
+ops/artifacts_queue_events/
+    year=.../month=.../status=.../artifact_type=.../<uuid>.parquet
+```
+
+| Column | Type | Notes |
+|---|---|---|
+| artifact_id | int64 | FK to `artifacts_queue.artifact_id` |
+| status | string | Value at time of event: `pending` \| `processing` \| `complete` \| `retry` \| `skip` |
+| event_at | timestamp[us, UTC] | When the transition occurred |
+| minio_path | string | S3 URI of the raw HTML artifact |
+| artifact_type | string | `results_page` \| `detail_page` |
+| fetched_at | timestamp[us, UTC] | When the artifact was scraped |
+| listing_id | string (nullable) | Populated for detail_page artifacts |
+| run_id | string (nullable) | Scraper run that produced the artifact |
+
+**Write responsibilities:**
+- `status='pending'` — written by the **scraper** (via `shared.minio.write_artifact_event()`) immediately after the `artifacts_queue` INSERT
+- All other statuses (`processing`, `complete`, `retry`, `skip`) — written by the **processing service** on every status transition, alongside the Postgres UPDATE
+
+**Why not a single UPDATE per artifact?** Each status transition is a new Parquet row. This means the full lifecycle of any artifact can be reconstructed by reading all rows for a given `artifact_id` ordered by `event_at` — no Postgres required. This is what makes replayability and auditability possible at Plan 96 and beyond.
+
+`write_artifact_event()` lives in `shared/minio.py` and uses `get_s3fs()` + pyarrow. Non-fatal in both callers — a failed event write logs a warning and does not roll back the Postgres insert or status update.
+
+---
+
 ## MinIO Silver Schema
 
 Unified Parquet, all observation types in one partition tree. No separate srp/detail partitions — `source` column is the discriminator.
@@ -199,7 +232,9 @@ processing/
 
 6. Mark artifact status='complete' in artifacts_queue
 
-7. Emit stubs (after commit):
+7. write_artifact_event(artifact_id, status='complete', ...)
+
+8. Emit stubs (after commit):
    emit_price_updated(vin, price, listing_id, 'srp')  per listing with price + vin
    emit_vin_mapped(listing_id, vin)                    if vin_to_listing entry was new
 ```
@@ -242,7 +277,9 @@ processing/
 
 9. Mark artifact status='complete' in artifacts_queue
 
-10. Emit stubs (after commit):
+10. write_artifact_event(artifact_id, status='complete', ...)
+
+11. Emit stubs (after commit):
     emit_price_updated(vin, price, listing_id, 'detail')
     emit_vin_mapped(listing_id, vin)  if vin_to_listing entry was new
 ```
@@ -261,7 +298,9 @@ processing/
 
 6. Mark artifact status='complete' in artifacts_queue
 
-7. Emit: emit_listing_removed(vin, listing_id)
+7. write_artifact_event(artifact_id, status='complete', ...)
+
+8. Emit: emit_listing_removed(vin, listing_id)
 ```
 
 ### VIN collision / relisting
@@ -426,7 +465,8 @@ Then:  {"ready": true}
 4. Add `processing/queries.py` (SQL loader pattern from Plan 89)
 5. Write all SQL files in `processing/sql/`
 6. Add `processing/events.py` — log-only stubs
-7. Implement `processing/writers/silver_writer.py` — `write_srp_silver()`, `write_detail_silver()`; same s3fs/pyarrow pattern as `archiver/processors/archive_artifacts.py`; skips silently if `MINIO_ENDPOINT` not set
+7. Call `shared.minio.write_artifact_event()` in the processing service on every status transition (`processing`, `complete`, `retry`, `skip`); `pending` event is already written by the scraper
+8. Implement `processing/writers/silver_writer.py` — `write_srp_silver()`, `write_detail_silver()`; same s3fs/pyarrow pattern as `archiver/processors/archive_artifacts.py`; skips silently if `MINIO_ENDPOINT` not set
 8. Implement `processing/writers/srp_writer.py`
 9. Implement `processing/writers/detail_writer.py`
 10. Implement `processing/routers/batch.py` — wraps handler in `active_job()`

@@ -693,3 +693,100 @@ class TestFetchPage:
 
         assert result["page_vins_new"] == 1
         assert result["page_vins_total"] == 2
+
+
+# ---------------------------------------------------------------------------
+# _fetch_page — MinIO + artifacts_queue (Plan 97)
+# ---------------------------------------------------------------------------
+
+class TestFetchPageMinioIntegration:
+    """Verify the MinIO write + artifacts_queue insert path added by Plan 97."""
+
+    @pytest.fixture(autouse=True)
+    def reset_penalty(self):
+        sr._srp_adaptive_penalty = 0.0
+        yield
+        sr._srp_adaptive_penalty = 0.0
+
+    def _mock_http(self, mocker, status=200, content=b"<html></html>"):
+        mock_resp = MagicMock()
+        mock_resp.status_code = status
+        mock_resp.content = content
+        mock_resp.headers = {"content-type": "text/html"}
+        mock_session = MagicMock()
+        mock_session.get.return_value = mock_resp
+        mocker.patch(
+            "scraper.processors.scrape_results.get_cf_credentials",
+            return_value=({"cookies": {}, "user_agent": "ua"}, None, None),
+        )
+        mocker.patch(
+            "scraper.processors.scrape_results.make_cf_session",
+            return_value=mock_session,
+        )
+
+    def _mock_minio_and_db(self, mocker, artifact_id=99):
+        """Patch MinIO write and DB insert to simulate success."""
+        mocker.patch("shared.minio.make_key", return_value="html/year=2026/test.html.zst")
+        mocker.patch("shared.minio.write_html", return_value="s3://bronze/html/year=2026/test.html.zst")
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_cursor.__enter__ = MagicMock(return_value=mock_cursor)
+        mock_cursor.__exit__ = MagicMock(return_value=False)
+        mock_cursor.fetchone.return_value = (artifact_id,)
+        mock_conn.cursor.return_value = mock_cursor
+        mocker.patch("shared.db.get_conn", return_value=mock_conn)
+        return mock_conn
+
+    def test_success_populates_minio_path(self, mocker):
+        mocker.patch("builtins.open", mock_open())
+        self._mock_http(mocker)
+        self._mock_minio_and_db(mocker, artifact_id=42)
+
+        result = _fetch_page(_PAGE_URL, _RUN_DIR, _SEARCH_KEY, _SCOPE, _PAGE_NUM, set())
+
+        assert result["minio_path"] == "s3://bronze/html/year=2026/test.html.zst"
+
+    def test_success_populates_queue_artifact_id(self, mocker):
+        mocker.patch("builtins.open", mock_open())
+        self._mock_http(mocker)
+        self._mock_minio_and_db(mocker, artifact_id=77)
+
+        result = _fetch_page(_PAGE_URL, _RUN_DIR, _SEARCH_KEY, _SCOPE, _PAGE_NUM, set())
+
+        assert result["queue_artifact_id"] == 77
+
+    def test_minio_failure_is_nonfatal(self, mocker):
+        """If MinIO write raises, minio_path is None and no exception propagates."""
+        mocker.patch("builtins.open", mock_open())
+        self._mock_http(mocker)
+        mocker.patch("shared.minio.write_html", side_effect=Exception("connection refused"))
+
+        result = _fetch_page(_PAGE_URL, _RUN_DIR, _SEARCH_KEY, _SCOPE, _PAGE_NUM, set())
+
+        assert result["minio_path"] is None
+        assert result["queue_artifact_id"] is None
+        assert result["http_status"] == 200  # core fetch still succeeded
+
+    def test_db_failure_is_nonfatal(self, mocker):
+        """If DB insert raises, queue_artifact_id is None and no exception propagates."""
+        mocker.patch("builtins.open", mock_open())
+        self._mock_http(mocker)
+        mocker.patch("shared.minio.make_key", return_value="html/year=2026/test.html.zst")
+        mocker.patch("shared.minio.write_html", return_value="s3://bronze/html/year=2026/test.html.zst")
+        mocker.patch("shared.db.get_conn", side_effect=Exception("db down"))
+
+        result = _fetch_page(_PAGE_URL, _RUN_DIR, _SEARCH_KEY, _SCOPE, _PAGE_NUM, set())
+
+        assert result["queue_artifact_id"] is None
+        assert result["http_status"] == 200
+
+    def test_disk_write_still_happens_on_minio_failure(self, mocker):
+        """Shadow disk write must occur regardless of MinIO outcome."""
+        mock_open_fn = mock_open()
+        mocker.patch("builtins.open", mock_open_fn)
+        self._mock_http(mocker)
+        mocker.patch("shared.minio.write_html", side_effect=Exception("unreachable"))
+
+        _fetch_page(_PAGE_URL, _RUN_DIR, _SEARCH_KEY, _SCOPE, _PAGE_NUM, set())
+
+        assert mock_open_fn.called

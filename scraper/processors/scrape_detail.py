@@ -136,6 +136,41 @@ def scrape_detail_fetch(*, run_id: str, payload: Dict[str, Any]) -> Dict[str, An
         with open(filepath, "wb") as f:
             f.write(content)
 
+        # Write to MinIO and record in artifacts_queue (Plan 97)
+        minio_path = None
+        queue_artifact_id = None
+        try:
+            from shared.db import db_cursor
+            from shared.minio import make_key, write_html
+
+            key = make_key("detail_page", fetched_at)
+            minio_path = write_html(key, content)
+
+            with db_cursor(error_context="scrape_detail_fetch: insert artifacts_queue") as cur:
+                cur.execute(
+                    """
+                    INSERT INTO artifacts_queue
+                        (minio_path, artifact_type, listing_id, run_id, fetched_at, status)
+                    VALUES (%s, 'detail_page', %s, %s, %s, 'pending')
+                    RETURNING artifact_id
+                    """,
+                    (minio_path, str(listing_id), run_id or None, fetched_at),
+                )
+                queue_artifact_id = cur.fetchone()[0]
+                cur.execute(
+                    """
+                    INSERT INTO artifacts_queue_events (
+                        artifact_id, status, minio_path, artifact_type, 
+                        fetched_at, listing_id, run_id
+                    )
+                    VALUES (%s, 'pending', %s, 'detail_page', %s, %s, %s)
+                    """,
+                    (queue_artifact_id, minio_path, fetched_at,
+                     str(listing_id) if listing_id else None, run_id or None),
+                )
+        except Exception as _minio_err:
+            logger.warning("MinIO/queue write failed (non-fatal): %s", _minio_err)
+
         if status != 200:
             logger.warning(
                 "detail fetch HTTP %s for listing_id=%s url=%s",
@@ -156,6 +191,8 @@ def scrape_detail_fetch(*, run_id: str, payload: Dict[str, Any]) -> Dict[str, An
             "content_bytes": size,
             "sha256": _sha256_bytes(content) if content else None,
             "filepath": filepath,
+            "minio_path": minio_path,
+            "queue_artifact_id": queue_artifact_id,
             "error": None if status == 200 else f"HTTP {status}",
         }
 
@@ -345,6 +382,8 @@ def scrape_detail_dummy(*, run_id: str, payload: Dict[str, Any]) -> Dict[str, An
             "sha256": _sha256_bytes(content),
             "filepath": filepath,
             "error": None,
+            "minio_path": None,
+            "queue_artifact_id": None,
         }
 
         return {
@@ -372,6 +411,8 @@ def scrape_detail_dummy(*, run_id: str, payload: Dict[str, Any]) -> Dict[str, An
                     "sha256": None,
                     "filepath": filepath,
                     "error": f"{type(e).__name__}: {e}",
+                    "minio_path": None,
+                    "queue_artifact_id": None,
                 }
             ],
             "meta": {"mode": "dummy", "listing_id": listing_id, "vin": vin, "wrote": False},

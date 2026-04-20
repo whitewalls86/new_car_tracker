@@ -428,42 +428,60 @@ def process_results_pages(payload: dict = Body(...)) -> Dict[str, Any]:
             "listings": [],
         }
 
-    # --- Read HTML artifact from disk ---
-    filepath = artifact.get("filepath")
-    if not filepath:
+    # --- Read HTML artifact: prefer MinIO (Plan 97), fall back to disk ---
+    minio_path = artifact.get("minio_path")
+    filepath   = artifact.get("filepath")
+
+    if minio_path:
+        try:
+            from shared.minio import read_html as _read_minio
+            html = _read_minio(minio_path).decode("utf-8", errors="replace")
+        except Exception as e:
+            return {
+                "processor": processor,
+                "artifact_id": artifact_id,
+                "status": "failed",
+                "message": "failed to read artifact from MinIO",
+                "meta": {
+                    "minio_path": minio_path,
+                    "error": type(e).__name__,
+                    "error_message": str(e),
+                },
+                "listings": [],
+            }
+    elif filepath:
+        if not os.path.exists(filepath):
+            return {
+                "processor": processor,
+                "artifact_id": artifact_id,
+                "status": "failed",
+                "message": f"artifact file not found: {filepath}",
+                "meta": {"filepath": filepath},
+                "listings": [],
+            }
+        try:
+            with open(filepath, "rb") as f:
+                html = f.read().decode("utf-8", errors="replace")
+        except Exception as e:
+            return {
+                "processor": processor,
+                "artifact_id": artifact_id,
+                "status": "failed",
+                "message": "failed to read artifact file",
+                "meta": {
+                    "filepath": filepath,
+                    "error": type(e).__name__,
+                    "error_message": str(e),
+                },
+                "listings": [],
+            }
+    else:
         return {
             "processor": processor,
             "artifact_id": artifact_id,
             "status": "failed",
-            "message": "artifact.filepath is required",
+            "message": "artifact.minio_path or artifact.filepath is required",
             "meta": {},
-            "listings": [],
-        }
-
-    if not os.path.exists(filepath):
-        return {
-            "processor": processor,
-            "artifact_id": artifact_id,
-            "status": "failed",
-            "message": f"artifact file not found: {filepath}",
-            "meta": {"filepath": filepath},
-            "listings": [],
-        }
-
-    try:
-        with open(filepath, "rb") as f:
-            html = f.read().decode("utf-8", errors="replace")
-    except Exception as e:
-        return {
-            "processor": processor,
-            "artifact_id": artifact_id,
-            "status": "failed",
-            "message": "failed to read artifact file",
-            "meta": {
-                "filepath": filepath,
-                "error": type(e).__name__,
-                "error_message": str(e),
-            },
             "listings": [],
         }
 
@@ -621,47 +639,67 @@ def process_detail_pages(payload: dict = Body(...)) -> Dict[str, Any]:
             "carousel": [],
         }
 
-    # --- Read HTML artifact from disk ---
-    filepath = artifact.get("filepath")
-    if not filepath:
+    # --- Read HTML artifact: prefer MinIO (Plan 97), fall back to disk ---
+    minio_path = artifact.get("minio_path")
+    filepath   = artifact.get("filepath")
+
+    if minio_path:
+        try:
+            from shared.minio import read_html as _read_minio
+            html = _read_minio(minio_path).decode("utf-8", errors="replace")
+        except Exception as e:
+            return {
+                "processor": processor,
+                "artifact_id": artifact_id,
+                "search_key": search_key,
+                "status": "failed",
+                "message": "failed to read artifact from MinIO",
+                "meta": {
+                    "minio_path": minio_path,
+                    "error": type(e).__name__,
+                    "error_message": str(e),
+                },
+                "primary": {},
+                "carousel": [],
+            }
+    elif filepath:
+        if not os.path.exists(filepath):
+            return {
+                "processor": processor,
+                "artifact_id": artifact_id,
+                "search_key": search_key,
+                "status": "failed",
+                "message": f"artifact file not found: {filepath}",
+                "meta": {"filepath": filepath},
+                "primary": {},
+                "carousel": [],
+            }
+        try:
+            with open(filepath, "rb") as f:
+                html = f.read().decode("utf-8", errors="replace")
+        except Exception as e:
+            return {
+                "processor": processor,
+                "artifact_id": artifact_id,
+                "search_key": search_key,
+                "status": "failed",
+                "message": "failed to read artifact file",
+                "meta": {
+                    "filepath": filepath,
+                    "error": type(e).__name__,
+                    "error_message": str(e),
+                },
+                "primary": {},
+                "carousel": [],
+            }
+    else:
         return {
             "processor": processor,
             "artifact_id": artifact_id,
             "search_key": search_key,
             "status": "failed",
-            "message": "artifact.filepath is required",
+            "message": "artifact.minio_path or artifact.filepath is required",
             "meta": {},
-            "primary": {},
-            "carousel": [],
-        }
-
-    if not os.path.exists(filepath):
-        return {
-            "processor": processor,
-            "artifact_id": artifact_id,
-            "search_key": search_key,
-            "status": "failed",
-            "message": f"artifact file not found: {filepath}",
-            "meta": {"filepath": filepath},
-            "primary": {},
-            "carousel": [],
-        }
-
-    try:
-        with open(filepath, "rb") as f:
-            html = f.read().decode("utf-8", errors="replace")
-    except Exception as e:
-        return {
-            "processor": processor,
-            "artifact_id": artifact_id,
-            "search_key": search_key,
-            "status": "failed",
-            "message": "failed to read artifact file",
-            "meta": {
-                "filepath": filepath,
-                "error": type(e).__name__,
-                "error_message": str(e),
-            },
             "primary": {},
             "carousel": [],
         }

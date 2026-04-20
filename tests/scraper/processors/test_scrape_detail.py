@@ -19,7 +19,7 @@ def reset_adaptive_delay():
     yield
     sd._detail_adaptive_delay = 0.0
 
-# n8n reads all 14 of these keys from every artifact
+# n8n reads all 16 of these keys from every artifact (Plan 97 added minio_path + queue_artifact_id)
 N8N_ARTIFACT_KEYS = {
     "source",
     "artifact_type",
@@ -35,6 +35,8 @@ N8N_ARTIFACT_KEYS = {
     "sha256",
     "filepath",
     "error",
+    "minio_path",
+    "queue_artifact_id",
 }
 
 RUN_ID = "run-test-0000-0000-000000000001"
@@ -399,3 +401,110 @@ class TestCffiTargetForUa:
     def test_version_older_than_all_targets(self):
         # 50 is older than the lowest known target (99)
         assert cf_session.cffi_target_for_ua("Chrome/50.0.0.0") == "chrome99"
+
+
+# ---------------------------------------------------------------------------
+# scrape_detail_fetch — MinIO + artifacts_queue (Plan 97)
+# ---------------------------------------------------------------------------
+
+class TestScrapeDetailFetchMinioIntegration:
+    """Verify the MinIO write + artifacts_queue insert path added by Plan 97."""
+
+    def _mock_http(self, mocker, status=200, content=b"<html>detail</html>"):
+        mock_resp = MagicMock()
+        mock_resp.status_code = status
+        mock_resp.content = content
+        mock_resp.url = f"https://www.cars.com/vehicledetail/{LISTING_ID}/"
+        mock_resp.headers = {"content-type": "text/html"}
+        mock_session = MagicMock()
+        mock_session.get.return_value = mock_resp
+        mocker.patch(
+            "scraper.processors.scrape_detail.get_cf_credentials",
+            return_value=({"cookies": {}, "user_agent": "ua"}, None, None),
+        )
+        mocker.patch(
+            "scraper.processors.scrape_detail.make_cf_session",
+            return_value=mock_session,
+        )
+
+    def _mock_minio_and_db(self, mocker, artifact_id=55):
+        """Patch MinIO write and DB insert to simulate success."""
+        mocker.patch("shared.minio.make_key", return_value="html/year=2026/detail.html.zst")
+        mocker.patch(
+            "shared.minio.write_html",
+            return_value="s3://bronze/html/year=2026/detail.html.zst",
+        )
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_cursor.__enter__ = MagicMock(return_value=mock_cursor)
+        mock_cursor.__exit__ = MagicMock(return_value=False)
+        mock_cursor.fetchone.return_value = (artifact_id,)
+        mock_conn.cursor.return_value = mock_cursor
+        mocker.patch("shared.db.get_conn", return_value=mock_conn)
+        return mock_conn
+
+    def test_success_populates_minio_path(self, mocker):
+        mocker.patch("os.makedirs")
+        mocker.patch("builtins.open", mock_open())
+        self._mock_http(mocker)
+        self._mock_minio_and_db(mocker, artifact_id=55)
+
+        result = scrape_detail_fetch(run_id=RUN_ID, payload={"listing_id": LISTING_ID})
+        art = result["artifacts"][0]
+
+        assert art["minio_path"] == "s3://bronze/html/year=2026/detail.html.zst"
+
+    def test_success_populates_queue_artifact_id(self, mocker):
+        mocker.patch("os.makedirs")
+        mocker.patch("builtins.open", mock_open())
+        self._mock_http(mocker)
+        self._mock_minio_and_db(mocker, artifact_id=88)
+
+        result = scrape_detail_fetch(run_id=RUN_ID, payload={"listing_id": LISTING_ID})
+        art = result["artifacts"][0]
+
+        assert art["queue_artifact_id"] == 88
+
+    def test_minio_failure_is_nonfatal(self, mocker):
+        """If MinIO write raises, minio_path is None and no exception propagates."""
+        mocker.patch("os.makedirs")
+        mocker.patch("builtins.open", mock_open())
+        self._mock_http(mocker)
+        mocker.patch("shared.minio.write_html", side_effect=Exception("connection refused"))
+
+        result = scrape_detail_fetch(run_id=RUN_ID, payload={"listing_id": LISTING_ID})
+        art = result["artifacts"][0]
+
+        assert art["minio_path"] is None
+        assert art["queue_artifact_id"] is None
+        assert art["http_status"] == 200  # core fetch still succeeded
+
+    def test_db_failure_is_nonfatal(self, mocker):
+        """If DB insert raises, queue_artifact_id is None and no exception propagates."""
+        mocker.patch("os.makedirs")
+        mocker.patch("builtins.open", mock_open())
+        self._mock_http(mocker)
+        mocker.patch("shared.minio.make_key", return_value="html/year=2026/detail.html.zst")
+        mocker.patch(
+            "shared.minio.write_html",
+            return_value="s3://bronze/html/year=2026/detail.html.zst",
+        )
+        mocker.patch("shared.db.get_conn", side_effect=Exception("db down"))
+
+        result = scrape_detail_fetch(run_id=RUN_ID, payload={"listing_id": LISTING_ID})
+        art = result["artifacts"][0]
+
+        assert art["queue_artifact_id"] is None
+        assert art["http_status"] == 200
+
+    def test_disk_write_still_happens_on_minio_failure(self, mocker):
+        """Shadow disk write must occur regardless of MinIO outcome."""
+        mocker.patch("os.makedirs")
+        mock_open_fn = mock_open()
+        mocker.patch("builtins.open", mock_open_fn)
+        self._mock_http(mocker)
+        mocker.patch("shared.minio.write_html", side_effect=Exception("unreachable"))
+
+        scrape_detail_fetch(run_id=RUN_ID, payload={"listing_id": LISTING_ID})
+
+        assert mock_open_fn.called
