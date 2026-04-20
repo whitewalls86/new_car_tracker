@@ -421,23 +421,28 @@ sources:
           - name: created_at
             description: "Timestamp when row was inserted"
 
+  - name: ops
+    description: "Hot operational state — one row per entity, current state only"
+    schema: ops
+
+    tables:
       - name: blocked_cooldown
-        description: "Listing IDs that need a timeout before we try them again."
+        description: "Listings in 403 cooldown. One row per blocked listing; deleted when cooldown clears."
         columns:
           - name: listing_id
-            description: "uuid of the listing (primary key)"
+            description: "UUID of the listing (primary key)"
             data_tests:
               - not_null
               - unique
-          - name: first_attempt_at
-            description: "When was the first 403 block"
+          - name: first_attempted_at
+            description: "When the first 403 block was recorded"
             data_tests:
               - not_null
           - name: last_attempted_at
-            description: "When did we get the most recent 403 block"
+            description: "When the most recent 403 block was recorded"
             data_tests:
               - not_null
           - name: num_of_attempts
-            description: "How many times have we attempted to fetch it without success"
+            description: "How many times we have attempted to fetch this listing without success"
             data_tests:
               - not_null
