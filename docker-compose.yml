@@ -74,6 +74,7 @@ services:
       -placeholders.adminEmail=${ADMIN_EMAIL}
       -placeholders.airflowPassword=${AIRFLOW_DB_PASSWORD}
       -placeholders.airflowAppPassword=${AIRFLOW_APP_DB_PASSWORD}
+      -defaultSchema=public
       -baselineOnMigrate=true
       migrate
     volumes:

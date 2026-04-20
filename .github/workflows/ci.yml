@@ -89,6 +89,7 @@ jobs:
             -placeholders.adminEmail=ci@example.com
             -placeholders.airflowPassword=ci_airflow
             -placeholders.airflowAppPassword=ci_airflow_app
+            -defaultSchema=public
             migrate
         # Flyway runs as a Docker container step; it must reach the postgres
         # service by its service name ("postgres"), not localhost.
