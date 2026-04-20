@@ -1,7 +1,7 @@
 # Plan 79: Multi-Instance Detail Scraping
 
-**Status:** On hold — not currently needed. Resume if IP flagging returns.
-**Priority:** Low — unblocked once Plan 97 ships
+**Status:** Unblocked — resume when needed
+**Priority:** Low — IP flagging not currently a problem; can start as soon as `scrape_detail_pages` Airflow DAG exists
 
 The MinIO artifact store work originally scoped here has been extracted to Plan 97 as a core architectural requirement. Plan 79 now covers only the multi-VM scraper deployment.
 
@@ -15,9 +15,13 @@ Cars.com flagged the home server IP after sustained 50K+/day scraping (cumulativ
 
 ## Dependencies
 
-**Plan 97 (MinIO artifact store)** is a prerequisite and is being built as part of the core architecture regardless of multi-instance. Plan 97 delivers the scraper→MinIO write path that removes the shared-filesystem requirement for remote VMs. Once Plan 97 ships, the main technical blocker for this plan is resolved.
+**Plan 97 (MinIO artifact store)** — complete. Scraper writes directly to MinIO; no shared filesystem required on remote VMs. ✓
 
-**Plan 71 (Airflow migration)** provides the slim scraper (stateless fetch machine) and the ops coordination endpoints (`claim-batch`, `release`) that each remote VM calls. Both must be complete before deploying remote VMs.
+**Ops coordination endpoints** (`claim-batch`, `release`) — implemented. ✓
+
+**`scrape_detail_pages` Airflow DAG** — the only remaining hard dependency. Once this DAG exists, Plan 79 can start immediately. The DAG fans out to N scraper connections; adding more VM connections requires no DAG logic changes.
+
+The slim scraper (Plan 71 Phase 7) is not required. The current scraper image runs on remote VMs for detail scraping — it carries unused SRP parsing code but that does not affect correctness or concurrency.
 
 ---
 
@@ -42,7 +46,7 @@ The `scrape_detail_pages` DAG fans out to N scraper instances instead of one. Wo
 
 ## Implementation Checklist (when resumed)
 
-- [ ] Confirm Plans 97 and 71 are complete
+- [ ] Confirm `scrape_detail_pages` Airflow DAG is live
 - [ ] Provision 2–3 Oracle Cloud Free Tier ARM instances
 - [ ] Confirm slim scraper image builds and runs without Playwright (detail scraping uses curl_cffi; Playwright is only needed for SRP)
 - [ ] Add Airflow connections for each VM (`scraper_vm_1_url`, etc.)
@@ -55,6 +59,6 @@ The `scrape_detail_pages` DAG fans out to N scraper instances instead of one. Wo
 ## What Does Not Change
 
 - `detail_scrape_claims` table and `FOR UPDATE SKIP LOCKED` concurrency model
-- `blocked_cooldown` / `stg_blocked_cooldown` logic and 403 backoff
+- `ops.blocked_cooldown` hot table and `staging.blocked_cooldown_events` logic and 403 backoff
 - Processing service logic — same parsing, same observation writes
 - MinIO bucket structure — already the artifact store per Plan 97

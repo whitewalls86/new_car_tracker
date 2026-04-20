@@ -1,7 +1,7 @@
 # Plan 92: Service Drain Endpoints
 
-**Status:** Planned
-**Priority:** Low — quality-of-life improvement to deployment process; current deploy flow works but is clunky
+**Status:** In progress — archiver and dbt_runner complete; scraper and processing pending
+**Priority:** Low — ships incrementally as each service is touched
 
 ---
 
@@ -22,12 +22,13 @@ The `runs` table and orphan checker remain unchanged — they handle history and
 
 ## Per-Service Definition of "Idle"
 
-| Service | Idle condition |
-|---|---|
-| `scraper` | No `runs` rows with `status = 'running'` owned by this instance |
-| `processing` | No artifacts currently mid-parse — track with an in-memory counter or check `artifact_processing` rows in `'processing'` state |
-| `ops` | Stateless request handler — always ready |
-| `archiver` | No active archive jobs in flight — in-memory counter on active requests |
+| Service | Idle condition | Status |
+|---|---|---|
+| `archiver` | No active archive jobs in flight — in-memory counter | ✓ done |
+| `dbt_runner` | No dbt build in progress — in-memory counter | ✓ done |
+| `scraper` | No `runs` rows with `status = 'running'` owned by this instance | pending — ships in Plan 71 Phase 7 |
+| `processing` | No artifacts currently mid-parse — in-memory counter via `shared/job_counter.py` | pending — ships in Plan 93 |
+| `ops` | Stateless request handler — always ready | N/A |
 
 ---
 

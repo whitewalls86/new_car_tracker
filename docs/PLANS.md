@@ -1,68 +1,86 @@
 # Cartracker — Plans & Roadmap
 
-Each plan has its own file in `docs/`. This file is the index only.
+Each plan has its own file in `docs/`. This file is the index only. For system design patterns (schema layout, hot+staging, MinIO tiers, testing strategy, drain endpoints), see [ARCHITECTURE.md](ARCHITECTURE.md).
 
-## Current State (as of 2026-04-17)
+## Current State (as of 2026-04-20)
 
-Site is live at https://cartracker.info. Auth (Plan 82), data migration (Plan 81), CI/CD (Plans 62+63), user management, and integration testing (Plan 84) are all complete. 71 SQL smoke tests (Layer 1), full dbt model logic tests (Layer 2), and ops API integration tests (Layer 3, 5 files, 37 tests) are in CI.
+Site is live at https://cartracker.info. Auth (Plan 82), data migration (Plan 81), CI/CD (Plans 62+63), integration testing (Plan 84), and MinIO artifact store (Plan 97) are complete. Airflow is running with all maintenance DAGs live. Ops coordination endpoints (`advance_rotation`, `claim-batch`, `release`) are implemented.
 
-Architecture is transitioning from Postgres+dbt as the observation data owner to a MinIO-first design: Postgres holds only hot operational state (current inventory, VIN mappings, work queue), MinIO holds the complete observation record (silver layer). Plans 97 → 93 → 71 → 96 → 90 implement this transition in sequence.
+Architecture is transitioning from Postgres+dbt as the observation data owner to a MinIO-first design: Postgres holds only hot operational state (current inventory, VIN mappings, work queues); MinIO holds the complete observation record. The transition sequence is: V018 → Plan 93 → Plan 71 completion → V019 → n8n cutover → Plan 96 → Plan 90.
 
 ---
 
 ## Active
 
-_No active plans._
+| Plan | Title | Notes |
+|------|-------|-------|
+| [V018](plan_v018_schema_migration.md) | Schema migration | Drop Plan 89 dead tables; create `ops.price_observations`, `ops.vin_to_listing`, `ops.blocked_cooldown`, `staging.detail_scrape_claim_events`, `staging.blocked_cooldown_events`; fix UUID column types on `detail_scrape_claims` and `blocked_cooldown`. Safe to ship now — nothing reads the tables being dropped. |
+| [71](plan_71_airflow.md) | Airflow migration (steps 8–9) | `scrape_listings` and `scrape_detail_pages` DAGs can be written now in parallel with V018. Unblocks Plan 79 the moment `scrape_detail_pages` is live. |
 
 ---
 
 ## Backlog
 
-| Priority | Plan | Title | Notes |
-|----------|------|-------|-------|
-| 1 | [97](plan_97_minio_artifact_store.md) | MinIO-first artifact store | Scraper writes HTML directly to MinIO; `artifacts_queue` replaces `raw_artifacts` + `artifact_processing`. Core prerequisite for Plans 93 and 71 processing service work. |
-| 2 | [93](plan_93_processing_service.md) | Processing service core | Reads from MinIO; writes to MinIO silver (primary) and Postgres HOT tables (`price_observations`, `vin_to_listing`). Unlisted = DELETE. Carousel filtered against `search_configs`. Depends on Plan 97. |
-| 3 | [71](plan_71_airflow.md) | Airflow migration | Replaces n8n with Python DAGs. Airflow setup, coordination endpoints, and non-processing DAGs can start before Plan 93; `results_processing` DAG requires Plan 93 complete. |
-| 4 | [96](plan_96_silver_layer.md) | Silver layer validation + DuckDB analytics | Validates MinIO silver is complete and correct after Plan 93 ships. Establishes production DuckDB query surface that replaces dbt analytics. Explicit go/no-go gate for Plan 90. |
-| 5 | [90](plan_90_dbt_cleanup.md) | dbt decommission | Remove dbt, dbt_runner, and legacy Postgres observation tables once silver is validated. Replace analytics with DuckDB queries. Blocked on Plan 96. |
-| — | [83](plan_83_n8n_workflow_viewer.md) | n8n workflow viewer | Read-only portfolio page. Quick win, self-contained, unblocked now. |
-| — | **86** | Grafana observability stack | Prometheus + Loki + Tempo + Grafana. Best sequenced after Airflow so real DAG metrics exist to observe. |
-| — | **87** | Kafka event-driven layer | Replace schedule-driven scraping with events. Defensible only after Airflow DAGs produce events and multiple consumers exist. Processing service already has emit stubs (Plan 93). |
-| — | **88** | Kubernetes | Orchestration upgrade over Docker Compose. Makes sense once Airflow is running and 5+ services need managing. |
-| hold | [79](plan_79_multi_instance.md) | Multi-instance detail scraping | On hold — IP flagging not currently a problem. Unblocked once Plan 97 ships (MinIO write path was the main blocker). |
-| — | [69](plan_69_terraform.md) | Terraform IaC | Write after manual provisioning is stable; shows cloud maturity. |
-| — | [66](plan_66_sql_injection.md) | SQL injection audit | Lower urgency now that auth is DB-backed and Caddy is sole gatekeeper. |
-| — | [94](plan_94_api_docs.md) | API documentation hub | Swagger UI for all FastAPI services via Caddy `handle_path`. |
-| — | [95](plan_95_portfolio_landing_page.md) | Portfolio landing page | Replace `/info` README dump with purpose-built landing page. |
+| Priority | Plan | Title | Blocked on |
+|----------|------|-------|------------|
+| 1 | [93](plan_93_processing_service.md) | Processing service core | V018 |
+| 2 | [71](plan_71_airflow.md) | Airflow migration (steps 10–15) | Plan 93 (`results_processing` DAG); V019 before n8n cutover |
+| 3 | **V019** | View migration | Plan 93 live with production data; rewrites `ops_vehicle_staleness` and `ops_detail_scrape_queue` as plain Postgres views reading HOT tables; inlines `stg_blocked_cooldown` backoff formula; removes dbt dependency from the scrape queue |
+| 4 | [96](plan_96_silver_layer.md) | Silver layer validation + DuckDB analytics | Plan 93 in production for 2+ weeks |
+| 5 | [90](plan_90_dbt_cleanup.md) | dbt decommission | Plan 96 validation gates |
+| — | [79](plan_79_multi_instance.md) | Multi-instance detail scraping | `scrape_detail_pages` Airflow DAG live (Plan 71 step 9); resume when IP flagging requires it |
+| — | **86** | Grafana observability stack | Airflow live so real DAG metrics exist to observe |
+| — | **87** | Kafka event-driven layer | Airflow DAGs producing events + multiple consumers exist |
+| — | **88** | Kubernetes | 5+ services under management |
+| — | [69](plan_69_terraform.md) | Terraform IaC | Manual provisioning stable |
+| — | [66](plan_66_sql_injection.md) | SQL injection audit | Lower urgency with DB-backed auth and Caddy as sole gatekeeper |
+| — | [94](plan_94_api_docs.md) | API documentation hub | Swagger UI for all FastAPI services |
+| — | [95](plan_95_portfolio_landing_page.md) | Portfolio landing page | Replace `/info` README dump |
 
 ---
 
 ## Sequencing Rationale
 
-**Plan 97 first** — everything in the new architecture depends on the scraper writing to MinIO and `artifacts_queue` existing. Pure infrastructure with no logic changes. Validate before touching the processing service.
+**V018 first** — creates the HOT tables that Plan 93 writes to, migrates `blocked_cooldown` and `detail_scrape_claims` to ops schema, and drops dead Plan 89 tables. Zero breaking risk: the Plan 89 tables have never been written to; everything in production still reads from dbt models.
 
-**Plan 93 before Plan 71 results_processing DAG** — the `results_processing` Airflow DAG calls `POST /process/batch`. That endpoint can't exist until Plan 93 is built. The rest of Plan 71 (Airflow setup, coordination endpoints, maintenance DAGs) can run in parallel with Plan 93.
+**`scrape_listings` + `scrape_detail_pages` DAGs now** — all ops endpoints exist, MinIO write path exists. Shadow-run alongside n8n immediately. `scrape_detail_pages` going live unblocks Plan 79 with no other dependencies.
 
-**Plan 96 before Plan 90** — Plan 90 removes dbt and drops legacy Postgres observation tables. Those drops are irreversible. Plan 96's validation is the explicit gate: don't decommission dbt until silver has been running in production for at least 2 weeks and all five validation checks pass.
+**Plan 93 before `results_processing` DAG** — the DAG calls `POST /process/batch` which doesn't exist until Plan 93 is built. Everything else in Plan 71 can proceed independently.
 
-**Plan 79 still on hold** — IP flagging hasn't returned. Plan 97 resolves the main technical blocker (MinIO write path). When resumed, Plan 79 is: provision VMs + update Airflow connections + fan out the DAG. Most of the hard work will already be done.
+**V019 before n8n cutover** — the scrape queue view (`ops_detail_scrape_queue`) currently depends on dbt models. V019 rewrites it as a plain Postgres view reading HOT tables, removing the dbt dependency. Must happen before n8n is decommissioned and before Plan 90 drops dbt, because both paths would break the queue otherwise.
+
+**Plan 96 before Plan 90** — Plan 90 drops dbt and legacy Postgres observation tables. Those drops are irreversible. Plan 96's five validation checks are the explicit go/no-go gate: don't decommission dbt until silver has been running in production for at least 2 weeks and all checks pass.
+
+**Plan 79 whenever needed** — IP flagging not currently active. The technical prerequisites (MinIO write path, ops claim endpoints, `scrape_detail_pages` DAG) either exist or are being built now. When IP flagging returns, provision Oracle Cloud VMs, add Airflow connections, and fan out the DAG. No other plans need to be complete first.
 
 ---
 
-## Superseded Plans
+## In-Progress / Nearly Complete
+
+| Plan | Title | Status |
+|------|-------|--------|
+| [71](plan_71_airflow.md) | Airflow migration | Steps 1–6 done; steps 7–15 pending |
+| [92](plan_92_service_drain.md) | Service drain `/ready` endpoints | archiver + dbt_runner done; scraper (Plan 71 step 13) + processing (Plan 93) pending |
+| [91](plan_91_uuid_type_cleanup.md) | UUID column type fixes | Scope collapsed to 2 columns; absorbed into V018 |
+
+---
+
+## Superseded
 
 | Plan | Title | Reason |
 |---|---|---|
-| [89](plan_89_ops_analytics_split.md) | Operational/analytics dbt split | Philosophy correct; implementation superseded. `listing_to_vin`/`vin_state`/append-only `price_observations` in Postgres replaced by `vin_to_listing` + `price_observations`-as-HOT-table + MinIO silver. See Plans 93, 97, 96. |
+| [89](plan_89_ops_analytics_split.md) | Operational/analytics dbt split | Philosophy preserved; implementation superseded by Plans 93, 97, 96 |
 
 ---
 
 ## Completed
 
-See [completed_plans.md](completed_plans.md) for full list. Notable recent completions:
-- **84** — Integration testing: 71 SQL smoke tests + full dbt model logic coverage + ops API tests (2026-04-16)
+See [completed_plans.md](completed_plans.md) for full list. Recent completions:
+- **97** — MinIO-first artifact store; `ops.artifacts_queue` live; V017 deployed (2026-04-20)
+- **98** — Bronze data architecture; schema complete in V017 (2026-04-20)
+- **84** — Integration testing: 71 SQL smoke tests + dbt logic coverage + ops API tests (2026-04-16)
 - **82** — DB-backed auth with access requests (PRs #64–#67, 2026-04-14)
 - **81** — Data migration local → cloud (2026-04-14)
-- **62+63** — CI/CD + Flyway schema migrations
 - **80** — 403 cooldown with exponential backoff
 - **78** — FlareSolverr + curl_cffi impersonation
+- **62+63** — CI/CD + Flyway schema migrations

@@ -1,15 +1,21 @@
 # Plan 91: UUID Column Type Standardisation
 
-**Status:** Planned
-**Priority:** Medium — correctness/hygiene; no operational blocker, but causes cast noise in processing service code
+**Status:** Absorbed into V018 migration
+**Priority:** N/A — scope collapsed; two remaining fixes ship with V018
 
 ---
 
 ## Overview
 
-Several columns that store UUID values are typed as `text` in the application tables. The only correctly-typed column is `raw_artifacts.listing_id uuid`. Everything else that stores a UUID — listing IDs, run IDs in observation tables, n8n execution IDs — needs to be audited and the mismatches corrected with `ALTER COLUMN TYPE`.
+Originally scoped to audit and fix all `text` columns storing UUID values. Scope has collapsed: most affected tables (`srp_observations`, `detail_observations`, `detail_carousel_hints`) are dropped in Plan 90; n8n tables (`n8n_executions`, `pipeline_errors`) are dropped with n8n decommission. The Plan 89 tables (`listing_to_vin`, `price_observations` append-only, `vin_state`) are dropped in V018.
 
-The goal is a schema where Postgres enforces UUID format at the DB boundary, joins never require implicit casting, and Python code receives `uuid.UUID` objects rather than raw strings.
+Two columns survive into the new architecture and need fixing. Both are included in the V018 migration:
+- `detail_scrape_claims.listing_id` — `text NOT NULL` → `uuid NOT NULL`
+- `blocked_cooldown.listing_id` — `text NOT NULL` → `uuid NOT NULL`
+
+The new HOT tables (`ops.price_observations`, `ops.vin_to_listing`) are created with correct `uuid` types from the start in V018.
+
+This plan is complete when V018 ships.
 
 ---
 

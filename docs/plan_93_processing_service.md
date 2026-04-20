@@ -203,6 +203,10 @@ processing/
 
     # --- search config filter ---
     get_active_search_configs.sql     # used for carousel make/model filtering
+
+    # --- blocked cooldown (easy to remove when 403 blocking no longer needed) ---
+    upsert_blocked_cooldown.sql       # called when detail artifact is a 403 block page
+    clear_blocked_cooldown.sql        # called on successful detail scrape for a blocked listing
 ```
 
 ---
@@ -273,13 +277,16 @@ processing/
 7. Write primary observation to MinIO silver (source='detail')
    Failure: log + increment counter; do NOT roll back steps 4-5
 
-8. Release detail_scrape_claims: UPDATE status='processed' WHERE listing_id = primary.listing_id
+8. Clear blocked_cooldown: DELETE FROM ops.blocked_cooldown WHERE listing_id = primary.listing_id
+   (no-op if listing was not blocked; removes cooldown on successful scrape)
 
-9. Mark artifact status='complete' in artifacts_queue
+9. Release detail_scrape_claims: UPDATE status='processed' WHERE listing_id = primary.listing_id
 
-10. write_artifact_event(artifact_id, status='complete', ...)
+10. Mark artifact status='complete' in artifacts_queue
 
-11. Emit stubs (after commit):
+11. write_artifact_event(artifact_id, status='complete', ...)
+
+12. Emit stubs (after commit):
     emit_price_updated(vin, price, listing_id, 'detail')
     emit_vin_mapped(listing_id, vin)  if vin_to_listing entry was new
 ```
@@ -294,13 +301,35 @@ processing/
 4. Write to MinIO silver (source='detail', listing_state='unlisted', price=NULL)
    Failure: log + increment counter; do NOT roll back step 3
 
-5. Release detail_scrape_claims for this listing_id
+5. Clear blocked_cooldown for this listing_id (no-op if not blocked)
 
-6. Mark artifact status='complete' in artifacts_queue
+6. Release detail_scrape_claims for this listing_id
 
-7. write_artifact_event(artifact_id, status='complete', ...)
+7. Mark artifact status='complete' in artifacts_queue
 
-8. Emit: emit_listing_removed(vin, listing_id)
+8. write_artifact_event(artifact_id, status='complete', ...)
+
+9. Emit: emit_listing_removed(vin, listing_id)
+```
+
+## Detail Write Path — 403 Block Page
+
+```
+1-2. Same claim + read; parser identifies response as a 403/block page
+
+3. UPSERT ops.blocked_cooldown:
+   INSERT (listing_id, first_attempted_at=now(), last_attempted_at=now(), num_of_attempts=1)
+   ON CONFLICT (listing_id) DO UPDATE SET last_attempted_at=now(),
+                                          num_of_attempts = blocked_cooldown.num_of_attempts + 1
+
+4. INSERT staging.blocked_cooldown_events (listing_id, event_type='blocked',
+   num_of_attempts, event_at=now())
+
+5. Release detail_scrape_claims for this listing_id (returns it to queue after cooldown)
+
+6. Mark artifact status='skip' in artifacts_queue
+
+7. write_artifact_event(artifact_id, status='skip', ...)
 ```
 
 ### VIN collision / relisting
@@ -459,7 +488,7 @@ Then:  {"ready": true}
 
 ## Implementation Steps
 
-1. Flyway migration: create `price_observations`, `vin_to_listing` tables with indexes
+1. **Prerequisite: V018 migration shipped** — `ops.price_observations`, `ops.vin_to_listing`, `ops.blocked_cooldown`, `staging.detail_scrape_claim_events`, `staging.blocked_cooldown_events` must exist before any service code is written
 2. Copy parsers: `scraper/processors/parse_detail_page.py` → `processing/processors/`; same for `results_page_cards.py`
 3. Add `processing/db.py` (asyncpg pool)
 4. Add `processing/queries.py` (SQL loader pattern from Plan 89)

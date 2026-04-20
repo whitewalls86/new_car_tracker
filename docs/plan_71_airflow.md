@@ -1,6 +1,6 @@
 # Plan 71: Airflow Migration
 
-**Status:** Planned
+**Status:** In progress — steps 1–6 complete; steps 7–13 pending
 **Priority:** Medium — strong portfolio signal; replaces n8n entirely
 
 ## Overview
@@ -161,19 +161,21 @@ The detection logic doesn't move. Only the output mechanism changes. Design the 
 
 ## Rollout Order
 
-1. **Airflow service** — add to `docker-compose.yml`, Flyway migration for Airflow metadata schema
-2. **Processing service scaffold** — FastAPI skeleton, Docker Compose entry, `/health` endpoint, CI job. **Prerequisite: Plan 97 complete** (MinIO artifact store + `artifacts_queue` in place before this service is built).
-3. **Ops service: coordination endpoints** — `advance_rotation`, `claim-batch`, `release-claims` (move from scraper)
-4. **`dbt_build` DAG** — simplest standalone DAG; validates Airflow → dbt_runner connection
-5. **`orphan_checker` + `delete_stale_emails` + `cleanup_parquet`** — maintenance DAGs, safe to shadow-run alongside n8n
-6. **`cleanup_artifacts` DAG** — validate archive → delete chain before cutover
-7. **Processing service: core logic** — full design in Plan 93. Reads from MinIO via `artifacts_queue.minio_path`; writes to MinIO silver (primary) and Postgres HOT tables (`price_observations`, `vin_to_listing`). Uses `artifacts_queue` as work queue. Unlisted path: DELETE from `price_observations`. Carousel: parse make/model → filter against `search_configs` → upsert.
-8. **`results_processing` DAG** — calls processing service; shadow-run against n8n until observation row counts match
-9. **`scrape_listings` DAG** — uses new ops rotation endpoint; validate rotation slot claims
-10. **`scrape_detail_pages` DAG** — uses new ops claim endpoints; slim scraper no longer owns this
-11. **Scraper: remove ported logic** — delete `advance_rotation`, claim endpoints, parsing code
-12. **Disable n8n schedules** — cutover; n8n container stays up briefly as fallback
-13. **Decommission n8n** — remove from docker-compose, archive workflow JSONs to `docs/n8n_archive/`
+1. ~~**Airflow service**~~ — ✓ done
+2. ~~**Processing service scaffold**~~ — ✓ done (`processing/app.py` stub with `/health`)
+3. ~~**Ops service: coordination endpoints**~~ — ✓ done (`advance_rotation`, `claim-batch`, `release-claims`)
+4. ~~**`dbt_build` DAG**~~ — ✓ done
+5. ~~**`orphan_checker` + `delete_stale_emails` + `cleanup_parquet`**~~ — ✓ done
+6. ~~**`cleanup_artifacts` DAG**~~ — ✓ done
+7. **[V018 migration](plan_v018_schema_migration.md)** — prerequisite for steps 8–10. Creates `ops.price_observations`, `ops.vin_to_listing`, `ops.blocked_cooldown` (migrated from public), `staging.detail_scrape_claim_events`, `staging.blocked_cooldown_events`; drops dead Plan 89 tables; fixes UUID column types.
+8. **`scrape_listings` DAG** — `advance_rotation` extended to also INSERT a `runs` row and return `run_id` (bridge, easy to remove when `runs` deprecated); fan-out scrape per config; shadow-run alongside n8n.
+9. **`scrape_detail_pages` DAG** — `claim-batch` → `scrape_detail/batch` → `release`; shadow-run alongside n8n. **Unblocks Plan 79.**
+10. **Processing service: core logic** — full design in Plan 93. Blocked on V018 (step 7).
+11. **`results_processing` DAG** — calls processing service; shadow-run against n8n until observation row counts match. Blocked on Plan 93.
+12. **V019 migration** — `CREATE OR REPLACE VIEW ops.ops_vehicle_staleness` and `ops.ops_detail_scrape_queue` as plain Postgres views reading HOT tables; blocked_cooldown backoff logic inlined. Replaces dbt dependency. Blocked on Plan 93 having live data.
+13. **Scraper: add `/ready` + remove ported logic** — delete `advance_rotation` from scraper, remove SRP parsers once processing service shadow period ends. Add `GET /ready` (Plan 92).
+14. **Disable n8n schedules** — cutover; n8n container stays up briefly as fallback.
+15. **Decommission n8n** — remove from docker-compose, archive workflow JSONs to `docs/n8n_archive/`.
 
 ---
 
