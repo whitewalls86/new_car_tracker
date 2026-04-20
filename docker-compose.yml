@@ -406,7 +406,7 @@ services:
       - "8080:8080"
     environment:
       <<: *airflow-common-env
-      AIRFLOW__WEBSERVER__BASE_URL: "https://cartracker.info/airflow"
+      AIRFLOW__API__BASE_URL: "https://cartracker.info/airflow"
     healthcheck:
       test: ["CMD", "curl", "--fail", "http://localhost:8080/api/v2/monitor/health"]
       interval: 30s
