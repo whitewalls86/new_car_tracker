@@ -48,11 +48,13 @@ This migration introduces one new service and redistributes responsibilities acr
 Extracts all Results Processing logic from n8n into a dedicated Python/FastAPI service. Stays on the main VM because it needs access to the local filesystem where raw artifact files are stored.
 
 **Responsibilities:**
-- Read unprocessed artifacts from `raw_artifacts` (by filepath)
-- Parse HTML/JSON → write `srp_observations`, `detail_observations`
-- Extract and write `detail_carousel_hints` and `dealers`
-- Handle unlisted vehicle logic and multi-table deletes
-- Manage `artifact_processing` status (ok / retry / skip)
+- Claim unprocessed artifacts from `artifacts_queue` (by minio_path — requires Plan 97)
+- Read artifact files from MinIO
+- Parse HTML/JSON → write to MinIO silver `observations` (primary — see Plan 96)
+- Upsert `price_observations` and `vin_to_listing` Postgres HOT tables (see Plan 93)
+- Handle unlisted vehicle logic: DELETE from `price_observations`
+- Carousel: parse make/model, filter against `search_configs`, upsert matching into `price_observations`
+- Manage `artifacts_queue` status (complete / retry / skip)
 
 **Key endpoints:**
 ```
@@ -63,7 +65,7 @@ GET  /artifacts/status/{run_id}  { }          → returns processing progress fo
 
 The `artifact_id`-based endpoint is intentional: when Kafka arrives, the consumer receives an event containing an `artifact_id` and calls this endpoint. The service fetches the file itself. The message is a pointer, not a payload.
 
-**File storage:** Raw artifact files stay on disk. The processing service reads them by the `filepath` column in `raw_artifacts`. No change to the file-based architecture, cleanup workflows, or MinIO archiving. When scrapers move to separate VMs, the file store migrates to MinIO as the primary store (already in the stack) — the `filepath` column becomes an S3 URI. That is a separate migration gated on multi-VM scrapers, not this plan.
+**File storage:** Raw artifact files are written directly to MinIO by the scraper (Plan 97). The processing service reads them from MinIO via `artifacts_queue.minio_path`. Plan 97 is a prerequisite for this service — it delivers the scraper→MinIO write path and the `artifacts_queue` work queue. Multi-VM scraping (Plan 79) is separately on hold and unblocked once Plan 97 ships.
 
 ### Scraper: slimmed to a fetch machine
 
@@ -160,12 +162,12 @@ The detection logic doesn't move. Only the output mechanism changes. Design the 
 ## Rollout Order
 
 1. **Airflow service** — add to `docker-compose.yml`, Flyway migration for Airflow metadata schema
-2. **Processing service scaffold** — FastAPI skeleton, Docker Compose entry, `/health` endpoint, CI job
+2. **Processing service scaffold** — FastAPI skeleton, Docker Compose entry, `/health` endpoint, CI job. **Prerequisite: Plan 97 complete** (MinIO artifact store + `artifacts_queue` in place before this service is built).
 3. **Ops service: coordination endpoints** — `advance_rotation`, `claim-batch`, `release-claims` (move from scraper)
 4. **`dbt_build` DAG** — simplest standalone DAG; validates Airflow → dbt_runner connection
 5. **`orphan_checker` + `delete_stale_emails` + `cleanup_parquet`** — maintenance DAGs, safe to shadow-run alongside n8n
 6. **`cleanup_artifacts` DAG** — validate archive → delete chain before cutover
-7. **Processing service: core logic** — port Results Processing SQL → Python (SRP observations, detail observations, carousel hints, dealers, unlisted vehicles, artifact_processing status)
+7. **Processing service: core logic** — full design in Plan 93. Reads from MinIO via `artifacts_queue.minio_path`; writes to MinIO silver (primary) and Postgres HOT tables (`price_observations`, `vin_to_listing`). Uses `artifacts_queue` as work queue. Unlisted path: DELETE from `price_observations`. Carousel: parse make/model → filter against `search_configs` → upsert.
 8. **`results_processing` DAG** — calls processing service; shadow-run against n8n until observation row counts match
 9. **`scrape_listings` DAG** — uses new ops rotation endpoint; validate rotation slot claims
 10. **`scrape_detail_pages` DAG** — uses new ops claim endpoints; slim scraper no longer owns this
@@ -177,17 +179,16 @@ The detection logic doesn't move. Only the output mechanism changes. Design the 
 
 ## What Stays the Same
 
-- Postgres schema — no migrations needed for the migration itself
-- `raw_artifacts` file storage and MinIO archiving architecture
-- dbt models and dbt_runner HTTP interface
-- Deploy intent flag and ops admin UI
 - `detail_scrape_claims` concurrency model (`FOR UPDATE SKIP LOCKED`) — just moves to an ops endpoint
 - `blocked_cooldown` / `stg_blocked_cooldown` logic
+- Deploy intent flag and ops admin UI
+- dbt models and dbt_runner HTTP interface (until Plan 90 decommissions them)
 
 ## What Changes
 
 - `advance_rotation` moves from scraper → ops
 - Claim management moves from scraper → ops
-- Results Processing SQL logic moves from n8n → processing service (Python)
-- Scraper loses everything except the browser stack and fetch loop
+- Scraper writes artifacts directly to MinIO; `artifacts_queue` replaces `raw_artifacts` + `artifact_processing` (Plan 97)
+- Results Processing logic moves from n8n → processing service: reads from MinIO, writes to MinIO silver (primary) and Postgres HOT tables (`price_observations`, `vin_to_listing`)
+- Scraper loses everything except the browser stack, fetch loop, and MinIO write
 - n8n decommissioned

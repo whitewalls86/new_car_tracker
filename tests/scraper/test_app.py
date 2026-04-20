@@ -313,7 +313,7 @@ class TestAdvanceRotation:
 # POST /process/results_pages
 # ---------------------------------------------------------------------------
 class TestProcessResultsPages:
-    def test_missing_filepath_returns_failed(self, mock_scraper_client):
+    def test_neither_minio_path_nor_filepath_returns_failed(self, mock_scraper_client):
         resp = mock_scraper_client.post(
             "/process/results_pages",
             json={"processor": "cars_results_page__listings_v3", "artifact": {"artifact_id": 1}},
@@ -321,7 +321,7 @@ class TestProcessResultsPages:
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "failed"
-        assert "filepath" in data["message"]
+        assert "minio_path" in data["message"] or "filepath" in data["message"]
 
     def test_file_not_found_returns_failed(self, mock_scraper_client, mocker):
         mocker.patch("os.path.exists", return_value=False)
@@ -335,6 +335,65 @@ class TestProcessResultsPages:
         data = resp.json()
         assert data["status"] == "failed"
         assert "not found" in data["message"]
+
+    def test_minio_path_preferred_over_filepath(self, mock_scraper_client, mocker):
+        """When minio_path is present the MinIO reader is used; filepath is ignored."""
+        mock_read = mocker.patch(
+            "shared.minio.read_html",
+            return_value=b"<html></html>",
+        )
+        resp = mock_scraper_client.post(
+            "/process/results_pages",
+            json={
+                "processor": "cars_results_page__listings_v3",
+                "artifact": {
+                    "artifact_id": 1,
+                    "minio_path": "s3://bronze/html/test.html.zst",
+                    "filepath": "/data/file.html",
+                },
+            },
+        )
+        mock_read.assert_called_once_with("s3://bronze/html/test.html.zst")
+        assert resp.json()["status"] == "ok"
+
+    def test_minio_read_failure_returns_failed(self, mock_scraper_client, mocker):
+        mocker.patch(
+            "shared.minio.read_html",
+            side_effect=Exception("connection refused"),
+        )
+        resp = mock_scraper_client.post(
+            "/process/results_pages",
+            json={
+                "processor": "cars_results_page__listings_v3",
+                "artifact": {
+                    "artifact_id": 1,
+                    "minio_path": "s3://bronze/html/test.html.zst",
+                },
+            },
+        )
+        data = resp.json()
+        assert data["status"] == "failed"
+        assert "MinIO" in data["message"]
+        assert data["meta"]["minio_path"] == "s3://bronze/html/test.html.zst"
+
+    def test_filepath_fallback_when_no_minio_path(self, mock_scraper_client, mocker):
+        """filepath is used when minio_path is absent."""
+        mocker.patch("os.path.exists", return_value=True)
+        mocker.patch(
+            "builtins.open", 
+            __import__(
+                "unittest.mock", 
+                fromlist=["mock_open"]
+                ).mock_open(read_data=b"<html></html>")
+            )
+        resp = mock_scraper_client.post(
+            "/process/results_pages",
+            json={
+                "processor": "cars_results_page__listings_v3",
+                "artifact": {"artifact_id": 1, "filepath": "/data/file.html"},
+            },
+        )
+        assert resp.json()["status"] == "ok"
 
     def test_invalid_artifact_id_returns_failed(self, mock_scraper_client):
         payload = {
@@ -473,14 +532,14 @@ class TestProcessDetailPages:
         "</script>"
     )
 
-    def test_missing_filepath_returns_failed(self, mock_scraper_client):
+    def test_neither_minio_path_nor_filepath_returns_failed(self, mock_scraper_client):
         resp = mock_scraper_client.post(
             "/process/detail_pages",
             json={"processor": "cars_detail_page__v1", "artifact": {"artifact_id": 1}},
         )
         data = resp.json()
         assert data["status"] == "failed"
-        assert "filepath" in data["message"]
+        assert "minio_path" in data["message"] or "filepath" in data["message"]
 
     def test_file_not_found_returns_failed(self, mock_scraper_client, mocker):
         mocker.patch("os.path.exists", return_value=False)
@@ -493,6 +552,43 @@ class TestProcessDetailPages:
         )
         data = resp.json()
         assert data["status"] == "failed"
+
+    def test_minio_path_preferred_over_filepath(self, mock_scraper_client, mocker):
+        mocker.patch(
+            "shared.minio.read_html",
+            return_value=self.DETAIL_HTML.encode(),
+        )
+        resp = mock_scraper_client.post(
+            "/process/detail_pages",
+            json={
+                "processor": "cars_detail_page__v1",
+                "artifact": {
+                    "artifact_id": 1,
+                    "minio_path": "s3://bronze/html/detail.html.zst",
+                    "filepath": "/data/detail.html",
+                },
+            },
+        )
+        assert resp.json()["status"] == "ok"
+
+    def test_minio_read_failure_returns_failed(self, mock_scraper_client, mocker):
+        mocker.patch(
+            "shared.minio.read_html",
+            side_effect=Exception("bucket not found"),
+        )
+        resp = mock_scraper_client.post(
+            "/process/detail_pages",
+            json={
+                "processor": "cars_detail_page__v1",
+                "artifact": {
+                    "artifact_id": 1,
+                    "minio_path": "s3://bronze/html/detail.html.zst",
+                },
+            },
+        )
+        data = resp.json()
+        assert data["status"] == "failed"
+        assert "MinIO" in data["message"]
 
     def test_v1_success(self, mock_scraper_client, mocker):
         mocker.patch("os.path.exists", return_value=True)
