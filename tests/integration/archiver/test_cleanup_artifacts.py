@@ -124,6 +124,11 @@ class TestGetCleanupCandidates:
         artifact_id = _insert_artifact(cur, seed_run, fetched_at_offset="10 days")
         assert artifact_id not in self._candidate_ids(cur)
 
+    def test_empty_filepath_not_eligible(self, cur, seed_run):
+        artifact_id = _insert_artifact(cur, seed_run, filepath="", fetched_at_offset="49 hours")
+        _add_processing(cur, artifact_id, "ok")
+        assert artifact_id not in self._candidate_ids(cur)
+
     def test_already_deleted_not_eligible(self, cur, seed_run):
         artifact_id = _insert_artifact(
             cur, seed_run, fetched_at_offset="49 hours", deleted_at=_NOW
