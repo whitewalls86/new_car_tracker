@@ -2,7 +2,7 @@ from datetime import datetime
 from pathlib import Path
 
 from airflow.providers.postgres.operators.postgres import PostgresOperator
-from dags.sensors import deploy_intent_sensor
+from sensors import deploy_intent_sensor
 
 from airflow import DAG
 

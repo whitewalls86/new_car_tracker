@@ -2,7 +2,7 @@ from datetime import datetime
 
 import requests
 from airflow.operators.python import PythonOperator
-from dags.sensors import deploy_intent_sensor, http_health_sensor
+from sensors import deploy_intent_sensor, http_health_sensor
 
 from airflow import DAG
 

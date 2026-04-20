@@ -14,7 +14,7 @@ Two primitives:
 
 Usage in a DAG:
 
-    from dags.sensors import deploy_intent_sensor, http_health_sensor
+    from sensors import deploy_intent_sensor, http_health_sensor
 
     with DAG(...):
         intent   = deploy_intent_sensor()
