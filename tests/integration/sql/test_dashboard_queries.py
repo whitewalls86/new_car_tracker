@@ -414,7 +414,7 @@ class TestPipelineHealthQueries:
                        ) as priority_row
                 FROM ops.ops_detail_scrape_queue q
                 LEFT JOIN detail_scrape_claims c
-                    ON c.listing_id = q.listing_id AND c.status = 'running'
+                    ON c.listing_id = q.listing_id::uuid AND c.status = 'running'
                 WHERE c.listing_id IS NULL
             )
             SELECT
@@ -448,7 +448,7 @@ class TestPipelineHealthQueries:
                        ) as priority_row
                 FROM ops.ops_detail_scrape_queue q
                 LEFT JOIN detail_scrape_claims c
-                    ON c.listing_id = q.listing_id AND c.status = 'running'
+                    ON c.listing_id = q.listing_id::uuid AND c.status = 'running'
                 WHERE c.listing_id IS NULL
             )
             SELECT bc.num_of_attempts,

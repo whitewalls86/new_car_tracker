@@ -271,7 +271,7 @@ def _section_stale_backlog():
                 ROW_NUMBER() OVER (PARTITION BY 1 ORDER BY q.priority, q.listing_id) as priority_row
             FROM ops.ops_detail_scrape_queue q
             LEFT JOIN detail_scrape_claims c
-                ON c.listing_id = q.listing_id AND c.status = 'running'
+                ON c.listing_id = q.listing_id::uuid AND c.status = 'running'
             WHERE c.listing_id IS NULL
         ), first_part AS (
             SELECT
@@ -335,7 +335,7 @@ def _section_stale_backlog():
                 ROW_NUMBER() OVER (PARTITION BY 1 ORDER BY q.priority, q.listing_id) as priority_row
             FROM ops.ops_detail_scrape_queue q
             LEFT JOIN detail_scrape_claims c
-                ON c.listing_id = q.listing_id AND c.status = 'running'
+                ON c.listing_id = q.listing_id::uuid AND c.status = 'running'
             WHERE c.listing_id IS NULL
         )
         SELECT
