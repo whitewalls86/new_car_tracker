@@ -25,7 +25,7 @@ Usage in a DAG:
 """
 import requests
 from airflow.providers.postgres.hooks.postgres import PostgresHook
-from airflow.sensors.base import BaseSensorOperator
+from airflow.sdk.bases.sensor import BaseSensorOperator
 
 
 class _DeployIntentSensor(BaseSensorOperator):
