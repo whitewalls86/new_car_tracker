@@ -35,7 +35,7 @@ jobs:
             fastapi httpx \
             psycopg2-binary asyncpg \
             requests pydantic jinja2 python-multipart \
-            boto3 zstandard pyarrow \
+            boto3 zstandard pyarrow s3fs \
             bs4 lxml \
             resend
       - run: pytest tests/ -v -m "not integration"
