@@ -1,22 +1,40 @@
 """
 Shared psycopg2 connection helper and context manager.
+
+Connection resolution order:
+  1. DATABASE_URL  — full DSN string (used by the scraper service)
+  2. PG* env vars  — PGHOST / PGPORT / PGDATABASE / PGUSER / POSTGRES_PASSWORD
+                     (used by the archiver and processing services)
 """
 import logging
 import os
 from contextlib import contextmanager
+from urllib.parse import urlparse
 
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
 logger = logging.getLogger(__name__)
 
-DB_KWARGS = {
-    "host": os.environ.get("PGHOST", "postgres"),
-    "port": int(os.environ.get("PGPORT", "5432")),
-    "dbname": os.environ.get("PGDATABASE", "cartracker"),
-    "user": os.environ.get("PGUSER", "cartracker"),
-    "password": os.environ.get("POSTGRES_PASSWORD", ""),
-}
+_DATABASE_URL = os.environ.get("DATABASE_URL", "")
+
+if _DATABASE_URL:
+    _p = urlparse(_DATABASE_URL)
+    DB_KWARGS = {
+        "host":     _p.hostname or "postgres",
+        "port":     _p.port or 5432,
+        "dbname":   _p.path.lstrip("/") or "cartracker",
+        "user":     _p.username or "cartracker",
+        "password": _p.password or "",
+    }
+else:
+    DB_KWARGS = {
+        "host":     os.environ.get("PGHOST", "postgres"),
+        "port":     int(os.environ.get("PGPORT", "5432")),
+        "dbname":   os.environ.get("PGDATABASE", "cartracker"),
+        "user":     os.environ.get("PGUSER", "cartracker"),
+        "password": os.environ.get("POSTGRES_PASSWORD", ""),
+    }
 
 
 def get_conn():

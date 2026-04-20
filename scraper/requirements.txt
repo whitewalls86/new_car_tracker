@@ -4,6 +4,7 @@ requests
 curl_cffi
 bs4
 lxml
-patchright
 asyncpg
 psycopg2-binary
+boto3
+zstandard

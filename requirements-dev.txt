@@ -4,3 +4,5 @@ pytest-mock
 pytest-asyncio
 httpx
 resend
+boto3
+zstandard

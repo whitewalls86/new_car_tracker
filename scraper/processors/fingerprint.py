@@ -9,8 +9,7 @@ import random
 from typing import Dict, Tuple
 
 # ---------------------------------------------------------------------------
-# Chrome version profiles – keep versions close to the Patchright/Playwright
-# bundled Chromium so JS feature-detection doesn't reveal a mismatch.
+# Chrome version profiles
 # ---------------------------------------------------------------------------
 _CHROME_VERSIONS = ["132", "133", "134", "135"]
 

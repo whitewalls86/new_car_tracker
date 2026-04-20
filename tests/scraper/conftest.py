@@ -5,7 +5,7 @@ Sets up:
 1. sys.path so tests can import from scraper/ directly
    (processors.fingerprint, db, app, etc.)
 2. sys.modules stubs for heavy native deps that are only present inside Docker
-   (patchright, playwright, curl_cffi).
+   (curl_cffi).
 """
 import os
 import sys
@@ -35,18 +35,6 @@ def _stub_module(name, **attrs):
         sys.modules[name] = m
     return sys.modules[name]
 
-
-# patchright (Playwright fork, only in scraper Docker image)
-_patchright_sync = _stub_module("patchright.sync_api")
-_patchright_sync.sync_playwright = MagicMock()
-_patchright_sync.Browser = MagicMock()
-_stub_module("patchright")
-
-# playwright (fallback used by browser.py when patchright absent)
-_pw_sync = _stub_module("playwright.sync_api")
-_pw_sync.sync_playwright = MagicMock()
-_pw_sync.Browser = MagicMock()
-_stub_module("playwright")
 
 # curl_cffi (TLS-fingerprinting HTTP client, only in scraper Docker image)
 _curl_requests = _stub_module("curl_cffi.requests")

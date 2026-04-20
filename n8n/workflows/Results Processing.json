@@ -28,7 +28,7 @@
         "url": "http://cartracker-scraper:8000/process/results_pages",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"processor\": \"{{ $('SET SRP Processor').item.json.processor }}\",\n  \"artifact\": {\n    \"artifact_id\": {{$json.artifact_id}},\n    \"filepath\": \"{{$json.filepath}}\",\n    \"run_id\": \"{{$json.run_id}}\",\n    \"fetched_at\": \"{{$json.fetched_at}}\",\n    \"url\": \"{{$json.url}}\",\n    \"http_status\": {{$json.http_status}},\n    \"content_type\": \"{{$json.content_type}}\"\n  },\n  \"options\": {\n    \"include_dummy_listings\": true\n  }\n}",
+        "jsonBody": "={\n  \"processor\": \"{{ $('SET SRP Processor').item.json.processor }}\",\n  \"artifact\": {\n    \"artifact_id\": {{$json.artifact_id}},\n    \"filepath\": \"{{$json.filepath}}\",\n    \"minio_path\": {{ $json.minio_path ? '\"' + $json.minio_path + '\"' : 'null' }},\n    \"run_id\": \"{{$json.run_id}}\",\n    \"fetched_at\": \"{{$json.fetched_at}}\",\n    \"url\": \"{{$json.url}}\",\n    \"http_status\": {{$json.http_status}},\n    \"content_type\": \"{{$json.content_type}}\"\n  },\n  \"options\": {\n    \"include_dummy_listings\": true\n  }\n}",
         "options": {}
       },
       "type": "n8n-nodes-base.httpRequest",
@@ -850,7 +850,7 @@
         "url": "http://cartracker-scraper:8000/process/detail_pages",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"processor\": \"{{ $node[\"Set Detail Processor\"].json.processor }}\",\n  \"artifact\": {\n    \"artifact_id\": \"{{ $json.artifact_id }}\",\n    \"filepath\": \"{{ $json.filepath }}\",\n    \"search_key\": \"{{ $json.search_key }}\",\n    \"url\": \"{{ $json.url }}\"\n  }\n}\n",
+        "jsonBody": "={\n  \"processor\": \"{{ $node[\"Set Detail Processor\"].json.processor }}\",\n  \"artifact\": {\n    \"artifact_id\": \"{{ $json.artifact_id }}\",\n    \"filepath\": \"{{ $json.filepath }}\",\n    \"minio_path\": {{ $json.minio_path ? '\"' + $json.minio_path + '\"' : 'null' }},\n    \"search_key\": \"{{ $json.search_key }}\",\n    \"url\": \"{{ $json.url }}\"\n  }\n}\n",
         "options": {}
       },
       "type": "n8n-nodes-base.httpRequest",

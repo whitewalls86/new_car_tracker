@@ -8,6 +8,8 @@ from archiver.processors.cleanup_artifacts import cleanup_artifacts
 from archiver.processors.cleanup_artifacts import run_cleanup_artifacts as _run_cleanup_artifacts
 from archiver.processors.cleanup_parquet import cleanup_parquet as _cleanup_parquet
 from archiver.processors.cleanup_parquet import run_cleanup_parquet as _run_cleanup_parquet
+from archiver.processors.cleanup_queue import cleanup_queue as _cleanup_queue
+from archiver.processors.cleanup_queue import run_cleanup_queue as _run_cleanup_queue
 from shared.job_counter import active_job, is_idle
 
 logging.basicConfig(level=logging.INFO)
@@ -56,6 +58,24 @@ def run_cleanup_parquet(payload: dict = Body(...)) -> Dict[str, Any]:
 def trigger_cleanup_parquet() -> Dict[str, Any]:
     with active_job():
         return _run_cleanup_parquet()
+
+
+@app.post("/cleanup/queue")
+def run_cleanup_queue_batch(payload: dict = Body(...)) -> Dict[str, Any]:
+    """Delete a caller-supplied list of artifacts_queue rows (status complete/skip)."""
+    with active_job():
+        artifact_ids = [int(i) for i in (payload or {}).get("artifact_ids", [])]
+        results = _cleanup_queue(artifact_ids)
+        deleted_count = sum(1 for r in results if r.get("deleted"))
+        return {"total": len(results), "deleted": deleted_count,
+                "failed": len(results) - deleted_count, "results": results}
+
+
+@app.post("/cleanup/queue/run")
+def trigger_cleanup_queue() -> Dict[str, Any]:
+    """Sweep all complete/skip rows from artifacts_queue (Airflow DAG trigger)."""
+    with active_job():
+        return _run_cleanup_queue()
 
 
 @app.get("/health")

@@ -209,7 +209,7 @@ def extract_results_paging_meta(html_text: str) -> Optional[Dict[str, Any]]:
 
 def _fetch_page(url: str, run_dir: str,
                 search_key: str, scope: str, page_num: int,
-                known_vins: Set[str]) -> Dict[str, Any]:
+                known_vins: Set[str], run_id: str = "") -> Dict[str, Any]:
     """Fetch a single SRP page using a CF-bootstrapped curl_cffi session.
 
     Retries once on 403 (after re-bootstrapping CF credentials) or on transient
@@ -306,11 +306,43 @@ def _fetch_page(url: str, run_dir: str,
             if cards_on_page == 0:
                 stop = True
 
-    # Save raw HTML
+    # Save raw HTML to disk (shadow — kept during Plan 97 transition)
     filename = f"{search_key}__{scope}__page_{page_num:04d}__{status}.html"
     filepath = os.path.join(run_dir, filename)
     with open(filepath, "wb") as f:
         f.write(content)
+
+    # Write to MinIO and record in artifacts_queue (Plan 97)
+    minio_path = None
+    queue_artifact_id = None
+    try:
+        from shared.db import db_cursor
+        from shared.minio import make_key, write_html
+
+        key = make_key("results_page", fetched_at)
+        minio_path = write_html(key, content)
+
+        with db_cursor(error_context="scrape_results: insert artifacts_queue") as cur:
+            cur.execute(
+                """
+                INSERT INTO artifacts_queue
+                    (minio_path, artifact_type, run_id, fetched_at, status)
+                VALUES (%s, 'results_page', %s, %s, 'pending')
+                RETURNING artifact_id
+                """,
+                (minio_path, run_id or None, fetched_at),
+            )
+            queue_artifact_id = cur.fetchone()[0]
+            cur.execute(
+                """
+                INSERT INTO artifacts_queue_events
+                    (artifact_id, status, minio_path, artifact_type, fetched_at, run_id)
+                VALUES (%s, 'pending', %s, 'results_page', %s, %s)
+                """,
+                (queue_artifact_id, minio_path, fetched_at, run_id or None),
+            )
+    except Exception as _minio_err:
+        logger.warning("MinIO/queue write failed (non-fatal): %s", _minio_err)
 
     # --- VIN extraction ---
     # Cars.com now HTML-encodes JSON in data attributes (&quot; instead of ")
@@ -339,6 +371,8 @@ def _fetch_page(url: str, run_dir: str,
         "content_bytes": size,
         "sha256": sha256_bytes(content) if content else None,
         "filepath": filepath,
+        "minio_path": minio_path,
+        "queue_artifact_id": queue_artifact_id,
         "fetched_at": fetched_at,
         "error": None if status == 200 else f"HTTP {status}",
         "paging_meta": paging,
@@ -409,7 +443,7 @@ def scrape_results(
     time.sleep(human_delay(1))
 
     url_p1 = build_results_url(makes, models, zip_code, scope, radius_miles, 1, sort_order)
-    result_p1 = _fetch_page(url_p1, run_dir, search_key, scope, 1, known_vins)
+    result_p1 = _fetch_page(url_p1, run_dir, search_key, scope, 1, known_vins, run_id)
 
     logger.info(
         "page 1: search_key=%s status=%s paging=%s vins=%d new_vins=%d stop=%s break=%s",
@@ -495,7 +529,7 @@ def scrape_results(
 
         url = build_results_url(makes, models, zip_code, scope,
                                 radius_miles, page_num, sort_order)
-        result = _fetch_page(url, run_dir, search_key, scope, page_num, known_vins)
+        result = _fetch_page(url, run_dir, search_key, scope, page_num, known_vins, run_id)
 
         logger.info(
             "page %d: search_key=%s status=%s vins=%d new_vins=%d stop=%s break=%s err=%s",
