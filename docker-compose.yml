@@ -21,6 +21,7 @@ x-airflow-common:
     TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
   volumes:
     - ./airflow/dags:/opt/airflow/dags
+    - ./airflow/sql:/opt/airflow/sql
     - airflow_logs:/opt/airflow/logs
     - ./airflow/plugins:/opt/airflow/plugins
   user: "${AIRFLOW_UID:-50000}:0"
