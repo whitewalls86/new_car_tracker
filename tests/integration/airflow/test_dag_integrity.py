@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 from airflow.models import DAG
 
-DAGS_DIR = Path(__file__).parents[2] / "airflow" / "dags"
+DAGS_DIR = Path(__file__).parents[3] / "airflow" / "dags"
 
 # Map dag filename -> expected dag_id and expected task_ids
 DAG_SPECS = {
@@ -68,12 +68,14 @@ def _load_dag_module(filename: str):
             sys.path.remove(dags_dir)
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize("filename", DAG_SPECS.keys())
 def test_dag_imports_without_error(filename):
     """Each DAG file must import cleanly."""
     _load_dag_module(filename)  # raises on any ImportError / syntax error
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize("filename,spec", DAG_SPECS.items())
 def test_dag_id_and_tasks(filename, spec):
     """Each DAG must expose the expected dag_id and task set."""
