@@ -72,7 +72,7 @@ https://cartracker.info {
         reverse_proxy ops:8060
     }
 
-    handle_path /n8n* {
+    handle /n8n* {
         forward_auth oauth2-proxy:4180 {
             uri /oauth2/auth
             copy_headers X-Auth-Request-Email X-Auth-Request-User
