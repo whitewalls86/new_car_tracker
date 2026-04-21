@@ -80,7 +80,7 @@ def test_stale_no_cooldown_in_queue(analytics_ci_cur):
     analytics_ci_cur.execute("""
         SELECT listing_id, priority
         FROM ops.ops_detail_scrape_queue
-        WHERE listing_id = 'OL1'
+        WHERE listing_id = '00000000-0000-0000-0000-000000000301'
     """)
     row = analytics_ci_cur.fetchone()
     assert row is not None
@@ -92,7 +92,7 @@ def test_eligible_cooldown_in_queue(analytics_ci_cur):
     analytics_ci_cur.execute("""
         SELECT listing_id
         FROM ops.ops_detail_scrape_queue
-        WHERE listing_id = 'OL2'
+        WHERE listing_id = '00000000-0000-0000-0000-000000000302'
     """)
     row = analytics_ci_cur.fetchone()
     assert row is not None
@@ -103,7 +103,7 @@ def test_not_stale_not_in_queue(analytics_ci_cur):
     analytics_ci_cur.execute("""
         SELECT listing_id
         FROM ops.ops_detail_scrape_queue
-        WHERE listing_id = 'OL3'
+        WHERE listing_id = '00000000-0000-0000-0000-000000000303'
     """)
     row = analytics_ci_cur.fetchone()
     assert row is None
@@ -114,7 +114,7 @@ def test_cooldown_ineligible_not_in_queue(analytics_ci_cur):
     analytics_ci_cur.execute("""
         SELECT listing_id
         FROM ops.ops_detail_scrape_queue
-        WHERE listing_id = 'OL4'
+        WHERE listing_id = '00000000-0000-0000-0000-000000000304'
     """)
     row = analytics_ci_cur.fetchone()
     assert row is None
@@ -125,7 +125,7 @@ def test_fully_blocked_not_in_queue(analytics_ci_cur):
     analytics_ci_cur.execute("""
         SELECT listing_id
         FROM ops.ops_detail_scrape_queue
-        WHERE listing_id = 'OL5'
+        WHERE listing_id = '00000000-0000-0000-0000-000000000305'
     """)
     row = analytics_ci_cur.fetchone()
     assert row is None

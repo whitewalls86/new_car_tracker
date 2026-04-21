@@ -335,7 +335,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "UPDATE detail_scrape_claims\nSET status = 'processed'\nWHERE listing_id IN (\n    SELECT ra.listing_id::text\n    FROM raw_artifacts ra\n    INNER JOIN scrape_jobs sj\n        ON ra.run_id = sj.run_id\n       AND ra.search_key = sj.search_key\n    INNER JOIN artifact_processing ap\n        ON ra.artifact_id = ap.artifact_id\n       AND ap.status = 'ok'\n    WHERE ra.artifact_type = 'detail_page'\n      AND ra.listing_id IS NOT NULL\n      AND ap.processor LIKE 'cars_detail_page__%'\n      AND sj.status = 'fetched'\n)\nAND status != 'processed'\n",
+        "query": "UPDATE detail_scrape_claims\nSET status = 'processed'\nWHERE listing_id IN (\n    SELECT ra.listing_id\n    FROM raw_artifacts ra\n    INNER JOIN scrape_jobs sj\n        ON ra.run_id = sj.run_id\n       AND ra.search_key = sj.search_key\n    INNER JOIN artifact_processing ap\n        ON ra.artifact_id = ap.artifact_id\n       AND ap.status = 'ok'\n    WHERE ra.artifact_type = 'detail_page'\n      AND ra.listing_id IS NOT NULL\n      AND ap.processor LIKE 'cars_detail_page__%'\n      AND sj.status = 'fetched'\n)\nAND status != 'processed'\n",
         "options": {}
       },
       "type": "n8n-nodes-base.postgres",

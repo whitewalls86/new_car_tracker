@@ -2,7 +2,7 @@ version: 2
 
 models:
   - name: stg_blocked_cooldown
-    description: "Staging view over public.blocked_cooldown. Computes eligiblity for further attempts."
+    description: "Staging view over ops.blocked_cooldown. Computes eligibility for further attempts."
 
     columns:
       - name: listing_id

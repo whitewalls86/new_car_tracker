@@ -253,7 +253,7 @@ class TestExpireOrphanDetailClaims:
         run_id = _insert_run(cur, status="terminated")
         listing_id = _insert_detail_claim(cur, run_id)
         self._run_query(cur)
-        cur.execute("SELECT 1 FROM detail_scrape_claims WHERE listing_id = %s", (listing_id,))
+        cur.execute("SELECT 1 FROM detail_scrape_claims WHERE listing_id = %s::uuid", (listing_id,))
         assert cur.fetchone() is None
 
 

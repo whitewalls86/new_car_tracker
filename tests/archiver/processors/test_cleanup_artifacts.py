@@ -128,7 +128,7 @@ class TestRunCleanupArtifacts:
         assert mock_db_cursor.call_count == 1
 
     def test_candidates_passed_to_archive(self, mocker):
-        candidates = [(1, "/a.html"), (2, "/b.html")]
+        candidates = [(1, "/a.html", None), (2, "/b.html", None)]
         _patch_db_cursor(mocker, candidates=candidates)
         mock_archive = self._patch_archive(mocker, [
             {"artifact_id": 1, "archived": True, "reason": None},
@@ -145,7 +145,7 @@ class TestRunCleanupArtifacts:
         ])
 
     def test_only_archived_passed_to_cleanup(self, mocker):
-        candidates = [(1, "/a.html"), (2, "/b.html")]
+        candidates = [(1, "/a.html", None), (2, "/b.html", None)]
         _patch_db_cursor(mocker, candidates=candidates)
         self._patch_archive(mocker, [
             {"artifact_id": 1, "archived": True, "reason": None},
@@ -155,13 +155,13 @@ class TestRunCleanupArtifacts:
             {"artifact_id": 1, "deleted": True, "reason": None},
         ])
         run_cleanup_artifacts()
-        # only artifact 1 (archived=True) goes to cleanup
+        # only artifact 1 (archived=True) goes to cleanup, with filepath reconstructed
         mock_cleanup.assert_called_once_with([
-            {"artifact_id": 1, "archived": True, "reason": None},
+            {"artifact_id": 1, "filepath": "/a.html"},
         ])
 
     def test_mark_deleted_called_with_deleted_ids(self, mocker):
-        candidates = [(1, "/a.html"), (2, "/b.html")]
+        candidates = [(1, "/a.html", None), (2, "/b.html", None)]
         mock_db_cursor, mock_cursor = _patch_db_cursor(mocker, candidates=candidates)
         self._patch_archive(mocker, [
             {"artifact_id": 1, "archived": True, "reason": None},
@@ -176,7 +176,7 @@ class TestRunCleanupArtifacts:
         assert mock_db_cursor.call_count == 2
 
     def test_mark_deleted_skipped_when_none_deleted(self, mocker):
-        candidates = [(1, "/a.html")]
+        candidates = [(1, "/a.html", None)]
         mock_db_cursor, _ = _patch_db_cursor(mocker, candidates=candidates)
         self._patch_archive(mocker, [{"artifact_id": 1, "archived": False, "reason": "error"}])
         self._patch_cleanup(mocker, [])
@@ -184,7 +184,7 @@ class TestRunCleanupArtifacts:
         assert mock_db_cursor.call_count == 1
 
     def test_returns_correct_counts_full_success(self, mocker):
-        candidates = [(1, "/a.html"), (2, "/b.html")]
+        candidates = [(1, "/a.html", None), (2, "/b.html", None)]
         _patch_db_cursor(mocker, candidates=candidates)
         self._patch_archive(mocker, [
             {"artifact_id": 1, "archived": True, "reason": None},
@@ -201,7 +201,7 @@ class TestRunCleanupArtifacts:
         assert result["failed"] == 0
 
     def test_returns_correct_counts_partial_failure(self, mocker):
-        candidates = [(1, "/a.html"), (2, "/b.html"), (3, "/c.html")]
+        candidates = [(1, "/a.html", None), (2, "/b.html", None), (3, "/c.html", None)]
         _patch_db_cursor(mocker, candidates=candidates)
         self._patch_archive(mocker, [
             {"artifact_id": 1, "archived": True, "reason": None},
@@ -219,7 +219,7 @@ class TestRunCleanupArtifacts:
         assert result["failed"] == 2
 
     def test_delete_results_included_in_response(self, mocker):
-        candidates = [(1, "/a.html")]
+        candidates = [(1, "/a.html", None)]
         _patch_db_cursor(mocker, candidates=candidates)
         self._patch_archive(mocker, [{"artifact_id": 1, "archived": True, "reason": None}])
         delete_results = [{"artifact_id": 1, "deleted": True, "reason": None}]

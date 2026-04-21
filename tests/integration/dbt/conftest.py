@@ -214,11 +214,14 @@ def _seed_all(cur):
              'SRPL8000000035000', 'Test-Make-Two', 'Test-Model', 'Test-Trim', 35000, 'https://nowhere.com'),
 
             -- Ops group: honda / crv, no price (price comes from detail_observations)
-            (301, 301, %s, 'OL1', now()-interval '25 hours',  now()-interval '25 hours',
+            (301, 301, %s, '00000000-0000-0000-0000-000000000301',
+             now()-interval '25 hours',  now()-interval '25 hours',
              'L100000PRICESTALE', 'honda', 'crv', NULL, NULL, 'https://nowhere.com'),
-            (302, 302, %s, 'OL2', now()-interval '200 hours', now()-interval '200 hours',
+            (302, 302, %s, '00000000-0000-0000-0000-000000000302',
+             now()-interval '200 hours', now()-interval '200 hours',
              'L20000FULLDETAILS', 'honda', 'crv', NULL, NULL, 'https://nowhere.com'),
-            (303, 303, %s, 'OL3', now()-interval '2 hours',   now()-interval '2 hours',
+            (303, 303, %s, '00000000-0000-0000-0000-000000000303',
+             now()-interval '2 hours',   now()-interval '2 hours',
              'L30000000NOTSTALE', 'honda', 'crv', NULL, NULL, 'https://nowhere.com'),
 
             -- Deal scores group: honda / crv / Hybrid with price
@@ -260,13 +263,13 @@ def _seed_all(cur):
             -- Ops group: price here is what gives the non-stale VIN a valid price_observed_at.
             -- Without price in detail_observations, price_observed_at would be NULL and
             -- every VIN would be flagged is_price_stale regardless of observation age.
-            (301, 304, 'OL3', now()-interval '1 hour',    'active',
+            (301, 304, '00000000-0000-0000-0000-000000000303', now()-interval '1 hour',    'active',
              'L30000000NOTSTALE', 'honda', 'crv', NULL, 10000, NULL),
-            (302, 305, 'OL4', now()-interval '25 hours',  'active',
+            (302, 305, '00000000-0000-0000-0000-000000000304', now()-interval '25 hours',  'active',
              'L4STALEONCOOLDOWN', 'honda', 'crv', NULL, 10000, NULL),
-            (303, 306, 'OL5', now()-interval '36 hours',  'active',
+            (303, 306, '00000000-0000-0000-0000-000000000305', now()-interval '36 hours',  'active',
              'L50STALEFULLBLOCK', 'honda', 'crv', NULL, 10000, NULL),
-            (304, 307, 'OL2', now()-interval '170 hours', 'active',
+            (304, 307, '00000000-0000-0000-0000-000000000302', now()-interval '170 hours', 'active',
              'L20000FULLDETAILS', 'honda', 'crv', NULL, 10000, NULL),
 
             -- Deal scores group: target VIN with msrp and trim for score calculation
@@ -279,17 +282,20 @@ def _seed_all(cur):
     # blocked_cooldown (ops scenarios only)
     # ------------------------------------------------------------------
     cur.execute("""
-        INSERT INTO public.blocked_cooldown
-            (listing_id, first_attempt_at, last_attempted_at, num_of_attempts)
+        INSERT INTO ops.blocked_cooldown
+            (listing_id, first_attempted_at, last_attempted_at, num_of_attempts)
         VALUES
             -- OL5 / L50STALEFULLBLOCK: fully blocked (5 attempts)
-            ('OL5', now()-interval '5 days',  now()-interval '1 hour',   5),
+            ('00000000-0000-0000-0000-000000000305',
+             now()-interval '5 days', now()-interval '1 hour', 5),
             -- OL4 / L4STALEONCOOLDOWN: on cooldown, not yet eligible
             --   next_eligible_at = last_attempted + 12h * 2^(2-1) = 1h ago + 24h = 23h from now
-            ('OL4', now()-interval '2 days',  now()-interval '1 hour',   2),
+            ('00000000-0000-0000-0000-000000000304',
+             now()-interval '2 days', now()-interval '1 hour', 2),
             -- OL2 / L20000FULLDETAILS: cooldown elapsed, eligible for re-scrape
             --   next_eligible_at = last_attempted + 12h * 2^(1-1) = 13h ago + 12h = 1h ago (past)
-            ('OL2', now()-interval '3 days',  now()-interval '13 hours', 1)
+            ('00000000-0000-0000-0000-000000000302',
+             now()-interval '3 days', now()-interval '13 hours', 1)
     """)
 
     # ==================================================================
@@ -529,7 +535,7 @@ def seed_and_build(dbt_conn, run_dbt):
     with dbt_conn.cursor() as cur:
         cur.execute("""
             TRUNCATE public.runs, public.raw_artifacts, public.srp_observations,
-                     public.detail_observations, public.blocked_cooldown CASCADE
+                     public.detail_observations, ops.blocked_cooldown CASCADE
         """)
 
 

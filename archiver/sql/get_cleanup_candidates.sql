@@ -1,7 +1,7 @@
 SELECT ra.artifact_id, ra.filepath, ra.archived_at
 FROM raw_artifacts ra
 WHERE ra.deleted_at IS NULL
-  AND ra.filepath IS NOT NULL
+  AND ra.filepath IS NOT NULL AND ra.filepath != ''
   AND (
     -- ok: delete after 48 hours
     EXISTS (
