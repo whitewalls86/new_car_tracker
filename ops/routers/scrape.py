@@ -186,7 +186,7 @@ def claim_batch(batch_size: int = 450) -> Dict[str, Any]:
             ),
             claimed AS (
                 INSERT INTO detail_scrape_claims (listing_id, claimed_by, claimed_at, status)
-                SELECT b.listing_id, %s, now(), 'running'
+                SELECT b.listing_id::uuid, %s, now(), 'running'
                 FROM batch b
                 ON CONFLICT (listing_id) DO UPDATE
                     SET claimed_by = EXCLUDED.claimed_by,
@@ -234,7 +234,8 @@ def release_claims(body: ReleaseRequest) -> Dict[str, Any]:
     with db_cursor(error_context="release_claims") as cur:
         if listing_ids:
             cur.execute(
-                "DELETE FROM detail_scrape_claims WHERE listing_id = ANY(%s) AND claimed_by = %s",
+                "DELETE FROM detail_scrape_claims"
+                " WHERE listing_id = ANY(%s::uuid[]) AND claimed_by = %s",
                 (listing_ids, run_id),
             )
 

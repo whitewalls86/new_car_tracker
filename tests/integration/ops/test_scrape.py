@@ -101,7 +101,7 @@ def seed_claim(verify_cur):
     yield _seed
 
     verify_cur.execute(
-        "DELETE FROM detail_scrape_claims WHERE listing_id = ANY(%s)",
+        "DELETE FROM detail_scrape_claims WHERE listing_id = ANY(%s::uuid[])",
         (inserted_listing_ids,),
     )
 
@@ -239,7 +239,7 @@ def test_claim_batch_marks_run_skipped_when_queue_empty(api_client, verify_cur):
         # Cleanup claims and run
         listing_ids = [listing["listing_id"] for listing in data["listings"]]
         verify_cur.execute(
-            "DELETE FROM detail_scrape_claims WHERE listing_id = ANY(%s)", (listing_ids,)
+            "DELETE FROM detail_scrape_claims WHERE listing_id = ANY(%s::uuid[])", (listing_ids,)
         )
     else:
         # Queue empty — run should be skipped
@@ -285,7 +285,7 @@ def test_release_claims_deletes_claim_rows(api_client, verify_cur, seed_run, see
     })
 
     verify_cur.execute(
-        "SELECT 1 FROM detail_scrape_claims WHERE listing_id = %s", (listing_id,)
+        "SELECT 1 FROM detail_scrape_claims WHERE listing_id = %s::uuid", (listing_id,)
     )
     assert verify_cur.fetchone() is None
 
