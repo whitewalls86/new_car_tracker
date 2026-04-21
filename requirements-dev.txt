@@ -6,3 +6,4 @@ httpx
 resend
 boto3
 zstandard
+pyyaml
