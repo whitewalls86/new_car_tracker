@@ -325,7 +325,7 @@ def _fetch_page(url: str, run_dir: str,
         with db_cursor(error_context="scrape_results: insert artifacts_queue") as cur:
             cur.execute(
                 """
-                INSERT INTO artifacts_queue
+                INSERT INTO ops.artifacts_queue
                     (minio_path, artifact_type, run_id,
                      fetched_at, status, search_key)
                 VALUES (%s, 'results_page', %s, %s, 'pending', %s)
@@ -336,7 +336,7 @@ def _fetch_page(url: str, run_dir: str,
             queue_artifact_id = cur.fetchone()[0]
             cur.execute(
                 """
-                INSERT INTO artifacts_queue_events
+                INSERT INTO staging.artifacts_queue_events
                     (artifact_id, status, minio_path, artifact_type, fetched_at, run_id)
                 VALUES (%s, 'pending', %s, 'results_page', %s, %s)
                 """,
