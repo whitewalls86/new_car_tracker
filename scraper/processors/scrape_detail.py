@@ -159,7 +159,7 @@ def scrape_detail_fetch(*, run_id: str, payload: Dict[str, Any]) -> Dict[str, An
                 queue_artifact_id = cur.fetchone()[0]
                 cur.execute(
                     """
-                    INSERT INTO ops.artifacts_queue_events (
+                    INSERT INTO staging.artifacts_queue_events (
                         artifact_id, status, minio_path, artifact_type, 
                         fetched_at, listing_id, run_id
                     )
