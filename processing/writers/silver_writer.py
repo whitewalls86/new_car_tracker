@@ -104,6 +104,10 @@ def write_silver_observations_minio(
 
         schema = _get_schema()
         field_names = [f.name for f in schema if f.name != "written_at"]
+        numeric_fields = {
+            f.name for f in schema
+            if pa.types.is_integer(f.type) or pa.types.is_floating(f.type)
+        }
 
         rows = []
         for obs in observations:
@@ -119,6 +123,10 @@ def write_silver_observations_minio(
                 row["listing_id"] = str(row["listing_id"])
             if row.get("listing_state") is None:
                 row["listing_state"] = "active"
+            # Empty strings can't be coerced to numeric types by pyarrow
+            for field in numeric_fields:
+                if row.get(field) == "":
+                    row[field] = None
             row["fetched_at"] = fetched_at
             row["written_at"] = now
             rows.append(row)
@@ -143,6 +151,11 @@ def write_silver_observations_minio(
         logger.warning("silver_writer: write failed: %s", e, exc_info=True)
         return 0
 
+
+_POSTGRES_INT_COLS = {
+    "artifact_id", "price", "year", "mileage", "msrp",
+    "page_number", "position_on_page",
+}
 
 _POSTGRES_COLS = [
     # identifiers & metadata
@@ -207,6 +220,9 @@ def write_silver_observations_postgres(
                 row["listing_id"] = str(row["listing_id"])
             if row.get("listing_state") is None:
                 row["listing_state"] = "active"
+            for field in _POSTGRES_INT_COLS:
+                if row.get(field) == "":
+                    row[field] = None
             row["fetched_at"] = fetched_at
             rows.append(tuple(row[col] for col in _POSTGRES_COLS))
 

@@ -2,4 +2,4 @@
 -- Returns listing_id → vin mapping for all known entries.
 SELECT listing_id, vin
 FROM ops.vin_to_listing
-WHERE listing_id = ANY(%(listing_ids)s)
+WHERE listing_id = ANY(%(listing_ids)s::uuid[])
