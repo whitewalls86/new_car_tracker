@@ -1,6 +1,6 @@
 # Plan 93: Processing Service Core
 
-**Status:** Restart — design supersedes previous in-progress version
+**Status:** COMPLETE (2026-04-21)
 **Priority:** High — Phase 4 of Plan 71 (Airflow Migration)
 **Depends on:** Plan 97 (MinIO artifact store + `artifacts_queue`)
 **Parent plan:** Plan 71 (Airflow Migration)

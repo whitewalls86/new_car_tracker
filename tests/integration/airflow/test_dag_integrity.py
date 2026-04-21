@@ -5,16 +5,22 @@ Verifies that every DAG file in airflow/dags/ can be imported without error
 and produces the expected DAG objects. These tests catch broken imports,
 syntax errors, and missing tasks before they reach production.
 
+Also validates that service URLs in DAGs match the ports defined in
+docker-compose.yml — catches port mismatches before they hit production.
+
 Must be run with PYTHONPATH including airflow/dags/ so that intra-DAG imports
 (e.g. `from sensors import ...`) resolve correctly.
 """
 import importlib.util
+import re
 import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
-DAGS_DIR = Path(__file__).parents[3] / "airflow" / "dags"
+REPO_ROOT = Path(__file__).parents[3]
+DAGS_DIR = REPO_ROOT / "airflow" / "dags"
 
 # Map dag filename -> expected dag_id and expected task_ids
 DAG_SPECS = {
@@ -44,6 +50,14 @@ DAG_SPECS = {
             "reset_stale_artifact_processing",
             "expire_orphan_detail_claims",
             "expire_orphan_scrape_jobs",
+        },
+    },
+    "results_processing.py": {
+        "dag_id": "results_processing",
+        "tasks": {
+            "check_deploy_intent",
+            "check_processing_health",
+            "process_batch",
         },
     },
 }
@@ -95,4 +109,82 @@ def test_dag_id_and_tasks(filename, spec):
         f"Task mismatch for '{dag_id}':\n"
         f"  expected: {spec['tasks']}\n"
         f"  actual:   {actual_tasks}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Service URL / port validation
+# ---------------------------------------------------------------------------
+
+def _parse_compose_ports():
+    """
+    Parse docker-compose.yml to build a map of service_name → set of
+    internal ports (the container-side port from "host:container" mappings,
+    plus CMD/ENTRYPOINT ports from Dockerfiles).
+    """
+    compose_path = REPO_ROOT / "docker-compose.yml"
+    with open(compose_path) as f:
+        compose = yaml.safe_load(f)
+
+    service_ports = {}
+    for name, svc in compose.get("services", {}).items():
+        ports = set()
+        for p in svc.get("ports", []):
+            # "8070:8070" or "9000:9000"
+            parts = str(p).split(":")
+            if len(parts) == 2:
+                ports.add(int(parts[1]))
+        # Also check Dockerfile CMD for uvicorn --port
+        dockerfile = svc.get("build", {}).get("dockerfile")
+        if dockerfile:
+            df_path = REPO_ROOT / dockerfile
+            if df_path.exists():
+                content = df_path.read_text()
+                m = re.search(r"--port[=\s]+(\d+)", content)
+                if m:
+                    ports.add(int(m.group(1)))
+        if ports:
+            service_ports[name] = ports
+    return service_ports
+
+
+def _extract_dag_service_urls():
+    """
+    Scan all DAG files for http://<service>:<port> patterns.
+    Returns list of (filename, service, port) tuples.
+    """
+    url_re = re.compile(r'http://(\w+):(\d+)')
+    results = []
+    for dag_file in DAGS_DIR.glob("*.py"):
+        content = dag_file.read_text()
+        for m in url_re.finditer(content):
+            service = m.group(1)
+            port = int(m.group(2))
+            results.append((dag_file.name, service, port))
+    return results
+
+
+@pytest.mark.integration
+def test_dag_service_urls_match_compose_ports():
+    """
+    Every http://service:port in a DAG file must reference a port that
+    the service actually exposes in docker-compose.yml or its Dockerfile.
+    """
+    compose_ports = _parse_compose_ports()
+    dag_urls = _extract_dag_service_urls()
+
+    mismatches = []
+    for filename, service, port in dag_urls:
+        known_ports = compose_ports.get(service, set())
+        if not known_ports:
+            continue  # service not in compose (e.g. external)
+        if port not in known_ports:
+            mismatches.append(
+                f"{filename}: {service}:{port} — "
+                f"compose/Dockerfile has {known_ports}"
+            )
+
+    assert not mismatches, (
+        "DAG service URLs reference ports that don't match "
+        "docker-compose.yml:\n  " + "\n  ".join(mismatches)
     )

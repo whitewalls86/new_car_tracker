@@ -2,11 +2,11 @@
 
 Each plan has its own file in `docs/`. This file is the index only. For system design patterns (schema layout, hot+staging, MinIO tiers, testing strategy, drain endpoints), see [ARCHITECTURE.md](ARCHITECTURE.md).
 
-## Current State (as of 2026-04-20)
+## Current State (as of 2026-04-21)
 
-Site is live at https://cartracker.info. Auth (Plan 82), data migration (Plan 81), CI/CD (Plans 62+63), integration testing (Plan 84), and MinIO artifact store (Plan 97) are complete. Airflow is running with all maintenance DAGs live. Ops coordination endpoints (`advance_rotation`, `claim-batch`, `release`) are implemented.
+Site is live at https://cartracker.info. Auth (Plan 82), data migration (Plan 81), CI/CD (Plans 62+63), integration testing (Plan 84), MinIO artifact store (Plan 97), and the processing service (Plan 93) are complete. V018–V025 migrations shipped. Airflow is running with all maintenance DAGs live plus the `results_processing` DAG (Plan 71 step 11). Ops coordination endpoints (`advance_rotation`, `claim-batch`, `release`) are implemented.
 
-Architecture is transitioning from Postgres+dbt as the observation data owner to a MinIO-first design: Postgres holds only hot operational state (current inventory, VIN mappings, work queues); MinIO holds the complete observation record. The transition sequence is: V018 → Plan 93 → Plan 71 completion → V019 → n8n cutover → Plan 96 → Plan 90.
+Architecture has transitioned to a MinIO-first design: Postgres holds only hot operational state (current inventory, VIN mappings, work queues, tracked models); MinIO holds the complete observation record via a staging buffer (`staging.silver_observations`) flushed to partitioned Parquet. The remaining transition sequence is: V019 → n8n cutover → Plan 96 → Plan 90.
 
 ---
 
@@ -14,8 +14,7 @@ Architecture is transitioning from Postgres+dbt as the observation data owner to
 
 | Plan | Title | Notes |
 |------|-------|-------|
-| [V018](plan_v018_schema_migration.md) | Schema migration | Drop Plan 89 dead tables; create `ops.price_observations`, `ops.vin_to_listing`, `ops.blocked_cooldown`, `staging.detail_scrape_claim_events`, `staging.blocked_cooldown_events`; fix UUID column types on `detail_scrape_claims` and `blocked_cooldown`. Safe to ship now — nothing reads the tables being dropped. |
-| [71](plan_71_airflow.md) | Airflow migration (steps 8–9) | `scrape_listings` and `scrape_detail_pages` DAGs can be written now in parallel with V018. Unblocks Plan 79 the moment `scrape_detail_pages` is live. |
+| [71](plan_71_airflow.md) | Airflow migration (steps 8–9, 12–15) | Steps 1–6 done. Steps 7 (V018), 10 (Plan 93), 11 (`results_processing` DAG) done. Next: steps 8–9 (`scrape_listings` + `scrape_detail_pages` DAGs), then V019, n8n cutover, scraper slimming. |
 
 ---
 
@@ -23,10 +22,10 @@ Architecture is transitioning from Postgres+dbt as the observation data owner to
 
 | Priority | Plan | Title | Blocked on |
 |----------|------|-------|------------|
-| 1 | [93](plan_93_processing_service.md) | Processing service core | V018 |
-| 2 | [71](plan_71_airflow.md) | Airflow migration (steps 10–15) | Plan 93 (`results_processing` DAG); V019 before n8n cutover |
-| 3 | **V019** | View migration | Plan 93 live with production data; rewrites `ops_vehicle_staleness` and `ops_detail_scrape_queue` as plain Postgres views reading HOT tables; inlines `stg_blocked_cooldown` backoff formula; removes dbt dependency from the scrape queue |
-| 4 | [96](plan_96_silver_layer.md) | Silver layer validation + DuckDB analytics | Plan 93 in production for 2+ weeks |
+| 1 | **V019** | View migration | Nothing — unblocked now. Rewrites `ops_vehicle_staleness` and `ops_detail_scrape_queue` as plain Postgres views reading HOT tables; inlines `stg_blocked_cooldown` backoff formula; removes dbt dependency from the scrape queue. Prerequisite for n8n cutover. |
+| 2 | [71](plan_71_airflow.md) | Airflow migration (steps 8–9, 12–15) | Steps 8–9 (`scrape_listings` + `scrape_detail_pages` DAGs) unblocked. Steps 12–15 (V019, scraper slimming, n8n cutover) blocked on V019. |
+| 3 | **Silver flush DAG** | Flush `staging.silver_observations` → MinIO Parquet | Plan 93 deployed and writing to staging table |
+| 4 | [96](plan_96_silver_layer.md) | Silver layer validation + DuckDB analytics | Plan 93 in production for 2+ weeks + silver flush running |
 | 5 | [90](plan_90_dbt_cleanup.md) | dbt decommission | Plan 96 validation gates |
 | — | [79](plan_79_multi_instance.md) | Multi-instance detail scraping | `scrape_detail_pages` Airflow DAG live (Plan 71 step 9); resume when IP flagging requires it |
 | — | **86** | Grafana observability stack | Airflow live so real DAG metrics exist to observe |
@@ -41,13 +40,11 @@ Architecture is transitioning from Postgres+dbt as the observation data owner to
 
 ## Sequencing Rationale
 
-**V018 first** — creates the HOT tables that Plan 93 writes to, migrates `blocked_cooldown` and `detail_scrape_claims` to ops schema, and drops dead Plan 89 tables. Zero breaking risk: the Plan 89 tables have never been written to; everything in production still reads from dbt models.
+**V019 next** — the scrape queue view (`ops_detail_scrape_queue`) currently depends on dbt models. V019 rewrites it as a plain Postgres view reading HOT tables, removing the dbt dependency. Must happen before n8n is decommissioned and before Plan 90 drops dbt, because both paths would break the queue otherwise. Now unblocked: Plan 93 is complete and writing to HOT tables.
 
 **`scrape_listings` + `scrape_detail_pages` DAGs now** — all ops endpoints exist, MinIO write path exists. Shadow-run alongside n8n immediately. `scrape_detail_pages` going live unblocks Plan 79 with no other dependencies.
 
-**Plan 93 before `results_processing` DAG** — the DAG calls `POST /process/batch` which doesn't exist until Plan 93 is built. Everything else in Plan 71 can proceed independently.
-
-**V019 before n8n cutover** — the scrape queue view (`ops_detail_scrape_queue`) currently depends on dbt models. V019 rewrites it as a plain Postgres view reading HOT tables, removing the dbt dependency. Must happen before n8n is decommissioned and before Plan 90 drops dbt, because both paths would break the queue otherwise.
+**Silver flush DAG** — `staging.silver_observations` is a buffer; a scheduled DAG flushes rows to partitioned Parquet (`source` + `date`) in MinIO and DELETEs flushed rows. Must be running before Plan 96 validation can begin.
 
 **Plan 96 before Plan 90** — Plan 90 drops dbt and legacy Postgres observation tables. Those drops are irreversible. Plan 96's five validation checks are the explicit go/no-go gate: don't decommission dbt until silver has been running in production for at least 2 weeks and all checks pass.
 
@@ -59,7 +56,7 @@ Architecture is transitioning from Postgres+dbt as the observation data owner to
 
 | Plan | Title | Status |
 |------|-------|--------|
-| [71](plan_71_airflow.md) | Airflow migration | Steps 1–6 done; steps 7–15 pending |
+| [71](plan_71_airflow.md) | Airflow migration | Steps 1–7, 10–11 done; steps 8–9, 12–15 pending |
 | [92](plan_92_service_drain.md) | Service drain `/ready` endpoints | archiver + dbt_runner done; scraper (Plan 71 step 13) + processing (Plan 93) pending |
 | [91](plan_91_uuid_type_cleanup.md) | UUID column type fixes | Scope collapsed to 2 columns; absorbed into V018 |
 
@@ -76,6 +73,7 @@ Architecture is transitioning from Postgres+dbt as the observation data owner to
 ## Completed
 
 See [completed_plans.md](completed_plans.md) for full list. Recent completions:
+- **93** — Processing service: SRP/detail/carousel write paths, silver staging buffer, tracked_models, V021–V025 (2026-04-21)
 - **97** — MinIO-first artifact store; `ops.artifacts_queue` live; V017 deployed (2026-04-20)
 - **98** — Bronze data architecture; schema complete in V017 (2026-04-20)
 - **84** — Integration testing: 71 SQL smoke tests + dbt logic coverage + ops API tests (2026-04-16)
