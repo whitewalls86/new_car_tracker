@@ -149,7 +149,7 @@ def scrape_detail_fetch(*, run_id: str, payload: Dict[str, Any]) -> Dict[str, An
             with db_cursor(error_context="scrape_detail_fetch: insert artifacts_queue") as cur:
                 cur.execute(
                     """
-                    INSERT INTO artifacts_queue
+                    INSERT INTO ops.artifacts_queue
                         (minio_path, artifact_type, listing_id, run_id, fetched_at, status)
                     VALUES (%s, 'detail_page', %s, %s, %s, 'pending')
                     RETURNING artifact_id
@@ -159,7 +159,7 @@ def scrape_detail_fetch(*, run_id: str, payload: Dict[str, Any]) -> Dict[str, An
                 queue_artifact_id = cur.fetchone()[0]
                 cur.execute(
                     """
-                    INSERT INTO artifacts_queue_events (
+                    INSERT INTO ops.artifacts_queue_events (
                         artifact_id, status, minio_path, artifact_type, 
                         fetched_at, listing_id, run_id
                     )
