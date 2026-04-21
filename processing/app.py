@@ -1,14 +1,18 @@
 """
 Processing service — artifact parsing and observation writes for cartracker.
+
+Slim entrypoint: health/ready endpoints plus router includes.
+All processing logic lives in routers/ and writers/.
 """
 import logging
 import os
 from logging.handlers import RotatingFileHandler
-from typing import Any, Dict, Optional
 
-from fastapi import FastAPI, Query
+from fastapi import FastAPI
 
-from processing.processor import claim_batch, process_artifact, queue_is_empty
+from processing.routers.artifact import router as artifact_router
+from processing.routers.batch import router as batch_router
+from shared.job_counter import is_idle
 
 _LOG_PATH = os.getenv("LOG_PATH", "/usr/app/logs/app.log")
 os.makedirs(os.path.dirname(_LOG_PATH), exist_ok=True)
@@ -17,9 +21,10 @@ _log_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s:
 logging.getLogger().addHandler(_log_handler)
 logging.getLogger().setLevel(logging.INFO)
 
-logger = logging.getLogger(__name__)
-
 app = FastAPI()
+
+app.include_router(batch_router)
+app.include_router(artifact_router)
 
 
 @app.get("/health")
@@ -29,46 +34,13 @@ def health():
 
 @app.get("/ready")
 def ready():
-    """Returns queue drain status. Airflow uses this as a sensor before closing a run."""
-    empty = queue_is_empty()
-    return {"ready": empty, "queue_empty": empty}
-
-
-@app.post("/process/batch")
-def process_batch(
-    batch_size: int = Query(default=20, ge=1, le=200),
-    artifact_type: Optional[str] = Query(default=None),
-) -> Dict[str, Any]:
     """
-    Claim and process a batch of pending/retry artifacts from ops.artifacts_queue.
+    Drain signal for Plan 92 / Airflow.
 
-    Query params:
-      batch_size    — how many artifacts to claim (default 20, max 200)
-      artifact_type — optional filter: 'results_page' or 'detail_page'
-
-    Returns a summary of outcomes for each claimed artifact.
+    Returns ready=true when no batch is currently executing.
+    Airflow sensors poll this before closing a DAG run.
     """
-    artifacts = claim_batch(batch_size=batch_size, artifact_type=artifact_type)
-    if not artifacts:
-        return {"claimed": 0, "complete": 0, "retry": 0, "skipped": 0, "results": []}
-
-    logger.info(
-        "process_batch: claimed %d artifacts (type=%s)", len(artifacts), artifact_type
-    )
-
-    results = []
-    for artifact in artifacts:
-        result = process_artifact(artifact)
-        results.append({"artifact_id": artifact["artifact_id"], **result})
-        logger.info(
-            "artifact_id=%s type=%s status=%s",
-            artifact["artifact_id"], artifact.get("artifact_type"), result.get("status"),
-        )
-
-    return {
-        "claimed": len(artifacts),
-        "complete": sum(1 for r in results if r.get("status") == "complete"),
-        "retry": sum(1 for r in results if r.get("status") == "retry"),
-        "skipped": sum(1 for r in results if r.get("status") == "skip"),
-        "results": results,
-    }
+    idle = is_idle()
+    if idle:
+        return {"ready": True}
+    return {"ready": False, "reason": "batch in progress"}
