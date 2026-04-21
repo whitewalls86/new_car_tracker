@@ -334,7 +334,7 @@ def _section_stale_backlog():
                 q.stale_reason,
                 ROW_NUMBER() OVER (PARTITION BY 1 ORDER BY q.priority, q.listing_id) as priority_row
             FROM ops.ops_detail_scrape_queue q
-            LEFT JOIN detail_scrape_claims c
+            LEFT JOIN ops.detail_scrape_claims c
                 ON c.listing_id::text = q.listing_id AND c.status = 'running'
             WHERE c.listing_id IS NULL
         )
