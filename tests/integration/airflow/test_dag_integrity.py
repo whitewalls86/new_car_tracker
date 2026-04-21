@@ -17,7 +17,6 @@ import sys
 from pathlib import Path
 
 import pytest
-import yaml
 
 REPO_ROOT = Path(__file__).parents[3]
 DAGS_DIR = REPO_ROOT / "airflow" / "dags"
@@ -122,6 +121,8 @@ def _parse_compose_ports():
     internal ports (the container-side port from "host:container" mappings,
     plus CMD/ENTRYPOINT ports from Dockerfiles).
     """
+    import yaml
+
     compose_path = REPO_ROOT / "docker-compose.yml"
     with open(compose_path) as f:
         compose = yaml.safe_load(f)
