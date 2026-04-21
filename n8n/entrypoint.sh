@@ -85,4 +85,4 @@ else
 fi
 
 # Hand off to the default n8n entrypoint
-exec n8n "$@"
+exec n8n start
