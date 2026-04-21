@@ -24,7 +24,7 @@ from processing.queries import (
     UPSERT_TRACKED_MODEL,
     UPSERT_VIN_TO_LISTING,
 )
-from processing.writers.silver_writer import write_silver_observations
+from processing.writers.silver_writer import write_silver_observations_postgres
 from shared.db import db_cursor
 
 logger = logging.getLogger(__name__)
@@ -179,7 +179,7 @@ def write_srp_observations(
         for item in listings
         if item.get("listing_id")
     ]
-    silver_written = write_silver_observations(silver_rows)
+    silver_written = write_silver_observations_postgres(silver_rows)
 
     # --- Step 4: Emit stubs (after commit) ---
     for event in events_to_emit:

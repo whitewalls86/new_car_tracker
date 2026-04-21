@@ -46,7 +46,7 @@ from processing.queries import (
     UPSERT_PRICE_OBSERVATION,
     UPSERT_VIN_TO_LISTING,
 )
-from processing.writers.silver_writer import write_silver_observations
+from processing.writers.silver_writer import write_silver_observations_postgres
 from shared.db import db_cursor
 
 logger = logging.getLogger(__name__)
@@ -345,7 +345,7 @@ def write_detail_active(
             "fetched_at": fetched_at,
             **dealer_fields,
         })
-    silver_written = write_silver_observations(silver_rows)
+    silver_written = write_silver_observations_postgres(silver_rows)
 
     # --- Emit events (after commit) ---
     if vin and primary.get("price"):
@@ -401,7 +401,7 @@ def write_detail_unlisted(
 
     # Silver write (non-fatal)
     _URL_PREFIX = "https://www.cars.com/vehicledetail/"
-    silver_written = write_silver_observations([{
+    silver_written = write_silver_observations_postgres([{
         "artifact_id": artifact_id,
         "listing_id": listing_id,
         "vin": vin,

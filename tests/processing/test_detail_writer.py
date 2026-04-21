@@ -38,7 +38,7 @@ def mock_cursor():
 @pytest.fixture
 def mock_silver(mocker):
     return mocker.patch(
-        "processing.writers.detail_writer.write_silver_observations", return_value=1
+        "processing.writers.detail_writer.write_silver_observations_postgres", return_value=1
     )
 
 
