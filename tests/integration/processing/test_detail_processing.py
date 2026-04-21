@@ -7,6 +7,8 @@ Covers active, unlisted, VIN relisting, and blocked cooldown paths.
 import uuid
 from datetime import datetime, timezone
 
+import pytest
+
 from processing.queries import (
     CLEAR_BLOCKED_COOLDOWN,
     DELETE_PRICE_OBSERVATION,
@@ -20,6 +22,8 @@ from processing.queries import (
     UPSERT_PRICE_OBSERVATION,
     UPSERT_VIN_TO_LISTING,
 )
+
+pytestmark = pytest.mark.integration
 
 
 class TestDetailActive:

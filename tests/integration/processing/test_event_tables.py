@@ -6,10 +6,14 @@ used by the processing writers.
 """
 import uuid
 
+import pytest
+
 from processing.queries import (
     INSERT_PRICE_OBSERVATION_EVENT,
     INSERT_VIN_TO_LISTING_EVENT,
 )
+
+pytestmark = pytest.mark.integration
 
 
 class TestPriceObservationEvents:

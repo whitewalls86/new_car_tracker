@@ -7,10 +7,14 @@ MinIO/silver writes are not asserted — validated by Plan 96.
 import uuid
 from datetime import datetime, timezone
 
+import pytest
+
 from processing.queries import (
     UPSERT_PRICE_OBSERVATION,
     UPSERT_VIN_TO_LISTING,
 )
+
+pytestmark = pytest.mark.integration
 
 
 class TestSrpArtifact:
