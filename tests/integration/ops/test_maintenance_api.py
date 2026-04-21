@@ -232,7 +232,7 @@ class TestExpireOrphanDetailClaimsApi:
         assert resp.json()["affected"] >= 1
 
         verify_cur.execute(
-            "SELECT 1 FROM detail_scrape_claims WHERE listing_id = %s", (listing_id,)
+            "SELECT 1 FROM detail_scrape_claims WHERE listing_id = %s::uuid", (listing_id,)
         )
         assert verify_cur.fetchone() is None
 
@@ -247,12 +247,12 @@ class TestExpireOrphanDetailClaimsApi:
 
         assert resp.status_code == 200
         verify_cur.execute(
-            "SELECT 1 FROM detail_scrape_claims WHERE listing_id = %s", (listing_id,)
+            "SELECT 1 FROM detail_scrape_claims WHERE listing_id = %s::uuid", (listing_id,)
         )
         assert verify_cur.fetchone() is not None
 
         verify_cur.execute(
-            "DELETE FROM detail_scrape_claims WHERE listing_id = %s", (listing_id,)
+            "DELETE FROM detail_scrape_claims WHERE listing_id = %s::uuid", (listing_id,)
         )
         verify_cur.execute("DELETE FROM runs WHERE run_id = %s", (run_id,))
 

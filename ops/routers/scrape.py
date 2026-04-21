@@ -178,14 +178,16 @@ def claim_batch(batch_size: int = 450) -> Dict[str, Any]:
                 SELECT q.*
                 FROM ops.ops_detail_scrape_queue q
                 LEFT JOIN detail_scrape_claims c
-                    ON c.listing_id = q.listing_id::uuid
+                    ON c.listing_id::text = q.listing_id
                    AND c.status = 'running'
                 WHERE c.listing_id IS NULL
+                  AND q.listing_id ~ '^[0-9a-f-]{36}$'
                 ORDER BY q.priority, q.listing_id
                 LIMIT %s
             ),
             claimed AS (
-                INSERT INTO detail_scrape_claims (listing_id, claimed_by, claimed_at, status)
+                INSERT INTO detail_scrape_claims
+                    (listing_id, claimed_by, claimed_at, status)
                 SELECT b.listing_id::uuid, %s, now(), 'running'
                 FROM batch b
                 ON CONFLICT (listing_id) DO UPDATE
@@ -196,7 +198,7 @@ def claim_batch(batch_size: int = 450) -> Dict[str, Any]:
                 RETURNING listing_id
             )
             SELECT b.* FROM batch b
-            JOIN claimed c ON c.listing_id = b.listing_id::uuid
+            JOIN claimed c ON c.listing_id::text = b.listing_id
         """, (batch_size, run_id))
 
         rows = cur.fetchall()
