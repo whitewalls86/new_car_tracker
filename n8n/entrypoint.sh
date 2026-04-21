@@ -74,10 +74,8 @@ if [ -d /workflows ] && ls /workflows/*.json 1>/dev/null 2>&1; then
     # Tier 4 — depend on Tier 3
     # Tier 5 — top-level callers
     publish_workflow "Error Handler"
-    publish_workflow "Orphan Checker"
-    publish_workflow "Cleanup Artifacts"
-    publish_workflow "Cleanup Parquet"
-    publish_workflow "Delete Stale Request Emails"
+    # Maintenance workflows ported to Airflow — do NOT activate:
+    #   Orphan Checker, Cleanup Artifacts, Cleanup Parquet, Delete Stale Request Emails
     publish_workflow "Job Poller V2"
     publish_workflow "Results Processing"
     publish_workflow "Scrape Detail Pages V2"
