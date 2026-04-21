@@ -16,7 +16,7 @@ from sensors import deploy_intent_sensor, http_health_sensor
 from airflow import DAG
 
 PROCESSING_URL = "http://processing:8070"
-BATCH_SIZE = 50
+BATCH_SIZE = 1000
 
 
 def _process_batch():
