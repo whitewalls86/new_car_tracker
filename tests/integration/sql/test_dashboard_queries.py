@@ -1,11 +1,12 @@
 """
 Layer 1 — SQL smoke tests for dashboard service queries.
 
-The dashboard runs 39 SELECT queries, many with complex CTEs and JOINs across
-analytics.* and public.* tables. These are the highest-risk queries in the
-system — they touch the most tables and are the most likely to break on schema
-changes. All queries should execute without error against an empty-but-valid
-schema (Flyway migrations applied, dbt tables exist but are empty).
+All tests run as the `viewer` role (via the viewer_cur fixture) — the same
+role the dashboard uses in production. This catches both SQL breakage and
+permission regressions (missing GRANTs after schema changes).
+
+Queries should execute without error against an empty-but-valid schema
+(Flyway migrations applied, dbt tables exist but are empty).
 """
 import pytest
 
@@ -18,12 +19,12 @@ pytestmark = pytest.mark.integration
 
 class TestAppQueries:
 
-    def test_data_freshness(self, cur):
-        cur.execute("""
+    def test_data_freshness(self, viewer_cur):
+        viewer_cur.execute("""
             SELECT MAX(price_observed_at) AT TIME ZONE 'America/Chicago' AS ts
             FROM analytics.mart_vehicle_snapshot
         """)
-        cur.fetchone()
+        viewer_cur.fetchone()
 
 
 # ============================================================================
@@ -32,15 +33,15 @@ class TestAppQueries:
 
 class TestDealQueries:
 
-    def test_distinct_makes(self, cur):
-        cur.execute("""
+    def test_distinct_makes(self, viewer_cur):
+        viewer_cur.execute("""
             SELECT DISTINCT make FROM analytics.mart_deal_scores
             WHERE COALESCE(listing_state, 'active') != 'unlisted' ORDER BY make
         """)
-        cur.fetchall()
+        viewer_cur.fetchall()
 
-    def test_deals_table(self, cur):
-        cur.execute("""
+    def test_deals_table(self, viewer_cur):
+        viewer_cur.execute("""
             SELECT make, model, vehicle_trim, model_year, dealer_name,
                    current_price, national_median_price, msrp,
                    ROUND(msrp_discount_pct::numeric, 1) AS msrp_off_pct,
@@ -55,10 +56,10 @@ class TestDealQueries:
             WHERE COALESCE(listing_state, 'active') != 'unlisted'
             ORDER BY deal_score DESC
         """)
-        cur.fetchall()
+        viewer_cur.fetchall()
 
-    def test_deal_tier_distribution(self, cur):
-        cur.execute("""
+    def test_deal_tier_distribution(self, viewer_cur):
+        viewer_cur.execute("""
             SELECT deal_tier, COUNT(*) AS listings
             FROM analytics.mart_deal_scores
             WHERE COALESCE(listing_state, 'active') != 'unlisted'
@@ -67,10 +68,10 @@ class TestDealQueries:
                 WHEN 'excellent' THEN 1 WHEN 'good' THEN 2
                 WHEN 'fair' THEN 3 WHEN 'weak' THEN 4 END
         """)
-        cur.fetchall()
+        viewer_cur.fetchall()
 
-    def test_days_on_market_buckets(self, cur):
-        cur.execute("""
+    def test_days_on_market_buckets(self, viewer_cur):
+        viewer_cur.execute("""
             SELECT
                 CASE
                     WHEN days_on_market <= 7  THEN '0-7 days'
@@ -84,10 +85,10 @@ class TestDealQueries:
             WHERE COALESCE(listing_state, 'active') != 'unlisted'
             GROUP BY 1 ORDER BY MIN(days_on_market)
         """)
-        cur.fetchall()
+        viewer_cur.fetchall()
 
-    def test_price_drops(self, cur):
-        cur.execute("""
+    def test_price_drops(self, viewer_cur):
+        viewer_cur.execute("""
             SELECT make, model, vehicle_trim, model_year, dealer_name,
                    current_price, first_price,
                    current_price - first_price AS price_change,
@@ -99,10 +100,10 @@ class TestDealQueries:
               AND price_drop_count > 0
             ORDER BY total_price_drop_pct DESC
         """)
-        cur.fetchall()
+        viewer_cur.fetchall()
 
-    def test_price_vs_msrp_by_model(self, cur):
-        cur.execute("""
+    def test_price_vs_msrp_by_model(self, viewer_cur):
+        viewer_cur.execute("""
             SELECT model,
                    ROUND(AVG(current_price)) AS avg_price,
                    ROUND(AVG(msrp)) AS avg_msrp,
@@ -113,7 +114,7 @@ class TestDealQueries:
               AND msrp IS NOT NULL AND msrp > 0
             GROUP BY model ORDER BY avg_msrp_off_pct DESC
         """)
-        cur.fetchall()
+        viewer_cur.fetchall()
 
 
 # ============================================================================
@@ -122,39 +123,39 @@ class TestDealQueries:
 
 class TestInventoryQueries:
 
-    def test_active_listings_count(self, cur):
-        cur.execute("""
+    def test_active_listings_count(self, viewer_cur):
+        viewer_cur.execute("""
             SELECT COUNT(*) AS cnt FROM analytics.mart_deal_scores
             WHERE COALESCE(listing_state, 'active') != 'unlisted'
         """)
-        cur.fetchone()
+        viewer_cur.fetchone()
 
-    def test_new_listings_24h(self, cur):
-        cur.execute("""
+    def test_new_listings_24h(self, viewer_cur):
+        viewer_cur.execute("""
             SELECT COUNT(*) AS cnt FROM analytics.mart_deal_scores
             WHERE COALESCE(listing_state, 'active') != 'unlisted'
               AND first_seen_at > now() - interval '24 hours'
         """)
-        cur.fetchone()
+        viewer_cur.fetchone()
 
-    def test_new_listings_7d(self, cur):
-        cur.execute("""
+    def test_new_listings_7d(self, viewer_cur):
+        viewer_cur.execute("""
             SELECT COUNT(*) AS cnt FROM analytics.mart_deal_scores
             WHERE COALESCE(listing_state, 'active') != 'unlisted'
               AND first_seen_at > now() - interval '7 days'
         """)
-        cur.fetchone()
+        viewer_cur.fetchone()
 
-    def test_new_listings_30d(self, cur):
-        cur.execute("""
+    def test_new_listings_30d(self, viewer_cur):
+        viewer_cur.execute("""
             SELECT COUNT(*) AS cnt FROM analytics.mart_deal_scores
             WHERE COALESCE(listing_state, 'active') != 'unlisted'
               AND first_seen_at > now() - interval '30 days'
         """)
-        cur.fetchone()
+        viewer_cur.fetchone()
 
-    def test_listings_by_make_model(self, cur):
-        cur.execute("""
+    def test_listings_by_make_model(self, viewer_cur):
+        viewer_cur.execute("""
             SELECT make, model,
                    COUNT(*) AS active_listings,
                    ROUND(AVG(current_price)) AS avg_price,
@@ -164,10 +165,10 @@ class TestInventoryQueries:
             GROUP BY make, model
             ORDER BY active_listings DESC
         """)
-        cur.fetchall()
+        viewer_cur.fetchall()
 
-    def test_new_listings_over_time(self, cur):
-        cur.execute("""
+    def test_new_listings_over_time(self, viewer_cur):
+        viewer_cur.execute("""
             SELECT date_trunc('day', first_seen_at AT TIME ZONE 'America/Chicago') AS day,
                    make, COUNT(*) AS new_listings
             FROM analytics.mart_deal_scores
@@ -175,10 +176,10 @@ class TestInventoryQueries:
               AND first_seen_at > now() - interval '30 days'
             GROUP BY 1, 2 ORDER BY 1, 2
         """)
-        cur.fetchall()
+        viewer_cur.fetchall()
 
-    def test_unlisted_over_time(self, cur):
-        cur.execute("""
+    def test_unlisted_over_time(self, viewer_cur):
+        viewer_cur.execute("""
             WITH first_unlisted AS (
                 SELECT upper(d.vin) AS vin, MIN(d.fetched_at) AS unlisted_at
                 FROM analytics.stg_detail_observations d
@@ -192,10 +193,10 @@ class TestInventoryQueries:
             FROM first_unlisted
             GROUP BY 1 ORDER BY 1
         """)
-        cur.fetchall()
+        viewer_cur.fetchall()
 
-    def test_top_dealers(self, cur):
-        cur.execute("""
+    def test_top_dealers(self, viewer_cur):
+        viewer_cur.execute("""
             SELECT COALESCE(dealer_name, seller_customer_id) AS dealer,
                    make, model,
                    COUNT(*) AS active_listings,
@@ -207,7 +208,7 @@ class TestInventoryQueries:
             GROUP BY COALESCE(dealer_name, seller_customer_id), make, model
             ORDER BY active_listings DESC LIMIT 50
         """)
-        cur.fetchall()
+        viewer_cur.fetchall()
 
 
 # ============================================================================
@@ -216,8 +217,8 @@ class TestInventoryQueries:
 
 class TestMarketTrendsQueries:
 
-    def test_median_price_by_model_weekly(self, cur):
-        cur.execute("""
+    def test_median_price_by_model_weekly(self, viewer_cur):
+        viewer_cur.execute("""
             SELECT date_trunc('week', ph.observed_at AT TIME ZONE 'America/Chicago') AS week,
                    va.make, va.model,
                    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY mrt.price) AS median_price,
@@ -229,10 +230,10 @@ class TestMarketTrendsQueries:
               AND ph.price > 0 AND mrt.vin IS NOT NULL
             GROUP BY 1, 2, 3 ORDER BY 1, 2, 3
         """)
-        cur.fetchall()
+        viewer_cur.fetchall()
 
-    def test_inventory_levels_daily(self, cur):
-        cur.execute("""
+    def test_inventory_levels_daily(self, viewer_cur):
+        viewer_cur.execute("""
             SELECT date_trunc('day', ph.observed_at AT TIME ZONE 'America/Chicago') AS day,
                    va.make, va.model,
                    COUNT(DISTINCT ph.vin) AS listings_seen
@@ -242,10 +243,10 @@ class TestMarketTrendsQueries:
             WHERE ph.observed_at > now() - interval '30 days' AND mrt.vin IS NOT NULL
             GROUP BY 1, 2, 3 ORDER BY 1, 4 DESC
         """)
-        cur.fetchall()
+        viewer_cur.fetchall()
 
-    def test_days_on_market_by_model(self, cur):
-        cur.execute("""
+    def test_days_on_market_by_model(self, viewer_cur):
+        viewer_cur.execute("""
             SELECT make, model,
                    ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY days_on_market))
                        AS median_days,
@@ -257,10 +258,10 @@ class TestMarketTrendsQueries:
             WHERE COALESCE(listing_state, 'active') != 'unlisted'
             GROUP BY make, model ORDER BY median_days DESC
         """)
-        cur.fetchall()
+        viewer_cur.fetchall()
 
-    def test_national_vs_local_supply(self, cur):
-        cur.execute("""
+    def test_national_vs_local_supply(self, viewer_cur):
+        viewer_cur.execute("""
             SELECT make, model,
                    COUNT(*) AS national_listings,
                    COUNT(*) FILTER (WHERE is_local) AS local_listings,
@@ -271,7 +272,7 @@ class TestMarketTrendsQueries:
             WHERE COALESCE(listing_state, 'active') != 'unlisted'
             GROUP BY make, model ORDER BY national_listings DESC
         """)
-        cur.fetchall()
+        viewer_cur.fetchall()
 
 
 # ============================================================================
@@ -280,8 +281,8 @@ class TestMarketTrendsQueries:
 
 class TestPipelineHealthQueries:
 
-    def test_active_runs(self, cur):
-        cur.execute("""
+    def test_active_runs(self, viewer_cur):
+        viewer_cur.execute("""
             SELECT r.trigger, r.started_at AT TIME ZONE 'America/Chicago' AS started_at,
                    ROUND(EXTRACT(EPOCH FROM now() - r.started_at) / 60) AS elapsed_min,
                    r.progress_count, r.total_count,
@@ -293,18 +294,18 @@ class TestPipelineHealthQueries:
                     WHERE j.run_id = r.run_id AND j.status = 'failed') AS failed_jobs
             FROM runs r WHERE r.status = 'running' ORDER BY r.started_at
         """)
-        cur.fetchall()
+        viewer_cur.fetchall()
 
-    def test_dbt_lock_status(self, cur):
-        cur.execute("""
+    def test_dbt_lock_status(self, viewer_cur):
+        viewer_cur.execute("""
             SELECT locked, locked_at AT TIME ZONE 'America/Chicago' AS locked_at, locked_by
             FROM dbt_lock WHERE id = 1
         """)
-        row = cur.fetchone()
+        row = viewer_cur.fetchone()
         assert row is not None
 
-    def test_rotation_schedule(self, cur):
-        cur.execute("""
+    def test_rotation_schedule(self, viewer_cur):
+        viewer_cur.execute("""
             WITH slot_configs AS (
                 SELECT rotation_slot,
                        string_agg(search_key, ', ' ORDER BY search_key) AS search_keys,
@@ -363,10 +364,10 @@ class TestPipelineHealthQueries:
             LEFT JOIN slot_results res ON res.rotation_slot = c.rotation_slot
             ORDER BY c.rotation_slot
         """)
-        cur.fetchall()
+        viewer_cur.fetchall()
 
-    def test_recent_detail_scrape_runs(self, cur):
-        cur.execute("""
+    def test_recent_detail_scrape_runs(self, viewer_cur):
+        viewer_cur.execute("""
             WITH my_runs AS (
                 SELECT * FROM runs
                 WHERE trigger = 'detail scrape'
@@ -403,10 +404,10 @@ class TestPipelineHealthQueries:
                      r.total_count, r.error_count, r.last_error
             ORDER BY started DESC
         """)
-        cur.fetchall()
+        viewer_cur.fetchall()
 
-    def test_stale_vehicle_backlog(self, cur):
-        cur.execute("""
+    def test_stale_vehicle_backlog(self, viewer_cur):
+        viewer_cur.execute("""
             WITH batch_marking AS (
                 SELECT q.listing_id, q.stale_reason,
                        ROW_NUMBER() OVER (
@@ -437,10 +438,10 @@ class TestPipelineHealthQueries:
             FROM batch_marking q
             GROUP BY 1 ORDER BY batch_param ASC
         """)
-        cur.fetchall()
+        viewer_cur.fetchall()
 
-    def test_cooldown_backlog(self, cur):
-        cur.execute("""
+    def test_cooldown_backlog(self, viewer_cur):
+        viewer_cur.execute("""
             WITH batch_marking AS (
                 SELECT q.listing_id, q.stale_reason,
                        ROW_NUMBER() OVER (
@@ -469,10 +470,10 @@ class TestPipelineHealthQueries:
             GROUP BY bc.num_of_attempts
             ORDER BY bc.num_of_attempts
         """)
-        cur.fetchall()
+        viewer_cur.fetchall()
 
-    def test_price_freshness(self, cur):
-        cur.execute("""
+    def test_price_freshness(self, viewer_cur):
+        viewer_cur.execute("""
             WITH buckets AS (
                 SELECT FLOOR(LEAST(vs.price_age_hours, 24) * 2) / 2 AS age_floor,
                        vs.price_tier, vs.is_full_details_stale
@@ -491,10 +492,10 @@ class TestPipelineHealthQueries:
                    COUNT(*) AS total
             FROM buckets GROUP BY age_floor ORDER BY age_floor DESC
         """)
-        cur.fetchall()
+        viewer_cur.fetchall()
 
-    def test_blocked_cooldown_histogram(self, cur):
-        cur.execute("""
+    def test_blocked_cooldown_histogram(self, viewer_cur):
+        viewer_cur.execute("""
             WITH buckets AS (
                 SELECT FLOOR(GREATEST(
                     (EXTRACT(EPOCH FROM (next_eligible_at - now())) / 3600), 0
@@ -507,10 +508,10 @@ class TestPipelineHealthQueries:
                    COUNT(*) AS total
             FROM buckets GROUP BY age_floor ORDER BY age_floor DESC
         """)
-        cur.fetchall()
+        viewer_cur.fetchall()
 
-    def test_success_rate_detail(self, cur):
-        cur.execute("""
+    def test_success_rate_detail(self, viewer_cur):
+        viewer_cur.execute("""
             SELECT date_trunc('day', fetched_at AT TIME ZONE 'America/Chicago') AS day,
                    CASE
                        WHEN http_status = 200 THEN '200 OK'
@@ -524,10 +525,10 @@ class TestPipelineHealthQueries:
               AND fetched_at > now() - interval '7 days'
             GROUP BY 1, 2 ORDER BY 1, 2
         """)
-        cur.fetchall()
+        viewer_cur.fetchall()
 
-    def test_success_rate_results(self, cur):
-        cur.execute("""
+    def test_success_rate_results(self, viewer_cur):
+        viewer_cur.execute("""
             SELECT date_trunc('day', fetched_at AT TIME ZONE 'America/Chicago') AS day,
                    CASE
                        WHEN http_status = 200 THEN '200 OK'
@@ -541,10 +542,10 @@ class TestPipelineHealthQueries:
               AND fetched_at > now() - interval '7 days'
             GROUP BY 1, 2 ORDER BY 1, 2
         """)
-        cur.fetchall()
+        viewer_cur.fetchall()
 
-    def test_search_scrape_jobs_7d(self, cur):
-        cur.execute("""
+    def test_search_scrape_jobs_7d(self, viewer_cur):
+        viewer_cur.execute("""
             SELECT r.run_id,
                    r.started_at AT TIME ZONE 'America/Chicago' AS run_started,
                    r.status AS run_status,
@@ -568,10 +569,10 @@ class TestPipelineHealthQueries:
             GROUP BY 1,2,3,4,5,6,7
             ORDER BY r.started_at DESC, j.search_key, j.scope
         """)
-        cur.fetchall()
+        viewer_cur.fetchall()
 
-    def test_runs_over_time(self, cur):
-        cur.execute("""
+    def test_runs_over_time(self, viewer_cur):
+        viewer_cur.execute("""
             SELECT date_trunc('day', started_at AT TIME ZONE 'America/Chicago') AS day,
                    trigger, COUNT(*) AS runs,
                    COUNT(*) FILTER (WHERE status = 'success') AS successful,
@@ -582,42 +583,42 @@ class TestPipelineHealthQueries:
               AND status NOT IN ('skipped', 'terminated')
             GROUP BY 1, 2 ORDER BY 1, 2
         """)
-        cur.fetchall()
+        viewer_cur.fetchall()
 
-    def test_artifact_processing_backlog(self, cur):
-        cur.execute("""
+    def test_artifact_processing_backlog(self, viewer_cur):
+        viewer_cur.execute("""
             SELECT processor, status, COUNT(*) AS count,
                    MIN(processed_at) AT TIME ZONE 'America/Chicago' AS oldest
             FROM artifact_processing
             WHERE status IN ('retry', 'processing')
             GROUP BY processor, status ORDER BY count DESC
         """)
-        cur.fetchall()
+        viewer_cur.fetchall()
 
-    def test_terminated_runs(self, cur):
-        cur.execute("""
+    def test_terminated_runs(self, viewer_cur):
+        viewer_cur.execute("""
             SELECT trigger, COUNT(*) AS terminated_count,
                    MAX(started_at) AT TIME ZONE 'America/Chicago' AS most_recent
             FROM runs
             WHERE status = 'terminated' AND started_at > now() - interval '7 days'
             GROUP BY trigger ORDER BY terminated_count DESC
         """)
-        cur.fetchall()
+        viewer_cur.fetchall()
 
-    def test_pipeline_errors(self, cur):
-        cur.execute("""
+    def test_pipeline_errors(self, viewer_cur):
+        viewer_cur.execute("""
             SELECT occurred_at AT TIME ZONE 'America/Chicago' AS occurred_at_ct,
                    workflow_name, node_name, error_type, error_message
             FROM pipeline_errors ORDER BY occurred_at DESC LIMIT 50
         """)
-        cur.fetchall()
+        viewer_cur.fetchall()
 
-    def test_dbt_build_history(self, cur):
-        cur.execute("SELECT * FROM dbt_runs ORDER BY started_at DESC LIMIT 10")
-        cur.fetchall()
+    def test_dbt_build_history(self, viewer_cur):
+        viewer_cur.execute("SELECT * FROM dbt_runs ORDER BY started_at DESC LIMIT 10")
+        viewer_cur.fetchall()
 
-    def test_processor_activity(self, cur):
-        cur.execute("""
+    def test_processor_activity(self, viewer_cur):
+        viewer_cur.execute("""
             SELECT processor,
                    COUNT(*) FILTER (WHERE status = 'ok') AS ok,
                    COUNT(*) FILTER (
@@ -632,10 +633,10 @@ class TestPipelineHealthQueries:
                    MAX(processed_at) AT TIME ZONE 'America/Chicago' AS last_processed
             FROM artifact_processing GROUP BY processor ORDER BY processor
         """)
-        cur.fetchall()
+        viewer_cur.fetchall()
 
-    def test_processing_throughput(self, cur):
-        cur.execute("""
+    def test_processing_throughput(self, viewer_cur):
+        viewer_cur.execute("""
             SELECT date_trunc('hour',
                        processed_at AT TIME ZONE 'America/Chicago') AS hour,
                    processor, COUNT(*) AS processed,
@@ -645,10 +646,10 @@ class TestPipelineHealthQueries:
             WHERE processed_at > now() - interval '24 hours'
             GROUP BY 1, 2 ORDER BY 1 DESC, 2
         """)
-        cur.fetchall()
+        viewer_cur.fetchall()
 
-    def test_detail_extraction_coverage(self, cur):
-        cur.execute("""
+    def test_detail_extraction_coverage(self, viewer_cur):
+        viewer_cur.execute("""
             SELECT date_trunc('day',
                        ap.processed_at AT TIME ZONE 'America/Chicago') AS day,
                    COUNT(*) AS total_processed,
@@ -670,10 +671,10 @@ class TestPipelineHealthQueries:
               AND ap.processed_at > now() - interval '14 days'
             GROUP BY 1 ORDER BY 1 DESC
         """)
-        cur.fetchall()
+        viewer_cur.fetchall()
 
-    def test_pg_stat_activity(self, cur):
-        cur.execute("""
+    def test_pg_stat_activity(self, viewer_cur):
+        viewer_cur.execute("""
             SELECT COUNT(*) FILTER (WHERE state = 'active') AS active,
                    COUNT(*) FILTER (WHERE state = 'idle in transaction') AS idle_in_tx,
                    ROUND(MAX(
@@ -683,10 +684,10 @@ class TestPipelineHealthQueries:
                    )::numeric, 1) AS longest_query_s
             FROM pg_stat_activity WHERE backend_type = 'client backend'
         """)
-        cur.fetchone()
+        viewer_cur.fetchone()
 
-    def test_long_running_queries(self, cur):
-        cur.execute("""
+    def test_long_running_queries(self, viewer_cur):
+        viewer_cur.execute("""
             SELECT pid, state,
                    ROUND(EXTRACT(EPOCH FROM (now() - query_start))::numeric, 1) AS duration_s,
                    LEFT(query, 80) AS query
@@ -696,4 +697,4 @@ class TestPipelineHealthQueries:
               AND backend_type = 'client backend'
             ORDER BY duration_s DESC
         """)
-        cur.fetchall()
+        viewer_cur.fetchall()

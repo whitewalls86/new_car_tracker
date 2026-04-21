@@ -257,6 +257,11 @@ services:
       MINIO_IDENTITY_OPENID_REDIRECT_URI: "https://cartracker.info/minio/oauth_callback"
       MINIO_IDENTITY_OPENID_CLAIM_NAME: "email"
       MINIO_IDENTITY_OPENID_SCOPES: "openid,email,profile"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped
     networks:
       - cartracker-net
@@ -374,11 +379,17 @@ services:
       PGDATABASE: cartracker
       PGUSER: cartracker
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_BUCKET: bronze
     networks:
       - cartracker-net
     depends_on:
       flyway:
         condition: service_completed_successfully
+      minio:
+        condition: service_healthy
 
   airflow-init:
     <<: *airflow-common

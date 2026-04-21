@@ -875,7 +875,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "INSERT INTO blocked_cooldown (listing_id, first_attempt_at, last_attempted_at, num_of_attempts)\nSELECT lid, now(), now(), 1\nFROM jsonb_array_elements_text('{{ JSON.stringify($json.add_ids) }}'::jsonb) AS lid\nON CONFLICT (listing_id) DO UPDATE\n  SET last_attempted_at = now(),\n      num_of_attempts   = blocked_cooldown.num_of_attempts + 1;",
+        "query": "INSERT INTO blocked_cooldown (listing_id, first_attempted_at, last_attempted_at, num_of_attempts)\nSELECT lid::uuid, now(), now(), 1\nFROM jsonb_array_elements_text('{{ JSON.stringify($json.add_ids) }}'::jsonb) AS lid\nON CONFLICT (listing_id) DO UPDATE\n  SET last_attempted_at = now(),\n      num_of_attempts   = blocked_cooldown.num_of_attempts + 1;",
         "options": {}
       },
       "type": "n8n-nodes-base.postgres",

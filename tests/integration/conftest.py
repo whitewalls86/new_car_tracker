@@ -18,6 +18,9 @@ from psycopg2.extras import RealDictCursor
 _DEFAULT_URL = "postgresql://cartracker:cartracker@localhost:5432/cartracker"
 DATABASE_URL = os.environ.get("TEST_DATABASE_URL", _DEFAULT_URL)
 
+_DEFAULT_VIEWER_URL = "postgresql://viewer:ci_viewer@localhost:5432/cartracker"
+VIEWER_DATABASE_URL = os.environ.get("TEST_VIEWER_DATABASE_URL", _DEFAULT_VIEWER_URL)
+
 
 def _parse_dsn(url: str) -> dict:
     """Convert a postgresql:// URL into psycopg2 connect kwargs."""
@@ -65,6 +68,36 @@ def db_conn(db_conn_factory):
 def cur(db_conn):
     """Convenience cursor (RealDictCursor) from the per-test connection."""
     with db_conn.cursor(cursor_factory=RealDictCursor) as cursor:
+        yield cursor
+
+
+@pytest.fixture(scope="session")
+def viewer_conn_factory():
+    """Returns a callable that creates new DB connections as the viewer role."""
+    dsn = _parse_dsn(VIEWER_DATABASE_URL)
+
+    def _connect():
+        return psycopg2.connect(**dsn)
+
+    conn = _connect()
+    conn.close()
+    return _connect
+
+
+@pytest.fixture()
+def viewer_conn(viewer_conn_factory):
+    """Per-test viewer connection that rolls back on teardown."""
+    conn = viewer_conn_factory()
+    conn.autocommit = False
+    yield conn
+    conn.rollback()
+    conn.close()
+
+
+@pytest.fixture()
+def viewer_cur(viewer_conn):
+    """Convenience cursor (RealDictCursor) connected as the viewer role."""
+    with viewer_conn.cursor(cursor_factory=RealDictCursor) as cursor:
         yield cursor
 
 

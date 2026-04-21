@@ -326,11 +326,12 @@ def _fetch_page(url: str, run_dir: str,
             cur.execute(
                 """
                 INSERT INTO artifacts_queue
-                    (minio_path, artifact_type, run_id, fetched_at, status)
-                VALUES (%s, 'results_page', %s, %s, 'pending')
+                    (minio_path, artifact_type, run_id,
+                     fetched_at, status, search_key)
+                VALUES (%s, 'results_page', %s, %s, 'pending', %s)
                 RETURNING artifact_id
                 """,
-                (minio_path, run_id or None, fetched_at),
+                (minio_path, run_id or None, fetched_at, search_key),
             )
             queue_artifact_id = cur.fetchone()[0]
             cur.execute(
