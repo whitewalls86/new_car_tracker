@@ -37,7 +37,7 @@ def _insert_aq_event(cur, artifact_id=None) -> int:
 
 def _insert_claim_event(cur) -> int:
     """Insert a row into staging.detail_scrape_claim_events. Returns event_id."""
-    listing_id = uuid.uuid4()
+    listing_id = str(uuid.uuid4())
     cur.execute(
         """INSERT INTO staging.detail_scrape_claim_events
                (listing_id, status, event_at)
@@ -50,7 +50,7 @@ def _insert_claim_event(cur) -> int:
 
 def _insert_blocked_event(cur) -> int:
     """Insert a row into staging.blocked_cooldown_events. Returns event_id."""
-    listing_id = uuid.uuid4()
+    listing_id = str(uuid.uuid4())
     cur.execute(
         """INSERT INTO staging.blocked_cooldown_events
                (listing_id, event_type, num_of_attempts, event_at)
@@ -63,7 +63,7 @@ def _insert_blocked_event(cur) -> int:
 
 def _insert_price_event(cur) -> int:
     """Insert a row into staging.price_observation_events. Returns event_id."""
-    listing_id = uuid.uuid4()
+    listing_id = str(uuid.uuid4())
     cur.execute(
         """INSERT INTO staging.price_observation_events
                (listing_id, artifact_id, event_type, source, event_at)
@@ -77,7 +77,7 @@ def _insert_price_event(cur) -> int:
 def _insert_vin_event(cur) -> int:
     """Insert a row into staging.vin_to_listing_events. Returns event_id."""
     vin = str(uuid.uuid4())
-    listing_id = uuid.uuid4()
+    listing_id = str(uuid.uuid4())
     cur.execute(
         """INSERT INTO staging.vin_to_listing_events
                (vin, listing_id, artifact_id, event_type, event_at)
