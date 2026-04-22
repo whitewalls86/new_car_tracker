@@ -10,7 +10,7 @@ Flow:
 import requests
 
 PROCESSING_URL = "http://processing:8070"
-BATCH_SIZE = 2500
+BATCH_SIZE = 500
 
 
 def _process_batch():
@@ -44,6 +44,7 @@ try:
         schedule="*/5 * * * *",
         start_date=datetime(2026, 1, 1),
         catchup=False,
+        max_active_runs=1,
         tags=["processing", "plan71"],
     ):
         ready = deploy_intent_sensor()
