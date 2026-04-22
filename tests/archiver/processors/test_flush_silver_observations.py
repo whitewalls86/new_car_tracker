@@ -163,12 +163,15 @@ class TestFlushSilverSuccess:
         assert arrow_table.column("source").to_pylist() == ["srp"]
 
     def test_written_at_set_to_now(self, mocker):
-        before = datetime.now(timezone.utc)
+        import pyarrow as _pa
+        before = datetime.now(timezone.utc).replace(tzinfo=None)
         _, mock_write, _ = self._run(mocker, [_make_row()])
-        after = datetime.now(timezone.utc)
+        after = datetime.now(timezone.utc).replace(tzinfo=None)
         arrow_table = mock_write.call_args[0][0]
-        written_at = arrow_table.column("written_at").to_pylist()[0]
-        assert before <= written_at.replace(tzinfo=timezone.utc) <= after
+        # Cast to tz-naive before to_pylist() — avoids zoneinfo lookup failing on
+        # Windows hosts without the tzdata package installed.
+        written_at = arrow_table.column("written_at").cast(_pa.timestamp("us")).to_pylist()[0]
+        assert before <= written_at <= after
 
     def test_id_column_not_in_parquet(self, mocker):
         _, mock_write, _ = self._run(mocker, [_make_row()])

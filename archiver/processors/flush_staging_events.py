@@ -316,7 +316,14 @@ def flush_staging_events() -> Dict[str, Any]:
     results = []
     try:
         for config in _TABLE_CONFIGS:
-            result = _flush_one(config, conn, fs)
+            try:
+                result = _flush_one(config, conn, fs)
+            except Exception as e:
+                logger.error(
+                    "flush_staging: unexpected error for %s: %s",
+                    config["table"], e, exc_info=True,
+                )
+                result = {"table": config["table"], "flushed": 0, "error": str(e)}
             results.append(result)
     finally:
         conn.close()

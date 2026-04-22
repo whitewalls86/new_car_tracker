@@ -2,8 +2,6 @@
 from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
-import pytest
-
 from archiver.processors.flush_staging_events import (
     _TABLE_CONFIGS,
     _flush_one,
@@ -232,7 +230,7 @@ class TestFlushStagingEvents:
         assert len(result["tables"]) == len(_TABLE_CONFIGS)
 
     def test_total_flushed_aggregates_per_table(self, mocker):
-        mock_flush_one = mocker.patch(
+        mocker.patch(
             "archiver.processors.flush_staging_events._flush_one",
             side_effect=[
                 {"table": f"staging.t{i}", "flushed": 10, "error": None}

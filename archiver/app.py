@@ -10,7 +10,9 @@ from archiver.processors.cleanup_parquet import cleanup_parquet as _cleanup_parq
 from archiver.processors.cleanup_parquet import run_cleanup_parquet as _run_cleanup_parquet
 from archiver.processors.cleanup_queue import cleanup_queue as _cleanup_queue
 from archiver.processors.cleanup_queue import run_cleanup_queue as _run_cleanup_queue
-from archiver.processors.flush_silver_observations import flush_silver_observations as _flush_silver_observations
+from archiver.processors.flush_silver_observations import (
+    flush_silver_observations as _flush_silver_observations,
+)
 from archiver.processors.flush_staging_events import flush_staging_events as _flush_staging_events
 from shared.job_counter import active_job, is_idle
 

@@ -38,8 +38,17 @@ class TestProcessBatch:
         assert resp.status_code == 422
 
     def test_batch_size_above_max_rejected(self, mock_processing_client):
-        resp = mock_processing_client.post("/process/batch?batch_size=201")
+        resp = mock_processing_client.post("/process/batch?batch_size=2501")
         assert resp.status_code == 422
+
+    def test_dag_batch_size_within_endpoint_limits(self, mock_processing_client):
+        """DAG's BATCH_SIZE must be accepted by the endpoint — catches caller/endpoint drift."""
+        from airflow.dags.results_processing import BATCH_SIZE
+        resp = mock_processing_client.post(f"/process/batch?batch_size={BATCH_SIZE}")
+        assert resp.status_code != 422, (
+            f"DAG BATCH_SIZE={BATCH_SIZE} is rejected by the endpoint (422). "
+            "Update BATCH_SIZE in results_processing.py or raise le= in the router."
+        )
 
     def test_srp_complete_counted(self, mock_processing_client, mocker):
         mocker.patch(

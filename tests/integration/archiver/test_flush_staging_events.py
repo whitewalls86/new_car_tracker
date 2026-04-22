@@ -26,7 +26,8 @@ def _insert_aq_event(cur, artifact_id=None) -> int:
     minio = f"s3://bronze/html/year=2026/month=4/results_page/{uuid.uuid4()}.html.zst"
     cur.execute(
         """INSERT INTO staging.artifacts_queue_events
-               (artifact_id, status, event_at, minio_path, artifact_type, fetched_at, listing_id, run_id)
+               (artifact_id, status, event_at, minio_path, 
+                artifact_type, fetched_at, listing_id, run_id)
            VALUES (%s, 'pending', %s, %s, 'results_page', %s, 'listing-test', 'run-test')
            RETURNING event_id""",
         (artifact_id or 999999, _NOW, minio, _NOW),
@@ -146,7 +147,9 @@ class TestSelectRowsUpToMax:
         )
         row = cur.fetchone()
         assert row is not None
-        for col in ("event_id", "listing_id", "run_id", "status", "stale_reason", "vin", "event_at"):
+        for col in (
+            "event_id", "listing_id", "run_id", "status", "stale_reason", "vin", "event_at"
+        ):
             assert col in row
 
     def test_blocked_events_select_columns_present(self, cur):
