@@ -7,16 +7,10 @@ from ops.artifacts_queue. Runs every 5 minutes.
 Flow:
   deploy_intent_sensor → processing_up → process_batch
 """
-from datetime import datetime
-
 import requests
-from airflow.providers.standard.operators.python import PythonOperator
-from sensors import deploy_intent_sensor, http_health_sensor
-
-from airflow import DAG
 
 PROCESSING_URL = "http://processing:8070"
-BATCH_SIZE = 1000
+BATCH_SIZE = 2500
 
 
 def _process_batch():
@@ -37,15 +31,26 @@ def _process_batch():
     return result
 
 
-with DAG(
-    dag_id="results_processing",
-    schedule="*/5 * * * *",
-    start_date=datetime(2026, 1, 1),
-    catchup=False,
-    tags=["processing", "plan71"],
-):
-    ready = deploy_intent_sensor()
-    processing_up = http_health_sensor("processing", PROCESSING_URL)
-    process = PythonOperator(task_id="process_batch", python_callable=_process_batch)
+try:
+    from datetime import datetime
 
-    ready >> processing_up >> process
+    from airflow.providers.standard.operators.python import PythonOperator
+    from sensors import deploy_intent_sensor, http_health_sensor
+
+    from airflow import DAG
+
+    with DAG(
+        dag_id="results_processing",
+        schedule="*/5 * * * *",
+        start_date=datetime(2026, 1, 1),
+        catchup=False,
+        tags=["processing", "plan71"],
+    ):
+        ready = deploy_intent_sensor()
+        processing_up = http_health_sensor("processing", PROCESSING_URL)
+        process = PythonOperator(task_id="process_batch", python_callable=_process_batch)
+
+        ready >> processing_up >> process
+
+except ImportError:
+    pass

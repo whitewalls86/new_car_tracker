@@ -300,6 +300,66 @@ class TestCleanupQueueRunEndpoint:
 
 
 # ---------------------------------------------------------------------------
+# POST /flush/staging/run
+# ---------------------------------------------------------------------------
+
+class TestFlushStagingRunEndpoint:
+    def test_delegates_to_flush_staging_events(self, mock_archiver_client, mocker):
+        fake = {"total_flushed": 42, "tables": [], "error": None}
+        mocker.patch("archiver.app._flush_staging_events", return_value=fake)
+        resp = mock_archiver_client.post("/flush/staging/run")
+        assert resp.status_code == 200
+        assert resp.json() == fake
+
+    def test_no_work_returns_zero_total(self, mock_archiver_client, mocker):
+        mocker.patch(
+            "archiver.app._flush_staging_events",
+            return_value={"total_flushed": 0, "tables": [], "error": None},
+        )
+        resp = mock_archiver_client.post("/flush/staging/run")
+        assert resp.json()["total_flushed"] == 0
+
+    def test_error_propagated_in_response(self, mock_archiver_client, mocker):
+        mocker.patch(
+            "archiver.app._flush_staging_events",
+            return_value={"total_flushed": 0, "tables": [], "error": "db down"},
+        )
+        resp = mock_archiver_client.post("/flush/staging/run")
+        assert resp.status_code == 200
+        assert resp.json()["error"] == "db down"
+
+
+# ---------------------------------------------------------------------------
+# POST /flush/silver/run
+# ---------------------------------------------------------------------------
+
+class TestFlushSilverRunEndpoint:
+    def test_delegates_to_flush_silver_observations(self, mock_archiver_client, mocker):
+        fake = {"flushed": 100, "error": None}
+        mocker.patch("archiver.app._flush_silver_observations", return_value=fake)
+        resp = mock_archiver_client.post("/flush/silver/run")
+        assert resp.status_code == 200
+        assert resp.json() == fake
+
+    def test_no_work_returns_zero(self, mock_archiver_client, mocker):
+        mocker.patch(
+            "archiver.app._flush_silver_observations",
+            return_value={"flushed": 0, "error": None},
+        )
+        resp = mock_archiver_client.post("/flush/silver/run")
+        assert resp.json()["flushed"] == 0
+
+    def test_error_propagated_in_response(self, mock_archiver_client, mocker):
+        mocker.patch(
+            "archiver.app._flush_silver_observations",
+            return_value={"flushed": 0, "error": "minio unreachable"},
+        )
+        resp = mock_archiver_client.post("/flush/silver/run")
+        assert resp.status_code == 200
+        assert resp.json()["error"] == "minio unreachable"
+
+
+# ---------------------------------------------------------------------------
 # GET /ready
 # ---------------------------------------------------------------------------
 

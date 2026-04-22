@@ -10,6 +10,10 @@ from archiver.processors.cleanup_parquet import cleanup_parquet as _cleanup_parq
 from archiver.processors.cleanup_parquet import run_cleanup_parquet as _run_cleanup_parquet
 from archiver.processors.cleanup_queue import cleanup_queue as _cleanup_queue
 from archiver.processors.cleanup_queue import run_cleanup_queue as _run_cleanup_queue
+from archiver.processors.flush_silver_observations import (
+    flush_silver_observations as _flush_silver_observations,
+)
+from archiver.processors.flush_staging_events import flush_staging_events as _flush_staging_events
 from shared.job_counter import active_job, is_idle
 
 logging.basicConfig(level=logging.INFO)
@@ -76,6 +80,20 @@ def trigger_cleanup_queue() -> Dict[str, Any]:
     """Sweep all complete/skip rows from artifacts_queue (Airflow DAG trigger)."""
     with active_job():
         return _run_cleanup_queue()
+
+
+@app.post("/flush/silver/run")
+def trigger_flush_silver() -> Dict[str, Any]:
+    """Flush staging.silver_observations to MinIO silver layer (Airflow DAG trigger)."""
+    with active_job():
+        return _flush_silver_observations()
+
+
+@app.post("/flush/staging/run")
+def trigger_flush_staging() -> Dict[str, Any]:
+    """Flush all staging event tables to MinIO Parquet (Airflow DAG trigger)."""
+    with active_job():
+        return _flush_staging_events()
 
 
 @app.get("/health")

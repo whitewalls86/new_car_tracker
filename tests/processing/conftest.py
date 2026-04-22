@@ -17,6 +17,7 @@ def mock_processing_client(mocker):
     DB or MinIO connections are made. Tests override per-case.
     """
     mocker.patch("shared.job_counter._count", 0)
+    mocker.patch("processing.routers.batch._claim_batch", return_value=[])
 
     import processing.app as processing_app
     return TestClient(processing_app.app)

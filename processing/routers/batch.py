@@ -215,7 +215,7 @@ def _process_artifact(artifact: Dict[str, Any]) -> Dict[str, Any]:
 
 @router.post("/process/batch")
 def process_batch(
-    batch_size: int = Query(default=20, ge=1, le=200),
+    batch_size: int = Query(default=50, ge=1, le=2500),
     artifact_type: Optional[str] = Query(default=None),
 ) -> Dict[str, Any]:
     """
