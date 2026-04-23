@@ -32,7 +32,7 @@ def cleanup_queue(artifact_ids: List[int]) -> List[Dict[str, Any]]:
         with db_cursor(error_context="cleanup_queue: delete rows") as cur:
             cur.execute(
                 """
-                DELETE FROM artifacts_queue
+                DELETE FROM ops.artifacts_queue
                 WHERE  artifact_id = ANY(%s)
                   AND  status IN ('complete', 'skip')
                 RETURNING artifact_id

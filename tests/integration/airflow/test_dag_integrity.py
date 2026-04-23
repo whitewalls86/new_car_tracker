@@ -27,6 +27,10 @@ DAG_SPECS = {
         "dag_id": "cleanup_artifacts",
         "tasks": {"check_deploy_intent", "check_archiver_health", "cleanup_artifacts"},
     },
+    "cleanup_queue.py": {
+        "dag_id": "cleanup_queue",
+        "tasks": {"check_deploy_intent", "check_archiver_health", "cleanup_queue"},
+    },
     "cleanup_parquet.py": {
         "dag_id": "cleanup_parquet",
         "tasks": {"check_deploy_intent", "check_archiver_health", "cleanup_parquet"},
