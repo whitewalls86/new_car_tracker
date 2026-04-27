@@ -4,11 +4,13 @@ Each plan has its own file in `docs/`. This file is the index only. For system d
 
 ## Current State (as of 2026-04-27)
 
-Site is live at https://cartracker.info. Auth (Plan 82), data migration (Plan 81), CI/CD (Plans 62+63), integration testing (Plan 84), MinIO artifact store (Plan 97), processing service (Plan 93), and Plan 99 are complete. V018–V029 migrations shipped. Airflow is running with all maintenance DAGs live, the `results_processing` DAG, and the `flush_silver_observations` + `flush_staging_events` DAGs.
+Site is live at https://cartracker.info. Auth (Plan 82), data migration (Plan 81), CI/CD (Plans 62+63), integration testing (Plan 84), MinIO artifact store (Plan 97), processing service (Plan 93), and Plan 99 are complete. V018–V030 migrations shipped. Airflow is running with all maintenance DAGs live, the `results_processing` DAG, the `flush_silver_observations` + `flush_staging_events` DAGs, and the new `scrape_listings` + `scrape_detail_pages` scrape DAGs (merged, pending unpause).
 
 The ops staleness view (`ops_vehicle_staleness`) and scrape queue (`ops_detail_scrape_queue`) are now plain Postgres views reading HOT tables directly (V029). The dbt ops models have been deleted. `customer_id IS NULL` is the enrichment signal replacing the old dbt `dealer_unenriched` join.
 
-The remaining transition sequence is: shadow period for `scrape_listings` + `scrape_detail_pages` DAGs (Plan 71 steps 14–15) → n8n cutover → Plan 100 → Plan 96 → Plan 90.
+The processing service now has 52 integration tests covering all write paths end-to-end. Dashboard has Airflow DAG run visibility (`airflow_dag_runs.sql`) and pipeline health queries updated to use `ops.artifacts_queue` directly.
+
+The remaining transition sequence is: restart `ops` + `scraper`, unpause `scrape_listings` + `scrape_detail_pages`, validate shadow period, disable n8n schedules (Plan 71 step 14) → decommission n8n (step 15) → Plan 100 → Plan 96 → Plan 90.
 
 ---
 
@@ -55,8 +57,8 @@ The remaining transition sequence is: shadow period for `scrape_listings` + `scr
 
 | Plan | Title | Status |
 |------|-------|--------|
-| [71](plan_71_airflow.md) | Airflow migration | Steps 1–13 done; steps 14–15 (n8n cutover + decommission) pending |
-| [92](plan_92_service_drain.md) | Service drain `/ready` endpoints | archiver + dbt_runner done; scraper (Plan 71 step 13) + processing (Plan 93) pending |
+| [71](plan_71_airflow.md) | Airflow migration | Steps 1–13 merged; steps 14–15 (n8n cutover + decommission) pending |
+| [92](plan_92_service_drain.md) | Service drain `/ready` endpoints | archiver + dbt_runner + scraper done; processing (Plan 93) pending |
 | [91](plan_91_uuid_type_cleanup.md) | UUID column type fixes | Scope collapsed to 2 columns; absorbed into V018 |
 
 ---
@@ -72,12 +74,9 @@ The remaining transition sequence is: shadow period for `scrape_listings` + `scr
 ## Completed
 
 See [completed_plans.md](completed_plans.md) for full list. Recent completions:
+- **71 (steps 8–9, 13)** — `scrape_listings` + `scrape_detail_pages` DAGs merged; `advance_rotation` gap check on `search_configs.last_queued_at`; scraper gains `/ready`, loses `advance_rotation`. 52 processing integration tests. Dashboard Airflow DAG run panel + pipeline queries updated to `ops.artifacts_queue`. V030 migration (2026-04-27)
 - **99** — Per-source staleness: `customer_id` added to `ops.price_observations` (V028); enrichment flag replaces dbt dealer join (2026-04-27)
 - **V029** — Plain Postgres ops views: `ops_vehicle_staleness` + `ops_detail_scrape_queue` rewritten as HOT-table-direct views; dbt ops models deleted; n8n cutover now unblocked (2026-04-27)
 - **Silver flush DAGs** — `flush_silver_observations` + `flush_staging_events` DAGs live; staging buffer → MinIO Parquet on schedule (PR #86, 2026-04-21)
 - **93** — Processing service: SRP/detail/carousel write paths, silver staging buffer, tracked_models, V021–V025 (2026-04-21)
 - **97** — MinIO-first artifact store; `ops.artifacts_queue` live; V017 deployed (2026-04-20)
-- **98** — Bronze data architecture; schema complete in V017 (2026-04-20)
-- **84** — Integration testing: 71 SQL smoke tests + dbt logic coverage + ops API tests (2026-04-16)
-- **82** — DB-backed auth with access requests (PRs #64–#67, 2026-04-14)
-- **81** — Data migration local → cloud (2026-04-14)

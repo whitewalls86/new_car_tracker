@@ -1,6 +1,6 @@
 # Plan 71: Airflow Migration
 
-**Status:** In progress — steps 1–13 complete; steps 14–15 (n8n cutover + decommission) pending
+**Status:** In progress — steps 1–13 complete and merged to master; steps 14–15 (n8n cutover + decommission) pending
 **Priority:** Medium — strong portfolio signal; replaces n8n entirely
 
 ## Overview
@@ -174,12 +174,14 @@ The detection logic doesn't move. Only the output mechanism changes. Design the 
 11. ~~**`results_processing` DAG**~~ — ✓ done (2026-04-21).
 12. ~~**V029 migration (was "V019")**~~ — ✓ done (2026-04-27). `ops_vehicle_staleness` and `ops_detail_scrape_queue` rewritten as plain Postgres views reading HOT tables directly. `customer_id IS NULL` replaces full_details staleness; carousel pool merged into dealer_unenriched pool. dbt ops models deleted.
 13. ~~**Scraper: add `/ready` + remove ported logic**~~ — ✓ done. `GET /ready` drain endpoint added; `/search_configs/advance_rotation` removed from scraper (now lives in ops).
-14. **Disable n8n schedules** — cutover; n8n container stays up briefly as fallback.
+14. **Disable n8n schedules** — cutover; n8n container stays up briefly as fallback. Unblocked: restart `ops` + `scraper` containers after `git pull`; unpause `scrape_listings` + `scrape_detail_pages` in Airflow UI; verify via `search_configs.last_queued_at` and `ops.artifacts_queue` artifact counts.
 15. **Decommission n8n** — remove from docker-compose, archive workflow JSONs to `docs/n8n_archive/`.
 
 **Not in original rollout — added during execution:**
 - ~~**`flush_silver_observations` + `flush_staging_events` DAGs**~~ — ✓ done (PR #86, 2026-04-21). Flush `staging.silver_observations` and staging event tables to MinIO Parquet on schedule. Live in production.
 - ~~**`cleanup_queue` DAG**~~ — ✓ done (PR #88, 2026-04-27). Cleans up completed `artifacts_queue` entries.
+- ~~**Processing service integration tests**~~ — ✓ done. 52 integration tests covering `_claim_batch`, `write_srp_observations`, `write_detail_active/unlisted/blocked` end-to-end against real Postgres. Committed fixture family (`vc`/`pg_conn`) added to processing conftest. Integration test isolation fix for `advance_rotation` (park-and-gap pattern).
+- ~~**Dashboard Airflow visibility**~~ — ✓ done. `airflow_dag_runs.sql` added (queries Airflow's `dag_run` table in the shared Postgres DB). `rotation_schedule.sql` and `search_scrape_jobs.sql` rewritten to use `ops.artifacts_queue` — legacy `runs`/`scrape_jobs` joins removed. V030 migration grants `SELECT ON dag_run TO viewer` (guarded for fresh-stack ordering). Smoke tests updated.
 
 ---
 
