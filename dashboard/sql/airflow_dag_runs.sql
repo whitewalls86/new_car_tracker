@@ -14,7 +14,7 @@ SELECT
             THEN ROUND(EXTRACT(EPOCH FROM (now() - start_date)) / 60, 1)
     END AS duration_min,
     CASE WHEN end_date IS NULL AND start_date IS NOT NULL THEN true ELSE false END AS running
-FROM dag_run
+FROM airflow.dag_run
 WHERE dag_id IN ('scrape_listings', 'scrape_detail_pages')
   AND start_date > now() - interval '3 days'
 ORDER BY start_date DESC
