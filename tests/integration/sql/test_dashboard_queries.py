@@ -415,7 +415,7 @@ class TestPipelineHealthQueries:
                        ) as priority_row
                 FROM ops.ops_detail_scrape_queue q
                 LEFT JOIN detail_scrape_claims c
-                    ON c.listing_id::text = q.listing_id AND c.status = 'running'
+                    ON c.listing_id = q.listing_id AND c.status = 'running'
                 WHERE c.listing_id IS NULL
             )
             SELECT
@@ -449,22 +449,22 @@ class TestPipelineHealthQueries:
                        ) as priority_row
                 FROM ops.ops_detail_scrape_queue q
                 LEFT JOIN detail_scrape_claims c
-                    ON c.listing_id::text = q.listing_id AND c.status = 'running'
+                    ON c.listing_id = q.listing_id AND c.status = 'running'
                 WHERE c.listing_id IS NULL
             )
             SELECT bc.num_of_attempts,
-                   MIN(bc.next_eligible_at) FILTER (
-                       WHERE bc.next_eligible_at > now()
+                   MIN(bc.last_attempted_at + (interval '1 hour' * (12 * power(2, bc.num_of_attempts::float - 1)))) FILTER (
+                       WHERE bc.last_attempted_at + (interval '1 hour' * (12 * power(2, bc.num_of_attempts::float - 1))) > now()
                    ) AT TIME ZONE 'America/Chicago' as next_attempt_at,
                    COUNT(bc.listing_id) as num_listings,
                    COUNT(bc.listing_id) FILTER (
-                       WHERE bc.next_eligible_at < now()
+                       WHERE bc.last_attempted_at + (interval '1 hour' * (12 * power(2, bc.num_of_attempts::float - 1))) < now()
                          AND ovs.stale_reason != 'not_stale'
                    ) as eligible_now,
                    COUNT(bc.listing_id) FILTER (
                        WHERE q.priority_row < 601 AND q.priority_row IS NOT NULL
                    ) as num_in_next_batch
-            FROM analytics.stg_blocked_cooldown bc
+            FROM ops.blocked_cooldown bc
             LEFT JOIN batch_marking q ON q.listing_id = bc.listing_id
             LEFT JOIN ops.ops_vehicle_staleness ovs ON bc.listing_id = ovs.listing_id
             GROUP BY bc.num_of_attempts
@@ -475,19 +475,16 @@ class TestPipelineHealthQueries:
     def test_price_freshness(self, viewer_cur):
         viewer_cur.execute("""
             WITH buckets AS (
-                SELECT FLOOR(LEAST(vs.price_age_hours, 24) * 2) / 2 AS age_floor,
-                       vs.price_tier, vs.is_full_details_stale
+                SELECT FLOOR(LEAST(vs.age_hours, 24) * 2) / 2 AS age_floor,
+                       vs.is_full_details_stale
                 FROM ops.ops_vehicle_staleness vs
-                LEFT JOIN analytics.stg_blocked_cooldown bc
+                LEFT JOIN ops.blocked_cooldown bc
                        ON bc.listing_id = vs.listing_id
-                WHERE vs.price_age_hours IS NOT NULL AND bc.listing_id IS NULL
+                WHERE vs.age_hours IS NOT NULL AND bc.listing_id IS NULL
             )
             SELECT (24 - age_floor)::numeric AS hours_until_stale,
                    TO_CHAR((24 - age_floor)::numeric, 'FM90.0') || 'h' AS expiry_bucket,
-                   COUNT(*) FILTER (
-                       WHERE price_tier = 1 AND NOT is_full_details_stale) AS tier1,
-                   COUNT(*) FILTER (
-                       WHERE price_tier = 2 AND NOT is_full_details_stale) AS tier2,
+                   COUNT(*) FILTER (WHERE NOT is_full_details_stale) AS enriched,
                    COUNT(*) FILTER (WHERE is_full_details_stale) AS full_details_stale,
                    COUNT(*) AS total
             FROM buckets GROUP BY age_floor ORDER BY age_floor DESC
@@ -498,10 +495,12 @@ class TestPipelineHealthQueries:
         viewer_cur.execute("""
             WITH buckets AS (
                 SELECT FLOOR(GREATEST(
-                    (EXTRACT(EPOCH FROM (next_eligible_at - now())) / 3600), 0
+                    (EXTRACT(EPOCH FROM (
+                        last_attempted_at + (interval '1 hour' * (12 * power(2, num_of_attempts::float - 1))) - now()
+                    )) / 3600), 0
                 ) / 2) * 2 AS age_floor
-                FROM analytics.stg_blocked_cooldown
-                WHERE next_eligible_at IS NOT NULL
+                FROM ops.blocked_cooldown
+                WHERE num_of_attempts < 5
             )
             SELECT age_floor::numeric AS hours_until_eligible,
                    TO_CHAR(age_floor::numeric, 'FM90.0') || 'h' AS eligible_bucket,
