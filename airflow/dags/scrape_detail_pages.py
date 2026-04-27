@@ -24,7 +24,7 @@ import requests
 OPS_URL = "http://ops:8060"
 SCRAPER_URL = "http://scraper:8000"
 
-BATCH_SIZE = 450
+BATCH_SIZE = 600
 POLL_INTERVAL_S = 60
 DETAIL_TIMEOUT_S = 10800  # 3 hours — large batches can take a while
 
