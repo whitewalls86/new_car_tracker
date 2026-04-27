@@ -22,7 +22,7 @@ import time
 import requests
 
 OPS_URL = "http://ops:8060"
-SCRAPER_URL = "http://scraper:8050"
+SCRAPER_URL = "http://scraper:8000"
 
 BATCH_SIZE = 450
 POLL_INTERVAL_S = 60
