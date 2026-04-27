@@ -1,6 +1,6 @@
 # Plan 71: Airflow Migration
 
-**Status:** In progress — steps 1–6 complete; steps 7–13 pending
+**Status:** In progress — steps 1–13 complete; steps 14–15 (n8n cutover + decommission) pending
 **Priority:** Medium — strong portfolio signal; replaces n8n entirely
 
 ## Overview
@@ -167,15 +167,19 @@ The detection logic doesn't move. Only the output mechanism changes. Design the 
 4. ~~**`dbt_build` DAG**~~ — ✓ done
 5. ~~**`orphan_checker` + `delete_stale_emails` + `cleanup_parquet`**~~ — ✓ done
 6. ~~**`cleanup_artifacts` DAG**~~ — ✓ done
-7. **[V018 migration](plan_v018_schema_migration.md)** — prerequisite for steps 8–10. Creates `ops.price_observations`, `ops.vin_to_listing`, `ops.blocked_cooldown` (migrated from public), `staging.detail_scrape_claim_events`, `staging.blocked_cooldown_events`; drops dead Plan 89 tables; fixes UUID column types.
-8. **`scrape_listings` DAG** — `advance_rotation` extended to also INSERT a `runs` row and return `run_id` (bridge, easy to remove when `runs` deprecated); fan-out scrape per config; shadow-run alongside n8n.
-9. **`scrape_detail_pages` DAG** — `claim-batch` → `scrape_detail/batch` → `release`; shadow-run alongside n8n. **Unblocks Plan 79.**
-10. **Processing service: core logic** — full design in Plan 93. Blocked on V018 (step 7).
-11. **`results_processing` DAG** — calls processing service; shadow-run against n8n until observation row counts match. Blocked on Plan 93.
-12. **V019 migration** — `CREATE OR REPLACE VIEW ops.ops_vehicle_staleness` and `ops.ops_detail_scrape_queue` as plain Postgres views reading HOT tables; blocked_cooldown backoff logic inlined. Replaces dbt dependency. Blocked on Plan 93 having live data.
-13. **Scraper: add `/ready` + remove ported logic** — delete `advance_rotation` from scraper, remove SRP parsers once processing service shadow period ends. Add `GET /ready` (Plan 92).
+7. ~~**[V018 migration](plan_v018_schema_migration.md)**~~ — ✓ done. Created `ops.price_observations`, `ops.vin_to_listing`, `ops.blocked_cooldown`, `staging.detail_scrape_claim_events`, `staging.blocked_cooldown_events`; dropped dead Plan 89 tables; fixed UUID column types.
+8. ~~**`scrape_listings` DAG**~~ — ✓ done. `advance_rotation` gap check migrated from `runs` to `search_configs.last_queued_at`; returns `run_id` UUID without writing `runs`. Fan-out scrape per config×scope; shadow-run alongside n8n.
+9. ~~**`scrape_detail_pages` DAG**~~ — ✓ done. `claim-batch` → `scrape_detail/batch` → `release`; shadow-run alongside n8n. **Unblocks Plan 79.**
+10. ~~**Processing service: core logic**~~ — ✓ done (Plan 93, 2026-04-21).
+11. ~~**`results_processing` DAG**~~ — ✓ done (2026-04-21).
+12. ~~**V029 migration (was "V019")**~~ — ✓ done (2026-04-27). `ops_vehicle_staleness` and `ops_detail_scrape_queue` rewritten as plain Postgres views reading HOT tables directly. `customer_id IS NULL` replaces full_details staleness; carousel pool merged into dealer_unenriched pool. dbt ops models deleted.
+13. ~~**Scraper: add `/ready` + remove ported logic**~~ — ✓ done. `GET /ready` drain endpoint added; `/search_configs/advance_rotation` removed from scraper (now lives in ops).
 14. **Disable n8n schedules** — cutover; n8n container stays up briefly as fallback.
 15. **Decommission n8n** — remove from docker-compose, archive workflow JSONs to `docs/n8n_archive/`.
+
+**Not in original rollout — added during execution:**
+- ~~**`flush_silver_observations` + `flush_staging_events` DAGs**~~ — ✓ done (PR #86, 2026-04-21). Flush `staging.silver_observations` and staging event tables to MinIO Parquet on schedule. Live in production.
+- ~~**`cleanup_queue` DAG**~~ — ✓ done (PR #88, 2026-04-27). Cleans up completed `artifacts_queue` entries.
 
 ---
 

@@ -63,6 +63,25 @@ DAG_SPECS = {
             "process_batch",
         },
     },
+    "scrape_listings.py": {
+        "dag_id": "scrape_listings",
+        "tasks": {
+            "check_deploy_intent",
+            "check_scraper_health",
+            "advance_rotation",
+            "run_scrapes",
+        },
+    },
+    "scrape_detail_pages.py": {
+        "dag_id": "scrape_detail_pages",
+        "tasks": {
+            "check_deploy_intent",
+            "check_scraper_health",
+            "claim_batch",
+            "scrape_detail",
+            "release_claims",
+        },
+    },
 }
 
 

@@ -136,6 +136,8 @@ def test_advance_rotation_returns_slot_when_due(api_client, verify_cur, seed_sea
     assert response.status_code == 200
     data = response.json()
     assert data["slot"] == 2
+    assert data["run_id"] is not None
+    uuid.UUID(data["run_id"])  # valid UUID — no runs row written, just returned
     assert any(c["search_key"] == key for c in data["configs"])
 
     # last_queued_at should be set on the claimed row
@@ -147,31 +149,23 @@ def test_advance_rotation_returns_slot_when_due(api_client, verify_cur, seed_sea
 
 
 @pytest.mark.integration
-def test_advance_rotation_returns_too_soon_within_gap(api_client, verify_cur, seed_search_config):
-    seed_search_config(rotation_slot=3, last_queued_at=None)
-
-    # Seed a very recent search scrape run
-    run_id = str(uuid.uuid4())
-    verify_cur.execute(
-        """
-        INSERT INTO runs 
-            (run_id, status, trigger) 
-        VALUES (%s::uuid, 'completed', 'search scrape')
-        """,
-        (run_id,),
+def test_advance_rotation_returns_too_soon_within_gap(api_client, seed_search_config):
+    # Seed a config with a very recent last_queued_at to trigger the gap guard.
+    # The gap check now reads MAX(search_configs.last_queued_at) — no runs row needed.
+    seed_search_config(
+        rotation_slot=3,
+        last_queued_at=datetime.datetime.now(datetime.timezone.utc),
     )
-    try:
-        response = api_client.post(
-            "/scrape/rotation/advance",
-            params={"min_idle_minutes": 1, "min_gap_minutes": 9999},
-        )
 
-        assert response.status_code == 200
-        data = response.json()
-        assert data["slot"] is None
-        assert data.get("reason") == "too_soon"
-    finally:
-        verify_cur.execute("DELETE FROM runs WHERE run_id = %s", (run_id,))
+    response = api_client.post(
+        "/scrape/rotation/advance",
+        params={"min_idle_minutes": 1, "min_gap_minutes": 9999},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["slot"] is None
+    assert data.get("reason") == "too_soon"
 
 
 @pytest.mark.integration

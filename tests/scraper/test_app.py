@@ -202,111 +202,34 @@ class TestGetKnownVins:
 
 
 # ---------------------------------------------------------------------------
-# POST /search_configs/advance_rotation
+# GET /ready
 # ---------------------------------------------------------------------------
-def _make_rotation_pool(mocker, fetchrow_side_effect):
-    """
-    Build a mock pool/conn for advance_rotation tests.
-    conn.transaction() must return a sync context manager (not a coroutine)
-    because app.py uses `async with conn.transaction()`.
-    """
-    mock_transaction = MagicMock()
-    mock_transaction.__aenter__ = AsyncMock(return_value=None)
-    mock_transaction.__aexit__ = AsyncMock(return_value=False)
-
-    mock_conn = MagicMock()
-    mock_conn.transaction.return_value = mock_transaction
-    mock_conn.fetchrow = AsyncMock(side_effect=fetchrow_side_effect)
-    mock_conn.fetch = AsyncMock(return_value=[])
-    mock_conn.execute = AsyncMock()
-
-    mock_pool = MagicMock()
-    mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
-    mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
-    return mock_pool, mock_conn
-
-
-class TestAdvanceRotation:
-    def test_too_soon_returns_null_slot(self, mock_scraper_client, mocker):
-        import datetime
-        last_run_row = MagicMock()
-        last_run_row.__getitem__ = lambda s, k: datetime.datetime.now(datetime.timezone.utc)
-        mock_pool, _ = _make_rotation_pool(mocker, [last_run_row])
-        mocker.patch("scraper.app.get_pool", new_callable=AsyncMock, return_value=mock_pool)
-
-        resp = mock_scraper_client.post(
-            "/search_configs/advance_rotation"
-            "?min_idle_minutes=1439&min_gap_minutes=230"
-        )
+class TestReady:
+    def test_ready_when_no_jobs(self, mock_scraper_client):
+        scraper_app._jobs.clear()
+        resp = mock_scraper_client.get("/ready")
         assert resp.status_code == 200
-        data = resp.json()
-        assert data["slot"] is None
-        assert data["reason"] == "too_soon"
+        assert resp.json() == {"ready": True, "active_jobs": 0}
 
-    def test_no_slot_due_returns_empty_configs(self, mock_scraper_client, mocker):
-        # last_run=None, slot_row=None, legacy_row=None
-        mock_pool, _ = _make_rotation_pool(mocker, [None, None, None])
-        mocker.patch("scraper.app.get_pool", new_callable=AsyncMock, return_value=mock_pool)
+    def test_not_ready_when_job_queued(self, mock_scraper_client):
+        _inject_job("rdy1", status="queued")
+        resp = mock_scraper_client.get("/ready")
+        assert resp.status_code == 503
+        assert resp.json()["detail"]["ready"] is False
+        assert resp.json()["detail"]["active_jobs"] == 1
 
-        resp = mock_scraper_client.post("/search_configs/advance_rotation")
+    def test_not_ready_when_job_running(self, mock_scraper_client):
+        _inject_job("rdy2", status="running")
+        resp = mock_scraper_client.get("/ready")
+        assert resp.status_code == 503
+
+    def test_ready_when_only_completed_jobs(self, mock_scraper_client):
+        scraper_app._jobs.clear()
+        _inject_job("rdy3", status="completed")
+        _inject_job("rdy4", status="failed")
+        resp = mock_scraper_client.get("/ready")
         assert resp.status_code == 200
-        data = resp.json()
-        assert data["slot"] is None
-        assert data["configs"] == []
-
-    def test_response_has_slot_and_configs_keys(self, mock_scraper_client, mocker):
-        mock_pool, _ = _make_rotation_pool(mocker, [None, None, None])
-        mocker.patch("scraper.app.get_pool", new_callable=AsyncMock, return_value=mock_pool)
-
-        resp = mock_scraper_client.post("/search_configs/advance_rotation")
-        data = resp.json()
-        assert "slot" in data
-        assert "configs" in data
-
-    def test_legacy_fallback_returns_single_config(self, mock_scraper_client, mocker):
-        """When no slot_row exists but a legacy (no rotation_slot) config does."""
-        import json as _json
-        legacy_row = {
-            "search_key": "legacy-search",
-            "params": _json.dumps({
-                "makes": ["Toyota"], "models": ["RAV4"],
-                "zip_code": "77002", "scopes": ["local"],
-            }),
-        }
-        # fetchrow calls: last_run=None, slot_row=None, legacy_row=legacy_row
-        mock_pool, _ = _make_rotation_pool(mocker, [None, None, legacy_row])
-        mocker.patch("scraper.app.get_pool", new_callable=AsyncMock, return_value=mock_pool)
-
-        resp = mock_scraper_client.post("/search_configs/advance_rotation")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["slot"] is None
-        assert len(data["configs"]) == 1
-        assert data["configs"][0]["search_key"] == "legacy-search"
-        assert data["configs"][0]["scopes"] == ["local"]
-
-    def test_slot_path_returns_slot_and_configs(self, mock_scraper_client, mocker):
-        """When a rotation slot is found, return all configs in that slot."""
-        import json as _json
-        slot_row = {"rotation_slot": 3}
-        params_a = _json.dumps({"makes": ["Honda"], "scopes": ["national"]})
-        params_b = _json.dumps({"makes": ["Toyota"], "scopes": ["local"]})
-        config_rows = [
-            {"search_key": "slot3-a", "params": params_a},
-            {"search_key": "slot3-b", "params": params_b},
-        ]
-        # fetchrow calls: last_run=None, slot_row=slot_row (no third fetchrow)
-        mock_pool, mock_conn = _make_rotation_pool(mocker, [None, slot_row])
-        mock_conn.fetch = AsyncMock(return_value=config_rows)
-        mocker.patch("scraper.app.get_pool", new_callable=AsyncMock, return_value=mock_pool)
-
-        resp = mock_scraper_client.post("/search_configs/advance_rotation")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["slot"] == 3
-        assert len(data["configs"]) == 2
-        assert data["configs"][0]["search_key"] == "slot3-a"
-        assert data["configs"][1]["search_key"] == "slot3-b"
+        assert resp.json()["ready"] is True
 
 
 # ---------------------------------------------------------------------------

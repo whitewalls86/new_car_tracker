@@ -1,95 +1,154 @@
-# Plan 90: dbt Decommission
+# Plan 90: dbt Migration to dbt-duckdb
 
 **Status:** Planned — blocked on Plan 96 validation
 **Priority:** Medium — do not start until silver has 2+ weeks of production data
-**Previously titled:** "dbt Intermediate Cleanup"
+**Previously titled:** "dbt Decommission"
 
 ---
 
 ## Overview
 
-With the processing service (Plan 93) writing all observations to MinIO silver as the primary store, dbt's source tables (`srp_observations`, `detail_observations`) are no longer populated. This plan decides dbt's fate and migrates the analytics layer accordingly.
+With the processing service (Plan 93) writing all observations to MinIO silver, dbt's Postgres source tables (`srp_observations`, `detail_observations`) are no longer populated. Rather than decommissioning dbt, this plan migrates it to use DuckDB as the execution engine, reading directly from MinIO silver Parquet via `httpfs`.
+
+dbt remains the transformation, testing, lineage, and documentation layer. The execution backend changes; nothing else does.
 
 ---
 
 ## The Decision
 
-**Option A — Full decommission (recommended):** Replace all dbt models with DuckDB queries against MinIO silver and the Postgres HOT tables. Remove `dbt_runner` from docker-compose. Remove the `dbt_build` Airflow DAG.
+**Option A — Full decommission (previously recommended, now rejected):** Replace all dbt models with ad-hoc DuckDB queries. Loses lineage tracking, data quality tests, schema documentation, and dbt docs — high-value for both operational correctness and portfolio purposes.
 
-**Option B — Reduced dbt:** Keep dbt for complex derived models (deal scores, market benchmarks). Point dbt at silver via DuckDB FDW or materialized Postgres tables populated from silver. More moving parts, harder to justify.
-
-**Recommended: Option A.** Dashboard charts map cleanly to DuckDB queries. With Airflow handling orchestration, dbt adds complexity without adding value. The portfolio signal from dbt is already captured in git history — the story becomes "I replaced a batch transformation layer with a streaming write path and event-log analytics."
+**Option B — Migrate to dbt-duckdb (selected):** Swap the execution engine from Postgres to DuckDB. DuckDB reads MinIO silver Parquet via httpfs. Existing models and tests survive with minor SQL compatibility fixes. `dbt_runner`, the `dbt_build` Airflow DAG, Layer 2 CI tests, and dbt docs all stay intact.
 
 ---
 
 ## Prerequisites
 
-- Plan 96 complete: silver validated, DuckDB queries confirmed correct against production data
+- Plan 96 complete: silver validated, dbt-duckdb sources confirmed against production data
 - At least 2 weeks of silver data in production
-- All dashboard charts confirmed serviceable from DuckDB queries
 
 ---
 
-## What Gets Removed
+## What Changes
 
-| Component | Replacement |
-|---|---|
-| All dbt models | DuckDB queries against silver |
-| `dbt_runner` service | Removed from docker-compose |
-| `dbt_build` Airflow DAG | Removed |
-| `dbt_intents` table | Removed |
-| Layer 2 dbt logic tests in CI | Replaced by DuckDB query validation tests |
-| `srp_observations` Postgres table | Dropped (data preserved in silver) |
-| `detail_observations` Postgres table | Dropped (data preserved in silver) |
-| `detail_carousel_hints` Postgres table | Dropped (carousel observations in silver) |
-| `raw_artifacts` table | Dropped (replaced by `artifacts_queue` in Plan 97) |
-| `artifact_processing` table | Dropped (replaced by `artifacts_queue` in Plan 97) |
+### dbt Dockerfile
 
----
+Swap adapter:
 
-## What the Analytics Layer Looks Like After
+```dockerfile
+# before
+RUN pip install dbt-postgres==1.8.2 --no-cache-dir
 
-DuckDB pointed at MinIO silver + Postgres HOT tables via `postgres_scan()`.
-
-```sql
--- Vehicle snapshot (replaces mart_vehicle_snapshot)
-SELECT
-    p.vin, p.listing_id, p.price, p.make, p.model, p.last_seen_at,
-    attrs.trim, attrs.year, attrs.fuel_type, attrs.body_style
-FROM postgres_scan('postgresql://...', 'public', 'price_observations') p
-LEFT JOIN (
-    SELECT DISTINCT ON (vin) vin, trim, year, fuel_type, body_style
-    FROM read_parquet('s3://bucket/silver/observations/year=*/month=*/*.parquet',
-                      hive_partitioning=true)
-    WHERE source = 'detail'
-    ORDER BY vin, fetched_at DESC
-) attrs USING (vin);
-
--- Deal score (replaces mart_deal_scores)
-SELECT
-    p.vin, p.price, p.make, p.model,
-    market.median_price,
-    round(p.price::numeric / NULLIF(market.median_price, 0), 2) AS price_to_market_ratio
-FROM postgres_scan('postgresql://...', 'public', 'price_observations') p
-JOIN (
-    SELECT make, model, median(price)::integer AS median_price
-    FROM read_parquet('s3://bucket/silver/observations/year=*/month=*/*.parquet',
-                      hive_partitioning=true)
-    WHERE source = 'detail'
-      AND listing_state = 'active'
-      AND price IS NOT NULL
-    GROUP BY make, model
-) market USING (make, model);
+# after
+RUN pip install dbt-duckdb==1.10.1 --no-cache-dir
 ```
+
+### profiles.yml — new duckdb target
+
+```yaml
+cartracker:
+  target: prod
+  outputs:
+    prod:
+      type: duckdb
+      path: /tmp/cartracker.duckdb
+      extensions:
+        - httpfs
+        - parquet
+      settings:
+        s3_endpoint: "minio:9000"
+        s3_url_style: path
+        s3_use_ssl: "false"
+        s3_region: us-east-1
+        s3_access_key_id: "{{ env_var('MINIO_ROOT_USER') }}"
+        s3_secret_access_key: "{{ env_var('MINIO_ROOT_PASSWORD') }}"
+    ci:
+      type: duckdb
+      path: /tmp/cartracker_ci.duckdb
+      extensions:
+        - httpfs
+        - parquet
+      settings:
+        s3_endpoint: "{{ env_var('DBT_S3_ENDPOINT', 'minio:9000') }}"
+        s3_url_style: path
+        s3_use_ssl: "false"
+        s3_region: us-east-1
+        s3_access_key_id: "{{ env_var('MINIO_ROOT_USER') }}"
+        s3_secret_access_key: "{{ env_var('MINIO_ROOT_PASSWORD') }}"
+```
+
+### docker-compose.yml — dbt_runner env vars
+
+Add MinIO credentials to `dbt_runner`:
+
+```yaml
+dbt_runner:
+  environment:
+    MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+    MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+```
+
+### dbt Sources
+
+Source definitions move from Postgres tables to external MinIO Parquet. See Plan 96 for the source YAML and model `FROM` clause patterns.
+
+### SQL Compatibility Fixes
+
+Run existing models against DuckDB and fix as needed. Known incompatibilities to watch:
+
+| Issue | Postgres | DuckDB | Fix |
+|---|---|---|---|
+| Implicit casting | Lenient | Strict | Add explicit `CAST()` or enable `old_implicit_casting: true` temporarily |
+| `GROUP BY` | Allows uniquely-determined non-grouped cols | Requires all non-aggregated cols | Add missing columns or wrap in `ANY_VALUE()` |
+| `to_date()` | Supported | Not supported | Replace with `strptime()` |
+| Integer division | `1/2 = 0` | `1/2 = 0.5` | Use `//` for integer division where needed |
+
+---
+
+## What Gets Removed (Postgres cleanup)
+
+These tables are now fully redundant — data is preserved in silver Parquet.
+
+| Table | Reason |
+|---|---|
+| `srp_observations` | Observations in silver |
+| `detail_observations` | Observations in silver |
+| `detail_carousel_hints` | Carousel observations in silver |
+| `raw_artifacts` | Replaced by `artifacts_queue` (Plan 97) |
+| `artifact_processing` | Replaced by `artifacts_queue` (Plan 97) |
+
+`dbt_intents` is also removed — no longer populated.
+
+---
+
+## Gold Layer and Dashboard
+
+Mart models materialize as DuckDB tables (in-memory or persisted to `/tmp/cartracker.duckdb`). The dashboard (`dashboard/db.py`) switches from `psycopg2` → `duckdb`, reading from the DuckDB file for analytical queries and retaining a direct Postgres connection via `postgres_scan()` for operational HOT table data (`price_observations`, `vin_to_listing`).
+
+This is the only part of the codebase outside `dbt/` that changes.
+
+---
+
+## What Stays Unchanged
+
+- `dbt_runner` service (reconfigured, not removed)
+- `dbt_build` Airflow DAG
+- All dbt models (minor SQL edits only)
+- All dbt tests and `schema.yml` contracts
+- Layer 2 CI tests — dbt test assertions run identically against DuckDB
+- dbt docs
 
 ---
 
 ## Rollout Order
 
-1. Confirm all dashboard queries can be served from DuckDB (test in staging against production silver data)
-2. Remove dbt models one layer at a time, running dashboard spot-checks after each deletion
-3. Drop `srp_observations`, `detail_observations`, `detail_carousel_hints` Postgres tables
-4. Drop `raw_artifacts`, `artifact_processing` tables
-5. Remove `dbt_runner` from docker-compose
-6. Remove `dbt_build` DAG from Airflow
-7. Remove Layer 2 dbt tests from CI; add DuckDB query validation tests
+1. Add `duckdb` target to `profiles.yml`; update `dbt/Dockerfile` to `dbt-duckdb==1.10.1`
+2. On a feature branch, run all existing models against DuckDB in dev — catalogue SQL compat failures
+3. Fix compat issues model by model; keep existing tests passing throughout
+4. Redefine dbt sources as external MinIO Parquet sources (see Plan 96)
+5. Confirm all dbt tests pass against production silver data
+6. Add MinIO env vars to `dbt_runner` in `docker-compose.yml`
+7. Run Layer 2 CI tests — confirm passing
+8. Migrate `dashboard/db.py` from psycopg2 → duckdb
+9. Drop legacy Postgres source tables (Flyway migration)
+10. Deploy to production

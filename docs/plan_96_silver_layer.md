@@ -75,53 +75,82 @@ If consistently > 0 in `/process/batch` responses, investigate and fix before pr
 
 ---
 
-## DuckDB Analytics Query Surface
+## dbt-duckdb Source Configuration
 
-These are production-ready queries that become the analytics layer once Plan 90 removes dbt.
+Plan 90 migrates dbt to use DuckDB as its execution engine rather than decommissioning it. This section documents how dbt sources are redefined to point at MinIO silver Parquet, and confirms that existing models can run against them.
+
+### Source YAML
+
+Replace the existing Postgres source tables with an external MinIO source:
+
+```yaml
+version: 2
+
+sources:
+  - name: silver
+    description: "Parsed observations — hive-partitioned Parquet in MinIO"
+    tables:
+      - name: observations
+        description: "All parsed observations from SRP, detail, and carousel pages"
+        meta:
+          external_location: >
+            read_parquet(
+              's3://bronze/silver/observations/**/*.parquet',
+              hive_partitioning=true
+            )
+        columns:
+          - name: artifact_id
+          - name: listing_id
+          - name: vin
+          - name: source
+          - name: listing_state
+          - name: fetched_at
+          - name: price
+          - name: make
+          - name: model
+          - name: trim
+          - name: year
+          - name: mileage
+          - name: obs_year
+          - name: obs_month
+          - name: obs_day
+```
+
+### Model FROM clause pattern
+
+Existing models that previously referenced `srp_observations` or `detail_observations` are rewritten to filter `{{ source('silver', 'observations') }}` by `source` column:
 
 ```sql
--- Full price history for a VIN (replaces int_price_history_by_vin)
-SELECT fetched_at, price, source, mileage
-FROM read_parquet('s3://bucket/silver/observations/year=*/month=*/*.parquet',
-                  hive_partitioning=true)
-WHERE vin = $1
-  AND source IN ('srp', 'detail')
-  AND listing_state = 'active'
-ORDER BY fetched_at;
+-- previously: FROM {{ source('public', 'srp_observations') }}
+-- now:
+FROM {{ source('silver', 'observations') }}
+WHERE source = 'srp'
 
--- Days on market (replaces int_listing_days_on_market)
-SELECT vin, listing_id,
-       min(fetched_at)                                      AS first_seen,
-       max(fetched_at)                                      AS last_seen,
-       date_diff('day', min(fetched_at), max(fetched_at))   AS days_on_market
-FROM read_parquet(...)
-WHERE vin = $1
-GROUP BY vin, listing_id;
-
--- Market median price by make/model (replaces int_model_price_benchmarks)
-SELECT make, model,
-       median(price)::integer  AS median_price,
-       count(*)                AS observation_count
-FROM read_parquet(...)
+-- previously: FROM {{ source('public', 'detail_observations') }}
+-- now:
+FROM {{ source('silver', 'observations') }}
 WHERE source = 'detail'
-  AND listing_state = 'active'
-  AND price IS NOT NULL
-GROUP BY make, model;
-
--- Current inventory with deal score (replaces mart_vehicle_snapshot + mart_deal_scores)
-SELECT
-    p.vin, p.listing_id, p.price, p.make, p.model,
-    round(p.price::numeric / NULLIF(market.median_price, 0), 2) AS price_to_market_ratio
-FROM postgres_scan('postgresql://...', 'public', 'price_observations') p
-JOIN (
-    SELECT make, model, median(price)::integer AS median_price
-    FROM read_parquet('s3://bucket/silver/observations/year=*/month=*/*.parquet',
-                      hive_partitioning=true)
-    WHERE source = 'detail' AND listing_state = 'active' AND price IS NOT NULL
-    GROUP BY make, model
-) market USING (make, model)
-WHERE p.vin IS NOT NULL;
 ```
+
+### Postgres HOT tables via postgres_scan()
+
+Mart models that need current operational state join against Postgres directly:
+
+```sql
+-- mart_vehicle_snapshot pattern
+SELECT
+    p.vin, p.listing_id, p.price, p.make, p.model, p.last_seen_at,
+    attrs.trim, attrs.year, attrs.fuel_type, attrs.body_style
+FROM {{ source('ops', 'price_observations') }} p   -- postgres_scan() under the hood
+LEFT JOIN (
+    SELECT DISTINCT ON (vin) vin, trim, year, fuel_type, body_style
+    FROM {{ source('silver', 'observations') }}
+    WHERE source = 'detail'
+    ORDER BY vin, fetched_at DESC
+) attrs USING (vin)
+```
+
+The `ops` source is defined separately pointing at the Postgres HOT tables via dbt-duckdb's `postgres_scan()` integration.
 
 ---
 
@@ -170,4 +199,4 @@ Bronze HTML follows the existing retention policy. Since Plan 97 routes files di
 
 ## Gate for Plan 90
 
-Plan 90 (dbt decommission) must not start until all five validation checks above pass and silver has at least 2 weeks of production data. The validation results from this plan are the explicit go/no-go for removing dbt.
+Plan 90 (dbt migration to dbt-duckdb) must not start until all five validation checks above pass, silver has at least 2 weeks of production data, and the dbt-duckdb source configuration above has been confirmed to execute correctly against production silver data on a feature branch.

@@ -1,9 +1,10 @@
 # Plan 99: Per-Source Price Observations
 
-**Status:** PLANNED
-**Priority:** High — prerequisite for V019 view correctness
+**Status:** COMPLETE (2026-04-27) — implemented with a simplified design; see note below
 **Depends on:** Plan 93 (processing service, COMPLETE)
-**Blocks:** Plan V019 (view migration — `ops_vehicle_staleness` staleness logic requires per-source rows)
+**Blocks:** V029 (plain Postgres ops views — COMPLETE)
+
+> **Design note:** The per-source composite PK `(listing_id, source)` described below was not implemented. Instead, V028 added a `customer_id` column to `ops.price_observations`. `customer_id IS NULL` means the listing has never been detail-scraped (equivalent to "no detail source row"). V029 then rewrote the staleness view using this flag, eliminating the need to pivot by source. The original plan's goal — enabling the staleness view to distinguish detail vs SRP observations — was achieved with this simpler approach. The steps below are retained for reference.
 
 ---
 

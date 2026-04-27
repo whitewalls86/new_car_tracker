@@ -1,4 +1,3 @@
-import json
 import logging
 import os
 import threading
@@ -276,123 +275,6 @@ async def get_known_vins(search_key: str, scope: str = "national") -> Dict[str, 
         "scope": scope, 
         "count": len(rows), 
         "vins": [r["vin"] for r in rows]
-    }
-
-
-@app.post("/search_configs/advance_rotation")
-async def advance_search_rotation(
-    min_idle_minutes: int = 1439,
-    min_gap_minutes: int = 230,
-) -> Dict[str, Any]:
-    """
-    Atomically claims the next rotation slot due for scraping.
-
-    Architectural note: this is a justified exception to the principle that n8n
-    owns all orchestration logic. The slot-claiming transaction requires an
-    atomic DB read-modify-write that cannot be expressed safely in n8n HTTP nodes.
-
-    Two guards:
-    1. min_idle_minutes (default 1439 = 23h59m): each slot must wait this long
-       before it can fire again. With 6 slots this means ~1 fire/day per slot.
-    2. min_gap_minutes (default 230 = ~3h50m): blocks if ANY non-skipped search
-       scrape run started within this window. Prevents multiple slots from
-       firing in rapid succession even if all have stale timestamps.
-
-    Returns {"slot": null, "configs": []} when nothing is due.
-    """
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        async with conn.transaction():
-            # Guard: check time since last non-skipped search scrape run
-            last_run = await conn.fetchrow("""
-                SELECT started_at
-                FROM runs
-                WHERE trigger = 'search scrape'
-                  AND status NOT IN ('skipped', 'failed', 'requested')
-                ORDER BY started_at DESC
-                LIMIT 1
-            """)
-            if last_run and last_run["started_at"]:
-                import datetime
-                gap = datetime.datetime.now(datetime.timezone.utc) - last_run["started_at"]
-                if gap.total_seconds() < min_gap_minutes * 60:
-                    return {"slot": None, "configs": [], "reason": "too_soon",
-                            "last_run_minutes_ago": round(gap.total_seconds() / 60, 1)}
-
-            # Find the next due slot
-            slot_row = await conn.fetchrow("""
-                SELECT rotation_slot
-                FROM search_configs
-                WHERE enabled = true
-                  AND rotation_slot IS NOT NULL
-                  AND (last_queued_at IS NULL
-                       OR last_queued_at < now() - make_interval(mins => $1))
-                GROUP BY rotation_slot
-                ORDER BY MIN(COALESCE(last_queued_at, '1970-01-01'::timestamptz)), rotation_slot
-                LIMIT 1
-            """, min_idle_minutes)
-
-            if slot_row is None:
-                # Fallback: try legacy single-config (no rotation_slot)
-                row = await conn.fetchrow("""
-                    SELECT search_key, params
-                    FROM search_configs
-                    WHERE enabled = true
-                      AND rotation_slot IS NULL
-                      AND (last_queued_at IS NULL
-                           OR last_queued_at < now() - make_interval(mins => $1))
-                    ORDER BY rotation_order NULLS LAST, search_key
-                    LIMIT 1
-                    FOR UPDATE SKIP LOCKED
-                """, min_idle_minutes)
-
-                if not row:
-                    return {"slot": None, "configs": []}
-
-                await conn.execute(
-                    "UPDATE search_configs SET last_queued_at = now() WHERE search_key = $1",
-                    row["search_key"],
-                )
-                raw_params = row["params"]
-                params = json.loads(raw_params) if isinstance(raw_params, str) else dict(raw_params)
-                return {
-                    "slot": None,
-                    "configs": [{
-                        "search_key": row["search_key"],
-                        "params": params,
-                        "scopes": params.get("scopes", ["local", "national"]),
-                    }],
-                }
-
-            slot = slot_row["rotation_slot"]
-
-            # Claim all configs in this slot
-            await conn.execute("""
-                UPDATE search_configs
-                SET last_queued_at = now()
-                WHERE enabled = true AND rotation_slot = $1
-            """, slot)
-
-            rows = await conn.fetch("""
-                SELECT search_key, params
-                FROM search_configs
-                WHERE enabled = true AND rotation_slot = $1
-                ORDER BY rotation_order NULLS LAST, search_key
-            """, slot)
-
-    configs = []
-    for row in rows:
-        raw_params = row["params"]
-        params = json.loads(raw_params) if isinstance(raw_params, str) else dict(raw_params)
-        configs.append({
-            "search_key": row["search_key"],
-            "params": params,
-            "scopes": params.get("scopes", ["local", "national"]),
-        })
-
-    return {
-        "slot": slot,
-        "configs": configs,
     }
 
 
@@ -773,3 +655,19 @@ def get_logs(lines: int = 200) -> Dict[str, Any]:
 @app.get("/health")
 def health():
     return {"ok": True}
+
+
+@app.get("/ready")
+def ready():
+    """
+    Drain endpoint (Plan 92). Returns 200 when no jobs are in-flight so that
+    a deploy can proceed safely. Returns 503 while jobs are running or queued.
+    """
+    with _jobs_lock:
+        active = [j for j in _jobs.values() if j["status"] in ("queued", "running")]
+    if active:
+        raise HTTPException(
+            status_code=503,
+            detail={"ready": False, "active_jobs": len(active)},
+        )
+    return {"ready": True, "active_jobs": 0}

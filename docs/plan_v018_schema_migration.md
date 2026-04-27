@@ -1,6 +1,6 @@
 # V018: Schema Migration
 
-**Status:** Ready to implement — no blockers
+**Status:** COMPLETE (shipped as part of Plan 93 rollout)
 **Migration file:** `db/migrations/V018__hot_tables_and_cleanup.sql`
 
 ---
