@@ -77,6 +77,7 @@ def write_srp_observations(
                 "price": listing.get("price"),
                 "make": listing.get("make"),
                 "model": listing.get("model"),
+                "customer_id": None,  # SRP never enriches dealer info
                 "last_seen_at": fetched_at,
                 "last_artifact_id": artifact_id,
             })

@@ -52,15 +52,16 @@ def seed_artifact(cur):
 @pytest.fixture()
 def seed_price_observation(cur):
     """Factory: insert a price_observations row."""
-    def _factory(listing_id=None, vin=None, price=25000, make="Honda", model="CR-V", artifact_id=1):
+    def _factory(listing_id=None, vin=None, price=25000, make="Honda", model="CR-V",
+                 customer_id=None, artifact_id=1):
         listing_id = listing_id or str(uuid.uuid4())
         cur.execute(
             """
             INSERT INTO ops.price_observations
-                (listing_id, vin, price, make, model, last_seen_at, last_artifact_id)
-            VALUES (%s::uuid, %s, %s, %s, %s, now(), %s)
+                (listing_id, vin, price, make, model, customer_id, last_seen_at, last_artifact_id)
+            VALUES (%s::uuid, %s, %s, %s, %s, %s, now(), %s)
             """,
-            (listing_id, vin, price, make, model, artifact_id),
+            (listing_id, vin, price, make, model, customer_id, artifact_id),
         )
         return listing_id
 
