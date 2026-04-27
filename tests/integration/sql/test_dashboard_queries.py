@@ -12,6 +12,7 @@ import pytest
 
 from dashboard.queries import (
     ACTIVE_RUNS,
+    AIRFLOW_DAG_RUNS,
     ARTIFACT_BACKLOG,
     BLOCKED_COOLDOWN_HISTOGRAM,
     COOLDOWN_BACKLOG,
@@ -400,5 +401,5 @@ class TestPipelineHealthQueries:
         """)
         if viewer_cur.fetchone() is None:
             pytest.skip("dag_run table not yet created (Airflow not initialised)")
-        viewer_cur.execute(Q.AIRFLOW_DAG_RUNS)
+        viewer_cur.execute(AIRFLOW_DAG_RUNS)
         viewer_cur.fetchall()
