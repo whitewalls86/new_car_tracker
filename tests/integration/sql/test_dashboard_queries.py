@@ -5,10 +5,12 @@ All tests run as the `viewer` role (via the viewer_cur fixture) — the same
 role the dashboard uses in production. This catches both SQL breakage and
 permission regressions (missing GRANTs after schema changes).
 
-Queries should execute without error against an empty-but-valid schema
-(Flyway migrations applied, dbt tables exist but are empty).
+Queries are imported from dashboard.queries (the same module the dashboard
+uses), so tests and production are always in sync.
 """
 import pytest
+
+from dashboard import queries as Q
 
 pytestmark = pytest.mark.integration
 
@@ -282,418 +284,90 @@ class TestMarketTrendsQueries:
 class TestPipelineHealthQueries:
 
     def test_active_runs(self, viewer_cur):
-        viewer_cur.execute("""
-            SELECT r.trigger, r.started_at AT TIME ZONE 'America/Chicago' AS started_at,
-                   ROUND(EXTRACT(EPOCH FROM now() - r.started_at) / 60) AS elapsed_min,
-                   r.progress_count, r.total_count,
-                   CASE WHEN r.total_count > 0
-                        THEN ROUND(r.progress_count::numeric /
-                                   (EXTRACT(EPOCH FROM now() - r.started_at) / 60), 1)
-                   END AS vins_per_min,
-                   (SELECT COUNT(*) FROM scrape_jobs j
-                    WHERE j.run_id = r.run_id AND j.status = 'failed') AS failed_jobs
-            FROM runs r WHERE r.status = 'running' ORDER BY r.started_at
-        """)
+        viewer_cur.execute(Q.ACTIVE_RUNS)
         viewer_cur.fetchall()
 
     def test_dbt_lock_status(self, viewer_cur):
-        viewer_cur.execute("""
-            SELECT locked, locked_at AT TIME ZONE 'America/Chicago' AS locked_at, locked_by
-            FROM dbt_lock WHERE id = 1
-        """)
+        viewer_cur.execute(Q.DBT_LOCK_STATUS)
         row = viewer_cur.fetchone()
         assert row is not None
 
     def test_rotation_schedule(self, viewer_cur):
-        viewer_cur.execute("""
-            WITH slot_configs AS (
-                SELECT rotation_slot,
-                       string_agg(search_key, ', ' ORDER BY search_key) AS search_keys,
-                       MAX(last_queued_at) AS last_queued_at
-                FROM search_configs
-                WHERE enabled = true AND rotation_slot IS NOT NULL
-                GROUP BY rotation_slot
-            ), slot_last_run AS (
-                SELECT DISTINCT ON (sc.rotation_slot)
-                    sc.rotation_slot, r.run_id,
-                    r.status AS run_status, r.started_at
-                FROM search_configs sc
-                JOIN scrape_jobs j ON j.search_key = sc.search_key
-                JOIN runs r ON r.run_id = j.run_id AND r.trigger = 'search scrape'
-                WHERE sc.enabled = true AND sc.rotation_slot IS NOT NULL
-                ORDER BY sc.rotation_slot, r.started_at DESC
-            ), slot_results AS (
-                SELECT slr.rotation_slot,
-                       COUNT(DISTINCT a.artifact_id) AS pages,
-                       COUNT(DISTINCT a.artifact_id) FILTER (
-                           WHERE a.http_status IS NULL OR a.http_status >= 400
-                       ) AS errors,
-                       COUNT(DISTINCT so.vin) AS vins_observed
-                FROM slot_last_run slr
-                JOIN scrape_jobs j ON j.run_id = slr.run_id
-                    AND j.search_key IN (
-                        SELECT search_key FROM search_configs
-                        WHERE rotation_slot = slr.rotation_slot
-                    )
-                JOIN raw_artifacts a ON a.run_id = slr.run_id
-                    AND a.artifact_type = 'results_page'
-                    AND a.search_key = j.search_key
-                    AND a.search_scope = j.scope
-                LEFT JOIN srp_observations so ON so.artifact_id = a.artifact_id
-                    AND so.vin IS NOT NULL
-                GROUP BY slr.rotation_slot
-            )
-            SELECT c.rotation_slot AS slot, c.search_keys,
-                   c.last_queued_at AT TIME ZONE 'America/Chicago' AS last_fired,
-                   ROUND(EXTRACT(EPOCH FROM (now() - c.last_queued_at)) / 3600, 1) AS hours_ago,
-                   COALESCE(slr.run_status, '-') AS last_status,
-                   COALESCE(res.pages, 0) AS pages,
-                   COALESCE(res.errors, 0) AS errors,
-                   COALESCE(res.vins_observed, 0) AS vins_observed,
-                   (c.last_queued_at + interval '1439 minutes')
-                       AT TIME ZONE 'America/Chicago' AS next_eligible,
-                   CASE
-                       WHEN c.last_queued_at IS NULL THEN 'Ready now'
-                       WHEN now() > c.last_queued_at + interval '1439 minutes' THEN 'Ready now'
-                       ELSE 'In ' || ROUND(EXTRACT(EPOCH FROM (
-                           c.last_queued_at + interval '1439 minutes' - now()
-                       )) / 3600, 1)::text || 'h'
-                   END AS next_status
-            FROM slot_configs c
-            LEFT JOIN slot_last_run slr ON slr.rotation_slot = c.rotation_slot
-            LEFT JOIN slot_results res ON res.rotation_slot = c.rotation_slot
-            ORDER BY c.rotation_slot
-        """)
+        viewer_cur.execute(Q.ROTATION_SCHEDULE)
         viewer_cur.fetchall()
 
     def test_recent_detail_scrape_runs(self, viewer_cur):
-        viewer_cur.execute("""
-            WITH my_runs AS (
-                SELECT * FROM runs
-                WHERE trigger = 'detail scrape'
-                ORDER BY started_at DESC LIMIT 20
-            ), price_min AS (
-                SELECT vin, MIN(observed_at) as min_observed_at
-                FROM analytics.int_price_events GROUP BY vin
-            ), filtered_artifacts AS (
-                SELECT ra.* FROM raw_artifacts ra JOIN my_runs r USING (run_id)
-            )
-            SELECT r.started_at AT TIME ZONE 'America/Chicago' AS started,
-                   CASE
-                       WHEN r.finished_at IS NOT NULL
-                       THEN ROUND(EXTRACT(EPOCH FROM (r.finished_at - r.started_at))
-                                  / 60)::text || 'm'
-                       ELSE ROUND(EXTRACT(EPOCH FROM (now() - r.started_at))
-                                  / 60)::text || 'm (running)'
-                   END AS duration,
-                   r.status, r.total_count AS batch_size, r.error_count as num_errors,
-                   COUNT(DISTINCT d.vin) FILTER (WHERE d.price IS NOT NULL) AS prices_refreshed,
-                   COUNT(DISTINCT ra.artifact_id) FILTER (
-                       WHERE d.listing_state = 'unlisted') AS newly_unlisted,
-                   COUNT(DISTINCT ra.artifact_id) FILTER (
-                       WHERE ap.message = 'unlisted' AND d.artifact_id IS NULL
-                   ) AS unlisted_carousel_hit,
-                   COUNT(DISTINCT d.vin17) FILTER (
-                       WHERE pe.vin IS NULL) AS newly_mapped_vins
-            FROM my_runs r
-            LEFT JOIN filtered_artifacts ra ON r.run_id = ra.run_id
-            LEFT JOIN artifact_processing ap ON ra.artifact_id = ap.artifact_id
-            LEFT JOIN analytics.stg_detail_observations d ON ra.artifact_id = d.artifact_id
-            LEFT JOIN price_min pe ON d.vin = pe.vin AND pe.min_observed_at <= r.started_at
-            GROUP BY r.run_id, r.started_at, r.finished_at, r.status,
-                     r.total_count, r.error_count, r.last_error
-            ORDER BY started DESC
-        """)
+        viewer_cur.execute(Q.RECENT_DETAIL_RUNS)
         viewer_cur.fetchall()
 
     def test_stale_vehicle_backlog(self, viewer_cur):
-        viewer_cur.execute("""
-            WITH batch_marking AS (
-                SELECT q.listing_id, q.stale_reason,
-                       ROW_NUMBER() OVER (
-                           PARTITION BY 1 ORDER BY q.priority, q.listing_id
-                       ) as priority_row
-                FROM ops.ops_detail_scrape_queue q
-                LEFT JOIN detail_scrape_claims c
-                    ON c.listing_id = q.listing_id AND c.status = 'running'
-                WHERE c.listing_id IS NULL
-            )
-            SELECT
-                CASE
-                    WHEN priority_row < 601 THEN '00_next_batch'
-                    WHEN priority_row < 1201 THEN '01_following_batch'
-                    WHEN priority_row < 1801 THEN '02_third_batch'
-                    ELSE '03_backlog'
-                END as batch_param,
-                COUNT(*) FILTER (WHERE stale_reason LIKE 'price_only%%')::varchar as price_only,
-                COUNT(*) FILTER (WHERE stale_reason LIKE 'force_stale_36h')::varchar as force_stale,
-                COUNT(*) FILTER (WHERE stale_reason LIKE 'full_details')::varchar AS full_details,
-                COUNT(*) FILTER (
-                    WHERE stale_reason LIKE 'unmapped_carousel'
-                )::varchar as unmapped_carousel,
-                COUNT(*) FILTER (
-                    WHERE stale_reason LIKE 'dealer_unenriched'
-                )::varchar as dealer_unenriched,
-                COUNT(*)::varchar AS total_count
-            FROM batch_marking q
-            GROUP BY 1 ORDER BY batch_param ASC
-        """)
+        viewer_cur.execute(Q.STALE_VEHICLE_BACKLOG)
         viewer_cur.fetchall()
 
     def test_cooldown_backlog(self, viewer_cur):
-        viewer_cur.execute("""
-            WITH batch_marking AS (
-                SELECT q.listing_id, q.stale_reason,
-                       ROW_NUMBER() OVER (
-                           PARTITION BY 1 ORDER BY q.priority, q.listing_id
-                       ) as priority_row
-                FROM ops.ops_detail_scrape_queue q
-                LEFT JOIN detail_scrape_claims c
-                    ON c.listing_id = q.listing_id AND c.status = 'running'
-                WHERE c.listing_id IS NULL
-            )
-            SELECT bc.num_of_attempts,
-                   MIN(bc.last_attempted_at + (interval '1 hour' * (12 * power(2, bc.num_of_attempts::float - 1)))) FILTER (
-                       WHERE bc.last_attempted_at + (interval '1 hour' * (12 * power(2, bc.num_of_attempts::float - 1))) > now()
-                   ) AT TIME ZONE 'America/Chicago' as next_attempt_at,
-                   COUNT(bc.listing_id) as num_listings,
-                   COUNT(bc.listing_id) FILTER (
-                       WHERE bc.last_attempted_at + (interval '1 hour' * (12 * power(2, bc.num_of_attempts::float - 1))) < now()
-                         AND ovs.stale_reason != 'not_stale'
-                   ) as eligible_now,
-                   COUNT(bc.listing_id) FILTER (
-                       WHERE q.priority_row < 601 AND q.priority_row IS NOT NULL
-                   ) as num_in_next_batch
-            FROM ops.blocked_cooldown bc
-            LEFT JOIN batch_marking q ON q.listing_id = bc.listing_id
-            LEFT JOIN ops.ops_vehicle_staleness ovs ON bc.listing_id = ovs.listing_id
-            GROUP BY bc.num_of_attempts
-            ORDER BY bc.num_of_attempts
-        """)
+        viewer_cur.execute(Q.COOLDOWN_BACKLOG)
         viewer_cur.fetchall()
 
     def test_price_freshness(self, viewer_cur):
-        viewer_cur.execute("""
-            WITH buckets AS (
-                SELECT FLOOR(LEAST(vs.age_hours, 24) * 2) / 2 AS age_floor,
-                       vs.is_full_details_stale
-                FROM ops.ops_vehicle_staleness vs
-                LEFT JOIN ops.blocked_cooldown bc
-                       ON bc.listing_id = vs.listing_id
-                WHERE vs.age_hours IS NOT NULL AND bc.listing_id IS NULL
-            )
-            SELECT (24 - age_floor)::numeric AS hours_until_stale,
-                   TO_CHAR((24 - age_floor)::numeric, 'FM90.0') || 'h' AS expiry_bucket,
-                   COUNT(*) FILTER (WHERE NOT is_full_details_stale) AS enriched,
-                   COUNT(*) FILTER (WHERE is_full_details_stale) AS full_details_stale,
-                   COUNT(*) AS total
-            FROM buckets GROUP BY age_floor ORDER BY age_floor DESC
-        """)
+        viewer_cur.execute(Q.PRICE_FRESHNESS)
         viewer_cur.fetchall()
 
     def test_blocked_cooldown_histogram(self, viewer_cur):
-        viewer_cur.execute("""
-            WITH buckets AS (
-                SELECT FLOOR(GREATEST(
-                    (EXTRACT(EPOCH FROM (
-                        last_attempted_at + (interval '1 hour' * (12 * power(2, num_of_attempts::float - 1))) - now()
-                    )) / 3600), 0
-                ) / 2) * 2 AS age_floor
-                FROM ops.blocked_cooldown
-                WHERE num_of_attempts < 5
-            )
-            SELECT age_floor::numeric AS hours_until_eligible,
-                   TO_CHAR(age_floor::numeric, 'FM90.0') || 'h' AS eligible_bucket,
-                   COUNT(*) AS total
-            FROM buckets GROUP BY age_floor ORDER BY age_floor DESC
-        """)
+        viewer_cur.execute(Q.BLOCKED_COOLDOWN_HISTOGRAM)
         viewer_cur.fetchall()
 
     def test_success_rate_detail(self, viewer_cur):
-        viewer_cur.execute("""
-            SELECT date_trunc('day', fetched_at AT TIME ZONE 'America/Chicago') AS day,
-                   CASE
-                       WHEN http_status = 200 THEN '200 OK'
-                       WHEN http_status = 403 THEN '403 Blocked'
-                       WHEN http_status IS NULL THEN 'Error/Timeout'
-                       ELSE http_status::text
-                   END AS result,
-                   COUNT(*) AS fetches
-            FROM raw_artifacts
-            WHERE artifact_type = 'detail_page'
-              AND fetched_at > now() - interval '7 days'
-            GROUP BY 1, 2 ORDER BY 1, 2
-        """)
+        viewer_cur.execute(Q.SUCCESS_RATE.format(
+            artifact_type="detail_page", interval="7 days"
+        ))
         viewer_cur.fetchall()
 
     def test_success_rate_results(self, viewer_cur):
-        viewer_cur.execute("""
-            SELECT date_trunc('day', fetched_at AT TIME ZONE 'America/Chicago') AS day,
-                   CASE
-                       WHEN http_status = 200 THEN '200 OK'
-                       WHEN http_status = 403 THEN '403 Blocked'
-                       WHEN http_status IS NULL THEN 'Error/Timeout'
-                       ELSE http_status::text
-                   END AS result,
-                   COUNT(*) AS fetches
-            FROM raw_artifacts
-            WHERE artifact_type = 'results_page'
-              AND fetched_at > now() - interval '7 days'
-            GROUP BY 1, 2 ORDER BY 1, 2
-        """)
+        viewer_cur.execute(Q.SUCCESS_RATE.format(
+            artifact_type="results_page", interval="7 days"
+        ))
         viewer_cur.fetchall()
 
     def test_search_scrape_jobs_7d(self, viewer_cur):
-        viewer_cur.execute("""
-            SELECT r.run_id,
-                   r.started_at AT TIME ZONE 'America/Chicago' AS run_started,
-                   r.status AS run_status,
-                   j.search_key, j.scope, j.status AS job_status,
-                   j.artifact_count,
-                   COUNT(srp.vin) as vins_recorded,
-                   COUNT(srp.vin) FILTER (WHERE pe.vin IS NULL) as new_vins_recorded
-            FROM runs r
-            JOIN scrape_jobs j ON j.run_id = r.run_id
-            LEFT JOIN raw_artifacts ra
-                ON j.scope = ra.search_scope AND ra.run_id = r.run_id
-                   AND ra.search_key = j.search_key
-            LEFT JOIN analytics.stg_srp_observations srp
-                ON ra.artifact_id = srp.artifact_id
-            LEFT JOIN (
-                SELECT vin, min(observed_at) as first_seen
-                FROM analytics.int_price_events GROUP BY vin
-            ) pe ON srp.vin17 = pe.vin AND pe.first_seen < r.started_at
-            WHERE r.trigger = 'search scrape'
-              AND r.started_at > now() - interval '7 days'
-            GROUP BY 1,2,3,4,5,6,7
-            ORDER BY r.started_at DESC, j.search_key, j.scope
-        """)
+        viewer_cur.execute(Q.SEARCH_SCRAPE_JOBS)
         viewer_cur.fetchall()
 
     def test_runs_over_time(self, viewer_cur):
-        viewer_cur.execute("""
-            SELECT date_trunc('day', started_at AT TIME ZONE 'America/Chicago') AS day,
-                   trigger, COUNT(*) AS runs,
-                   COUNT(*) FILTER (WHERE status = 'success') AS successful,
-                   COUNT(*) FILTER (WHERE status = 'terminated') AS terminated,
-                   COUNT(*) FILTER (WHERE status = 'failed') AS failed
-            FROM runs
-            WHERE started_at > now() - interval '7 days'
-              AND status NOT IN ('skipped', 'terminated')
-            GROUP BY 1, 2 ORDER BY 1, 2
-        """)
+        viewer_cur.execute(Q.RUNS_OVER_TIME)
         viewer_cur.fetchall()
 
     def test_artifact_processing_backlog(self, viewer_cur):
-        viewer_cur.execute("""
-            SELECT processor, status, COUNT(*) AS count,
-                   MIN(processed_at) AT TIME ZONE 'America/Chicago' AS oldest
-            FROM artifact_processing
-            WHERE status IN ('retry', 'processing')
-            GROUP BY processor, status ORDER BY count DESC
-        """)
+        viewer_cur.execute(Q.ARTIFACT_BACKLOG)
         viewer_cur.fetchall()
 
     def test_terminated_runs(self, viewer_cur):
-        viewer_cur.execute("""
-            SELECT trigger, COUNT(*) AS terminated_count,
-                   MAX(started_at) AT TIME ZONE 'America/Chicago' AS most_recent
-            FROM runs
-            WHERE status = 'terminated' AND started_at > now() - interval '7 days'
-            GROUP BY trigger ORDER BY terminated_count DESC
-        """)
+        viewer_cur.execute(Q.TERMINATED_RUNS)
         viewer_cur.fetchall()
 
     def test_pipeline_errors(self, viewer_cur):
-        viewer_cur.execute("""
-            SELECT occurred_at AT TIME ZONE 'America/Chicago' AS occurred_at_ct,
-                   workflow_name, node_name, error_type, error_message
-            FROM pipeline_errors ORDER BY occurred_at DESC LIMIT 50
-        """)
+        viewer_cur.execute(Q.PIPELINE_ERRORS)
         viewer_cur.fetchall()
 
     def test_dbt_build_history(self, viewer_cur):
-        viewer_cur.execute("SELECT * FROM dbt_runs ORDER BY started_at DESC LIMIT 10")
+        viewer_cur.execute(Q.DBT_BUILD_HISTORY)
         viewer_cur.fetchall()
 
     def test_processor_activity(self, viewer_cur):
-        viewer_cur.execute("""
-            SELECT processor,
-                   COUNT(*) FILTER (WHERE status = 'ok') AS ok,
-                   COUNT(*) FILTER (
-                       WHERE status IN ('retry', 'processing')) AS pending,
-                   COUNT(*) FILTER (
-                       WHERE status = 'ok' AND message ILIKE '%%cloudflare%%'
-                   ) AS cloudflare_blocked,
-                   COUNT(*) FILTER (
-                       WHERE status = 'ok'
-                         AND meta->>'primary_json_present' = 'true'
-                   ) AS has_primary_data,
-                   MAX(processed_at) AT TIME ZONE 'America/Chicago' AS last_processed
-            FROM artifact_processing GROUP BY processor ORDER BY processor
-        """)
+        viewer_cur.execute(Q.PROCESSOR_ACTIVITY)
         viewer_cur.fetchall()
 
     def test_processing_throughput(self, viewer_cur):
-        viewer_cur.execute("""
-            SELECT date_trunc('hour',
-                       processed_at AT TIME ZONE 'America/Chicago') AS hour,
-                   processor, COUNT(*) AS processed,
-                   COUNT(*) FILTER (WHERE status = 'ok') AS ok,
-                   COUNT(*) FILTER (WHERE status NOT IN ('ok')) AS errors
-            FROM artifact_processing
-            WHERE processed_at > now() - interval '24 hours'
-            GROUP BY 1, 2 ORDER BY 1 DESC, 2
-        """)
+        viewer_cur.execute(Q.PROCESSING_THROUGHPUT)
         viewer_cur.fetchall()
 
     def test_detail_extraction_coverage(self, viewer_cur):
-        viewer_cur.execute("""
-            SELECT date_trunc('day',
-                       ap.processed_at AT TIME ZONE 'America/Chicago') AS day,
-                   COUNT(*) AS total_processed,
-                   COUNT(*) FILTER (
-                       WHERE ap.meta->>'primary_json_present' = 'true'
-                   ) AS has_vehicle_data,
-                   COUNT(*) FILTER (
-                       WHERE ap.message LIKE '%%403%%') AS cloudflare_blocked,
-                   COUNT(*) FILTER (
-                       WHERE ap.meta->>'primary_json_present' = 'false'
-                         AND (ap.message IS NULL
-                              OR ap.message NOT ILIKE '%%cloudflare%%')
-                   ) AS no_data,
-                   ROUND(100.0 * COUNT(*) FILTER (
-                       WHERE ap.meta->>'primary_json_present' = 'true'
-                   ) / NULLIF(COUNT(*), 0), 1) AS extraction_pct
-            FROM artifact_processing ap
-            WHERE ap.processor LIKE 'cars_detail_page__%%'
-              AND ap.processed_at > now() - interval '14 days'
-            GROUP BY 1 ORDER BY 1 DESC
-        """)
+        viewer_cur.execute(Q.DETAIL_EXTRACTION_COVERAGE)
         viewer_cur.fetchall()
 
     def test_pg_stat_activity(self, viewer_cur):
-        viewer_cur.execute("""
-            SELECT COUNT(*) FILTER (WHERE state = 'active') AS active,
-                   COUNT(*) FILTER (WHERE state = 'idle in transaction') AS idle_in_tx,
-                   ROUND(MAX(
-                       CASE WHEN state = 'active' AND query_start IS NOT NULL
-                            THEN EXTRACT(EPOCH FROM (now() - query_start))
-                       END
-                   )::numeric, 1) AS longest_query_s
-            FROM pg_stat_activity WHERE backend_type = 'client backend'
-        """)
+        viewer_cur.execute(Q.PG_STAT_CONNECTIONS)
         viewer_cur.fetchone()
 
     def test_long_running_queries(self, viewer_cur):
-        viewer_cur.execute("""
-            SELECT pid, state,
-                   ROUND(EXTRACT(EPOCH FROM (now() - query_start))::numeric, 1) AS duration_s,
-                   LEFT(query, 80) AS query
-            FROM pg_stat_activity
-            WHERE state = 'active'
-              AND query_start < now() - interval '5 seconds'
-              AND backend_type = 'client backend'
-            ORDER BY duration_s DESC
-        """)
+        viewer_cur.execute(Q.PG_STAT_SLOW_QUERIES)
         viewer_cur.fetchall()
