@@ -4,6 +4,7 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
+from dashboard import queries as Q
 from db import run_query
 
 
@@ -11,18 +12,7 @@ def render():
     st.header("Pipeline Health")
 
     # -- Active run indicator ------------------------------------------------
-    active_runs_df = run_query("""
-        SELECT r.trigger, r.started_at AT TIME ZONE 'America/Chicago' AS started_at,
-               ROUND(EXTRACT(EPOCH FROM now() - r.started_at) / 60) AS elapsed_min,
-               r.progress_count, r.total_count,
-               CASE WHEN r.total_count > 0
-                    THEN ROUND(r.progress_count::numeric / 
-                               (EXTRACT(EPOCH FROM now() - r.started_at) / 60), 1)
-               END AS vins_per_min,
-               (SELECT COUNT(*) FROM scrape_jobs j
-                WHERE j.run_id = r.run_id AND j.status = 'failed') AS failed_jobs
-        FROM runs r WHERE r.status = 'running' ORDER BY r.started_at
-    """)
+    active_runs_df = run_query(Q.ACTIVE_RUNS)
     if not active_runs_df.empty:
         for _, row in active_runs_df.iterrows():
             progress_str = ""
@@ -55,13 +45,7 @@ def render():
         st.success("No active runs")
 
     # -- dbt build status ----------------------------------------------------
-    dbt_lock_df = run_query("""
-        SELECT 
-            locked, 
-            locked_at AT TIME ZONE 'America/Chicago' AS locked_at, 
-            locked_by 
-        FROM dbt_lock 
-        WHERE id = 1""")
+    dbt_lock_df = run_query(Q.DBT_LOCK_STATUS)
     if not dbt_lock_df.empty and dbt_lock_df["locked"].iloc[0]:
         lock_at = dbt_lock_df["locked_at"].iloc[0]
         lock_by = dbt_lock_df["locked_by"].iloc[0] or "unknown"
@@ -121,76 +105,7 @@ def render():
 
 def _section_rotation_schedule():
     st.subheader("Search Scrape Rotation Schedule")
-    df = run_query("""
-        WITH slot_configs AS (
-            SELECT
-                rotation_slot,
-                string_agg(search_key, ', ' ORDER BY search_key) AS search_keys,
-                MAX(last_queued_at) AS last_queued_at
-            FROM search_configs
-            WHERE enabled = true AND rotation_slot IS NOT NULL
-            GROUP BY rotation_slot
-        ),
-        slot_last_run AS (
-            SELECT DISTINCT ON (sc.rotation_slot)
-                sc.rotation_slot,
-                r.run_id,
-                r.status AS run_status,
-                r.started_at
-            FROM search_configs sc
-            JOIN scrape_jobs j ON j.search_key = sc.search_key
-            JOIN runs r ON r.run_id = j.run_id AND r.trigger = 'search scrape'
-            WHERE sc.enabled = true AND sc.rotation_slot IS NOT NULL
-            ORDER BY sc.rotation_slot, r.started_at DESC
-        ),
-        slot_results AS (
-            SELECT
-                slr.rotation_slot,
-                COUNT(DISTINCT a.artifact_id) AS pages,
-                COUNT(DISTINCT a.artifact_id) FILTER (
-                    WHERE a.http_status IS NULL OR a.http_status >= 400
-                ) AS errors,
-                COUNT(DISTINCT so.vin) AS vins_observed
-            FROM slot_last_run slr
-            JOIN scrape_jobs j ON j.run_id = slr.run_id
-                AND j.search_key IN (
-                    SELECT search_key FROM search_configs
-                    WHERE rotation_slot = slr.rotation_slot
-                )
-            JOIN raw_artifacts a ON a.run_id = slr.run_id
-                AND a.artifact_type = 'results_page'
-                AND a.search_key = j.search_key
-                AND a.search_scope = j.scope
-            LEFT JOIN srp_observations so ON so.artifact_id = a.artifact_id
-                AND so.vin IS NOT NULL
-            GROUP BY slr.rotation_slot
-        )
-        SELECT
-            c.rotation_slot AS slot,
-            c.search_keys,
-            c.last_queued_at AT TIME ZONE 'America/Chicago' AS last_fired,
-            ROUND(EXTRACT(EPOCH FROM (now() - c.last_queued_at)) / 3600, 1) AS hours_ago,
-            COALESCE(slr.run_status, '-') AS last_status,
-            COALESCE(res.pages, 0) AS pages,
-            COALESCE(res.errors, 0) AS errors,
-            COALESCE(res.vins_observed, 0) AS vins_observed,
-            (c.last_queued_at + interval '1439 minutes') 
-                   AT TIME ZONE 'America/Chicago' AS next_eligible,
-            CASE
-                WHEN c.last_queued_at IS NULL THEN 'Ready now'
-                WHEN now() > c.last_queued_at + interval '1439 minutes'
-                    THEN 'Ready now'
-                ELSE 'In ' || ROUND(
-                    EXTRACT(EPOCH FROM (
-                        c.last_queued_at + interval '1439 minutes' - now()
-                    )) / 3600, 1
-                )::text || 'h'
-            END AS next_status
-        FROM slot_configs c
-        LEFT JOIN slot_last_run slr ON slr.rotation_slot = c.rotation_slot
-        LEFT JOIN slot_results res ON res.rotation_slot = c.rotation_slot
-        ORDER BY c.rotation_slot
-    """)
+    df = run_query(Q.ROTATION_SCHEDULE)
     if not df.empty:
         st.dataframe(df, width="stretch", hide_index=True)
     else:
@@ -199,167 +114,18 @@ def _section_rotation_schedule():
 
 def _section_detail_runs():
     st.subheader("Recent Detail Scrape Runs")
-    df = run_query("""
-        With my_runs AS (
-            SELECT 
-                *
-            FROM
-                runs
-            WHERE
-                trigger = 'detail scrape'
-            ORDER BY started_at DESC
-            LIMIT 20
-        ), price_min AS (
-			SELECT vin, MIN(observed_at) as min_observed_at
-			FROM analytics.int_price_events
-			GROUP BY vin
-		), filtered_artifacts AS (
-			SELECT ra.*
-			FROM raw_artifacts ra
-			JOIN my_runs r USING (run_id)
-		)
-        SELECT
-            r.started_at AT TIME ZONE 'America/Chicago' AS started,
-            CASE
-                WHEN r.finished_at IS NOT NULL
-                THEN ROUND(EXTRACT(EPOCH FROM (r.finished_at - r.started_at)) / 60)::text || 'm'
-                ELSE ROUND(EXTRACT(EPOCH FROM (now() - r.started_at)) / 60)::text || 'm (running)'
-            END AS duration,
-            r.status,
-            r.total_count AS batch_size,
-            r.error_count as num_errors,
-            COUNT(DISTINCT d.vin) FILTER (WHERE d.price IS NOT NULL) AS prices_refreshed,
-            COUNT(DISTINCT ra.artifact_id) 
-                FILTER (WHERE d.listing_state = 'unlisted') AS newly_unlisted,
-            COUNT(DISTINCT ra.artifact_id) 
-                FILTER (
-                   WHERE ap.message = 'unlisted' 
-                   AND d.artifact_id IS NULL
-                   ) AS unlisted_carousel_hit,
-            COUNT(DISTINCT d.vin17) FILTER (WHERE pe.vin IS NULL) AS newly_mapped_vins
-        FROM
-            my_runs r
-        LEFT JOIN filtered_artifacts ra on r.run_id = ra.run_id
-        LEFT JOIN artifact_processing ap ON ra.artifact_id = ap.artifact_id
-        LEFT JOIN analytics.stg_detail_observations d on ra.artifact_id = d.artifact_id
-        LEFT JOIN price_min pe on d.vin = pe.vin AND pe.min_observed_at <= r.started_at
-        GROUP BY 
-            r.run_id, 
-            r.started_at, 
-            r.finished_at, 
-            r.status, 
-            r.total_count, 
-            r.error_count, 
-            r.last_error
-        ORDER BY started DESC;
-    """)
+    df = run_query(Q.RECENT_DETAIL_RUNS)
     if not df.empty:
         st.dataframe(df, use_container_width=True, hide_index=True)
     else:
         st.info("No detail scrape runs found.")
 
 
-
 def _section_stale_backlog():
     left_col, right_col = st.columns([1, 1])
 
-    df_stale = run_query("""
-        WITH batch_marking AS (
-            SELECT 
-                q.listing_id,
-                q.stale_reason,
-                ROW_NUMBER() OVER (PARTITION BY 1 ORDER BY q.priority, q.listing_id) as priority_row
-            FROM ops.ops_detail_scrape_queue q
-            LEFT JOIN ops.detail_scrape_claims c
-                ON c.listing_id::text = q.listing_id AND c.status = 'running'
-            WHERE c.listing_id IS NULL
-        ), first_part AS (
-            SELECT
-                CASE 
-                    WHEN priority_row < 601 THEN '00_next_batch' 
-                    WHEN priority_row < 1201 THEN '01_following_batch'
-                    WHEN priority_row < 1801 THEN '02_third_batch'
-                    ELSE '03_backlog' END as batch_param,
-                COUNT(*) FILTER (WHERE stale_reason LIKE 'price_only%')::varchar as price_only,
-                COUNT(*) FILTER (
-                            WHERE stale_reason LIKE 'force_stale_36h%'
-                         )::varchar as force_stale,
-                COUNT(*) FILTER (WHERE stale_reason LIKE 'full_details%')::varchar AS full_details,
-                COUNT(*) FILTER (
-                            WHERE stale_reason LIKE 'unmapped_carousel'
-                         )::varchar as unmapped_carousel,
-                COUNT(*) FILTER (
-                            WHERE stale_reason LIKE 'dealer_unenriched'
-                         )::varchar as dealer_unenriched,
-                COUNT(*)::varchar AS total_count
-            FROM batch_marking q
-            GROUP BY 1
-			ORDER BY batch_param ASC
-        ), second_part AS (
-            SELECT
-                'Grand Total' as batch_param,
-                COUNT(*) FILTER (WHERE stale_reason LIKE 'price_only%')::varchar as price_only,
-                COUNT(*) FILTER (
-                            WHERE stale_reason LIKE 'force_stale_36h%'
-                         )::varchar as force_stale,
-                COUNT(*) FILTER (WHERE stale_reason LIKE 'full_details%')::varchar AS full_details,
-                COUNT(*) FILTER (
-                            WHERE stale_reason LIKE 'unmapped_carousel%'
-                         )::varchar as unmapped_carousel,
-                COUNT(*) FILTER (
-                            WHERE stale_reason LIKE 'dealer_unenriched%'
-                         )::varchar as dealer_unenriched,
-                COUNT(*)::varchar AS total_count
-            FROM batch_marking q
-            GROUP BY 1
-        )
-        SELECT * FROM first_part
-        UNION ALL
-        SELECT 
-            '----------' as batch_param, 
-            '----------' as price_only,
-            '----------' as force_stale,
-            '----------' as full_details,
-            '----------' as unmapped_carousel,
-            '----------' as dealer_unenriched,
-            '----------' as total_count
-        UNION ALL       
-        SELECT * FROM second_part
-    """)
-
-    df_cooldown = run_query("""
-        WITH batch_marking AS (
-            SELECT 
-                q.listing_id,
-                q.stale_reason,
-                ROW_NUMBER() OVER (PARTITION BY 1 ORDER BY q.priority, q.listing_id) as priority_row
-            FROM ops.ops_detail_scrape_queue q
-            LEFT JOIN ops.detail_scrape_claims c
-                ON c.listing_id::text = q.listing_id AND c.status = 'running'
-            WHERE c.listing_id IS NULL
-        )
-        SELECT
-            bc.num_of_attempts
-            ,MIN(bc.next_eligible_at) FILTER (
-                                        WHERE bc.next_eligible_at > now() 
-                                      ) AT TIME ZONE 'America/Chicago' as next_attempt_at
-            ,COUNT(bc.listing_id) as num_listings
-            ,COUNT(bc.listing_id) FILTER (
-                                WHERE bc.next_eligible_at < now() 
-                                AND ovs.stale_reason != 'not_stale'
-                            ) as eligible_now
-            ,COUNT(bc.listing_id) FILTER (
-                                    WHERE q.priority_row < 601 AND q.priority_row IS NOT NULL
-                                    ) as num_in_next_batch
-        FROM
-            analytics.stg_blocked_cooldown bc
-        LEFT JOIN batch_marking q ON q.listing_id = bc.listing_id
-        LEFT JOIN ops.ops_vehicle_staleness ovs ON bc.listing_id = ovs.listing_id
-        GROUP BY
-            bc.num_of_attempts
-        ORDER BY
-            bc.num_of_attempts
-    """)
+    df_stale = run_query(Q.STALE_VEHICLE_BACKLOG)
+    df_cooldown = run_query(Q.COOLDOWN_BACKLOG)
 
     with left_col:
         st.subheader("Stale Vehicle Backlog")
@@ -370,40 +136,16 @@ def _section_stale_backlog():
         st.dataframe(df_cooldown, width="stretch", hide_index=True)
 
 
-
 def _section_price_freshness():
     st.subheader("Price Freshness — Expiring in Next 24h")
-    df = run_query("""
-        WITH buckets AS (
-            SELECT
-                FLOOR(LEAST(vs.price_age_hours, 24) * 2) / 2 AS age_floor,
-                vs.price_tier,
-                vs.is_full_details_stale
-            FROM ops.ops_vehicle_staleness vs
-            LEFT JOIN analytics.stg_blocked_cooldown bc
-                   ON bc.listing_id = vs.listing_id
-            WHERE vs.price_age_hours IS NOT NULL
-                  AND bc.listing_id IS NULL
-        )
-        SELECT
-            (24 - age_floor)::numeric AS hours_until_stale,
-            TO_CHAR((24 - age_floor)::numeric, 'FM90.0') || 'h' AS expiry_bucket,
-            COUNT(*) FILTER (WHERE price_tier = 1 AND NOT is_full_details_stale) AS tier1,
-            COUNT(*) FILTER (WHERE price_tier = 2 AND NOT is_full_details_stale) AS tier2,
-            COUNT(*) FILTER (WHERE is_full_details_stale) AS full_details_stale,
-            COUNT(*) AS total
-        FROM buckets
-        GROUP BY age_floor
-        ORDER BY age_floor DESC
-    """)
+    df = run_query(Q.PRICE_FRESHNESS)
     if not df.empty:
         df = df.sort_values("hours_until_stale")
         fig = px.bar(
-            df, x="expiry_bucket", y=["tier1", "tier2", "full_details_stale"], barmode="stack",
+            df, x="expiry_bucket", y=["enriched", "full_details_stale"], barmode="stack",
             labels={"value": "VINs", "expiry_bucket": "Expires In"},
             color_discrete_map={
-                "tier1": "#3498db", 
-                "tier2": "#95a5a6", 
+                "enriched": "#3498db",
                 "full_details_stale": "#e67e22"
             },
         )
@@ -412,7 +154,7 @@ def _section_price_freshness():
             yaxis_title="Active VINs",
             legend_title="Price Tier",
             xaxis={
-                "categoryorder": "array", 
+                "categoryorder": "array",
                 "categoryarray": df["expiry_bucket"].tolist()
             }
         )
@@ -421,26 +163,7 @@ def _section_price_freshness():
 
 def _section_blocked_cooldown():
     st.subheader("Blocked Listings — Next Eligible Count")
-    df = run_query("""
-        WITH buckets AS (
-            SELECT
-                FLOOR(
-                    GREATEST(
-                        (EXTRACT(EPOCH FROM (next_eligible_at - now())) / 3600),
-                        0
-                    ) / 2
-                ) * 2 AS age_floor
-            FROM analytics.stg_blocked_cooldown
-            WHERE next_eligible_at IS NOT NULL
-        )
-        SELECT
-            age_floor::numeric AS hours_until_eligible,
-            TO_CHAR(age_floor::numeric, 'FM90.0') || 'h' AS eligible_bucket,
-            COUNT(*) AS total
-        FROM buckets
-        GROUP BY age_floor
-        ORDER BY age_floor DESC
-    """)
+    df = run_query(Q.BLOCKED_COOLDOWN_HISTOGRAM)
     if not df.empty:
         df = df.sort_values("hours_until_eligible")
         fig = px.bar(
@@ -449,10 +172,10 @@ def _section_blocked_cooldown():
             color_discrete_map={"total": "#3498db"},
         )
         fig.update_layout(
-            xaxis_title="Hours until eligible", 
+            xaxis_title="Hours until eligible",
             yaxis_title="Listing Ids",
             xaxis={
-                "categoryorder": "array", 
+                "categoryorder": "array",
                 "categoryarray": df["eligible_bucket"].tolist()
             }
         )
@@ -461,22 +184,7 @@ def _section_blocked_cooldown():
 
 def _section_success_rate(title: str, artifact_type: str, interval: str):
     st.subheader(title)
-    df = run_query(f"""
-        SELECT
-            date_trunc('day', fetched_at AT TIME ZONE 'America/Chicago') AS day,
-            CASE
-                WHEN http_status = 200 THEN '200 OK'
-                WHEN http_status = 403 THEN '403 Blocked'
-                WHEN http_status IS NULL THEN 'Error/Timeout'
-                ELSE http_status::text
-            END AS result,
-            COUNT(*) AS fetches
-        FROM raw_artifacts
-        WHERE artifact_type = '{artifact_type}'
-          AND fetched_at > now() - interval '{interval}'
-        GROUP BY 1, 2
-        ORDER BY 1, 2
-    """)
+    df = run_query(Q.SUCCESS_RATE.format(artifact_type=artifact_type, interval=interval))
     if not df.empty:
         fig = make_subplots(specs=[[{"secondary_y": True}]])
         for result, color in [
@@ -497,8 +205,8 @@ def _section_success_rate(title: str, artifact_type: str, interval: str):
                                   line=dict(color="black", width=2),
                                   marker=dict(size=6)), secondary_y=True)
         fig.update_layout(
-            barmode="stack", 
-            xaxis_title=None, 
+            barmode="stack",
+            xaxis_title=None,
             legend=dict(orientation="h", y=-0.15)
         )
         fig.update_yaxes(title_text="Fetches", secondary_y=False)
@@ -510,30 +218,7 @@ def _section_success_rate(title: str, artifact_type: str, interval: str):
 
 def _section_search_jobs():
     st.subheader("Search Scrape Jobs (Last 7 Days)")
-    df = run_query("""
-        SELECT
-            r.run_id,
-            r.started_at AT TIME ZONE 'America/Chicago' AS run_started,
-            r.status AS run_status,
-            j.search_key, j.scope, j.status AS job_status,
-            j.artifact_count,
-            COUNT(srp.vin) as vins_recorded,
-            COUNT(srp.vin) FILTER (WHERE pe.vin IS NULL) as new_vins_recorded
-        FROM runs r
-        JOIN scrape_jobs j ON j.run_id = r.run_id
-        LEFT JOIN raw_artifacts ra 
-            on j.scope = ra.search_scope and ra.run_id = r.run_id and ra.search_key = j.search_key
-        LEFT JOIN analytics.stg_srp_observations srp on ra.artifact_id = srp.artifact_id
-        LEFT JOIN ( 
-            SELECT vin, min(observed_at) as first_seen 
-            FROM  analytics.int_price_events group by vin
-        ) pe ON srp.vin17 = pe.vin AND pe.first_seen < r.started_at
-        WHERE r.trigger = 'search scrape'
-          AND r.started_at > now() - interval '7 days'
-        GROUP BY
-            1,2,3,4,5,6,7
-        ORDER BY r.started_at DESC, j.search_key, j.scope;
-    """)
+    df = run_query(Q.SEARCH_SCRAPE_JOBS)
     if df.empty:
         st.info("No search scrape jobs in the last 7 days.")
     else:
@@ -542,17 +227,7 @@ def _section_search_jobs():
 
 def _section_runs_over_time():
     st.subheader("Runs Over Time")
-    df = run_query("""
-        SELECT
-            date_trunc('day', started_at AT TIME ZONE 'America/Chicago') AS day,
-            trigger, COUNT(*) AS runs,
-            COUNT(*) FILTER (WHERE status = 'success') AS successful,
-            COUNT(*) FILTER (WHERE status = 'terminated') AS terminated,
-            COUNT(*) FILTER (WHERE status = 'failed') AS failed
-        FROM runs
-        WHERE started_at > now() - interval '7 days' AND status NOT IN ('skipped', 'terminated')
-        GROUP BY 1, 2 ORDER BY 1, 2
-    """)
+    df = run_query(Q.RUNS_OVER_TIME)
     if not df.empty:
         fig = px.bar(df, x="day", y="runs", color="trigger", barmode="group")
         fig.update_layout(xaxis_title=None, yaxis_title="Runs", legend_title=None)
@@ -561,25 +236,13 @@ def _section_runs_over_time():
 
 def _section_artifact_backlog():
     st.subheader("Artifact Processing Backlog")
-    df = run_query("""
-        SELECT processor, status, COUNT(*) AS count,
-               MIN(processed_at) AT TIME ZONE 'America/Chicago' AS oldest
-        FROM artifact_processing
-        WHERE status IN ('retry', 'processing')
-        GROUP BY processor, status ORDER BY count DESC
-    """)
+    df = run_query(Q.ARTIFACT_BACKLOG)
     st.dataframe(df, use_container_width=True, hide_index=True)
 
 
 def _section_terminated_runs():
     st.subheader("Terminated Runs (Last 7 Days)")
-    df = run_query("""
-        SELECT trigger, COUNT(*) AS terminated_count,
-               MAX(started_at) AT TIME ZONE 'America/Chicago' AS most_recent
-        FROM runs
-        WHERE status = 'terminated' AND started_at > now() - interval '7 days'
-        GROUP BY trigger ORDER BY terminated_count DESC
-    """)
+    df = run_query(Q.TERMINATED_RUNS)
     if df.empty:
         st.success("No terminated runs in the last 7 days.")
     else:
@@ -588,11 +251,7 @@ def _section_terminated_runs():
 
 def _section_pipeline_errors():
     st.subheader("Recent Pipeline Errors")
-    df = run_query("""
-        SELECT occurred_at AT TIME ZONE 'America/Chicago' AS occurred_at_ct,
-               workflow_name, node_name, error_type, error_message
-        FROM pipeline_errors ORDER BY occurred_at DESC LIMIT 50
-    """)
+    df = run_query(Q.PIPELINE_ERRORS)
     if df.empty:
         st.success("No pipeline errors recorded.")
     else:
@@ -601,7 +260,7 @@ def _section_pipeline_errors():
 
 def _section_dbt_history():
     st.subheader("dbt Build History")
-    df = run_query("SELECT * FROM dbt_runs ORDER BY started_at DESC LIMIT 10")
+    df = run_query(Q.DBT_BUILD_HISTORY)
     if df.empty:
         st.info("No dbt builds recorded yet.")
         return
@@ -648,34 +307,12 @@ def _section_dbt_history():
 
 def _section_processor_activity():
     st.subheader("Processor Activity")
-    proc_summary_df = run_query("""
-        SELECT processor,
-               COUNT(*) FILTER (WHERE status = 'ok') AS ok,
-               COUNT(*) FILTER (
-                            WHERE status IN ('retry', 'processing')
-                        ) AS pending,
-               COUNT(*) FILTER (
-                            WHERE status = 'ok' AND message ILIKE '%cloudflare%'
-                        ) AS cloudflare_blocked,
-               COUNT(*) FILTER (
-                            WHERE status = 'ok' AND meta->>'primary_json_present' = 'true'
-                            ) AS has_primary_data,
-               MAX(processed_at) AT TIME ZONE 'America/Chicago' AS last_processed
-        FROM artifact_processing GROUP BY processor ORDER BY processor
-    """)
+    proc_summary_df = run_query(Q.PROCESSOR_ACTIVITY)
     if not proc_summary_df.empty:
         st.dataframe(proc_summary_df, use_container_width=True, hide_index=True)
 
     st.caption("Processing throughput — last 24 hours")
-    proc_hourly_df = run_query("""
-        SELECT date_trunc('hour', processed_at AT TIME ZONE 'America/Chicago') AS hour,
-               processor, COUNT(*) AS processed,
-               COUNT(*) FILTER (WHERE status = 'ok') AS ok,
-               COUNT(*) FILTER (WHERE status NOT IN ('ok')) AS errors
-        FROM artifact_processing
-        WHERE processed_at > now() - interval '24 hours'
-        GROUP BY 1, 2 ORDER BY 1 DESC, 2
-    """)
+    proc_hourly_df = run_query(Q.PROCESSING_THROUGHPUT)
     if not proc_hourly_df.empty:
         fig = px.bar(proc_hourly_df, x="hour", y="processed", color="processor", barmode="group")
         fig.update_layout(xaxis_title=None, yaxis_title="Artifacts Processed", legend_title=None)
@@ -684,22 +321,7 @@ def _section_processor_activity():
         st.info("No processing activity in the last 24 hours.")
 
     st.caption("Detail parser data extraction coverage")
-    proc_coverage_df = run_query("""
-        SELECT date_trunc('day', ap.processed_at AT TIME ZONE 'America/Chicago') AS day,
-               COUNT(*) AS total_processed,
-               COUNT(*) FILTER (
-                            WHERE ap.meta->>'primary_json_present' = 'true'
-                        ) AS has_vehicle_data,
-               COUNT(*) FILTER (WHERE ap.message LIKE '%403%') AS cloudflare_blocked,
-               COUNT(*) FILTER (WHERE ap.meta->>'primary_json_present' = 'false'
-                   AND (ap.message IS NULL OR ap.message NOT ILIKE '%cloudflare%')) AS no_data,
-               ROUND(100.0 * COUNT(*) FILTER (WHERE ap.meta->>'primary_json_present' = 'true')
-                   / NULLIF(COUNT(*), 0), 1) AS extraction_pct
-        FROM artifact_processing ap
-        WHERE ap.processor LIKE 'cars_detail_page__%'
-          AND ap.processed_at > now() - interval '14 days'
-        GROUP BY 1 ORDER BY 1 DESC
-    """)
+    proc_coverage_df = run_query(Q.DETAIL_EXTRACTION_COVERAGE)
     if not proc_coverage_df.empty:
         st.dataframe(proc_coverage_df, use_container_width=True, hide_index=True)
     else:
@@ -708,17 +330,7 @@ def _section_processor_activity():
 
 def _section_postgres_health():
     st.subheader("Postgres Health")
-    df_conn = run_query("""
-        SELECT COUNT(*) FILTER (WHERE state = 'active') AS active,
-               COUNT(*) FILTER (WHERE state = 'idle in transaction') AS idle_in_tx,
-               ROUND(MAX(
-                    CASE 
-                        WHEN state = 'active' AND query_start IS NOT NULL
-                            THEN EXTRACT(EPOCH FROM (now() - query_start)) 
-                    END
-                )::numeric, 1) AS longest_query_s
-        FROM pg_stat_activity WHERE backend_type = 'client backend'
-    """)
+    df_conn = run_query(Q.PG_STAT_CONNECTIONS)
     if not df_conn.empty:
         c1, c2, c3 = st.columns(3)
         with c1:
@@ -729,15 +341,7 @@ def _section_postgres_health():
             val = df_conn["longest_query_s"].iloc[0]
             st.metric("Longest Query (s)", f"{val:.1f}" if pd.notna(val) else "0")
 
-    df_slow = run_query("""
-        SELECT pid, state,
-               ROUND(EXTRACT(EPOCH FROM (now() - query_start))::numeric, 1) AS duration_s,
-               LEFT(query, 80) AS query
-        FROM pg_stat_activity
-        WHERE state = 'active' AND query_start < now() - interval '5 seconds'
-          AND backend_type = 'client backend'
-        ORDER BY duration_s DESC
-    """)
+    df_slow = run_query(Q.PG_STAT_SLOW_QUERIES)
     if df_slow.empty:
         st.success("No long-running queries (>5s).")
     else:

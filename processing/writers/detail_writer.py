@@ -199,6 +199,7 @@ def write_detail_active(
             "price": primary.get("price"),
             "make": primary.get("make"),
             "model": primary.get("model"),
+            "customer_id": primary.get("customer_id"),
             "last_seen_at": fetched_at,
             "last_artifact_id": artifact_id,
         })
@@ -252,6 +253,7 @@ def write_detail_active(
                     "price": hint.get("price"),
                     "make": None,  # carousel doesn't have structured make/model
                     "model": None,
+                    "customer_id": None,  # carousel never enriches dealer info
                     "last_seen_at": fetched_at,
                     "last_artifact_id": artifact_id,
                 })

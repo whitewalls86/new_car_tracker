@@ -523,12 +523,11 @@ def seed_and_build(dbt_conn, run_dbt):
       - All intermediate models including int_listing_to_vin, int_price_percentiles_by_vin,
         int_price_history_by_vin, int_listing_days_on_market, int_vehicle_attributes, etc.
       - mart_vehicle_snapshot, mart_deal_scores
-      - ops_vehicle_staleness, ops_detail_scrape_queue
     """
     with dbt_conn.cursor() as cur:
         _seed_all(cur)
 
-    run_dbt("+mart_deal_scores +ops_detail_scrape_queue")
+    run_dbt("+mart_deal_scores")
 
     yield
 

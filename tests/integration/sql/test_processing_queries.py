@@ -54,6 +54,7 @@ class TestPriceObservationsSchema:
         assert "listing_id" in cols
         assert "vin" in cols
         assert "price" in cols
+        assert "customer_id" in cols
         assert "last_seen_at" in cols
         assert "last_artifact_id" in cols
 
@@ -306,18 +307,23 @@ class TestPriceObservationsUpsert:
         cur.execute(
             """
             INSERT INTO ops.price_observations
-                (listing_id, vin, price, make, model, last_seen_at, last_artifact_id)
-            VALUES (%s::uuid, %s, %s, %s, %s, now(), %s)
+                (listing_id, vin, price, make, model, customer_id, last_seen_at, last_artifact_id)
+            VALUES (%s::uuid, %s, %s, %s, %s, %s, now(), %s)
             """,
-            (listing_id, "1HGCM82633A004352", 35000, "Honda", "Accord", artifact["artifact_id"]),
+            (listing_id, "1HGCM82633A004352", 35000, "Honda", "Accord",
+             "cust-001", artifact["artifact_id"]),
         )
         cur.execute(
-            "SELECT vin, price FROM ops.price_observations WHERE listing_id = %s::uuid",
+            """
+                SELECT vin, price, customer_id 
+                FROM ops.price_observations WHERE listing_id = %s::uuid
+            """,
             (listing_id,),
         )
         row = cur.fetchone()
         assert row["vin"] == "1HGCM82633A004352"
         assert row["price"] == 35000
+        assert row["customer_id"] == "cust-001"
 
     def test_upsert_updates_existing(self, cur):
         artifact = _insert_artifact(cur)
@@ -327,15 +333,18 @@ class TestPriceObservationsUpsert:
             cur.execute(
                 """
                 INSERT INTO ops.price_observations
-                    (listing_id, vin, price, make, model, last_seen_at, last_artifact_id)
-                VALUES (%s::uuid, %s, %s, %s, %s, now(), %s)
+                    (listing_id, vin, price, make, model, 
+                     customer_id, last_seen_at, last_artifact_id)
+                VALUES (%s::uuid, %s, %s, %s, %s, %s, now(), %s)
                 ON CONFLICT (listing_id) DO UPDATE SET
                     price            = EXCLUDED.price,
+                    customer_id      = COALESCE(EXCLUDED.customer_id, 
+                                                ops.price_observations.customer_id),
                     last_seen_at     = EXCLUDED.last_seen_at,
                     last_artifact_id = EXCLUDED.last_artifact_id
                 """,
                 (listing_id, "1HGCM82633A004352", price, "Honda", "Accord",
-                 artifact["artifact_id"]),
+                 "cust-001", artifact["artifact_id"]),
             )
 
         cur.execute(
@@ -343,6 +352,46 @@ class TestPriceObservationsUpsert:
             (listing_id,),
         )
         assert cur.fetchone()["price"] == 33000
+
+    def test_customer_id_not_downgraded_by_srp(self, cur):
+        """customer_id set by detail write is preserved when SRP writes NULL."""
+        artifact = _insert_artifact(cur)
+        listing_id = _random_listing_id()
+
+        # Detail write sets customer_id
+        cur.execute(
+            """
+            INSERT INTO ops.price_observations
+                (listing_id, vin, price, make, model, customer_id, last_seen_at, last_artifact_id)
+            VALUES (%s::uuid, %s, %s, %s, %s, %s, now(), %s)
+            """,
+            (listing_id, "1HGCM82633A004352", 35000, "Honda", "Accord",
+             "cust-detail", artifact["artifact_id"]),
+        )
+        # SRP write with NULL customer_id
+        cur.execute(
+            """
+            INSERT INTO ops.price_observations
+                (listing_id, vin, price, make, model, customer_id, last_seen_at, last_artifact_id)
+            VALUES (%s::uuid, %s, %s, %s, %s, %s, now(), %s)
+            ON CONFLICT (listing_id) DO UPDATE SET
+                price            = EXCLUDED.price,
+                customer_id      = COALESCE(EXCLUDED.customer_id, 
+                                            ops.price_observations.customer_id),
+                last_seen_at     = EXCLUDED.last_seen_at,
+                last_artifact_id = EXCLUDED.last_artifact_id
+            """,
+            (listing_id, "1HGCM82633A004352", 34000, "Honda", "Accord",
+             None, artifact["artifact_id"]),
+        )
+
+        cur.execute(
+            "SELECT price, customer_id FROM ops.price_observations WHERE listing_id = %s::uuid",
+            (listing_id,),
+        )
+        row = cur.fetchone()
+        assert row["price"] == 34000          # price updated by SRP
+        assert row["customer_id"] == "cust-detail"  # customer_id preserved
 
     def test_vin_accepts_text_not_uuid(self, cur):
         artifact = _insert_artifact(cur)
@@ -352,10 +401,10 @@ class TestPriceObservationsUpsert:
         cur.execute(
             """
             INSERT INTO ops.price_observations
-                (listing_id, vin, price, make, model, last_seen_at, last_artifact_id)
-            VALUES (%s::uuid, %s, %s, %s, %s, now(), %s)
+                (listing_id, vin, price, make, model, customer_id, last_seen_at, last_artifact_id)
+            VALUES (%s::uuid, %s, %s, %s, %s, %s, now(), %s)
             """,
-            (listing_id, vin, 42000, "Ford", "F-150", artifact["artifact_id"]),
+            (listing_id, vin, 42000, "Ford", "F-150", None, artifact["artifact_id"]),
         )
         cur.execute(
             "SELECT vin FROM ops.price_observations WHERE listing_id = %s::uuid",
@@ -370,10 +419,10 @@ class TestPriceObservationsUpsert:
         cur.execute(
             """
             INSERT INTO ops.price_observations
-                (listing_id, vin, price, make, model, last_seen_at, last_artifact_id)
-            VALUES (%s::uuid, %s, %s, %s, %s, now(), %s)
+                (listing_id, vin, price, make, model, customer_id, last_seen_at, last_artifact_id)
+            VALUES (%s::uuid, %s, %s, %s, %s, %s, now(), %s)
             """,
-            (listing_id, None, 30000, "Toyota", "RAV4", artifact["artifact_id"]),
+            (listing_id, None, 30000, "Toyota", "RAV4", None, artifact["artifact_id"]),
         )
         cur.execute(
             "DELETE FROM ops.price_observations WHERE listing_id = %s::uuid",

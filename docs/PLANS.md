@@ -22,11 +22,13 @@ Architecture has transitioned to a MinIO-first design: Postgres holds only hot o
 
 | Priority | Plan | Title | Blocked on |
 |----------|------|-------|------------|
-| 1 | **V019** | View migration | Nothing — unblocked now. Rewrites `ops_vehicle_staleness` and `ops_detail_scrape_queue` as plain Postgres views reading HOT tables; inlines `stg_blocked_cooldown` backoff formula; removes dbt dependency from the scrape queue. Prerequisite for n8n cutover. |
-| 2 | [71](plan_71_airflow.md) | Airflow migration (steps 8–9, 12–15) | Steps 8–9 (`scrape_listings` + `scrape_detail_pages` DAGs) unblocked. Steps 12–15 (V019, scraper slimming, n8n cutover) blocked on V019. |
+| 1 | [99](plan_99_price_observations_per_source.md) | Per-source price observations | Nothing — unblocked. Changes `ops.price_observations` PK to `(listing_id, source)`; required for V019 staleness view correctness. |
+| 2 | **V019** | View migration | Plan 99. Rewrites `ops_vehicle_staleness` and `ops_detail_scrape_queue` as plain Postgres views reading HOT tables; inlines `stg_blocked_cooldown` backoff formula; removes dbt dependency from the scrape queue. Prerequisite for n8n cutover. |
+| 3 | [71](plan_71_airflow.md) | Airflow migration (steps 8–9, 12–15) | Steps 8–9 (`scrape_listings` + `scrape_detail_pages` DAGs) unblocked. Steps 12–15 (V019, scraper slimming, n8n cutover) blocked on V019. |
 | 3 | **Silver flush DAG** | Flush `staging.silver_observations` → MinIO Parquet | Plan 93 deployed and writing to staging table |
-| 4 | [96](plan_96_silver_layer.md) | Silver layer validation + DuckDB analytics | Plan 93 in production for 2+ weeks + silver flush running |
-| 5 | [90](plan_90_dbt_cleanup.md) | dbt decommission | Plan 96 validation gates |
+| 4 | [100](plan_100_historical_data_migration.md) | Historical data migration to MinIO | Silver flush DAG running. Migrates legacy n8n tables (raw_artifacts, artifact_processing, srp/detail/carousel observations) to MinIO Parquet with artifact ID remapping. Prerequisite for Plan 96 and Plan 90. |
+| 5 | [96](plan_96_silver_layer.md) | Silver layer validation + DuckDB analytics | Plan 100 complete (full historical record in MinIO) |
+| 6 | [90](plan_90_dbt_cleanup.md) | dbt decommission | Plan 96 validation gates |
 | — | [79](plan_79_multi_instance.md) | Multi-instance detail scraping | `scrape_detail_pages` Airflow DAG live (Plan 71 step 9); resume when IP flagging requires it |
 | — | **86** | Grafana observability stack | Airflow live so real DAG metrics exist to observe |
 | — | **87** | Kafka event-driven layer | Airflow DAGs producing events + multiple consumers exist |
@@ -40,7 +42,9 @@ Architecture has transitioned to a MinIO-first design: Postgres holds only hot o
 
 ## Sequencing Rationale
 
-**V019 next** — the scrape queue view (`ops_detail_scrape_queue`) currently depends on dbt models. V019 rewrites it as a plain Postgres view reading HOT tables, removing the dbt dependency. Must happen before n8n is decommissioned and before Plan 90 drops dbt, because both paths would break the queue otherwise. Now unblocked: Plan 93 is complete and writing to HOT tables.
+**Plan 99 first** — `ops.price_observations` currently stores one row per listing regardless of source. The V019 staleness view needs to distinguish when a detail scrape last ran vs when an SRP scan last ran — that requires per-source rows. Plan 99 changes the PK to `(listing_id, source)` and wires `source` through the processing service write paths. Must ship before V019 so the view reads the correct table shape.
+
+**V019 next** — the scrape queue view (`ops_detail_scrape_queue`) currently depends on dbt models. V019 rewrites it as a plain Postgres view reading the per-source HOT table, removing the dbt dependency. Must happen before n8n is decommissioned and before Plan 90 drops dbt, because both paths would break the queue otherwise.
 
 **`scrape_listings` + `scrape_detail_pages` DAGs now** — all ops endpoints exist, MinIO write path exists. Shadow-run alongside n8n immediately. `scrape_detail_pages` going live unblocks Plan 79 with no other dependencies.
 
