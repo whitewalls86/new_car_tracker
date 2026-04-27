@@ -65,156 +65,61 @@ duplicates. The two datasets join cleanly at that boundary.
 
 ## MinIO Output Layout
 
-All paths follow the existing partition convention used by the flush DAGs.
+All paths match the exact schemas used by the flush DAGs in production.
 
-| MinIO prefix | Source table(s) | Partition by |
-|---|---|---|
-| `bronze/artifacts/year=.../month=.../` | `raw_artifacts` | fetched_at |
-| `bronze/artifact_events/year=.../month=.../` | `artifact_processing` + `raw_artifacts` | processed_at |
-| `silver/srp/year=.../month=.../` | `srp_observations` | fetched_at |
-| `silver/detail/year=.../month=.../` | `detail_observations` | fetched_at |
-| `silver/carousel/year=.../month=.../` | `detail_carousel_hints` | fetched_at |
-| `silver/price_events/year=.../month=.../` | `srp_observations` + `detail_observations` + `detail_carousel_hints` | fetched_at |
-| `silver/vin_events/year=.../month=.../` | `srp_observations` + `detail_observations` | fetched_at |
+| MinIO prefix | Source table(s) | Partition by | Schema file |
+|---|---|---|---|
+| `silver/observations/source=.../obs_year=.../obs_month=.../obs_day=.../` | `srp_observations`, `detail_observations`, `detail_carousel_hints` | source + fetched_at | `flush_silver_observations.py` |
+| `ops/artifacts_queue_events/year=.../month=.../` | `artifact_processing` + `raw_artifacts` | processed_at | `flush_staging_events.py` |
+| `ops/price_observation_events/year=.../month=.../` | derived from all three observation tables | fetched_at | `flush_staging_events.py` |
+| `ops/vin_to_listing_events/year=.../month=.../` | first `(listing_id, vin)` per pair from srp + detail | first fetched_at | `flush_staging_events.py` |
+
+All three observation sources land in a single **unified** `silver/observations` table with the `source` column
+(`'srp'` / `'detail'` / `'carousel'`) as a partition key. This matches what the `flush_silver_observations` DAG
+writes for live data.
+
+Migration files use a `legacy-<source>-YYYY-MM-{i}.parquet` basename so idempotency checks can
+detect completed months without a separate marker file.
 
 ---
 
 ## Schema Mappings
 
-### bronze/artifacts — from `raw_artifacts`
+All schemas match the PyArrow schemas defined in the archiver flush processors.
+See `scripts/migrate_legacy_to_minio.py` for the exact field mapping.
 
-| Parquet column | Source |
-|---|---|
-| `artifact_id` | `remap[raw_artifacts.artifact_id]` |
-| `original_artifact_id` | `raw_artifacts.artifact_id` (preserved for debugging) |
-| `artifact_type` | `raw_artifacts.artifact_type` |
-| `url` | `raw_artifacts.url` |
-| `minio_path` | `raw_artifacts.minio_path` |
-| `fetched_at` | `raw_artifacts.fetched_at` |
-| `status` | `raw_artifacts.status` |
+### silver/observations — from `srp_observations`, `detail_observations`, `detail_carousel_hints`
 
-### bronze/artifact_events — from `artifact_processing` JOIN `raw_artifacts`
+Schema matches `archiver/processors/flush_silver_observations.py _SCHEMA`.
+`source` column distinguishes rows: `'srp'` / `'detail'` / `'carousel'`.
 
-| Parquet column | Source |
-|---|---|
-| `artifact_id` | `remap[artifact_processing.artifact_id]` |
-| `artifact_type` | `raw_artifacts.artifact_type` |
-| `minio_path` | `raw_artifacts.minio_path` |
-| `fetched_at` | `raw_artifacts.fetched_at` |
-| `listing_id` | `raw_artifacts.listing_id` |
-| `run_id` | `raw_artifacts.run_id` |
-| `processor` | `artifact_processing.processor` |
-| `status` | `artifact_processing.status` |
-| `message` | `artifact_processing.message` |
-| `meta` | `artifact_processing.meta` |
-| `event_at` | `artifact_processing.processed_at` |
+Key field notes:
+- `vin` — normalized: 17-char alphanumeric only (`[A-HJ-NPR-Z0-9]{17}`), else NULL
+- `listing_state` — `'active'` for srp/carousel; from `detail_observations.listing_state` for detail
+- `canonical_detail_url` — from `srp_observations.canonical_detail_url`; for detail via JOIN `raw_artifacts.url`; for carousel constructed as `https://www.cars.com/vehicledetail/{listing_id}/`
+- `written_at` — fixed to migration run timestamp (not a per-row timestamp)
+- `raw_vehicle_json` — not migrated; structured fields cover analytics needs
 
-### silver/srp — from `srp_observations`
+### ops/artifacts_queue_events — from `artifact_processing` JOIN `raw_artifacts`
 
-Mirrors the `staging.silver_observations` schema with `source = 'srp'`.
+Schema matches `archiver/processors/flush_staging_events.py _ARTIFACTS_QUEUE_EVENTS_SCHEMA`.
 
-| Parquet column | Source |
-|---|---|
-| `artifact_id` | `remap[srp_observations.artifact_id]` |
-| `listing_id` | `srp_observations.listing_id` |
-| `vin` | normalized: 17-char alphanumeric only, else NULL |
-| `source` | `'srp'` |
-| `listing_state` | `'active'` |
-| `fetched_at` | `srp_observations.fetched_at` |
-| `price` | `srp_observations.price` |
-| `make` | `srp_observations.make` |
-| `model` | `srp_observations.model` |
-| `trim` | `srp_observations.trim` |
-| `year` | `srp_observations.year` |
-| `mileage` | `srp_observations.mileage` |
-| `msrp` | `srp_observations.msrp` |
-| `stock_type` | `srp_observations.stock_type` |
-| `fuel_type` | `srp_observations.fuel_type` |
-| `body_style` | `srp_observations.body_style` |
-| `financing_type` | `srp_observations.financing_type` |
-| `seller_zip` | `srp_observations.seller_zip` |
-| `seller_customer_id` | `srp_observations.seller_customer_id` |
-| `page_number` | `srp_observations.page_number` |
-| `position_on_page` | `srp_observations.position_on_page` |
-| `trid` | `srp_observations.trid` |
-| `isa_context` | `srp_observations.isa_context` |
-| `canonical_detail_url` | `srp_observations.canonical_detail_url` |
+Key field notes:
+- `minio_path` — NULL for pre-MinIO artifacts (legacy scraper used local `filepath`); populated for any row where `raw_artifacts.minio_path` was set during the shadow period
+- `event_id` — synthetic negative IDs (`< -1_000_000_000_000`) to distinguish migration rows
+- `listing_id` — `raw_artifacts.listing_id` cast from UUID to text
+- `processor` column from `artifact_processing` is dropped (not in target schema)
 
-Note: `raw_vehicle_json` is not migrated — structured fields above cover the analytics surface.
+### ops/price_observation_events — derived from observation tables
 
-### silver/detail — from `detail_observations`
+One row per observation row. Schema matches `_PRICE_OBSERVATION_EVENTS_SCHEMA`.
+- `event_type` = `'upserted'` for srp/carousel; `'upserted'` or `'deleted'` for detail based on `listing_state = 'unlisted'`
 
-| Parquet column | Source |
-|---|---|
-| `artifact_id` | `remap[detail_observations.artifact_id]` |
-| `listing_id` | `detail_observations.listing_id` |
-| `vin` | normalized: 17-char alphanumeric only, else NULL |
-| `source` | `'detail'` |
-| `listing_state` | `detail_observations.listing_state` |
-| `fetched_at` | `detail_observations.fetched_at` |
-| `price` | `detail_observations.price` |
-| `make` | `detail_observations.make` |
-| `model` | `detail_observations.model` |
-| `trim` | `detail_observations.trim` |
-| `year` | `detail_observations.year` |
-| `mileage` | `detail_observations.mileage` |
-| `msrp` | `detail_observations.msrp` |
-| `stock_type` | `detail_observations.stock_type` |
-| `fuel_type` | `detail_observations.fuel_type` |
-| `body_style` | `detail_observations.body_style` |
-| `dealer_name` | `detail_observations.dealer_name` |
-| `dealer_zip` | `detail_observations.dealer_zip` |
-| `customer_id` | `detail_observations.customer_id` |
-| `canonical_detail_url` | via JOIN `raw_artifacts.url` |
+### ops/vin_to_listing_events — first VIN mapping per `(listing_id, vin)` pair
 
-### silver/carousel — from `detail_carousel_hints`
-
-| Parquet column | Source |
-|---|---|
-| `artifact_id` | `remap[detail_carousel_hints.artifact_id]` |
-| `listing_id` | `detail_carousel_hints.listing_id` |
-| `source_listing_id` | `detail_carousel_hints.source_listing_id` |
-| `source` | `'carousel'` |
-| `listing_state` | `'active'` |
-| `fetched_at` | `detail_carousel_hints.fetched_at` |
-| `price` | `detail_carousel_hints.price` |
-| `mileage` | `detail_carousel_hints.mileage` |
-| `year` | `detail_carousel_hints.year` |
-| `body` | `detail_carousel_hints.body` |
-| `condition` | `detail_carousel_hints.condition` |
-
-### silver/price_events
-
-One row per observation row — the write-side audit trail reconstructed from legacy data.
-
-| Parquet column | Source |
-|---|---|
-| `artifact_id` | `remap[...artifact_id]` |
-| `listing_id` | observation `listing_id` |
-| `vin` | normalized vin |
-| `price` | observation `price` |
-| `make` | observation `make` (NULL for carousel) |
-| `model` | observation `model` (NULL for carousel) |
-| `event_type` | `'upserted'` for srp/carousel; `'upserted'` or `'deleted'` for detail (from `listing_state`) |
-| `source` | `'srp'` / `'detail'` / `'carousel'` |
-| `event_at` | observation `fetched_at` |
-
-### silver/vin_events
-
-First observation of each `(listing_id, vin)` pair — approximates the mapping event history.
-Only rows where a valid VIN is present.
-
-| Parquet column | Source |
-|---|---|
-| `artifact_id` | `remap[...artifact_id]` |
-| `vin` | normalized vin |
-| `listing_id` | observation `listing_id` |
-| `event_type` | `'mapped'` |
-| `event_at` | `MIN(fetched_at)` per `(listing_id, vin)` |
-
-Note: remapping history (a VIN moving to a new listing_id) cannot be reconstructed from the
-legacy data — the legacy system did not record remap events. Only the earliest mapping per pair
-is emitted.
+Single aggregated pass over srp + detail (carousel has no VINs).
+- `event_type` = `'mapped'` for all rows
+- `previous_listing_id` = NULL (remap history not reconstructable from legacy data)
 
 ---
 
@@ -223,22 +128,24 @@ is emitted.
 The script is a standalone Python CLI (`scripts/migrate_legacy_to_minio.py`).
 
 **Requirements:**
-- Chunked reads from Postgres (by month) — never loads a full table into memory
-- Writes Parquet directly to MinIO using the same client/bucket config as the processing service
-- Idempotent: checks for existing partition files before writing; skips completed months
+- Month-by-month reads from Postgres — never loads a full table into memory
+- Writes Parquet directly to MinIO using the same PyArrow schemas as the flush DAGs
+- Idempotent: uses source-prefixed basenames (`legacy-srp-YYYY-MM-0.parquet`) so completed
+  months can be detected by glob without a separate marker file
 - Progress logging: rows read, rows written, current month, elapsed time
-- Dry-run mode: reads and maps without writing to MinIO
+- Dry-run mode (`--dry-run`): reads and maps without writing to MinIO
+- Negative synthetic `event_id` values (`< -1_000_000_000_000`) distinguish migration rows from production rows
 
 **Processing order:**
-1. Build remap table (load all `raw_artifacts` IDs into memory — this is artifact metadata only,
-   not observation rows, so size is manageable)
-2. Write `bronze/artifacts/` and `bronze/artifact_events/`
-3. Write `silver/srp/` month by month
-4. Write `silver/detail/` month by month
-5. Write `silver/carousel/` month by month
-6. Write `silver/price_events/` (derived from steps 3–5, can reuse same monthly chunks)
-7. Write `silver/vin_events/` (derived pass over srp + detail)
-8. Run `setval` to advance `ops.artifacts_queue_artifact_id_seq`
+1. Build artifact ID remap (`SELECT artifact_id FROM raw_artifacts ORDER BY artifact_id`)
+2. Load VIN map from `analytics.int_listing_to_vin` (for carousel enrichment)
+3. Write `silver/observations` (source=srp) + `ops/price_observation_events` (srp) month by month
+4. Write `silver/observations` (source=detail) + `ops/price_observation_events` (detail) month by month
+5. Write `silver/observations` (source=carousel) + `ops/price_observation_events` (carousel) month by month
+   - Carousel rows: VIN enriched from `analytics.int_listing_to_vin`; make/model parsed from `body` field
+6. Write `ops/artifacts_queue_events` from `artifact_processing` JOIN `raw_artifacts` month by month
+7. Write `ops/vin_to_listing_events` (single aggregated pass over srp + detail)
+8. Run `setval` to advance `ops.artifacts_queue_artifact_id_seq` past all remapped IDs
 
 ---
 
@@ -247,20 +154,28 @@ The script is a standalone Python CLI (`scripts/migrate_legacy_to_minio.py`).
 After the script completes:
 
 ```sql
--- 1. Row count audit per source per month
+-- 1. Row count audit: Postgres vs MinIO (run against Postgres)
 SELECT
+    'srp' AS source,
     date_trunc('month', fetched_at) AS month,
     COUNT(*) AS legacy_rows
-FROM srp_observations
-WHERE fetched_at < '2026-04-21'
-GROUP BY 1 ORDER BY 1;
--- Compare to Parquet row counts via DuckDB scan of silver/srp/
+FROM srp_observations WHERE fetched_at < '2026-04-21'
+GROUP BY 1, 2
+UNION ALL
+SELECT 'detail', date_trunc('month', fetched_at), COUNT(*)
+FROM detail_observations WHERE fetched_at < '2026-04-21'
+GROUP BY 1, 2
+UNION ALL
+SELECT 'carousel', date_trunc('month', fetched_at), COUNT(*)
+FROM detail_carousel_hints WHERE fetched_at < '2026-04-21'
+GROUP BY 1, 2
+ORDER BY 1, 2;
+-- Compare to DuckDB scan of silver/observations/ grouped by source + obs_year + obs_month
 ```
 
 ```sql
--- 2. Spot-check: known listing_id present in silver
--- (run via DuckDB against MinIO)
-SELECT * FROM read_parquet('s3://silver/srp/**/*.parquet')
+-- 2. Spot-check via DuckDB against MinIO
+SELECT * FROM read_parquet('s3://bronze/silver/observations/**/*.parquet', hive_partitioning=true)
 WHERE listing_id = '<known_id>'
 ORDER BY fetched_at;
 ```
@@ -268,7 +183,7 @@ ORDER BY fetched_at;
 ```sql
 -- 3. Confirm sequence advanced past remapped range
 SELECT last_value FROM ops.artifacts_queue_artifact_id_seq;
--- Must be >= max remapped artifact_id
+-- Must be >= (MAX(artifact_id FROM raw_artifacts WHERE fetched_at < '2026-04-21') + pre-migration max)
 ```
 
 ---
@@ -284,8 +199,7 @@ SELECT last_value FROM ops.artifacts_queue_artifact_id_seq;
 - `raw_vehicle_json` from `srp_observations` — not migrated; structured fields cover analytics needs
 - Full VIN remap history — not reconstructable from legacy data; `vin_events` captures first-seen only
 - Writing to Postgres staging tables — MinIO is the direct target throughout
-- HOT table backfill (`ops.price_observations`) — already at 99%+ coverage from the live pipeline;
-  `customer_id` backfill handled separately (see feature/postgres-hot-views branch)
+- HOT table backfills (`ops.price_observations`, `ops.vin_to_listing`) — HOT tables are operational only; the live pipeline populates them as new scrapes run
 
 ## Deployment Sequencing
 

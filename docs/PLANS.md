@@ -31,7 +31,7 @@ The remaining transition sequence is: restart `ops` + `scraper`, unpause `scrape
 | 3 | [96](plan_96_silver_layer.md) | Silver layer validation + DuckDB analytics | Plan 100 complete (full historical record in MinIO) |
 | 4 | [90](plan_90_dbt_cleanup.md) | dbt decommission | Plan 96 validation gates (2+ weeks of silver production data) |
 | — | [79](plan_79_multi_instance.md) | Multi-instance detail scraping | `scrape_detail_pages` Airflow DAG live (Plan 71 step 9); resume when IP flagging requires it |
-| — | **86** | Grafana observability stack | Airflow live so real DAG metrics exist to observe |
+| — | [86](plan_86_grafana_observability.md) | Grafana observability stack | Airflow live so real DAG metrics exist to observe |
 | — | **87** | Kafka event-driven layer | Airflow DAGs producing events + multiple consumers exist |
 | — | **88** | Kubernetes | 5+ services under management |
 | — | [69](plan_69_terraform.md) | Terraform IaC | Manual provisioning stable |
