@@ -113,6 +113,27 @@ class TestProcessBatch:
         body = resp.json()
         assert body["skip_count"] == 1
 
+    def test_silver_write_failures_counted_when_silver_written_zero(
+        self, mock_processing_client, mocker
+    ):
+        """complete artifact with silver_written=0 increments silver_write_failures."""
+        mocker.patch(
+            "processing.routers.batch._claim_batch",
+            return_value=[_make_artifact(1, "results_page")],
+        )
+        mocker.patch(
+            "processing.routers.batch._process_artifact",
+            return_value={
+                "status": "complete",
+                "artifact_type": "results_page",
+                "silver_written": 0,
+            },
+        )
+        resp = mock_processing_client.post("/process/batch")
+        body = resp.json()
+        assert body["silver_write_failures"] == 1
+        assert body["srp_count"] == 1
+
     def test_mixed_batch(self, mock_processing_client, mocker):
         artifacts = [
             _make_artifact(1, "results_page"),

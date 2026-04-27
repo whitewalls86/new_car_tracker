@@ -33,29 +33,30 @@ def advance_rotation(
     Two guards:
     1. min_idle_minutes (default 1439 = 23h59m): each slot must wait this long
        before it can fire again.
-    2. min_gap_minutes (default 230 = ~3h50m): blocks if ANY non-skipped search
-       scrape run started within this window. Prevents multiple slots from
+    2. min_gap_minutes (default 230 = ~3h50m): blocks if ANY config's
+       last_queued_at falls within this window. Prevents multiple slots from
        firing in rapid succession even if all have stale timestamps.
 
-    Returns {"slot": null, "configs": []} when nothing is due.
+    Returns {"slot": null, "configs": [], "run_id": null} when nothing is due.
+    Returns {"slot": ..., "configs": [...], "run_id": "<uuid>"} when work is claimed.
+    run_id is a fresh UUID for the caller to pass to the scraper; no runs row is inserted.
     """
     with db_cursor(error_context="advance_rotation") as cur:
-        # Guard: check time since last non-skipped search scrape run
+        # Guard: check time since last search config was queued
         cur.execute("""
-            SELECT started_at
-            FROM runs
-            WHERE trigger = 'search scrape'
-              AND status NOT IN ('skipped', 'failed', 'requested')
-            ORDER BY started_at DESC
-            LIMIT 1
+            SELECT MAX(last_queued_at)
+            FROM search_configs
+            WHERE enabled = true
         """)
-        last_run = cur.fetchone()
-        if last_run and last_run[0]:
-            gap = datetime.datetime.now(datetime.timezone.utc) - last_run[0]
+        row = cur.fetchone()
+        last_queued = row[0] if row else None
+        if last_queued:
+            gap = datetime.datetime.now(datetime.timezone.utc) - last_queued
             if gap.total_seconds() < min_gap_minutes * 60:
                 return {
                     "slot": None,
                     "configs": [],
+                    "run_id": None,
                     "reason": "too_soon",
                     "last_run_minutes_ago": round(gap.total_seconds() / 60, 1),
                 }
@@ -90,7 +91,7 @@ def advance_rotation(
             row = cur.fetchone()
 
             if not row:
-                return {"slot": None, "configs": []}
+                return {"slot": None, "configs": [], "run_id": None}
 
             cur.execute(
                 "UPDATE search_configs SET last_queued_at = now() WHERE search_key = %s",
@@ -100,6 +101,7 @@ def advance_rotation(
             params = json.loads(raw_params) if isinstance(raw_params, str) else dict(raw_params)
             return {
                 "slot": None,
+                "run_id": str(uuid.uuid4()),
                 "configs": [{
                     "search_key": row[0],
                     "params": params,
@@ -134,7 +136,7 @@ def advance_rotation(
             "scopes": params.get("scopes", ["local", "national"]),
         })
 
-    return {"slot": slot, "configs": configs}
+    return {"slot": slot, "run_id": str(uuid.uuid4()), "configs": configs}
 
 
 # ---------------------------------------------------------------------------

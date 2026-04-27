@@ -21,10 +21,16 @@ client = TestClient(app)
 # ---------------------------------------------------------------------------
 
 class TestAdvanceRotation:
+    # Mock shape: MAX(last_queued_at) always returns a row — either (None,) or (timestamp,).
+    # fetchone.side_effect entries follow the query order:
+    #   1. MAX(last_queued_at) gap check
+    #   2. slot_row (rotation_slot query)
+    #   3. legacy_row (fallback single-config query)
+
     def test_too_soon_returns_null_slot(self, mock_cursor_context):
         conn, cursor = mock_cursor_context
         recent = datetime.datetime.now(datetime.timezone.utc)
-        cursor.fetchone.side_effect = [(recent,)]
+        cursor.fetchone.side_effect = [(recent,)]  # gap check: recently queued
 
         resp = client.post(
             "/scrape/rotation/advance",
@@ -34,32 +40,36 @@ class TestAdvanceRotation:
         assert resp.status_code == 200
         data = resp.json()
         assert data["slot"] is None
+        assert data["run_id"] is None
         assert data["reason"] == "too_soon"
         assert "last_run_minutes_ago" in data
 
     def test_no_slot_due_returns_empty(self, mock_cursor_context):
         conn, cursor = mock_cursor_context
-        # last_run=None, slot_row=None, legacy_row=None
-        cursor.fetchone.side_effect = [None, None, None]
+        # gap check: no recent queued, slot_row: None, legacy_row: None
+        cursor.fetchone.side_effect = [(None,), None, None]
 
         resp = client.post("/scrape/rotation/advance")
 
         assert resp.status_code == 200
         data = resp.json()
         assert data["slot"] is None
+        assert data["run_id"] is None
         assert data["configs"] == []
 
     def test_legacy_fallback_returns_single_config(self, mock_cursor_context):
         conn, cursor = mock_cursor_context
         params = json.dumps({"makes": ["Honda"], "scopes": ["local"]})
-        # last_run=None, slot_row=None, legacy_row=(search_key, params)
-        cursor.fetchone.side_effect = [None, None, ("legacy-key", params)]
+        # gap check: no recent queued, slot_row: None, legacy_row: found
+        cursor.fetchone.side_effect = [(None,), None, ("legacy-key", params)]
 
         resp = client.post("/scrape/rotation/advance")
 
         assert resp.status_code == 200
         data = resp.json()
         assert data["slot"] is None
+        assert data["run_id"] is not None
+        uuid.UUID(data["run_id"])  # valid UUID
         assert len(data["configs"]) == 1
         assert data["configs"][0]["search_key"] == "legacy-key"
         assert data["configs"][0]["scopes"] == ["local"]
@@ -68,8 +78,8 @@ class TestAdvanceRotation:
         conn, cursor = mock_cursor_context
         params_a = json.dumps({"makes": ["Honda"], "scopes": ["national"]})
         params_b = json.dumps({"makes": ["Toyota"], "scopes": ["local"]})
-        # last_run=None, slot_row=(slot=3,) — then fetchall for configs
-        cursor.fetchone.side_effect = [None, (3,)]
+        # gap check: no recent queued, slot_row: slot 3 found
+        cursor.fetchone.side_effect = [(None,), (3,)]
         cursor.fetchall.return_value = [
             ("slot3-a", params_a),
             ("slot3-b", params_b),
@@ -80,23 +90,27 @@ class TestAdvanceRotation:
         assert resp.status_code == 200
         data = resp.json()
         assert data["slot"] == 3
+        assert data["run_id"] is not None
+        uuid.UUID(data["run_id"])  # valid UUID
         assert len(data["configs"]) == 2
         assert data["configs"][0]["search_key"] == "slot3-a"
         assert data["configs"][1]["search_key"] == "slot3-b"
 
-    def test_response_always_has_slot_and_configs_keys(self, mock_cursor_context):
+    def test_response_always_has_slot_configs_and_run_id_keys(self, mock_cursor_context):
         conn, cursor = mock_cursor_context
-        cursor.fetchone.side_effect = [None, None, None]
+        cursor.fetchone.side_effect = [(None,), None, None]
 
         resp = client.post("/scrape/rotation/advance")
 
-        assert "slot" in resp.json()
-        assert "configs" in resp.json()
+        data = resp.json()
+        assert "slot" in data
+        assert "configs" in data
+        assert "run_id" in data
 
-    def test_last_run_none_does_not_trigger_too_soon(self, mock_cursor_context):
+    def test_no_last_queued_does_not_trigger_too_soon(self, mock_cursor_context):
         conn, cursor = mock_cursor_context
-        # last_run=None means no prior run — should not be blocked
-        cursor.fetchone.side_effect = [None, None, None]
+        # MAX returns (None,) — no configs ever queued — must not be blocked
+        cursor.fetchone.side_effect = [(None,), None, None]
 
         resp = client.post(
             "/scrape/rotation/advance",
