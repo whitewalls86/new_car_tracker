@@ -371,3 +371,13 @@ class TestPipelineHealthQueries:
     def test_long_running_queries(self, viewer_cur):
         viewer_cur.execute(Q.PG_STAT_SLOW_QUERIES)
         viewer_cur.fetchall()
+
+    def test_airflow_dag_runs(self, viewer_cur):
+        viewer_cur.execute("""
+            SELECT 1 FROM information_schema.tables
+            WHERE table_schema = 'public' AND table_name = 'dag_run'
+        """)
+        if viewer_cur.fetchone() is None:
+            pytest.skip("dag_run table not yet created (Airflow not initialised)")
+        viewer_cur.execute(Q.AIRFLOW_DAG_RUNS)
+        viewer_cur.fetchall()

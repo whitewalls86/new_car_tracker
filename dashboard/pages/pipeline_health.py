@@ -44,6 +44,9 @@ def render():
     else:
         st.success("No active runs")
 
+    # -- Airflow DAG runs ----------------------------------------------------
+    _section_airflow_dag_runs()
+
     # -- dbt build status ----------------------------------------------------
     dbt_lock_df = run_query(Q.DBT_LOCK_STATUS)
     if not dbt_lock_df.empty and dbt_lock_df["locked"].iloc[0]:
@@ -102,6 +105,21 @@ def render():
 
 
 # ---- helpers ---------------------------------------------------------------
+
+def _section_airflow_dag_runs():
+    st.subheader("Airflow DAG Runs (Last 3 Days)")
+    try:
+        df = run_query(Q.AIRFLOW_DAG_RUNS)
+    except Exception:
+        st.warning("Airflow dag_run table not accessible — run: GRANT SELECT ON dag_run TO viewer;")
+        return
+    if df.empty:
+        st.info("No recent scrape DAG runs found.")
+        return
+    display = df[["dag_id", "state", "started", "duration_min", "running"]].copy()
+    display.columns = ["DAG", "State", "Started", "Duration (min)", "Running"]
+    st.dataframe(display, use_container_width=True, hide_index=True)
+
 
 def _section_rotation_schedule():
     st.subheader("Search Scrape Rotation Schedule")
