@@ -128,10 +128,19 @@ def test_advance_rotation_does_not_return_recently_queued_config(api_client, see
 
 @pytest.mark.integration
 def test_advance_rotation_returns_slot_when_due(api_client, verify_cur, seed_search_config):
-    # Seed a config with no last_queued_at — always due
+    # Park all existing eligible configs so they won't be chosen over our test data.
+    # Pass min_gap_minutes=0 to bypass the gap guard (which would fire because
+    # the parked configs now have last_queued_at = now()).
+    verify_cur.execute(
+        "UPDATE search_configs SET last_queued_at = now() WHERE enabled = true"
+    )
+
     key = seed_search_config(rotation_slot=2, last_queued_at=None)
 
-    response = api_client.post("/scrape/rotation/advance", params={"min_idle_minutes": 1})
+    response = api_client.post(
+        "/scrape/rotation/advance",
+        params={"min_idle_minutes": 1, "min_gap_minutes": 0},
+    )
 
     assert response.status_code == 200
     data = response.json()
@@ -172,10 +181,19 @@ def test_advance_rotation_returns_too_soon_within_gap(api_client, seed_search_co
 def test_advance_rotation_updates_last_queued_at_for_all_configs_in_slot(
     api_client, verify_cur, seed_search_config
 ):
+    # Park all existing eligible configs so our slot-4 pair is chosen.
+    # Pass min_gap_minutes=0 to bypass the gap guard.
+    verify_cur.execute(
+        "UPDATE search_configs SET last_queued_at = now() WHERE enabled = true"
+    )
+
     key_a = seed_search_config(rotation_slot=4, last_queued_at=None)
     key_b = seed_search_config(rotation_slot=4, last_queued_at=None)
 
-    api_client.post("/scrape/rotation/advance", params={"min_idle_minutes": 1})
+    api_client.post(
+        "/scrape/rotation/advance",
+        params={"min_idle_minutes": 1, "min_gap_minutes": 0},
+    )
 
     for key in (key_a, key_b):
         verify_cur.execute(
