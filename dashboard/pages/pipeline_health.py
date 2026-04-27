@@ -1,10 +1,10 @@
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+import queries as Q
 import streamlit as st
 from plotly.subplots import make_subplots
 
-from dashboard import queries as Q
 from db import run_query
 
 

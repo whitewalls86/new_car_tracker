@@ -10,7 +10,28 @@ uses), so tests and production are always in sync.
 """
 import pytest
 
-from dashboard import queries as Q
+from dashboard.queries import (
+    ACTIVE_RUNS,
+    ARTIFACT_BACKLOG,
+    BLOCKED_COOLDOWN_HISTOGRAM,
+    COOLDOWN_BACKLOG,
+    DBT_BUILD_HISTORY,
+    DBT_LOCK_STATUS,
+    DETAIL_EXTRACTION_COVERAGE,
+    PG_STAT_CONNECTIONS,
+    PG_STAT_SLOW_QUERIES,
+    PIPELINE_ERRORS,
+    PRICE_FRESHNESS,
+    PROCESSING_THROUGHPUT,
+    PROCESSOR_ACTIVITY,
+    RECENT_DETAIL_RUNS,
+    ROTATION_SCHEDULE,
+    RUNS_OVER_TIME,
+    SEARCH_SCRAPE_JOBS,
+    STALE_VEHICLE_BACKLOG,
+    SUCCESS_RATE,
+    TERMINATED_RUNS,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -284,92 +305,92 @@ class TestMarketTrendsQueries:
 class TestPipelineHealthQueries:
 
     def test_active_runs(self, viewer_cur):
-        viewer_cur.execute(Q.ACTIVE_RUNS)
+        viewer_cur.execute(ACTIVE_RUNS)
         viewer_cur.fetchall()
 
     def test_dbt_lock_status(self, viewer_cur):
-        viewer_cur.execute(Q.DBT_LOCK_STATUS)
+        viewer_cur.execute(DBT_LOCK_STATUS)
         row = viewer_cur.fetchone()
         assert row is not None
 
     def test_rotation_schedule(self, viewer_cur):
-        viewer_cur.execute(Q.ROTATION_SCHEDULE)
+        viewer_cur.execute(ROTATION_SCHEDULE)
         viewer_cur.fetchall()
 
     def test_recent_detail_scrape_runs(self, viewer_cur):
-        viewer_cur.execute(Q.RECENT_DETAIL_RUNS)
+        viewer_cur.execute(RECENT_DETAIL_RUNS)
         viewer_cur.fetchall()
 
     def test_stale_vehicle_backlog(self, viewer_cur):
-        viewer_cur.execute(Q.STALE_VEHICLE_BACKLOG)
+        viewer_cur.execute(STALE_VEHICLE_BACKLOG)
         viewer_cur.fetchall()
 
     def test_cooldown_backlog(self, viewer_cur):
-        viewer_cur.execute(Q.COOLDOWN_BACKLOG)
+        viewer_cur.execute(COOLDOWN_BACKLOG)
         viewer_cur.fetchall()
 
     def test_price_freshness(self, viewer_cur):
-        viewer_cur.execute(Q.PRICE_FRESHNESS)
+        viewer_cur.execute(PRICE_FRESHNESS)
         viewer_cur.fetchall()
 
     def test_blocked_cooldown_histogram(self, viewer_cur):
-        viewer_cur.execute(Q.BLOCKED_COOLDOWN_HISTOGRAM)
+        viewer_cur.execute(BLOCKED_COOLDOWN_HISTOGRAM)
         viewer_cur.fetchall()
 
     def test_success_rate_detail(self, viewer_cur):
-        viewer_cur.execute(Q.SUCCESS_RATE.format(
+        viewer_cur.execute(SUCCESS_RATE.format(
             artifact_type="detail_page", interval="7 days"
         ))
         viewer_cur.fetchall()
 
     def test_success_rate_results(self, viewer_cur):
-        viewer_cur.execute(Q.SUCCESS_RATE.format(
+        viewer_cur.execute(SUCCESS_RATE.format(
             artifact_type="results_page", interval="7 days"
         ))
         viewer_cur.fetchall()
 
     def test_search_scrape_jobs_7d(self, viewer_cur):
-        viewer_cur.execute(Q.SEARCH_SCRAPE_JOBS)
+        viewer_cur.execute(SEARCH_SCRAPE_JOBS)
         viewer_cur.fetchall()
 
     def test_runs_over_time(self, viewer_cur):
-        viewer_cur.execute(Q.RUNS_OVER_TIME)
+        viewer_cur.execute(RUNS_OVER_TIME)
         viewer_cur.fetchall()
 
     def test_artifact_processing_backlog(self, viewer_cur):
-        viewer_cur.execute(Q.ARTIFACT_BACKLOG)
+        viewer_cur.execute(ARTIFACT_BACKLOG)
         viewer_cur.fetchall()
 
     def test_terminated_runs(self, viewer_cur):
-        viewer_cur.execute(Q.TERMINATED_RUNS)
+        viewer_cur.execute(TERMINATED_RUNS)
         viewer_cur.fetchall()
 
     def test_pipeline_errors(self, viewer_cur):
-        viewer_cur.execute(Q.PIPELINE_ERRORS)
+        viewer_cur.execute(PIPELINE_ERRORS)
         viewer_cur.fetchall()
 
     def test_dbt_build_history(self, viewer_cur):
-        viewer_cur.execute(Q.DBT_BUILD_HISTORY)
+        viewer_cur.execute(DBT_BUILD_HISTORY)
         viewer_cur.fetchall()
 
     def test_processor_activity(self, viewer_cur):
-        viewer_cur.execute(Q.PROCESSOR_ACTIVITY)
+        viewer_cur.execute(PROCESSOR_ACTIVITY)
         viewer_cur.fetchall()
 
     def test_processing_throughput(self, viewer_cur):
-        viewer_cur.execute(Q.PROCESSING_THROUGHPUT)
+        viewer_cur.execute(PROCESSING_THROUGHPUT)
         viewer_cur.fetchall()
 
     def test_detail_extraction_coverage(self, viewer_cur):
-        viewer_cur.execute(Q.DETAIL_EXTRACTION_COVERAGE)
+        viewer_cur.execute(DETAIL_EXTRACTION_COVERAGE)
         viewer_cur.fetchall()
 
     def test_pg_stat_activity(self, viewer_cur):
-        viewer_cur.execute(Q.PG_STAT_CONNECTIONS)
+        viewer_cur.execute(PG_STAT_CONNECTIONS)
         viewer_cur.fetchone()
 
     def test_long_running_queries(self, viewer_cur):
-        viewer_cur.execute(Q.PG_STAT_SLOW_QUERIES)
+        viewer_cur.execute(PG_STAT_SLOW_QUERIES)
         viewer_cur.fetchall()
 
     def test_airflow_dag_runs(self, viewer_cur):
