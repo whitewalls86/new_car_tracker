@@ -40,7 +40,11 @@
 -- 1. ops.ops_vehicle_staleness
 -- ---------------------------------------------------------------------------
 
-CREATE OR REPLACE VIEW ops.ops_vehicle_staleness AS
+-- Drop in dependency order: queue depends on staleness
+DROP VIEW IF EXISTS ops.ops_detail_scrape_queue;
+DROP VIEW IF EXISTS ops.ops_vehicle_staleness;
+
+CREATE VIEW ops.ops_vehicle_staleness AS
 SELECT
     po.listing_id,
     po.vin,
@@ -85,7 +89,7 @@ GRANT SELECT ON ops.ops_vehicle_staleness TO viewer;
 --   fully_blocked    = num_of_attempts >= 5
 -- ---------------------------------------------------------------------------
 
-CREATE OR REPLACE VIEW ops.ops_detail_scrape_queue AS
+CREATE VIEW ops.ops_detail_scrape_queue AS
 WITH stale AS (
     SELECT
         ovs.listing_id,
