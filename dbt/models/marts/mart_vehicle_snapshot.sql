@@ -56,3 +56,6 @@ select
 from {{ ref('int_latest_observation') }} obs
 left join {{ ref('int_price_history') }} ph
     on ph.vin = obs.vin17
+inner join {{ ref('int_active_make_models') }} amm
+    on amm.make  = lower(obs.make)
+   and amm.model = lower(obs.model)
