@@ -20,39 +20,73 @@ sources:
             )
         columns:
           - name: artifact_id
+            data_type: bigint
           - name: listing_id
+            data_type: varchar
           - name: vin
+            data_type: varchar
           - name: canonical_detail_url
+            data_type: varchar
           - name: source
+            data_type: varchar
           - name: listing_state
+            data_type: varchar
           - name: fetched_at
+            data_type: timestamptz
           - name: written_at
+            data_type: timestamptz
           - name: price
+            data_type: integer
           - name: make
+            data_type: varchar
           - name: model
+            data_type: varchar
           - name: trim
+            data_type: varchar
           - name: year
+            data_type: smallint
           - name: mileage
+            data_type: smallint
           - name: msrp
+            data_type: smallint
           - name: stock_type
+            data_type: varchar
           - name: fuel_type
+            data_type: varchar
           - name: body_style
+            data_type: varchar
           - name: dealer_name
+            data_type: varchar
           - name: dealer_zip
+            data_type: varchar
           - name: customer_id
+            data_type: varchar
           - name: seller_id
+            data_type: varchar
           - name: financing_type
+            data_type: varchar
           - name: seller_zip
+            data_type: varchar
           - name: seller_customer_id
+            data_type: varchar
           - name: page_number
+            data_type: smallint
           - name: position_on_page
+            data_type: smallint
           - name: trid
+            data_type: varchar
           - name: isa_context
+            data_type: varchar
           - name: body
+            data_type: varchar
           - name: condition
+            data_type: varchar
           - name: obs_year
+            data_type: integer
           - name: obs_month
+            data_type: integer
           - name: obs_day
+            data_type: integer
 
   # ---------------------------------------------------------------------------
   # Ops events — append-only event logs in MinIO
@@ -74,17 +108,29 @@ sources:
             )
         columns:
           - name: event_id
+            data_type: bigint
           - name: listing_id
+            data_type: varchar
           - name: vin
+            data_type: varchar
           - name: price
+            data_type: integer
           - name: make
+            data_type: varchar
           - name: model
+            data_type: varchar
           - name: artifact_id
+            data_type: bigint
           - name: event_type
+            data_type: varchar
           - name: source
+            data_type: varchar
           - name: event_at
+            data_type: timestamptz
           - name: year
+            data_type: integer
           - name: month
+            data_type: integer
 
       - name: vin_to_listing_events
         description: >
