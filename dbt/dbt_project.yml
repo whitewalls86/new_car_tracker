@@ -4,6 +4,9 @@ config-version: 2
 
 profile: cartracker
 
+on-run-start:
+  - "{{ register_upstream_external_models() }}"
+
 model-paths: ["models"]
 analysis-paths: ["analysis"]
 test-paths: ["tests"]
