@@ -1,6 +1,6 @@
 import pandas as pd
 import streamlit as st
-from pages import deals, inventory, market_trends
+from pages import data_health, deals, inventory, market_trends
 from queries import MART_FRESHNESS
 
 from db import run_duckdb_query
@@ -34,8 +34,8 @@ if _freshness_val is not None:
 # ---------------------------------------------------------------------------
 # Tabs
 # ---------------------------------------------------------------------------
-tab1, tab2, tab3 = st.tabs([
-    "Inventory Overview", "Deal Finder", "Market Trends",
+tab1, tab2, tab3, tab4 = st.tabs([
+    "Inventory Overview", "Deal Finder", "Market Trends", "Data Health",
 ])
 
 with tab1:
@@ -44,3 +44,5 @@ with tab2:
     deals.render()
 with tab3:
     market_trends.render()
+with tab4:
+    data_health.render()

@@ -248,3 +248,206 @@ unit_tests:
         rows: []
     expect:
       rows: []
+
+  # ---------------------------------------------------------------------------
+  # mart_inventory_coverage — enrichment rate by make/model
+  # ---------------------------------------------------------------------------
+
+  - name: test_coverage_all_detail
+    description: "All VINs with source='detail' → coverage_pct=100, srp_only=0"
+    model: mart_inventory_coverage
+    given:
+      - input: ref('int_latest_observation')
+        rows:
+          - {vin17: "DETAIL0VIN0000001", make: "honda", model: "crv", source: "detail"}
+          - {vin17: "DETAIL0VIN0000002", make: "honda", model: "crv", source: "detail"}
+    expect:
+      rows:
+        - {make: "honda", model: "crv", total_vins: 2, detail_enriched: 2, srp_only: 0, coverage_pct: 100.0}
+
+  - name: test_coverage_all_srp
+    description: "All VINs with source='srp' → coverage_pct=0, detail_enriched=0"
+    model: mart_inventory_coverage
+    given:
+      - input: ref('int_latest_observation')
+        rows:
+          - {vin17: "SRPONLY0VIN000001", make: "honda", model: "crv", source: "srp"}
+          - {vin17: "SRPONLY0VIN000002", make: "honda", model: "crv", source: "srp"}
+    expect:
+      rows:
+        - {make: "honda", model: "crv", total_vins: 2, detail_enriched: 0, srp_only: 2, coverage_pct: 0.0}
+
+  - name: test_coverage_mixed_fifty_pct
+    description: "1 detail + 1 SRP for the same make/model → coverage_pct=50.0"
+    model: mart_inventory_coverage
+    given:
+      - input: ref('int_latest_observation')
+        rows:
+          - {vin17: "MIXEDCOVDET000001", make: "honda", model: "crv", source: "detail"}
+          - {vin17: "MIXEDCOVSRP000001", make: "honda", model: "crv", source: "srp"}
+    expect:
+      rows:
+        - {make: "honda", model: "crv", total_vins: 2, detail_enriched: 1, srp_only: 1, coverage_pct: 50.0}
+
+  - name: test_coverage_null_make_excluded
+    description: "Rows with null make are excluded from coverage"
+    model: mart_inventory_coverage
+    given:
+      - input: ref('int_latest_observation')
+        rows:
+          - {vin17: "NULLMAKEVIN000001", make: null, model: "crv", source: "detail"}
+          - {vin17: "GOODMAKEVIN000001", make: "honda", model: "crv", source: "detail"}
+    expect:
+      rows:
+        - {make: "honda", model: "crv", total_vins: 1}
+
+  # ---------------------------------------------------------------------------
+  # mart_cooldown_cohorts — 403 backlog bucket assignment
+  # ---------------------------------------------------------------------------
+
+  - name: test_cooldown_bucket_3_to_5
+    description: "A listing with 4 attempts falls into the '3-5' bucket"
+    model: mart_cooldown_cohorts
+    given:
+      - input: ref('stg_blocked_cooldown_events')
+        rows:
+          - {listing_id: "L001", num_of_attempts: 4, event_at: "2026-01-10 12:00:00+00"}
+    expect:
+      rows:
+        - {attempt_bucket: "3-5", listing_count: 1}
+
+  - name: test_cooldown_bucket_11_plus
+    description: "A listing with 15 attempts falls into the '11+' bucket"
+    model: mart_cooldown_cohorts
+    given:
+      - input: ref('stg_blocked_cooldown_events')
+        rows:
+          - {listing_id: "L001", num_of_attempts: 15, event_at: "2026-01-10 12:00:00+00"}
+    expect:
+      rows:
+        - {attempt_bucket: "11+", listing_count: 1}
+
+  - name: test_cooldown_latest_event_wins
+    description: "Two events for the same listing — the one with the higher event_at determines the attempt count"
+    model: mart_cooldown_cohorts
+    given:
+      - input: ref('stg_blocked_cooldown_events')
+        rows:
+          - {listing_id: "L001", num_of_attempts: 2, event_at: "2026-01-09 12:00:00+00"}
+          - {listing_id: "L001", num_of_attempts: 7, event_at: "2026-01-10 12:00:00+00"}
+    expect:
+      rows:
+        - {attempt_bucket: "6-10", listing_count: 1}
+
+  - name: test_cooldown_two_listings_same_bucket
+    description: "Two distinct listings both at 1 attempt → listing_count=2 in bucket '1'"
+    model: mart_cooldown_cohorts
+    given:
+      - input: ref('stg_blocked_cooldown_events')
+        rows:
+          - {listing_id: "L001", num_of_attempts: 1, event_at: "2026-01-10 12:00:00+00"}
+          - {listing_id: "L002", num_of_attempts: 1, event_at: "2026-01-10 12:00:00+00"}
+    expect:
+      rows:
+        - {attempt_bucket: "1", listing_count: 2}
+
+  # ---------------------------------------------------------------------------
+  # mart_detail_batch_outcomes — extraction yield per day
+  # ---------------------------------------------------------------------------
+
+  - name: test_batch_yield_all_valid
+    description: "All detail observations have a valid vin17 → extraction_yield=100.0"
+    model: mart_detail_batch_outcomes
+    given:
+      - input: ref('stg_observations')
+        rows:
+          - {source: "detail", fetched_at: "2026-01-10 10:00:00+00", artifact_id: 1, vin17: "VALIDVIN00000001"}
+          - {source: "detail", fetched_at: "2026-01-10 11:00:00+00", artifact_id: 1, vin17: "VALIDVIN00000002"}
+    expect:
+      rows:
+        - {obs_date: "2026-01-10", total_observations: 2, valid_vin_count: 2,
+           unique_vins_enriched: 2, extraction_yield: 100.0}
+
+  - name: test_batch_yield_partial
+    description: "1 of 2 observations has a valid vin17 → extraction_yield=50.0"
+    model: mart_detail_batch_outcomes
+    given:
+      - input: ref('stg_observations')
+        rows:
+          - {source: "detail", fetched_at: "2026-01-10 10:00:00+00", artifact_id: 1, vin17: "VALIDVIN00000001"}
+          - {source: "detail", fetched_at: "2026-01-10 11:00:00+00", artifact_id: 1, vin17: null}
+    expect:
+      rows:
+        - {obs_date: "2026-01-10", total_observations: 2, valid_vin_count: 1,
+           extraction_yield: 50.0}
+
+  - name: test_batch_non_detail_excluded
+    description: "SRP observations are excluded — only source='detail' counts"
+    model: mart_detail_batch_outcomes
+    given:
+      - input: ref('stg_observations')
+        rows:
+          - {source: "srp",    fetched_at: "2026-01-10 10:00:00+00", artifact_id: 1, vin17: "SRPVIN000000001"}
+          - {source: "detail", fetched_at: "2026-01-10 11:00:00+00", artifact_id: 2, vin17: "DETAILVIN000001"}
+    expect:
+      rows:
+        - {obs_date: "2026-01-10", total_observations: 1, valid_vin_count: 1}
+
+  - name: test_batch_groups_by_day
+    description: "Observations on two distinct days produce two rows"
+    model: mart_detail_batch_outcomes
+    given:
+      - input: ref('stg_observations')
+        rows:
+          - {source: "detail", fetched_at: "2026-01-10 10:00:00+00", artifact_id: 1, vin17: "VALIDVIN00000001"}
+          - {source: "detail", fetched_at: "2026-01-11 10:00:00+00", artifact_id: 2, vin17: "VALIDVIN00000002"}
+    expect:
+      rows:
+        - {obs_date: "2026-01-10"}
+        - {obs_date: "2026-01-11"}
+
+  # ---------------------------------------------------------------------------
+  # mart_price_freshness_trend — freshness bucket assignment
+  # ---------------------------------------------------------------------------
+
+  - name: test_freshness_no_price_history_goes_stale
+    description: "VIN with no price history (left join miss) → counted in stale_gt_14d, fresh_lt_7d_pct=0"
+    model: mart_price_freshness_trend
+    given:
+      - input: ref('int_latest_observation')
+        rows:
+          - {vin17: "NOPRICEHIST000001", make: "honda", model: "crv"}
+      - input: ref('int_price_history')
+        rows: []
+    expect:
+      rows:
+        - {make: "honda", model: "crv", total_vins: 1, stale_gt_14d: 1, fresh_lt_7d_pct: 0.0}
+
+  - name: test_freshness_old_price_goes_stale
+    description: "VIN with a very old price observation → counted in stale_gt_14d"
+    model: mart_price_freshness_trend
+    given:
+      - input: ref('int_latest_observation')
+        rows:
+          - {vin17: "STALEVIN00000001", make: "honda", model: "crv"}
+      - input: ref('int_price_history')
+        rows:
+          - {vin: "STALEVIN00000001", price_observed_at: "2025-01-01 12:00:00+00"}
+    expect:
+      rows:
+        - {make: "honda", model: "crv", stale_gt_14d: 1, fresh_lt_1d: 0, fresh_lt_7d_pct: 0.0}
+
+  - name: test_freshness_current_price_is_fresh
+    description: "VIN with a price observed right now → counted in fresh_lt_1d, fresh_lt_7d_pct=100"
+    model: mart_price_freshness_trend
+    given:
+      - input: ref('int_latest_observation')
+        rows:
+          - {vin17: "FRESHVIN00000001", make: "honda", model: "crv"}
+      - input: ref('int_price_history')
+        rows:
+          - {vin: "FRESHVIN00000001",
+             price_observed_at: "{{ modules.datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S+00') }}"}
+    expect:
+      rows:
+        - {make: "honda", model: "crv", fresh_lt_1d: 1, stale_gt_14d: 0, fresh_lt_7d_pct: 100.0}

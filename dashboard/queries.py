@@ -44,3 +44,9 @@ INVENTORY_TOP_DEALERS = _load("inventory_top_dealers.sql")
 MARKET_TRENDS_DAYS_ON_MARKET = _load("market_trends_days_on_market.sql")
 MARKET_TRENDS_NATIONAL_SUPPLY = _load("market_trends_national_supply.sql")
 MARKET_TRENDS_PRICE_DISTRIBUTION = _load("market_trends_price_distribution.sql")
+
+# data_health.py
+DATA_HEALTH_INVENTORY_COVERAGE = _load("data_health_inventory_coverage.sql")
+DATA_HEALTH_COOLDOWN_COHORTS = _load("data_health_cooldown_cohorts.sql")
+DATA_HEALTH_BATCH_OUTCOMES = _load("data_health_batch_outcomes.sql")
+DATA_HEALTH_PRICE_FRESHNESS = _load("data_health_price_freshness.sql")

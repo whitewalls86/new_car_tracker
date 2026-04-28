@@ -1,0 +1,27 @@
+version: 2
+
+models:
+  - name: stg_blocked_cooldown_events
+    description: >
+      403 blocked cooldown lifecycle events from MinIO. One row per event.
+      event_type values: 'blocked' (first 403), 'incremented' (subsequent attempts).
+      num_of_attempts is the cumulative count at the time of the event.
+    columns:
+      - name: event_id
+        data_tests:
+          - not_null
+          - unique
+      - name: listing_id
+        data_tests:
+          - not_null
+      - name: event_type
+        data_tests:
+          - not_null
+          - accepted_values:
+              values: ['blocked', 'incremented']
+      - name: num_of_attempts
+        data_tests:
+          - not_null
+      - name: event_at
+        data_tests:
+          - not_null

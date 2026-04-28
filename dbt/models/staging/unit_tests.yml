@@ -31,3 +31,22 @@ unit_tests:
     expect:
       rows:
         - {customer_id: "DEALER1", name: "Has ID", zip: "44444"}
+
+  # ---------------------------------------------------------------------------
+  # stg_blocked_cooldown_events — pass-through from source
+  # ---------------------------------------------------------------------------
+
+  - name: test_blocked_cooldown_events_pass_through
+    description: "All columns from the source pass through unchanged"
+    model: stg_blocked_cooldown_events
+    given:
+      - input: source('ops_events', 'blocked_cooldown_events')
+        rows:
+          - {event_id: 1, listing_id: "L001", event_type: "blocked",
+             num_of_attempts: 1, event_at: "2026-01-10 12:00:00+00"}
+          - {event_id: 2, listing_id: "L001", event_type: "incremented",
+             num_of_attempts: 2, event_at: "2026-01-11 12:00:00+00"}
+    expect:
+      rows:
+        - {event_id: 1, listing_id: "L001", event_type: "blocked",   num_of_attempts: 1}
+        - {event_id: 2, listing_id: "L001", event_type: "incremented", num_of_attempts: 2}
