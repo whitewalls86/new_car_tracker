@@ -193,4 +193,20 @@ sources:
           - name: rotation_slot
           - name: last_queued_at
 
+  - name: ops
+    description: "Ops schema HOT tables — live operational state"
+    schema: ops
+    tables:
+      - name: tracked_models
+        description: >
+          Empirical set of (search_key, make, model) tuples observed in SRP results.
+          Populated by the processing service when a make/model appears in a search result.
+          Join to search_configs on search_key to get only enabled targets.
+        meta:
+          external_location: "postgres_scan('{{ env_var(\"POSTGRES_URL\") }}', 'ops', 'tracked_models')"
+        columns:
+          - name: search_key
+          - name: make
+          - name: model
+
 

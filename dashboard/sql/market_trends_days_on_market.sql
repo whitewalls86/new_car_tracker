@@ -6,5 +6,6 @@ SELECT
     MAX(days_on_market)                                                AS max_days,
     COUNT(*)                                                           AS listings
 FROM mart_deal_scores
+WHERE (make, model) IN (SELECT make, model FROM int_active_make_models)
 GROUP BY make, model
 ORDER BY median_days DESC
