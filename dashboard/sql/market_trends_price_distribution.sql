@@ -7,6 +7,5 @@ SELECT
     ROUND(percentile_cont(0.90) WITHIN GROUP (ORDER BY current_price)) AS p90,
     COUNT(*)                                                           AS listings
 FROM mart_deal_scores
-WHERE (make, model) IN (SELECT make, model FROM int_active_make_models)
 GROUP BY make, model
 ORDER BY median DESC
