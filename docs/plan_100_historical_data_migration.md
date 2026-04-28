@@ -1,6 +1,6 @@
 # Plan 100: Historical Data Migration to MinIO
 
-**Status:** PLANNED
+**Status:** COMPLETE (2026-04-27)
 **Priority:** High — prerequisite for Plan 90 (dbt + legacy table drop)
 **Depends on:** Plan 93 (processing service, COMPLETE), Plan 97 (MinIO artifact store, COMPLETE)
 **Blocks:** Plan 96 (silver layer validation), Plan 90 (dbt cleanup)

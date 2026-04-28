@@ -1,0 +1,140 @@
+unit_tests:
+
+  # ---------------------------------------------------------------------------
+  # int_latest_observation — source priority + recency
+  # ---------------------------------------------------------------------------
+
+  - name: test_detail_wins_over_srp_same_vin
+    description: "Detail observation wins over SRP for the same VIN (source priority)"
+    model: int_latest_observation
+    given:
+      - input: ref('stg_observations')
+        rows:
+          - {vin17: "1HGBH41JXMN109186", listing_id: "L1", source: "srp",
+             make: "SRP-Make", fetched_at: "2026-01-10 14:00:00+00", artifact_id: 1}
+          - {vin17: "1HGBH41JXMN109186", listing_id: "L1", source: "detail",
+             make: "Detail-Make", fetched_at: "2026-01-10 12:00:00+00", artifact_id: 2}
+    expect:
+      rows:
+        - {vin17: "1HGBH41JXMN109186", source: "detail", make: "Detail-Make"}
+
+  - name: test_detail_wins_even_when_srp_is_fresher
+    description: "Detail always beats SRP regardless of recency — source_priority first"
+    model: int_latest_observation
+    given:
+      - input: ref('stg_observations')
+        rows:
+          - {vin17: "1HGBH41JXMN109186", listing_id: "L1", source: "srp",
+             make: "SRP-Make", fetched_at: "2026-01-10 14:00:00+00", artifact_id: 1}
+          - {vin17: "1HGBH41JXMN109186", listing_id: "L1", source: "detail",
+             make: "Detail-Make", fetched_at: "2026-01-09 12:00:00+00", artifact_id: 2}
+    expect:
+      rows:
+        - {vin17: "1HGBH41JXMN109186", source: "detail", make: "Detail-Make"}
+
+  - name: test_srp_only_vin_passes_through
+    description: "VIN with only SRP observations passes through as-is"
+    model: int_latest_observation
+    given:
+      - input: ref('stg_observations')
+        rows:
+          - {vin17: "1HGBH41JXMN109186", listing_id: "L1", source: "srp",
+             make: "Honda", fetched_at: "2026-01-10 12:00:00+00", artifact_id: 1}
+    expect:
+      rows:
+        - {vin17: "1HGBH41JXMN109186", source: "srp", make: "Honda"}
+
+  - name: test_null_vin17_excluded
+    description: "Rows with null vin17 are excluded from the output"
+    model: int_latest_observation
+    given:
+      - input: ref('stg_observations')
+        rows:
+          - {vin17: null, listing_id: "L1", source: "srp",
+             make: "Honda", fetched_at: "2026-01-10 12:00:00+00", artifact_id: 1}
+          - {vin17: "1HGBH41JXMN109186", listing_id: "L2", source: "srp",
+             make: "Toyota", fetched_at: "2026-01-10 12:00:00+00", artifact_id: 2}
+    expect:
+      rows:
+        - {vin17: "1HGBH41JXMN109186", make: "Toyota"}
+
+  - name: test_fresher_srp_wins_over_older_srp
+    description: "When both are SRP, the fresher observation wins"
+    model: int_latest_observation
+    given:
+      - input: ref('stg_observations')
+        rows:
+          - {vin17: "1HGBH41JXMN109186", listing_id: "L1", source: "srp",
+             make: "Old-Make", fetched_at: "2026-01-08 12:00:00+00", artifact_id: 1}
+          - {vin17: "1HGBH41JXMN109186", listing_id: "L1", source: "srp",
+             make: "New-Make", fetched_at: "2026-01-10 12:00:00+00", artifact_id: 2}
+    expect:
+      rows:
+        - {vin17: "1HGBH41JXMN109186", make: "New-Make"}
+
+  # ---------------------------------------------------------------------------
+  # int_price_history — price drop/increase counting
+  # ---------------------------------------------------------------------------
+
+  - name: test_price_drop_and_increase_counts
+    description: >
+      Five price events: 100 -> 120 -> 90 -> 90 -> 110.
+      Drops: 120->90 (1). Increases: 100->120, 90->110 (2). Flat: 90->90 (ignored).
+    model: int_price_history
+    given:
+      - input: ref('stg_price_events')
+        rows:
+          - {vin: "TEST00000000000V1", price: 100, event_at: "2026-01-01 12:00:00+00"}
+          - {vin: "TEST00000000000V1", price: 120, event_at: "2026-01-03 12:00:00+00"}
+          - {vin: "TEST00000000000V1", price: 90,  event_at: "2026-01-05 12:00:00+00"}
+          - {vin: "TEST00000000000V1", price: 90,  event_at: "2026-01-07 12:00:00+00"}
+          - {vin: "TEST00000000000V1", price: 110, event_at: "2026-01-09 12:00:00+00"}
+    expect:
+      rows:
+        - {vin: "TEST00000000000V1", price_drop_count: 1, price_increase_count: 2,
+           first_price: 100, min_price: 90, max_price: 120, current_price: 110,
+           total_price_observations: 5}
+
+  - name: test_single_observation_no_drops_or_increases
+    description: "A single price event produces 0 drops and 0 increases"
+    model: int_price_history
+    given:
+      - input: ref('stg_price_events')
+        rows:
+          - {vin: "TEST00000000000V1", price: 25000, event_at: "2026-01-10 12:00:00+00"}
+    expect:
+      rows:
+        - {vin: "TEST00000000000V1", price_drop_count: 0, price_increase_count: 0,
+           first_price: 25000, current_price: 25000, min_price: 25000, max_price: 25000,
+           total_price_observations: 1}
+
+  - name: test_monotonic_drops
+    description: "Three consecutive price drops: 50000 -> 45000 -> 40000"
+    model: int_price_history
+    given:
+      - input: ref('stg_price_events')
+        rows:
+          - {vin: "TEST00000000000V1", price: 50000, event_at: "2026-01-01 12:00:00+00"}
+          - {vin: "TEST00000000000V1", price: 45000, event_at: "2026-01-05 12:00:00+00"}
+          - {vin: "TEST00000000000V1", price: 40000, event_at: "2026-01-10 12:00:00+00"}
+    expect:
+      rows:
+        - {vin: "TEST00000000000V1", price_drop_count: 2, price_increase_count: 0,
+           first_price: 50000, current_price: 40000}
+
+  - name: test_multiple_vins_independent
+    description: "Price history is computed independently per VIN"
+    model: int_price_history
+    given:
+      - input: ref('stg_price_events')
+        rows:
+          - {vin: "VIN0000000000001A", price: 100, event_at: "2026-01-01 12:00:00+00"}
+          - {vin: "VIN0000000000001A", price: 80,  event_at: "2026-01-05 12:00:00+00"}
+          - {vin: "VIN0000000000002B", price: 200, event_at: "2026-01-01 12:00:00+00"}
+          - {vin: "VIN0000000000002B", price: 250, event_at: "2026-01-05 12:00:00+00"}
+    expect:
+      rows:
+        - {vin: "VIN0000000000001A", price_drop_count: 1, price_increase_count: 0,
+           current_price: 80}
+        - {vin: "VIN0000000000002B", price_drop_count: 0, price_increase_count: 1,
+           current_price: 250}

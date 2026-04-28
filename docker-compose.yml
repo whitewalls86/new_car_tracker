@@ -222,19 +222,21 @@ services:
     working_dir: /usr/app
     environment:
       DBT_PROFILES_DIR: /usr/app
-      PGHOST: postgres
-      PGPORT: 5432
-      PGDATABASE: cartracker
-      PGUSER: dbt_user
-      POSTGRES_PASSWORD: ${DBT_DB_PASSWORD}
+      POSTGRES_URL: postgresql://dbt_user:${DBT_DB_PASSWORD}@postgres:5432/cartracker
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-cartracker}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_BUCKET: bronze
+      DUCKDB_PATH: /data/analytics/analytics.duckdb
     networks:
       - cartracker-net
     depends_on:
-      flyway:
-        condition: service_completed_successfully
+      minio:
+        condition: service_started
     volumes:
       - ./target:/usr/app/target
       - dbt_runner_logs:/usr/app/logs
+      - analytics_db:/data/analytics
 
 
 
@@ -304,11 +306,14 @@ services:
       - "8501:8501"
     environment:
       DATABASE_URL: postgresql://viewer:${VIEWER_DB_PASSWORD}@postgres:5432/cartracker
+      DUCKDB_PATH: /data/analytics/analytics.duckdb
     depends_on:
       flyway:
         condition: service_completed_successfully
     networks:
       - cartracker-net
+    volumes:
+      - analytics_db:/data/analytics:ro
 
   pgadmin:
     image: dpage/pgadmin4
@@ -499,6 +504,8 @@ volumes:
   scraper_logs:
 
   dbt_runner_logs:
+
+  analytics_db:
 
   ops_logs:
 

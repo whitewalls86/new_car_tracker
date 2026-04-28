@@ -1,8 +1,9 @@
 # Plan 90: dbt Migration to dbt-duckdb
 
-**Status:** Planned — blocked on Plan 96 validation
-**Priority:** Medium — do not start until silver has 2+ weeks of production data
+**Status:** Superseded by Plan 101
 **Previously titled:** "dbt Decommission"
+
+> **Superseded (2026-04-27):** The DuckDB source layer was implemented in Plan 96. The dashboard restructure (including `dashboard/db.py` connection switch) and the definition of what the dashboard becomes are now owned by [Plan 101](plan_101_dashboard_restructure.md). The Postgres observation table drops (Flyway migration) remain valid work but are gated on Plan 96 production validation completing. See Plan 101 for the full picture.
 
 ---
 

@@ -1,0 +1,250 @@
+unit_tests:
+
+  # ---------------------------------------------------------------------------
+  # mart_vehicle_snapshot — listing_state inference
+  # ---------------------------------------------------------------------------
+
+  - name: test_detail_explicit_active_state
+    description: "Detail observation with listing_state='active' passes through unchanged"
+    model: mart_vehicle_snapshot
+    given:
+      - input: ref('int_latest_observation')
+        rows:
+          - {vin17: "DETAIL0ACTIVE00001", listing_id: "L1", source: "detail",
+             listing_state: "active", make: "honda", model: "crv",
+             fetched_at: "2026-01-10 12:00:00+00"}
+      - input: ref('int_price_history')
+        rows:
+          - {vin: "DETAIL0ACTIVE00001", current_price: 30000, price_observed_at: "2026-01-10 12:00:00+00",
+             first_price: 30000, min_price: 30000, max_price: 30000,
+             price_drop_count: 0, price_increase_count: 0, total_price_observations: 1,
+             first_seen_at: "2026-01-10 12:00:00+00", last_seen_at: "2026-01-10 12:00:00+00",
+             days_on_market: 0}
+    expect:
+      rows:
+        - {vin: "DETAIL0ACTIVE00001", listing_state: "active"}
+
+  - name: test_srp_only_recent_inferred_active
+    description: "SRP-only VIN last seen within 7 days is inferred as 'active'"
+    model: mart_vehicle_snapshot
+    given:
+      - input: ref('int_latest_observation')
+        rows:
+          - {vin17: "SRPONLY0RECENT0001", listing_id: "L1", source: "srp",
+             listing_state: null, make: "honda", model: "crv",
+             fetched_at: "2026-01-10 12:00:00+00"}
+      - input: ref('int_price_history')
+        rows:
+          - {vin: "SRPONLY0RECENT0001", current_price: 30000, price_observed_at: "2026-01-10 12:00:00+00",
+             first_price: 30000, min_price: 30000, max_price: 30000,
+             price_drop_count: 0, price_increase_count: 0, total_price_observations: 1,
+             first_seen_at: "2026-01-05 12:00:00+00",
+             last_seen_at: "{{ modules.datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S+00') }}",
+             days_on_market: 5}
+    expect:
+      rows:
+        - {vin: "SRPONLY0RECENT0001", listing_state: "active"}
+
+  - name: test_srp_only_old_inferred_unlisted
+    description: "SRP-only VIN last seen over 7 days ago is inferred as 'unlisted'"
+    model: mart_vehicle_snapshot
+    given:
+      - input: ref('int_latest_observation')
+        rows:
+          - {vin17: "SRPONLY00000OLD001", listing_id: "L1", source: "srp",
+             listing_state: null, make: "honda", model: "crv",
+             fetched_at: "2025-12-01 12:00:00+00"}
+      - input: ref('int_price_history')
+        rows:
+          - {vin: "SRPONLY00000OLD001", current_price: 30000, price_observed_at: "2025-12-01 12:00:00+00",
+             first_price: 30000, min_price: 30000, max_price: 30000,
+             price_drop_count: 0, price_increase_count: 0, total_price_observations: 1,
+             first_seen_at: "2025-12-01 12:00:00+00", last_seen_at: "2025-12-01 12:00:00+00",
+             days_on_market: 40}
+    expect:
+      rows:
+        - {vin: "SRPONLY00000OLD001", listing_state: "unlisted"}
+
+  - name: test_no_price_history_still_produces_row
+    description: "VIN with observation but no price history still appears (left join)"
+    model: mart_vehicle_snapshot
+    given:
+      - input: ref('int_latest_observation')
+        rows:
+          - {vin17: "NOPRICEHIST000001", listing_id: "L1", source: "srp",
+             listing_state: null, make: "honda", model: "crv",
+             fetched_at: "2026-01-10 12:00:00+00"}
+      - input: ref('int_price_history')
+        rows: []
+    expect:
+      rows:
+        - {vin: "NOPRICEHIST000001", price: null, listing_state: "unlisted"}
+
+  # ---------------------------------------------------------------------------
+  # mart_deal_scores — scoring and tier assignment
+  # ---------------------------------------------------------------------------
+
+  - name: test_deal_tier_excellent_above_70
+    description: "A VIN with score >= 70 gets deal_tier='excellent'"
+    model: mart_deal_scores
+    given:
+      - input: ref('mart_vehicle_snapshot')
+        rows:
+          - {vin: "EXCELLENT00000001", listing_id: "DL1", make: "honda", model: "crv",
+             listing_state: "active", price: 35000, msrp: 50000,
+             price_observed_at: "2026-01-10 12:00:00+00",
+             first_price: 40000, min_price: 35000, max_price: 40000,
+             price_drop_count: 2, price_increase_count: 0, total_price_observations: 3,
+             first_seen_at: "2025-11-26 12:00:00+00", last_seen_at: "2026-01-10 12:00:00+00",
+             days_on_market: 45, seller_customer_id: null, dealer_name: null, dealer_zip: null,
+             vehicle_trim: "Hybrid", model_year: 2025, fuel_type: null, body_style: null,
+             stock_type: null, canonical_detail_url: null, customer_id: null,
+             last_observed_at: "2026-01-10 12:00:00+00", mileage: null}
+          - {vin: "COHORT000000000V2", listing_id: "DL2", make: "honda", model: "crv",
+             listing_state: "active", price: 45000, msrp: null,
+             price_observed_at: "2026-01-10 12:00:00+00",
+             first_price: 45000, min_price: 45000, max_price: 45000,
+             price_drop_count: 0, price_increase_count: 0, total_price_observations: 1,
+             first_seen_at: "2026-01-09 12:00:00+00", last_seen_at: "2026-01-10 12:00:00+00",
+             days_on_market: 1, seller_customer_id: null, dealer_name: null, dealer_zip: null,
+             vehicle_trim: "Hybrid", model_year: 2025, fuel_type: null, body_style: null,
+             stock_type: null, canonical_detail_url: null, customer_id: null,
+             last_observed_at: "2026-01-10 12:00:00+00", mileage: null}
+          - {vin: "COHORT000000000V3", listing_id: "DL3", make: "honda", model: "crv",
+             listing_state: "active", price: 50000, msrp: null,
+             price_observed_at: "2026-01-10 12:00:00+00",
+             first_price: 50000, min_price: 50000, max_price: 50000,
+             price_drop_count: 0, price_increase_count: 0, total_price_observations: 1,
+             first_seen_at: "2026-01-09 12:00:00+00", last_seen_at: "2026-01-10 12:00:00+00",
+             days_on_market: 1, seller_customer_id: null, dealer_name: null, dealer_zip: null,
+             vehicle_trim: "Hybrid", model_year: 2025, fuel_type: null, body_style: null,
+             stock_type: null, canonical_detail_url: null, customer_id: null,
+             last_observed_at: "2026-01-10 12:00:00+00", mileage: null}
+          - {vin: "COHORT000000000V4", listing_id: "DL4", make: "honda", model: "crv",
+             listing_state: "active", price: 55000, msrp: null,
+             price_observed_at: "2026-01-10 12:00:00+00",
+             first_price: 55000, min_price: 55000, max_price: 55000,
+             price_drop_count: 0, price_increase_count: 0, total_price_observations: 1,
+             first_seen_at: "2026-01-09 12:00:00+00", last_seen_at: "2026-01-10 12:00:00+00",
+             days_on_market: 1, seller_customer_id: null, dealer_name: null, dealer_zip: null,
+             vehicle_trim: "Hybrid", model_year: 2025, fuel_type: null, body_style: null,
+             stock_type: null, canonical_detail_url: null, customer_id: null,
+             last_observed_at: "2026-01-10 12:00:00+00", mileage: null}
+          - {vin: "COHORT000000000V5", listing_id: "DL5", make: "honda", model: "crv",
+             listing_state: "active", price: 60000, msrp: null,
+             price_observed_at: "2026-01-10 12:00:00+00",
+             first_price: 60000, min_price: 60000, max_price: 60000,
+             price_drop_count: 0, price_increase_count: 0, total_price_observations: 1,
+             first_seen_at: "2026-01-09 12:00:00+00", last_seen_at: "2026-01-10 12:00:00+00",
+             days_on_market: 1, seller_customer_id: null, dealer_name: null, dealer_zip: null,
+             vehicle_trim: "Hybrid", model_year: 2025, fuel_type: null, body_style: null,
+             stock_type: null, canonical_detail_url: null, customer_id: null,
+             last_observed_at: "2026-01-10 12:00:00+00", mileage: null}
+      - input: ref('int_benchmarks')
+        rows:
+          - {make: "honda", model: "crv", national_listing_count: 5,
+             national_avg_price: 49000, national_median_price: 50000,
+             national_p10_price: 37000, national_p25_price: 45000,
+             national_p75_price: 55000, national_p90_price: 58000,
+             national_avg_discount_pct: null}
+      - input: ref('stg_dealers')
+        rows: []
+    expect:
+      rows:
+        - {vin: "EXCELLENT00000001", deal_tier: "excellent"}
+        - {vin: "COHORT000000000V2", deal_tier: "weak"}
+        - {vin: "COHORT000000000V3", deal_tier: "weak"}
+        - {vin: "COHORT000000000V4", deal_tier: "weak"}
+        - {vin: "COHORT000000000V5", deal_tier: "weak"}
+
+  - name: test_msrp_discount_pct
+    description: "MSRP discount is correctly calculated as (msrp - price) / msrp * 100"
+    model: mart_deal_scores
+    given:
+      - input: ref('mart_vehicle_snapshot')
+        rows:
+          - {vin: "MSRPDISC000000001", listing_id: "L1", make: "honda", model: "crv",
+             listing_state: "active", price: 35000, msrp: 50000,
+             price_observed_at: "2026-01-10 12:00:00+00",
+             first_price: 35000, min_price: 35000, max_price: 35000,
+             price_drop_count: 0, price_increase_count: 0, total_price_observations: 1,
+             first_seen_at: "2026-01-10 12:00:00+00", last_seen_at: "2026-01-10 12:00:00+00",
+             days_on_market: 0, seller_customer_id: null, dealer_name: null, dealer_zip: null,
+             vehicle_trim: null, model_year: null, fuel_type: null, body_style: null,
+             stock_type: null, canonical_detail_url: null, customer_id: null,
+             last_observed_at: "2026-01-10 12:00:00+00", mileage: null}
+      - input: ref('int_benchmarks')
+        rows:
+          - {make: "honda", model: "crv", national_listing_count: 1,
+             national_avg_price: 35000, national_median_price: 35000,
+             national_p10_price: 35000, national_p25_price: 35000,
+             national_p75_price: 35000, national_p90_price: 35000,
+             national_avg_discount_pct: null}
+      - input: ref('stg_dealers')
+        rows: []
+    expect:
+      rows:
+        - {vin: "MSRPDISC000000001", msrp_discount_pct: 30.00}
+
+  - name: test_deal_score_in_bounds
+    description: "Deal score is always between 0 and 100"
+    model: mart_deal_scores
+    given:
+      - input: ref('mart_vehicle_snapshot')
+        rows:
+          - {vin: "BOUNDS0000000001A", listing_id: "L1", make: "honda", model: "crv",
+             listing_state: "active", price: 1000, msrp: 100000,
+             price_observed_at: "2026-01-10 12:00:00+00",
+             first_price: 50000, min_price: 1000, max_price: 50000,
+             price_drop_count: 10, price_increase_count: 0, total_price_observations: 11,
+             first_seen_at: "2025-06-01 12:00:00+00", last_seen_at: "2026-01-10 12:00:00+00",
+             days_on_market: 200, seller_customer_id: null, dealer_name: null, dealer_zip: null,
+             vehicle_trim: null, model_year: null, fuel_type: null, body_style: null,
+             stock_type: null, canonical_detail_url: null, customer_id: null,
+             last_observed_at: "2026-01-10 12:00:00+00", mileage: null}
+          - {vin: "BOUNDS0000000002B", listing_id: "L2", make: "honda", model: "crv",
+             listing_state: "active", price: 99000, msrp: null,
+             price_observed_at: "2026-01-10 12:00:00+00",
+             first_price: 99000, min_price: 99000, max_price: 99000,
+             price_drop_count: 0, price_increase_count: 0, total_price_observations: 1,
+             first_seen_at: "2026-01-10 12:00:00+00", last_seen_at: "2026-01-10 12:00:00+00",
+             days_on_market: 0, seller_customer_id: null, dealer_name: null, dealer_zip: null,
+             vehicle_trim: null, model_year: null, fuel_type: null, body_style: null,
+             stock_type: null, canonical_detail_url: null, customer_id: null,
+             last_observed_at: "2026-01-10 12:00:00+00", mileage: null}
+      - input: ref('int_benchmarks')
+        rows:
+          - {make: "honda", model: "crv", national_listing_count: 2,
+             national_avg_price: 50000, national_median_price: 50000,
+             national_p10_price: 1000, national_p25_price: 25000,
+             national_p75_price: 75000, national_p90_price: 99000,
+             national_avg_discount_pct: null}
+      - input: ref('stg_dealers')
+        rows: []
+    expect:
+      rows:
+        - {vin: "BOUNDS0000000001A"}
+        - {vin: "BOUNDS0000000002B"}
+
+  - name: test_unlisted_excluded_from_deal_scores
+    description: "Unlisted VINs are excluded from deal scores (WHERE listing_state='active')"
+    model: mart_deal_scores
+    given:
+      - input: ref('mart_vehicle_snapshot')
+        rows:
+          - {vin: "UNLISTEDVIN000001", listing_id: "L1", make: "honda", model: "crv",
+             listing_state: "unlisted", price: 30000, msrp: null,
+             price_observed_at: "2026-01-10 12:00:00+00",
+             first_price: 30000, min_price: 30000, max_price: 30000,
+             price_drop_count: 0, price_increase_count: 0, total_price_observations: 1,
+             first_seen_at: "2025-12-01 12:00:00+00", last_seen_at: "2025-12-01 12:00:00+00",
+             days_on_market: 40, seller_customer_id: null, dealer_name: null, dealer_zip: null,
+             vehicle_trim: null, model_year: null, fuel_type: null, body_style: null,
+             stock_type: null, canonical_detail_url: null, customer_id: null,
+             last_observed_at: "2025-12-01 12:00:00+00", mileage: null}
+      - input: ref('int_benchmarks')
+        rows: []
+      - input: ref('stg_dealers')
+        rows: []
+    expect:
+      rows: []

@@ -4,8 +4,7 @@ from datetime import datetime, timedelta
 
 import requests
 from airflow.providers.standard.operators.python import PythonOperator
-from airflow.utils.state import TaskInstanceState
-from sensors import deploy_intent_sensor, http_health_sensor
+from sensors import http_health_sensor
 
 from airflow import DAG
 
@@ -18,17 +17,22 @@ logger = logging.getLogger(__name__)
 
 def _run_dbt_build(**context):
     conf = context["dag_run"].conf or {}
-    intent = conf.get("intent", "both")
+
+    payload = {}
+    if "select" in conf:
+        payload["select"] = conf["select"]
+    if "full_refresh" in conf:
+        payload["full_refresh"] = conf["full_refresh"]
 
     resp = requests.post(
         f"{DBT_RUNNER_URL}/dbt/build",
-        json={"intent": intent, "full_refresh": False},
-        timeout=300,
+        json=payload,
+        timeout=600,
     )
 
     if resp.status_code == 409:
-        logger.info("dbt build already running (409) — treating as success: %s", resp.text)
-        return {"ok": True, "skipped": True, "intent": intent}
+        logger.info("dbt build already running (409) — skipping: %s", resp.text)
+        return {"ok": True, "skipped": True}
 
     resp.raise_for_status()
     result = resp.json()
@@ -38,23 +42,19 @@ def _run_dbt_build(**context):
 
 def _notify(**context):
     dbt_ti = context["dag_run"].get_task_instance("dbt_build")
-    if not dbt_ti or dbt_ti.state != TaskInstanceState.FAILED:
+    if not dbt_ti or dbt_ti.state != "failed":
         return
 
     result = context["ti"].xcom_pull(task_ids="dbt_build", key="result")
 
     if not _TELEGRAM_API or not _TELEGRAM_CHAT_ID:
-        logger.warning(
-            "TELEGRAM_API/TELEGRAM_CHAT_ID not configured — skipping failure notification"
-        )
+        logger.warning("TELEGRAM_API/TELEGRAM_CHAT_ID not configured — skipping notification")
         return
 
-    conf = context["dag_run"].conf or {}
-    intent = conf.get("intent", "unknown")
     error_detail = ""
     if result:
         error_detail = result.get("stderr") or result.get("stdout") or ""
-    msg = f"dbt build FAILED\nintent: {intent}\n\n{error_detail[-500:]}"
+    msg = f"dbt build FAILED\n\n{error_detail[-500:]}"
 
     try:
         requests.post(
@@ -68,12 +68,11 @@ def _notify(**context):
 
 with DAG(
     dag_id="dbt_build",
-    schedule=None,
+    schedule="0 * * * *",  # hourly; override via dag_run.conf {"select": [...]}
     start_date=datetime(2026, 1, 1),
     catchup=False,
     tags=["dbt"],
 ):
-    ready = deploy_intent_sensor()
     dbt_runner_up = http_health_sensor("dbt_runner", DBT_RUNNER_URL)
 
     build = PythonOperator(
@@ -89,4 +88,4 @@ with DAG(
         trigger_rule="all_done",
     )
 
-    ready >> dbt_runner_up >> build >> notify
+    dbt_runner_up >> build >> notify
