@@ -232,6 +232,16 @@ jobs:
           buf.seek(0)
           s3.put_object(Bucket='bronze', Key='ops/price_observation_events/year=2026/month=1/seed.parquet', Body=buf.getvalue())
           print('Uploaded ops/price_observation_events/year=2026/month=1/seed.parquet')
+
+          upload_empty('ops/blocked_cooldown_events/year=2026/month=1/seed.parquet', pa.schema([
+              pa.field('event_id', pa.int64()),
+              pa.field('listing_id', pa.string()),
+              pa.field('event_type', pa.string()),
+              pa.field('num_of_attempts', pa.int32()),
+              pa.field('event_at', pa.timestamp('us', tz='UTC')),
+              pa.field('year', pa.int32()),
+              pa.field('month', pa.int32()),
+          ]))
           "
 
       - name: dbt build (DuckDB — empty data compilation check)
