@@ -20,11 +20,6 @@ def get_connection():
     return conn
 
 
-@st.cache_resource
-def get_duckdb_connection():
-    return duckdb.connect(DUCKDB_PATH, read_only=True)
-
-
 def run_query(sql: str, params=None) -> pd.DataFrame:
     conn = get_connection()
     try:
@@ -40,7 +35,7 @@ def run_query(sql: str, params=None) -> pd.DataFrame:
 
 
 def run_duckdb_query(sql: str, params=None) -> pd.DataFrame:
-    con = get_duckdb_connection()
-    if params:
-        return con.execute(sql, params).df()
-    return con.execute(sql).df()
+    with duckdb.connect(DUCKDB_PATH, read_only=True) as con:
+        if params:
+            return con.execute(sql, params).df()
+        return con.execute(sql).df()

@@ -3,21 +3,41 @@
 }}
 
 -- Current state snapshot: one row per VIN.
--- Combines latest observation attributes with current price and price history.
--- listing_state: 'detail' observations are authoritative; SRP-only VINs are
--- inferred active if seen within 7 days, otherwise unlisted.
+-- Separates two concerns:
+--   1. listing_state  — from the most recent observation per VIN, any source,
+--      any data completeness. Unlisted Cars.com detail pages don't return vehicle
+--      JSON (VIN/make/model are NULL), but the listing_state they carry is still
+--      authoritative and must override a stale "active" signal from a prior SRP hit.
+--   2. vehicle attrs  — from int_latest_observation, which requires make IS NOT NULL,
+--      so it falls back to the best prior SRP/detail obs that had full vehicle data.
+--
+-- listing_state coalesce order:
+--   1. If the most recent observation came from source='detail', trust its listing_state.
+--   2. Otherwise infer: seen on SRP within 7 days → 'active', else → 'unlisted'.
+
+with latest_state as (
+    -- Most recent observation per VIN regardless of data completeness.
+    -- Used only for listing_state; vehicle attributes come from int_latest_observation.
+    select distinct on (vin17)
+        vin17,
+        listing_state,
+        source       as state_source
+    from {{ ref('stg_observations') }}
+    where vin17 is not null
+    order by vin17, fetched_at desc
+)
 
 select
     obs.vin17                   as vin,
     obs.listing_id,
     coalesce(
-        case when obs.source = 'detail' then obs.listing_state end,
+        case when ls.state_source = 'detail' then ls.listing_state end,
         case when ph.last_seen_at >= now() - interval '7 days' then 'active'
              else 'unlisted'
         end
     )                           as listing_state,
 
-    -- Vehicle attributes (from best available observation)
+    -- Vehicle attributes (from best data-rich observation — make IS NOT NULL)
     obs.make,
     obs.model,
     obs.vehicle_trim,
@@ -56,3 +76,8 @@ select
 from {{ ref('int_latest_observation') }} obs
 left join {{ ref('int_price_history') }} ph
     on ph.vin = obs.vin17
+left join latest_state ls
+    on ls.vin17 = obs.vin17
+inner join {{ ref('int_active_make_models') }} amm
+    on amm.make  = lower(obs.make)
+   and amm.model = lower(obs.model)
