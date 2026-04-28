@@ -37,7 +37,7 @@ DAG_SPECS = {
     },
     "dbt_build.py": {
         "dag_id": "dbt_build",
-        "tasks": {"check_deploy_intent", "check_dbt_runner_health", "dbt_build", "notify"},
+        "tasks": {"check_dbt_runner_health", "dbt_build", "notify"},
     },
     "delete_stale_emails.py": {
         "dag_id": "delete_stale_emails",
