@@ -1,8 +1,9 @@
 import pandas as pd
 import streamlit as st
+from pages import deals, inventory, market_trends
+from queries import MART_FRESHNESS
 
 from db import run_duckdb_query
-from pages import deals, inventory, market_trends
 
 st.set_page_config(page_title="Cartracker Dashboard", layout="wide")
 
@@ -23,13 +24,12 @@ st.sidebar.markdown("[pgAdmin](https://cartracker.info/pgadmin)")
 st.sidebar.markdown("[MinIO](https://cartracker.info/minio)")
 
 # Data freshness
-_freshness_df = run_duckdb_query(
-    "SELECT MAX(price_observed_at) AS ts FROM mart_vehicle_snapshot"
-)
+_freshness_df = run_duckdb_query(MART_FRESHNESS)
 _freshness_val = _freshness_df["ts"].iloc[0]
 if _freshness_val is not None:
     if pd.notna(_freshness_val):
-        st.sidebar.caption(f"Data as of: {pd.Timestamp(_freshness_val).strftime('%b %d %H:%M')} UTC")
+        ts = pd.Timestamp(_freshness_val).strftime("%b %d %H:%M")
+        st.sidebar.caption(f"Data as of: {ts} UTC")
 
 # ---------------------------------------------------------------------------
 # Tabs
