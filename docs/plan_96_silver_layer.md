@@ -1,6 +1,6 @@
 # Plan 96: Silver Layer — Primary Observation Store
 
-**Status:** Planned — depends on Plan 93
+**Status:** COMPLETE (2026-04-28, `feature/duck-dbt`)
 **Priority:** High — Plan 93 makes silver the primary write path; this plan validates it and establishes the analytics query surface that gates Plan 90
 
 ---
