@@ -234,6 +234,17 @@ jobs:
           print('Uploaded ops/price_observation_events/year=2026/month=1/seed.parquet')
           "
 
+      - name: dbt run --empty (initialise DuckDB schemas for unit test compilation)
+        working-directory: dbt
+        run: dbt run --profiles-dir . --target duckdb --empty
+        env:
+          DUCKDB_PATH: /tmp/ci_analytics.duckdb
+          POSTGRES_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
+          MINIO_ENDPOINT: http://localhost:9000
+          MINIO_ROOT_USER: cartracker
+          MINIO_ROOT_PASSWORD: cartracker123
+          MINIO_BUCKET: bronze
+
       - name: dbt build (DuckDB — empty data compilation check)
         working-directory: dbt
         run: dbt build --profiles-dir . --target duckdb
