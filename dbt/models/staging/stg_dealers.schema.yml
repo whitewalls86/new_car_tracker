@@ -2,13 +2,14 @@ version: 2
 
 models:
   - name: stg_dealers
-    description: "Staging view over public.dealers. Excludes SRP derived seller_ids"
+    description: >
+      Dealer reference data derived from silver observations.
+      One row per customer_id with the most recent known name and zip.
 
     columns:
       - name: customer_id
+        data_tests:
+          - not_null
+          - unique
       - name: name
-      - name: city
-      - name: state
       - name: zip
-      - name: phone
-      - name: rating

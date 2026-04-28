@@ -28,3 +28,17 @@ cartracker:
       dbname: "{{ env_var('DBT_DBNAME', 'cartracker') }}"
       schema: analytics_ci
       threads: 4
+    duckdb:
+      type: duckdb
+      path: "{{ env_var('DUCKDB_PATH') }}"
+      threads: 4
+      extensions:
+        - httpfs
+        - postgres_scanner
+      settings:
+        # MinIO S3-compatible settings — strip protocol prefix from MINIO_ENDPOINT
+        s3_endpoint: "{{ env_var('MINIO_ENDPOINT', 'http://minio:9000') | replace('http://', '') | replace('https://', '') }}"
+        s3_access_key_id: "{{ env_var('MINIO_ROOT_USER', 'cartracker') }}"
+        s3_secret_access_key: "{{ env_var('MINIO_ROOT_PASSWORD', '') }}"
+        s3_use_ssl: false
+        s3_url_style: path

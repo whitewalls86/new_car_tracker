@@ -1,0 +1,33 @@
+unit_tests:
+
+  # ---------------------------------------------------------------------------
+  # stg_dealers — arg_max aggregation
+  # ---------------------------------------------------------------------------
+
+  - name: test_dealers_most_recent_attributes_win
+    description: "arg_max picks dealer name/zip from the most recent observation"
+    model: stg_dealers
+    given:
+      - input: ref('int_latest_observation')
+        rows:
+          - {customer_id: "DEALER1", dealer_name: "Old Name", dealer_zip: "11111",
+             fetched_at: "2026-01-01 12:00:00+00"}
+          - {customer_id: "DEALER1", dealer_name: "New Name", dealer_zip: "22222",
+             fetched_at: "2026-01-10 12:00:00+00"}
+    expect:
+      rows:
+        - {customer_id: "DEALER1", name: "New Name", zip: "22222"}
+
+  - name: test_dealers_null_customer_id_excluded
+    description: "Rows with null customer_id are excluded"
+    model: stg_dealers
+    given:
+      - input: ref('int_latest_observation')
+        rows:
+          - {customer_id: null, dealer_name: "No ID Dealer", dealer_zip: "33333",
+             fetched_at: "2026-01-10 12:00:00+00"}
+          - {customer_id: "DEALER1", dealer_name: "Has ID", dealer_zip: "44444",
+             fetched_at: "2026-01-10 12:00:00+00"}
+    expect:
+      rows:
+        - {customer_id: "DEALER1", name: "Has ID", zip: "44444"}

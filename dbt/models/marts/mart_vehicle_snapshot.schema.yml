@@ -3,15 +3,20 @@ version: 2
 models:
   - name: mart_vehicle_snapshot
     description: >
-      Current vehicle snapshot per VIN, derived from latest Tier-1 observation
-      and latest available price event.
+      Current state snapshot: one row per VIN. Combines latest observation
+      attributes with current price and price history. listing_state is
+      authoritative from detail observations, inferred for SRP-only VINs.
     columns:
       - name: vin
-      - name: tier1_observed_at
         data_tests:
           - not_null
-
-      - name: tier1_artifact_id
-
+          - unique
+      - name: listing_state
+        data_tests:
+          - not_null
+          - accepted_values:
+              values: ['active', 'unlisted']
+      - name: make
+      - name: model
       - name: price
-        description: Latest observed price (Tier-1 or Tier-2).
+        description: Current price from the price observation event stream.

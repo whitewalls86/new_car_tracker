@@ -69,6 +69,20 @@ jobs:
           --health-timeout 5s
           --health-retries 10
 
+      minio:
+        image: minio/minio:latest
+        env:
+          MINIO_ROOT_USER: cartracker
+          MINIO_ROOT_PASSWORD: cartracker123
+        ports:
+          - 9000:9000
+        options: >-
+          --health-cmd "curl -f http://localhost:9000/minio/health/live || exit 1"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+        command: server /data
+
     steps:
       - uses: actions/checkout@v4
 
@@ -97,50 +111,157 @@ jobs:
         with:
           python-version: "3.13"
 
+      - name: Create MinIO bucket
+        run: |
+          pip install boto3
+          python -c "
+          import boto3
+          from botocore.client import Config
+          s3 = boto3.client('s3',
+              endpoint_url='http://localhost:9000',
+              aws_access_key_id='cartracker',
+              aws_secret_access_key='cartracker123',
+              config=Config(signature_version='s3v4'),
+              region_name='us-east-1')
+          s3.create_bucket(Bucket='bronze')
+          print('Created bucket: bronze')
+          "
+
       - name: Install dbt
-        run: pip install dbt-postgres
+        run: pip install dbt-duckdb dbt-postgres
 
       - name: Install dbt packages
         working-directory: dbt
         run: dbt deps
 
-      - name: dbt build
-        working-directory: dbt
-        run: dbt build --profiles-dir . --target ci
-        env:
-          DBT_HOST: localhost
-          DBT_PORT: "5432"
-          DBT_USER: cartracker
-          DBT_PASSWORD: cartracker
-          DBT_DBNAME: cartracker
+      - name: Install DuckDB extensions
+        run: python -c "import duckdb; con = duckdb.connect(); con.install_extension('httpfs'); con.install_extension('postgres_scanner')"
 
-      - name: Install pytests
-        run: pip install pytest psycopg2-binary
+      - name: Seed MinIO with empty Parquet schemas (required for dbt unit test compilation)
+        run: |
+          pip install pyarrow
+          python -c "
+          import io
+          import boto3
+          import pyarrow as pa
+          import pyarrow.parquet as pq
+          from botocore.client import Config
+
+          s3 = boto3.client('s3',
+              endpoint_url='http://localhost:9000',
+              aws_access_key_id='cartracker',
+              aws_secret_access_key='cartracker123',
+              config=Config(signature_version='s3v4'),
+              region_name='us-east-1')
+
+          def upload_empty(key, schema):
+              buf = io.BytesIO()
+              pq.write_table(pa.table({f.name: pa.array([], type=f.type) for f in schema}, schema=schema), buf)
+              buf.seek(0)
+              s3.put_object(Bucket='bronze', Key=key, Body=buf.getvalue())
+              print(f'Uploaded {key}')
+
+          upload_empty('silver/observations/source=srp/obs_year=2026/obs_month=1/obs_day=1/seed.parquet', pa.schema([
+              pa.field('artifact_id', pa.int64()),
+              pa.field('listing_id', pa.string()),
+              pa.field('vin', pa.string()),
+              pa.field('canonical_detail_url', pa.string()),
+              pa.field('source', pa.string()),
+              pa.field('listing_state', pa.string()),
+              pa.field('fetched_at', pa.timestamp('us', tz='UTC')),
+              pa.field('written_at', pa.timestamp('us', tz='UTC')),
+              pa.field('price', pa.int32()),
+              pa.field('make', pa.string()),
+              pa.field('model', pa.string()),
+              pa.field('trim', pa.string()),
+              pa.field('year', pa.int16()),
+              pa.field('mileage', pa.int32()),
+              pa.field('msrp', pa.int32()),
+              pa.field('stock_type', pa.string()),
+              pa.field('fuel_type', pa.string()),
+              pa.field('body_style', pa.string()),
+              pa.field('dealer_name', pa.string()),
+              pa.field('dealer_zip', pa.string()),
+              pa.field('customer_id', pa.string()),
+              pa.field('seller_id', pa.string()),
+              pa.field('financing_type', pa.string()),
+              pa.field('seller_zip', pa.string()),
+              pa.field('seller_customer_id', pa.string()),
+              pa.field('page_number', pa.int16()),
+              pa.field('position_on_page', pa.int16()),
+              pa.field('trid', pa.string()),
+              pa.field('isa_context', pa.string()),
+              pa.field('body', pa.string()),
+              pa.field('condition', pa.string()),
+              pa.field('obs_year', pa.int32()),
+              pa.field('obs_month', pa.int32()),
+              pa.field('obs_day', pa.int32()),
+          ]))
+
+          schema = pa.schema([
+              pa.field('event_id', pa.int64()),
+              pa.field('listing_id', pa.string()),
+              pa.field('vin', pa.string()),
+              pa.field('price', pa.int32()),
+              pa.field('make', pa.string()),
+              pa.field('model', pa.string()),
+              pa.field('artifact_id', pa.int64()),
+              pa.field('event_type', pa.string()),
+              pa.field('source', pa.string()),
+              pa.field('event_at', pa.timestamp('us', tz='UTC')),
+              pa.field('year', pa.int32()),
+              pa.field('month', pa.int32()),
+          ])
+          from datetime import datetime, timezone
+          row = {
+              'event_id': pa.array([1], type=pa.int64()),
+              'listing_id': pa.array(['CI_SEED_L1'], type=pa.string()),
+              'vin': pa.array(['1HGBH41JXMN109186'], type=pa.string()),
+              'price': pa.array([25000], type=pa.int32()),
+              'make': pa.array(['Honda'], type=pa.string()),
+              'model': pa.array(['Civic'], type=pa.string()),
+              'artifact_id': pa.array([1], type=pa.int64()),
+              'event_type': pa.array(['upserted'], type=pa.string()),
+              'source': pa.array(['srp'], type=pa.string()),
+              'event_at': pa.array([datetime(2026, 1, 1, tzinfo=timezone.utc)], type=pa.timestamp('us', tz='UTC')),
+              'year': pa.array([2026], type=pa.int32()),
+              'month': pa.array([1], type=pa.int32()),
+          }
+          buf = io.BytesIO()
+          pq.write_table(pa.table(row, schema=schema), buf)
+          buf.seek(0)
+          s3.put_object(Bucket='bronze', Key='ops/price_observation_events/year=2026/month=1/seed.parquet', Body=buf.getvalue())
+          print('Uploaded ops/price_observation_events/year=2026/month=1/seed.parquet')
+          "
+
+      - name: dbt build (DuckDB — empty data compilation check)
+        working-directory: dbt
+        run: dbt build --profiles-dir . --target duckdb
+        env:
+          DUCKDB_PATH: /tmp/ci_analytics.duckdb
+          POSTGRES_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
+          MINIO_ENDPOINT: http://localhost:9000
+          MINIO_ROOT_USER: cartracker
+          MINIO_ROOT_PASSWORD: cartracker123
+          MINIO_BUCKET: bronze
+
+      - name: Install test dependencies
+        run: |
+          pip install \
+            pytest psycopg2-binary \
+            pyarrow boto3 s3fs duckdb \
+            fastapi httpx jinja2 python-multipart requests resend \
+            apache-airflow \
+            apache-airflow-providers-postgres \
+            apache-airflow-providers-http \
+            apache-airflow-providers-common-sql \
+            apache-airflow-providers-standard
 
       - name: Run SQL smoke tests (Layer 1)
         run: pytest tests/integration/sql/ -v -m integration
         env:
           PYTHONPATH: ${{ github.workspace }}
           TEST_DATABASE_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
-          DBT_HOST: localhost
-          DBT_PORT: "5432"
-          DBT_USER: cartracker
-          DBT_PASSWORD: cartracker
-          DBT_DBNAME: cartracker
-
-      - name: Run dbt integration tests (Layer 2)
-        run: pytest tests/integration/dbt/ -v -m integration
-        env:
-          PYTHONPATH: ${{ github.workspace }}
-          TEST_DATABASE_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
-          DBT_HOST: localhost
-          DBT_PORT: "5432"
-          DBT_USER: cartracker
-          DBT_PASSWORD: cartracker
-          DBT_DBNAME: cartracker
-
-      - name: Install Layer 3 dependencies
-        run: pip install fastapi httpx jinja2 python-multipart requests resend
 
       - name: Run API integration tests (Layer 3)
         run: pytest tests/integration/ops/ -v -m integration
@@ -148,15 +269,6 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}
           TEST_DATABASE_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
           LOG_PATH: /tmp/ops_test.log
-
-      - name: Install Airflow test dependencies
-        run: |
-          pip install \
-            apache-airflow \
-            apache-airflow-providers-postgres \
-            apache-airflow-providers-http \
-            apache-airflow-providers-common-sql \
-            apache-airflow-providers-standard
 
       - name: Run Airflow integration tests
         run: pytest tests/integration/airflow/ -v -m integration
@@ -171,15 +283,15 @@ jobs:
         env:
           PYTHONPATH: ${{ github.workspace }}
           TEST_DATABASE_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
+          MINIO_ENDPOINT: http://localhost:9000
+          MINIO_ROOT_USER: cartracker
+          MINIO_ROOT_PASSWORD: cartracker123
+          MINIO_BUCKET: bronze
 
       - name: Run dbt_runner integration tests
         run: pytest tests/integration/dbt_runner/ -v -m integration
         env:
           PYTHONPATH: ${{ github.workspace }}
-          TEST_DATABASE_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
-          DBT_HOST: localhost
-          DBT_PORT: "5432"
-          DBT_USER: cartracker
-          DBT_PASSWORD: cartracker
-          DBT_DBNAME: cartracker
+          DUCKDB_PATH: /tmp/ci_dbt_runner_test.duckdb
+          POSTGRES_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
           LOG_PATH: /tmp/dbt_runner_test.log

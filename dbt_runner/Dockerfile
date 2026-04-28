@@ -1,7 +1,7 @@
 FROM python:3.13-slim
 
 # Install dbt-postgres and uvicorn
-RUN pip install dbt-postgres==1.8.2 uvicorn --no-cache-dir
+RUN pip install dbt-postgres==1.8.2 dbt-duckdb==1.8.4 uvicorn --no-cache-dir
 
 # Install additional dependencies
 COPY dbt_runner/requirements.txt .
@@ -18,6 +18,9 @@ COPY shared/ /usr/app/shared/
 
 # Install dbt packages (dbt_packages/ is gitignored so not in the COPY above)
 RUN dbt deps
+
+# Pre-install DuckDB extensions so they don't download at runtime
+RUN python -c "import duckdb; con = duckdb.connect(); con.install_extension('httpfs'); con.install_extension('postgres_scanner')"
 
 EXPOSE 8080
 ENTRYPOINT []

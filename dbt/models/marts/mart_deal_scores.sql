@@ -1,81 +1,88 @@
--- Deal scores for all active listings.
--- One row per VIN, ranked by composite deal_score (0-100).
--- Active VINs sourced from mart_vehicle_snapshot (listing_state = 'active').
+{{
+  config(materialized='table')
+}}
+
+-- Deal scores for all active listings. One row per VIN.
+-- Scored 0-100 across four factors: MSRP discount, national price percentile,
+-- days on market, and price drop history.
 
 with
--- Check if VIN was seen locally in last 3 days
-local_seen as (
-    select distinct s.vin17 as vin
-    from {{ ref('stg_srp_observations') }} s
-    inner join {{ ref('stg_raw_artifacts') }} ra
-        on ra.artifact_id = s.artifact_id
-    where s.vin17 is not null
-      and ra.search_scope = 'local'
-      and s.fetched_at >= now() - interval '{{ var("staleness_window_days") }} days'
+
+-- National price percentile per VIN within its make/model
+price_percentiles as (
+    select
+        v.vin,
+        percent_rank() over (
+            partition by v.make, v.model
+            order by v.price
+        ) as national_price_percentile
+    from {{ ref('mart_vehicle_snapshot') }} v
+    where v.price is not null and v.price > 0
+),
+
+-- Dealer inventory depth: how many tracked VINs at the same dealer, same make/model
+dealer_inventory as (
+    select
+        seller_customer_id,
+        make,
+        model,
+        count(*) as dealer_inventory_count
+    from {{ ref('mart_vehicle_snapshot') }}
+    where listing_state = 'active'
+      and seller_customer_id is not null
+    group by seller_customer_id, make, model
 ),
 
 scored as (
     select
         -- Identity
-        a.vin,
+        v.vin,
         v.listing_id,
-        a.make,
-        a.model,
-        a.vehicle_trim,
-        a.model_year,
-        a.fuel_type,
-        a.body_style,
-        a.stock_type,
-        a.search_key,
-        a.canonical_detail_url,
+        v.make,
+        v.model,
+        v.vehicle_trim,
+        v.model_year,
+        v.fuel_type,
+        v.body_style,
+        v.stock_type,
+        v.canonical_detail_url,
+        v.listing_state,
 
-        -- Seller
-        a.seller_customer_id,
-        a.seller_zip,
-        -- dealer_name: prefer detail parse, fallback to dealers table (now joined via numeric customer_id)
-        dlr.name as dealer_name,
-
-        dlr.city as dealer_city,
-        dlr.state as dealer_state,
-        dlr.phone as dealer_phone,
-        dlr.rating as dealer_rating,
+        -- Dealer
+        v.seller_customer_id,
+        v.dealer_zip,
+        coalesce(d.name, v.dealer_name)  as dealer_name,
 
         -- Price
-        v.price as current_price,
+        v.price                          as current_price,
         v.price_observed_at,
-        v.price_source,
-        a.msrp,
+        v.msrp,
 
         -- MSRP discount
-        case when a.msrp > 0 and v.price > 0
-             then round((a.msrp - v.price)::numeric / a.msrp * 100, 2)
-             else null
-        end as msrp_discount_pct,
-        case when a.msrp > 0 and v.price > 0
-             then a.msrp - v.price
-             else null
-        end as msrp_discount_amt,
+        case when v.msrp > 0 and v.price > 0
+             then round((v.msrp - v.price)::numeric / v.msrp * 100, 2)
+        end                              as msrp_discount_pct,
+        case when v.msrp > 0 and v.price > 0
+             then v.msrp - v.price
+        end                              as msrp_discount_amt,
 
-        -- Days on market
-        dom.first_seen_at,
-        dom.last_seen_at,
-        dom.first_seen_local_at,
-        dom.days_on_market,
-        dom.days_observed,
+        -- Time on market
+        v.first_seen_at,
+        v.last_seen_at,
+        v.days_on_market,
 
         -- Price history
-        ph.first_price,
-        ph.min_price,
-        ph.max_price,
-        ph.price_drop_count,
-        ph.price_increase_count,
-        ph.total_price_observations,
-        case when ph.first_price > 0 and v.price > 0
-             then round((ph.first_price - v.price)::numeric / ph.first_price * 100, 2)
-             else null
-        end as total_price_drop_pct,
+        v.first_price,
+        v.min_price,
+        v.max_price,
+        v.price_drop_count,
+        v.price_increase_count,
+        v.total_price_observations,
+        case when v.first_price > 0 and v.price > 0
+             then round((v.first_price - v.price)::numeric / v.first_price * 100, 2)
+        end                              as total_price_drop_pct,
 
-        -- National benchmarks (for the VIN's make/model/trim)
+        -- National benchmarks
         b.national_listing_count,
         b.national_avg_price,
         b.national_median_price,
@@ -86,56 +93,45 @@ scored as (
         -- National price percentile (0 = cheapest, 1 = most expensive)
         coalesce(pctl.national_price_percentile, 0.75) as national_price_percentile,
 
-
-        -- Dealer inventory
-        coalesce(di.dealer_inventory_count, 0) as dealer_inventory_count,
-
-        -- Scope flags
-        (ls.vin is not null) as is_local,
-
-        -- Listing state (from detail scrapes, null if SRP-only)
-        v.listing_state,
+        -- Dealer inventory depth
+        coalesce(di.dealer_inventory_count, 0)         as dealer_inventory_count,
 
         -- ===== DEAL SCORE (0-100) =====
         round((
             -- MSRP discount (35 pts): 10%+ discount = full points
-            coalesce(
-                greatest(0, least(35,
-                    (a.msrp - v.price)::numeric / nullif(a.msrp, 0) * 350
-                )), 0)
+            coalesce(greatest(0, least(35,
+                (v.msrp - v.price)::numeric / nullif(v.msrp, 0) * 350
+            )), 0)
 
-            -- National price percentile (30 pts): lower percentile = better
+            -- National price percentile (30 pts): lower = better deal
             + (1 - coalesce(pctl.national_price_percentile, 0.75)) * 30
 
             -- Days on market (15 pts): capped at 90 days
-            + least(coalesce(dom.days_on_market, 0), 90) / 90.0 * 15
+            + least(coalesce(v.days_on_market, 0), 90) / 90.0 * 15
 
             -- Price drops (10 pts): capped at 3 drops
-            + least(coalesce(ph.price_drop_count, 0), 3) / 3.0 * 10
+            + least(coalesce(v.price_drop_count, 0), 3) / 3.0 * 10
 
             -- Dealer inventory depth (5 pts): capped at 10 units
             + least(coalesce(di.dealer_inventory_count, 0), 10) / 10.0 * 5
 
             -- National supply (5 pts): capped at 500 listings
             + least(coalesce(b.national_listing_count, 0), 500) / 500.0 * 5
-        )::numeric, 1) as deal_score
+        )::numeric, 1)                                 as deal_score
 
     from {{ ref('mart_vehicle_snapshot') }} v
-    inner join {{ ref('int_vehicle_attributes') }} a on a.vin = v.vin
-    left join {{ ref('int_listing_days_on_market') }} dom on dom.vin = v.vin
-    left join {{ ref('int_price_history_by_vin') }} ph on ph.vin = v.vin
-    left join {{ ref('int_model_price_benchmarks') }} b
-        on b.make = a.make and b.model = a.model
-        and ((b.vehicle_trim = a.vehicle_trim) or (b.vehicle_trim is null and a.vehicle_trim is null))
-    left join {{ ref('int_dealer_inventory') }} di
-        on di.seller_customer_id = a.seller_customer_id
-        and di.make = a.make and di.model = a.model
-    left join {{ ref('int_price_percentiles_by_vin') }} pctl on pctl.vin = v.vin
-    left join {{ ref('stg_dealers') }} dlr
-        on dlr.customer_id = v.customer_id
-    left join local_seen ls on ls.vin = v.vin
+    left join {{ ref('int_benchmarks') }} b
+        on b.make = v.make and b.model = v.model
+    left join price_percentiles pctl
+        on pctl.vin = v.vin
+    left join dealer_inventory di
+        on di.seller_customer_id = v.seller_customer_id
+        and di.make = v.make and di.model = v.model
+    left join {{ ref('stg_dealers') }} d
+        on d.customer_id = v.seller_customer_id
     where v.listing_state = 'active'
-      and v.price is not null and v.price > 0
+      and v.price is not null
+      and v.price > 0
 )
 
 select
