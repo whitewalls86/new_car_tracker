@@ -365,7 +365,7 @@ unit_tests:
           - {source: "detail", fetched_at: "2026-01-10 11:00:00+00", artifact_id: 1, vin17: "VALIDVIN00000002"}
     expect:
       rows:
-        - {obs_date: "2026-01-10", total_observations: 2, valid_vin_count: 2,
+        - {obs_date: "2026-01-10", detail_observations: 2, valid_vin_count: 2,
            unique_vins_enriched: 2, extraction_yield: 100.0}
 
   - name: test_batch_yield_partial
@@ -378,7 +378,7 @@ unit_tests:
           - {source: "detail", fetched_at: "2026-01-10 11:00:00+00", artifact_id: 1, vin17: null}
     expect:
       rows:
-        - {obs_date: "2026-01-10", total_observations: 2, valid_vin_count: 1,
+        - {obs_date: "2026-01-10", detail_observations: 2, valid_vin_count: 1,
            extraction_yield: 50.0}
 
   - name: test_batch_non_detail_excluded
@@ -391,7 +391,7 @@ unit_tests:
           - {source: "detail", fetched_at: "2026-01-10 11:00:00+00", artifact_id: 2, vin17: "DETAILVIN000001"}
     expect:
       rows:
-        - {obs_date: "2026-01-10", total_observations: 1, valid_vin_count: 1}
+        - {obs_date: "2026-01-10", detail_observations: 1, valid_vin_count: 1}
 
   - name: test_batch_groups_by_day
     description: "Observations on two distinct days produce two rows"

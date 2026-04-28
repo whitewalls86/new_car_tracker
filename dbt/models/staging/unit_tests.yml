@@ -41,6 +41,14 @@ unit_tests:
     model: stg_blocked_cooldown_events
     given:
       - input: source('ops_events', 'blocked_cooldown_events')
+        columns:
+          - {name: event_id,        data_type: bigint}
+          - {name: listing_id,      data_type: varchar}
+          - {name: event_type,      data_type: varchar}
+          - {name: num_of_attempts, data_type: integer}
+          - {name: event_at,        data_type: timestamptz}
+          - {name: year,            data_type: integer}
+          - {name: month,           data_type: integer}
         rows:
           - {event_id: 1, listing_id: "L001", event_type: "blocked",
              num_of_attempts: 1, event_at: "2026-01-10 12:00:00+00"}
@@ -48,5 +56,5 @@ unit_tests:
              num_of_attempts: 2, event_at: "2026-01-11 12:00:00+00"}
     expect:
       rows:
-        - {event_id: 1, listing_id: "L001", event_type: "blocked",   num_of_attempts: 1}
+        - {event_id: 1, listing_id: "L001", event_type: "blocked",    num_of_attempts: 1}
         - {event_id: 2, listing_id: "L001", event_type: "incremented", num_of_attempts: 2}
