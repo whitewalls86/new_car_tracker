@@ -475,43 +475,52 @@ unit_tests:
   # ---------------------------------------------------------------------------
 
   - name: test_freshness_no_price_history_goes_stale
-    description: "VIN with no price history (left join miss) → counted in stale_gt_14d, fresh_lt_7d_pct=0"
+    description: "Active VIN with no price history → counted in stale_gt_14d, fresh_lt_7d_pct=0"
     model: mart_price_freshness_trend
     given:
-      - input: ref('int_latest_observation')
+      - input: ref('mart_vehicle_snapshot')
         rows:
-          - {vin17: "NOPRICEHIST000001", make: "honda", model: "crv"}
-      - input: ref('int_price_history')
-        rows: []
+          - {vin: "NOPRICEHIST000001", make: "honda", model: "crv",
+             listing_state: "active", price_observed_at: null}
     expect:
       rows:
         - {make: "honda", model: "crv", total_vins: 1, stale_gt_14d: 1, fresh_lt_7d_pct: 0.0}
 
   - name: test_freshness_old_price_goes_stale
-    description: "VIN with a very old price observation → counted in stale_gt_14d"
+    description: "Active VIN with a very old price observation → counted in stale_gt_14d"
     model: mart_price_freshness_trend
     given:
-      - input: ref('int_latest_observation')
+      - input: ref('mart_vehicle_snapshot')
         rows:
-          - {vin17: "STALEVIN00000001", make: "honda", model: "crv"}
-      - input: ref('int_price_history')
-        rows:
-          - {vin: "STALEVIN00000001", price_observed_at: "2025-01-01 12:00:00+00"}
+          - {vin: "STALEVIN00000001", make: "honda", model: "crv",
+             listing_state: "active", price_observed_at: "2025-01-01 12:00:00+00"}
     expect:
       rows:
         - {make: "honda", model: "crv", stale_gt_14d: 1, fresh_lt_1d: 0, fresh_lt_7d_pct: 0.0}
 
   - name: test_freshness_current_price_is_fresh
-    description: "VIN with a price observed right now → counted in fresh_lt_1d, fresh_lt_7d_pct=100"
+    description: "Active VIN with a price observed right now → counted in fresh_lt_1d, fresh_lt_7d_pct=100"
     model: mart_price_freshness_trend
     given:
-      - input: ref('int_latest_observation')
+      - input: ref('mart_vehicle_snapshot')
         rows:
-          - {vin17: "FRESHVIN00000001", make: "honda", model: "crv"}
-      - input: ref('int_price_history')
-        rows:
-          - {vin: "FRESHVIN00000001",
+          - {vin: "FRESHVIN00000001", make: "honda", model: "crv",
+             listing_state: "active",
              price_observed_at: "{{ modules.datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S+00') }}"}
     expect:
       rows:
         - {make: "honda", model: "crv", fresh_lt_1d: 1, stale_gt_14d: 0, fresh_lt_7d_pct: 100.0}
+
+  - name: test_freshness_unlisted_excluded
+    description: "Unlisted VINs are excluded — stale prices on sold listings shouldn't count"
+    model: mart_price_freshness_trend
+    given:
+      - input: ref('mart_vehicle_snapshot')
+        rows:
+          - {vin: "UNLISTEDVIN000001", make: "honda", model: "crv",
+             listing_state: "unlisted", price_observed_at: "2025-01-01 12:00:00+00"}
+          - {vin: "ACTIVEVIN0000001", make: "honda", model: "crv",
+             listing_state: "active", price_observed_at: "2025-01-01 12:00:00+00"}
+    expect:
+      rows:
+        - {make: "honda", model: "crv", total_vins: 1, stale_gt_14d: 1}
