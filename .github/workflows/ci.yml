@@ -70,7 +70,7 @@ jobs:
           --health-retries 10
 
       minio:
-        image: bitnami/minio:latest
+        image: minio/minio:latest
         env:
           MINIO_ROOT_USER: cartracker
           MINIO_ROOT_PASSWORD: cartracker123
@@ -81,6 +81,7 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+        command: server /data
 
     steps:
       - uses: actions/checkout@v4
