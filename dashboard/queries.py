@@ -1,13 +1,14 @@
 """
-SQL query loader for the dashboard service.
+DuckDB analytics query loader for the dashboard service.
 
 Loads all .sql files from dashboard/sql/ at import time and exposes them
 as module-level constants. File name (without extension) becomes the constant
 name in UPPER_CASE.
 
 Usage:
-    from dashboard.queries import STALE_VEHICLE_BACKLOG, COOLDOWN_BACKLOG
-    from dashboard.queries import SUCCESS_RATE  # use .format(artifact_type=..., interval=...)
+    from dashboard.queries import DEALS_TABLE, INVENTORY_ACTIVE_COUNT
+    # Template queries — call .format(filter_clause=...) before executing:
+    from dashboard.queries import DEALS_TABLE  # .format(filter_clause="AND make IN (?)")
 """
 from pathlib import Path
 
@@ -18,25 +19,34 @@ def _load(filename: str) -> str:
     return (_SQL_DIR / filename).read_text()
 
 
-ACTIVE_RUNS = _load("active_runs.sql")
-DBT_LOCK_STATUS = _load("dbt_lock_status.sql")
-ROTATION_SCHEDULE = _load("rotation_schedule.sql")
-RECENT_DETAIL_RUNS = _load("recent_detail_runs.sql")
-STALE_VEHICLE_BACKLOG = _load("stale_vehicle_backlog.sql")
-COOLDOWN_BACKLOG = _load("cooldown_backlog.sql")
-PRICE_FRESHNESS = _load("price_freshness.sql")
-BLOCKED_COOLDOWN_HISTOGRAM = _load("blocked_cooldown_histogram.sql")
-# Template — call .format(artifact_type=..., interval=...) before executing
-SUCCESS_RATE = _load("success_rate.sql")
-SEARCH_SCRAPE_JOBS = _load("search_scrape_jobs.sql")
-RUNS_OVER_TIME = _load("runs_over_time.sql")
-ARTIFACT_BACKLOG = _load("artifact_backlog.sql")
-TERMINATED_RUNS = _load("terminated_runs.sql")
-PIPELINE_ERRORS = _load("pipeline_errors.sql")
-DBT_BUILD_HISTORY = _load("dbt_build_history.sql")
-PROCESSOR_ACTIVITY = _load("processor_activity.sql")
-PROCESSING_THROUGHPUT = _load("processing_throughput.sql")
-DETAIL_EXTRACTION_COVERAGE = _load("detail_extraction_coverage.sql")
-PG_STAT_CONNECTIONS = _load("pg_stat_connections.sql")
-PG_STAT_SLOW_QUERIES = _load("pg_stat_slow_queries.sql")
-AIRFLOW_DAG_RUNS = _load("airflow_dag_runs.sql")
+# app.py
+MART_FRESHNESS = _load("mart_freshness.sql")
+
+# deals.py — templates: call .format(filter_clause="AND ..." or "") before executing
+DEALS_MAKES = _load("deals_makes.sql")
+DEALS_TABLE = _load("deals_table.sql")
+DEALS_TIER_DISTRIBUTION = _load("deals_tier_distribution.sql")
+DEALS_DAYS_ON_MARKET = _load("deals_days_on_market.sql")
+DEALS_PRICE_DROPS = _load("deals_price_drops.sql")
+DEALS_PRICE_VS_MSRP = _load("deals_price_vs_msrp.sql")
+
+# inventory.py
+INVENTORY_ACTIVE_COUNT = _load("inventory_active_count.sql")
+INVENTORY_NEW_24H = _load("inventory_new_24h.sql")
+INVENTORY_NEW_7D = _load("inventory_new_7d.sql")
+INVENTORY_NEW_30D = _load("inventory_new_30d.sql")
+INVENTORY_BY_MAKE_MODEL = _load("inventory_by_make_model.sql")
+INVENTORY_NEW_OVER_TIME = _load("inventory_new_over_time.sql")
+INVENTORY_UNLISTED_OVER_TIME = _load("inventory_unlisted_over_time.sql")
+INVENTORY_TOP_DEALERS = _load("inventory_top_dealers.sql")
+
+# market_trends.py
+MARKET_TRENDS_DAYS_ON_MARKET = _load("market_trends_days_on_market.sql")
+MARKET_TRENDS_NATIONAL_SUPPLY = _load("market_trends_national_supply.sql")
+MARKET_TRENDS_PRICE_DISTRIBUTION = _load("market_trends_price_distribution.sql")
+
+# data_health.py
+DATA_HEALTH_INVENTORY_COVERAGE = _load("data_health_inventory_coverage.sql")
+DATA_HEALTH_COOLDOWN_COHORTS = _load("data_health_cooldown_cohorts.sql")
+DATA_HEALTH_BATCH_OUTCOMES = _load("data_health_batch_outcomes.sql")
+DATA_HEALTH_PRICE_FRESHNESS = _load("data_health_price_freshness.sql")
