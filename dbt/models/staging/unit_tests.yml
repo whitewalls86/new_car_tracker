@@ -9,6 +9,13 @@ unit_tests:
     model: stg_observations
     given:
       - input: source('silver', 'observations')
+        column_overrides:
+          artifact_id: BIGINT
+          listing_id: VARCHAR
+          source: VARCHAR
+          listing_state: VARCHAR
+          fetched_at: TIMESTAMPTZ
+          vin: VARCHAR
         rows:
           - {artifact_id: 1, listing_id: "L1", source: "srp", listing_state: "active",
              fetched_at: "2026-01-10 12:00:00+00", vin: "1hgbh41jxmn109186"}
@@ -21,6 +28,13 @@ unit_tests:
     model: stg_observations
     given:
       - input: source('silver', 'observations')
+        column_overrides:
+          artifact_id: BIGINT
+          listing_id: VARCHAR
+          source: VARCHAR
+          listing_state: VARCHAR
+          fetched_at: TIMESTAMPTZ
+          vin: VARCHAR
         rows:
           - {artifact_id: 1, listing_id: "L1", source: "srp", listing_state: "active",
              fetched_at: "2026-01-10 12:00:00+00", vin: "SHORT123"}
@@ -33,6 +47,13 @@ unit_tests:
     model: stg_observations
     given:
       - input: source('silver', 'observations')
+        column_overrides:
+          artifact_id: BIGINT
+          listing_id: VARCHAR
+          source: VARCHAR
+          listing_state: VARCHAR
+          fetched_at: TIMESTAMPTZ
+          vin: VARCHAR
         rows:
           - {artifact_id: 1, listing_id: "L1", source: "srp", listing_state: "active",
              fetched_at: "2026-01-10 12:00:00+00", vin: null}
@@ -45,6 +66,13 @@ unit_tests:
     model: stg_observations
     given:
       - input: source('silver', 'observations')
+        column_overrides:
+          artifact_id: BIGINT
+          listing_id: VARCHAR
+          source: VARCHAR
+          listing_state: VARCHAR
+          fetched_at: TIMESTAMPTZ
+          vin: VARCHAR
         rows:
           - {artifact_id: 1, listing_id: "L1", source: "srp", listing_state: "active",
              fetched_at: "2026-01-10 12:00:00+00", vin: "1HGBH41JXMN10918!"}
@@ -61,6 +89,15 @@ unit_tests:
     model: stg_price_events
     given:
       - input: source('ops_events', 'price_observation_events')
+        column_overrides:
+          event_id: BIGINT
+          listing_id: VARCHAR
+          vin: VARCHAR
+          price: INTEGER
+          artifact_id: BIGINT
+          event_type: VARCHAR
+          source: VARCHAR
+          event_at: TIMESTAMPTZ
         rows:
           - {event_id: 1, listing_id: "L1", vin: null, price: 10000,
              artifact_id: 1, event_type: "upserted", source: "srp",
@@ -77,6 +114,15 @@ unit_tests:
     model: stg_price_events
     given:
       - input: source('ops_events', 'price_observation_events')
+        column_overrides:
+          event_id: BIGINT
+          listing_id: VARCHAR
+          vin: VARCHAR
+          price: INTEGER
+          artifact_id: BIGINT
+          event_type: VARCHAR
+          source: VARCHAR
+          event_at: TIMESTAMPTZ
         rows:
           - {event_id: 1, listing_id: "L1", vin: "VALIDVIN000000001", price: 10000,
              artifact_id: 1, event_type: "deleted", source: "srp",
@@ -93,6 +139,15 @@ unit_tests:
     model: stg_price_events
     given:
       - input: source('ops_events', 'price_observation_events')
+        column_overrides:
+          event_id: BIGINT
+          listing_id: VARCHAR
+          vin: VARCHAR
+          price: INTEGER
+          artifact_id: BIGINT
+          event_type: VARCHAR
+          source: VARCHAR
+          event_at: TIMESTAMPTZ
         rows:
           - {event_id: 1, listing_id: "L1", vin: "VALIDVIN000000001", price: 0,
              artifact_id: 1, event_type: "upserted", source: "srp",
@@ -109,6 +164,15 @@ unit_tests:
     model: stg_price_events
     given:
       - input: source('ops_events', 'price_observation_events')
+        column_overrides:
+          event_id: BIGINT
+          listing_id: VARCHAR
+          vin: VARCHAR
+          price: INTEGER
+          artifact_id: BIGINT
+          event_type: VARCHAR
+          source: VARCHAR
+          event_at: TIMESTAMPTZ
         rows:
           - {event_id: 1, listing_id: "L1", vin: "VALIDVIN000000001", price: null,
              artifact_id: 1, event_type: "upserted", source: "srp",
