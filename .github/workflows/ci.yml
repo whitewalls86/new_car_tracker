@@ -198,7 +198,7 @@ jobs:
               pa.field('obs_day', pa.int32()),
           ]))
 
-          upload_empty('ops/price_observation_events/year=2026/month=1/seed.parquet', pa.schema([
+          schema = pa.schema([
               pa.field('event_id', pa.int64()),
               pa.field('listing_id', pa.string()),
               pa.field('vin', pa.string()),
@@ -211,7 +211,27 @@ jobs:
               pa.field('event_at', pa.timestamp('us', tz='UTC')),
               pa.field('year', pa.int32()),
               pa.field('month', pa.int32()),
-          ]))
+          ])
+          from datetime import datetime, timezone
+          row = {
+              'event_id': pa.array([1], type=pa.int64()),
+              'listing_id': pa.array(['CI_SEED_L1'], type=pa.string()),
+              'vin': pa.array(['1HGBH41JXMN109186'], type=pa.string()),
+              'price': pa.array([25000], type=pa.int32()),
+              'make': pa.array(['Honda'], type=pa.string()),
+              'model': pa.array(['Civic'], type=pa.string()),
+              'artifact_id': pa.array([1], type=pa.int64()),
+              'event_type': pa.array(['upserted'], type=pa.string()),
+              'source': pa.array(['srp'], type=pa.string()),
+              'event_at': pa.array([datetime(2026, 1, 1, tzinfo=timezone.utc)], type=pa.timestamp('us', tz='UTC')),
+              'year': pa.array([2026], type=pa.int32()),
+              'month': pa.array([1], type=pa.int32()),
+          }
+          buf = io.BytesIO()
+          pq.write_table(pa.table(row, schema=schema), buf)
+          buf.seek(0)
+          s3.put_object(Bucket='bronze', Key='ops/price_observation_events/year=2026/month=1/seed.parquet', Body=buf.getvalue())
+          print('Uploaded ops/price_observation_events/year=2026/month=1/seed.parquet')
           "
 
       - name: dbt build (DuckDB — empty data compilation check)
