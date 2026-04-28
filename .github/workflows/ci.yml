@@ -137,6 +137,83 @@ jobs:
       - name: Install DuckDB extensions
         run: python -c "import duckdb; con = duckdb.connect(); con.install_extension('httpfs'); con.install_extension('postgres_scanner')"
 
+      - name: Seed MinIO with empty Parquet schemas (required for dbt unit test compilation)
+        run: |
+          pip install pyarrow
+          python -c "
+          import io
+          import boto3
+          import pyarrow as pa
+          import pyarrow.parquet as pq
+          from botocore.client import Config
+
+          s3 = boto3.client('s3',
+              endpoint_url='http://localhost:9000',
+              aws_access_key_id='cartracker',
+              aws_secret_access_key='cartracker123',
+              config=Config(signature_version='s3v4'),
+              region_name='us-east-1')
+
+          def upload_empty(key, schema):
+              buf = io.BytesIO()
+              pq.write_table(pa.table({f.name: pa.array([], type=f.type) for f in schema}, schema=schema), buf)
+              buf.seek(0)
+              s3.put_object(Bucket='bronze', Key=key, Body=buf.getvalue())
+              print(f'Uploaded {key}')
+
+          upload_empty('silver/observations/source=srp/obs_year=2026/obs_month=1/obs_day=1/seed.parquet', pa.schema([
+              pa.field('artifact_id', pa.int64()),
+              pa.field('listing_id', pa.string()),
+              pa.field('vin', pa.string()),
+              pa.field('canonical_detail_url', pa.string()),
+              pa.field('source', pa.string()),
+              pa.field('listing_state', pa.string()),
+              pa.field('fetched_at', pa.timestamp('us', tz='UTC')),
+              pa.field('written_at', pa.timestamp('us', tz='UTC')),
+              pa.field('price', pa.int32()),
+              pa.field('make', pa.string()),
+              pa.field('model', pa.string()),
+              pa.field('trim', pa.string()),
+              pa.field('year', pa.int16()),
+              pa.field('mileage', pa.int16()),
+              pa.field('msrp', pa.int16()),
+              pa.field('stock_type', pa.string()),
+              pa.field('fuel_type', pa.string()),
+              pa.field('body_style', pa.string()),
+              pa.field('dealer_name', pa.string()),
+              pa.field('dealer_zip', pa.string()),
+              pa.field('customer_id', pa.string()),
+              pa.field('seller_id', pa.string()),
+              pa.field('financing_type', pa.string()),
+              pa.field('seller_zip', pa.string()),
+              pa.field('seller_customer_id', pa.string()),
+              pa.field('page_number', pa.int16()),
+              pa.field('position_on_page', pa.int16()),
+              pa.field('trid', pa.string()),
+              pa.field('isa_context', pa.string()),
+              pa.field('body', pa.string()),
+              pa.field('condition', pa.string()),
+              pa.field('obs_year', pa.int32()),
+              pa.field('obs_month', pa.int32()),
+              pa.field('obs_day', pa.int32()),
+          ]))
+
+          upload_empty('ops/price_observation_events/year=2026/month=1/seed.parquet', pa.schema([
+              pa.field('event_id', pa.int64()),
+              pa.field('listing_id', pa.string()),
+              pa.field('vin', pa.string()),
+              pa.field('price', pa.int32()),
+              pa.field('make', pa.string()),
+              pa.field('model', pa.string()),
+              pa.field('artifact_id', pa.int64()),
+              pa.field('event_type', pa.string()),
+              pa.field('source', pa.string()),
+              pa.field('event_at', pa.timestamp('us', tz='UTC')),
+              pa.field('year', pa.int32()),
+              pa.field('month', pa.int32()),
+          ]))
+          "
+
       - name: dbt build (DuckDB — empty data compilation check)
         working-directory: dbt
         run: dbt build --profiles-dir . --target duckdb
