@@ -46,9 +46,9 @@ sources:
           - name: year
             data_type: smallint
           - name: mileage
-            data_type: smallint
+            data_type: integer
           - name: msrp
-            data_type: smallint
+            data_type: integer
           - name: stock_type
             data_type: varchar
           - name: fuel_type
