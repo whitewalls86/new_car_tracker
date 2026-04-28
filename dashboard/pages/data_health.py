@@ -16,7 +16,9 @@ def render():
 
     # -- Inventory Coverage --------------------------------------------------
     st.subheader("Inventory Coverage by Make / Model")
-    st.caption("Coverage = fraction of tracked VINs with a detail observation (trim, mileage, etc.)")
+    st.caption(
+        "Coverage = fraction of tracked VINs with a detail observation (trim, mileage, etc.)"
+    )
     df = run_duckdb_query(DATA_HEALTH_INVENTORY_COVERAGE)
     if not df.empty:
         col1, col2, col3 = st.columns(3)
@@ -94,7 +96,10 @@ def render():
 
     # -- Detail Batch Outcomes -----------------------------------------------
     st.subheader("Detail Scrape Extraction Yield (Last 30 Days)")
-    st.caption("extraction_yield = fraction of detail observations with a valid 17-char VIN. Low yield signals parser failures.")
+    st.caption(
+        "extraction_yield = fraction of detail observations with a valid 17-char VIN. "
+        "Low yield signals parser failures."
+    )
     df = run_duckdb_query(DATA_HEALTH_BATCH_OUTCOMES)
     if not df.empty:
         fig = px.line(
