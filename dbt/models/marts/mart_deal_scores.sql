@@ -23,14 +23,14 @@ price_percentiles as (
 -- Dealer inventory depth: how many tracked VINs at the same dealer, same make/model
 dealer_inventory as (
     select
-        seller_customer_id,
+        customer_id,
         make,
         model,
         count(*) as dealer_inventory_count
     from {{ ref('mart_vehicle_snapshot') }}
     where listing_state = 'active'
-      and seller_customer_id is not null
-    group by seller_customer_id, make, model
+      and customer_id is not null
+    group by customer_id, make, model
 ),
 
 scored as (
@@ -49,7 +49,7 @@ scored as (
         v.listing_state,
 
         -- Dealer
-        v.seller_customer_id,
+        v.customer_id,
         v.dealer_zip,
         coalesce(d.name, v.dealer_name)  as dealer_name,
 
@@ -125,10 +125,10 @@ scored as (
     left join price_percentiles pctl
         on pctl.vin = v.vin
     left join dealer_inventory di
-        on di.seller_customer_id = v.seller_customer_id
+        on di.customer_id = v.customer_id
         and di.make = v.make and di.model = v.model
     left join {{ ref('stg_dealers') }} d
-        on d.customer_id = v.seller_customer_id
+        on d.customer_id = v.customer_id
     where v.listing_state = 'active'
       and v.price is not null
       and v.price > 0
