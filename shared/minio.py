@@ -67,10 +67,10 @@ def get_s3fs():
     """Return a new s3fs.S3FileSystem configured for MinIO."""
     import s3fs
     return s3fs.S3FileSystem(
-        endpoint_url=ENDPOINT,
         key=ACCESS,
         secret=SECRET,
         use_ssl=False,
+        client_kwargs={"endpoint_url": ENDPOINT},
     )
 
 
