@@ -99,26 +99,49 @@ def main():
         SET s3_url_style='path';
     """)
 
-    logger.info("Querying unlisted events with resolvable VINs...")
+    logger.info("Querying unlisted events with resolvable VINs and make/model...")
     rows = con.execute("""
-        SELECT
-            e.listing_id,
-            e.artifact_id,
-            v.vin,
-            -- most recent deleted event per listing
-            MAX(e.event_at) AS fetched_at
-        FROM read_parquet('s3://bronze/ops/price_observation_events/**/*.parquet') e
-        JOIN (
-            -- most recent VIN mapping per listing
+        WITH deleted AS (
+            -- Most recent deleted event per listing
+            SELECT
+                listing_id,
+                arg_max(artifact_id, event_at) AS artifact_id,
+                max(event_at)                  AS fetched_at
+            FROM read_parquet('s3://bronze/ops/price_observation_events/**/*.parquet')
+            WHERE event_type = 'deleted'
+              AND source = 'detail'
+            GROUP BY listing_id
+        ),
+        vin_map AS (
+            -- Most recent VIN mapping per listing
             SELECT DISTINCT ON (listing_id)
                 listing_id,
                 vin
             FROM read_parquet('s3://bronze/ops/vin_to_listing_events/**/*.parquet')
             ORDER BY listing_id, event_at DESC
-        ) v ON v.listing_id = e.listing_id
-        WHERE e.event_type = 'deleted'
-          AND e.source = 'detail'
-        GROUP BY e.listing_id, e.artifact_id, v.vin
+        ),
+        last_make_model AS (
+            -- Most recent make/model seen for each listing (from any upserted event)
+            SELECT
+                listing_id,
+                arg_max(make,  event_at) AS make,
+                arg_max(model, event_at) AS model
+            FROM read_parquet('s3://bronze/ops/price_observation_events/**/*.parquet')
+            WHERE event_type = 'upserted'
+              AND make IS NOT NULL
+              AND model IS NOT NULL
+            GROUP BY listing_id
+        )
+        SELECT
+            d.listing_id,
+            d.artifact_id,
+            v.vin,
+            d.fetched_at,
+            mm.make,
+            mm.model
+        FROM deleted d
+        JOIN vin_map    v  ON v.listing_id  = d.listing_id
+        JOIN last_make_model mm ON mm.listing_id = d.listing_id
     """).fetchall()
 
     logger.info("Found %d unlisted listings to backfill", len(rows))
@@ -130,7 +153,7 @@ def main():
     written_at = datetime.now(timezone.utc)
     silver_rows = []
 
-    for listing_id, artifact_id, vin, fetched_at in rows:
+    for listing_id, artifact_id, vin, fetched_at, make, model in rows:
         if fetched_at.tzinfo is None:
             fetched_at = fetched_at.replace(tzinfo=timezone.utc)
 
@@ -143,10 +166,10 @@ def main():
             "listing_state":        "unlisted",
             "fetched_at":           fetched_at,
             "written_at":           written_at,
-            # Vehicle/dealer fields unknown for unlisted pages — all NULL
+            # Vehicle/dealer fields — make/model from last known upserted event
             "price":                None,
-            "make":                 None,
-            "model":                None,
+            "make":                 make,
+            "model":                model,
             "trim":                 None,
             "year":                 None,
             "mileage":              None,
