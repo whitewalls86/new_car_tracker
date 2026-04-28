@@ -20,6 +20,9 @@ unit_tests:
              price_drop_count: 0, price_increase_count: 0, total_price_observations: 1,
              first_seen_at: "2026-01-10 12:00:00+00", last_seen_at: "2026-01-10 12:00:00+00",
              days_on_market: 0}
+      - input: ref('int_active_make_models')
+        rows:
+          - {make: "honda", model: "crv"}
     expect:
       rows:
         - {vin: "DETAIL0ACTIVE00001", listing_state: "active"}
@@ -41,6 +44,9 @@ unit_tests:
              first_seen_at: "2026-01-05 12:00:00+00",
              last_seen_at: "{{ modules.datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S+00') }}",
              days_on_market: 5}
+      - input: ref('int_active_make_models')
+        rows:
+          - {make: "honda", model: "crv"}
     expect:
       rows:
         - {vin: "SRPONLY0RECENT0001", listing_state: "active"}
@@ -61,6 +67,9 @@ unit_tests:
              price_drop_count: 0, price_increase_count: 0, total_price_observations: 1,
              first_seen_at: "2025-12-01 12:00:00+00", last_seen_at: "2025-12-01 12:00:00+00",
              days_on_market: 40}
+      - input: ref('int_active_make_models')
+        rows:
+          - {make: "honda", model: "crv"}
     expect:
       rows:
         - {vin: "SRPONLY00000OLD001", listing_state: "unlisted"}
@@ -76,6 +85,9 @@ unit_tests:
              fetched_at: "2026-01-10 12:00:00+00"}
       - input: ref('int_price_history')
         rows: []
+      - input: ref('int_active_make_models')
+        rows:
+          - {make: "honda", model: "crv"}
     expect:
       rows:
         - {vin: "NOPRICEHIST000001", price: null, listing_state: "unlisted"}
