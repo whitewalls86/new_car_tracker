@@ -380,6 +380,17 @@ def write_detail_unlisted(
     """Detail write path for unlisted listings."""
     vin = primary.get("vin")
 
+    # Unlisted pages rarely carry a VIN in the activity JSON — look it up so the
+    # silver row has a vin17 and flows through int_latest_observation correctly.
+    if not vin:
+        with db_cursor(
+            error_context="detail_unlisted: vin_lookup", dict_cursor=True,
+        ) as cur:
+            cur.execute(BATCH_LOOKUP_VIN_TO_LISTING, {"listing_ids": [listing_id]})
+            row = cur.fetchone()
+            if row:
+                vin = str(row["vin"])
+
     with db_cursor(error_context=f"detail_unlisted: writes artifact_id={artifact_id}") as cur:
         cur.execute(DELETE_PRICE_OBSERVATION, {"listing_id": listing_id})
         # Event: price_observation deleted (unlisted)
