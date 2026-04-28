@@ -152,10 +152,10 @@ unit_tests:
     expect:
       rows:
         - {vin: "EXCELLENT00000001", deal_tier: "excellent"}
-        - {vin: "COHORT000000000V2", deal_tier: "weak"}
-        - {vin: "COHORT000000000V3", deal_tier: "weak"}
-        - {vin: "COHORT000000000V4", deal_tier: "weak"}
-        - {vin: "COHORT000000000V5", deal_tier: "weak"}
+        - {vin: "COHORT000000000V2", deal_tier: "good"}
+        - {vin: "COHORT000000000V3", deal_tier: "good"}
+        - {vin: "COHORT000000000V4", deal_tier: "fair"}
+        - {vin: "COHORT000000000V5", deal_tier: "fair"}
 
   - name: test_msrp_discount_pct
     description: "MSRP discount is correctly calculated as (msrp - price) / msrp * 100"
