@@ -121,34 +121,6 @@ def seed_search_config(cur):
 
 
 @pytest.fixture()
-def seed_run(cur):
-    """Insert a minimal runs row. Returns the run_id (UUID)."""
-    run_id = str(uuid.uuid4())
-    cur.execute(
-        """
-        INSERT INTO runs (run_id, started_at, status, trigger)
-        VALUES (%s, now(), 'running', 'integration_test')
-        """,
-        (run_id,),
-    )
-    return run_id
-
-
-@pytest.fixture()
-def seed_scrape_job(cur, seed_run, seed_search_config):
-    """Insert a minimal scrape_jobs row. Returns (job_id, run_id, search_key)."""
-    job_id = str(uuid.uuid4())
-    cur.execute(
-        """
-        INSERT INTO scrape_jobs (job_id, run_id, search_key, scope, status, created_at)
-        VALUES (%s, %s, %s, 'local', 'completed', now())
-        """,
-        (job_id, seed_run, seed_search_config),
-    )
-    return job_id, seed_run, seed_search_config
-
-
-@pytest.fixture()
 def seed_authorized_user(cur):
     """Insert a minimal authorized_users row. Returns (id, email_hash)."""
     email_hash = f"testhash_{uuid.uuid4().hex[:12]}"

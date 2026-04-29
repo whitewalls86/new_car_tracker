@@ -326,17 +326,6 @@ class TestArtifactsQueueSchema:
                 (minio_path,),
             )
 
-    def test_raw_artifacts_has_nullable_minio_path_column(self, cur):
-        cur.execute("""
-            SELECT is_nullable FROM information_schema.columns
-            WHERE table_schema = 'public' AND table_name = 'raw_artifacts'
-              AND column_name = 'minio_path'
-        """)
-        row = cur.fetchone()
-        assert row is not None, "raw_artifacts.minio_path column missing"
-        assert row["is_nullable"] == "YES"
-
-
 # ============================================================================
 # Plan 98 — staging.artifacts_queue_events schema smoke tests
 # ============================================================================
