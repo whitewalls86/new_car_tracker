@@ -7,6 +7,7 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
     <style>
         body { padding: 2rem 0; }
+
         .top-bar {
             max-width: 900px;
             margin: 0 auto 1.5rem auto;
@@ -17,12 +18,24 @@
         .top-bar a { text-decoration: none; }
         .prose { max-width: 900px; margin: 0 auto; }
 
-        /* Hero */
-        .hero { margin-bottom: 2.5rem; }
-        .hero h1 { border-bottom: 2px solid var(--pico-muted-border-color); padding-bottom: 0.4rem; margin-bottom: 1rem; }
-        .hero p { font-size: 1.1rem; color: var(--pico-secondary); }
+        h2 { border-bottom: 1px solid var(--pico-muted-border-color); padding-bottom: 0.3rem; margin-bottom: 1rem; }
 
-        /* Live stats */
+        /* ── Hero ── */
+        .hero { margin-bottom: 2.5rem; }
+        .hero h1 {
+            border-bottom: 2px solid var(--pico-muted-border-color);
+            padding-bottom: 0.4rem;
+            margin-bottom: 1rem;
+        }
+        .hero p { font-size: 1.1rem; color: var(--pico-secondary); margin-bottom: 1.25rem; }
+        .hero-cta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.75rem;
+        }
+        .hero-cta a[role="button"] { margin: 0; }
+
+        /* ── Live stats ── */
         .stats-row {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
@@ -31,14 +44,16 @@
         }
         .stat-card {
             border: 1px solid var(--pico-muted-border-color);
+            border-top: 3px solid var(--pico-primary);
             border-radius: 8px;
-            padding: 1rem 1.2rem;
+            padding: 1.1rem 1.2rem 1rem;
             text-align: center;
+            background: var(--pico-card-background-color);
         }
-        .stat-card .num { font-size: 2rem; font-weight: 700; line-height: 1.1; }
-        .stat-card .label { font-size: 0.8rem; color: var(--pico-muted-color); margin-top: 0.25rem; }
+        .stat-card .num { font-size: 2.2rem; font-weight: 700; line-height: 1.1; color: var(--pico-primary); }
+        .stat-card .label { font-size: 0.8rem; color: var(--pico-muted-color); margin-top: 0.3rem; }
 
-        /* Data flow pipeline */
+        /* ── Data flow pipeline ── */
         .pipeline {
             display: flex;
             align-items: stretch;
@@ -46,10 +61,18 @@
             margin-bottom: 2.5rem;
             overflow-x: auto;
         }
+        /* Layer color tokens */
+        .pipeline-stage[data-layer="ingest"]  { --layer-color: #2563EB; }
+        .pipeline-stage[data-layer="bronze"]  { --layer-color: #B45309; }
+        .pipeline-stage[data-layer="silver"]  { --layer-color: #64748B; }
+        .pipeline-stage[data-layer="mart"]    { --layer-color: #7C3AED; }
+        .pipeline-stage[data-layer="serving"] { --layer-color: #059669; }
+
         .pipeline-stage {
             flex: 1;
             min-width: 130px;
             border: 1px solid var(--pico-muted-border-color);
+            border-top: 3px solid var(--layer-color, var(--pico-muted-border-color));
             border-radius: 8px;
             padding: 0.85rem 1rem;
         }
@@ -57,12 +80,8 @@
             border-left: none;
             border-radius: 0 8px 8px 0;
         }
-        .pipeline-stage:first-child {
-            border-radius: 8px 0 0 8px;
-        }
-        .pipeline-stage:only-child {
-            border-radius: 8px;
-        }
+        .pipeline-stage:first-child { border-radius: 8px 0 0 8px; }
+        .pipeline-stage:only-child  { border-radius: 8px; }
         .pipeline-stage:not(:last-child) {
             border-radius: 8px 0 0 8px;
             position: relative;
@@ -83,13 +102,13 @@
             font-weight: 700;
             letter-spacing: 0.05em;
             text-transform: uppercase;
-            color: var(--pico-primary);
+            color: var(--layer-color, var(--pico-primary));
             margin-bottom: 0.3rem;
         }
         .pipeline-stage strong { font-size: 0.85rem; display: block; margin-bottom: 0.25rem; }
         .pipeline-stage p { font-size: 0.75rem; color: var(--pico-muted-color); margin: 0; line-height: 1.4; }
 
-        /* Services grid */
+        /* ── Services grid ── */
         .services-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
@@ -99,25 +118,52 @@
         .service-card {
             border: 1px solid var(--pico-muted-border-color);
             border-radius: 8px;
-            padding: 0.75rem 1rem;
+            padding: 0.85rem 1rem;
             display: flex;
             align-items: flex-start;
-            gap: 0.75rem;
+            gap: 0.85rem;
         }
+        .service-logo {
+            width: 30px;
+            height: 30px;
+            flex-shrink: 0;
+            margin-top: 0.05rem;
+            object-fit: contain;
+        }
+        .service-logo-placeholder {
+            width: 30px;
+            height: 30px;
+            flex-shrink: 0;
+            border-radius: 6px;
+            background: var(--pico-secondary-background);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.65rem;
+            font-weight: 700;
+            color: var(--pico-secondary);
+            text-align: center;
+            line-height: 1.1;
+        }
+        .service-info .title-row {
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            flex-wrap: wrap;
+            margin-bottom: 0.15rem;
+        }
+        .service-info strong { font-size: 0.95rem; }
         .service-badge {
-            font-size: 0.7rem;
+            font-size: 0.65rem;
             background: var(--pico-secondary-background);
             color: var(--pico-secondary);
             border-radius: 4px;
-            padding: 0.15rem 0.4rem;
+            padding: 0.1rem 0.35rem;
             white-space: nowrap;
-            flex-shrink: 0;
-            margin-top: 0.1rem;
         }
-        .service-info strong { font-size: 0.95rem; }
-        .service-info p { font-size: 0.82rem; color: var(--pico-muted-color); margin: 0.15rem 0 0; }
+        .service-info p { font-size: 0.82rem; color: var(--pico-muted-color); margin: 0; }
 
-        /* Highlights */
+        /* ── Technical highlights ── */
         .highlights-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
@@ -132,17 +178,22 @@
         .highlight-card h4 { margin: 0 0 0.4rem; font-size: 0.95rem; }
         .highlight-card p { font-size: 0.85rem; color: var(--pico-muted-color); margin: 0; }
 
-        /* CTA links */
-        .cta-row {
+        /* ── Footer CTA ── */
+        .footer-cta {
+            border-top: 1px solid var(--pico-muted-border-color);
+            padding-top: 1.5rem;
+            margin-top: 0.5rem;
             display: flex;
             flex-wrap: wrap;
             gap: 0.75rem;
-            margin-bottom: 2rem;
+            align-items: center;
         }
-        .cta-row a[role="button"] { margin: 0; }
-        .cta-row a.secondary { margin: 0; }
-
-        h2 { border-bottom: 1px solid var(--pico-muted-border-color); padding-bottom: 0.3rem; margin-bottom: 1rem; }
+        .footer-cta a[role="button"] { margin: 0; }
+        .footer-cta .footer-note {
+            margin-left: auto;
+            font-size: 0.8rem;
+            color: var(--pico-muted-color);
+        }
     </style>
 </head>
 <body>
@@ -164,6 +215,11 @@
                 middle — anti-detection, idempotent writes, event sourcing, schema migrations,
                 and observability — not just the happy path.
             </p>
+            <div class="hero-cta">
+                <a href="/dashboard" role="button">View Dashboard</a>
+                <a href="https://github.com/whitewalls86/new_car_tracker" target="_blank" rel="noopener" role="button" class="secondary">GitHub →</a>
+                <a href="/request-access" role="button" class="outline">Request Access</a>
+            </div>
         </section>
 
         <!-- ── 2. Live stats ── -->
@@ -191,7 +247,7 @@
                 {% endif %}
                 {% if stats.last_pipeline_run %}
                 <div class="stat-card">
-                    <div class="num" style="font-size:1.1rem;">{{ stats.last_pipeline_run }}</div>
+                    <div class="num" style="font-size:1.1rem; padding-top:0.55rem;">{{ stats.last_pipeline_run }}</div>
                     <div class="label">Last pipeline run</div>
                 </div>
                 {% endif %}
@@ -203,27 +259,27 @@
         <section>
             <h2>How data flows</h2>
             <div class="pipeline">
-                <div class="pipeline-stage">
+                <div class="pipeline-stage" data-layer="ingest">
                     <div class="layer-badge">Ingest</div>
                     <strong>Scraper → MinIO</strong>
                     <p>Raw HTML artifacts written to MinIO object storage, partitioned by date and artifact type.</p>
                 </div>
-                <div class="pipeline-stage">
+                <div class="pipeline-stage" data-layer="bronze">
                     <div class="layer-badge">Bronze</div>
                     <strong>Processing → Postgres</strong>
                     <p>Artifacts claimed from the queue, parsed, and written to staging event tables in Postgres.</p>
                 </div>
-                <div class="pipeline-stage">
+                <div class="pipeline-stage" data-layer="silver">
                     <div class="layer-badge">Silver</div>
                     <strong>Archiver → Parquet</strong>
                     <p>Archiver bulk-flushes staging events to Parquet files on MinIO, partitioned by source and date.</p>
                 </div>
-                <div class="pipeline-stage">
+                <div class="pipeline-stage" data-layer="mart">
                     <div class="layer-badge">Mart</div>
                     <strong>dbt + DuckDB</strong>
                     <p>dbt reads Parquet from MinIO and Postgres exports, producing silver and mart layers in DuckDB.</p>
                 </div>
-                <div class="pipeline-stage">
+                <div class="pipeline-stage" data-layer="serving">
                     <div class="layer-badge">Serving</div>
                     <strong>Dashboard</strong>
                     <p>Streamlit queries the DuckDB mart layer directly for price history, deal scores, and trends.</p>
@@ -235,76 +291,117 @@
         <section>
             <h2>Architecture at a glance</h2>
             <div class="services-grid">
+
                 <div class="service-card">
-                    <span class="service-badge">FastAPI</span>
+                    <img class="service-logo" src="https://cdn.simpleicons.org/fastapi/009688" alt="FastAPI" onerror="this.style.display='none'">
                     <div class="service-info">
-                        <strong>Scraper</strong>
+                        <div class="title-row">
+                            <strong>Scraper</strong>
+                            <span class="service-badge">FastAPI</span>
+                        </div>
                         <p>Fetches SRP and detail pages with Chrome TLS fingerprinting; writes compressed HTML to MinIO.</p>
                     </div>
                 </div>
+
                 <div class="service-card">
-                    <span class="service-badge">FastAPI</span>
+                    <img class="service-logo" src="https://cdn.simpleicons.org/fastapi/009688" alt="FastAPI" onerror="this.style.display='none'">
                     <div class="service-info">
-                        <strong>Processing</strong>
+                        <div class="title-row">
+                            <strong>Processing</strong>
+                            <span class="service-badge">FastAPI</span>
+                        </div>
                         <p>Claims artifacts from the queue, parses HTML, and writes price observations via staging event tables.</p>
                     </div>
                 </div>
+
                 <div class="service-card">
-                    <span class="service-badge">FastAPI</span>
+                    <img class="service-logo" src="https://cdn.simpleicons.org/fastapi/009688" alt="FastAPI" onerror="this.style.display='none'">
                     <div class="service-info">
-                        <strong>Ops</strong>
+                        <div class="title-row">
+                            <strong>Ops</strong>
+                            <span class="service-badge">FastAPI</span>
+                        </div>
                         <p>Admin UI, deploy coordination, claim management, and auth forward-proxy endpoint.</p>
                     </div>
                 </div>
+
                 <div class="service-card">
-                    <span class="service-badge">FastAPI</span>
+                    <img class="service-logo" src="https://cdn.simpleicons.org/fastapi/009688" alt="FastAPI" onerror="this.style.display='none'">
                     <div class="service-info">
-                        <strong>Archiver</strong>
+                        <div class="title-row">
+                            <strong>Archiver</strong>
+                            <span class="service-badge">FastAPI</span>
+                        </div>
                         <p>Bulk-flushes staging event buffers to MinIO Parquet; sweeps completed queue rows.</p>
                     </div>
                 </div>
+
                 <div class="service-card">
-                    <span class="service-badge">dbt + DuckDB</span>
+                    <img class="service-logo" src="https://cdn.simpleicons.org/dbt/FF694B" alt="dbt" onerror="this.style.display='none'">
                     <div class="service-info">
-                        <strong>dbt Runner</strong>
+                        <div class="title-row">
+                            <strong>dbt Runner</strong>
+                            <span class="service-badge">dbt + DuckDB</span>
+                        </div>
                         <p>Runs dbt transformations against DuckDB — reads Parquet from MinIO directly, no separate warehouse needed.</p>
                     </div>
                 </div>
+
                 <div class="service-card">
-                    <span class="service-badge">Airflow</span>
+                    <img class="service-logo" src="https://cdn.simpleicons.org/apacheairflow/017CEE" alt="Apache Airflow" onerror="this.style.display='none'">
                     <div class="service-info">
-                        <strong>Airflow</strong>
+                        <div class="title-row">
+                            <strong>Airflow</strong>
+                            <span class="service-badge">Airflow</span>
+                        </div>
                         <p>Schedules all DAGs — scrape rotation, artifact processing, staging flush, queue cleanup, and orphan checks.</p>
                     </div>
                 </div>
+
                 <div class="service-card">
-                    <span class="service-badge">Streamlit</span>
+                    <img class="service-logo" src="https://cdn.simpleicons.org/streamlit/FF4B4B" alt="Streamlit" onerror="this.style.display='none'">
                     <div class="service-info">
-                        <strong>Dashboard</strong>
+                        <div class="title-row">
+                            <strong>Dashboard</strong>
+                            <span class="service-badge">Streamlit</span>
+                        </div>
                         <p>Interactive price-history and deal-score views backed by the DuckDB mart layer.</p>
                     </div>
                 </div>
+
                 <div class="service-card">
-                    <span class="service-badge">MinIO</span>
+                    <img class="service-logo" src="https://cdn.simpleicons.org/minio/C72E49" alt="MinIO" onerror="this.style.display='none'">
                     <div class="service-info">
-                        <strong>MinIO (S3-compatible)</strong>
+                        <div class="title-row">
+                            <strong>MinIO</strong>
+                            <span class="service-badge">S3-compatible</span>
+                        </div>
                         <p>Object store for raw HTML artifacts and Parquet silver observations; queryable directly by DuckDB.</p>
                     </div>
                 </div>
+
                 <div class="service-card">
-                    <span class="service-badge">Caddy</span>
+                    <img class="service-logo" src="https://cdn.simpleicons.org/caddy/22D3EE" alt="Caddy" onerror="this.style.display='none'">
                     <div class="service-info">
-                        <strong>Caddy</strong>
+                        <div class="title-row">
+                            <strong>Caddy</strong>
+                            <span class="service-badge">Reverse Proxy</span>
+                        </div>
                         <p>Reverse proxy with TLS termination, OAuth2 Google auth, and DB-backed role checks.</p>
                     </div>
                 </div>
+
                 <div class="service-card">
-                    <span class="service-badge">Grafana</span>
+                    <img class="service-logo" src="https://cdn.simpleicons.org/grafana/F46800" alt="Grafana" onerror="this.style.display='none'">
                     <div class="service-info">
-                        <strong>Grafana</strong>
+                        <div class="title-row">
+                            <strong>Grafana</strong>
+                            <span class="service-badge">Observability</span>
+                        </div>
                         <p>Operational dashboards from Prometheus metrics (Airflow, Postgres, MinIO, node).</p>
                     </div>
                 </div>
+
             </div>
         </section>
 
@@ -363,14 +460,13 @@
             </div>
         </section>
 
-        <!-- ── 6. Links ── -->
+        <!-- ── 6. Footer CTA ── -->
         <section>
-            <h2>Explore</h2>
-            <div class="cta-row">
+            <div class="footer-cta">
                 <a href="/dashboard" role="button">View Dashboard</a>
-                <a href="https://github.com/whitewalls86/new_car_tracker" target="_blank" rel="noopener" role="button" class="secondary">GitHub →</a>
-                <a href="/admin" role="button" class="secondary">Ops Admin UI</a>
-                <a href="/request-access" role="button" class="outline">Request Access</a>
+                <a href="/grafana" role="button" class="secondary">Grafana →</a>
+                <a href="/admin" role="button" class="secondary">Ops Admin</a>
+                <span class="footer-note">Built by <a href="https://github.com/whitewalls86" target="_blank" rel="noopener">whitewalls86</a></span>
             </div>
         </section>
 
