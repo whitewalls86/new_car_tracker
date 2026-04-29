@@ -138,7 +138,7 @@ https://cartracker.info {
         }
     }
 
-    handle_path /grafana* {
+    handle /grafana* {
         forward_auth oauth2-proxy:4180 {
             uri /oauth2/auth
             copy_headers X-Auth-Request-Email X-Auth-Request-User
