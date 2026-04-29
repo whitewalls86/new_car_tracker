@@ -39,7 +39,8 @@ jobs:
             bs4 lxml \
             resend \
             prometheus-fastapi-instrumentator \
-            pyyaml
+            pyyaml \
+            duckdb
       - run: pytest tests/ -v -m "not integration"
         env:
           PYTHONPATH: ${{ github.workspace }}
