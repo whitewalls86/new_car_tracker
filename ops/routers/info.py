@@ -23,6 +23,20 @@ templates = Jinja2Templates(directory=os.path.join(_BASE_DIR, "templates"))
 _DUCKDB_PATH = os.environ.get("DUCKDB_PATH", "/data/analytics/analytics.duckdb")
 
 
+def _fmt_stat(value: int | float) -> str:
+    """Format a stat number for display: abbreviate millions/thousands."""
+    if value >= 1_000_000:
+        return f"{value / 1_000_000:.1f}M"
+    if value >= 10_000:
+        return f"{value / 1_000:.0f}K"
+    if value >= 1_000:
+        return f"{value / 1_000:.1f}K"
+    return f"{value:,}"
+
+
+templates.env.filters["fmt_stat"] = _fmt_stat
+
+
 def _load_stats() -> dict:
     """
     Pull live counts for the landing page.

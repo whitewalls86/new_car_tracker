@@ -154,11 +154,13 @@
         }
         .service-info strong { font-size: 0.95rem; }
         .service-badge {
-            font-size: 0.65rem;
+            font-size: 0.72rem;
+            font-weight: 600;
             background: var(--pico-secondary-background);
-            color: var(--pico-secondary);
+            color: var(--pico-color);
+            border: 1px solid var(--pico-muted-border-color);
             border-radius: 4px;
-            padding: 0.1rem 0.35rem;
+            padding: 0.15rem 0.4rem;
             white-space: nowrap;
         }
         .service-info p { font-size: 0.82rem; color: var(--pico-muted-color); margin: 0; }
@@ -228,13 +230,13 @@
             <div class="stats-row">
                 {% if stats.active_listings is defined %}
                 <div class="stat-card">
-                    <div class="num">{{ "{:,}".format(stats.active_listings) }}</div>
+                    <div class="num">{{ stats.active_listings | fmt_stat }}</div>
                     <div class="label">Active listings</div>
                 </div>
                 {% endif %}
                 {% if stats.price_observations is defined %}
                 <div class="stat-card">
-                    <div class="num">{{ "{:,}".format(stats.price_observations) }}</div>
+                    <div class="num">{{ stats.price_observations | fmt_stat }}</div>
                     <div class="label">Price observations</div>
                 </div>
                 {% endif %}
@@ -337,7 +339,7 @@
 
                 <div class="service-card">
                     <div style="display:flex;gap:0.35rem;flex-shrink:0;">
-                        <img class="service-logo" src="/static/dbt-bit-standalone.png" alt="dbt">
+                        <img class="service-logo" src="/static/dbt-bit-standalone.png" alt="dbt" onerror="this.style.display='none'">
                         <img class="service-logo" src="https://cdn.simpleicons.org/duckdb/FFF000" alt="DuckDB" onerror="this.style.display='none'">
                     </div>
                     <div class="service-info">
