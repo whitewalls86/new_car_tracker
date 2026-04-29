@@ -216,9 +216,8 @@
                 and observability — not just the happy path.
             </p>
             <div class="hero-cta">
-                <a href="/dashboard" role="button">View Dashboard</a>
+                <a href="/request-access" role="button">Request Access</a>
                 <a href="https://github.com/whitewalls86/new_car_tracker" target="_blank" rel="noopener" role="button" class="secondary">GitHub →</a>
-                <a href="/request-access" role="button" class="outline">Request Access</a>
             </div>
         </section>
 
@@ -227,19 +226,19 @@
         <section>
             <h2>Live stats</h2>
             <div class="stats-row">
-                {% if stats.active_listings is not none %}
+                {% if stats.active_listings is defined %}
                 <div class="stat-card">
                     <div class="num">{{ "{:,}".format(stats.active_listings) }}</div>
                     <div class="label">Active listings</div>
                 </div>
                 {% endif %}
-                {% if stats.price_observations is not none %}
+                {% if stats.price_observations is defined %}
                 <div class="stat-card">
                     <div class="num">{{ "{:,}".format(stats.price_observations) }}</div>
                     <div class="label">Price observations</div>
                 </div>
                 {% endif %}
-                {% if stats.make_model_pairs is not none %}
+                {% if stats.make_model_pairs is defined %}
                 <div class="stat-card">
                     <div class="num">{{ stats.make_model_pairs }}</div>
                     <div class="label">Make/model pairs tracked</div>
@@ -466,9 +465,8 @@
         <!-- ── 6. Footer CTA ── -->
         <section>
             <div class="footer-cta">
-                <a href="/dashboard" role="button">View Dashboard</a>
-                <a href="/grafana" role="button" class="secondary">Grafana →</a>
-                <a href="/admin" role="button" class="secondary">Ops Admin</a>
+                <a href="/request-access" role="button">Request Access</a>
+                <a href="https://github.com/whitewalls86/new_car_tracker" target="_blank" rel="noopener" role="button" class="secondary">GitHub →</a>
                 <span class="footer-note">Built by <a href="https://github.com/whitewalls86" target="_blank" rel="noopener">whitewalls86</a></span>
             </div>
             <p style="font-size:0.75rem; color:var(--pico-muted-color); margin:0.75rem 0 0;">

@@ -104,6 +104,7 @@ services:
       - "8060:8060"
     volumes:
       - ops_logs:/usr/app/logs
+      - analytics_db:/data/analytics:ro
     environment:
       PGHOST: postgres
       PGPORT: 5432
@@ -117,6 +118,7 @@ services:
       DBT_DOCS_URL: http://localhost:8081/dbt-docs/
       SCRAPER_URL: http://scraper:8000
       RESEND_API_KEY: ${RESEND_API_KEY:-}
+      DUCKDB_PATH: /data/analytics/analytics.duckdb
     networks:
       - cartracker-net
     depends_on:
