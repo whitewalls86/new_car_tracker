@@ -7,6 +7,7 @@ from logging.handlers import RotatingFileHandler
 
 from fastapi import FastAPI, Request
 from fastapi.responses import RedirectResponse, Response
+from fastapi.staticfiles import StaticFiles
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from .routers.admin import router as admin_router
@@ -27,6 +28,7 @@ logging.getLogger().setLevel(logging.INFO)
 
 app = FastAPI()
 Instrumentator().instrument(app).expose(app)
+app.mount("/static", StaticFiles(directory=os.path.join(os.path.dirname(__file__), "static")), name="static")
 app.include_router(info_router)
 app.include_router(auth_router)
 app.include_router(deploy_router)

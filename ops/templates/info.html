@@ -227,10 +227,10 @@
         <section>
             <h2>Live stats</h2>
             <div class="stats-row">
-                {% if stats.vins_tracked is not none %}
+                {% if stats.active_listings is not none %}
                 <div class="stat-card">
-                    <div class="num">{{ "{:,}".format(stats.vins_tracked) }}</div>
-                    <div class="label">VINs tracked</div>
+                    <div class="num">{{ "{:,}".format(stats.active_listings) }}</div>
+                    <div class="label">Active listings</div>
                 </div>
                 {% endif %}
                 {% if stats.price_observations is not none %}
@@ -239,10 +239,10 @@
                     <div class="label">Price observations</div>
                 </div>
                 {% endif %}
-                {% if stats.artifacts_today is not none %}
+                {% if stats.make_model_pairs is not none %}
                 <div class="stat-card">
-                    <div class="num">{{ "{:,}".format(stats.artifacts_today) }}</div>
-                    <div class="label">Listings scraped today</div>
+                    <div class="num">{{ stats.make_model_pairs }}</div>
+                    <div class="label">Make/model pairs tracked</div>
                 </div>
                 {% endif %}
                 {% if stats.last_pipeline_run %}
@@ -337,7 +337,10 @@
                 </div>
 
                 <div class="service-card">
-                    <img class="service-logo" src="https://cdn.simpleicons.org/dbt/FF694B" alt="dbt" onerror="this.style.display='none'">
+                    <div style="display:flex;gap:0.35rem;flex-shrink:0;">
+                        <img class="service-logo" src="/static/dbt-bit-standalone.png" alt="dbt">
+                        <img class="service-logo" src="https://cdn.simpleicons.org/duckdb/FFF000" alt="DuckDB" onerror="this.style.display='none'">
+                    </div>
                     <div class="service-info">
                         <div class="title-row">
                             <strong>dbt Runner</strong>
@@ -468,6 +471,9 @@
                 <a href="/admin" role="button" class="secondary">Ops Admin</a>
                 <span class="footer-note">Built by <a href="https://github.com/whitewalls86" target="_blank" rel="noopener">whitewalls86</a></span>
             </div>
+            <p style="font-size:0.75rem; color:var(--pico-muted-color); margin:0.75rem 0 0;">
+                dbt™ is a trademark of dbt Labs, Inc. This project is not affiliated with or endorsed by dbt Labs.
+            </p>
         </section>
 
     </div><!-- /prose -->
