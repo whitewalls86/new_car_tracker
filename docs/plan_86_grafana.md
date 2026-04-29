@@ -1,8 +1,17 @@
 # Plan 86: Grafana Observability Stack
 
-**Status:** Planned
+**Status:** COMPLETE (2026-04-29)
 **Priority:** Medium — Airflow is live with real DAG metrics; now worth instrumenting
 **Depends on:** Plan 71 (Airflow, COMPLETE), Plan 93 (processing service, COMPLETE)
+
+## Completion Notes
+
+Deployed to production 2026-04-29. All containers live, all three dashboards populate.
+
+- V033 Flyway migration applied (created `metrics_user` with `pg_monitor`; V032 was already taken)
+- `/grafana` route live behind admin-only Caddy auth
+- All five metrics sources scraping: Airflow StatsD, Postgres, MinIO, ops/processing HTTP, node-exporter
+- `METRICS_DB_PASSWORD`, `GRAFANA_ADMIN_USER`, `GRAFANA_ADMIN_PASSWORD` set in server env
 
 ---
 
