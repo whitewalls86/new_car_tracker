@@ -45,6 +45,35 @@ models:
       - name: extraction_yield
         description: Percentage of observations with a valid VIN (0–100).
 
+  - name: mart_scrape_volume
+    description: >
+      Hourly scrape throughput by source type (srp, detail, carousel).
+      artifact_count is distinct artifacts processed in the hour; observation_count
+      is total parsed rows. vin_extraction_pct is populated for detail rows only.
+      One row per (hour, source).
+    columns:
+      - name: hour
+        data_tests:
+          - not_null
+      - name: source
+        data_tests:
+          - not_null
+      - name: artifact_count
+        data_tests:
+          - not_null
+
+  - name: mart_block_rate
+    description: >
+      Hourly 403 blocking events. new_blocks counts first-time blocks; block_increments
+      counts repeated attempts on already-blocked listings. Join to mart_scrape_volume
+      on hour to compute a block rate against total observations.
+      One row per hour.
+    columns:
+      - name: hour
+        data_tests:
+          - not_null
+          - unique
+
   - name: mart_price_freshness_trend
     description: >
       Price freshness distribution by make/model. Shows how current price data is
