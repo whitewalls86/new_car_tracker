@@ -7,3 +7,4 @@ resend
 boto3
 zstandard
 pyyaml
+prometheus-fastapi-instrumentator
