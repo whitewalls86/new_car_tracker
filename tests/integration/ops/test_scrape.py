@@ -58,30 +58,6 @@ def seed_search_config(verify_cur, test_key_prefix):
 
 
 @pytest.fixture()
-def seed_run(verify_cur):
-    """
-    Factory fixture that inserts a runs row and cleans up after.
-    """
-    inserted_ids = []
-
-    def _seed(status: str = "running", trigger: str = "detail scrape") -> str:
-        run_id = str(uuid.uuid4())
-        verify_cur.execute(
-            "INSERT INTO runs (run_id, status, trigger) VALUES (%s::uuid, %s, %s)",
-            (run_id, status, trigger),
-        )
-        inserted_ids.append(run_id)
-        return run_id
-
-    yield _seed
-
-    verify_cur.execute(
-        "DELETE FROM runs WHERE run_id = ANY(%s::uuid[])",
-        (inserted_ids,),
-    )
-
-
-@pytest.fixture()
 def seed_claim(verify_cur):
     """
     Factory fixture that inserts a detail_scrape_claims row and cleans up after.
@@ -218,76 +194,13 @@ def test_claim_batch_returns_run_id(api_client):
     uuid.UUID(data["run_id"])
 
 
-@pytest.mark.integration
-def test_claim_batch_creates_run_row_in_db(api_client, verify_cur):
-    response = api_client.post("/scrape/claims/claim-batch")
-
-    run_id = response.json()["run_id"]
-
-    verify_cur.execute("SELECT status, trigger FROM runs WHERE run_id = %s::uuid", (run_id,))
-    row = verify_cur.fetchone()
-    assert row is not None
-    assert row["trigger"] == "detail scrape"
-
-    # Cleanup
-    verify_cur.execute("DELETE FROM runs WHERE run_id = %s::uuid", (run_id,))
-
-
-@pytest.mark.integration
-def test_claim_batch_marks_run_skipped_when_queue_empty(api_client, verify_cur):
-    # This test assumes the queue may be empty in the test DB.
-    # If the queue has rows, the test is still valid — we just check the run exists.
-    response = api_client.post("/scrape/claims/claim-batch")
-
-    data = response.json()
-    run_id = data["run_id"]
-
-    verify_cur.execute("SELECT status FROM runs WHERE run_id = %s::uuid", (run_id,))
-    row = verify_cur.fetchone()
-
-    if data["listings"]:
-        # Queue had rows — run should be running
-        assert row["status"] == "running"
-        # Cleanup claims and run
-        listing_ids = [listing["listing_id"] for listing in data["listings"]]
-        verify_cur.execute(
-            "DELETE FROM detail_scrape_claims WHERE listing_id = ANY(%s::uuid[])", (listing_ids,)
-        )
-    else:
-        # Queue empty — run should be skipped
-        assert row["status"] == "skipped"
-
-    verify_cur.execute("DELETE FROM runs WHERE run_id = %s::uuid", (run_id,))
-
-
 # ---------------------------------------------------------------------------
 # POST /scrape/claims/release
 # ---------------------------------------------------------------------------
 
 @pytest.mark.integration
-def test_release_claims_marks_run_completed(api_client, verify_cur, seed_run, seed_claim):
-    run_id = seed_run(status="running")
-    listing_id = str(uuid.uuid4())
-    seed_claim(listing_id=listing_id, claimed_by=run_id)
-
-    response = api_client.post("/scrape/claims/release", json={
-        "run_id": run_id,
-        "results": [{"listing_id": listing_id, "status": "ok"}],
-    })
-
-    assert response.status_code == 200
-    data = response.json()
-    assert data["status"] == "completed"
-    assert data["total"] == 1
-    assert data["errors"] == 0
-
-    verify_cur.execute("SELECT status FROM runs WHERE run_id = %s::uuid", (run_id,))
-    assert verify_cur.fetchone()["status"] == "completed"
-
-
-@pytest.mark.integration
-def test_release_claims_deletes_claim_rows(api_client, verify_cur, seed_run, seed_claim):
-    run_id = seed_run(status="running")
+def test_release_claims_deletes_claim_rows(api_client, verify_cur, seed_claim):
+    run_id = str(uuid.uuid4())
     listing_id = str(uuid.uuid4())
     seed_claim(listing_id=listing_id, claimed_by=run_id)
 
@@ -303,35 +216,8 @@ def test_release_claims_deletes_claim_rows(api_client, verify_cur, seed_run, see
 
 
 @pytest.mark.integration
-def test_release_claims_marks_run_failed_when_all_results_failed(
-    api_client, verify_cur, seed_run, seed_claim
-):
-    run_id = seed_run(status="running")
-    listing_a = str(uuid.uuid4())
-    listing_b = str(uuid.uuid4())
-    seed_claim(listing_id=listing_a, claimed_by=run_id)
-    seed_claim(listing_id=listing_b, claimed_by=run_id)
-
-    response = api_client.post("/scrape/claims/release", json={
-        "run_id": run_id,
-        "results": [
-            {"listing_id": listing_a, "status": "failed"},
-            {"listing_id": listing_b, "status": "failed"},
-        ],
-    })
-
-    assert response.status_code == 200
-    assert response.json()["status"] == "failed"
-
-    verify_cur.execute("SELECT status FROM runs WHERE run_id = %s::uuid", (run_id,))
-    assert verify_cur.fetchone()["status"] == "failed"
-
-
-@pytest.mark.integration
-def test_release_claims_completed_when_mix_of_ok_and_failed(
-    api_client, verify_cur, seed_run, seed_claim
-):
-    run_id = seed_run(status="running")
+def test_release_claims_counts_errors_correctly(api_client, verify_cur, seed_claim):
+    run_id = str(uuid.uuid4())
     listing_ok = str(uuid.uuid4())
     listing_fail = str(uuid.uuid4())
     seed_claim(listing_id=listing_ok, claimed_by=run_id)
@@ -347,14 +233,13 @@ def test_release_claims_completed_when_mix_of_ok_and_failed(
 
     assert response.status_code == 200
     data = response.json()
-    assert data["status"] == "completed"
     assert data["errors"] == 1
     assert data["total"] == 2
 
 
 @pytest.mark.integration
-def test_release_claims_empty_results(api_client, verify_cur, seed_run):
-    run_id = seed_run(status="running")
+def test_release_claims_empty_results(api_client):
+    run_id = str(uuid.uuid4())
 
     response = api_client.post("/scrape/claims/release", json={
         "run_id": run_id,
@@ -362,5 +247,4 @@ def test_release_claims_empty_results(api_client, verify_cur, seed_run):
     })
 
     assert response.status_code == 200
-    assert response.json()["status"] == "completed"
     assert response.json()["total"] == 0

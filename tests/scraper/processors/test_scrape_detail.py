@@ -19,8 +19,7 @@ def reset_adaptive_delay():
     yield
     sd._detail_adaptive_delay = 0.0
 
-# n8n reads all 16 of these keys from every artifact (Plan 97 added minio_path + queue_artifact_id)
-N8N_ARTIFACT_KEYS = {
+ARTIFACT_KEYS = {
     "source",
     "artifact_type",
     "listing_id",
@@ -205,8 +204,8 @@ class TestScrapeDetailFetch:
 
         result = scrape_detail_fetch(run_id=RUN_ID, payload={"listing_id": LISTING_ID})
         art = result["artifacts"][0]
-        missing = N8N_ARTIFACT_KEYS - art.keys()
-        assert missing == set(), f"Artifact missing n8n fields: {missing}"
+        missing = ARTIFACT_KEYS - art.keys()
+        assert missing == set(), f"Artifact missing fields: {missing}"
 
     def test_raw_base_from_env(self, mock_cf_session, mocker):
         mocker.patch("os.environ.get", return_value="/tmp/custom_raw")
@@ -281,8 +280,8 @@ class TestScrapeDetailDummy:
         mocker.patch("builtins.open", mock_open())
         result = scrape_detail_dummy(run_id=RUN_ID, payload={"listing_id": LISTING_ID, "vin": VIN})
         art = result["artifacts"][0]
-        missing = N8N_ARTIFACT_KEYS - art.keys()
-        assert missing == set(), f"Dummy artifact missing n8n fields: {missing}"
+        missing = ARTIFACT_KEYS - art.keys()
+        assert missing == set(), f"Dummy artifact missing fields: {missing}"
 
     def test_meta_has_listing_id(self, mocker):
         mocker.patch("os.makedirs")
@@ -379,8 +378,8 @@ class TestScrapeDetailBatch:
             run_id=RUN_ID, batch_id=BATCH_ID, listings=listings
         )
         art = result["artifacts"][0]
-        missing = N8N_ARTIFACT_KEYS - art.keys()
-        assert missing == set(), f"Batch artifact missing n8n fields: {missing}"
+        missing = ARTIFACT_KEYS - art.keys()
+        assert missing == set(), f"Batch artifact missing fields: {missing}"
 
 
 # ---------------------------------------------------------------------------

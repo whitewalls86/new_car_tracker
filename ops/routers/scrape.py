@@ -167,14 +167,6 @@ def claim_batch(batch_size: int = 450) -> Dict[str, Any]:
     run_id = str(uuid.uuid4())
 
     with db_cursor(error_context="claim_batch") as cur:
-        cur.execute(
-            """INSERT INTO runs 
-                (run_id, status, trigger)
-               VALUES (%s::uuid, 'running', 'detail scrape')
-            """,
-            (run_id,),
-        )
-
         cur.execute("""
             WITH batch AS (
                 SELECT q.*
@@ -207,14 +199,6 @@ def claim_batch(batch_size: int = 450) -> Dict[str, Any]:
 
     listings = [dict(zip(col_names, row)) for row in rows]
 
-    if not listings:
-        # Nothing to scrape — mark run as skipped
-        with db_cursor(error_context="claim_batch_skip") as cur:
-            cur.execute(
-                "UPDATE runs SET status = 'skipped', finished_at = now() WHERE run_id = %s::uuid",
-                (run_id,),
-            )
-
     return {"run_id": run_id, "listings": listings}
 
 
@@ -232,7 +216,6 @@ def release_claims(body: ReleaseRequest) -> Dict[str, Any]:
 
     listing_ids = [r.listing_id for r in results]
     error_count = sum(1 for r in results if r.status == "failed")
-    run_status = "failed" if error_count == len(results) and results else "completed"
 
     with db_cursor(error_context="release_claims") as cur:
         if listing_ids:
@@ -242,18 +225,8 @@ def release_claims(body: ReleaseRequest) -> Dict[str, Any]:
                 (listing_ids, run_id),
             )
 
-        cur.execute("""
-            UPDATE runs
-            SET status = %s,
-                finished_at = now(),
-                error_count = %s,
-                total_count = %s
-            WHERE run_id = %s::uuid
-        """, (run_status, error_count, len(results), run_id))
-
     return {
         "run_id": run_id,
-        "status": run_status,
         "total": len(results),
         "errors": error_count,
     }

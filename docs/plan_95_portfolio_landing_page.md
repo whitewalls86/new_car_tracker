@@ -53,7 +53,7 @@ fails, silently omit that stat (no error banner on the landing page).
 
 **3. Architecture at a glance**
 
-A compact two-column grid of the 10 services — name, one-line description, and
+A compact two-column grid of the services — name, one-line description, and
 a small badge for the technology (FastAPI, Streamlit, dbt, etc.). Not the full
 services table from the README — just enough to convey scale.
 

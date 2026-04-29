@@ -72,26 +72,6 @@ https://cartracker.info {
         reverse_proxy ops:8060
     }
 
-    handle /n8n* {
-        forward_auth oauth2-proxy:4180 {
-            uri /oauth2/auth
-            copy_headers X-Auth-Request-Email X-Auth-Request-User
-            @error status 401
-            handle_response @error {
-                redir * /oauth2/sign_in?rd={scheme}://{host}{uri}
-            }
-        }
-        forward_auth ops:8060 {
-            uri /auth/check?require=admin
-            copy_headers X-User-Role
-            @unauth status 403
-            handle_response @unauth {
-                redir * /request-access
-            }
-        }
-        reverse_proxy n8n:5678
-    }
-
     handle /pgadmin* {
         forward_auth oauth2-proxy:4180 {
             uri /oauth2/auth

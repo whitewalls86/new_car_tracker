@@ -486,36 +486,6 @@ class TestVinToListingUpsert:
 
 
 # ---------------------------------------------------------------------------
-# carousel hints insert
-# ---------------------------------------------------------------------------
-
-class TestCarouselHintsInsert:
-
-    def test_insert_carousel_hint(self, cur):
-        artifact = _insert_artifact(cur, artifact_type="detail_page")
-        source_listing_id = _random_listing_id()
-        hint_listing_id = _random_listing_id()
-
-        cur.execute(
-            """
-            INSERT INTO public.detail_carousel_hints
-                (artifact_id, fetched_at, source_listing_id, listing_id,
-                 price, mileage, body, condition, year)
-            VALUES (%s, now(), %s, %s, %s, %s, %s, %s, %s)
-            """,
-            (
-                artifact["artifact_id"], source_listing_id, hint_listing_id,
-                38000, 5000, "New 2026 Toyota RAV4 XLE", "New", 2026,
-            ),
-        )
-        cur.execute(
-            "SELECT price FROM public.detail_carousel_hints WHERE listing_id = %s",
-            (hint_listing_id,),
-        )
-        assert cur.fetchone()["price"] == 38000
-
-
-# ---------------------------------------------------------------------------
 # detail_scrape_claims release
 # ---------------------------------------------------------------------------
 

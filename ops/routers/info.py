@@ -1,72 +1,89 @@
 """
-Public /info route — renders README.md as a styled landing page.
+Public /info route — renders the CarTracker portfolio landing page.
 No authentication required; Caddy routes /info without forward_auth.
 """
+import logging
 import os
+from datetime import datetime, timezone
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
+
+from shared.db import db_cursor
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-_README_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "README.md")
+_BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+templates = Jinja2Templates(directory=os.path.join(_BASE_DIR, "templates"))
+
+
+def _load_stats() -> dict:
+    """
+    Pull live counts from the DB for the landing page.
+    Returns a dict with keys: vins_tracked, price_observations,
+    artifacts_today, last_pipeline_run.
+    Any value that fails to load is set to None and silently omitted.
+    """
+    stats: dict = {}
+
+    try:
+        with db_cursor(error_context="info: vins_tracked", dict_cursor=True) as cur:
+            cur.execute("SELECT COUNT(DISTINCT vin) FROM ops.vin_to_listing WHERE vin IS NOT NULL")
+            row = cur.fetchone()
+            if row:
+                stats["vins_tracked"] = row[0]
+    except Exception:
+        logger.debug("info stats: vins_tracked query failed", exc_info=True)
+
+    try:
+        with db_cursor(error_context="info: price_observations", dict_cursor=True) as cur:
+            cur.execute("SELECT COUNT(*) FROM ops.price_observations")
+            row = cur.fetchone()
+            if row:
+                stats["price_observations"] = row[0]
+    except Exception:
+        logger.debug("info stats: price_observations query failed", exc_info=True)
+
+    try:
+        with db_cursor(error_context="info: artifacts_today", dict_cursor=True) as cur:
+            cur.execute(
+                "SELECT COUNT(*) FROM ops.artifacts_queue WHERE fetched_at >= CURRENT_DATE"
+            )
+            row = cur.fetchone()
+            if row:
+                stats["artifacts_today"] = row[0]
+    except Exception:
+        logger.debug("info stats: artifacts_today query failed", exc_info=True)
+
+    try:
+        with db_cursor(error_context="info: last_pipeline_run", dict_cursor=True) as cur:
+            cur.execute(
+                "SELECT MAX(fetched_at) FROM ops.artifacts_queue WHERE status = 'complete'"
+            )
+            row = cur.fetchone()
+            if row and row[0]:
+                ts: datetime = row[0]
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=timezone.utc)
+                stats["last_pipeline_run"] = ts.strftime("%Y-%m-%d %H:%M UTC")
+    except Exception:
+        logger.debug("info stats: last_pipeline_run query failed", exc_info=True)
+
+    return stats
 
 
 @router.get("/info", response_class=HTMLResponse)
-def info_page():
+def info_page(request: Request):
     try:
-        with open(_README_PATH, "r", encoding="utf-8") as f:
-            raw_md = f.read()
-    except FileNotFoundError:
-        raw_md = "# CarTracker\n\nREADME not found."
+        stats = _load_stats()
+    except Exception:
+        stats = {}
 
-    # Escape backticks and template literals so the JS string stays intact
-    escaped = raw_md.replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${")
-
-    return f"""<!DOCTYPE html>
-<html lang="en" data-theme="light">
-<head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>CarTracker</title>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
-    <style>
-        body {{ padding: 2rem 0; }}
-        .prose {{ max-width: 860px; margin: 0 auto; }}
-        pre {{ overflow-x: auto; }}
-        pre code {{
-            display: block;
-            padding: 1rem;
-            font-size: 0.85rem;
-            line-height: 1.5;
-        }}
-        table {{ width: 100%; }}
-        h1, h2, h3 {{ margin-top: 2rem; }}
-        h1 {{ border-bottom: 2px solid var(--pico-muted-border-color); padding-bottom: 0.4rem; }}
-        h2 {{ border-bottom: 1px solid var(--pico-muted-border-color); padding-bottom: 0.3rem; }}
-        .top-bar {{
-            max-width: 860px;
-            margin: 0 auto 1.5rem auto;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }}
-        .top-bar a {{ text-decoration: none; }}
-    </style>
-</head>
-<body>
-    <main class="container">
-        <div class="top-bar">
-            <a href="/request-access" role="button">Request Access</a>
-            <a href="https://github.com/whitewalls86/new_car_tracker"
-               target="_blank" rel="noopener">GitHub →</a>
-        </div>
-        <article class="prose" id="content"></article>
-    </main>
-    <script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
-    <script>
-        const md = `{escaped}`;
-        document.getElementById("content").innerHTML = marked.parse(md);
-    </script>
-</body>
-</html>"""
+    return templates.TemplateResponse(
+        request=request,
+        name="info.html",
+        context={"request": request, "stats": stats},
+    )

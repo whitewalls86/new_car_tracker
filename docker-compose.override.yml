@@ -3,12 +3,6 @@
 # Not loaded when using explicit -f flags (e.g. test commands).
 
 services:
-  n8n:
-    environment:
-      - N8N_HOST=localhost
-      - N8N_PROTOCOL=http
-      - N8N_PATH=/
-
   scraper:
     ports:
       - "8000:8000"

@@ -10,7 +10,7 @@ ARCHIVER_URL = "http://archiver:8001"
 
 
 def _run_cleanup():
-    resp = requests.post(f"{ARCHIVER_URL}/cleanup/artifacts/run", timeout=600)
+    resp = requests.post(f"{ARCHIVER_URL}/cleanup/parquet/run", timeout=600)
     resp.raise_for_status()
     return resp.json()
 
@@ -24,6 +24,6 @@ with DAG(
 ):
     ready = deploy_intent_sensor()
     archiver_up = http_health_sensor("archiver", ARCHIVER_URL)
-    cleanup = PythonOperator(task_id="cleanup_artifacts", python_callable=_run_cleanup)
+    cleanup = PythonOperator(task_id="cleanup_parquet", python_callable=_run_cleanup)
 
     ready >> archiver_up >> cleanup

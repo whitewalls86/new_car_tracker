@@ -326,63 +326,6 @@ def test_edit_search_form_db_error(mock_client, mock_db_connection_error, mock_t
 
 
 # ---------------------------------------------------------------------------
-# GET /runs
-# ---------------------------------------------------------------------------
-
-def test_list_runs_ok(mock_client, mock_cursor_context, mock_templates):
-    conn, cursor = mock_cursor_context
-    cursor.fetchall.return_value = []
-
-    response = mock_client.get("/admin/runs")
-
-    assert response.status_code == 200
-    mock_templates.assert_called_once()
-
-
-def test_list_runs_db_error(mock_client, mock_db_connection_error, mock_templates):
-    response = mock_client.get("/admin/runs")
-
-    assert response.status_code == 503
-    mock_templates.assert_called_once()
-
-
-# ---------------------------------------------------------------------------
-# GET /runs/{run_id}
-# ---------------------------------------------------------------------------
-
-def test_run_detail_found(mock_client, mock_cursor_context, mock_templates):
-    conn, cursor = mock_cursor_context
-    run_id = str(uuid.uuid4())
-    cursor.fetchone.return_value = {
-        "run_id": uuid.uuid4(), "started_at": None, "finished_at": None,
-        "status": "done", "trigger": None, "progress_count": 0,
-        "total_count": 0, "error_count": 0, "last_error": None, "notes": None,
-    }
-    cursor.fetchall.return_value = []
-
-    response = mock_client.get(f"/admin/runs/{run_id}")
-
-    assert response.status_code == 200
-
-
-def test_run_detail_not_found(mock_client, mock_cursor_context, mock_templates):
-    conn, cursor = mock_cursor_context
-    cursor.fetchone.return_value = None
-
-    response = mock_client.get(f"/admin/runs/{uuid.uuid4()}", follow_redirects=False)
-
-    assert response.status_code == 303
-    assert response.headers["location"] == "/admin/runs"
-
-
-def test_run_detail_db_error(mock_client, mock_db_connection_error, mock_templates):
-    response = mock_client.get(f"/admin/runs/{uuid.uuid4()}")
-
-    assert response.status_code == 503
-    mock_templates.assert_called_once()
-
-
-# ---------------------------------------------------------------------------
 # GET /dbt
 # ---------------------------------------------------------------------------
 

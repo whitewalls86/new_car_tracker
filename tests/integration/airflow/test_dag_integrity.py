@@ -25,7 +25,7 @@ DAGS_DIR = REPO_ROOT / "airflow" / "dags"
 DAG_SPECS = {
     "cleanup_artifacts.py": {
         "dag_id": "cleanup_artifacts",
-        "tasks": {"check_deploy_intent", "check_archiver_health", "cleanup_artifacts"},
+        "tasks": {"check_deploy_intent", "check_archiver_health", "cleanup_parquet"},
     },
     "cleanup_queue.py": {
         "dag_id": "cleanup_queue",
@@ -48,11 +48,7 @@ DAG_SPECS = {
         "tasks": {
             "check_deploy_intent",
             "check_ops_health",
-            "expire_orphan_runs",
-            "expire_orphan_processing_runs",
-            "reset_stale_artifact_processing",
             "expire_orphan_detail_claims",
-            "expire_orphan_scrape_jobs",
         },
     },
     "results_processing.py": {

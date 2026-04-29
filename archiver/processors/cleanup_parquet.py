@@ -34,7 +34,7 @@ def run_cleanup_parquet() -> Dict[str, Any]:
 
     Queries expired months from the DB, deletes the corresponding Parquet
     partitions from MinIO, then marks those artifacts as deleted_at in the DB.
-    The legacy POST /cleanup/parquet endpoint (called by n8n) remains unchanged.
+    The POST /cleanup/parquet endpoint remains unchanged.
     """
     with db_cursor(error_context="run_cleanup_parquet: get expired months") as cur:
         cur.execute(GET_EXPIRED_PARQUET_MONTHS)

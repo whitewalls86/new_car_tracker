@@ -7,8 +7,7 @@ from scraper.processors.parse_detail_page import (
     parse_cars_detail_page_html_v1,
 )
 
-# Fields that n8n reads from `primary` (from Parse Detail Pages.json workflow)
-N8N_PRIMARY_FIELDS = {
+PRIMARY_FIELDS = {
     "listing_id",
     "vin",
     "listing_state",
@@ -294,11 +293,11 @@ class TestMetaKeys:
         assert "carousel_found" in meta
 
 
-class TestN8nContract:
-    def test_all_n8n_primary_fields_present(self):
+class TestDetailContract:
+    def test_all_primary_fields_present(self):
         primary, _, _ = parse_cars_detail_page_html_v1(ACTIVE_DETAIL_HTML)
-        missing = N8N_PRIMARY_FIELDS - primary.keys()
-        assert missing == set(), f"Missing n8n-consumed primary fields: {missing}"
+        missing = PRIMARY_FIELDS - primary.keys()
+        assert missing == set(), f"Missing primary fields: {missing}"
 
 
 # ---------------------------------------------------------------------------
