@@ -22,6 +22,7 @@ st.sidebar.markdown("[Search Config Admin](https://cartracker.info/admin)")
 st.sidebar.markdown("[Airflow](https://cartracker.info/airflow)")
 st.sidebar.markdown("[pgAdmin](https://cartracker.info/pgadmin)")
 st.sidebar.markdown("[MinIO](https://cartracker.info/minio)")
+st.sidebar.markdown("[Grafana](https://cartracker.info/grafana)")
 
 # Data freshness
 _freshness_df = run_duckdb_query(MART_FRESHNESS)

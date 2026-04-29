@@ -499,14 +499,14 @@ unit_tests:
         - {make: "honda", model: "crv", stale_gt_14d: 1, fresh_lt_1d: 0, fresh_lt_7d_pct: 0.0}
 
   - name: test_freshness_current_price_is_fresh
-    description: "Active VIN with a price observed right now → counted in fresh_lt_1d, fresh_lt_7d_pct=100"
+    description: "Active VIN with a far-future price_observed_at → always counted in fresh_lt_1d (datediff is negative)"
     model: mart_price_freshness_trend
     given:
       - input: ref('mart_vehicle_snapshot')
         rows:
           - {vin: "FRESHVIN00000001", make: "honda", model: "crv",
              listing_state: "active",
-             price_observed_at: "{{ modules.datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S+00') }}"}
+             price_observed_at: "2099-01-01 00:00:00+00"}
     expect:
       rows:
         - {make: "honda", model: "crv", fresh_lt_1d: 1, stale_gt_14d: 0, fresh_lt_7d_pct: 100.0}
