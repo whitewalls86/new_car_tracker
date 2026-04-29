@@ -37,7 +37,9 @@ jobs:
             requests pydantic jinja2 python-multipart \
             boto3 zstandard pyarrow s3fs \
             bs4 lxml \
-            resend
+            resend \
+            prometheus-fastapi-instrumentator \
+            pyyaml
       - run: pytest tests/ -v -m "not integration"
         env:
           PYTHONPATH: ${{ github.workspace }}
@@ -102,6 +104,7 @@ jobs:
             -placeholders.adminEmail=ci@example.com
             -placeholders.airflowPassword=ci_airflow
             -placeholders.airflowAppPassword=ci_airflow_app
+            -placeholders.metricsPassword=ci_metrics
             -defaultSchema=public
             migrate
         # Flyway runs as a Docker container step; it must reach the postgres
@@ -261,6 +264,7 @@ jobs:
             pytest psycopg2-binary \
             pyarrow boto3 s3fs duckdb \
             fastapi httpx jinja2 python-multipart requests resend \
+            prometheus-fastapi-instrumentator \
             apache-airflow \
             apache-airflow-providers-postgres \
             apache-airflow-providers-http \
