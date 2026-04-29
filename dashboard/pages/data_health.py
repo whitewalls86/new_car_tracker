@@ -27,9 +27,16 @@ def render():
         )
         trunc = {"Hourly": "hour", "Daily": "day", "Weekly": "week"}[granularity]
         df_agg = (
-            df_vol.assign(period=df_vol["hour"].dt.floor("h" if trunc == "hour" else ("D" if trunc == "day" else "W")))
+            df_vol.assign(
+                period=df_vol["hour"].dt.floor(
+                    "h" if trunc == "hour" else ("D" if trunc == "day" else "W")
+                )
+            )
             .groupby(["period", "source"], as_index=False)
-            .agg(artifact_count=("artifact_count", "sum"), observation_count=("observation_count", "sum"))
+            .agg(
+                artifact_count=("artifact_count", "sum"), 
+                observation_count=("observation_count", "sum")
+            )
         )
 
         col1, col2, col3 = st.columns(3)
@@ -55,7 +62,11 @@ def render():
             x="period", y="artifact_count", color="source",
             color_discrete_map={"srp": "#2563EB", "detail": "#7C3AED", "carousel": "#059669"},
         )
-        fig2.update_layout(xaxis_title=None, yaxis_title="Artifacts (batches)", legend_title="Source")
+        fig2.update_layout(
+            xaxis_title=None, 
+            yaxis_title="Artifacts (batches)", 
+            legend_title="Source"
+        )
         st.plotly_chart(fig2, use_container_width=True)
 
     st.divider()
@@ -89,7 +100,10 @@ def render():
         with col1:
             st.metric("New blocks today", f"{int(today_blk['new_blocks'].sum()):,}")
         with col2:
-            st.metric("Unique listings blocked today", f"{int(today_blk['unique_listings_blocked'].sum()):,}")
+            st.metric(
+                "Unique listings blocked today", 
+                f"{int(today_blk['unique_listings_blocked'].sum()):,}"
+            )
         with col3:
             rate_today = (
                 today_blk["new_blocks"].sum() * 100.0 / today_blk["total_observations"].sum()
