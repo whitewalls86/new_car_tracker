@@ -6,6 +6,23 @@ def test_get_health(mock_client):
     assert response.json() == {"ok": True}
 
 
+def test_metrics_endpoint_returns_200(mock_client):
+    response = mock_client.get("/metrics")
+    assert response.status_code == 200
+
+
+def test_metrics_endpoint_content_type_is_prometheus(mock_client):
+    response = mock_client.get("/metrics")
+    assert "text/plain" in response.headers["content-type"]
+
+
+def test_metrics_endpoint_contains_http_requests_total(mock_client):
+    # Make a request first so the counter exists in the registry.
+    mock_client.get("/health")
+    response = mock_client.get("/metrics")
+    assert "http_requests_total" in response.text
+
+
 def test_get_admin(mock_client):
     response = mock_client.get("/admin", follow_redirects=False)
     assert response.status_code == 307
