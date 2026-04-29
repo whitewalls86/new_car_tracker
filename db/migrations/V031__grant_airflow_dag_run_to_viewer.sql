@@ -6,8 +6,8 @@
 DO $$
 BEGIN
     IF EXISTS (
-        SELECT 1 FROM information_schema.tables
-        WHERE table_schema = 'airflow' AND table_name = 'dag_run'
+        SELECT 1 FROM information_schema.schemata
+        WHERE schema_name = 'airflow'
     ) THEN
         EXECUTE 'GRANT USAGE ON SCHEMA airflow TO viewer';
         EXECUTE 'GRANT SELECT ON airflow.dag_run TO viewer';
