@@ -1,7 +1,34 @@
 # Plan 101: Dashboard Restructure + Analytics Migration
 
-**Status:** Planned — depends on Plan 96 validation, Plan 86 implementation
+**Status:** COMPLETE (2026-04-29) — all 3 phases done
 **Supersedes:** Plan 90 ("dbt Decommission" / "dbt Migration to dbt-duckdb")
+
+## Completion Notes
+
+All three phases shipped:
+
+**Phase 1 — Cleanup (2026-04-28):**
+- Replaced all 21 original Postgres SQL files with 18 new DuckDB-targeted files in `dashboard/sql/`
+- `dashboard/queries.py` rewritten as a functional SQL file loader (18 named constants)
+- `dashboard/pages/pipeline_health.py` deleted; pipeline health tab removed from `app.py`
+- `app.py`: 3 tabs (Inventory, Deals, Market Trends); Airflow link added, n8n quicklink removed
+- `dashboard/db.py`: added `DUCKDB_PATH`, `get_duckdb_connection()` (read-only), `run_duckdb_query()` — DuckDB uses `?` params, returns `.df()`
+- All three analytics pages migrated to `run_duckdb_query`; `analytics.` schema prefix removed (dbt-duckdb uses bare `main` schema)
+- `deals.py`: removed broken `is_local` filter, `%s` → `?`
+- `inventory.py`: "Listings Going Unlisted" rewritten using `mart_vehicle_snapshot WHERE listing_state='unlisted'`
+- `market_trends.py`: dropped two broken charts referencing non-existent tables; added "Price Distribution by Model" from `mart_deal_scores`
+
+**Phase 2 — Grafana handoff (2026-04-29):**
+- Plan 86 deployed; Grafana live at `/grafana`; sidebar link added to dashboard
+
+**Phase 3 — Data Health page (2026-04-28):**
+- 4 new dbt mart models: `mart_inventory_coverage`, `mart_cooldown_cohorts`, `mart_detail_batch_outcomes`, `mart_price_freshness_trend`
+- Schema: `dbt/models/marts/mart_data_health.schema.yml`
+- 4 new SQL files: `dashboard/sql/data_health_*.sql`; `DATA_HEALTH_*` constants added to `queries.py`
+- `dashboard/pages/data_health.py`: 4-section admin page (coverage, price freshness, batch outcomes, cooldown cohorts)
+- `app.py`: 4th "Data Health" tab added
+
+**Architecture note:** `stg_*` views query MinIO via httpfs — dashboard DuckDB connection does not have S3 credentials. Dashboard queries only hit materialized tables: `mart_*`, `int_benchmarks`, `int_price_history`, `int_latest_observation`.
 
 ---
 

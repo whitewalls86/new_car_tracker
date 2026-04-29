@@ -2,15 +2,13 @@
 
 Each plan has its own file in `docs/`. This file is the index only. For system design patterns (schema layout, hot+staging, MinIO tiers, testing strategy, drain endpoints), see [ARCHITECTURE.md](ARCHITECTURE.md).
 
-## Current State (as of 2026-04-28)
+## Current State (as of 2026-04-29)
 
-Site is live at https://cartracker.info. Auth (Plan 82), data migration (Plan 81), CI/CD (Plans 62+63), integration testing (Plan 84), MinIO artifact store (Plan 97), processing service (Plan 93), Plan 99, Plan 100, and Plan 96 are complete. V018–V030 migrations shipped. Airflow is running with all maintenance DAGs live, the `results_processing` DAG, the `flush_silver_observations` + `flush_staging_events` DAGs, and the new `scrape_listings` + `scrape_detail_pages` scrape DAGs (merged, pending unpause).
+Site is live at https://cartracker.info. All major plans complete: auth (82), data migration (81), CI/CD (62+63), integration testing (84), MinIO artifact store (97), processing service (93), Plan 99, Plan 100, Plan 96 (dbt-duckdb), Plan 86 (Grafana), Plan 101 (dashboard restructure). V033 is the latest applied migration.
 
-The ops staleness view (`ops_vehicle_staleness`) and scrape queue (`ops_detail_scrape_queue`) are now plain Postgres views reading HOT tables directly (V029). The dbt ops models have been deleted. `customer_id IS NULL` is the enrichment signal replacing the old dbt `dealer_unenriched` join.
+Airflow owns all scraping and maintenance. n8n is deactivated. dbt runs on DuckDB against MinIO silver. The dashboard is a pure analytics product backed by DuckDB mart tables. Grafana owns pipeline/infrastructure observability.
 
-**Plan 96 (dbt-duckdb) is live on the server** (`feature/duck-dbt`): `dbt build --target duckdb` reads silver Parquet from MinIO and writes mart tables to a persistent DuckDB file (`/data/analytics/analytics.duckdb`). Server validation: 169k rows in `mart_vehicle_snapshot` (105k active / 64k unlisted), deal scores distributed across all tiers.
-
-The remaining transition sequence is: unpause `scrape_listings` + `scrape_detail_pages`, validate shadow period, disable n8n schedules (Plan 71 step 14) → decommission n8n (step 15) → Plan 90. Plan 100 (historical data migration) is COMPLETE (2026-04-27): ~13.7M legacy observations migrated to MinIO Parquet; artifact ID sequence advanced to 3741859.
+**Now:** Cleaning up the n8n-era codebase (Plan 102) — removing dead tables, dead endpoints, dead infrastructure.
 
 ---
 
@@ -18,7 +16,7 @@ The remaining transition sequence is: unpause `scrape_listings` + `scrape_detail
 
 | Plan | Title | Notes |
 |------|-------|-------|
-| [71](plan_71_airflow.md) | Airflow migration (steps 14–15) | Steps 1–13 done. Next: disable n8n schedules (step 14), decommission n8n (step 15). Shadow period first. |
+| [102](plan_102_decommission.md) | Full decommission — n8n, legacy Postgres, dead service code | 4 tracks: n8n infra, scraper cleanup, ops service cleanup, archiver + event wiring |
 
 ---
 
@@ -26,11 +24,8 @@ The remaining transition sequence is: unpause `scrape_listings` + `scrape_detail
 
 | Priority | Plan | Title | Blocked on |
 |----------|------|-------|------------|
-| 1 | [71](plan_71_airflow.md) | Airflow migration (steps 14–15) | Steps 1–13 complete. Shadow period running. Steps 14–15 (n8n cutover + decommission) unblocked — validate DAGs in shadow then cut over. |
-| 2 | [101](plan_101_dashboard_restructure.md) | Dashboard restructure + analytics migration | Cleanup phase unblocked now; data health page gated on Plan 86 |
-| — | [79](plan_79_multi_instance.md) | Multi-instance detail scraping | `scrape_detail_pages` Airflow DAG live (Plan 71 step 9); resume when IP flagging requires it |
-| — | [86](plan_86_grafana.md) | Grafana observability stack | Implemented (2026-04-28); needs server deploy + env vars (METRICS_DB_PASSWORD, GRAFANA_ADMIN_USER, GRAFANA_ADMIN_PASSWORD) |
-| — | **87** | Kafka event-driven layer | Airflow DAGs producing events + multiple consumers exist |
+| — | [79](plan_79_multi_instance.md) | Multi-instance detail scraping | Resume when IP flagging requires it |
+| — | **87** | Kafka event-driven layer | event stubs in processing/events.py; Plan 102 Track 4 wires artifacts_queue_events first |
 | — | **88** | Kubernetes | 5+ services under management |
 | — | [69](plan_69_terraform.md) | Terraform IaC | Manual provisioning stable |
 | — | [66](plan_66_sql_injection.md) | SQL injection audit | Lower urgency with DB-backed auth and Caddy as sole gatekeeper |
@@ -41,21 +36,9 @@ The remaining transition sequence is: unpause `scrape_listings` + `scrape_detail
 
 ## Sequencing Rationale
 
-**`scrape_listings` + `scrape_detail_pages` DAGs now** — all ops endpoints exist, MinIO write path exists, V029 views are live. Shadow-run alongside n8n immediately. `scrape_detail_pages` going live unblocks Plan 79 with no other dependencies.
+**Plan 102 before Plan 87** — Track 4 of Plan 102 wires `staging.artifacts_queue_events` properly. Plan 87 (Kafka) builds on that foundation — the event stubs in `processing/events.py` become real Kafka producer calls.
 
-**Plan 96 before Plan 90** — Plan 90 drops dbt and legacy Postgres observation tables. Those drops are irreversible. Plan 96's five validation checks are the explicit go/no-go gate: don't decommission dbt until silver has been running in production for at least 2 weeks and all checks pass.
-
-**Plan 79 whenever needed** — IP flagging not currently active. The technical prerequisites (MinIO write path, ops claim endpoints, `scrape_detail_pages` DAG) either exist or are being built now. When IP flagging returns, provision Oracle Cloud VMs, add Airflow connections, and fan out the DAG. No other plans need to be complete first.
-
----
-
-## In-Progress / Nearly Complete
-
-| Plan | Title | Status |
-|------|-------|--------|
-| [71](plan_71_airflow.md) | Airflow migration | Steps 1–13 merged; steps 14–15 (n8n cutover + decommission) pending |
-| [92](plan_92_service_drain.md) | Service drain `/ready` endpoints | archiver + dbt_runner + scraper done; processing (Plan 93) pending |
-| [91](plan_91_uuid_type_cleanup.md) | UUID column type fixes | Scope collapsed to 2 columns; absorbed into V018 |
+**Plan 79 whenever needed** — IP flagging not currently active. Prerequisites all exist. Provision Oracle Cloud VMs and fan out the DAG when needed.
 
 ---
 
@@ -64,18 +47,15 @@ The remaining transition sequence is: unpause `scrape_listings` + `scrape_detail
 | Plan | Title | Reason |
 |---|---|---|
 | [89](plan_89_ops_analytics_split.md) | Operational/analytics dbt split | Philosophy preserved; implementation superseded by Plans 93, 97, 96 |
-| [90](plan_90_dbt_cleanup.md) | dbt decommission / dbt-duckdb migration | dbt is staying; DuckDB source layer implemented in Plan 96; dashboard restructure covered by Plan 101 |
+| [90](plan_90_dbt_cleanup.md) | dbt decommission / dbt-duckdb migration | Superseded by Plan 102; DuckDB source layer done (Plan 96); table drops + dead code removal covered in Plan 102 |
 
 ---
 
 ## Completed
 
 See [completed_plans.md](completed_plans.md) for full list. Recent completions:
+- **101** — Dashboard restructure: all 3 phases complete. Deleted 21 legacy SQL files + pipeline_health.py; migrated dashboard to DuckDB; new Data Health page (4 dbt models); Grafana sidebar link (2026-04-29)
+- **86** — Grafana observability stack: Prometheus + statsd-exporter + postgres-exporter + node-exporter + 3 provisioned dashboards; V033 (metrics_user); Grafana at /grafana behind admin auth (2026-04-29)
+- **71** — Airflow migration: COMPLETE. All DAGs live (scrape_listings, scrape_detail_pages, results_processing, all maintenance). n8n deactivated. Steps 14–15 absorbed into Plan 102 (infrastructure removal) (2026-04-29)
 - **96** — dbt-duckdb analytics: silver Parquet source wired up, all models updated for DuckDB target, CI passing, server validated (169k rows, deal scores live) (2026-04-28)
 - **100** — Historical data migration: ~13.7M legacy observations (srp/detail/carousel) migrated to MinIO Parquet; artifact ID remap applied; `ops.artifacts_queue_artifact_id_seq` advanced to 3741859 (2026-04-27)
-- **71 (steps 8–9, 13)** — `scrape_listings` + `scrape_detail_pages` DAGs merged; `advance_rotation` gap check on `search_configs.last_queued_at`; scraper gains `/ready`, loses `advance_rotation`. 52 processing integration tests. Dashboard Airflow DAG run panel + pipeline queries updated to `ops.artifacts_queue`. V030 migration (2026-04-27)
-- **99** — Per-source staleness: `customer_id` added to `ops.price_observations` (V028); enrichment flag replaces dbt dealer join (2026-04-27)
-- **V029** — Plain Postgres ops views: `ops_vehicle_staleness` + `ops_detail_scrape_queue` rewritten as HOT-table-direct views; dbt ops models deleted; n8n cutover now unblocked (2026-04-27)
-- **Silver flush DAGs** — `flush_silver_observations` + `flush_staging_events` DAGs live; staging buffer → MinIO Parquet on schedule (PR #86, 2026-04-21)
-- **93** — Processing service: SRP/detail/carousel write paths, silver staging buffer, tracked_models, V021–V025 (2026-04-21)
-- **97** — MinIO-first artifact store; `ops.artifacts_queue` live; V017 deployed (2026-04-20)
