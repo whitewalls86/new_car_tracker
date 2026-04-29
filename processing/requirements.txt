@@ -7,3 +7,4 @@ boto3
 zstandard
 pyarrow
 s3fs
+prometheus-fastapi-instrumentator

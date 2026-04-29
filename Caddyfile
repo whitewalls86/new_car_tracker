@@ -138,6 +138,26 @@ https://cartracker.info {
         }
     }
 
+    handle_path /grafana* {
+        forward_auth oauth2-proxy:4180 {
+            uri /oauth2/auth
+            copy_headers X-Auth-Request-Email X-Auth-Request-User
+            @error status 401
+            handle_response @error {
+                redir * /oauth2/sign_in?rd={scheme}://{host}{uri}
+            }
+        }
+        forward_auth ops:8060 {
+            uri /auth/check?require=admin
+            copy_headers X-User-Role
+            @unauth status 403
+            handle_response @unauth {
+                redir * /request-access
+            }
+        }
+        reverse_proxy grafana:3000
+    }
+
     handle_path /minio* {
         forward_auth oauth2-proxy:4180 {
             uri /oauth2/auth

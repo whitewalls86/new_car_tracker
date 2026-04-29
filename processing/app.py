@@ -9,6 +9,7 @@ import os
 from logging.handlers import RotatingFileHandler
 
 from fastapi import FastAPI
+from prometheus_fastapi_instrumentator import Instrumentator
 
 from processing.routers.artifact import router as artifact_router
 from processing.routers.batch import router as batch_router
@@ -22,6 +23,7 @@ logging.getLogger().addHandler(_log_handler)
 logging.getLogger().setLevel(logging.INFO)
 
 app = FastAPI()
+Instrumentator().instrument(app).expose(app)
 
 app.include_router(batch_router)
 app.include_router(artifact_router)

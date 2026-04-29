@@ -29,7 +29,7 @@ The remaining transition sequence is: unpause `scrape_listings` + `scrape_detail
 | 1 | [71](plan_71_airflow.md) | Airflow migration (steps 14–15) | Steps 1–13 complete. Shadow period running. Steps 14–15 (n8n cutover + decommission) unblocked — validate DAGs in shadow then cut over. |
 | 2 | [101](plan_101_dashboard_restructure.md) | Dashboard restructure + analytics migration | Cleanup phase unblocked now; data health page gated on Plan 86 |
 | — | [79](plan_79_multi_instance.md) | Multi-instance detail scraping | `scrape_detail_pages` Airflow DAG live (Plan 71 step 9); resume when IP flagging requires it |
-| — | **86** | Grafana observability stack | Airflow live so real DAG metrics exist to observe |
+| — | [86](plan_86_grafana.md) | Grafana observability stack | Implemented (2026-04-28); needs server deploy + env vars (METRICS_DB_PASSWORD, GRAFANA_ADMIN_USER, GRAFANA_ADMIN_PASSWORD) |
 | — | **87** | Kafka event-driven layer | Airflow DAGs producing events + multiple consumers exist |
 | — | **88** | Kubernetes | 5+ services under management |
 | — | [69](plan_69_terraform.md) | Terraform IaC | Manual provisioning stable |
