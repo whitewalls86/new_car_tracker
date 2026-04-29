@@ -148,17 +148,6 @@ class TestClaimBatch:
 
         assert resp.json()["listings"] == []
 
-    def test_inserts_run_row(self, mock_cursor_context):
-        conn, cursor = mock_cursor_context
-        cursor.fetchall.return_value = []
-        cursor.description = []
-
-        client.post("/scrape/claims/claim-batch")
-
-        # First execute call should be the INSERT INTO runs
-        first_call_sql = cursor.execute.call_args_list[0][0][0]
-        assert "INSERT INTO runs" in first_call_sql
-
     def test_listings_returned_from_queue(self, mock_cursor_context):
         conn, cursor = mock_cursor_context
         cursor.description = [
@@ -187,7 +176,7 @@ class TestClaimBatch:
 # ---------------------------------------------------------------------------
 
 class TestReleaseClaims:
-    def test_returns_run_id_and_status(self, mock_cursor_context):
+    def test_returns_run_id_and_counts(self, mock_cursor_context):
         run_id = str(uuid.uuid4())
 
         resp = client.post("/scrape/claims/release", json={
@@ -198,9 +187,10 @@ class TestReleaseClaims:
         assert resp.status_code == 200
         data = resp.json()
         assert data["run_id"] == run_id
-        assert data["status"] == "completed"
+        assert data["total"] == 1
+        assert data["errors"] == 0
 
-    def test_all_failed_sets_status_failed(self, mock_cursor_context):
+    def test_all_failed_reflected_in_error_count(self, mock_cursor_context):
         run_id = str(uuid.uuid4())
 
         resp = client.post("/scrape/claims/release", json={
@@ -211,9 +201,11 @@ class TestReleaseClaims:
             ],
         })
 
-        assert resp.json()["status"] == "failed"
+        data = resp.json()
+        assert data["errors"] == 2
+        assert data["total"] == 2
 
-    def test_mixed_results_sets_status_completed(self, mock_cursor_context):
+    def test_mixed_results_counts_errors_correctly(self, mock_cursor_context):
         run_id = str(uuid.uuid4())
 
         resp = client.post("/scrape/claims/release", json={
@@ -225,11 +217,10 @@ class TestReleaseClaims:
         })
 
         data = resp.json()
-        assert data["status"] == "completed"
         assert data["errors"] == 1
         assert data["total"] == 2
 
-    def test_empty_results_returns_completed(self, mock_cursor_context):
+    def test_empty_results_returns_zero_counts(self, mock_cursor_context):
         run_id = str(uuid.uuid4())
 
         resp = client.post("/scrape/claims/release", json={
@@ -238,7 +229,6 @@ class TestReleaseClaims:
         })
 
         data = resp.json()
-        assert data["status"] == "completed"
         assert data["total"] == 0
         assert data["errors"] == 0
 
@@ -257,14 +247,3 @@ class TestReleaseClaims:
         sql_calls = [c[0][0] for c in cursor.execute.call_args_list]
         assert any("DELETE FROM detail_scrape_claims" in sql for sql in sql_calls)
 
-    def test_updates_run_status_in_db(self, mock_cursor_context):
-        conn, cursor = mock_cursor_context
-        run_id = str(uuid.uuid4())
-
-        client.post("/scrape/claims/release", json={
-            "run_id": run_id,
-            "results": [{"listing_id": "listing-aaa", "status": "ok"}],
-        })
-
-        sql_calls = [c[0][0] for c in cursor.execute.call_args_list]
-        assert any("UPDATE runs" in sql for sql in sql_calls)

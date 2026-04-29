@@ -80,43 +80,6 @@ class TestSearchConfigQueries:
 
 
 # ============================================================================
-# admin.py — run history queries
-# ============================================================================
-
-class TestRunQueries:
-
-    def test_list_runs(self, cur):
-        cur.execute("""
-            SELECT run_id, started_at, finished_at, status, trigger,
-                   progress_count, total_count, error_count, last_error, notes
-            FROM runs ORDER BY started_at DESC LIMIT 20
-        """)
-        rows = cur.fetchall()
-        assert isinstance(rows, list)
-
-    def test_get_run_by_id(self, cur, seed_run):
-        cur.execute(
-            """SELECT run_id, started_at, finished_at, status, trigger,
-                      progress_count, total_count, error_count, last_error, notes
-               FROM runs WHERE run_id = %s""",
-            (seed_run,),
-        )
-        row = cur.fetchone()
-        assert row is not None
-
-    def test_get_scrape_jobs_for_run(self, cur, seed_scrape_job):
-        _job_id, run_id, _key = seed_scrape_job
-        cur.execute(
-            """SELECT job_id, search_key, scope, status, created_at,
-                      started_at, completed_at, artifact_count, error, retry_count
-               FROM scrape_jobs WHERE run_id = %s ORDER BY created_at""",
-            (run_id,),
-        )
-        rows = cur.fetchall()
-        assert len(rows) >= 1
-
-
-# ============================================================================
 # deploy.py — deploy intent queries
 # ============================================================================
 
@@ -124,26 +87,23 @@ class TestDeployIntentQueries:
 
     def test_intent_status(self, cur):
         cur.execute("""
-            WITH current_executions AS (
-                SELECT COUNT(execution_id) as number_running,
-                       MIN(started_at) as min_started_at
-                FROM n8n_executions WHERE status = 'running'
-            ), current_runs AS (
-                SELECT COUNT(*) as number_running,
-                       MIN(started_at) as min_started_at
-                FROM runs WHERE status = 'running'
-            ), current_processing_runs AS (
-                SELECT COUNT(*) as number_running,
-                       MIN(started_at) as min_started_at
-                FROM processing_runs WHERE status = 'processing'
+            WITH pending_artifacts AS (
+                SELECT COUNT(*) AS number_running,
+                       MIN(created_at) AS min_started_at
+                FROM ops.artifacts_queue
+                WHERE status IN ('pending', 'processing')
+            ), running_detail_claims AS (
+                SELECT COUNT(*) AS number_running,
+                       MIN(claimed_at) AS min_started_at
+                FROM ops.detail_scrape_claims
+                WHERE status = 'running'
             )
             SELECT di.intent, di.requested_at, di.requested_by,
-                   ce.number_running + cr.number_running + cpr.number_running as number_running,
-                   LEAST(ce.min_started_at, cr.min_started_at, cpr.min_started_at) as min_started_at
+                   pa.number_running + rdc.number_running AS number_running,
+                   LEAST(pa.min_started_at, rdc.min_started_at) AS min_started_at
             FROM deploy_intent di
-            LEFT JOIN current_executions ce ON 1=1
-            LEFT JOIN current_runs cr ON 1=1
-            LEFT JOIN current_processing_runs cpr ON 1=1
+            LEFT JOIN pending_artifacts pa ON 1=1
+            LEFT JOIN running_detail_claims rdc ON 1=1
             WHERE di.id = 1
         """)
         row = cur.fetchone()

@@ -93,30 +93,6 @@ services:
     networks:
       - cartracker-net
 
-  n8n:
-    image: n8nio/n8n:latest
-    container_name: cartracker-n8n
-    restart: unless-stopped
-    entrypoint: ["/bin/sh", "/entrypoint-custom.sh"]
-    ports:
-      - "5678:5678"
-    volumes:
-      - n8n_data:/home/node/.n8n
-      - ./n8n/workflows:/workflows:ro
-      - ./n8n/entrypoint.sh:/entrypoint-custom.sh:ro
-    networks:
-      - cartracker-net
-    environment:
-      - EXECUTIONS_DATA_PRUNE=true
-      - EXECUTIONS_DATA_MAX_AGE=168
-      - EXECUTIONS_DATA_PRUNE_MAX=1000
-      - N8N_HOST=cartracker.info
-      - N8N_PROTOCOL=https
-      - N8N_PATH=/n8n/
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      - TELEGRAM_API=${TELEGRAM_API}
-      - N8N_USER_MANAGEMENT_DISABLED=true
-
   ops:
     build:
       context: .
@@ -368,7 +344,6 @@ services:
     depends_on:
       - dashboard
       - ops
-      - n8n
       - oauth2-proxy
       - airflow-apiserver
       - grafana
@@ -574,10 +549,6 @@ volumes:
   cartracker_raw:
     external: true
     name: cartracker_raw
-
-  n8n_data:
-    external: true
-    name: n8n_data
 
   pgadmin_data:
 

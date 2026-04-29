@@ -3,8 +3,7 @@ import json
 
 from scraper.processors.results_page_cards import _digits_to_int, parse_cars_results_page_html_v3
 
-# n8n consumes all of these fields from every listing
-N8N_LISTING_FIELDS = {
+LISTING_FIELDS = {
     "listing_id",
     "canonical_detail_url",
     "year",
@@ -184,15 +183,15 @@ class TestV3Meta:
         assert meta["json_failures"] == 0
 
 
-class TestV3N8nContract:
-    """Assert that every field consumed by n8n workflows is present in output."""
+class TestListingContract:
+    """Assert that every expected listing field is present in output."""
 
-    def test_all_n8n_fields_present(self):
+    def test_all_listing_fields_present(self):
         html = _make_v3_card("spark-card")
         listings, _ = parse_cars_results_page_html_v3(html)
         assert len(listings) == 1
-        missing = N8N_LISTING_FIELDS - listings[0].keys()
-        assert missing == set(), f"Missing n8n-consumed fields: {missing}"
+        missing = LISTING_FIELDS - listings[0].keys()
+        assert missing == set(), f"Missing listing fields: {missing}"
 
 
 # ---------------------------------------------------------------------------

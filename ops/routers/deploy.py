@@ -18,42 +18,34 @@ def _intent_status() -> Dict[str, Any]:
     """Return current deploy intent state plus in-flight counts."""
 
     sql = """
-        WITH current_executions AS (
+        WITH pending_artifacts AS (
             SELECT
-                COUNT(execution_id) as number_running,
-                MIN(started_at) as min_started_at
-            FROM n8n_executions
+                COUNT(*) AS number_running,
+                MIN(created_at) AS min_started_at
+            FROM ops.artifacts_queue
+            WHERE status IN ('pending', 'processing')
+        ), running_detail_claims AS (
+            SELECT
+                COUNT(*) AS number_running,
+                MIN(claimed_at) AS min_started_at
+            FROM ops.detail_scrape_claims
             WHERE status = 'running'
-        ), current_runs AS (
-            SELECT
-                COUNT(*) as number_running,
-                MIN(started_at) as min_started_at
-            FROM runs
-            WHERE status = 'running'
-        ), current_processing_runs AS (
-            SELECT
-                COUNT(*) as number_running,
-                MIN(started_at) as min_started_at
-            FROM processing_runs
-            WHERE status = 'processing'
         )
         SELECT
             di.intent,
             di.requested_at,
             di.requested_by,
-            ce.number_running + cr.number_running + cpr.number_running as number_running,
-            LEAST(ce.min_started_at, cr.min_started_at, cpr.min_started_at) as min_started_at
+            pa.number_running + rdc.number_running AS number_running,
+            LEAST(pa.min_started_at, rdc.min_started_at) AS min_started_at
         FROM deploy_intent di
-        LEFT JOIN current_executions ce ON 1=1
-        LEFT JOIN current_runs cr ON 1=1
-        LEFT JOIN current_processing_runs cpr ON 1=1
-        WHERE di.id = 1;
-            """
-    
+        LEFT JOIN pending_artifacts pa ON 1=1
+        LEFT JOIN running_detail_claims rdc ON 1=1
+        WHERE di.id = 1
+    """
+
     try:
         with db_cursor(error_context='Intent-Status') as cur:
             cur.execute(sql)
-        
             row = cur.fetchone()
 
         if row:

@@ -402,7 +402,7 @@ def scrape_results(
 ) -> Dict[str, Any]:
     """
     Fetches results pages for one (search_key, scope), saves raw HTML to disk,
-    and returns artifact metadata for n8n to write to Postgres.
+    and returns artifact metadata for the caller to write to Postgres.
     """
     os.makedirs(RAW_BASE, exist_ok=True)
 
