@@ -30,7 +30,7 @@ def _load_stats() -> dict:
     stats: dict = {}
 
     try:
-        with db_cursor(error_context="info: vins_tracked", dict_cursor=True) as cur:
+        with db_cursor(error_context="info: vins_tracked") as cur:
             cur.execute("SELECT COUNT(DISTINCT vin) FROM ops.vin_to_listing WHERE vin IS NOT NULL")
             row = cur.fetchone()
             if row:
@@ -39,7 +39,7 @@ def _load_stats() -> dict:
         logger.debug("info stats: vins_tracked query failed", exc_info=True)
 
     try:
-        with db_cursor(error_context="info: price_observations", dict_cursor=True) as cur:
+        with db_cursor(error_context="info: price_observations") as cur:
             cur.execute("SELECT COUNT(*) FROM ops.price_observations")
             row = cur.fetchone()
             if row:
@@ -48,7 +48,7 @@ def _load_stats() -> dict:
         logger.debug("info stats: price_observations query failed", exc_info=True)
 
     try:
-        with db_cursor(error_context="info: artifacts_today", dict_cursor=True) as cur:
+        with db_cursor(error_context="info: artifacts_today") as cur:
             cur.execute(
                 "SELECT COUNT(*) FROM ops.artifacts_queue WHERE fetched_at >= CURRENT_DATE"
             )
@@ -59,7 +59,7 @@ def _load_stats() -> dict:
         logger.debug("info stats: artifacts_today query failed", exc_info=True)
 
     try:
-        with db_cursor(error_context="info: last_pipeline_run", dict_cursor=True) as cur:
+        with db_cursor(error_context="info: last_pipeline_run") as cur:
             cur.execute(
                 "SELECT MAX(fetched_at) FROM ops.artifacts_queue WHERE status = 'complete'"
             )

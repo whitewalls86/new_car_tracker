@@ -41,10 +41,6 @@ def _run_dbt_build(**context):
 
 
 def _notify(**context):
-    dbt_ti = context["dag_run"].get_task_instance("dbt_build")
-    if not dbt_ti or dbt_ti.state != "failed":
-        return
-
     result = context["ti"].xcom_pull(task_ids="dbt_build", key="result")
 
     if not _TELEGRAM_API or not _TELEGRAM_CHAT_ID:
@@ -85,7 +81,7 @@ with DAG(
     notify = PythonOperator(
         task_id="notify",
         python_callable=_notify,
-        trigger_rule="all_done",
+        trigger_rule="one_failed",
     )
 
     dbt_runner_up >> build >> notify
