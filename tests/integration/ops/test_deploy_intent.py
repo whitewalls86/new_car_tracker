@@ -93,15 +93,15 @@ def test_deploy_complete_releases_intent(api_client, verify_cur):
 
 @pytest.mark.integration
 def test_deploy_status_reflects_running_count(api_client, verify_cur):
-    run_id = str(uuid.uuid4())
+    listing_id = str(uuid.uuid4())
     verify_cur.execute(
-        "INSERT INTO runs (run_id, started_at, status, trigger)"
-        " VALUES (%s, now(), 'running', 'l3test-deploy-count')",
-        (run_id,),
+        "INSERT INTO detail_scrape_claims (listing_id, claimed_by, status)"
+        " VALUES (%s, %s, 'running')",
+        (listing_id, str(uuid.uuid4())),
     )
     try:
         response = api_client.get("/deploy/status")
         assert response.status_code == 200
         assert response.json()["number_running"] >= 1
     finally:
-        verify_cur.execute("DELETE FROM runs WHERE run_id = %s", (run_id,))
+        verify_cur.execute("DELETE FROM detail_scrape_claims WHERE listing_id = %s", (listing_id,))
