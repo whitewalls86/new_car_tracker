@@ -1,23 +1,22 @@
 """
-Backfill ops.blocked_cooldown and staging.blocked_cooldown_events from scraper logs.
+Backfill ops.blocked_cooldown and staging.blocked_cooldown_events from MinIO.
 
 The 403-at-fetch-time write path was added in fix/403-rate-tracking. This script:
 
   1. Queries MinIO blocked_cooldown_events Parquet to identify the data gap
-     (MAX(event_at) before Apr 30 → gap start; MIN(event_at) after Apr 29 → gap end).
-  2. Parses app.log* and keeps 403s that fall within the gap window.
-  3. Aggregates log data per listing_id: count, first_attempted_at, last_attempted_at.
-  4. Inserts one staging.blocked_cooldown_events row per log line (full history).
+     (MAX(event_at) before gap → gap start; MIN(event_at) after gap → gap end).
+  2. Queries MinIO artifacts_queue_events for detail_page rows with status='skip'
+     that fall within the gap window (these are the historical 403 blocks).
+  3. Aggregates per listing_id: count, first_attempted_at, last_attempted_at.
+  4. Inserts one staging.blocked_cooldown_events row per skip event (full history).
   5. Cross-references MinIO detail_scrape_claim_events to exclude listing_ids that had
-     a successful scrape after their last 403 — those are no longer blocked.
+     a successful scrape after their last block — those are no longer blocked.
   6. Upserts ops.blocked_cooldown for the remaining (still-blocked) listing_ids:
        - INSERT for listing_ids not already present
        - UPDATE num_of_attempts + timestamps for ones already present
 
 Usage (on VM, with DB + MinIO env vars set):
-    python3 scripts/backfill_blocked_cooldown.py \
-        --log-dir /mnt/data/docker-volumes/cartracker_scraper_logs/_data \
-        [--dry-run]
+    python3 scripts/backfill_blocked_cooldown.py [--dry-run]
 
 Env vars required:
     DATABASE_URL or PGHOST/PGPORT/PGDATABASE/PGUSER/POSTGRES_PASSWORD
@@ -27,10 +26,8 @@ Env vars required:
 import argparse
 import logging
 import os
-import re
 import sys
 from datetime import datetime, timezone
-from pathlib import Path
 from urllib.parse import urlparse
 
 import duckdb
@@ -38,12 +35,13 @@ import duckdb
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
-MINIO_ENDPOINT      = os.environ.get("MINIO_ENDPOINT", "").replace("http://", "")
-MINIO_USER          = os.environ.get("MINIO_ROOT_USER", "")
-MINIO_PASSWORD      = os.environ.get("MINIO_ROOT_PASSWORD", "")
-BUCKET              = os.environ.get("MINIO_BUCKET", "bronze")
-EVENTS_PREFIX       = f"s3://{BUCKET}/ops/blocked_cooldown_events"
-CLAIM_EVENTS_PREFIX = f"s3://{BUCKET}/ops/detail_scrape_claim_events"
+MINIO_ENDPOINT            = os.environ.get("MINIO_ENDPOINT", "").replace("http://", "")
+MINIO_USER                = os.environ.get("MINIO_ROOT_USER", "")
+MINIO_PASSWORD            = os.environ.get("MINIO_ROOT_PASSWORD", "")
+BUCKET                    = os.environ.get("MINIO_BUCKET", "bronze")
+EVENTS_PREFIX             = f"s3://{BUCKET}/ops/blocked_cooldown_events"
+CLAIM_EVENTS_PREFIX       = f"s3://{BUCKET}/ops/detail_scrape_claim_events"
+ARTIFACTS_EVENTS_PREFIX   = f"s3://{BUCKET}/ops/artifacts_queue_events"
 
 
 # ---------------------------------------------------------------------------
@@ -68,8 +66,8 @@ def _duckdb_con() -> duckdb.DuckDBPyConnection:
 
 def get_gap_window() -> tuple[datetime | None, datetime | None]:
     """
-    gap_start = MAX(event_at) WHERE event_at < '2026-04-30'  → last event before gap
-    gap_end   = MIN(event_at) WHERE event_at > '2026-04-29'  → first event after fix
+    gap_start = MAX(event_at) where something was blocked, before the gap
+    gap_end   = MIN(event_at) where something was blocked, after the fix
 
     Either may be None; both None means no Parquet exists yet → backfill everything.
     """
@@ -93,54 +91,51 @@ def get_gap_window() -> tuple[datetime | None, datetime | None]:
     except Exception as e:
         logger.info("No blocked_cooldown_events in MinIO (%s) — backfilling all", e)
 
-    logger.info("Gap window: %s → %s", gap_start or "beginning", gap_end or "end of logs")
+    logger.info("Gap window: %s → %s", gap_start or "beginning", gap_end or "end of data")
     return gap_start, gap_end
 
 
 # ---------------------------------------------------------------------------
-# Step 2: parse logs, filter to gap
+# Step 2: query skip events from artifacts_queue_events
 # ---------------------------------------------------------------------------
 
-_LOG_RE = re.compile(
-    r"^(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),\d+ WARNING scraper: "
-    r"detail fetch HTTP 403 for listing_id=(?P<listing_id>[0-9a-f-]+) "
-)
-
-
-def parse_logs(
-    log_dir: Path,
+def get_skip_events(
     gap_start: datetime | None,
     gap_end: datetime | None,
 ) -> list[tuple[datetime, str]]:
     """
-    Return (timestamp, listing_id) tuples within (gap_start, gap_end), sorted
-    chronologically.
+    Return (fetched_at, listing_id) tuples for detail_page skip rows
+    within the gap window, sorted chronologically.
     """
-    events = []
-    log_files = sorted(log_dir.glob("app.log*"))
-    if not log_files:
-        logger.error("No app.log* files found in %s", log_dir)
+    con = _duckdb_con()
+
+    filters = ["artifact_type = 'detail_page'", "status = 'skip'", "listing_id IS NOT NULL"]
+    if gap_start:
+        filters.append(f"fetched_at > '{gap_start.isoformat()}'")
+    if gap_end:
+        filters.append(f"fetched_at < '{gap_end.isoformat()}'")
+
+    where = " AND ".join(filters)
+
+    try:
+        rows = con.execute(f"""
+            SELECT fetched_at, listing_id
+            FROM read_parquet('{ARTIFACTS_EVENTS_PREFIX}/**/*.parquet')
+            WHERE {where}
+            ORDER BY fetched_at
+        """).fetchall()
+    except Exception as e:
+        logger.error("Failed to query artifacts_queue_events from MinIO: %s", e)
         sys.exit(1)
 
-    logger.info("Parsing %d log file(s)", len(log_files))
-    for log_file in log_files:
-        with open(log_file, encoding="utf-8", errors="replace") as f:
-            for line in f:
-                m = _LOG_RE.match(line)
-                if not m:
-                    continue
-                ts = datetime.strptime(m.group("ts"), "%Y-%m-%d %H:%M:%S").replace(
-                    tzinfo=timezone.utc
-                )
-                if gap_start is not None and ts <= gap_start:
-                    continue
-                if gap_end is not None and ts >= gap_end:
-                    continue
-                events.append((ts, m.group("listing_id")))
+    events = []
+    for fetched_at, listing_id in rows:
+        if fetched_at and fetched_at.tzinfo is None:
+            fetched_at = fetched_at.replace(tzinfo=timezone.utc)
+        events.append((fetched_at, listing_id))
 
-    events.sort(key=lambda e: e[0])
     logger.info(
-        "Found %d 403 events (%d unique listing_ids) in gap",
+        "Found %d skip events (%d unique listing_ids) in gap",
         len(events), len({lid for _, lid in events}),
     )
     return events
@@ -171,18 +166,17 @@ def aggregate(
 
 
 # ---------------------------------------------------------------------------
-# Step 5: find listing_ids with a successful scrape after their last 403
+# Step 5: find listing_ids with a successful scrape after their last block
 # ---------------------------------------------------------------------------
 
 def get_successfully_scraped(agg: dict[str, dict]) -> set[str]:
     """
     Query MinIO detail_scrape_claim_events for listing_ids that have a
-    status='processed' event AFTER their last 403 timestamp.
+    status='processed' event AFTER their last block timestamp.
     These are no longer blocked and should be excluded from blocked_cooldown.
     """
     con = _duckdb_con()
 
-    # Build a VALUES table so DuckDB can do the per-listing timestamp comparison.
     values_rows = ", ".join(
         f"('{lid}'::uuid, '{rec['last_at'].isoformat()}'::timestamptz)"
         for lid, rec in agg.items()
@@ -190,15 +184,15 @@ def get_successfully_scraped(agg: dict[str, dict]) -> set[str]:
 
     try:
         rows = con.execute(f"""
-            WITH last_403 AS (
-                SELECT col0 AS listing_id, col1 AS last_403_at
+            WITH last_block AS (
+                SELECT col0 AS listing_id, col1 AS last_block_at
                 FROM (VALUES {values_rows}) t
             )
             SELECT DISTINCT c.listing_id::text
             FROM read_parquet('{CLAIM_EVENTS_PREFIX}/**/*.parquet') c
-            JOIN last_403 l ON c.listing_id::uuid = l.listing_id
+            JOIN last_block l ON c.listing_id::uuid = l.listing_id
             WHERE c.status = 'processed'
-              AND c.event_at > l.last_403_at
+              AND c.event_at > l.last_block_at
         """).fetchall()
         cleared = {row[0] for row in rows}
     except Exception as e:
@@ -207,7 +201,7 @@ def get_successfully_scraped(agg: dict[str, dict]) -> set[str]:
 
     if cleared:
         logger.info(
-            "%d listing_ids had a successful scrape after their last 403 — "
+            "%d listing_ids had a successful scrape after their last block — "
             "excluding from blocked_cooldown", len(cleared),
         )
     return cleared
@@ -247,8 +241,6 @@ VALUES
     (%(listing_id)s, %(event_type)s, %(num_of_attempts)s, %(event_at)s)
 """
 
-# Insert for new listing_ids; update counts + timestamps for existing ones.
-# Does NOT touch listing_ids that have been successfully scraped since their last 403.
 _UPSERT_COOLDOWN = """
 INSERT INTO ops.blocked_cooldown
     (listing_id, first_attempted_at, last_attempted_at, num_of_attempts)
@@ -266,7 +258,6 @@ ON CONFLICT (listing_id) DO UPDATE SET
 # ---------------------------------------------------------------------------
 
 def _get_existing_cooldown_ids(cur, listing_ids: list[str]) -> set[str]:
-    """Return the subset of listing_ids already present in ops.blocked_cooldown."""
     cur.execute(
         "SELECT listing_id::text FROM ops.blocked_cooldown"
         " WHERE listing_id = ANY(%s::uuid[])",
@@ -295,7 +286,7 @@ def backfill(
                 _print_dry_run_summary(events, agg, cleared, insert_ids, update_ids, existing_ids)
                 return
 
-            # Step 4: insert one event row per log line (all listing_ids, incl. cleared).
+            # Step 4: insert one event row per skip event (all listing_ids, incl. cleared).
             attempt_counts: dict[str, int] = {}
             for event_at, listing_id in events:
                 attempt_counts[listing_id] = attempt_counts.get(listing_id, 0) + 1
@@ -321,7 +312,7 @@ def backfill(
             logger.info(
                 "Done. %d event rows inserted into staging.blocked_cooldown_events. "
                 "%d listing_ids inserted + %d updated in blocked_cooldown. "
-                "%d skipped (successfully scraped after last 403).",
+                "%d skipped (successfully scraped after last block).",
                 len(events), len(insert_ids), len(update_ids), len(cleared),
             )
 
@@ -344,9 +335,9 @@ def _print_dry_run_summary(
     sep = "-" * 60
 
     print(f"\n{sep}")
-    print("STEP 2 — Log events in gap")
+    print("STEP 2 — Skip events in gap")
     print(sep)
-    print(f"  Total 403 log lines:         {len(events)}")
+    print(f"  Total skip events:           {len(events)}")
     print(f"  Unique listing_ids:          {len(agg)}")
     if events:
         print(f"  Earliest event:              {events[0][0]}")
@@ -364,7 +355,7 @@ def _print_dry_run_summary(
     print(f"\n{sep}")
     print("STEP 4 — staging.blocked_cooldown_events inserts")
     print(sep)
-    first_blocks = sum(1 for rec in agg.values())
+    first_blocks = len(agg)
     incremented  = len(events) - first_blocks
     print(f"  Rows to insert (total):      {len(events)}")
     print(f"    event_type='blocked':       {first_blocks}")
@@ -377,7 +368,7 @@ def _print_dry_run_summary(
     if cleared:
         for lid in sorted(cleared):
             rec = agg[lid]
-            print(f"    {lid}  (last_403={rec['last_at']})")
+            print(f"    {lid}  (last_block={rec['last_at']})")
 
     print(f"\n{sep}")
     print("STEP 6 — ops.blocked_cooldown upsert")
@@ -403,24 +394,14 @@ def _print_dry_run_summary(
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--log-dir",
-        default="/mnt/data/docker-volumes/cartracker_scraper_logs/_data",
-        help="Directory containing app.log* files",
-    )
-    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Print what would be written without touching the DB",
     )
     args = parser.parse_args()
 
-    log_dir = Path(args.log_dir)
-    if not log_dir.is_dir():
-        logger.error("--log-dir %s does not exist", log_dir)
-        sys.exit(1)
-
     gap_start, gap_end = get_gap_window()
-    events = parse_logs(log_dir, gap_start=gap_start, gap_end=gap_end)
+    events = get_skip_events(gap_start=gap_start, gap_end=gap_end)
 
     if not events:
         logger.info("No gap events found — nothing to backfill")
