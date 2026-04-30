@@ -35,6 +35,20 @@
         }
         .hero-cta a[role="button"] { margin: 0; }
 
+        /* ── Demo media ── */
+        .demo-media {
+            margin: 1.5rem 0 0;
+            border-radius: 8px;
+            overflow: hidden;
+            border: 1px solid var(--pico-muted-border-color);
+        }
+        .demo-media video,
+        .demo-media img {
+            display: block;
+            width: 100%;
+            border-radius: 8px;
+        }
+
         /* ── Live stats ── */
         .stats-row {
             display: grid;
@@ -145,6 +159,17 @@
             text-align: center;
             line-height: 1.1;
         }
+
+        /* ── Expandable service cards ── */
+        .service-info { width: 100%; min-width: 0; }
+        .service-info details { width: 100%; }
+        .service-info details summary {
+            list-style: none;
+            cursor: pointer;
+            -webkit-user-select: none;
+            user-select: none;
+        }
+        .service-info details summary::-webkit-details-marker { display: none; }
         .service-info .title-row {
             display: flex;
             align-items: center;
@@ -162,7 +187,31 @@
             padding: 0.2rem 0.5rem;
             white-space: nowrap;
         }
-        .service-info p { font-size: 0.82rem; color: var(--pico-muted-color); margin: 0; }
+        .expand-indicator {
+            margin-left: auto;
+            font-size: 0.75rem;
+            color: var(--pico-muted-color);
+            flex-shrink: 0;
+        }
+        .expand-indicator::before { content: "▸"; }
+        details[open] .expand-indicator::before { content: "▾"; }
+        .service-info details summary p {
+            font-size: 0.82rem;
+            color: var(--pico-muted-color);
+            margin: 0;
+        }
+        .expanded-detail {
+            margin-top: 0.65rem;
+            padding-top: 0.65rem;
+            border-top: 1px solid var(--pico-muted-border-color);
+        }
+        .expanded-detail ul {
+            margin: 0;
+            padding-left: 1.2rem;
+            font-size: 0.82rem;
+            color: var(--pico-muted-color);
+        }
+        .expanded-detail li { margin-bottom: 0.25rem; }
 
         /* ── Technical highlights ── */
         .highlights-grid {
@@ -210,16 +259,21 @@
         <section class="hero">
             <h1>A production data pipeline for tracking car prices</h1>
             <p>
-                CarTracker scrapes Cars.com every 15 minutes across 40+ make/model pairs,
-                running raw HTML through a bronze → silver → mart pipeline across Postgres,
-                MinIO, and DuckDB. Built to show how a real data pipeline handles the messy
-                middle — anti-detection, idempotent writes, event sourcing, schema migrations,
-                and observability — not just the happy path.
+                CarTracker scrapes Cars.com every 15 minutes across
+                {{ stats.make_model_pairs if stats and 'make_model_pairs' in stats else '13' }}
+                make/model pairs, running raw HTML through a bronze → silver → mart pipeline
+                across Postgres, MinIO, and DuckDB. Built to show how a real data pipeline
+                handles the messy middle — anti-detection, idempotent writes, event sourcing,
+                schema migrations, and observability — not just the happy path.
             </p>
             <div class="hero-cta">
                 <a href="/request-access" role="button">Request Access</a>
                 <a href="https://github.com/whitewalls86/new_car_tracker" target="_blank" rel="noopener" role="button" class="secondary">GitHub →</a>
             </div>
+            <!-- Drop demo.mp4 (or demo.gif) into ops/static/ to activate this preview -->
+            <figure class="demo-media">
+                <video src="/static/demo.mp4" autoplay loop muted playsinline></video>
+            </figure>
         </section>
 
         <!-- ── 2. Live stats ── -->
@@ -290,49 +344,103 @@
         <!-- ── 4. Architecture at a glance ── -->
         <section>
             <h2>Architecture at a glance</h2>
+            <p style="font-size:0.82rem; color:var(--pico-muted-color); margin-bottom:0.85rem;">Click any card to expand.</p>
             <div class="services-grid">
 
                 <div class="service-card">
                     <img class="service-logo" src="https://cdn.simpleicons.org/fastapi/009688" alt="FastAPI" onerror="this.style.display='none'">
                     <div class="service-info">
-                        <div class="title-row">
-                            <strong>Scraper</strong>
-                            <span class="service-badge">FastAPI</span>
-                        </div>
-                        <p>Fetches SRP and detail pages with Chrome TLS fingerprinting; writes compressed HTML to MinIO.</p>
+                        <details>
+                            <summary>
+                                <div class="title-row">
+                                    <strong>Scraper</strong>
+                                    <span class="service-badge">FastAPI</span>
+                                    <span class="expand-indicator"></span>
+                                </div>
+                                <p>Fetches SRP and detail pages with Chrome TLS fingerprinting; writes compressed HTML to MinIO.</p>
+                            </summary>
+                            <div class="expanded-detail">
+                                <ul>
+                                    <li>Uses <code>curl_cffi</code> to mimic a real Chrome TLS handshake, bypassing basic bot detection</li>
+                                    <li>Automatic fallback to FlareSolverr for Cloudflare JS challenge pages</li>
+                                    <li>HTML artifacts GZIP-compressed before writing to MinIO with structured key paths</li>
+                                    <li>Process-wide credential cache with 25-min TTL; auto re-bootstraps on 403</li>
+                                    <li>Airflow triggers scrape rotation every 15 minutes across all tracked make/model pairs</li>
+                                </ul>
+                            </div>
+                        </details>
                     </div>
                 </div>
 
                 <div class="service-card">
                     <img class="service-logo" src="https://cdn.simpleicons.org/fastapi/009688" alt="FastAPI" onerror="this.style.display='none'">
                     <div class="service-info">
-                        <div class="title-row">
-                            <strong>Processing</strong>
-                            <span class="service-badge">FastAPI</span>
-                        </div>
-                        <p>Claims artifacts from the queue, parses HTML, and writes price observations via staging event tables.</p>
+                        <details>
+                            <summary>
+                                <div class="title-row">
+                                    <strong>Processing</strong>
+                                    <span class="service-badge">FastAPI</span>
+                                    <span class="expand-indicator"></span>
+                                </div>
+                                <p>Claims artifacts from the queue, parses HTML, and writes price observations via staging event tables.</p>
+                            </summary>
+                            <div class="expanded-detail">
+                                <ul>
+                                    <li>Polls <code>ops.artifacts_queue</code> using atomic <code>FOR UPDATE SKIP LOCKED</code> claims to prevent duplicate processing</li>
+                                    <li>BeautifulSoup extracts listing fields: price, mileage, VIN, dealer, trim, and more</li>
+                                    <li>Writes to <code>staging._events</code> tables first — never directly to HOT tables</li>
+                                    <li>Idempotent by VIN: duplicate SRP hits produce a price observation, not a duplicate vehicle record</li>
+                                </ul>
+                            </div>
+                        </details>
                     </div>
                 </div>
 
                 <div class="service-card">
                     <img class="service-logo" src="https://cdn.simpleicons.org/fastapi/009688" alt="FastAPI" onerror="this.style.display='none'">
                     <div class="service-info">
-                        <div class="title-row">
-                            <strong>Ops</strong>
-                            <span class="service-badge">FastAPI</span>
-                        </div>
-                        <p>Admin UI, deploy coordination, claim management, and auth forward-proxy endpoint.</p>
+                        <details>
+                            <summary>
+                                <div class="title-row">
+                                    <strong>Ops</strong>
+                                    <span class="service-badge">FastAPI</span>
+                                    <span class="expand-indicator"></span>
+                                </div>
+                                <p>Admin UI, deploy coordination, claim management, and auth forward-proxy endpoint.</p>
+                            </summary>
+                            <div class="expanded-detail">
+                                <ul>
+                                    <li>Admin routes for monitoring queue depth, claim state, and per-service health</li>
+                                    <li><code>forward_auth</code> endpoint: Caddy calls this for every protected route to validate Google OAuth tokens and DB role</li>
+                                    <li>DB-backed user access request flow with role assignment</li>
+                                    <li>Deploy coordination endpoint triggers zero-downtime container restarts</li>
+                                </ul>
+                            </div>
+                        </details>
                     </div>
                 </div>
 
                 <div class="service-card">
                     <img class="service-logo" src="https://cdn.simpleicons.org/fastapi/009688" alt="FastAPI" onerror="this.style.display='none'">
                     <div class="service-info">
-                        <div class="title-row">
-                            <strong>Archiver</strong>
-                            <span class="service-badge">FastAPI</span>
-                        </div>
-                        <p>Bulk-flushes staging event buffers to MinIO Parquet; sweeps completed queue rows.</p>
+                        <details>
+                            <summary>
+                                <div class="title-row">
+                                    <strong>Archiver</strong>
+                                    <span class="service-badge">FastAPI</span>
+                                    <span class="expand-indicator"></span>
+                                </div>
+                                <p>Bulk-flushes staging event buffers to MinIO Parquet; sweeps completed queue rows.</p>
+                            </summary>
+                            <div class="expanded-detail">
+                                <ul>
+                                    <li>Triggered by Airflow on a configurable schedule (default: hourly)</li>
+                                    <li>Reads <code>staging._events</code> tables in batches and writes Parquet to MinIO partitioned by <code>source/YYYY-MM-DD</code></li>
+                                    <li>After a successful flush, promotes events to HOT tables and marks queue rows complete</li>
+                                    <li>Separate sweep job removes completed queue entries beyond the retention window</li>
+                                </ul>
+                            </div>
+                        </details>
                     </div>
                 </div>
 
@@ -342,66 +450,144 @@
                         <img class="service-logo" src="https://cdn.simpleicons.org/duckdb/FFF000" alt="DuckDB" onerror="this.style.display='none'">
                     </div>
                     <div class="service-info">
-                        <div class="title-row">
-                            <strong>dbt Runner</strong>
-                            <span class="service-badge">dbt + DuckDB</span>
-                        </div>
-                        <p>Runs dbt transformations against DuckDB — reads Parquet from MinIO directly, no separate warehouse needed.</p>
+                        <details>
+                            <summary>
+                                <div class="title-row">
+                                    <strong>dbt Runner</strong>
+                                    <span class="service-badge">dbt + DuckDB</span>
+                                    <span class="expand-indicator"></span>
+                                </div>
+                                <p>Runs dbt transformations against DuckDB — reads Parquet from MinIO directly, no separate warehouse needed.</p>
+                            </summary>
+                            <div class="expanded-detail">
+                                <ul>
+                                    <li>DuckDB reads Parquet directly from MinIO via the <code>httpfs</code> extension — no ETL step needed</li>
+                                    <li>Model layers: staging → silver (cleaned, typed) → mart (deal scores, price windows, rolling averages)</li>
+                                    <li><code>blocked_cooldown</code> model implements exponential backoff logic for 403'd listings in pure SQL — queryable and testable</li>
+                                    <li>Full dbt test suite runs on each pipeline execution via Airflow</li>
+                                </ul>
+                            </div>
+                        </details>
                     </div>
                 </div>
 
                 <div class="service-card">
                     <img class="service-logo" src="https://cdn.simpleicons.org/apacheairflow/017CEE" alt="Apache Airflow" onerror="this.style.display='none'">
                     <div class="service-info">
-                        <div class="title-row">
-                            <strong>Airflow</strong>
-                            <span class="service-badge">Airflow</span>
-                        </div>
-                        <p>Schedules all DAGs — scrape rotation, artifact processing, staging flush, queue cleanup, and orphan checks.</p>
+                        <details>
+                            <summary>
+                                <div class="title-row">
+                                    <strong>Airflow</strong>
+                                    <span class="service-badge">Airflow</span>
+                                    <span class="expand-indicator"></span>
+                                </div>
+                                <p>Schedules all DAGs — scrape rotation, artifact processing, staging flush, queue cleanup, and orphan checks.</p>
+                            </summary>
+                            <div class="expanded-detail">
+                                <ul>
+                                    <li>Five active DAGs: SRP scrape rotation, detail scrape, artifact processing, staging flush, and queue cleanup</li>
+                                    <li>Task-level retries and alerting; no shared state between tasks</li>
+                                    <li>DAG changes deploy via git pull — no container restarts required</li>
+                                    <li>Replaced the previous n8n workflow engine, which was decommissioned</li>
+                                </ul>
+                            </div>
+                        </details>
                     </div>
                 </div>
 
                 <div class="service-card">
                     <img class="service-logo" src="https://cdn.simpleicons.org/streamlit/FF4B4B" alt="Streamlit" onerror="this.style.display='none'">
                     <div class="service-info">
-                        <div class="title-row">
-                            <strong>Dashboard</strong>
-                            <span class="service-badge">Streamlit</span>
-                        </div>
-                        <p>Interactive price-history and deal-score views backed by the DuckDB mart layer.</p>
+                        <details>
+                            <summary>
+                                <div class="title-row">
+                                    <strong>Dashboard</strong>
+                                    <span class="service-badge">Streamlit</span>
+                                    <span class="expand-indicator"></span>
+                                </div>
+                                <p>Interactive price-history and deal-score views backed by the DuckDB mart layer.</p>
+                            </summary>
+                            <div class="expanded-detail">
+                                <ul>
+                                    <li>Queries DuckDB mart layer directly — sub-second response on 100K+ observations</li>
+                                    <li>Price history charts per listing with deal score overlay and days-on-market trends</li>
+                                    <li>Make/model/trim filtering, price drop alerts, and rolling average comparisons</li>
+                                    <li>Access-gated via Caddy OAuth — same auth layer as the rest of the stack</li>
+                                </ul>
+                            </div>
+                        </details>
                     </div>
                 </div>
 
                 <div class="service-card">
                     <img class="service-logo" src="https://cdn.simpleicons.org/minio/C72E49" alt="MinIO" onerror="this.style.display='none'">
                     <div class="service-info">
-                        <div class="title-row">
-                            <strong>MinIO</strong>
-                            <span class="service-badge">S3-compatible</span>
-                        </div>
-                        <p>Object store for raw HTML artifacts and Parquet silver observations; queryable directly by DuckDB.</p>
+                        <details>
+                            <summary>
+                                <div class="title-row">
+                                    <strong>MinIO</strong>
+                                    <span class="service-badge">S3-compatible</span>
+                                    <span class="expand-indicator"></span>
+                                </div>
+                                <p>Object store for raw HTML artifacts and Parquet silver observations; queryable directly by DuckDB.</p>
+                            </summary>
+                            <div class="expanded-detail">
+                                <ul>
+                                    <li>S3-compatible object store running on the same host as Postgres</li>
+                                    <li>Two buckets: <code>raw</code> (GZIP HTML artifacts) and <code>silver</code> (Parquet price observations)</li>
+                                    <li>DuckDB reads <code>silver</code> Parquet directly via <code>httpfs</code> + S3 credentials — no separate data warehouse</li>
+                                    <li>Raw artifacts retained for 30 days; Parquet files retained indefinitely</li>
+                                </ul>
+                            </div>
+                        </details>
                     </div>
                 </div>
 
                 <div class="service-card">
                     <img class="service-logo" src="https://cdn.simpleicons.org/caddy/22D3EE" alt="Caddy" onerror="this.style.display='none'">
                     <div class="service-info">
-                        <div class="title-row">
-                            <strong>Caddy</strong>
-                            <span class="service-badge">Reverse Proxy</span>
-                        </div>
-                        <p>Reverse proxy with TLS termination, OAuth2 Google auth, and DB-backed role checks.</p>
+                        <details>
+                            <summary>
+                                <div class="title-row">
+                                    <strong>Caddy</strong>
+                                    <span class="service-badge">Reverse Proxy</span>
+                                    <span class="expand-indicator"></span>
+                                </div>
+                                <p>Reverse proxy with TLS termination, OAuth2 Google auth, and DB-backed role checks.</p>
+                            </summary>
+                            <div class="expanded-detail">
+                                <ul>
+                                    <li>Automatic TLS cert provisioning via Let's Encrypt</li>
+                                    <li><code>forward_auth</code> middleware calls the Ops service for every protected route — validates Google OAuth token and DB role</li>
+                                    <li>Routes: <code>/</code> → Dashboard, <code>/airflow</code> → Airflow, <code>/grafana</code> → Grafana, <code>/info</code> → public (no auth)</li>
+                                    <li>Single Caddyfile defines the entire routing and auth layer</li>
+                                </ul>
+                            </div>
+                        </details>
                     </div>
                 </div>
 
                 <div class="service-card">
                     <img class="service-logo" src="https://cdn.simpleicons.org/grafana/F46800" alt="Grafana" onerror="this.style.display='none'">
                     <div class="service-info">
-                        <div class="title-row">
-                            <strong>Grafana</strong>
-                            <span class="service-badge">Observability</span>
-                        </div>
-                        <p>Operational dashboards from Prometheus metrics (Airflow, Postgres, MinIO, node).</p>
+                        <details>
+                            <summary>
+                                <div class="title-row">
+                                    <strong>Grafana</strong>
+                                    <span class="service-badge">Observability</span>
+                                    <span class="expand-indicator"></span>
+                                </div>
+                                <p>Operational dashboards from Prometheus metrics (Airflow, Postgres, MinIO, node).</p>
+                            </summary>
+                            <div class="expanded-detail">
+                                <ul>
+                                    <li>Scrapes Prometheus metrics from Airflow, Postgres (postgres_exporter), MinIO, and node_exporter</li>
+                                    <li>Dashboards cover pipeline throughput, queue depth, processing lag, and system resources</li>
+                                    <li>Deployed at <code>/grafana</code> behind the same Caddy auth layer</li>
+                                    <li>Prometheus scrape targets for all services added via V033 migration</li>
+                                </ul>
+                            </div>
+                        </details>
                     </div>
                 </div>
 

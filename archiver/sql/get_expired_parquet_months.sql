@@ -1,8 +1,4 @@
-SELECT DISTINCT
-    EXTRACT(YEAR FROM archived_at)::int  AS year,
-    EXTRACT(MONTH FROM archived_at)::int AS month
-FROM raw_artifacts
-WHERE archived_at IS NOT NULL
-  AND deleted_at IS NULL
-  AND archived_at < now() - interval '28 days'
-ORDER BY year, month
+-- raw_artifacts was dropped in V036. The old HTML→Parquet export pipeline
+-- no longer exists; new raw HTML goes directly to MinIO via ops.artifacts_queue.
+-- Return empty so the cleanup job succeeds as a no-op.
+SELECT 0::int AS year, 0::int AS month WHERE FALSE
