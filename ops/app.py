@@ -29,8 +29,8 @@ logging.getLogger().setLevel(logging.INFO)
 app = FastAPI()
 Instrumentator().instrument(app).expose(app)
 app.mount(
-    "/static",
-    StaticFiles(directory=os.path.join(os.path.dirname(__file__), "static")), name="static"
+    "/static_ops",
+    StaticFiles(directory=os.path.join(os.path.dirname(__file__), "static_ops")), name="static_ops"
 )
 app.include_router(info_router)
 app.include_router(auth_router)
