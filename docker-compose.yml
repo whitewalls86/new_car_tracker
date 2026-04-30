@@ -262,6 +262,7 @@ services:
     container_name: cartracker-archiver
     volumes:
       - cartracker_raw:/data/raw
+      - archiver_logs:/usr/app/logs
     environment:
       PGHOST: postgres
       PGPORT: 5432
@@ -570,6 +571,8 @@ volumes:
   airflow_logs:
 
   processing_logs:
+
+  archiver_logs:
 
   prometheus_data:
 

@@ -1,4 +1,6 @@
 import logging
+import os
+from logging.handlers import RotatingFileHandler
 from typing import Any, Dict
 
 from fastapi import Body, FastAPI
@@ -13,7 +15,11 @@ from archiver.processors.flush_silver_observations import (
 from archiver.processors.flush_staging_events import flush_staging_events as _flush_staging_events
 from shared.job_counter import active_job, is_idle
 
-logging.basicConfig(level=logging.INFO)
+_LOG_PATH = os.getenv("LOG_PATH", "/usr/app/logs/app.log")
+os.makedirs(os.path.dirname(_LOG_PATH), exist_ok=True)
+_log_handler = RotatingFileHandler(_LOG_PATH, maxBytes=5_000_000, backupCount=3)
+_log_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+logging.basicConfig(level=logging.INFO, handlers=[_log_handler, logging.StreamHandler()])
 logger = logging.getLogger("archiver")
 
 app = FastAPI()
