@@ -1,10 +1,12 @@
 """
-Integration tests: write_detail_active(), write_detail_unlisted(),
-write_detail_blocked() end-to-end.
+Integration tests: write_detail_active(), write_detail_unlisted() end-to-end.
 
 Calls the real Python functions against a real Postgres instance.
 Covers: VIN mapping, collision/relisting, carousel filtering, silver write,
-claim release, blocked cooldown upsert/increment, and event tables.
+claim release, and event tables.
+
+Blocked cooldown tests live in tests/integration/scraper/test_blocked_cooldown.py
+since that path is now owned by the scraper at fetch time.
 """
 import uuid
 from datetime import datetime, timezone
@@ -13,7 +15,6 @@ import pytest
 
 from processing.writers.detail_writer import (
     write_detail_active,
-    write_detail_blocked,
     write_detail_unlisted,
 )
 
@@ -578,91 +579,3 @@ class TestWriteDetailUnlisted:
 
         _cleanup(vc, listing_ids=[lid], artifact_id=artifact["artifact_id"])
 
-
-# ---------------------------------------------------------------------------
-# write_detail_blocked
-# ---------------------------------------------------------------------------
-
-class TestWriteDetailBlocked:
-    def test_first_block_creates_cooldown_with_attempts_1(self, vc, seed_artifact_c):
-        artifact = seed_artifact_c(artifact_type="detail_page")
-        lid = str(uuid.uuid4())
-
-        result = write_detail_blocked(artifact["artifact_id"], lid, "run-1")
-
-        assert result["num_attempts"] == 1
-        row = _blocked_cooldown_row(vc, lid)
-        assert row is not None
-        assert row["num_of_attempts"] == 1
-
-        _cleanup(vc, listing_ids=[lid])
-
-    def test_second_block_increments_attempts(self, vc, seed_artifact_c):
-        artifact = seed_artifact_c(artifact_type="detail_page")
-        lid = str(uuid.uuid4())
-
-        write_detail_blocked(artifact["artifact_id"], lid, "run-1")
-        result = write_detail_blocked(artifact["artifact_id"], lid, "run-2")
-
-        assert result["num_attempts"] == 2
-        row = _blocked_cooldown_row(vc, lid)
-        assert row["num_of_attempts"] == 2
-
-        _cleanup(vc, listing_ids=[lid])
-
-    def test_first_block_event_type_is_blocked(self, vc, seed_artifact_c):
-        artifact = seed_artifact_c(artifact_type="detail_page")
-        lid = str(uuid.uuid4())
-
-        write_detail_blocked(artifact["artifact_id"], lid, "run-1")
-
-        vc.execute(
-            "SELECT event_type FROM staging.blocked_cooldown_events"
-            " WHERE listing_id = %s::uuid ORDER BY event_id",
-            (lid,),
-        )
-        row = vc.fetchone()
-        assert row["event_type"] == "blocked"
-
-        _cleanup(vc, listing_ids=[lid])
-
-    def test_second_block_event_type_is_incremented(self, vc, seed_artifact_c):
-        artifact = seed_artifact_c(artifact_type="detail_page")
-        lid = str(uuid.uuid4())
-
-        write_detail_blocked(artifact["artifact_id"], lid, "run-1")
-        write_detail_blocked(artifact["artifact_id"], lid, "run-2")
-
-        vc.execute(
-            "SELECT event_type FROM staging.blocked_cooldown_events"
-            " WHERE listing_id = %s::uuid ORDER BY event_id DESC LIMIT 1",
-            (lid,),
-        )
-        row = vc.fetchone()
-        assert row["event_type"] == "incremented"
-
-        _cleanup(vc, listing_ids=[lid])
-
-    def test_releases_detail_claim(self, vc, seed_artifact_c, seed_detail_claim_c):
-        artifact = seed_artifact_c(artifact_type="detail_page")
-        lid = str(uuid.uuid4())
-        seed_detail_claim_c(lid)
-
-        assert _claim_exists(vc, lid)
-
-        write_detail_blocked(artifact["artifact_id"], lid, "run-1")
-
-        assert not _claim_exists(vc, lid), "Claim should be released even on blocked page"
-
-        _cleanup(vc, listing_ids=[lid])
-
-    def test_blocked_result_shape(self, vc, seed_artifact_c):
-        artifact = seed_artifact_c(artifact_type="detail_page")
-        lid = str(uuid.uuid4())
-
-        result = write_detail_blocked(artifact["artifact_id"], lid, "run-1")
-
-        assert result["blocked"] is True
-        assert isinstance(result["num_attempts"], int)
-
-        _cleanup(vc, listing_ids=[lid])
