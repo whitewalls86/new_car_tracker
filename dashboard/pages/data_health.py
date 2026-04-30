@@ -21,9 +21,9 @@ def render():
     st.caption("Artifacts and observations processed per hour, by source type.")
     df_vol = run_duckdb_query(DATA_HEALTH_SCRAPE_VOLUME)
     if not df_vol.empty:
-        granularity = st.radio(
+        granularity = st.selectbox(
             "Granularity", ["Hourly", "Daily", "Weekly"],
-            horizontal=True, key="scrape_vol_gran",
+            key="scrape_vol_gran",
         )
         trunc = {"Hourly": "hour", "Daily": "day", "Weekly": "week"}[granularity]
         df_agg = (
@@ -76,9 +76,9 @@ def render():
     st.caption("New 403 blocks per hour and block rate as a fraction of total observations.")
     df_blk = run_duckdb_query(DATA_HEALTH_BLOCK_RATE)
     if not df_blk.empty:
-        granularity_b = st.radio(
+        granularity_b = st.selectbox(
             "Granularity", ["Hourly", "Daily", "Weekly"],
-            horizontal=True, key="block_rate_gran",
+            key="block_rate_gran",
         )
         trunc_b = {"Hourly": "h", "Daily": "D", "Weekly": "W"}[granularity_b]
         df_blk_agg = (
