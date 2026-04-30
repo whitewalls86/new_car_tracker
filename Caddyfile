@@ -5,7 +5,7 @@ https://cartracker.info {
         reverse_proxy ops:8060
     }
 
-    handle /static/* {
+    handle /static_ops/* {
         reverse_proxy ops:8060
     }
 
