@@ -92,12 +92,12 @@
         }
         .pipeline-stage + .pipeline-stage {
             border-left: none;
-            border-radius: 0 8px 8px 0;
+            border-radius: 0;
         }
         .pipeline-stage:first-child { border-radius: 8px 0 0 8px; }
+        .pipeline-stage:last-child  { border-radius: 0 8px 8px 0; }
         .pipeline-stage:only-child  { border-radius: 8px; }
         .pipeline-stage:not(:last-child) {
-            border-radius: 8px 0 0 8px;
             position: relative;
         }
         .pipeline-stage:not(:last-child)::after {
@@ -193,7 +193,7 @@
             color: var(--pico-muted-color);
             flex-shrink: 0;
         }
-        .expand-indicator::before { content: "▸"; }
+        .expand-indicator::before { content: "Why? ▸"; }
         details[open] .expand-indicator::before { content: "▾"; }
         .service-info details summary p {
             font-size: 0.82rem;
@@ -259,12 +259,12 @@
         <section class="hero">
             <h1>A production data pipeline for tracking car prices</h1>
             <p>
-                CarTracker scrapes Cars.com every 15 minutes across
+                Built to show how a real data pipeline handles the messy middle — anti-detection,
+                idempotent writes, event sourcing, schema migrations, and observability — not just
+                the happy path. CarTracker scrapes Cars.com every 15 minutes across
                 {{ stats.make_model_pairs if stats and 'make_model_pairs' in stats else '13' }}
                 make/model pairs, running raw HTML through a bronze → silver → mart pipeline
-                across Postgres, MinIO, and DuckDB. Built to show how a real data pipeline
-                handles the messy middle — anti-detection, idempotent writes, event sourcing,
-                schema migrations, and observability — not just the happy path.
+                across Postgres, MinIO, and DuckDB.
             </p>
             <div class="hero-cta">
                 <a href="/request-access" role="button">Request Access</a>
@@ -485,7 +485,7 @@
                             </summary>
                             <div class="expanded-detail">
                                 <ul>
-                                    <li>Five active DAGs: SRP scrape rotation, detail scrape, artifact processing, staging flush, and queue cleanup</li>
+                                    <li>Twelve active DAGs covering scrape rotation, detail scraping, artifact processing, staging flush, dbt builds, orphan claim expiry, queue cleanup, Parquet cleanup, and deployment coordination</li>
                                     <li>Task-level retries and alerting; no shared state between tasks</li>
                                     <li>DAG changes deploy via git pull — no container restarts required</li>
                                     <li>Replaced the previous n8n workflow engine, which was decommissioned</li>
@@ -601,9 +601,9 @@
                 <div class="highlight-card">
                     <h4>Medallion architecture across two storage systems</h4>
                     <p>
-                        Raw HTML lands in MinIO (bronze), gets parsed into Postgres staging events (operational),
-                        flushed to Parquet (silver), and transformed by dbt into DuckDB mart tables — each layer
-                        with a different storage engine chosen for its access pattern.
+                        Each layer uses the right engine for its access pattern: Postgres for low-latency
+                        operational reads, Parquet on MinIO for durable event history, DuckDB for analytical
+                        queries. One tool was never going to do all three well.
                     </p>
                 </div>
                 <div class="highlight-card">
@@ -617,9 +617,10 @@
                 <div class="highlight-card">
                     <h4>Atomic claim pattern</h4>
                     <p>
-                        Parallel detail scrapes use <code>ON CONFLICT DO UPDATE</code> against
-                        <code>detail_scrape_claims</code> to prevent duplicate work without a queue
-                        service. Time-based expiry handles orphaned claims.
+                        No Redis, no SQS — Postgres <code>ON CONFLICT DO UPDATE</code> handles
+                        distributed claim locking natively, keeping the stack simple without
+                        sacrificing correctness. An Airflow orphan-checker DAG expires stale
+                        claims left by crashed containers.
                     </p>
                 </div>
                 <div class="highlight-card">
@@ -633,9 +634,28 @@
                 <div class="highlight-card">
                     <h4>Versioned schema migrations</h4>
                     <p>
-                        36 Flyway migrations track every schema change — table creation, index additions,
-                        HOT table promotion, and legacy table drops — reviewed as code and applied
-                        automatically on deploy.
+                        Every schema change is a reviewed PR — no ad-hoc <code>ALTER TABLE</code> in
+                        production. 37 Flyway migrations covering table creation, index additions, HOT
+                        table promotion, role grants, and legacy drops, applied automatically on deploy.
+                    </p>
+                </div>
+                <div class="highlight-card">
+                    <h4>Three-layer test strategy</h4>
+                    <p>
+                        SQL smoke tests (Layer 1) validate schema correctness before dbt runs.
+                        dbt logic tests (Layer 2) seed known inputs and assert outputs against a
+                        CI schema. API integration tests (Layer 3) verify full request paths against
+                        a real Postgres instance — no mocks where real DB behavior matters.
+                        971 tests total, enforced on every commit.
+                    </p>
+                </div>
+                <div class="highlight-card">
+                    <h4>Drain-based zero-downtime deploys</h4>
+                    <p>
+                        Each service exposes a <code>/ready</code> endpoint. A <code>deploy_intent</code>
+                        table signals pending deployments; Airflow sensors block new DAG runs until all
+                        in-flight work drains. Container restarts happen only between runs — never
+                        mid-pipeline.
                     </p>
                 </div>
                 <div class="highlight-card">
@@ -654,7 +674,7 @@
             <div class="footer-cta">
                 <a href="/request-access" role="button">Request Access</a>
                 <a href="https://github.com/whitewalls86/new_car_tracker" target="_blank" rel="noopener" role="button" class="secondary">GitHub →</a>
-                <span class="footer-note">Built by <a href="https://github.com/whitewalls86" target="_blank" rel="noopener">whitewalls86</a></span>
+                <span class="footer-note">Built by <a href="https://www.linkedin.com/in/andrew-preston-miller/" target="_blank" rel="noopener">Andrew Miller</a> &mdash; <a href="https://github.com/whitewalls86" target="_blank" rel="noopener">GitHub</a> &middot; <a href="https://www.linkedin.com/in/andrew-preston-miller/" target="_blank" rel="noopener">LinkedIn</a></span>
             </div>
             <p style="font-size:0.75rem; color:var(--pico-muted-color); margin:0.75rem 0 0;">
                 dbt™ is a trademark of dbt Labs, Inc. This project is not affiliated with or endorsed by dbt Labs.
