@@ -10,15 +10,11 @@ from datetime import datetime, timezone
 import pytest
 
 from processing.queries import (
-    CLEAR_BLOCKED_COOLDOWN,
     DELETE_PRICE_OBSERVATION,
     DELETE_PRICE_OBSERVATION_BY_VIN,
-    GET_BLOCKED_COOLDOWN_ATTEMPTS,
-    INSERT_BLOCKED_COOLDOWN_EVENT,
     INSERT_DETAIL_CLAIM_EVENT,
     LOOKUP_VIN_COLLISION,
     RELEASE_DETAIL_CLAIMS,
-    UPSERT_BLOCKED_COOLDOWN,
     UPSERT_PRICE_OBSERVATION,
     UPSERT_VIN_TO_LISTING,
 )
@@ -205,56 +201,6 @@ class TestVinRelisting:
         # Verify vin_to_listing updated
         cur.execute("SELECT listing_id FROM ops.vin_to_listing WHERE vin = %s", (vin,))
         assert str(cur.fetchone()["listing_id"]) == new_listing_id
-
-
-class TestBlockedCooldown:
-    """
-    Given: Detail artifact is a 403 block page
-    When:  Blocked path runs
-    Then:  blocked_cooldown upserted with num_of_attempts incremented
-           blocked_cooldown_events row inserted
-    """
-
-    def test_blocked_upserts_cooldown_and_event(self, cur, seed_artifact):
-        listing_id = str(uuid.uuid4())
-        seed_artifact(artifact_type="detail_page", listing_id=listing_id)
-
-        # First block
-        cur.execute(UPSERT_BLOCKED_COOLDOWN, {"listing_id": listing_id})
-        cur.execute(GET_BLOCKED_COOLDOWN_ATTEMPTS, {"listing_id": listing_id})
-        row = cur.fetchone()
-        assert row["num_of_attempts"] == 1
-
-        cur.execute(INSERT_BLOCKED_COOLDOWN_EVENT, {
-            "listing_id": listing_id,
-            "event_type": "blocked",
-            "num_of_attempts": 1,
-        })
-
-        # Second block (increment)
-        cur.execute(UPSERT_BLOCKED_COOLDOWN, {"listing_id": listing_id})
-        cur.execute(GET_BLOCKED_COOLDOWN_ATTEMPTS, {"listing_id": listing_id})
-        row = cur.fetchone()
-        assert row["num_of_attempts"] == 2
-
-    def test_clear_blocked_cooldown_on_success(self, cur, seed_artifact):
-        listing_id = str(uuid.uuid4())
-
-        # Seed a blocked entry
-        cur.execute(UPSERT_BLOCKED_COOLDOWN, {"listing_id": listing_id})
-        cur.execute(
-            "SELECT COUNT(*) AS cnt FROM ops.blocked_cooldown WHERE listing_id = %s::uuid",
-            (listing_id,),
-        )
-        assert cur.fetchone()["cnt"] == 1
-
-        # Clear on successful scrape
-        cur.execute(CLEAR_BLOCKED_COOLDOWN, {"listing_id": listing_id})
-        cur.execute(
-            "SELECT COUNT(*) AS cnt FROM ops.blocked_cooldown WHERE listing_id = %s::uuid",
-            (listing_id,),
-        )
-        assert cur.fetchone()["cnt"] == 0
 
 
 class TestReadyEndpoint:

@@ -15,6 +15,11 @@ from scraper.processors.cf_session import (
     invalidate_cf_credentials,
     make_cf_session,
 )
+from scraper.queries import (
+    GET_BLOCKED_COOLDOWN_ATTEMPTS,
+    INSERT_BLOCKED_COOLDOWN_EVENT,
+    UPSERT_BLOCKED_COOLDOWN,
+)
 
 # Adaptive delay for detail fetches: backs off on 403, recovers on success.
 _detail_delay_lock = threading.Lock()
@@ -176,6 +181,27 @@ def scrape_detail_fetch(*, run_id: str, payload: Dict[str, Any]) -> Dict[str, An
                 "detail fetch HTTP %s for listing_id=%s url=%s",
                 status, listing_id, final_url,
             )
+
+        if status == 403:
+            try:
+                from shared.db import db_cursor
+                with db_cursor(error_context="scrape_detail_fetch: blocked_cooldown") as cur:
+                    cur.execute(UPSERT_BLOCKED_COOLDOWN, {"listing_id": listing_id})
+                    cur.execute(GET_BLOCKED_COOLDOWN_ATTEMPTS, {"listing_id": listing_id})
+                    row = cur.fetchone()
+                    num_attempts = row[0] if row else 1
+                    event_type = "blocked" if num_attempts == 1 else "incremented"
+                    cur.execute(INSERT_BLOCKED_COOLDOWN_EVENT, {
+                        "listing_id": listing_id,
+                        "event_type": event_type,
+                        "num_of_attempts": num_attempts,
+                    })
+                logger.warning(
+                    "detail fetch 403 listing_id=%s: blocked_cooldown updated (attempts=%d)",
+                    listing_id, num_attempts,
+                )
+            except Exception as _blocked_err:
+                logger.warning("blocked_cooldown write failed (non-fatal): %s", _blocked_err)
 
         artifact = {
             "source": "cars.com",

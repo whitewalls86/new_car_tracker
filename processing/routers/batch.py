@@ -20,9 +20,7 @@ from processing.queries import (
     MARK_ARTIFACT_STATUS,
 )
 from processing.writers.detail_writer import (
-    is_block_page,
     write_detail_active,
-    write_detail_blocked,
     write_detail_unlisted,
 )
 from processing.writers.srp_writer import write_srp_observations
@@ -149,18 +147,6 @@ def _process_detail_page(artifact: Dict[str, Any]) -> Dict[str, Any]:
         logger.warning("detail_page %s: MinIO read failed: %s", artifact_id, e)
         _set_status(artifact, "retry")
         return {"status": "retry", "error": str(e)}
-
-    # Check for 403 block page before parsing
-    if is_block_page(html):
-        logger.info("detail_page %s: 403 block page detected", artifact_id)
-        try:
-            result = write_detail_blocked(artifact_id, listing_id, run_id)
-        except Exception as e:
-            logger.exception("detail_page %s: blocked writes failed", artifact_id)
-            _set_status(artifact, "retry")
-            return {"status": "retry", "error": str(e)}
-        _set_status(artifact, "skip")
-        return {"status": "skip", "reason": "block_page", **result}
 
     try:
         primary, carousel, parse_meta = parse_cars_detail_page_html_v1(html, artifact_url)

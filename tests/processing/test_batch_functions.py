@@ -145,36 +145,9 @@ class TestProcessDetailPage:
 
         assert result["status"] == "retry"
 
-    def test_block_page_returns_skip(self, mocker):
-        mocker.patch("processing.routers.batch._read_artifact_html", return_value="<html/>")
-        mocker.patch("processing.routers.batch.is_block_page", return_value=True)
-        mocker.patch(
-            "processing.routers.batch.write_detail_blocked",
-            return_value={"blocked": True},
-        )
-        mocker.patch("processing.routers.batch._set_status")
-
-        result = _process_detail_page(_detail_artifact())
-
-        assert result["status"] == "skip"
-        assert result["reason"] == "block_page"
-
-    def test_block_page_write_failure_returns_retry(self, mocker):
-        mocker.patch("processing.routers.batch._read_artifact_html", return_value="<html/>")
-        mocker.patch("processing.routers.batch.is_block_page", return_value=True)
-        mocker.patch(
-            "processing.routers.batch.write_detail_blocked",
-            side_effect=Exception("DB down"),
-        )
-        mocker.patch("processing.routers.batch._set_status")
-
-        result = _process_detail_page(_detail_artifact())
-
-        assert result["status"] == "retry"
 
     def test_parse_failure_returns_retry(self, mocker):
         mocker.patch("processing.routers.batch._read_artifact_html", return_value="<html/>")
-        mocker.patch("processing.routers.batch.is_block_page", return_value=False)
         mocker.patch(
             "processing.routers.batch.parse_cars_detail_page_html_v1",
             side_effect=Exception("parse error"),
@@ -187,7 +160,6 @@ class TestProcessDetailPage:
 
     def test_active_listing_calls_write_detail_active(self, mocker):
         mocker.patch("processing.routers.batch._read_artifact_html", return_value="<html/>")
-        mocker.patch("processing.routers.batch.is_block_page", return_value=False)
         mocker.patch(
             "processing.routers.batch.parse_cars_detail_page_html_v1",
             return_value=(
@@ -210,7 +182,6 @@ class TestProcessDetailPage:
 
     def test_unlisted_calls_write_detail_unlisted(self, mocker):
         mocker.patch("processing.routers.batch._read_artifact_html", return_value="<html/>")
-        mocker.patch("processing.routers.batch.is_block_page", return_value=False)
         mocker.patch(
             "processing.routers.batch.parse_cars_detail_page_html_v1",
             return_value=(
@@ -233,7 +204,6 @@ class TestProcessDetailPage:
 
     def test_write_failure_returns_retry(self, mocker):
         mocker.patch("processing.routers.batch._read_artifact_html", return_value="<html/>")
-        mocker.patch("processing.routers.batch.is_block_page", return_value=False)
         mocker.patch(
             "processing.routers.batch.parse_cars_detail_page_html_v1",
             return_value=(
@@ -255,7 +225,6 @@ class TestProcessDetailPage:
     def test_listing_id_resolved_from_artifact_when_missing_from_parse(self, mocker):
         """When parser returns no listing_id, falls back to artifact.listing_id."""
         mocker.patch("processing.routers.batch._read_artifact_html", return_value="<html/>")
-        mocker.patch("processing.routers.batch.is_block_page", return_value=False)
         mocker.patch(
             "processing.routers.batch.parse_cars_detail_page_html_v1",
             return_value=({"listing_id": None, "listing_state": "active"}, [], {}),

@@ -9,9 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from processing.writers.detail_writer import (
-    is_block_page,
     write_detail_active,
-    write_detail_blocked,
     write_detail_unlisted,
 )
 
@@ -50,23 +48,6 @@ def mock_search_configs(mocker):
         return_value={("honda", "accord"), ("toyota", "camry")},
     )
 
-
-# ---------------------------------------------------------------------------
-# is_block_page
-# ---------------------------------------------------------------------------
-
-class TestIsBlockPage:
-    def test_short_html_with_marker_detected(self):
-        html = "<html><body>Access Denied</body></html>"
-        assert is_block_page(html) is True
-
-    def test_normal_page_not_blocked(self):
-        html = "<html><body>" + ("x" * 10000) + "</body></html>"
-        assert is_block_page(html) is False
-
-    def test_short_page_without_marker_not_blocked(self):
-        html = "<html><body>Hello</body></html>"
-        assert is_block_page(html) is False
 
 
 # ---------------------------------------------------------------------------
@@ -245,16 +226,3 @@ class TestWriteDetailUnlisted:
         assert silver_rows[0]["price"] is None
         assert silver_rows[0]["listing_state"] == "unlisted"
 
-
-# ---------------------------------------------------------------------------
-# Blocked path
-# ---------------------------------------------------------------------------
-
-class TestWriteDetailBlocked:
-    def test_blocked_upserts_cooldown(self, mock_cursor):
-        mock_cursor.fetchone.return_value = (2,)  # num_of_attempts after upsert
-        result = write_detail_blocked(
-            artifact_id=20, listing_id="aaa", run_id="run20",
-        )
-        assert result["blocked"] is True
-        assert result["num_attempts"] == 2

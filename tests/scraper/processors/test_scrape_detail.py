@@ -76,6 +76,12 @@ class TestScrapeDetailFetch:
     def test_non_200_sets_error(self, mock_cf_session, mocker):
         mocker.patch("os.makedirs")
         mocker.patch("builtins.open", mock_open())
+        mock_conn = MagicMock()
+        mock_conn.cursor.return_value.__enter__ = MagicMock(
+            return_value=MagicMock(fetchone=MagicMock(return_value=(1,)))
+        )
+        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+        mocker.patch("shared.db.get_conn", return_value=mock_conn)
         mock_session, mock_resp = mock_cf_session
         mock_resp.status_code = 403
         mock_resp.content = b"<html>blocked</html>"
@@ -325,6 +331,12 @@ class TestScrapeDetailBatch:
     def test_403_increments_adaptive_delay(self, mock_cf_session, mocker):
         mocker.patch("os.makedirs")
         mocker.patch("builtins.open", mock_open())
+        mock_conn = MagicMock()
+        mock_conn.cursor.return_value.__enter__ = MagicMock(
+            return_value=MagicMock(fetchone=MagicMock(return_value=(1,)))
+        )
+        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+        mocker.patch("shared.db.get_conn", return_value=mock_conn)
         mock_session, mock_resp = mock_cf_session
         mock_resp.status_code = 403
         mock_resp.content = b"<html>blocked</html>"
@@ -338,6 +350,12 @@ class TestScrapeDetailBatch:
     def test_403_invalidates_credentials(self, mock_cf_session, mocker):
         mocker.patch("os.makedirs")
         mocker.patch("builtins.open", mock_open())
+        mock_conn = MagicMock()
+        mock_conn.cursor.return_value.__enter__ = MagicMock(
+            return_value=MagicMock(fetchone=MagicMock(return_value=(1,)))
+        )
+        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+        mocker.patch("shared.db.get_conn", return_value=mock_conn)
         mock_session, mock_resp = mock_cf_session
         mock_resp.status_code = 403
         mock_resp.content = b"blocked"

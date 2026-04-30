@@ -1,5 +1,5 @@
 """
-Detail page write path — handles active, unlisted, and 403 block page cases.
+Detail page write path — handles active and unlisted cases.
 
 Active path:
   1. Batch VIN lookup for primary + carousel listing_ids
@@ -17,11 +17,7 @@ Unlisted path:
   3. Clear blocked_cooldown
   4. Release detail_scrape_claims + event
 
-403 path:
-  1. Upsert blocked_cooldown (increment attempts)
-  2. Insert blocked_cooldown_event
-  3. Release detail_scrape_claims
-  4. Mark artifact 'skip'
+403 path: handled at scrape time in scraper/processors/scrape_detail.py.
 """
 import logging
 import re
@@ -34,15 +30,12 @@ from processing.queries import (
     CLEAR_BLOCKED_COOLDOWN,
     DELETE_PRICE_OBSERVATION,
     DELETE_PRICE_OBSERVATION_BY_VIN,
-    GET_BLOCKED_COOLDOWN_ATTEMPTS,
     GET_TRACKED_MODELS,
-    INSERT_BLOCKED_COOLDOWN_EVENT,
     INSERT_DETAIL_CLAIM_EVENT,
     INSERT_PRICE_OBSERVATION_EVENT,
     INSERT_VIN_TO_LISTING_EVENT,
     LOOKUP_VIN_COLLISION,
     RELEASE_DETAIL_CLAIMS,
-    UPSERT_BLOCKED_COOLDOWN,
     UPSERT_PRICE_OBSERVATION,
     UPSERT_VIN_TO_LISTING,
 )
@@ -50,24 +43,6 @@ from processing.writers.silver_writer import write_silver_observations_postgres
 from shared.db import db_cursor
 
 logger = logging.getLogger(__name__)
-
-# 403 block page markers
-_BLOCK_MARKERS = (
-    "Access Denied",
-    "Request unsuccessful",
-    "Incapsula",
-    "blocked",
-)
-
-
-def is_block_page(html: str) -> bool:
-    """Detect if the HTML is a 403/block page rather than a real detail page."""
-    if len(html) < 5000:
-        for marker in _BLOCK_MARKERS:
-            if marker in html:
-                return True
-    return False
-
 
 # ---------------------------------------------------------------------------
 # Carousel search_config filtering
@@ -442,29 +417,3 @@ def write_detail_unlisted(
     return {"deleted": True, "vin": vin, "silver_written": silver_written}
 
 
-def write_detail_blocked(
-    artifact_id: int,
-    listing_id: str,
-    run_id: Optional[str],
-) -> Dict[str, Any]:
-    """Detail write path for 403 block pages."""
-    with db_cursor(error_context=f"detail_blocked: writes artifact_id={artifact_id}") as cur:
-        cur.execute(UPSERT_BLOCKED_COOLDOWN, {"listing_id": listing_id})
-        cur.execute(GET_BLOCKED_COOLDOWN_ATTEMPTS, {"listing_id": listing_id})
-        row = cur.fetchone()
-        num_attempts = row[0] if row else 1
-
-        cur.execute(INSERT_BLOCKED_COOLDOWN_EVENT, {
-            "listing_id": listing_id,
-            "event_type": "blocked" if num_attempts == 1 else "incremented",
-            "num_of_attempts": num_attempts,
-        })
-
-        cur.execute(RELEASE_DETAIL_CLAIMS, {"listing_id": listing_id})
-        cur.execute(INSERT_DETAIL_CLAIM_EVENT, {
-            "listing_id": listing_id,
-            "run_id": run_id,
-            "status": "processed",
-        })
-
-    return {"blocked": True, "num_attempts": num_attempts}
