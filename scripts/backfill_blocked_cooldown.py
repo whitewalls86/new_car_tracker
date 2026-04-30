@@ -190,7 +190,7 @@ def get_successfully_scraped(agg: dict[str, dict]) -> set[str]:
     try:
         rows = con.execute(f"""
             WITH last_403 AS (
-                SELECT column0 AS listing_id, column1 AS last_403_at
+                SELECT col0 AS listing_id, col1 AS last_403_at
                 FROM (VALUES {values_rows}) t
             )
             SELECT DISTINCT c.listing_id::text
