@@ -82,6 +82,7 @@ def get_gap_window() -> tuple[datetime | None, datetime | None]:
                 MAX(CASE WHEN event_at < '2026-04-30' THEN event_at END) AS gap_start,
                 MIN(CASE WHEN event_at > '2026-04-29' THEN event_at END) AS gap_end
             FROM read_parquet('{EVENTS_PREFIX}/**/*.parquet')
+            WHERE event_type IN ('blocked', 'incremented')
         """).fetchone()
         if row:
             gap_start, gap_end = row[0], row[1]
