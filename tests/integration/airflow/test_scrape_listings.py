@@ -12,9 +12,7 @@ verified that the DAG was constructing the same format when calling the API.
 """
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, call, patch
-
-import pytest
+from unittest.mock import MagicMock, patch
 
 # Ensure airflow/dags/ is importable so the DAG module loads cleanly.
 DAGS_DIR = Path(__file__).parents[3] / "airflow" / "dags"
@@ -22,7 +20,6 @@ if str(DAGS_DIR) not in sys.path:
     sys.path.insert(0, str(DAGS_DIR))
 
 from scrape_listings import _run_scrapes  # noqa: E402
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -118,8 +115,8 @@ class TestRunScrapesPayloadContract:
             body = c.kwargs.get("json") or (c.args[1] if len(c.args) > 1 else None)
             assert body is not None, "No JSON body sent to /scrape_results"
             assert "params" in body, (
-                f"JSON body missing 'params' key — got top-level keys: {list(body.keys())}. "
-                "The DAG must send {{\"params\": config[\"params\"]}} not config[\"params\"] directly."
+                f"JSON body missing 'params' key — got: {list(body.keys())}. "
+                "DAG must send {\"params\": config[\"params\"]}, not the flat dict."
             )
             assert "makes" in body["params"], "body['params'] missing 'makes'"
             assert "models" in body["params"], "body['params'] missing 'models'"
@@ -197,7 +194,7 @@ class TestRunScrapesPayloadContract:
              patch("scrape_listings.requests.get", return_value=poll_resp), \
              patch("scrape_listings.time.sleep"):
 
-            result = _run_scrapes(**context)
+            _run_scrapes(**context)
 
         assert call_count == 2, f"Expected 2 scrape_results POSTs, got {call_count}"
 
