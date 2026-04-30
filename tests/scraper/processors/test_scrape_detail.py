@@ -525,3 +525,98 @@ class TestScrapeDetailFetchMinioIntegration:
         scrape_detail_fetch(run_id=RUN_ID, payload={"listing_id": LISTING_ID})
 
         assert mock_open_fn.called
+
+
+# ---------------------------------------------------------------------------
+# scrape_detail_fetch — blocked_cooldown writes on 403
+# ---------------------------------------------------------------------------
+
+class TestScrapeDetailFetch403BlockedCooldown:
+    """Verify that blocked_cooldown upsert + event insert fire on 403 responses."""
+
+    def _setup(self, mocker, fetchone_return=(1,)):
+        mocker.patch("os.makedirs")
+        mocker.patch("builtins.open", mock_open())
+        mocker.patch(
+            "scraper.processors.scrape_detail.get_cf_credentials",
+            return_value=({"cookies": {}, "user_agent": "ua"}, None, None),
+        )
+        mock_session = MagicMock()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 403
+        mock_resp.content = b"<html>blocked</html>"
+        mock_resp.url = f"https://www.cars.com/vehicledetail/{LISTING_ID}/"
+        mock_resp.headers = {"content-type": "text/html"}
+        mock_session.get.return_value = mock_resp
+        mocker.patch(
+            "scraper.processors.scrape_detail.make_cf_session",
+            return_value=mock_session,
+        )
+
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = fetchone_return
+        mock_conn = MagicMock()
+        mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cursor)
+        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+        mocker.patch("shared.db.get_conn", return_value=mock_conn)
+        return mock_cursor
+
+    def _executed_sqls(self, mock_cursor):
+        return [call[0][0] for call in mock_cursor.execute.call_args_list]
+
+    def test_upsert_blocked_cooldown_called(self, mocker):
+        from scraper.queries import UPSERT_BLOCKED_COOLDOWN
+        mock_cursor = self._setup(mocker)
+        scrape_detail_fetch(run_id=RUN_ID, payload={"listing_id": LISTING_ID})
+        assert UPSERT_BLOCKED_COOLDOWN in self._executed_sqls(mock_cursor)
+
+    def test_insert_blocked_cooldown_event_called(self, mocker):
+        from scraper.queries import INSERT_BLOCKED_COOLDOWN_EVENT
+        mock_cursor = self._setup(mocker)
+        scrape_detail_fetch(run_id=RUN_ID, payload={"listing_id": LISTING_ID})
+        assert INSERT_BLOCKED_COOLDOWN_EVENT in self._executed_sqls(mock_cursor)
+
+    def test_first_403_event_type_is_blocked(self, mocker):
+        from scraper.queries import INSERT_BLOCKED_COOLDOWN_EVENT
+        mock_cursor = self._setup(mocker, fetchone_return=(1,))
+        scrape_detail_fetch(run_id=RUN_ID, payload={"listing_id": LISTING_ID})
+
+        event_call = next(
+            c for c in mock_cursor.execute.call_args_list
+            if c[0][0] == INSERT_BLOCKED_COOLDOWN_EVENT
+        )
+        assert event_call[0][1]["event_type"] == "blocked"
+
+    def test_subsequent_403_event_type_is_incremented(self, mocker):
+        from scraper.queries import INSERT_BLOCKED_COOLDOWN_EVENT
+        mock_cursor = self._setup(mocker, fetchone_return=(2,))
+        scrape_detail_fetch(run_id=RUN_ID, payload={"listing_id": LISTING_ID})
+
+        event_call = next(
+            c for c in mock_cursor.execute.call_args_list
+            if c[0][0] == INSERT_BLOCKED_COOLDOWN_EVENT
+        )
+        assert event_call[0][1]["event_type"] == "incremented"
+
+    def test_blocked_cooldown_db_failure_is_nonfatal(self, mocker):
+        mocker.patch("os.makedirs")
+        mocker.patch("builtins.open", mock_open())
+        mocker.patch(
+            "scraper.processors.scrape_detail.get_cf_credentials",
+            return_value=({"cookies": {}, "user_agent": "ua"}, None, None),
+        )
+        mock_session = MagicMock()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 403
+        mock_resp.content = b"<html>blocked</html>"
+        mock_resp.url = f"https://www.cars.com/vehicledetail/{LISTING_ID}/"
+        mock_resp.headers = {"content-type": "text/html"}
+        mock_session.get.return_value = mock_resp
+        mocker.patch(
+            "scraper.processors.scrape_detail.make_cf_session",
+            return_value=mock_session,
+        )
+        mocker.patch("shared.db.get_conn", side_effect=Exception("db down"))
+
+        result = scrape_detail_fetch(run_id=RUN_ID, payload={"listing_id": LISTING_ID})
+        assert result["artifacts"][0]["http_status"] == 403

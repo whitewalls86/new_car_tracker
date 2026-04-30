@@ -2,7 +2,7 @@
 Plan 97: artifacts_queue row cleanup.
 
 Deletes artifacts_queue rows whose status is 'complete' or 'skip'.
-'retry' rows are intentionally left in place until resolved.
+'retry' rows older than 1 hour are also deleted (considered permanently stuck).
 
 This replaces the local-file archive step for new-style artifacts that were
 written directly to MinIO by the scraper — the HTML is already in MinIO, so
@@ -34,7 +34,10 @@ def cleanup_queue(artifact_ids: List[int]) -> List[Dict[str, Any]]:
                 """
                 DELETE FROM ops.artifacts_queue
                 WHERE  artifact_id = ANY(%s)
-                  AND  status IN ('complete', 'skip')
+                  AND (
+                      status IN ('complete', 'skip')
+                      OR (status = 'retry' AND created_at < now() - interval '1 hour')
+                  )
                 RETURNING artifact_id
                 """,
                 (artifact_ids,),
