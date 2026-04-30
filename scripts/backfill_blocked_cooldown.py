@@ -52,13 +52,13 @@ CLAIM_EVENTS_PREFIX = f"s3://{BUCKET}/ops/detail_scrape_claim_events"
 
 def _duckdb_con() -> duckdb.DuckDBPyConnection:
     con = duckdb.connect()
-    con.execute("INSTALL httpfs")
-    con.execute("LOAD httpfs")
-    con.execute(f"SET s3_endpoint='{MINIO_ENDPOINT}'")
-    con.execute(f"SET s3_access_key_id='{MINIO_USER}'")
-    con.execute(f"SET s3_secret_access_key='{MINIO_PASSWORD}'")
-    con.execute("SET s3_use_ssl=false")
-    con.execute("SET s3_url_style='path'")
+    con.execute(f"""
+        SET s3_endpoint='{MINIO_ENDPOINT}';
+        SET s3_access_key_id='{MINIO_USER}';
+        SET s3_secret_access_key='{MINIO_PASSWORD}';
+        SET s3_use_ssl=false;
+        SET s3_url_style='path';
+    """)
     return con
 
 
