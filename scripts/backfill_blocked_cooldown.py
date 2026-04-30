@@ -106,14 +106,16 @@ def get_skip_events(
     """
     Return (fetched_at, listing_id) tuples for detail_page skip rows
     within the gap window, sorted chronologically.
+    Gap filtering is on event_at (when processing set the skip status),
+    not fetched_at (when the HTML was originally scraped).
     """
     con = _duckdb_con()
 
     filters = ["artifact_type = 'detail_page'", "status = 'skip'", "listing_id IS NOT NULL"]
     if gap_start:
-        filters.append(f"fetched_at > '{gap_start.isoformat()}'")
+        filters.append(f"event_at > '{gap_start.isoformat()}'")
     if gap_end:
-        filters.append(f"fetched_at < '{gap_end.isoformat()}'")
+        filters.append(f"event_at < '{gap_end.isoformat()}'")
 
     where = " AND ".join(filters)
 
