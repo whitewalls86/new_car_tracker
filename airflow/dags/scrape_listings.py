@@ -63,7 +63,7 @@ def _run_scrapes(**context):
                     "search_key": config["search_key"],
                     "scope": scope,
                 },
-                json=config["params"],
+                json={"params": config["params"]},
                 timeout=30,
             )
             resp.raise_for_status()
