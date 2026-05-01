@@ -45,7 +45,7 @@ Scraper ──► MinIO (raw HTML)
 | **postgres** | PostgreSQL 16 — operational tables (queue, claims, observations, auth). Airflow metadata lives in its own `airflow` schema. |
 | **minio** | S3-compatible object store for raw HTML artifacts and Parquet silver observations. Queryable directly by DuckDB via httpfs. |
 | **caddy** | Reverse proxy — TLS termination, OAuth2 Google auth via oauth2-proxy, and DB-backed role enforcement via `/auth/check`. |
-| **grafana** | Operational dashboards sourced from Prometheus — Airflow, Postgres, MinIO, and node metrics. |
+| **grafana** | Observability stack — Prometheus metrics (Airflow, Postgres, MinIO, node, service latency), Loki log aggregation via Promtail, and Telegram alerting with 9 provisioned alert rules. |
 | **flaresolverr** | Solves Cloudflare JS challenges and provides `cf_clearance` cookies to the scraper. |
 
 ---

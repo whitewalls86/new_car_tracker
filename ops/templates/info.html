@@ -232,6 +232,25 @@
         }
         .highlight-card h4 { margin: 0 0 0.4rem; font-size: 0.95rem; }
         .highlight-card p { font-size: 0.85rem; color: var(--pico-muted-color); margin: 0; }
+        .highlight-detail-panel {
+            grid-column: 1 / -1;
+            border: 1px solid var(--pico-primary);
+            border-radius: 8px;
+            padding: 1.1rem 1.4rem;
+            background: var(--pico-card-background-color);
+            font-size: 0.85rem;
+            color: var(--pico-muted-color);
+            line-height: 1.6;
+        }
+        .highlight-detail-panel h5 {
+            font-size: 0.85rem;
+            font-weight: 700;
+            color: var(--pico-color);
+            margin: 1rem 0 0.3rem;
+        }
+        .highlight-detail-panel h5:first-child { margin-top: 0; }
+        .highlight-detail-panel p { margin: 0 0 0.6rem; }
+        .highlight-detail-panel p:last-child { margin-bottom: 0; }
 
         /* ── Expandable highlight card ── */
         .highlight-card.expandable { cursor: pointer; user-select: none; transition: border-color 0.15s, box-shadow 0.15s; }
@@ -301,8 +320,8 @@
             <p>
                 CarTracker started as a personal project — I was car shopping and wanted a data-driven
                 way to spot a good deal before it disappeared. What began as a simple scraper grew into
-                a full production pipeline: continuous collection across 50+ make/model pairs, a lakehouse
-                architecture across Postgres, MinIO, and DuckDB, and a deal-score model that turns 50M+
+                a full production pipeline: continuous collection across 13+ make/model pairs, a lakehouse
+                architecture across Postgres, MinIO, and DuckDB, and a deal-score model that turns 10M+
                 raw observations into a single number. It's as much a learning project as a portfolio
                 piece — every architectural decision in here was made, reconsidered, and sometimes replaced
                 as the system grew into something that actually had to work.
@@ -611,13 +630,13 @@
                             <span class="service-badge">Observability</span>
                             <span class="why-cta">Why?</span>
                         </div>
-                        <p>The answer to "how do we know if something's wrong?" — a single place to see the health of every service instead of hunting through container logs.</p>
+                        <p>The answer to "how do we know if something's wrong?" — metrics, logs, and alerting in one place so pipeline failures surface as notifications, not as stale data someone eventually notices.</p>
                         <div class="card-detail" hidden>
                             <ul>
                                 <li>A pipeline this distributed fails silently without observability — a scraper block, a processing backlog, or a staging flush that stopped flushing won't throw an error you'll notice until the data goes stale</li>
-                                <li>Prometheus scrapes metrics from every layer: Airflow DAG success rates, Postgres connection counts and query latency, MinIO throughput, and host-level resources — all in one place</li>
-                                <li>Dashboards surface the questions that matter operationally: is the queue draining? Is the scraper getting blocked more than usual? Is the mart layer falling behind?</li>
-                                <li>Observability was added as a first-class concern, not an afterthought — Prometheus scrape targets were provisioned via a dedicated Flyway migration alongside the services themselves</li>
+                                <li>Prometheus scrapes metrics from every layer: Airflow DAG success rates, Postgres connection counts, MinIO throughput, host-level resources, and custom DuckDB gauges that expose mart-layer data health directly as Prometheus metrics</li>
+                                <li>Loki aggregates structured logs from all five Python services via Promtail — searchable by level and logger across the whole stack from a single query</li>
+                                <li>Nine alert rules provisioned as code fire to Telegram: scrape volume drops, VIN extraction yield, price staleness, 403 backlog growth, service downtime, and log error spikes — the questions that matter operationally answered without anyone having to check</li>
                             </ul>
                         </div>
                     </div>
@@ -775,28 +794,39 @@
                     </p>
                 </div>
                 <div class="highlight-card">
-                    <h4>50M+ observations, one server</h4>
+                    <h4>10M+ observations, one server</h4>
                     <p>
                         The entire stack runs on a single VPS — one Postgres instance, one MinIO node,
                         one Airflow scheduler, eleven Docker containers. That's a deliberate choice, not
                         a limitation: the architecture is what keeps it manageable at this scale. Columnar
-                        Parquet storage means DuckDB doesn't break a sweat on 50M rows. Staging tables
+                        Parquet storage means DuckDB doesn't break a sweat on 10M rows. Staging tables
                         mean Postgres never holds more than it needs to. Thin DAGs mean Airflow isn't
                         doing real work, just coordinating. The bottleneck at this scale isn't the
                         hardware — it's whether the data model is right. This one is.
                     </p>
                 </div>
-            </div>
-            <div class="highlight-detail-panel" id="highlight-detail-panel" hidden>
-                <div id="highlight-detail-content"></div>
+                <div class="highlight-detail-panel" id="highlight-detail-panel" hidden>
+                    <div id="highlight-detail-content"></div>
+                </div>
             </div>
         </section>
 
         <script>
             (function () {
+                var grid = document.querySelector('.highlights-grid');
                 var panel = document.getElementById('highlight-detail-panel');
                 var content = document.getElementById('highlight-detail-content');
                 var activeCard = null;
+
+                function lastCardInRow(card) {
+                    var cards = Array.from(grid.querySelectorAll('.highlight-card'));
+                    var rowTop = card.offsetTop;
+                    var last = card;
+                    cards.forEach(function (c) {
+                        if (Math.abs(c.offsetTop - rowTop) < 5) last = c;
+                    });
+                    return last;
+                }
 
                 ['highlight-db', 'highlight-n8n'].forEach(function (id) {
                     var card = document.getElementById(id);
@@ -809,6 +839,7 @@
                             if (activeCard) activeCard.classList.remove('active');
                             card.classList.add('active');
                             content.innerHTML = card.querySelector('.card-detail').innerHTML;
+                            lastCardInRow(card).after(panel);
                             panel.hidden = false;
                             activeCard = card;
                         }
