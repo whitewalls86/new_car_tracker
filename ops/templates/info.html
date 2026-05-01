@@ -92,12 +92,12 @@
         }
         .pipeline-stage + .pipeline-stage {
             border-left: none;
-            border-radius: 0 8px 8px 0;
+            border-radius: 0;
         }
         .pipeline-stage:first-child { border-radius: 8px 0 0 8px; }
+        .pipeline-stage:last-child  { border-radius: 0 8px 8px 0; }
         .pipeline-stage:only-child  { border-radius: 8px; }
         .pipeline-stage:not(:last-child) {
-            border-radius: 8px 0 0 8px;
             position: relative;
         }
         .pipeline-stage:not(:last-child)::after {
@@ -136,6 +136,14 @@
             display: flex;
             align-items: flex-start;
             gap: 0.85rem;
+            cursor: pointer;
+            transition: border-color 0.15s, box-shadow 0.15s;
+            user-select: none;
+        }
+        .service-card:hover { border-color: var(--pico-primary-hover); }
+        .service-card.active {
+            border-color: var(--pico-primary);
+            box-shadow: 0 0 0 1px var(--pico-primary);
         }
         .service-logo {
             width: 30px;
@@ -160,16 +168,8 @@
             line-height: 1.1;
         }
 
-        /* ── Expandable service cards ── */
+        /* ── Service card content ── */
         .service-info { width: 100%; min-width: 0; }
-        .service-info details { width: 100%; }
-        .service-info details summary {
-            list-style: none;
-            cursor: pointer;
-            -webkit-user-select: none;
-            user-select: none;
-        }
-        .service-info details summary::-webkit-details-marker { display: none; }
         .service-info .title-row {
             display: flex;
             align-items: center;
@@ -178,6 +178,11 @@
             margin-bottom: 0.15rem;
         }
         .service-info strong { font-size: 0.95rem; }
+        .service-info p {
+            font-size: 0.82rem;
+            color: var(--pico-muted-color);
+            margin: 0;
+        }
         .service-badge {
             font-size: 0.72rem;
             font-weight: 600;
@@ -187,31 +192,31 @@
             padding: 0.2rem 0.5rem;
             white-space: nowrap;
         }
-        .expand-indicator {
+        .why-cta {
             margin-left: auto;
-            font-size: 0.75rem;
-            color: var(--pico-muted-color);
+            font-size: 0.72rem;
+            color: var(--pico-primary);
+            font-weight: 600;
             flex-shrink: 0;
         }
-        .expand-indicator::before { content: "▸"; }
-        details[open] .expand-indicator::before { content: "▾"; }
-        .service-info details summary p {
-            font-size: 0.82rem;
-            color: var(--pico-muted-color);
-            margin: 0;
+        .service-card:not(.active) .why-cta::after { content: " ▸"; }
+        .service-card.active .why-cta::after { content: " ▾"; }
+
+        /* ── Service detail panel ── */
+        .service-detail-panel {
+            grid-column: 1 / -1;
+            border: 1px solid var(--pico-primary);
+            border-radius: 8px;
+            padding: 1.1rem 1.4rem;
+            background: var(--pico-card-background-color);
         }
-        .expanded-detail {
-            margin-top: 0.65rem;
-            padding-top: 0.65rem;
-            border-top: 1px solid var(--pico-muted-border-color);
-        }
-        .expanded-detail ul {
+        .service-detail-panel ul {
             margin: 0;
             padding-left: 1.2rem;
-            font-size: 0.82rem;
+            font-size: 0.85rem;
             color: var(--pico-muted-color);
         }
-        .expanded-detail li { margin-bottom: 0.25rem; }
+        .service-detail-panel li { margin-bottom: 0.35rem; }
 
         /* ── Technical highlights ── */
         .highlights-grid {
@@ -259,12 +264,13 @@
         <section class="hero">
             <h1>A production data pipeline for tracking car prices</h1>
             <p>
-                CarTracker scrapes Cars.com every 15 minutes across
-                {{ stats.make_model_pairs if stats and 'make_model_pairs' in stats else '13' }}
-                make/model pairs, running raw HTML through a bronze → silver → mart pipeline
-                across Postgres, MinIO, and DuckDB. Built to show how a real data pipeline
-                handles the messy middle — anti-detection, idempotent writes, event sourcing,
-                schema migrations, and observability — not just the happy path.
+                CarTracker started as a personal project — I was car shopping and wanted a data-driven
+                way to spot a good deal before it disappeared. What began as a simple scraper grew into
+                a full production pipeline: continuous collection across 50+ make/model pairs, a lakehouse
+                architecture across Postgres, MinIO, and DuckDB, and a deal-score model that turns 50M+
+                raw observations into a single number. It's as much a learning project as a portfolio
+                piece — every architectural decision in here was made, reconsidered, and sometimes replaced
+                as the system grew into something that actually had to work.
             </p>
             <div class="hero-cta">
                 <a href="/request-access" role="button">Request Access</a>
@@ -344,306 +350,344 @@
         <!-- ── 4. Architecture at a glance ── -->
         <section>
             <h2>Architecture at a glance</h2>
-            <p style="font-size:0.82rem; color:var(--pico-muted-color); margin-bottom:0.85rem;">Click any card to expand.</p>
-            <div class="services-grid">
+            <p style="font-size:0.82rem; color:var(--pico-muted-color); margin-bottom:0.85rem;">Click any card to learn why it was built that way.</p>
+            <div class="services-grid" id="services-grid">
 
-                <div class="service-card">
+                <div class="service-card" data-card="scraper">
                     <img class="service-logo" src="https://cdn.simpleicons.org/fastapi/009688" alt="FastAPI" onerror="this.style.display='none'">
                     <div class="service-info">
-                        <details>
-                            <summary>
-                                <div class="title-row">
-                                    <strong>Scraper</strong>
-                                    <span class="service-badge">FastAPI</span>
-                                    <span class="expand-indicator"></span>
-                                </div>
-                                <p>Fetches SRP and detail pages with Chrome TLS fingerprinting; writes compressed HTML to MinIO.</p>
-                            </summary>
-                            <div class="expanded-detail">
-                                <ul>
-                                    <li>Uses <code>curl_cffi</code> to mimic a real Chrome TLS handshake, bypassing basic bot detection</li>
-                                    <li>Automatic fallback to FlareSolverr for Cloudflare JS challenge pages</li>
-                                    <li>HTML artifacts GZIP-compressed before writing to MinIO with structured key paths</li>
-                                    <li>Process-wide credential cache with 25-min TTL; auto re-bootstraps on 403</li>
-                                    <li>Airflow triggers scrape rotation every 15 minutes across all tracked make/model pairs</li>
-                                </ul>
-                            </div>
-                        </details>
+                        <div class="title-row">
+                            <strong>Scraper</strong>
+                            <span class="service-badge">FastAPI</span>
+                            <span class="why-cta">Why?</span>
+                        </div>
+                        <p>Continuously surveys Cars.com across 40+ make/model pairs — capturing market-level search results every 15 minutes and drilling into individual listings for full vehicle detail.</p>
+                        <div class="card-detail" hidden>
+                            <ul>
+                                <li>Two-pass collection strategy: broad market sweeps surface new listings and price changes; targeted detail scrapes enrich each listing with full specs, trim, dealer, and history</li>
+                                <li>Raw HTML artifacts stored to MinIO on every pass — the source of truth is always replayable, not dependent on what the parser could extract at the time</li>
+                                <li>Anti-detection layer (Chrome TLS fingerprinting + Cloudflare bypass) keeps the collection running continuously without manual intervention</li>
+                                <li>Adaptive backoff system tracks block events per listing and backs off exponentially — scraper recovers on its own without operator involvement</li>
+                                <li>Process-wide session cache avoids redundant auth handshakes across concurrent scrape workers</li>
+                            </ul>
+                        </div>
                     </div>
                 </div>
 
-                <div class="service-card">
+                <div class="service-card" data-card="processing">
                     <img class="service-logo" src="https://cdn.simpleicons.org/fastapi/009688" alt="FastAPI" onerror="this.style.display='none'">
                     <div class="service-info">
-                        <details>
-                            <summary>
-                                <div class="title-row">
-                                    <strong>Processing</strong>
-                                    <span class="service-badge">FastAPI</span>
-                                    <span class="expand-indicator"></span>
-                                </div>
-                                <p>Claims artifacts from the queue, parses HTML, and writes price observations via staging event tables.</p>
-                            </summary>
-                            <div class="expanded-detail">
-                                <ul>
-                                    <li>Polls <code>ops.artifacts_queue</code> using atomic <code>FOR UPDATE SKIP LOCKED</code> claims to prevent duplicate processing</li>
-                                    <li>BeautifulSoup extracts listing fields: price, mileage, VIN, dealer, trim, and more</li>
-                                    <li>Writes to <code>staging._events</code> tables first — never directly to HOT tables</li>
-                                    <li>Idempotent by VIN: duplicate SRP hits produce a price observation, not a duplicate vehicle record</li>
-                                </ul>
-                            </div>
-                        </details>
+                        <div class="title-row">
+                            <strong>Processing</strong>
+                            <span class="service-badge">FastAPI</span>
+                            <span class="why-cta">Why?</span>
+                        </div>
+                        <p>Transforms raw HTML artifacts into structured price observations — separating the data the pipeline needs right now from the data that feeds long-term analytics.</p>
+                        <div class="card-detail" hidden>
+                            <ul>
+                                <li>Every artifact is parsed from the original stored HTML — if the parser improves, historical data can be reprocessed from source without re-scraping</li>
+                                <li>HOT tables (<code>ops.*</code>) hold current state for pipeline operations — fast, minimal, always up to date</li>
+                                <li>Staging event tables buffer every observation until the archiver flushes them to Parquet — the silver layer is built from this event stream, not from HOT table snapshots</li>
+                                <li>Idempotent by VIN: the same listing can be processed multiple times without producing duplicate records, so retries and replays are safe</li>
+                            </ul>
+                        </div>
                     </div>
                 </div>
 
-                <div class="service-card">
+                <div class="service-card" data-card="ops">
                     <img class="service-logo" src="https://cdn.simpleicons.org/fastapi/009688" alt="FastAPI" onerror="this.style.display='none'">
                     <div class="service-info">
-                        <details>
-                            <summary>
-                                <div class="title-row">
-                                    <strong>Ops</strong>
-                                    <span class="service-badge">FastAPI</span>
-                                    <span class="expand-indicator"></span>
-                                </div>
-                                <p>Admin UI, deploy coordination, claim management, and auth forward-proxy endpoint.</p>
-                            </summary>
-                            <div class="expanded-detail">
-                                <ul>
-                                    <li>Admin routes for monitoring queue depth, claim state, and per-service health</li>
-                                    <li><code>forward_auth</code> endpoint: Caddy calls this for every protected route to validate Google OAuth tokens and DB role</li>
-                                    <li>DB-backed user access request flow with role assignment</li>
-                                    <li>Deploy coordination endpoint triggers zero-downtime container restarts</li>
-                                </ul>
-                            </div>
-                        </details>
+                        <div class="title-row">
+                            <strong>Ops</strong>
+                            <span class="service-badge">FastAPI</span>
+                            <span class="why-cta">Why?</span>
+                        </div>
+                        <p>The control plane for the stack — handles auth, configuration, and deploy coordination so every other service stays stateless and focused on its own job.</p>
+                        <div class="card-detail" hidden>
+                            <ul>
+                                <li>Caddy calls <code>GET /auth/check</code> on every protected request — Ops validates the Google OAuth token and DB role so no other service needs to know about auth at all</li>
+                                <li>Search configs, tracked make/model pairs, and user roles all live here — one place to change pipeline behavior without touching service code</li>
+                                <li>Deploy intent state machine signals all services to drain before a container restart — zero-downtime deploys without an external orchestrator</li>
+                                <li>Claim lifecycle management prevents duplicate scrape work across concurrent workers — Ops owns the coordination, scraper and processing just ask permission</li>
+                            </ul>
+                        </div>
                     </div>
                 </div>
 
-                <div class="service-card">
+                <div class="service-card" data-card="archiver">
                     <img class="service-logo" src="https://cdn.simpleicons.org/fastapi/009688" alt="FastAPI" onerror="this.style.display='none'">
                     <div class="service-info">
-                        <details>
-                            <summary>
-                                <div class="title-row">
-                                    <strong>Archiver</strong>
-                                    <span class="service-badge">FastAPI</span>
-                                    <span class="expand-indicator"></span>
-                                </div>
-                                <p>Bulk-flushes staging event buffers to MinIO Parquet; sweeps completed queue rows.</p>
-                            </summary>
-                            <div class="expanded-detail">
-                                <ul>
-                                    <li>Triggered by Airflow on a configurable schedule (default: hourly)</li>
-                                    <li>Reads <code>staging._events</code> tables in batches and writes Parquet to MinIO partitioned by <code>source/YYYY-MM-DD</code></li>
-                                    <li>After a successful flush, promotes events to HOT tables and marks queue rows complete</li>
-                                    <li>Separate sweep job removes completed queue entries beyond the retention window</li>
-                                </ul>
-                            </div>
-                        </details>
+                        <div class="title-row">
+                            <strong>Archiver</strong>
+                            <span class="service-badge">FastAPI</span>
+                            <span class="why-cta">Why?</span>
+                        </div>
+                        <p>Bridges the operational and analytical data systems — draining Postgres staging tables into partitioned Parquet on MinIO so each system stays focused on what it does best.</p>
+                        <div class="card-detail" hidden>
+                            <ul>
+                                <li>Postgres stays lean and fast because it only holds what the pipeline needs right now — the Archiver is what makes that possible by moving the permanent record out on a schedule</li>
+                                <li>Staging tables are intentionally short-lived: written to during processing, flushed to Parquet by the Archiver, then truncated — Postgres never becomes the analytics store</li>
+                                <li>Parquet files are hive-partitioned by source and date on MinIO — structured for the analytical queries that DuckDB and dbt will run downstream</li>
+                                <li>Flush and truncate happen in a single transaction — if the write to MinIO fails, nothing is lost and the next run picks up where it left off</li>
+                            </ul>
+                        </div>
                     </div>
                 </div>
 
-                <div class="service-card">
+                <div class="service-card" data-card="dbt">
                     <div style="display:flex;gap:0.35rem;flex-shrink:0;">
                         <img class="service-logo" src="/static_ops/dbt-bit-standalone.png" alt="dbt" onerror="this.style.display='none'">
                         <img class="service-logo" src="https://cdn.simpleicons.org/duckdb/FFF000" alt="DuckDB" onerror="this.style.display='none'">
                     </div>
                     <div class="service-info">
-                        <details>
-                            <summary>
-                                <div class="title-row">
-                                    <strong>dbt Runner</strong>
-                                    <span class="service-badge">dbt + DuckDB</span>
-                                    <span class="expand-indicator"></span>
-                                </div>
-                                <p>Runs dbt transformations against DuckDB — reads Parquet from MinIO directly, no separate warehouse needed.</p>
-                            </summary>
-                            <div class="expanded-detail">
-                                <ul>
-                                    <li>DuckDB reads Parquet directly from MinIO via the <code>httpfs</code> extension — no ETL step needed</li>
-                                    <li>Model layers: staging → silver (cleaned, typed) → mart (deal scores, price windows, rolling averages)</li>
-                                    <li><code>blocked_cooldown</code> model implements exponential backoff logic for 403'd listings in pure SQL — queryable and testable</li>
-                                    <li>Full dbt test suite runs on each pipeline execution via Airflow</li>
-                                </ul>
-                            </div>
-                        </details>
+                        <div class="title-row">
+                            <strong>dbt Runner</strong>
+                            <span class="service-badge">dbt + DuckDB</span>
+                            <span class="why-cta">Why?</span>
+                        </div>
+                        <p>The analytical layer — transforms the raw Parquet event stream into tested, documented data models that answer real questions about the market.</p>
+                        <div class="card-detail" hidden>
+                            <ul>
+                                <li>DuckDB reads Parquet directly from MinIO via the <code>httpfs</code> extension — no managed warehouse needed, the lake <em>is</em> the warehouse</li>
+                                <li>Models are layered by responsibility: staging cleans and types the raw events, intermediate builds reusable assets like price history and national benchmarks, mart tables answer specific questions — deal scores, inventory coverage, scraper health</li>
+                                <li>Deal score model combines five factors (MSRP discount, national price percentile, days on market, price drop history, inventory supply) into a single 0–100 score with tier labels — built in SQL so the logic is transparent and testable</li>
+                                <li>dbt tests run on every pipeline execution — transformation correctness is enforced the same way application correctness is, not left to manual spot-checks</li>
+                                <li>Exponential backoff logic for blocked listings lives entirely in a dbt model — keeping operational concerns queryable and auditable alongside the data they affect</li>
+                            </ul>
+                        </div>
                     </div>
                 </div>
 
-                <div class="service-card">
+                <div class="service-card" data-card="airflow">
                     <img class="service-logo" src="https://cdn.simpleicons.org/apacheairflow/017CEE" alt="Apache Airflow" onerror="this.style.display='none'">
                     <div class="service-info">
-                        <details>
-                            <summary>
-                                <div class="title-row">
-                                    <strong>Airflow</strong>
-                                    <span class="service-badge">Airflow</span>
-                                    <span class="expand-indicator"></span>
-                                </div>
-                                <p>Schedules all DAGs — scrape rotation, artifact processing, staging flush, queue cleanup, and orphan checks.</p>
-                            </summary>
-                            <div class="expanded-detail">
-                                <ul>
-                                    <li>Five active DAGs: SRP scrape rotation, detail scrape, artifact processing, staging flush, and queue cleanup</li>
-                                    <li>Task-level retries and alerting; no shared state between tasks</li>
-                                    <li>DAG changes deploy via git pull — no container restarts required</li>
-                                    <li>Replaced the previous n8n workflow engine, which was decommissioned</li>
-                                </ul>
-                            </div>
-                        </details>
+                        <div class="title-row">
+                            <strong>Airflow</strong>
+                            <span class="service-badge">Airflow</span>
+                            <span class="why-cta">Why?</span>
+                        </div>
+                        <p>Coordinates the full pipeline — scraping, processing, archiving, and analytics — across a dozen independent services that have no direct knowledge of each other.</p>
+                        <div class="card-detail" hidden>
+                            <ul>
+                                <li>Without an orchestration layer, each service would need to know what comes next — Airflow is the only thing that knows the full sequence, so the services themselves stay decoupled</li>
+                                <li>Migrated from n8n: workflow logic in n8n lived in a UI, not in code — it couldn't be unit tested, version controlled, or reviewed like the rest of the codebase</li>
+                                <li>Thin-DAG, fat-service pattern: DAGs contain only scheduling and HTTP calls, all business logic lives in the services — the testable surface area is in Python, not in a workflow config file</li>
+                                <li>Twelve DAGs covering scrape rotation, artifact processing, staging flush, dbt builds, orphan claim expiry, queue cleanup, and deployment coordination</li>
+                                <li>Deploy intent DAG coordinates zero-downtime restarts — Airflow doesn't just run the pipeline, it manages the pipeline's own lifecycle</li>
+                            </ul>
+                        </div>
                     </div>
                 </div>
 
-                <div class="service-card">
+                <div class="service-card" data-card="dashboard">
                     <img class="service-logo" src="https://cdn.simpleicons.org/streamlit/FF4B4B" alt="Streamlit" onerror="this.style.display='none'">
                     <div class="service-info">
-                        <details>
-                            <summary>
-                                <div class="title-row">
-                                    <strong>Dashboard</strong>
-                                    <span class="service-badge">Streamlit</span>
-                                    <span class="expand-indicator"></span>
-                                </div>
-                                <p>Interactive price-history and deal-score views backed by the DuckDB mart layer.</p>
-                            </summary>
-                            <div class="expanded-detail">
-                                <ul>
-                                    <li>Queries DuckDB mart layer directly — sub-second response on 100K+ observations</li>
-                                    <li>Price history charts per listing with deal score overlay and days-on-market trends</li>
-                                    <li>Make/model/trim filtering, price drop alerts, and rolling average comparisons</li>
-                                    <li>Access-gated via Caddy OAuth — same auth layer as the rest of the stack</li>
-                                </ul>
-                            </div>
-                        </details>
+                        <div class="title-row">
+                            <strong>Dashboard</strong>
+                            <span class="service-badge">Streamlit</span>
+                            <span class="why-cta">Why?</span>
+                        </div>
+                        <p>The payoff of the pipeline — fast, recent market intelligence made possible by architectural decisions made at every layer upstream.</p>
+                        <div class="card-detail" hidden>
+                            <ul>
+                                <li>Sub-second query performance on 57M+ observations comes from the layers below: hive-partitioned Parquet, DuckDB's columnar engine, and pre-aggregated mart tables — the dashboard itself does almost no work</li>
+                                <li>Data is recent, not live — the mart layer refreshes hourly, which is the right tradeoff for analytical queries that don't need to be real-time</li>
+                                <li>Surfaces pipeline health alongside market data — scraper block rates, processing lag, and stale listings are visible here, turning operational issues into something you can see rather than hunt for in logs</li>
+                                <li>Access-gated behind the same OAuth + DB role layer as the rest of the stack — the dashboard is a consumer of the architecture, not a special case in it</li>
+                            </ul>
+                        </div>
                     </div>
                 </div>
 
-                <div class="service-card">
+                <div class="service-card" data-card="minio">
                     <img class="service-logo" src="https://cdn.simpleicons.org/minio/C72E49" alt="MinIO" onerror="this.style.display='none'">
                     <div class="service-info">
-                        <details>
-                            <summary>
-                                <div class="title-row">
-                                    <strong>MinIO</strong>
-                                    <span class="service-badge">S3-compatible</span>
-                                    <span class="expand-indicator"></span>
-                                </div>
-                                <p>Object store for raw HTML artifacts and Parquet silver observations; queryable directly by DuckDB.</p>
-                            </summary>
-                            <div class="expanded-detail">
-                                <ul>
-                                    <li>S3-compatible object store running on the same host as Postgres</li>
-                                    <li>Two buckets: <code>raw</code> (GZIP HTML artifacts) and <code>silver</code> (Parquet price observations)</li>
-                                    <li>DuckDB reads <code>silver</code> Parquet directly via <code>httpfs</code> + S3 credentials — no separate data warehouse</li>
-                                    <li>Raw artifacts retained for 30 days; Parquet files retained indefinitely</li>
-                                </ul>
-                            </div>
-                        </details>
+                        <div class="title-row">
+                            <strong>MinIO</strong>
+                            <span class="service-badge">S3-compatible</span>
+                            <span class="why-cta">Why?</span>
+                        </div>
+                        <p>The storage backbone of the lakehouse — keeps the analytical record out of Postgres and in a format purpose-built for the queries that matter.</p>
+                        <div class="card-detail" hidden>
+                            <ul>
+                                <li>Postgres was never meant to hold years of append-only observation history — query performance degrades, storage costs grow, and the operational database starts doing two jobs badly instead of one well</li>
+                                <li>Moving the historical record to Parquet on MinIO lets Postgres stay small and fast for pipeline operations while the analytical layer scales independently</li>
+                                <li>Parquet's columnar format is why DuckDB can query 57M+ observations in under a second — row-oriented databases like Postgres simply can't match that for this access pattern</li>
+                                <li>S3-compatible by design: MinIO is a right-sized choice for a single-server deployment, but the interface is identical to AWS S3 — the entire stack ports to cloud storage without a code change</li>
+                                <li>Two tiers: raw GZIP HTML artifacts (bronze, 30-day retention) and Parquet observations (silver, indefinite) — retention policy matches the value of the data at each layer</li>
+                            </ul>
+                        </div>
                     </div>
                 </div>
 
-                <div class="service-card">
+                <div class="service-card" data-card="caddy">
                     <img class="service-logo" src="https://cdn.simpleicons.org/caddy/22D3EE" alt="Caddy" onerror="this.style.display='none'">
                     <div class="service-info">
-                        <details>
-                            <summary>
-                                <div class="title-row">
-                                    <strong>Caddy</strong>
-                                    <span class="service-badge">Reverse Proxy</span>
-                                    <span class="expand-indicator"></span>
-                                </div>
-                                <p>Reverse proxy with TLS termination, OAuth2 Google auth, and DB-backed role checks.</p>
-                            </summary>
-                            <div class="expanded-detail">
-                                <ul>
-                                    <li>Automatic TLS cert provisioning via Let's Encrypt</li>
-                                    <li><code>forward_auth</code> middleware calls the Ops service for every protected route — validates Google OAuth token and DB role</li>
-                                    <li>Routes: <code>/</code> → Dashboard, <code>/airflow</code> → Airflow, <code>/grafana</code> → Grafana, <code>/info</code> → public (no auth)</li>
-                                    <li>Single Caddyfile defines the entire routing and auth layer</li>
-                                </ul>
-                            </div>
-                        </details>
+                        <div class="title-row">
+                            <strong>Caddy</strong>
+                            <span class="service-badge">Reverse Proxy</span>
+                            <span class="why-cta">Why?</span>
+                        </div>
+                        <p>The front door — handles TLS, Google OAuth, and role-based access so the rest of the stack is visible to the right people without any service needing to own auth logic.</p>
+                        <div class="card-detail" hidden>
+                            <ul>
+                                <li>This is a portfolio project that needs to be accessible to hiring managers and reviewers — Caddy makes that possible without bolting auth logic onto every service</li>
+                                <li><code>forward_auth</code> middleware intercepts every request and calls Ops to validate the Google OAuth token and DB role — auth is enforced at the edge, invisible to everything behind it</li>
+                                <li>Single Caddyfile defines all routing: <code>/</code> → Dashboard, <code>/airflow</code> → Airflow, <code>/grafana</code> → Grafana, <code>/info</code> → public — the entire access model is one readable config file</li>
+                                <li>Automatic TLS via Let's Encrypt — the site is production-grade even if the audience is small</li>
+                            </ul>
+                        </div>
                     </div>
                 </div>
 
-                <div class="service-card">
+                <div class="service-card" data-card="grafana">
                     <img class="service-logo" src="https://cdn.simpleicons.org/grafana/F46800" alt="Grafana" onerror="this.style.display='none'">
                     <div class="service-info">
-                        <details>
-                            <summary>
-                                <div class="title-row">
-                                    <strong>Grafana</strong>
-                                    <span class="service-badge">Observability</span>
-                                    <span class="expand-indicator"></span>
-                                </div>
-                                <p>Operational dashboards from Prometheus metrics (Airflow, Postgres, MinIO, node).</p>
-                            </summary>
-                            <div class="expanded-detail">
-                                <ul>
-                                    <li>Scrapes Prometheus metrics from Airflow, Postgres (postgres_exporter), MinIO, and node_exporter</li>
-                                    <li>Dashboards cover pipeline throughput, queue depth, processing lag, and system resources</li>
-                                    <li>Deployed at <code>/grafana</code> behind the same Caddy auth layer</li>
-                                    <li>Prometheus scrape targets for all services added via V033 migration</li>
-                                </ul>
-                            </div>
-                        </details>
+                        <div class="title-row">
+                            <strong>Grafana</strong>
+                            <span class="service-badge">Observability</span>
+                            <span class="why-cta">Why?</span>
+                        </div>
+                        <p>The answer to "how do we know if something's wrong?" — a single place to see the health of every service instead of hunting through container logs.</p>
+                        <div class="card-detail" hidden>
+                            <ul>
+                                <li>A pipeline this distributed fails silently without observability — a scraper block, a processing backlog, or a staging flush that stopped flushing won't throw an error you'll notice until the data goes stale</li>
+                                <li>Prometheus scrapes metrics from every layer: Airflow DAG success rates, Postgres connection counts and query latency, MinIO throughput, and host-level resources — all in one place</li>
+                                <li>Dashboards surface the questions that matter operationally: is the queue draining? Is the scraper getting blocked more than usual? Is the mart layer falling behind?</li>
+                                <li>Observability was added as a first-class concern, not an afterthought — Prometheus scrape targets were provisioned via a dedicated Flyway migration alongside the services themselves</li>
+                            </ul>
+                        </div>
                     </div>
+                </div>
+
+                <div class="service-card" data-card="testing">
+                    <img class="service-logo" src="https://cdn.simpleicons.org/pytest/0A9EDC" alt="pytest" onerror="this.style.display='none'">
+                    <div class="service-info">
+                        <div class="title-row">
+                            <strong>Testing & CI</strong>
+                            <span class="service-badge">pytest · GitHub Actions</span>
+                            <span class="why-cta">Why?</span>
+                        </div>
+                        <p>A three-layer test strategy that matches the scope of the pipeline — because a project with this many moving pieces needs more than one kind of wrong covered.</p>
+                        <div class="card-detail" hidden>
+                            <ul>
+                                <li>A scraper, six services, twelve DAGs, fifteen dbt models, and a lakehouse backend all have different failure modes — a single test layer would miss most of them</li>
+                                <li>Layer 1 — unit tests: fast, no database, cover parsing logic, backoff behavior, and service internals; run on every commit before anything else</li>
+                                <li>Layer 2 — SQL smoke tests: run every critical query against the real Postgres schema before dbt executes — catch schema regressions that unit tests can't see</li>
+                                <li>Layer 3 — integration tests: full request paths against a real database, real dbt builds against a seeded CI schema, real Airflow DAG execution — no mocks where real behavior matters</li>
+                                <li>Schema changes are versioned Flyway migrations reviewed as PRs — <code>ALTER TABLE</code> in production without a migration history is its own category of wrong, and this project doesn't allow it</li>
+                                <li>Enforced in CI on every commit: lint → unit → build → smoke → integration — a broken pipeline can't merge</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Detail panel lives inside the grid so it can span a full row -->
+                <div class="service-detail-panel" id="service-detail-panel" hidden>
+                    <div id="service-detail-content"></div>
                 </div>
 
             </div>
         </section>
+
+        <script>
+            (function () {
+                var grid = document.getElementById('services-grid');
+                var panel = document.getElementById('service-detail-panel');
+                var content = document.getElementById('service-detail-content');
+                var activeCard = null;
+
+                function lastCardInRow(card) {
+                    var cards = Array.from(grid.querySelectorAll('.service-card'));
+                    var rowTop = card.offsetTop;
+                    var last = card;
+                    cards.forEach(function (c) {
+                        if (Math.abs(c.offsetTop - rowTop) < 5) last = c;
+                    });
+                    return last;
+                }
+
+                document.querySelectorAll('.service-card').forEach(function (card) {
+                    card.addEventListener('click', function () {
+                        if (activeCard === card) {
+                            card.classList.remove('active');
+                            panel.hidden = true;
+                            activeCard = null;
+                        } else {
+                            if (activeCard) activeCard.classList.remove('active');
+                            card.classList.add('active');
+                            content.innerHTML = card.querySelector('.card-detail').innerHTML;
+                            lastCardInRow(card).after(panel);
+                            panel.hidden = false;
+                            activeCard = card;
+                        }
+                    });
+                });
+            })();
+        </script>
 
         <!-- ── 5. Technical highlights ── -->
         <section>
             <h2>Technical highlights</h2>
             <div class="highlights-grid">
                 <div class="highlight-card">
-                    <h4>Medallion architecture across two storage systems</h4>
+                    <h4>The Data Journey: 🥉 → 🥈 → 🥇</h4>
                     <p>
-                        Raw HTML lands in MinIO (bronze), gets parsed into Postgres staging events (operational),
-                        flushed to Parquet (silver), and transformed by dbt into DuckDB mart tables — each layer
-                        with a different storage engine chosen for its access pattern.
+                        A car listing enters the pipeline as raw HTML and exits as a deal score. Between those
+                        two points it passes through three storage systems, each chosen for what it does best:
+                        MinIO holds the unprocessed artifact, Postgres buffers the parsed observation for
+                        pipeline operations, Parquet on MinIO preserves the permanent analytical record, and
+                        DuckDB transforms it into something a person can act on. No single tool does all of
+                        that well — the architecture exists because the data has different needs at different stages.
                     </p>
                 </div>
                 <div class="highlight-card">
-                    <h4>Event sourcing via staging flush</h4>
+                    <h4>One database doing everything — and why that had to change</h4>
                     <p>
-                        Price observations write to <code>staging._events</code> tables first; the archiver
-                        bulk-flushes them to HOT tables and Parquet on a schedule. Decouples write throughput
-                        from read consistency and enables bulk-insert optimization.
+                        The first version stored everything in Postgres — observations, analytics, and operational
+                        state in the same database. Analytical queries slowed operational writes, and dbt ran
+                        against tables that were still being written to. The fix wasn't a bigger database — it
+                        was separating concerns: Postgres owns operational state only, staging tables act as
+                        short-lived write buffers, and the Archiver drains them to Parquet on a schedule.
+                        Each system now does one thing well.
                     </p>
                 </div>
                 <div class="highlight-card">
-                    <h4>Atomic claim pattern</h4>
+                    <h4>Why we replaced the workflow engine mid-project</h4>
                     <p>
-                        Parallel detail scrapes use <code>ON CONFLICT DO UPDATE</code> against
-                        <code>detail_scrape_claims</code> to prevent duplicate work without a queue
-                        service. Time-based expiry handles orphaned claims.
+                        n8n worked until the pipeline got complex enough that bugs in the orchestration
+                        layer were hard to find. The root problem: workflow logic lived in a visual UI,
+                        not in code — it couldn't be unit tested, version controlled, or reviewed like
+                        the rest of the codebase. A broken DAG looked the same as a passing one until
+                        data stopped arriving. The move to Airflow wasn't about features — it was about
+                        making the orchestration layer subject to the same standards as everything else.
+                        Thin DAGs, fat services: scheduling and HTTP calls live in Airflow, all business
+                        logic lives in Python where it can be tested, diffed, and trusted.
                     </p>
                 </div>
                 <div class="highlight-card">
-                    <h4>dbt backoff model</h4>
+                    <h4>Deploying without breaking what's already running</h4>
                     <p>
-                        403'd listings are tracked in <code>blocked_cooldown</code>; exponential backoff
-                        logic lives entirely in a dbt model — queryable and testable without touching
-                        application code.
+                        Restarting a container mid-pipeline means lost data, orphaned claims, and partial
+                        writes that are hard to recover from. Every service exposes a <code>/ready</code>
+                        endpoint and tracks in-flight work with a shared job counter — when a deploy is
+                        signaled, Airflow sensors stop scheduling new runs and each service drains to idle
+                        before its container restarts. The coordination happens across services that have no
+                        direct knowledge of each other, mediated entirely through a single
+                        <code>deploy_intent</code> table in Postgres. No external orchestrator, no manual
+                        timing — the pipeline manages its own lifecycle.
                     </p>
                 </div>
                 <div class="highlight-card">
-                    <h4>Versioned schema migrations</h4>
+                    <h4>50M+ observations, one server</h4>
                     <p>
-                        36 Flyway migrations track every schema change — table creation, index additions,
-                        HOT table promotion, and legacy table drops — reviewed as code and applied
-                        automatically on deploy.
-                    </p>
-                </div>
-                <div class="highlight-card">
-                    <h4>Anti-detection resilience</h4>
-                    <p>
-                        curl_cffi with Chrome TLS fingerprinting + FlareSolverr for Cloudflare JS
-                        challenges. Process-wide credential cache with 25-min TTL and automatic
-                        re-bootstrap on 403.
+                        The entire stack runs on a single VPS — one Postgres instance, one MinIO node,
+                        one Airflow scheduler, eleven Docker containers. That's a deliberate choice, not
+                        a limitation: the architecture is what keeps it manageable at this scale. Columnar
+                        Parquet storage means DuckDB doesn't break a sweat on 50M rows. Staging tables
+                        mean Postgres never holds more than it needs to. Thin DAGs mean Airflow isn't
+                        doing real work, just coordinating. The bottleneck at this scale isn't the
+                        hardware — it's whether the data model is right. This one is.
                     </p>
                 </div>
             </div>
@@ -654,7 +698,7 @@
             <div class="footer-cta">
                 <a href="/request-access" role="button">Request Access</a>
                 <a href="https://github.com/whitewalls86/new_car_tracker" target="_blank" rel="noopener" role="button" class="secondary">GitHub →</a>
-                <span class="footer-note">Built by <a href="https://github.com/whitewalls86" target="_blank" rel="noopener">whitewalls86</a></span>
+                <span class="footer-note">Built by <a href="https://www.linkedin.com/in/andrew-preston-miller/" target="_blank" rel="noopener">Andrew Miller</a> &mdash; <a href="https://github.com/whitewalls86" target="_blank" rel="noopener">GitHub</a> &middot; <a href="https://www.linkedin.com/in/andrew-preston-miller/" target="_blank" rel="noopener">LinkedIn</a></span>
             </div>
             <p style="font-size:0.75rem; color:var(--pico-muted-color); margin:0.75rem 0 0;">
                 dbt™ is a trademark of dbt Labs, Inc. This project is not affiliated with or endorsed by dbt Labs.
