@@ -31,7 +31,7 @@
             "type": "loki",
             "uid": "cartracker-loki"
           },
-          "expr": "{job=~\".+\"}",
+          "expr": "{service=~\".+\"}",
           "refId": "A"
         }
       ],
@@ -65,7 +65,7 @@
             "type": "loki",
             "uid": "cartracker-loki"
           },
-          "expr": "{job=~\".+\", level=~\"ERROR|WARNING\"}",
+          "expr": "{service=~\".+\", level=~\"ERROR|WARNING\"}",
           "refId": "A"
         }
       ],
@@ -99,7 +99,7 @@
             "type": "loki",
             "uid": "cartracker-loki"
           },
-          "expr": "sum by (level) (count_over_time({job=~\".+\"} [5m]))",
+          "expr": "sum by (level) (count_over_time({service=~\".+\"} [5m]))",
           "legendFormat": "{{level}}",
           "refId": "A"
         }
