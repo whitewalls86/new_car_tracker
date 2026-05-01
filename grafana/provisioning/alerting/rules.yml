@@ -17,17 +17,26 @@ groups:
         data:
           - refId: A
             datasourceUid: cartracker-loki
+            relativeTimeRange:
+              from: 600
+              to: 0
             model:
               expr: 'sum by (service) (count_over_time({service=~".+", level="ERROR"}[5m]))'
               queryType: range
           - refId: B
             datasourceUid: "__expr__"
+            relativeTimeRange:
+              from: 600
+              to: 0
             model:
               type: reduce
               reducer: last
               expression: A
           - refId: C
             datasourceUid: "__expr__"
+            relativeTimeRange:
+              from: 600
+              to: 0
             model:
               type: threshold
               expression: B
@@ -45,17 +54,26 @@ groups:
         data:
           - refId: A
             datasourceUid: cartracker-loki
+            relativeTimeRange:
+              from: 600
+              to: 0
             model:
               expr: 'count_over_time({service="scraper"} |= "403" [5m])'
               queryType: range
           - refId: B
             datasourceUid: "__expr__"
+            relativeTimeRange:
+              from: 600
+              to: 0
             model:
               type: reduce
               reducer: last
               expression: A
           - refId: C
             datasourceUid: "__expr__"
+            relativeTimeRange:
+              from: 600
+              to: 0
             model:
               type: threshold
               expression: B
@@ -79,16 +97,25 @@ groups:
         data:
           - refId: A
             datasourceUid: cartracker-prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
             model:
               expr: 'increase(airflow_ti_failures[10m])'
           - refId: B
             datasourceUid: "__expr__"
+            relativeTimeRange:
+              from: 600
+              to: 0
             model:
               type: reduce
               reducer: last
               expression: A
           - refId: C
             datasourceUid: "__expr__"
+            relativeTimeRange:
+              from: 600
+              to: 0
             model:
               type: threshold
               expression: B
@@ -106,16 +133,25 @@ groups:
         data:
           - refId: A
             datasourceUid: cartracker-prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
             model:
               expr: 'up{job=~"ops|processing"}'
           - refId: B
             datasourceUid: "__expr__"
+            relativeTimeRange:
+              from: 600
+              to: 0
             model:
               type: reduce
               reducer: last
               expression: A
           - refId: C
             datasourceUid: "__expr__"
+            relativeTimeRange:
+              from: 600
+              to: 0
             model:
               type: threshold
               expression: B
@@ -133,16 +169,25 @@ groups:
         data:
           - refId: A
             datasourceUid: cartracker-prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
             model:
               expr: 'cartracker_observation_count_last_hour'
           - refId: B
             datasourceUid: "__expr__"
+            relativeTimeRange:
+              from: 600
+              to: 0
             model:
               type: reduce
               reducer: last
               expression: A
           - refId: C
             datasourceUid: "__expr__"
+            relativeTimeRange:
+              from: 600
+              to: 0
             model:
               type: threshold
               expression: B
@@ -160,16 +205,25 @@ groups:
         data:
           - refId: A
             datasourceUid: cartracker-prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
             model:
               expr: 'cartracker_extraction_yield_last_day'
           - refId: B
             datasourceUid: "__expr__"
+            relativeTimeRange:
+              from: 600
+              to: 0
             model:
               type: reduce
               reducer: last
               expression: A
           - refId: C
             datasourceUid: "__expr__"
+            relativeTimeRange:
+              from: 600
+              to: 0
             model:
               type: threshold
               expression: B
@@ -187,16 +241,25 @@ groups:
         data:
           - refId: A
             datasourceUid: cartracker-prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
             model:
               expr: 'cartracker_stale_listings_pct'
           - refId: B
             datasourceUid: "__expr__"
+            relativeTimeRange:
+              from: 600
+              to: 0
             model:
               type: reduce
               reducer: last
               expression: A
           - refId: C
             datasourceUid: "__expr__"
+            relativeTimeRange:
+              from: 600
+              to: 0
             model:
               type: threshold
               expression: B
@@ -214,16 +277,25 @@ groups:
         data:
           - refId: A
             datasourceUid: cartracker-prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
             model:
               expr: 'cartracker_cooldown_backlog_high'
           - refId: B
             datasourceUid: "__expr__"
+            relativeTimeRange:
+              from: 600
+              to: 0
             model:
               type: reduce
               reducer: last
               expression: A
           - refId: C
             datasourceUid: "__expr__"
+            relativeTimeRange:
+              from: 600
+              to: 0
             model:
               type: threshold
               expression: B
@@ -241,16 +313,25 @@ groups:
         data:
           - refId: A
             datasourceUid: cartracker-prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
             model:
               expr: 'cartracker_block_events_last_hour'
           - refId: B
             datasourceUid: "__expr__"
+            relativeTimeRange:
+              from: 600
+              to: 0
             model:
               type: reduce
               reducer: last
               expression: A
           - refId: C
             datasourceUid: "__expr__"
+            relativeTimeRange:
+              from: 600
+              to: 0
             model:
               type: threshold
               expression: B
