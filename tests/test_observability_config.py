@@ -60,7 +60,8 @@ class TestGrafanaProvisioning:
         assert path.exists()
         doc = yaml.safe_load(path.read_text())
         assert doc["datasources"][0]["type"] == "prometheus"
-        assert doc["datasources"][0]["uid"] == "cartracker-prometheus"
+        assert doc["datasources"][0]["access"] == "proxy"
+        assert doc["datasources"][0]["isDefault"] is True
 
     def test_loki_datasource_yml_parses(self):
         path = _REPO_ROOT / "grafana" / "provisioning" / "datasources" / "loki.yml"
