@@ -525,7 +525,7 @@ services:
       - cartracker-net
 
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:11.6.1
     container_name: cartracker-grafana
     restart: unless-stopped
     environment:
