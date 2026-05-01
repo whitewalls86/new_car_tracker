@@ -1,0 +1,260 @@
+apiVersion: 1
+
+groups:
+
+  - orgId: 1
+    name: log-anomalies
+    folder: Cartracker
+    interval: 5m
+    rules:
+
+      - uid: ct-log-error-spike
+        title: Log ERROR Spike
+        condition: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 5m
+        data:
+          - refId: A
+            datasourceUid: cartracker-loki
+            model:
+              expr: 'sum by (service) (count_over_time({service=~".+", level="ERROR"}[5m]))'
+              queryType: range
+          - refId: B
+            datasourceUid: "-100"
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+          - refId: C
+            datasourceUid: "-100"
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [5]
+
+      - uid: ct-403-log-spike
+        title: Scraper 403 Log Spike
+        condition: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 5m
+        data:
+          - refId: A
+            datasourceUid: cartracker-loki
+            model:
+              expr: 'count_over_time({service="scraper"} |= "403" [5m])'
+              queryType: range
+          - refId: B
+            datasourceUid: "-100"
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+          - refId: C
+            datasourceUid: "-100"
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [10]
+
+  - orgId: 1
+    name: infra-and-data-health
+    folder: Cartracker
+    interval: 1m
+    rules:
+
+      - uid: ct-pipeline-failures
+        title: Pipeline Task Failures
+        condition: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 0s
+        data:
+          - refId: A
+            datasourceUid: cartracker-prometheus
+            model:
+              expr: 'increase(airflow_ti_failures[10m])'
+          - refId: B
+            datasourceUid: "-100"
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+          - refId: C
+            datasourceUid: "-100"
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [2]
+
+      - uid: ct-service-down
+        title: Service Down
+        condition: C
+        noDataState: Alerting
+        execErrState: Alerting
+        for: 2m
+        data:
+          - refId: A
+            datasourceUid: cartracker-prometheus
+            model:
+              expr: 'up{job=~"ops|processing"}'
+          - refId: B
+            datasourceUid: "-100"
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+          - refId: C
+            datasourceUid: "-100"
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: lt
+                    params: [1]
+
+      - uid: ct-scrape-volume-drop
+        title: Scrape Volume Drop
+        condition: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 30m
+        data:
+          - refId: A
+            datasourceUid: cartracker-prometheus
+            model:
+              expr: 'cartracker_observation_count_last_hour'
+          - refId: B
+            datasourceUid: "-100"
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+          - refId: C
+            datasourceUid: "-100"
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: lt
+                    params: [100]
+
+      - uid: ct-extraction-yield-drop
+        title: VIN Extraction Yield Drop
+        condition: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 1h
+        data:
+          - refId: A
+            datasourceUid: cartracker-prometheus
+            model:
+              expr: 'cartracker_extraction_yield_last_day'
+          - refId: B
+            datasourceUid: "-100"
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+          - refId: C
+            datasourceUid: "-100"
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: lt
+                    params: [90]
+
+      - uid: ct-stale-listings
+        title: Price Data Staleness
+        condition: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 1h
+        data:
+          - refId: A
+            datasourceUid: cartracker-prometheus
+            model:
+              expr: 'cartracker_stale_listings_pct'
+          - refId: B
+            datasourceUid: "-100"
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+          - refId: C
+            datasourceUid: "-100"
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [20]
+
+      - uid: ct-cooldown-backlog
+        title: 403 Cooldown Backlog
+        condition: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 30m
+        data:
+          - refId: A
+            datasourceUid: cartracker-prometheus
+            model:
+              expr: 'cartracker_cooldown_backlog_high'
+          - refId: B
+            datasourceUid: "-100"
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+          - refId: C
+            datasourceUid: "-100"
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [5000]
+
+      - uid: ct-block-events-spike
+        title: 403 Block Events Spike
+        condition: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 30m
+        data:
+          - refId: A
+            datasourceUid: cartracker-prometheus
+            model:
+              expr: 'cartracker_block_events_last_hour'
+          - refId: B
+            datasourceUid: "-100"
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+          - refId: C
+            datasourceUid: "-100"
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [200]

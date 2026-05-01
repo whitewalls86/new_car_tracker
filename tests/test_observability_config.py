@@ -60,7 +60,7 @@ class TestGrafanaProvisioning:
         assert path.exists()
         doc = yaml.safe_load(path.read_text())
         assert doc["datasources"][0]["type"] == "prometheus"
-        assert doc["datasources"][0]["access"] == "proxy"
+        assert doc["datasources"][0]["uid"] == "cartracker-prometheus"
         assert doc["datasources"][0]["isDefault"] is True
 
     def test_loki_datasource_yml_parses(self):
@@ -106,3 +106,37 @@ class TestGrafanaDashboards:
         assert doc["uid"] == "cartracker-logs"
         assert len(doc["panels"]) == 3
         assert all(p["datasource"]["uid"] == "cartracker-loki" for p in doc["panels"])
+
+
+class TestGrafanaAlertingProvisioning:
+    _ALERTING_DIR = _REPO_ROOT / "grafana" / "provisioning" / "alerting"
+
+    def test_contact_points_yml_parses(self):
+        path = self._ALERTING_DIR / "contact_points.yml"
+        assert path.exists(), "contact_points.yml missing"
+        doc = yaml.safe_load(path.read_text())
+        assert doc["contactPoints"][0]["receivers"][0]["type"] == "telegram"
+
+    def test_notification_policies_yml_parses(self):
+        path = self._ALERTING_DIR / "notification_policies.yml"
+        assert path.exists(), "notification_policies.yml missing"
+        doc = yaml.safe_load(path.read_text())
+        assert doc["policies"][0]["receiver"] == "telegram"
+
+    def test_rules_yml_parses(self):
+        path = self._ALERTING_DIR / "rules.yml"
+        assert path.exists(), "rules.yml missing"
+        doc = yaml.safe_load(path.read_text())
+        assert len(doc["groups"]) >= 2
+
+    def test_rules_yml_all_uids_present(self):
+        path = self._ALERTING_DIR / "rules.yml"
+        doc = yaml.safe_load(path.read_text())
+        all_uids = {r["uid"] for g in doc["groups"] for r in g["rules"]}
+        expected = {
+            "ct-log-error-spike", "ct-403-log-spike",
+            "ct-pipeline-failures", "ct-service-down",
+            "ct-scrape-volume-drop", "ct-extraction-yield-drop",
+            "ct-stale-listings", "ct-cooldown-backlog", "ct-block-events-spike",
+        }
+        assert expected <= all_uids, f"Missing rule UIDs: {expected - all_uids}"
