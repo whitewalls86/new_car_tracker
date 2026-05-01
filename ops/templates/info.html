@@ -324,10 +324,24 @@
                     <div class="label">Active listings</div>
                 </div>
                 {% endif %}
+                {% if stats.artifacts_per_hour is defined %}
+                <div class="stat-card">
+                    <div class="num">{{ stats.artifacts_per_hour | fmt_stat }}</div>
+                    <div class="label">Pages fetched / hr</div>
+                </div>
+                {% endif %}
+                {% if stats.observations_per_hour is defined %}
+                <div class="stat-card">
+                    <div class="num">{{ stats.observations_per_hour | fmt_stat }}</div>
+                    <div class="label">Observations processed / hr</div>
+                </div>
+                {% endif %}
+            </div>
+            <div class="stats-row" style="margin-top:0.75rem;">
                 {% if stats.price_observations is defined %}
                 <div class="stat-card">
                     <div class="num">{{ stats.price_observations | fmt_stat }}</div>
-                    <div class="label">Price observations</div>
+                    <div class="label">Total price observations</div>
                 </div>
                 {% endif %}
                 {% if stats.make_model_pairs is defined %}
@@ -336,14 +350,28 @@
                     <div class="label">Make/model pairs tracked</div>
                 </div>
                 {% endif %}
-                {% if stats.last_pipeline_run %}
+                {% if stats.last_pipeline_run_iso %}
                 <div class="stat-card">
-                    <div class="num" style="font-size:1.1rem; padding-top:0.55rem;">{{ stats.last_pipeline_run }}</div>
+                    <div class="num" style="font-size:1.1rem; padding-top:0.55rem;">
+                        <time id="last-run-time" datetime="{{ stats.last_pipeline_run_iso }}">{{ stats.last_pipeline_run_iso }}</time>
+                    </div>
                     <div class="label">Last pipeline run</div>
                 </div>
                 {% endif %}
             </div>
         </section>
+        <script>
+            (function () {
+                var el = document.getElementById('last-run-time');
+                if (!el) return;
+                var d = new Date(el.getAttribute('datetime'));
+                if (isNaN(d)) return;
+                el.textContent = d.toLocaleString(undefined, {
+                    month: 'short', day: 'numeric',
+                    hour: 'numeric', minute: '2-digit'
+                });
+            })();
+        </script>
         {% endif %}
 
         <!-- ── 3. How data flows ── -->
