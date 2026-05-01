@@ -8,6 +8,6 @@ contactPoints:
         type: telegram
         settings:
           bottoken: ${TELEGRAM_API}
-          chatid: ${TELEGRAM_CHAT_ID}
+          chatid: "${TELEGRAM_CHAT_ID}"
           parseMode: HTML
         disableResolveMessage: false
