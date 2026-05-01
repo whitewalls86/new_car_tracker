@@ -447,6 +447,62 @@ class TestWriteDetailCarousel:
             artifact_id=artifact["artifact_id"],
         )
 
+    def test_carousel_vin_collision_replaced_without_error(
+        self, vc, seed_artifact_c, seed_tracked_model_c, clear_tracked_models_cache
+    ):
+        """
+        Given: price_observations has VIN → old_carousel_listing
+               vin_to_listing maps that VIN → carousel_listing (relisted)
+        When:  detail active processes a carousel hint for carousel_listing
+        Then:  old row deleted, new row upserted — no UniqueViolation
+        """
+        seed_tracked_model_c("honda", "cr-v")
+        artifact = seed_artifact_c(artifact_type="detail_page")
+        lid = str(uuid.uuid4())
+        old_carousel_lid = str(uuid.uuid4())
+        carousel_lid = str(uuid.uuid4())
+        vin = f"VINCR{uuid.uuid4().hex[:12].upper()}"
+
+        # Seed the stale price_observation under the old carousel listing
+        vc.execute(
+            "INSERT INTO ops.price_observations"
+            " (listing_id, vin, price, make, model, last_seen_at, last_artifact_id)"
+            " VALUES (%s::uuid, %s, 22000, 'Honda', 'CR-V', now(), %s)",
+            (old_carousel_lid, vin, artifact["artifact_id"]),
+        )
+        # vin_to_listing already knows the VIN now belongs to the new carousel listing
+        vc.execute(
+            "INSERT INTO ops.vin_to_listing (vin, listing_id, mapped_at, artifact_id)"
+            " VALUES (%s, %s::uuid, now(), %s)",
+            (vin, carousel_lid, artifact["artifact_id"]),
+        )
+
+        hint = _carousel_hint(carousel_lid, body="New 2026 Honda CR-V EX")
+        result = write_detail_active(
+            _primary(lid), [hint], artifact["artifact_id"], _NOW, lid, "run-1"
+        )
+
+        assert result["carousel_upserted"] == 1
+
+        # Old row gone
+        vc.execute(
+            "SELECT COUNT(*) AS cnt FROM ops.price_observations WHERE listing_id = %s::uuid",
+            (old_carousel_lid,),
+        )
+        assert vc.fetchone()["cnt"] == 0, "Stale carousel price_observation should be deleted"
+
+        # New row present
+        row = _get_price_obs(vc, carousel_lid)
+        assert row is not None
+        assert row["vin"] == vin
+
+        _cleanup(
+            vc,
+            listing_ids=[lid, old_carousel_lid, carousel_lid],
+            vins=["1HGCV1F34PA111001", vin],
+            artifact_id=artifact["artifact_id"],
+        )
+
     def test_carousel_hint_without_price_skipped(
         self, vc, seed_artifact_c, seed_tracked_model_c, clear_tracked_models_cache
     ):

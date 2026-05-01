@@ -62,7 +62,32 @@ def write_srp_observations(
     vin_mapped = 0
     events_to_emit: List[Tuple[str, ...]] = []
 
+    # Build resolved (listing_id, vin) pairs for the batch collision delete.
+    resolved = [
+        (item["listing_id"], item.get("vin") or vin_by_listing.get(item["listing_id"]))
+        for item in listings
+        if item.get("listing_id")
+    ]
+    vin_to_expected_listing = {vin: lid for lid, vin in resolved if vin}
+
     with db_cursor(error_context=f"srp: upserts artifact_id={artifact_id}") as cur:
+        # Clear any price_observations rows where the VIN now maps to a different
+        # listing_id — same relisting-collision guard as the detail write path.
+        if vin_to_expected_listing:
+            cur.execute(
+                """
+                DELETE FROM ops.price_observations
+                WHERE vin = ANY(%s)
+                  AND listing_id NOT IN (
+                      SELECT unnest(%s::uuid[])
+                  )
+                """,
+                (
+                    list(vin_to_expected_listing.keys()),
+                    list(vin_to_expected_listing.values()),
+                ),
+            )
+
         for listing in listings:
             listing_id = listing.get("listing_id")
             if not listing_id:
