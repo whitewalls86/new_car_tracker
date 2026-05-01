@@ -550,6 +550,8 @@ services:
     container_name: cartracker-loki
     restart: unless-stopped
     command: --config.file=/etc/loki/loki.yml
+    ports:
+      - "3100:3100"
     volumes:
       - ./loki/loki.yml:/etc/loki/loki.yml:ro
       - loki_data:/loki
