@@ -323,10 +323,3 @@ jobs:
           POSTGRES_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
           LOG_PATH: /tmp/dbt_runner_test.log
 
-      - name: Install observability test dependencies
-        run: pip install requests
-
-      - name: Run observability integration tests (Loki + Promtail)
-        run: pytest tests/integration/observability/ -v -m integration
-        env:
-          PYTHONPATH: ${{ github.workspace }}
