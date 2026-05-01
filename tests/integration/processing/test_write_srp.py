@@ -299,6 +299,44 @@ class TestWriteSrpVinFallback:
         _cleanup(vc, [lid], [vin], artifact["artifact_id"])
 
 
+class TestWriteSrpVinCollision:
+    def test_relisted_vin_replaces_old_price_observation(self, vc, seed_artifact_c):
+        """
+        Given: price_observations has VIN → old_listing
+        When:  SRP batch contains new_listing with the same VIN
+        Then:  old row deleted, new row upserted — no UniqueViolation
+        """
+        artifact = seed_artifact_c(artifact_type="results_page")
+        old_lid = str(uuid.uuid4())
+        new_lid = str(uuid.uuid4())
+        vin = f"VINSRP{uuid.uuid4().hex[:10].upper()}"
+
+        # Seed the stale price_observation under the old listing
+        vc.execute(
+            "INSERT INTO ops.price_observations"
+            " (listing_id, vin, price, make, model, last_seen_at, last_artifact_id)"
+            " VALUES (%s::uuid, %s, 25000, 'Honda', 'CR-V', now(), %s)",
+            (old_lid, vin, artifact["artifact_id"]),
+        )
+
+        listings = [_listing(listing_id=new_lid, vin=vin)]
+        write_srp_observations(listings, artifact["artifact_id"], _NOW)
+
+        # Old row removed
+        vc.execute(
+            "SELECT COUNT(*) AS cnt FROM ops.price_observations WHERE listing_id = %s::uuid",
+            (old_lid,),
+        )
+        assert vc.fetchone()["cnt"] == 0, "Old price_observation should be deleted on relisting"
+
+        # New row present with correct VIN
+        row = _get_price_obs(vc, new_lid)
+        assert row is not None
+        assert row["vin"] == vin
+
+        _cleanup(vc, [old_lid, new_lid], [vin], artifact["artifact_id"])
+
+
 class TestWriteSrpTrackedModels:
     def test_search_key_seeds_tracked_models(self, vc, seed_artifact_c):
         """

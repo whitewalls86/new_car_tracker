@@ -222,6 +222,17 @@ def write_detail_active(
 
             if _carousel_matches_search_config(hint):
                 hint_vin = vin_by_listing.get(hint_listing_id)
+                if hint_vin:
+                    cur.execute(
+                        LOOKUP_VIN_COLLISION, 
+                        {"vin": hint_vin, "listing_id": hint_listing_id}
+                    )
+                    collision = cur.fetchone()
+                    if collision:
+                        cur.execute(
+                            DELETE_PRICE_OBSERVATION_BY_VIN, 
+                            {"old_listing_id": collision[0]}
+                        )
                 cur.execute(UPSERT_PRICE_OBSERVATION, {
                     "listing_id": hint_listing_id,
                     "vin": hint_vin,
