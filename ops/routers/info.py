@@ -91,9 +91,26 @@ def _load_stats() -> dict:
                 ts: datetime = row[0]
                 if ts.tzinfo is None:
                     ts = ts.replace(tzinfo=timezone.utc)
-                stats["last_pipeline_run"] = ts.strftime("%Y-%m-%d %H:%M UTC")
+                stats["last_pipeline_run_iso"] = ts.strftime("%Y-%m-%dT%H:%M:%SZ")
     except Exception:
         logger.debug("info stats: last_pipeline_run query failed", exc_info=True)
+
+    try:
+        with duckdb.connect(_DUCKDB_PATH, read_only=True) as con:
+            row = con.execute(
+                """
+                SELECT
+                    SUM(artifact_count)    / 24.0,
+                    SUM(observation_count) / 24.0
+                FROM main.mart_scrape_volume
+                WHERE hour >= now() - INTERVAL '24 hours'
+                """
+            ).fetchone()
+            if row and row[0] is not None:
+                stats["artifacts_per_hour"] = round(row[0])
+                stats["observations_per_hour"] = round(row[1])
+    except Exception:
+        logger.debug("info stats: throughput query failed", exc_info=True)
 
     return stats
 
