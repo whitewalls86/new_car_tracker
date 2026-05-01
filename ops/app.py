@@ -10,6 +10,7 @@ from fastapi.responses import RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from prometheus_fastapi_instrumentator import Instrumentator
 
+from .metrics.duckdb_gauges import update_duckdb_metrics
 from .routers.admin import router as admin_router
 from .routers.auth import router as auth_router
 from .routers.deploy import router as deploy_router
@@ -27,7 +28,7 @@ logging.getLogger().addHandler(_log_handler)
 logging.getLogger().setLevel(logging.INFO)
 
 app = FastAPI()
-Instrumentator().instrument(app).expose(app)
+Instrumentator().add(lambda _: update_duckdb_metrics()).instrument(app).expose(app)
 app.mount(
     "/static_ops",
     StaticFiles(directory=os.path.join(os.path.dirname(__file__), "static_ops")), name="static_ops"

@@ -16,11 +16,15 @@ def test_metrics_endpoint_content_type_is_prometheus(mock_client):
     assert "text/plain" in response.headers["content-type"]
 
 
-def test_metrics_endpoint_contains_http_requests_total(mock_client):
-    # Make a request first so the counter exists in the registry.
-    mock_client.get("/health")
+def test_metrics_endpoint_contains_custom_duckdb_metrics(mock_client):
     response = mock_client.get("/metrics")
-    assert "http_requests_total" in response.text
+    # Verify custom DuckDB data health metrics are exposed
+    assert "cartracker_observation_count_last_hour" in response.text
+    assert "cartracker_artifact_count_last_hour" in response.text
+    assert "cartracker_block_events_last_hour" in response.text
+    assert "cartracker_extraction_yield_last_day" in response.text
+    assert "cartracker_stale_listings_pct" in response.text
+    assert "cartracker_cooldown_backlog_high" in response.text
 
 
 def test_get_admin(mock_client):

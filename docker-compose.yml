@@ -525,7 +525,7 @@ services:
       - cartracker-net
 
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:11.6.1
     container_name: cartracker-grafana
     restart: unless-stopped
     environment:
@@ -535,6 +535,8 @@ services:
       GF_AUTH_DISABLE_LOGIN_FORM: 'false'
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER}
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+      TELEGRAM_API: ${TELEGRAM_API}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
     volumes:
       - grafana_data:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
@@ -543,6 +545,37 @@ services:
       - cartracker-net
     depends_on:
       - prometheus
+      - loki
+
+  loki:
+    image: grafana/loki:2.9.8
+    container_name: cartracker-loki
+    restart: unless-stopped
+    command: --config.file=/etc/loki/loki.yml
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./loki/loki.yml:/etc/loki/loki.yml:ro
+      - loki_data:/loki
+    networks:
+      - cartracker-net
+
+  promtail:
+    image: grafana/promtail:2.9.8
+    container_name: cartracker-promtail
+    restart: unless-stopped
+    command: --config.file=/etc/promtail/promtail.yml
+    volumes:
+      - ./promtail/promtail.yml:/etc/promtail/promtail.yml:ro
+      - ops_logs:/logs/ops:ro
+      - scraper_logs:/logs/scraper:ro
+      - processing_logs:/logs/processing:ro
+      - dbt_runner_logs:/logs/dbt_runner:ro
+      - archiver_logs:/logs/archiver:ro
+    depends_on:
+      - loki
+    networks:
+      - cartracker-net
 
 volumes:
   cartracker_pgdata:
@@ -577,6 +610,8 @@ volumes:
   prometheus_data:
 
   grafana_data:
+
+  loki_data:
 
 networks:
   cartracker-net:
