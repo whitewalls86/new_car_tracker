@@ -1,0 +1,101 @@
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+
+  - job_name: ops
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          service: ops
+          __path__: /logs/ops/app.log*
+
+    pipeline_stages:
+      - regex:
+          expression: '^(?P<ts>\S+ \S+) (?P<level>[A-Z]+) (?P<logger>\S+):'
+      - labels:
+          level:
+          logger:
+      - timestamp:
+          source: ts
+          format: '2006-01-02 15:04:05,000'
+
+  - job_name: scraper
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          service: scraper
+          __path__: /logs/scraper/app.log*
+
+    pipeline_stages:
+      - regex:
+          expression: '^(?P<ts>\S+ \S+) (?P<level>[A-Z]+) (?P<logger>\S+):'
+      - labels:
+          level:
+          logger:
+      - timestamp:
+          source: ts
+          format: '2006-01-02 15:04:05,000'
+
+  - job_name: processing
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          service: processing
+          __path__: /logs/processing/app.log*
+
+    pipeline_stages:
+      - regex:
+          expression: '^(?P<ts>\S+ \S+) (?P<level>[A-Z]+) (?P<logger>\S+):'
+      - labels:
+          level:
+          logger:
+      - timestamp:
+          source: ts
+          format: '2006-01-02 15:04:05,000'
+
+  - job_name: dbt_runner
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          service: dbt_runner
+          __path__: /logs/dbt_runner/app.log*
+
+    pipeline_stages:
+      - regex:
+          expression: '^(?P<ts>\S+ \S+) (?P<level>[A-Z]+) (?P<logger>\S+):'
+      - labels:
+          level:
+          logger:
+      - timestamp:
+          source: ts
+          format: '2006-01-02 15:04:05,000'
+
+  - job_name: archiver
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          service: archiver
+          __path__: /logs/archiver/app.log*
+
+    pipeline_stages:
+      - regex:
+          expression: '^(?P<ts>\S+ \S+) (?P<level>[A-Z]+) (?P<logger>\S+):'
+      - labels:
+          level:
+          logger:
+      - timestamp:
+          source: ts
+          format: '2006-01-02 15:04:05,000'
