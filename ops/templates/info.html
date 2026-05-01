@@ -246,23 +246,27 @@
         }
         .highlight-card:not(.active) .highlight-read-more::after { content: " Read more ▸"; }
         .highlight-card.active .highlight-read-more::after { content: " Collapse ▴"; }
-        .highlight-full {
-            margin-top: 1rem;
-            padding-top: 1rem;
-            border-top: 1px solid var(--pico-muted-border-color);
+
+        /* ── Highlight detail panel (full-width, below grid) ── */
+        .highlight-detail-panel {
+            border: 1px solid var(--pico-primary);
+            border-radius: 8px;
+            padding: 1.4rem 1.6rem;
+            background: var(--pico-card-background-color);
+            margin-top: 0.75rem;
             font-size: 0.85rem;
             color: var(--pico-muted-color);
             line-height: 1.6;
         }
-        .highlight-full h5 {
+        .highlight-detail-panel h5 {
             font-size: 0.85rem;
             font-weight: 700;
             color: var(--pico-color);
             margin: 1rem 0 0.3rem;
         }
-        .highlight-full h5:first-child { margin-top: 0; }
-        .highlight-full p { margin: 0 0 0.6rem; }
-        .highlight-full p:last-child { margin-bottom: 0; }
+        .highlight-detail-panel h5:first-child { margin-top: 0; }
+        .highlight-detail-panel p { margin: 0 0 0.6rem; }
+        .highlight-detail-panel p:last-child { margin-bottom: 0; }
 
         /* ── Footer CTA ── */
         .footer-cta {
@@ -711,7 +715,7 @@
                         Each system now does one thing well.
                     </p>
                     <span class="highlight-read-more"></span>
-                    <div class="highlight-full" hidden>
+                    <div class="card-detail" hidden>
                         <h5>The dependency nobody named</h5>
                         <p>The pipeline had a hidden coupling. To know what to scrape next, it queried dbt — <code>int_</code> tables that computed staleness scores, mapped listing IDs to VINs, and produced the scrape queue. That meant after every batch of scrapes, the pipeline needed a dbt rebuild before it could schedule the next one. A full build was taking 45 seconds. It couldn't run concurrently — a build lock had to be added after parallel runs started stepping on each other.</p>
                         <p>The carousel hints problem made it worse. Scraping vehicle A would sometimes surface price updates for B, C, and D in the same response. Those vehicles didn't need their own scrape — but the pipeline couldn't know that without running dbt first. Operational logic and analytical logic were tangled in the same models, running on the same schedule, blocking each other.</p>
@@ -740,7 +744,7 @@
                         logic lives in Python where it can be tested, diffed, and trusted.
                     </p>
                     <span class="highlight-read-more"></span>
-                    <div class="highlight-full" hidden>
+                    <div class="card-detail" hidden>
                         <h5>The problem with logic you can't test</h5>
                         <p>The issue was that n8n wasn't just an orchestrator — it was holding business logic. SQL queries lived in Postgres nodes inside workflows. Conditional branching, error handling, retry decisions — all of it in a visual UI, exported as JSON. That meant none of it could be unit tested. None of it showed up in a diff in a meaningful way. When a workflow had a bug, diagnosing it meant clicking through a visual interface and guessing at which node was wrong.</p>
                         <p>The worst part: a broken workflow looked the same as a passing one. n8n would report success on a run that had silently dropped records or skipped a step it shouldn't have. The only way to catch those failures was to notice that data had stopped arriving — which could be hours later.</p>
@@ -783,18 +787,34 @@
                     </p>
                 </div>
             </div>
+            <div class="highlight-detail-panel" id="highlight-detail-panel" hidden>
+                <div id="highlight-detail-content"></div>
+            </div>
         </section>
 
         <script>
-            ['highlight-db', 'highlight-n8n'].forEach(function (id) {
-                var card = document.getElementById(id);
-                var full = card.querySelector('.highlight-full');
-                card.addEventListener('click', function () {
-                    var open = !full.hidden;
-                    full.hidden = open;
-                    card.classList.toggle('active', !open);
+            (function () {
+                var panel = document.getElementById('highlight-detail-panel');
+                var content = document.getElementById('highlight-detail-content');
+                var activeCard = null;
+
+                ['highlight-db', 'highlight-n8n'].forEach(function (id) {
+                    var card = document.getElementById(id);
+                    card.addEventListener('click', function () {
+                        if (activeCard === card) {
+                            card.classList.remove('active');
+                            panel.hidden = true;
+                            activeCard = null;
+                        } else {
+                            if (activeCard) activeCard.classList.remove('active');
+                            card.classList.add('active');
+                            content.innerHTML = card.querySelector('.card-detail').innerHTML;
+                            panel.hidden = false;
+                            activeCard = card;
+                        }
+                    });
                 });
-            });
+            })();
         </script>
 
         <!-- ── 6. Footer CTA ── -->
