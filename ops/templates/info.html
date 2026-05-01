@@ -233,6 +233,37 @@
         .highlight-card h4 { margin: 0 0 0.4rem; font-size: 0.95rem; }
         .highlight-card p { font-size: 0.85rem; color: var(--pico-muted-color); margin: 0; }
 
+        /* ── Expandable highlight card ── */
+        .highlight-card.expandable { cursor: pointer; user-select: none; transition: border-color 0.15s, box-shadow 0.15s; }
+        .highlight-card.expandable:hover { border-color: var(--pico-primary-hover); }
+        .highlight-card.expandable.active { border-color: var(--pico-primary); box-shadow: 0 0 0 1px var(--pico-primary); }
+        .highlight-read-more {
+            display: inline-block;
+            margin-top: 0.6rem;
+            font-size: 0.78rem;
+            font-weight: 600;
+            color: var(--pico-primary);
+        }
+        .highlight-card:not(.active) .highlight-read-more::after { content: " Read more ▸"; }
+        .highlight-card.active .highlight-read-more::after { content: " Collapse ▴"; }
+        .highlight-full {
+            margin-top: 1rem;
+            padding-top: 1rem;
+            border-top: 1px solid var(--pico-muted-border-color);
+            font-size: 0.85rem;
+            color: var(--pico-muted-color);
+            line-height: 1.6;
+        }
+        .highlight-full h5 {
+            font-size: 0.85rem;
+            font-weight: 700;
+            color: var(--pico-color);
+            margin: 1rem 0 0.3rem;
+        }
+        .highlight-full h5:first-child { margin-top: 0; }
+        .highlight-full p { margin: 0 0 0.6rem; }
+        .highlight-full p:last-child { margin-bottom: 0; }
+
         /* ── Footer CTA ── */
         .footer-cta {
             border-top: 1px solid var(--pico-muted-border-color);
@@ -641,7 +672,7 @@
                         that well — the architecture exists because the data has different needs at different stages.
                     </p>
                 </div>
-                <div class="highlight-card">
+                <div class="highlight-card expandable" id="highlight-db">
                     <h4>One database doing everything — and why that had to change</h4>
                     <p>
                         The first version stored everything in Postgres — observations, analytics, and operational
@@ -651,9 +682,25 @@
                         short-lived write buffers, and the Archiver drains them to Parquet on a schedule.
                         Each system now does one thing well.
                     </p>
+                    <span class="highlight-read-more"></span>
+                    <div class="highlight-full" hidden>
+                        <h5>The dependency nobody named</h5>
+                        <p>The pipeline had a hidden coupling. To know what to scrape next, it queried dbt — <code>int_</code> tables that computed staleness scores, mapped listing IDs to VINs, and produced the scrape queue. That meant after every batch of scrapes, the pipeline needed a dbt rebuild before it could schedule the next one. A full build was taking 45 seconds. It couldn't run concurrently — a build lock had to be added after parallel runs started stepping on each other.</p>
+                        <p>The carousel hints problem made it worse. Scraping vehicle A would sometimes surface price updates for B, C, and D in the same response. Those vehicles didn't need their own scrape — but the pipeline couldn't know that without running dbt first. Operational logic and analytical logic were tangled in the same models, running on the same schedule, blocking each other.</p>
+                        <h5>The question that reframed it</h5>
+                        <p>The fix came from asking a different question: <em>what should dbt actually own?</em></p>
+                        <p>dbt is good at one thing — transforming a stable, append-only record into analytical assets. Deal scores, price history, national benchmarks. That work runs hourly and can fail and retry without consequence. The scrape queue is different. It needs to reflect the current state of the world right now — which listings are stale, which VINs are blocked, which artifacts haven't been processed. That's operational state. Rebuilding a dbt model to answer "what do I do next?" is the wrong tool for the job.</p>
+                        <h5>The three-schema solution</h5>
+                        <p>Postgres gets an <code>ops</code> schema: HOT tables, one row per entity, always current state. The scrape queue becomes a plain Postgres view reading from those tables — no dbt, no rebuild cycle, no lock. Operational workers own these directly.</p>
+                        <p>A <code>staging</code> schema holds event tables: one row per event, append-only. On a schedule, the Archiver drains them to hive-partitioned Parquet on MinIO and truncates. Postgres never becomes the analytics store — it hands the record off and stays lean.</p>
+                        <p>dbt runs against the Parquet files via DuckDB's <code>httpfs</code> extension. The lake <em>is</em> the warehouse. Deal scores and price history are built from the permanent record, not from operational tables that are still being written to.</p>
+                        <h5>What changed</h5>
+                        <p>The dbt build that used to block the pipeline now runs independently, on its own schedule, without holding anything up. Operational queries that took seconds — building a scrape queue from a dbt model — now take milliseconds from a Postgres view of a HOT table. The staging tables give the analytical layer a clean event stream to work from, and when the Archiver flushes them, Postgres shrinks back down rather than growing.</p>
+                        <p>MinIO started as a storage fix. It ended as the thing that made the separation possible — a clear boundary between what the pipeline needs <em>right now</em> and what the analytics layer needs <em>eventually</em>. Those two things have different access patterns, different failure modes, and different owners. Once the architecture reflected that, both got faster.</p>
+                    </div>
                 </div>
-                <div class="highlight-card">
-                    <h4>Why we replaced the workflow engine mid-project</h4>
+                <div class="highlight-card expandable" id="highlight-n8n">
+                    <h4>Why I replaced the workflow engine mid-project</h4>
                     <p>
                         n8n worked until the pipeline got complex enough that bugs in the orchestration
                         layer were hard to find. The root problem: workflow logic lived in a visual UI,
@@ -664,6 +711,23 @@
                         Thin DAGs, fat services: scheduling and HTTP calls live in Airflow, all business
                         logic lives in Python where it can be tested, diffed, and trusted.
                     </p>
+                    <span class="highlight-read-more"></span>
+                    <div class="highlight-full" hidden>
+                        <h5>The problem with logic you can't test</h5>
+                        <p>The issue was that n8n wasn't just an orchestrator — it was holding business logic. SQL queries lived in Postgres nodes inside workflows. Conditional branching, error handling, retry decisions — all of it in a visual UI, exported as JSON. That meant none of it could be unit tested. None of it showed up in a diff in a meaningful way. When a workflow had a bug, diagnosing it meant clicking through a visual interface and guessing at which node was wrong.</p>
+                        <p>The worst part: a broken workflow looked the same as a passing one. n8n would report success on a run that had silently dropped records or skipped a step it shouldn't have. The only way to catch those failures was to notice that data had stopped arriving — which could be hours later.</p>
+                        <p>I was still patching n8n workflows on April 13th. Two days later, I started building Airflow.</p>
+                        <h5>The insight that drove the switch</h5>
+                        <p>The decision wasn't really about Airflow's feature set. It was about a principle that the n8n experience had made concrete: <em>orchestration logic should be subject to the same standards as everything else.</em></p>
+                        <p>If it can't be unit tested, it's not code — it's configuration. And configuration that holds business logic is the worst kind: it looks trustworthy because it's in the repo, but it isn't testable the way code is.</p>
+                        <p>This became the fat server, thin DAG pattern. DAGs contain only two things: scheduling and HTTP calls. No business logic, no SQL, no conditional branching. All of that lives in the Python services — where it can be tested, diffed, and reviewed like any other function.</p>
+                        <h5>The migration</h5>
+                        <p>Airflow ran in parallel with n8n for four days while the DAGs were built and validated. On April 20th, the n8n workflows were deactivated. Nine days later, the container was removed from docker-compose entirely.</p>
+                        <p>The cutover was clean because the services hadn't changed — only what was calling them. The scraper, processor, and archiver all exposed HTTP endpoints. n8n had been calling those endpoints. Airflow now calls those endpoints. Swapping the orchestrator didn't require touching the services.</p>
+                        <h5>What changed</h5>
+                        <p>A broken DAG now fails in CI before it ships. Every piece of business logic that used to live in a workflow node now lives in a Python function with a test. The twelve DAGs that run the pipeline today are readable in under a minute each — they're scheduling logic, nothing more.</p>
+                        <p>The pipeline didn't get more capable when I switched to Airflow. It got more trustworthy. That turned out to matter more.</p>
+                    </div>
                 </div>
                 <div class="highlight-card">
                     <h4>Deploying without breaking what's already running</h4>
@@ -692,6 +756,18 @@
                 </div>
             </div>
         </section>
+
+        <script>
+            ['highlight-db', 'highlight-n8n'].forEach(function (id) {
+                var card = document.getElementById(id);
+                var full = card.querySelector('.highlight-full');
+                card.addEventListener('click', function () {
+                    var open = !full.hidden;
+                    full.hidden = open;
+                    card.classList.toggle('active', !open);
+                });
+            });
+        </script>
 
         <!-- ── 6. Footer CTA ── -->
         <section>
