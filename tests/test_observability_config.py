@@ -24,7 +24,7 @@ class TestPrometheusConfig:
         path = _REPO_ROOT / "prometheus" / "prometheus.yml"
         doc = yaml.safe_load(path.read_text())
         job_names = {job["job_name"] for job in doc["scrape_configs"]}
-        expected = {"airflow", "postgres", "minio", "ops", "processing", "node"}
+        expected = {"airflow", "postgres", "minio", "minio_bucket", "ops", "processing", "node"}
         assert expected == job_names, f"Unexpected jobs: {job_names ^ expected}"
 
 
