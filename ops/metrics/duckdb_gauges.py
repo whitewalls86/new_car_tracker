@@ -110,4 +110,7 @@ def update_duckdb_metrics():
                 logger.warning(f"Failed to update cooldown backlog metrics: {e}")
 
     except Exception as e:
-        logger.error(f"DuckDB connection failed: {e}")
+        if "Conflicting lock" in str(e):
+            logger.warning(f"DuckDB connection skipped (write lock held by dbt): {e}")
+        else:
+            logger.error(f"DuckDB connection failed: {e}")

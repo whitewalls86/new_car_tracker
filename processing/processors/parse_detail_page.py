@@ -17,11 +17,17 @@ _UUID_RE = re.compile(
 _UNLISTED_TEXT_RE = re.compile(r"\bno longer available\b|\bno longer listed\b", re.IGNORECASE)
 
 
-def _digits_to_int(text: Optional[str]) -> Optional[int]:
-    if not text:
+def _digits_to_int(val: Any) -> Optional[int]:
+    if val is None:
         return None
-    digits = re.sub(r"\D", "", text)
-    return int(digits) if digits else None
+    if isinstance(val, int):
+        return val
+    if isinstance(val, float):
+        return int(val)
+    if isinstance(val, str):
+        digits = re.sub(r"\D", "", val)
+        return int(digits) if digits else None
+    return None
 
 
 def _extract_script_json_by_id(soup: BeautifulSoup, script_id: str) -> Optional[Dict[str, Any]]:
@@ -297,10 +303,10 @@ def parse_cars_detail_page_html_v1(
         "make": activity.get("make"),
         "model": activity.get("model"),
         "trim": activity.get("trim"),
-        "year": activity.get("year"),
-        "price": activity.get("price"),
-        "mileage": activity.get("mileage"),
-        "msrp": activity.get("msrp"),
+        "year": _digits_to_int(activity.get("year")),
+        "price": _digits_to_int(activity.get("price")),
+        "mileage": _digits_to_int(activity.get("mileage")),
+        "msrp": _digits_to_int(activity.get("msrp")),
         "stock_type": activity.get("stock_type"),
         "fuel_type": activity.get("fuel_type"),
         "body_style": activity.get("bodystyle"),

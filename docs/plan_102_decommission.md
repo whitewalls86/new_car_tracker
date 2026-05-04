@@ -1,6 +1,6 @@
 # Plan 102: Full Decommission — n8n, Legacy Postgres, Dead Service Code
 
-**Status:** Planned
+**Status:** Complete (2026-04-29)
 **Supersedes:** Plan 90 (dbt decommission / dbt-duckdb migration — absorbed and extended)
 
 ---

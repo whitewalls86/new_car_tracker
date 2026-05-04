@@ -81,8 +81,11 @@ def write_silver_observations_postgres(
             if row.get("listing_state") is None:
                 row["listing_state"] = "active"
             for field in _POSTGRES_INT_COLS:
-                if row.get(field) == "":
+                val = row.get(field)
+                if val == "" or val is None:
                     row[field] = None
+                else:
+                    row[field] = int(val)
             row["fetched_at"] = fetched_at
             rows.append(tuple(row[col] for col in _POSTGRES_COLS))
 

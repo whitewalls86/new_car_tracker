@@ -3,6 +3,9 @@ Pipeline Ops — admin UI and deploy coordination for cartracker.
 """
 import logging
 import os
+import threading
+import time
+from contextlib import asynccontextmanager
 from logging.handlers import RotatingFileHandler
 
 from fastapi import FastAPI, Request
@@ -27,8 +30,22 @@ _log_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s:
 logging.getLogger().addHandler(_log_handler)
 logging.getLogger().setLevel(logging.INFO)
 
-app = FastAPI()
-Instrumentator().add(lambda _: update_duckdb_metrics()).instrument(app).expose(app)
+def _duckdb_metrics_loop() -> None:
+    update_duckdb_metrics()
+    while True:
+        time.sleep(60)
+        update_duckdb_metrics()
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    t = threading.Thread(target=_duckdb_metrics_loop, daemon=True)
+    t.start()
+    yield
+
+
+app = FastAPI(lifespan=lifespan)
+Instrumentator().instrument(app).expose(app)
 app.mount(
     "/static_ops",
     StaticFiles(directory=os.path.join(os.path.dirname(__file__), "static_ops")), name="static_ops"
