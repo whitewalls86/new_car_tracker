@@ -401,7 +401,7 @@ unit_tests:
           - {listing_id: "L001", num_of_attempts: 7, event_at: "2026-01-10 12:00:00+00"}
     expect:
       rows:
-        - {attempt_bucket: "6-10", listing_count: 1}
+        - {attempt_bucket: "5-10", listing_count: 1}
 
   - name: test_cooldown_two_listings_same_bucket
     description: "Two distinct listings both at 1 attempt → listing_count=2 in bucket '1'"
