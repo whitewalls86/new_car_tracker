@@ -129,6 +129,16 @@ class TestWriteSilverObservationsPostgres:
             idx = _POSTGRES_COLS.index(field)
             assert rows[0][idx] is None, f"{field} should be None for empty string"
 
+    def test_float_int_fields_cast_to_int(self, mocker):
+        obs = _make_obs(price=35499.99, year=2024.0, mileage=15000.0)
+        _, _, mock_ev = self._patched_write(mocker, [obs])
+        rows = mock_ev.call_args[0][2]
+        from processing.writers.silver_writer import _POSTGRES_COLS
+        for field, expected in (("price", 35499), ("year", 2024), ("mileage", 15000)):
+            idx = _POSTGRES_COLS.index(field)
+            assert rows[0][idx] == expected
+            assert isinstance(rows[0][idx], int), f"{field} should be int, got {type(rows[0][idx])}"
+
     def test_db_failure_returns_zero_does_not_raise(self, mocker):
         from processing.writers.silver_writer import write_silver_observations_postgres
 

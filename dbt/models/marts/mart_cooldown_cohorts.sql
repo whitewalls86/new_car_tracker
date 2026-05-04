@@ -22,15 +22,15 @@ bucketed as (
         case
             when current_attempts = 1 then '1'
             when current_attempts = 2 then '2'
-            when current_attempts between 3 and 5 then '3-5'
-            when current_attempts between 6 and 10 then '6-10'
+            when current_attempts between 3 and 4 then '3-4'
+            when current_attempts between 5 and 10 then '5-10'
             else '11+'
         end as attempt_bucket,
         case
             when current_attempts = 1 then 1
             when current_attempts = 2 then 2
-            when current_attempts between 3 and 5 then 3
-            when current_attempts between 6 and 10 then 4
+            when current_attempts between 3 and 4 then 3
+            when current_attempts between 5 and 10 then 4
             else 5
         end as bucket_order
     from latest_per_listing

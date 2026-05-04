@@ -35,9 +35,14 @@ cartracker_stale_listings_pct = Gauge(
     "Percentage of tracked vehicle VINs with price data older than 14 days"
 )
 
-cartracker_cooldown_backlog_high = Gauge(
-    "cartracker_cooldown_backlog_high",
-    "Number of listings stuck in 11+ cooldown attempts (severe IP block backlog)"
+cartracker_cooldown_backlog = Gauge(
+    "cartracker_cooldown_backlog",
+    "Listings in active cooldown (1-4 attempts — will retry)"
+)
+
+cartracker_cooldown_permanent = Gauge(
+    "cartracker_cooldown_permanent",
+    "Listings effectively blocked (5+ attempts — exponential backoff, unlikely to clear)"
 )
 
 
@@ -98,16 +103,30 @@ def update_duckdb_metrics():
             except Exception as e:
                 logger.warning(f"Failed to update staleness metrics: {e}")
 
-            # Cooldown backlog (11+ attempts)
+            # Cooldown backlog: 1-4 attempts (active, will retry)
             try:
                 row = con.execute(
-                    "SELECT COALESCE(listing_count, 0) FROM main.mart_cooldown_cohorts "
-                    "WHERE attempt_bucket = '11+'"
+                    "SELECT COALESCE(SUM(listing_count), 0) FROM main.mart_cooldown_cohorts "
+                    "WHERE attempt_bucket IN ('1', '2', '3-4')"
                 ).fetchone()
                 if row:
-                    cartracker_cooldown_backlog_high.set(row[0])
+                    cartracker_cooldown_backlog.set(row[0])
             except Exception as e:
                 logger.warning(f"Failed to update cooldown backlog metrics: {e}")
 
+            # Cooldown permanent: 5+ attempts (effectively blocked)
+            try:
+                row = con.execute(
+                    "SELECT COALESCE(SUM(listing_count), 0) FROM main.mart_cooldown_cohorts "
+                    "WHERE attempt_bucket IN ('5-10', '11+')"
+                ).fetchone()
+                if row:
+                    cartracker_cooldown_permanent.set(row[0])
+            except Exception as e:
+                logger.warning(f"Failed to update cooldown permanent metrics: {e}")
+
     except Exception as e:
-        logger.error(f"DuckDB connection failed: {e}")
+        if "Conflicting lock" in str(e):
+            logger.warning(f"DuckDB connection skipped (write lock held by dbt): {e}")
+        else:
+            logger.error(f"DuckDB connection failed: {e}")

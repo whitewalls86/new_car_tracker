@@ -1,7 +1,6 @@
 # Plan 95: Portfolio Landing Page
 
-**Status:** Planned
-**Priority:** Unprioritized
+**Status:** Complete (2026-05-04)
 
 ## Overview
 

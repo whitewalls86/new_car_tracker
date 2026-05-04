@@ -369,8 +369,8 @@ unit_tests:
   # mart_cooldown_cohorts — 403 backlog bucket assignment
   # ---------------------------------------------------------------------------
 
-  - name: test_cooldown_bucket_3_to_5
-    description: "A listing with 4 attempts falls into the '3-5' bucket"
+  - name: test_cooldown_bucket_3_to_4
+    description: "A listing with 4 attempts falls into the '3-4' bucket"
     model: mart_cooldown_cohorts
     given:
       - input: ref('stg_blocked_cooldown_events')
@@ -378,7 +378,7 @@ unit_tests:
           - {listing_id: "L001", num_of_attempts: 4, event_at: "2026-01-10 12:00:00+00"}
     expect:
       rows:
-        - {attempt_bucket: "3-5", listing_count: 1}
+        - {attempt_bucket: "3-4", listing_count: 1}
 
   - name: test_cooldown_bucket_11_plus
     description: "A listing with 15 attempts falls into the '11+' bucket"
@@ -401,7 +401,7 @@ unit_tests:
           - {listing_id: "L001", num_of_attempts: 7, event_at: "2026-01-10 12:00:00+00"}
     expect:
       rows:
-        - {attempt_bucket: "6-10", listing_count: 1}
+        - {attempt_bucket: "5-10", listing_count: 1}
 
   - name: test_cooldown_two_listings_same_bucket
     description: "Two distinct listings both at 1 attempt → listing_count=2 in bucket '1'"

@@ -1,0 +1,16 @@
+mappings:
+  - match: "airflow.dagrun.duration.success.*"
+    name: "airflow_dagrun_duration_success"
+    timer_type: summary
+    labels:
+      dag_id: "$1"
+  - match: "airflow.dagrun.duration.failed.*"
+    name: "airflow_dagrun_duration_failed"
+    timer_type: summary
+    labels:
+      dag_id: "$1"
+  - match: "airflow.dagrun.schedule_delay.*"
+    name: "airflow_dagrun_schedule_delay"
+    timer_type: summary
+    labels:
+      dag_id: "$1"

@@ -311,6 +311,39 @@ class TestCarouselParsing:
         assert meta["missing_listing_id"] == 1
 
 
+FLOAT_PRICE_HTML = (
+    _activity_script({
+        "listing_id": "22222222-aaaa-bbbb-cccc-000000000002",
+        "price": 35499.99,
+        "year": 2024.0,
+        "mileage": 15000.0,
+        "msrp": 36999.99,
+    })
+)
+
+
+class TestFloatIntCoercion:
+    def test_float_price_cast_to_int(self):
+        primary, _, _ = parse_cars_detail_page_html_v1(FLOAT_PRICE_HTML)
+        assert primary["price"] == 35499
+        assert isinstance(primary["price"], int)
+
+    def test_float_mileage_cast_to_int(self):
+        primary, _, _ = parse_cars_detail_page_html_v1(FLOAT_PRICE_HTML)
+        assert primary["mileage"] == 15000
+        assert isinstance(primary["mileage"], int)
+
+    def test_float_msrp_cast_to_int(self):
+        primary, _, _ = parse_cars_detail_page_html_v1(FLOAT_PRICE_HTML)
+        assert primary["msrp"] == 36999
+        assert isinstance(primary["msrp"], int)
+
+    def test_float_year_cast_to_int(self):
+        primary, _, _ = parse_cars_detail_page_html_v1(FLOAT_PRICE_HTML)
+        assert primary["year"] == 2024
+        assert isinstance(primary["year"], int)
+
+
 class TestMetaKeys:
     def test_meta_has_parser_key(self):
         _, _, meta = parse_cars_detail_page_html_v1(ACTIVE_DETAIL_HTML)

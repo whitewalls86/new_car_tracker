@@ -478,6 +478,9 @@ services:
   statsd-exporter:
     image: prom/statsd-exporter:latest
     container_name: cartracker-statsd-exporter
+    command: --statsd.mapping-config=/etc/statsd_mapping.yml
+    volumes:
+      - ./grafana/statsd_mapping.yml:/etc/statsd_mapping.yml:ro
     restart: unless-stopped
     networks:
       - cartracker-net
