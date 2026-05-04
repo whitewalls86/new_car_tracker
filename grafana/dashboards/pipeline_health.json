@@ -100,14 +100,14 @@
     },
     {
       "id": 7,
-      "title": "Task Success Rate by DAG",
+      "title": "Task Success Rate (global, 1h window)",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
       "targets": [
         {
           "datasource": "Prometheus",
-          "expr": "rate(airflow_ti_successes[5m]) / (rate(airflow_ti_successes[5m]) + rate(airflow_ti_failures[5m]) + 0.0001)",
-          "legendFormat": "success rate"
+          "expr": "increase(airflow_ti_successes[1h]) / (increase(airflow_ti_successes[1h]) + increase(airflow_ti_failures[1h]) + 0.001)",
+          "legendFormat": "Success rate"
         }
       ],
       "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1 } }
@@ -175,7 +175,7 @@
       "id": 12,
       "title": "VIN Extraction Yield (last day)",
       "type": "stat",
-      "gridPos": { "h": 4, "w": 8, "x": 0, "y": 24 },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 24 },
       "targets": [
         {
           "datasource": "Prometheus",
@@ -190,7 +190,7 @@
       "id": 13,
       "title": "Stale Listings %",
       "type": "stat",
-      "gridPos": { "h": 4, "w": 8, "x": 8, "y": 24 },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 24 },
       "targets": [
         {
           "datasource": "Prometheus",
@@ -203,18 +203,33 @@
     },
     {
       "id": 14,
-      "title": "403 Cooldown Backlog (11+ bucket)",
+      "title": "403 Cooldown Backlog (1-4 attempts)",
       "type": "stat",
-      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 24 },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 24 },
       "targets": [
         {
           "datasource": "Prometheus",
-          "expr": "cartracker_cooldown_backlog_high",
-          "legendFormat": "Listings"
+          "expr": "cartracker_cooldown_backlog",
+          "legendFormat": "In queue"
         }
       ],
       "options": { "colorMode": "background", "reduceOptions": { "calcs": ["lastNotNull"] } },
-      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "unit": "short", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 2000 }, { "color": "red", "value": 5000 }] } } }
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "unit": "short", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 1000 }, { "color": "red", "value": 3000 }] } } }
+    },
+    {
+      "id": 15,
+      "title": "403 Permanently Blocked (5+ attempts)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 24 },
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "cartracker_cooldown_permanent",
+          "legendFormat": "Blocked"
+        }
+      ],
+      "options": { "colorMode": "background", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "unit": "short", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 500 }, { "color": "red", "value": 2000 }] } } }
     }
   ]
 }
