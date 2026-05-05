@@ -4,6 +4,7 @@ No authentication required; Caddy routes /info without forward_auth.
 """
 import logging
 import os
+import time
 from datetime import datetime, timezone
 
 import duckdb
@@ -21,6 +22,21 @@ _BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 templates = Jinja2Templates(directory=os.path.join(_BASE_DIR, "templates"))
 
 _DUCKDB_PATH = os.environ.get("DUCKDB_PATH", "/data/analytics/analytics.duckdb")
+_DUCKDB_RETRIES = 3
+_DUCKDB_RETRY_DELAY = 2.0  # seconds between retries; covers dbt write-lock windows
+
+
+def _duckdb_connect() -> duckdb.DuckDBPyConnection:
+    """Open a read-only DuckDB connection, retrying on lock errors."""
+    last_exc: Exception = RuntimeError("no attempts made")
+    for attempt in range(_DUCKDB_RETRIES):
+        try:
+            return duckdb.connect(_DUCKDB_PATH, read_only=True)
+        except Exception as exc:
+            last_exc = exc
+            if attempt < _DUCKDB_RETRIES - 1:
+                time.sleep(_DUCKDB_RETRY_DELAY)
+    raise last_exc
 
 
 def _fmt_stat(value: int | float) -> str:
@@ -48,27 +64,27 @@ def _load_stats() -> dict:
     stats: dict = {}
 
     try:
-        with duckdb.connect(_DUCKDB_PATH, read_only=True) as con:
+        with _duckdb_connect() as con:
             row = con.execute(
                 "SELECT COUNT(*) FROM main.mart_vehicle_snapshot WHERE listing_state = 'active'"
             ).fetchone()
             if row:
                 stats["active_listings"] = row[0]
     except Exception:
-        logger.debug("info stats: active_listings query failed", exc_info=True)
+        logger.warning("info stats: active_listings query failed", exc_info=True)
 
     try:
-        with duckdb.connect(_DUCKDB_PATH, read_only=True) as con:
+        with _duckdb_connect() as con:
             row = con.execute(
                 "SELECT COALESCE(SUM(total_price_observations), 0) FROM main.mart_vehicle_snapshot"
             ).fetchone()
             if row:
                 stats["price_observations"] = row[0]
     except Exception:
-        logger.debug("info stats: price_observations query failed", exc_info=True)
+        logger.warning("info stats: price_observations query failed", exc_info=True)
 
     try:
-        with duckdb.connect(_DUCKDB_PATH, read_only=True) as con:
+        with _duckdb_connect() as con:
             row = con.execute(
                 """
                 SELECT COUNT(DISTINCT make || '|' || model)
@@ -79,7 +95,7 @@ def _load_stats() -> dict:
             if row:
                 stats["make_model_pairs"] = row[0]
     except Exception:
-        logger.debug("info stats: make_model_pairs query failed", exc_info=True)
+        logger.warning("info stats: make_model_pairs query failed", exc_info=True)
 
     try:
         with db_cursor(error_context="info: last_pipeline_run") as cur:
@@ -93,10 +109,10 @@ def _load_stats() -> dict:
                     ts = ts.replace(tzinfo=timezone.utc)
                 stats["last_pipeline_run_iso"] = ts.strftime("%Y-%m-%dT%H:%M:%SZ")
     except Exception:
-        logger.debug("info stats: last_pipeline_run query failed", exc_info=True)
+        logger.warning("info stats: last_pipeline_run query failed", exc_info=True)
 
     try:
-        with duckdb.connect(_DUCKDB_PATH, read_only=True) as con:
+        with _duckdb_connect() as con:
             row = con.execute(
                 """
                 SELECT
@@ -110,7 +126,7 @@ def _load_stats() -> dict:
                 stats["artifacts_per_hour"] = round(row[0])
                 stats["observations_per_hour"] = round(row[1])
     except Exception:
-        logger.debug("info stats: throughput query failed", exc_info=True)
+        logger.warning("info stats: throughput query failed", exc_info=True)
 
     return stats
 
