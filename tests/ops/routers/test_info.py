@@ -25,7 +25,7 @@ def _duckdb_ctx(fetchone_val):
 def _patch_all_ok(mocker):
     """Patch DuckDB (4 calls) and Postgres db_cursor to all succeed."""
     mocker.patch(
-        "ops.routers.info.duckdb.connect",
+        "ops.routers.info._duckdb_connect",
         side_effect=[
             _duckdb_ctx((500,)),           # active_listings
             _duckdb_ctx((1_200_000,)),     # price_observations
@@ -121,7 +121,7 @@ class TestLoadStatsIndividualFailures:
 
     def test_active_listings_fails_key_absent(self, mocker):
         mocker.patch(
-            "ops.routers.info.duckdb.connect",
+            "ops.routers.info._duckdb_connect",
             side_effect=[
                 Exception("duckdb down"),
                 _duckdb_ctx((1_000_000,)),
@@ -136,7 +136,7 @@ class TestLoadStatsIndividualFailures:
 
     def test_price_observations_fails_key_absent(self, mocker):
         mocker.patch(
-            "ops.routers.info.duckdb.connect",
+            "ops.routers.info._duckdb_connect",
             side_effect=[
                 _duckdb_ctx((500,)),
                 Exception("duckdb down"),
@@ -151,7 +151,7 @@ class TestLoadStatsIndividualFailures:
 
     def test_make_model_pairs_fails_key_absent(self, mocker):
         mocker.patch(
-            "ops.routers.info.duckdb.connect",
+            "ops.routers.info._duckdb_connect",
             side_effect=[
                 _duckdb_ctx((500,)),
                 _duckdb_ctx((1_000_000,)),
@@ -166,7 +166,7 @@ class TestLoadStatsIndividualFailures:
 
     def test_last_pipeline_run_fails_key_absent(self, mocker):
         mocker.patch(
-            "ops.routers.info.duckdb.connect",
+            "ops.routers.info._duckdb_connect",
             side_effect=[
                 _duckdb_ctx((500,)),
                 _duckdb_ctx((1_000_000,)),
@@ -181,7 +181,7 @@ class TestLoadStatsIndividualFailures:
 
     def test_throughput_fails_keys_absent(self, mocker):
         mocker.patch(
-            "ops.routers.info.duckdb.connect",
+            "ops.routers.info._duckdb_connect",
             side_effect=[
                 _duckdb_ctx((500,)),
                 _duckdb_ctx((1_000_000,)),
@@ -203,7 +203,7 @@ class TestLoadStatsIndividualFailures:
 class TestLoadStatsAllFail:
     def test_all_queries_fail_returns_empty_dict(self, mocker):
         mocker.patch(
-            "ops.routers.info.duckdb.connect",
+            "ops.routers.info._duckdb_connect",
             side_effect=Exception("duckdb down"),
         )
         mocker.patch("ops.routers.info.db_cursor", side_effect=Exception("pg down"))
