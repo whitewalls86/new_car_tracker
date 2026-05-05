@@ -246,7 +246,6 @@ class TestReady:
     def test_ready_false_when_busy(self, mock_archiver_client, mocker):
         mocker.patch("archiver.app.is_idle", return_value=False)
         resp = mock_archiver_client.get("/ready")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["ready"] is False
-        assert "reason" in data
+        assert resp.status_code == 503
+        assert resp.json()["detail"]["ready"] is False
+        assert "reason" in resp.json()["detail"]

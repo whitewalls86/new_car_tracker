@@ -1,6 +1,4 @@
 """Unit tests for scraper/app.py HTTP endpoints."""
-from unittest.mock import mock_open
-
 import scraper.app as scraper_app
 
 ARTIFACT_KEYS = {
@@ -41,35 +39,6 @@ class TestHealth:
         resp = mock_scraper_client.get("/health")
         assert resp.status_code == 200
         assert resp.json() == {"ok": True}
-
-
-# ---------------------------------------------------------------------------
-# GET /logs
-# ---------------------------------------------------------------------------
-class TestLogs:
-    def test_logs_default_200_lines(self, mock_scraper_client, mocker):
-        fake_lines = [f"line {i}\n" for i in range(300)]
-        m = mock_open()
-        m.return_value.__enter__.return_value.readlines.return_value = fake_lines
-        mocker.patch("builtins.open", m)
-        resp = mock_scraper_client.get("/logs")
-        assert resp.status_code == 200
-        assert len(resp.json()["lines"]) == 200
-
-    def test_logs_custom_line_count(self, mock_scraper_client, mocker):
-        fake_lines = [f"line {i}\n" for i in range(300)]
-        m = mock_open()
-        m.return_value.__enter__.return_value.readlines.return_value = fake_lines
-        mocker.patch("builtins.open", m)
-        resp = mock_scraper_client.get("/logs?lines=50")
-        assert resp.status_code == 200
-        assert len(resp.json()["lines"]) == 50
-
-    def test_logs_file_not_found_returns_empty(self, mock_scraper_client, mocker):
-        mocker.patch("builtins.open", side_effect=FileNotFoundError)
-        resp = mock_scraper_client.get("/logs")
-        assert resp.status_code == 200
-        assert resp.json() == {"lines": []}
 
 
 # ---------------------------------------------------------------------------

@@ -13,6 +13,10 @@ DATABASE_URL = os.environ.get(
 DUCKDB_PATH = os.environ.get("DUCKDB_PATH", "/data/analytics/analytics.duckdb")
 
 
+# Intentionally does not use shared/db.py: Streamlit's session model requires
+# @st.cache_resource to share a single connection across reruns. The retry in
+# run_query exists because Streamlit long-lived connections go stale overnight;
+# on failure we clear the cache and reconnect rather than crashing the dashboard.
 @st.cache_resource
 def get_connection():
     conn = psycopg2.connect(DATABASE_URL)

@@ -1,10 +1,8 @@
 import logging
-import os
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
-from logging.handlers import RotatingFileHandler
 from typing import Any, Dict, List
 
 from fastapi import Body, FastAPI, HTTPException
@@ -16,13 +14,9 @@ from scraper.processors.scrape_detail import (
     scrape_detail_fetch,
 )
 from scraper.processors.scrape_results import scrape_results
+from shared.logging_setup import configure_logging
 
-_LOG_PATH = os.getenv("LOG_PATH", "/usr/app/logs/app.log")
-os.makedirs(os.path.dirname(_LOG_PATH), exist_ok=True)
-_log_handler = RotatingFileHandler(_LOG_PATH, maxBytes=5_000_000, backupCount=3)
-_log_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
-logging.getLogger().addHandler(_log_handler)
-logging.getLogger().setLevel(logging.INFO)
+configure_logging()
 
 logger = logging.getLogger("scraper")
 
@@ -244,17 +238,6 @@ def scrape_detail_batch_endpoint(
     }
 
 
-@app.get("/logs")
-def get_logs(lines: int = 200) -> Dict[str, Any]:
-    """Return the last N lines of the application log file."""
-    try:
-        with open(_LOG_PATH) as f:
-            all_lines = f.readlines()
-        return {"lines": all_lines[-lines:]}
-    except FileNotFoundError:
-        return {"lines": []}
-
-
 @app.get("/health")
 def health():
     return {"ok": True}
@@ -263,8 +246,8 @@ def health():
 @app.get("/ready")
 def ready():
     """
-    Drain endpoint. Returns 200 when no jobs are in-flight so that a deploy can
-    proceed safely. Returns 503 while jobs are running or queued.
+    Drain endpoint. Returns 503 while jobs are running or queued so that
+    monitoring and Airflow sensors get a clear not-ready signal via status code.
     """
     with _jobs_lock:
         active = [j for j in _jobs.values() if j["status"] in ("queued", "running")]

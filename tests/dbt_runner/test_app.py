@@ -92,35 +92,9 @@ def test_get_ready_when_idle(mock_client, mocker):
 def test_get_ready_when_busy(mock_client, mocker):
     mocker.patch("dbt_runner.app.is_idle", return_value=False)
     response = mock_client.get("/ready")
-    assert response.status_code == 200
-    assert response.json() == {"ready": False, "reason": "jobs in flight"}
-
-
-# ---------------------------------------------------------------------------
-# /logs
-# ---------------------------------------------------------------------------
-
-def test_get_logs_file_not_found(mock_client, mock_log_file_not_found):
-    response = mock_client.get("/logs")
-    assert response.json() == {"lines": []}
-    assert response.status_code == 200
-
-
-def test_get_logs_permission_error(mock_client, mock_log_permission_error):
-    with pytest.raises(PermissionError):
-        mock_client.get("/logs")
-
-
-def test_get_logs_default(mock_client, mock_log_file):
-    response = mock_client.get("/logs")
-    assert response.status_code == 200
-    assert len(response.json()["lines"]) == 200
-
-
-def test_get_logs_custom_lines(mock_client, mock_log_file):
-    response = mock_client.get("/logs?lines=50")
-    assert len(response.json()["lines"]) == 50
-    assert response.status_code == 200
+    assert response.status_code == 503
+    assert response.json()["detail"]["ready"] is False
+    assert response.json()["detail"]["reason"] == "jobs in flight"
 
 
 # ---------------------------------------------------------------------------
