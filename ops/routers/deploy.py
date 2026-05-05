@@ -64,8 +64,8 @@ def _intent_status() -> Dict[str, Any]:
     return results
 
 
-def _set_intent(caller: str) -> bool:
-    """Atomically try to set intent. Returns True if set, False if already set."""
+def _set_intent(caller: str) -> str:
+    """Atomically try to set intent. Returns 'ok', 'locked', or 'error'."""
 
     sql = """UPDATE deploy_intent
                    SET
@@ -82,12 +82,11 @@ def _set_intent(caller: str) -> bool:
         with db_cursor(error_context="Set-Intent") as cur:
             cur.execute(sql, params)
             if cur.fetchone() is not None:
-                return True
-            else:
-                logger.warning("Intent failed to set.")
-                return False
+                return "ok"
+            logger.warning("Intent failed to set — already locked.")
+            return "locked"
     except Exception:
-        return False
+        return "error"
 
 
 def _intent_release() -> bool:
@@ -117,8 +116,10 @@ def get_current_intent() -> Dict[str, Any]:
 def start_deploy_intent() -> bool:
     """Signals deploy intent to the system."""
     result = _set_intent("Deploy Declared")
-    if result:
-        return result
+    if result == "ok":
+        return True
+    elif result == "locked":
+        raise HTTPException(status_code=409, detail="Deploy intent already set.")
     else:
         raise HTTPException(status_code=503, detail="Database unavailable.")
 
