@@ -58,7 +58,7 @@ def deploy_intent_sensor(**kwargs) -> _DeployIntentSensor:
         task_id="check_deploy_intent",
         mode="reschedule",
         poke_interval=60,
-        timeout=300,
+        timeout=600,
         **kwargs,
     )
 
@@ -77,6 +77,6 @@ def http_health_sensor(service_name: str, health_url: str, **kwargs) -> _Service
         health_url=f"{health_url}/health",
         mode="reschedule",
         poke_interval=15,
-        timeout=300,
+        timeout=600,
         **kwargs,
     )
