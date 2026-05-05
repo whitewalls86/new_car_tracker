@@ -63,7 +63,7 @@ def test_deploy_start_idempotent_when_already_pending(api_client):
 
     response = api_client.post("/deploy/start")
 
-    assert response.status_code == 503
+    assert response.status_code == 409
 
 
 # ---------------------------------------------------------------------------
@@ -85,6 +85,25 @@ def test_deploy_complete_releases_intent(api_client, verify_cur):
     row = verify_cur.fetchone()
     assert row["intent"] == "none"
     assert row["requested_at"] is None
+
+
+@pytest.mark.integration
+def test_deploy_start_returns_409_not_503_when_locked(api_client):
+    """Locked intent must return 409, not 503 — confirms error discrimination."""
+    api_client.post("/deploy/start")
+
+    response = api_client.post("/deploy/start")
+
+    assert response.status_code == 409
+    assert "already" in response.json()["detail"].lower()
+
+
+@pytest.mark.integration
+def test_deploy_complete_when_no_intent_set(api_client):
+    """Complete with no intent set still returns 200 — release is unconditional."""
+    response = api_client.post("/deploy/complete")
+
+    assert response.status_code == 200
 
 
 # ---------------------------------------------------------------------------

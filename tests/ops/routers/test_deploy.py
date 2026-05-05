@@ -110,20 +110,20 @@ def test_set_intent_connection_error(
     mock_db_connection_error, mock_logger_error
 ):
     result = deploy._set_intent('test')
-    assert result is False
+    assert result == "error"
     error_msg = mock_logger_error.call_args[0][0]
     assert "Set-Intent: Unable to connect to Postgres database." in error_msg
 
 
 def test_set_intent_db_error(mock_db_database_error, mock_logger_error):
     result = deploy._set_intent('test')
-    assert result is False
+    assert result == "error"
     assert "Set-Intent: encountered DB error." in mock_logger_error.call_args[0][0]
 
 
 def test_set_intent_execution_error(mock_db_sql_error, mock_logger_error):
     result = deploy._set_intent('test')
-    assert result is False
+    assert result == "error"
     assert "Set-Intent: SQL execution failed." in mock_logger_error.call_args[0][0]
 
 
@@ -132,7 +132,7 @@ def test_set_intent_success(mock_cursor_context):
     cursor.fetchone.return_value = ('pending',)
     result = deploy._set_intent('test')
 
-    assert result is True
+    assert result == "ok"
 
 
 def test_set_intent_no_return(mock_cursor_context, mock_router_logger_warning):
@@ -140,8 +140,8 @@ def test_set_intent_no_return(mock_cursor_context, mock_router_logger_warning):
     cursor.fetchone.return_value = None
     result = deploy._set_intent('test')
 
-    assert result is False
-    assert "Intent failed to set." in mock_router_logger_warning.call_args[0][0]
+    assert result == "locked"
+    assert "Intent failed to set — already locked." in mock_router_logger_warning.call_args[0][0]
 
 
 
@@ -157,8 +157,14 @@ def test_set_deploy_health(mock_client, mock_set_intent):
     mock_set_intent.assert_called_once()
 
 
+def test_set_deploy_health_already_locked(mock_client, mock_set_intent):
+    mock_set_intent.return_value = "locked"
+    response = mock_client.post("/deploy/start")
+    assert response.status_code == 409
+
+
 def test_set_deploy_health_db_error(mock_client, mock_set_intent):
-    mock_set_intent.return_value = False
+    mock_set_intent.return_value = "error"
     response = mock_client.post("/deploy/start")
     assert response.status_code == 503
 
