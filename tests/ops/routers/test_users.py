@@ -110,6 +110,22 @@ def test_submit_access_request_no_telegram_when_unconfigured(
 # GET /admin/users
 # ---------------------------------------------------------------------------
 
+def test_submit_access_request_duplicate_pending(mock_client, mock_cursor_context, monkeypatch):
+    monkeypatch.setattr("ops.routers.auth._SALT", SALT)
+    _, cursor = mock_cursor_context
+    # First fetchone: not already authorized; second: has a pending request
+    cursor.fetchone.side_effect = [None, {"id": 1}]
+    resp = mock_client.post(
+        "/request-access",
+        data={"display_name": "Test User", "requested_role": "viewer"},
+        headers={"X-Auth-Request-Email": "user@gmail.com"},
+    )
+    assert resp.status_code == 200
+    # No INSERT should have been issued for the duplicate
+    sql_calls = [call[0][0] for call in cursor.execute.call_args_list]
+    assert not any("INSERT INTO access_requests" in sql for sql in sql_calls)
+
+
 def test_list_users_ok(mock_client, mock_cursor_context):
     _, cursor = mock_cursor_context
     cursor.fetchall.return_value = [

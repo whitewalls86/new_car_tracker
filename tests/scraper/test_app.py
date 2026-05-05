@@ -45,6 +45,14 @@ class TestHealth:
 # POST /scrape_results
 # ---------------------------------------------------------------------------
 class TestPostScrapeResults:
+    def test_invalid_json_body_returns_422(self, mock_scraper_client):
+        resp = mock_scraper_client.post(
+            "/scrape_results?run_id=r1&search_key=sk1&scope=national",
+            content=b"not-json",
+            headers={"Content-Type": "application/json"},
+        )
+        assert resp.status_code == 422
+
     def test_queues_job_returns_job_id(self, mock_scraper_client, mocker):
         mocker.patch.object(scraper_app._executor, "submit")
         resp = mock_scraper_client.post(

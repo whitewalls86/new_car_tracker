@@ -301,6 +301,21 @@ class TestFlushStagingEvents:
         assert result["total_flushed"] == 0
         assert result["error"] is not None
 
+    def test_no_tables_configured_returns_zero(self, mocker):
+        mocker.patch(
+            "archiver.processors.flush_staging_events.get_conn", return_value=MagicMock()
+        )
+        mocker.patch(
+            "archiver.processors.flush_staging_events.get_s3fs", return_value=MagicMock()
+        )
+        mocker.patch(
+            "archiver.processors.flush_staging_events._TABLE_CONFIGS", []
+        )
+        result = flush_staging_events()
+        assert result["total_flushed"] == 0
+        assert result["tables"] == []
+        assert result["error"] is None
+
     def test_conn_always_closed(self, mocker):
         mock_conn = MagicMock()
         mocker.patch(

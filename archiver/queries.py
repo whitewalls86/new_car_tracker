@@ -8,11 +8,13 @@ Queries are loaded from .sql files at import time so they can be:
 """
 from pathlib import Path
 
-_SQL = Path(__file__).parent / "sql"
+from shared.query_loader import load_query
+
+_SQL_DIR = Path(__file__).parent / "sql"
 
 
 def _q(name: str) -> str:
-    return (_SQL / f"{name}.sql").read_text()
+    return load_query(_SQL_DIR, name)
 
 
 GET_EXPIRED_PARQUET_MONTHS = _q("get_expired_parquet_months")
