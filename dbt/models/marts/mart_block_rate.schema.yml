@@ -1,0 +1,30 @@
+version: 2
+
+models:
+  - name: mart_block_rate
+    description: >
+      Hourly 403 blocking events. new_blocks counts first-time blocks
+      (event_type='blocked'); block_increments counts repeated attempts on
+      already-blocked listings (event_type='incremented'). Join to
+      mart_scrape_volume on hour to compute block rate against observations.
+      One row per hour.
+    columns:
+      - name: hour
+        data_tests:
+          - not_null
+          - unique
+      - name: new_blocks
+        data_tests:
+          - not_null
+      - name: block_increments
+        data_tests:
+          - not_null
+      - name: total_block_events
+        data_tests:
+          - not_null
+      - name: unique_listings_blocked
+        data_tests:
+          - not_null
+      - name: max_attempts_seen
+        data_tests:
+          - not_null

@@ -1,0 +1,28 @@
+version: 2
+
+models:
+  - name: mart_inventory_coverage
+    description: >
+      Detail enrichment rate by make/model. A VIN is "enriched" if its best
+      observation comes from source='detail'. Used by the data health dashboard
+      to identify make/model segments that need more detail scraping.
+      One row per (make, model). Composite PK: (make, model).
+    columns:
+      - name: make
+        data_tests:
+          - not_null
+      - name: model
+        data_tests:
+          - not_null
+      - name: total_vins
+        data_tests:
+          - not_null
+      - name: detail_enriched
+        data_tests:
+          - not_null
+      - name: srp_only
+        data_tests:
+          - not_null
+      - name: coverage_pct
+        data_tests:
+          - not_null

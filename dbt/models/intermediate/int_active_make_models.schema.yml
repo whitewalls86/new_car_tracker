@@ -1,0 +1,16 @@
+version: 2
+
+models:
+  - name: int_active_make_models
+    description: >
+      Distinct set of make/model pairs currently enabled for tracking.
+      Derived from search_configs joined to tracked_models where enabled=true.
+      Used by mart_vehicle_snapshot to filter the inventory to tracked models only.
+      Composite PK: (make, model).
+    columns:
+      - name: make
+        data_tests:
+          - not_null
+      - name: model
+        data_tests:
+          - not_null

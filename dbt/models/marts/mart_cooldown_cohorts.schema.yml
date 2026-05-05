@@ -1,0 +1,29 @@
+version: 2
+
+models:
+  - name: mart_cooldown_cohorts
+    description: >
+      Distribution of 403-blocked listings by attempt depth.
+      Uses the latest event per listing to determine current attempt count,
+      then groups into buckets: 1, 2, 3-4, 5-10, 11+.
+      One row per attempt_bucket. attempt_bucket is the display label;
+      bucket_order is the sort key.
+    columns:
+      - name: attempt_bucket
+        data_tests:
+          - not_null
+          - unique
+          - accepted_values:
+              values: ['1', '2', '3-4', '5-10', '11+']
+      - name: bucket_order
+        data_tests:
+          - not_null
+      - name: listing_count
+        data_tests:
+          - not_null
+      - name: min_attempts
+        data_tests:
+          - not_null
+      - name: max_attempts
+        data_tests:
+          - not_null

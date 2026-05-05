@@ -524,3 +524,103 @@ unit_tests:
     expect:
       rows:
         - {make: "honda", model: "crv", total_vins: 1, stale_gt_14d: 1}
+
+  # ---------------------------------------------------------------------------
+  # mart_scrape_volume — hourly throughput and vin_extraction_pct
+  # ---------------------------------------------------------------------------
+
+  - name: test_scrape_volume_vin_extraction_pct
+    description: "vin_extraction_pct computed for detail source; null for srp and carousel"
+    model: mart_scrape_volume
+    given:
+      - input: ref('stg_observations')
+        rows:
+          - {fetched_at: "2026-01-10 10:00:00+00", source: "detail",
+             artifact_id: 1, listing_id: "L1", vin17: "VALIDVIN00000001A"}
+          - {fetched_at: "2026-01-10 10:30:00+00", source: "detail",
+             artifact_id: 1, listing_id: "L2", vin17: null}
+          - {fetched_at: "2026-01-10 10:00:00+00", source: "srp",
+             artifact_id: 2, listing_id: "L3", vin17: "VALIDVIN00000003A"}
+    expect:
+      rows:
+        - {source: "detail", vin_extraction_pct: 50.0}
+        - {source: "srp", vin_extraction_pct: null}
+
+  - name: test_scrape_volume_artifact_count_distinct
+    description: "Two observations from the same artifact_id count as artifact_count=1"
+    model: mart_scrape_volume
+    given:
+      - input: ref('stg_observations')
+        rows:
+          - {fetched_at: "2026-01-10 10:00:00+00", source: "srp",
+             artifact_id: 99, listing_id: "L1", vin17: null}
+          - {fetched_at: "2026-01-10 10:30:00+00", source: "srp",
+             artifact_id: 99, listing_id: "L2", vin17: null}
+    expect:
+      rows:
+        - {source: "srp", artifact_count: 1, observation_count: 2}
+
+  - name: test_scrape_volume_hourly_grouping
+    description: "Observations in different hours produce separate rows"
+    model: mart_scrape_volume
+    given:
+      - input: ref('stg_observations')
+        rows:
+          - {fetched_at: "2026-01-10 10:00:00+00", source: "srp",
+             artifact_id: 1, listing_id: "L1", vin17: null}
+          - {fetched_at: "2026-01-10 11:00:00+00", source: "srp",
+             artifact_id: 2, listing_id: "L2", vin17: null}
+    expect:
+      rows:
+        - {source: "srp", observation_count: 1}
+        - {source: "srp", observation_count: 1}
+
+  # ---------------------------------------------------------------------------
+  # mart_block_rate — event_type split and hourly aggregation
+  # ---------------------------------------------------------------------------
+
+  - name: test_block_rate_event_type_split
+    description: "blocked and incremented events are counted in their respective columns"
+    model: mart_block_rate
+    given:
+      - input: ref('stg_blocked_cooldown_events')
+        rows:
+          - {listing_id: "L1", event_type: "blocked",     num_of_attempts: 1,
+             event_at: "2026-01-10 10:00:00+00"}
+          - {listing_id: "L2", event_type: "incremented", num_of_attempts: 3,
+             event_at: "2026-01-10 10:15:00+00"}
+          - {listing_id: "L3", event_type: "incremented", num_of_attempts: 7,
+             event_at: "2026-01-10 10:30:00+00"}
+    expect:
+      rows:
+        - {new_blocks: 1, block_increments: 2, total_block_events: 3,
+           unique_listings_blocked: 3, max_attempts_seen: 7}
+
+  - name: test_block_rate_unique_listings
+    description: "Two events for the same listing_id count as unique_listings_blocked=1"
+    model: mart_block_rate
+    given:
+      - input: ref('stg_blocked_cooldown_events')
+        rows:
+          - {listing_id: "L1", event_type: "blocked",     num_of_attempts: 1,
+             event_at: "2026-01-10 10:00:00+00"}
+          - {listing_id: "L1", event_type: "incremented", num_of_attempts: 2,
+             event_at: "2026-01-10 10:30:00+00"}
+    expect:
+      rows:
+        - {unique_listings_blocked: 1, total_block_events: 2}
+
+  - name: test_block_rate_hourly_grouping
+    description: "Events in two separate hours produce two rows"
+    model: mart_block_rate
+    given:
+      - input: ref('stg_blocked_cooldown_events')
+        rows:
+          - {listing_id: "L1", event_type: "blocked", num_of_attempts: 1,
+             event_at: "2026-01-10 10:00:00+00"}
+          - {listing_id: "L2", event_type: "blocked", num_of_attempts: 1,
+             event_at: "2026-01-10 11:00:00+00"}
+    expect:
+      rows:
+        - {new_blocks: 1}
+        - {new_blocks: 1}

@@ -1,0 +1,16 @@
+version: 2
+
+models:
+  - name: stg_observations
+    description: >
+      Unified view of all parsed observations from the MinIO silver layer.
+      One row per artifact observation — SRP cards, detail pages, and carousel items.
+      vin17 is null when the raw VIN is absent, not 17 characters, or fails the
+      ^[A-Z0-9]{17}$ format check. Most columns are nullable because observation
+      completeness varies by source type.
+    columns:
+      - name: source
+        data_tests:
+          - not_null
+          - accepted_values:
+              values: ['srp', 'detail', 'carousel']

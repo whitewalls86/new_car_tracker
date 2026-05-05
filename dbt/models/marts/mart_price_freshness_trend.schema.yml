@@ -1,0 +1,37 @@
+version: 2
+
+models:
+  - name: mart_price_freshness_trend
+    description: >
+      Price observation freshness distribution for active listings, grouped by
+      make/model. Buckets: fresh_lt_1d, fresh_1_3d, fresh_4_7d, fresh_8_14d,
+      stale_gt_14d. Unlisted VINs are excluded — stale prices on sold listings
+      are expected and would mask real scraping gaps. One row per (make, model).
+    columns:
+      - name: make
+        data_tests:
+          - not_null
+      - name: model
+        data_tests:
+          - not_null
+      - name: total_vins
+        data_tests:
+          - not_null
+      - name: fresh_lt_1d
+        data_tests:
+          - not_null
+      - name: fresh_1_3d
+        data_tests:
+          - not_null
+      - name: fresh_4_7d
+        data_tests:
+          - not_null
+      - name: fresh_8_14d
+        data_tests:
+          - not_null
+      - name: stale_gt_14d
+        data_tests:
+          - not_null
+      - name: fresh_lt_7d_pct
+        data_tests:
+          - not_null

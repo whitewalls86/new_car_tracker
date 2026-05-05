@@ -1,0 +1,39 @@
+version: 2
+
+models:
+  - name: int_benchmarks
+    description: >
+      National market benchmarks per make/model, computed from current prices
+      across all tracked VINs. One row per (make, model). Used by mart_deal_scores
+      to rank individual listings against the national cohort.
+      national_avg_discount_pct is null for make/models where no VIN has a known MSRP.
+    columns:
+      - name: make
+        data_tests:
+          - not_null
+      - name: model
+        data_tests:
+          - not_null
+      - name: national_listing_count
+        data_tests:
+          - not_null
+      - name: national_avg_price
+        data_tests:
+          - not_null
+      - name: national_median_price
+        data_tests:
+          - not_null
+      - name: national_p10_price
+        data_tests:
+          - not_null
+      - name: national_p25_price
+        data_tests:
+          - not_null
+      - name: national_p75_price
+        data_tests:
+          - not_null
+      - name: national_p90_price
+        data_tests:
+          - not_null
+      - name: national_avg_discount_pct
+        description: "Null when no VIN in the cohort has a non-zero MSRP."

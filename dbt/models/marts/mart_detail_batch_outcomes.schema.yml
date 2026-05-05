@@ -1,0 +1,28 @@
+version: 2
+
+models:
+  - name: mart_detail_batch_outcomes
+    description: >
+      Daily detail scrape batch quality. extraction_yield is the fraction of
+      detail observations that produced a valid 17-char VIN. Low-yield days
+      indicate parser failures or structural page changes on the source site.
+      One row per obs_date.
+    columns:
+      - name: obs_date
+        data_tests:
+          - not_null
+          - unique
+      - name: detail_observations
+        data_tests:
+          - not_null
+      - name: detail_artifacts
+        data_tests:
+          - not_null
+      - name: valid_vin_count
+        data_tests:
+          - not_null
+      - name: unique_vins_enriched
+        data_tests:
+          - not_null
+      - name: extraction_yield
+        description: "Null only if detail_observations = 0 (guard via nullif); always populated in practice."

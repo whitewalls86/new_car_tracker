@@ -31,3 +31,110 @@ unit_tests:
     expect:
       rows:
         - {customer_id: "DEALER1", name: "Has ID", zip: "44444"}
+
+  # ---------------------------------------------------------------------------
+  # stg_observations — vin17 validation logic
+  # ---------------------------------------------------------------------------
+
+  - name: test_vin17_valid_uppercase
+    description: "Valid 17-char uppercase VIN passes through unchanged as vin17"
+    model: stg_observations
+    given:
+      - input: source('silver', 'observations')
+        rows:
+          - {vin: "VALIDVIN00000001A", source: "srp"}
+    expect:
+      rows:
+        - {vin17: "VALIDVIN00000001A"}
+
+  - name: test_vin17_lowercase_uppercased
+    description: "Valid 17-char lowercase VIN is uppercased to produce vin17"
+    model: stg_observations
+    given:
+      - input: source('silver', 'observations')
+        rows:
+          - {vin: "validvin00000001a", source: "srp"}
+    expect:
+      rows:
+        - {vin17: "VALIDVIN00000001A"}
+
+  - name: test_vin17_null_when_too_short
+    description: "VIN shorter than 17 chars produces null vin17"
+    model: stg_observations
+    given:
+      - input: source('silver', 'observations')
+        rows:
+          - {vin: "SHORTVIN0000001A", source: "srp"}
+    expect:
+      rows:
+        - {vin17: null}
+
+  - name: test_vin17_null_when_invalid_char
+    description: "VIN containing a non-alphanumeric character produces null vin17"
+    model: stg_observations
+    given:
+      - input: source('silver', 'observations')
+        rows:
+          - {vin: "BADCHAR0000001AB!", source: "srp"}
+    expect:
+      rows:
+        - {vin17: null}
+
+  - name: test_vin17_null_when_vin_null
+    description: "Null raw VIN produces null vin17"
+    model: stg_observations
+    given:
+      - input: source('silver', 'observations')
+        rows:
+          - {vin: null, source: "srp"}
+    expect:
+      rows:
+        - {vin17: null}
+
+  # ---------------------------------------------------------------------------
+  # stg_price_events — filter logic
+  # ---------------------------------------------------------------------------
+
+  - name: test_price_events_deleted_excluded
+    description: "Rows with event_type='deleted' are excluded; other event types pass through"
+    model: stg_price_events
+    given:
+      - input: source('ops_events', 'price_observation_events')
+        rows:
+          - {event_id: 1, listing_id: "L1", vin: "VALIDVIN00000001A", price: 30000,
+             event_type: "deleted", event_at: "2026-01-10 12:00:00+00"}
+          - {event_id: 2, listing_id: "L2", vin: "VALIDVIN00000002A", price: 25000,
+             event_type: "upserted", event_at: "2026-01-10 12:00:00+00"}
+    expect:
+      rows:
+        - {event_id: 2}
+
+  - name: test_price_events_null_vin_excluded
+    description: "Rows with null VIN are excluded"
+    model: stg_price_events
+    given:
+      - input: source('ops_events', 'price_observation_events')
+        rows:
+          - {event_id: 1, listing_id: "L1", vin: null, price: 30000,
+             event_type: "upserted", event_at: "2026-01-10 12:00:00+00"}
+          - {event_id: 2, listing_id: "L2", vin: "VALIDVIN00000001A", price: 25000,
+             event_type: "upserted", event_at: "2026-01-10 12:00:00+00"}
+    expect:
+      rows:
+        - {event_id: 2}
+
+  - name: test_price_events_zero_and_null_price_excluded
+    description: "Rows with null price or price=0 are excluded; positive price passes through"
+    model: stg_price_events
+    given:
+      - input: source('ops_events', 'price_observation_events')
+        rows:
+          - {event_id: 1, listing_id: "L1", vin: "VALIDVIN00000001A", price: null,
+             event_type: "upserted", event_at: "2026-01-10 12:00:00+00"}
+          - {event_id: 2, listing_id: "L2", vin: "VALIDVIN00000002A", price: 0,
+             event_type: "upserted", event_at: "2026-01-10 12:00:00+00"}
+          - {event_id: 3, listing_id: "L3", vin: "VALIDVIN00000003A", price: 25000,
+             event_type: "upserted", event_at: "2026-01-10 12:00:00+00"}
+    expect:
+      rows:
+        - {event_id: 3}

@@ -1,0 +1,23 @@
+version: 2
+
+models:
+  - name: int_latest_observation
+    description: >
+      One row per VIN17 — the single best observation for each vehicle.
+      Source priority: detail > srp > carousel. Within a source, most recent
+      fetched_at wins (artifact_id as tiebreaker). Rows with null vin17 or null
+      make are excluded. The canonical source of vehicle attributes for all
+      downstream marts.
+    columns:
+      - name: vin17
+        data_tests:
+          - not_null
+          - unique
+      - name: source
+        data_tests:
+          - not_null
+          - accepted_values:
+              values: ['srp', 'detail', 'carousel']
+      - name: make
+        data_tests:
+          - not_null
