@@ -19,4 +19,5 @@ models:
         data_tests:
           - not_null
           - accepted_values:
-              values: ['excellent', 'good', 'fair', 'weak']
+              arguments:
+                values: ['excellent', 'good', 'fair', 'weak']

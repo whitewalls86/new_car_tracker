@@ -14,7 +14,8 @@ models:
           - not_null
           - unique
           - accepted_values:
-              values: ['1', '2', '3-4', '5-10', '11+']
+              arguments:
+                values: ['1', '2', '3-4', '5-10', '11+']
       - name: bucket_order
         data_tests:
           - not_null

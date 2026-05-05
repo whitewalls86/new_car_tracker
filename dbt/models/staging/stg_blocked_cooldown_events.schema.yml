@@ -18,7 +18,8 @@ models:
         data_tests:
           - not_null
           - accepted_values:
-              values: ['blocked', 'incremented']
+              arguments:
+                values: ['blocked', 'incremented']
       - name: num_of_attempts
         data_tests:
           - not_null

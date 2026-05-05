@@ -17,7 +17,8 @@ models:
         data_tests:
           - not_null
           - accepted_values:
-              values: ['srp', 'detail', 'carousel']
+              arguments:
+                values: ['srp', 'detail', 'carousel']
       - name: make
         data_tests:
           - not_null
