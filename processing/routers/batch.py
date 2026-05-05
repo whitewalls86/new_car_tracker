@@ -8,7 +8,7 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 
 from processing.processors import (
     parse_cars_detail_page_html_v1,
@@ -211,7 +211,12 @@ def process_batch(
       srp_count, detail_count, retry_count, skip_count, silver_write_failures
     """
     with active_job():
-        artifacts = _claim_batch(batch_size=batch_size, artifact_type=artifact_type)
+        try:
+            artifacts = _claim_batch(batch_size=batch_size, artifact_type=artifact_type)
+        except Exception:
+            logger.exception("process_batch: DB error claiming artifacts")
+            raise HTTPException(status_code=503, detail="service unavailable")
+
         if not artifacts:
             return {
                 "srp_count": 0,

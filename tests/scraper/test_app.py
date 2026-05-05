@@ -1,6 +1,4 @@
 """Unit tests for scraper/app.py HTTP endpoints."""
-from unittest.mock import mock_open
-
 import scraper.app as scraper_app
 
 ARTIFACT_KEYS = {
@@ -44,38 +42,17 @@ class TestHealth:
 
 
 # ---------------------------------------------------------------------------
-# GET /logs
-# ---------------------------------------------------------------------------
-class TestLogs:
-    def test_logs_default_200_lines(self, mock_scraper_client, mocker):
-        fake_lines = [f"line {i}\n" for i in range(300)]
-        m = mock_open()
-        m.return_value.__enter__.return_value.readlines.return_value = fake_lines
-        mocker.patch("builtins.open", m)
-        resp = mock_scraper_client.get("/logs")
-        assert resp.status_code == 200
-        assert len(resp.json()["lines"]) == 200
-
-    def test_logs_custom_line_count(self, mock_scraper_client, mocker):
-        fake_lines = [f"line {i}\n" for i in range(300)]
-        m = mock_open()
-        m.return_value.__enter__.return_value.readlines.return_value = fake_lines
-        mocker.patch("builtins.open", m)
-        resp = mock_scraper_client.get("/logs?lines=50")
-        assert resp.status_code == 200
-        assert len(resp.json()["lines"]) == 50
-
-    def test_logs_file_not_found_returns_empty(self, mock_scraper_client, mocker):
-        mocker.patch("builtins.open", side_effect=FileNotFoundError)
-        resp = mock_scraper_client.get("/logs")
-        assert resp.status_code == 200
-        assert resp.json() == {"lines": []}
-
-
-# ---------------------------------------------------------------------------
 # POST /scrape_results
 # ---------------------------------------------------------------------------
 class TestPostScrapeResults:
+    def test_invalid_json_body_returns_422(self, mock_scraper_client):
+        resp = mock_scraper_client.post(
+            "/scrape_results?run_id=r1&search_key=sk1&scope=national",
+            content=b"not-json",
+            headers={"Content-Type": "application/json"},
+        )
+        assert resp.status_code == 422
+
     def test_queues_job_returns_job_id(self, mock_scraper_client, mocker):
         mocker.patch.object(scraper_app._executor, "submit")
         resp = mock_scraper_client.post(

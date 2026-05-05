@@ -102,6 +102,13 @@ class TestV3ParserSparkCard:
         assert listings == []
         assert meta["json_failures"] == 1
 
+    def test_empty_vehicle_details_attribute_skipped(self):
+        """Empty data-vehicle-details (fallback '') must not raise — card is skipped."""
+        html = "<spark-card data-vehicle-details=''></spark-card>"
+        listings, meta = parse_cars_results_page_html_v3(html)
+        assert listings == []
+        assert meta["json_failures"] == 1
+
     def test_malformed_and_valid_card(self):
         bad = "<spark-card data-vehicle-details='broken'></spark-card>"
         good = _make_v3_card("fuse-card", listing_id="good-0000-0000-0000-000000000001")

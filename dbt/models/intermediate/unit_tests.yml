@@ -138,3 +138,43 @@ unit_tests:
            current_price: 80}
         - {vin: "VIN0000000000002B", price_drop_count: 0, price_increase_count: 1,
            current_price: 250}
+
+  # ---------------------------------------------------------------------------
+  # int_benchmarks — national market aggregates per make/model
+  # ---------------------------------------------------------------------------
+
+  - name: test_benchmarks_single_vin
+    description: "Single VIN produces listing_count=1 and median/avg equal to that VIN's price; discount_pct correct"
+    model: int_benchmarks
+    given:
+      - input: ref('int_latest_observation')
+        rows:
+          - {vin17: "SINGLE0VIN0000001", make: "honda", model: "crv", msrp: 40000}
+      - input: ref('int_price_history')
+        rows:
+          - {vin: "SINGLE0VIN0000001", current_price: 30000}
+    expect:
+      rows:
+        - {make: "honda", model: "crv", national_listing_count: 1,
+           national_avg_price: 30000, national_median_price: 30000,
+           national_avg_discount_pct: 25.00}
+
+  - name: test_benchmarks_three_vins_median
+    description: "Three VINs at 20k/30k/40k — median=30k, avg=30k, count=3; null MSRP excluded from discount"
+    model: int_benchmarks
+    given:
+      - input: ref('int_latest_observation')
+        rows:
+          - {vin17: "BENCH0VIN0000001A", make: "honda", model: "crv", msrp: null}
+          - {vin17: "BENCH0VIN0000002B", make: "honda", model: "crv", msrp: null}
+          - {vin17: "BENCH0VIN0000003C", make: "honda", model: "crv", msrp: null}
+      - input: ref('int_price_history')
+        rows:
+          - {vin: "BENCH0VIN0000001A", current_price: 20000}
+          - {vin: "BENCH0VIN0000002B", current_price: 30000}
+          - {vin: "BENCH0VIN0000003C", current_price: 40000}
+    expect:
+      rows:
+        - {make: "honda", model: "crv", national_listing_count: 3,
+           national_median_price: 30000, national_avg_price: 30000,
+           national_avg_discount_pct: null}

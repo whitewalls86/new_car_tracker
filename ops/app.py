@@ -1,17 +1,17 @@
 """
 Pipeline Ops — admin UI and deploy coordination for cartracker.
 """
-import logging
 import os
 import threading
 import time
 from contextlib import asynccontextmanager
-from logging.handlers import RotatingFileHandler
 
 from fastapi import FastAPI, Request
 from fastapi.responses import RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from prometheus_fastapi_instrumentator import Instrumentator
+
+from shared.logging_setup import configure_logging
 
 from .metrics.duckdb_gauges import update_duckdb_metrics
 from .routers.admin import router as admin_router
@@ -23,12 +23,7 @@ from .routers.scrape import router as scrape_router
 from .routers.users import public_router as users_public_router
 from .routers.users import router as users_router
 
-_LOG_PATH = os.getenv("LOG_PATH", "/usr/app/logs/app.log")
-os.makedirs(os.path.dirname(_LOG_PATH), exist_ok=True)
-_log_handler = RotatingFileHandler(_LOG_PATH, maxBytes=5_000_000, backupCount=3)
-_log_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
-logging.getLogger().addHandler(_log_handler)
-logging.getLogger().setLevel(logging.INFO)
+configure_logging()
 
 def _duckdb_metrics_loop() -> None:
     update_duckdb_metrics()

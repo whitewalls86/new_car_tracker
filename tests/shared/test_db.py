@@ -70,6 +70,10 @@ class TestDbKwargsResolution:
         assert kwargs["user"] == "cartracker"
         assert kwargs["password"] == ""
 
+    def test_bad_pgport_raises_value_error_with_context(self, monkeypatch):
+        with pytest.raises(ValueError, match="PGPORT must be an integer"):
+            _reload_db_kwargs(monkeypatch, {"PGPORT": "not_a_port"})
+
     def test_database_url_defaults_for_missing_components(self, monkeypatch):
         # Minimal URL — host only, no port/user/db
         kwargs = _reload_db_kwargs(monkeypatch, {

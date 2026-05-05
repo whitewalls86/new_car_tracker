@@ -16,3 +16,4 @@ GPT-Review-*.md.txt
 target/
 ssh-key*
 docker-compose.override.yml
+scripts/provision_oracle_vm.py

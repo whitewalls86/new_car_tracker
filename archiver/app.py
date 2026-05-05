@@ -1,9 +1,7 @@
 import logging
-import os
-from logging.handlers import RotatingFileHandler
 from typing import Any, Dict
 
-from fastapi import Body, FastAPI
+from fastapi import Body, FastAPI, HTTPException
 
 from archiver.processors.cleanup_parquet import cleanup_parquet as _cleanup_parquet
 from archiver.processors.cleanup_parquet import run_cleanup_parquet as _run_cleanup_parquet
@@ -14,12 +12,9 @@ from archiver.processors.flush_silver_observations import (
 )
 from archiver.processors.flush_staging_events import flush_staging_events as _flush_staging_events
 from shared.job_counter import active_job, is_idle
+from shared.logging_setup import configure_logging
 
-_LOG_PATH = os.getenv("LOG_PATH", "/usr/app/logs/app.log")
-os.makedirs(os.path.dirname(_LOG_PATH), exist_ok=True)
-_log_handler = RotatingFileHandler(_LOG_PATH, maxBytes=5_000_000, backupCount=3)
-_log_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
-logging.basicConfig(level=logging.INFO, handlers=[_log_handler, logging.StreamHandler()])
+configure_logging()
 logger = logging.getLogger("archiver")
 
 app = FastAPI()
@@ -82,4 +77,4 @@ def health():
 def ready():
     if is_idle():
         return {"ready": True}
-    return {"ready": False, "reason": "jobs in flight"}
+    raise HTTPException(status_code=503, detail={"ready": False, "reason": "jobs in flight"})

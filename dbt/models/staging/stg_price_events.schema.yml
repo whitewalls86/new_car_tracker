@@ -1,0 +1,30 @@
+version: 2
+
+models:
+  - name: stg_price_events
+    description: >
+      Price observation events from ops_events.price_observation_events.
+      Filtered to exclude deleted events and rows with null or non-positive prices.
+      One row per event — the source for all price history and benchmark calculations.
+    columns:
+      - name: event_id
+        data_tests:
+          - not_null
+          - unique
+      - name: listing_id
+        data_tests:
+          - not_null
+      - name: vin
+        data_tests:
+          - not_null
+      - name: price
+        description: "Always > 0 — zero and null prices are filtered out at this layer."
+        data_tests:
+          - not_null
+      - name: event_type
+        description: "Delivery event type. 'deleted' rows are excluded by the WHERE clause."
+        data_tests:
+          - not_null
+      - name: event_at
+        data_tests:
+          - not_null

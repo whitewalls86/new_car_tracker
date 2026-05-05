@@ -1,0 +1,46 @@
+version: 2
+
+models:
+  - name: int_price_history
+    description: >
+      Aggregated price trajectory per VIN, built from stg_price_events.
+      One row per VIN. All aggregate columns are non-null because stg_price_events
+      guarantees price > 0 and vin is not null, so every group has at least one row.
+    columns:
+      - name: vin
+        data_tests:
+          - not_null
+          - unique
+      - name: current_price
+        data_tests:
+          - not_null
+      - name: price_observed_at
+        data_tests:
+          - not_null
+      - name: first_price
+        data_tests:
+          - not_null
+      - name: min_price
+        data_tests:
+          - not_null
+      - name: max_price
+        data_tests:
+          - not_null
+      - name: total_price_observations
+        data_tests:
+          - not_null
+      - name: price_drop_count
+        data_tests:
+          - not_null
+      - name: price_increase_count
+        data_tests:
+          - not_null
+      - name: first_seen_at
+        data_tests:
+          - not_null
+      - name: last_seen_at
+        data_tests:
+          - not_null
+      - name: days_on_market
+        data_tests:
+          - not_null

@@ -5,22 +5,16 @@ import os
 import re
 import shlex
 import subprocess
-from logging.handlers import RotatingFileHandler
 from typing import Any, Dict, List
 
 from fastapi import Body, FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 
 from shared.job_counter import active_job, is_idle
+from shared.logging_setup import configure_logging
 
+configure_logging()
 app = FastAPI()
-_LOG_PATH = os.getenv("LOG_PATH", "/usr/app/logs/app.log")
-os.makedirs(os.path.dirname(_LOG_PATH), exist_ok=True)
-_log_handler = RotatingFileHandler(_LOG_PATH, maxBytes=5_000_000, backupCount=3)
-_log_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
-logging.getLogger().addHandler(_log_handler)
-logging.getLogger().setLevel(logging.INFO)
-
 logger = logging.getLogger("dbt_runner")
 
 SAFE_TOKEN = re.compile(r"^[A-Za-z0-9_:+.@/-]+$")
@@ -51,18 +45,7 @@ def health() -> Dict[str, Any]:
 def ready() -> Dict[str, Any]:
     if is_idle():
         return {"ready": True}
-    return {"ready": False, "reason": "jobs in flight"}
-
-
-@app.get("/logs")
-def get_logs(lines: int = 200) -> Dict[str, Any]:
-    """Return the last N lines of the application log file."""
-    try:
-        with open(_LOG_PATH) as f:
-            all_lines = f.readlines()
-        return {"lines": all_lines[-lines:]}
-    except FileNotFoundError:
-        return {"lines": []}
+    raise HTTPException(status_code=503, detail={"ready": False, "reason": "jobs in flight"})
 
 
 @app.get("/dbt/docs/status")

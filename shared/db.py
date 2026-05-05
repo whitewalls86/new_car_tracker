@@ -28,9 +28,13 @@ if _DATABASE_URL:
         "password": _p.password or "",
     }
 else:
+    try:
+        _pgport = int(os.environ.get("PGPORT", "5432"))
+    except ValueError:
+        raise ValueError(f"PGPORT must be an integer, got: {os.environ.get('PGPORT')!r}")
     DB_KWARGS = {
         "host":     os.environ.get("PGHOST", "postgres"),
-        "port":     int(os.environ.get("PGPORT", "5432")),
+        "port":     _pgport,
         "dbname":   os.environ.get("PGDATABASE", "cartracker"),
         "user":     os.environ.get("PGUSER", "cartracker"),
         "password": os.environ.get("POSTGRES_PASSWORD", ""),

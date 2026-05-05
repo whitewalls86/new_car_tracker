@@ -1,0 +1,32 @@
+version: 2
+
+models:
+  - name: mart_scrape_volume
+    description: >
+      Hourly scrape throughput by source type. One row per (hour, source).
+      vin_extraction_pct is only populated for source='detail'; null for srp and carousel.
+      Composite PK: (hour, source).
+    columns:
+      - name: hour
+        data_tests:
+          - not_null
+      - name: source
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['srp', 'detail', 'carousel']
+      - name: artifact_count
+        data_tests:
+          - not_null
+      - name: observation_count
+        data_tests:
+          - not_null
+      - name: unique_listings
+        data_tests:
+          - not_null
+      - name: valid_vin_count
+        data_tests:
+          - not_null
+      - name: vin_extraction_pct
+        description: "Populated only for source='detail'. Null for srp and carousel."

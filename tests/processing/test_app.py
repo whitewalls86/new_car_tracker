@@ -39,7 +39,6 @@ class TestReady:
     def test_not_ready_when_batch_running(self, mock_processing_client, mocker):
         mocker.patch("processing.app.is_idle", return_value=False)
         resp = mock_processing_client.get("/ready")
-        assert resp.status_code == 200
-        body = resp.json()
-        assert body["ready"] is False
-        assert body["reason"] == "batch in progress"
+        assert resp.status_code == 503
+        assert resp.json()["detail"]["ready"] is False
+        assert resp.json()["detail"]["reason"] == "batch in progress"

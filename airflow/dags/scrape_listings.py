@@ -44,7 +44,7 @@ def _advance_rotation():
 
 
 def _run_scrapes(**context):
-    rotation = context["ti"].xcom_pull(task_ids="advance_rotation")
+    rotation = context["ti"].xcom_pull(task_ids="advance_rotation") or {}
     configs = rotation.get("configs", [])
     run_id = rotation.get("run_id")
 

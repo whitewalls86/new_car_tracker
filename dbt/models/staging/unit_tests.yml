@@ -31,3 +31,4 @@ unit_tests:
     expect:
       rows:
         - {customer_id: "DEALER1", name: "Has ID", zip: "44444"}
+

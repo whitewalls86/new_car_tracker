@@ -19,8 +19,11 @@ scrape_configs:
           __path__: /logs/ops/app.log*
 
     pipeline_stages:
-      - regex:
-          expression: '^(?P<ts>\S+ \S+) (?P<level>[A-Z]+) (?P<logger>\S+):'
+      - json:
+          expressions:
+            ts: ts
+            level: level
+            logger: logger
       - labels:
           level:
           logger:
@@ -37,8 +40,11 @@ scrape_configs:
           __path__: /logs/scraper/app.log*
 
     pipeline_stages:
-      - regex:
-          expression: '^(?P<ts>\S+ \S+) (?P<level>[A-Z]+) (?P<logger>\S+):'
+      - json:
+          expressions:
+            ts: ts
+            level: level
+            logger: logger
       - labels:
           level:
           logger:
@@ -55,8 +61,11 @@ scrape_configs:
           __path__: /logs/processing/app.log*
 
     pipeline_stages:
-      - regex:
-          expression: '^(?P<ts>\S+ \S+) (?P<level>[A-Z]+) (?P<logger>\S+):'
+      - json:
+          expressions:
+            ts: ts
+            level: level
+            logger: logger
       - labels:
           level:
           logger:
@@ -73,8 +82,11 @@ scrape_configs:
           __path__: /logs/dbt_runner/app.log*
 
     pipeline_stages:
-      - regex:
-          expression: '^(?P<ts>\S+ \S+) (?P<level>[A-Z]+) (?P<logger>\S+):'
+      - json:
+          expressions:
+            ts: ts
+            level: level
+            logger: logger
       - labels:
           level:
           logger:
@@ -91,8 +103,11 @@ scrape_configs:
           __path__: /logs/archiver/app.log*
 
     pipeline_stages:
-      - regex:
-          expression: '^(?P<ts>\S+ \S+) (?P<level>[A-Z]+) (?P<logger>\S+):'
+      - json:
+          expressions:
+            ts: ts
+            level: level
+            logger: logger
       - labels:
           level:
           logger:

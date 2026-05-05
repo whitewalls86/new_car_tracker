@@ -195,6 +195,8 @@ def claim_batch(batch_size: int = 450) -> Dict[str, Any]:
         """, (batch_size, run_id))
 
         rows = cur.fetchall()
+        if cur.description is None:
+            raise ValueError("Query returned no result set")
         col_names = [desc[0] for desc in cur.description]
 
     listings = [dict(zip(col_names, row)) for row in rows]

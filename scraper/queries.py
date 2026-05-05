@@ -6,13 +6,15 @@ module-level constants. Mirrors the pattern used in processing/queries.py.
 """
 from pathlib import Path
 
+from shared.query_loader import load_query
+
 _SQL_DIR = Path(__file__).parent / "sql"
 
 
-def _load(filename: str) -> str:
-    return (_SQL_DIR / filename).read_text()
+def _load(name: str) -> str:
+    return load_query(_SQL_DIR, name)
 
 
-UPSERT_BLOCKED_COOLDOWN = _load("upsert_blocked_cooldown.sql")
-GET_BLOCKED_COOLDOWN_ATTEMPTS = _load("get_blocked_cooldown_attempts.sql")
-INSERT_BLOCKED_COOLDOWN_EVENT = _load("insert_blocked_cooldown_event.sql")
+UPSERT_BLOCKED_COOLDOWN = _load("upsert_blocked_cooldown")
+GET_BLOCKED_COOLDOWN_ATTEMPTS = _load("get_blocked_cooldown_attempts")
+INSERT_BLOCKED_COOLDOWN_EVENT = _load("insert_blocked_cooldown_event")

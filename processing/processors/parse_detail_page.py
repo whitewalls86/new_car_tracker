@@ -37,7 +37,10 @@ def _extract_script_json_by_id(soup: BeautifulSoup, script_id: str) -> Optional[
     raw = (el.string or el.get_text() or "").strip()
     if not raw:
         return None
-    return json.loads(raw)
+    try:
+        return json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        return None
 
 
 def _detect_unlisted(soup: BeautifulSoup, html: str) -> Optional[Dict[str, Any]]:

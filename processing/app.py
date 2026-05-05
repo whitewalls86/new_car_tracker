@@ -4,23 +4,15 @@ Processing service — artifact parsing and observation writes for cartracker.
 Slim entrypoint: health/ready endpoints plus router includes.
 All processing logic lives in routers/ and writers/.
 """
-import logging
-import os
-from logging.handlers import RotatingFileHandler
-
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from processing.routers.artifact import router as artifact_router
 from processing.routers.batch import router as batch_router
 from shared.job_counter import is_idle
+from shared.logging_setup import configure_logging
 
-_LOG_PATH = os.getenv("LOG_PATH", "/usr/app/logs/app.log")
-os.makedirs(os.path.dirname(_LOG_PATH), exist_ok=True)
-_log_handler = RotatingFileHandler(_LOG_PATH, maxBytes=5_000_000, backupCount=3)
-_log_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
-logging.getLogger().addHandler(_log_handler)
-logging.getLogger().setLevel(logging.INFO)
+configure_logging()
 
 app = FastAPI()
 Instrumentator().instrument(app).expose(app)
@@ -42,7 +34,6 @@ def ready():
     Returns ready=true when no batch is currently executing.
     Airflow sensors poll this before closing a DAG run.
     """
-    idle = is_idle()
-    if idle:
+    if is_idle():
         return {"ready": True}
-    return {"ready": False, "reason": "batch in progress"}
+    raise HTTPException(status_code=503, detail={"ready": False, "reason": "batch in progress"})

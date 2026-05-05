@@ -134,6 +134,14 @@ class TestProcessBatch:
         assert body["silver_write_failures"] == 1
         assert body["srp_count"] == 1
 
+    def test_claim_db_error_returns_503(self, mock_processing_client, mocker):
+        mocker.patch(
+            "processing.routers.batch._claim_batch",
+            side_effect=Exception("connection refused"),
+        )
+        resp = mock_processing_client.post("/process/batch")
+        assert resp.status_code == 503
+
     def test_mixed_batch(self, mock_processing_client, mocker):
         artifacts = [
             _make_artifact(1, "results_page"),
