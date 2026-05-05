@@ -392,6 +392,21 @@ class TestDealerCardSellerJson:
         assert info["dealer_zip_parsed"] == "90210"
 
 
+class TestMalformedScriptJson:
+    def test_garbled_script_tag_no_exception(self):
+        html = '<script id="initial-activity-data">{ not : valid json !!!</script>'
+        primary, carousel, meta = parse_cars_detail_page_html_v1(html)
+        assert primary["listing_id"] is None
+        assert meta["primary_json_present"] is False
+
+    def test_garbled_script_still_falls_back_to_url(self):
+        html = '<script id="initial-activity-data">{ bad }</script>'
+        url = "https://www.cars.com/vehicledetail/11111111-dead-beef-0000-000000000001/"
+        primary, _, _ = parse_cars_detail_page_html_v1(html, url=url)
+        assert primary["listing_id"] == "11111111-dead-beef-0000-000000000001"
+        assert primary["listing_id_source"] == "url"
+
+
 class TestCarouselListingIdFallback:
     def test_listing_id_from_href_when_no_data_attribute(self):
         from bs4 import BeautifulSoup

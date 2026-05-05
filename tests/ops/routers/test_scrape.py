@@ -9,6 +9,7 @@ import json
 import uuid
 from unittest.mock import MagicMock
 
+import pytest
 from fastapi.testclient import TestClient
 
 from ops.app import app
@@ -147,6 +148,15 @@ class TestClaimBatch:
         resp = client.post("/scrape/claims/claim-batch")
 
         assert resp.json()["listings"] == []
+
+    def test_none_description_raises_value_error(self, mock_cursor_context):
+        """cur.description is None when no result set returned → ValueError, not AttributeError."""
+        conn, cursor = mock_cursor_context
+        cursor.fetchall.return_value = [("listing-aaa",)]
+        cursor.description = None  # simulates cursor that executed no result-set query
+
+        with pytest.raises(ValueError, match="no result set"):
+            client.post("/scrape/claims/claim-batch")
 
     def test_listings_returned_from_queue(self, mock_cursor_context):
         conn, cursor = mock_cursor_context

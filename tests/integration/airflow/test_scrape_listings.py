@@ -249,6 +249,20 @@ class TestRunScrapesGuards:
         mock_get.assert_not_called()
         assert result["skipped"] is True
 
+    def test_xcom_null_pull_does_not_crash(self):
+        """When advance_rotation was skipped, xcom_pull returns None → must not AttributeError."""
+        ti = MagicMock()
+        ti.xcom_pull.return_value = None
+        context = {"ti": ti}
+
+        with patch("scrape_listings.requests.post") as mock_post, \
+             patch("scrape_listings.requests.get") as mock_get:
+            result = _run_scrapes(**context)
+
+        mock_post.assert_not_called()
+        mock_get.assert_not_called()
+        assert result["skipped"] is True
+
     def test_too_soon_reason_propagated(self):
         rotation = {"slot": None, "run_id": None, "configs": [], "reason": "too_soon"}
         context = _mock_context(rotation)
