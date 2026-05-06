@@ -49,6 +49,20 @@ VIN = "1HGCM82633A123456"
 # ---------------------------------------------------------------------------
 
 class TestScrapeDetailFetch:
+    @pytest.fixture(autouse=True)
+    def _patch_open_and_makedirs(self, mocker):
+        mocker.patch("builtins.open", mock_open())
+        mocker.patch("os.makedirs")
+        mocker.patch("shared.minio.make_key", return_value="html/test.html.zst")
+        mocker.patch("shared.minio.write_html", return_value="s3://bronze/html/test.html.zst")
+        mock_cursor = MagicMock()
+        mock_cursor.__enter__ = MagicMock(return_value=mock_cursor)
+        mock_cursor.__exit__ = MagicMock(return_value=False)
+        mock_cursor.fetchone.return_value = (1,)
+        mock_conn = MagicMock()
+        mock_conn.cursor.return_value = mock_cursor
+        mocker.patch("shared.db.get_conn", return_value=mock_conn)
+
     def test_missing_listing_id_returns_error(self, mocker):
         mocker.patch("os.makedirs")
         result = scrape_detail_fetch(run_id=RUN_ID, payload={})
@@ -56,8 +70,6 @@ class TestScrapeDetailFetch:
         assert result["artifacts"] == []
 
     def test_success_200(self, mock_cf_session, mocker):
-        mocker.patch("os.makedirs")
-        mocker.patch("builtins.open", mock_open())
         mock_session, mock_resp = mock_cf_session
         mock_resp.status_code = 200
         mock_resp.content = b"<html>detail</html>"
@@ -95,8 +107,6 @@ class TestScrapeDetailFetch:
         assert result["artifacts"][0]["http_status"] == 403
 
     def test_url_defaults_from_listing_id(self, mock_cf_session, mocker):
-        mocker.patch("os.makedirs")
-        mocker.patch("builtins.open", mock_open())
         mock_session, mock_resp = mock_cf_session
         mock_resp.status_code = 200
         mock_resp.content = b"ok"
@@ -108,8 +118,6 @@ class TestScrapeDetailFetch:
         assert called_url == f"https://www.cars.com/vehicledetail/{LISTING_ID}/"
 
     def test_url_override_used(self, mock_cf_session, mocker):
-        mocker.patch("os.makedirs")
-        mocker.patch("builtins.open", mock_open())
         mock_session, mock_resp = mock_cf_session
         mock_resp.status_code = 200
         mock_resp.content = b"ok"
@@ -122,8 +130,6 @@ class TestScrapeDetailFetch:
         assert called_url == custom_url
 
     def test_timeout_default_is_30(self, mock_cf_session, mocker):
-        mocker.patch("os.makedirs")
-        mocker.patch("builtins.open", mock_open())
         mock_session, mock_resp = mock_cf_session
         mock_resp.status_code = 200
         mock_resp.content = b"ok"
@@ -135,8 +141,6 @@ class TestScrapeDetailFetch:
         assert kwargs["timeout"] == 30
 
     def test_timeout_override(self, mock_cf_session, mocker):
-        mocker.patch("os.makedirs")
-        mocker.patch("builtins.open", mock_open())
         mock_session, mock_resp = mock_cf_session
         mock_resp.status_code = 200
         mock_resp.content = b"ok"
@@ -147,10 +151,7 @@ class TestScrapeDetailFetch:
         kwargs = mock_session.get.call_args[1]
         assert kwargs["timeout"] == 60
 
-    def test_network_exception_writes_error_file(self, mocker):
-        mocker.patch("os.makedirs")
-        mock_open_fn = mock_open()
-        mocker.patch("builtins.open", mock_open_fn)
+    def test_network_exception_returns_error(self, mocker):
         mock_session = MagicMock(get=MagicMock(side_effect=ConnectionError("refused")))
         mocker.patch(
             "scraper.processors.scrape_detail.make_cf_session",
@@ -165,13 +166,8 @@ class TestScrapeDetailFetch:
 
         assert "ConnectionError" in result["error"]
         assert result["artifacts"][0]["http_status"] is None
-        # Error file must have been written
-        open_calls = mock_open_fn.call_args_list
-        assert any("ERROR.txt" in str(c) for c in open_calls)
 
     def test_batch_id_used_as_search_key(self, mock_cf_session, mocker):
-        mocker.patch("os.makedirs")
-        mocker.patch("builtins.open", mock_open())
         mock_session, mock_resp = mock_cf_session
         mock_resp.status_code = 200
         mock_resp.content = b"ok"
@@ -188,8 +184,6 @@ class TestScrapeDetailFetch:
         assert result["artifacts"][0]["listing_id"] == LISTING_ID
 
     def test_batch_id_defaults_to_run_id(self, mock_cf_session, mocker):
-        mocker.patch("os.makedirs")
-        mocker.patch("builtins.open", mock_open())
         mock_session, mock_resp = mock_cf_session
         mock_resp.status_code = 200
         mock_resp.content = b"ok"
@@ -200,8 +194,6 @@ class TestScrapeDetailFetch:
         assert result["artifacts"][0]["search_key"] == RUN_ID
 
     def test_artifact_keys_match_n8n_contract(self, mock_cf_session, mocker):
-        mocker.patch("os.makedirs")
-        mocker.patch("builtins.open", mock_open())
         mock_session, mock_resp = mock_cf_session
         mock_resp.status_code = 200
         mock_resp.content = b"ok"
@@ -213,18 +205,6 @@ class TestScrapeDetailFetch:
         missing = ARTIFACT_KEYS - art.keys()
         assert missing == set(), f"Artifact missing fields: {missing}"
 
-    def test_raw_base_from_env(self, mock_cf_session, mocker):
-        mocker.patch("os.environ.get", return_value="/tmp/custom_raw")
-        mocker.patch("os.makedirs")
-        mocker.patch("builtins.open", mock_open())
-        mock_session, mock_resp = mock_cf_session
-        mock_resp.status_code = 200
-        mock_resp.content = b"ok"
-        mock_resp.url = "https://example.com/"
-        mock_resp.headers = {}
-
-        result = scrape_detail_fetch(run_id=RUN_ID, payload={"listing_id": LISTING_ID})
-        assert "/tmp/custom_raw" in result["artifacts"][0]["filepath"]
 
 
 # ---------------------------------------------------------------------------
@@ -309,13 +289,21 @@ class TestScrapeDetailBatch:
         assert result["meta"]["errors"] == 0
 
     def test_batch_returns_artifact_per_listing(self, mock_cf_session, mocker):
-        mocker.patch("os.makedirs")
-        mocker.patch("builtins.open", mock_open())
         mock_session, mock_resp = mock_cf_session
         mock_resp.status_code = 200
         mock_resp.content = b"<html>detail</html>"
         mock_resp.url = "https://www.cars.com/vehicledetail/l1/"
         mock_resp.headers = {"content-type": "text/html; charset=utf-8"}
+
+        mocker.patch("shared.minio.make_key", return_value="html/test.html.zst")
+        mocker.patch("shared.minio.write_html", return_value="s3://bronze/html/test.html.zst")
+        mock_cursor = MagicMock()
+        mock_cursor.__enter__ = MagicMock(return_value=mock_cursor)
+        mock_cursor.__exit__ = MagicMock(return_value=False)
+        mock_cursor.fetchone.return_value = (1,)
+        mock_conn = MagicMock()
+        mock_conn.cursor.return_value = mock_cursor
+        mocker.patch("shared.db.get_conn", return_value=mock_conn)
 
         listings = [
             {"listing_id": "l1", "vin": "VIN1"},
@@ -367,8 +355,6 @@ class TestScrapeDetailBatch:
         assert cf_session._cf_credentials_expires_at == 0.0
 
     def test_meta_has_required_keys(self, mock_cf_session, mocker):
-        mocker.patch("os.makedirs")
-        mocker.patch("builtins.open", mock_open())
         mock_session, mock_resp = mock_cf_session
         mock_resp.status_code = 200
         mock_resp.content = b"ok"
@@ -383,8 +369,6 @@ class TestScrapeDetailBatch:
             assert key in result["meta"], f"meta missing key: {key}"
 
     def test_artifacts_have_n8n_keys(self, mock_cf_session, mocker):
-        mocker.patch("os.makedirs")
-        mocker.patch("builtins.open", mock_open())
         mock_session, mock_resp = mock_cf_session
         mock_resp.status_code = 200
         mock_resp.content = b"ok"
@@ -427,6 +411,11 @@ class TestCffiTargetForUa:
 class TestScrapeDetailFetchMinioIntegration:
     """Verify the MinIO write + artifacts_queue insert path added by Plan 97."""
 
+    @pytest.fixture(autouse=True)
+    def _patch_open_and_makedirs(self, mocker):
+        mocker.patch("builtins.open", mock_open())
+        mocker.patch("os.makedirs")
+
     def _mock_http(self, mocker, status=200, content=b"<html>detail</html>"):
         mock_resp = MagicMock()
         mock_resp.status_code = status
@@ -461,8 +450,6 @@ class TestScrapeDetailFetchMinioIntegration:
         return mock_conn
 
     def test_success_populates_minio_path(self, mocker):
-        mocker.patch("os.makedirs")
-        mocker.patch("builtins.open", mock_open())
         self._mock_http(mocker)
         self._mock_minio_and_db(mocker, artifact_id=55)
 
@@ -472,8 +459,6 @@ class TestScrapeDetailFetchMinioIntegration:
         assert art["minio_path"] == "s3://bronze/html/year=2026/detail.html.zst"
 
     def test_success_populates_queue_artifact_id(self, mocker):
-        mocker.patch("os.makedirs")
-        mocker.patch("builtins.open", mock_open())
         self._mock_http(mocker)
         self._mock_minio_and_db(mocker, artifact_id=88)
 
@@ -482,10 +467,8 @@ class TestScrapeDetailFetchMinioIntegration:
 
         assert art["queue_artifact_id"] == 88
 
-    def test_minio_failure_is_nonfatal(self, mocker):
-        """If MinIO write raises, minio_path is None and no exception propagates."""
-        mocker.patch("os.makedirs")
-        mocker.patch("builtins.open", mock_open())
+    def test_minio_failure_sets_artifact_error(self, mocker):
+        """MinIO write failure propagates into artifact.error so Airflow retries the task."""
         self._mock_http(mocker)
         mocker.patch("shared.minio.write_html", side_effect=Exception("connection refused"))
 
@@ -494,12 +477,13 @@ class TestScrapeDetailFetchMinioIntegration:
 
         assert art["minio_path"] is None
         assert art["queue_artifact_id"] is None
-        assert art["http_status"] == 200  # core fetch still succeeded
+        assert art["http_status"] == 200  # HTTP fetch succeeded
+        assert art["error"] is not None
+        assert "MinIO write failed" in art["error"]
+        assert result["error"] is not None
 
-    def test_db_failure_is_nonfatal(self, mocker):
-        """If DB insert raises, queue_artifact_id is None and no exception propagates."""
-        mocker.patch("os.makedirs")
-        mocker.patch("builtins.open", mock_open())
+    def test_db_failure_sets_artifact_error(self, mocker):
+        """DB insert failure propagates into artifact.error so Airflow retries the task."""
         self._mock_http(mocker)
         mocker.patch("shared.minio.make_key", return_value="html/year=2026/detail.html.zst")
         mocker.patch(
@@ -513,18 +497,10 @@ class TestScrapeDetailFetchMinioIntegration:
 
         assert art["queue_artifact_id"] is None
         assert art["http_status"] == 200
+        assert art["error"] is not None
+        assert "MinIO write failed" in art["error"]
+        assert result["error"] is not None
 
-    def test_disk_write_still_happens_on_minio_failure(self, mocker):
-        """Shadow disk write must occur regardless of MinIO outcome."""
-        mocker.patch("os.makedirs")
-        mock_open_fn = mock_open()
-        mocker.patch("builtins.open", mock_open_fn)
-        self._mock_http(mocker)
-        mocker.patch("shared.minio.write_html", side_effect=Exception("unreachable"))
-
-        scrape_detail_fetch(run_id=RUN_ID, payload={"listing_id": LISTING_ID})
-
-        assert mock_open_fn.called
 
 
 # ---------------------------------------------------------------------------
