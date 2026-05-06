@@ -118,32 +118,23 @@ def scrape_detail_fetch(*, run_id: str, payload: Dict[str, Any]) -> Dict[str, An
         }
     if not url:
         return {
-            "error": "payload.url could not be derived", 
-            "artifacts": [], 
+            "error": "payload.url could not be derived",
+            "artifacts": [],
             "meta": {"mode": "fetch", "listing_id": listing_id}
         }
-
-    raw_base = os.environ.get("RAW_BASE", "/data/raw")
-    run_dir = os.path.join(raw_base, f"run_{run_id}")
-    os.makedirs(run_dir, exist_ok=True)
 
     fetched_at = datetime.now(UTC).isoformat()
     timeout_s = int((payload or {}).get("timeout_s") or 30)
 
-    # We always write *something* for auditability.
-    # Non-200 responses get written too (useful for debugging blocks/interstitials).
+    # Non-200 responses are still written to MinIO (useful for debugging blocks/interstitials).
+    # MinIO write failure is treated as a fetch failure — the artifact is unreadable by processing.
     try:
         content, status, content_type, final_url = _fetch_url(url, timeout_s)
         size = len(content)
 
-        filename = f"detail_{listing_id}__{status}.html"
-        filepath = os.path.join(run_dir, filename)
-        with open(filepath, "wb") as f:
-            f.write(content)
-
-        # Write to MinIO and record in artifacts_queue (Plan 97)
         minio_path = None
         queue_artifact_id = None
+        minio_write_error: Optional[str] = None
         try:
             from shared.db import db_cursor
             from shared.minio import make_key, write_html
@@ -165,7 +156,7 @@ def scrape_detail_fetch(*, run_id: str, payload: Dict[str, Any]) -> Dict[str, An
                 cur.execute(
                     """
                     INSERT INTO staging.artifacts_queue_events (
-                        artifact_id, status, minio_path, artifact_type, 
+                        artifact_id, status, minio_path, artifact_type,
                         fetched_at, listing_id, run_id
                     )
                     VALUES (%s, 'pending', %s, 'detail_page', %s, %s, %s)
@@ -174,7 +165,8 @@ def scrape_detail_fetch(*, run_id: str, payload: Dict[str, Any]) -> Dict[str, An
                      str(listing_id) if listing_id else None, run_id or None),
                 )
         except Exception as _minio_err:
-            logger.warning("MinIO/queue write failed (non-fatal): %s", _minio_err)
+            minio_write_error = f"MinIO write failed: {_minio_err}"
+            logger.error("MinIO/queue write failed for listing_id=%s: %s", listing_id, _minio_err)
 
         if status != 200:
             logger.warning(
@@ -216,14 +208,15 @@ def scrape_detail_fetch(*, run_id: str, payload: Dict[str, Any]) -> Dict[str, An
             "content_type": content_type,
             "content_bytes": size,
             "sha256": _sha256_bytes(content) if content else None,
-            "filepath": filepath,
+            "filepath": None,
             "minio_path": minio_path,
             "queue_artifact_id": queue_artifact_id,
-            "error": None if status == 200 else f"HTTP {status}",
+            "error": minio_write_error if status == 200 else f"HTTP {status}",
         }
 
+        fetch_error = minio_write_error if status == 200 else f"HTTP {status}"
         return {
-            "error": None if status == 200 else f"HTTP {status}",
+            "error": fetch_error,
             "artifacts": [artifact],
             "meta": {
                 "mode": "fetch",
@@ -234,16 +227,6 @@ def scrape_detail_fetch(*, run_id: str, payload: Dict[str, Any]) -> Dict[str, An
         }
 
     except Exception as e:
-        # Write an error marker file so every attempt leaves a disk trace.
-        filename = f"detail_{listing_id}__ERROR.txt"
-        filepath = os.path.join(run_dir, filename)
-        try:
-            with open(filepath, "w", encoding="utf-8") as f:
-                f.write(f"{type(e).__name__}: {e}\n")
-                f.write(f"url={url}\n")
-        except Exception:
-            pass
-
         return {
             "error": f"{type(e).__name__}: {e}",
             "artifacts": [
@@ -260,7 +243,7 @@ def scrape_detail_fetch(*, run_id: str, payload: Dict[str, Any]) -> Dict[str, An
                     "content_type": None,
                     "content_bytes": None,
                     "sha256": None,
-                    "filepath": filepath,
+                    "filepath": None,
                     "error": f"{type(e).__name__}: {e}",
                 }
             ],

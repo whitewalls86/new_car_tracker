@@ -196,25 +196,21 @@ class TestScrapeResultsOrchestration:
         mocker.patch("scraper.processors.scrape_results.time.sleep")
         mocker.patch("scraper.processors.scrape_results.random_zip", return_value="77002")
         mocker.patch("scraper.processors.scrape_results.human_delay", return_value=0.0)
-        mocker.patch("os.makedirs")
         mocker.patch(
             "scraper.processors.scrape_results._fetch_page",
             side_effect=fetch_results,
         )
 
     def test_invalid_scope_returns_error(self, mocker):
-        mocker.patch("os.makedirs")
         result = scrape_results("run1", "sk", "galaxy", VALID_PAYLOAD)
         assert result["error"] == "Invalid scope 'galaxy'"
         assert result["artifacts"] == []
 
     def test_missing_makes_returns_error(self, mocker):
-        mocker.patch("os.makedirs")
         result = scrape_results("run1", "sk", "national", {"params": {"models": ["RAV4"]}})
         assert result["error"] == "Missing makes/models in params"
 
     def test_missing_models_returns_error(self, mocker):
-        mocker.patch("os.makedirs")
         result = scrape_results("run1", "sk", "national", {"params": {"makes": ["Toyota"]}})
         assert result["error"] == "Missing makes/models in params"
 
@@ -269,7 +265,6 @@ class TestScrapeResultsOrchestration:
         mocker.patch("scraper.processors.scrape_results.time.sleep")
         mocker.patch("scraper.processors.scrape_results.random_zip", return_value="77002")
         mocker.patch("scraper.processors.scrape_results.human_delay", return_value=0.0)
-        mocker.patch("os.makedirs")
         mocker.patch(
             "scraper.processors.scrape_results._fetch_page",
             side_effect=RuntimeError("boom"),
@@ -359,7 +354,6 @@ class TestPage1Blocked:
         mocker.patch("scraper.processors.scrape_results.time.sleep")
         mocker.patch("scraper.processors.scrape_results.random_zip", return_value="77002")
         mocker.patch("scraper.processors.scrape_results.human_delay", return_value=0.0)
-        mocker.patch("os.makedirs")
         mocker.patch(
             "scraper.processors.scrape_results._fetch_page",
             side_effect=fetch_results,
@@ -408,7 +402,6 @@ class TestPage1Blocked:
 # ---------------------------------------------------------------------------
 
 _PAGE_URL = "https://www.cars.com/shopping/results/?page=3"
-_RUN_DIR = "/data/raw/run_test"
 _SEARCH_KEY = "ford-escape"
 _SCOPE = "national"
 _PAGE_NUM = 3
@@ -434,6 +427,19 @@ def _make_ctrl_html(page_num: int, total_pages: int = 5, page_size: int = 20,
 
 
 class TestFetchPage:
+    @pytest.fixture(autouse=True)
+    def _patch_open(self, mocker):
+        mocker.patch("builtins.open", mock_open())
+        mocker.patch("shared.minio.make_key", return_value="html/test.html.zst")
+        mocker.patch("shared.minio.write_html", return_value="s3://bronze/html/test.html.zst")
+        mock_cursor = MagicMock()
+        mock_cursor.__enter__ = MagicMock(return_value=mock_cursor)
+        mock_cursor.__exit__ = MagicMock(return_value=False)
+        mock_cursor.fetchone.return_value = (1,)
+        mock_conn = MagicMock()
+        mock_conn.cursor.return_value = mock_cursor
+        mocker.patch("shared.db.get_conn", return_value=mock_conn)
+
     @pytest.fixture(autouse=True)
     def reset_penalty(self):
         sr._srp_adaptive_penalty = 0.0
@@ -462,10 +468,9 @@ class TestFetchPage:
         return mock_session, mock_resp
 
     def test_success_200_artifact_fields(self, mocker):
-        mocker.patch("builtins.open", mock_open())
         self._mock_http(mocker, 200, b"<html></html>")
 
-        result = _fetch_page(_PAGE_URL, _RUN_DIR, _SEARCH_KEY, _SCOPE, _PAGE_NUM, set())
+        result = _fetch_page(_PAGE_URL, _SEARCH_KEY, _SCOPE, _PAGE_NUM, set())
 
         assert result["http_status"] == 200
         assert result["error"] is None
@@ -477,29 +482,17 @@ class TestFetchPage:
         assert result["page_num"] == _PAGE_NUM
 
     def test_success_sha256_populated(self, mocker):
-        mocker.patch("builtins.open", mock_open())
         self._mock_http(mocker, 200, b"<html>content</html>")
 
-        result = _fetch_page(_PAGE_URL, _RUN_DIR, _SEARCH_KEY, _SCOPE, _PAGE_NUM, set())
+        result = _fetch_page(_PAGE_URL, _SEARCH_KEY, _SCOPE, _PAGE_NUM, set())
 
         assert result["sha256"] is not None
         assert len(result["sha256"]) == 64
 
-    def test_file_written_with_status_in_name(self, mocker):
-        mock_open_fn = mock_open()
-        mocker.patch("builtins.open", mock_open_fn)
-        self._mock_http(mocker, 200, b"<html></html>")
-
-        _fetch_page(_PAGE_URL, _RUN_DIR, _SEARCH_KEY, _SCOPE, _PAGE_NUM, set())
-
-        open_calls = [str(c) for c in mock_open_fn.call_args_list]
-        assert any(f"page_{_PAGE_NUM:04d}" in c and "__200" in c for c in open_calls)
-
     def test_non_200_sets_is_error_and_stop(self, mocker):
-        mocker.patch("builtins.open", mock_open())
         self._mock_http(mocker, 404, b"not found")
 
-        result = _fetch_page(_PAGE_URL, _RUN_DIR, _SEARCH_KEY, _SCOPE, _PAGE_NUM, set())
+        result = _fetch_page(_PAGE_URL, _SEARCH_KEY, _SCOPE, _PAGE_NUM, set())
 
         assert result["http_status"] == 404
         assert result["_is_error"] is True
@@ -507,7 +500,6 @@ class TestFetchPage:
         assert result["error"] == "HTTP 404"
 
     def test_403_retry_succeeds_and_invalidates_credentials(self, mocker):
-        mocker.patch("builtins.open", mock_open())
 
         resp_403 = MagicMock()
         resp_403.status_code = 403
@@ -534,14 +526,13 @@ class TestFetchPage:
             "scraper.processors.scrape_results.invalidate_cf_credentials"
         )
 
-        result = _fetch_page(_PAGE_URL, _RUN_DIR, _SEARCH_KEY, _SCOPE, _PAGE_NUM, set())
+        result = _fetch_page(_PAGE_URL, _SEARCH_KEY, _SCOPE, _PAGE_NUM, set())
 
         mock_invalidate.assert_called_once()
         assert result["http_status"] == 200
         assert result["_is_error"] is False
 
     def test_403_retry_still_403_returns_error(self, mocker):
-        mocker.patch("builtins.open", mock_open())
 
         resp_403 = MagicMock()
         resp_403.status_code = 403
@@ -561,13 +552,12 @@ class TestFetchPage:
         )
         mocker.patch("scraper.processors.scrape_results.invalidate_cf_credentials")
 
-        result = _fetch_page(_PAGE_URL, _RUN_DIR, _SEARCH_KEY, _SCOPE, _PAGE_NUM, set())
+        result = _fetch_page(_PAGE_URL, _SEARCH_KEY, _SCOPE, _PAGE_NUM, set())
 
         assert result["_is_error"] is True
         assert "403" in result["error"]
 
     def test_403_backs_off_srp_penalty(self, mocker):
-        mocker.patch("builtins.open", mock_open())
 
         resp_403 = MagicMock()
         resp_403.status_code = 403
@@ -588,11 +578,10 @@ class TestFetchPage:
         mocker.patch("scraper.processors.scrape_results.invalidate_cf_credentials")
 
         sr._srp_adaptive_penalty = 0.0
-        _fetch_page(_PAGE_URL, _RUN_DIR, _SEARCH_KEY, _SCOPE, _PAGE_NUM, set())
+        _fetch_page(_PAGE_URL, _SEARCH_KEY, _SCOPE, _PAGE_NUM, set())
         assert sr._srp_adaptive_penalty >= 45.0
 
     def test_transient_error_retries_after_sleep(self, mocker):
-        mocker.patch("builtins.open", mock_open())
         mock_sleep = mocker.patch("scraper.processors.scrape_results.time.sleep")
 
         resp_200 = MagicMock()
@@ -612,14 +601,13 @@ class TestFetchPage:
             return_value=mock_session,
         )
 
-        result = _fetch_page(_PAGE_URL, _RUN_DIR, _SEARCH_KEY, _SCOPE, _PAGE_NUM, set())
+        result = _fetch_page(_PAGE_URL, _SEARCH_KEY, _SCOPE, _PAGE_NUM, set())
 
-        mock_sleep.assert_called_with(10)
+        mock_sleep.assert_any_call(10)
         assert result["http_status"] == 200
         assert result["_is_error"] is False
 
     def test_transient_error_both_attempts_returns_error(self, mocker):
-        mocker.patch("builtins.open", mock_open())
         mocker.patch("scraper.processors.scrape_results.time.sleep")
 
         mock_session = MagicMock()
@@ -634,7 +622,7 @@ class TestFetchPage:
             return_value=mock_session,
         )
 
-        result = _fetch_page(_PAGE_URL, _RUN_DIR, _SEARCH_KEY, _SCOPE, _PAGE_NUM, set())
+        result = _fetch_page(_PAGE_URL, _SEARCH_KEY, _SCOPE, _PAGE_NUM, set())
 
         assert result["_is_error"] is True
         assert "ConnectionError" in result["error"]
@@ -642,39 +630,35 @@ class TestFetchPage:
     def test_break_no_save_when_page_clamped(self, mocker):
         # Cars.com returned page 1 but we requested page 3 → duplicate territory
         html = _make_ctrl_html(page_num=1, total_pages=5)
-        mocker.patch("builtins.open", mock_open())
         self._mock_http(mocker, 200, html)
 
-        result = _fetch_page(_PAGE_URL, _RUN_DIR, _SEARCH_KEY, _SCOPE, _PAGE_NUM, set())
+        result = _fetch_page(_PAGE_URL, _SEARCH_KEY, _SCOPE, _PAGE_NUM, set())
 
         assert result["_break_no_save"] is True
 
     def test_stop_when_no_cards_on_page(self, mocker):
         html = _make_ctrl_html(page_num=_PAGE_NUM, total_pages=5, page_size=0)
-        mocker.patch("builtins.open", mock_open())
         self._mock_http(mocker, 200, html)
 
-        result = _fetch_page(_PAGE_URL, _RUN_DIR, _SEARCH_KEY, _SCOPE, _PAGE_NUM, set())
+        result = _fetch_page(_PAGE_URL, _SEARCH_KEY, _SCOPE, _PAGE_NUM, set())
 
         assert result["_stop"] is True
 
     def test_stop_on_last_page(self, mocker):
         # actual_page == total_pages → stop
         html = _make_ctrl_html(page_num=5, total_pages=5)
-        mocker.patch("builtins.open", mock_open())
         self._mock_http(mocker, 200, html)
 
-        result = _fetch_page(_PAGE_URL, _RUN_DIR, _SEARCH_KEY, _SCOPE, 5, set())
+        result = _fetch_page(_PAGE_URL, _SEARCH_KEY, _SCOPE, 5, set())
 
         assert result["_stop"] is True
 
     def test_vin_extraction(self, mocker):
         vin = "1HGCM82633A123456"
         html = f'<html><body><script>{{"vin": "{vin}"}}</script></body></html>'.encode()
-        mocker.patch("builtins.open", mock_open())
         self._mock_http(mocker, 200, html)
 
-        result = _fetch_page(_PAGE_URL, _RUN_DIR, _SEARCH_KEY, _SCOPE, _PAGE_NUM, set())
+        result = _fetch_page(_PAGE_URL, _SEARCH_KEY, _SCOPE, _PAGE_NUM, set())
 
         assert vin in result["_page_vins"]
         assert result["page_vins_total"] == 1
@@ -685,11 +669,10 @@ class TestFetchPage:
         html = (
             f'<script>{{"vin": "{vin_known}"}}{{"vin": "{vin_new}"}}</script>'
         ).encode()
-        mocker.patch("builtins.open", mock_open())
         self._mock_http(mocker, 200, html)
 
         known = {vin_known}
-        result = _fetch_page(_PAGE_URL, _RUN_DIR, _SEARCH_KEY, _SCOPE, _PAGE_NUM, known)
+        result = _fetch_page(_PAGE_URL, _SEARCH_KEY, _SCOPE, _PAGE_NUM, known)
 
         assert result["page_vins_new"] == 1
         assert result["page_vins_total"] == 2
@@ -701,6 +684,10 @@ class TestFetchPage:
 
 class TestFetchPageMinioIntegration:
     """Verify the MinIO write + artifacts_queue insert path added by Plan 97."""
+
+    @pytest.fixture(autouse=True)
+    def _patch_open(self, mocker):
+        mocker.patch("builtins.open", mock_open())
 
     @pytest.fixture(autouse=True)
     def reset_penalty(self):
@@ -738,55 +725,47 @@ class TestFetchPageMinioIntegration:
         return mock_conn
 
     def test_success_populates_minio_path(self, mocker):
-        mocker.patch("builtins.open", mock_open())
         self._mock_http(mocker)
         self._mock_minio_and_db(mocker, artifact_id=42)
 
-        result = _fetch_page(_PAGE_URL, _RUN_DIR, _SEARCH_KEY, _SCOPE, _PAGE_NUM, set())
+        result = _fetch_page(_PAGE_URL, _SEARCH_KEY, _SCOPE, _PAGE_NUM, set())
 
         assert result["minio_path"] == "s3://bronze/html/year=2026/test.html.zst"
 
     def test_success_populates_queue_artifact_id(self, mocker):
-        mocker.patch("builtins.open", mock_open())
         self._mock_http(mocker)
         self._mock_minio_and_db(mocker, artifact_id=77)
 
-        result = _fetch_page(_PAGE_URL, _RUN_DIR, _SEARCH_KEY, _SCOPE, _PAGE_NUM, set())
+        result = _fetch_page(_PAGE_URL, _SEARCH_KEY, _SCOPE, _PAGE_NUM, set())
 
         assert result["queue_artifact_id"] == 77
 
-    def test_minio_failure_is_nonfatal(self, mocker):
-        """If MinIO write raises, minio_path is None and no exception propagates."""
-        mocker.patch("builtins.open", mock_open())
+    def test_minio_failure_sets_artifact_error(self, mocker):
+        """MinIO write failure propagates into artifact.error and _is_error so Airflow retries."""
         self._mock_http(mocker)
         mocker.patch("shared.minio.write_html", side_effect=Exception("connection refused"))
 
-        result = _fetch_page(_PAGE_URL, _RUN_DIR, _SEARCH_KEY, _SCOPE, _PAGE_NUM, set())
+        result = _fetch_page(_PAGE_URL, _SEARCH_KEY, _SCOPE, _PAGE_NUM, set())
 
         assert result["minio_path"] is None
         assert result["queue_artifact_id"] is None
-        assert result["http_status"] == 200  # core fetch still succeeded
+        assert result["http_status"] == 200  # HTTP fetch succeeded
+        assert result["error"] is not None
+        assert "MinIO write failed" in result["error"]
+        assert result["_is_error"] is True
 
-    def test_db_failure_is_nonfatal(self, mocker):
-        """If DB insert raises, queue_artifact_id is None and no exception propagates."""
-        mocker.patch("builtins.open", mock_open())
+    def test_db_failure_sets_artifact_error(self, mocker):
+        """DB insert failure propagates into artifact.error and _is_error so Airflow retries."""
         self._mock_http(mocker)
         mocker.patch("shared.minio.make_key", return_value="html/year=2026/test.html.zst")
         mocker.patch("shared.minio.write_html", return_value="s3://bronze/html/year=2026/test.html.zst")
         mocker.patch("shared.db.get_conn", side_effect=Exception("db down"))
 
-        result = _fetch_page(_PAGE_URL, _RUN_DIR, _SEARCH_KEY, _SCOPE, _PAGE_NUM, set())
+        result = _fetch_page(_PAGE_URL, _SEARCH_KEY, _SCOPE, _PAGE_NUM, set())
 
         assert result["queue_artifact_id"] is None
         assert result["http_status"] == 200
+        assert result["error"] is not None
+        assert "MinIO write failed" in result["error"]
+        assert result["_is_error"] is True
 
-    def test_disk_write_still_happens_on_minio_failure(self, mocker):
-        """Shadow disk write must occur regardless of MinIO outcome."""
-        mock_open_fn = mock_open()
-        mocker.patch("builtins.open", mock_open_fn)
-        self._mock_http(mocker)
-        mocker.patch("shared.minio.write_html", side_effect=Exception("unreachable"))
-
-        _fetch_page(_PAGE_URL, _RUN_DIR, _SEARCH_KEY, _SCOPE, _PAGE_NUM, set())
-
-        assert mock_open_fn.called

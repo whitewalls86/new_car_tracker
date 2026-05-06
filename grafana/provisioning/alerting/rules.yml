@@ -304,6 +304,78 @@ groups:
                     type: gt
                     params: [5000]
 
+      - uid: ct-disk-space-warning
+        title: Disk Space Warning (>80%)
+        condition: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 30m
+        data:
+          - refId: A
+            datasourceUid: cartracker-prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: '(1 - node_filesystem_avail_bytes{fstype!="tmpfs",mountpoint!~"/boot.*"} / node_filesystem_size_bytes{fstype!="tmpfs",mountpoint!~"/boot.*"}) * 100'
+          - refId: B
+            datasourceUid: "__expr__"
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+          - refId: C
+            datasourceUid: "__expr__"
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [80]
+
+      - uid: ct-disk-space-critical
+        title: Disk Space Critical (>90%)
+        condition: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 5m
+        data:
+          - refId: A
+            datasourceUid: cartracker-prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: '(1 - node_filesystem_avail_bytes{fstype!="tmpfs",mountpoint!~"/boot.*"} / node_filesystem_size_bytes{fstype!="tmpfs",mountpoint!~"/boot.*"}) * 100'
+          - refId: B
+            datasourceUid: "__expr__"
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+          - refId: C
+            datasourceUid: "__expr__"
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [90]
+
       - uid: ct-block-events-spike
         title: 403 Block Events Spike
         condition: C

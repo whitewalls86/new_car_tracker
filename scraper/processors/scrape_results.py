@@ -3,7 +3,6 @@ import html as html_lib
 import json
 import logging
 import math
-import os
 import random
 import re
 import threading
@@ -24,7 +23,6 @@ from scraper.processors.fingerprint import human_delay, random_zip
 
 logger = logging.getLogger(__name__)
 
-RAW_BASE = "/data/raw"
 BASE_URL = "https://www.cars.com/shopping/results/"
 _SITE_ACTIVITY_RE = re.compile(r'data-site-activity="([^"]+)"')
 _VIN_RE = re.compile(r'"vin"\s*:\s*"([A-HJ-NPR-Z0-9]{17})"')
@@ -207,7 +205,7 @@ def extract_results_paging_meta(html_text: str) -> Optional[Dict[str, Any]]:
         return None
 
 
-def _fetch_page(url: str, run_dir: str,
+def _fetch_page(url: str,
                 search_key: str, scope: str, page_num: int,
                 known_vins: Set[str], run_id: str = "") -> Dict[str, Any]:
     """Fetch a single SRP page using a CF-bootstrapped curl_cffi session.
@@ -234,15 +232,12 @@ def _fetch_page(url: str, run_dir: str,
         return content, resp.status_code, resp.headers.get("content-type")
 
     def _error_artifact(err_msg: str) -> Dict[str, Any]:
-        error_filepath = os.path.join(
-            run_dir, f"{search_key}__{scope}__page_{page_num:04d}__ERROR.txt"
-        )
         return {
             "source": "cars.com", "artifact_type": "results_page",
             "search_key": search_key, "search_scope": scope,
             "page_num": page_num, "url": url,
             "http_status": None, "content_type": None, "content_bytes": None,
-            "sha256": None, "filepath": error_filepath, "fetched_at": fetched_at,
+            "sha256": None, "filepath": None, "fetched_at": fetched_at,
             "error": err_msg[:500].replace("'", ""),
             "paging_meta": None, "page_vins_total": 0, "page_vins_new": 0,
             "_paging": None, "_page_vins": set(), "_new_vins_count": 0,
@@ -306,15 +301,9 @@ def _fetch_page(url: str, run_dir: str,
             if cards_on_page == 0:
                 stop = True
 
-    # Save raw HTML to disk (shadow — kept during Plan 97 transition)
-    filename = f"{search_key}__{scope}__page_{page_num:04d}__{status}.html"
-    filepath = os.path.join(run_dir, filename)
-    with open(filepath, "wb") as f:
-        f.write(content)
-
-    # Write to MinIO and record in artifacts_queue (Plan 97)
     minio_path = None
     queue_artifact_id = None
+    minio_write_error: Optional[str] = None
     try:
         from shared.db import db_cursor
         from shared.minio import make_key, write_html
@@ -343,7 +332,8 @@ def _fetch_page(url: str, run_dir: str,
                 (queue_artifact_id, minio_path, fetched_at, run_id or None),
             )
     except Exception as _minio_err:
-        logger.warning("MinIO/queue write failed (non-fatal): %s", _minio_err)
+        minio_write_error = f"MinIO write failed: {_minio_err}"
+        logger.error("MinIO/queue write failed for page %d: %s", page_num, _minio_err)
 
     # --- VIN extraction ---
     # Cars.com now HTML-encodes JSON in data attributes (&quot; instead of ")
@@ -371,11 +361,11 @@ def _fetch_page(url: str, run_dir: str,
         "content_type": content_type,
         "content_bytes": size,
         "sha256": sha256_bytes(content) if content else None,
-        "filepath": filepath,
+        "filepath": None,
         "minio_path": minio_path,
         "queue_artifact_id": queue_artifact_id,
         "fetched_at": fetched_at,
-        "error": None if status == 200 else f"HTTP {status}",
+        "error": minio_write_error if status == 200 else f"HTTP {status}",
         "paging_meta": paging,
         "page_vins_total": len(page_vins),
         "page_vins_new": new_vins_count,
@@ -385,7 +375,7 @@ def _fetch_page(url: str, run_dir: str,
     artifact["_new_vins_count"] = new_vins_count
     artifact["_stop"] = stop
     artifact["_break_no_save"] = break_no_save
-    artifact["_is_error"] = status != 200
+    artifact["_is_error"] = status != 200 or minio_write_error is not None
     return artifact
 
 
@@ -401,11 +391,9 @@ def scrape_results(
     payload: dict = Body(...),
 ) -> Dict[str, Any]:
     """
-    Fetches results pages for one (search_key, scope), saves raw HTML to disk,
+    Fetches results pages for one (search_key, scope), writes HTML to MinIO,
     and returns artifact metadata for the caller to write to Postgres.
     """
-    os.makedirs(RAW_BASE, exist_ok=True)
-
     params = payload.get("params", {})
 
     makes = params.get("makes") or []
@@ -429,10 +417,6 @@ def scrape_results(
     # --- ZIP rotation: pick a random ZIP per session ---
     zip_code = random_zip(scope)
 
-    # directory per run for organization
-    run_dir = os.path.join(RAW_BASE, f"run_{run_id}")
-    os.makedirs(run_dir, exist_ok=True)
-
     logger.info("scrape_results start: search_key=%s scope=%s zip=%s known_vins=%d",
                 search_key, scope, zip_code, len(known_vins))
 
@@ -444,7 +428,7 @@ def scrape_results(
     time.sleep(human_delay(1))
 
     url_p1 = build_results_url(makes, models, zip_code, scope, radius_miles, 1, sort_order)
-    result_p1 = _fetch_page(url_p1, run_dir, search_key, scope, 1, known_vins, run_id)
+    result_p1 = _fetch_page(url_p1, search_key, scope, 1, known_vins, run_id)
 
     logger.info(
         "page 1: search_key=%s status=%s paging=%s vins=%d new_vins=%d stop=%s break=%s",
@@ -530,7 +514,7 @@ def scrape_results(
 
         url = build_results_url(makes, models, zip_code, scope,
                                 radius_miles, page_num, sort_order)
-        result = _fetch_page(url, run_dir, search_key, scope, page_num, known_vins, run_id)
+        result = _fetch_page(url, search_key, scope, page_num, known_vins, run_id)
 
         logger.info(
             "page %d: search_key=%s status=%s vins=%d new_vins=%d stop=%s break=%s err=%s",
