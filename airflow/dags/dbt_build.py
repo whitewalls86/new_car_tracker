@@ -34,9 +34,13 @@ def _run_dbt_build(**context):
         logger.info("dbt build already running (409) — skipping: %s", resp.text)
         return {"ok": True, "skipped": True}
 
-    resp.raise_for_status()
-    result = resp.json()
+    try:
+        result = resp.json()
+    except Exception:
+        result = {"ok": False, "stdout": "", "stderr": resp.text}
+
     context["ti"].xcom_push(key="result", value=result)
+    resp.raise_for_status()
     return result
 
 
