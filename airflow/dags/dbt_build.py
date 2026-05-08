@@ -35,9 +35,12 @@ def _run_dbt_build(**context):
         return {"ok": True, "skipped": True}
 
     try:
-        result = resp.json()
+        body = resp.json()
     except Exception:
-        result = {"ok": False, "stdout": "", "stderr": resp.text}
+        body = {"ok": False, "stdout": "", "stderr": resp.text}
+
+    # FastAPI wraps HTTPException details under a "detail" key
+    result = body.get("detail", body) if isinstance(body.get("detail"), dict) else body
 
     context["ti"].xcom_push(key="result", value=result)
     resp.raise_for_status()
@@ -46,20 +49,32 @@ def _run_dbt_build(**context):
 
 def _notify(**context):
     result = context["ti"].xcom_pull(task_ids="dbt_build", key="result")
+    ti = context["ti"]
 
     if not _TELEGRAM_API or not _TELEGRAM_CHAT_ID:
         logger.warning("TELEGRAM_API/TELEGRAM_CHAT_ID not configured — skipping notification")
         return
 
-    error_detail = ""
+    lines = [
+        "dbt build FAILED",
+        f"Run:     {ti.dag_run.run_id}",
+        f"Date:    {ti.execution_date}",
+    ]
+
     if result:
-        error_detail = result.get("stderr") or result.get("stdout") or ""
-    msg = f"dbt build FAILED\n\n{error_detail[-500:]}"
+        if result.get("cmd"):
+            lines.append(f"Command: {result['cmd']}")
+        rc = result.get("returncode")
+        if rc is not None:
+            lines.append(f"Exit:    {rc}")
+        error_body = result.get("stderr") or result.get("stdout") or ""
+        if error_body:
+            lines += ["", error_body[-800:]]
 
     try:
         requests.post(
             f"https://api.telegram.org/bot{_TELEGRAM_API}/sendMessage",
-            json={"chat_id": _TELEGRAM_CHAT_ID, "text": msg},
+            json={"chat_id": _TELEGRAM_CHAT_ID, "text": "\n".join(lines)},
             timeout=10,
         )
     except requests.RequestException:
