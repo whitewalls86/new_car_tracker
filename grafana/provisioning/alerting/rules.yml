@@ -94,6 +94,9 @@ groups:
         noDataState: OK
         execErrState: Alerting
         for: 0s
+        annotations:
+          summary: "DAG {{ $labels.dag_id }} failed"
+          description: "A DAG run failed in the last 10 min. Check the Airflow UI for details: https://cartracker.info/airflow"
         data:
           - refId: A
             datasourceUid: cartracker-prometheus
@@ -101,7 +104,7 @@ groups:
               from: 600
               to: 0
             model:
-              expr: 'increase(airflow_ti_failures[10m])'
+              expr: 'increase(airflow_dagrun_duration_failed_count[10m])'
           - refId: B
             datasourceUid: "__expr__"
             relativeTimeRange:
@@ -122,7 +125,7 @@ groups:
               conditions:
                 - evaluator:
                     type: gt
-                    params: [2]
+                    params: [0]
 
       - uid: ct-service-down
         title: Service Down
