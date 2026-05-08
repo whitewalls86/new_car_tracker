@@ -149,7 +149,10 @@ def dbt_build(payload: Dict[str, Any] = Body(default={})) -> Dict[str, Any]:
         }
 
         if proc.returncode != 0:
-            logger.error("dbt build failed (rc=%d)", proc.returncode)
+            logger.error(
+                "dbt build failed (rc=%d)\nstdout: %s\nstderr: %s",
+                proc.returncode, proc.stdout, proc.stderr,
+            )
             raise HTTPException(status_code=500, detail=result)
 
         return result
