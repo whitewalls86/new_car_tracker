@@ -142,7 +142,6 @@ services:
     container_name: cartracker-scraper
     restart: unless-stopped
     volumes:
-      - cartracker_raw:/data/raw
       - scraper_logs:/usr/app/logs
     environment:
       DATABASE_URL: postgresql://scraper_user:${SCRAPER_DB_PASSWORD}@postgres:5432/cartracker
@@ -262,7 +261,6 @@ services:
     image: cartracker-archiver
     container_name: cartracker-archiver
     volumes:
-      - cartracker_raw:/data/raw
       - archiver_logs:/usr/app/logs
     environment:
       PGHOST: postgres
@@ -364,7 +362,6 @@ services:
     ports:
       - "8070:8070"
     volumes:
-      - cartracker_raw:/data/raw
       - processing_logs:/usr/app/logs
     environment:
       PGHOST: postgres
@@ -585,10 +582,6 @@ volumes:
   cartracker_pgdata:
     external: true
     name: cartracker_pgdata
-
-  cartracker_raw:
-    external: true
-    name: cartracker_raw
 
   pgadmin_data:
 
