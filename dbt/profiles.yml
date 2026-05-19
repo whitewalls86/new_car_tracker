@@ -36,9 +36,7 @@ cartracker:
         - httpfs
         - postgres_scanner
       settings:
-        # MinIO S3-compatible settings — strip protocol prefix from MINIO_ENDPOINT
-        # httplib reverts DuckDB 1.5 httpfs client change that broke MinIO connectivity
-        httpfs_client_implementation: httplib
+        httpfs_connection_caching: true
         s3_endpoint: "{{ env_var('MINIO_ENDPOINT', 'http://minio:9000') | replace('http://', '') | replace('https://', '') }}"
         s3_access_key_id: "{{ env_var('MINIO_ROOT_USER', 'cartracker') }}"
         s3_secret_access_key: "{{ env_var('MINIO_ROOT_PASSWORD', '') }}"
