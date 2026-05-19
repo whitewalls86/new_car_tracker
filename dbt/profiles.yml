@@ -31,7 +31,7 @@ cartracker:
     duckdb:
       type: duckdb
       path: "{{ env_var('DUCKDB_PATH') }}"
-      threads: 2
+      threads: 1
       extensions:
         - httpfs
         - postgres_scanner
