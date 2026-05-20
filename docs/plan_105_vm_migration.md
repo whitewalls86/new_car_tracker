@@ -1,6 +1,6 @@
 # Plan 105: VM Migration — A2 → A1 (Oracle Cloud)
 
-**Status:** Planned
+**Status:** COMPLETE (2026-05-20)
 **Priority:** Medium — cost reduction (A1 is free tier; A2 is paid)
 
 ---

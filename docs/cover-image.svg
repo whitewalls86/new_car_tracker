@@ -1,0 +1,159 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">
+
+  <!-- Background -->
+  <rect width="1920" height="1080" fill="#0d1117"/>
+
+  <!-- ===================== TITLE ===================== -->
+  <text x="960" y="148"
+        text-anchor="middle"
+        font-family="system-ui, -apple-system, 'Segoe UI', Arial, sans-serif"
+        font-size="90" font-weight="700" letter-spacing="-2"
+        fill="#f0f6fc">CarTracker</text>
+
+  <text x="960" y="205"
+        text-anchor="middle"
+        font-family="system-ui, -apple-system, 'Segoe UI', Arial, sans-serif"
+        font-size="30" fill="#8b949e">
+    A production vehicle pricing data platform
+  </text>
+
+  <!-- ===================== PIPELINE ===================== -->
+  <!--
+    7 nodes × 180px + 6 gaps × 60px = 1620px
+    Left margin: (1920 - 1620) / 2 = 150px
+    Node: top=310, height=130, center y=375
+  -->
+
+  <!-- NODE 1: Scraper  x: 150–330  center: 240 -->
+  <rect x="150" y="310" width="180" height="130" rx="8" fill="#12233b" stroke="#1f6feb" stroke-width="1.5"/>
+  <rect x="150" y="310" width="180" height="4"   rx="2" fill="#1f6feb"/>
+  <text x="240" y="363" text-anchor="middle"
+        font-family="system-ui, Arial, sans-serif" font-size="22" font-weight="600" fill="#79c0ff">Scraper</text>
+  <text x="240" y="391" text-anchor="middle"
+        font-family="system-ui, Arial, sans-serif" font-size="17" fill="#6e7681">FastAPI</text>
+
+  <!-- Arrow 1  330→390 -->
+  <line x1="333" y1="375" x2="376" y2="375" stroke="#30363d" stroke-width="2.5"/>
+  <polygon points="376,368 390,375 376,382" fill="#30363d"/>
+
+  <!-- NODE 2: Bronze  x: 390–570  center: 480 -->
+  <rect x="390" y="310" width="180" height="130" rx="8" fill="#271d00" stroke="#9e6a03" stroke-width="1.5"/>
+  <rect x="390" y="310" width="180" height="4"   rx="2" fill="#9e6a03"/>
+  <text x="480" y="363" text-anchor="middle"
+        font-family="system-ui, Arial, sans-serif" font-size="22" font-weight="600" fill="#e3b341">Bronze</text>
+  <text x="480" y="391" text-anchor="middle"
+        font-family="system-ui, Arial, sans-serif" font-size="17" fill="#6e7681">MinIO · zstd HTML</text>
+
+  <!-- Arrow 2  570→630 -->
+  <line x1="573" y1="375" x2="616" y2="375" stroke="#30363d" stroke-width="2.5"/>
+  <polygon points="616,368 630,375 616,382" fill="#30363d"/>
+
+  <!-- NODE 3: Processing  x: 630–810  center: 720 -->
+  <rect x="630" y="310" width="180" height="130" rx="8" fill="#062028" stroke="#0891b2" stroke-width="1.5"/>
+  <rect x="630" y="310" width="180" height="4"   rx="2" fill="#0891b2"/>
+  <text x="720" y="363" text-anchor="middle"
+        font-family="system-ui, Arial, sans-serif" font-size="22" font-weight="600" fill="#67e8f9">Processing</text>
+  <text x="720" y="391" text-anchor="middle"
+        font-family="system-ui, Arial, sans-serif" font-size="17" fill="#6e7681">parsers · writers</text>
+
+  <!-- Arrow 3  810→870 -->
+  <line x1="813" y1="375" x2="856" y2="375" stroke="#30363d" stroke-width="2.5"/>
+  <polygon points="856,368 870,375 856,382" fill="#30363d"/>
+
+  <!-- NODE 4: Postgres Ops  x: 870–1050  center: 960 -->
+  <rect x="870" y="310" width="180" height="130" rx="8" fill="#0a1f0e" stroke="#2ea043" stroke-width="1.5"/>
+  <rect x="870" y="310" width="180" height="4"   rx="2" fill="#2ea043"/>
+  <text x="960" y="355" text-anchor="middle"
+        font-family="system-ui, Arial, sans-serif" font-size="20" font-weight="600" fill="#56d364">Postgres Ops</text>
+  <text x="960" y="379" text-anchor="middle"
+        font-family="system-ui, Arial, sans-serif" font-size="16" fill="#56d364" opacity="0.85">hot state</text>
+  <text x="960" y="402" text-anchor="middle"
+        font-family="system-ui, Arial, sans-serif" font-size="16" fill="#6e7681">event buffers</text>
+
+  <!-- Arrow 4  1050→1110 -->
+  <line x1="1053" y1="375" x2="1096" y2="375" stroke="#30363d" stroke-width="2.5"/>
+  <polygon points="1096,368 1110,375 1096,382" fill="#30363d"/>
+
+  <!-- NODE 5: Silver  x: 1110–1290  center: 1200 -->
+  <rect x="1110" y="310" width="180" height="130" rx="8" fill="#0e1d35" stroke="#388bfd" stroke-width="1.5"/>
+  <rect x="1110" y="310" width="180" height="4"   rx="2" fill="#388bfd"/>
+  <text x="1200" y="363" text-anchor="middle"
+        font-family="system-ui, Arial, sans-serif" font-size="22" font-weight="600" fill="#79c0ff">Silver</text>
+  <text x="1200" y="391" text-anchor="middle"
+        font-family="system-ui, Arial, sans-serif" font-size="17" fill="#6e7681">MinIO · Parquet</text>
+
+  <!-- Arrow 5  1290→1350 -->
+  <line x1="1293" y1="375" x2="1336" y2="375" stroke="#30363d" stroke-width="2.5"/>
+  <polygon points="1336,368 1350,375 1336,382" fill="#30363d"/>
+
+  <!-- NODE 6: Mart  x: 1350–1530  center: 1440 -->
+  <rect x="1350" y="310" width="180" height="130" rx="8" fill="#1a0d35" stroke="#8957e5" stroke-width="1.5"/>
+  <rect x="1350" y="310" width="180" height="4"   rx="2" fill="#8957e5"/>
+  <text x="1440" y="363" text-anchor="middle"
+        font-family="system-ui, Arial, sans-serif" font-size="22" font-weight="600" fill="#d2a8ff">Mart</text>
+  <text x="1440" y="391" text-anchor="middle"
+        font-family="system-ui, Arial, sans-serif" font-size="17" fill="#6e7681">DuckDB · dbt</text>
+
+  <!-- Arrow 6  1530→1590 -->
+  <line x1="1533" y1="375" x2="1576" y2="375" stroke="#30363d" stroke-width="2.5"/>
+  <polygon points="1576,368 1590,375 1576,382" fill="#30363d"/>
+
+  <!-- NODE 7: Dashboard  x: 1590–1770  center: 1680 -->
+  <rect x="1590" y="310" width="180" height="130" rx="8" fill="#061822" stroke="#0969da" stroke-width="1.5"/>
+  <rect x="1590" y="310" width="180" height="4"   rx="2" fill="#0969da"/>
+  <text x="1680" y="363" text-anchor="middle"
+        font-family="system-ui, Arial, sans-serif" font-size="22" font-weight="600" fill="#79c0ff">Dashboard</text>
+  <text x="1680" y="391" text-anchor="middle"
+        font-family="system-ui, Arial, sans-serif" font-size="17" fill="#6e7681">Streamlit</text>
+
+  <!-- ===================== DIVIDER ===================== -->
+  <line x1="150" y1="580" x2="1770" y2="580" stroke="#21262d" stroke-width="1"/>
+
+  <!-- ===================== BADGES ===================== -->
+  <!--
+    5 badges × 275px + 4 gaps × 25px = 1475px
+    Left margin: (1920 - 1475) / 2 = 222px
+    Positions: 222, 522, 822, 1122, 1422
+    Text centers (badge_x + 140): 362, 662, 962, 1262, 1562
+    Badge top: 625, height: 50
+  -->
+
+  <!-- Badge 1: Airflow -->
+  <rect x="222" y="625" width="275" height="50" rx="25" fill="#0d1117" stroke="#21262d" stroke-width="1.5"/>
+  <rect x="222" y="625" width="5"   height="50" fill="#f97316"/>
+  <text x="362" y="657" text-anchor="middle"
+        font-family="system-ui, Arial, sans-serif" font-size="19" fill="#8b949e">Airflow orchestration</text>
+
+  <!-- Badge 2: Grafana -->
+  <rect x="522" y="625" width="275" height="50" rx="25" fill="#0d1117" stroke="#21262d" stroke-width="1.5"/>
+  <rect x="522" y="625" width="5"   height="50" fill="#f05c17"/>
+  <text x="662" y="657" text-anchor="middle"
+        font-family="system-ui, Arial, sans-serif" font-size="19" fill="#8b949e">Grafana observability</text>
+
+  <!-- Badge 3: Scale -->
+  <rect x="822" y="625" width="275" height="50" rx="25" fill="#0d1117" stroke="#21262d" stroke-width="1.5"/>
+  <rect x="822" y="625" width="5"   height="50" fill="#e3b341"/>
+  <text x="962" y="657" text-anchor="middle"
+        font-family="system-ui, Arial, sans-serif" font-size="19" fill="#8b949e">13.7M+ observations</text>
+
+  <!-- Badge 4: Tests -->
+  <rect x="1122" y="625" width="275" height="50" rx="25" fill="#0d1117" stroke="#21262d" stroke-width="1.5"/>
+  <rect x="1122" y="625" width="5"   height="50" fill="#2ea043"/>
+  <text x="1262" y="657" text-anchor="middle"
+        font-family="system-ui, Arial, sans-serif" font-size="19" fill="#8b949e">974 tests in CI</text>
+
+  <!-- Badge 5: Migrations -->
+  <rect x="1422" y="625" width="275" height="50" rx="25" fill="#0d1117" stroke="#21262d" stroke-width="1.5"/>
+  <rect x="1422" y="625" width="5"   height="50" fill="#8957e5"/>
+  <text x="1562" y="657" text-anchor="middle"
+        font-family="system-ui, Arial, sans-serif" font-size="19" fill="#8b949e">39 schema migrations</text>
+
+  <!-- ===================== FOOTER ===================== -->
+  <text x="960" y="945"
+        text-anchor="middle"
+        font-family="system-ui, Arial, sans-serif"
+        font-size="22" fill="#6e7681">
+    Production data pipeline on a single VPS · cartracker.info
+  </text>
+
+</svg>
