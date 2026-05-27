@@ -34,6 +34,9 @@ unit_tests:
   - name: test_srp_only_recent_inferred_active
     description: "SRP-only VIN last seen within 7 days is inferred as 'active'"
     model: mart_vehicle_snapshot
+    overrides:
+      macros:
+        now_ts: "cast('2026-01-15 12:00:00+00' as TIMESTAMP WITH TIME ZONE)"
     given:
       - input: ref('int_latest_observation')
         rows:
@@ -46,7 +49,7 @@ unit_tests:
              first_price: 30000, min_price: 30000, max_price: 30000,
              price_drop_count: 0, price_increase_count: 0, total_price_observations: 1,
              first_seen_at: "2026-01-05 12:00:00+00",
-             last_seen_at: "{{ modules.datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S+00') }}",
+             last_seen_at: "2026-01-13 12:00:00+00",
              days_on_market: 5}
       - input: ref('int_active_make_models')
         rows:
@@ -127,7 +130,7 @@ unit_tests:
              first_price: 30000, min_price: 30000, max_price: 30000,
              price_drop_count: 0, price_increase_count: 0, total_price_observations: 1,
              first_seen_at: "2026-01-05 12:00:00+00",
-             last_seen_at: "{{ modules.datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S+00') }}",
+             last_seen_at: "2026-04-24 12:00:00+00",
              days_on_market: 5}
       - input: ref('int_active_make_models')
         rows:
