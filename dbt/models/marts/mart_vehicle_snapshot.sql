@@ -32,7 +32,7 @@ select
     obs.listing_id,
     coalesce(
         case when ls.state_source = 'detail' then ls.listing_state end,
-        case when ph.last_seen_at >= now() - interval '7 days' then 'active'
+        case when ph.last_seen_at >= {{ now_ts() }} - interval '7 days' then 'active'
              else 'unlisted'
         end
     )                           as listing_state,
