@@ -3,7 +3,7 @@
 All use in-memory PyArrow tables + mocked s3fs. No real MinIO required.
 """
 from datetime import date, timedelta
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pyarrow as pa
 import pytest
@@ -65,7 +65,10 @@ def _mock_pq(mocker, table: pa.Table, *, num_rows: int | None = None):
 
 
 def _day_path(source: str, year: int, month: int, day: int) -> str:
-    return f"bronze/silver/observations/source={source}/obs_year={year}/obs_month={month}/obs_day={day}"
+    return (
+        f"bronze/silver/observations/source={source}"
+        f"/obs_year={year}/obs_month={month}/obs_day={day}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -128,8 +131,6 @@ class TestFullCompactionHappyPath:
 class TestSortOrderApplied:
     def test_output_rows_sorted_by_sort_cols(self, mock_fs, mocker):
         """Written table is sorted by SORT_COLS (make → model → … → listing_id)."""
-        import archiver.processors.compact_silver as mod
-
         # Deliberately unsorted: Honda < Ford < Toyota by make
         unsorted = pa.table({
             "make": ["Toyota", "Ford", "Honda"],
@@ -147,18 +148,22 @@ class TestSortOrderApplied:
             captured.append(tbl)
 
         mocker.patch("archiver.processors.compact_silver.pq.read_table", return_value=unsorted)
-        mocker.patch("archiver.processors.compact_silver.pq.write_table", side_effect=_capture_write)
+        mocker.patch(
+            "archiver.processors.compact_silver.pq.write_table", side_effect=_capture_write
+        )
         mock_pf = MagicMock()
         mock_pf.metadata.num_rows = 3
         mocker.patch("archiver.processors.compact_silver.pq.ParquetFile", return_value=mock_pf)
 
         from archiver.processors.compact_silver import _compact_one
         path = _day_path("detail", 2026, 6, 28)
-        _compact_one(mock_fs, path, "needs_compaction", [], [f"{path}/part-x-0.parquet"], date(2026, 6, 28))
+        _compact_one(
+            mock_fs, path, "needs_compaction", [], [f"{path}/part-x-0.parquet"], date(2026, 6, 28)
+        )
 
         assert len(captured) == 1
         written_makes = captured[0].column("make").to_pylist()
-        assert written_makes == sorted(written_makes), "Rows should be sorted by make (first SORT_COL)"
+        assert written_makes == sorted(written_makes), "Output should be sorted by make"
 
 
 # ---------------------------------------------------------------------------
@@ -386,14 +391,6 @@ class TestOldestFirstOrdering:
         """Partitions are processed oldest-first by (date, source)."""
         import archiver.processors.compact_silver as mod
 
-        # Three partitions out of order
-        dates_sources = [
-            (date(2026, 6, 5), "srp"),
-            (date(2026, 6, 1), "detail"),
-            (date(2026, 6, 1), "carousel"),
-        ]
-        paths = [_day_path(s, d.year, d.month, d.day) for d, s in dates_sources]
-
         # _list_day_partitions processes each source completely (year→month→day)
         # before moving to the next. Classify calls all happen after full discovery.
         detail_day = _day_path("detail", 2026, 6, 1)
@@ -472,7 +469,9 @@ class TestFailedPartitionDoesNotAbortRun:
                 raise RuntimeError("simulated read failure")
             return _make_table(2)
 
-        mocker.patch("archiver.processors.compact_silver.pq.read_table", side_effect=_read_side_effect)
+        mocker.patch(
+            "archiver.processors.compact_silver.pq.read_table", side_effect=_read_side_effect
+        )
         mocker.patch("archiver.processors.compact_silver.pq.write_table")
         mock_pf = MagicMock()
         mock_pf.metadata.num_rows = 2

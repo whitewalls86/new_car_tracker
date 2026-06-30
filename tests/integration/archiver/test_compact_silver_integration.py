@@ -210,13 +210,17 @@ class TestIncrementalCompactionEndToEnd:
         assert result2["incremental"] >= 1
 
         keys = _list_parquet_keys(s3_client, obs_prefix)
-        assert len(keys) == 1, f"Expected exactly 1 compacted file after incremental, got {len(keys)}"
+        assert len(keys) == 1, (
+            f"Expected exactly 1 compacted file after incremental, got {len(keys)}"
+        )
 
         final_table = pq.read_table(f"{_BUCKET}/{keys[0]}", filesystem=test_fs)
         assert len(final_table) == 6  # 4 + 2
 
         listing_ids = final_table.column("listing_id").to_pylist()
-        assert len(listing_ids) == len(set(listing_ids)), "Duplicate rows after incremental compaction"
+        assert len(listing_ids) == len(set(listing_ids)), (
+            "Duplicate rows after incremental compaction"
+        )
 
 
 # ---------------------------------------------------------------------------

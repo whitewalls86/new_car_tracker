@@ -141,7 +141,8 @@ def _compact_one(
 
     if state == "incremental":
         logger.info(
-            "compact_silver: incremental source=%s date=%s, %d new part files since last compaction",
+            "compact_silver: incremental source=%s date=%s,"
+            " %d new part files since last compaction",
             source, date_str, len(part_files),
         )
 
