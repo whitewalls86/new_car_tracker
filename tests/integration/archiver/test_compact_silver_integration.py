@@ -106,6 +106,10 @@ def _list_all_keys(s3_client, prefix: str) -> list[str]:
 
 
 def _sample_table(n: int = 5, make: str = "Ford") -> pa.Table:
+    # Partition columns (source, obs_year, obs_month, obs_day) are NOT included:
+    # flush_silver_observations removes them via partition_cols, so real part files
+    # never have them in their data. Including them here would conflict with
+    # pyarrow's hive partition inference on the directory path.
     return pa.table({
         "listing_id": [f"L{uuid.uuid4().hex[:6]}" for _ in range(n)],
         "make": [make] * n,
@@ -115,10 +119,6 @@ def _sample_table(n: int = 5, make: str = "Ford") -> pa.Table:
         "year": pa.array([2024] * n, type=pa.int16()),
         "trim": ["XLT"] * n,
         "price": pa.array([30000 + i * 100 for i in range(n)], type=pa.int32()),
-        "source": ["detail"] * n,
-        "obs_year": pa.array([_OBS_DATE.year] * n, type=pa.int32()),
-        "obs_month": pa.array([_OBS_DATE.month] * n, type=pa.int32()),
-        "obs_day": pa.array([_OBS_DATE.day] * n, type=pa.int32()),
     })
 
 

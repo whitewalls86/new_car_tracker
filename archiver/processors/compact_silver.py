@@ -146,8 +146,9 @@ def _compact_one(
             source, date_str, len(part_files),
         )
 
-    # 1. Read all source files
-    tables = [pq.read_table(f, filesystem=fs) for f in read_files]
+    # 1. Read all source files using ParquetFile to bypass dataset-level hive
+    #    partition inference, which conflicts with columns stored in file data.
+    tables = [pq.ParquetFile(f, filesystem=fs).read() for f in read_files]
     combined = pa.concat_tables(tables)
     expected_rows = len(combined)
 

@@ -56,10 +56,14 @@ def _patch_bucket():
 
 
 def _mock_pq(mocker, table: pa.Table, *, num_rows: int | None = None):
-    """Mock pq.read_table, pq.write_table, and pq.ParquetFile for _compact_one."""
-    mocker.patch("archiver.processors.compact_silver.pq.read_table", return_value=table)
+    """Mock pq.ParquetFile and pq.write_table for _compact_one.
+
+    pq.ParquetFile is used for both reading (via .read()) and the row-count
+    assertion (via .metadata.num_rows). A single mock instance covers both.
+    """
     mocker.patch("archiver.processors.compact_silver.pq.write_table")
     mock_pf = MagicMock()
+    mock_pf.read.return_value = table
     mock_pf.metadata.num_rows = num_rows if num_rows is not None else len(table)
     mocker.patch("archiver.processors.compact_silver.pq.ParquetFile", return_value=mock_pf)
 
@@ -147,11 +151,11 @@ class TestSortOrderApplied:
         def _capture_write(tbl, *args, **kwargs):
             captured.append(tbl)
 
-        mocker.patch("archiver.processors.compact_silver.pq.read_table", return_value=unsorted)
         mocker.patch(
             "archiver.processors.compact_silver.pq.write_table", side_effect=_capture_write
         )
         mock_pf = MagicMock()
+        mock_pf.read.return_value = unsorted
         mock_pf.metadata.num_rows = 3
         mocker.patch("archiver.processors.compact_silver.pq.ParquetFile", return_value=mock_pf)
 
@@ -205,7 +209,7 @@ class TestSkipsDonePartition:
             [path],
             [f"{path}/compacted-2026-06-01.parquet"],  # only compacted file
         ]
-        mock_read = mocker.patch("archiver.processors.compact_silver.pq.read_table")
+        mock_pf_cls = mocker.patch("archiver.processors.compact_silver.pq.ParquetFile")
         mock_write = mocker.patch("archiver.processors.compact_silver.pq.write_table")
 
         result = mod.compact_silver(max_partitions=10)
@@ -213,7 +217,7 @@ class TestSkipsDonePartition:
         assert result["skipped"] == 1
         assert result["compacted"] == 0
         assert result["partitions"] == []
-        mock_read.assert_not_called()
+        mock_pf_cls.assert_not_called()
         mock_write.assert_not_called()
 
 
@@ -278,10 +282,10 @@ class TestIncrementalCompaction:
         assert p["state"] == "incremental"
         assert p["files_merged"] == 2
 
-        # Both files were read
-        read_calls = [c.args[0] for c in mod.pq.read_table.call_args_list]
-        assert compacted_file in read_calls
-        assert new_part_file in read_calls
+        # Both files were opened via pq.ParquetFile
+        pf_calls = [c.args[0] for c in mod.pq.ParquetFile.call_args_list]
+        assert compacted_file in pf_calls
+        assert new_part_file in pf_calls
 
         # Both files deleted
         mock_fs.rm.assert_any_call(compacted_file)
@@ -461,6 +465,8 @@ class TestFailedPartitionDoesNotAbortRun:
             [part_fail],
         ]
 
+        mocker.patch("archiver.processors.compact_silver.pq.write_table")
+
         call_count = [0]
 
         def _read_side_effect(*args, **kwargs):
@@ -469,11 +475,8 @@ class TestFailedPartitionDoesNotAbortRun:
                 raise RuntimeError("simulated read failure")
             return _make_table(2)
 
-        mocker.patch(
-            "archiver.processors.compact_silver.pq.read_table", side_effect=_read_side_effect
-        )
-        mocker.patch("archiver.processors.compact_silver.pq.write_table")
         mock_pf = MagicMock()
+        mock_pf.read.side_effect = _read_side_effect
         mock_pf.metadata.num_rows = 2
         mocker.patch("archiver.processors.compact_silver.pq.ParquetFile", return_value=mock_pf)
 
