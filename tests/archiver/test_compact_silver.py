@@ -89,7 +89,8 @@ class TestFullCompactionHappyPath:
             [path],
             part_files,
         ]
-        _mock_pq(mocker, table)
+        # 2 part files each return the same 3-row table → concat produces 6 rows
+        _mock_pq(mocker, table, num_rows=6)
 
         result = mod.compact_silver(max_partitions=10)
 
@@ -103,7 +104,7 @@ class TestFullCompactionHappyPath:
         assert p["ok"] is True
         assert p["state"] == "needs_compaction"
         assert p["files_merged"] == 2
-        assert p["rows"] == 3
+        assert p["rows"] == 6  # 2 part files × 3 rows each
 
         # .tmp was the write destination
         write_call = mod.pq.write_table.call_args
@@ -261,7 +262,8 @@ class TestIncrementalCompaction:
             [compacted_file, new_part_file],
         ]
         table = _make_table(2)
-        _mock_pq(mocker, table)
+        # 2 files each return the same 2-row table → concat produces 4 rows
+        _mock_pq(mocker, table, num_rows=4)
 
         result = mod.compact_silver(max_partitions=10)
 
@@ -392,32 +394,31 @@ class TestOldestFirstOrdering:
         ]
         paths = [_day_path(s, d.year, d.month, d.day) for d, s in dates_sources]
 
+        # _list_day_partitions processes each source completely (year→month→day)
+        # before moving to the next. Classify calls all happen after full discovery.
+        detail_day = _day_path("detail", 2026, 6, 1)
+        carousel_day = _day_path("carousel", 2026, 6, 1)
+        srp_day = _day_path("srp", 2026, 6, 5)
         ls_returns = [
+            # discovery: base
             [f"{_BASE}/source=detail", f"{_BASE}/source=carousel", f"{_BASE}/source=srp"],
+            # discovery: detail fully
+            [f"{_BASE}/source=detail/obs_year=2026"],
+            [f"{_BASE}/source=detail/obs_year=2026/obs_month=6"],
+            [detail_day],
+            # discovery: carousel fully
+            [f"{_BASE}/source=carousel/obs_year=2026"],
+            [f"{_BASE}/source=carousel/obs_year=2026/obs_month=6"],
+            [carousel_day],
+            # discovery: srp fully
+            [f"{_BASE}/source=srp/obs_year=2026"],
+            [f"{_BASE}/source=srp/obs_year=2026/obs_month=6"],
+            [srp_day],
+            # classify: in discovery order (detail, carousel, srp)
+            [f"{detail_day}/part-x-0.parquet"],
+            [f"{carousel_day}/part-x-0.parquet"],
+            [f"{srp_day}/part-x-0.parquet"],
         ]
-        # For each source, build year/month/day listing
-        source_order = ["detail", "carousel", "srp"]
-        for src in source_order:
-            ls_returns.append([f"{_BASE}/source={src}/obs_year=2026"])
-            ls_returns.append([f"{_BASE}/source={src}/obs_year=2026/obs_month=6"])
-
-        # Day dirs per source
-        src_to_days = {
-            "detail": [_day_path("detail", 2026, 6, 1)],
-            "carousel": [_day_path("carousel", 2026, 6, 1)],
-            "srp": [_day_path("srp", 2026, 6, 5)],
-        }
-        for src in source_order:
-            ls_returns.append(src_to_days[src])
-
-        # Files in each day dir
-        all_paths_in_order = [
-            _day_path("detail", 2026, 6, 1),
-            _day_path("carousel", 2026, 6, 1),
-            _day_path("srp", 2026, 6, 5),
-        ]
-        for p in all_paths_in_order:
-            ls_returns.append([f"{p}/part-x-0.parquet"])
 
         mocker.patch("archiver.processors.compact_silver.get_s3fs", return_value=mock_fs)
         mock_fs.ls.side_effect = ls_returns
@@ -447,15 +448,19 @@ class TestFailedPartitionDoesNotAbortRun:
         part_fail = f"{path_fail}/part-y-0.parquet"
 
         mocker.patch("archiver.processors.compact_silver.get_s3fs", return_value=mock_fs)
+        # Discovery processes each source fully before classify calls
         mock_fs.ls.side_effect = [
             [f"{_BASE}/source=detail", f"{_BASE}/source=carousel"],
+            # detail fully
             [f"{_BASE}/source=detail/obs_year=2026"],
             [f"{_BASE}/source=detail/obs_year=2026/obs_month=6"],
             [path_ok],
-            [part_ok],
+            # carousel fully
             [f"{_BASE}/source=carousel/obs_year=2026"],
             [f"{_BASE}/source=carousel/obs_year=2026/obs_month=6"],
             [path_fail],
+            # classify (in discovery order: detail, carousel)
+            [part_ok],
             [part_fail],
         ]
 

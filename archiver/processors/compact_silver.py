@@ -171,12 +171,22 @@ def _compact_one(
             f"Row count mismatch after write: expected {expected_rows}, got {written_rows}"
         )
 
-    # 5. Delete originals (partition is empty during the rename that follows)
+    # 5. Delete originals (partition is empty during the rename that follows).
+    # Any delete failure aborts the rename — leaving the .tmp unpublished prevents
+    # double-counting with the surviving original files.
+    delete_errors = []
     for f in files_to_delete:
         try:
             fs.rm(f)
         except Exception as e:
             logger.warning("compact_silver: failed to delete path=%s: %s", f, e)
+            delete_errors.append((f, e))
+
+    if delete_errors:
+        raise RuntimeError(
+            f"{len(delete_errors)} file(s) could not be deleted; aborting rename to prevent "
+            f"double-counting. First error: {delete_errors[0][1]}"
+        )
 
     # 6. Rename .tmp → final; on failure .tmp is left for manual recovery
     final_path = f"{path}/compacted-{date_str}.parquet"
