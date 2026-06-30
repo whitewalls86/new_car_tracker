@@ -7,6 +7,7 @@ from archiver.processors.cleanup_parquet import cleanup_parquet as _cleanup_parq
 from archiver.processors.cleanup_parquet import run_cleanup_parquet as _run_cleanup_parquet
 from archiver.processors.cleanup_queue import cleanup_queue as _cleanup_queue
 from archiver.processors.cleanup_queue import run_cleanup_queue as _run_cleanup_queue
+from archiver.processors.compact_silver import compact_silver as _compact_silver
 from archiver.processors.flush_silver_observations import (
     flush_silver_observations as _flush_silver_observations,
 )
@@ -59,6 +60,13 @@ def trigger_flush_silver() -> Dict[str, Any]:
     """Flush staging.silver_observations to MinIO silver layer (Airflow DAG trigger)."""
     with active_job():
         return _flush_silver_observations()
+
+
+@app.post("/compact/silver/run")
+def trigger_compact_silver() -> Dict[str, Any]:
+    """Compact silver/observations partitions into single sorted files (Airflow DAG trigger)."""
+    with active_job():
+        return _compact_silver()
 
 
 @app.post("/flush/staging/run")
