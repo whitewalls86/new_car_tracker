@@ -233,6 +233,29 @@ class TestFlushSilverRunEndpoint:
 
 
 # ---------------------------------------------------------------------------
+# POST /compact/silver/run
+# ---------------------------------------------------------------------------
+
+class TestCompactSilverRunEndpoint:
+    def test_delegates_to_compact_silver(self, mock_archiver_client, mocker):
+        fake = {
+            "scanned": 10, "compacted": 3, "incremental": 1, "skipped": 5, "failed": 0,
+            "size_before_mb": 8.0, "size_after_mb": 2.6, "error": None, "partitions": [],
+        }
+        mocker.patch("archiver.app._compact_silver", return_value=fake)
+        resp = mock_archiver_client.post("/compact/silver/run")
+        assert resp.status_code == 200
+        assert resp.json() == fake
+
+    def test_ready_returns_503_while_compact_active(self, mock_archiver_client, mocker):
+        """GET /ready returns 503 while active_job() counter is non-zero."""
+        mocker.patch("archiver.app.is_idle", return_value=False)
+        resp = mock_archiver_client.get("/ready")
+        assert resp.status_code == 503
+        assert resp.json()["detail"]["ready"] is False
+
+
+# ---------------------------------------------------------------------------
 # GET /ready
 # ---------------------------------------------------------------------------
 

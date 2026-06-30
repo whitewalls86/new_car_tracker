@@ -78,6 +78,10 @@ DAG_SPECS = {
             "release_claims",
         },
     },
+    "compact_silver.py": {
+        "dag_id": "compact_silver",
+        "tasks": {"check_deploy_intent", "check_archiver_health", "compact_silver"},
+    },
 }
 
 
