@@ -404,3 +404,34 @@ results across runs.
 - Actual recompression of existing objects (separate tool, post-evidence).
 - Automatic retention or deletion. See Plan 114.
 - Adaptive detail scheduling. See Plans 111–113.
+
+---
+
+## Findings — COMPLETE (2026-07-01)
+
+Script ran against three independent samples on production MinIO:
+
+| Sample | Artifact type | Scanned | Sampled | Savings |
+|--------|--------------|---------|---------|---------|
+| 2026/05 detail_page | oldest available | 62,841 | 3,143 | 8.0% |
+| 2026/06 detail_page | most recent | 61,261 | 3,064 | 8.1% |
+| 2026/06 results_page | different type | 8,685 | 435 | 9.4% |
+
+0 failures across all three runs. Savings are stable across 2 months and both
+artifact types — no age effect, no page-type outlier.
+
+**Compression ratios observed:**
+- detail_page: ~5.35x (535 MiB raw → 100 MiB stored at level-3)
+- results_page: ~18x (313 MiB raw → 17 MiB stored at level-3)
+
+Results pages are already far more compressible, which is why the marginal
+gain from level-9 is similar despite the different page structures.
+
+### Decision
+
+**Skip retroactive recompression pass. Proceed with Plan 110 Track A
+(level-9 for new writes only).**
+
+8% savings on existing objects does not justify a recompression pass over
+~5.8M objects. The real storage leverage is Plan 114 (86% semantic duplicate
+rate). Recompression can be revisited if storage pressure becomes acute.
