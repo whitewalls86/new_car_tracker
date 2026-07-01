@@ -147,3 +147,22 @@ class TestSrpWriter:
             c for c in calls if "tracked_models" in str(c)
         ]
         assert len(tracked_calls) == 0
+
+    def test_srp_does_not_set_last_detail_scraped_at(self, mock_cursor, mock_silver):
+        """SRP writes must pass last_detail_scraped_at = None (circuit breaker must not advance)."""
+        listings = [
+            {"listing_id": "aaa", "vin": "VIN001", "price": 25000,
+             "make": "Honda", "model": "CR-V"},
+        ]
+        write_srp_observations(listings, artifact_id=10, fetched_at=FETCHED_AT)
+
+        upsert_params = [
+            c[0][1] for c in mock_cursor.execute.call_args_list
+            if len(c[0]) >= 2
+            and isinstance(c[0][1], dict)
+            and "last_seen_at" in c[0][1]
+            and "listing_id" in c[0][1]
+        ]
+        assert len(upsert_params) >= 1
+        for params in upsert_params:
+            assert params.get("last_detail_scraped_at") is None

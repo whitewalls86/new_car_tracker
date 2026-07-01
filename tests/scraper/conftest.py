@@ -46,6 +46,34 @@ _stub_module("curl_cffi")
 # ---------------------------------------------------------------------------
 
 @pytest.fixture(autouse=True)
+def _mock_external_io(mocker):
+    """
+    Prevent scraper tests from making real MinIO or Postgres connections.
+
+    scrape_detail_fetch unconditionally tries to write to MinIO and then insert
+    into artifacts_queue via psycopg2. Without this fixture both calls block for
+    ~20 s waiting for TCP timeouts to unreachable Docker hostnames (minio:9000,
+    postgres:5432). Tests that need specific behaviour (MinIO failure, different
+    artifact_id, etc.) override these patches with their own mocker.patch calls,
+    which are applied after this fixture and take priority.
+    """
+    mocker.patch(
+        "shared.minio.make_key",
+        return_value="html/year=2026/month=1/artifact_type=detail_page/stub.html.zst",
+    )
+    mocker.patch(
+        "shared.minio.write_html",
+        return_value="s3://bronze/html/year=2026/month=1/artifact_type=detail_page/stub.html.zst",
+    )
+    mock_cursor = MagicMock()
+    mock_cursor.fetchone.return_value = (1,)
+    mock_conn = MagicMock()
+    mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cursor)
+    mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+    mocker.patch("shared.db.get_conn", return_value=mock_conn)
+
+
+@pytest.fixture(autouse=True)
 def clear_jobs():
     """
     The scraper app keeps an in-memory _jobs dict at module level.

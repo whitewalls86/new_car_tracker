@@ -48,8 +48,10 @@ class TestDetailActive:
             "price": 28000,
             "make": "Honda",
             "model": "CR-V",
+            "customer_id": None,
             "last_seen_at": now,
             "last_artifact_id": artifact["artifact_id"],
+            "last_detail_scraped_at": now,
         })
         cur.execute(UPSERT_VIN_TO_LISTING, {
             "vin": vin,
@@ -172,8 +174,10 @@ class TestVinRelisting:
             "price": 32000,
             "make": "Honda",
             "model": "Accord",
+            "customer_id": None,
             "last_seen_at": now,
             "last_artifact_id": artifact["artifact_id"],
+            "last_detail_scraped_at": now,
         })
 
         # Update vin_to_listing

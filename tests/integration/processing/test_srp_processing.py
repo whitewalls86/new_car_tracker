@@ -55,8 +55,10 @@ class TestSrpArtifact:
                 "price": listing["price"],
                 "make": listing["make"],
                 "model": listing["model"],
+                "customer_id": None,
                 "last_seen_at": now,
                 "last_artifact_id": artifact_id,
+                "last_detail_scraped_at": None,
             })
 
         # Upsert vin_to_listing for those with VINs

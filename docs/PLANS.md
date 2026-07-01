@@ -8,13 +8,20 @@ Site is live at https://cartracker.info. All major plans complete: auth (82), da
 
 Airflow owns all scraping and maintenance. n8n is fully removed. dbt runs on DuckDB against MinIO silver. The dashboard is a pure analytics product backed by DuckDB mart tables. Grafana owns pipeline/infrastructure observability. The `/info` landing page is a purpose-built portfolio page with live DB stats.
 
-**Now:** No active plans. See Backlog for upcoming work.
+**Now:** Detail scrape circuit-breaker bugfix, HTML storage baselining, adaptive detail refresh, and sectioned HTML audit planning.
 
 ---
 
 ## Active
 
-*None.*
+| Plan | Title | Status |
+|------|-------|--------|
+| [110](plan_110_html_storage_optimization.md) | HTML storage baseline + safe hygiene | Draft |
+| [111](plan_111_adaptive_detail_refresh.md) | Adaptive refresh feature foundation | Draft |
+| [112](plan_112_refresh_policy_backtesting.md) | Refresh policy backtesting | Draft |
+| [113](plan_113_production_adaptive_refresh.md) | Production adaptive refresh integration | Draft |
+| [114](plan_114_sectioned_html_artifact_audit.md) | Sectioned HTML artifact audit | Draft |
+| [115](plan_115_detail_unenriched_circuit_breaker.md) | Detail unenriched circuit breaker | Draft |
 
 ---
 

@@ -105,6 +105,7 @@ def write_srp_observations(
                 "customer_id": None,  # SRP never enriches dealer info
                 "last_seen_at": fetched_at,
                 "last_artifact_id": artifact_id,
+                "last_detail_scraped_at": None,  # SRP must not set circuit-breaker
             })
             upserted += 1
 
