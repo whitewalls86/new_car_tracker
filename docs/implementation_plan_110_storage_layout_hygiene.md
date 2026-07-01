@@ -106,7 +106,7 @@ No code changes. Produces a living checklist that each subsequent phase marks of
 1. List all source partition directories under `silver/observations/`:
    ```bash
    # On production server via processing container
-   docker exec -it processing python -c "
+   docker exec -it cartracker-processing python -c "
    from shared.minio import get_s3fs, BUCKET
    fs = get_s3fs()
    dirs = fs.ls(f'{BUCKET}/silver/observations', detail=False)
@@ -116,7 +116,7 @@ No code changes. Produces a living checklist that each subsequent phase marks of
 
 2. List all ops event table prefixes and sample the partition depth for two:
    ```bash
-   docker exec -it processing python -c "
+   docker exec -it cartracker-processing python -c "
    from shared.minio import get_s3fs, BUCKET
    fs = get_s3fs()
    for t in ['price_observation_events', 'detail_scrape_claim_events',
@@ -132,7 +132,7 @@ No code changes. Produces a living checklist that each subsequent phase marks of
 
 4. Run one dbt model that reads silver and confirm it works before making changes:
    ```bash
-   docker exec -it dbt_runner dbt run --select stg_detail_observations --full-refresh
+   docker exec -it cartracker-dbt-runner dbt run --select stg_detail_observations --full-refresh
    ```
 
 5. Record all current dbt source external_location globs from
@@ -234,13 +234,13 @@ No real MinIO required for unit tests — mock boto3 and s3fs.
 
 ```bash
 # Check current level before deploy
-docker exec -it scraper python -c "from shared.minio import ZSTD_LEVEL; print(ZSTD_LEVEL)"
+docker exec -it cartracker-scraper python -c "from shared.minio import ZSTD_LEVEL; print(ZSTD_LEVEL)"
 
 # After deploy — confirm scraper sees level 9
-docker exec -it scraper python -c "from shared.minio import ZSTD_LEVEL; print(ZSTD_LEVEL)"
+docker exec -it cartracker-scraper python -c "from shared.minio import ZSTD_LEVEL; print(ZSTD_LEVEL)"
 
 # Watch scraper logs for write_html metrics lines
-docker logs scraper --follow 2>&1 | grep "write_html:"
+docker logs cartracker-scraper --follow 2>&1 | grep "write_html:"
 ```
 
 ### Deploy impact
@@ -339,12 +339,12 @@ Other:
 
 ```bash
 # Dry-run a single month prefix to preview expected savings
-docker exec -it processing python scripts/recompress_bronze_html.py \
+docker exec -it cartracker-processing python scripts/recompress_bronze_html.py \
   --year 2026 --month 6 --artifact-type detail_page \
   --limit 1000 --progress-every 100
 
 # Apply with checkpoint (restartable)
-docker exec -it processing python scripts/recompress_bronze_html.py \
+docker exec -it cartracker-processing python scripts/recompress_bronze_html.py \
   --year 2026 --month 6 --artifact-type detail_page \
   --apply --checkpoint /tmp/recompress_2026_06.json \
   --progress-every 500 --json-out /tmp/result_2026_06.json
@@ -447,7 +447,7 @@ Markdown: human-readable table per dataset, plus a summary table.
 #### Validation
 
 ```bash
-docker exec -it processing python scripts/audit_parquet_layout.py \
+docker exec -it cartracker-processing python scripts/audit_parquet_layout.py \
   --json-out /tmp/audit_before_normalize.json \
   --md-out /tmp/audit_before_normalize.md
 
@@ -474,73 +474,92 @@ This phase produces a layout decision record (an update to this document) — no
 | detail_scrape_claim_events | `ops/detail_scrape_claim_events/year=Y/month=M/` | year, month |
 | artifacts_queue_events | `ops/artifacts_queue_events/year=Y/month=M/` | year, month |
 
-### Proposed canonical layout (recommended)
+### Compaction impact analysis
+
+This decision is not just about path aesthetics. The existing `compact_silver.py`
+processor traverses `source=X/obs_year=Y/obs_month=M/obs_day=D/` directories
+(`_list_day_partitions`), classifies each by file types, and compacts day by day.
+The compaction strategy must be consistent with the chosen normalized layout.
+**Choosing the wrong layout forces a full rewrite of compact_silver.**
+
+### Option A: Source-only flat (most Iceberg-native, highest pre-Iceberg cost)
 
 ```
 silver_normalized/observations/
     source={source}/
         data-{YYYY-MM-DD}-{uuid}.parquet
-
-ops_normalized/
-    {table_name}/
-        data-{YYYY-MM-DD}-{uuid}.parquet
 ```
 
-**Rationale:**
+- + Cleanest layout for Iceberg: no path-level time partitions for Iceberg to override
+- + Fewer directories, simpler object listing
+- - `compact_silver.py` cannot be retargeted — day-partition traversal logic is inapplicable.
+  Compaction must be replaced with a new strategy (e.g., compact all files per source
+  into a rolling set of sized files). This is significant extra work in Plan 110.
+- - DuckDB reads all files per source for any time-range query (no path-level pruning).
+  A dbt model filtering `fetched_at > '2026-01-01'` scans the entire detail source.
+  This is acceptable only if Iceberg is live before query load grows.
+- **Pre-Iceberg gap:** During the DuckDB/dbt period before Plan 112, this layout
+  provides no time-based pushdown. Viable only if Iceberg registration (Plan 112)
+  follows Plan 110 immediately and without delay.
 
-- **Source partition on silver is load-bearing.** Every dbt model and analytics
-  query filters on source (`detail`, `carousel`, `srp`). Removing it would force
-  full scans. Keep it.
-- **Remove day/month partitions from Parquet path.** Iceberg manages time-based
-  partition evolution and snapshot metadata. DuckDB glob-based time filtering should
-  use the `fetched_at` / `event_at` column inside the file, not the path. Day
-  partitions were essential for append-only Parquet growth; Iceberg removes that need.
-- **Event timestamps stay as data columns** (`fetched_at`, `event_at`, `obs_year`,
-  etc.) — they are not removed from the schema. Only the *path partition* on time
-  is removed.
-- **`data-{YYYY-MM-DD}-{uuid}.parquet` filename** encodes the write date for
-  human-readable MinIO browsing and manual recovery, without making the date a
-  partition column.
-- **Separate `silver_normalized/` and `ops_normalized/` roots** allow dual-read
-  validation: old paths remain active for dbt while new paths are being verified.
-  Iceberg registration targets only the normalized roots.
-
-### Alternative A: month/source partitions
+### Option B: Month/source partitions (middle ground)
 
 ```
 silver_normalized/observations/
-    source={source}/year={YYYY}/month={MM}/
-        data-{uuid}.parquet
+    source={source}/obs_year={year}/obs_month={month}/
+        compacted-{YYYY-MM}.parquet
 ```
 
-**Tradeoffs vs recommended:**
-- + DuckDB partition pruning on year/month works without Iceberg
-- + Smaller per-file size during compaction window
-- - More path levels = more Iceberg manifest entries during registration
-- - Partition evolution to "flat per source" still needed before long-term Iceberg use
+- + DuckDB partition pruning on `obs_year`/`obs_month` works without Iceberg
+- + `compact_silver.py` can be adapted: change discovery to month dirs, update watermark
+  to 2 months, change compacted filename. Non-trivial but bounded changes.
+- + Monthly compaction reduces file count vs daily: ~3 files per source per month
+- - Requires meaningful changes to `compact_silver.py` (new traversal + watermark logic)
+- - Month partitions still need Iceberg to evolve away from before long-term use
 
-### Alternative B: source-only, no change to ops
+### Option C: Same partition depth, new root (recommended)
 
-Normalize silver to source-only, leave ops events at year/month.
+```
+silver_normalized/observations/
+    source={source}/obs_year={year}/obs_month={month}/obs_day={day}/
+        compacted-{YYYY-MM-DD}.parquet   (or part-*.parquet pre-compaction)
+```
 
-**Tradeoffs vs recommended:**
-- + Half the migration scope
-- - Ops events remain on an inconsistent layout requiring a second migration later
-- - Iceberg registration needs different strategies per dataset
+For ops events:
+```
+ops_normalized/
+    {table_name}/year={year}/month={month}/
+        part-{uuid}-0.parquet
+```
 
-### Layout decision criteria
+**This is the recommended pre-Iceberg choice.**
 
-The recommended layout should be chosen **only after** Phase 3 audit confirms:
+- + `compact_silver.py`: change `_MINIO_PREFIX = "silver/observations"` to
+  `_MINIO_PREFIX = "silver_normalized/observations"` — that is the **only** change
+  needed. All traversal, watermark, classification, and compaction logic is unchanged.
+- + `flush_silver_observations.py`: change `_MINIO_PREFIX = "silver/observations"` to
+  `_MINIO_PREFIX = "silver_normalized/observations"` — **only** change needed.
+- + `flush_staging_events.py`: change each `minio_prefix` value in `_TABLE_CONFIGS`
+  from `ops/{table}` to `ops_normalized/{table}` — one line per table, no logic change.
+- + DuckDB hive partition pruning on `obs_year`/`obs_month`/`obs_day` works identically.
+- + dbt sources.yml: change globs from `silver/observations/**/*.parquet` to
+  `silver_normalized/observations/**/*.parquet` — exact same glob depth.
+- + Iceberg can register this layout as-is and evolve to month or source-only partitions
+  via partition evolution (no rewrite needed at Iceberg registration time).
+- - Does not reduce partition depth before Iceberg. Day partitions remain.
+  This is a non-issue for Plan 110: the goal is a clean, verified root before Iceberg,
+  not partition reduction.
 
-1. Silver per-source file counts post-Plan 109 compaction are ≤ ~180 files per source
-   (manageable as a flat set under `source=X/`)
-2. Ops event tables are small enough (< 500 objects each) that flat layout is practical
-3. No dbt model currently filters silver by `obs_year` or `obs_month` as path-pruning
-   (verify by checking explain output for a silver-reading model)
+**Decision criteria to confirm from Phase 3 audit before Phase 5:**
 
-**Open question:** Is there a period where dbt/DuckDB needs to read both old and new
-paths simultaneously? If yes, use a dual-read source in `sources.yml` temporarily
-(Phase 6 covers this). Confirm before starting Phase 5.
+1. Confirm `silver/observations/` contains only `source=detail/`, `source=carousel/`,
+   `source=srp/` at the top level — no unexpected prefixes.
+2. Confirm ops tables have `year=`/`month=` partition structure as expected.
+3. Confirm no dbt model reads from both `silver/observations/` and any other prefix.
+
+**Separate new roots (`silver_normalized/`, `ops_normalized/`) allow dual-read
+validation:** old paths stay live for dbt while Phase 5 rewrites and Phase 6 verifies.
+Iceberg registration in Plan 112 targets only the normalized roots.
 
 ---
 
@@ -627,109 +646,290 @@ Mirrors Plan 109 to prevent double-counting during any concurrent dbt read:
 
 ```bash
 # Dry-run one source for one month
-docker exec -it processing python scripts/rewrite_parquet_layout.py \
+docker exec -it cartracker-processing python scripts/rewrite_parquet_layout.py \
   --dataset silver_observations --source detail --month 2026-06 --dry-run
 
 # Apply one month, cross-check against Phase 3 audit
-docker exec -it processing python scripts/rewrite_parquet_layout.py \
+docker exec -it cartracker-processing python scripts/rewrite_parquet_layout.py \
   --dataset silver_observations --source detail --month 2026-06 \
   --apply \
   --baseline-audit /tmp/audit_before_normalize.json \
   --json-out /tmp/rewrite_verification_detail_2026_06.json
 
 # Verify the normalized prefix is readable by DuckDB
-docker exec -it dbt_runner python -c "
+docker exec -it cartracker-dbt-runner python -c "
 import duckdb
 conn = duckdb.connect()
 conn.execute(\"INSTALL httpfs; LOAD httpfs;\")
-result = conn.execute(\"SELECT count(*) FROM read_parquet('s3://bronze/silver_normalized/observations/source=detail/**/*.parquet')\").fetchone()
+result = conn.execute(\"SELECT count(*) FROM read_parquet('s3://bronze/silver_normalized/observations/source=detail/**/*.parquet', hive_partitioning=true)\").fetchone()
 print(f'Normalized detail rows: {result[0]}')
 "
 ```
 
 ---
 
-## Phase 6: Reader Switch / Compatibility
+## Phase 6: Writer + Reader Cutover
 
-**Objective:** Move dbt/DuckDB source globs from the current layout to the normalized
-layout, with validation gates before each switch and a clear rollback path.
+**Objective:** Atomically switch all writers (archiver flush + compaction) and all
+readers (dbt/DuckDB) from the old layout to the normalized layout. This is the
+highest-risk phase because live production services write to `silver/observations/`
+and `ops/*/` continuously. Switching readers alone (dbt sources.yml) while writers
+still target the old prefix would immediately create a diverging dataset.
 
-### Switch sequence
+### Files changed in this phase
 
-**Gate 1:** Phase 5 verification report confirms row counts match for all sources.
+| File | Change |
+|------|--------|
+| `archiver/processors/flush_silver_observations.py` | `_MINIO_PREFIX = "silver_normalized/observations"` |
+| `archiver/processors/compact_silver.py` | `_MINIO_PREFIX = "silver_normalized/observations"` |
+| `archiver/processors/flush_staging_events.py` | Each `minio_prefix` in `_TABLE_CONFIGS`: `ops/{table}` → `ops_normalized/{table}` |
+| `dbt/models/sources.yml` | All silver and ops_events `external_location` globs |
 
-**Gate 2:** Run a dual-read validation — query both old and new paths in DuckDB
-and compare row counts:
+**Services to rebuild:** `cartracker-archiver`, `cartracker-dbt-runner`
+
+**Flyway migration needed:** No.
+
+### Pre-cutover validation gates
+
+All three must pass before starting the cutover sequence.
+
+**Gate 1:** Phase 5 verification report shows 0 row-count discrepancies for all
+silver sources and all ops event tables.
+
+**Gate 2:** Dual-read SQL returns 0 rows (run from cartracker-dbt-runner):
 
 ```sql
--- Run against dbt_runner container
-WITH old AS (
-    SELECT source, count(*) as n FROM read_parquet(
-        's3://bronze/silver/observations/**/*.parquet', hive_partitioning=true)
+WITH old_silver AS (
+    SELECT source, count(*) AS n
+    FROM read_parquet(
+        's3://bronze/silver/observations/**/*.parquet',
+        hive_partitioning=true)
     GROUP BY source
 ),
-new AS (
-    SELECT source, count(*) as n FROM read_parquet(
-        's3://bronze/silver_normalized/observations/**/*.parquet', hive_partitioning=true)
+new_silver AS (
+    SELECT source, count(*) AS n
+    FROM read_parquet(
+        's3://bronze/silver_normalized/observations/**/*.parquet',
+        hive_partitioning=true)
     GROUP BY source
 )
-SELECT o.source, o.n as old_rows, n.n as new_rows, o.n - n.n as diff
-FROM old o JOIN new n USING (source)
+SELECT o.source, o.n AS old_rows, n.n AS new_rows, o.n - n.n AS diff
+FROM old_silver o JOIN new_silver n USING (source)
 WHERE o.n != n.n;
--- Must return 0 rows before switch
+-- Must return 0 rows.
 ```
 
-**Gate 3:** Run full dbt build against the normalized prefix (using a test source):
+**Gate 3:** Full dbt build passes against the normalized prefix. Set
+`external_location` to `silver_normalized/` in a throwaway copy of sources.yml
+and run `dbt build --full-refresh` to confirm all models compile and pass.
+
+### Cutover sequence
+
+This is a ~20-minute operator window. Each step is listed with the failure mode
+and its recovery action.
+
+#### Step 1 — Announce deploy intent
+
+Post deploy intent before touching anything. Do not start without it.
+
+```
+Deploy intent: silver writer + reader cutover, ~20 min.
+Services affected: cartracker-archiver, cartracker-dbt-runner.
+Airflow DAGs paused: flush_silver_observations, compact_silver, flush_staging_events.
+```
+
+#### Step 2 — Verify no active archiver jobs
 
 ```bash
-# Temporarily point sources.yml at normalized prefix for one model
-docker exec -it dbt_runner dbt run --select stg_detail_observations \
-  --vars '{"silver_prefix": "silver_normalized/observations"}'
-# Adjust once source parameterization is confirmed (see below)
+# /ready returns 503 while an active_job() is in progress
+curl -s http://localhost:8001/ready
+# Must return 200 before proceeding
 ```
 
-**Switch:**
+If `/ready` returns 503, wait for the in-progress job to finish (typically < 60s).
 
-Update `dbt/models/sources.yml` — change silver observations `external_location`:
+#### Step 3 — Pause Airflow DAGs that write silver/ops
 
-```yaml
-# Before
-read_parquet(
-  's3://{{ env_var("MINIO_BUCKET", "bronze") }}/silver/observations/**/*.parquet',
-  hive_partitioning=true
-)
-
-# After
-read_parquet(
-  's3://{{ env_var("MINIO_BUCKET", "bronze") }}/silver_normalized/observations/**/*.parquet',
-  hive_partitioning=true
-)
+```bash
+# Run from cartracker-airflow-apiserver or any container with airflow CLI
+docker exec -it cartracker-airflow-apiserver airflow dags pause flush_silver_observations
+docker exec -it cartracker-airflow-apiserver airflow dags pause compact_silver
+docker exec -it cartracker-airflow-apiserver airflow dags pause flush_staging_events
 ```
 
-Repeat for each ops event table that was rewritten in Phase 5.
+Verify no DAG run is currently active for these in the Airflow UI before continuing.
 
-**Feature flag option:** If the validation gate is uncertain, add an env var
-`SILVER_PREFIX` that switches between old and normalized paths in sources.yml
-via `env_var()`. This allows rollback without a code change. Only add this if
-the validation gate does not give clear confidence.
+#### Step 4 — Final flush: drain staging.silver_observations → old prefix
 
-### Rollback path
+```bash
+docker exec -it cartracker-archiver curl -s -X POST localhost:8001/flush/silver/run \
+  | python -c "import sys,json; r=json.load(sys.stdin); print(f'flushed={r[\"flushed\"]} error={r[\"error\"]}')"
+# Expect: flushed=N error=None
+```
 
-Revert `sources.yml` to the old glob. Old paths remain in MinIO until Phase 7,
-so rollback is instant.
+This writes any remaining buffered rows to `silver/observations/` (old prefix, intentionally).
 
-### Tests before switch
+#### Step 5 — Final compact: clean up any uncompacted day partitions in old prefix
 
-In addition to the dual-read SQL above:
-- `dbt build --full-refresh` passes on all silver-reading models
-- Integration test `test_storage_layout_integration.py` reads from normalized prefix
-  and asserts row counts match audit baseline
+```bash
+docker exec -it cartracker-archiver curl -s -X POST localhost:8001/compact/silver/run \
+  | python -c "import sys,json; r=json.load(sys.stdin); print(f'compacted={r[\"compacted\"]} failed={r[\"failed\"]}')"
+# Expect: failed=0
+```
 
-### Files changed
+Skip this step if compact_silver ran successfully within the last 24 hours and no
+new part files have appeared since.
 
-- `dbt/models/sources.yml` — update external_location globs
+#### Step 6 — Final delta rewrite
 
-**No Flyway migration needed.** DuckDB sources are not Postgres schema objects.
+Rewrite any partitions written to the old layout since the Phase 5 rewrite ran.
+This is the last data movement before the cutover.
+
+```bash
+# Rewrite any new silver partitions
+docker exec -it cartracker-processing python scripts/rewrite_parquet_layout.py \
+  --dataset silver_observations --apply \
+  --baseline-audit /tmp/audit_before_normalize.json \
+  --json-out /tmp/final_delta_rewrite_silver.json
+
+# Rewrite any new ops partitions
+for table in price_observation_events vin_to_listing_events \
+             blocked_cooldown_events detail_scrape_claim_events artifacts_queue_events; do
+  docker exec -it cartracker-processing python scripts/rewrite_parquet_layout.py \
+    --dataset $table --apply \
+    --json-out /tmp/final_delta_rewrite_${table}.json
+done
+```
+
+#### Step 7 — Final dual-read check
+
+Run Gate 2 SQL again. Must still return 0 rows. If it returns rows, investigate
+the delta rewrite output before proceeding.
+
+#### Step 8 — Deploy archiver with updated writer prefixes
+
+```bash
+# On the production server, in the repo root:
+git pull
+docker compose up -d --no-deps cartracker-archiver
+```
+
+Wait for the archiver to pass `/health`:
+```bash
+curl -s http://localhost:8001/health
+# Expect: {"status": "ok"}
+```
+
+**From this point**, new flush runs write to `silver_normalized/` and `ops_normalized/`.
+Old prefixes receive no new writes. The window between Step 5 and this step is the
+longest gap where staging might accumulate; it is bounded by the deploy time (~60s).
+
+#### Step 9 — Deploy dbt_runner with updated sources.yml
+
+```bash
+docker compose up -d --no-deps cartracker-dbt-runner
+```
+
+Verify the dbt container started cleanly:
+```bash
+docker logs cartracker-dbt-runner --tail 20
+```
+
+#### Step 10 — Re-enable Airflow DAGs
+
+```bash
+docker exec -it cartracker-airflow-apiserver airflow dags unpause flush_silver_observations
+docker exec -it cartracker-airflow-apiserver airflow dags unpause compact_silver
+docker exec -it cartracker-airflow-apiserver airflow dags unpause flush_staging_events
+```
+
+#### Step 11 — Validate
+
+```bash
+# Watch archiver logs: new flush should write to silver_normalized/
+docker logs cartracker-archiver --follow 2>&1 | grep "flush_silver:"
+# Expect: "flush_silver: wrote N rows → bronze/silver_normalized/observations"
+
+# Run dbt build against normalized prefix
+docker exec -it cartracker-dbt-runner dbt build
+# Expect: all models pass
+
+# Confirm old prefix is no longer growing
+docker exec -it cartracker-processing python -c "
+from shared.minio import get_s3fs, BUCKET
+import time
+fs = get_s3fs()
+before = len(fs.ls(f'{BUCKET}/silver/observations', detail=False))
+time.sleep(30)
+after = len(fs.ls(f'{BUCKET}/silver/observations', detail=False))
+print(f'Old prefix object count: before={before} after={after} (should be equal)')
+"
+```
+
+### Rollback paths
+
+#### Before Step 8 (archiver not yet deployed)
+
+```bash
+# Re-enable DAGs — no code was deployed, no data was changed
+docker exec -it cartracker-airflow-apiserver airflow dags unpause flush_silver_observations
+docker exec -it cartracker-airflow-apiserver airflow dags unpause compact_silver
+docker exec -it cartracker-airflow-apiserver airflow dags unpause flush_staging_events
+# Done — old prefix resumes writes, dbt still reads old prefix
+```
+
+#### After Step 8, before Step 9 (archiver deployed, dbt not yet switched)
+
+```bash
+# Roll back archiver to previous image
+git revert HEAD --no-commit  # revert the _MINIO_PREFIX changes
+git stash  # or use previous image tag
+docker compose up -d --no-deps cartracker-archiver
+
+# Re-enable DAGs
+docker exec -it cartracker-airflow-apiserver airflow dags unpause flush_silver_observations
+docker exec -it cartracker-airflow-apiserver airflow dags unpause compact_silver
+docker exec -it cartracker-airflow-apiserver airflow dags unpause flush_staging_events
+# dbt still reads old prefix — no dbt action needed
+```
+
+Note: any rows flushed to `silver_normalized/` between Steps 8 and the rollback
+will not appear in dbt queries (dbt still reads `silver/`). These rows are not
+lost — they are in MinIO. Run `rewrite_parquet_layout.py --dry-run` after rollback
+to confirm no gap exists, then schedule a follow-up delta rewrite if needed.
+
+#### After Step 9 (both deployed)
+
+```bash
+# Revert sources.yml to old globs + redeploy dbt_runner
+git revert HEAD --no-commit  # or manually restore silver glob
+docker compose up -d --no-deps cartracker-dbt-runner
+
+# Revert archiver _MINIO_PREFIX changes + redeploy archiver
+docker compose up -d --no-deps cartracker-archiver
+
+# Re-enable DAGs
+docker exec -it cartracker-airflow-apiserver airflow dags unpause flush_silver_observations
+docker exec -it cartracker-airflow-apiserver airflow dags unpause compact_silver
+docker exec -it cartracker-airflow-apiserver airflow dags unpause flush_staging_events
+# Old prefix has complete data — nothing was deleted
+```
+
+### Tests
+
+**Archiver unit tests** (existing test files, add coverage for prefix change):
+
+| Test | Assert |
+|------|--------|
+| `test_flush_silver_writes_to_normalized_prefix` | Mock s3fs; assert `root_path` contains `silver_normalized/observations` |
+| `test_compact_silver_targets_normalized_prefix` | Mock s3fs; assert `_MINIO_PREFIX` is `silver_normalized/observations` |
+| `test_flush_staging_events_writes_to_normalized_prefix` | Mock s3fs; assert each table uses `ops_normalized/{table}` prefix |
+
+**Integration test** (`tests/integration/archiver/test_storage_layout_integration.py`):
+
+- Seed MinIO with old-layout data; run full rewrite (Phase 5); run dual-read check;
+  assert zero diff; update `_MINIO_PREFIX` configs; assert next flush writes to
+  normalized prefix and produces readable rows in DuckDB.
 
 ---
 
@@ -809,18 +1009,18 @@ Other:
 
 ```bash
 # Preview what would be deleted
-docker exec -it processing python scripts/cleanup_old_parquet_layout.py \
+docker exec -it cartracker-processing python scripts/cleanup_old_parquet_layout.py \
   --prefix silver/observations/ \
   --dry-run
 
 # After at least 7 days of stable normalized reads:
-docker exec -it processing python scripts/cleanup_old_parquet_layout.py \
+docker exec -it cartracker-processing python scripts/cleanup_old_parquet_layout.py \
   --prefix silver/observations/ \
   --apply \
   --json-out /tmp/cleanup_silver_old_layout.json
 
 # Verify old prefix is empty
-docker exec -it processing python -c "
+docker exec -it cartracker-processing python -c "
 from shared.minio import get_s3fs, BUCKET
 fs = get_s3fs()
 remaining = fs.ls(f'{BUCKET}/silver/observations', detail=False)
@@ -836,13 +1036,17 @@ print(f'Objects remaining in old prefix: {len(remaining)}')
 
 | Phase | Services to rebuild | Flyway needed | Scraper impact | dbt impact |
 |-------|---------------------|---------------|----------------|------------|
-| 1 | `scraper`, `processing` | No | Yes — level 9 | No |
-| 2 | `processing` (script run) | No | No | No |
-| 3 | `processing` (script run) | No | No | No |
+| 1 | `cartracker-scraper`, `cartracker-processing` | No | Yes — level 9 | No |
+| 2 | `cartracker-processing` (script run only) | No | No | No |
+| 3 | `cartracker-processing` (script run only) | No | No | No |
 | 4 | No code | No | No | No |
-| 5 | `processing` (script run) | No | No | No |
-| 6 | `dbt_runner` (config only) | No | No | Yes — source switch |
-| 7 | `processing` (script run) | No | No | No |
+| 5 | `cartracker-processing` (script run only) | No | No | No |
+| 6 | `cartracker-archiver`, `cartracker-dbt-runner` | No | No | Yes — source switch |
+| 7 | `cartracker-processing` (script run only) | No | No | No |
+
+Phase 6 rebuilds the archiver because `flush_silver_observations.py`,
+`compact_silver.py`, and `flush_staging_events.py` all live inside it and
+all change their target prefixes in that phase.
 
 ### Monitoring during Phase 1 rollout
 
@@ -850,7 +1054,7 @@ After deploying Phase 1 (`ZSTD_LEVEL = 9`):
 
 ```bash
 # Confirm scraper write logs show compressed_bytes are smaller than raw_bytes
-docker logs scraper 2>&1 | grep "write_html:" | head -20
+docker logs cartracker-scraper 2>&1 | grep "write_html:" | head -20
 
 # Watch for any scraper throughput regression
 # Check Grafana: scraper artifacts/min panel — should remain stable
@@ -858,15 +1062,18 @@ docker logs scraper 2>&1 | grep "write_html:" | head -20
 
 ### Phase 5/6 deploy sequencing
 
-Phase 5 (rewrite) can run in the background from the processing container without
-affecting live traffic. It writes to `silver_normalized/` which nothing reads yet.
+Phase 5 (rewrite) runs from the processing container in the background. It writes
+only to `silver_normalized/` which nothing reads yet — safe to run at any time.
 
-Phase 6 (reader switch) is a config change to `dbt/models/sources.yml`. It takes
-effect on the next `dbt_runner` deploy. Coordinate with the dbt build schedule:
+Phase 6 (writer + reader cutover) is a ~20-minute coordinated window documented in
+full in the Phase 6 cutover sequence above. Do not treat it as a simple config deploy.
+The key constraints:
 
-- `dbt_build` runs at `0 * * * *` (hourly)
-- Deploy the sources.yml change, then monitor the next dbt run for failures
-- If the next dbt run fails, revert sources.yml and investigate
+- All three pre-cutover gates must pass first.
+- Airflow DAGs must be paused before the final flush runs.
+- Archiver and dbt_runner must deploy within the same operator session.
+- `dbt_build` runs at `0 * * * *` (hourly) — begin the cutover immediately after a
+  successful dbt run to maximize lead time before the next scheduled run.
 
 ### Rollback steps (per phase)
 
@@ -874,7 +1081,9 @@ effect on the next `dbt_runner` deploy. Coordinate with the dbt build schedule:
 |-------|---------|
 | 1 | Revert `ZSTD_LEVEL = 9 → 3`, rebuild scraper + processing |
 | 5 | Delete `silver_normalized/` prefix (no readers have switched yet) |
-| 6 | Revert `sources.yml` glob to old prefix; old data still in MinIO |
+| 6 (before archiver deploy) | Re-enable paused DAGs — no code to revert |
+| 6 (after archiver, before dbt) | Revert archiver image, re-enable DAGs |
+| 6 (after both deployed) | Revert sources.yml + archiver, redeploy both, re-enable DAGs |
 | 7 | Cannot undo deletion. This is why Phase 7 runs only after ≥7 days stable. |
 
 ### Quiet window recommendations
@@ -882,8 +1091,8 @@ effect on the next `dbt_runner` deploy. Coordinate with the dbt build schedule:
 | Phase | Recommendation |
 |-------|----------------|
 | 1 | Preferred off-peak; not required |
-| 5 | Off-peak; processing container is the only writer; concurrent scraper is fine |
-| 6 | Immediately after a successful dbt run to maximize lead time before next run |
+| 5 | Any time; concurrent scraping is fine |
+| 6 | Off-peak window; ~20 min; require deploy intent; start after a clean dbt run |
 | 7 | Off-peak; irreversible step |
 
 ---
@@ -894,17 +1103,18 @@ Safe PR/commit sequence:
 
 | PR | Contents | Can start when |
 |----|----------|---------------|
-| 1 | This implementation plan (docs only) | Now |
+| 1 | This implementation plan (docs only) | Now ✓ |
 | 2 | Phase 1: `shared/minio.py` + `tests/shared/test_minio.py` | Phase 0 checklist complete |
 | 3 | Phase 3: `scripts/audit_parquet_layout.py` + tests | Phase 1 deployed and stable |
-| 4 | Phase 5: `scripts/rewrite_parquet_layout.py` + tests | Phase 3 audit report reviewed and layout decision confirmed |
-| 5 | Phase 6: `dbt/models/sources.yml` reader switch | Phase 5 verification report passes all gates |
-| 6 | Phase 7: `scripts/cleanup_old_parquet_layout.py` + tests | Phase 6 stable for ≥7 days |
-| 7 | Phase 2 (optional): `scripts/recompress_bronze_html.py` + tests | Any time; not on critical path |
+| 4 | Phase 5: `scripts/rewrite_parquet_layout.py` + tests | Phase 3 audit reviewed; Phase 4 layout decision confirmed in this doc |
+| 5 | Phase 6 code: flush/compact/sources changes + new archiver/dbt tests | Phase 5 verification report passes all gates |
+| 6 | Phase 6 cutover: operator execution (not a PR — a deploy window) | PR 5 merged; all pre-cutover gates pass |
+| 7 | Phase 7: `scripts/cleanup_old_parquet_layout.py` + tests | Phase 6 cutover stable for ≥7 days |
+| 8 | Phase 2 (optional): `scripts/recompress_bronze_html.py` + tests | Any time; not on critical path |
 
 Note: Phase 4 (layout decision) is resolved as part of PR 3 review — the audit
-report informs the final decision, and the decision must be recorded in this document
-before PR 4 is written.
+report informs the final decision, and the chosen option (A, B, or C) must be
+recorded in this document before PR 4 begins. Option C is recommended.
 
 ---
 
@@ -912,11 +1122,11 @@ before PR 4 is written.
 
 | Phase | Unit tests | Integration tests | Manual validation |
 |-------|-----------|-------------------|-------------------|
-| 1 | `tests/shared/test_minio.py` | Roundtrip read after level-9 write | `docker logs scraper \| grep write_html` |
+| 1 | `tests/shared/test_minio.py` | Roundtrip read after level-9 write | `docker logs cartracker-scraper \| grep write_html` |
 | 2 | `tests/scripts/test_recompress_bronze_html.py` | Seed MinIO, dry-run asserts no change | Preview command on one month prefix |
 | 3 | `tests/scripts/test_audit_parquet_layout.py` | Seed MinIO, check report counts | Run against production, review Markdown report |
 | 5 | `tests/scripts/test_rewrite_parquet_layout.py` | Seed old-layout MinIO, rewrite, check rows | DuckDB row count cross-check |
-| 6 | (existing dbt model tests) | Dual-read SQL row count check | `dbt build --full-refresh` passes |
+| 6 | Archiver prefix unit tests; dbt model tests | Dual-read SQL; `test_storage_layout_integration.py` | Full cutover sequence; watch archiver logs; `dbt build` passes |
 | 7 | `tests/scripts/test_cleanup_old_parquet_layout.py` | `test_storage_layout_integration.py` | Dry-run candidate count reviewed before apply |
 
 All unit tests: no real MinIO required. All integration tests: require a MinIO
@@ -926,43 +1136,25 @@ test instance (already used by existing integration tests).
 
 ## Open Questions
 
-1. **Exact canonical normalized Parquet layout for silver.** The plan recommends
-   `silver_normalized/observations/source={source}/data-*.parquet` (source-only partition,
-   no time partition). This must be confirmed after Phase 3 audit reveals actual per-source
-   file counts post-compaction. If a single source has >500 files, a month-level partition
-   may still be needed before Iceberg.
+1. **Which layout option to adopt (A, B, or C)?** Option C (same partition depth,
+   new root) is recommended because it allows `compact_silver.py` and
+   `flush_silver_observations.py` to be retargeted with a single `_MINIO_PREFIX`
+   change each. Confirm after Phase 3 audit shows no unexpected partition structure.
+   If the audit reveals an unexpected partition shape, revisit before Phase 5.
 
-2. **Canonical layout for ops events.** Recommendation is flat
-   `ops_normalized/{table}/data-*.parquet`. Confirm `price_observation_events` total
-   object count (highest volume ops table) supports flat layout before Phase 5.
+2. **Do ops events need a different strategy than silver?** Current plan normalizes
+   both under new roots (Option C equivalent for ops). Confirm `price_observation_events`
+   and `artifacts_queue_events` (highest-volume tables) do not have schema variants
+   that would complicate a straight prefix-change rewrite. Audit report will answer this.
 
-3. **Do normalized prefixes live beside current prefixes or under a new root?**
-   Current plan: `silver_normalized/` beside `silver/`. This keeps old and new clearly
-   separated and avoids any reader confusion. Alternative: move directly to
-   `silver/observations/` (in-place) requires more careful orchestration to avoid
-   double-count during transition. Recommend keeping separate roots.
+3. **Memory ceiling for rewrite in cartracker-processing.** The rewrite script reads
+   one full partition into memory. Carousel is the largest source (~5.4 MB compacted
+   per day post-Plan 109). Monthly total for carousel is ~167 MB compacted; decompressed
+   is ~310 MB. If rewriting month-sized chunks, confirm the processing container's
+   memory limit accommodates this. If not, use `--month` selector to rewrite one month
+   at a time (which is the default guidance in Phase 5 runbook).
 
-4. **How much of Plan 109 compaction applies to the rewritten layout?** The
-   `compact_silver` DAG currently targets `silver/observations/`. After Phase 6 switches
-   readers to `silver_normalized/observations/`, the compaction DAG must be updated to
-   target the new prefix. This update is not in the current phase breakdown — it should
-   be added to PR 5 (reader switch) or as its own PR immediately after.
-
-5. **Which container runs historical recompression and rewrite scripts?** Both use
-   `shared/minio.py` and `boto3`/`s3fs`. The processing container has all dependencies
-   and is the natural host. Confirm `processing` has adequate memory for rewriting
-   one full-source monthly partition in-memory (carousel is the largest: ~5.4 MB
-   compacted post-Plan 109, safe).
-
-6. **Checkpoint state for Phase 2 (recompression): local JSON or MinIO object?**
-   Local JSON is simpler; MinIO object survives container restarts. Since
-   Phase 2 is deprioritized and run manually, local JSON is sufficient. If it is ever
-   operationalized, move checkpoint to a well-known MinIO path.
-
-7. **When to update the `compact_silver` DAG's target prefix.** After Phase 6 switches
-   `dbt/models/sources.yml` to `silver_normalized/`, new silver flushes will continue
-   writing to the old `silver/observations/` prefix until `flush_silver_observations.py`
-   is also updated. This means Phase 5 and Phase 6 must include updating the flush
-   prefix too — or the transition must be done atomically (stop flush, rewrite all
-   remaining data, start flush at new prefix, switch sources.yml). This is the highest-
-   risk coordination point. It should be resolved during Phase 4 layout review.
+4. **Checkpoint state for Phase 2 (recompression): local JSON or MinIO object?**
+   Phase 2 is deprioritized and run manually, so local JSON is sufficient. If it is
+   ever operationalized as a scheduled job, move checkpoint to a well-known MinIO path
+   (e.g., `bronze/checkpoints/recompress_bronze_html.json`).
