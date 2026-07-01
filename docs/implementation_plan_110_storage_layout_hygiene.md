@@ -987,37 +987,30 @@ docker compose up -d --no-deps <service>
 # Re-run Step 10 validation
 ```
 
-**Option B — Recovery rewrite (only if roll-forward is not viable):**
+**Option B — Emergency delta rewrite (only if roll-forward is not viable):**
 
 Copy the normalized-only delta back into the old layout before reverting dbt.
-This is a deliberate data operation, not a fast rollback.
+`rewrite_parquet_layout.py` does not support this direction — it only writes
+forward to the normalized prefix. This requires a one-off recovery script or
+a future `--from-prefix / --to-prefix / --delta-since` mode that does not
+exist yet.
 
-```bash
-# 1. Identify rows written to silver_normalized/ after Step 5's final compact
-#    (use the timestamp from Step 5 logs as the lower bound)
-# 2. Run rewrite_parquet_layout.py targeting silver_normalized/ → silver/observations/
-#    with the same partition scheme, covering only the delta window
-# 3. Verify row counts in silver/observations/ match expected total
-docker exec -it cartracker-processing python scripts/rewrite_parquet_layout.py \
-  --source silver_normalized/observations \
-  --dest silver/observations \
-  --dry-run
-# Review output, then re-run without --dry-run if counts look correct
+Steps at a conceptual level:
+1. Identify all Parquet files written to `silver_normalized/observations/`
+   after Step 5's final compact (use the Step 5 log timestamp as the lower
+   bound on object `LastModified`).
+2. Read those files with DuckDB or PyArrow, repartition into the old
+   `source=X/obs_year=Y/obs_month=M/obs_day=D/` layout, and write to
+   `silver/observations/`.
+3. Verify row counts in `silver/observations/` match pre-cutover baseline
+   plus the delta row count from the flush log.
+4. Only after verification, revert archiver and dbt, rebuild, re-enable DAGs,
+   and release deploy intent.
 
-# 4. Only after row count verification, revert archiver and dbt
-git checkout HEAD~ -- dbt/models/sources.yml \
-                      archiver/processors/flush_silver_observations.py \
-                      archiver/processors/compact_silver.py \
-                      archiver/processors/flush_staging_events.py
-docker compose build archiver dbt_runner
-docker compose up -d --no-deps archiver dbt_runner
-
-# 5. Re-enable DAGs and release intent
-docker exec -it cartracker-airflow-apiserver airflow dags unpause flush_silver_observations
-docker exec -it cartracker-airflow-apiserver airflow dags unpause compact_silver
-docker exec -it cartracker-airflow-apiserver airflow dags unpause flush_staging_events
-curl -sf -X POST http://localhost:8060/deploy/complete
-```
+**Do not attempt Option B under time pressure.** If the situation requires
+fast recovery, keep dbt on `silver_normalized/` (Option A) and treat the
+old-prefix revert as a scheduled follow-up once a proper recovery script
+exists.
 
 ### Tests
 
