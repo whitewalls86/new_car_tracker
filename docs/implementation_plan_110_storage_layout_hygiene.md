@@ -851,11 +851,18 @@ before any normal scheduling resumes.
 # Manually trigger one flush — bypasses DAG scheduler, does not require intent release
 curl -s -X POST http://localhost:8001/flush/silver/run \
   | python -c "import sys,json; r=json.load(sys.stdin); print(f'flushed={r[\"flushed\"]} error={r[\"error\"]}')"
-# Expect: flushed=N (may be 0 if staging was empty) error=None
+# Expect: flushed=N error=None
 
 # Confirm the flush wrote to the normalized prefix (or logged nothing to write)
 docker logs cartracker-archiver --tail 30 2>&1 | grep "flush_silver:"
 # Expect: "flush_silver: wrote N rows → silver_normalized/observations"
+#
+# Note: if flushed=0, this does NOT prove the writer targets the right prefix.
+# It only proves the endpoint responds without error. If staging was empty,
+# the log line may say "nothing to flush" rather than confirming the destination.
+# In that case, the dbt build below is the primary validation signal. If you
+# need a stronger writer test, insert a synthetic staging row or wait for a
+# natural flush after staging accumulates from scraper traffic.
 
 # Run dbt build against the new source globs
 docker exec -it cartracker-dbt-runner dbt build
@@ -927,7 +934,9 @@ will not appear in dbt queries (dbt still reads `silver/`). These rows are not
 lost — they are in MinIO. Run `rewrite_parquet_layout.py --dry-run` after rollback
 to confirm no gap exists, then schedule a follow-up delta rewrite if needed.
 
-#### After Step 9 (both deployed)
+#### After Step 9, before Step 10 (both deployed, no flush triggered yet)
+
+No rows have been written to `silver_normalized/` yet. Old prefix is complete.
 
 ```bash
 # Restore previous sources.yml and rebuild dbt_runner
@@ -949,7 +958,65 @@ docker exec -it cartracker-airflow-apiserver airflow dags unpause flush_staging_
 
 # Release deploy intent
 curl -sf -X POST http://localhost:8060/deploy/complete
-# Old prefix has complete data — nothing was deleted
+# Old prefix has complete data — nothing was written to normalized prefix
+```
+
+#### After Step 10 with flushed=0
+
+Flush ran but wrote nothing (staging was empty). Old prefix is still complete.
+Rollback procedure is identical to "before Step 10" above — nothing was written
+to `silver_normalized/` from staging.
+
+#### After Step 10 with flushed>0 (rows written to silver_normalized/)
+
+**Do not revert dbt to old globs and claim the old prefix is complete.** The
+flushed rows were deleted from staging and written only to `silver_normalized/`.
+Reverting dbt to `silver/` would silently drop those rows from all queries.
+
+**Option A — Roll forward (preferred if the problem is isolated):**
+
+Keep dbt on `silver_normalized/`. Diagnose and fix the specific failure in the
+new archiver or sources.yml, redeploy only the broken component, and re-run
+Step 10 validation. The normalized data already written is valid and queryable.
+
+```bash
+# dbt is already on normalized globs — leave it there
+# Fix the specific issue, rebuild only the affected service
+docker compose build <service>
+docker compose up -d --no-deps <service>
+# Re-run Step 10 validation
+```
+
+**Option B — Recovery rewrite (only if roll-forward is not viable):**
+
+Copy the normalized-only delta back into the old layout before reverting dbt.
+This is a deliberate data operation, not a fast rollback.
+
+```bash
+# 1. Identify rows written to silver_normalized/ after Step 5's final compact
+#    (use the timestamp from Step 5 logs as the lower bound)
+# 2. Run rewrite_parquet_layout.py targeting silver_normalized/ → silver/observations/
+#    with the same partition scheme, covering only the delta window
+# 3. Verify row counts in silver/observations/ match expected total
+docker exec -it cartracker-processing python scripts/rewrite_parquet_layout.py \
+  --source silver_normalized/observations \
+  --dest silver/observations \
+  --dry-run
+# Review output, then re-run without --dry-run if counts look correct
+
+# 4. Only after row count verification, revert archiver and dbt
+git checkout HEAD~ -- dbt/models/sources.yml \
+                      archiver/processors/flush_silver_observations.py \
+                      archiver/processors/compact_silver.py \
+                      archiver/processors/flush_staging_events.py
+docker compose build archiver dbt_runner
+docker compose up -d --no-deps archiver dbt_runner
+
+# 5. Re-enable DAGs and release intent
+docker exec -it cartracker-airflow-apiserver airflow dags unpause flush_silver_observations
+docker exec -it cartracker-airflow-apiserver airflow dags unpause compact_silver
+docker exec -it cartracker-airflow-apiserver airflow dags unpause flush_staging_events
+curl -sf -X POST http://localhost:8060/deploy/complete
 ```
 
 ### Tests
