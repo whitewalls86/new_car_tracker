@@ -728,15 +728,19 @@ and run `dbt build --full-refresh` to confirm all models compile and pass.
 This is a ~20-minute operator window. Each step is listed with the failure mode
 and its recovery action.
 
-#### Step 1 — Announce deploy intent
+#### Step 1 — Set deploy intent
 
-Post deploy intent before touching anything. Do not start without it.
+```bash
+curl -sf -X POST http://localhost:8060/deploy/start
+# Returns true on success; 409 if another intent is already set.
 
+curl -s http://localhost:8060/deploy/status
+# Confirm: "intent": "pending", and number_running is low (in-flight claims draining).
 ```
-Deploy intent: silver writer + reader cutover, ~20 min.
-Services affected: cartracker-archiver, cartracker-dbt-runner.
-Airflow DAGs paused: flush_silver_observations, compact_silver, flush_staging_events.
-```
+
+Do not proceed until `/deploy/status` returns `"intent": "pending"`. The ops
+service will begin returning 503 on claim endpoints, preventing new detail scrape
+claims from starting while the deploy is in progress.
 
 #### Step 2 — Verify no active archiver jobs
 
@@ -811,7 +815,8 @@ the delta rewrite output before proceeding.
 ```bash
 # On the production server, in the repo root:
 git pull
-docker compose up -d --no-deps cartracker-archiver
+docker compose build archiver
+docker compose up -d --no-deps archiver
 ```
 
 Wait for the archiver to pass `/health`:
@@ -827,7 +832,8 @@ longest gap where staging might accumulate; it is bounded by the deploy time (~6
 #### Step 9 — Deploy dbt_runner with updated sources.yml
 
 ```bash
-docker compose up -d --no-deps cartracker-dbt-runner
+docker compose build dbt_runner
+docker compose up -d --no-deps dbt_runner
 ```
 
 Verify the dbt container started cleanly:
@@ -866,6 +872,13 @@ print(f'Old prefix object count: before={before} after={after} (should be equal)
 "
 ```
 
+Once all checks pass, release the deploy intent:
+
+```bash
+curl -sf -X POST http://localhost:8060/deploy/complete
+# Returns true. The ops service resumes accepting claim requests.
+```
+
 ### Rollback paths
 
 #### Before Step 8 (archiver not yet deployed)
@@ -875,21 +888,29 @@ print(f'Old prefix object count: before={before} after={after} (should be equal)
 docker exec -it cartracker-airflow-apiserver airflow dags unpause flush_silver_observations
 docker exec -it cartracker-airflow-apiserver airflow dags unpause compact_silver
 docker exec -it cartracker-airflow-apiserver airflow dags unpause flush_staging_events
+
+# Release deploy intent
+curl -sf -X POST http://localhost:8060/deploy/complete
 # Done — old prefix resumes writes, dbt still reads old prefix
 ```
 
 #### After Step 8, before Step 9 (archiver deployed, dbt not yet switched)
 
 ```bash
-# Roll back archiver to previous image
-git revert HEAD --no-commit  # revert the _MINIO_PREFIX changes
-git stash  # or use previous image tag
-docker compose up -d --no-deps cartracker-archiver
+# Restore previous processor files and rebuild archiver
+git checkout HEAD~ -- archiver/processors/flush_silver_observations.py \
+                      archiver/processors/compact_silver.py \
+                      archiver/processors/flush_staging_events.py
+docker compose build archiver
+docker compose up -d --no-deps archiver
 
 # Re-enable DAGs
 docker exec -it cartracker-airflow-apiserver airflow dags unpause flush_silver_observations
 docker exec -it cartracker-airflow-apiserver airflow dags unpause compact_silver
 docker exec -it cartracker-airflow-apiserver airflow dags unpause flush_staging_events
+
+# Release deploy intent
+curl -sf -X POST http://localhost:8060/deploy/complete
 # dbt still reads old prefix — no dbt action needed
 ```
 
@@ -901,17 +922,25 @@ to confirm no gap exists, then schedule a follow-up delta rewrite if needed.
 #### After Step 9 (both deployed)
 
 ```bash
-# Revert sources.yml to old globs + redeploy dbt_runner
-git revert HEAD --no-commit  # or manually restore silver glob
-docker compose up -d --no-deps cartracker-dbt-runner
+# Restore previous sources.yml and rebuild dbt_runner
+git checkout HEAD~ -- dbt/models/sources.yml
+docker compose build dbt_runner
+docker compose up -d --no-deps dbt_runner
 
-# Revert archiver _MINIO_PREFIX changes + redeploy archiver
-docker compose up -d --no-deps cartracker-archiver
+# Restore previous processor files and rebuild archiver
+git checkout HEAD~ -- archiver/processors/flush_silver_observations.py \
+                      archiver/processors/compact_silver.py \
+                      archiver/processors/flush_staging_events.py
+docker compose build archiver
+docker compose up -d --no-deps archiver
 
 # Re-enable DAGs
 docker exec -it cartracker-airflow-apiserver airflow dags unpause flush_silver_observations
 docker exec -it cartracker-airflow-apiserver airflow dags unpause compact_silver
 docker exec -it cartracker-airflow-apiserver airflow dags unpause flush_staging_events
+
+# Release deploy intent
+curl -sf -X POST http://localhost:8060/deploy/complete
 # Old prefix has complete data — nothing was deleted
 ```
 
