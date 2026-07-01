@@ -391,21 +391,25 @@ class TestReadOnlyContract:
         body.read.return_value = compressed
         mock_client.get_object.return_value = {"Body": body}
 
-        mock_fs = MagicMock()
-        mock_fs.ls.return_value = [
-            {
-                "name": "bronze/html/year=2026/month=6/artifact_type=detail_page/abc.html.zst",
-                "type": "file",
-                "size": len(compressed),
-            }
-        ]
+        # Paginator returns one page with one object
+        mock_page = {
+            "Contents": [
+                {
+                    "Key": "html/year=2026/month=6/artifact_type=detail_page/abc.html.zst",
+                    "Size": len(compressed),
+                }
+            ]
+        }
+        mock_paginator = MagicMock()
+        mock_paginator.paginate.return_value = [mock_page]
+        mock_client.get_paginator.return_value = mock_paginator
 
         with (
             patch(
                 "scripts.estimate_recompression_savings.get_boto3_client",
                 return_value=mock_client,
             ),
-            patch("scripts.estimate_recompression_savings.get_s3fs", return_value=mock_fs),
+            patch("scripts.estimate_recompression_savings.get_s3fs", return_value=MagicMock()),
             patch(
                 "sys.argv",
                 [
