@@ -766,7 +766,7 @@ Verify no DAG run is currently active for these in the Airflow UI before continu
 #### Step 4 — Final flush: drain staging.silver_observations → old prefix
 
 ```bash
-docker exec -it cartracker-archiver curl -s -X POST localhost:8001/flush/silver/run \
+curl -s -X POST http://localhost:8001/flush/silver/run \
   | python -c "import sys,json; r=json.load(sys.stdin); print(f'flushed={r[\"flushed\"]} error={r[\"error\"]}')"
 # Expect: flushed=N error=None
 ```
@@ -776,7 +776,7 @@ This writes any remaining buffered rows to `silver/observations/` (old prefix, i
 #### Step 5 — Final compact: clean up any uncompacted day partitions in old prefix
 
 ```bash
-docker exec -it cartracker-archiver curl -s -X POST localhost:8001/compact/silver/run \
+curl -s -X POST http://localhost:8001/compact/silver/run \
   | python -c "import sys,json; r=json.load(sys.stdin); print(f'compacted={r[\"compacted\"]} failed={r[\"failed\"]}')"
 # Expect: failed=0
 ```
