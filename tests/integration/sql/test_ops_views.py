@@ -1,16 +1,17 @@
 """
 Layer 1 — SQL smoke tests for ops_vehicle_staleness and ops_detail_scrape_queue.
 
-Both views are plain Postgres views (V029) reading directly from ops.price_observations
+Both views are plain Postgres views (V040) reading directly from ops.price_observations
 and ops.blocked_cooldown. Tests seed HOT table rows and assert staleness flags and
 queue membership. Per-test rollback — no committed state.
 
-Staleness model (from Plan 99):
-  is_full_details_stale = customer_id IS NULL        (never been detail-scraped)
+Staleness model (Plan 115 circuit breaker):
+  is_full_details_stale = customer_id IS NULL AND (last_detail_scraped_at IS NULL
+                          OR last_detail_scraped_at < now() - 7 days)
   is_price_stale        = last_seen_at < now() - 24h (any source)
   stale_reason          = dealer_unenriched | price_only | not_stale
 
-Queue blocked_cooldown formula (inlined in V029):
+Queue blocked_cooldown formula (inlined in V040):
   next_eligible_at = last_attempted_at + 12h * 2^(num_of_attempts - 1)
   fully_blocked    = num_of_attempts >= 5
 """
@@ -55,20 +56,42 @@ def _insert_price_obs(
     price: int = 30000,
     customer_id: str = None,
     age_hours: float = 1.0,
+    last_detail_scraped_at_hours_ago: float = None,
 ):
-    """Insert one row into ops.price_observations at a controlled age."""
-    cur.execute(
-        """
-        INSERT INTO ops.price_observations
-            (listing_id, vin, price, make, model, customer_id, last_seen_at, last_artifact_id)
-        VALUES (
-            %s::uuid, %s, %s, 'honda', 'crv', %s,
-            now() - (%s || ' hours')::interval,
-            %s
+    """Insert one row into ops.price_observations at a controlled age.
+
+    last_detail_scraped_at_hours_ago: if provided, sets last_detail_scraped_at
+    to now() minus that many hours. None leaves the column NULL.
+    """
+    if last_detail_scraped_at_hours_ago is not None:
+        cur.execute(
+            """
+            INSERT INTO ops.price_observations
+                (listing_id, vin, price, make, model, customer_id, last_seen_at,
+                 last_artifact_id, last_detail_scraped_at)
+            VALUES (
+                %s::uuid, %s, %s, 'honda', 'crv', %s,
+                now() - (%s || ' hours')::interval,
+                %s,
+                now() - (%s || ' hours')::interval
+            )
+            """,
+            (listing_id, vin, price, customer_id, str(age_hours), artifact_id,
+             str(last_detail_scraped_at_hours_ago)),
         )
-        """,
-        (listing_id, vin, price, customer_id, str(age_hours), artifact_id),
-    )
+    else:
+        cur.execute(
+            """
+            INSERT INTO ops.price_observations
+                (listing_id, vin, price, make, model, customer_id, last_seen_at, last_artifact_id)
+            VALUES (
+                %s::uuid, %s, %s, 'honda', 'crv', %s,
+                now() - (%s || ' hours')::interval,
+                %s
+            )
+            """,
+            (listing_id, vin, price, customer_id, str(age_hours), artifact_id),
+        )
 
 
 def _insert_cooldown(cur, listing_id: str, num_of_attempts: int, last_attempted_hours_ago: float):
@@ -165,6 +188,57 @@ class TestOpsVehicleStaleness:
         )
         url = cur.fetchone()["current_listing_url"]
         assert url == f"https://www.cars.com/vehicledetail/{lid}/"
+
+    # -----------------------------------------------------------------------
+    # Circuit-breaker tests (Plan 115)
+    # -----------------------------------------------------------------------
+
+    def test_customer_id_null_last_detail_scraped_now_is_not_stale(self, cur):
+        """customer_id NULL + recently detail-scraped → not dealer_unenriched (circuit breaker)."""
+        artifact_id = _insert_artifact(cur)
+        lid = _random_listing_id()
+        _insert_price_obs(cur, artifact_id, lid, customer_id=None, age_hours=1,
+                          last_detail_scraped_at_hours_ago=0.1)
+
+        cur.execute(
+            "SELECT is_full_details_stale, stale_reason"
+            " FROM ops.ops_vehicle_staleness WHERE listing_id = %s::uuid",
+            (lid,),
+        )
+        row = cur.fetchone()
+        assert row["is_full_details_stale"] is False
+        assert row["stale_reason"] == "not_stale"
+
+    def test_customer_id_null_last_detail_scraped_8_days_ago_is_stale(self, cur):
+        """customer_id NULL + last_detail_scraped_at 8 days ago → dealer_unenriched again."""
+        artifact_id = _insert_artifact(cur)
+        lid = _random_listing_id()
+        _insert_price_obs(cur, artifact_id, lid, customer_id=None, age_hours=1,
+                          last_detail_scraped_at_hours_ago=8 * 24)
+
+        cur.execute(
+            "SELECT is_full_details_stale, stale_reason"
+            " FROM ops.ops_vehicle_staleness WHERE listing_id = %s::uuid",
+            (lid,),
+        )
+        row = cur.fetchone()
+        assert row["is_full_details_stale"] is True
+        assert row["stale_reason"] == "dealer_unenriched"
+
+    def test_last_detail_scraped_at_exposed_in_view(self, cur):
+        """last_detail_scraped_at is returned from the view for diagnostics."""
+        artifact_id = _insert_artifact(cur)
+        lid = _random_listing_id()
+        _insert_price_obs(cur, artifact_id, lid, customer_id=None, age_hours=1,
+                          last_detail_scraped_at_hours_ago=1)
+
+        cur.execute(
+            "SELECT last_detail_scraped_at"
+            " FROM ops.ops_vehicle_staleness WHERE listing_id = %s::uuid",
+            (lid,),
+        )
+        row = cur.fetchone()
+        assert row["last_detail_scraped_at"] is not None
 
 
 # ---------------------------------------------------------------------------
@@ -297,3 +371,106 @@ class TestOpsDetailScrapeQueue:
         priorities = sorted(r["priority"] for r in rows)
         assert 1 in priorities
         assert 2 in priorities
+
+
+# ---------------------------------------------------------------------------
+# Circuit-breaker queue suppression (Plan 115)
+# ---------------------------------------------------------------------------
+
+class TestCircuitBreakerQueue:
+
+    def test_unenriched_null_last_detail_is_in_queue(self, cur):
+        """customer_id NULL, last_detail_scraped_at NULL → in queue (never scraped)."""
+        artifact_id = _insert_artifact(cur)
+        lid = _random_listing_id()
+        _insert_price_obs(cur, artifact_id, lid, customer_id=None, age_hours=1)
+
+        cur.execute(
+            "SELECT listing_id FROM ops.ops_detail_scrape_queue WHERE listing_id = %s::uuid",
+            (lid,),
+        )
+        assert cur.fetchone() is not None
+
+    def test_unenriched_recently_scraped_not_in_queue(self, cur):
+        """customer_id NULL, last_detail_scraped_at now → suppressed by circuit breaker."""
+        artifact_id = _insert_artifact(cur)
+        lid = _random_listing_id()
+        _insert_price_obs(cur, artifact_id, lid, customer_id=None, age_hours=1,
+                          last_detail_scraped_at_hours_ago=0.25)
+
+        cur.execute(
+            "SELECT listing_id FROM ops.ops_detail_scrape_queue WHERE listing_id = %s::uuid",
+            (lid,),
+        )
+        assert cur.fetchone() is None
+
+    def test_unenriched_scraped_8_days_ago_back_in_queue(self, cur):
+        """customer_id NULL, last_detail_scraped_at 8 days ago → back in queue."""
+        artifact_id = _insert_artifact(cur)
+        lid = _random_listing_id()
+        _insert_price_obs(cur, artifact_id, lid, customer_id=None, age_hours=1,
+                          last_detail_scraped_at_hours_ago=8 * 24)
+
+        cur.execute(
+            "SELECT listing_id FROM ops.ops_detail_scrape_queue WHERE listing_id = %s::uuid",
+            (lid,),
+        )
+        assert cur.fetchone() is not None
+
+    def test_enriched_fresh_not_in_queue(self, cur):
+        """customer_id NOT NULL, last_seen_at fresh → not queued."""
+        artifact_id = _insert_artifact(cur)
+        lid = _random_listing_id()
+        _insert_price_obs(cur, artifact_id, lid, customer_id="cust-1", age_hours=1)
+
+        cur.execute(
+            "SELECT listing_id FROM ops.ops_detail_scrape_queue WHERE listing_id = %s::uuid",
+            (lid,),
+        )
+        assert cur.fetchone() is None
+
+    def test_enriched_stale_in_queue_as_price_only(self, cur):
+        """customer_id NOT NULL, last_seen_at > 24h → in queue as price_only."""
+        artifact_id = _insert_artifact(cur)
+        lid = _random_listing_id()
+        _insert_price_obs(cur, artifact_id, lid, customer_id="cust-2", age_hours=25)
+
+        cur.execute(
+            "SELECT listing_id, stale_reason FROM ops.ops_detail_scrape_queue"
+            " WHERE listing_id = %s::uuid",
+            (lid,),
+        )
+        row = cur.fetchone()
+        assert row is not None
+        assert row["stale_reason"] == "price_only"
+
+    def test_second_detail_cycle_with_null_customer_id_suppressed(self, cur):
+        """Regression: simulate two successful detail cycles with customer_id NULL.
+
+        After the first cycle sets last_detail_scraped_at, the listing must be
+        absent from the queue immediately on the next DAG run.
+        """
+        artifact_id = _insert_artifact(cur)
+        lid = _random_listing_id()
+
+        # First cycle: no last_detail_scraped_at yet → in queue
+        _insert_price_obs(cur, artifact_id, lid, customer_id=None, age_hours=1)
+        cur.execute(
+            "SELECT listing_id FROM ops.ops_detail_scrape_queue WHERE listing_id = %s::uuid",
+            (lid,),
+        )
+        assert cur.fetchone() is not None, "listing should be queued before first scrape"
+
+        # First cycle completes: set last_detail_scraped_at to now
+        cur.execute(
+            "UPDATE ops.price_observations SET last_detail_scraped_at = now()"
+            " WHERE listing_id = %s::uuid",
+            (lid,),
+        )
+
+        # Second cycle: listing must not be in queue immediately
+        cur.execute(
+            "SELECT listing_id FROM ops.ops_detail_scrape_queue WHERE listing_id = %s::uuid",
+            (lid,),
+        )
+        assert cur.fetchone() is None, "listing must be suppressed after first detail scrape"

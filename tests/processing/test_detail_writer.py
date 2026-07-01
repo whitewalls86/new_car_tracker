@@ -226,3 +226,86 @@ class TestWriteDetailUnlisted:
         assert silver_rows[0]["price"] is None
         assert silver_rows[0]["listing_state"] == "unlisted"
 
+
+# ---------------------------------------------------------------------------
+# Circuit-breaker: last_detail_scraped_at writer tests (Plan 115)
+# ---------------------------------------------------------------------------
+
+class TestLastDetailScrapedAt:
+    """Verify last_detail_scraped_at is set on primary detail writes and absent
+    from carousel and SRP writes."""
+
+    def _upsert_calls(self, mock_cursor) -> list:
+        """Return all execute calls that touch price_observations."""
+        return [
+            c for c in mock_cursor.execute.call_args_list
+            if "price_observations" in str(c)
+        ]
+
+    def _find_upsert_params(self, mock_cursor, source_hint: str = None) -> list[dict]:
+        """Return the params dicts passed to UPSERT_PRICE_OBSERVATION calls."""
+        params = []
+        for call in mock_cursor.execute.call_args_list:
+            args = call[0]
+            if len(args) >= 2 and isinstance(args[1], dict):
+                d = args[1]
+                if "last_seen_at" in d and "listing_id" in d:
+                    params.append(d)
+        return params
+
+    def test_primary_detail_sets_last_detail_scraped_at(
+        self, mock_cursor, mock_silver, mock_search_configs,
+    ):
+        """Primary detail active write passes last_detail_scraped_at = fetched_at."""
+        primary = {
+            "listing_id": "aaa", "vin": "V1", "price": 25000,
+            "make": "Honda", "model": "CR-V", "customer_id": "cust-1",
+        }
+        write_detail_active(
+            primary, carousel=[], artifact_id=1, fetched_at=FETCHED_AT,
+            listing_id="aaa", run_id="run1",
+        )
+        upsert_params = self._find_upsert_params(mock_cursor)
+        assert len(upsert_params) >= 1
+        primary_params = upsert_params[0]
+        assert primary_params["last_detail_scraped_at"] == FETCHED_AT
+
+    def test_primary_detail_sets_last_detail_scraped_at_when_customer_id_null(
+        self, mock_cursor, mock_silver, mock_search_configs,
+    ):
+        """Primary detail active write sets last_detail_scraped_at even when customer_id is NULL."""
+        primary = {
+            "listing_id": "aaa", "vin": "V1", "price": 25000,
+            "make": "Honda", "model": "CR-V", "customer_id": None,
+        }
+        write_detail_active(
+            primary, carousel=[], artifact_id=2, fetched_at=FETCHED_AT,
+            listing_id="aaa", run_id="run2",
+        )
+        upsert_params = self._find_upsert_params(mock_cursor)
+        primary_params = upsert_params[0]
+        assert primary_params["customer_id"] is None
+        assert primary_params["last_detail_scraped_at"] == FETCHED_AT
+
+    def test_carousel_upsert_does_not_set_last_detail_scraped_at(
+        self, mock_cursor, mock_silver, mock_search_configs,
+    ):
+        """Carousel upserts pass last_detail_scraped_at = None."""
+        primary = {
+            "listing_id": "aaa", "vin": "V1", "price": 25000,
+            "make": "Honda", "model": "CR-V",
+        }
+        carousel = [
+            {"listing_id": "c1", "price": 22000,
+             "body": "Used 2022 Honda Accord EX", "mileage": 10000},
+        ]
+        write_detail_active(
+            primary, carousel=carousel, artifact_id=3, fetched_at=FETCHED_AT,
+            listing_id="aaa", run_id="run3",
+        )
+        upsert_params = self._find_upsert_params(mock_cursor)
+        # First params = primary (last_detail_scraped_at set), rest = carousel
+        carousel_params = [p for p in upsert_params if p["listing_id"] == "c1"]
+        assert len(carousel_params) == 1
+        assert carousel_params[0]["last_detail_scraped_at"] is None
+

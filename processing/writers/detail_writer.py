@@ -177,6 +177,7 @@ def write_detail_active(
             "customer_id": primary.get("customer_id"),
             "last_seen_at": fetched_at,
             "last_artifact_id": artifact_id,
+            "last_detail_scraped_at": fetched_at,
         })
         # Event: primary price_observation upserted
         cur.execute(INSERT_PRICE_OBSERVATION_EVENT, {
@@ -242,6 +243,7 @@ def write_detail_active(
                     "customer_id": None,  # carousel never enriches dealer info
                     "last_seen_at": fetched_at,
                     "last_artifact_id": artifact_id,
+                    "last_detail_scraped_at": None,  # carousel must not set circuit-breaker
                 })
                 # Event: carousel price_observation upserted
                 cur.execute(INSERT_PRICE_OBSERVATION_EVENT, {
