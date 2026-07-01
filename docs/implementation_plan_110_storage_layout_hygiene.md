@@ -841,42 +841,50 @@ Verify the dbt container started cleanly:
 docker logs cartracker-dbt-runner --tail 20
 ```
 
-#### Step 10 — Re-enable Airflow DAGs
+#### Step 10 — Validate with a controlled flush (deploy intent still pending)
+
+While deploy intent is still set, DAG sensors block scheduled flushes. Use that
+window to trigger a single manual flush and verify it writes to the new prefix
+before any normal scheduling resumes.
+
+```bash
+# Manually trigger one flush — bypasses DAG scheduler, does not require intent release
+curl -s -X POST http://localhost:8001/flush/silver/run \
+  | python -c "import sys,json; r=json.load(sys.stdin); print(f'flushed={r[\"flushed\"]} error={r[\"error\"]}')"
+# Expect: flushed=N (may be 0 if staging was empty) error=None
+
+# Confirm the flush wrote to the normalized prefix (or logged nothing to write)
+docker logs cartracker-archiver --tail 30 2>&1 | grep "flush_silver:"
+# Expect: "flush_silver: wrote N rows → silver_normalized/observations"
+
+# Run dbt build against the new source globs
+docker exec -it cartracker-dbt-runner dbt build
+# Expect: all models pass
+
+# Confirm old prefix received no new objects during this window
+docker exec -it cartracker-processing python -c "
+from shared.minio import get_s3fs, BUCKET
+fs = get_s3fs()
+try:
+    count = len(fs.ls(f'{BUCKET}/silver/observations', detail=False))
+    print(f'Old prefix object count: {count} (should not have grown since Step 5)')
+except FileNotFoundError:
+    print('Old prefix not found — already empty or never written to')
+"
+```
+
+#### Step 11 — Re-enable Airflow DAGs and release deploy intent
+
+All validation passed. Re-enable scheduling, then release the deploy intent so the
+ops service resumes accepting claim requests.
 
 ```bash
 docker exec -it cartracker-airflow-apiserver airflow dags unpause flush_silver_observations
 docker exec -it cartracker-airflow-apiserver airflow dags unpause compact_silver
 docker exec -it cartracker-airflow-apiserver airflow dags unpause flush_staging_events
-```
 
-#### Step 11 — Validate
-
-```bash
-# Watch archiver logs: new flush should write to silver_normalized/
-docker logs cartracker-archiver --follow 2>&1 | grep "flush_silver:"
-# Expect: "flush_silver: wrote N rows → bronze/silver_normalized/observations"
-
-# Run dbt build against normalized prefix
-docker exec -it cartracker-dbt-runner dbt build
-# Expect: all models pass
-
-# Confirm old prefix is no longer growing
-docker exec -it cartracker-processing python -c "
-from shared.minio import get_s3fs, BUCKET
-import time
-fs = get_s3fs()
-before = len(fs.ls(f'{BUCKET}/silver/observations', detail=False))
-time.sleep(30)
-after = len(fs.ls(f'{BUCKET}/silver/observations', detail=False))
-print(f'Old prefix object count: before={before} after={after} (should be equal)')
-"
-```
-
-Once all checks pass, release the deploy intent:
-
-```bash
 curl -sf -X POST http://localhost:8060/deploy/complete
-# Returns true. The ops service resumes accepting claim requests.
+# Returns true. Claim traffic resumes. Next scheduled flush will also write to silver_normalized/.
 ```
 
 ### Rollback paths
