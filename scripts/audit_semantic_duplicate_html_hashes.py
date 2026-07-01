@@ -19,7 +19,6 @@ from typing import Any
 
 import duckdb
 
-
 SILVER_PATH = "s3://bronze/silver/observations/**/*.parquet"
 ARTIFACT_EVENTS_PATH = "s3://bronze/ops/artifacts_queue_events/**/*.parquet"
 
@@ -197,7 +196,9 @@ def s3_uri_to_duckdb_path(minio_path: str) -> str:
     return f"s3://bronze/{minio_path.lstrip('/')}"
 
 
-def hash_blob(con: duckdb.DuckDBPyConnection, minio_path: str) -> tuple[int | None, str | None, str | None]:
+def hash_blob(
+    con: duckdb.DuckDBPyConnection, minio_path: str
+) -> tuple[int | None, str | None, str | None]:
     path = s3_uri_to_duckdb_path(minio_path)
     escaped = path.replace("'", "''")
     try:
@@ -237,7 +238,9 @@ def print_results(
         print(f"GROUP {group_index}")
         print(f"listing_id: {listing_id}")
         print(f"semantic_artifact_count: {artifact_count}")
-        print(f"semantic_window: {group_rows[0]['first_seen_at']} -> {group_rows[0]['last_seen_at']}")
+        first = group_rows[0]['first_seen_at']
+        last = group_rows[0]['last_seen_at']
+        print(f"semantic_window: {first} -> {last}")
         print(f"parsed_fingerprint: {parsed_fingerprint}")
 
         hash_counts: dict[str, int] = defaultdict(int)

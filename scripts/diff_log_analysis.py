@@ -28,7 +28,6 @@ from typing import Any
 import duckdb
 import zstandard as zstd
 
-
 SILVER_PATH = "s3://bronze/silver/observations/**/*.parquet"
 ARTIFACT_EVENTS_PATH = "s3://bronze/ops/artifacts_queue_events/**/*.parquet"
 SCRATCH_PREFIX = "scratch/diff_analysis"
@@ -42,13 +41,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min-observations", type=int, default=50,
                         help="Minimum detail artifact count (default: 50).")
     parser.add_argument("--max-per-day", type=float, default=5.0,
-                        help="Max artifacts per day; excludes perpetually-re-scraped outliers (default: 5.0).")
+                        help="Max artifacts per day; excludes perpetually-re-scraped outliers "
+                             "(default: 5.0).")
     parser.add_argument("--source-pattern", default="%detail%",
                         help="SQL ILIKE pattern for detail-source observations.")
     parser.add_argument("--cleanup", action="store_true",
                         help="Delete scratch diffs from MinIO after analysis.")
     parser.add_argument("--skip-profile", action="store_true",
-                        help="Skip the full silver layer profile scan (faster, uses estimated counts).")
+                        help="Skip the full silver layer profile scan "
+                             "(faster, uses estimated counts).")
     return parser.parse_args()
 
 
@@ -308,7 +309,11 @@ def analyse_listing(
         minio_path = art["minio_path"]
         fingerprint = str(art["parsed_fingerprint"])
 
-        print(f"  [{i+1}/{len(artifacts)}] artifact_id={artifact_id} fetched_at={art['fetched_at']}", end="", flush=True)
+        print(
+            f"  [{i+1}/{len(artifacts)}] artifact_id={artifact_id}"
+            f" fetched_at={art['fetched_at']}",
+            end="", flush=True,
+        )
 
         full_bytes = fetch_blob_size(con, minio_path)
         html = fetch_html(con, minio_path)
@@ -353,7 +358,8 @@ def analyse_listing(
 def print_listing_summary(r: ListingResult) -> None:
     print(f"\n  {'='*70}")
     print(f"  {r.make} {r.model} {r.year}  listing_id={r.listing_id}")
-    print(f"  artifacts={len(r.artifacts)}  semantic_states={r.state_count}  semantic_changes={r.semantic_changes}")
+    print(f"  artifacts={len(r.artifacts)}  semantic_states={r.state_count}"
+          f"  semantic_changes={r.semantic_changes}")
     print()
     print(f"  {'fetched_at':<32} {'semantic':>8} {'full_B':>10} {'diff_B':>10} {'ratio':>7}")
     print(f"  {'-'*32} {'-'*8} {'-'*10} {'-'*10} {'-'*7}")
@@ -363,10 +369,13 @@ def print_listing_summary(r: ListingResult) -> None:
         ratio = ""
         if a.diff_compressed_bytes is not None and a.full_compressed_bytes:
             ratio = f"{100*a.diff_compressed_bytes/a.full_compressed_bytes:.1f}%"
-        print(f"  {str(a.fetched_at):<32} {changed:>8} {a.full_compressed_bytes:>10,} {diff_col:>10} {ratio:>7}")
+        print(f"  {str(a.fetched_at):<32} {changed:>8}"
+              f" {a.full_compressed_bytes:>10,} {diff_col:>10} {ratio:>7}")
     print()
-    print(f"  Full-store total:   {r.full_store_bytes:>12,} B  ({r.full_store_bytes/1024/1024:.2f} MiB)")
-    print(f"  Diff-store total:   {r.diffstore_bytes:>12,} B  ({r.diffstore_bytes/1024/1024:.2f} MiB)")
+    print(f"  Full-store total:   {r.full_store_bytes:>12,} B"
+          f"  ({r.full_store_bytes/1024/1024:.2f} MiB)")
+    print(f"  Diff-store total:   {r.diffstore_bytes:>12,} B"
+          f"  ({r.diffstore_bytes/1024/1024:.2f} MiB)")
     print(f"  Savings:            {r.savings_pct:.1f}%")
 
 
@@ -471,8 +480,10 @@ def print_extrapolation(results: list[ListingResult], profile: dict | None = Non
     print(f"{'='*72}")
     print(f"\nSample stats ({total_artifacts} artifacts across {len(results)} listings):")
     print(f"  avg full compressed size:          {avg_full:>10,.0f} B")
-    print(f"  avg diff size (stable state):      {avg_diff_stable:>10,.0f} B  (n={len(all_diff_stable)})")
-    print(f"  avg diff size (state changed):     {avg_diff_changed:>10,.0f} B  (n={len(all_diff_changed)})")
+    print(f"  avg diff size (stable state):      {avg_diff_stable:>10,.0f} B"
+          f"  (n={len(all_diff_stable)})")
+    print(f"  avg diff size (state changed):     {avg_diff_changed:>10,.0f} B"
+          f"  (n={len(all_diff_changed)})")
 
     if profile:
         lc  = profile["listing_count"]
@@ -489,13 +500,13 @@ def print_extrapolation(results: list[ListingResult], profile: dict | None = Non
 
         dup_rate = sd / (ta - lc) if (ta - lc) > 0 else 0
 
-        print(f"\nSilver layer profile (actual counts):")
+        print("\nSilver layer profile (actual counts):")
         print(f"  distinct listings:                 {lc:>12,}")
         print(f"  total detail artifacts:            {ta:>12,}")
         print(f"  distinct listing states:           {ts:>12,}")
         print(f"  stable diffs  (no state change):   {sd:>12,}  ({dup_rate*100:.1f}% of non-base)")
         print(f"  changed diffs (state transition):  {cd:>12,}")
-        print(f"\nStorage estimates:")
+        print("\nStorage estimates:")
         print(f"  Full-store (current):              {full_store/1024**3:>10.2f} GiB")
         print(f"  Diff-store (infinite retention):   {diffstore/1024**3:>10.2f} GiB  "
               f"({100*(full_store-diffstore)/full_store:.1f}% savings)")
@@ -512,15 +523,21 @@ def print_extrapolation(results: list[ListingResult], profile: dict | None = Non
         changed_count = SILVER_TOTAL - stable_count
         base_count    = len(results)
         full_store_total  = SILVER_TOTAL * avg_full
-        diffstore_total   = (avg_full * base_count) + (stable_count * avg_diff_stable) + (changed_count * avg_diff_changed)
-        print(f"\nSilver layer assumptions (estimated — run without --skip-profile for real counts):")
+        diffstore_total = (
+            (avg_full * base_count)
+            + (stable_count * avg_diff_stable)
+            + (changed_count * avg_diff_changed)
+        )
+        print("\nSilver layer assumptions "
+              "(estimated — run without --skip-profile for real counts):")
         print(f"  total detail artifacts:            {SILVER_TOTAL:>12,}")
         print(f"  semantic duplicate rate:           {SEMANTIC_DUP_RATE*100:.2f}%")
-        print(f"\nStorage estimates:")
+        print("\nStorage estimates:")
         print(f"  Full-store (current):              {full_store_total/1024**3:>10.2f} GiB")
         print(f"  Diff-store (infinite retention):   {diffstore_total/1024**3:>10.2f} GiB")
         if full_store_total > 0:
-            print(f"  Projected savings:                 {100*(full_store_total-diffstore_total)/full_store_total:.1f}%")
+            savings = 100 * (full_store_total - diffstore_total) / full_store_total
+            print(f"  Projected savings:                 {savings:.1f}%")
 
 
 def cleanup_scratch(fs: Any, results: list[ListingResult], bucket: str = "bronze") -> None:
@@ -539,24 +556,31 @@ def main() -> int:
     con = connect_duckdb()
     fs = get_s3fs()
 
-    print(f"Finding listings with {args.min_observations}+ detail observations (max {args.max_per_day}/day)...")
-    listings = find_listings(con, args.source_pattern, args.min_observations, args.listings, args.max_per_day)
+    print(f"Finding listings with {args.min_observations}+ detail observations"
+          f" (max {args.max_per_day}/day)...")
+    listings = find_listings(
+        con, args.source_pattern, args.min_observations, args.listings, args.max_per_day,
+    )
 
     if not listings:
         print("No listings found matching criteria.")
         return 1
 
     print(f"Found {len(listings)} listings:\n")
-    for l in listings:
-        per_day = f"{l['artifacts_per_day']:.1f}/day" if l["artifacts_per_day"] is not None else "n/a"
-        print(f"  {l['make']} {l['model']} {l['year']}  "
-              f"artifacts={l['artifact_count']}  states={l['state_count']}  "
-              f"freq={per_day}  listing_id={l['listing_id']}")
+    for listing in listings:
+        per_day = (
+            f"{listing['artifacts_per_day']:.1f}/day"
+            if listing["artifacts_per_day"] is not None else "n/a"
+        )
+        print(f"  {listing['make']} {listing['model']} {listing['year']}  "
+              f"artifacts={listing['artifact_count']}  states={listing['state_count']}  "
+              f"freq={per_day}  listing_id={listing['listing_id']}")
 
     results: list[ListingResult] = []
 
     for listing in listings:
-        print(f"\nAnalysing {listing['make']} {listing['model']} (listing_id={listing['listing_id']})...")
+        print(f"\nAnalysing {listing['make']} {listing['model']}"
+              f" (listing_id={listing['listing_id']})...")
         result = analyse_listing(con, fs, listing, args.source_pattern)
         print_listing_summary(result)
         results.append(result)
@@ -569,7 +593,9 @@ def main() -> int:
     if args.cleanup:
         cleanup_scratch(fs, results)
     else:
-        scratch_paths = [a.diff_scratch_path for r in results for a in r.artifacts if a.diff_scratch_path]
+        scratch_paths = [
+            a.diff_scratch_path for r in results for a in r.artifacts if a.diff_scratch_path
+        ]
         print(f"\nScratch diffs left in MinIO at bronze/{SCRATCH_PREFIX}/")
         print(f"({len(scratch_paths)} files). Run with --cleanup to remove.")
 

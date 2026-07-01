@@ -18,7 +18,6 @@ import sys
 import duckdb
 import zstandard as zstd
 
-
 SILVER_PATH = "s3://bronze/silver/observations/**/*.parquet"
 ARTIFACT_EVENTS_PATH = "s3://bronze/ops/artifacts_queue_events/**/*.parquet"
 
@@ -219,8 +218,11 @@ def main() -> int:
         n=args.context,
     ))
 
-    changed_lines = sum(1 for l in diff if l.startswith(("+", "-")) and not l.startswith(("+++", "---")))
-    hunks = sum(1 for l in diff if l.startswith("@@"))
+    changed_lines = sum(
+        1 for ln in diff
+        if ln.startswith(("+", "-")) and not ln.startswith(("+++", "---"))
+    )
+    hunks = sum(1 for ln in diff if ln.startswith("@@"))
 
     print(f"\nDiff summary: {changed_lines} changed lines across {hunks} hunks")
     print(f"Total lines:  A={len(lines_a):,}  B={len(lines_b):,}")

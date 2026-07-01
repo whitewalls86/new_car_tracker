@@ -26,7 +26,6 @@ from typing import Any
 
 from shared.minio import BUCKET, get_s3fs
 
-
 LOG = logging.getLogger("html_duplicate_estimator")
 
 
