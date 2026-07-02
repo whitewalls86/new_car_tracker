@@ -30,7 +30,7 @@ ACCESS   = os.environ.get("MINIO_ROOT_USER",     "cartracker")
 SECRET   = os.environ.get("MINIO_ROOT_PASSWORD", "")
 BUCKET   = os.environ.get("MINIO_BUCKET",        "bronze")
 
-ZSTD_LEVEL = 3  # fast compression; good enough for HTML
+ZSTD_LEVEL = 9  # ~8-10% smaller than level 3 (Plan 116 evidence)
 
 # ---------------------------------------------------------------------------
 # boto3 singleton client (raw object get/put)
@@ -131,6 +131,8 @@ def write_html(key: str, content: bytes) -> str:
     Compress *content* with zstd and upload to MinIO at *key*.
     Returns the full S3 URI: ``s3://<bucket>/<key>``.
     """
+    import hashlib
+
     import zstandard as zstd
 
     cctx = zstd.ZstdCompressor(level=ZSTD_LEVEL)
@@ -146,7 +148,17 @@ def write_html(key: str, content: bytes) -> str:
         ContentType="text/html",
     )
     uri = f"s3://{BUCKET}/{key}"
-    logger.debug("Uploaded %d bytes (compressed %d) → %s", len(content), len(compressed), uri)
+
+    if "/artifact_type=" in key:
+        artifact_type = key.split("/artifact_type=")[1].split("/")[0]
+    else:
+        artifact_type = "unknown"
+    logger.info(
+        "write_html: artifact_type=%s raw_bytes=%d compressed_bytes=%d "
+        "raw_sha256=%.12s minio_path=%s key=%s",
+        artifact_type, len(content), len(compressed),
+        hashlib.sha256(content).hexdigest(), uri, key,
+    )
     return uri
 
 

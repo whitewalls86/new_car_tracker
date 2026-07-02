@@ -3,6 +3,8 @@ Unit tests for shared/minio.py
 
 boto3 and zstandard are patched so no real MinIO connection is needed.
 """
+import logging
+import re
 from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
@@ -110,15 +112,58 @@ class TestWriteHtml:
         write_html("html/test.html.zst", b"data")
         mock_c.head_bucket.assert_called_once()
 
+    def test_write_html_uses_level_9(self, mocker):
+        _mock_client(mocker)
+        mock_compressor = MagicMock()
+        mock_compressor.compress.return_value = b"compressed"
+        mock_zstd_class = mocker.patch("zstandard.ZstdCompressor", return_value=mock_compressor)
+
+        from shared.minio import write_html
+        write_html("html/year=2026/month=4/artifact_type=detail_page/t.html.zst", b"content")
+
+        mock_zstd_class.assert_called_once_with(level=9)
+
+    def test_write_html_logs_metrics(self, mocker, caplog):
+        import hashlib
+
+        _mock_client(mocker)
+        key = "html/year=2026/month=4/artifact_type=detail_page/t.html.zst"
+        content = b"<html>content</html>"
+        expected_sha_prefix = hashlib.sha256(content).hexdigest()[:12]
+        from shared.minio import write_html
+
+        with caplog.at_level(logging.INFO, logger="shared.minio"):
+            write_html(key, content)
+
+        log_text = " ".join(r.getMessage() for r in caplog.records)
+        assert "artifact_type=detail_page" in log_text
+        assert "raw_bytes=" in log_text
+        assert "compressed_bytes=" in log_text
+        assert "minio_path=" in log_text
+        assert f"key={key}" in log_text
+        sha_match = re.search(r"raw_sha256=(\S+)", log_text)
+        assert sha_match is not None
+        assert sha_match.group(1) == expected_sha_prefix
+
+    def test_write_html_logs_unknown_artifact_type(self, mocker, caplog):
+        _mock_client(mocker)
+        key = "html/year=2026/month=4/no-artifact-segment/t.html.zst"
+        from shared.minio import write_html
+        with caplog.at_level(logging.INFO, logger="shared.minio"):
+            write_html(key, b"data")
+
+        log_text = " ".join(r.getMessage() for r in caplog.records)
+        assert "artifact_type=unknown" in log_text
+
 
 # ---------------------------------------------------------------------------
 # read_html
 # ---------------------------------------------------------------------------
 
 class TestReadHtml:
-    def _compressed(self, data: bytes) -> bytes:
+    def _compressed(self, data: bytes, level: int = 3) -> bytes:
         import zstandard as zstd
-        return zstd.ZstdCompressor(level=3).compress(data)
+        return zstd.ZstdCompressor(level=level).compress(data)
 
     def test_decompresses_and_returns_bytes(self, mocker):
         original = b"<html>hello world</html>"
@@ -153,6 +198,33 @@ class TestReadHtml:
         mock_c.get_object.assert_called_once_with(
             Bucket=BUCKET, Key="html/year=2026/month=4/test.html.zst"
         )
+
+    def test_read_html_roundtrip_level9(self, mocker):
+        original = b"<html>roundtrip at level 9</html>"
+        mock_c = _mock_client(mocker)
+
+        from shared.minio import read_html, write_html
+        write_html("html/year=2026/month=4/artifact_type=detail_page/r.html.zst", original)
+
+        compressed = mock_c.put_object.call_args[1]["Body"]
+        mock_body = MagicMock()
+        mock_body.read.return_value = compressed
+        mock_c.get_object.return_value = {"Body": mock_body}
+
+        result = read_html("s3://bronze/html/year=2026/month=4/artifact_type=detail_page/r.html.zst")
+        assert result == original
+
+    def test_read_html_level3_still_readable(self, mocker):
+        original = b"<html>old level-3 object</html>"
+        compressed = self._compressed(original, level=3)
+        mock_c = _mock_client(mocker)
+        mock_body = MagicMock()
+        mock_body.read.return_value = compressed
+        mock_c.get_object.return_value = {"Body": mock_body}
+
+        from shared.minio import read_html
+        result = read_html("s3://bronze/html/old.html.zst")
+        assert result == original
 
 
 # ---------------------------------------------------------------------------
