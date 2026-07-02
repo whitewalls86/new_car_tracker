@@ -1602,3 +1602,268 @@ class TestReplaceExistingTarget:
 
         assert result.status == "failed"
         assert result.replaced_files == 1  # one succeeded before the failure
+
+
+# ---------------------------------------------------------------------------
+# Group N: partition column stripping
+# ---------------------------------------------------------------------------
+
+
+def _make_table_with_partition_cols(n: int, dataset: str) -> pa.Table:
+    """Build a table that includes the Hive partition columns for the given dataset."""
+    if dataset == "silver_observations":
+        extra_fields = [
+            pa.field("source", pa.string()),
+            pa.field("obs_year", pa.int32()),
+            pa.field("obs_month", pa.int32()),
+        ]
+        extra_arrays = [
+            pa.array(["detail"] * n, type=pa.string()),
+            pa.array([2026] * n, type=pa.int32()),
+            pa.array([7] * n, type=pa.int32()),
+        ]
+    else:
+        extra_fields = [
+            pa.field("year", pa.int32()),
+            pa.field("month", pa.int32()),
+        ]
+        extra_arrays = [
+            pa.array([2026] * n, type=pa.int32()),
+            pa.array([7] * n, type=pa.int32()),
+        ]
+    base_schema = pa.schema([
+        pa.field("event_id", pa.int64()),
+        pa.field("listing_id", pa.string()),
+        pa.field("event_at", pa.timestamp("us", tz="UTC")),
+    ])
+    schema = pa.schema(list(base_schema) + extra_fields)
+    base_table = _make_table(n, schema=base_schema)
+    arrays = [base_table.column(f.name) for f in base_schema] + extra_arrays
+    return pa.table(
+        dict(zip([f.name for f in schema], arrays)),
+        schema=schema,
+    )
+
+
+def _run_apply_capture_written(unit, source_table, *, replace_existing=False, baseline_rows=None):
+    """Run _apply_unit and capture the table passed to pq.write_table."""
+    from scripts.rewrite_parquet_layout import _apply_unit
+
+    written_tables: list[pa.Table] = []
+
+    def _capture_write(t, path, **kwargs):
+        written_tables.append(t)
+
+    rows = len(source_table)
+    rg = MagicMock()
+    rg.num_rows = rows
+    meta = MagicMock()
+    meta.num_row_groups = 1
+    meta.row_group.return_value = rg
+
+    fs_mock = MagicMock()
+    fs_mock.ls.return_value = []
+
+    with (
+        patch("pyarrow.parquet.read_table", return_value=source_table),
+        patch("pyarrow.parquet.write_table", side_effect=_capture_write),
+        patch("pyarrow.parquet.read_metadata", return_value=meta),
+    ):
+        result = _apply_unit(
+            unit, fs_mock, "bronze",
+            baseline_rows=baseline_rows,
+            replace_existing=replace_existing,
+        )
+
+    return result, written_tables, fs_mock
+
+
+class TestPartitionColumnStripping:
+    """Group N: partition columns excluded from physical Parquet schema after rewrite."""
+
+    def test_silver_partition_cols_not_in_written_schema(self):
+        """source, obs_year, obs_month are not present in the written table."""
+        unit = _make_unit(dataset="silver_observations", source="detail")
+        source_table = _make_table_with_partition_cols(10, "silver_observations")
+        assert "source" in source_table.schema.names  # confirm input has them
+
+        result, written_tables, _ = _run_apply_capture_written(unit, source_table)
+
+        assert result.status == "ok"
+        assert len(written_tables) == 1
+        written_schema = written_tables[0].schema
+        for col in ("source", "obs_year", "obs_month"):
+            assert col not in written_schema.names, (
+                f"Partition column '{col}' must not appear physically in rewritten file"
+            )
+
+    def test_ops_partition_cols_not_in_written_schema(self):
+        """year, month are not present in the written table for ops datasets."""
+        unit = _make_unit(dataset="price_observation_events")
+        source_table = _make_table_with_partition_cols(10, "price_observation_events")
+        assert "year" in source_table.schema.names
+
+        result, written_tables, _ = _run_apply_capture_written(unit, source_table)
+
+        assert result.status == "ok"
+        written_schema = written_tables[0].schema
+        for col in ("year", "month"):
+            assert col not in written_schema.names, (
+                f"Partition column '{col}' must not appear physically in rewritten file"
+            )
+
+    def test_non_partition_cols_preserved(self):
+        """Business columns survive the partition-column drop."""
+        unit = _make_unit(dataset="price_observation_events")
+        source_table = _make_table_with_partition_cols(10, "price_observation_events")
+
+        _, written_tables, _ = _run_apply_capture_written(unit, source_table)
+
+        written_schema = written_tables[0].schema
+        for col in ("event_id", "listing_id", "event_at"):
+            assert col in written_schema.names
+
+    def test_row_count_preserved_after_drop(self):
+        """Row count is unchanged — dropping columns does not lose rows."""
+        unit = _make_unit(dataset="price_observation_events")
+        source_table = _make_table_with_partition_cols(17, "price_observation_events")
+
+        result, written_tables, _ = _run_apply_capture_written(unit, source_table)
+
+        assert result.rows_source == 17
+        assert len(written_tables[0]) == 17
+
+    def test_path_partition_values_still_in_target_prefix(self):
+        """Even after dropping physical columns, year/month/source are in the path."""
+        unit = _make_unit(dataset="price_observation_events", year=2026, month=7)
+        source_table = _make_table_with_partition_cols(5, "price_observation_events")
+
+        result, _, _ = _run_apply_capture_written(unit, source_table)
+
+        assert "year=2026" in result.target_prefix
+        assert "month=7" in result.target_prefix
+
+    def test_source_files_not_deleted_after_drop(self):
+        """Dropping partition columns must never trigger source file deletion."""
+        unit = _make_unit(dataset="price_observation_events")
+        source_table = _make_table_with_partition_cols(5, "price_observation_events")
+
+        _, _, fs_mock = _run_apply_capture_written(unit, source_table)
+
+        fs_mock.rm.assert_not_called()
+        fs_mock.delete_file.assert_not_called()
+
+    def test_replace_mode_still_works_after_drop(self):
+        """replace_existing=True completes successfully when partition cols are dropped."""
+        from scripts.rewrite_parquet_layout import _apply_unit
+
+        unit = _make_unit(dataset="price_observation_events")
+        source_table = _make_table_with_partition_cols(8, "price_observation_events")
+        old_path = (
+            "bronze/ops_normalized/price_observation_events"
+            "/year=2026/month=6/part-old.parquet"
+        )
+
+        written_tables: list[pa.Table] = []
+
+        def _capture_write(t, path, **kwargs):
+            written_tables.append(t)
+
+        rg = MagicMock()
+        rg.num_rows = len(source_table) - 2  # after drop, row count unchanged but fewer cols
+        # Actually row count is same as source; meta mock should reflect that
+        rg.num_rows = 8
+        meta = MagicMock()
+        meta.num_row_groups = 1
+        meta.row_group.return_value = rg
+
+        fs_mock = MagicMock()
+        fs_mock.ls.return_value = [old_path]
+
+        with (
+            patch("pyarrow.parquet.read_table", return_value=source_table),
+            patch("pyarrow.parquet.write_table", side_effect=_capture_write),
+            patch("pyarrow.parquet.read_metadata", return_value=meta),
+        ):
+            result = _apply_unit(unit, fs_mock, "bronze", replace_existing=True)
+
+        assert result.status == "ok"
+        assert result.replaced_files == 1
+        written_schema = written_tables[0].schema
+        assert "year" not in written_schema.names
+        assert "month" not in written_schema.names
+
+    def test_dry_run_no_write_for_table_with_partition_cols(self):
+        """dry-run never writes even when source table contains partition columns."""
+        from scripts.rewrite_parquet_layout import _dry_run_unit
+
+        unit = _make_unit(dataset="price_observation_events")
+        fs_mock = MagicMock()
+        fs_mock.ls.return_value = []
+
+        with (
+            patch("pyarrow.parquet.read_metadata") as mock_meta,
+            patch("pyarrow.parquet.write_table") as mock_write,
+        ):
+            mock_meta.return_value.num_row_groups = 1
+            rg = MagicMock()
+            rg.num_rows = 5
+            mock_meta.return_value.row_group.return_value = rg
+            mock_meta.return_value.schema.to_arrow_schema.return_value = pa.schema([
+                pa.field("event_id", pa.int64()),
+                pa.field("year", pa.int32()),
+                pa.field("month", pa.int32()),
+            ])
+            result = _dry_run_unit(unit, fs_mock, "bronze")
+            mock_write.assert_not_called()
+
+        assert result.status == "ok"
+
+    def test_regression_guard_still_enforced_after_drop(self):
+        """Baseline regression guard works correctly when partition cols are present."""
+        unit = _make_unit(dataset="price_observation_events")
+        source_table = _make_table_with_partition_cols(5, "price_observation_events")
+
+        result, _, fs_mock = _run_apply_capture_written(
+            unit, source_table, replace_existing=True, baseline_rows=10
+        )
+
+        assert result.status == "failed"
+        assert "regression" in (result.baseline_mismatch or "").lower()
+        fs_mock.rename.assert_not_called()
+
+    def test_no_partition_cols_in_source_leaves_table_unchanged(self):
+        """Tables that never had partition columns are written as-is (no-op drop)."""
+        from scripts.rewrite_parquet_layout import _drop_partition_cols
+
+        schema = pa.schema([
+            pa.field("event_id", pa.int64()),
+            pa.field("listing_id", pa.string()),
+        ])
+        table = _make_table(5, schema=schema)
+        result = _drop_partition_cols(table, "price_observation_events")
+
+        assert result.schema.names == ["event_id", "listing_id"]
+        assert len(result) == 5
+
+    def test_drop_partition_cols_helper_silver(self):
+        """_drop_partition_cols removes all three silver partition columns."""
+        from scripts.rewrite_parquet_layout import _drop_partition_cols
+
+        source_table = _make_table_with_partition_cols(3, "silver_observations")
+        dropped = _drop_partition_cols(source_table, "silver_observations")
+
+        for col in ("source", "obs_year", "obs_month"):
+            assert col not in dropped.schema.names
+        assert len(dropped) == 3
+
+    def test_drop_partition_cols_helper_ops(self):
+        """_drop_partition_cols removes year and month for ops datasets."""
+        from scripts.rewrite_parquet_layout import _drop_partition_cols
+
+        source_table = _make_table_with_partition_cols(3, "price_observation_events")
+        dropped = _drop_partition_cols(source_table, "price_observation_events")
+
+        assert "year" not in dropped.schema.names
+        assert "month" not in dropped.schema.names
+        assert len(dropped) == 3
