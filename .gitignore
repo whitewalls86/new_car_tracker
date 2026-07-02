@@ -18,3 +18,5 @@ ssh-key*
 docker-compose.override.yml
 scripts/provision_oracle_vm.py
 .codex-notes/
+audit*
+graphify-out/

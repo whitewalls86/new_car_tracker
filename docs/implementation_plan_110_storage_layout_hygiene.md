@@ -456,9 +456,10 @@ docker exec -it cartracker-processing python scripts/audit_parquet_layout.py \
 
 ---
 
-## Phase 4: Canonical Pre-Iceberg Layout Decision
+## Phase 4: Canonical Pre-Iceberg Layout + Flush Cadence Decision
 
-**Objective:** Define the physical layout that Iceberg will register. This decision
+**Objective:** Define the physical layout that Iceberg will register and stop
+creating unnecessary small files before dbt can expose the data. This decision
 must be written down and reviewed before Phase 5 begins any rewrites.
 
 This phase produces a layout decision record (an update to this document) — not code.
@@ -474,92 +475,100 @@ This phase produces a layout decision record (an update to this document) — no
 | detail_scrape_claim_events | `ops/detail_scrape_claim_events/year=Y/month=M/` | year, month |
 | artifacts_queue_events | `ops/artifacts_queue_events/year=Y/month=M/` | year, month |
 
-### Compaction impact analysis
+### Phase 3 audit baseline
 
-This decision is not just about path aesthetics. The existing `compact_silver.py`
-processor traverses `source=X/obs_year=Y/obs_month=M/obs_day=D/` directories
-(`_list_day_partitions`), classifies each by file types, and compacts day by day.
-The compaction strategy must be consistent with the chosen normalized layout.
-**Choosing the wrong layout forces a full rewrite of compact_silver.**
+Production audit before normalization:
 
-### Option A: Source-only flat (most Iceberg-native, highest pre-Iceberg cost)
+| Dataset | Objects | Small files | Partitions | Rows | Schema variants | Metadata failures |
+|---------|---------|-------------|------------|------|-----------------|-------------------|
+| silver_observations | 1,056 | 73.3% | 456 | 35,741,942 | 1 | 0 |
+| price_observation_events | 6,820 | 99.8% | 7 | 32,765,506 | 1 | 0 |
+| vin_to_listing_events | 6,812 | 100.0% | 7 | 3,014,947 | 1 | 0 |
+| blocked_cooldown_events | 1,145 | 100.0% | 4 | 53,816 | 1 | 0 |
+| detail_scrape_claim_events | 6,809 | 100.0% | 4 | 2,704,353 | 1 | 0 |
+| artifacts_queue_events | 6,824 | 99.9% | 7 | 12,092,159 | 1 | 0 |
 
-```
-silver_normalized/observations/
-    source={source}/
-        data-{YYYY-MM-DD}-{uuid}.parquet
-```
+Interpretation:
 
-- + Cleanest layout for Iceberg: no path-level time partitions for Iceberg to override
-- + Fewer directories, simpler object listing
-- - `compact_silver.py` cannot be retargeted — day-partition traversal logic is inapplicable.
-  Compaction must be replaced with a new strategy (e.g., compact all files per source
-  into a rolling set of sized files). This is significant extra work in Plan 110.
-- - DuckDB reads all files per source for any time-range query (no path-level pruning).
-  A dbt model filtering `fetched_at > '2026-01-01'` scans the entire detail source.
-  This is acceptable only if Iceberg is live before query load grows.
-- **Pre-Iceberg gap:** During the DuckDB/dbt period before Plan 112, this layout
-  provides no time-based pushdown. Viable only if Iceberg registration (Plan 112)
-  follows Plan 110 immediately and without delay.
+- Schema/path correctness is not the problem. Every dataset has one schema variant,
+  no unexpected paths, and no metadata read failures.
+- The problem is file cardinality. Across audited datasets there are 29,466 Parquet
+  objects, and 99.0% are small files.
+- Ops event tables are the worst offenders because frequent flushes create many
+  tiny files in a small number of monthly partitions.
 
-### Option B: Month/source partitions (middle ground)
+### Decision: Month-level normalized layout
 
-```
+```text
 silver_normalized/observations/
     source={source}/obs_year={year}/obs_month={month}/
-        compacted-{YYYY-MM}.parquet
-```
-
-- + DuckDB partition pruning on `obs_year`/`obs_month` works without Iceberg
-- + `compact_silver.py` can be adapted: change discovery to month dirs, update watermark
-  to 2 months, change compacted filename. Non-trivial but bounded changes.
-- + Monthly compaction reduces file count vs daily: ~3 files per source per month
-- - Requires meaningful changes to `compact_silver.py` (new traversal + watermark logic)
-- - Month partitions still need Iceberg to evolve away from before long-term use
-
-### Option C: Same partition depth, new root (recommended)
-
-```
-silver_normalized/observations/
-    source={source}/obs_year={year}/obs_month={month}/obs_day={day}/
-        compacted-{YYYY-MM-DD}.parquet   (or part-*.parquet pre-compaction)
+        part-{uuid}-0.parquet
+        compacted-through-{YYYY-MM-DD}.parquet
 ```
 
 For ops events:
-```
+```text
 ops_normalized/
     {table_name}/year={year}/month={month}/
         part-{uuid}-0.parquet
+        compacted-through-{YYYY-MM-DD}.parquet
 ```
 
-**This is the recommended pre-Iceberg choice.**
+Why month-level:
 
-- + `compact_silver.py`: change `_MINIO_PREFIX = "silver/observations"` to
-  `_MINIO_PREFIX = "silver_normalized/observations"` — that is the **only** change
-  needed. All traversal, watermark, classification, and compaction logic is unchanged.
-- + `flush_silver_observations.py`: change `_MINIO_PREFIX = "silver/observations"` to
-  `_MINIO_PREFIX = "silver_normalized/observations"` — **only** change needed.
-- + `flush_staging_events.py`: change each `minio_prefix` value in `_TABLE_CONFIGS`
-  from `ops/{table}` to `ops_normalized/{table}` — one line per table, no logic change.
-- + DuckDB hive partition pruning on `obs_year`/`obs_month`/`obs_day` works identically.
-- + dbt sources.yml: change globs from `silver/observations/**/*.parquet` to
-  `silver_normalized/observations/**/*.parquet` — exact same glob depth.
-- + Iceberg can register this layout as-is and evolve to month or source-only partitions
-  via partition evolution (no rewrite needed at Iceberg registration time).
-- - Does not reduce partition depth before Iceberg. Day partitions remain.
-  This is a non-issue for Plan 110: the goal is a clean, verified root before Iceberg,
-  not partition reduction.
-
-**Decision criteria to confirm from Phase 3 audit before Phase 5:**
-
-1. Confirm `silver/observations/` contains only `source=detail/`, `source=carousel/`,
-   `source=srp/` at the top level — no unexpected prefixes.
-2. Confirm ops tables have `year=`/`month=` partition structure as expected.
-3. Confirm no dbt model reads from both `silver/observations/` and any other prefix.
+- It collapses silver's day-level partition explosion while keeping useful
+  pre-Iceberg DuckDB pruning on `source`, `obs_year`, and `obs_month`.
+- Sorting by `fetched_at`/`event_at` inside files gives Parquet row group min/max
+  statistics for intra-month filters.
+- Ops tables already use year/month partitions, so this keeps ops stable while
+  fixing file count through cadence and compaction.
+- Iceberg does not make Parquet files mutable, but it later provides snapshot
+  commits, manifest-based reads, hidden partitioning, partition evolution, and
+  safer compaction over this cleaner physical base.
 
 **Separate new roots (`silver_normalized/`, `ops_normalized/`) allow dual-read
 validation:** old paths stay live for dbt while Phase 5 rewrites and Phase 6 verifies.
 Iceberg registration in Plan 112 targets only the normalized roots.
+
+### Decision: Align Parquet flush cadence with dbt visibility
+
+Current schedules:
+
+| DAG | Current cadence |
+|-----|-----------------|
+| `results_processing` | every 5 minutes |
+| `flush_silver_observations` | every 5 minutes |
+| `flush_staging_events` | every 15 minutes |
+| `dbt_build` | hourly at `:00` |
+
+Current flush cadence creates files faster than analytics usually exposes them.
+The target state is an orchestrated hourly analytics refresh:
+
+```text
+results_processing continues every 5 minutes
+
+hourly_analytics_refresh:
+    deploy_intent_sensor
+    archiver health
+    dbt_runner health
+    flush_silver_observations
+    flush_staging_events
+    dbt_build
+
+daily:
+    compact active month / closed months
+```
+
+This shifts the tradeoff from MinIO small-file churn to Postgres staging buffer
+size. That is acceptable if we add guardrails:
+
+- alert on staging row counts
+- alert on oldest unflushed staging row age
+- alert on flush failures
+- keep manual flush endpoints
+- only delete staging rows after successful Parquet writes
+- cap with "flush if oldest row > X minutes or row count > N" if hourly alone
+  proves too coarse
 
 ---
 
@@ -597,33 +606,37 @@ Other:
 #### Exact behavior
 
 1. **Default is dry-run.** `--apply` is required for any writes.
-2. Read all Parquet files from one source partition (using PyArrow — same as compact_silver).
+2. Read all Parquet files for one target rewrite unit:
+   - silver: one `source` + calendar month
+   - ops: one event table + calendar month
 3. Normalize: validate schema, drop path-derived partition columns (`obs_year`, `obs_month`,
    `obs_day`, `year`, `month`) from the file if they are redundant with the data columns
    (`fetched_at`, `event_at`). These columns stay in the data if they are in the schema;
-   do not drop them from the data — only stop using them as partition columns in the new path.
+   do not drop them from the data unless the reader contract is updated and tested. Stop
+   using `obs_day` as a path partition in the new layout.
 4. Write a single sorted file (or a small set of files for very large partitions) to the
-   normalized prefix. Filename: `data-{source_month}-{uuid}.parquet`.
+   normalized month prefix. Filename: `part-{uuid}-0.parquet` for the initial rewrite,
+   or `compacted-through-{YYYY-MM-DD}.parquet` for compaction outputs.
 5. **Verify before marking done:**
-   - Row count of rewritten file(s) == row count of source partition(s)
+   - Row count of rewritten file(s) == row count of source month(s)
    - Min/max `fetched_at` / `event_at` within ±1 second of expected range
    - Schema fingerprint matches expected normalized schema
-6. Produce a per-partition verification report (JSON).
+6. Produce a per-month verification report (JSON).
 7. **Never overwrite the old prefix.** Old paths remain untouched until Phase 7.
 8. If `--baseline-audit` is provided, cross-check rewritten row counts against
    the Phase 3 audit JSON — flag any discrepancy.
 
-#### Write sequence (per source partition)
+#### Write sequence (per source/month or table/month)
 
 Mirrors Plan 109 to prevent double-counting during any concurrent dbt read:
 
 ```
-1. Read all Parquet files from old partition into memory
-2. Sort by the same SORT_COLS as compact_silver
-3. Write to normalized_prefix/source={source}/data-{month}-{uuid}.parquet.tmp
+1. Read all Parquet files from old source/month or table/month into memory
+2. Sort by fetched_at/event_at first, then stable identifiers
+3. Write to normalized month prefix as part-{uuid}-0.parquet.tmp
    (invisible to *.parquet glob readers)
 4. Assert written rows == source rows  ← pre-rename safety check
-5. fs.rename(tmp → data-{month}-{uuid}.parquet)
+5. fs.rename(tmp → part-{uuid}-0.parquet)
 6. Append to verification report
 ```
 
@@ -681,13 +694,20 @@ still target the old prefix would immediately create a diverging dataset.
 | File | Change |
 |------|--------|
 | `archiver/processors/flush_silver_observations.py` | `_MINIO_PREFIX = "silver_normalized/observations"` |
-| `archiver/processors/compact_silver.py` | `_MINIO_PREFIX = "silver_normalized/observations"` |
+| `archiver/processors/compact_silver.py` | Retarget to `silver_normalized/observations`; compact month-level layout |
 | `archiver/processors/flush_staging_events.py` | Each `minio_prefix` in `_TABLE_CONFIGS`: `ops/{table}` → `ops_normalized/{table}` |
 | `dbt/models/sources.yml` | All silver and ops_events `external_location` globs |
+| `airflow/dags/hourly_analytics_refresh.py` | New orchestrated hourly flush + dbt DAG |
+| `airflow/dags/flush_silver_observations.py` | Unschedule or disable standalone frequent flush |
+| `airflow/dags/flush_staging_events.py` | Unschedule or disable standalone frequent flush |
+| `airflow/dags/dbt_build.py` | Unschedule hourly standalone build or keep manual-only |
 
-**Services to rebuild:** `cartracker-archiver`, `cartracker-dbt-runner`
+**Services to rebuild:** `cartracker-archiver`, `cartracker-dbt-runner`, Airflow
+scheduler/webserver images or DAG volume, depending on deploy process.
 
-**Flyway migration needed:** No.
+**Flyway migration needed:** No, unless staging observability tables/views are added
+in the same PR. Prefer Prometheus/dbt/SQL checks first and keep migrations out of the
+cutover if possible.
 
 ### Pre-cutover validation gates
 
@@ -1048,7 +1068,16 @@ exists.
 |------|--------|
 | `test_flush_silver_writes_to_normalized_prefix` | Mock s3fs; assert `root_path` contains `silver_normalized/observations` |
 | `test_compact_silver_targets_normalized_prefix` | Mock s3fs; assert `_MINIO_PREFIX` is `silver_normalized/observations` |
+| `test_compact_silver_discovers_month_partitions` | Month-level silver partitions are discovered and day-level traversal is not required |
 | `test_flush_staging_events_writes_to_normalized_prefix` | Mock s3fs; assert each table uses `ops_normalized/{table}` prefix |
+
+**Airflow DAG integrity tests** (`tests/integration/airflow/test_dag_integrity.py`):
+
+| Test | Assert |
+|------|--------|
+| `test_hourly_analytics_refresh_order` | DAG task order is `flush_silver` → `flush_staging_events` → `dbt_build` |
+| `test_standalone_flush_dags_not_scheduled_frequently` | Standalone flush DAGs are manual-only or not scheduled at 5/15 minute cadence |
+| `test_dbt_build_not_racing_flushes` | Hourly dbt build is not independently scheduled at the same time as the orchestrated refresh |
 
 **Integration test** (`tests/integration/archiver/test_storage_layout_integration.py`):
 
@@ -1166,12 +1195,14 @@ print(f'Objects remaining in old prefix: {len(remaining)}')
 | 3 | `cartracker-processing` (script run only) | No | No | No |
 | 4 | No code | No | No | No |
 | 5 | `cartracker-processing` (script run only) | No | No | No |
-| 6 | `cartracker-archiver`, `cartracker-dbt-runner` | No | No | Yes — source switch |
+| 6 | `cartracker-archiver`, `cartracker-dbt-runner`, Airflow DAG deploy | No | No | Yes — source switch + ordered refresh |
 | 7 | `cartracker-processing` (script run only) | No | No | No |
 
 Phase 6 rebuilds the archiver because `flush_silver_observations.py`,
 `compact_silver.py`, and `flush_staging_events.py` all live inside it and
-all change their target prefixes in that phase.
+all change their target prefixes in that phase. It also deploys Airflow DAG
+changes so Parquet flushes run as part of the hourly analytics refresh instead
+of independent 5/15 minute schedules.
 
 ### Monitoring during Phase 1 rollout
 
@@ -1237,9 +1268,8 @@ Safe PR/commit sequence:
 | 7 | Phase 7: `scripts/cleanup_old_parquet_layout.py` + tests | Phase 6 cutover stable for ≥7 days |
 | 8 | Phase 2 (optional): `scripts/recompress_bronze_html.py` + tests | Any time; not on critical path |
 
-Note: Phase 4 (layout decision) is resolved as part of PR 3 review — the audit
-report informs the final decision, and the chosen option (A, B, or C) must be
-recorded in this document before PR 4 begins. Option C is recommended.
+Note: Phase 4 is resolved by this document: use month-level normalized layout
+and align Parquet flushes with the hourly analytics refresh before PR 4 begins.
 
 ---
 
@@ -1251,7 +1281,7 @@ recorded in this document before PR 4 begins. Option C is recommended.
 | 2 | `tests/scripts/test_recompress_bronze_html.py` | Seed MinIO, dry-run asserts no change | Preview command on one month prefix |
 | 3 | `tests/scripts/test_audit_parquet_layout.py` | Seed MinIO, check report counts | Run against production, review Markdown report |
 | 5 | `tests/scripts/test_rewrite_parquet_layout.py` | Seed old-layout MinIO, rewrite, check rows | DuckDB row count cross-check |
-| 6 | Archiver prefix unit tests; dbt model tests | Dual-read SQL; `test_storage_layout_integration.py` | Full cutover sequence; watch archiver logs; `dbt build` passes |
+| 6 | Archiver prefix tests; Airflow ordering tests; dbt model tests | Dual-read SQL; `test_storage_layout_integration.py` | Full cutover sequence; watch archiver logs; `hourly_analytics_refresh` passes |
 | 7 | `tests/scripts/test_cleanup_old_parquet_layout.py` | `test_storage_layout_integration.py` | Dry-run candidate count reviewed before apply |
 
 All unit tests: no real MinIO required. All integration tests: require a MinIO
@@ -1261,23 +1291,22 @@ test instance (already used by existing integration tests).
 
 ## Open Questions
 
-1. **Which layout option to adopt (A, B, or C)?** Option C (same partition depth,
-   new root) is recommended because it allows `compact_silver.py` and
-   `flush_silver_observations.py` to be retargeted with a single `_MINIO_PREFIX`
-   change each. Confirm after Phase 3 audit shows no unexpected partition structure.
-   If the audit reveals an unexpected partition shape, revisit before Phase 5.
-
-2. **Do ops events need a different strategy than silver?** Current plan normalizes
-   both under new roots (Option C equivalent for ops). Confirm `price_observation_events`
-   and `artifacts_queue_events` (highest-volume tables) do not have schema variants
-   that would complicate a straight prefix-change rewrite. Audit report will answer this.
-
-3. **Memory ceiling for rewrite in cartracker-processing.** The rewrite script reads
+1. **Memory ceiling for rewrite in cartracker-processing.** The rewrite script reads
    one full partition into memory. Carousel is the largest source (~5.4 MB compacted
    per day post-Plan 109). Monthly total for carousel is ~167 MB compacted; decompressed
    is ~310 MB. If rewriting month-sized chunks, confirm the processing container's
    memory limit accommodates this. If not, use `--month` selector to rewrite one month
    at a time (which is the default guidance in Phase 5 runbook).
+
+2. **Hourly flush thresholds.** Hourly pre-dbt flush is the target, but production
+   may need a safety valve: flush early if staging rows exceed N or oldest unflushed
+   row age exceeds X minutes. Decide the initial thresholds after checking staging
+   volume during one normal dbt interval.
+
+3. **Staging observability implementation.** Minimum requirement is alerting on row
+   count, oldest unflushed row age, and flush failures. Decide whether to expose this
+   through existing Prometheus gauges, dbt freshness checks, or a small archiver/ops
+   endpoint before Phase 6 deploy.
 
 4. **Checkpoint state for Phase 2 (recompression): local JSON or MinIO object?**
    Phase 2 is deprioritized and run manually, so local JSON is sufficient. If it is

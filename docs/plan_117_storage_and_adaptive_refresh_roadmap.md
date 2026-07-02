@@ -102,7 +102,10 @@ Buys:
 - manual historical bronze recompression to bring old objects to the new
   standard
 - Parquet lake audit across silver and ops event datasets
-- canonical pre-Iceberg Parquet layout
+- canonical month-level pre-Iceberg Parquet layout
+- hourly flush-before-dbt orchestration so Parquet write cadence matches
+  analytics visibility
+- fewer small files before daily compaction even runs
 - safe rewrite and verification path
 - guarded/manual cleanup after validation
 
@@ -132,13 +135,14 @@ Does not buy:
 - ML model training
 - experiment tracking
 
-### Plan 112: Iceberg + MLflow Refresh Policy Backtesting
+### Plan 112: Lakehouse + MLflow Refresh Policy Backtesting
 
 Create the reproducible experiment layer and run policy simulations.
 
 Buys:
 
-- Iceberg snapshots for experiment inputs
+- DuckLake vs Iceberg substrate spike before committing to implementation
+- lakehouse snapshots/version IDs for experiment inputs
 - MLflow runs for params, metrics, artifacts, and snapshot IDs
 - replay of candidate refresh policies against historical timelines
 - quality gates for fetch reduction vs detection delay
@@ -166,7 +170,7 @@ Buys:
 
 Does not buy:
 
-- MLflow or Iceberg reads at claim time
+- MLflow or lakehouse reads at claim time
 - model serving
 - unguarded production throttling
 
@@ -184,7 +188,7 @@ Does not buy:
 
 - immediate production retention deletion
 - adaptive refresh
-- Iceberg/MLflow experiment tracking
+- lakehouse/MLflow experiment tracking
 
 ---
 
@@ -200,12 +204,12 @@ Plan 114 is parallel, but it should use evidence from Plan 110 and the fetch
 volume results from Plans 112-113.
 ```
 
-Plan 110 comes first because Iceberg snapshots should not be built on a messy
+Plan 110 comes first because lakehouse snapshots should not be built on a messy
 or poorly understood Parquet layout.
 
 Plan 111 can begin once the normalized source contract is clear. It does not
-need production Iceberg to define feature logic, but its outputs should be
-designed for Plan 112 snapshotting.
+need production lakehouse tables to define feature logic, but its outputs should
+be designed for Plan 112 snapshotting.
 
 Plan 112 must precede Plan 113 because production throttling needs reproducible
 evidence, not hand-tuned intuition.
@@ -219,7 +223,7 @@ evidence, not hand-tuned intuition.
 - No whole-file HTML dedup as a primary strategy.
 - No production adaptive refresh before backtesting.
 - No ML serving in production.
-- No Iceberg or MLflow calls in the hot ops claim path.
+- No lakehouse or MLflow calls in the hot ops claim path.
 - No destructive cleanup before row counts, schema checks, and query checks pass.
 
 ---
@@ -236,7 +240,7 @@ evidence, not hand-tuned intuition.
 
 ### Experiment Reproducibility
 
-- Iceberg snapshot IDs are available for backtest inputs.
+- Lakehouse snapshot/version IDs are available for backtest inputs.
 - MLflow records policy params, dataset snapshot IDs, metrics, and artifacts.
 - A backtest run can be reproduced from recorded metadata.
 

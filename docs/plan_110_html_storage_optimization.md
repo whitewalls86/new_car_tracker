@@ -185,7 +185,7 @@ without mutating MinIO.
 
 ---
 
-## Track E - Canonical Pre-Iceberg Parquet Layout
+## Track E - Canonical Pre-Iceberg Parquet Layout + Flush Cadence
 
 Define the physical layout that Iceberg will be built on.
 
@@ -193,26 +193,51 @@ The intent is to stop treating day-partitioned object paths as the long-term
 table contract. Day partitions were useful for append-only Parquet and DuckDB
 globs, but Iceberg should own partition evolution and snapshot metadata.
 
-Candidate canonical layout:
+Canonical layout:
 
 ```text
 silver_normalized/observations/
-    source=<source>/
-        data-*.parquet
+    source=<source>/obs_year=<YYYY>/obs_month=<M>/
+        part-*.parquet
+        compacted-through-<YYYY-MM-DD>.parquet
 
-ops_normalized/<event_table>/
-    data-*.parquet
+ops_normalized/<event_table>/year=<YYYY>/month=<M>/
+    part-*.parquet
+    compacted-through-<YYYY-MM-DD>.parquet
 ```
 
-The final layout decision must be written down before rewrite. The decision
-should account for:
+Rationale:
 
-- Iceberg table registration/conversion path
-- DuckDB/dbt compatibility during migration
-- expected query filters (`source`, `observed_at`, `fetched_at`, event time)
-- file size targets
-- schema evolution
-- rollback path
+- Month-level partitions reduce silver partition count without removing useful
+  DuckDB/dbt pruning during the pre-Iceberg period.
+- `source` remains a silver partition because SRP, detail, and carousel rows
+  have different query patterns and row density.
+- `fetched_at` / `event_at` ordering inside Parquet files provides row-group
+  statistics for intra-month skipping.
+- Iceberg still adds value later: snapshot commits, manifest-based file
+  tracking, partition evolution, and safer compaction.
+
+This track also changes the write cadence. Current DAGs flush silver every 5
+minutes and ops events every 15 minutes, while `dbt_build` runs hourly. That
+creates many small files before analytics can usually expose the data.
+
+Target orchestration:
+
+```text
+processing continues every 5 minutes
+hourly analytics refresh:
+    flush_silver_observations
+    flush_staging_events
+    dbt_build
+daily:
+    compact active month / closed months
+```
+
+The key tradeoff is larger Postgres staging buffers and a larger delayed-data
+window if a flush fails. Rows are not deleted from staging until Parquet writes
+succeed, so the main risk is delayed analytics visibility, not normal-case data
+loss. Add observability for staging row counts, oldest unflushed row age, and
+flush failures.
 
 ---
 
@@ -298,6 +323,8 @@ days":
 - Seed MinIO with current-layout Parquet, run layout audit, assert counts and
   schema report are correct.
 - Rewrite a small silver fixture to normalized layout and verify row counts.
+- DAG integrity verifies hourly analytics refresh runs flushes before dbt and
+  disables/unschedules frequent standalone flushes.
 - Run guarded cleanup for a test prefix, assert only that prefix is deleted.
 
 ---
@@ -310,11 +337,16 @@ days":
 | `scripts/recompress_bronze_html.py` | New manual recompression apply tool |
 | `scripts/audit_parquet_layout.py` | New read-only lake layout audit |
 | `scripts/rewrite_parquet_layout.py` | New guarded normalized-layout rewrite |
+| `airflow/dags/hourly_analytics_refresh.py` | New hourly flush-before-dbt orchestration |
+| `airflow/dags/flush_silver_observations.py` | Remove frequent standalone schedule or make manual-only |
+| `airflow/dags/flush_staging_events.py` | Remove frequent standalone schedule or make manual-only |
+| `airflow/dags/dbt_build.py` | Avoid independent hourly run racing the orchestrated refresh |
 | `archiver/processors/cleanup_parquet.py` | Guarded explicit old-layout cleanup |
 | `tests/shared/test_minio.py` | Compression and metrics coverage |
 | `tests/scripts/test_recompress_bronze_html.py` | Recompression coverage |
 | `tests/scripts/test_audit_parquet_layout.py` | Parquet audit coverage |
 | `tests/scripts/test_rewrite_parquet_layout.py` | Rewrite verification coverage |
+| `tests/integration/airflow/test_dag_integrity.py` | Hourly refresh ordering and schedule coverage |
 | `tests/archiver/test_cleanup_parquet.py` | Guarded cleanup coverage |
 | `tests/integration/archiver/test_storage_layout_integration.py` | MinIO integration coverage |
 
