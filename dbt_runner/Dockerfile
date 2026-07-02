@@ -1,7 +1,8 @@
 FROM python:3.13-slim
 
-# Install dbt-postgres and uvicorn
-RUN pip install dbt-postgres==1.8.2 dbt-duckdb==1.8.4 uvicorn --no-cache-dir
+# Keep dbt on 1.x; dbt-core 2.x alpha rejects the source meta.external_location
+# syntax used by dbt-duckdb in this project.
+RUN pip install "dbt-core<2" dbt-postgres==1.8.2 dbt-duckdb==1.8.4 uvicorn --no-cache-dir
 
 # Install additional dependencies
 COPY dbt_runner/requirements.txt .
