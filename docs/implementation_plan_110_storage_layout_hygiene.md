@@ -888,7 +888,15 @@ docker exec -it cartracker-dbt-runner dbt build
 docker exec -it cartracker-processing python -c "
 from shared.minio import get_s3fs, BUCKET
 fs = get_s3fs()
-for prefix in ['silver/observations', 'ops/price_observation_events', 'ops/vin_to_listing_events']:
+prefixes = [
+    'silver/observations',
+    'ops/price_observation_events',
+    'ops/vin_to_listing_events',
+    'ops/artifacts_queue_events',
+    'ops/detail_scrape_claim_events',
+    'ops/blocked_cooldown_events',
+]
+for prefix in prefixes:
     try:
         count = len(fs.ls(f'{BUCKET}/{prefix}', detail=False))
         print(f'{prefix}: {count} objects (should not have grown since Step 5)')
@@ -978,11 +986,11 @@ curl -sf -X POST http://localhost:8060/deploy/complete
 # Old prefix has complete data — nothing was written to normalized prefix
 ```
 
-#### After Step 10 with flushed=0
+#### After Step 10 with flushed=0 and total_flushed=0
 
-Flush ran but wrote nothing (staging was empty). Old prefix is still complete.
-Rollback procedure is identical to "before Step 10" above — nothing was written
-to `silver_normalized/` from staging.
+Both flushes ran but wrote nothing (silver staging and all ops staging tables
+were empty). Old prefixes are still complete. Rollback procedure is identical
+to "before Step 10" above — nothing was written to any normalized prefix.
 
 #### After Step 10 with flushed>0 (rows written to silver_normalized/ or ops_normalized/)
 
