@@ -63,6 +63,12 @@ _SILVER_KEY_RE = re.compile(
     r"/obs_year=(\d+)/obs_month=(\d+)/obs_day=\d+/[^/]+\.parquet$"
 )
 
+# Hive partition columns that live in the path and must be excluded from the physical
+# Parquet schema. Fresh flush files never include these physically; historical rewrites
+# must match that behaviour so all files in a partition share one schema.
+_SILVER_PARTITION_COLS: list[str] = ["source", "obs_year", "obs_month"]
+_OPS_PARTITION_COLS: list[str] = ["year", "month"]
+
 # Sort column priority per dataset; only columns actually present in the table are used.
 _SORT_COLS: dict[str, list[str]] = {
     "silver_observations":        ["fetched_at", "listing_id", "artifact_id"],
@@ -154,6 +160,21 @@ def _extract_ts_range(table: pa.Table) -> tuple[Optional[str], Optional[str]]:
         return dt.isoformat()
 
     return _iso(mn), _iso(mx)
+
+
+def _drop_partition_cols(table: pa.Table, dataset: str) -> pa.Table:
+    """Select away Hive partition columns so they live only in the path, not physically.
+
+    This makes rewritten files schema-identical to fresh flush files, which rely
+    on partition-path inference and never include these columns physically.
+    """
+    to_drop = (
+        _SILVER_PARTITION_COLS if dataset == "silver_observations" else _OPS_PARTITION_COLS
+    )
+    keep = [name for name in table.schema.names if name not in to_drop]
+    if len(keep) == len(table.schema.names):
+        return table
+    return table.select(keep)
 
 
 def _concat_sort(tables: list[pa.Table], sort_cols: list[str]) -> pa.Table:
@@ -441,6 +462,7 @@ def _apply_unit(
         return result
 
     combined = _concat_sort(tables, sort_cols)
+    combined = _drop_partition_cols(combined, unit.dataset)
     rows_source = len(combined)
     result.rows_source = rows_source
     result.schema_fingerprint = _schema_fingerprint(combined.schema)
