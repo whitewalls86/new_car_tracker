@@ -868,15 +868,32 @@ docker logs cartracker-archiver --tail 30 2>&1 | grep "flush_silver:"
 docker exec -it cartracker-dbt-runner dbt build
 # Expect: all models pass
 
-# Confirm old prefix received no new objects during this window
+# Also flush staging events — validates ops_normalized/ writer
+curl -s -X POST http://localhost:8001/flush/staging/run \
+  | python -c "import sys,json; r=json.load(sys.stdin); print(r)"
+# Expect: total_flushed=N (may be 0) error=None
+
+# Confirm ops event tables wrote to the normalized prefix (or logged nothing to write)
+docker logs cartracker-archiver --tail 50 2>&1 | grep "flush_staging:"
+# Expect any non-empty tables to log ops_normalized/<table>
+#
+# Note: same flushed=0 caveat applies — if all staging tables were empty,
+# this only proves the endpoint responds. dbt build below is the primary signal.
+
+# Run dbt build against the new source globs
+docker exec -it cartracker-dbt-runner dbt build
+# Expect: all models pass
+
+# Confirm old prefixes received no new objects during this window
 docker exec -it cartracker-processing python -c "
 from shared.minio import get_s3fs, BUCKET
 fs = get_s3fs()
-try:
-    count = len(fs.ls(f'{BUCKET}/silver/observations', detail=False))
-    print(f'Old prefix object count: {count} (should not have grown since Step 5)')
-except FileNotFoundError:
-    print('Old prefix not found — already empty or never written to')
+for prefix in ['silver/observations', 'ops/price_observation_events', 'ops/vin_to_listing_events']:
+    try:
+        count = len(fs.ls(f'{BUCKET}/{prefix}', detail=False))
+        print(f'{prefix}: {count} objects (should not have grown since Step 5)')
+    except FileNotFoundError:
+        print(f'{prefix}: not found')
 "
 ```
 
@@ -967,11 +984,13 @@ Flush ran but wrote nothing (staging was empty). Old prefix is still complete.
 Rollback procedure is identical to "before Step 10" above — nothing was written
 to `silver_normalized/` from staging.
 
-#### After Step 10 with flushed>0 (rows written to silver_normalized/)
+#### After Step 10 with flushed>0 (rows written to silver_normalized/ or ops_normalized/)
 
-**Do not revert dbt to old globs and claim the old prefix is complete.** The
-flushed rows were deleted from staging and written only to `silver_normalized/`.
-Reverting dbt to `silver/` would silently drop those rows from all queries.
+**Do not revert dbt to old globs and claim the old prefixes are complete.** Any
+rows flushed by `/flush/silver/run` or `/flush/staging/run` were deleted from
+staging and written only to `silver_normalized/` or `ops_normalized/<table>`.
+Reverting dbt to `silver/` and `ops/` would silently drop those rows from all
+queries.
 
 **Option A — Roll forward (preferred if the problem is isolated):**
 
@@ -996,14 +1015,15 @@ a future `--from-prefix / --to-prefix / --delta-since` mode that does not
 exist yet.
 
 Steps at a conceptual level:
-1. Identify all Parquet files written to `silver_normalized/observations/`
-   after Step 5's final compact (use the Step 5 log timestamp as the lower
-   bound on object `LastModified`).
-2. Read those files with DuckDB or PyArrow, repartition into the old
-   `source=X/obs_year=Y/obs_month=M/obs_day=D/` layout, and write to
-   `silver/observations/`.
-3. Verify row counts in `silver/observations/` match pre-cutover baseline
-   plus the delta row count from the flush log.
+1. Identify all Parquet files written to `silver_normalized/observations/` and
+   each `ops_normalized/<table>/` after Step 5's final compact (use the Step 5
+   log timestamp as the lower bound on object `LastModified`).
+2. For each dataset, read the delta files with DuckDB or PyArrow, repartition
+   into the old layout, and write back: silver → `silver/observations/` with
+   `source=X/obs_year=Y/obs_month=M/obs_day=D/` partitioning; ops tables →
+   `ops/<table>/` with their original partition scheme.
+3. Verify row counts for each dataset match the pre-cutover baseline plus the
+   delta row count from the flush logs.
 4. Only after verification, revert archiver and dbt, rebuild, re-enable DAGs,
    and release deploy intent.
 
