@@ -26,7 +26,7 @@ Airflow owns all scraping and maintenance. n8n is fully removed. dbt runs on Duc
 |------|-------|--------|
 | [110](plan_110_html_storage_optimization.md) | Storage layout hygiene + Iceberg readiness | Draft — see [implementation plan](implementation_plan_110_storage_layout_hygiene.md) |
 | [111](plan_111_adaptive_detail_refresh.md) | Adaptive refresh feature foundation | Draft |
-| [112](plan_112_refresh_policy_backtesting.md) | Iceberg + MLflow refresh policy backtesting | Draft |
+| [112](plan_112_refresh_policy_backtesting.md) | Lakehouse + MLflow refresh policy backtesting | Draft |
 | [113](plan_113_production_adaptive_refresh.md) | Production adaptive refresh integration | Draft |
 | [114](plan_114_sectioned_html_artifact_audit.md) | Sectioned HTML artifact audit | Draft |
 | [115](plan_115_detail_unenriched_circuit_breaker.md) | Detail unenriched circuit breaker | Draft |
@@ -54,9 +54,10 @@ Airflow owns all scraping and maintenance. n8n is fully removed. dbt runs on Duc
 **Plan 79 whenever needed** — IP flagging not currently active. Prerequisites all exist. Provision Oracle Cloud VMs and fan out the DAG when needed.
 
 **Plans 110-113 storage/experiment sequence** — Plan 110 normalizes bronze HTML
-and silver/ops Parquet layout before Iceberg. Plan 111 builds listing-state and
-volatility feature models against that cleaned substrate. Plan 112 adds Iceberg
-snapshotting and MLflow tracking so refresh-policy backtests are reproducible.
+and silver/ops Parquet layout before the lakehouse layer. Plan 111 builds
+listing-state and volatility feature models against that cleaned substrate. Plan
+112 adds a DuckLake-vs-Iceberg spike, then lakehouse snapshotting and MLflow
+tracking so refresh-policy backtests are reproducible.
 Plan 113 deploys only an approved, pinned policy config into ops claim logic.
 Plan 117 is the umbrella context for this sequence and should be read before
 implementing any of Plans 110-114.

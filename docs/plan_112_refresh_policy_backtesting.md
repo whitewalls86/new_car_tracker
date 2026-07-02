@@ -1,4 +1,4 @@
-# Plan 112: Iceberg + MLflow Refresh Policy Backtesting
+# Plan 112: Lakehouse + MLflow Refresh Policy Backtesting
 
 ## Goal
 
@@ -7,8 +7,8 @@ simulate candidate refresh policies against historical listing timelines.
 
 This plan combines:
 
-1. Apache Iceberg snapshots over the cleaned/normalized Parquet lake from Plan
-   110.
+1. A snapshot-capable lakehouse table layer over the cleaned/normalized Parquet
+   lake from Plan 110.
 2. MLflow tracking for policy parameters, dataset versions, metrics, and
    artifacts.
 3. Backtest replay logic that quantifies the tradeoff between fetch volume
@@ -20,7 +20,8 @@ Do not change production scraping in this plan.
 
 ## Context
 
-Plan 110 normalizes storage layout and prepares silver/ops Parquet for Iceberg.
+Plan 110 normalizes storage layout and prepares silver/ops Parquet for a
+snapshot-capable lakehouse table layer.
 Plan 111 builds listing state fingerprints, state runs, volatility features, and
 rule-based refresh priority outputs.
 
@@ -34,8 +35,8 @@ Before wiring that score into production ops, we need to know:
 - Does the policy reduce likely 403/block pressure?
 - Can a run be reproduced later from the same data snapshot?
 
-Iceberg answers the dataset-version question. MLflow answers the experiment
-tracking question.
+The lakehouse table layer answers the dataset-version question. MLflow answers
+the experiment tracking question.
 
 ---
 
@@ -45,7 +46,7 @@ tracking question.
 Plan 110 normalized Parquet
         |
         v
-Iceberg tables / snapshots
+Lakehouse tables / snapshots
         |
         v
 Plan 111 feature models
@@ -55,7 +56,7 @@ Backtest replay script/dbt models
         |
         v
 MLflow run:
-  params + metrics + artifacts + Iceberg snapshot IDs
+  params + metrics + artifacts + lakehouse snapshot/version IDs
 ```
 
 The first policy remains rule-based and interpretable. ML model training is
@@ -63,9 +64,79 @@ still deferred until the target, labels, and quality gates are proven.
 
 ---
 
-## Iceberg Substrate
+## Lakehouse Substrate Decision
 
-Register or create Iceberg tables for the datasets needed by refresh
+Before implementing the table layer, run a short research spike to decide
+between DuckLake and Apache Iceberg. The plan originally assumed Iceberg, but
+DuckLake may be a better operational fit for this project because the current
+stack is already DuckDB, Postgres, MinIO, and dbt-oriented. Iceberg may still be
+the better portfolio and ecosystem choice because it is more widely recognized
+across lakehouse, data platform, Spark, Trino, and cloud warehouse roles.
+
+### Substrate Research Spike
+
+Evaluate both candidates against the same small normalized dataset from Plan
+110. This spike should happen before committing to Iceberg-specific
+implementation.
+
+Candidate A: DuckLake
+
+- DuckDB-native table format.
+- Metadata stored in a SQL catalog, preferably Postgres for this deployment.
+- Natural fit for local DuckDB/dbt workflows.
+- Snapshot and time-travel support should satisfy the backtest reproducibility
+  requirement if it works cleanly with the current runtime.
+
+Candidate B: Apache Iceberg
+
+- Broader ecosystem and hiring-market recognition.
+- Stronger fit if future work needs Spark, Trino, Flink, Snowflake, BigQuery,
+  Databricks-adjacent tooling, or a more standard lakehouse story.
+- More likely to be recognized as a portfolio signal for data platform roles.
+
+Run the spike in an isolated object-store prefix and catalog namespace. Do not
+register production prefixes in a way that gives the experimental table layer
+permission to compact, expire, or delete existing files.
+
+Required checks:
+
+1. Create or register a small table from normalized Plan 110 Parquet.
+2. Query it from the same DuckDB/dbt-runner environment used by this project.
+3. Capture snapshot/version metadata.
+4. Time-travel to a prior snapshot/version.
+5. Record the snapshot/version ID in an MLflow test run.
+6. Validate repeated reads return stable row counts.
+7. Verify MinIO path ownership and cleanup behavior are understood.
+8. Verify rollback is simple: dropping the test catalog/table does not affect
+   source Parquet.
+9. Document operational complexity: services, credentials, deployment changes,
+   backup/restore needs, and failure modes.
+10. Score portfolio value separately from operational fit.
+
+Decision criteria:
+
+| Criterion | DuckLake question | Iceberg question |
+|-----------|-------------------|------------------|
+| DuckDB/dbt fit | Can current jobs read/write it directly? | Is read/write practical without adding too much machinery? |
+| Snapshot fidelity | Are version IDs stable and easy to log? | Are snapshot IDs stable and easy to log? |
+| MinIO safety | Can we avoid accidental ownership of old files? | Can we avoid accidental ownership of old files? |
+| Ops burden | Does Postgres catalog setup stay simple? | Does catalog setup stay simple enough for one server? |
+| Backtest reproducibility | Can MLflow reproduce a run from recorded metadata? | Can MLflow reproduce a run from recorded metadata? |
+| Portfolio value | Does it tell a differentiated but legible story? | Does it tell a broadly recognized lakehouse story? |
+
+Expected output: a short markdown decision note committed with this plan's
+implementation docs, including the selected substrate and rejected alternative.
+
+If both candidates pass technically and Iceberg is only moderately harder,
+prefer Iceberg for portfolio value. If Iceberg requires disproportionate
+infrastructure or introduces fragile deployment work, prefer DuckLake and keep
+the project moving.
+
+---
+
+## Lakehouse Substrate
+
+Register or create lakehouse tables for the datasets needed by refresh
 experiments:
 
 | Logical table | Source |
@@ -82,17 +153,18 @@ experiments:
 For each backtest run, record:
 
 - table name
-- snapshot ID
+- snapshot/version ID
 - snapshot timestamp
 - row count
 - input window start/end
 - source code commit SHA
 
-### Local Catalog Choice
+### Catalog Choice
 
-Use the simplest catalog that works on the current single-server setup.
-Candidates:
+Use the simplest catalog that works on the current single-server setup. The
+research spike determines the exact choice. Candidates:
 
+- DuckLake with a Postgres catalog and MinIO data files.
 - DuckDB Iceberg extension if it supports the required read/write pattern.
 - PyIceberg with a local/sql catalog and MinIO object storage.
 - A minimal file/catalog approach if full service deployment is unnecessary for
@@ -133,9 +205,10 @@ Each run logs:
 
 | Tag | Description |
 |-----|-------------|
-| `iceberg.silver_observations.snapshot_id` | Source observation snapshot |
-| `iceberg.listing_state_runs.snapshot_id` | State-run snapshot |
-| `iceberg.detail_refresh_priority.snapshot_id` | Feature/score snapshot |
+| `lakehouse.substrate` | Selected substrate, e.g. `ducklake` or `iceberg` |
+| `lakehouse.silver_observations.snapshot_id` | Source observation snapshot/version |
+| `lakehouse.listing_state_runs.snapshot_id` | State-run snapshot/version |
+| `lakehouse.detail_refresh_priority.snapshot_id` | Feature/score snapshot/version |
 | `dataset.row_count` | Input row count used for replay |
 
 ### Metrics
@@ -164,9 +237,9 @@ Each run logs:
 
 ## Inputs
 
-- Iceberg snapshot of `int_listing_state_runs` from Plan 111: ground truth
+- Lakehouse snapshot of `int_listing_state_runs` from Plan 111: ground truth
   state-change timeline.
-- Iceberg snapshot of `mart_detail_refresh_priority` from Plan 111: policy
+- Lakehouse snapshot of `mart_detail_refresh_priority` from Plan 111: policy
   scoring output.
 - Candidate policy parameters varied per run.
 
@@ -185,10 +258,10 @@ For each listing:
 4. Compute per-listing detection delay for any changes that were delayed.
 5. Aggregate skipped fetches, delayed changes, and missed active windows.
 
-The replay must pin all inputs to Iceberg snapshot IDs and record those IDs in
-MLflow. If Iceberg setup is not complete, the runner may support a temporary
-fixed-window fallback, but that fallback is not sufficient for approving a
-production policy.
+The replay must pin all inputs to lakehouse snapshot/version IDs and record
+those IDs in MLflow. If lakehouse setup is not complete, the runner may support
+a temporary fixed-window fallback, but that fallback is not sufficient for
+approving a production policy.
 
 ---
 
@@ -218,7 +291,7 @@ One row per policy run with aggregate outcome metrics.
 |--------|-------------|
 | `policy_run_id` | Policy run identifier |
 | `mlflow_run_id` | MLflow run identifier |
-| `input_snapshot_id` | Primary Iceberg snapshot ID or manifest reference |
+| `input_snapshot_id` | Primary lakehouse snapshot/version ID or manifest reference |
 | `fetches_total` | Baseline fetch count |
 | `fetches_skipped` | Fetches policy would skip |
 | `fetches_skipped_pct` | Skip rate |
@@ -236,8 +309,8 @@ One row per policy run with aggregate outcome metrics.
 Log one MLflow run with `would_fetch = true` for all points. Every candidate
 policy is compared to this baseline.
 
-The baseline run should still log Iceberg snapshot IDs so future candidate runs
-can prove they used comparable inputs.
+The baseline run should still log lakehouse snapshot/version IDs so future
+candidate runs can prove they used comparable inputs.
 
 ---
 
@@ -263,11 +336,11 @@ only after the replay is stable and needs scheduled repetition.
 
 Eventual `backtest_refresh_policy` DAG:
 
-1. Ensure required Iceberg tables/snapshots exist.
+1. Ensure required lakehouse tables/snapshots exist.
 2. Read policy parameter grid from config.
 3. For each candidate policy, start an MLflow run.
 4. Materialize `mart_backtest_policy_summary`.
-5. Log params, metrics, Iceberg snapshot IDs, and artifacts.
+5. Log params, metrics, lakehouse snapshot/version IDs, and artifacts.
 6. Log the best run ID by skip rate subject to quality gates.
 
 ---
@@ -293,12 +366,14 @@ Eventual `backtest_refresh_policy` DAG:
 
 ### Integration Tests
 
-- Iceberg table registration reads a small normalized Parquet fixture.
+- The selected lakehouse substrate reads a small normalized Parquet fixture.
 - Snapshot metadata is captured for a fixed input table.
 - Artifacts are written to the configured output path and retrievable.
 - Repeated runs against the same snapshot produce stable row counts.
 - Baseline and candidate runs are comparable by `policy_run_id`.
 - MLflow run can be queried by run ID and contains expected metrics/artifacts.
+- Substrate research spike proves table cleanup/drop does not mutate source
+  Plan 110 Parquet.
 
 ---
 
@@ -306,15 +381,16 @@ Eventual `backtest_refresh_policy` DAG:
 
 | File | Change |
 |------|--------|
-| `scripts/register_iceberg_tables.py` | New Iceberg registration/setup helper |
-| `scripts/backtest_refresh_policy.py` | New local/DuckDB/Iceberg runner |
+| `docs/lakehouse_substrate_decision.md` | New DuckLake vs Iceberg spike result |
+| `scripts/register_lakehouse_tables.py` | New selected-substrate registration/setup helper |
+| `scripts/backtest_refresh_policy.py` | New local/DuckDB/lakehouse runner |
 | `dbt/models/intermediate/int_backtest_policy_decisions.sql` | New |
 | `dbt/models/marts/mart_backtest_policy_summary.sql` | New |
 | `mlflow/` or config file | Optional MLflow server/config wiring |
 | `airflow/dags/backtest_refresh_policy.py` | Optional later DAG |
 | `tests/test_backtest_replay.py` | Replay algorithm unit tests |
 | `tests/integration/test_refresh_backtest_outputs.py` | Output artifact integration tests |
-| `tests/integration/test_iceberg_refresh_snapshots.py` | Iceberg snapshot tests |
+| `tests/integration/test_lakehouse_refresh_snapshots.py` | Lakehouse snapshot tests |
 | `tests/integration/test_mlflow_refresh_runs.py` | MLflow tracking tests |
 
 ---
@@ -324,6 +400,6 @@ Eventual `backtest_refresh_policy` DAG:
 - Production ops integration. See Plan 113.
 - Online ML model serving.
 - MLflow model registry promotion.
-- Automatic Iceberg maintenance/compaction beyond what is needed for the first
-  backtest substrate.
+- Automatic lakehouse maintenance/compaction beyond what is needed for the
+  first backtest substrate.
 - Exact raw HTML dedup. See Plan 110 and Plan 114.
