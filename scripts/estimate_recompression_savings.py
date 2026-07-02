@@ -109,22 +109,19 @@ def discover_months_for_year(
     return sorted(months)
 
 
-def iter_prefix(fs, bucket: str, prefix: str) -> Iterator[ObjectInfo]:
-    """Yield ObjectInfo for every .html.zst file under prefix."""
-    full_prefix = f"{bucket}/{prefix}" if not prefix.startswith(bucket + "/") else prefix
-    try:
-        entries = fs.ls(full_prefix, detail=True)
-    except FileNotFoundError:
-        return
-    for entry in entries:
-        if entry.get("type") == "directory":
-            continue
-        path = str(entry.get("name", ""))
-        if not path.endswith(".html.zst"):
-            continue
-        size = int(entry.get("size") or entry.get("Size") or 0)
-        bare_key = path[len(bucket) + 1:] if path.startswith(bucket + "/") else path
-        yield ObjectInfo(key=bare_key, size=size)
+def iter_prefix(client, bucket: str, prefix: str) -> Iterator[ObjectInfo]:
+    """Yield ObjectInfo for every .html.zst file under prefix.
+
+    Uses the boto3 list_objects_v2 paginator so results stream in 1 000-object
+    pages rather than blocking until every key in the prefix is buffered.
+    """
+    paginator = client.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+        for entry in page.get("Contents", []):
+            key = entry["Key"]
+            if not key.endswith(".html.zst"):
+                continue
+            yield ObjectInfo(key=key, size=entry["Size"])
 
 
 # ── Sampling ─────────────────────────────────────────────────────────────────
@@ -395,7 +392,7 @@ def main() -> int:
         prefix_listed_bytes = 0
         prefix_listed_count = 0
 
-        for obj in iter_prefix(fs, args.bucket, prefix):
+        for obj in iter_prefix(client, args.bucket, prefix):
             stats.listed_bytes += obj.size
             prefix_listed_bytes += obj.size
             prefix_listed_count += 1

@@ -12,16 +12,23 @@ Do not change production scraping in this plan.
 
 ## Context
 
-Plan 110 showed:
+Plan 110/116 showed:
 
 - 5,804,559 detail artifacts in silver.
 - 4,999,689 were semantically duplicate by parsed-state fingerprint.
 - Semantic duplicate rate: 86.13%.
 - Whole-file raw HTML hashes still differed.
+- Level-9 recompression saves a consistent but moderate 8-10%, so compression
+  is useful hygiene but not the main storage lever.
 
 The most valuable near-term lever is deciding which listings deserve frequent
 detail refresh. This plan creates the feature layer needed to answer that
 question from historical data.
+
+Plan 110 now also owns storage layout hygiene and Parquet normalization before
+Iceberg. This plan should build feature logic in a way that can run against
+the normalized lake and later be pinned to Iceberg snapshots for reproducible
+backtests.
 
 ---
 
@@ -39,9 +46,15 @@ the target, labels, and quality gates have been proven by backtesting.
 
 ## Scope
 
-Build dbt models only. Keep the first implementation on existing silver Parquet
-and DuckDB reads. Apache Iceberg and ML are explicitly deferred so they do not
-block the first backtest.
+Build dbt models only. Do not change production scraping in this plan.
+
+The models may initially run through DuckDB/dbt, but they should be written as
+stable dataset definitions that Plan 112 can snapshot and track through
+Iceberg + MLflow. Avoid hard-coding assumptions about day-partitioned object
+paths into model logic.
+
+This plan does not stand up Iceberg or MLflow; it produces the feature tables
+that those tools will version and evaluate in Plan 112.
 
 ---
 
@@ -85,6 +98,11 @@ block the first backtest.
 ---
 
 ## Models
+
+All models should read from the canonical/normalized silver source once Plan
+110 has created it. During transition, DuckDB sources may still point at the
+current `silver/observations/**/*.parquet` glob, but the model semantics should
+not depend on that physical layout.
 
 ### `int_listing_state_fingerprints`
 
@@ -209,17 +227,17 @@ Thresholds must be tuned from Plan 112 backtest results.
 
 ---
 
-## Deferred Work
+## Iceberg / MLflow Boundary
 
-### Iceberg
+Plan 111 defines features. Plan 112 provides reproducibility.
 
-Iceberg may be useful later for snapshot isolation and table maintenance, but it
-is not required to build the first historical feature tables. The first backtest
-can replay timelines from existing silver Parquet using `fetched_at` ordering.
+This plan should output stable tables that can be:
 
-### ML
+- registered or snapshotted as Iceberg tables
+- referenced by snapshot ID in backtest metadata
+- logged as MLflow dataset inputs/artifacts
 
-The first scoring model should be rule-based and interpretable. ML can follow
+The first scoring model remains rule-based and interpretable. ML can follow
 after Plan 112 proves the objective, labels, and quality gates.
 
 ---
@@ -237,24 +255,31 @@ after Plan 112 proves the objective, labels, and quality gates.
 
 ### Integration Tests
 
-- dbt model selection builds the four refresh models from existing silver data.
-- Row counts are stable across repeated runs on a fixed input snapshot.
+- dbt model selection builds the four refresh models from normalized silver
+  data, or from the current silver glob during the migration window.
+- Row counts are stable across repeated runs on a fixed input snapshot/window.
+- Model output includes enough metadata for Plan 112 to link a backtest run to
+  the input window or eventual Iceberg snapshot.
 
 ---
 
 ## Rollout
 
-1. Build `int_listing_state_fingerprints`.
-2. Build `int_listing_state_runs`.
-3. Build `int_listing_volatility_features`.
-4. Build `mart_detail_refresh_priority`.
-5. Run dbt tests and hand off to Plan 112.
+1. Confirm Plan 110 has either normalized silver Parquet or documented the
+   current transition source.
+2. Build `int_listing_state_fingerprints`.
+3. Build `int_listing_state_runs`.
+4. Build `int_listing_volatility_features`.
+5. Build `mart_detail_refresh_priority`.
+6. Run dbt tests and hand off to Plan 112 for Iceberg/MLflow-backed backtests.
 
 ---
 
 ## Out of Scope
 
 - Backtest policy simulation. See Plan 112.
+- Iceberg table registration and snapshot tracking. See Plan 112.
+- MLflow experiment tracking. See Plan 112.
 - Production ops integration. See Plan 113.
 - Sectioned/recomposable HTML storage. See Plan 114.
 - Replacing Airflow scheduling.

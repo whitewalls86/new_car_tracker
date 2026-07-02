@@ -1,18 +1,19 @@
-# Plan 110: HTML Storage Baseline + Safe Hygiene
+# Plan 110: Storage Layout Hygiene + Iceberg Readiness
 
 ## Goal
 
-Stabilize raw HTML storage growth without reducing the retention window yet.
+Normalize the storage layer before adaptive-refresh experiments depend on it.
 
-Plan 114 may let us keep raw-page auditability for much longer by replacing
-eligible full HTML objects with verified section manifests. Until that is
-tested, this plan should avoid a hard 30-day deletion policy.
+This plan is no longer just "make HTML smaller." Plan 116 showed that zstd
+level 9 saves a consistent but moderate 8-10% on existing bronze HTML. That is
+worth doing as hygiene, but the larger goal is to make the object store clean
+enough to support Apache Iceberg snapshots and MLflow-tracked refresh-policy
+experiments in Plans 111-112.
 
-This plan does three conservative things:
+This plan has two independent cleanup tracks:
 
-1. Improve compression for newly written HTML.
-2. Add observability for raw HTML storage cost.
-3. Repair cleanup plumbing only enough to support manual/emergency deletion.
+1. Bring bronze HTML forward to the new compression/observability standard.
+2. Audit and normalize silver/ops Parquet layout before Iceberg is introduced.
 
 It does **not** introduce automatic 30-day raw HTML expiry.
 
@@ -65,9 +66,26 @@ Follow-up diffs showed unchanged listings with only small volatile regions:
 This means whole-file dedup is the wrong first storage optimization, but
 section-level reuse may still be valuable. Plan 114 tests that.
 
+### Plan 116 Recompression Evidence
+
+Plan 116 sampled existing bronze HTML and recompressed in memory from the
+current zstd level to level 9:
+
+| Prefix | Savings |
+|--------|---------|
+| detail_page, June | 8.1% |
+| results_page, June | 9.4% |
+| detail_page, May | 8.0% |
+
+All sampled runs completed with 0 failures.
+
+Decision: level 9 is worth adopting as the new write standard. Historical
+recompression is also reasonable as a bounded normalization step, not as the
+primary storage strategy.
+
 ---
 
-## Track A - Bump Compression Level
+## Track A - New Bronze HTML Write Standard
 
 **File:** `shared/minio.py`
 
@@ -79,8 +97,9 @@ ZSTD_LEVEL = 3
 ZSTD_LEVEL = 9
 ```
 
-Expected gain: 15-25% further size reduction on new HTML writes. Existing
-objects remain readable because zstd frames are self-describing.
+Expected gain: 8-10% further size reduction on new HTML writes based on Plan
+116 production samples. Existing objects remain readable because zstd frames
+are self-describing.
 
 **Tradeoff:** Compression happens in the scraper fetch path. Level 9 is slower
 than level 3, but HTML objects are small relative to network fetch time. Watch
@@ -88,36 +107,142 @@ scraper throughput after rollout.
 
 ---
 
-## Track B - Storage Observability
+## Track B - Bronze HTML Write Observability
 
 Add lightweight metrics at HTML write time so future storage decisions do not
 require expensive retrospective MinIO scans.
 
-Suggested fields to emit as a staging event or structured log:
+Suggested fields to emit as structured logs:
 
 | Field | Purpose |
 |-------|---------|
 | `artifact_type` | Separate `detail_page` and `results_page` behavior |
-| `listing_id` | Detail-page grouping key |
 | `raw_bytes` | Pre-compression size |
 | `compressed_bytes` | Actual storage cost |
 | `raw_sha256` | Whole-file duplicate measurement |
 | `minio_path` | Traceability |
-| `fetched_at` | Time-window analysis |
-| `http_status` | Separate successful pages from blocks/interstitials |
+| `key` | Bare object key |
 
-Prefer append-only events or metrics logs. Do not add a permanent dedup index
-until Plan 114 proves a storage strategy worth indexing.
+Do not add a permanent dedup index until Plan 114 proves a storage strategy
+worth indexing.
 
 ---
 
-## Track C - Cleanup Plumbing, Not Automatic Retention
+## Track C - Historical Bronze HTML Recompression
 
-`cleanup_artifacts` may continue calling `/cleanup/parquet/run` for
-compatibility, but the implementation should not automatically delete raw HTML
-on a 30-day window yet.
+Add a manual operator script that recompresses existing `.html.zst` objects to
+the new level-9 standard.
 
-Instead, implement cleanup as a guarded operation:
+This is explicitly **not** an Airflow job and not automatic retention cleanup.
+It is a one-object-at-a-time normalization tool.
+
+Required behavior:
+
+1. Default to dry-run.
+2. Accept explicit selectors: `--prefix` or `--year --month --artifact-type`.
+3. Support `--limit`, `--max-bytes`, `--progress-every`, `--checkpoint`, and
+   `--json-out`.
+4. Download, decompress, recompress, and compare in memory.
+5. In apply mode, overwrite only when the recompressed bytes are smaller unless
+   `--force` is supplied.
+6. Never delete objects.
+7. Log progress and final totals: scanned, recompressed, skipped, failed, old
+   bytes, new bytes, saved bytes, saved percent.
+8. Keep a failure list and continue on corrupt/unreadable objects.
+9. Be safe to interrupt; every object is rewritten independently.
+
+Plan 116's estimate script remains the measurement tool. This track is the
+apply tool.
+
+---
+
+## Track D - Parquet Lake Layout Audit
+
+Before Iceberg is introduced, inventory the current MinIO Parquet layout:
+
+| Dataset | Current area |
+|---------|--------------|
+| Silver observations | `silver/observations/**` |
+| Price observation events | `ops/price_observation_events/**` |
+| VIN mapping events | `ops/vin_to_listing_events/**` |
+| Blocked cooldown events | `ops/blocked_cooldown_events/**` |
+| Detail claim events | `ops/detail_scrape_claim_events/**` |
+| Artifacts queue events | `ops/artifacts_queue_events/**` |
+
+For each dataset, report:
+
+- partition columns present in paths
+- object count
+- total bytes
+- small-file distribution
+- schema variants
+- row counts
+- minimum and maximum event/observation timestamps
+- legacy or unexpected prefixes
+
+This audit should produce a JSON/Markdown report and should be safe to run
+without mutating MinIO.
+
+---
+
+## Track E - Canonical Pre-Iceberg Parquet Layout
+
+Define the physical layout that Iceberg will be built on.
+
+The intent is to stop treating day-partitioned object paths as the long-term
+table contract. Day partitions were useful for append-only Parquet and DuckDB
+globs, but Iceberg should own partition evolution and snapshot metadata.
+
+Candidate canonical layout:
+
+```text
+silver_normalized/observations/
+    source=<source>/
+        data-*.parquet
+
+ops_normalized/<event_table>/
+    data-*.parquet
+```
+
+The final layout decision must be written down before rewrite. The decision
+should account for:
+
+- Iceberg table registration/conversion path
+- DuckDB/dbt compatibility during migration
+- expected query filters (`source`, `observed_at`, `fetched_at`, event time)
+- file size targets
+- schema evolution
+- rollback path
+
+---
+
+## Track F - Safe Parquet Rewrite + Verification
+
+Rewrite existing silver/ops Parquet into the canonical layout without deleting
+the original layout initially.
+
+Required sequence:
+
+1. Read source dataset from the current layout.
+2. Normalize schema and partition columns.
+3. Write to a new normalized prefix.
+4. Verify row counts by dataset/source/month.
+5. Verify timestamp min/max by dataset/source/month.
+6. Verify schema compatibility.
+7. Run representative DuckDB/dbt reads against the normalized prefix.
+8. Only after validation, update dbt sources or Iceberg registration to the new
+   location.
+9. Keep old layout until a manual cleanup decision is made.
+
+This track should reuse the safety lessons from Plan 109 silver compaction:
+write to new paths first, verify before switching readers, and avoid any window
+where readers can double-count.
+
+---
+
+## Track G - Guarded Cleanup, Not Automatic Retention
+
+After Track F verifies normalized Parquet, add guarded cleanup for old layouts:
 
 1. Support explicitly supplied MinIO prefixes or object keys.
 2. Report candidate object count and bytes before deletion.
@@ -125,8 +250,8 @@ Instead, implement cleanup as a guarded operation:
 4. Treat missing objects as already deleted.
 5. Report `total`, `deleted`, `failed`, and bytes affected.
 
-This gives us operational safety if storage pressure becomes urgent, while
-preserving data for the Plan 114 section-level audit.
+This is for operator-controlled cleanup only. Do not introduce automatic raw
+HTML expiry or automatic old-layout deletion.
 
 ---
 
@@ -155,16 +280,25 @@ days":
 
 - `write_html` uses the new zstd level and still returns `s3://bucket/key`.
 - Storage metrics include raw bytes, compressed bytes, artifact type, and path.
-- Cleanup dry-run returns candidate counts without deleting objects.
+- Recompression dry-run never calls write/delete APIs.
+- Recompression apply overwrites only smaller recompressed objects.
+- Recompression checkpoint/resume skips completed keys.
+- Parquet layout audit reports files, bytes, schemas, and row counts.
+- Guarded cleanup dry-run returns candidate counts without deleting objects.
 - Explicit cleanup deletes supplied keys/prefixes only when deletion is enabled.
 - Missing objects are treated as already deleted.
 - MinIO delete failures are reported without hiding partial failure.
 
 ### Integration Tests
 
-- Seed MinIO with HTML objects, run dry-run cleanup, assert no objects deleted.
-- Run explicit cleanup for a test prefix, assert only that prefix is deleted.
-- Verify cleanup response includes object counts, bytes, deleted, and failed.
+- Seed MinIO with HTML objects, run recompression dry-run, assert no objects
+  changed.
+- Run recompression apply for a test prefix, assert objects remain readable and
+  only smaller objects were rewritten.
+- Seed MinIO with current-layout Parquet, run layout audit, assert counts and
+  schema report are correct.
+- Rewrite a small silver fixture to normalized layout and verify row counts.
+- Run guarded cleanup for a test prefix, assert only that prefix is deleted.
 
 ---
 
@@ -172,11 +306,17 @@ days":
 
 | File | Change |
 |------|--------|
-| `shared/minio.py` | `ZSTD_LEVEL` 3 -> 9 and optional storage metrics |
-| `archiver/processors/cleanup_parquet.py` | Guarded explicit raw-object cleanup |
+| `shared/minio.py` | `ZSTD_LEVEL` 3 -> 9 and storage metrics |
+| `scripts/recompress_bronze_html.py` | New manual recompression apply tool |
+| `scripts/audit_parquet_layout.py` | New read-only lake layout audit |
+| `scripts/rewrite_parquet_layout.py` | New guarded normalized-layout rewrite |
+| `archiver/processors/cleanup_parquet.py` | Guarded explicit old-layout cleanup |
 | `tests/shared/test_minio.py` | Compression and metrics coverage |
+| `tests/scripts/test_recompress_bronze_html.py` | Recompression coverage |
+| `tests/scripts/test_audit_parquet_layout.py` | Parquet audit coverage |
+| `tests/scripts/test_rewrite_parquet_layout.py` | Rewrite verification coverage |
 | `tests/archiver/test_cleanup_parquet.py` | Guarded cleanup coverage |
-| `tests/integration/archiver/test_cleanup_html_integration.py` | MinIO cleanup integration coverage |
+| `tests/integration/archiver/test_storage_layout_integration.py` | MinIO integration coverage |
 
 ---
 
@@ -185,4 +325,7 @@ days":
 - Automatic 30-day raw HTML expiry.
 - Exact whole-file HTML dedup.
 - Sectioned/recomposable HTML storage. See Plan 114.
+- Apache Iceberg table registration. This plan prepares the layout; Plan 112
+  introduces the experiment substrate.
+- MLflow tracking server setup. See Plan 112.
 - Adaptive detail fetch scheduling. See Plans 111-113.
