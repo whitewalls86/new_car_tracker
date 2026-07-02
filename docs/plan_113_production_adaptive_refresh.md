@@ -2,18 +2,28 @@
 
 ## Goal
 
-Wire the rule-based refresh priority from Plans 111-112 into production ops so
-the scraper only fetches listings that are due.
+Wire the approved refresh policy from Plans 111-112 into production ops so the
+scraper only fetches listings that are due.
 
-Do not introduce XGBoost or MLflow model serving in this plan. The first
-production rollout should be conservative, observable, and easy to disable.
+Do not introduce XGBoost or MLflow model serving in this plan. MLflow is used
+upstream to identify and audit the selected policy run; production should deploy
+a concrete rule/config snapshot, not call MLflow at claim time.
 
 ---
 
 ## Context
 
-Plan 111 builds refresh features. Plan 112 backtests candidate thresholds and
-intervals. This plan deploys the chosen rule-based policy behind guardrails.
+Plan 110 normalizes the storage layer and prepares the Parquet lake for Iceberg.
+Plan 111 builds refresh features. Plan 112 uses Iceberg snapshots and MLflow to
+backtest candidate thresholds and intervals reproducibly.
+
+This plan deploys the chosen rule-based policy behind guardrails. The production
+policy must reference the approved Plan 112 evidence:
+
+- MLflow run ID
+- policy config artifact
+- Iceberg snapshot IDs or dataset manifest used in backtesting
+- quality-gate metrics
 
 ---
 
@@ -39,6 +49,17 @@ Suggested table name:
 ```text
 ops.detail_refresh_priority
 ```
+
+The materialized table should include policy lineage columns:
+
+| Column | Description |
+|--------|-------------|
+| `policy_version` | Human-readable policy/config version |
+| `mlflow_run_id` | Approved backtest run ID |
+| `input_snapshot_id` | Primary Iceberg snapshot/manifest reference |
+| `computed_at` | When this priority row was generated |
+
+Ops should not query Iceberg or MLflow at claim time.
 
 ---
 
@@ -79,6 +100,9 @@ These conditions bypass throttling regardless of score:
 - Shadow mode before enforcing eligibility.
 - Per-run counters for throttled vs fetched claims.
 - Manual force path for a listing or batch.
+- Policy version pinning: production uses one approved policy config until a
+  new Plan 112 run is reviewed and promoted.
+- Rollback path to the previous policy version or to unthrottled claims.
 
 ---
 
@@ -102,17 +126,23 @@ Dashboard these after rollout:
 - Tier distribution.
 - Estimated skipped fetches.
 - Freshness/detection-delay proxy.
+- Active policy version and MLflow run ID.
+- Shadow-vs-enforced divergence during rollout.
 
 ---
 
 ## Rollout
 
-1. Materialize `mart_detail_refresh_priority` without changing claim behavior.
-2. Add shadow counters: due, throttled, escaped, tier distribution.
-3. Compare live shadow counters to Plan 112 expectations for several days.
-4. Enable throttling with conservative thresholds.
-5. Watch scrape volume, processing volume, block/403 rate, and freshness metrics.
-6. Tighten intervals only after observed behavior matches the backtest.
+1. Select an approved Plan 112 MLflow run that passed quality gates.
+2. Export/pin the policy config and snapshot metadata for production.
+3. Materialize `mart_detail_refresh_priority` with lineage columns, without
+   changing claim behavior.
+4. Add shadow counters: due, throttled, escaped, tier distribution.
+5. Compare live shadow counters to Plan 112 expectations for several days.
+6. Enable throttling with conservative thresholds.
+7. Watch scrape volume, processing volume, block/403 rate, and freshness metrics.
+8. Tighten intervals only after observed behavior matches the backtest and a new
+   Plan 112 run is reviewed.
 
 ---
 
@@ -127,6 +157,10 @@ Dashboard these after rollout:
   never-detail-scraped listings.
 - Feature flag disables throttling.
 - Observability counters are logged per batch.
+- Materialized priority rows include policy version, MLflow run ID, and snapshot
+  metadata.
+- Production config refuses to enable throttling without an approved policy
+  version.
 
 ### Regression Tests
 
@@ -142,6 +176,8 @@ Dashboard these after rollout:
 |------|--------|
 | `ops/sql/claim_detail_listing.sql` | Add refresh tier eligibility filter |
 | `dbt/models/marts/mart_detail_refresh_priority.sql` | Materialize selected rule-based score |
+| `ops/sql/detail_refresh_priority.sql` | Optional query/table sync for priority rows |
+| `ops/config` or env | Policy version / feature flag wiring |
 | `tests/ops/test_claim_detail_throttling.py` | Claim query integration tests |
 | `ops/metrics/` | Optional counters/dashboard wiring |
 
@@ -150,7 +186,8 @@ Dashboard these after rollout:
 ## Out of Scope
 
 - XGBoost or any ML model.
-- MLflow model registry.
+- MLflow model serving or registry promotion.
+- Iceberg reads at claim time.
 - Online feature serving.
 - Replacing Airflow scheduling.
 - Sectioned HTML storage. See Plan 114.
