@@ -7,11 +7,12 @@ processor reads those rows, writes them as hive-partitioned Parquet, and
 deletes the source rows.
 
 MinIO layout:
-  s3://bronze/silver/observations/source=.../year=YYYY/month=MM/day=DD/part-<uuid>-0.parquet
+  s3://bronze/silver_normalized/observations/source=.../obs_year=YYYY/obs_month=MM/part-<uuid>-0.parquet
 
 Schema mirrors processing/writers/silver_writer.py with two differences:
   - written_at is set to now() at flush time (not stored in Postgres)
-  - source/year/month/day partition columns are derived from source + fetched_at
+  - source/year/month partition columns are derived from source + fetched_at
+    (obs_day remains in the file as a regular column for compatibility)
 """
 import logging
 import uuid
@@ -26,7 +27,7 @@ from shared.minio import BUCKET, get_s3fs
 
 logger = logging.getLogger("archiver")
 
-_MINIO_PREFIX = "silver/observations"
+_MINIO_PREFIX = "silver_normalized/observations"
 
 _DB_COLUMNS = [
     "id",
@@ -113,7 +114,7 @@ def flush_silver_observations() -> Dict[str, Any]:
     Flush staging.silver_observations to MinIO silver layer.
 
     Reads all rows up to a snapshot max id, writes Parquet partitioned by
-    source/obs_year/obs_month/obs_day (derived from source + fetched_at),
+    source/obs_year/obs_month (derived from source + fetched_at),
     then deletes the flushed rows.
 
     Called by POST /flush/silver/run (Airflow DAG or manual trigger).
@@ -182,7 +183,7 @@ def flush_silver_observations() -> Dict[str, Any]:
         pq.write_to_dataset(
             arrow_table,
             root_path=f"s3://{BUCKET}/{_MINIO_PREFIX}",
-            partition_cols=["source", "obs_year", "obs_month", "obs_day"],
+            partition_cols=["source", "obs_year", "obs_month"],
             filesystem=fs,
             compression="zstd",
             existing_data_behavior="overwrite_or_ignore",

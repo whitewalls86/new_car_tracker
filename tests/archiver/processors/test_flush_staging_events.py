@@ -144,7 +144,11 @@ class TestFlushOneSuccess:
         _flush_one(_aq_config(), mock_conn, MagicMock())
 
         _, kwargs = mock_write.call_args
-        assert "ops/artifacts_queue_events" in kwargs.get("root_path", "")
+        assert "ops_normalized/artifacts_queue_events" in kwargs.get("root_path", "")
+
+    def test_all_table_configs_target_ops_normalized_prefixes(self):
+        for config in _TABLE_CONFIGS:
+            assert config["minio_prefix"].startswith("ops_normalized/")
 
     def test_commit_called_after_delete(self, mocker):
         mock_conn, _ = _make_mock_conn(max_pk=1, rows=[_make_aq_row()])

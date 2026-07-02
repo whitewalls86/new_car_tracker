@@ -10,12 +10,12 @@ sources:
       - name: observations
         description: >
           All parsed observations from SRP, detail, and carousel pages.
-          Partitioned by source/obs_year/obs_month/obs_day.
+          Partitioned by source/obs_year/obs_month.
           Source values: 'srp', 'detail', 'carousel'.
         meta:
           external_location: >
             read_parquet(
-              's3://{{ env_var("MINIO_BUCKET", "bronze") }}/silver/observations/**/*.parquet',
+              's3://{{ env_var("MINIO_BUCKET", "bronze") }}/silver_normalized/observations/**/*.parquet',
               hive_partitioning=true
             )
         columns:
@@ -63,6 +63,20 @@ sources:
             data_type: varchar
           - name: seller_id
             data_type: varchar
+          - name: dealer_street
+            data_type: varchar
+          - name: dealer_city
+            data_type: varchar
+          - name: dealer_state
+            data_type: varchar
+          - name: dealer_phone
+            data_type: varchar
+          - name: dealer_website
+            data_type: varchar
+          - name: dealer_cars_com_url
+            data_type: varchar
+          - name: dealer_rating
+            data_type: float
           - name: financing_type
             data_type: varchar
           - name: seller_zip
@@ -103,7 +117,7 @@ sources:
         meta:
           external_location: >
             read_parquet(
-              's3://{{ env_var("MINIO_BUCKET", "bronze") }}/ops/price_observation_events/**/*.parquet',
+              's3://{{ env_var("MINIO_BUCKET", "bronze") }}/ops_normalized/price_observation_events/**/*.parquet',
               hive_partitioning=true
             )
         columns:
@@ -140,7 +154,7 @@ sources:
         meta:
           external_location: >
             read_parquet(
-              's3://{{ env_var("MINIO_BUCKET", "bronze") }}/ops/vin_to_listing_events/**/*.parquet',
+              's3://{{ env_var("MINIO_BUCKET", "bronze") }}/ops_normalized/vin_to_listing_events/**/*.parquet',
               hive_partitioning=true
             )
         columns:
@@ -161,7 +175,7 @@ sources:
         meta:
           external_location: >
             read_parquet(
-              's3://{{ env_var("MINIO_BUCKET", "bronze") }}/ops/blocked_cooldown_events/**/*.parquet',
+              's3://{{ env_var("MINIO_BUCKET", "bronze") }}/ops_normalized/blocked_cooldown_events/**/*.parquet',
               hive_partitioning=true
             )
         columns:

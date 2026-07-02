@@ -64,7 +64,7 @@ def trigger_flush_silver() -> Dict[str, Any]:
 
 @app.post("/compact/silver/run")
 def trigger_compact_silver() -> Dict[str, Any]:
-    """Compact silver/observations partitions into single sorted files (Airflow DAG trigger)."""
+    """Compact silver_normalized/observations partitions (Airflow DAG trigger)."""
     with active_job():
         return _compact_silver()
 

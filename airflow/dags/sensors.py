@@ -23,9 +23,22 @@ Usage in a DAG:
 
         intent >> archiver >> work
 """
+import logging
+from typing import Any, Dict
+
 import requests
 from airflow.providers.postgres.hooks.postgres import PostgresHook
 from airflow.sdk.bases.sensor import BaseSensorOperator
+
+logger = logging.getLogger(__name__)
+
+
+class JsonPostError(requests.HTTPError):
+    """HTTPError that preserves the parsed response body for downstream alerts."""
+
+    def __init__(self, message: str, *, result: Dict[str, Any]):
+        super().__init__(message)
+        self.result = result
 
 
 class _DeployIntentSensor(BaseSensorOperator):
@@ -80,3 +93,37 @@ def http_health_sensor(service_name: str, health_url: str, **kwargs) -> _Service
         timeout=600,
         **kwargs,
     )
+
+
+def post_json(
+    url: str,
+    *,
+    timeout: int,
+    payload: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
+    """
+    POST JSON to an internal service and return a normalized response body.
+
+    Active-job 409 responses are treated as a graceful skip so manual DAG
+    triggers do not fail just because an hourly run already owns the work.
+    Other HTTP errors raise JsonPostError with the parsed body attached so
+    notification tasks can include useful stderr/stdout details.
+    """
+    resp = requests.post(url, json=payload, timeout=timeout)
+
+    if resp.status_code == 409:
+        logger.info("job already running (409) - skipping: %s", resp.text)
+        return {"ok": True, "skipped": True}
+
+    try:
+        body = resp.json()
+    except Exception:
+        body = {"ok": False, "stdout": "", "stderr": resp.text}
+
+    result = body.get("detail", body) if isinstance(body.get("detail"), dict) else body
+    if not resp.ok:
+        raise JsonPostError(
+            f"{resp.status_code} Error for url: {url}",
+            result=result,
+        )
+    return result

@@ -12,10 +12,10 @@ import pytest
 # Shared fixtures and helpers
 # ---------------------------------------------------------------------------
 
-_TODAY = date(2026, 6, 30)
-_WATERMARK = _TODAY - timedelta(days=2)  # 2026-06-28
+_TODAY = date(2026, 7, 5)
+_WATERMARK = _TODAY - timedelta(days=2)  # 2026-07-03
 
-_BASE = "bronze/silver/observations"
+_BASE = "bronze/silver_normalized/observations"
 
 
 def _make_table(n: int = 3, include_all_sort_cols: bool = True) -> pa.Table:
@@ -68,10 +68,10 @@ def _mock_pq(mocker, table: pa.Table, *, num_rows: int | None = None):
     mocker.patch("archiver.processors.compact_silver.pq.ParquetFile", return_value=mock_pf)
 
 
-def _day_path(source: str, year: int, month: int, day: int) -> str:
+def _month_path(source: str, year: int, month: int) -> str:
     return (
-        f"bronze/silver/observations/source={source}"
-        f"/obs_year={year}/obs_month={month}/obs_day={day}"
+        f"bronze/silver_normalized/observations/source={source}"
+        f"/obs_year={year}/obs_month={month}"
     )
 
 
@@ -84,7 +84,7 @@ class TestFullCompactionHappyPath:
         """N part files → .tmp written → parts deleted → rename to compacted."""
         import archiver.processors.compact_silver as mod
 
-        path = _day_path("detail", 2026, 6, 28)
+        path = _month_path("detail", 2026, 6)
         part_files = [f"{path}/part-aaa-0.parquet", f"{path}/part-bbb-0.parquet"]
         table = _make_table(3)
 
@@ -92,7 +92,6 @@ class TestFullCompactionHappyPath:
         mock_fs.ls.side_effect = [
             [f"{_BASE}/source=detail"],
             [f"{_BASE}/source=detail/obs_year=2026"],
-            [f"{_BASE}/source=detail/obs_year=2026/obs_month=6"],
             [path],
             part_files,
         ]
@@ -115,7 +114,7 @@ class TestFullCompactionHappyPath:
 
         # .tmp was the write destination
         write_call = mod.pq.write_table.call_args
-        assert write_call.args[1].endswith("compacted-2026-06-28.parquet.tmp")
+        assert write_call.args[1].endswith("compacted-through-2026-06-30.parquet.tmp")
 
         # all part files deleted
         for f in part_files:
@@ -124,7 +123,7 @@ class TestFullCompactionHappyPath:
         # renamed from .tmp to final
         rename_src, rename_dst = mock_fs.rename.call_args.args
         assert rename_src.endswith(".parquet.tmp")
-        assert rename_dst.endswith("compacted-2026-06-28.parquet")
+        assert rename_dst.endswith("compacted-through-2026-06-30.parquet")
         assert not rename_dst.endswith(".tmp")
 
 
@@ -160,9 +159,9 @@ class TestSortOrderApplied:
         mocker.patch("archiver.processors.compact_silver.pq.ParquetFile", return_value=mock_pf)
 
         from archiver.processors.compact_silver import _compact_one
-        path = _day_path("detail", 2026, 6, 28)
+        path = _month_path("detail", 2026, 6)
         _compact_one(
-            mock_fs, path, "needs_compaction", [], [f"{path}/part-x-0.parquet"], date(2026, 6, 28)
+            mock_fs, path, "needs_compaction", [], [f"{path}/part-x-0.parquet"], date(2026, 6, 30)
         )
 
         assert len(captured) == 1
@@ -182,9 +181,9 @@ class TestSortColsAbsentFromSchema:
         _mock_pq(mocker, table_no_dealer)
 
         from archiver.processors.compact_silver import _compact_one
-        path = _day_path("srp", 2026, 6, 28)
+        path = _month_path("srp", 2026, 6)
         result = _compact_one(
-            mock_fs, path, "needs_compaction", [], [f"{path}/part-x-0.parquet"], date(2026, 6, 28)
+            mock_fs, path, "needs_compaction", [], [f"{path}/part-x-0.parquet"], date(2026, 6, 30)
         )
 
         assert result["ok"] is True
@@ -200,14 +199,13 @@ class TestSkipsDonePartition:
         """Partition with only compacted-*.parquet → skipped; no reads or writes."""
         import archiver.processors.compact_silver as mod
 
-        path = _day_path("detail", 2026, 6, 1)
+        path = _month_path("detail", 2026, 6)
         mocker.patch("archiver.processors.compact_silver.get_s3fs", return_value=mock_fs)
         mock_fs.ls.side_effect = [
             [f"{_BASE}/source=detail"],
             [f"{_BASE}/source=detail/obs_year=2026"],
-            [f"{_BASE}/source=detail/obs_year=2026/obs_month=6"],
             [path],
-            [f"{path}/compacted-2026-06-01.parquet"],  # only compacted file
+            [f"{path}/compacted-through-2026-06-30.parquet"],  # only compacted file
         ]
         mock_pf_cls = mocker.patch("archiver.processors.compact_silver.pq.ParquetFile")
         mock_write = mocker.patch("archiver.processors.compact_silver.pq.write_table")
@@ -230,12 +228,11 @@ class TestSkipsEmptyPartition:
         """Partition with no parquet files → skipped gracefully."""
         import archiver.processors.compact_silver as mod
 
-        path = _day_path("detail", 2026, 6, 1)
+        path = _month_path("detail", 2026, 6)
         mocker.patch("archiver.processors.compact_silver.get_s3fs", return_value=mock_fs)
         mock_fs.ls.side_effect = [
             [f"{_BASE}/source=detail"],
             [f"{_BASE}/source=detail/obs_year=2026"],
-            [f"{_BASE}/source=detail/obs_year=2026/obs_month=6"],
             [path],
             ["path/somefile.csv"],  # no parquet files
         ]
@@ -258,15 +255,14 @@ class TestIncrementalCompaction:
         """Incremental state: re-reads compacted + new part files, deletes all originals."""
         import archiver.processors.compact_silver as mod
 
-        path = _day_path("detail", 2026, 6, 10)
-        compacted_file = f"{path}/compacted-2026-06-10.parquet"
+        path = _month_path("detail", 2026, 6)
+        compacted_file = f"{path}/compacted-through-2026-06-30.parquet"
         new_part_file = f"{path}/part-new-0.parquet"
 
         mocker.patch("archiver.processors.compact_silver.get_s3fs", return_value=mock_fs)
         mock_fs.ls.side_effect = [
             [f"{_BASE}/source=detail"],
             [f"{_BASE}/source=detail/obs_year=2026"],
-            [f"{_BASE}/source=detail/obs_year=2026/obs_month=6"],
             [path],
             [compacted_file, new_part_file],
         ]
@@ -293,22 +289,20 @@ class TestIncrementalCompaction:
 
 
 # ---------------------------------------------------------------------------
-# test_watermark_excludes_yesterday
+# test_watermark_excludes_current_month
 # ---------------------------------------------------------------------------
 
-class TestWatermarkExcludesYesterday:
-    def test_obs_day_yesterday_not_included(self, mock_fs, mocker):
-        """obs_day == today - 1 is NOT processed (inside the 2-day watermark buffer)."""
+class TestWatermarkExcludesCurrentMonth:
+    def test_current_month_not_included(self, mock_fs, mocker):
+        """A month whose month-end is after the watermark is not processed."""
         import archiver.processors.compact_silver as mod
 
-        yesterday = _TODAY - timedelta(days=1)
-        path = _day_path("detail", yesterday.year, yesterday.month, yesterday.day)
+        path = _month_path("detail", _TODAY.year, _TODAY.month)
 
         mocker.patch("archiver.processors.compact_silver.get_s3fs", return_value=mock_fs)
         mock_fs.ls.side_effect = [
             [f"{_BASE}/source=detail"],
-            [f"{_BASE}/source=detail/obs_year={yesterday.year}"],
-            [f"{_BASE}/source=detail/obs_year={yesterday.year}/obs_month={yesterday.month}"],
+            [f"{_BASE}/source=detail/obs_year={_TODAY.year}"],
             [path],
         ]
         mock_write = mocker.patch("archiver.processors.compact_silver.pq.write_table")
@@ -321,23 +315,21 @@ class TestWatermarkExcludesYesterday:
 
 
 # ---------------------------------------------------------------------------
-# test_watermark_includes_two_days_ago
+# test_watermark_includes_closed_month
 # ---------------------------------------------------------------------------
 
-class TestWatermarkIncludesTwoDaysAgo:
-    def test_obs_day_two_days_ago_is_included(self, mock_fs, mocker):
-        """obs_day == today - 2 IS included in discovery."""
+class TestWatermarkIncludesClosedMonth:
+    def test_previous_month_is_included(self, mock_fs, mocker):
+        """A previous month whose month-end is <= watermark is processed."""
         import archiver.processors.compact_silver as mod
 
-        two_ago = _TODAY - timedelta(days=2)
-        path = _day_path("detail", two_ago.year, two_ago.month, two_ago.day)
+        path = _month_path("detail", 2026, 6)
         part_file = f"{path}/part-abc-0.parquet"
 
         mocker.patch("archiver.processors.compact_silver.get_s3fs", return_value=mock_fs)
         mock_fs.ls.side_effect = [
             [f"{_BASE}/source=detail"],
-            [f"{_BASE}/source=detail/obs_year={two_ago.year}"],
-            [f"{_BASE}/source=detail/obs_year={two_ago.year}/obs_month={two_ago.month}"],
+            [f"{_BASE}/source=detail/obs_year=2026"],
             [path],
             [part_file],
         ]
@@ -346,7 +338,7 @@ class TestWatermarkIncludesTwoDaysAgo:
         result = mod.compact_silver(max_partitions=10)
 
         assert result["compacted"] == 1
-        assert result["partitions"][0]["date"] == two_ago.strftime("%Y-%m-%d")
+        assert result["partitions"][0]["date"] == "2026-06-30"
 
 
 # ---------------------------------------------------------------------------
@@ -358,21 +350,18 @@ class TestMaxPartitionsRespected:
         """20 eligible partitions → only 10 processed."""
         import archiver.processors.compact_silver as mod
 
-        # Build 20 partitions for different days, all within watermark
-        days = [date(2026, 5, d) for d in range(1, 21)]
-        paths = [_day_path("detail", d.year, d.month, d.day) for d in days]
+        # Build 20 source/month partitions, all within watermark
+        sources = [f"source{i:02d}" for i in range(20)]
+        paths = [_month_path(source, 2026, 5) for source in sources]
         part_files_per_path = {p: [f"{p}/part-x-0.parquet"] for p in paths}
 
         # Simulate discovery
-        ls_returns = [
-            [f"{_BASE}/source=detail"],
-            [f"{_BASE}/source=detail/obs_year=2026"],
-        ]
-        # Each month dir lists its day dirs; 20 days across May
-        # We'll structure as a single month for simplicity
-        ls_returns.append([f"{_BASE}/source=detail/obs_year=2026/obs_month=5"])
-        ls_returns.append(paths)  # all 20 day dirs in one month
-        # Each day dir ls call returns one part file
+        ls_returns = [[f"{_BASE}/source={source}" for source in sources]]
+        for source in sources:
+            ls_returns.append([f"{_BASE}/source={source}/obs_year=2026"])
+            ls_returns.append([f"{_BASE}/source={source}/obs_year=2026/obs_month=5"])
+
+        # Each month partition classify call returns one part file.
         for p in paths:
             ls_returns.append(part_files_per_path[p])
 
@@ -395,30 +384,27 @@ class TestOldestFirstOrdering:
         """Partitions are processed oldest-first by (date, source)."""
         import archiver.processors.compact_silver as mod
 
-        # _list_day_partitions processes each source completely (year→month→day)
+        # _list_month_partitions processes each source completely (year -> month)
         # before moving to the next. Classify calls all happen after full discovery.
-        detail_day = _day_path("detail", 2026, 6, 1)
-        carousel_day = _day_path("carousel", 2026, 6, 1)
-        srp_day = _day_path("srp", 2026, 6, 5)
+        detail_month = _month_path("detail", 2026, 6)
+        carousel_month = _month_path("carousel", 2026, 6)
+        srp_month = _month_path("srp", 2026, 5)
         ls_returns = [
             # discovery: base
             [f"{_BASE}/source=detail", f"{_BASE}/source=carousel", f"{_BASE}/source=srp"],
             # discovery: detail fully
             [f"{_BASE}/source=detail/obs_year=2026"],
             [f"{_BASE}/source=detail/obs_year=2026/obs_month=6"],
-            [detail_day],
             # discovery: carousel fully
             [f"{_BASE}/source=carousel/obs_year=2026"],
             [f"{_BASE}/source=carousel/obs_year=2026/obs_month=6"],
-            [carousel_day],
             # discovery: srp fully
             [f"{_BASE}/source=srp/obs_year=2026"],
-            [f"{_BASE}/source=srp/obs_year=2026/obs_month=6"],
-            [srp_day],
+            [f"{_BASE}/source=srp/obs_year=2026/obs_month=5"],
             # classify: in discovery order (detail, carousel, srp)
-            [f"{detail_day}/part-x-0.parquet"],
-            [f"{carousel_day}/part-x-0.parquet"],
-            [f"{srp_day}/part-x-0.parquet"],
+            [f"{detail_month}/part-x-0.parquet"],
+            [f"{carousel_month}/part-x-0.parquet"],
+            [f"{srp_month}/part-x-0.parquet"],
         ]
 
         mocker.patch("archiver.processors.compact_silver.get_s3fs", return_value=mock_fs)
@@ -429,9 +415,9 @@ class TestOldestFirstOrdering:
 
         processed = [(p["date"], p["source"]) for p in result["partitions"]]
         assert processed == sorted(processed), "Partitions must be processed oldest-first"
-        assert processed[0] == ("2026-06-01", "carousel")
-        assert processed[1] == ("2026-06-01", "detail")
-        assert processed[2] == ("2026-06-05", "srp")
+        assert processed[0] == ("2026-05-31", "srp")
+        assert processed[1] == ("2026-06-30", "carousel")
+        assert processed[2] == ("2026-06-30", "detail")
 
 
 # ---------------------------------------------------------------------------
@@ -443,8 +429,8 @@ class TestFailedPartitionDoesNotAbortRun:
         """One partition errors → others still processed; failed count incremented."""
         import archiver.processors.compact_silver as mod
 
-        path_ok = _day_path("detail", 2026, 6, 1)
-        path_fail = _day_path("carousel", 2026, 6, 1)
+        path_ok = _month_path("detail", 2026, 6)
+        path_fail = _month_path("carousel", 2026, 6)
         part_ok = f"{path_ok}/part-x-0.parquet"
         part_fail = f"{path_fail}/part-y-0.parquet"
 
@@ -455,11 +441,9 @@ class TestFailedPartitionDoesNotAbortRun:
             # detail fully
             [f"{_BASE}/source=detail/obs_year=2026"],
             [f"{_BASE}/source=detail/obs_year=2026/obs_month=6"],
-            [path_ok],
             # carousel fully
             [f"{_BASE}/source=carousel/obs_year=2026"],
             [f"{_BASE}/source=carousel/obs_year=2026/obs_month=6"],
-            [path_fail],
             # classify (in discovery order: detail, carousel)
             [part_ok],
             [part_fail],
@@ -499,7 +483,7 @@ class TestTmpPreservedForManualRecovery:
         """If rename fails after originals are deleted, .tmp is left in place (not cleaned up)."""
         from archiver.processors.compact_silver import _compact_one
 
-        path = _day_path("detail", 2026, 6, 28)
+        path = _month_path("detail", 2026, 6)
         part_file = f"{path}/part-abc-0.parquet"
         table = _make_table(3)
 
@@ -507,10 +491,10 @@ class TestTmpPreservedForManualRecovery:
         mock_fs.rename.side_effect = OSError("rename failed")
 
         with pytest.raises(OSError, match="rename failed"):
-            _compact_one(mock_fs, path, "needs_compaction", [], [part_file], date(2026, 6, 28))
+            _compact_one(mock_fs, path, "needs_compaction", [], [part_file], date(2026, 6, 30))
 
         # .tmp was NOT deleted (no rm call on the tmp path)
-        tmp_path = f"{path}/compacted-2026-06-28.parquet.tmp"
+        tmp_path = f"{path}/compacted-through-2026-06-30.parquet.tmp"
         rm_calls = [c.args[0] for c in mock_fs.rm.call_args_list]
         assert tmp_path not in rm_calls, ".tmp must be preserved for manual recovery"
 
