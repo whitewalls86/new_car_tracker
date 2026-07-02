@@ -74,7 +74,7 @@ def _cleanup_minio_parquet():
         region_name="us-east-1",
     )
 
-    prefix = "silver/observations/source=srp/obs_year=2026/obs_month=1/obs_day=10/"
+    prefix = "silver_normalized/observations/source=srp/obs_year=2026/obs_month=1/"
     resp = s3.list_objects_v2(Bucket=_BUCKET, Prefix=prefix)
     for obj in resp.get("Contents", []):
         s3.delete_object(Bucket=_BUCKET, Key=obj["Key"])
@@ -111,7 +111,7 @@ class TestFlushSilverE2E:
             config=Config(signature_version="s3v4"),
             region_name="us-east-1",
         )
-        prefix = "silver/observations/source=srp/obs_year=2026/obs_month=1/obs_day=10/"
+        prefix = "silver_normalized/observations/source=srp/obs_year=2026/obs_month=1/"
         resp = s3.list_objects_v2(Bucket=_BUCKET, Prefix=prefix)
         keys = [obj["Key"] for obj in resp.get("Contents", [])]
         assert len(keys) >= 1, f"No parquet files found at {prefix}"

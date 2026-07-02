@@ -4,15 +4,24 @@ from datetime import datetime, timedelta
 
 import requests
 from airflow.providers.standard.operators.python import PythonOperator
-from sensors import JsonPostError, http_health_sensor, post_json
+from sensors import JsonPostError, deploy_intent_sensor, http_health_sensor, post_json
 
 from airflow import DAG
 
+ARCHIVER_URL = "http://archiver:8001"
 DBT_RUNNER_URL = "http://dbt_runner:8080"
 _TELEGRAM_API = os.environ.get("TELEGRAM_API", "")
 _TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
 logger = logging.getLogger(__name__)
+
+
+def _run_flush_silver():
+    return post_json(f"{ARCHIVER_URL}/flush/silver/run", timeout=300)
+
+
+def _run_flush_staging():
+    return post_json(f"{ARCHIVER_URL}/flush/staging/run", timeout=300)
 
 
 def _run_dbt_build(**context):
@@ -42,7 +51,7 @@ def _notify(**context):
         return
 
     lines = [
-        "dbt build FAILED",
+        "hourly analytics refresh FAILED",
         f"Run:     {ti.dag_run.run_id}",
         f"Date:    {ti.execution_date}",
     ]
@@ -64,29 +73,43 @@ def _notify(**context):
             timeout=10,
         )
     except requests.RequestException:
-        logger.warning("Failed to send Telegram notification for dbt build failure")
+        logger.warning("Failed to send Telegram notification for hourly analytics failure")
 
 
 with DAG(
-    dag_id="dbt_build",
-    schedule=None,  # manual-only; hourly_analytics_refresh owns the scheduled build
+    dag_id="hourly_analytics_refresh",
+    schedule="0 * * * *",
     start_date=datetime(2026, 1, 1),
     catchup=False,
-    tags=["dbt"],
+    tags=["analytics", "dbt"],
 ):
+    ready = deploy_intent_sensor()
+    archiver_up = http_health_sensor("archiver", ARCHIVER_URL)
     dbt_runner_up = http_health_sensor("dbt_runner", DBT_RUNNER_URL)
 
+    flush_silver = PythonOperator(
+        task_id="flush_silver_observations",
+        python_callable=_run_flush_silver,
+        retries=1,
+        retry_delay=timedelta(seconds=30),
+    )
+    flush_staging = PythonOperator(
+        task_id="flush_staging_events",
+        python_callable=_run_flush_staging,
+        retries=1,
+        retry_delay=timedelta(seconds=30),
+    )
     build = PythonOperator(
         task_id="dbt_build",
         python_callable=_run_dbt_build,
         retries=1,
         retry_delay=timedelta(seconds=30),
     )
-
     notify = PythonOperator(
         task_id="notify",
         python_callable=_notify,
         trigger_rule="one_failed",
     )
 
-    dbt_runner_up >> build >> notify
+    ready >> archiver_up >> flush_silver >> flush_staging >> dbt_runner_up >> build
+    [ready, archiver_up, flush_silver, flush_staging, dbt_runner_up, build] >> notify

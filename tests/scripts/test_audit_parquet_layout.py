@@ -154,6 +154,18 @@ class TestParserValidation:
         args = parse_args(["--all", "--sample-files", "10"])
         assert args.sample_files == 10
 
+    def test_prefix_mode_defaults_to_current(self):
+        from scripts.audit_parquet_layout import parse_args
+
+        args = parse_args(["--all"])
+        assert args.prefix_mode == "current"
+
+    def test_prefix_mode_normalized_parsed(self):
+        from scripts.audit_parquet_layout import parse_args
+
+        args = parse_args(["--all", "--prefix-mode", "normalized"])
+        assert args.prefix_mode == "normalized"
+
 
 # ── Group B: dataset-to-prefix mapping ───────────────────────────────────────
 
@@ -181,6 +193,76 @@ class TestDatasetPrefixMapping:
             assert "prefix" in config
             assert "expected_pattern" in config
             assert "partition_template" in config
+
+    def test_current_prefix_mode_matches_default_configs(self):
+        from scripts.audit_parquet_layout import (
+            DATASET_CONFIGS,
+            dataset_configs_for_prefix_mode,
+        )
+
+        configs = dataset_configs_for_prefix_mode("current")
+        assert configs["silver_observations"]["prefix"] == (
+            DATASET_CONFIGS["silver_observations"]["prefix"]
+        )
+        assert configs["price_observation_events"]["prefix"] == (
+            DATASET_CONFIGS["price_observation_events"]["prefix"]
+        )
+
+    @pytest.mark.parametrize("dataset,expected_prefix", [
+        ("silver_observations", "silver_normalized/observations/"),
+        ("price_observation_events", "ops_normalized/price_observation_events/"),
+        ("vin_to_listing_events", "ops_normalized/vin_to_listing_events/"),
+        ("blocked_cooldown_events", "ops_normalized/blocked_cooldown_events/"),
+        ("detail_scrape_claim_events", "ops_normalized/detail_scrape_claim_events/"),
+        ("artifacts_queue_events", "ops_normalized/artifacts_queue_events/"),
+    ])
+    def test_normalized_prefix_correct(self, dataset, expected_prefix):
+        from scripts.audit_parquet_layout import dataset_configs_for_prefix_mode
+
+        configs = dataset_configs_for_prefix_mode("normalized")
+        assert configs[dataset]["prefix"] == expected_prefix
+
+    def test_normalized_silver_pattern_matches_month_partition(self):
+        from scripts.audit_parquet_layout import (
+            _is_expected_key,
+            dataset_configs_for_prefix_mode,
+        )
+
+        pattern = dataset_configs_for_prefix_mode("normalized")[
+            "silver_observations"
+        ]["expected_pattern"]
+        key = (
+            "silver_normalized/observations/source=detail"
+            "/obs_year=2026/obs_month=6/part-abc.parquet"
+        )
+        assert _is_expected_key(key, pattern)
+
+    def test_normalized_silver_pattern_rejects_day_partition(self):
+        from scripts.audit_parquet_layout import (
+            _is_expected_key,
+            dataset_configs_for_prefix_mode,
+        )
+
+        pattern = dataset_configs_for_prefix_mode("normalized")[
+            "silver_observations"
+        ]["expected_pattern"]
+        key = (
+            "silver_normalized/observations/source=detail"
+            "/obs_year=2026/obs_month=6/obs_day=1/part-abc.parquet"
+        )
+        assert not _is_expected_key(key, pattern)
+
+    def test_normalized_ops_pattern_matches(self):
+        from scripts.audit_parquet_layout import (
+            _is_expected_key,
+            dataset_configs_for_prefix_mode,
+        )
+
+        pattern = dataset_configs_for_prefix_mode("normalized")[
+            "price_observation_events"
+        ]["expected_pattern"]
+        key = "ops_normalized/price_observation_events/year=2026/month=6/part.parquet"
+        assert _is_expected_key(key, pattern)
 
 
 # ── Group C: partition path helpers ──────────────────────────────────────────

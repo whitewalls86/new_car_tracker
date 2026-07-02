@@ -41,46 +41,63 @@ SUPPORTED_DATASETS = [
 ]
 
 
-def _ops_re(table: str) -> re.Pattern:
+def _ops_re(table: str, root: str = "ops") -> re.Pattern:
     return re.compile(
-        rf"^ops/{re.escape(table)}/year=\d+/month=\d+/[^/]+\.parquet$"
+        rf"^{re.escape(root)}/{re.escape(table)}/year=\d+/month=\d+/[^/]+\.parquet$"
     )
 
 
-DATASET_CONFIGS: dict[str, dict] = {
-    "silver_observations": {
-        "prefix": "silver/observations/",
-        "expected_pattern": re.compile(
-            r"^silver/observations/source=[^/]+/obs_year=\d+/obs_month=\d+/obs_day=\d+/[^/]+\.parquet$"
-        ),
-        "partition_template": "source=<source>/obs_year=<Y>/obs_month=<M>/obs_day=<D>/",
-    },
-    "price_observation_events": {
-        "prefix": "ops/price_observation_events/",
-        "expected_pattern": _ops_re("price_observation_events"),
-        "partition_template": "year=<Y>/month=<M>/",
-    },
-    "vin_to_listing_events": {
-        "prefix": "ops/vin_to_listing_events/",
-        "expected_pattern": _ops_re("vin_to_listing_events"),
-        "partition_template": "year=<Y>/month=<M>/",
-    },
-    "blocked_cooldown_events": {
-        "prefix": "ops/blocked_cooldown_events/",
-        "expected_pattern": _ops_re("blocked_cooldown_events"),
-        "partition_template": "year=<Y>/month=<M>/",
-    },
-    "detail_scrape_claim_events": {
-        "prefix": "ops/detail_scrape_claim_events/",
-        "expected_pattern": _ops_re("detail_scrape_claim_events"),
-        "partition_template": "year=<Y>/month=<M>/",
-    },
-    "artifacts_queue_events": {
-        "prefix": "ops/artifacts_queue_events/",
-        "expected_pattern": _ops_re("artifacts_queue_events"),
-        "partition_template": "year=<Y>/month=<M>/",
-    },
-}
+def _ops_configs(root: str) -> dict[str, dict]:
+    return {
+        table: {
+            "prefix": f"{root}/{table}/",
+            "expected_pattern": _ops_re(table, root=root),
+            "partition_template": "year=<Y>/month=<M>/",
+        }
+        for table in SUPPORTED_DATASETS
+        if table != "silver_observations"
+    }
+
+
+def _current_dataset_configs() -> dict[str, dict]:
+    return {
+        "silver_observations": {
+            "prefix": "silver/observations/",
+            "expected_pattern": re.compile(
+                r"^silver/observations/source=[^/]+"
+                r"/obs_year=\d+/obs_month=\d+/obs_day=\d+/[^/]+\.parquet$"
+            ),
+            "partition_template": (
+                "source=<source>/obs_year=<Y>/obs_month=<M>/obs_day=<D>/"
+            ),
+        },
+        **_ops_configs("ops"),
+    }
+
+
+def _normalized_dataset_configs() -> dict[str, dict]:
+    return {
+        "silver_observations": {
+            "prefix": "silver_normalized/observations/",
+            "expected_pattern": re.compile(
+                r"^silver_normalized/observations/source=[^/]+"
+                r"/obs_year=\d+/obs_month=\d+/[^/]+\.parquet$"
+            ),
+            "partition_template": "source=<source>/obs_year=<Y>/obs_month=<M>/",
+        },
+        **_ops_configs("ops_normalized"),
+    }
+
+
+def dataset_configs_for_prefix_mode(prefix_mode: str) -> dict[str, dict]:
+    if prefix_mode == "current":
+        return _current_dataset_configs()
+    if prefix_mode == "normalized":
+        return _normalized_dataset_configs()
+    raise ValueError(f"unsupported prefix mode: {prefix_mode}")
+
+
+DATASET_CONFIGS: dict[str, dict] = dataset_configs_for_prefix_mode("current")
 
 
 # ── Data structures ───────────────────────────────────────────────────────────
@@ -511,6 +528,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Max Parquet files to sample per partition for schema/metadata [default: 3]",
     )
     other.add_argument(
+        "--prefix-mode",
+        choices=["current", "normalized"],
+        default="current",
+        help=(
+            "Which Parquet layout to audit: current legacy prefixes or "
+            "normalized prefixes [default: current]"
+        ),
+    )
+    other.add_argument(
         "--log-level",
         default="INFO",
         choices=["DEBUG", "INFO", "WARNING"],
@@ -539,10 +565,11 @@ def main(argv: list[str] | None = None) -> int:
 
     client = get_boto3_client()
     fs = get_s3fs()
+    dataset_configs = dataset_configs_for_prefix_mode(args.prefix_mode)
 
     dataset_results: dict[str, dict] = {}
     for name in selected:
-        config = DATASET_CONFIGS[name]
+        config = dataset_configs[name]
         result = audit_dataset(
             client, fs, args.bucket, name, config, sample_files=args.sample_files
         )

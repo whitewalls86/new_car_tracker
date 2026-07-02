@@ -1,11 +1,13 @@
 """
-Compact silver/observations partitions: merge per-flush part files into a single sorted
-compacted-<YYYY-MM-DD>.parquet per day partition.
+Compact silver_normalized/observations partitions: merge per-flush part files into
+a single sorted compacted-through-<YYYY-MM-DD>.parquet per source/month partition.
 
-Only processes obs_day <= today_utc - 2 (2-day watermark against late-arriving flushes).
-Concurrent flush runs are safe under this assumption; late backfills that land in an
-already-compacted partition are detected and re-merged on the next run (incremental state).
+Only processes months whose month-end is <= today_utc - 2 (2-day watermark against
+late-arriving flushes). Concurrent flush runs are safe under this assumption; late
+backfills that land in an already-compacted partition are detected and re-merged on
+the next run (incremental state).
 """
+import calendar
 import logging
 import os
 import re
@@ -19,14 +21,14 @@ from shared.minio import BUCKET, get_s3fs
 
 logger = logging.getLogger("archiver")
 
-_MINIO_PREFIX = "silver/observations"
+_MINIO_PREFIX = "silver_normalized/observations"
 
 MAX_PARTITIONS = int(os.environ.get("COMPACT_SILVER_MAX_PARTITIONS", "10"))
 
 SORT_COLS = ["make", "model", "dealer_state", "dealer_name", "year", "trim", "listing_id"]
 
 _PART_RE = re.compile(r"^part-.*\.parquet$")
-_COMPACTED_RE = re.compile(r"^compacted-.*\.parquet$")
+_COMPACTED_RE = re.compile(r"^compacted.*\.parquet$")
 
 
 def _today_utc() -> date:
@@ -34,8 +36,8 @@ def _today_utc() -> date:
 
 
 def _parse_partition_path(path: str) -> Tuple[str, date]:
-    """Extract (source, obs_date) from a hive partition path."""
-    source = year = month = day = None
+    """Extract (source, month_end_date) from a normalized hive partition path."""
+    source = year = month = None
     for part in path.rstrip("/").split("/"):
         if part.startswith("source="):
             source = part[7:]
@@ -43,17 +45,16 @@ def _parse_partition_path(path: str) -> Tuple[str, date]:
             year = int(part[9:])
         elif part.startswith("obs_month="):
             month = int(part[10:])
-        elif part.startswith("obs_day="):
-            day = int(part[8:])
-    if None in (source, year, month, day):
+    if None in (source, year, month):
         raise ValueError(f"Could not parse partition path: {path}")
-    return source, date(year, month, day)
+    month_end = calendar.monthrange(year, month)[1]
+    return source, date(year, month, month_end)
 
 
-def _list_day_partitions(fs: Any, bucket: str) -> List[str]:
-    """List all day-level partition directories under silver/observations."""
+def _list_month_partitions(fs: Any, bucket: str) -> List[str]:
+    """List all source/month partition directories under silver_normalized/observations."""
     base = f"{bucket}/{_MINIO_PREFIX}"
-    day_paths: List[str] = []
+    month_paths: List[str] = []
 
     try:
         source_dirs = [e for e in fs.ls(base, detail=False) if "/source=" in e]
@@ -70,19 +71,14 @@ def _list_day_partitions(fs: Any, bucket: str) -> List[str]:
                 month_dirs = [e for e in fs.ls(year_path, detail=False) if "/obs_month=" in e]
             except FileNotFoundError:
                 continue
-            for month_path in month_dirs:
-                try:
-                    day_dirs = [e for e in fs.ls(month_path, detail=False) if "/obs_day=" in e]
-                except FileNotFoundError:
-                    continue
-                day_paths.extend(day_dirs)
+            month_paths.extend(month_dirs)
 
-    return day_paths
+    return month_paths
 
 
 def _classify_partition(fs: Any, path: str) -> Tuple[str, List[str], List[str]]:
     """
-    Classify a day partition by the files it contains.
+    Classify a month partition by the files it contains.
 
     Returns (state, compacted_files, part_files) where state is one of:
       needs_compaction  — only part-*.parquet files present
@@ -129,7 +125,9 @@ def _compact_one(
       4. Delete all originals  (partition is briefly empty — no double-count possible)
       5. fs.rename(tmp → compacted-<date>.parquet)
 
-    If step 5 fails the .tmp is preserved for manual recovery; its path is logged at ERROR.
+    Final files use compacted-through-<date>.parquet where <date> is the
+    partition month-end. If step 5 fails the .tmp is preserved for manual
+    recovery; its path is logged at ERROR.
     """
     source, _ = _parse_partition_path(path)
     date_str = obs_date.strftime("%Y-%m-%d")
@@ -141,7 +139,7 @@ def _compact_one(
 
     if state == "incremental":
         logger.info(
-            "compact_silver: incremental source=%s date=%s,"
+            "compact_silver: incremental source=%s through=%s,"
             " %d new part files since last compaction",
             source, date_str, len(part_files),
         )
@@ -153,7 +151,7 @@ def _compact_one(
     expected_rows = len(combined)
 
     logger.info(
-        "compact_silver: compacting source=%s date=%s, %d files, %d rows",
+        "compact_silver: compacting source=%s through=%s, %d files, %d rows",
         source, date_str, len(read_files), expected_rows,
     )
 
@@ -163,7 +161,7 @@ def _compact_one(
         combined = combined.sort_by([(c, "ascending") for c in sort_cols_present])
 
     # 3. Write to .tmp (not matched by *.parquet glob)
-    tmp_path = f"{path}/compacted-{date_str}.parquet.tmp"
+    tmp_path = f"{path}/compacted-through-{date_str}.parquet.tmp"
     pq.write_table(combined, tmp_path, filesystem=fs, compression="zstd")
 
     # 4. Assert row count before deleting originals
@@ -191,7 +189,7 @@ def _compact_one(
         )
 
     # 6. Rename .tmp → final; on failure .tmp is left for manual recovery
-    final_path = f"{path}/compacted-{date_str}.parquet"
+    final_path = f"{path}/compacted-through-{date_str}.parquet"
     try:
         fs.rename(tmp_path, final_path)
     except Exception as e:
@@ -205,7 +203,7 @@ def _compact_one(
     reduction_pct = round(100 * (size_before - size_after) / size_before) if size_before else 0
 
     logger.info(
-        "compact_silver: done source=%s date=%s, before=%d bytes, after=%d bytes (-%d%%)",
+        "compact_silver: done source=%s through=%s, before=%d bytes, after=%d bytes (-%d%%)",
         source, date_str, size_before, size_after, reduction_pct,
     )
 
@@ -226,9 +224,10 @@ def compact_silver(max_partitions: int = MAX_PARTITIONS) -> Dict[str, Any]:
     """
     Discover and compact up to max_partitions completed silver observation partitions.
 
-    Only processes obs_day <= today_utc - 2 (2-day watermark against late-arriving flushes).
-    Concurrent flush runs are safe under the 2-day watermark assumption; late backfills that
-    land in an already-compacted partition are handled by incremental compaction on the next run.
+    Only processes source/month partitions whose month-end date is <= today_utc - 2
+    (2-day watermark against late-arriving flushes). Concurrent flush runs are safe
+    under the 2-day watermark assumption; late backfills that land in an already-
+    compacted partition are handled by incremental compaction on the next run.
 
     Returns a summary dict plus a per-partition breakdown list.
     """
@@ -244,14 +243,14 @@ def compact_silver(max_partitions: int = MAX_PARTITIONS) -> Dict[str, Any]:
 
     watermark = _today_utc() - timedelta(days=2)
 
-    # Discover all day-level partition directories
-    all_day_paths = _list_day_partitions(fs, BUCKET)
+    # Discover all month-level partition directories
+    all_month_paths = _list_month_partitions(fs, BUCKET)
 
     # Parse paths, apply watermark, classify state
     candidates = []
     skipped = 0
 
-    for path in all_day_paths:
+    for path in all_month_paths:
         try:
             source, obs_date = _parse_partition_path(path)
         except ValueError:
@@ -324,7 +323,7 @@ def compact_silver(max_partitions: int = MAX_PARTITIONS) -> Dict[str, Any]:
     )
 
     return {
-        "scanned": len(all_day_paths),
+        "scanned": len(all_month_paths),
         "compacted": compacted,
         "incremental": incremental,
         "skipped": skipped,

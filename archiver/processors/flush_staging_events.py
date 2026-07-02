@@ -12,7 +12,7 @@ Pattern per table:
   4. DELETE WHERE pk <= max_pk (only on write success)
 
 MinIO layout:
-  s3://bronze/ops/<table_name>/year=YYYY/month=MM/part-<uuid>-0.parquet
+  s3://bronze/ops_normalized/<table_name>/year=YYYY/month=MM/part-<uuid>-0.parquet
 
 Flushing is idempotent: if a flush is interrupted after the Parquet write but
 before the DELETE, re-running will overwrite the existing file (same partition,
@@ -142,7 +142,7 @@ _TABLE_CONFIGS = [
             "minio_path", "artifact_type", "fetched_at", "listing_id", "run_id",
         ],
         "schema":       _ARTIFACTS_QUEUE_EVENTS_SCHEMA,
-        "minio_prefix": "ops/artifacts_queue_events",
+        "minio_prefix": "ops_normalized/artifacts_queue_events",
         "uuid_cols":    set(),
     },
     {
@@ -154,7 +154,7 @@ _TABLE_CONFIGS = [
             "stale_reason", "vin", "event_at",
         ],
         "schema":       _DETAIL_SCRAPE_CLAIM_EVENTS_SCHEMA,
-        "minio_prefix": "ops/detail_scrape_claim_events",
+        "minio_prefix": "ops_normalized/detail_scrape_claim_events",
         "uuid_cols":    {"listing_id", "run_id", "vin"},
     },
     {
@@ -165,7 +165,7 @@ _TABLE_CONFIGS = [
             "event_id", "listing_id", "event_type", "num_of_attempts", "event_at",
         ],
         "schema":       _BLOCKED_COOLDOWN_EVENTS_SCHEMA,
-        "minio_prefix": "ops/blocked_cooldown_events",
+        "minio_prefix": "ops_normalized/blocked_cooldown_events",
         "uuid_cols":    {"listing_id"},
     },
     {
@@ -177,7 +177,7 @@ _TABLE_CONFIGS = [
             "model", "artifact_id", "event_type", "source", "event_at",
         ],
         "schema":       _PRICE_OBSERVATION_EVENTS_SCHEMA,
-        "minio_prefix": "ops/price_observation_events",
+        "minio_prefix": "ops_normalized/price_observation_events",
         "uuid_cols":    {"listing_id"},
     },
     {
@@ -189,7 +189,7 @@ _TABLE_CONFIGS = [
             "event_type", "previous_listing_id", "event_at",
         ],
         "schema":       _VIN_TO_LISTING_EVENTS_SCHEMA,
-        "minio_prefix": "ops/vin_to_listing_events",
+        "minio_prefix": "ops_normalized/vin_to_listing_events",
         "uuid_cols":    {"listing_id", "previous_listing_id"},
     },
 ]

@@ -136,15 +136,15 @@ class TestFlushSilverSuccess:
         _, kwargs = mock_write.call_args
         assert kwargs.get("compression") == "zstd"
 
-    def test_partitions_by_source_year_month_day(self, mocker):
+    def test_partitions_by_source_year_month(self, mocker):
         _, mock_write, _ = self._run(mocker, [_make_row()])
         _, kwargs = mock_write.call_args
-        assert kwargs.get("partition_cols") == ["source", "obs_year", "obs_month", "obs_day"]
+        assert kwargs.get("partition_cols") == ["source", "obs_year", "obs_month"]
 
-    def test_root_path_is_silver_observations(self, mocker):
+    def test_root_path_is_silver_normalized_observations(self, mocker):
         _, mock_write, _ = self._run(mocker, [_make_row()])
         _, kwargs = mock_write.call_args
-        assert "silver/observations" in kwargs.get("root_path", "")
+        assert "silver_normalized/observations" in kwargs.get("root_path", "")
 
     def test_commit_called(self, mocker):
         _, _, mock_conn = self._run(mocker, [_make_row()])

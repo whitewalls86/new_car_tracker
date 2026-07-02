@@ -78,7 +78,7 @@ def ns(s3_client, monkeypatch):
     minio_prefix = f"silver/test-compact-{run_id}/observations"
     obs_prefix = (
         f"{minio_prefix}/source=detail"
-        f"/obs_year={_OBS_DATE.year}/obs_month={_OBS_DATE.month}/obs_day={_OBS_DATE.day}"
+        f"/obs_year={_OBS_DATE.year}/obs_month={_OBS_DATE.month}"
     )
     monkeypatch.setattr("archiver.processors.compact_silver._MINIO_PREFIX", minio_prefix)
 
@@ -106,10 +106,9 @@ def _list_all_keys(s3_client, prefix: str) -> list[str]:
 
 
 def _sample_table(n: int = 5, make: str = "Ford") -> pa.Table:
-    # Partition columns (source, obs_year, obs_month, obs_day) are NOT included:
-    # flush_silver_observations removes them via partition_cols, so real part files
-    # never have them in their data. Including them here would conflict with
-    # pyarrow's hive partition inference on the directory path.
+    # Hive partition columns (source, obs_year, obs_month) are not included:
+    # flush_silver_observations removes them via partition_cols, so real part
+    # files never have them in their data.
     return pa.table({
         "listing_id": [f"L{uuid.uuid4().hex[:6]}" for _ in range(n)],
         "make": [make] * n,
@@ -235,7 +234,7 @@ class TestTmpFileNotVisibleToParquetGlob:
         obs_prefix = ns["obs_prefix"]
 
         # Manually upload a .tmp file
-        tmp_key = f"{obs_prefix}/compacted-2026-01-15.parquet.tmp"
+        tmp_key = f"{obs_prefix}/compacted-through-2026-01-31.parquet.tmp"
         table = _sample_table(2)
         buf = pa.BufferOutputStream()
         pq.write_table(table, buf)

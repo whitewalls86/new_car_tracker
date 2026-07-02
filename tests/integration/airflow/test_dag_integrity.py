@@ -39,6 +39,26 @@ DAG_SPECS = {
         "dag_id": "dbt_build",
         "tasks": {"check_dbt_runner_health", "dbt_build", "notify"},
     },
+    "flush_silver_observations.py": {
+        "dag_id": "flush_silver_observations",
+        "tasks": {"check_deploy_intent", "check_archiver_health", "flush_silver_observations"},
+    },
+    "flush_staging_events.py": {
+        "dag_id": "flush_staging_events",
+        "tasks": {"check_deploy_intent", "check_archiver_health", "flush_staging_events"},
+    },
+    "hourly_analytics_refresh.py": {
+        "dag_id": "hourly_analytics_refresh",
+        "tasks": {
+            "check_deploy_intent",
+            "check_archiver_health",
+            "check_dbt_runner_health",
+            "flush_silver_observations",
+            "flush_staging_events",
+            "dbt_build",
+            "notify",
+        },
+    },
     "delete_stale_emails.py": {
         "dag_id": "delete_stale_emails",
         "tasks": {"check_deploy_intent", "delete_stale_emails"},
@@ -132,6 +152,38 @@ def test_dag_id_and_tasks(filename, spec):
         f"  expected: {spec['tasks']}\n"
         f"  actual:   {actual_tasks}"
     )
+
+
+@pytest.mark.integration
+def test_hourly_analytics_refresh_order():
+    """Hourly analytics must flush before dbt so dbt reads fresh normalized files."""
+    from airflow.models.dagbag import DagBag
+
+    dagbag = DagBag(dag_folder=str(DAGS_DIR), include_examples=False)
+    dag = dagbag.dags["hourly_analytics_refresh"]
+
+    assert dag.task_dict["check_deploy_intent"] in (
+        dag.task_dict["check_archiver_health"].upstream_list
+    )
+    assert dag.task_dict["check_archiver_health"] in (
+        dag.task_dict["flush_silver_observations"].upstream_list
+    )
+    assert dag.task_dict["flush_silver_observations"] in (
+        dag.task_dict["flush_staging_events"].upstream_list
+    )
+    assert dag.task_dict["flush_staging_events"] in (
+        dag.task_dict["check_dbt_runner_health"].upstream_list
+    )
+    assert dag.task_dict["check_dbt_runner_health"] in dag.task_dict["dbt_build"].upstream_list
+    for task_id in [
+        "check_deploy_intent",
+        "check_archiver_health",
+        "flush_silver_observations",
+        "flush_staging_events",
+        "check_dbt_runner_health",
+        "dbt_build",
+    ]:
+        assert dag.task_dict[task_id] in dag.task_dict["notify"].upstream_list
 
 
 # ---------------------------------------------------------------------------

@@ -1,8 +1,7 @@
 from datetime import datetime
 
-import requests
 from airflow.providers.standard.operators.python import PythonOperator
-from sensors import deploy_intent_sensor, http_health_sensor
+from sensors import deploy_intent_sensor, http_health_sensor, post_json
 
 from airflow import DAG
 
@@ -10,14 +9,12 @@ ARCHIVER_URL = "http://archiver:8001"
 
 
 def _run_flush():
-    resp = requests.post(f"{ARCHIVER_URL}/flush/silver/run", timeout=300)
-    resp.raise_for_status()
-    return resp.json()
+    return post_json(f"{ARCHIVER_URL}/flush/silver/run", timeout=300)
 
 
 with DAG(
     dag_id="flush_silver_observations",
-    schedule="*/5 * * * *",
+    schedule=None,  # manual-only; hourly_analytics_refresh owns scheduled flush + dbt order
     start_date=datetime(2026, 1, 1),
     catchup=False,
     tags=["silver"],
