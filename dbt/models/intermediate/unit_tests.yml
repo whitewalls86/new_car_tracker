@@ -373,7 +373,7 @@ unit_tests:
         - {vin17: "1HGBH41JXMN109186", parsed_fingerprint: "fp_a",
            run_started_at: "2026-01-03 00:00:00+00", run_ended_at: "2026-01-03 12:00:00+00",
            artifact_count: 2, run_duration_hours: 12,
-           is_open_run: true, hours_until_change: null, next_state_started_at: null}
+           is_open_run: true, hours_until_change: null}
 
   # ---------------------------------------------------------------------------
   # int_listing_volatility_features — feature row correctness
