@@ -12,6 +12,7 @@ Must be run with PYTHONPATH including airflow/dags/ so that intra-DAG imports
 (e.g. `from sensors import ...`) resolve correctly.
 """
 import importlib.util
+import inspect
 import re
 import sys
 from pathlib import Path
@@ -123,6 +124,19 @@ def _load_dag_module(filename: str):
             sys.path.remove(dags_dir)
 
 
+def _make_dagbag():
+    """Build a DagBag across Airflow versions without loading example DAGs."""
+    try:
+        from airflow.dag_processing.dagbag import DagBag
+    except ImportError:
+        from airflow.models.dagbag import DagBag
+
+    kwargs = {"dag_folder": str(DAGS_DIR)}
+    if "include_examples" in inspect.signature(DagBag).parameters:
+        kwargs["include_examples"] = False
+    return DagBag(**kwargs)
+
+
 @pytest.mark.integration
 @pytest.mark.parametrize("filename", DAG_SPECS.keys())
 def test_dag_imports_without_error(filename):
@@ -134,9 +148,7 @@ def test_dag_imports_without_error(filename):
 @pytest.mark.parametrize("filename,spec", DAG_SPECS.items())
 def test_dag_id_and_tasks(filename, spec):
     """Each DAG must expose the expected dag_id and task set."""
-    from airflow.models.dagbag import DagBag
-
-    dagbag = DagBag(dag_folder=str(DAGS_DIR), include_examples=False)
+    dagbag = _make_dagbag()
 
     assert dagbag.import_errors == {}, (
         f"Import errors found: {dagbag.import_errors}"
@@ -157,9 +169,7 @@ def test_dag_id_and_tasks(filename, spec):
 @pytest.mark.integration
 def test_hourly_analytics_refresh_order():
     """Hourly analytics must flush before dbt so dbt reads fresh normalized files."""
-    from airflow.models.dagbag import DagBag
-
-    dagbag = DagBag(dag_folder=str(DAGS_DIR), include_examples=False)
+    dagbag = _make_dagbag()
     dag = dagbag.dags["hourly_analytics_refresh"]
 
     assert dag.task_dict["check_deploy_intent"] in (
