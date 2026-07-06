@@ -142,7 +142,8 @@ jobs:
           "
 
       - name: Install dbt
-        run: pip install dbt-duckdb dbt-postgres
+        # Pinned to match dbt_runner/Dockerfile — dbt 1.10 supports data_tests.arguments; avoids dbt 2.x prerelease.
+        run: pip install "dbt-core==1.10.20" "dbt-postgres==1.10.2" "dbt-duckdb==1.10.1"
 
       - name: Install dbt packages
         working-directory: dbt

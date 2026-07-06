@@ -1,8 +1,9 @@
 FROM python:3.13-slim
 
-# Keep dbt on dbt-core==1.8.9; dbt-core 2.x alpha rejects the source meta.external_location
-# syntax used by dbt-duckdb in this project.
-RUN pip install "dbt-core==1.8.9" dbt-postgres==1.8.2 dbt-duckdb==1.8.4 uvicorn --no-cache-dir
+# dbt 1.10 is the minimum stable release supporting data_tests.arguments syntax.
+# Avoid dbt 2.x prerelease: it rejects source meta.external_location used by dbt-duckdb here.
+# Keep prod/CI/local aligned on the same exact pins.
+RUN pip install "dbt-core==1.10.20" "dbt-postgres==1.10.2" "dbt-duckdb==1.10.1" uvicorn --no-cache-dir
 
 # Install additional dependencies
 COPY dbt_runner/requirements.txt .
