@@ -15,3 +15,7 @@ models:
           - accepted_values:
               arguments:
                 values: ['srp', 'detail', 'carousel']
+      - name: dealer_city
+        description: City of the dealer — passed through from silver, populated for detail source only.
+      - name: dealer_state
+        description: State abbreviation of the dealer — passed through from silver, populated for detail source only.

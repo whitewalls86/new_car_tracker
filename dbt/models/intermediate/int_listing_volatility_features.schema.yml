@@ -1,0 +1,92 @@
+version: 2
+
+models:
+  - name: int_listing_volatility_features
+    description: >
+      One row per VIN — current-state feature row for Plan 112 backtesting.
+      Grain is the open run per VIN from int_listing_state_runs (is_open_run = true).
+      Dealer and make/model run-length rates are computed from completed runs only to
+      avoid inflating in-progress durations. price_vs_make_model_median is NULL when
+      national_median_price is unavailable for a make/model. days_since_srp_seen is
+      NULL when the current listing_id has never been observed in an SRP fetch.
+    columns:
+      - name: vin17
+        description: VIN — primary key.
+        data_tests:
+          - not_null
+          - unique
+      - name: listing_id
+        description: Current active listing_id from the open run.
+        data_tests:
+          - not_null
+      - name: latest_fetched_at
+        description: Timestamp of the most recent detail observation for this VIN.
+        data_tests:
+          - not_null
+      - name: first_seen_at
+        description: Timestamp of the first ever detail observation for this VIN.
+        data_tests:
+          - not_null
+      - name: total_state_changes
+        description: >
+          Total run transitions across all listing_ids for this VIN (run count minus 1).
+          Zero for VINs observed in a single uninterrupted state.
+        data_tests:
+          - not_null
+      - name: listing_id_change_count
+        description: Number of distinct listing_ids observed for this VIN (relisting count, min 1).
+        data_tests:
+          - not_null
+      - name: days_since_last_state_change
+        description: Age of the open run in days — datediff('day', run_started_at, as_of_at).
+        data_tests:
+          - not_null
+      - name: unchanged_observation_streak
+        description: Number of consecutive same-fingerprint detail observations in the open run.
+        data_tests:
+          - not_null
+      - name: listing_state_change_count
+        description: >
+          Number of run transitions where listing_state specifically changed between
+          consecutive runs for this VIN. Zero when listing_state never changed.
+        data_tests:
+          - not_null
+      - name: current_price
+        description: Most recent parsed price from int_price_history.
+      - name: price_change_count_7d
+        description: >
+          Genuine price changes (price != prev_price) in stg_price_events in the 7 days
+          ending at as_of_at. Events after as_of_at are excluded.
+        data_tests:
+          - not_null
+      - name: price_change_count_30d
+        description: >
+          Genuine price changes (price != prev_price) in stg_price_events in the 30 days
+          ending at as_of_at. Events after as_of_at are excluded.
+        data_tests:
+          - not_null
+      - name: price_vs_make_model_median
+        description: >
+          current_price / national_median_price ratio. NULL when int_benchmarks has no
+          row for this make/model or when national_median_price is zero.
+      - name: listing_days_on_market
+        description: >
+          Days from first_seen_at to as_of_at. Computed in this model rather than taken
+          from int_price_history.days_on_market, which uses wall-clock time and would
+          break backtest reproducibility.
+      - name: dealer_avg_run_length_hours
+        description: Mean run duration in hours across all completed runs at this dealer (customer_id).
+      - name: dealer_median_run_length_hours
+        description: Median run duration in hours across all completed runs at this dealer.
+      - name: make_model_avg_run_length_hours
+        description: Mean run duration in hours across all completed runs for this make/model.
+      - name: make_model_median_run_length_hours
+        description: Median run duration in hours across all completed runs for this make/model.
+      - name: recent_srp_seen_at
+        description: >
+          Most recent SRP observation timestamp for the current listing_id at or before
+          as_of_at. NULL when the listing has never appeared in SRP.
+      - name: days_since_srp_seen
+        description: >
+          Days from recent_srp_seen_at to as_of_at. NULL when the listing has never
+          appeared in SRP at or before as_of_at.
