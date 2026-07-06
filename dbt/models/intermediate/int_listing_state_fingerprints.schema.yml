@@ -1,0 +1,46 @@
+version: 2
+
+models:
+  - name: int_listing_state_fingerprints
+    description: >
+      One row per detail artifact with a valid VIN.
+      parsed_fingerprint is an md5 hash of all business-state fields including listing_id,
+      so a relisting (same VIN, new listing_id) automatically produces a new fingerprint
+      without any special-case logic. Source is filtered to detail only; rows with null
+      vin17 are excluded. price, mileage, and listing_state are denormalized for
+      downstream convenience.
+    columns:
+      - name: vin17
+        description: Validated 17-character VIN — primary key for downstream VIN-grained models.
+        data_tests:
+          - not_null
+      - name: listing_id
+        description: Listing identifier active when this artifact was fetched.
+        data_tests:
+          - not_null
+      - name: artifact_id
+        description: Source artifact identifier.
+        data_tests:
+          - not_null
+      - name: fetched_at
+        description: Timestamp when this detail artifact was fetched.
+        data_tests:
+          - not_null
+      - name: parsed_fingerprint
+        description: >
+          md5 hash of 18 business-state fields: listing_id, vin17, price, mileage, msrp,
+          make, model, vehicle_trim, model_year, stock_type, fuel_type, body_style,
+          listing_state, dealer_name, dealer_zip, dealer_city, dealer_state, customer_id.
+          Null fields are coalesced to empty string before hashing.
+          listing_id and listing_state are included intentionally so relisting and
+          active→unavailable transitions automatically open new runs.
+          seller_id and seller_customer_id are excluded: seller_id overlaps with customer_id
+          and is unreliable on detail pages; seller_customer_id is SRP-only and not present.
+        data_tests:
+          - not_null
+      - name: price
+        description: Parsed listing price — denormalized from stg_observations.
+      - name: mileage
+        description: Parsed mileage — denormalized from stg_observations.
+      - name: listing_state
+        description: Listing state (active/unavailable/unknown) — denormalized from stg_observations.

@@ -14,7 +14,7 @@
 select
     event_id,
     listing_id,
-    vin,
+    upper(vin) as vin,
     price,
     make,
     model,

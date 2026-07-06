@@ -32,6 +32,8 @@ select
     body_style,
     dealer_name,
     dealer_zip,
+    dealer_city,
+    dealer_state,
     customer_id,
     canonical_detail_url,
     financing_type,

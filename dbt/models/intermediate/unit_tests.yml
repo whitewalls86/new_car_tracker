@@ -178,3 +178,346 @@ unit_tests:
         - {make: "honda", model: "crv", national_listing_count: 3,
            national_median_price: 30000, national_avg_price: 30000,
            national_avg_discount_pct: null}
+
+  # ---------------------------------------------------------------------------
+  # int_listing_state_fingerprints — filter behavior
+  # ---------------------------------------------------------------------------
+
+  - name: test_fingerprints_excludes_non_detail_and_null_vin
+    description: "SRP rows and rows with null vin17 are excluded; only detail+valid-vin rows appear"
+    model: int_listing_state_fingerprints
+    given:
+      - input: ref('stg_observations')
+        rows:
+          - {artifact_id: 1, listing_id: "L1", vin17: "1HGBH41JXMN109186", source: "detail",
+             fetched_at: "2026-01-10 12:00:00+00", price: 30000, mileage: 100, listing_state: "active"}
+          - {artifact_id: 2, listing_id: "L2", vin17: "1HGBH41JXMN109186", source: "srp",
+             fetched_at: "2026-01-10 13:00:00+00", price: 30000, mileage: 100, listing_state: "active"}
+          - {artifact_id: 3, listing_id: "L3", vin17: null, source: "detail",
+             fetched_at: "2026-01-10 14:00:00+00", price: 30000, mileage: 100, listing_state: "active"}
+    expect:
+      rows:
+        - {artifact_id: 1, listing_id: "L1", vin17: "1HGBH41JXMN109186"}
+
+  - name: test_fingerprints_identical_inputs_same_hash
+    description: "Two detail rows with identical business fields produce the same parsed_fingerprint"
+    model: int_listing_state_fingerprints
+    given:
+      - input: ref('stg_observations')
+        rows:
+          - {artifact_id: 1, listing_id: "L1", vin17: "1HGBH41JXMN109186", source: "detail",
+             fetched_at: "2026-01-10 10:00:00+00", price: 30000, mileage: 5000, listing_state: "active",
+             make: "honda", model: "crv", vehicle_trim: "EX", model_year: 2024,
+             msrp: 35000, stock_type: "new", fuel_type: "gasoline", body_style: "suv",
+             dealer_name: "Test Dealer", dealer_zip: "90210", dealer_city: "Los Angeles",
+             dealer_state: "CA", customer_id: "D001"}
+          - {artifact_id: 2, listing_id: "L1", vin17: "1HGBH41JXMN109186", source: "detail",
+             fetched_at: "2026-01-10 16:00:00+00", price: 30000, mileage: 5000, listing_state: "active",
+             make: "honda", model: "crv", vehicle_trim: "EX", model_year: 2024,
+             msrp: 35000, stock_type: "new", fuel_type: "gasoline", body_style: "suv",
+             dealer_name: "Test Dealer", dealer_zip: "90210", dealer_city: "Los Angeles",
+             dealer_state: "CA", customer_id: "D001"}
+    expect:
+      rows:
+        - {artifact_id: 1, vin17: "1HGBH41JXMN109186", price: 30000, mileage: 5000, listing_state: "active",
+           parsed_fingerprint: "bb31f33225ad43103c76daa93981a307"}
+        - {artifact_id: 2, vin17: "1HGBH41JXMN109186", price: 30000, mileage: 5000, listing_state: "active",
+           parsed_fingerprint: "bb31f33225ad43103c76daa93981a307"}
+
+  - name: test_fingerprints_price_sensitivity
+    description: "A $1 price change (30000 → 29999) produces a different parsed_fingerprint"
+    model: int_listing_state_fingerprints
+    given:
+      - input: ref('stg_observations')
+        rows:
+          - {artifact_id: 1, listing_id: "L1", vin17: "1HGBH41JXMN109186", source: "detail",
+             fetched_at: "2026-01-10 10:00:00+00", price: 30000, mileage: 5000, listing_state: "active",
+             make: "honda", model: "crv", vehicle_trim: "EX", model_year: 2024,
+             msrp: 35000, stock_type: "new", fuel_type: "gasoline", body_style: "suv",
+             dealer_name: "Test Dealer", dealer_zip: "90210", dealer_city: "Los Angeles",
+             dealer_state: "CA", customer_id: "D001"}
+          - {artifact_id: 2, listing_id: "L1", vin17: "1HGBH41JXMN109186", source: "detail",
+             fetched_at: "2026-01-10 16:00:00+00", price: 29999, mileage: 5000, listing_state: "active",
+             make: "honda", model: "crv", vehicle_trim: "EX", model_year: 2024,
+             msrp: 35000, stock_type: "new", fuel_type: "gasoline", body_style: "suv",
+             dealer_name: "Test Dealer", dealer_zip: "90210", dealer_city: "Los Angeles",
+             dealer_state: "CA", customer_id: "D001"}
+    expect:
+      rows:
+        - {artifact_id: 1, parsed_fingerprint: "bb31f33225ad43103c76daa93981a307"}
+        - {artifact_id: 2, parsed_fingerprint: "4d9c43601bd925a806b5e496ee3f7593"}
+
+  - name: test_fingerprints_listing_state_sensitivity
+    description: "A listing_state change (active → unavailable) produces a different parsed_fingerprint"
+    model: int_listing_state_fingerprints
+    given:
+      - input: ref('stg_observations')
+        rows:
+          - {artifact_id: 1, listing_id: "L1", vin17: "1HGBH41JXMN109186", source: "detail",
+             fetched_at: "2026-01-10 10:00:00+00", price: 30000, mileage: 5000, listing_state: "active",
+             make: "honda", model: "crv", vehicle_trim: "EX", model_year: 2024,
+             msrp: 35000, stock_type: "new", fuel_type: "gasoline", body_style: "suv",
+             dealer_name: "Test Dealer", dealer_zip: "90210", dealer_city: "Los Angeles",
+             dealer_state: "CA", customer_id: "D001"}
+          - {artifact_id: 2, listing_id: "L1", vin17: "1HGBH41JXMN109186", source: "detail",
+             fetched_at: "2026-01-10 16:00:00+00", price: 30000, mileage: 5000, listing_state: "unavailable",
+             make: "honda", model: "crv", vehicle_trim: "EX", model_year: 2024,
+             msrp: 35000, stock_type: "new", fuel_type: "gasoline", body_style: "suv",
+             dealer_name: "Test Dealer", dealer_zip: "90210", dealer_city: "Los Angeles",
+             dealer_state: "CA", customer_id: "D001"}
+    expect:
+      rows:
+        - {artifact_id: 1, parsed_fingerprint: "bb31f33225ad43103c76daa93981a307"}
+        - {artifact_id: 2, parsed_fingerprint: "50711e6e84c56f7732b64b4e579428c6"}
+
+  # ---------------------------------------------------------------------------
+  # int_listing_state_runs — gaps-and-islands logic
+  # ---------------------------------------------------------------------------
+
+  - name: test_runs_collapses_identical_fingerprints
+    description: "Three detail rows with same fingerprint collapse to one run with artifact_count=3"
+    model: int_listing_state_runs
+    given:
+      - input: ref('int_listing_state_fingerprints')
+        rows:
+          - {vin17: "1HGBH41JXMN109186", listing_id: "L1", artifact_id: 1,
+             fetched_at: "2026-01-01 00:00:00+00", parsed_fingerprint: "fp_a",
+             price: 30000, mileage: 5000, listing_state: "active"}
+          - {vin17: "1HGBH41JXMN109186", listing_id: "L1", artifact_id: 2,
+             fetched_at: "2026-01-01 06:00:00+00", parsed_fingerprint: "fp_a",
+             price: 30000, mileage: 5000, listing_state: "active"}
+          - {vin17: "1HGBH41JXMN109186", listing_id: "L1", artifact_id: 3,
+             fetched_at: "2026-01-01 12:00:00+00", parsed_fingerprint: "fp_a",
+             price: 30000, mileage: 5000, listing_state: "active"}
+    expect:
+      rows:
+        - {vin17: "1HGBH41JXMN109186", listing_id: "L1", parsed_fingerprint: "fp_a",
+           artifact_count: 3, is_open_run: true, hours_until_change: null,
+           next_state_started_at: null}
+
+  - name: test_runs_splits_on_price_or_state_change
+    description: "Two rows with different fingerprints (simulating a price change) produce two runs"
+    model: int_listing_state_runs
+    given:
+      - input: ref('int_listing_state_fingerprints')
+        rows:
+          - {vin17: "1HGBH41JXMN109186", listing_id: "L1", artifact_id: 1,
+             fetched_at: "2026-01-01 00:00:00+00", parsed_fingerprint: "fp_a",
+             price: 30000, mileage: 5000, listing_state: "active"}
+          - {vin17: "1HGBH41JXMN109186", listing_id: "L1", artifact_id: 2,
+             fetched_at: "2026-01-02 00:00:00+00", parsed_fingerprint: "fp_b",
+             price: 29000, mileage: 5000, listing_state: "active"}
+    expect:
+      rows:
+        - {vin17: "1HGBH41JXMN109186", parsed_fingerprint: "fp_a",
+           artifact_count: 1, is_open_run: false, hours_until_change: 24}
+        - {vin17: "1HGBH41JXMN109186", parsed_fingerprint: "fp_b",
+           artifact_count: 1, is_open_run: true, hours_until_change: null}
+
+  - name: test_runs_relisting_new_listing_id_opens_new_run
+    description: "Same VIN with a new listing_id (different fingerprint) opens a new run"
+    model: int_listing_state_runs
+    given:
+      - input: ref('int_listing_state_fingerprints')
+        rows:
+          - {vin17: "1HGBH41JXMN109186", listing_id: "L1", artifact_id: 1,
+             fetched_at: "2026-01-01 00:00:00+00", parsed_fingerprint: "fp_dealer_a",
+             price: 30000, mileage: 5000, listing_state: "active"}
+          - {vin17: "1HGBH41JXMN109186", listing_id: "L2", artifact_id: 2,
+             fetched_at: "2026-01-10 00:00:00+00", parsed_fingerprint: "fp_dealer_b",
+             price: 28000, mileage: 5000, listing_state: "active"}
+    expect:
+      rows:
+        - {vin17: "1HGBH41JXMN109186", listing_id: "L1", parsed_fingerprint: "fp_dealer_a",
+           artifact_count: 1, is_open_run: false}
+        - {vin17: "1HGBH41JXMN109186", listing_id: "L2", parsed_fingerprint: "fp_dealer_b",
+           artifact_count: 1, is_open_run: true}
+
+  - name: test_runs_three_runs_correct_boundaries
+    description: >
+      3 rows fingerprint A, 1 row fingerprint B, 2 rows fingerprint A again → 3 runs with correct boundaries.
+      The third run is open (hours_until_change IS NULL). The second run's hours_until_change
+      equals the gap between run 2 end and run 3 start.
+    model: int_listing_state_runs
+    given:
+      - input: ref('int_listing_state_fingerprints')
+        rows:
+          - {vin17: "1HGBH41JXMN109186", listing_id: "L1", artifact_id: 1,
+             fetched_at: "2026-01-01 00:00:00+00", parsed_fingerprint: "fp_a",
+             price: 30000, mileage: 5000, listing_state: "active"}
+          - {vin17: "1HGBH41JXMN109186", listing_id: "L1", artifact_id: 2,
+             fetched_at: "2026-01-01 06:00:00+00", parsed_fingerprint: "fp_a",
+             price: 30000, mileage: 5000, listing_state: "active"}
+          - {vin17: "1HGBH41JXMN109186", listing_id: "L1", artifact_id: 3,
+             fetched_at: "2026-01-01 12:00:00+00", parsed_fingerprint: "fp_a",
+             price: 30000, mileage: 5000, listing_state: "active"}
+          - {vin17: "1HGBH41JXMN109186", listing_id: "L1", artifact_id: 4,
+             fetched_at: "2026-01-02 00:00:00+00", parsed_fingerprint: "fp_b",
+             price: 29000, mileage: 5000, listing_state: "active"}
+          - {vin17: "1HGBH41JXMN109186", listing_id: "L1", artifact_id: 5,
+             fetched_at: "2026-01-03 00:00:00+00", parsed_fingerprint: "fp_a",
+             price: 30000, mileage: 5000, listing_state: "active"}
+          - {vin17: "1HGBH41JXMN109186", listing_id: "L1", artifact_id: 6,
+             fetched_at: "2026-01-03 12:00:00+00", parsed_fingerprint: "fp_a",
+             price: 30000, mileage: 5000, listing_state: "active"}
+    expect:
+      rows:
+        - {vin17: "1HGBH41JXMN109186", parsed_fingerprint: "fp_a",
+           run_started_at: "2026-01-01 00:00:00+00", run_ended_at: "2026-01-01 12:00:00+00",
+           artifact_count: 3, run_duration_hours: 12,
+           is_open_run: false, hours_until_change: 12}
+        - {vin17: "1HGBH41JXMN109186", parsed_fingerprint: "fp_b",
+           run_started_at: "2026-01-02 00:00:00+00", run_ended_at: "2026-01-02 00:00:00+00",
+           artifact_count: 1, run_duration_hours: 0,
+           is_open_run: false, hours_until_change: 24}
+        - {vin17: "1HGBH41JXMN109186", parsed_fingerprint: "fp_a",
+           run_started_at: "2026-01-03 00:00:00+00", run_ended_at: "2026-01-03 12:00:00+00",
+           artifact_count: 2, run_duration_hours: 12,
+           is_open_run: true, hours_until_change: null, next_state_started_at: null}
+
+  # ---------------------------------------------------------------------------
+  # int_listing_volatility_features — feature row correctness
+  # ---------------------------------------------------------------------------
+
+  - name: test_volatility_features_state_history
+    description: >
+      1 VIN with 2 runs (closed L1 + open L2, both listing_state=active). Verifies
+      total_state_changes, listing_id_change_count, days_since_last_state_change
+      (as_of_at-pinned), unchanged_observation_streak, and price_change_count_7d=0.
+      Inputs include a future price event and a future SRP row (both after as_of_at=2026-01-26)
+      to confirm the <= as_of_at upper-bound filters exclude them.
+    model: int_listing_volatility_features
+    overrides:
+      vars:
+        as_of_at: "2026-01-26 00:00:00+00"
+    given:
+      - input: ref('int_listing_state_runs')
+        rows:
+          - {vin17: "VIN1", listing_id: "L1", parsed_fingerprint: "fp_a",
+             listing_state: "active",
+             run_started_at: "2026-01-10 00:00:00+00", run_ended_at: "2026-01-24 00:00:00+00",
+             artifact_count: 1, run_duration_hours: 336, is_open_run: false,
+             next_state_started_at: "2026-01-25 00:00:00+00", hours_until_change: 24}
+          - {vin17: "VIN1", listing_id: "L2", parsed_fingerprint: "fp_b",
+             listing_state: "active",
+             run_started_at: "2026-01-25 00:00:00+00", run_ended_at: "2026-01-25 12:00:00+00",
+             artifact_count: 2, run_duration_hours: 12, is_open_run: true,
+             next_state_started_at: null, hours_until_change: null}
+      - input: ref('stg_observations')
+        rows:
+          - {vin17: "VIN1", listing_id: "L2", source: "detail",
+             fetched_at: "2026-01-25 00:00:00+00",
+             customer_id: "D001", make: "honda", model: "crv", artifact_id: 1}
+          - {vin17: "VIN1", listing_id: "L2", source: "detail",
+             fetched_at: "2026-01-25 12:00:00+00",
+             customer_id: "D001", make: "honda", model: "crv", artifact_id: 2}
+          # future SRP — must be excluded; days_since_srp_seen should remain null
+          - {vin17: "VIN1", listing_id: "L2", source: "srp",
+             fetched_at: "2026-01-27 00:00:00+00", artifact_id: 3}
+      - input: ref('stg_price_events')
+        rows:
+          - {vin: "VIN1", price: 30000, event_at: "2026-01-01 00:00:00+00"}
+          # future price event — genuine change (30000→28000), within 7d window if not filtered
+          - {vin: "VIN1", price: 28000, event_at: "2026-01-28 00:00:00+00"}
+      - input: ref('int_price_history')
+        rows:
+          - {vin: "VIN1", current_price: 30000, days_on_market: 16,
+             price_drop_count: 0, price_increase_count: 0,
+             first_price: 30000, min_price: 30000, max_price: 30000,
+             total_price_observations: 1}
+      - input: ref('int_benchmarks')
+        rows:
+          - {make: "honda", model: "crv", national_listing_count: 1,
+             national_avg_price: 25000, national_median_price: 25000,
+             national_avg_discount_pct: null}
+    expect:
+      rows:
+        - {vin17: "VIN1", listing_id: "L2",
+           total_state_changes: 1,
+           listing_id_change_count: 2,
+           days_since_last_state_change: 1,
+           unchanged_observation_streak: 2,
+           price_change_count_7d: 0,
+           price_change_count_30d: 0,
+           listing_state_change_count: 0,
+           days_since_srp_seen: null}
+
+  - name: test_volatility_features_price_windows_srp_and_priors
+    description: >
+      1 VIN with 3 runs (2 closed 12h+24h at D001/honda/crv, 1 open). Three price events
+      28k→29k→30k. SRP at 2026-01-29. Verifies price_change_count_7d=1, price_change_count_30d=2,
+      days_since_srp_seen=3, dealer_avg_run_length_hours=18.0, price_vs_make_model_median=1.2.
+      Inputs include future rows after as_of_at=2026-02-01: a future price change (would push
+      counts to 2/3), a future SRP fetch (would change days_since_srp_seen to -2), and a future
+      detail observation with different make/model (would break price_vs_make_model_median if
+      arg_max leaked it). Expected values confirm all three are excluded.
+    model: int_listing_volatility_features
+    overrides:
+      vars:
+        as_of_at: "2026-02-01 00:00:00+00"
+    given:
+      - input: ref('int_listing_state_runs')
+        rows:
+          - {vin17: "VIN2", listing_id: "L1", parsed_fingerprint: "fp_a",
+             listing_state: "active",
+             run_started_at: "2026-01-03 00:00:00+00", run_ended_at: "2026-01-03 12:00:00+00",
+             artifact_count: 1, run_duration_hours: 12, is_open_run: false,
+             next_state_started_at: "2026-01-10 00:00:00+00", hours_until_change: 156}
+          - {vin17: "VIN2", listing_id: "L1", parsed_fingerprint: "fp_b",
+             listing_state: "active",
+             run_started_at: "2026-01-10 00:00:00+00", run_ended_at: "2026-01-11 00:00:00+00",
+             artifact_count: 1, run_duration_hours: 24, is_open_run: false,
+             next_state_started_at: "2026-01-25 00:00:00+00", hours_until_change: 336}
+          - {vin17: "VIN2", listing_id: "L2", parsed_fingerprint: "fp_c",
+             listing_state: "active",
+             run_started_at: "2026-01-25 00:00:00+00", run_ended_at: "2026-01-29 00:00:00+00",
+             artifact_count: 3, run_duration_hours: 96, is_open_run: true,
+             next_state_started_at: null, hours_until_change: null}
+      - input: ref('stg_observations')
+        rows:
+          - {vin17: "VIN2", listing_id: "L1", source: "detail",
+             fetched_at: "2026-01-03 00:00:00+00",
+             customer_id: "D001", make: "honda", model: "crv", artifact_id: 1}
+          - {vin17: "VIN2", listing_id: "L1", source: "detail",
+             fetched_at: "2026-01-11 00:00:00+00",
+             customer_id: "D001", make: "honda", model: "crv", artifact_id: 2}
+          - {vin17: "VIN2", listing_id: "L2", source: "detail",
+             fetched_at: "2026-01-25 00:00:00+00",
+             customer_id: "D001", make: "honda", model: "crv", artifact_id: 3}
+          - {vin17: "VIN2", listing_id: "L2", source: "srp",
+             fetched_at: "2026-01-29 00:00:00+00", artifact_id: 4}
+          # future SRP — must be excluded; days_since_srp_seen should stay 3, not become -2
+          - {vin17: "VIN2", listing_id: "L2", source: "srp",
+             fetched_at: "2026-02-03 00:00:00+00", artifact_id: 5}
+          # future detail with different make/model — arg_max must not pick this up;
+          # price_vs_make_model_median must stay 1.2 (honda/crv benchmark), not become null
+          - {vin17: "VIN2", listing_id: "L2", source: "detail",
+             fetched_at: "2026-02-03 00:00:00+00",
+             customer_id: "D002", make: "toyota", model: "rav4", artifact_id: 6}
+      - input: ref('stg_price_events')
+        rows:
+          - {vin: "VIN2", price: 28000, event_at: "2026-01-03 00:00:00+00"}
+          - {vin: "VIN2", price: 29000, event_at: "2026-01-10 00:00:00+00"}
+          - {vin: "VIN2", price: 30000, event_at: "2026-01-28 00:00:00+00"}
+          # future price change — would push 7d count to 2 and 30d count to 3 if not filtered
+          - {vin: "VIN2", price: 32000, event_at: "2026-02-05 00:00:00+00"}
+      - input: ref('int_price_history')
+        rows:
+          - {vin: "VIN2", current_price: 30000, days_on_market: 29,
+             price_drop_count: 0, price_increase_count: 2,
+             first_price: 28000, min_price: 28000, max_price: 30000,
+             total_price_observations: 3}
+      - input: ref('int_benchmarks')
+        rows:
+          - {make: "honda", model: "crv", national_listing_count: 1,
+             national_avg_price: 25000, national_median_price: 25000,
+             national_avg_discount_pct: null}
+    expect:
+      rows:
+        - {vin17: "VIN2", listing_id: "L2",
+           price_change_count_7d: 1,
+           price_change_count_30d: 2,
+           days_since_srp_seen: 3,
+           dealer_avg_run_length_hours: 18.0,
+           make_model_avg_run_length_hours: 18.0,
+           price_vs_make_model_median: 1.2}

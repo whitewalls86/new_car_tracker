@@ -1,0 +1,52 @@
+version: 2
+
+models:
+  - name: int_listing_state_runs
+    description: >
+      One row per contiguous run of identical parsed_fingerprint, partitioned by vin17.
+      A "run" is a sequence of consecutive detail observations where the business-state hash
+      did not change. A fingerprint change (including listing_id change, which is part of the
+      hash) always opens a new run.
+      hours_until_change and next_state_started_at are NULL for the open (most recent) run
+      per VIN — this is the label target for Plan 112.
+    columns:
+      - name: vin17
+        description: VIN — grain for all downstream VIN-keyed models.
+        data_tests:
+          - not_null
+      - name: listing_id
+        description: Listing active during this run. Safe group key because listing_id is in the fingerprint hash.
+        data_tests:
+          - not_null
+      - name: listing_state
+        description: Listing state (active/unavailable/unknown) — constant within a run since it is part of the fingerprint hash. Carried forward to avoid a range-join back to int_listing_state_fingerprints in downstream models.
+      - name: parsed_fingerprint
+        description: Business-state hash — constant within a run by definition.
+        data_tests:
+          - not_null
+      - name: run_started_at
+        description: Timestamp of the first observation in this run (MIN fetched_at).
+        data_tests:
+          - not_null
+      - name: run_ended_at
+        description: Timestamp of the last observation in this run (MAX fetched_at).
+        data_tests:
+          - not_null
+      - name: artifact_count
+        description: Number of detail observations in this run.
+        data_tests:
+          - not_null
+      - name: run_duration_hours
+        description: Hours between run_started_at and run_ended_at. Zero for single-observation runs.
+        data_tests:
+          - not_null
+      - name: next_state_started_at
+        description: run_started_at of the following run for this VIN. NULL for the open run.
+      - name: hours_until_change
+        description: >
+          Hours from run_ended_at to next_state_started_at. NULL for the open run.
+          This is the label target for Plan 112 backtest.
+      - name: is_open_run
+        description: True for the latest (open) run per VIN — next_state_started_at IS NULL.
+        data_tests:
+          - not_null
