@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-from archiver.processors.lake_snapshot_selectors import build_selector_registry
+from archiver.processors.lake_snapshot_selectors import build_selector_registry, run_lake_selectors
 from archiver.processors.lake_source_audit import audit_source_tables
 
 logger = logging.getLogger("archiver")
@@ -52,6 +52,7 @@ class SnapshotRequest:
     min_selector_coverage: bool = True
     dry_run: bool = False
     audit_sources: bool = False
+    run_selectors: bool = False
     source_base_path: Optional[str] = None
 
 
@@ -71,6 +72,7 @@ class SnapshotResult:
     archive_key: Optional[str] = None
     coverage_failures: List[str] = field(default_factory=list)
     source_audit: Optional[Dict[str, Any]] = None
+    selector_diagnostics: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -88,6 +90,7 @@ class SnapshotResult:
             "archive_key": self.archive_key,
             "coverage_failures": self.coverage_failures,
             "source_audit": self.source_audit,
+            "selector_diagnostics": self.selector_diagnostics,
         }
 
 
@@ -146,6 +149,7 @@ def resolve_request_defaults(request: SnapshotRequest) -> SnapshotRequest:
         min_selector_coverage=request.min_selector_coverage,
         dry_run=request.dry_run,
         audit_sources=request.audit_sources,
+        run_selectors=request.run_selectors,
         source_base_path=request.source_base_path,
     )
 
@@ -268,9 +272,22 @@ def export_ci_lake_snapshot(request: SnapshotRequest) -> SnapshotResult:
     if request.dry_run:
         logger.info(
             "export_ci_lake_snapshot: dry_run snapshot_id=%s tier=%s target_vins=%s "
-            "max_archive_mb=%s",
+            "max_archive_mb=%s run_selectors=%s",
             snapshot_id, request.tier, request.target_vins, request.max_archive_mb,
+            request.run_selectors,
         )
+        selector_diagnostics = None
+        if request.run_selectors:
+            selector_diagnostics = run_lake_selectors(
+                base_path=request.source_base_path,
+                window_start=window_start,
+                window_end=window_end,
+            )
+            logger.info(
+                "export_ci_lake_snapshot: run_selectors snapshot_id=%s tier=%s ok=%s errors=%s",
+                snapshot_id, request.tier,
+                selector_diagnostics["ok"], selector_diagnostics["errors"],
+            )
         return SnapshotResult(
             snapshot_id=snapshot_id,
             tier=request.tier,
@@ -278,6 +295,7 @@ def export_ci_lake_snapshot(request: SnapshotRequest) -> SnapshotResult:
             source_window_start=window_start.isoformat() if window_start else None,
             source_window_end=window_end.isoformat() if window_end else None,
             coverage_failures=[],
+            selector_diagnostics=selector_diagnostics,
         )
 
     logger.info(
@@ -307,6 +325,7 @@ def _parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument("--dry-run", dest="dry_run", action="store_true")
     parser.add_argument("--audit-sources", dest="audit_sources", action="store_true")
+    parser.add_argument("--run-selectors", dest="run_selectors", action="store_true")
     parser.add_argument("--source-base-path", dest="source_base_path", default=None)
     return parser.parse_args(argv)
 
@@ -322,6 +341,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         source_window_months=args.source_window_months,
         dry_run=args.dry_run,
         audit_sources=args.audit_sources,
+        run_selectors=args.run_selectors,
         source_base_path=args.source_base_path,
     )
     result = export_ci_lake_snapshot(request)

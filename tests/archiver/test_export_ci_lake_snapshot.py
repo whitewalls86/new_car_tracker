@@ -15,7 +15,12 @@ from archiver.processors.export_ci_lake_snapshot import (
     resolve_request_defaults,
     validate_request,
 )
-from archiver.processors.lake_snapshot_selectors import build_selector_registry
+from archiver.processors.lake_snapshot_selectors import (
+    RUNNABLE_SELECTORS,
+    build_selector_query,
+    build_selector_registry,
+    run_lake_selectors,
+)
 from archiver.processors.lake_source_audit import audit_source_tables
 
 # ---------------------------------------------------------------------------
@@ -407,3 +412,185 @@ class TestExportAuditSources:
             source_window_end=datetime(2026, 7, 4, tzinfo=timezone.utc),
         ))
         assert result.source_audit["tables"]["silver_observations"]["rows"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Selector execution (Plan 120, Phase 2) — local Parquet fixtures
+# ---------------------------------------------------------------------------
+
+def _ts(*args):
+    return datetime(*args, tzinfo=timezone.utc)
+
+
+@pytest.fixture
+def selector_fixture(tmp_path):
+    """A tiny local lake exercising each of the five Phase 2 selectors once."""
+    base = tmp_path / "lake"
+
+    _write_parquet(
+        base / "ops_normalized/vin_to_listing_events/year=2026/month=7/part-000.parquet",
+        event_id=[1, 2, 3],
+        vin=["VIN_RELISTED", "VIN_RELISTED", "VIN_SINGLE"],
+        listing_id=["L1", "L2", "L3"],
+        artifact_id=[101, 102, 103],
+        event_type=["mapped", "remapped", "mapped"],
+        previous_listing_id=[None, "L1", None],
+        event_at=pa.array(
+            [_ts(2026, 7, 1), _ts(2026, 7, 2), _ts(2026, 7, 1)],
+            type=pa.timestamp("us", tz="UTC"),
+        ),
+    )
+    _write_parquet(
+        base / "ops_normalized/price_observation_events/year=2026/month=7/part-000.parquet",
+        event_id=[1, 2, 3, 4],
+        listing_id=["L1", "L1", "L1", "L4"],
+        vin=["VIN_RELISTED", "VIN_RELISTED", "VIN_RELISTED", "VIN_OTHER"],
+        artifact_id=[101, 101, 101, 104],
+        price=pa.array([20000, 19000, 21000, 15000], type=pa.int32()),
+        event_type=["upserted", "upserted", "upserted", "upserted"],
+        event_at=pa.array(
+            [_ts(2026, 7, 1), _ts(2026, 7, 2), _ts(2026, 7, 3), _ts(2026, 7, 1)],
+            type=pa.timestamp("us", tz="UTC"),
+        ),
+    )
+    _write_parquet(
+        base / "ops_normalized/blocked_cooldown_events/year=2026/month=7/part-000.parquet",
+        event_id=[1, 2, 3],
+        listing_id=["L1", "L1", "L5"],
+        event_type=["blocked", "blocked", "blocked"],
+        num_of_attempts=pa.array([1, 2, 1], type=pa.int32()),
+        event_at=pa.array(
+            [_ts(2026, 7, 1), _ts(2026, 7, 2), _ts(2026, 7, 1)],
+            type=pa.timestamp("us", tz="UTC"),
+        ),
+    )
+    _write_parquet(
+        base / "silver_normalized/observations/source=detail"
+               "/obs_year=2026/obs_month=7/part-000.parquet",
+        vin=["VIN_STABLE", "VIN_STABLE", "VIN_CHANGE", "VIN_CHANGE"],
+        listing_id=["L6", "L6", "L7", "L7"],
+        artifact_id=[106, 106, 107, 107],
+        fetched_at=pa.array(
+            [_ts(2026, 7, 1), _ts(2026, 7, 2), _ts(2026, 7, 1), _ts(2026, 7, 2)],
+            type=pa.timestamp("us", tz="UTC"),
+        ),
+        price=pa.array([10000, 10000, 10000, 9000], type=pa.int32()),
+        mileage=pa.array([5000, 5000, 5000, 5000], type=pa.int32()),
+        listing_state=["active", "active", "active", "active"],
+    )
+    return base
+
+
+class TestBuildSelectorQuery:
+    def test_runnable_selectors_match_expected_five(self):
+        assert set(RUNNABLE_SELECTORS) == {
+            "relisted_vin", "price_drop", "price_increase",
+            "cooldown_incremented", "stable_state_run",
+        }
+
+    def test_unimplemented_selector_raises(self):
+        with pytest.raises(ValueError):
+            build_selector_query("state_change_run", "s3://bronze/whatever/**/*.parquet")
+
+    def test_query_embeds_resolved_path(self):
+        sql, _ = build_selector_query("relisted_vin", "s3://bronze/foo/**/*.parquet")
+        assert "s3://bronze/foo/**/*.parquet" in sql
+
+
+class TestRunLakeSelectors:
+    def test_relisted_vin_finds_multi_listing_vin(self, selector_fixture):
+        diagnostics = run_lake_selectors(base_path=str(selector_fixture))
+        selector = diagnostics["selectors"]["relisted_vin"]
+        assert selector["entities"] == 1
+        assert selector["sample_entities"] == ["VIN_RELISTED"]
+        assert selector["candidate_rows"] == 2
+        assert selector["error"] is None
+
+    def test_price_drop_finds_consecutive_lower_price(self, selector_fixture):
+        diagnostics = run_lake_selectors(base_path=str(selector_fixture))
+        selector = diagnostics["selectors"]["price_drop"]
+        assert selector["entities"] == 1
+        assert selector["sample_entities"] == ["L1"]
+        assert selector["candidate_rows"] == 1
+
+    def test_price_increase_finds_consecutive_higher_price(self, selector_fixture):
+        diagnostics = run_lake_selectors(base_path=str(selector_fixture))
+        selector = diagnostics["selectors"]["price_increase"]
+        assert selector["entities"] == 1
+        assert selector["sample_entities"] == ["L1"]
+        assert selector["candidate_rows"] == 1
+
+    def test_cooldown_incremented_finds_repeated_attempt(self, selector_fixture):
+        diagnostics = run_lake_selectors(base_path=str(selector_fixture))
+        selector = diagnostics["selectors"]["cooldown_incremented"]
+        assert selector["entities"] == 1
+        assert selector["sample_entities"] == ["L1"]
+        assert selector["candidate_rows"] == 1
+
+    def test_stable_state_run_finds_unchanged_fingerprint(self, selector_fixture):
+        diagnostics = run_lake_selectors(base_path=str(selector_fixture))
+        selector = diagnostics["selectors"]["stable_state_run"]
+        assert selector["entities"] == 1
+        assert selector["sample_entities"] == ["VIN_STABLE"]
+        assert selector["candidate_rows"] == 1
+
+    def test_all_five_selectors_run_by_default(self, selector_fixture):
+        diagnostics = run_lake_selectors(base_path=str(selector_fixture))
+        assert set(diagnostics["selectors"].keys()) == set(RUNNABLE_SELECTORS)
+        assert diagnostics["ok"] is True
+        assert diagnostics["errors"] == []
+
+    def test_required_and_status_reflect_registry_minimums(self, selector_fixture):
+        diagnostics = run_lake_selectors(base_path=str(selector_fixture))
+        selector = diagnostics["selectors"]["relisted_vin"]
+        assert selector["required"] == 10
+        assert selector["status"] == "fail"  # only 1 entity found, min is 10
+
+    def test_window_filters_candidates(self, selector_fixture):
+        diagnostics = run_lake_selectors(
+            base_path=str(selector_fixture),
+            window_start=datetime(2026, 7, 3, tzinfo=timezone.utc),
+            window_end=datetime(2026, 7, 5, tzinfo=timezone.utc),
+        )
+        selector = diagnostics["selectors"]["relisted_vin"]
+        assert selector["entities"] == 0
+        assert selector["candidate_rows"] == 0
+
+    def test_missing_table_produces_selector_level_error_not_crash(self, tmp_path):
+        diagnostics = run_lake_selectors(base_path=str(tmp_path / "does_not_exist"))
+        assert diagnostics["ok"] is False
+        assert len(diagnostics["errors"]) == len(RUNNABLE_SELECTORS)
+        for selector in diagnostics["selectors"].values():
+            assert selector["error"] is not None
+
+    def test_names_param_limits_selectors_run(self, selector_fixture):
+        diagnostics = run_lake_selectors(base_path=str(selector_fixture), names=["price_drop"])
+        assert set(diagnostics["selectors"].keys()) == {"price_drop"}
+
+
+# ---------------------------------------------------------------------------
+# export_ci_lake_snapshot — run_selectors (Plan 120, Phase 2)
+# ---------------------------------------------------------------------------
+
+class TestExportRunSelectors:
+    def test_dry_run_without_run_selectors_stays_cheap(self):
+        result = export_ci_lake_snapshot(SnapshotRequest(tier="ci", dry_run=True))
+        assert result.status == "planned"
+        assert result.selector_diagnostics is None
+
+    def test_dry_run_with_run_selectors_returns_diagnostics(self, selector_fixture):
+        result = export_ci_lake_snapshot(SnapshotRequest(
+            tier="ci", dry_run=True, run_selectors=True,
+            source_base_path=str(selector_fixture),
+        ))
+        assert result.status == "planned"
+        assert result.selector_diagnostics is not None
+        assert result.selector_diagnostics["selectors"]["relisted_vin"]["entities"] == 1
+
+    def test_non_dry_run_ignores_run_selectors(self, selector_fixture):
+        result = export_ci_lake_snapshot(SnapshotRequest(
+            tier="ci", dry_run=False, run_selectors=True,
+            source_base_path=str(selector_fixture),
+        ))
+        assert result.status == "not_implemented"
+        assert result.selector_diagnostics is None

@@ -362,6 +362,36 @@ class TestSnapshotExportRunEndpoint:
         assert request_arg.audit_sources is False
         assert request_arg.source_base_path is None
 
+    def test_run_selectors_defaults_to_false(self, mock_archiver_client, mocker):
+        mock_fn = mocker.patch("archiver.app._export_ci_lake_snapshot")
+        mock_fn.return_value.to_dict.return_value = {"status": "planned"}
+        mock_archiver_client.post(
+            "/snapshots/adaptive-refresh/run", json={"tier": "ci", "dry_run": True}
+        )
+        request_arg = mock_fn.call_args[0][0]
+        assert request_arg.run_selectors is False
+
+    def test_run_selectors_forwarded_to_request_and_response(self, mock_archiver_client, mocker):
+        fake_result = {
+            "snapshot_id": "adaptive-refresh-2026-07-07-000000",
+            "tier": "ci",
+            "status": "planned",
+            "selector_diagnostics": {"selectors": {}, "errors": [], "ok": True},
+        }
+        mock_fn = mocker.patch("archiver.app._export_ci_lake_snapshot")
+        mock_fn.return_value.to_dict.return_value = fake_result
+        resp = mock_archiver_client.post(
+            "/snapshots/adaptive-refresh/run",
+            json={
+                "tier": "ci", "dry_run": True, "run_selectors": True,
+                "source_base_path": "/tmp/lake",
+            },
+        )
+        assert resp.status_code == 200
+        assert resp.json()["selector_diagnostics"]["ok"] is True
+        request_arg = mock_fn.call_args[0][0]
+        assert request_arg.run_selectors is True
+
     def test_malformed_payload_with_audit_sources_still_returns_400(self, mock_archiver_client):
         resp = mock_archiver_client.post(
             "/snapshots/adaptive-refresh/run",

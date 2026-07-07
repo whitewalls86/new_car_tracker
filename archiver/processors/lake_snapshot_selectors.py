@@ -5,12 +5,24 @@ Each Selector names a dbt/PySpark branch or guard the snapshot must exercise,
 the SQL used to find candidate entities in production, and the minimum
 representation required in the snapshot before it can be published.
 
-SQL is placeholder/TODO in this first pass — the exporter does not yet run
-selectors against real Parquet. The registry shape and uniqueness constraint
-are the load-bearing parts of this slice.
+Phase 2 implements real DuckDB SQL (and an execution path, see
+`run_lake_selectors`) for five selectors:
+
+    relisted_vin, price_drop, price_increase, cooldown_incremented,
+    stable_state_run
+
+All other selectors remain placeholder/TODO SQL — the registry shape and
+uniqueness constraint are still the load-bearing parts for those.
 """
+import logging
 from dataclasses import dataclass
-from typing import Dict, List
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Tuple
+
+from archiver.processors.lake_source_audit import resolve_table_path
+from shared.duckdb_s3 import get_duckdb_s3_connection
+
+logger = logging.getLogger("archiver")
 
 
 @dataclass(frozen=True)
@@ -84,6 +96,126 @@ def _placeholder_sql(name: str) -> str:
     return f"-- TODO: implement selector SQL for '{name}'\nSELECT NULL WHERE FALSE"
 
 
+# ---------------------------------------------------------------------------
+# Phase 2 real selector SQL
+#
+# Each template reads a single source Parquet table (see _SELECTOR_TABLE) and
+# is filled in with the resolved table path and a WHERE clause built by
+# `_build_where`. Table/column names come from the actual writers:
+#   archiver/processors/flush_silver_observations.py
+#   archiver/processors/flush_staging_events.py
+# ---------------------------------------------------------------------------
+
+_RELISTED_VIN_SQL = """
+WITH events AS (
+    SELECT vin, listing_id, artifact_id, event_type, previous_listing_id, event_at
+    FROM read_parquet('{path}', union_by_name=true)
+    {where}
+),
+relisted AS (
+    SELECT vin FROM events GROUP BY vin HAVING count(DISTINCT listing_id) > 1
+)
+SELECT e.vin, e.listing_id, e.artifact_id, e.event_type, e.previous_listing_id, e.event_at
+FROM events e
+JOIN relisted r USING (vin)
+ORDER BY e.vin, e.event_at
+"""
+
+_PRICE_DROP_SQL = """
+WITH events AS (
+    SELECT event_id, listing_id, vin, artifact_id, price, event_type, event_at
+    FROM read_parquet('{path}', union_by_name=true)
+    {where}
+),
+diffed AS (
+    SELECT *, LAG(price) OVER (PARTITION BY listing_id ORDER BY event_at, event_id) AS prev_price
+    FROM events
+)
+SELECT event_id, listing_id, vin, artifact_id, price, prev_price, event_at
+FROM diffed
+WHERE prev_price IS NOT NULL AND price < prev_price
+ORDER BY listing_id, event_at
+"""
+
+_PRICE_INCREASE_SQL = """
+WITH events AS (
+    SELECT event_id, listing_id, vin, artifact_id, price, event_type, event_at
+    FROM read_parquet('{path}', union_by_name=true)
+    {where}
+),
+diffed AS (
+    SELECT *, LAG(price) OVER (PARTITION BY listing_id ORDER BY event_at, event_id) AS prev_price
+    FROM events
+)
+SELECT event_id, listing_id, vin, artifact_id, price, prev_price, event_at
+FROM diffed
+WHERE prev_price IS NOT NULL AND price > prev_price
+ORDER BY listing_id, event_at
+"""
+
+_COOLDOWN_INCREMENTED_SQL = """
+SELECT event_id, listing_id, event_type, num_of_attempts, event_at
+FROM read_parquet('{path}', union_by_name=true)
+{where}
+ORDER BY listing_id, event_at
+"""
+
+_STABLE_STATE_RUN_SQL = """
+WITH obs AS (
+    SELECT vin, listing_id, artifact_id, fetched_at, price, mileage, listing_state,
+           CONCAT_WS('|', CAST(price AS VARCHAR), CAST(mileage AS VARCHAR),
+                     COALESCE(listing_state, '')) AS fingerprint
+    FROM read_parquet('{path}', union_by_name=true)
+    {where}
+),
+fp AS (
+    SELECT *, LAG(fingerprint) OVER (PARTITION BY vin ORDER BY fetched_at) AS prev_fingerprint
+    FROM obs
+)
+SELECT vin, listing_id, artifact_id, fetched_at, fingerprint
+FROM fp
+WHERE prev_fingerprint IS NOT NULL AND fingerprint = prev_fingerprint
+ORDER BY vin, fetched_at
+"""
+
+_SELECTOR_SQL_TEMPLATES: Dict[str, str] = {
+    "relisted_vin": _RELISTED_VIN_SQL,
+    "price_drop": _PRICE_DROP_SQL,
+    "price_increase": _PRICE_INCREASE_SQL,
+    "cooldown_incremented": _COOLDOWN_INCREMENTED_SQL,
+    "stable_state_run": _STABLE_STATE_RUN_SQL,
+}
+
+# selector name -> logical source table name (matches lake_source_audit.SOURCE_TABLE_SPECS)
+_SELECTOR_TABLE: Dict[str, str] = {
+    "relisted_vin": "vin_to_listing_events",
+    "price_drop": "price_observation_events",
+    "price_increase": "price_observation_events",
+    "cooldown_incremented": "blocked_cooldown_events",
+    "stable_state_run": "silver_observations",
+}
+
+# selector name -> hardcoded (non-window) filter clauses
+_SELECTOR_BASE_FILTERS: Dict[str, List[str]] = {
+    "relisted_vin": [],
+    "price_drop": ["event_type = 'upserted'", "price IS NOT NULL"],
+    "price_increase": ["event_type = 'upserted'", "price IS NOT NULL"],
+    "cooldown_incremented": ["num_of_attempts > 1"],
+    "stable_state_run": ["source = 'detail'"],
+}
+
+# selector name -> timestamp column used for window filtering
+_SELECTOR_TS_COL: Dict[str, str] = {
+    "relisted_vin": "event_at",
+    "price_drop": "event_at",
+    "price_increase": "event_at",
+    "cooldown_incremented": "event_at",
+    "stable_state_run": "fetched_at",
+}
+
+RUNNABLE_SELECTORS: Tuple[str, ...] = tuple(_SELECTOR_TABLE.keys())
+
+
 def build_selector_registry() -> Dict[str, Selector]:
     """Build the selector registry, keyed by selector name.
 
@@ -97,7 +229,126 @@ def build_selector_registry() -> Dict[str, Selector]:
             name=name,
             min_entities=min_entities,
             entity_key=entity_key,
-            sql=_placeholder_sql(name),
+            sql=_SELECTOR_SQL_TEMPLATES.get(name) or _placeholder_sql(name),
             description=description,
         )
     return registry
+
+
+def _build_where(
+    name: str, window_start: Optional[datetime], window_end: Optional[datetime]
+) -> Tuple[str, List[Any]]:
+    clauses = list(_SELECTOR_BASE_FILTERS[name])
+    params: List[Any] = []
+    ts_col = _SELECTOR_TS_COL[name]
+    if window_start is not None:
+        clauses.append(f"{ts_col} >= ?")
+        params.append(window_start)
+    if window_end is not None:
+        clauses.append(f"{ts_col} < ?")
+        params.append(window_end)
+    where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    return where_sql, params
+
+
+def build_selector_query(
+    name: str,
+    path: str,
+    window_start: Optional[datetime] = None,
+    window_end: Optional[datetime] = None,
+) -> Tuple[str, List[Any]]:
+    """Build the executable SQL and bound params for a Phase 2 selector."""
+    if name not in RUNNABLE_SELECTORS:
+        raise ValueError(f"No executable query implemented for selector '{name}'")
+    template = _SELECTOR_SQL_TEMPLATES[name]
+    where_sql, params = _build_where(name, window_start, window_end)
+    sql = template.format(path=path, where=where_sql)
+    return sql, params
+
+
+def run_selector(
+    con,
+    name: str,
+    base_path: Optional[str],
+    window_start: Optional[datetime] = None,
+    window_end: Optional[datetime] = None,
+    registry: Optional[Dict[str, Selector]] = None,
+) -> Dict[str, Any]:
+    """Run one Phase 2 selector and return coverage/candidate diagnostics.
+
+    Never raises for a missing/unreadable source table — the error is
+    captured in the returned dict, mirroring `lake_source_audit._audit_table`.
+    """
+    registry = registry or build_selector_registry()
+    selector = registry[name]
+    table_name = _SELECTOR_TABLE[name]
+    path = resolve_table_path(table_name, base_path)
+
+    result: Dict[str, Any] = {
+        "selector": name,
+        "entity_key": selector.entity_key,
+        "required": selector.min_entities,
+        "path": path,
+        "candidate_rows": 0,
+        "entities": 0,
+        "sample_entities": [],
+        "status": "fail",
+        "error": None,
+    }
+
+    try:
+        sql, params = build_selector_query(name, path, window_start, window_end)
+        cursor = con.execute(sql, params)
+        columns = [c[0] for c in cursor.description]
+        rows = cursor.fetchall()
+        entity_idx = columns.index(selector.entity_key)
+        entities = sorted({row[entity_idx] for row in rows if row[entity_idx] is not None})
+        result["candidate_rows"] = len(rows)
+        result["entities"] = len(entities)
+        result["sample_entities"] = entities[:5]
+        result["status"] = "pass" if len(entities) >= selector.min_entities else "fail"
+    except Exception as e:
+        result["error"] = str(e)
+        logger.warning("lake_snapshot_selectors: selector=%s path=%s error=%s", name, path, e)
+
+    return result
+
+
+def run_lake_selectors(
+    names: Optional[List[str]] = None,
+    base_path: Optional[str] = None,
+    window_start: Optional[datetime] = None,
+    window_end: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    """Run the Phase 2 selectors and return coverage/candidate diagnostics.
+
+    Returns a dict shaped like:
+        {"selectors": {...}, "errors": [...], "ok": bool}
+    """
+    names = list(names) if names is not None else list(RUNNABLE_SELECTORS)
+    registry = build_selector_registry()
+
+    if base_path:
+        import duckdb
+        con = duckdb.connect()
+    else:
+        con = get_duckdb_s3_connection()
+
+    try:
+        selectors: Dict[str, Any] = {}
+        errors: List[str] = []
+        for name in names:
+            selector_result = run_selector(
+                con, name, base_path, window_start, window_end, registry=registry
+            )
+            selectors[name] = selector_result
+            if selector_result["error"] is not None:
+                errors.append(f"{name}: {selector_result['error']}")
+
+        return {
+            "selectors": selectors,
+            "errors": errors,
+            "ok": len(errors) == 0,
+        }
+    finally:
+        con.close()
