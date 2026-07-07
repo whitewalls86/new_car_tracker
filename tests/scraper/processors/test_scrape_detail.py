@@ -129,7 +129,7 @@ class TestScrapeDetailFetch:
         called_url = mock_session.get.call_args[0][0]
         assert called_url == custom_url
 
-    def test_timeout_default_is_30(self, mock_cf_session, mocker):
+    def test_timeout_default_is_90(self, mock_cf_session, mocker):
         mock_session, mock_resp = mock_cf_session
         mock_resp.status_code = 200
         mock_resp.content = b"ok"
@@ -138,7 +138,7 @@ class TestScrapeDetailFetch:
 
         scrape_detail_fetch(run_id=RUN_ID, payload={"listing_id": LISTING_ID})
         kwargs = mock_session.get.call_args[1]
-        assert kwargs["timeout"] == 30
+        assert kwargs["timeout"] == 90
 
     def test_timeout_override(self, mock_cf_session, mocker):
         mock_session, mock_resp = mock_cf_session

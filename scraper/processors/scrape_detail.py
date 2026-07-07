@@ -124,7 +124,7 @@ def scrape_detail_fetch(*, run_id: str, payload: Dict[str, Any]) -> Dict[str, An
         }
 
     fetched_at = datetime.now(UTC).isoformat()
-    timeout_s = int((payload or {}).get("timeout_s") or 30)
+    timeout_s = int((payload or {}).get("timeout_s") or 90)
 
     # Non-200 responses are still written to MinIO (useful for debugging blocks/interstitials).
     # MinIO write failure is treated as a fetch failure — the artifact is unreadable by processing.
