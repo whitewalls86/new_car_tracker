@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -35,6 +36,17 @@ def _sha256_bytes(b: bytes) -> str:
     return hashlib.sha256(b).hexdigest()
 
 
+def _html_title(content: bytes) -> Optional[str]:
+    try:
+        text = content[:4096].decode("utf-8", errors="replace")
+    except Exception:
+        return None
+    m = re.search(r"<title[^>]*>(.*?)</title>", text, re.IGNORECASE | re.DOTALL)
+    if not m:
+        return None
+    return re.sub(r"\s+", " ", m.group(1)).strip()[:200]
+
+
 def _update_detail_delay(is_403: bool) -> None:
     """
     Adjust the module-level adaptive delay based on the last fetch outcome.
@@ -65,10 +77,23 @@ def _fetch_url(url: str, timeout_s: int) -> tuple[bytes, int, Optional[str], str
         try:
             credentials, bootstrap_html, bootstrap_status = get_cf_credentials(url, timeout_s)
             if bootstrap_html is not None:
+                if bootstrap_status == 403:
+                    logger.warning(
+                        "FlareSolverr bootstrap returned 403 for url=%s title=%r",
+                        url,
+                        _html_title(bootstrap_html),
+                    )
                 return bootstrap_html, bootstrap_status, "text/html; charset=utf-8", url
             session = make_cf_session(credentials)
             resp = session.get(url, timeout=timeout_s, allow_redirects=True)
             content = resp.content or b""
+            if resp.status_code == 403:
+                logger.warning(
+                    "curl_cffi CF-session returned 403 for url=%s final_url=%s title=%r",
+                    url,
+                    resp.url,
+                    _html_title(content),
+                )
             return content, resp.status_code, resp.headers.get("content-type"), str(resp.url)
         except Exception as e:
             logger.warning(
@@ -78,6 +103,13 @@ def _fetch_url(url: str, timeout_s: int) -> tuple[bytes, int, Optional[str], str
     session = make_cf_session(None)
     resp = session.get(url, timeout=timeout_s, allow_redirects=True)
     content = resp.content or b""
+    if resp.status_code == 403:
+        logger.warning(
+            "plain curl_cffi returned 403 for url=%s final_url=%s title=%r",
+            url,
+            resp.url,
+            _html_title(content),
+        )
     return content, resp.status_code, resp.headers.get("content-type"), str(resp.url)
 
 

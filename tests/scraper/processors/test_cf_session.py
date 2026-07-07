@@ -76,6 +76,7 @@ class TestGetCfCredentials:
 
         assert credentials is not None
         assert credentials["cookies"] == {"cf_clearance": "token123"}
+        assert credentials["cookie_attrs"] == [{"name": "cf_clearance", "value": "token123"}]
         assert "Chrome/136" in credentials["user_agent"]
         assert html == b"<html>solved</html>"
         assert status == 200
@@ -160,7 +161,23 @@ class TestMakeCfSession:
             "cookies": {},
         }
         session = make_cf_session(creds)
-        session.headers.update.assert_called_once_with({"User-Agent": creds["user_agent"]})
+        headers = session.headers.update.call_args[0][0]
+        assert headers["User-Agent"] == creds["user_agent"]
+
+    def test_with_credentials_sets_browser_navigation_headers(self):
+        creds = {
+            "user_agent": "Mozilla/5.0 Chrome/136.0.0.0 Safari/537.36",
+            "cookies": {},
+        }
+        session = make_cf_session(creds)
+        headers = session.headers.update.call_args[0][0]
+        assert headers["Accept"].startswith("text/html")
+        assert headers["Accept-Language"] == "en-US,en;q=0.9"
+        assert headers["Referer"] == "https://www.cars.com/"
+        assert headers["Sec-Fetch-Mode"] == "navigate"
+        assert headers["sec-ch-ua-mobile"] == "?0"
+        assert headers["sec-ch-ua-platform"] == '"Windows"'
+        assert '"Google Chrome";v="136"' in headers["sec-ch-ua"]
 
     def test_with_credentials_sets_each_cookie(self):
         creds = {
@@ -169,6 +186,27 @@ class TestMakeCfSession:
         }
         session = make_cf_session(creds)
         assert session.cookies.set.call_count == 2
+
+    def test_with_credentials_preserves_cookie_domain_and_path(self):
+        creds = {
+            "user_agent": "Mozilla/5.0 Chrome/136.0.0.0",
+            "cookies": {"cf_clearance": "abc"},
+            "cookie_attrs": [
+                {
+                    "name": "cf_clearance",
+                    "value": "abc",
+                    "domain": ".cars.com",
+                    "path": "/",
+                }
+            ],
+        }
+        session = make_cf_session(creds)
+        session.cookies.set.assert_called_once_with(
+            "cf_clearance",
+            "abc",
+            domain=".cars.com",
+            path="/",
+        )
 
     def test_without_credentials_no_header_or_cookie_calls(self):
         session = make_cf_session(None)

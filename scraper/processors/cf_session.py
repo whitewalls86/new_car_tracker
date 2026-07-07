@@ -89,6 +89,48 @@ def cffi_target_for_ua(user_agent: str) -> str:
     return _CHROME_CFFI_TARGETS[0][1]
 
 
+def _chrome_major(user_agent: str) -> Optional[int]:
+    m = re.search(r"Chrome/(\d+)\.", user_agent)
+    return int(m.group(1)) if m else None
+
+
+def browser_headers_for_ua(user_agent: str, referer: str = "https://www.cars.com/") -> Dict[str, str]:
+    """Build browser-like headers to replay a FlareSolverr browser session.
+
+    Cloudflare clearance can be sensitive to more than the cookie and UA. These
+    headers keep the curl_cffi request shape closer to the Chrome browser that
+    generated the clearance token.
+    """
+    headers = {
+        "User-Agent": user_agent,
+        "Accept": (
+            "text/html,application/xhtml+xml,application/xml;q=0.9,"
+            "image/avif,image/webp,image/apng,*/*;q=0.8,"
+            "application/signed-exchange;v=b3;q=0.7"
+        ),
+        "Accept-Language": "en-US,en;q=0.9",
+        "Cache-Control": "max-age=0",
+        "Referer": referer,
+        "Upgrade-Insecure-Requests": "1",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "same-origin",
+        "Sec-Fetch-User": "?1",
+    }
+    major = _chrome_major(user_agent)
+    if major is not None:
+        headers.update({
+            "sec-ch-ua": (
+                f'"Chromium";v="{major}", '
+                f'"Google Chrome";v="{major}", '
+                '"Not.A/Brand";v="99"'
+            ),
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": '"Windows"',
+        })
+    return headers
+
+
 def get_cf_credentials(url: str, timeout_s: int) \
         -> Tuple[Optional[Dict[str, Any]], Optional[bytes], Optional[int]]:
     """Return CF credentials (cookies + user-agent) needed to bypass Cloudflare.
@@ -127,15 +169,23 @@ def get_cf_credentials(url: str, timeout_s: int) \
         user_agent = solution["userAgent"]
         html = (solution.get("response") or "").encode("utf-8")
         http_status = solution.get("status", 200)
-        cookies = {c["name"]: c["value"] for c in solution.get("cookies", [])}
+        cookie_attrs = solution.get("cookies", [])
+        cookies = {c["name"]: c["value"] for c in cookie_attrs}
 
-        _cf_credentials = {"cookies": cookies, "user_agent": user_agent}
+        _cf_credentials = {
+            "cookies": cookies,
+            "cookie_attrs": cookie_attrs,
+            "user_agent": user_agent,
+        }
         _cf_credentials_expires_at = now + _CF_SESSION_TTL
 
         logger.info(
-            "FlareSolverr bootstrapped CF credentials (status=%s, cookies=%s)",
+            "FlareSolverr bootstrapped CF credentials "
+            "(status=%s, cookies=%s, ua_chrome=%s, response_bytes=%d)",
             http_status,
             list(cookies.keys()),
+            _chrome_major(user_agent),
+            len(html),
         )
         return _cf_credentials, html, http_status
 
@@ -166,7 +216,17 @@ def make_cf_session(credentials: Optional[Dict[str, Any]]) -> cf_requests.Sessio
     )
     session = cf_requests.Session(impersonate=impersonate)
     if credentials:
-        session.headers.update({"User-Agent": credentials["user_agent"]})
-        for name, value in credentials["cookies"].items():
-            session.cookies.set(name, value)
+        session.headers.update(browser_headers_for_ua(credentials["user_agent"]))
+        cookie_attrs = credentials.get("cookie_attrs") or []
+        if cookie_attrs:
+            for cookie in cookie_attrs:
+                kwargs = {}
+                if cookie.get("domain"):
+                    kwargs["domain"] = cookie["domain"]
+                if cookie.get("path"):
+                    kwargs["path"] = cookie["path"]
+                session.cookies.set(cookie["name"], cookie["value"], **kwargs)
+        else:
+            for name, value in credentials["cookies"].items():
+                session.cookies.set(name, value)
     return session
