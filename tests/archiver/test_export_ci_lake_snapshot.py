@@ -1,6 +1,8 @@
-"""Unit tests for archiver/processors/export_ci_lake_snapshot.py (Plan 120, Phase 1)."""
+"""Unit tests for archiver/processors/export_ci_lake_snapshot.py (Plan 120, Phase 1-2)."""
 from datetime import datetime, timezone
 
+import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 
 from archiver.processors.export_ci_lake_snapshot import (
@@ -14,6 +16,7 @@ from archiver.processors.export_ci_lake_snapshot import (
     validate_request,
 )
 from archiver.processors.lake_snapshot_selectors import build_selector_registry
+from archiver.processors.lake_source_audit import audit_source_tables
 
 # ---------------------------------------------------------------------------
 # Request validation
@@ -247,3 +250,160 @@ class TestExportNonDryRun:
         assert result.status == "not_implemented"
         assert result.archive_key is None
         assert result.manifest_key is None
+
+
+# ---------------------------------------------------------------------------
+# Source audit (Plan 120, Phase 2) — local Parquet fixtures
+# ---------------------------------------------------------------------------
+
+def _write_parquet(path, **columns):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pq.write_table(pa.table(columns), path)
+
+
+@pytest.fixture
+def lake_fixture(tmp_path):
+    """A tiny local Parquet lake matching the four audited source tables."""
+    base = tmp_path / "lake"
+    _write_parquet(
+        base / "silver_normalized/observations/source=detail"
+               "/obs_year=2026/obs_month=7/part-000.parquet",
+        fetched_at=pa.array(
+            [datetime(2026, 7, 1, tzinfo=timezone.utc), datetime(2026, 7, 3, tzinfo=timezone.utc)],
+            type=pa.timestamp("us", tz="UTC"),
+        ),
+        vin=["VIN1", "VIN2"],
+        listing_id=["L1", "L2"],
+    )
+    _write_parquet(
+        base / "ops_normalized/price_observation_events/year=2026/month=7/part-000.parquet",
+        event_at=pa.array(
+            [datetime(2026, 7, 2, tzinfo=timezone.utc)], type=pa.timestamp("us", tz="UTC"),
+        ),
+        vin=["VIN1"],
+        listing_id=["L1"],
+    )
+    _write_parquet(
+        base / "ops_normalized/vin_to_listing_events/year=2026/month=7/part-000.parquet",
+        event_at=pa.array(
+            [datetime(2026, 7, 1, tzinfo=timezone.utc)], type=pa.timestamp("us", tz="UTC"),
+        ),
+        vin=["VIN1"],
+        listing_id=["L1"],
+    )
+    _write_parquet(
+        base / "ops_normalized/blocked_cooldown_events/year=2026/month=7/part-000.parquet",
+        event_at=pa.array(
+            [datetime(2026, 7, 1, tzinfo=timezone.utc)], type=pa.timestamp("us", tz="UTC"),
+        ),
+        listing_id=["L1"],
+    )
+    return base
+
+
+class TestAuditSourceTables:
+    def test_local_fixture_counts_rows(self, lake_fixture):
+        audit = audit_source_tables(base_path=str(lake_fixture))
+        assert audit["ok"] is True
+        assert audit["tables"]["silver_observations"]["rows"] == 2
+        assert audit["tables"]["price_observation_events"]["rows"] == 1
+        assert audit["tables"]["vin_to_listing_events"]["rows"] == 1
+        assert audit["tables"]["blocked_cooldown_events"]["rows"] == 1
+
+    def test_local_fixture_min_max_timestamps(self, lake_fixture):
+        audit = audit_source_tables(base_path=str(lake_fixture))
+        table = audit["tables"]["silver_observations"]
+        assert table["min_timestamp"].startswith("2026-07-01")
+        assert table["max_timestamp"].startswith("2026-07-03")
+
+    def test_local_fixture_distinct_vin_and_listing_counts(self, lake_fixture):
+        audit = audit_source_tables(base_path=str(lake_fixture))
+        table = audit["tables"]["silver_observations"]
+        assert table["distinct_vins"] == 2
+        assert table["distinct_listing_ids"] == 2
+
+    def test_blocked_cooldown_events_has_no_vin_column(self, lake_fixture):
+        audit = audit_source_tables(base_path=str(lake_fixture))
+        table = audit["tables"]["blocked_cooldown_events"]
+        assert table["distinct_vins"] is None
+        assert table["distinct_listing_ids"] == 1
+
+    def test_missing_table_path_produces_table_level_error_not_crash(self, tmp_path):
+        audit = audit_source_tables(base_path=str(tmp_path / "does_not_exist"))
+        assert audit["ok"] is False
+        assert len(audit["errors"]) == 4
+        for table in audit["tables"].values():
+            assert table["exists"] is False
+            assert table["error"] is not None
+
+    def test_window_filters_row_counts(self, lake_fixture):
+        audit = audit_source_tables(
+            base_path=str(lake_fixture),
+            window_start=datetime(2026, 7, 2, tzinfo=timezone.utc),
+            window_end=datetime(2026, 7, 4, tzinfo=timezone.utc),
+        )
+        assert audit["tables"]["silver_observations"]["rows"] == 1
+
+    def test_window_included_in_result(self, lake_fixture):
+        start = datetime(2026, 7, 1, tzinfo=timezone.utc)
+        end = datetime(2026, 7, 4, tzinfo=timezone.utc)
+        audit = audit_source_tables(base_path=str(lake_fixture), window_start=start, window_end=end)
+        assert audit["window"]["start"] == start.isoformat()
+        assert audit["window"]["end"] == end.isoformat()
+
+    def test_no_window_leaves_window_null(self, lake_fixture):
+        audit = audit_source_tables(base_path=str(lake_fixture))
+        assert audit["window"] == {"start": None, "end": None}
+
+
+# ---------------------------------------------------------------------------
+# export_ci_lake_snapshot — audit_sources (Plan 120, Phase 2)
+# ---------------------------------------------------------------------------
+
+class TestExportAuditSources:
+    def test_audit_false_dry_run_remains_planned(self):
+        result = export_ci_lake_snapshot(SnapshotRequest(tier="ci", dry_run=True))
+        assert result.status == "planned"
+        assert result.source_audit is None
+
+    def test_audit_true_returns_source_audit(self, lake_fixture):
+        result = export_ci_lake_snapshot(SnapshotRequest(
+            tier="ci", dry_run=True, audit_sources=True, source_base_path=str(lake_fixture),
+        ))
+        assert result.status == "audited"
+        assert result.source_audit is not None
+        assert result.source_audit["ok"] is True
+
+    def test_audit_true_without_dry_run_still_audits(self, lake_fixture):
+        result = export_ci_lake_snapshot(SnapshotRequest(
+            tier="ci", dry_run=False, audit_sources=True, source_base_path=str(lake_fixture),
+        ))
+        assert result.status == "audited"
+        assert result.source_audit["ok"] is True
+
+    def test_audit_true_missing_tables_sets_ok_false(self, tmp_path):
+        result = export_ci_lake_snapshot(SnapshotRequest(
+            tier="ci", audit_sources=True, source_base_path=str(tmp_path / "empty"),
+        ))
+        assert result.status == "audited"
+        assert result.source_audit["ok"] is False
+
+    def test_audit_true_with_source_window_months_sets_effective_window(self, lake_fixture):
+        result = export_ci_lake_snapshot(SnapshotRequest(
+            tier="ci", audit_sources=True, source_base_path=str(lake_fixture),
+            source_window_months=1,
+        ))
+        assert result.source_window_start is not None
+        assert result.source_window_end is not None
+        assert result.source_audit["window"]["start"] is not None
+        assert result.source_audit["window"]["end"] is not None
+
+    def test_audit_true_with_explicit_source_window_filters_counts(self, lake_fixture):
+        result = export_ci_lake_snapshot(SnapshotRequest(
+            tier="ci",
+            audit_sources=True,
+            source_base_path=str(lake_fixture),
+            source_window_start=datetime(2026, 7, 2, tzinfo=timezone.utc),
+            source_window_end=datetime(2026, 7, 4, tzinfo=timezone.utc),
+        ))
+        assert result.source_audit["tables"]["silver_observations"]["rows"] == 1

@@ -103,6 +103,8 @@ def trigger_snapshot_export(payload: dict = Body(default={})) -> Dict[str, Any]:
                 source_window_months=payload.get("source_window_months"),
                 min_selector_coverage=payload.get("min_selector_coverage", True),
                 dry_run=payload.get("dry_run", False),
+                audit_sources=payload.get("audit_sources", False),
+                source_base_path=payload.get("source_base_path"),
             )
             result = _export_ci_lake_snapshot(request)
         except SnapshotRequestError as e:
