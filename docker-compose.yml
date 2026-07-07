@@ -19,6 +19,9 @@ x-airflow-common:
     AIRFLOW_CONN_CARTRACKER_DB: postgresql://airflow_app_user:${AIRFLOW_APP_DB_PASSWORD}@postgres:5432/cartracker
     TELEGRAM_API: ${TELEGRAM_API}
     TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+    DETAIL_BATCH_SIZE: ${DETAIL_BATCH_SIZE:-100}
+    DETAIL_MAX_WORKERS: ${DETAIL_MAX_WORKERS:-1}
+    DETAIL_REQUEST_TIMEOUT_S: ${DETAIL_REQUEST_TIMEOUT_S:-90}
     # Plan 86: StatsD → statsd-exporter → Prometheus
     AIRFLOW__METRICS__STATSD_ON: 'true'
     AIRFLOW__METRICS__STATSD_HOST: statsd-exporter
@@ -148,6 +151,8 @@ services:
       DBT_RUNNER_URL: http://dbt_runner:8080
       DBT_DOCS_URL: http://localhost:8081/dbt-docs/
       FLARESOLVERR_URL: http://flaresolverr:8191
+      SCRAPER_DETAIL_MAX_WORKERS: ${SCRAPER_DETAIL_MAX_WORKERS:-1}
+      SCRAPER_DETAIL_TIMEOUT_S: ${SCRAPER_DETAIL_TIMEOUT_S:-90}
       MINIO_ENDPOINT: http://minio:9000
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}

@@ -9,6 +9,8 @@ from fastapi import Body, FastAPI, HTTPException
 
 from db import close_pool, get_pool
 from scraper.processors.scrape_detail import (
+    DEFAULT_DETAIL_MAX_WORKERS,
+    DEFAULT_DETAIL_TIMEOUT_S,
     scrape_detail_batch,
     scrape_detail_dummy,
     scrape_detail_fetch,
@@ -66,7 +68,8 @@ def _run_detail_batch_job(
         run_id: str,
         batch_id: str,
         listings: List[Dict[str, Any]],
-        max_workers: int
+        max_workers: int,
+        timeout_s: int,
     ):
     """Runs in background thread. Updates in-memory job store."""
     import asyncio
@@ -84,7 +87,8 @@ def _run_detail_batch_job(
             run_id=run_id,
             batch_id=batch_id,
             listings=listings,
-            max_workers=max_workers
+            max_workers=max_workers,
+            timeout_s=timeout_s,
         )
         artifacts = result.get("artifacts", [])
         with _jobs_lock:
@@ -197,7 +201,8 @@ def scrape_detail_batch_endpoint(
     """
     Queues an async detail-batch scrape job. Returns job_id immediately.
     payload.listings: [{listing_id, vin?, url?}, ...]
-    payload.max_workers: optional int (default 8)
+    payload.max_workers: optional int (default SCRAPER_DETAIL_MAX_WORKERS or 1)
+    payload.timeout_s: optional per-request timeout (default SCRAPER_DETAIL_TIMEOUT_S or 90)
     Poll GET /scrape_results/jobs/completed to retrieve results.
     """
     listings = (payload or {}).get("listings") or []
@@ -207,12 +212,14 @@ def scrape_detail_batch_endpoint(
             detail="payload.listings is required and must be non-empty"
         )
 
-    max_workers = int((payload or {}).get("max_workers") or 8)
+    max_workers = int((payload or {}).get("max_workers") or DEFAULT_DETAIL_MAX_WORKERS)
+    timeout_s = int((payload or {}).get("timeout_s") or DEFAULT_DETAIL_TIMEOUT_S)
     batch_id = (payload or {}).get("batch_id") or str(uuid.uuid4())
 
     logger.info(
-        "scrape_detail/batch received run_id=%s batch_id=%s listing_count=%s payload_keys=%s",
-        run_id, batch_id, len(listings), list((payload or {}).keys()),
+        "scrape_detail/batch received run_id=%s batch_id=%s listing_count=%s "
+        "max_workers=%s timeout_s=%s payload_keys=%s",
+        run_id, batch_id, len(listings), max_workers, timeout_s, list((payload or {}).keys()),
     )
 
     job_id = str(uuid.uuid4())
@@ -229,7 +236,9 @@ def scrape_detail_batch_endpoint(
             "error": None,
             "started_at": None,
         }
-    _executor.submit(_run_detail_batch_job, job_id, run_id, batch_id, listings, max_workers)
+    _executor.submit(
+        _run_detail_batch_job, job_id, run_id, batch_id, listings, max_workers, timeout_s
+    )
     return {
         "job_id": job_id,
         "batch_id": batch_id,

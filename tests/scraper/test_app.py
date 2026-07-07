@@ -270,6 +270,20 @@ class TestScrapeDetailBatch:
         assert job["listing_count"] == 1
         assert job["status"] == "queued"
 
+    def test_batch_forwards_worker_and_timeout_settings(self, mock_scraper_client, mocker):
+        mock_submit = mocker.patch.object(scraper_app._executor, "submit")
+        mock_scraper_client.post(
+            "/scrape_detail/batch?run_id=myrun",
+            json={
+                "listings": [{"listing_id": "l1"}],
+                "max_workers": 1,
+                "timeout_s": 123,
+            },
+        )
+
+        assert mock_submit.call_args[0][5] == 1
+        assert mock_submit.call_args[0][6] == 123
+
     def test_completed_job_surfaces_in_jobs_endpoint(self, mock_scraper_client):
         _inject_job("db1", status="completed")
         scraper_app._jobs["db1"]["job_type"] = "detail_batch"
