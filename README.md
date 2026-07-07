@@ -78,7 +78,7 @@ Scraper ──► MinIO (raw HTML)
 
 **dbt backoff model** — 403'd listings are tracked in `staging.blocked_cooldown_events`. Exponential backoff logic (`next_eligible_at`, `fully_blocked`) lives entirely in a dbt staging model — queryable, testable, and separated from application code.
 
-**Anti-detection resilience** — curl_cffi with Chrome TLS fingerprinting bypasses passive TLS inspection. FlareSolverr handles active Cloudflare JS challenges. Process-wide credential cache with 25-min TTL and automatic re-bootstrap on 403.
+**Anti-detection resilience** — curl_cffi with Chrome TLS fingerprinting bypasses passive TLS inspection. FlareSolverr handles active Cloudflare JS challenges. Process-wide credential cache with 25-min TTL and automatic re-bootstrap on 403. FlareSolverr is pinned because its bundled browser version must stay compatible with scraper `curl_cffi` impersonation targets.
 
 **Versioned schema migrations** — 36 Flyway migrations track every schema change from initial setup through the full medallion evolution — reviewed as code and applied automatically on deploy.
 

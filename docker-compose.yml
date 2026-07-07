@@ -129,7 +129,7 @@ services:
         condition: service_completed_successfully
 
   flaresolverr:
-    image: ghcr.io/flaresolverr/flaresolverr:latest
+    image: ${FLARESOLVERR_IMAGE:-ghcr.io/flaresolverr/flaresolverr:v3.4.6}
     container_name: cartracker-flaresolverr
     restart: unless-stopped
     environment:
