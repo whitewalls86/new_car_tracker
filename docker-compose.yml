@@ -19,6 +19,9 @@ x-airflow-common:
     AIRFLOW_CONN_CARTRACKER_DB: postgresql://airflow_app_user:${AIRFLOW_APP_DB_PASSWORD}@postgres:5432/cartracker
     TELEGRAM_API: ${TELEGRAM_API}
     TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+    DETAIL_BATCH_SIZE: ${DETAIL_BATCH_SIZE:-100}
+    DETAIL_MAX_WORKERS: ${DETAIL_MAX_WORKERS:-1}
+    DETAIL_REQUEST_TIMEOUT_S: ${DETAIL_REQUEST_TIMEOUT_S:-90}
     # Plan 86: StatsD → statsd-exporter → Prometheus
     AIRFLOW__METRICS__STATSD_ON: 'true'
     AIRFLOW__METRICS__STATSD_HOST: statsd-exporter
@@ -126,11 +129,45 @@ services:
         condition: service_completed_successfully
 
   flaresolverr:
-    image: ghcr.io/flaresolverr/flaresolverr:latest
+    image: ${FLARESOLVERR_IMAGE:-ghcr.io/flaresolverr/flaresolverr:v3.4.6}
     container_name: cartracker-flaresolverr
     restart: unless-stopped
     environment:
       LOG_LEVEL: info
+    networks:
+      - cartracker-net
+
+  redis-trawl:
+    image: redis:7-alpine
+    container_name: cartracker-redis-trawl
+    restart: unless-stopped
+    profiles: ["trawl"]
+    volumes:
+      - trawl_redis_data:/data
+    networks:
+      - cartracker-net
+
+  trawl:
+    image: ${TRAWL_IMAGE:-ghcr.io/germondai/trawl:latest}
+    container_name: cartracker-trawl
+    restart: unless-stopped
+    profiles: ["trawl"]
+    shm_size: 1gb
+    environment:
+      REDIS_URL: redis://redis-trawl:6379
+      BROWSER_POOL_SIZE: ${TRAWL_BROWSER_POOL_SIZE:-2}
+      BROWSER_ACQUIRE_TIMEOUT_MS: ${TRAWL_BROWSER_ACQUIRE_TIMEOUT_MS:-30000}
+      SESSION_TTL_SECONDS: ${TRAWL_SESSION_TTL_SECONDS:-3600}
+      BROWSER_RECYCLE_AFTER_CONTEXTS: ${TRAWL_BROWSER_RECYCLE_AFTER_CONTEXTS:-8}
+      BROWSER_CONTENT_PROCESSES: ${TRAWL_BROWSER_CONTENT_PROCESSES:-2}
+    depends_on:
+      - redis-trawl
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8191/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
     networks:
       - cartracker-net
 
@@ -147,7 +184,9 @@ services:
       DATABASE_URL: postgresql://scraper_user:${SCRAPER_DB_PASSWORD}@postgres:5432/cartracker
       DBT_RUNNER_URL: http://dbt_runner:8080
       DBT_DOCS_URL: http://localhost:8081/dbt-docs/
-      FLARESOLVERR_URL: http://flaresolverr:8191
+      FLARESOLVERR_URL: ${FLARESOLVERR_URL:-http://flaresolverr:8191}
+      SCRAPER_DETAIL_MAX_WORKERS: ${SCRAPER_DETAIL_MAX_WORKERS:-1}
+      SCRAPER_DETAIL_TIMEOUT_S: ${SCRAPER_DETAIL_TIMEOUT_S:-90}
       MINIO_ENDPOINT: http://minio:9000
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
@@ -586,6 +625,8 @@ volumes:
   pgadmin_data:
 
   scraper_logs:
+
+  trawl_redis_data:
 
   dbt_runner_logs:
 

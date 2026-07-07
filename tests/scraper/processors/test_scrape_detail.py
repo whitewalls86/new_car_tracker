@@ -129,7 +129,7 @@ class TestScrapeDetailFetch:
         called_url = mock_session.get.call_args[0][0]
         assert called_url == custom_url
 
-    def test_timeout_default_is_30(self, mock_cf_session, mocker):
+    def test_timeout_default_is_90(self, mock_cf_session, mocker):
         mock_session, mock_resp = mock_cf_session
         mock_resp.status_code = 200
         mock_resp.content = b"ok"
@@ -138,7 +138,7 @@ class TestScrapeDetailFetch:
 
         scrape_detail_fetch(run_id=RUN_ID, payload={"listing_id": LISTING_ID})
         kwargs = mock_session.get.call_args[1]
-        assert kwargs["timeout"] == 30
+        assert kwargs["timeout"] == 90
 
     def test_timeout_override(self, mock_cf_session, mocker):
         mock_session, mock_resp = mock_cf_session
@@ -382,6 +382,23 @@ class TestScrapeDetailBatch:
         art = result["artifacts"][0]
         missing = ARTIFACT_KEYS - art.keys()
         assert missing == set(), f"Batch artifact missing fields: {missing}"
+
+    def test_batch_forwards_timeout_to_each_fetch(self, mocker):
+        mock_fetch = mocker.patch(
+            "scraper.processors.scrape_detail.scrape_detail_fetch",
+            return_value={"error": None, "artifacts": []},
+        )
+
+        scrape_detail_batch(
+            run_id=RUN_ID,
+            batch_id=BATCH_ID,
+            listings=[{"listing_id": "l7"}],
+            max_workers=1,
+            timeout_s=123,
+        )
+
+        payload = mock_fetch.call_args[1]["payload"]
+        assert payload["timeout_s"] == 123
 
 
 # ---------------------------------------------------------------------------

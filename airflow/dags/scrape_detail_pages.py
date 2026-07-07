@@ -17,6 +17,7 @@ Schedule: every 15 minutes. claim_batch itself marks the run skipped when
 the queue is empty, so frequent polling is cheap.
 """
 import logging
+import os
 import time
 
 import requests
@@ -24,7 +25,9 @@ import requests
 OPS_URL = "http://ops:8060"
 SCRAPER_URL = "http://scraper:8000"
 
-BATCH_SIZE = 600
+BATCH_SIZE = int(os.environ.get("DETAIL_BATCH_SIZE", "100"))
+DETAIL_MAX_WORKERS = int(os.environ.get("DETAIL_MAX_WORKERS", "1"))
+DETAIL_REQUEST_TIMEOUT_S = int(os.environ.get("DETAIL_REQUEST_TIMEOUT_S", "90"))
 POLL_INTERVAL_S = 60
 DETAIL_TIMEOUT_S = 10800  # 3 hours — large batches can take a while
 
@@ -60,7 +63,11 @@ def _scrape_detail(**context):
     resp = requests.post(
         f"{SCRAPER_URL}/scrape_detail/batch",
         params={"run_id": run_id},
-        json={"listings": listings},
+        json={
+            "listings": listings,
+            "max_workers": DETAIL_MAX_WORKERS,
+            "timeout_s": DETAIL_REQUEST_TIMEOUT_S,
+        },
         timeout=60,
     )
     resp.raise_for_status()

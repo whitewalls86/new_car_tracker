@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -27,9 +28,23 @@ _detail_adaptive_delay: float = 0.0
 
 logger = logging.getLogger("scraper")
 
+DEFAULT_DETAIL_TIMEOUT_S = int(os.environ.get("SCRAPER_DETAIL_TIMEOUT_S", "90"))
+DEFAULT_DETAIL_MAX_WORKERS = int(os.environ.get("SCRAPER_DETAIL_MAX_WORKERS", "1"))
+
 
 def _sha256_bytes(b: bytes) -> str:
     return hashlib.sha256(b).hexdigest()
+
+
+def _html_title(content: bytes) -> Optional[str]:
+    try:
+        text = content[:4096].decode("utf-8", errors="replace")
+    except Exception:
+        return None
+    m = re.search(r"<title[^>]*>(.*?)</title>", text, re.IGNORECASE | re.DOTALL)
+    if not m:
+        return None
+    return re.sub(r"\s+", " ", m.group(1)).strip()[:200]
 
 
 def _update_detail_delay(is_403: bool) -> None:
@@ -62,10 +77,23 @@ def _fetch_url(url: str, timeout_s: int) -> tuple[bytes, int, Optional[str], str
         try:
             credentials, bootstrap_html, bootstrap_status = get_cf_credentials(url, timeout_s)
             if bootstrap_html is not None:
+                if bootstrap_status == 403:
+                    logger.warning(
+                        "FlareSolverr bootstrap returned 403 for url=%s title=%r",
+                        url,
+                        _html_title(bootstrap_html),
+                    )
                 return bootstrap_html, bootstrap_status, "text/html; charset=utf-8", url
             session = make_cf_session(credentials)
             resp = session.get(url, timeout=timeout_s, allow_redirects=True)
             content = resp.content or b""
+            if resp.status_code == 403:
+                logger.warning(
+                    "curl_cffi CF-session returned 403 for url=%s final_url=%s title=%r",
+                    url,
+                    resp.url,
+                    _html_title(content),
+                )
             return content, resp.status_code, resp.headers.get("content-type"), str(resp.url)
         except Exception as e:
             logger.warning(
@@ -75,6 +103,13 @@ def _fetch_url(url: str, timeout_s: int) -> tuple[bytes, int, Optional[str], str
     session = make_cf_session(None)
     resp = session.get(url, timeout=timeout_s, allow_redirects=True)
     content = resp.content or b""
+    if resp.status_code == 403:
+        logger.warning(
+            "plain curl_cffi returned 403 for url=%s final_url=%s title=%r",
+            url,
+            resp.url,
+            _html_title(content),
+        )
     return content, resp.status_code, resp.headers.get("content-type"), str(resp.url)
 
 
@@ -124,7 +159,7 @@ def scrape_detail_fetch(*, run_id: str, payload: Dict[str, Any]) -> Dict[str, An
         }
 
     fetched_at = datetime.now(UTC).isoformat()
-    timeout_s = int((payload or {}).get("timeout_s") or 30)
+    timeout_s = int((payload or {}).get("timeout_s") or DEFAULT_DETAIL_TIMEOUT_S)
 
     # Non-200 responses are still written to MinIO (useful for debugging blocks/interstitials).
     # MinIO write failure is treated as a fetch failure — the artifact is unreadable by processing.
@@ -252,7 +287,12 @@ def scrape_detail_fetch(*, run_id: str, payload: Dict[str, Any]) -> Dict[str, An
 
 
 def scrape_detail_batch(
-    *, run_id: str, batch_id: str, listings: List[Dict[str, Any]], max_workers: int = 8
+    *,
+    run_id: str,
+    batch_id: str,
+    listings: List[Dict[str, Any]],
+    max_workers: Optional[int] = None,
+    timeout_s: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     Fetch detail pages for a list of listings concurrently.
@@ -268,6 +308,8 @@ def scrape_detail_batch(
     Returns: {"artifacts": [...], "meta": {...}}
     """
 
+    max_workers = max_workers or DEFAULT_DETAIL_MAX_WORKERS
+
     def _fetch_one(item: Dict[str, Any]) -> Dict[str, Any]:
         with _detail_delay_lock:
             delay = _detail_adaptive_delay
@@ -277,7 +319,10 @@ def scrape_detail_batch(
                 delay, item.get("listing_id"),
             )
             time.sleep(delay)
-        result = scrape_detail_fetch(run_id=run_id, payload={**item, "batch_id": batch_id})
+        payload = {**item, "batch_id": batch_id}
+        if timeout_s is not None:
+            payload["timeout_s"] = timeout_s
+        result = scrape_detail_fetch(run_id=run_id, payload=payload)
         is_403 = any(a.get("http_status") == 403 for a in result.get("artifacts", []))
         _update_detail_delay(is_403)
         if is_403:
