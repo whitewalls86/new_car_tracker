@@ -94,7 +94,10 @@ def _chrome_major(user_agent: str) -> Optional[int]:
     return int(m.group(1)) if m else None
 
 
-def browser_headers_for_ua(user_agent: str, referer: str = "https://www.cars.com/") -> Dict[str, str]:
+def browser_headers_for_ua(
+    user_agent: str,
+    referer: str = "https://www.cars.com/",
+) -> Dict[str, str]:
     """Build browser-like headers to replay a FlareSolverr browser session.
 
     Cloudflare clearance can be sensitive to more than the cookie and UA. These
