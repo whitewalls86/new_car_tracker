@@ -330,6 +330,7 @@ class TestSnapshotExportRunEndpoint:
         assert resp.status_code == 400
 
     def test_audit_sources_forwarded_to_request_and_response(self, mock_archiver_client, mocker):
+        mocker.patch("archiver.app._ALLOW_SOURCE_BASE_PATH", True)
         fake_result = {
             "snapshot_id": "adaptive-refresh-2026-07-07-000000",
             "tier": "ci",
@@ -372,6 +373,7 @@ class TestSnapshotExportRunEndpoint:
         assert request_arg.run_selectors is False
 
     def test_run_selectors_forwarded_to_request_and_response(self, mock_archiver_client, mocker):
+        mocker.patch("archiver.app._ALLOW_SOURCE_BASE_PATH", True)
         fake_result = {
             "snapshot_id": "adaptive-refresh-2026-07-07-000000",
             "tier": "ci",
@@ -391,6 +393,29 @@ class TestSnapshotExportRunEndpoint:
         assert resp.json()["selector_diagnostics"]["ok"] is True
         request_arg = mock_fn.call_args[0][0]
         assert request_arg.run_selectors is True
+
+    def test_source_base_path_rejected_by_default(self, mock_archiver_client, mocker):
+        mock_fn = mocker.patch("archiver.app._export_ci_lake_snapshot")
+        resp = mock_archiver_client.post(
+            "/snapshots/adaptive-refresh/run",
+            json={
+                "tier": "ci", "dry_run": True, "run_selectors": True,
+                "source_base_path": "/tmp/lake",
+            },
+        )
+        assert resp.status_code == 400
+        assert not mock_fn.called
+
+    def test_source_base_path_allowed_when_flag_enabled(self, mock_archiver_client, mocker):
+        mocker.patch("archiver.app._ALLOW_SOURCE_BASE_PATH", True)
+        mock_fn = mocker.patch("archiver.app._export_ci_lake_snapshot")
+        mock_fn.return_value.to_dict.return_value = {"status": "planned"}
+        resp = mock_archiver_client.post(
+            "/snapshots/adaptive-refresh/run",
+            json={"tier": "ci", "dry_run": True, "source_base_path": "/tmp/lake"},
+        )
+        assert resp.status_code == 200
+        assert mock_fn.called
 
     def test_malformed_payload_with_audit_sources_still_returns_400(self, mock_archiver_client):
         resp = mock_archiver_client.post(

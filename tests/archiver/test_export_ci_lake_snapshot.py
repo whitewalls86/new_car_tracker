@@ -594,3 +594,20 @@ class TestExportRunSelectors:
         ))
         assert result.status == "not_implemented"
         assert result.selector_diagnostics is None
+
+    def test_min_selector_coverage_true_reports_coverage_failures(self, selector_fixture):
+        # Fixture only ever provides 1 candidate entity per selector, well below
+        # every selector's min_entities, so every selector should be reported short.
+        result = export_ci_lake_snapshot(SnapshotRequest(
+            tier="ci", dry_run=True, run_selectors=True, min_selector_coverage=True,
+            source_base_path=str(selector_fixture),
+        ))
+        assert len(result.coverage_failures) == 5
+        assert any("relisted_vin" in f for f in result.coverage_failures)
+
+    def test_min_selector_coverage_false_skips_coverage_failures(self, selector_fixture):
+        result = export_ci_lake_snapshot(SnapshotRequest(
+            tier="ci", dry_run=True, run_selectors=True, min_selector_coverage=False,
+            source_base_path=str(selector_fixture),
+        ))
+        assert result.coverage_failures == []

@@ -277,6 +277,7 @@ def export_ci_lake_snapshot(request: SnapshotRequest) -> SnapshotResult:
             request.run_selectors,
         )
         selector_diagnostics = None
+        coverage_failures: List[str] = []
         if request.run_selectors:
             selector_diagnostics = run_lake_selectors(
                 base_path=request.source_base_path,
@@ -288,13 +289,15 @@ def export_ci_lake_snapshot(request: SnapshotRequest) -> SnapshotResult:
                 snapshot_id, request.tier,
                 selector_diagnostics["ok"], selector_diagnostics["errors"],
             )
+            if request.min_selector_coverage:
+                coverage_failures = format_coverage_failures(selector_diagnostics["selectors"])
         return SnapshotResult(
             snapshot_id=snapshot_id,
             tier=request.tier,
             status="planned",
             source_window_start=window_start.isoformat() if window_start else None,
             source_window_end=window_end.isoformat() if window_end else None,
-            coverage_failures=[],
+            coverage_failures=coverage_failures,
             selector_diagnostics=selector_diagnostics,
         )
 

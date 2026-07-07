@@ -266,6 +266,30 @@ def build_selector_query(
     return sql, params
 
 
+def _wrap_aggregate_query(candidate_sql: str, entity_key: str) -> str:
+    """Wrap a selector's candidate-row query so counting/sampling happens in
+    DuckDB rather than pulling every candidate row into archiver memory."""
+    return f"""
+WITH selector_candidates AS (
+{candidate_sql}
+)
+SELECT
+    count(*) AS candidate_rows,
+    count(DISTINCT {entity_key}) AS entities,
+    (
+        SELECT list(entity_value)
+        FROM (
+            SELECT DISTINCT {entity_key} AS entity_value
+            FROM selector_candidates
+            WHERE {entity_key} IS NOT NULL
+            ORDER BY entity_value
+            LIMIT 5
+        ) AS sample
+    ) AS sample_entities
+FROM selector_candidates
+"""
+
+
 def run_selector(
     con,
     name: str,
@@ -297,16 +321,13 @@ def run_selector(
     }
 
     try:
-        sql, params = build_selector_query(name, path, window_start, window_end)
-        cursor = con.execute(sql, params)
-        columns = [c[0] for c in cursor.description]
-        rows = cursor.fetchall()
-        entity_idx = columns.index(selector.entity_key)
-        entities = sorted({row[entity_idx] for row in rows if row[entity_idx] is not None})
-        result["candidate_rows"] = len(rows)
-        result["entities"] = len(entities)
-        result["sample_entities"] = entities[:5]
-        result["status"] = "pass" if len(entities) >= selector.min_entities else "fail"
+        candidate_sql, params = build_selector_query(name, path, window_start, window_end)
+        agg_sql = _wrap_aggregate_query(candidate_sql, selector.entity_key)
+        candidate_rows, entities, sample_entities = con.execute(agg_sql, params).fetchone()
+        result["candidate_rows"] = candidate_rows
+        result["entities"] = entities
+        result["sample_entities"] = list(sample_entities) if sample_entities else []
+        result["status"] = "pass" if entities >= selector.min_entities else "fail"
     except Exception as e:
         result["error"] = str(e)
         logger.warning("lake_snapshot_selectors: selector=%s path=%s error=%s", name, path, e)

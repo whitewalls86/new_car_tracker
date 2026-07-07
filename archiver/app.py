@@ -1,4 +1,5 @@
 import logging
+import os
 from datetime import datetime
 from typing import Any, Dict
 
@@ -27,6 +28,14 @@ configure_logging()
 logger = logging.getLogger("archiver")
 
 app = FastAPI()
+
+# source_base_path lets callers point selector/audit reads at a local fixture
+# directory instead of s3://{MINIO_BUCKET}. That's needed for CLI/tests but
+# must stay off by default on the HTTP route — it's an arbitrary local path
+# interpolated into DuckDB read_parquet() calls.
+_ALLOW_SOURCE_BASE_PATH = (
+    os.environ.get("ARCHIVER_ALLOW_SOURCE_BASE_PATH", "false").lower() == "true"
+)
 
 
 @app.post("/cleanup/parquet")
@@ -91,6 +100,12 @@ def trigger_snapshot_export(payload: dict = Body(default={})) -> Dict[str, Any]:
         payload = payload or {}
         window_start = payload.get("source_window_start")
         window_end = payload.get("source_window_end")
+        source_base_path = payload.get("source_base_path")
+        if source_base_path is not None and not _ALLOW_SOURCE_BASE_PATH:
+            raise HTTPException(
+                status_code=400,
+                detail="source_base_path is not permitted on this endpoint",
+            )
         try:
             request = SnapshotRequest(
                 tier=payload.get("tier"),
@@ -105,7 +120,7 @@ def trigger_snapshot_export(payload: dict = Body(default={})) -> Dict[str, Any]:
                 dry_run=payload.get("dry_run", False),
                 audit_sources=payload.get("audit_sources", False),
                 run_selectors=payload.get("run_selectors", False),
-                source_base_path=payload.get("source_base_path"),
+                source_base_path=source_base_path,
             )
             result = _export_ci_lake_snapshot(request)
         except SnapshotRequestError as e:
