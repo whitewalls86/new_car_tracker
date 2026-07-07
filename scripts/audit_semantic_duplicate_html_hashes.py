@@ -12,12 +12,13 @@ it is intended to run in the dbt_runner container.
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 from collections import defaultdict
 from typing import Any
 
 import duckdb
+
+from shared.duckdb_s3 import get_duckdb_s3_connection
 
 SILVER_PATH = "s3://bronze/silver/observations/**/*.parquet"
 ARTIFACT_EVENTS_PATH = "s3://bronze/ops/artifacts_queue_events/**/*.parquet"
@@ -48,15 +49,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def connect_duckdb() -> duckdb.DuckDBPyConnection:
-    con = duckdb.connect()
-    con.execute("INSTALL httpfs")
-    con.execute("LOAD httpfs")
-    con.execute("SET s3_endpoint='minio:9000'")
-    con.execute("SET s3_url_style='path'")
-    con.execute("SET s3_use_ssl=false")
-    con.execute("SET s3_access_key_id=?", [os.environ.get("MINIO_ROOT_USER", "cartracker")])
-    con.execute("SET s3_secret_access_key=?", [os.environ["MINIO_ROOT_PASSWORD"]])
-    return con
+    return get_duckdb_s3_connection()
 
 
 def fetch_sample(con: duckdb.DuckDBPyConnection, args: argparse.Namespace) -> list[dict[str, Any]]:

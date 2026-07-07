@@ -20,13 +20,14 @@ from __future__ import annotations
 
 import argparse
 import difflib
-import os
 import sys
 from dataclasses import dataclass, field
 from typing import Any
 
 import duckdb
 import zstandard as zstd
+
+from shared.duckdb_s3 import get_duckdb_s3_connection
 
 SILVER_PATH = "s3://bronze/silver/observations/**/*.parquet"
 ARTIFACT_EVENTS_PATH = "s3://bronze/ops/artifacts_queue_events/**/*.parquet"
@@ -54,25 +55,12 @@ def parse_args() -> argparse.Namespace:
 
 
 def connect_duckdb() -> duckdb.DuckDBPyConnection:
-    con = duckdb.connect()
-    con.execute("INSTALL httpfs")
-    con.execute("LOAD httpfs")
-    con.execute("SET s3_endpoint='minio:9000'")
-    con.execute("SET s3_url_style='path'")
-    con.execute("SET s3_use_ssl=false")
-    con.execute("SET s3_access_key_id=?", [os.environ.get("MINIO_ROOT_USER", "cartracker")])
-    con.execute("SET s3_secret_access_key=?", [os.environ["MINIO_ROOT_PASSWORD"]])
-    return con
+    return get_duckdb_s3_connection()
 
 
 def get_s3fs():
-    import s3fs
-    return s3fs.S3FileSystem(
-        key=os.environ.get("MINIO_ROOT_USER", "cartracker"),
-        secret=os.environ["MINIO_ROOT_PASSWORD"],
-        use_ssl=False,
-        client_kwargs={"endpoint_url": "http://minio:9000"},
-    )
+    from shared.minio import get_s3fs as _get_s3fs
+    return _get_s3fs()
 
 
 def find_listings(

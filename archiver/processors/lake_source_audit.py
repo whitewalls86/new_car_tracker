@@ -8,9 +8,11 @@ diagnostics (row counts, timestamp bounds, distinct VIN/listing counts)
 without generating a snapshot archive. No writes are performed.
 """
 import logging
-import os
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
+
+from shared.duckdb_s3 import get_duckdb_s3_connection
+from shared.minio import BUCKET
 
 logger = logging.getLogger("archiver")
 
@@ -43,25 +45,6 @@ SOURCE_TABLE_SPECS: Dict[str, Dict[str, Optional[str]]] = {
 }
 
 
-def _normalize_endpoint(endpoint: str) -> str:
-    """Strip scheme from a MinIO endpoint (e.g. 'http://minio:9000' -> 'minio:9000')."""
-    return endpoint.replace("http://", "").replace("https://", "")
-
-
-def configure_duckdb_s3(con) -> None:
-    """Configure a DuckDB connection to read MinIO over S3. Read-only settings."""
-    endpoint = _normalize_endpoint(os.environ.get("MINIO_ENDPOINT", "minio:9000"))
-    access_key = os.environ.get("MINIO_ROOT_USER", "cartracker")
-    secret_key = os.environ.get("MINIO_ROOT_PASSWORD", "")
-    con.execute(f"""
-        SET s3_endpoint='{endpoint}';
-        SET s3_access_key_id='{access_key}';
-        SET s3_secret_access_key='{secret_key}';
-        SET s3_use_ssl=false;
-        SET s3_url_style='path';
-    """)
-
-
 def resolve_table_path(table_name: str, base_path: Optional[str]) -> str:
     """Resolve the Parquet glob for a logical source table.
 
@@ -71,8 +54,7 @@ def resolve_table_path(table_name: str, base_path: Optional[str]) -> str:
     spec = SOURCE_TABLE_SPECS[table_name]
     if base_path:
         return f"{base_path.rstrip('/')}/{spec['relative_path']}"
-    bucket = os.environ.get("MINIO_BUCKET", "bronze")
-    return f"s3://{bucket}/{spec['relative_path']}"
+    return f"s3://{BUCKET}/{spec['relative_path']}"
 
 
 def _iso(value: Any) -> Optional[str]:
@@ -161,13 +143,13 @@ def audit_source_tables(
     Never raises for a missing/unreadable table — the error is captured at
     the table level and `ok` is set to False.
     """
-    import duckdb
+    if base_path:
+        import duckdb
+        con = duckdb.connect()
+    else:
+        con = get_duckdb_s3_connection()
 
-    con = duckdb.connect()
     try:
-        if not base_path:
-            configure_duckdb_s3(con)
-
         tables: Dict[str, Any] = {}
         errors: list = []
         for table_name in SOURCE_TABLE_SPECS:
