@@ -99,7 +99,7 @@ def validate_request(request: SnapshotRequest) -> None:
             f"adaptive-refresh-[A-Za-z0-9._-]+"
         )
 
-    for field_name in ("target_vins", "max_archive_mb", "max_rows"):
+    for field_name in ("target_vins", "max_archive_mb", "max_rows", "source_window_months"):
         value = getattr(request, field_name)
         if value is not None and value <= 0:
             raise SnapshotRequestError(f"{field_name} must be positive when set, got {value}")

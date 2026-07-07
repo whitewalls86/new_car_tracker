@@ -315,6 +315,20 @@ class TestSnapshotExportRunEndpoint:
         assert data["tier"] == "edge"
         assert data["status"] == "planned"
 
+    def test_malformed_source_window_start_returns_400(self, mock_archiver_client):
+        resp = mock_archiver_client.post(
+            "/snapshots/adaptive-refresh/run",
+            json={"tier": "ci", "source_window_start": "not-a-date", "dry_run": True},
+        )
+        assert resp.status_code == 400
+
+    def test_non_numeric_limit_returns_400(self, mock_archiver_client):
+        resp = mock_archiver_client.post(
+            "/snapshots/adaptive-refresh/run",
+            json={"tier": "ci", "target_vins": "five-thousand", "dry_run": True},
+        )
+        assert resp.status_code == 400
+
 
 # ---------------------------------------------------------------------------
 # GET /ready

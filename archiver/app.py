@@ -107,6 +107,8 @@ def trigger_snapshot_export(payload: dict = Body(default={})) -> Dict[str, Any]:
             result = _export_ci_lake_snapshot(request)
         except SnapshotRequestError as e:
             raise HTTPException(status_code=400, detail=str(e))
+        except (ValueError, TypeError) as e:
+            raise HTTPException(status_code=400, detail=f"Invalid request payload: {e}")
         return result.to_dict()
 
 

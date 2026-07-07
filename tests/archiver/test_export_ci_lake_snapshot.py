@@ -39,17 +39,23 @@ class TestValidateRequest:
         with pytest.raises(SnapshotRequestError):
             validate_request(SnapshotRequest(tier="ci", snapshot_id="other-2026-07-07"))
 
-    @pytest.mark.parametrize("field_name", ["target_vins", "max_archive_mb", "max_rows"])
+    @pytest.mark.parametrize(
+        "field_name", ["target_vins", "max_archive_mb", "max_rows", "source_window_months"]
+    )
     def test_negative_limits_rejected(self, field_name):
         with pytest.raises(SnapshotRequestError):
             validate_request(SnapshotRequest(tier="ci", **{field_name: -1}))
 
-    @pytest.mark.parametrize("field_name", ["target_vins", "max_archive_mb", "max_rows"])
+    @pytest.mark.parametrize(
+        "field_name", ["target_vins", "max_archive_mb", "max_rows", "source_window_months"]
+    )
     def test_zero_limits_rejected(self, field_name):
         with pytest.raises(SnapshotRequestError):
             validate_request(SnapshotRequest(tier="ci", **{field_name: 0}))
 
-    @pytest.mark.parametrize("field_name", ["target_vins", "max_archive_mb", "max_rows"])
+    @pytest.mark.parametrize(
+        "field_name", ["target_vins", "max_archive_mb", "max_rows", "source_window_months"]
+    )
     def test_positive_limits_pass(self, field_name):
         validate_request(SnapshotRequest(tier="ci", **{field_name: 10}))
 
