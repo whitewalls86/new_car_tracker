@@ -9,6 +9,8 @@ This plan starts from two completed foundations:
 
 - Plan 110 normalized storage layout and tightened the object-store contract.
 - Plan 111 built the adaptive-refresh feature tables.
+- Plan 120 provides CI/local historical fixture snapshots for reproducible
+  development and tests.
 
 Before training or backtesting anything seriously, audit those feature outputs
 and make sure they are good enough to become experiment inputs.
@@ -31,6 +33,10 @@ The previous version of this plan centered on DuckLake vs Apache Iceberg. Plan
 
 The purpose of Plan 112 is to prove reproducible refresh-policy experiments,
 not to complete the entire Databricks-style migration.
+
+Plan 112 should consume fixture snapshots produced by Plan 120 when running in
+CI or local development. Full production-corpus validation can still run on the
+VM manually.
 
 ---
 
@@ -396,6 +402,7 @@ whether the available features support useful predictive signal.
 ## Out Of Scope
 
 - Production ops claim-query integration. See Plan 113.
+- CI/local fixture snapshot export and delivery. See Plan 120.
 - Full dbt migration away from DuckDB. See Plan 118.
 - Governance/catalog expansion beyond the spike. See Plan 119.
 - Online model serving.
