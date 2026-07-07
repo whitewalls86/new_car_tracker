@@ -27,6 +27,9 @@ _detail_adaptive_delay: float = 0.0
 
 logger = logging.getLogger("scraper")
 
+DEFAULT_DETAIL_TIMEOUT_S = int(os.environ.get("SCRAPER_DETAIL_TIMEOUT_S", "90"))
+DEFAULT_DETAIL_MAX_WORKERS = int(os.environ.get("SCRAPER_DETAIL_MAX_WORKERS", "1"))
+
 
 def _sha256_bytes(b: bytes) -> str:
     return hashlib.sha256(b).hexdigest()
@@ -124,7 +127,7 @@ def scrape_detail_fetch(*, run_id: str, payload: Dict[str, Any]) -> Dict[str, An
         }
 
     fetched_at = datetime.now(UTC).isoformat()
-    timeout_s = int((payload or {}).get("timeout_s") or 90)
+    timeout_s = int((payload or {}).get("timeout_s") or DEFAULT_DETAIL_TIMEOUT_S)
 
     # Non-200 responses are still written to MinIO (useful for debugging blocks/interstitials).
     # MinIO write failure is treated as a fetch failure — the artifact is unreadable by processing.
@@ -252,7 +255,12 @@ def scrape_detail_fetch(*, run_id: str, payload: Dict[str, Any]) -> Dict[str, An
 
 
 def scrape_detail_batch(
-    *, run_id: str, batch_id: str, listings: List[Dict[str, Any]], max_workers: int = 8
+    *,
+    run_id: str,
+    batch_id: str,
+    listings: List[Dict[str, Any]],
+    max_workers: Optional[int] = None,
+    timeout_s: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     Fetch detail pages for a list of listings concurrently.
@@ -268,6 +276,8 @@ def scrape_detail_batch(
     Returns: {"artifacts": [...], "meta": {...}}
     """
 
+    max_workers = max_workers or DEFAULT_DETAIL_MAX_WORKERS
+
     def _fetch_one(item: Dict[str, Any]) -> Dict[str, Any]:
         with _detail_delay_lock:
             delay = _detail_adaptive_delay
@@ -277,7 +287,10 @@ def scrape_detail_batch(
                 delay, item.get("listing_id"),
             )
             time.sleep(delay)
-        result = scrape_detail_fetch(run_id=run_id, payload={**item, "batch_id": batch_id})
+        payload = {**item, "batch_id": batch_id}
+        if timeout_s is not None:
+            payload["timeout_s"] = timeout_s
+        result = scrape_detail_fetch(run_id=run_id, payload=payload)
         is_403 = any(a.get("http_status") == 403 for a in result.get("artifacts", []))
         _update_detail_delay(is_403)
         if is_403:

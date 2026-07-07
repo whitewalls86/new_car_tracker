@@ -383,6 +383,23 @@ class TestScrapeDetailBatch:
         missing = ARTIFACT_KEYS - art.keys()
         assert missing == set(), f"Batch artifact missing fields: {missing}"
 
+    def test_batch_forwards_timeout_to_each_fetch(self, mocker):
+        mock_fetch = mocker.patch(
+            "scraper.processors.scrape_detail.scrape_detail_fetch",
+            return_value={"error": None, "artifacts": []},
+        )
+
+        scrape_detail_batch(
+            run_id=RUN_ID,
+            batch_id=BATCH_ID,
+            listings=[{"listing_id": "l7"}],
+            max_workers=1,
+            timeout_s=123,
+        )
+
+        payload = mock_fetch.call_args[1]["payload"]
+        assert payload["timeout_s"] == 123
+
 
 # ---------------------------------------------------------------------------
 # cffi_target_for_ua  (lives in cf_session after refactor)
