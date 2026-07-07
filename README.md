@@ -47,6 +47,7 @@ Scraper ──► MinIO (raw HTML)
 | **caddy** | Reverse proxy — TLS termination, OAuth2 Google auth via oauth2-proxy, and DB-backed role enforcement via `/auth/check`. |
 | **grafana** | Observability stack — Prometheus metrics (Airflow, Postgres, MinIO, node, service latency), Loki log aggregation via Promtail, and Telegram alerting with 9 provisioned alert rules. |
 | **flaresolverr** | Solves Cloudflare JS challenges and provides `cf_clearance` cookies to the scraper. |
+| **trawl** | Optional FlareSolverr-compatible solver sidecar behind the `trawl` Compose profile. Used for browser-backed session-cache trials when cookie replay through `curl_cffi` is unreliable. |
 
 ---
 
