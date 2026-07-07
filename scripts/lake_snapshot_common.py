@@ -166,8 +166,14 @@ def is_production_like_endpoint(endpoint: str) -> bool:
     host = (urlparse(endpoint).hostname or "").lower()
     if host in _LOCAL_HOSTS:
         return False
-    if host.startswith("192.168.") or host.startswith("10.") or host.startswith("172."):
-        return False
+
+    import ipaddress
+    try:
+        if ipaddress.ip_address(host).is_private:
+            return False
+    except ValueError:
+        pass  # not a literal IP address (e.g. a hostname) — fall through
+
     # Unknown/public host: treat conservatively as production-like.
     return True
 

@@ -80,6 +80,19 @@ def build_boto3_client(endpoint: str):
     )
 
 
+def ensure_bucket(client, bucket: str) -> None:
+    """Create *bucket* if it doesn't exist yet (fresh local/CI MinIO instances)."""
+    from botocore.exceptions import ClientError
+
+    try:
+        client.head_bucket(Bucket=bucket)
+    except ClientError as e:
+        code = e.response["Error"]["Code"]
+        if code not in ("404", "NoSuchBucket"):
+            raise
+        client.create_bucket(Bucket=bucket)
+
+
 def iter_upload_plan(extract_dir: Path) -> List[Tuple[str, Path]]:
     """Return (object_key, local_path) pairs for fixture files under extract_dir."""
     plan: List[Tuple[str, Path]] = []
@@ -156,6 +169,7 @@ def seed_lake_snapshot(
 
     if client is None:
         client = build_boto3_client(minio_endpoint)
+    ensure_bucket(client, bucket)
 
     with tempfile.TemporaryDirectory(prefix="lake-snapshot-") as tmp:
         extract_dir = safe_extract_tar_zst(snapshot_path, Path(tmp))

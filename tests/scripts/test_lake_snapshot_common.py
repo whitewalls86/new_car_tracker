@@ -132,9 +132,17 @@ class TestProductionGuard:
         "https://cartracker.info",
         "http://147.224.199.86:9000",
         "https://some-public-host.example.com",
+        "http://172.32.0.1:9000",  # outside the 172.16.0.0/12 private range
     ])
     def test_production_like_endpoints_detected(self, endpoint):
         assert is_production_like_endpoint(endpoint) is True
+
+    @pytest.mark.parametrize("endpoint", [
+        "http://172.16.0.5:9000",
+        "http://172.31.0.1:9000",
+    ])
+    def test_172_16_private_range_is_safe(self, endpoint):
+        assert is_production_like_endpoint(endpoint) is False
 
     def test_production_like_bucket_detected(self):
         assert is_production_like_bucket("prod-bronze") is True

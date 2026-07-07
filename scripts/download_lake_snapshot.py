@@ -69,6 +69,19 @@ def _parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def _finalize_archive(tmp_path: Path, dest_path: Path, manifest: Dict[str, Any]) -> Path:
+    """Verify a staged .tmp archive against the manifest, then atomically
+    promote it to dest_path. Removes the .tmp file on checksum failure so a
+    bad archive is never left in the cache under its final name."""
+    try:
+        verify_archive_checksum(tmp_path, manifest)
+    except LakeSnapshotError:
+        tmp_path.unlink(missing_ok=True)
+        raise
+    os.replace(tmp_path, dest_path)
+    return dest_path
+
+
 def _write_snapshot(
     manifest: Dict[str, Any], src_archive: Path, out_dir: Path,
 ) -> Path:
@@ -76,10 +89,10 @@ def _write_snapshot(
     dest_dir = out_dir / snapshot_id
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest_archive = dest_dir / "snapshot.tar.zst"
-    if src_archive != dest_archive:
-        shutil.copyfile(src_archive, dest_archive)
+    tmp_archive = dest_dir / "snapshot.tar.zst.tmp"
+    shutil.copyfile(src_archive, tmp_archive)
 
-    verify_archive_checksum(dest_archive, manifest)
+    _finalize_archive(tmp_archive, dest_archive, manifest)
 
     dest_manifest = dest_dir / "manifest.json"
     with open(dest_manifest, "w", encoding="utf-8") as fh:
@@ -143,17 +156,18 @@ def download_api(
         dest_dir = out_dir / snapshot_id
         dest_dir.mkdir(parents=True, exist_ok=True)
         dest_archive = dest_dir / "snapshot.tar.zst"
+        tmp_archive = dest_dir / "snapshot.tar.zst.tmp"
 
         with client.stream("GET", f"{_SNAPSHOTS_PATH}/{snapshot_id}/download") as stream:
             stream.raise_for_status()
-            with open(dest_archive, "wb") as fh:
+            with open(tmp_archive, "wb") as fh:
                 for chunk in stream.iter_bytes():
                     fh.write(chunk)
     finally:
         if owns_client:
             client.close()
 
-    verify_archive_checksum(dest_archive, manifest)
+    _finalize_archive(tmp_archive, dest_archive, manifest)
     with open(dest_dir / "manifest.json", "w", encoding="utf-8") as fh:
         json.dump(manifest, fh, indent=2)
 

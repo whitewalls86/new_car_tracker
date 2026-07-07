@@ -74,6 +74,19 @@ class TestDownloadLocal:
         with pytest.raises(ChecksumMismatchError):
             download_local(manifest_path, archive, out_dir)
 
+    def test_checksum_mismatch_leaves_no_bad_or_tmp_archive(self, tmp_path):
+        manifest_path, archive, manifest = _build_snapshot(tmp_path)
+        manifest["archive"]["sha256"] = "0" * 64
+        manifest_path.write_text(json.dumps(manifest))
+        out_dir = tmp_path / "out"
+
+        with pytest.raises(ChecksumMismatchError):
+            download_local(manifest_path, archive, out_dir)
+
+        dest_dir = out_dir / manifest["snapshot_id"]
+        assert not (dest_dir / "snapshot.tar.zst").exists()
+        assert not (dest_dir / "snapshot.tar.zst.tmp").exists()
+
     def test_missing_archive_raises_clear_error(self, tmp_path):
         manifest_path, archive, _ = _build_snapshot(tmp_path)
         archive.unlink()

@@ -15,7 +15,7 @@ from scripts.lake_snapshot_common import (
     ProductionTargetError,
     sha256_file,
 )
-from scripts.seed_lake_snapshot import main, seed_lake_snapshot
+from scripts.seed_lake_snapshot import ensure_bucket, main, seed_lake_snapshot
 
 
 def _make_tar_zst(archive_path, files, raw_members=None):
@@ -189,6 +189,38 @@ class TestSeedLakeSnapshot:
             "silver_normalized", "ops_normalized", "expected",
         }
         assert result["deleted_objects"] == 0
+
+    def test_ensure_bucket_creates_missing_bucket(self):
+        from botocore.exceptions import ClientError
+
+        client = MagicMock()
+        client.head_bucket.side_effect = ClientError(
+            {"Error": {"Code": "404", "Message": "Not Found"}}, "HeadBucket",
+        )
+
+        ensure_bucket(client, "bronze")
+
+        client.create_bucket.assert_called_once_with(Bucket="bronze")
+
+    def test_ensure_bucket_skips_create_when_bucket_exists(self):
+        client = MagicMock()
+        client.head_bucket.return_value = {}
+
+        ensure_bucket(client, "bronze")
+
+        client.create_bucket.assert_not_called()
+
+    def test_seed_lake_snapshot_ensures_bucket_before_upload(self, tmp_path):
+        archive, _ = _build_snapshot(tmp_path)
+        client = _mock_client()
+
+        seed_lake_snapshot(
+            snapshot_path=archive, manifest_path=None,
+            minio_endpoint="http://localhost:9000", bucket="bronze",
+            clear_prefixes=False, allow_production_target=False, client=client,
+        )
+
+        client.head_bucket.assert_called_once_with(Bucket="bronze")
 
     def test_missing_manifest_raises_clear_error(self, tmp_path):
         archive, _ = _build_snapshot(tmp_path)
