@@ -256,6 +256,67 @@ class TestCompactSilverRunEndpoint:
 
 
 # ---------------------------------------------------------------------------
+# POST /snapshots/adaptive-refresh/run  (Plan 120)
+# ---------------------------------------------------------------------------
+
+class TestSnapshotExportRunEndpoint:
+    def test_dry_run_calls_processor_and_returns_json(self, mock_archiver_client, mocker):
+        fake_result = {
+            "snapshot_id": "adaptive-refresh-2026-07-07-000000",
+            "tier": "ci",
+            "status": "planned",
+            "source_window_start": None,
+            "source_window_end": None,
+            "seed_vin_count": None,
+            "closed_vin_count": None,
+            "listing_count": None,
+            "artifact_count": None,
+            "archive_bytes": None,
+            "manifest_key": None,
+            "archive_key": None,
+            "coverage_failures": [],
+        }
+        mock_fn = mocker.patch("archiver.app._export_ci_lake_snapshot")
+        mock_fn.return_value.to_dict.return_value = fake_result
+        resp = mock_archiver_client.post(
+            "/snapshots/adaptive-refresh/run", json={"tier": "ci", "dry_run": True}
+        )
+        assert resp.status_code == 200
+        assert resp.json() == fake_result
+        assert mock_fn.called
+
+    def test_missing_body_defaults_to_empty_payload(self, mock_archiver_client, mocker):
+        mock_fn = mocker.patch("archiver.app._export_ci_lake_snapshot")
+        mock_fn.return_value.to_dict.return_value = {"status": "planned"}
+        resp = mock_archiver_client.post("/snapshots/adaptive-refresh/run", json={})
+        assert resp.status_code == 200
+        request_arg = mock_fn.call_args[0][0]
+        assert request_arg.tier is None
+
+    def test_invalid_tier_returns_400(self, mock_archiver_client):
+        resp = mock_archiver_client.post(
+            "/snapshots/adaptive-refresh/run", json={"tier": "bogus"}
+        )
+        assert resp.status_code == 400
+
+    def test_non_dry_run_is_explicit_not_implemented(self, mock_archiver_client):
+        resp = mock_archiver_client.post(
+            "/snapshots/adaptive-refresh/run", json={"tier": "ci", "dry_run": False}
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "not_implemented"
+
+    def test_tier_defaults_flow_through_to_dry_run_result(self, mock_archiver_client):
+        resp = mock_archiver_client.post(
+            "/snapshots/adaptive-refresh/run", json={"tier": "edge", "dry_run": True}
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["tier"] == "edge"
+        assert data["status"] == "planned"
+
+
+# ---------------------------------------------------------------------------
 # GET /ready
 # ---------------------------------------------------------------------------
 

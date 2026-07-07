@@ -3,3 +3,5 @@ uvicorn>=0.30
 psycopg2-binary>=2.9
 pyarrow>=16.0
 s3fs>=2024.3.1
+duckdb>=1.0
+zstandard>=0.22

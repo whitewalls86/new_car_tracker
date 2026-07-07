@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime
 from typing import Any, Dict
 
 from fastapi import Body, FastAPI, HTTPException
@@ -8,6 +9,13 @@ from archiver.processors.cleanup_parquet import run_cleanup_parquet as _run_clea
 from archiver.processors.cleanup_queue import cleanup_queue as _cleanup_queue
 from archiver.processors.cleanup_queue import run_cleanup_queue as _run_cleanup_queue
 from archiver.processors.compact_silver import compact_silver as _compact_silver
+from archiver.processors.export_ci_lake_snapshot import (
+    SnapshotRequest,
+    SnapshotRequestError,
+)
+from archiver.processors.export_ci_lake_snapshot import (
+    export_ci_lake_snapshot as _export_ci_lake_snapshot,
+)
 from archiver.processors.flush_silver_observations import (
     flush_silver_observations as _flush_silver_observations,
 )
@@ -74,6 +82,32 @@ def trigger_flush_staging() -> Dict[str, Any]:
     """Flush all staging event tables to MinIO Parquet (Airflow DAG trigger)."""
     with active_job():
         return _flush_staging_events()
+
+
+@app.post("/snapshots/adaptive-refresh/run")
+def trigger_snapshot_export(payload: dict = Body(default={})) -> Dict[str, Any]:
+    """Generate (or dry-run plan) a CI lake snapshot (Plan 120)."""
+    with active_job():
+        payload = payload or {}
+        window_start = payload.get("source_window_start")
+        window_end = payload.get("source_window_end")
+        try:
+            request = SnapshotRequest(
+                tier=payload.get("tier"),
+                snapshot_id=payload.get("snapshot_id"),
+                target_vins=payload.get("target_vins"),
+                max_archive_mb=payload.get("max_archive_mb"),
+                max_rows=payload.get("max_rows"),
+                source_window_start=datetime.fromisoformat(window_start) if window_start else None,
+                source_window_end=datetime.fromisoformat(window_end) if window_end else None,
+                source_window_months=payload.get("source_window_months"),
+                min_selector_coverage=payload.get("min_selector_coverage", True),
+                dry_run=payload.get("dry_run", False),
+            )
+            result = _export_ci_lake_snapshot(request)
+        except SnapshotRequestError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return result.to_dict()
 
 
 @app.get("/health")
