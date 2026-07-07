@@ -406,7 +406,7 @@ class TestScrapeDetailBatch:
 # ---------------------------------------------------------------------------
 class TestCffiTargetForUa:
     def test_exact_match(self):
-        assert cf_session.cffi_target_for_ua("Mozilla/5.0 Chrome/148.0.0.0") == "chrome148"
+        assert cf_session.cffi_target_for_ua("Mozilla/5.0 Chrome/142.0.0.0") == "chrome142"
 
     def test_non_chrome_returns_fallback(self):
         result = cf_session.cffi_target_for_ua("Mozilla/5.0 Firefox/120.0")
