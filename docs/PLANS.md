@@ -58,6 +58,7 @@ governance/catalog expansion.
 | - | [66](plan_66_sql_injection.md) | SQL injection audit | Lower urgency with DB-backed auth and Caddy as sole gatekeeper |
 | - | [94](plan_94_api_docs.md) | API documentation hub | Swagger UI for all FastAPI services |
 | - | [108](plan_108_deploy_trigger_endpoint.md) | Deploy trigger endpoint | Docker socket mount + ops Dockerfile change needed |
+| - | [122](plan_122_runtime_scraper_fetch_config.md) | Runtime scraper fetch configuration | Tune FlareSolverr/detail timeouts without image rebuilds |
 
 ---
 
