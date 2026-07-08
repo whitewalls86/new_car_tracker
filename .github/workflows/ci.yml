@@ -30,8 +30,8 @@ jobs:
           python-version: "3.13"
       - name: Install dependencies
         run: |
-          pip install -r requirements-dev.txt
           pip install \
+            -r requirements-dev.txt \
             -r scraper/requirements.txt \
             -r archiver/requirements.txt \
             -r processing/requirements.txt \
@@ -125,8 +125,8 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install -r requirements-dev.txt
           pip install \
+            -r requirements-dev.txt \
             -r scraper/requirements.txt \
             -r archiver/requirements.txt \
             -r processing/requirements.txt \
