@@ -716,6 +716,35 @@ class TestRunLakeSelectors:
         assert "L17" in selector["sample_entities"]
         assert "L16" not in selector["sample_entities"]
 
+    def test_price_changed_7d_anchors_to_explicit_window_end_not_max_event(self, selector_fixture):
+        # Regression: recency must anchor to the requested window_end, not
+        # MAX(event_at) of whatever survived the filter. L16's change is on
+        # 2026-08-01 — with window_end far past that (2026-09-15), it is 45
+        # days stale and must NOT be misclassified as "within 7d" just
+        # because it happens to be the latest surviving event.
+        diagnostics = run_lake_selectors(
+            base_path=str(selector_fixture), names=["price_changed_7d"],
+            window_end=datetime(2026, 9, 15, tzinfo=timezone.utc),
+        )
+        selector = diagnostics["selectors"]["price_changed_7d"]
+        assert selector["entities"] == 0
+        assert "L16" not in selector["sample_entities"]
+
+    def test_price_changed_30d_only_anchors_to_explicit_window_end_not_max_event(
+        self, selector_fixture,
+    ):
+        # Same regression for the 30d-only bucket: L17's change on
+        # 2026-07-10 is 67 days before window_end=2026-09-15 and must not be
+        # misclassified as "within 30d" via a MAX(event_at) anchor of
+        # 2026-08-01 (22 days apart) instead of the real window_end.
+        diagnostics = run_lake_selectors(
+            base_path=str(selector_fixture), names=["price_changed_30d_only"],
+            window_end=datetime(2026, 9, 15, tzinfo=timezone.utc),
+        )
+        selector = diagnostics["selectors"]["price_changed_30d_only"]
+        assert selector["entities"] == 0
+        assert "L17" not in selector["sample_entities"]
+
     def test_no_price_history_finds_vin_absent_from_price_events(self, selector_fixture):
         # sample_entities is capped at 5 (alphabetically first), and most
         # fixture VINs lack priced events, so check the full candidate set

@@ -257,10 +257,15 @@ WHERE u.first_unlisted_at > a.first_active_at
 ORDER BY a.listing_id
 """
 
-# Anchor "source window end" as MAX(event_at) over the (already window-filtered)
-# read: when a window_end is supplied, _build_where already bounds event_at
-# below it, so the in-query max is the same recency anchor. When no window is
-# supplied, the anchor degrades gracefully to "most recent event in the table".
+# Anchor "source window end" to the actual requested window_end when one is
+# supplied (bound as the first `?` in the diffed CTE below — see
+# _SELECTOR_WINDOW_ANCHOR / build_selector_query). Falling back to
+# MAX(event_at) OVER () unconditionally is wrong: if the export window ends
+# 2026-07-07 but the latest surviving price event is 2026-06-20, an
+# unconditional MAX() would anchor recency to June 20 and could misclassify
+# a stale change as "within 7d". MAX(event_at) OVER () is only used when no
+# window_end was requested at all (open-ended read), where "most recent
+# event in the table" is the only sensible anchor.
 _PRICE_CHANGED_7D_SQL = """
 WITH events AS (
     SELECT event_id, listing_id, vin, artifact_id, price, event_type, event_at
@@ -270,7 +275,7 @@ WITH events AS (
 diffed AS (
     SELECT *,
         LAG(price) OVER (PARTITION BY listing_id ORDER BY event_at, event_id) AS prev_price,
-        MAX(event_at) OVER () AS window_anchor
+        COALESCE(CAST(? AS TIMESTAMP), MAX(event_at) OVER ()) AS window_anchor
     FROM events
 )
 SELECT event_id, listing_id, vin, artifact_id, price, prev_price, event_at
@@ -289,7 +294,7 @@ WITH events AS (
 diffed AS (
     SELECT *,
         LAG(price) OVER (PARTITION BY listing_id ORDER BY event_at, event_id) AS prev_price,
-        MAX(event_at) OVER () AS window_anchor
+        COALESCE(CAST(? AS TIMESTAMP), MAX(event_at) OVER ()) AS window_anchor
     FROM events
 )
 SELECT event_id, listing_id, vin, artifact_id, price, prev_price, event_at
@@ -598,6 +603,10 @@ _SELECTOR_TS_COL: Dict[str, str] = {
 
 RUNNABLE_SELECTORS: Tuple[str, ...] = tuple(_SELECTOR_TABLE.keys())
 
+# selectors whose SQL template embeds a `?` for the requested window_end,
+# bound as the recency anchor (see _PRICE_CHANGED_7D_SQL/_30D_ONLY_SQL above).
+_SELECTOR_WINDOW_ANCHOR: Tuple[str, ...] = ("price_changed_7d", "price_changed_30d_only")
+
 
 def build_selector_registry() -> Dict[str, Selector]:
     """Build the selector registry, keyed by selector name.
@@ -646,6 +655,11 @@ def build_selector_query(
         raise ValueError(f"No executable query implemented for selector '{name}'")
     template = _SELECTOR_SQL_TEMPLATES[name]
     where_sql, params = _build_where(name, window_start, window_end)
+    if name in _SELECTOR_WINDOW_ANCHOR:
+        # Appended last: the `?` this binds sits in the diffed CTE, which
+        # follows the {where} clause in the compiled SQL text, so DuckDB's
+        # positional binding order matches.
+        params = params + [window_end]
     format_kwargs: Dict[str, str] = {"path": path, "where": where_sql}
     if extra_paths:
         format_kwargs.update(extra_paths)
