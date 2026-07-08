@@ -17,7 +17,23 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-from archiver.processors.lake_snapshot_cohort import build_snapshot_cohort, open_duckdb_connection
+from archiver.processors.lake_snapshot_cohort import (
+    build_snapshot_cohort,
+    candidate_sets_to_selector_diagnostics,
+    collect_all_selector_candidates,
+    open_duckdb_connection,
+)
+from archiver.processors.lake_snapshot_planning_cache import (
+    DEFAULT_PLANNING_CACHE_PREFIX,
+    VALID_BUCKET_GRAINS,
+    build_planning_cache_artifact,
+    compute_planning_fingerprint,
+    load_planning_cache,
+    planning_cache_path,
+    resolve_planning_window,
+    subtract_months,
+    write_planning_cache,
+)
 from archiver.processors.lake_snapshot_selectors import build_selector_registry, run_lake_selectors
 from archiver.processors.lake_source_audit import audit_source_tables
 
@@ -56,6 +72,10 @@ class SnapshotRequest:
     run_selectors: bool = False
     build_cohort: bool = False
     source_base_path: Optional[str] = None
+    reuse_planning_cache: bool = False
+    refresh_planning_cache: bool = False
+    planning_cache_bucket_grain: str = "week"
+    planning_cache_prefix: str = DEFAULT_PLANNING_CACHE_PREFIX
 
 
 @dataclass(frozen=True)
@@ -76,6 +96,10 @@ class SnapshotResult:
     source_audit: Optional[Dict[str, Any]] = None
     selector_diagnostics: Optional[Dict[str, Any]] = None
     cohort_diagnostics: Optional[Dict[str, Any]] = None
+    planning_cache_key: Optional[str] = None
+    planning_cache_path: Optional[str] = None
+    planning_cache_hit: bool = False
+    planning_cache_action: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -95,6 +119,10 @@ class SnapshotResult:
             "source_audit": self.source_audit,
             "selector_diagnostics": self.selector_diagnostics,
             "cohort_diagnostics": self.cohort_diagnostics,
+            "planning_cache_key": self.planning_cache_key,
+            "planning_cache_path": self.planning_cache_path,
+            "planning_cache_hit": self.planning_cache_hit,
+            "planning_cache_action": self.planning_cache_action,
         }
 
 
@@ -127,6 +155,16 @@ def validate_request(request: SnapshotRequest) -> None:
             "source_window_start must be strictly before source_window_end"
         )
 
+    if request.reuse_planning_cache and request.refresh_planning_cache:
+        raise SnapshotRequestError(
+            "reuse_planning_cache and refresh_planning_cache cannot both be set"
+        )
+    if request.planning_cache_bucket_grain not in VALID_BUCKET_GRAINS:
+        raise SnapshotRequestError(
+            f"Invalid planning_cache_bucket_grain '{request.planning_cache_bucket_grain}'; "
+            f"must be one of {VALID_BUCKET_GRAINS}"
+        )
+
 
 def resolve_request_defaults(request: SnapshotRequest) -> SnapshotRequest:
     """Fill in tier-derived target_vins/max_archive_mb when not explicitly set."""
@@ -156,6 +194,10 @@ def resolve_request_defaults(request: SnapshotRequest) -> SnapshotRequest:
         run_selectors=request.run_selectors,
         build_cohort=request.build_cohort,
         source_base_path=request.source_base_path,
+        reuse_planning_cache=request.reuse_planning_cache,
+        refresh_planning_cache=request.refresh_planning_cache,
+        planning_cache_bucket_grain=request.planning_cache_bucket_grain,
+        planning_cache_prefix=request.planning_cache_prefix,
     )
 
 
@@ -174,23 +216,10 @@ def resolve_source_window(
     if request.source_window_months is not None:
         now = now or datetime.now(timezone.utc)
         window_end = now
-        window_start = _subtract_months(now, request.source_window_months)
+        window_start = subtract_months(now, request.source_window_months)
         return window_start, window_end
 
     return None, None
-
-
-def _subtract_months(dt: datetime, months: int) -> datetime:
-    total_months = dt.month - 1 - months
-    year = dt.year + total_months // 12
-    month = total_months % 12 + 1
-    day = min(dt.day, _days_in_month(year, month))
-    return dt.replace(year=year, month=month, day=day)
-
-
-def _days_in_month(year: int, month: int) -> int:
-    import calendar
-    return calendar.monthrange(year, month)[1]
 
 
 def build_manifest_skeleton(
@@ -247,8 +276,9 @@ def export_ci_lake_snapshot(request: SnapshotRequest) -> SnapshotResult:
     validate_request(request)
     request = resolve_request_defaults(request)
 
-    snapshot_id = request.snapshot_id or generate_snapshot_id(request.tier)
-    window_start, window_end = resolve_source_window(request)
+    now = datetime.now(timezone.utc)
+    snapshot_id = request.snapshot_id or generate_snapshot_id(request.tier, now=now)
+    window_start, window_end = resolve_source_window(request, now=now)
 
     # Registry is built (and validated for unique names) even in this
     # scaffolding pass, so selector shape is exercised end-to-end.
@@ -285,25 +315,88 @@ def export_ci_lake_snapshot(request: SnapshotRequest) -> SnapshotResult:
         coverage_failures: List[str] = []
         cohort_diagnostics = None
         seed_vin_count = closed_vin_count = listing_count = artifact_count = None
-        if request.run_selectors:
-            selector_diagnostics = run_lake_selectors(
-                base_path=request.source_base_path,
-                window_start=window_start,
-                window_end=window_end,
+        cache_key = cache_path = None
+        cache_hit = False
+        cache_action = None
+        if request.run_selectors and request.build_cohort:
+            # Gate C.75: the heavy planning path (selector candidate collection
+            # + cohort allocation/closure) is the expensive part of this
+            # branch, so an equivalent prior planning request can be reused
+            # from a persisted cache instead of rescanning the lake. A
+            # relative (source_window_months) window is re-anchored to the
+            # bucketed "now" here so the query actually executed always
+            # matches the fingerprint's identity — otherwise two requests in
+            # the same bucket could hash the same fingerprint while querying
+            # different exact windows.
+            window_start, window_end = resolve_planning_window(
+                request, window_start, window_end, now=now,
             )
+            resolved_window = {
+                "start": window_start.isoformat() if window_start else None,
+                "end": window_end.isoformat() if window_end else None,
+            }
+            cache_key, request_fingerprint = compute_planning_fingerprint(
+                request, window_start, window_end,
+            )
+            fingerprint_window = request_fingerprint["fingerprint_window"]
+            cache_path = planning_cache_path(request.planning_cache_prefix, cache_key)
+
             logger.info(
-                "export_ci_lake_snapshot: run_selectors snapshot_id=%s tier=%s ok=%s errors=%s",
-                snapshot_id, request.tier,
-                selector_diagnostics["ok"], selector_diagnostics["errors"],
+                "export_ci_lake_snapshot: planning_cache lookup snapshot_id=%s "
+                "fingerprint=%s reuse=%s refresh=%s path=%s",
+                snapshot_id, cache_key, request.reuse_planning_cache,
+                request.refresh_planning_cache, cache_path,
             )
-            if request.min_selector_coverage:
-                coverage_failures = format_coverage_failures(selector_diagnostics["selectors"])
-            if request.build_cohort:
+
+            cached_artifact = None
+            if request.reuse_planning_cache:
+                cached_artifact = load_planning_cache(cache_path)
+
+            cache_hit = cached_artifact is not None
+            if cache_hit:
+                cache_action = "reused"
+                selector_diagnostics = cached_artifact["selector_diagnostics"]
+                cohort_diagnostics = cached_artifact["cohort_diagnostics"]
+                seed_vin_count = cached_artifact["seed_vin_count"]
+                closed_vin_count = cached_artifact["closed_vin_count"]
+                listing_count = cached_artifact["listing_count"]
+                artifact_count = cached_artifact["artifact_count"]
+                if request.min_selector_coverage:
+                    coverage_failures = format_coverage_failures(
+                        selector_diagnostics["selectors"]
+                    )
+                logger.info(
+                    "export_ci_lake_snapshot: planning_cache hit snapshot_id=%s "
+                    "fingerprint=%s",
+                    snapshot_id, cache_key,
+                )
+            else:
+                cache_action = "refreshed" if request.refresh_planning_cache else "computed"
+                # Collect selector candidates once and reuse them for both
+                # selector diagnostics and cohort allocation, rather than
+                # scanning the lake twice (run_lake_selectors + build_snapshot_cohort).
                 con = open_duckdb_connection(request.source_base_path)
                 try:
+                    candidate_sets = collect_all_selector_candidates(
+                        con, base_path=request.source_base_path,
+                        window_start=window_start, window_end=window_end,
+                    )
+                    selector_diagnostics = candidate_sets_to_selector_diagnostics(
+                        candidate_sets, request.source_base_path,
+                    )
+                    logger.info(
+                        "export_ci_lake_snapshot: run_selectors snapshot_id=%s tier=%s ok=%s "
+                        "errors=%s",
+                        snapshot_id, request.tier,
+                        selector_diagnostics["ok"], selector_diagnostics["errors"],
+                    )
+                    if request.min_selector_coverage:
+                        coverage_failures = format_coverage_failures(
+                            selector_diagnostics["selectors"]
+                        )
                     cohort = build_snapshot_cohort(
                         con, request.source_base_path, window_start, window_end,
-                        request.target_vins,
+                        request.target_vins, candidate_sets=candidate_sets,
                     )
                 finally:
                     con.close()
@@ -318,6 +411,34 @@ def export_ci_lake_snapshot(request: SnapshotRequest) -> SnapshotResult:
                     snapshot_id, request.tier, seed_vin_count, closed_vin_count,
                     listing_count, artifact_count,
                 )
+
+                artifact = build_planning_cache_artifact(
+                    fingerprint=cache_key,
+                    request_fingerprint=request_fingerprint,
+                    fingerprint_window=fingerprint_window,
+                    resolved_window=resolved_window,
+                    candidate_sets=candidate_sets,
+                    selector_diagnostics=selector_diagnostics,
+                    cohort_diagnostics=cohort_diagnostics,
+                    seed_vin_count=seed_vin_count,
+                    closed_vin_count=closed_vin_count,
+                    listing_count=listing_count,
+                    artifact_count=artifact_count,
+                )
+                write_planning_cache(cache_path, artifact)
+        elif request.run_selectors:
+            selector_diagnostics = run_lake_selectors(
+                base_path=request.source_base_path,
+                window_start=window_start,
+                window_end=window_end,
+            )
+            logger.info(
+                "export_ci_lake_snapshot: run_selectors snapshot_id=%s tier=%s ok=%s errors=%s",
+                snapshot_id, request.tier,
+                selector_diagnostics["ok"], selector_diagnostics["errors"],
+            )
+            if request.min_selector_coverage:
+                coverage_failures = format_coverage_failures(selector_diagnostics["selectors"])
         return SnapshotResult(
             snapshot_id=snapshot_id,
             tier=request.tier,
@@ -331,6 +452,10 @@ def export_ci_lake_snapshot(request: SnapshotRequest) -> SnapshotResult:
             coverage_failures=coverage_failures,
             selector_diagnostics=selector_diagnostics,
             cohort_diagnostics=cohort_diagnostics,
+            planning_cache_key=cache_key,
+            planning_cache_path=cache_path,
+            planning_cache_hit=cache_hit,
+            planning_cache_action=cache_action,
         )
 
     logger.info(
@@ -363,6 +488,20 @@ def _parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--run-selectors", dest="run_selectors", action="store_true")
     parser.add_argument("--build-cohort", dest="build_cohort", action="store_true")
     parser.add_argument("--source-base-path", dest="source_base_path", default=None)
+    parser.add_argument(
+        "--reuse-planning-cache", dest="reuse_planning_cache", action="store_true"
+    )
+    parser.add_argument(
+        "--refresh-planning-cache", dest="refresh_planning_cache", action="store_true"
+    )
+    parser.add_argument(
+        "--planning-cache-bucket-grain", dest="planning_cache_bucket_grain",
+        choices=VALID_BUCKET_GRAINS, default="week",
+    )
+    parser.add_argument(
+        "--planning-cache-prefix", dest="planning_cache_prefix",
+        default=DEFAULT_PLANNING_CACHE_PREFIX,
+    )
     return parser.parse_args(argv)
 
 
@@ -380,6 +519,10 @@ def main(argv: Optional[List[str]] = None) -> None:
         run_selectors=args.run_selectors,
         build_cohort=args.build_cohort,
         source_base_path=args.source_base_path,
+        reuse_planning_cache=args.reuse_planning_cache,
+        refresh_planning_cache=args.refresh_planning_cache,
+        planning_cache_bucket_grain=args.planning_cache_bucket_grain,
+        planning_cache_prefix=args.planning_cache_prefix,
     )
     result = export_ci_lake_snapshot(request)
     print(json.dumps(result.to_dict(), indent=2))

@@ -162,6 +162,50 @@ def write_html(key: str, content: bytes) -> str:
     return uri
 
 
+def write_json(key: str, obj) -> str:
+    """
+    Serialize *obj* as canonical JSON and upload to MinIO at *key*.
+    Returns the full S3 URI: ``s3://<bucket>/<key>``.
+    """
+    import json
+
+    body = json.dumps(obj, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+    client = get_boto3_client()
+    ensure_bucket()
+    client.put_object(Bucket=BUCKET, Key=key, Body=body, ContentType="application/json")
+    return f"s3://{BUCKET}/{key}"
+
+
+def read_json(minio_path: str):
+    """
+    Fetch and parse a JSON object.
+
+    *minio_path* may be a full S3 URI (``s3://bucket/key``) or a bare key.
+    Returns None if the object does not exist.
+    """
+    import json
+
+    from botocore.exceptions import ClientError
+
+    if minio_path.startswith("s3://"):
+        remainder = minio_path[len("s3://"):]
+        bucket, key = remainder.split("/", 1)
+    else:
+        bucket = BUCKET
+        key = minio_path
+
+    client = get_boto3_client()
+    try:
+        response = client.get_object(Bucket=bucket, Key=key)
+    except ClientError as e:
+        code = e.response["Error"]["Code"]
+        if code in ("404", "NoSuchKey"):
+            return None
+        raise
+    return json.loads(response["Body"].read())
+
+
 def read_html(minio_path: str) -> bytes:
     """
     Fetch and decompress a zstd-compressed HTML object.

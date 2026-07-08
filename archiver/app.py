@@ -37,6 +37,15 @@ _ALLOW_SOURCE_BASE_PATH = (
     os.environ.get("ARCHIVER_ALLOW_SOURCE_BASE_PATH", "false").lower() == "true"
 )
 
+# Plan 120 Gate C.5: production-sized cohort/export work (build_cohort=True)
+# must not run synchronously inside the production archiver API process — a
+# VM run showed it starves flush/cleanup/compact and Airflow health checks.
+# That work belongs in the isolated snapshot-worker one-shot container (see
+# docker-compose.yml). This flag exists only for tests/manual override.
+_ALLOW_SYNC_SNAPSHOT_COHORT = (
+    os.environ.get("ARCHIVER_ALLOW_SYNC_SNAPSHOT_COHORT", "false").lower() == "true"
+)
+
 
 @app.post("/cleanup/parquet")
 def run_cleanup_parquet(payload: dict = Body(...)) -> Dict[str, Any]:
@@ -106,6 +115,20 @@ def trigger_snapshot_export(payload: dict = Body(default={})) -> Dict[str, Any]:
                 status_code=400,
                 detail="source_base_path is not permitted on this endpoint",
             )
+        if payload.get("build_cohort", False) and not _ALLOW_SYNC_SNAPSHOT_COHORT:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "build_cohort is disabled on the production archiver API. "
+                    "Production-sized cohort/export work must run in the isolated "
+                    "snapshot-worker container, e.g.: docker compose run --rm "
+                    "snapshot-worker python -m archiver.processors."
+                    "export_ci_lake_snapshot --tier edge --dry-run --run-selectors "
+                    "--build-cohort --source-window-months 1 --target-vins 100. "
+                    "Set ARCHIVER_ALLOW_SYNC_SNAPSHOT_COHORT=true to override for "
+                    "tests or manual use."
+                ),
+            )
         try:
             request = SnapshotRequest(
                 tier=payload.get("tier"),
@@ -122,6 +145,14 @@ def trigger_snapshot_export(payload: dict = Body(default={})) -> Dict[str, Any]:
                 run_selectors=payload.get("run_selectors", False),
                 build_cohort=payload.get("build_cohort", False),
                 source_base_path=source_base_path,
+                reuse_planning_cache=payload.get("reuse_planning_cache", False),
+                refresh_planning_cache=payload.get("refresh_planning_cache", False),
+                planning_cache_bucket_grain=payload.get(
+                    "planning_cache_bucket_grain", "week"
+                ),
+                planning_cache_prefix=payload.get(
+                    "planning_cache_prefix", "snapshot_planning_cache"
+                ),
             )
             result = _export_ci_lake_snapshot(request)
         except SnapshotRequestError as e:

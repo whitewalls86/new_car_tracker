@@ -17,9 +17,38 @@ and distributing them.
 
 ## Current Status
 
-Status as of 2026-07-07: **Gate B (selector readiness)** is complete. The
-implementation is between **Implementation Step 2** and **Implementation
-Step 4** in the detailed guide.
+Status as of 2026-07-08: **Gate C.5 (worker isolation and observability)** is
+implemented, and **Gate C.75 (persisted planning cache)** has been added on
+top of it. VM validation had exposed an operational issue: production-sized
+cohort planning is too heavy to run inside the always-on production archiver
+service. Source audit and selector diagnostics passed against the VM lake, but
+a six-month `build_cohort` dry run consumed sustained CPU/network for hours
+and likely contributed to missed production archiver/Airflow health checks.
+
+Production-sized `build_cohort` work has moved to an isolated `snapshot-worker`
+one-shot Docker Compose service (profile-gated, no ports, reuses the archiver
+image/build context). The production archiver's
+`POST /snapshots/adaptive-refresh/run` endpoint now rejects `build_cohort=True`
+with a `409` unless `ARCHIVER_ALLOW_SYNC_SNAPSHOT_COHORT=true` is set (off by
+default; intended for tests/manual override, not production). Cheap
+`audit_sources`/`dry_run` (without `build_cohort`) calls remain allowed on the
+production archiver. Phase timing logs (`time.monotonic()`-based, `elapsed_s`
+fields) were added around source audit, selector candidate collection, cohort
+allocation, and each entity-closure pass. When both `run_selectors=True` and
+`build_cohort=True` are requested, the exporter now collects selector
+candidates once and reuses them for both selector diagnostics and cohort
+allocation, instead of scanning the lake twice.
+
+Gate C.75 adds a persisted planning cache
+(`archiver/processors/lake_snapshot_planning_cache.py`) on top of that shared
+scan, so repeated equivalent heavy planning requests (e.g. re-running the same
+`snapshot-worker` invocation) can skip selector/cohort computation entirely
+instead of rescanning the lake again. See
+[Planning cache (Gate C.75)](#planning-cache-gate-c75) below for the
+fingerprint/flag contract. Reuse is opt-in only — no request implicitly reuses
+a cache.
+
+The next gate is **Gate D - filtered Parquet writer**.
 
 The phase labels below describe product areas, not commit gates. For execution
 tracking, use the Step 1-11 checklist in
@@ -27,22 +56,24 @@ tracking, use the Step 1-11 checklist in
 
 | Area | Status | Notes |
 |------|--------|-------|
-| Exporter skeleton | Mostly done | Request/result models, validation, tier defaults, CLI, dry-run, source audit, and selector diagnostics exist. Non-dry-run export still returns `not_implemented`. |
+| Exporter skeleton | Mostly done | Request/result models, validation, tier defaults, CLI, dry-run, source audit, selector diagnostics, and cohort dry-run diagnostics exist. Non-dry-run export still returns `not_implemented`. |
 | Selector registry | Done (Gate B) | All 22 registered selectors are executable, derived entirely from the four supported source tables. `stable_state_run`/`state_change_run` reproduce the dbt fingerprint fields from `int_listing_state_fingerprints.sql` exactly; `detail_beats_srp`/`srp_fallback` mirror `int_latest_observation.sql`'s source-priority ranking. No selector remains a TODO placeholder. Coupling to dbt is guarded by a single CI test (`tests/integration/dbt/test_selector_dbt_equivalence.py`) that seeds fixture data (`scripts/seed_lake_snapshot_fixture.py`), runs the real dbt models, and diffs selector output against dbt's actual materialized tables — so drift in either the dbt SQL or the selector SQL fails CI. |
 | DuckDB source reads | Done for audit/selector reads | Shared DuckDB/MinIO helper exists, source audit reads four lake tables, and local fixture mode exists for tests. |
-| Cohort allocation and closure | Not started | No `SnapshotCohort`, deterministic fill, VIN/listing/artifact closure, or closure diagnostics yet. |
+| Cohort allocation and closure | Implemented, VM-hardened (Gate C.5) | `SnapshotCohort`, deterministic allocation/fill, VIN/listing/artifact closure, artifact-only seed closure, selector coverage diagnostics, and target-overrun diagnostics exist. Local and integration tests pass. VM source audit and selector diagnostics pass. Heavy `build_cohort` work now runs only in the isolated `snapshot-worker` container. |
+| Worker isolation and observability | Done (Gate C.5) | `snapshot-worker` is a profile-gated, port-free, one-shot Docker Compose service that reuses the archiver image/build context. The production archiver rejects `build_cohort=True` with `409` unless `ARCHIVER_ALLOW_SYNC_SNAPSHOT_COHORT=true`. Phase timing logs (`elapsed_s`) cover source audit, selector candidate collection, cohort allocation, and each closure pass. Selector diagnostics and cohort allocation share one candidate scan when both are requested. |
+| Persisted planning cache | Done (Gate C.75) | `lake_snapshot_planning_cache.py` fingerprints the heavy planning path (tier, selector/cohort toggles, normalized source window, target_vins, min_selector_coverage, source_base_path, selector config/SQL hashes, cohort algorithm version) and stores/loads a JSON planning artifact in MinIO, keyed by that fingerprint. `dry_run`, `audit_sources`, and `snapshot_id` never affect the fingerprint. Reuse/refresh are both opt-in flags; the default computes and persists but never reuses. |
 | Filtered Parquet writer | Not started | No fixture table materialization yet. |
 | Manifest/package/upload | Not started | No `.tar.zst` generation, MinIO promotion, or `latest.json` update yet. |
-| Archiver endpoint | Partial | Internal endpoint is wired and wrapped with `active_job()`, but it can only audit, dry-run, or return `not_implemented`. |
-| Airflow DAG | Structurally done | Manual DAG exists and passes params/defaults. It cannot create a real snapshot until exporter Steps 4-6 exist. |
+| Archiver endpoint | Control-plane only (Gate C.5) | Internal endpoint is wired and wrapped with `active_job()`. Cheap `audit_sources`/`dry_run` (without `build_cohort`) calls remain allowed. `build_cohort=True` is rejected with `409` unless `ARCHIVER_ALLOW_SYNC_SNAPSHOT_COHORT=true`; production-sized work must go through `snapshot-worker`. |
+| Airflow DAG | Structurally done, worker target TBD | Manual DAG exists and passes params/defaults. It should trigger the isolated snapshot worker once Steps 4-6 are worker-safe — the DAG currently still posts to the archiver control-plane route, which will 409 if it requests `build_cohort=True` without the override flag. |
 | Ops download API | Not started | Latest/manifest/download routes and CI token auth still need implementation. |
 | Download/seed scripts | Mostly done | Offline/local mode exists and verifies checksums. API mode is scaffolded but depends on the ops download API. |
 | CI pilot | Not started | Needs a real archive and ops download route first. |
 
-Next gate: **Gate C - cohort allocation and closure** (Implementation Step 4).
-All planned selectors are now executable, so the next step is turning selector
-candidates into a coherent `SnapshotCohort` with seed/closed VINs, listing
-IDs, artifact IDs, coverage diagnostics, and deterministic fill behavior.
+Next gate: **Gate D - filtered Parquet writer**. Gate C.5 isolated
+production-sized cohort/export work into `snapshot-worker` and added phase
+timing logs, so the next step is materializing the closed cohort into
+dbt-compatible fixture Parquet.
 
 ---
 
@@ -71,9 +102,11 @@ production-derived coherent fixture snapshot
 ## Core Design
 
 Use the API as a **file delivery/control plane**, not as a live export engine.
-Snapshot generation should run in the `archiver` container because it already
-owns batch work over Postgres + MinIO and is already triggered by Airflow or
-manual HTTP endpoints.
+Snapshot generation should run in an isolated snapshot worker, not inside the
+always-on production archiver service. The worker can reuse archiver code and
+the archiver image, but it should be a separate service/process/container so
+production flush, cleanup, compact, and health-check responsibilities are not
+competing with long DuckDB lake scans.
 
 Good:
 
@@ -89,22 +122,41 @@ GET /admin/snapshots/adaptive-refresh/export
     -> scans production data, builds an archive, and streams it synchronously
 ```
 
-Snapshot creation should happen through an operator command, scheduled job, or
-background task. CI and local dev should only download already-built immutable
-artifacts.
+Snapshot creation should happen through an operator command, scheduled job,
+one-shot worker container, or background worker. CI and local dev should only
+download already-built immutable artifacts.
 
 Recommended ownership:
 
 | Layer | Responsibility |
 |-------|----------------|
-| `archiver` | Generate snapshots, run selectors, read production Parquet, write snapshot archives to MinIO. |
-| Airflow | Schedule or manually trigger archiver snapshot generation. |
+| production `archiver` | Continue production duties: flush silver, flush staging, cleanup, compact, and cheap snapshot audit/control-plane calls. |
+| `snapshot-worker` | Generate snapshots, run selectors, read production Parquet, write snapshot archives to MinIO. This may reuse archiver modules/image but must be isolated from production archiver runtime health. |
+| Airflow | Schedule or manually trigger snapshot-worker generation. |
 | `ops` API | Authenticated admin/CI facade for listing, requesting, auditing, and downloading snapshots. |
 | CI/local scripts | Download, verify, unpack, and seed snapshots. |
 
 This keeps the heavy data export job close to the existing Parquet maintenance
-code while keeping public download/auth behavior in the service that already
-owns admin access.
+code while avoiding production-service starvation, and keeps public
+download/auth behavior in the service that already owns admin access.
+
+Operational lesson from VM validation:
+
+```text
+Do not run production-sized build_cohort/export jobs synchronously inside
+the production archiver API process.
+```
+
+Safe near-term execution model:
+
+```bash
+docker compose run --rm snapshot-worker python -m archiver.processors.export_ci_lake_snapshot \
+  --tier edge \
+  --run-selectors \
+  --build-cohort \
+  --source-window-months 1 \
+  --target-vins 100
+```
 
 ---
 
@@ -288,10 +340,11 @@ snapshot when required checks fail.
 ## Phase 1: Archiver Exporter
 
 This is the broad exporter product area. In the implementation guide it is
-split into Steps 1-7. As of 2026-07-07, only the skeleton, source audit,
-initial selector diagnostics, and internal endpoint portions are implemented.
-The real archive-producing path still depends on cohort closure, filtered
-Parquet writing, manifest finalization, packaging, and upload.
+split into Steps 1-7. As of 2026-07-08, the skeleton, source audit, selector
+diagnostics, cohort allocation/closure, internal endpoint, local fixture seeder,
+download/seed scripts, and manual Airflow DAG structure are implemented. The
+real archive-producing path still depends on worker isolation, filtered Parquet
+writing, manifest finalization, packaging, and upload.
 
 Add:
 
@@ -371,7 +424,7 @@ upload_snapshot()
 Later, if the script grows, move selector definitions into
 `archiver/processors/lake_snapshot_selectors.py`.
 
-Expose an internal archiver route:
+Expose a cheap internal archiver/control-plane route:
 
 ```http
 POST /snapshots/adaptive-refresh/run
@@ -394,7 +447,9 @@ summary:
 ```
 
 The route is for internal use by Airflow and ops. It should not be exposed
-directly through Caddy.
+directly through Caddy. It must not run production-sized cohort/export work
+synchronously in the production archiver process; production-sized generation
+should be delegated to the isolated snapshot worker.
 
 Suggested MinIO layout:
 
@@ -403,6 +458,105 @@ ci_snapshots/adaptive_refresh/latest.json
 ci_snapshots/adaptive_refresh/adaptive-refresh-YYYY-MM-DD/
   manifest.json
   snapshot.tar.zst
+```
+
+---
+
+## Planning cache (Gate C.75)
+
+The heavy dry-run planning path (`dry_run=True` + `run_selectors=True` +
+`build_cohort=True`) is expensive: selector candidate collection and cohort
+allocation/closure each scan the lake. Gate C.75 adds an explicit, persisted
+cache for that path's output so an equivalent planning request can skip
+straight to a prior result instead of rescanning.
+
+**Flags** (`SnapshotRequest` fields, CLI flags, and API payload keys):
+
+- `reuse_planning_cache` (default `false`) — if a matching cache entry exists,
+  load it and skip selector/cohort computation; on a miss, compute and persist
+  as usual.
+- `refresh_planning_cache` (default `false`) — ignore any existing cache entry,
+  compute fresh, and overwrite it. Mutually exclusive with
+  `reuse_planning_cache` (both set is a validation error).
+- `planning_cache_bucket_grain` (default `"week"`) — one of `week`, `day`,
+  `none`. Controls how a *relative* `source_window_months` window is bucketed
+  for fingerprinting (see below).
+- `planning_cache_prefix` (default `"snapshot_planning_cache"`) — the MinIO
+  key prefix planning artifacts are stored under.
+
+With no flags set, the default behavior is to compute fresh and persist the
+result — it never implicitly reuses a cache. Reuse is always something the
+caller asks for.
+
+**Fingerprint.** The cache key is a SHA-256 hash over the request's *semantic
+planning identity*: `tier`, `run_selectors`, `build_cohort`, the normalized
+source window (see below), `target_vins`, `min_selector_coverage`,
+`source_base_path`, a hash of the resolved Parquet path for every supported
+source table (`source_table_paths_hash` — catches a lake layout/bucket change
+even when `source_base_path` itself is unchanged), a hash of the loaded
+selector config, a hash of the resolved selector SQL templates, and a cohort
+algorithm version constant. `dry_run`, `audit_sources`, and `snapshot_id` are
+deliberately excluded — none of them change what selectors/cohort would
+compute, so including them would fragment the cache without adding safety.
+`snapshot_id` in particular is often unique per invocation (e.g.
+Airflow-generated), so including it would make the cache unreusable across
+otherwise-identical runs.
+
+**Window normalization.** An explicit `source_window_start`/`source_window_end`
+always fingerprints on those exact values. A *relative*
+`source_window_months` window is bucketed by `planning_cache_bucket_grain`:
+`week` re-anchors "now" to the most recent Monday 00:00 UTC, `day` snaps to
+midnight UTC, and `none` uses the exact resolved timestamps for that call
+(which will essentially never repeat, so `none` opts out of caching for
+relative windows).
+
+Critically, `resolve_planning_window()` re-anchors the window *before* both
+the fingerprint is computed and selectors/cohort are actually queried — the
+bucketed timestamp isn't just a hashing convenience, it becomes the real
+`window_start`/`window_end` used for that call. `export_ci_lake_snapshot()`
+samples `datetime.now(timezone.utc)` exactly once per call and threads that
+same value into `resolve_source_window()` and `resolve_planning_window()`, so
+the two never disagree about "now" across a UTC day/week boundary. Without this, a Monday
+03:00 UTC run and a Thursday 21:00 UTC run in the same ISO week would share a
+weekly fingerprint while each querying its own exact (different) window; a
+cache hit would then silently serve a cohort computed over the wrong window
+while the response reported the *current* call's exact timestamps. Because
+the actual query is bucketed too, every call in the same bucket computes
+(and can safely share) the literal same window. The normalized
+`fingerprint_window` and the `resolved_window` persisted in the cache artifact
+are therefore always identical for a relative window — both fields are kept
+for observability, not because they can diverge.
+
+**Storage.** Cache artifacts are plain JSON, written via `shared.minio.write_json`
+/ `read_json` at a deterministic path:
+`{planning_cache_prefix}/fingerprints/{fingerprint}/planning.json`. A cache
+entry is written only after a successful selector/cohort computation — a
+failed compute never persists a partial artifact. Reads/writes failing (e.g.
+transient MinIO error) are logged and treated as a miss/no-write; they don't
+fail the request.
+
+**Response observability.** `SnapshotResult` exposes `planning_cache_key`
+(the fingerprint), `planning_cache_path`, `planning_cache_hit`, and
+`planning_cache_action` (one of `"computed"`, `"reused"`, or `"refreshed"`).
+
+Example commands (run inside `snapshot-worker`, same as the Gate C.5 heavy
+path):
+
+```bash
+# Compute fresh and persist a planning cache entry (default: no flags).
+docker compose run --rm snapshot-worker python -m archiver.processors.export_ci_lake_snapshot \
+  --tier ci --dry-run --run-selectors --build-cohort \
+  --source-window-months 1 --target-vins 5000
+
+# Reuse a previously persisted entry if the fingerprint matches (same week by default).
+docker compose run --rm snapshot-worker python -m archiver.processors.export_ci_lake_snapshot \
+  --tier ci --dry-run --run-selectors --build-cohort \
+  --source-window-months 1 --target-vins 5000 --reuse-planning-cache
+
+# Force a fresh recompute and overwrite the cached entry.
+docker compose run --rm snapshot-worker python -m archiver.processors.export_ci_lake_snapshot \
+  --tier ci --dry-run --run-selectors --build-cohort \
+  --source-window-months 1 --target-vins 5000 --refresh-planning-cache
 ```
 
 ---
@@ -512,7 +666,8 @@ Initial behavior:
 
 - manual trigger by default
 - optional weekly/monthly schedule later
-- POST to `http://archiver:8001/snapshots/adaptive-refresh/run`
+- trigger the isolated snapshot worker, or POST only to a cheap archiver/ops
+  control-plane route that starts the worker
 - pass tier and size limits through DAG params
 - log snapshot ID, archive key, manifest key, and coverage summary
 - fail the DAG if required selector coverage is missing
@@ -547,6 +702,10 @@ but CI should be able to pin a specific snapshot ID for reproducibility.
 ## Testing
 
 - Exporter produces coherent VIN histories across all included tables.
+- Production-sized export/cohort work runs in an isolated worker, not in the
+  production archiver API process.
+- Worker logs include phase timing for selector collection, allocation,
+  closure passes, table writing, packaging, and upload.
 - Exporter excludes raw HTML and unwanted sensitive/internal fields.
 - Manifest row counts match archive contents.
 - Checksums are stable and verified before loading.

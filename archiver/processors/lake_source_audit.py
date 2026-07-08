@@ -8,6 +8,7 @@ diagnostics (row counts, timestamp bounds, distinct VIN/listing counts)
 without generating a snapshot archive. No writes are performed.
 """
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
@@ -149,6 +150,8 @@ def audit_source_tables(
     else:
         con = get_duckdb_s3_connection()
 
+    t0 = time.monotonic()
+    logger.info("lake_source_audit: audit_source_tables start tables=%d", len(SOURCE_TABLE_SPECS))
     try:
         tables: Dict[str, Any] = {}
         errors: list = []
@@ -158,7 +161,7 @@ def audit_source_tables(
             if table_result["error"] is not None:
                 errors.append(f"{table_name}: {table_result['error']}")
 
-        return {
+        result = {
             "tables": tables,
             "window": {
                 "start": _iso(window_start),
@@ -167,5 +170,10 @@ def audit_source_tables(
             "errors": errors,
             "ok": len(errors) == 0,
         }
+        logger.info(
+            "lake_source_audit: audit_source_tables end elapsed_s=%.2f ok=%s errors=%d",
+            time.monotonic() - t0, result["ok"], len(errors),
+        )
+        return result
     finally:
         con.close()

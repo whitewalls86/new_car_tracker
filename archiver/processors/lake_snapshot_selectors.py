@@ -14,6 +14,7 @@ fingerprint fields from `int_listing_state_fingerprints.sql` exactly (see the
 dbt-equivalence tests in `tests/archiver/test_export_ci_lake_snapshot.py`).
 """
 import logging
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from functools import lru_cache
@@ -205,6 +206,8 @@ def run_lake_selectors(
     else:
         con = get_duckdb_s3_connection()
 
+    t0 = time.monotonic()
+    logger.info("lake_snapshot_selectors: run_lake_selectors start selectors=%d", len(names))
     try:
         selectors: Dict[str, Any] = {}
         errors: List[str] = []
@@ -216,10 +219,15 @@ def run_lake_selectors(
             if selector_result["error"] is not None:
                 errors.append(f"{name}: {selector_result['error']}")
 
-        return {
+        result = {
             "selectors": selectors,
             "errors": errors,
             "ok": len(errors) == 0,
         }
+        logger.info(
+            "lake_snapshot_selectors: run_lake_selectors end elapsed_s=%.2f ok=%s errors=%d",
+            time.monotonic() - t0, result["ok"], len(errors),
+        )
+        return result
     finally:
         con.close()

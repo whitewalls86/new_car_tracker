@@ -228,6 +228,84 @@ class TestReadHtml:
 
 
 # ---------------------------------------------------------------------------
+# write_json / read_json
+# ---------------------------------------------------------------------------
+
+class TestWriteJson:
+    def test_returns_s3_uri(self, mocker):
+        from shared.minio import BUCKET, write_json
+        _mock_client(mocker)
+        uri = write_json("snapshot_planning_cache/fingerprints/abc/planning.json", {"a": 1})
+        assert uri == f"s3://{BUCKET}/snapshot_planning_cache/fingerprints/abc/planning.json"
+
+    def test_put_object_called_with_canonical_json_body(self, mocker):
+        import json
+
+        from shared.minio import BUCKET, write_json
+        mock_c = _mock_client(mocker)
+        key = "snapshot_planning_cache/fingerprints/abc/planning.json"
+        write_json(key, {"b": 2, "a": 1})
+        call_kwargs = mock_c.put_object.call_args[1]
+        assert call_kwargs["Key"] == key
+        assert call_kwargs["Bucket"] == BUCKET
+        assert call_kwargs["ContentType"] == "application/json"
+        assert call_kwargs["Body"] == json.dumps({"a": 1, "b": 2}, sort_keys=True,
+                                                   separators=(",", ":")).encode("utf-8")
+
+    def test_ensures_bucket_exists(self, mocker):
+        mock_c = _mock_client(mocker, bucket_exists=True)
+        from shared.minio import write_json
+        write_json("some/key.json", {"a": 1})
+        mock_c.head_bucket.assert_called_once()
+
+
+class TestReadJson:
+    def test_parses_full_s3_uri_bucket_and_key(self, mocker):
+        mock_c = _mock_client(mocker)
+        mock_body = MagicMock()
+        mock_body.read.return_value = b'{"a": 1}'
+        mock_c.get_object.return_value = {"Body": mock_body}
+
+        from shared.minio import read_json
+        result = read_json("s3://mybucket/some/path/file.json")
+        assert result == {"a": 1}
+        mock_c.get_object.assert_called_once_with(Bucket="mybucket", Key="some/path/file.json")
+
+    def test_bare_key_uses_default_bucket(self, mocker):
+        mock_c = _mock_client(mocker)
+        mock_body = MagicMock()
+        mock_body.read.return_value = b'{"a": 1}'
+        mock_c.get_object.return_value = {"Body": mock_body}
+
+        from shared.minio import BUCKET, read_json
+        read_json("some/path/file.json")
+        mock_c.get_object.assert_called_once_with(Bucket=BUCKET, Key="some/path/file.json")
+
+    def test_missing_object_returns_none(self, mocker):
+        from botocore.exceptions import ClientError
+
+        mock_c = _mock_client(mocker)
+        mock_c.get_object.side_effect = ClientError(
+            {"Error": {"Code": "NoSuchKey", "Message": "Not Found"}}, "GetObject",
+        )
+
+        from shared.minio import read_json
+        assert read_json("some/path/file.json") is None
+
+    def test_non_missing_client_error_propagates(self, mocker):
+        from botocore.exceptions import ClientError
+
+        mock_c = _mock_client(mocker)
+        mock_c.get_object.side_effect = ClientError(
+            {"Error": {"Code": "403", "Message": "Forbidden"}}, "GetObject",
+        )
+
+        from shared.minio import read_json
+        with pytest.raises(ClientError):
+            read_json("some/path/file.json")
+
+
+# ---------------------------------------------------------------------------
 # ensure_bucket
 # ---------------------------------------------------------------------------
 

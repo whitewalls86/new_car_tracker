@@ -8,6 +8,7 @@ later gate can materialize filtered Parquet from a logically complete set of
 VINs/listing_ids/artifact_ids. No filtered Parquet is written here.
 """
 import logging
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, FrozenSet, List, Optional, Tuple
@@ -45,6 +46,14 @@ class CandidateSet:
     selected_entities: Tuple[Any, ...]
     status: str
     error: Optional[str] = None
+    # True distinct entity count (may exceed len(entities) when the pool is
+    # larger than candidate_cap). Defaults to len(entities) for callers/tests
+    # that build a CandidateSet directly from an already-bounded list.
+    entity_count: int = -1
+
+    def __post_init__(self) -> None:
+        if self.entity_count == -1:
+            object.__setattr__(self, "entity_count", len(self.entities))
 
 
 @dataclass(frozen=True)
@@ -151,6 +160,7 @@ def collect_selector_candidates(
             candidate_rows=candidate_rows,
             selected_entities=selected,
             status=status,
+            entity_count=entity_count,
         )
     except Exception as e:
         logger.warning(
@@ -180,13 +190,51 @@ def collect_all_selector_candidates(
     """Collect bounded candidate sets for every requested selector."""
     names = list(names) if names is not None else list(RUNNABLE_SELECTORS)
     registry = build_selector_registry()
-    return {
+    t0 = time.monotonic()
+    logger.info(
+        "lake_snapshot_cohort: collect_all_selector_candidates start selectors=%d",
+        len(names),
+    )
+    result = {
         name: collect_selector_candidates(
             con, name, base_path, window_start, window_end,
             registry=registry, candidate_cap=candidate_cap,
         )
         for name in names
     }
+    logger.info(
+        "lake_snapshot_cohort: collect_all_selector_candidates end elapsed_s=%.2f "
+        "selectors=%d",
+        time.monotonic() - t0, len(names),
+    )
+    return result
+
+
+def candidate_sets_to_selector_diagnostics(
+    candidate_sets: Dict[str, "CandidateSet"], base_path: Optional[str]
+) -> Dict[str, Any]:
+    """Convert already-collected CandidateSets into the same diagnostics shape
+    returned by `lake_snapshot_selectors.run_lake_selectors`, so cohort
+    building and selector diagnostics can share one scan instead of two."""
+    selectors: Dict[str, Any] = {}
+    errors: List[str] = []
+    for name, candidate in candidate_sets.items():
+        config = _SELECTOR_CONFIGS[name]
+        path = resolve_table_path(config.source_table, base_path)
+        selectors[name] = {
+            "selector": name,
+            "entity_key": candidate.entity_key,
+            "required": candidate.required,
+            "path": path,
+            "candidate_rows": candidate.candidate_rows,
+            "entities": candidate.entity_count,
+            "sample_entities": list(candidate.entities[:5]),
+            "status": candidate.status,
+            "error": candidate.error,
+        }
+        if candidate.error is not None:
+            errors.append(f"{name}: {candidate.error}")
+    return {"selectors": selectors, "errors": errors, "ok": len(errors) == 0}
 
 
 # ---------------------------------------------------------------------------
@@ -262,6 +310,11 @@ def allocate_cohort(
     """Bucket each selector's pre-selected entities by entity_key type,
     deduplicating across selectors, then deterministically fill remaining
     vin capacity toward target_vins from source data."""
+    t0 = time.monotonic()
+    logger.info(
+        "lake_snapshot_cohort: allocate_cohort start selectors=%d target_vins=%s",
+        len(candidate_sets), target_vins,
+    )
     vin_seeds: set = set()
     listing_seeds: set = set()
     artifact_seeds: set = set()
@@ -293,6 +346,12 @@ def allocate_cohort(
         vin_seeds.update(fill_vins)
         fill_vins_added = len(fill_vins)
 
+    logger.info(
+        "lake_snapshot_cohort: allocate_cohort end elapsed_s=%.2f vin_seeds=%d "
+        "listing_seeds=%d artifact_seeds=%d fill_vins_added=%d",
+        time.monotonic() - t0, len(vin_seeds), len(listing_seeds), len(artifact_seeds),
+        fill_vins_added,
+    )
     return CohortAllocation(
         vin_seeds=frozenset(vin_seeds),
         listing_seeds=frozenset(listing_seeds),
@@ -539,6 +598,8 @@ def expand_entity_closure(
     listing context), stopping once no set grows or after max_passes,
     whichever comes first.
     """
+    t0 = time.monotonic()
+    logger.info("lake_snapshot_cohort: expand_entity_closure start max_passes=%d", max_passes)
     make_model_vins, make_model_listings = _resolve_make_model_seeds(
         con, base_path, window_start, window_end, allocation.make_model_seeds,
     )
@@ -555,7 +616,13 @@ def expand_entity_closure(
 
     passes = 0
     for passes in range(1, max_passes + 1):
+        pass_t0 = time.monotonic()
         before = (len(vins), len(listing_ids), len(artifact_ids))
+        logger.info(
+            "lake_snapshot_cohort: closure pass=%d start vins=%d listing_ids=%d "
+            "artifact_ids=%d",
+            passes, *before,
+        )
 
         listing_ids |= _listing_ids_for_vins(con, base_path, window_start, window_end, vins)
         vins |= _vins_for_listing_ids(con, base_path, window_start, window_end, listing_ids)
@@ -577,9 +644,19 @@ def expand_entity_closure(
         listing_ids |= artifact_listing_ids
 
         after = (len(vins), len(listing_ids), len(artifact_ids))
+        logger.info(
+            "lake_snapshot_cohort: closure pass=%d end elapsed_s=%.2f vins=%d "
+            "listing_ids=%d artifact_ids=%d",
+            passes, time.monotonic() - pass_t0, *after,
+        )
         if after == before:
             break
 
+    logger.info(
+        "lake_snapshot_cohort: expand_entity_closure end elapsed_s=%.2f passes=%d "
+        "closed_vins=%d listing_ids=%d artifact_ids=%d",
+        time.monotonic() - t0, passes, len(vins), len(listing_ids), len(artifact_ids),
+    )
     return {
         "closed_vins": vins,
         "listing_ids": listing_ids,
@@ -604,13 +681,22 @@ def build_snapshot_cohort(
     names: Optional[List[str]] = None,
     candidate_cap: int = DEFAULT_CANDIDATE_CAP,
     max_closure_passes: int = MAX_CLOSURE_PASSES,
+    candidate_sets: Optional[Dict[str, CandidateSet]] = None,
 ) -> SnapshotCohort:
     """Collect selector candidates, allocate a seed cohort, and close it into
-    a logically complete VIN/listing/artifact set."""
-    candidate_sets = collect_all_selector_candidates(
-        con, names=names, base_path=base_path,
-        window_start=window_start, window_end=window_end, candidate_cap=candidate_cap,
-    )
+    a logically complete VIN/listing/artifact set.
+
+    *candidate_sets* may be passed in already collected (e.g. by a caller
+    that also needs selector diagnostics) to avoid scanning selector
+    candidates twice.
+    """
+    t0 = time.monotonic()
+    logger.info("lake_snapshot_cohort: build_snapshot_cohort start target_vins=%s", target_vins)
+    if candidate_sets is None:
+        candidate_sets = collect_all_selector_candidates(
+            con, names=names, base_path=base_path,
+            window_start=window_start, window_end=window_end, candidate_cap=candidate_cap,
+        )
     allocation = allocate_cohort(
         candidate_sets, target_vins, con, base_path, window_start, window_end,
     )
@@ -635,6 +721,12 @@ def build_snapshot_cohort(
         "selector_coverage": allocation.selector_coverage,
     }
 
+    logger.info(
+        "lake_snapshot_cohort: build_snapshot_cohort end elapsed_s=%.2f closed_vins=%d "
+        "listing_ids=%d artifact_ids=%d",
+        time.monotonic() - t0, len(closure["closed_vins"]), len(closure["listing_ids"]),
+        len(closure["artifact_ids"]),
+    )
     return SnapshotCohort(
         seed_vins=frozenset(closure["seed_vins"]),
         closed_vins=frozenset(closure["closed_vins"]),
