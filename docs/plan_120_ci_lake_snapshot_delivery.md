@@ -15,6 +15,35 @@ and distributing them.
 
 ---
 
+## Current Status
+
+Status as of 2026-07-07: the implementation is between **Implementation Step 3**
+and **Implementation Step 4** in the detailed guide.
+
+The phase labels below describe product areas, not commit gates. For execution
+tracking, use the Step 1-11 checklist in
+[implementation_plan_120_ci_lake_snapshot_delivery.md](implementation_plan_120_ci_lake_snapshot_delivery.md#implementation-sequence).
+
+| Area | Status | Notes |
+|------|--------|-------|
+| Exporter skeleton | Mostly done | Request/result models, validation, tier defaults, CLI, dry-run, source audit, and selector diagnostics exist. Non-dry-run export still returns `not_implemented`. |
+| Selector registry | Partial | Five selectors are executable: `relisted_vin`, `price_drop`, `price_increase`, `cooldown_incremented`, and `stable_state_run`. Other planned selectors are placeholders. |
+| DuckDB source reads | Done for audit/selector reads | Shared DuckDB/MinIO helper exists, source audit reads four lake tables, and local fixture mode exists for tests. |
+| Cohort allocation and closure | Not started | No `SnapshotCohort`, deterministic fill, VIN/listing/artifact closure, or closure diagnostics yet. |
+| Filtered Parquet writer | Not started | No fixture table materialization yet. |
+| Manifest/package/upload | Not started | No `.tar.zst` generation, MinIO promotion, or `latest.json` update yet. |
+| Archiver endpoint | Partial | Internal endpoint is wired and wrapped with `active_job()`, but it can only audit, dry-run, or return `not_implemented`. |
+| Airflow DAG | Structurally done | Manual DAG exists and passes params/defaults. It cannot create a real snapshot until exporter Steps 4-6 exist. |
+| Ops download API | Not started | Latest/manifest/download routes and CI token auth still need implementation. |
+| Download/seed scripts | Mostly done | Offline/local mode exists and verifies checksums. API mode is scaffolded but depends on the ops download API. |
+| CI pilot | Not started | Needs a real archive and ops download route first. |
+
+Next gate: **Gate B / Implementation Step 4 prep**. Decide whether to finish
+more selector SQL first or proceed with the current five selectors as the
+initial executable coverage set, then implement cohort allocation and closure.
+
+---
+
 ## Context
 
 The current CI pipeline already starts Postgres and MinIO, applies migrations,
@@ -255,6 +284,12 @@ snapshot when required checks fail.
 ---
 
 ## Phase 1: Archiver Exporter
+
+This is the broad exporter product area. In the implementation guide it is
+split into Steps 1-7. As of 2026-07-07, only the skeleton, source audit,
+initial selector diagnostics, and internal endpoint portions are implemented.
+The real archive-producing path still depends on cohort closure, filtered
+Parquet writing, manifest finalization, packaging, and upload.
 
 Add:
 

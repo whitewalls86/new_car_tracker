@@ -1031,6 +1031,48 @@ Pinning:
 
 ## Implementation Sequence
 
+Use this section as the source of truth for commit gates. The shorter
+`docs/plan_120_ci_lake_snapshot_delivery.md` uses phase labels for product
+areas, but implementation tracking should use these numbered steps.
+
+Current status as of 2026-07-07:
+
+| Step | Gate | Status | Current branch state | Remaining work |
+|------|------|--------|----------------------|----------------|
+| 1 | Processor skeleton | Mostly done | `SnapshotRequest`, `SnapshotResult`, validation, tier defaults, CLI, dry-run, audit mode, and basic manifest skeleton exist. | Replace `not_implemented` non-dry-run path once Steps 4-6 exist. Extend manifest helper when real counts/checksums are available. |
+| 2 | Selector registry | Partial | Registry exists. Five selectors are executable: `relisted_vin`, `price_drop`, `price_increase`, `cooldown_incremented`, `stable_state_run`. | Decide whether the first real export can launch with five selectors or whether more required selectors must be implemented first. Placeholder selectors must not be treated as satisfied coverage. |
+| 3 | DuckDB source reads | Done for current scope | Shared DuckDB/MinIO helper exists. Source audit reads the four included tables. Local fixture mode exists for tests. | Reuse these reads for allocation/closure and table materialization. Add source views only if they reduce duplication in the next steps. |
+| 4 | Cohort allocation and closure | Not started | Selector diagnostics currently count/sample candidate entities only. | Build candidate sets, allocate required examples, fill deterministically, expand VIN/listing/artifact/event closure, and emit closure diagnostics. |
+| 5 | Write filtered Parquet | Not started | No fixture output is written. | Filter production Parquet by closed cohort, preserve dbt-compatible prefixes, and compute row counts/table checksums. |
+| 6 | Package and upload | Not started | No archive or MinIO snapshot prefix is written. | Package `.tar.zst`, upload to temp prefix, validate manifest/archive, promote to final prefix, update `latest.json`. |
+| 7 | Archiver endpoint | Partial | `POST /snapshots/adaptive-refresh/run` is wired, guarded by `active_job()`, and tested for dry-run/audit request handling. | Return `created` with archive/manifest keys after Steps 4-6. Keep non-dry-run failure explicit until then. |
+| 8 | Airflow DAG | Structurally done | Manual DAG exists, passes params/defaults, logs result fields, and fails on unsupported statuses. | Trigger on VM after Steps 4-6 can create a real snapshot. Add cadence only after manual runs are stable. |
+| 9 | Ops download API | Not started | No `ops` routes exist yet. | Add latest/manifest/download routes, CI token auth, and download tests. |
+| 10 | Download and seed scripts | Mostly done | Downloader and seeder exist. Offline/local mode works against manifest/archive paths. API mode is scaffolded. Seeder guards production-like targets and verifies checksums. | Test against the real ops API once Step 9 exists. Run local end-to-end seed with a generated archive. |
+| 11 | CI pilot | Not started | No workflow consumes snapshots yet. | Add manual/scheduled GitHub Actions path after a real archive and API route exist. Measure runtime before enabling PR checks. |
+
+Gate names for the next commits:
+
+1. **Gate A - docs/status reset:** complete when both Plan 120 docs clearly map
+   committed work to these steps and identify the next unfinished gate.
+2. **Gate B - selector readiness:** complete when the executable selector set is
+   sufficient for the first export, either by implementing more selector SQL or
+   documenting that the first export starts with the current five.
+3. **Gate C - cohort allocation and closure:** complete when selector candidates
+   become a coherent `SnapshotCohort` with seed/closed VINs, listing IDs,
+   artifact IDs, coverage diagnostics, and deterministic fill behavior.
+4. **Gate D - filtered Parquet writer:** complete when a closed cohort can be
+   materialized into dbt-compatible fixture prefixes with row counts and table
+   checksums.
+5. **Gate E - manifest/package/upload:** complete when an `edge` snapshot can be
+   written to MinIO under a versioned prefix, validated, promoted, and exposed
+   through `latest.json`.
+6. **Gate F - ops download API:** complete when authenticated latest/manifest/
+   download routes can serve an existing snapshot archive.
+7. **Gate G - end-to-end smoke:** complete when the VM can generate an `edge`
+   snapshot and a local/CI-like environment can download, verify, seed, and run
+   a small dbt/Spark smoke test.
+
 ### Step 1: Add Processor Skeleton
 
 - Add `SnapshotRequest`, `SnapshotResult`, manifest helpers.
