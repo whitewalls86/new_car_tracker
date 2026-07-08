@@ -29,6 +29,10 @@ jobs:
         with:
           python-version: "3.13"
       - name: Install dependencies
+        # No airflow/requirements.txt here: Airflow is a separate service image
+        # in prod (airflow/Dockerfile) and no non-integration test imports it —
+        # installing it alongside FastAPI here forces an incompatible starlette
+        # downgrade (see the dbt job's isolated Airflow venv below).
         run: |
           pip install \
             -r requirements-dev.txt \
@@ -37,8 +41,7 @@ jobs:
             -r processing/requirements.txt \
             -r ops/requirements.txt \
             -r dashboard/requirements.txt \
-            -r dbt_runner/requirements.txt \
-            -r airflow/requirements.txt
+            -r dbt_runner/requirements.txt
       - run: pytest tests/ -v -m "not integration"
         env:
           PYTHONPATH: ${{ github.workspace }}
@@ -124,6 +127,10 @@ jobs:
           python-version: "3.13"
 
       - name: Install dependencies
+        # No airflow/requirements.txt here: Airflow is a separate service image
+        # in prod (airflow/Dockerfile) and is installed into its own isolated
+        # venv below, right before the Airflow integration tests, so its
+        # starlette/fastapi constraints never collide with the other services'.
         run: |
           pip install \
             -r requirements-dev.txt \
@@ -132,8 +139,7 @@ jobs:
             -r processing/requirements.txt \
             -r ops/requirements.txt \
             -r dashboard/requirements.txt \
-            -r dbt_runner/requirements.txt \
-            -r airflow/requirements.txt
+            -r dbt_runner/requirements.txt
 
       - name: Create MinIO bucket
         run: |
@@ -316,8 +322,17 @@ jobs:
           TEST_DATABASE_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
           LOG_PATH: /tmp/ops_test.log
 
+      - name: Install Airflow test dependencies (isolated venv)
+        # Isolated from the "Install dependencies" step above: apache-airflow's
+        # starlette/fastapi constraints conflict with the FastAPI services', so
+        # it gets its own venv here, pinned to match airflow/Dockerfile's base
+        # image tag, mirroring how Airflow is its own container in prod.
+        run: |
+          python -m venv /tmp/airflow-venv
+          /tmp/airflow-venv/bin/pip install "apache-airflow==3.2.0" -r airflow/requirements.txt pytest psycopg2-binary requests
+
       - name: Run Airflow integration tests
-        run: pytest tests/integration/airflow/ -v -m integration
+        run: /tmp/airflow-venv/bin/pytest tests/integration/airflow/ -v -m integration
         env:
           PYTHONPATH: ${{ github.workspace }}/airflow/dags
           TEST_DATABASE_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
