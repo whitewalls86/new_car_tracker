@@ -266,6 +266,22 @@ jobs:
           ]))
           "
 
+      - name: Seed dbt/selector equivalence fixture data
+        # Uploads known business-state scenarios (Plan 120 Gate B) so the
+        # dbt build below materializes int_listing_state_runs/
+        # int_latest_observation against real data, not just the empty
+        # schema seed above. Compared against the selector SQL afterward in
+        # "Run selector/dbt equivalence tests".
+        run: |
+          pip install pyarrow boto3
+          python scripts/seed_dbt_selector_equivalence_fixture.py
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          MINIO_ENDPOINT: http://localhost:9000
+          MINIO_ROOT_USER: cartracker
+          MINIO_ROOT_PASSWORD: cartracker123
+          MINIO_BUCKET: bronze
+
       - name: dbt build (DuckDB — empty data compilation check)
         working-directory: dbt
         run: dbt build --profiles-dir . --target duckdb
@@ -318,6 +334,19 @@ jobs:
         env:
           PYTHONPATH: ${{ github.workspace }}
           TEST_DATABASE_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
+          MINIO_ENDPOINT: http://localhost:9000
+          MINIO_ROOT_USER: cartracker
+          MINIO_ROOT_PASSWORD: cartracker123
+          MINIO_BUCKET: bronze
+
+      - name: Run selector/dbt equivalence tests
+        # Compares the real dbt build above against the Plan 120 selector SQL
+        # over the same MinIO data — the coupling guard requested in Gate B
+        # review (not a hand-copied paraphrase of the dbt logic).
+        run: pytest tests/integration/dbt/ -v -m integration
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          DUCKDB_PATH: /tmp/ci_analytics.duckdb
           MINIO_ENDPOINT: http://localhost:9000
           MINIO_ROOT_USER: cartracker
           MINIO_ROOT_PASSWORD: cartracker123

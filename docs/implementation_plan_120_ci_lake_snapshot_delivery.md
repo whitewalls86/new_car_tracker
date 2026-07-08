@@ -1035,12 +1035,12 @@ Use this section as the source of truth for commit gates. The shorter
 `docs/plan_120_ci_lake_snapshot_delivery.md` uses phase labels for product
 areas, but implementation tracking should use these numbered steps.
 
-Current status as of 2026-07-07:
+Current status as of 2026-07-07 (Gate B complete):
 
 | Step | Gate | Status | Current branch state | Remaining work |
 |------|------|--------|----------------------|----------------|
 | 1 | Processor skeleton | Mostly done | `SnapshotRequest`, `SnapshotResult`, validation, tier defaults, CLI, dry-run, audit mode, and basic manifest skeleton exist. | Replace `not_implemented` non-dry-run path once Steps 4-6 exist. Extend manifest helper when real counts/checksums are available. |
-| 2 | Selector registry | Partial | Registry exists. Five selectors are executable: `relisted_vin`, `price_drop`, `price_increase`, `cooldown_incremented`, `stable_state_run`. | Decide whether the first real export can launch with five selectors or whether more required selectors must be implemented first. Placeholder selectors must not be treated as satisfied coverage. |
+| 2 | Selector registry | Done (Gate B) | Registry exists. All 22 selectors are executable, each derived from one or more of the four supported source tables. `stable_state_run`/`state_change_run` reproduce the dbt fingerprint fields exactly; `detail_beats_srp`/`srp_fallback` mirror `int_latest_observation.sql`'s source-priority ranking. Coupling is guarded by one CI test (`tests/integration/dbt/test_selector_dbt_equivalence.py`) that runs the actual dbt models against seeded fixture data and diffs selector output against dbt's real materialized tables. | None — proceed to Step 4 (cohort allocation and closure). |
 | 3 | DuckDB source reads | Done for current scope | Shared DuckDB/MinIO helper exists. Source audit reads the four included tables. Local fixture mode exists for tests. | Reuse these reads for allocation/closure and table materialization. Add source views only if they reduce duplication in the next steps. |
 | 4 | Cohort allocation and closure | Not started | Selector diagnostics currently count/sample candidate entities only. | Build candidate sets, allocate required examples, fill deterministically, expand VIN/listing/artifact/event closure, and emit closure diagnostics. |
 | 5 | Write filtered Parquet | Not started | No fixture output is written. | Filter production Parquet by closed cohort, preserve dbt-compatible prefixes, and compute row counts/table checksums. |
@@ -1055,9 +1055,11 @@ Gate names for the next commits:
 
 1. **Gate A - docs/status reset:** complete when both Plan 120 docs clearly map
    committed work to these steps and identify the next unfinished gate.
-2. **Gate B - selector readiness:** complete when the executable selector set is
-   sufficient for the first export, either by implementing more selector SQL or
-   documenting that the first export starts with the current five.
+2. **Gate B - selector readiness:** complete (2026-07-07). All 22 registered
+   selectors are executable; none remain TODO placeholders. Fingerprint and
+   source-priority selectors are covered by a CI equivalence test that runs
+   the actual dbt models
+   (`tests/integration/dbt/test_selector_dbt_equivalence.py`).
 3. **Gate C - cohort allocation and closure:** complete when selector candidates
    become a coherent `SnapshotCohort` with seed/closed VINs, listing IDs,
    artifact IDs, coverage diagnostics, and deterministic fill behavior.
@@ -1080,16 +1082,34 @@ Gate names for the next commits:
 - Add dry-run mode that returns a planned snapshot ID and limits.
 - Add unit tests for request validation.
 
-### Step 2: Add Selector Registry
+### Step 2: Add Selector Registry (complete — Gate B)
 
-- Add selector objects with placeholder SQL.
-- Implement the first selectors:
-  - `relisted_vin`
-  - `price_drop`
-  - `price_increase`
-  - `cooldown_incremented`
-  - `stable_state_run`
-- Add unit tests for registry shape.
+- Add selector objects with placeholder SQL. (done)
+- Implement the first selectors: `relisted_vin`, `price_drop`,
+  `price_increase`, `cooldown_incremented`, `stable_state_run`. (done)
+- Implement the remaining selectors (Gate B): `state_change_run`,
+  `active_to_unlisted`, `price_changed_7d`, `price_changed_30d_only`,
+  `no_price_history`, `detail_beats_srp`, `srp_fallback`,
+  `carousel_only_or_low_priority`, `invalid_or_null_vin`,
+  `benchmark_dense_make_model`, `benchmark_sparse_make_model`,
+  `cooldown_blocked`, `cooldown_bucket_3_4`, `cooldown_bucket_5_10`,
+  `cooldown_bucket_11_plus`, `fresh_recent_listing`, `stale_listing`. All are
+  derived from the four supported source tables; none required a fifth
+  source table, so none are marked non-runnable.
+- Add unit tests for registry shape and per-selector fixture coverage
+  (`tests/archiver/test_export_ci_lake_snapshot.py`) — fast, local, no
+  services required. These test the selector SQL on its own merits (does it
+  find the intended candidate); they do not assert anything about dbt. (done)
+- Add the dbt coupling guard in the CI `dbt` job:
+  `scripts/seed_dbt_selector_equivalence_fixture.py` seeds known
+  business-state scenarios into MinIO, the existing `dbt build` step
+  materializes `int_listing_state_runs`/`int_latest_observation` against
+  that data for real, and `tests/integration/dbt/test_selector_dbt_equivalence.py`
+  diffs selector output against dbt's actual materialized tables. This is
+  the single place that fails CI if the selector SQL and the dbt SQL drift
+  apart — deliberately not duplicated as a second hand-copied comparison in
+  the unit-test file, to avoid a second copy of dbt's logic that could
+  itself drift unnoticed. (done)
 
 ### Step 3: Add DuckDB Source Reads
 

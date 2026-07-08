@@ -17,8 +17,9 @@ and distributing them.
 
 ## Current Status
 
-Status as of 2026-07-07: the implementation is between **Implementation Step 3**
-and **Implementation Step 4** in the detailed guide.
+Status as of 2026-07-07: **Gate B (selector readiness)** is complete. The
+implementation is between **Implementation Step 2** and **Implementation
+Step 4** in the detailed guide.
 
 The phase labels below describe product areas, not commit gates. For execution
 tracking, use the Step 1-11 checklist in
@@ -27,7 +28,7 @@ tracking, use the Step 1-11 checklist in
 | Area | Status | Notes |
 |------|--------|-------|
 | Exporter skeleton | Mostly done | Request/result models, validation, tier defaults, CLI, dry-run, source audit, and selector diagnostics exist. Non-dry-run export still returns `not_implemented`. |
-| Selector registry | Partial | Five selectors are executable: `relisted_vin`, `price_drop`, `price_increase`, `cooldown_incremented`, and `stable_state_run`. Other planned selectors are placeholders. |
+| Selector registry | Done (Gate B) | All 22 registered selectors are executable, derived entirely from the four supported source tables. `stable_state_run`/`state_change_run` reproduce the dbt fingerprint fields from `int_listing_state_fingerprints.sql` exactly; `detail_beats_srp`/`srp_fallback` mirror `int_latest_observation.sql`'s source-priority ranking. No selector remains a TODO placeholder. Coupling to dbt is guarded by a single CI test (`tests/integration/dbt/test_selector_dbt_equivalence.py`) that seeds fixture data (`scripts/seed_dbt_selector_equivalence_fixture.py`), runs the real dbt models, and diffs selector output against dbt's actual materialized tables — so drift in either the dbt SQL or the selector SQL fails CI. |
 | DuckDB source reads | Done for audit/selector reads | Shared DuckDB/MinIO helper exists, source audit reads four lake tables, and local fixture mode exists for tests. |
 | Cohort allocation and closure | Not started | No `SnapshotCohort`, deterministic fill, VIN/listing/artifact closure, or closure diagnostics yet. |
 | Filtered Parquet writer | Not started | No fixture table materialization yet. |
@@ -38,9 +39,10 @@ tracking, use the Step 1-11 checklist in
 | Download/seed scripts | Mostly done | Offline/local mode exists and verifies checksums. API mode is scaffolded but depends on the ops download API. |
 | CI pilot | Not started | Needs a real archive and ops download route first. |
 
-Next gate: **Gate B / Implementation Step 4 prep**. Decide whether to finish
-more selector SQL first or proceed with the current five selectors as the
-initial executable coverage set, then implement cohort allocation and closure.
+Next gate: **Gate C - cohort allocation and closure** (Implementation Step 4).
+All planned selectors are now executable, so the next step is turning selector
+candidates into a coherent `SnapshotCohort` with seed/closed VINs, listing
+IDs, artifact IDs, coverage diagnostics, and deterministic fill behavior.
 
 ---
 
