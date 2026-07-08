@@ -48,7 +48,7 @@ instead of rescanning the lake again. See
 fingerprint/flag contract. Reuse is opt-in only — no request implicitly reuses
 a cache.
 
-The next gate is **Gate D - filtered Parquet writer**.
+The next gate is **Gate D - fingerprint-addressed filtered Parquet writer**.
 
 The phase labels below describe product areas, not commit gates. For execution
 tracking, use the Step 1-11 checklist in
@@ -62,18 +62,20 @@ tracking, use the Step 1-11 checklist in
 | Cohort allocation and closure | Implemented, VM-hardened (Gate C.5) | `SnapshotCohort`, deterministic allocation/fill, VIN/listing/artifact closure, artifact-only seed closure, selector coverage diagnostics, and target-overrun diagnostics exist. Local and integration tests pass. VM source audit and selector diagnostics pass. Heavy `build_cohort` work now runs only in the isolated `snapshot-worker` container. |
 | Worker isolation and observability | Done (Gate C.5) | `snapshot-worker` is a profile-gated, port-free, one-shot Docker Compose service that reuses the archiver image/build context. The production archiver rejects `build_cohort=True` with `409` unless `ARCHIVER_ALLOW_SYNC_SNAPSHOT_COHORT=true`. Phase timing logs (`elapsed_s`) cover source audit, selector candidate collection, cohort allocation, and each closure pass. Selector diagnostics and cohort allocation share one candidate scan when both are requested. |
 | Persisted planning cache | Done (Gate C.75) | `lake_snapshot_planning_cache.py` fingerprints the heavy planning path (tier, selector/cohort toggles, normalized source window, target_vins, min_selector_coverage, source_base_path, selector config/SQL hashes, cohort algorithm version) and stores/loads a JSON planning artifact in MinIO, keyed by that fingerprint. `dry_run`, `audit_sources`, and `snapshot_id` never affect the fingerprint. Reuse/refresh are both opt-in flags; the default computes and persists but never reuses. |
-| Filtered Parquet writer | Not started | No fixture table materialization yet. |
-| Manifest/package/upload | Not started | No `.tar.zst` generation, MinIO promotion, or `latest.json` update yet. |
+| Filtered Parquet writer | Not started | No fixture table materialization yet. Gate D should derive an export fingerprint from the planning fingerprint plus writer/export semantics, materialize dbt-compatible fixture prefixes under that fingerprint, and explicitly support reusing an existing materialized snapshot. |
+| Manifest/package/upload | Not started | No `.tar.zst` generation, MinIO promotion, or `latest.json` update yet. Gate E should package from the materialized export fingerprint and reuse an existing archive when its checksum already matches. |
 | Archiver endpoint | Control-plane only (Gate C.5) | Internal endpoint is wired and wrapped with `active_job()`. Cheap `audit_sources`/`dry_run` (without `build_cohort`) calls remain allowed. `build_cohort=True` is rejected with `409` unless `ARCHIVER_ALLOW_SYNC_SNAPSHOT_COHORT=true`; production-sized work must go through `snapshot-worker`. |
 | Airflow DAG | Structurally done, worker target TBD | Manual DAG exists and passes params/defaults. It should trigger the isolated snapshot worker once Steps 4-6 are worker-safe — the DAG currently still posts to the archiver control-plane route, which will 409 if it requests `build_cohort=True` without the override flag. |
 | Ops download API | Not started | Latest/manifest/download routes and CI token auth still need implementation. |
 | Download/seed scripts | Mostly done | Offline/local mode exists and verifies checksums. API mode is scaffolded but depends on the ops download API. |
 | CI pilot | Not started | Needs a real archive and ops download route first. |
 
-Next gate: **Gate D - filtered Parquet writer**. Gate C.5 isolated
+Next gate: **Gate D - fingerprint-addressed filtered Parquet writer**. Gate C.5 isolated
 production-sized cohort/export work into `snapshot-worker` and added phase
 timing logs, so the next step is materializing the closed cohort into
-dbt-compatible fixture Parquet.
+dbt-compatible fixture Parquet. Gate D should preserve the Gate C.75 cache
+boundary: a planning cache hit should be able to flow directly to an existing
+materialized snapshot when the export fingerprint also matches.
 
 ---
 
@@ -359,16 +361,23 @@ Responsibilities:
 3. Allocate the cohort across required edge cases and representative random
    coverage.
 4. Expand candidate VINs/listings into a coherent closure.
-5. Read only required production-derived Parquet tables.
-6. Filter rows for the cohort and source window.
-7. Remove raw HTML and any unnecessary sensitive/internal fields.
-8. Write the fixture directory.
-9. Generate row counts and checksums.
-10. Generate coverage assertions.
-11. Package `snapshot.tar.zst`.
-12. Write `manifest.json`.
-13. Upload to MinIO under a versioned prefix.
-14. Update `latest.json`.
+5. Compute or reuse the planning fingerprint for the closed cohort.
+6. Derive an export fingerprint from the planning fingerprint plus export
+   semantics: included table list, writer version, output schema/version,
+   partition layout, compression, and sanitization rules.
+7. Reuse a complete materialized snapshot when the caller explicitly allows
+   reuse and the export fingerprint already exists.
+8. Read only required production-derived Parquet tables.
+9. Filter rows for the cohort and source window.
+10. Remove raw HTML and any unnecessary sensitive/internal fields.
+11. Write the fixture directory under a fingerprint-addressed staging prefix.
+12. Generate row counts, file counts, and checksums.
+13. Generate coverage assertions.
+14. Promote/write the materialized snapshot manifest.
+15. Package `snapshot.tar.zst`.
+16. Write archive metadata.
+17. Upload to MinIO under a fingerprint-addressed archive prefix.
+18. Update `latest.json` or another friendly alias only after validation.
 
 Suggested CLI:
 
@@ -436,13 +445,15 @@ summary:
 ```json
 {
   "snapshot_id": "adaptive-refresh-2026-07-07",
+  "planning_fingerprint": "...",
+  "export_fingerprint": "...",
   "tier": "ci",
   "status": "created",
   "seed_vin_count": 5000,
   "closed_vin_count": 5062,
   "archive_bytes": 183447221,
-  "manifest_key": "ci_snapshots/adaptive_refresh/adaptive-refresh-2026-07-07/manifest.json",
-  "archive_key": "ci_snapshots/adaptive_refresh/adaptive-refresh-2026-07-07/snapshot.tar.zst"
+  "manifest_key": "snapshot_exports/fingerprints/{export_fingerprint}/manifest.json",
+  "archive_key": "snapshot_archives/fingerprints/{export_fingerprint}/snapshot.tar.zst"
 }
 ```
 
@@ -454,11 +465,26 @@ should be delegated to the isolated snapshot worker.
 Suggested MinIO layout:
 
 ```text
-ci_snapshots/adaptive_refresh/latest.json
-ci_snapshots/adaptive_refresh/adaptive-refresh-YYYY-MM-DD/
-  manifest.json
-  snapshot.tar.zst
+snapshot_exports/
+  fingerprints/{export_fingerprint}/
+    manifest.json
+    data/
+      silver_normalized/observations/...
+      ops_normalized/price_observation_events/...
+      ops_normalized/vin_to_listing_events/...
+      ops_normalized/blocked_cooldown_events/...
+snapshot_archives/
+  fingerprints/{export_fingerprint}/
+    archive_manifest.json
+    snapshot.tar.zst
+ci_snapshots/adaptive_refresh/
+  latest.json
+  aliases/{snapshot_id}.json
 ```
+
+`snapshot_id` is a friendly run label/alias, not the reusable storage identity.
+The true identity for generated data is the `export_fingerprint`, which is
+derived from the planning fingerprint and export semantics.
 
 ---
 
@@ -558,6 +584,71 @@ docker compose run --rm snapshot-worker python -m archiver.processors.export_ci_
   --tier ci --dry-run --run-selectors --build-cohort \
   --source-window-months 1 --target-vins 5000 --refresh-planning-cache
 ```
+
+---
+
+## Export materialization cache (Gate D/E contract)
+
+Gate C.75 caches the expensive answer to "which cohort should this snapshot
+contain?" Gate D must preserve that win by making the next expensive answer
+cacheable too: "which Parquet fixture files represent this planned cohort under
+the current export rules?"
+
+Gate D should introduce:
+
+- `planning_fingerprint`: the existing Gate C.75 cache key.
+- `export_fingerprint`: a new SHA-256 key derived from the
+  `planning_fingerprint` plus export semantics.
+- `materialized_snapshot_path`: the final MinIO prefix for filtered Parquet.
+- `manifest_path`: the manifest for the materialized Parquet output.
+- `archive_path`: the eventual Gate E `.tar.zst` path, once packaging exists.
+- `export_cache_hit` and `export_cache_action`: response fields mirroring the
+  planning-cache observability pattern.
+
+The export fingerprint should include only fields that change the bytes or
+interpretation of the materialized output:
+
+- `planning_fingerprint`
+- included logical table list and source table mapping
+- output schema/manifest version
+- writer algorithm/version
+- partition layout
+- Parquet compression/settings
+- sanitization/drop-column rules
+- expected-output generation version, once expected artifacts are written
+
+It should exclude `snapshot_id`, `dry_run`, `audit_sources`, and other run
+labels that do not change output bytes.
+
+Expected Gate D flow:
+
+```text
+resolve planning artifact
+derive export fingerprint
+if reuse_export_cache and complete materialized output exists:
+  return manifest/archive metadata without scanning source Parquet
+else:
+  write filtered Parquet to temporary fingerprint staging prefix
+  compute row counts, file counts, and checksums
+  validate expected coverage and table invariants
+  promote/write manifest under snapshot_exports/fingerprints/{export_fingerprint}/
+```
+
+Gate E should package from the materialized snapshot path and write the archive
+under `snapshot_archives/fingerprints/{export_fingerprint}/`. If the archive
+already exists and its checksum matches the manifest, Gate E should be able to
+reuse it without repackaging.
+
+This gives us three reusable layers:
+
+```text
+planning fingerprint -> cohort plan JSON
+export fingerprint   -> filtered Parquet fixture directory + manifest
+export fingerprint   -> packaged archive + archive manifest
+```
+
+The friendly `snapshot_id` can still be stored in manifests and alias files,
+but it should never force recomputation by itself.
 
 ---
 
@@ -696,6 +787,39 @@ Initial cadence:
 
 Snapshots are immutable. New snapshots create new IDs. `latest.json` can move,
 but CI should be able to pin a specific snapshot ID for reproducibility.
+
+---
+
+## Next VM Validation
+
+Before Gate D, validate that the expensive first phase can be generated and
+reused from the isolated worker:
+
+```bash
+# Compute the expensive planning phase and write planning.json.
+docker compose run --rm snapshot-worker python -m archiver.processors.export_ci_lake_snapshot \
+  --tier edge \
+  --dry-run \
+  --run-selectors \
+  --build-cohort \
+  --source-window-months 1 \
+  --target-vins 100 \
+  --refresh-planning-cache
+
+# Re-run the same request and prove it hits the persisted planning cache.
+docker compose run --rm snapshot-worker python -m archiver.processors.export_ci_lake_snapshot \
+  --tier edge \
+  --dry-run \
+  --run-selectors \
+  --build-cohort \
+  --source-window-months 1 \
+  --target-vins 100 \
+  --reuse-planning-cache
+```
+
+Expected result: both responses report the same `planning_cache_key`; the
+second response reports `planning_cache_hit=true` and
+`planning_cache_action=reused`.
 
 ---
 
