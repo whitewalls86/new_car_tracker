@@ -250,7 +250,10 @@ jobs:
           ])
           from datetime import datetime, timezone
           row = {
-              'event_id': pa.array([1], type=pa.int64()),
+              # event_id=0: outside the 1-8 range used by the Plan 120 lake-snapshot
+              # fixture's price_observation_events rows (scripts/seed_lake_snapshot_fixture.py),
+              # so unique_stg_price_events_event_id doesn't collide across the two seeds.
+              'event_id': pa.array([0], type=pa.int64()),
               'listing_id': pa.array(['CI_SEED_L1'], type=pa.string()),
               'vin': pa.array(['1HGBH41JXMN109186'], type=pa.string()),
               'price': pa.array([25000], type=pa.int32()),
