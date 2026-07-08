@@ -140,15 +140,44 @@ class TestExpandClosure:
         )
         assert {fx.ARTIFACT_RELISTED_1, fx.ARTIFACT_RELISTED_2} <= closure["artifact_ids"]
 
-    def test_closure_resolves_listing_context_for_artifact_only_seeds(self, minio_con):
-        # invalid_or_null_vin seeds artifact 108 (vin=None, listing L8a); closure
-        # must still pull L8a in even though that row's vin can't be resolved.
+    def test_explicit_artifact_root_does_not_discover_vin_or_listing(self, minio_con):
+        # invalid_or_null_vin seeds artifact 108 (vin=None, listing L8a). dbt,
+        # not the exporter, decides how to handle this malformed row — the
+        # exporter must keep the artifact_id for source-row export but must
+        # NOT manufacture vin/listing entity context from it.
         closure = expand_entity_closure(
             minio_con, None, None, None,
             _allocation(artifact_seeds=frozenset({fx.ARTIFACT_NULL_VIN})),
         )
-        assert fx.LISTING_NULL_VIN in closure["listing_ids"]
         assert fx.ARTIFACT_NULL_VIN in closure["artifact_ids"]
+        assert fx.LISTING_NULL_VIN not in closure["listing_ids"]
+        assert closure["closed_vins"] == set()
+
+    def test_artifact_cooccurrence_does_not_expand_vehicle_closure(self, minio_con):
+        # ARTIFACT_SRP_SHARED co-occurs on two unrelated VIN/listing rows (like
+        # an SRP/carousel artifact spanning many listings). Seeding on VIN A's
+        # own vehicle identity must attach the shared artifact_id (so a later
+        # gate can still export its source row) without pulling in VIN B/its
+        # listing, which only shares the artifact, not any identity edge.
+        closure = expand_entity_closure(
+            minio_con, None, None, None,
+            _allocation(vin_seeds=frozenset({fx.VIN_SRP_COOCCUR_A})),
+        )
+        assert fx.ARTIFACT_SRP_SHARED in closure["artifact_ids"]
+        assert fx.VIN_SRP_COOCCUR_B not in closure["closed_vins"]
+        assert fx.LISTING_SRP_COOCCUR_B not in closure["listing_ids"]
+
+    def test_artifact_selector_root_preserved_alongside_cooccurring_row(self, minio_con):
+        # Seeding the shared artifact_id directly as an explicit artifact root
+        # (e.g. from an artifact-keyed selector) must keep it in artifact_ids
+        # but still must not resolve either co-occurring VIN/listing.
+        closure = expand_entity_closure(
+            minio_con, None, None, None,
+            _allocation(artifact_seeds=frozenset({fx.ARTIFACT_SRP_SHARED})),
+        )
+        assert fx.ARTIFACT_SRP_SHARED in closure["artifact_ids"]
+        assert closure["closed_vins"] == set()
+        assert closure["listing_ids"] == set()
 
     def test_closure_resolves_non_vin_seeds_back_to_vins(self, minio_con):
         closure = expand_entity_closure(
@@ -176,13 +205,17 @@ class TestExpandClosure:
         assert any(
             "expand_entity_closure initial vins=1" in m for m in messages
         )
-        assert any("closure pass=1 start" in m for m in messages)
+        assert any("core_closure pass=1 start" in m for m in messages)
         assert any(
-            "closure pass=1 end" in m and "elapsed_s=" in m for m in messages
+            "core_closure pass=1 end" in m and "elapsed_s=" in m for m in messages
         )
         assert any(
-            f"closure pass={closure['closure_passes']} no_change stopping" in m
+            f"core_closure pass={closure['closure_passes']} no_change stopping" in m
             for m in messages
+        )
+        assert any("artifact_attachment start" in m for m in messages)
+        assert any(
+            "artifact_attachment end" in m and "elapsed_s=" in m for m in messages
         )
 
 

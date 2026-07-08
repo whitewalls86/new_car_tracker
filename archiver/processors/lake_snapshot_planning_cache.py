@@ -39,7 +39,7 @@ from shared.minio import read_json, write_json
 logger = logging.getLogger("archiver")
 
 CACHE_SCHEMA_VERSION = 1
-COHORT_ALGORITHM_VERSION = 1
+COHORT_ALGORITHM_VERSION = 2
 
 VALID_BUCKET_GRAINS: Tuple[str, ...] = ("week", "day", "none")
 DEFAULT_PLANNING_CACHE_PREFIX = "snapshot_planning_cache"

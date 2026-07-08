@@ -575,40 +575,6 @@ def _artifact_ids_for(
     return artifact_ids
 
 
-def _vins_and_listing_ids_for_artifact_ids(
-    con, base_path: Optional[str], window_start, window_end, artifact_ids: set
-) -> Tuple[set, set]:
-    """Resolve artifact_id seeds/growth back to their row's vin/listing_id, so
-    artifact-only selectors (e.g. invalid_or_null_vin) still pull the
-    surrounding listing context into the cohort."""
-    vins: set = set()
-    listing_ids: set = set()
-    if not artifact_ids:
-        return vins, listing_ids
-    artifact_clause, artifact_params = _in_clause("artifact_id", artifact_ids)
-    for table, ts_col in _VIN_LISTING_TABLES:
-        path = resolve_table_path(table, base_path)
-        time_clauses, time_params = _table_time_where(window_start, window_end, ts_col)
-        clauses = [artifact_clause] + time_clauses
-        query = (
-            f"SELECT DISTINCT vin, listing_id FROM read_parquet('{path}', union_by_name=true) "
-            f"WHERE {' AND '.join(clauses)}"
-        )
-        try:
-            rows = con.execute(query, artifact_params + time_params).fetchall()
-            for vin, listing_id in rows:
-                if vin is not None:
-                    vins.add(vin)
-                if listing_id is not None:
-                    listing_ids.add(listing_id)
-        except Exception as e:
-            logger.warning(
-                "lake_snapshot_cohort: vins_and_listing_ids_for_artifact_ids table=%s error=%s",
-                table, e,
-            )
-    return vins, listing_ids
-
-
 def expand_entity_closure(
     con,
     base_path: Optional[str],
@@ -617,13 +583,18 @@ def expand_entity_closure(
     allocation: CohortAllocation,
     max_passes: int = MAX_CLOSURE_PASSES,
 ) -> Dict[str, Any]:
-    """Expand allocated seeds into a logically closed VIN/listing/artifact set.
+    """Expand allocated seeds into a logically closed VIN/listing set, then
+    attach artifact context for that frozen core.
 
-    Iterates seed VINs -> listing_ids -> previous_listing_ids (remap events)
-    -> back to VINs -> artifact_ids -> back to VINs/listing_ids (so
-    artifact-only seeds like invalid_or_null_vin still pull in their row's
-    listing context), stopping once no set grows or after max_passes,
-    whichever comes first.
+    Core closure follows only vehicle-identity edges: seed VINs ->
+    listing_ids -> back to VINs -> previous_listing_ids (remap events),
+    repeated until no set grows or max_passes is hit. Artifact IDs are never
+    used to discover more VINs/listing_ids — an artifact (e.g. an SRP/carousel
+    row) can legitimately co-occur with many unrelated listings, and using
+    that co-occurrence to expand the vehicle closure is what caused runaway
+    growth. Once the core is frozen, artifact_ids are attached for reporting
+    (observations/events matching the core VINs/listing_ids, plus any
+    explicit artifact selector roots) without feeding back into vins/listing_ids.
     """
     t0 = time.monotonic()
     logger.info("lake_snapshot_cohort: expand_entity_closure start max_passes=%d", max_passes)
@@ -638,22 +609,20 @@ def expand_entity_closure(
     seed_vins = set(allocation.vin_seeds) | make_model_vins
     vins = set(seed_vins)
     listing_ids = set(allocation.listing_seeds) | make_model_listings
-    artifact_ids = set(allocation.artifact_seeds)
     previous_listing_ids_added = 0
 
     logger.info(
         "lake_snapshot_cohort: expand_entity_closure initial vins=%d listing_ids=%d "
-        "artifact_ids=%d",
-        len(vins), len(listing_ids), len(artifact_ids),
+        "artifact_roots=%d",
+        len(vins), len(listing_ids), len(allocation.artifact_seeds),
     )
 
     passes = 0
     for passes in range(1, max_passes + 1):
         pass_t0 = time.monotonic()
-        before = (len(vins), len(listing_ids), len(artifact_ids))
+        before = (len(vins), len(listing_ids))
         logger.info(
-            "lake_snapshot_cohort: closure pass=%d start vins=%d listing_ids=%d "
-            "artifact_ids=%d",
+            "lake_snapshot_cohort: core_closure pass=%d start vins=%d listing_ids=%d",
             passes, *before,
         )
 
@@ -666,27 +635,30 @@ def expand_entity_closure(
         previous_listing_ids_added += len(prev_listing_ids - listing_ids)
         listing_ids |= prev_listing_ids
 
-        artifact_ids |= _artifact_ids_for(
-            con, base_path, window_start, window_end, vins, listing_ids,
-        )
-
-        artifact_vins, artifact_listing_ids = _vins_and_listing_ids_for_artifact_ids(
-            con, base_path, window_start, window_end, artifact_ids,
-        )
-        vins |= artifact_vins
-        listing_ids |= artifact_listing_ids
-
-        after = (len(vins), len(listing_ids), len(artifact_ids))
+        after = (len(vins), len(listing_ids))
         logger.info(
-            "lake_snapshot_cohort: closure pass=%d end elapsed_s=%.2f vins=%d "
-            "listing_ids=%d artifact_ids=%d",
+            "lake_snapshot_cohort: core_closure pass=%d end elapsed_s=%.2f vins=%d "
+            "listing_ids=%d",
             passes, time.monotonic() - pass_t0, *after,
         )
         if after == before:
             logger.info(
-                "lake_snapshot_cohort: closure pass=%d no_change stopping", passes,
+                "lake_snapshot_cohort: core_closure pass=%d no_change stopping", passes,
             )
             break
+
+    attach_t0 = time.monotonic()
+    logger.info(
+        "lake_snapshot_cohort: artifact_attachment start core_vins=%d core_listing_ids=%d "
+        "explicit_artifact_roots=%d",
+        len(vins), len(listing_ids), len(allocation.artifact_seeds),
+    )
+    artifact_ids = set(allocation.artifact_seeds)
+    artifact_ids |= _artifact_ids_for(con, base_path, window_start, window_end, vins, listing_ids)
+    logger.info(
+        "lake_snapshot_cohort: artifact_attachment end artifact_ids=%d elapsed_s=%.2f",
+        len(artifact_ids), time.monotonic() - attach_t0,
+    )
 
     logger.info(
         "lake_snapshot_cohort: expand_entity_closure end elapsed_s=%.2f passes=%d "
