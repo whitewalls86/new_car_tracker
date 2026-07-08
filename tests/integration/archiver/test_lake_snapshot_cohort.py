@@ -163,6 +163,28 @@ class TestExpandClosure:
         assert closure["listing_ids"] == set()
         assert closure["artifact_ids"] == set()
 
+    def test_closure_logs_initial_counts_and_pass_progress(self, minio_con, caplog):
+        """Progress logging (Plan 120 worker visibility): the closure must
+        announce its initial seed counts, log each pass, and log why it
+        stopped, so `docker logs -f` shows activity during a long closure."""
+        with caplog.at_level("INFO", logger="archiver"):
+            closure = expand_entity_closure(
+                minio_con, None, None, None,
+                _allocation(vin_seeds=frozenset({fx.VIN_RELISTED})),
+            )
+        messages = [r.message for r in caplog.records]
+        assert any(
+            "expand_entity_closure initial vins=1" in m for m in messages
+        )
+        assert any("closure pass=1 start" in m for m in messages)
+        assert any(
+            "closure pass=1 end" in m and "elapsed_s=" in m for m in messages
+        )
+        assert any(
+            f"closure pass={closure['closure_passes']} no_change stopping" in m
+            for m in messages
+        )
+
 
 # ---------------------------------------------------------------------------
 # build_snapshot_cohort orchestration

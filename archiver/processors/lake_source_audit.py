@@ -77,6 +77,8 @@ def _audit_table(
 ) -> Dict[str, Any]:
     spec = SOURCE_TABLE_SPECS[table_name]
     path = resolve_table_path(table_name, base_path)
+    t0 = time.monotonic()
+    logger.info("lake_source_audit: table=%s start path=%s", table_name, path)
     result: Dict[str, Any] = {
         "path": path,
         "exists": False,
@@ -128,6 +130,10 @@ def _audit_table(
         result["error"] = str(e)
         logger.warning("lake_source_audit: table=%s path=%s error=%s", table_name, path, e)
 
+    logger.info(
+        "lake_source_audit: table=%s end elapsed_s=%.2f exists=%s rows=%s error=%s",
+        table_name, time.monotonic() - t0, result["exists"], result["rows"], result["error"],
+    )
     return result
 
 

@@ -280,6 +280,19 @@ def export_ci_lake_snapshot(request: SnapshotRequest) -> SnapshotResult:
     snapshot_id = request.snapshot_id or generate_snapshot_id(request.tier, now=now)
     window_start, window_end = resolve_source_window(request, now=now)
 
+    logger.info(
+        "export_ci_lake_snapshot: request snapshot_id=%s tier=%s dry_run=%s "
+        "audit_sources=%s run_selectors=%s build_cohort=%s source_window_start=%s "
+        "source_window_end=%s target_vins=%s reuse_planning_cache=%s "
+        "refresh_planning_cache=%s planning_cache_bucket_grain=%s",
+        snapshot_id, request.tier, request.dry_run, request.audit_sources,
+        request.run_selectors, request.build_cohort,
+        window_start.isoformat() if window_start else None,
+        window_end.isoformat() if window_end else None,
+        request.target_vins, request.reuse_planning_cache,
+        request.refresh_planning_cache, request.planning_cache_bucket_grain,
+    )
+
     # Registry is built (and validated for unique names) even in this
     # scaffolding pass, so selector shape is exercised end-to-end.
     build_selector_registry()
@@ -335,6 +348,11 @@ def export_ci_lake_snapshot(request: SnapshotRequest) -> SnapshotResult:
                 "start": window_start.isoformat() if window_start else None,
                 "end": window_end.isoformat() if window_end else None,
             }
+            logger.info(
+                "export_ci_lake_snapshot: planning_cache fingerprint compute start "
+                "snapshot_id=%s",
+                snapshot_id,
+            )
             cache_key, request_fingerprint = compute_planning_fingerprint(
                 request, window_start, window_end,
             )
@@ -424,6 +442,11 @@ def export_ci_lake_snapshot(request: SnapshotRequest) -> SnapshotResult:
                     closed_vin_count=closed_vin_count,
                     listing_count=listing_count,
                     artifact_count=artifact_count,
+                )
+                logger.info(
+                    "export_ci_lake_snapshot: planning_cache write start snapshot_id=%s "
+                    "fingerprint=%s path=%s",
+                    snapshot_id, cache_key, cache_path,
                 )
                 write_planning_cache(cache_path, artifact)
         elif request.run_selectors:

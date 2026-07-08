@@ -26,6 +26,7 @@ the fingerprint and the actual query always agree.
 import hashlib
 import json
 import logging
+import time
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional, Tuple
@@ -273,8 +274,15 @@ def load_planning_cache(path: str) -> Optional[Dict[str, Any]]:
 
 def write_planning_cache(path: str, artifact: Dict[str, Any]) -> None:
     """Persist a fully-computed planning cache artifact. Never raises."""
+    t0 = time.monotonic()
     try:
         write_json(path, artifact)
-        logger.info("lake_snapshot_planning_cache: write ok path=%s", path)
+        logger.info(
+            "lake_snapshot_planning_cache: write ok path=%s elapsed_s=%.2f",
+            path, time.monotonic() - t0,
+        )
     except Exception as e:
-        logger.warning("lake_snapshot_planning_cache: write failed path=%s error=%s", path, e)
+        logger.warning(
+            "lake_snapshot_planning_cache: write failed path=%s elapsed_s=%.2f error=%s",
+            path, time.monotonic() - t0, e,
+        )

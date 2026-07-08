@@ -656,6 +656,54 @@ class TestExportPlanningCache:
         assert result.planning_cache_key is not None
         assert result.planning_cache_path is not None
 
+    def test_default_logs_fingerprint_and_write_start(self, mocker, caplog):
+        """Progress logging (Plan 120 worker visibility): a fingerprint
+        compute log must precede the cache lookup, and a write-start log must
+        precede the (mocked) write itself."""
+        self._mock_heavy_path(mocker)
+        mocker.patch("archiver.processors.export_ci_lake_snapshot.load_planning_cache")
+        mocker.patch("archiver.processors.export_ci_lake_snapshot.write_planning_cache")
+
+        with caplog.at_level("INFO", logger="archiver"):
+            export_ci_lake_snapshot(SnapshotRequest(
+                tier="ci", dry_run=True, run_selectors=True, build_cohort=True,
+            ))
+
+        messages = [r.message for r in caplog.records]
+        assert any("planning_cache fingerprint compute start" in m for m in messages)
+        assert any(
+            "planning_cache write start" in m and "fingerprint=" in m for m in messages
+        )
+
+    def test_reuse_hit_skips_write_start_log(self, mocker, caplog):
+        mock_collect, mock_build_cohort = self._mock_heavy_path(mocker)
+        cached_artifact = {
+            "cache_schema_version": 1,
+            "selector_diagnostics": {"selectors": {}, "errors": [], "ok": True},
+            "cohort_diagnostics": {"cached": True},
+            "seed_vin_count": 7,
+            "closed_vin_count": 8,
+            "listing_count": 9,
+            "artifact_count": 10,
+        }
+        mocker.patch(
+            "archiver.processors.export_ci_lake_snapshot.load_planning_cache",
+            return_value=cached_artifact,
+        )
+        mocker.patch("archiver.processors.export_ci_lake_snapshot.write_planning_cache")
+
+        with caplog.at_level("INFO", logger="archiver"):
+            export_ci_lake_snapshot(SnapshotRequest(
+                tier="ci", dry_run=True, run_selectors=True, build_cohort=True,
+                reuse_planning_cache=True,
+            ))
+
+        messages = [r.message for r in caplog.records]
+        assert not mock_collect.called
+        assert not mock_build_cohort.called
+        assert any("planning_cache hit" in m for m in messages)
+        assert not any("planning_cache write start" in m for m in messages)
+
     def test_reuse_loads_existing_cache_and_skips_computation(self, mocker):
         mock_collect, mock_build_cohort = self._mock_heavy_path(mocker)
         cached_artifact = {
@@ -872,6 +920,35 @@ class TestAllocateCohortLogic:
         assert allocation.pre_fill_vin_count == 2
         assert allocation.fill_vins_added == 0
 
+    def test_logs_required_allocation_without_fill(self, caplog):
+        candidate_sets = {"relisted_vin": _candidate("relisted_vin", "vin", 10, ["VIN1", "VIN2"])}
+        with caplog.at_level("INFO", logger="archiver"):
+            allocate_cohort(candidate_sets, None, None, None)
+        messages = [r.message for r in caplog.records]
+        assert any("required_allocation_done vin_seeds=2" in m for m in messages)
+        assert not any("deterministic_fill" in m for m in messages)
+
+    def test_logs_deterministic_fill_start_and_end(self, mocker, caplog):
+        candidate_sets = {"relisted_vin": _candidate("relisted_vin", "vin", 10, ["VIN1"])}
+        mocker.patch(
+            "archiver.processors.lake_snapshot_cohort._fill_representative_vins",
+            return_value=["VIN2", "VIN3"],
+        )
+        with caplog.at_level("INFO", logger="archiver"):
+            allocation = allocate_cohort(candidate_sets, 3, mocker.Mock(), None)
+        assert allocation.fill_vins_added == 2
+        messages = [r.message for r in caplog.records]
+        assert any(
+            "deterministic_fill start" in m and "pre_fill_vin_count=1" in m
+            and "needed=2" in m
+            for m in messages
+        )
+        assert any(
+            "deterministic_fill end" in m and "fill_vins_added=2" in m
+            and "seed_vin_count=3" in m
+            for m in messages
+        )
+
 
 # ---------------------------------------------------------------------------
 # CandidateSet.entity_count + diagnostics conversion (Plan 120 Gate C.5)
@@ -944,3 +1021,25 @@ class TestCollectSelectorCandidatesErrorHandling:
         assert candidate.error is not None
         assert candidate.entities == ()
         assert candidate.selected_entities == ()
+
+    def test_missing_table_logs_start_and_error_with_elapsed_s(self, tmp_path, caplog):
+        """Progress logging (Plan 120 worker visibility) must announce a
+        selector query before it runs and report failures with elapsed_s
+        before returning the captured-error CandidateSet."""
+        import duckdb
+
+        con = duckdb.connect()
+        try:
+            with caplog.at_level("INFO", logger="archiver"):
+                collect_selector_candidates(
+                    con, "relisted_vin", base_path=str(tmp_path / "does_not_exist"),
+                )
+        finally:
+            con.close()
+        messages = [r.message for r in caplog.records]
+        assert any(
+            "selector=relisted_vin start" in m and "entity_key=" in m for m in messages
+        )
+        assert any(
+            "selector=relisted_vin error" in m and "elapsed_s=" in m for m in messages
+        )

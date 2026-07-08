@@ -163,6 +163,11 @@ def run_selector(
         "error": None,
     }
 
+    t0 = time.monotonic()
+    logger.info(
+        "lake_snapshot_selectors: selector=%s start entity_key=%s required=%s",
+        name, selector.entity_key, selector.min_entities,
+    )
     try:
         extra_paths = None
         if config.extra_source_tables:
@@ -179,9 +184,17 @@ def run_selector(
         result["entities"] = entities
         result["sample_entities"] = list(sample_entities) if sample_entities else []
         result["status"] = "pass" if entities >= selector.min_entities else "fail"
+        logger.info(
+            "lake_snapshot_selectors: selector=%s end elapsed_s=%.2f entities=%s "
+            "candidate_rows=%s status=%s",
+            name, time.monotonic() - t0, entities, candidate_rows, result["status"],
+        )
     except Exception as e:
         result["error"] = str(e)
-        logger.warning("lake_snapshot_selectors: selector=%s path=%s error=%s", name, path, e)
+        logger.warning(
+            "lake_snapshot_selectors: selector=%s error elapsed_s=%.2f path=%s error=%s",
+            name, time.monotonic() - t0, path, e,
+        )
 
     return result
 
@@ -207,7 +220,12 @@ def run_lake_selectors(
         con = get_duckdb_s3_connection()
 
     t0 = time.monotonic()
-    logger.info("lake_snapshot_selectors: run_lake_selectors start selectors=%d", len(names))
+    logger.info(
+        "lake_snapshot_selectors: run_lake_selectors start selectors=%d window_start=%s "
+        "window_end=%s",
+        len(names), window_start.isoformat() if window_start else None,
+        window_end.isoformat() if window_end else None,
+    )
     try:
         selectors: Dict[str, Any] = {}
         errors: List[str] = []

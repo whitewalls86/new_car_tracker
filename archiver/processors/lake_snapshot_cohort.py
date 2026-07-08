@@ -137,6 +137,11 @@ def collect_selector_candidates(
     config = _SELECTOR_CONFIGS[name]
     path = resolve_table_path(config.source_table, base_path)
 
+    t0 = time.monotonic()
+    logger.info(
+        "lake_snapshot_cohort: selector=%s start entity_key=%s required=%s",
+        name, selector.entity_key, selector.min_entities,
+    )
     try:
         extra_paths = None
         if config.extra_source_tables:
@@ -152,6 +157,11 @@ def collect_selector_candidates(
         entities = tuple(entities) if entities else ()
         selected = entities[: selector.min_entities]
         status = "pass" if entity_count >= selector.min_entities else "fail"
+        logger.info(
+            "lake_snapshot_cohort: selector=%s end elapsed_s=%.2f entities=%s "
+            "candidate_rows=%s status=%s",
+            name, time.monotonic() - t0, entity_count, candidate_rows, status,
+        )
         return CandidateSet(
             selector_name=name,
             entity_key=selector.entity_key,
@@ -164,8 +174,8 @@ def collect_selector_candidates(
         )
     except Exception as e:
         logger.warning(
-            "lake_snapshot_cohort: candidate collection selector=%s path=%s error=%s",
-            name, path, e,
+            "lake_snapshot_cohort: selector=%s error elapsed_s=%.2f path=%s error=%s",
+            name, time.monotonic() - t0, path, e,
         )
         return CandidateSet(
             selector_name=name,
@@ -192,8 +202,10 @@ def collect_all_selector_candidates(
     registry = build_selector_registry()
     t0 = time.monotonic()
     logger.info(
-        "lake_snapshot_cohort: collect_all_selector_candidates start selectors=%d",
-        len(names),
+        "lake_snapshot_cohort: collect_all_selector_candidates start selectors=%d "
+        "window_start=%s window_end=%s",
+        len(names), window_start.isoformat() if window_start else None,
+        window_end.isoformat() if window_end else None,
     )
     result = {
         name: collect_selector_candidates(
@@ -337,14 +349,29 @@ def allocate_cohort(
 
     required_vin_seeds = frozenset(vin_seeds)
     pre_fill_vin_count = len(vin_seeds)
+    logger.info(
+        "lake_snapshot_cohort: allocate_cohort required_allocation_done vin_seeds=%d "
+        "listing_seeds=%d artifact_seeds=%d make_model_seeds=%d",
+        pre_fill_vin_count, len(listing_seeds), len(artifact_seeds), len(make_model_seeds),
+    )
     fill_vins_added = 0
     if target_vins is not None and len(vin_seeds) < target_vins:
         needed = target_vins - len(vin_seeds)
+        logger.info(
+            "lake_snapshot_cohort: allocate_cohort deterministic_fill start "
+            "pre_fill_vin_count=%d needed=%d",
+            pre_fill_vin_count, needed,
+        )
         fill_vins = _fill_representative_vins(
             con, base_path, window_start, window_end, exclude=vin_seeds, limit=needed,
         )
         vin_seeds.update(fill_vins)
         fill_vins_added = len(fill_vins)
+        logger.info(
+            "lake_snapshot_cohort: allocate_cohort deterministic_fill end "
+            "pre_fill_vin_count=%d fill_vins_added=%d seed_vin_count=%d",
+            pre_fill_vin_count, fill_vins_added, len(vin_seeds),
+        )
 
     logger.info(
         "lake_snapshot_cohort: allocate_cohort end elapsed_s=%.2f vin_seeds=%d "
@@ -614,6 +641,12 @@ def expand_entity_closure(
     artifact_ids = set(allocation.artifact_seeds)
     previous_listing_ids_added = 0
 
+    logger.info(
+        "lake_snapshot_cohort: expand_entity_closure initial vins=%d listing_ids=%d "
+        "artifact_ids=%d",
+        len(vins), len(listing_ids), len(artifact_ids),
+    )
+
     passes = 0
     for passes in range(1, max_passes + 1):
         pass_t0 = time.monotonic()
@@ -650,6 +683,9 @@ def expand_entity_closure(
             passes, time.monotonic() - pass_t0, *after,
         )
         if after == before:
+            logger.info(
+                "lake_snapshot_cohort: closure pass=%d no_change stopping", passes,
+            )
             break
 
     logger.info(

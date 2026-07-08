@@ -310,3 +310,24 @@ class TestWritePlanningCache:
             side_effect=RuntimeError("boom"),
         )
         write_planning_cache("some/path", {"a": 1})
+
+    def test_write_ok_logs_elapsed_s(self, mocker, caplog):
+        mocker.patch("archiver.processors.lake_snapshot_planning_cache.write_json")
+        with caplog.at_level("INFO", logger="archiver"):
+            write_planning_cache("some/path", {"a": 1})
+        messages = [r.message for r in caplog.records]
+        assert any(
+            "write ok" in m and "some/path" in m and "elapsed_s=" in m for m in messages
+        )
+
+    def test_write_failure_logs_elapsed_s(self, mocker, caplog):
+        mocker.patch(
+            "archiver.processors.lake_snapshot_planning_cache.write_json",
+            side_effect=RuntimeError("boom"),
+        )
+        with caplog.at_level("INFO", logger="archiver"):
+            write_planning_cache("some/path", {"a": 1})
+        messages = [r.message for r in caplog.records]
+        assert any(
+            "write failed" in m and "elapsed_s=" in m and "boom" in m for m in messages
+        )
