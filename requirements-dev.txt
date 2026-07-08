@@ -8,5 +8,7 @@ boto3
 zstandard
 pyyaml
 prometheus-fastapi-instrumentator
-# Pinned to match the apache/airflow base image tag in airflow/Dockerfile.
-apache-airflow==3.2.0
+# Left unpinned: apache-airflow==3.2.0 (matching airflow/Dockerfile's base
+# image) forces starlette down to a version whose prometheus-fastapi-
+# instrumentator compat release breaks FastAPI's newer routing internals.
+apache-airflow
