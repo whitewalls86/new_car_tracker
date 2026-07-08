@@ -28,19 +28,20 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-      - name: Install test dependencies
+      - name: Install dependencies
+        # No airflow/requirements.txt here: Airflow is a separate service image
+        # in prod (airflow/Dockerfile) and no non-integration test imports it —
+        # installing it alongside FastAPI here forces an incompatible starlette
+        # downgrade (see the dbt job's isolated Airflow venv below).
         run: |
           pip install \
-            pytest pytest-mock pytest-asyncio \
-            fastapi httpx \
-            psycopg2-binary asyncpg \
-            requests pydantic jinja2 python-multipart \
-            boto3 zstandard pyarrow s3fs \
-            bs4 lxml \
-            resend \
-            prometheus-fastapi-instrumentator \
-            pyyaml \
-            duckdb
+            -r requirements-dev.txt \
+            -r scraper/requirements.txt \
+            -r archiver/requirements.txt \
+            -r processing/requirements.txt \
+            -r ops/requirements.txt \
+            -r dashboard/requirements.txt \
+            -r dbt_runner/requirements.txt
       - run: pytest tests/ -v -m "not integration"
         env:
           PYTHONPATH: ${{ github.workspace }}
@@ -125,9 +126,23 @@ jobs:
         with:
           python-version: "3.13"
 
+      - name: Install dependencies
+        # No airflow/requirements.txt here: Airflow is a separate service image
+        # in prod (airflow/Dockerfile) and is installed into its own isolated
+        # venv below, right before the Airflow integration tests, so its
+        # starlette/fastapi constraints never collide with the other services'.
+        run: |
+          pip install \
+            -r requirements-dev.txt \
+            -r scraper/requirements.txt \
+            -r archiver/requirements.txt \
+            -r processing/requirements.txt \
+            -r ops/requirements.txt \
+            -r dashboard/requirements.txt \
+            -r dbt_runner/requirements.txt
+
       - name: Create MinIO bucket
         run: |
-          pip install boto3
           python -c "
           import boto3
           from botocore.client import Config
@@ -154,7 +169,6 @@ jobs:
 
       - name: Seed MinIO with empty Parquet schemas (required for dbt unit test compilation)
         run: |
-          pip install pyarrow
           python -c "
           import io
           import boto3
@@ -236,7 +250,10 @@ jobs:
           ])
           from datetime import datetime, timezone
           row = {
-              'event_id': pa.array([1], type=pa.int64()),
+              # event_id=0: outside the 1-8 range used by the Plan 120 lake-snapshot
+              # fixture's price_observation_events rows (scripts/seed_lake_snapshot_fixture.py),
+              # so unique_stg_price_events_event_id doesn't collide across the two seeds.
+              'event_id': pa.array([0], type=pa.int64()),
               'listing_id': pa.array(['CI_SEED_L1'], type=pa.string()),
               'vin': pa.array(['1HGBH41JXMN109186'], type=pa.string()),
               'price': pa.array([25000], type=pa.int32()),
@@ -266,6 +283,22 @@ jobs:
           ]))
           "
 
+      - name: Seed lake snapshot fixture data
+        # Uploads the shared Plan 120 lake-snapshot fixture (known business-state
+        # scenarios across all four source tables) so the dbt build below
+        # materializes int_listing_state_runs/int_latest_observation against real
+        # data, and so the archiver selector/cohort integration tests have
+        # production-shaped Parquet to run their SQL against. Written under the
+        # reserved 2099 partition so it never collides with the empty-schema
+        # compilation seed above.
+        run: python scripts/seed_lake_snapshot_fixture.py
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          MINIO_ENDPOINT: http://localhost:9000
+          MINIO_ROOT_USER: cartracker
+          MINIO_ROOT_PASSWORD: cartracker123
+          MINIO_BUCKET: bronze
+
       - name: dbt build (DuckDB — empty data compilation check)
         working-directory: dbt
         run: dbt build --profiles-dir . --target duckdb
@@ -276,19 +309,6 @@ jobs:
           MINIO_ROOT_USER: cartracker
           MINIO_ROOT_PASSWORD: cartracker123
           MINIO_BUCKET: bronze
-
-      - name: Install test dependencies
-        run: |
-          pip install \
-            pytest psycopg2-binary \
-            pyarrow boto3 s3fs duckdb \
-            fastapi httpx jinja2 python-multipart requests resend \
-            prometheus-fastapi-instrumentator \
-            apache-airflow \
-            apache-airflow-providers-postgres \
-            apache-airflow-providers-http \
-            apache-airflow-providers-common-sql \
-            apache-airflow-providers-standard
 
       - name: Run SQL smoke tests (Layer 1)
         run: pytest tests/integration/sql/ -v -m integration
@@ -305,8 +325,17 @@ jobs:
           TEST_DATABASE_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
           LOG_PATH: /tmp/ops_test.log
 
+      - name: Install Airflow test dependencies (isolated venv)
+        # Isolated from the "Install dependencies" step above: apache-airflow's
+        # starlette/fastapi constraints conflict with the FastAPI services', so
+        # it gets its own venv here, pinned to match airflow/Dockerfile's base
+        # image tag, mirroring how Airflow is its own container in prod.
+        run: |
+          python -m venv /tmp/airflow-venv
+          /tmp/airflow-venv/bin/pip install "apache-airflow==3.2.0" -r airflow/requirements.txt pytest psycopg2-binary requests
+
       - name: Run Airflow integration tests
-        run: pytest tests/integration/airflow/ -v -m integration
+        run: /tmp/airflow-venv/bin/pytest tests/integration/airflow/ -v -m integration
         env:
           PYTHONPATH: ${{ github.workspace }}/airflow/dags
           TEST_DATABASE_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
@@ -318,6 +347,19 @@ jobs:
         env:
           PYTHONPATH: ${{ github.workspace }}
           TEST_DATABASE_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
+          MINIO_ENDPOINT: http://localhost:9000
+          MINIO_ROOT_USER: cartracker
+          MINIO_ROOT_PASSWORD: cartracker123
+          MINIO_BUCKET: bronze
+
+      - name: Run selector/dbt equivalence tests
+        # Compares the real dbt build above against the Plan 120 selector SQL
+        # over the same MinIO data — the coupling guard requested in Gate B
+        # review (not a hand-copied paraphrase of the dbt logic).
+        run: pytest tests/integration/dbt/ -v -m integration
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          DUCKDB_PATH: /tmp/ci_analytics.duckdb
           MINIO_ENDPOINT: http://localhost:9000
           MINIO_ROOT_USER: cartracker
           MINIO_ROOT_PASSWORD: cartracker123

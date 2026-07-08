@@ -78,6 +78,64 @@ class TestGrafanaProvisioning:
         assert doc["providers"][0]["type"] == "file"
 
 
+class TestDockerComposeSnapshotWorker:
+    """Plan 120 Gate C.5: snapshot-worker must exist, be inert by default, and
+    never disturb the production archiver service."""
+
+    @staticmethod
+    def _services():
+        path = _REPO_ROOT / "docker-compose.yml"
+        assert path.exists(), "docker-compose.yml missing"
+        doc = yaml.safe_load(path.read_text())
+        return doc["services"]
+
+    def test_snapshot_worker_service_exists(self):
+        services = self._services()
+        assert "snapshot-worker" in services
+
+    def test_snapshot_worker_has_no_ports(self):
+        service = self._services()["snapshot-worker"]
+        assert "ports" not in service
+
+    def test_snapshot_worker_is_profile_gated(self):
+        """Profile-gated services are inert under `docker compose up`; they
+        only run when explicitly invoked, e.g. `docker compose run --rm
+        snapshot-worker ...`."""
+        service = self._services()["snapshot-worker"]
+        assert service.get("profiles"), "snapshot-worker must declare profiles"
+        assert "snapshot-worker" not in self._default_profile_services()
+
+    def _default_profile_services(self):
+        services = self._services()
+        return {
+            name for name, spec in services.items()
+            if not spec.get("profiles")
+        }
+
+    def test_snapshot_worker_reuses_archiver_build_context(self):
+        service = self._services()["snapshot-worker"]
+        archiver = self._services()["archiver"]
+        assert service["build"]["dockerfile"] == archiver["build"]["dockerfile"]
+        assert service["build"]["context"] == archiver["build"]["context"]
+
+    def test_snapshot_worker_has_no_restart_policy(self):
+        """A one-shot `docker compose run` target should not auto-restart."""
+        service = self._services()["snapshot-worker"]
+        assert "restart" not in service
+
+    def test_snapshot_worker_has_distinct_container_name(self):
+        service = self._services()["snapshot-worker"]
+        archiver = self._services()["archiver"]
+        assert service["container_name"] != archiver["container_name"]
+
+    def test_archiver_service_unaffected(self):
+        """Adding snapshot-worker must not change the production archiver
+        service's restart/port/profile shape."""
+        archiver = self._services()["archiver"]
+        assert archiver.get("restart") == "unless-stopped"
+        assert "profiles" not in archiver
+
+
 class TestGrafanaDashboards:
     _DASHBOARD_DIR = _REPO_ROOT / "grafana" / "dashboards"
     _EXPECTED = {"pipeline_health.json", "infrastructure.json", "service_latency.json", "logs.json"}

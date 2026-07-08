@@ -1,0 +1,266 @@
+# Selector metadata for CI lake snapshot exports (Plan 120 Gate B).
+#
+# Each entry names a dbt/PySpark branch or guard the snapshot must exercise,
+# the source table(s) and filters used to find candidate entities in
+# production, and the minimum representation required in the snapshot before
+# it can be published.
+#
+# The SQL bodies referenced by `sql_template` live in
+# archiver/sql/lake_snapshot_selectors/*.sql (see
+# archiver/processors/lake_snapshot_selectors.py). This file is the single
+# source of truth for selector metadata; do not duplicate it in Python.
+selectors:
+  stable_state_run:
+    min_entities: 25
+    entity_key: vin
+    source_table: silver_observations
+    sql_template: stable_state_run
+    timestamp_column: fetched_at
+    base_filters:
+      - source = 'detail'
+    description: >
+      VINs with multiple detail observations where the business-state
+      fingerprint is unchanged (gaps-and-islands collapse).
+
+  state_change_run:
+    min_entities: 25
+    entity_key: vin
+    source_table: silver_observations
+    sql_template: state_change_run
+    timestamp_column: fetched_at
+    base_filters:
+      - source = 'detail'
+    description: >
+      VINs with multiple distinct business-state fingerprints (price,
+      mileage, dealer, or listing_state changes).
+
+  relisted_vin:
+    min_entities: 10
+    entity_key: vin
+    source_table: vin_to_listing_events
+    sql_template: relisted_vin
+    timestamp_column: event_at
+    description: >
+      VINs with more than one listing_id or remap events with
+      previous_listing_id.
+
+  active_to_unlisted:
+    min_entities: 10
+    entity_key: listing_id
+    source_table: silver_observations
+    sql_template: active_to_unlisted
+    timestamp_column: fetched_at
+    base_filters:
+      - source = 'detail'
+    description: >
+      VIN/listing with an active detail row followed by an unlisted/delete
+      event.
+
+  price_drop:
+    min_entities: 25
+    entity_key: listing_id
+    source_table: price_observation_events
+    sql_template: price_drop
+    timestamp_column: event_at
+    base_filters:
+      - event_type = 'upserted'
+      - price IS NOT NULL
+    description: >
+      Consecutive price event where price < prev_price.
+
+  price_increase:
+    min_entities: 25
+    entity_key: listing_id
+    source_table: price_observation_events
+    sql_template: price_increase
+    timestamp_column: event_at
+    base_filters:
+      - event_type = 'upserted'
+      - price IS NOT NULL
+    description: >
+      Consecutive price event where price > prev_price.
+
+  price_changed_7d:
+    min_entities: 25
+    entity_key: listing_id
+    source_table: price_observation_events
+    sql_template: price_changed_7d
+    timestamp_column: event_at
+    window_anchor: window_end
+    base_filters:
+      - event_type = 'upserted'
+      - price IS NOT NULL
+    description: >
+      Price change within seven days of the source window end.
+
+  price_changed_30d_only:
+    min_entities: 25
+    entity_key: listing_id
+    source_table: price_observation_events
+    sql_template: price_changed_30d_only
+    timestamp_column: event_at
+    window_anchor: window_end
+    base_filters:
+      - event_type = 'upserted'
+      - price IS NOT NULL
+    description: >
+      Price change within thirty days but outside the seven-day window.
+
+  no_price_history:
+    min_entities: 25
+    entity_key: vin
+    source_table: silver_observations
+    sql_template: no_price_history
+    timestamp_column: fetched_at
+    extra_source_tables:
+      - price_observation_events
+    base_filters:
+      - vin IS NOT NULL
+    description: >
+      Observation VIN lacking any matching positive price events.
+
+  detail_beats_srp:
+    min_entities: 25
+    entity_key: vin
+    source_table: silver_observations
+    sql_template: detail_beats_srp
+    timestamp_column: fetched_at
+    base_filters:
+      - source IN ('detail', 'srp')
+      - vin IS NOT NULL
+    description: >
+      VIN with both detail and SRP observations where detail should win
+      latest-observation source priority.
+
+  srp_fallback:
+    min_entities: 25
+    entity_key: vin
+    source_table: silver_observations
+    sql_template: srp_fallback
+    timestamp_column: fetched_at
+    base_filters:
+      - source IN ('detail', 'srp')
+      - vin IS NOT NULL
+    description: >
+      VIN with usable SRP attributes and missing/incomplete detail
+      attributes.
+
+  carousel_only_or_low_priority:
+    min_entities: 25
+    entity_key: vin
+    source_table: silver_observations
+    sql_template: carousel_only_or_low_priority
+    timestamp_column: fetched_at
+    base_filters:
+      - vin IS NOT NULL
+    description: >
+      VIN/listing represented only by carousel observations, or where
+      carousel loses priority to richer sources.
+
+  invalid_or_null_vin:
+    min_entities: 25
+    entity_key: artifact_id
+    source_table: silver_observations
+    sql_template: invalid_or_null_vin
+    timestamp_column: fetched_at
+    base_filters:
+      - (vin IS NULL OR length(vin) != 17 OR NOT regexp_matches(upper(vin), '^[A-Z0-9]{17}$'))
+    description: >
+      Rows with null or invalid VINs that must not become vin17.
+
+  benchmark_dense_make_model:
+    min_entities: 3
+    entity_key: make_model
+    source_table: silver_observations
+    sql_template: benchmark_dense_make_model
+    timestamp_column: fetched_at
+    base_filters:
+      - source = 'detail'
+    description: >
+      Make/model groups with enough rows for stable percentile/median
+      benchmarks.
+
+  benchmark_sparse_make_model:
+    min_entities: 3
+    entity_key: make_model
+    source_table: silver_observations
+    sql_template: benchmark_sparse_make_model
+    timestamp_column: fetched_at
+    base_filters:
+      - source = 'detail'
+    description: >
+      Make/model groups with only a few rows, which must not disappear
+      silently.
+
+  cooldown_blocked:
+    min_entities: 10
+    entity_key: listing_id
+    source_table: blocked_cooldown_events
+    sql_template: cooldown_events
+    timestamp_column: event_at
+    base_filters:
+      - num_of_attempts = 1
+    description: >
+      First 403 blocked cooldown event.
+
+  cooldown_incremented:
+    min_entities: 10
+    entity_key: listing_id
+    source_table: blocked_cooldown_events
+    sql_template: cooldown_events
+    timestamp_column: event_at
+    base_filters:
+      - num_of_attempts > 1
+    description: >
+      Repeated 403 blocked attempt event.
+
+  cooldown_bucket_3_4:
+    min_entities: 1
+    entity_key: listing_id
+    source_table: blocked_cooldown_events
+    sql_template: cooldown_events
+    timestamp_column: event_at
+    base_filters:
+      - num_of_attempts BETWEEN 3 AND 4
+    description: >
+      Cooldown attempts between 3 and 4 (bucket boundary).
+
+  cooldown_bucket_5_10:
+    min_entities: 1
+    entity_key: listing_id
+    source_table: blocked_cooldown_events
+    sql_template: cooldown_events
+    timestamp_column: event_at
+    base_filters:
+      - num_of_attempts BETWEEN 5 AND 10
+    description: >
+      Cooldown attempts between 5 and 10 (bucket boundary).
+
+  cooldown_bucket_11_plus:
+    min_entities: 1
+    entity_key: listing_id
+    source_table: blocked_cooldown_events
+    sql_template: cooldown_events
+    timestamp_column: event_at
+    base_filters:
+      - num_of_attempts >= 11
+    description: >
+      Cooldown attempts >= 11 (high-attempt bucket).
+
+  fresh_recent_listing:
+    min_entities: 25
+    entity_key: listing_id
+    source_table: silver_observations
+    sql_template: fresh_recent_listing
+    timestamp_column: fetched_at
+    description: >
+      Young/current active listing.
+
+  stale_listing:
+    min_entities: 25
+    entity_key: listing_id
+    source_table: silver_observations
+    sql_template: stale_listing
+    timestamp_column: fetched_at
+    description: >
+      Old listing, or listing with stale SRP/detail recency.

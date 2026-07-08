@@ -103,6 +103,10 @@ DAG_SPECS = {
         "dag_id": "compact_silver",
         "tasks": {"check_deploy_intent", "check_archiver_health", "compact_silver"},
     },
+    "export_ci_lake_snapshot.py": {
+        "dag_id": "export_ci_lake_snapshot",
+        "tasks": {"check_deploy_intent", "check_archiver_health", "export_ci_lake_snapshot"},
+    },
 }
 
 

@@ -1,4 +1,6 @@
 import logging
+import os
+from datetime import datetime
 from typing import Any, Dict
 
 from fastapi import Body, FastAPI, HTTPException
@@ -8,6 +10,13 @@ from archiver.processors.cleanup_parquet import run_cleanup_parquet as _run_clea
 from archiver.processors.cleanup_queue import cleanup_queue as _cleanup_queue
 from archiver.processors.cleanup_queue import run_cleanup_queue as _run_cleanup_queue
 from archiver.processors.compact_silver import compact_silver as _compact_silver
+from archiver.processors.export_ci_lake_snapshot import (
+    SnapshotRequest,
+    SnapshotRequestError,
+)
+from archiver.processors.export_ci_lake_snapshot import (
+    export_ci_lake_snapshot as _export_ci_lake_snapshot,
+)
 from archiver.processors.flush_silver_observations import (
     flush_silver_observations as _flush_silver_observations,
 )
@@ -19,6 +28,23 @@ configure_logging()
 logger = logging.getLogger("archiver")
 
 app = FastAPI()
+
+# source_base_path lets callers point selector/audit reads at a local fixture
+# directory instead of s3://{MINIO_BUCKET}. That's needed for CLI/tests but
+# must stay off by default on the HTTP route — it's an arbitrary local path
+# interpolated into DuckDB read_parquet() calls.
+_ALLOW_SOURCE_BASE_PATH = (
+    os.environ.get("ARCHIVER_ALLOW_SOURCE_BASE_PATH", "false").lower() == "true"
+)
+
+# Plan 120 Gate C.5: production-sized cohort/export work (build_cohort=True)
+# must not run synchronously inside the production archiver API process — a
+# VM run showed it starves flush/cleanup/compact and Airflow health checks.
+# That work belongs in the isolated snapshot-worker one-shot container (see
+# docker-compose.yml). This flag exists only for tests/manual override.
+_ALLOW_SYNC_SNAPSHOT_COHORT = (
+    os.environ.get("ARCHIVER_ALLOW_SYNC_SNAPSHOT_COHORT", "false").lower() == "true"
+)
 
 
 @app.post("/cleanup/parquet")
@@ -74,6 +100,66 @@ def trigger_flush_staging() -> Dict[str, Any]:
     """Flush all staging event tables to MinIO Parquet (Airflow DAG trigger)."""
     with active_job():
         return _flush_staging_events()
+
+
+@app.post("/snapshots/adaptive-refresh/run")
+def trigger_snapshot_export(payload: dict = Body(default={})) -> Dict[str, Any]:
+    """Generate (or dry-run plan) a CI lake snapshot (Plan 120)."""
+    with active_job():
+        payload = payload or {}
+        window_start = payload.get("source_window_start")
+        window_end = payload.get("source_window_end")
+        source_base_path = payload.get("source_base_path")
+        if source_base_path is not None and not _ALLOW_SOURCE_BASE_PATH:
+            raise HTTPException(
+                status_code=400,
+                detail="source_base_path is not permitted on this endpoint",
+            )
+        if payload.get("build_cohort", False) and not _ALLOW_SYNC_SNAPSHOT_COHORT:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "build_cohort is disabled on the production archiver API. "
+                    "Production-sized cohort/export work must run in the isolated "
+                    "snapshot-worker container, e.g.: docker compose run --rm "
+                    "snapshot-worker python -m archiver.processors."
+                    "export_ci_lake_snapshot --tier edge --dry-run --run-selectors "
+                    "--build-cohort --source-window-months 1 --target-vins 100. "
+                    "Set ARCHIVER_ALLOW_SYNC_SNAPSHOT_COHORT=true to override for "
+                    "tests or manual use."
+                ),
+            )
+        try:
+            request = SnapshotRequest(
+                tier=payload.get("tier"),
+                snapshot_id=payload.get("snapshot_id"),
+                target_vins=payload.get("target_vins"),
+                max_archive_mb=payload.get("max_archive_mb"),
+                max_rows=payload.get("max_rows"),
+                source_window_start=datetime.fromisoformat(window_start) if window_start else None,
+                source_window_end=datetime.fromisoformat(window_end) if window_end else None,
+                source_window_months=payload.get("source_window_months"),
+                min_selector_coverage=payload.get("min_selector_coverage", True),
+                dry_run=payload.get("dry_run", False),
+                audit_sources=payload.get("audit_sources", False),
+                run_selectors=payload.get("run_selectors", False),
+                build_cohort=payload.get("build_cohort", False),
+                source_base_path=source_base_path,
+                reuse_planning_cache=payload.get("reuse_planning_cache", False),
+                refresh_planning_cache=payload.get("refresh_planning_cache", False),
+                planning_cache_bucket_grain=payload.get(
+                    "planning_cache_bucket_grain", "week"
+                ),
+                planning_cache_prefix=payload.get(
+                    "planning_cache_prefix", "snapshot_planning_cache"
+                ),
+            )
+            result = _export_ci_lake_snapshot(request)
+        except SnapshotRequestError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except (ValueError, TypeError) as e:
+            raise HTTPException(status_code=400, detail=f"Invalid request payload: {e}")
+        return result.to_dict()
 
 
 @app.get("/health")

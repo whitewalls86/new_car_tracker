@@ -1,42 +1,42 @@
-# Plan 112: Lakehouse + MLflow Refresh Policy Backtesting
+# Plan 112: Delta + MLflow Adaptive Refresh Backtesting
 
 ## Goal
 
-Build a reproducible experiment substrate for adaptive detail refresh, then
-simulate candidate refresh policies against historical listing timelines.
+Build the reproducible experiment layer for adaptive detail refresh on the new
+Databricks-style track.
 
-This plan combines:
+This plan starts from two completed foundations:
 
-1. A snapshot-capable lakehouse table layer over the cleaned/normalized Parquet
-   lake from Plan 110.
-2. MLflow tracking for policy parameters, dataset versions, metrics, and
-   artifacts.
-3. Backtest replay logic that quantifies the tradeoff between fetch volume
-   reduction and detection delay before production scraping changes.
+- Plan 110 normalized storage layout and tightened the object-store contract.
+- Plan 111 built the adaptive-refresh feature tables.
+- Plan 120 provides CI/local historical fixture snapshots for reproducible
+  development and tests.
 
-Do not change production scraping in this plan.
+Before training or backtesting anything seriously, audit those feature outputs
+and make sure they are good enough to become experiment inputs.
+
+This plan does **not** change production scraping. Production integration
+belongs to Plan 113.
 
 ---
 
 ## Context
 
-Plan 110 normalizes storage layout and prepares silver/ops Parquet for a
-snapshot-capable lakehouse table layer.
-Plan 111 builds listing state fingerprints, state runs, volatility features, and
-rule-based refresh priority outputs.
+The previous version of this plan centered on DuckLake vs Apache Iceberg. Plan
+117 now resets the roadmap toward:
 
-Before wiring that score into production ops, we need to know:
+- Delta Lake tables
+- Spark/PySpark
+- MLflow
+- Unity Catalog OSS or a documented catalog/governance fallback
+- eventual dbt migration away from DuckDB
 
-- Which exact dataset snapshot was used?
-- Which policy parameters were evaluated?
-- How many detail fetches would each policy skip?
-- How much detection delay does throttling introduce?
-- Which threshold and interval set gives an acceptable tradeoff?
-- Does the policy reduce likely 403/block pressure?
-- Can a run be reproduced later from the same data snapshot?
+The purpose of Plan 112 is to prove reproducible refresh-policy experiments,
+not to complete the entire Databricks-style migration.
 
-The lakehouse table layer answers the dataset-version question. MLflow answers
-the experiment tracking question.
+Plan 112 should consume fixture snapshots produced by Plan 120 when running in
+CI or local development. Full production-corpus validation can still run on the
+VM manually.
 
 ---
 
@@ -46,147 +46,183 @@ the experiment tracking question.
 Plan 110 normalized Parquet
         |
         v
-Lakehouse tables / snapshots
+Delta table spike / table-version capture
         |
         v
-Plan 111 feature models
+Plan 111 feature outputs audit
         |
         v
-Backtest replay script/dbt models
+snapshot/version-pinned replay inputs
+        |
+        +--> rule-based policy backtests
+        |
+        +--> XGBoost experiment
         |
         v
-MLflow run:
-  params + metrics + artifacts + lakehouse snapshot/version IDs
+MLflow:
+  params + metrics + artifacts + models + Delta table versions
 ```
 
-The first policy remains rule-based and interpretable. ML model training is
-still deferred until the target, labels, and quality gates are proven.
+The hot production claim path must not call MLflow, Spark, Delta, Unity Catalog,
+or a live model server. Plan 113 consumes pinned outputs/configs produced by
+this plan.
 
 ---
 
-## Lakehouse Substrate Decision
+## Phase 0: Feature Store Audit
 
-Before implementing the table layer, run a short research spike to decide
-between DuckLake and Apache Iceberg. The plan originally assumed Iceberg, but
-DuckLake may be a better operational fit for this project because the current
-stack is already DuckDB, Postgres, MinIO, and dbt-oriented. Iceberg may still be
-the better portfolio and ecosystem choice because it is more widely recognized
-across lakehouse, data platform, Spark, Trino, and cloud warehouse roles.
+Audit Plan 111 outputs before treating them as training or backtest inputs.
 
-### Substrate Research Spike
+Tables to audit:
 
-Evaluate both candidates against the same small normalized dataset from Plan
-110. This spike should happen before committing to Iceberg-specific
-implementation.
-
-Candidate A: DuckLake
-
-- DuckDB-native table format.
-- Metadata stored in a SQL catalog, preferably Postgres for this deployment.
-- Natural fit for local DuckDB/dbt workflows.
-- Snapshot and time-travel support should satisfy the backtest reproducibility
-  requirement if it works cleanly with the current runtime.
-
-Candidate B: Apache Iceberg
-
-- Broader ecosystem and hiring-market recognition.
-- Stronger fit if future work needs Spark, Trino, Flink, Snowflake, BigQuery,
-  Databricks-adjacent tooling, or a more standard lakehouse story.
-- More likely to be recognized as a portfolio signal for data platform roles.
-
-Run the spike in an isolated object-store prefix and catalog namespace. Do not
-register production prefixes in a way that gives the experimental table layer
-permission to compact, expire, or delete existing files.
+- `int_listing_state_fingerprints`
+- `int_listing_state_runs`
+- `int_listing_volatility_features`
+- `mart_detail_refresh_priority`
 
 Required checks:
 
-1. Create or register a small table from normalized Plan 110 Parquet.
-2. Query it from the same DuckDB/dbt-runner environment used by this project.
-3. Capture snapshot/version metadata.
-4. Time-travel to a prior snapshot/version.
-5. Record the snapshot/version ID in an MLflow test run.
-6. Validate repeated reads return stable row counts.
-7. Verify MinIO path ownership and cleanup behavior are understood.
-8. Verify rollback is simple: dropping the test catalog/table does not affect
-   source Parquet.
-9. Document operational complexity: services, credentials, deployment changes,
-   backup/restore needs, and failure modes.
-10. Score portfolio value separately from operational fit.
+1. Row counts by source window.
+2. Distinct VIN/listing coverage.
+3. Null rates on key fields.
+4. Duplicate key checks at expected grain.
+5. Freshness and input-window checks.
+6. Fingerprint stability on repeated identical parsed states.
+7. State-run continuity: no impossible overlaps or negative durations.
+8. Volatility feature sanity: no unbounded scores, obvious date inversions, or
+   impossible counts.
+9. Sampled manual review for several VIN histories.
+10. Identify whether the backtest grain should be VIN-only or VIN plus listing
+    metadata for specific edge cases.
 
-Decision criteria:
+Deliverable:
 
-| Criterion | DuckLake question | Iceberg question |
-|-----------|-------------------|------------------|
-| DuckDB/dbt fit | Can current jobs read/write it directly? | Is read/write practical without adding too much machinery? |
-| Snapshot fidelity | Are version IDs stable and easy to log? | Are snapshot IDs stable and easy to log? |
-| MinIO safety | Can we avoid accidental ownership of old files? | Can we avoid accidental ownership of old files? |
-| Ops burden | Does Postgres catalog setup stay simple? | Does catalog setup stay simple enough for one server? |
-| Backtest reproducibility | Can MLflow reproduce a run from recorded metadata? | Can MLflow reproduce a run from recorded metadata? |
-| Portfolio value | Does it tell a differentiated but legible story? | Does it tell a broadly recognized lakehouse story? |
+- `docs/adaptive_refresh_feature_audit.md`
 
-Expected output: a short markdown decision note committed with this plan's
-implementation docs, including the selected substrate and rejected alternative.
-
-If both candidates pass technically and Iceberg is only moderately harder,
-prefer Iceberg for portfolio value. If Iceberg requires disproportionate
-infrastructure or introduces fragile deployment work, prefer DuckLake and keep
-the project moving.
+Plan 112 should not proceed to model/backtest claims until this audit is
+complete.
 
 ---
 
-## Lakehouse Substrate
+## Phase 1: Delta + Unity Catalog OSS Spike
 
-Register or create lakehouse tables for the datasets needed by refresh
-experiments:
+Run this first on isolated data and isolated object-store prefixes.
 
-| Logical table | Source |
-|---------------|--------|
-| `silver_observations` | normalized `silver/observations` from Plan 110 |
-| `price_observation_events` | normalized ops event Parquet |
-| `vin_to_listing_events` | normalized ops event Parquet |
-| `blocked_cooldown_events` | normalized ops event Parquet |
-| `listing_state_fingerprints` | Plan 111 model output |
-| `listing_state_runs` | Plan 111 model output |
-| `listing_volatility_features` | Plan 111 model output |
-| `detail_refresh_priority` | Plan 111 model output |
+Minimum Delta checks:
 
-For each backtest run, record:
+1. Stand up a local Spark/PySpark environment.
+2. Write a small Delta table from a Plan 110 normalized Parquet subset.
+3. Read it back through Spark.
+4. Append a second version.
+5. Time travel to a previous version.
+6. Capture table name, version, path, row count, and schema programmatically.
+7. Prove cleanup does not mutate source Parquet.
 
-- table name
-- snapshot/version ID
-- snapshot timestamp
-- row count
-- input window start/end
-- source code commit SHA
+Minimum Unity Catalog OSS checks:
 
-### Catalog Choice
+1. Stand up Unity Catalog OSS or document why it is deferred.
+2. Register or expose a test table if feasible.
+3. Test the smallest useful governance behavior, such as reader/writer
+   separation or table ownership metadata.
+4. Document differences from managed Databricks Unity Catalog.
 
-Use the simplest catalog that works on the current single-server setup. The
-research spike determines the exact choice. Candidates:
+Decision output:
 
-- DuckLake with a Postgres catalog and MinIO data files.
-- DuckDB Iceberg extension if it supports the required read/write pattern.
-- PyIceberg with a local/sql catalog and MinIO object storage.
-- A minimal file/catalog approach if full service deployment is unnecessary for
-  the first experiment substrate.
+- `docs/lakehouse_substrate_decision.md`
+- selected local table/catalog path
+- rejected alternatives
+- exact spike commands
+- cleanup proof
+- known gaps vs managed Databricks
 
-The implementation should prefer operational simplicity over enterprise
-completeness. The goal is reproducible backtests, not a full lakehouse platform.
+Fallback rule:
+
+If Delta works but Unity Catalog OSS blocks the local workflow, continue with
+Delta + MLflow and defer catalog integration to Plan 119. If Delta itself is
+disproportionately fragile locally, re-open Iceberg + Polaris.
 
 ---
 
-## MLflow Tracking
+## Phase 2: MLflow Foundation
 
-Add MLflow for backtest experiment tracking.
+Stand up MLflow before serious backtesting.
 
-Backend/artifact defaults:
+Initial deployment:
 
-- Backend store: existing Postgres, if practical.
-- Artifact store: MinIO or local mounted volume.
+- Backend store: existing Postgres if practical.
+- Artifact store: MinIO or a mounted Docker volume.
+- Access: internal first.
 
-Each run logs:
+Create one smoke-test experiment and log:
 
-### Parameters
+- code SHA
+- Delta table name
+- Delta table version
+- input row count
+- placeholder metrics
+- `dataset_snapshot.json`
+
+Required MLflow metadata:
+
+| Field | Description |
+|-------|-------------|
+| `policy_family` | `baseline`, `rule`, or `xgboost` |
+| `input_window_start` | First `fetched_at` included |
+| `input_window_end` | Last `fetched_at` included |
+| `code_sha` | Git commit used for replay |
+| `entity_grain` | Expected to be `vin17` unless the audit says otherwise |
+| `delta.table` | Source table name |
+| `delta.version` | Source table version |
+| `dataset.row_count` | Input row count |
+| `dataset.distinct_vins` | Distinct VIN count |
+
+Artifacts:
+
+- `dataset_snapshot.json`
+- `policy_config.json`
+- `environment.json`
+
+---
+
+## Phase 3: Backtest Input Preparation
+
+Prepare stable replay inputs once per dataset/version/window.
+
+Required inputs:
+
+- historical detail fetch points
+- parsed state fingerprints
+- state runs
+- volatility features
+- SRP recency signals
+- listing/VIN relisting signals
+- 403/cooldown signals where relevant
+
+Backtesting and modeling are VIN-grained unless the Phase 0 audit shows that a
+specific feature requires a secondary listing-level signal.
+
+Backtest decision rows should be keyed by:
+
+```text
+(policy_run_id, vin17, fetch_time)
+```
+
+Recommended supporting fields:
+
+- `listing_id`
+- `latest_listing_id`
+- `listing_id_change_count`
+- `source`
+- `dealer/customer identifiers`
+- `make/model/trim/year`
+
+---
+
+## Phase 4: Rule-Based Replay
+
+Run an interpretable policy grid before ML training.
+
+Candidate parameters:
 
 | Parameter | Description |
 |-----------|-------------|
@@ -197,106 +233,115 @@ Each run logs:
 | `daily_interval_hours` | Fetch interval for daily tier |
 | `cool_interval_hours` | Fetch interval for cool tier |
 | `cold_interval_hours` | Fetch interval for cold tier |
-| `input_window_start` | First fetched_at included |
-| `input_window_end` | Last fetched_at included |
-| `code_sha` | Git commit used for replay |
+| `srp_recent_hours` | Promotion window for recent SRP appearance |
+| `new_vin_hours` | Promotion window for new VINs |
 
-### Dataset Tags
+Replay algorithm:
 
-| Tag | Description |
-|-----|-------------|
-| `lakehouse.substrate` | Selected substrate, e.g. `ducklake` or `iceberg` |
-| `lakehouse.silver_observations.snapshot_id` | Source observation snapshot/version |
-| `lakehouse.listing_state_runs.snapshot_id` | State-run snapshot/version |
-| `lakehouse.detail_refresh_priority.snapshot_id` | Feature/score snapshot/version |
-| `dataset.row_count` | Input row count used for replay |
+1. Walk historical detail fetch points for each VIN in chronological order.
+2. Track the latest state the policy would have observed.
+3. At each historical fetch point:
+   - fetch if `next_detail_fetch_after <= fetch_time`
+   - otherwise skip
+4. When actual parsed state changes, compute when the policy would detect it.
+5. Aggregate skip, delay, and missed-window metrics.
 
-### Metrics
+Primary metrics:
 
 | Metric | Description |
 |--------|-------------|
 | `fetches_total` | Baseline fetch count |
 | `fetches_skipped` | Fetches policy would skip |
 | `fetches_skipped_pct` | Primary efficiency metric |
-| `price_changes_delayed_pct` | Primary quality metric |
-| `state_changes_delayed_pct` | Parsed-state changes delayed |
-| `median_detection_delay_hours` | Typical detection lag |
-| `p95_detection_delay_hours` | Tail detection lag |
+| `price_changes_delayed_pct` | Price changes delayed |
+| `state_changes_delayed_pct` | Listing-state changes delayed |
+| `relisting_changes_delayed_pct` | Listing-ID changes delayed |
+| `median_detection_delay_hours` | Typical delay |
+| `p95_detection_delay_hours` | Tail delay |
 | `missed_active_periods_pct` | Inventory tracking gaps |
 | `estimated_403_reduction_pct` | Proxy from reduced detail fetches |
 
-### Artifacts
+---
 
-- `policy_config.json`
-- `dataset_snapshot.json`
-- `mart_backtest_policy_summary.parquet`
-- `policy_decisions_sample.parquet`
-- optional plots for skip rate vs detection delay
+## Phase 5: XGBoost Experiment
+
+After the rule baseline and labels are stable, train an XGBoost model.
+
+This is a learning goal and an experiment. It does not go to production in this
+plan.
+
+Start with one binary target:
+
+- `material_change_within_48h`
+
+Candidate features:
+
+- days since last state change
+- unchanged observation streak
+- price change counts
+- listing ID change counts
+- SRP recency
+- make/model priors
+- dealer priors
+- current price band
+- mileage band
+- stock type
+- fuel/body style
+- cooldown/403 pressure
+
+Log to MLflow:
+
+- train/validation window boundaries
+- Delta table versions
+- XGBoost hyperparameters
+- AUC/PR-AUC/log-loss
+- calibration summary
+- confusion matrix at candidate thresholds
+- feature importance
+- model artifact
+- prediction sample
 
 ---
 
-## Inputs
-
-- Lakehouse snapshot of `int_listing_state_runs` from Plan 111: ground truth
-  state-change timeline.
-- Lakehouse snapshot of `mart_detail_refresh_priority` from Plan 111: policy
-  scoring output.
-- Candidate policy parameters varied per run.
-
----
-
-## Replay Algorithm
-
-For each listing:
-
-1. Walk the listing's historical state-run timeline in chronological order.
-2. At each actual historical fetch point, apply the candidate policy:
-   - If `next_detail_fetch_after <= fetch_time`, policy would fetch.
-   - Otherwise, policy would skip.
-3. For skipped fetches, record whether a state change occurred between the last
-   policy-observed fetch and the next policy-eligible fetch.
-4. Compute per-listing detection delay for any changes that were delayed.
-5. Aggregate skipped fetches, delayed changes, and missed active windows.
-
-The replay must pin all inputs to lakehouse snapshot/version IDs and record
-those IDs in MLflow. If lakehouse setup is not complete, the runner may support
-a temporary fixed-window fallback, but that fallback is not sufficient for
-approving a production policy.
-
----
-
-## Backtest Models
+## Output Tables / Artifacts
 
 ### `int_backtest_policy_decisions`
 
-Row per `(listing_id, fetch_point, policy_run_id)`.
+Row per `(policy_run_id, vin17, fetch_time)`.
 
 | Column | Description |
 |--------|-------------|
 | `policy_run_id` | Policy run identifier |
 | `mlflow_run_id` | MLflow run identifier |
-| `listing_id` | Listing key |
+| `vin17` | Primary entity key |
+| `listing_id` | Historical listing ID at fetch time |
 | `fetch_time` | Historical candidate fetch point |
 | `would_fetch` | Boolean |
 | `would_skip` | Boolean |
-| `score_at_time` | Volatility score used |
+| `score_at_time` | Rule/model score used |
 | `tier_at_time` | Tier assigned |
 | `reason` | Dominant decision reason |
+| `actual_change_at` | Change timestamp if applicable |
+| `policy_detected_at` | Policy detection timestamp if delayed |
+| `delay_hours` | Detection delay |
 
 ### `mart_backtest_policy_summary`
 
-One row per policy run with aggregate outcome metrics.
+One row per policy run.
 
 | Column | Description |
 |--------|-------------|
 | `policy_run_id` | Policy run identifier |
 | `mlflow_run_id` | MLflow run identifier |
-| `input_snapshot_id` | Primary lakehouse snapshot/version ID or manifest reference |
+| `input_table` | Primary Delta table |
+| `input_table_version` | Primary Delta table version |
+| `policy_family` | `baseline`, `rule`, or `xgboost` |
 | `fetches_total` | Baseline fetch count |
 | `fetches_skipped` | Fetches policy would skip |
 | `fetches_skipped_pct` | Skip rate |
 | `price_changes_delayed` | Price changes detected late |
-| `state_changes_delayed` | Any parsed-state changes detected late |
+| `state_changes_delayed` | Listing-state changes detected late |
+| `relisting_changes_delayed` | Listing-ID changes detected late |
 | `median_detection_delay_hours` | Typical delay |
 | `p95_detection_delay_hours` | Tail delay |
 | `missed_active_periods` | Short-lived inventory missed |
@@ -304,76 +349,35 @@ One row per policy run with aggregate outcome metrics.
 
 ---
 
-## Baseline Run
+## Evaluation Gates
 
-Log one MLflow run with `would_fetch = true` for all points. Every candidate
-policy is compared to this baseline.
-
-The baseline run should still log lakehouse snapshot/version IDs so future
-candidate runs can prove they used comparable inputs.
-
----
-
-## Evaluation Criteria
-
-Before approving any policy for production, the chosen run must satisfy:
+Before approving any policy for Plan 113, the chosen run must satisfy
+provisional gates:
 
 | Gate | Provisional Threshold |
 |------|-----------------------|
 | `fetches_skipped_pct` | >= 50% |
 | `p95_detection_delay_hours` | <= 48h |
-| `missed_active_periods` | <= 2% of total active periods |
+| `missed_active_periods_pct` | <= 2% |
+| `price_changes_delayed_pct` | reviewed against business impact |
 
-These thresholds are provisional and must be reviewed against actual backtest
-results before being treated as binding.
-
----
-
-## Execution
-
-Initial execution can be a local script or dbt operation. Add an Airflow DAG
-only after the replay is stable and needs scheduled repetition.
-
-Eventual `backtest_refresh_policy` DAG:
-
-1. Ensure required lakehouse tables/snapshots exist.
-2. Read policy parameter grid from config.
-3. For each candidate policy, start an MLflow run.
-4. Materialize `mart_backtest_policy_summary`.
-5. Log params, metrics, lakehouse snapshot/version IDs, and artifacts.
-6. Log the best run ID by skip rate subject to quality gates.
+XGBoost does not need to beat the rule policy to be valuable. It should teach
+whether the available features support useful predictive signal.
 
 ---
 
 ## Testing
 
-### Unit Tests
-
-- Replay algorithm correctly identifies skipped fetches and delayed detections.
-- Detection delay is zero when the policy would have fetched on time.
+- Feature audit queries catch duplicate keys, null keys, impossible date spans,
+  and unstable grains.
+- Delta spike can create, append, read, time travel, and clean up a fixture
+  table.
+- MLflow run logs params, metrics, tags, and artifacts.
+- Replay algorithm correctly identifies skipped fetches and detection delay.
 - Baseline run produces `fetches_skipped_pct = 0`.
-- Policy params and summary metrics are written with correct values.
-- MLflow logging receives params, metrics, tags, and artifacts.
-- Snapshot metadata is required for non-fallback approval runs.
-
-### Backtest Correctness Tests
-
-- Synthetic listing with no changes is throttled.
-- Synthetic listing with recent price drop remains high priority.
-- Newly discovered listing is always eligible.
-- Listing with SRP recency is promoted.
-- Detection-delay metrics are computed correctly for a known state change.
-
-### Integration Tests
-
-- The selected lakehouse substrate reads a small normalized Parquet fixture.
-- Snapshot metadata is captured for a fixed input table.
-- Artifacts are written to the configured output path and retrievable.
-- Repeated runs against the same snapshot produce stable row counts.
-- Baseline and candidate runs are comparable by `policy_run_id`.
-- MLflow run can be queried by run ID and contains expected metrics/artifacts.
-- Substrate research spike proves table cleanup/drop does not mutate source
-  Plan 110 Parquet.
+- Newly discovered VINs remain eligible.
+- Recent price drops remain high priority.
+- Known state changes produce expected `delay_hours`.
 
 ---
 
@@ -381,25 +385,28 @@ Eventual `backtest_refresh_policy` DAG:
 
 | File | Change |
 |------|--------|
-| `docs/lakehouse_substrate_decision.md` | New DuckLake vs Iceberg spike result |
-| `scripts/register_lakehouse_tables.py` | New selected-substrate registration/setup helper |
-| `scripts/backtest_refresh_policy.py` | New local/DuckDB/lakehouse runner |
-| `dbt/models/intermediate/int_backtest_policy_decisions.sql` | New |
-| `dbt/models/marts/mart_backtest_policy_summary.sql` | New |
-| `mlflow/` or config file | Optional MLflow server/config wiring |
-| `airflow/dags/backtest_refresh_policy.py` | Optional later DAG |
+| `docs/adaptive_refresh_feature_audit.md` | New feature output audit |
+| `docs/lakehouse_substrate_decision.md` | New Delta/Unity Catalog OSS spike result |
+| `scripts/spike_delta_lakehouse.py` | New isolated Delta spike helper |
+| `scripts/register_delta_tables.py` | New selected-table setup helper |
+| `scripts/backtest_refresh_policy.py` | New replay runner |
+| `scripts/train_refresh_xgboost.py` | New XGBoost experiment runner |
+| `mlflow/` or config file | MLflow server/config wiring |
 | `tests/test_backtest_replay.py` | Replay algorithm unit tests |
-| `tests/integration/test_refresh_backtest_outputs.py` | Output artifact integration tests |
-| `tests/integration/test_lakehouse_refresh_snapshots.py` | Lakehouse snapshot tests |
+| `tests/test_refresh_xgboost.py` | Model training/evaluation tests |
+| `tests/integration/test_delta_refresh_versions.py` | Delta version tests |
 | `tests/integration/test_mlflow_refresh_runs.py` | MLflow tracking tests |
 
 ---
 
-## Out of Scope
+## Out Of Scope
 
-- Production ops integration. See Plan 113.
-- Online ML model serving.
-- MLflow model registry promotion.
-- Automatic lakehouse maintenance/compaction beyond what is needed for the
-  first backtest substrate.
-- Exact raw HTML dedup. See Plan 110 and Plan 114.
+- Production ops claim-query integration. See Plan 113.
+- CI/local fixture snapshot export and delivery. See Plan 120.
+- Full dbt migration away from DuckDB. See Plan 118.
+- Governance/catalog expansion beyond the spike. See Plan 119.
+- Online model serving.
+- Automatic model promotion.
+- Calling MLflow, Spark, Delta, or Unity Catalog in the hot production scrape
+  path.
+- Raw HTML sectioning/deduplication. See Plan 114.

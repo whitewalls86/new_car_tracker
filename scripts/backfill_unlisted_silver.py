@@ -17,13 +17,14 @@ produce correct results (row_number() deduplication in int_latest_observation pi
 the most recent row per vin17), but it wastes storage.
 """
 import logging
-import os
 import uuid
 from datetime import datetime, timezone
 
-import duckdb
 import pyarrow as pa
 import pyarrow.parquet as pq
+
+from shared.duckdb_s3 import get_duckdb_s3_connection
+from shared.minio import BUCKET, get_s3fs
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -32,11 +33,7 @@ logger = logging.getLogger(__name__)
 # Config
 # ---------------------------------------------------------------------------
 
-MINIO_ENDPOINT = os.environ["MINIO_ENDPOINT"].replace("http://", "")
-MINIO_USER     = os.environ["MINIO_ROOT_USER"]
-MINIO_PASSWORD = os.environ["MINIO_ROOT_PASSWORD"]
-BUCKET         = os.environ.get("MINIO_BUCKET", "bronze")
-MINIO_PREFIX   = "silver/observations"
+MINIO_PREFIX = "silver/observations"
 
 # ---------------------------------------------------------------------------
 # Schema (mirrors flush_silver_observations.py)
@@ -90,14 +87,7 @@ _SCHEMA = pa.schema([
 def main():
     # --- Step 1: Query MinIO for unlisted events with resolved VINs -----------
     logger.info("Connecting to DuckDB and configuring MinIO credentials...")
-    con = duckdb.connect()
-    con.execute(f"""
-        SET s3_endpoint='{MINIO_ENDPOINT}';
-        SET s3_access_key_id='{MINIO_USER}';
-        SET s3_secret_access_key='{MINIO_PASSWORD}';
-        SET s3_use_ssl=false;
-        SET s3_url_style='path';
-    """)
+    con = get_duckdb_s3_connection()
 
     logger.info("Querying unlisted events with resolvable VINs and make/model...")
     rows = con.execute("""
@@ -205,13 +195,7 @@ def main():
     # --- Step 3: Write to MinIO ----------------------------------------------
     logger.info("Writing %d rows to MinIO silver...", len(silver_rows))
 
-    import s3fs
-    fs = s3fs.S3FileSystem(
-        key=MINIO_USER,
-        secret=MINIO_PASSWORD,
-        use_ssl=False,
-        client_kwargs={"endpoint_url": f"http://{MINIO_ENDPOINT}"},
-    )
+    fs = get_s3fs()
 
     arrow_table = pa.Table.from_pylist(silver_rows, schema=_SCHEMA)
     pq.write_to_dataset(

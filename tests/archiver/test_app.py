@@ -256,6 +256,285 @@ class TestCompactSilverRunEndpoint:
 
 
 # ---------------------------------------------------------------------------
+# POST /snapshots/adaptive-refresh/run  (Plan 120)
+# ---------------------------------------------------------------------------
+
+class TestSnapshotExportRunEndpoint:
+    def test_dry_run_calls_processor_and_returns_json(self, mock_archiver_client, mocker):
+        fake_result = {
+            "snapshot_id": "adaptive-refresh-2026-07-07-000000",
+            "tier": "ci",
+            "status": "planned",
+            "source_window_start": None,
+            "source_window_end": None,
+            "seed_vin_count": None,
+            "closed_vin_count": None,
+            "listing_count": None,
+            "artifact_count": None,
+            "archive_bytes": None,
+            "manifest_key": None,
+            "archive_key": None,
+            "coverage_failures": [],
+        }
+        mock_fn = mocker.patch("archiver.app._export_ci_lake_snapshot")
+        mock_fn.return_value.to_dict.return_value = fake_result
+        resp = mock_archiver_client.post(
+            "/snapshots/adaptive-refresh/run", json={"tier": "ci", "dry_run": True}
+        )
+        assert resp.status_code == 200
+        assert resp.json() == fake_result
+        assert mock_fn.called
+
+    def test_missing_body_defaults_to_empty_payload(self, mock_archiver_client, mocker):
+        mock_fn = mocker.patch("archiver.app._export_ci_lake_snapshot")
+        mock_fn.return_value.to_dict.return_value = {"status": "planned"}
+        resp = mock_archiver_client.post("/snapshots/adaptive-refresh/run", json={})
+        assert resp.status_code == 200
+        request_arg = mock_fn.call_args[0][0]
+        assert request_arg.tier is None
+
+    def test_invalid_tier_returns_400(self, mock_archiver_client):
+        resp = mock_archiver_client.post(
+            "/snapshots/adaptive-refresh/run", json={"tier": "bogus"}
+        )
+        assert resp.status_code == 400
+
+    def test_non_dry_run_is_explicit_not_implemented(self, mock_archiver_client):
+        resp = mock_archiver_client.post(
+            "/snapshots/adaptive-refresh/run", json={"tier": "ci", "dry_run": False}
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "not_implemented"
+
+    def test_tier_defaults_flow_through_to_dry_run_result(self, mock_archiver_client):
+        resp = mock_archiver_client.post(
+            "/snapshots/adaptive-refresh/run", json={"tier": "edge", "dry_run": True}
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["tier"] == "edge"
+        assert data["status"] == "planned"
+
+    def test_malformed_source_window_start_returns_400(self, mock_archiver_client):
+        resp = mock_archiver_client.post(
+            "/snapshots/adaptive-refresh/run",
+            json={"tier": "ci", "source_window_start": "not-a-date", "dry_run": True},
+        )
+        assert resp.status_code == 400
+
+    def test_non_numeric_limit_returns_400(self, mock_archiver_client):
+        resp = mock_archiver_client.post(
+            "/snapshots/adaptive-refresh/run",
+            json={"tier": "ci", "target_vins": "five-thousand", "dry_run": True},
+        )
+        assert resp.status_code == 400
+
+    def test_audit_sources_forwarded_to_request_and_response(self, mock_archiver_client, mocker):
+        mocker.patch("archiver.app._ALLOW_SOURCE_BASE_PATH", True)
+        fake_result = {
+            "snapshot_id": "adaptive-refresh-2026-07-07-000000",
+            "tier": "ci",
+            "status": "audited",
+            "source_audit": {"tables": {}, "window": {"start": None, "end": None},
+                              "errors": [], "ok": True},
+        }
+        mock_fn = mocker.patch("archiver.app._export_ci_lake_snapshot")
+        mock_fn.return_value.to_dict.return_value = fake_result
+        resp = mock_archiver_client.post(
+            "/snapshots/adaptive-refresh/run",
+            json={
+                "tier": "ci", "dry_run": True, "audit_sources": True,
+                "source_base_path": "/tmp/lake",
+            },
+        )
+        assert resp.status_code == 200
+        assert resp.json()["source_audit"]["ok"] is True
+        request_arg = mock_fn.call_args[0][0]
+        assert request_arg.audit_sources is True
+        assert request_arg.source_base_path == "/tmp/lake"
+
+    def test_audit_sources_defaults_to_false(self, mock_archiver_client, mocker):
+        mock_fn = mocker.patch("archiver.app._export_ci_lake_snapshot")
+        mock_fn.return_value.to_dict.return_value = {"status": "planned"}
+        mock_archiver_client.post(
+            "/snapshots/adaptive-refresh/run", json={"tier": "ci", "dry_run": True}
+        )
+        request_arg = mock_fn.call_args[0][0]
+        assert request_arg.audit_sources is False
+        assert request_arg.source_base_path is None
+
+    def test_run_selectors_defaults_to_false(self, mock_archiver_client, mocker):
+        mock_fn = mocker.patch("archiver.app._export_ci_lake_snapshot")
+        mock_fn.return_value.to_dict.return_value = {"status": "planned"}
+        mock_archiver_client.post(
+            "/snapshots/adaptive-refresh/run", json={"tier": "ci", "dry_run": True}
+        )
+        request_arg = mock_fn.call_args[0][0]
+        assert request_arg.run_selectors is False
+
+    def test_run_selectors_forwarded_to_request_and_response(self, mock_archiver_client, mocker):
+        mocker.patch("archiver.app._ALLOW_SOURCE_BASE_PATH", True)
+        fake_result = {
+            "snapshot_id": "adaptive-refresh-2026-07-07-000000",
+            "tier": "ci",
+            "status": "planned",
+            "selector_diagnostics": {"selectors": {}, "errors": [], "ok": True},
+        }
+        mock_fn = mocker.patch("archiver.app._export_ci_lake_snapshot")
+        mock_fn.return_value.to_dict.return_value = fake_result
+        resp = mock_archiver_client.post(
+            "/snapshots/adaptive-refresh/run",
+            json={
+                "tier": "ci", "dry_run": True, "run_selectors": True,
+                "source_base_path": "/tmp/lake",
+            },
+        )
+        assert resp.status_code == 200
+        assert resp.json()["selector_diagnostics"]["ok"] is True
+        request_arg = mock_fn.call_args[0][0]
+        assert request_arg.run_selectors is True
+
+    def test_source_base_path_rejected_by_default(self, mock_archiver_client, mocker):
+        mock_fn = mocker.patch("archiver.app._export_ci_lake_snapshot")
+        resp = mock_archiver_client.post(
+            "/snapshots/adaptive-refresh/run",
+            json={
+                "tier": "ci", "dry_run": True, "run_selectors": True,
+                "source_base_path": "/tmp/lake",
+            },
+        )
+        assert resp.status_code == 400
+        assert not mock_fn.called
+
+    def test_source_base_path_allowed_when_flag_enabled(self, mock_archiver_client, mocker):
+        mocker.patch("archiver.app._ALLOW_SOURCE_BASE_PATH", True)
+        mock_fn = mocker.patch("archiver.app._export_ci_lake_snapshot")
+        mock_fn.return_value.to_dict.return_value = {"status": "planned"}
+        resp = mock_archiver_client.post(
+            "/snapshots/adaptive-refresh/run",
+            json={"tier": "ci", "dry_run": True, "source_base_path": "/tmp/lake"},
+        )
+        assert resp.status_code == 200
+        assert mock_fn.called
+
+    def test_malformed_payload_with_audit_sources_still_returns_400(self, mock_archiver_client):
+        resp = mock_archiver_client.post(
+            "/snapshots/adaptive-refresh/run",
+            json={"tier": "bogus", "audit_sources": True},
+        )
+        assert resp.status_code == 400
+
+    # -----------------------------------------------------------------------
+    # build_cohort sync safeguard (Plan 120 Gate C.5)
+    # -----------------------------------------------------------------------
+
+    def test_build_cohort_rejected_by_default(self, mock_archiver_client, mocker):
+        mock_fn = mocker.patch("archiver.app._export_ci_lake_snapshot")
+        resp = mock_archiver_client.post(
+            "/snapshots/adaptive-refresh/run",
+            json={
+                "tier": "edge", "dry_run": True, "run_selectors": True,
+                "build_cohort": True,
+            },
+        )
+        assert resp.status_code == 409
+        assert not mock_fn.called
+        assert "snapshot-worker" in resp.json()["detail"]
+
+    def test_build_cohort_allowed_when_override_enabled(self, mock_archiver_client, mocker):
+        mocker.patch("archiver.app._ALLOW_SYNC_SNAPSHOT_COHORT", True)
+        mock_fn = mocker.patch("archiver.app._export_ci_lake_snapshot")
+        mock_fn.return_value.to_dict.return_value = {"status": "planned"}
+        resp = mock_archiver_client.post(
+            "/snapshots/adaptive-refresh/run",
+            json={
+                "tier": "edge", "dry_run": True, "run_selectors": True,
+                "build_cohort": True,
+            },
+        )
+        assert resp.status_code == 200
+        assert mock_fn.called
+
+    def test_dry_run_without_build_cohort_still_allowed_by_default(
+        self, mock_archiver_client, mocker
+    ):
+        mock_fn = mocker.patch("archiver.app._export_ci_lake_snapshot")
+        mock_fn.return_value.to_dict.return_value = {"status": "planned"}
+        resp = mock_archiver_client.post(
+            "/snapshots/adaptive-refresh/run", json={"tier": "edge", "dry_run": True}
+        )
+        assert resp.status_code == 200
+        assert mock_fn.called
+
+    def test_audit_sources_still_allowed_by_default(self, mock_archiver_client, mocker):
+        mock_fn = mocker.patch("archiver.app._export_ci_lake_snapshot")
+        mock_fn.return_value.to_dict.return_value = {"status": "audited"}
+        resp = mock_archiver_client.post(
+            "/snapshots/adaptive-refresh/run", json={"tier": "edge", "audit_sources": True}
+        )
+        assert resp.status_code == 200
+        assert mock_fn.called
+
+    def test_build_cohort_false_not_blocked_by_default(self, mock_archiver_client, mocker):
+        mock_fn = mocker.patch("archiver.app._export_ci_lake_snapshot")
+        mock_fn.return_value.to_dict.return_value = {"status": "planned"}
+        resp = mock_archiver_client.post(
+            "/snapshots/adaptive-refresh/run",
+            json={"tier": "edge", "dry_run": True, "build_cohort": False},
+        )
+        assert resp.status_code == 200
+        assert mock_fn.called
+
+    # -----------------------------------------------------------------------
+    # Planning cache fields (Plan 120 Gate C.75)
+    # -----------------------------------------------------------------------
+
+    def test_planning_cache_fields_default(self, mock_archiver_client, mocker):
+        mock_fn = mocker.patch("archiver.app._export_ci_lake_snapshot")
+        mock_fn.return_value.to_dict.return_value = {"status": "planned"}
+        mock_archiver_client.post(
+            "/snapshots/adaptive-refresh/run", json={"tier": "ci", "dry_run": True}
+        )
+        request_arg = mock_fn.call_args[0][0]
+        assert request_arg.reuse_planning_cache is False
+        assert request_arg.refresh_planning_cache is False
+        assert request_arg.planning_cache_bucket_grain == "week"
+        assert request_arg.planning_cache_prefix == "snapshot_planning_cache"
+
+    def test_planning_cache_fields_forwarded(self, mock_archiver_client, mocker):
+        mock_fn = mocker.patch("archiver.app._export_ci_lake_snapshot")
+        mock_fn.return_value.to_dict.return_value = {"status": "planned"}
+        mock_archiver_client.post(
+            "/snapshots/adaptive-refresh/run",
+            json={
+                "tier": "ci", "dry_run": True,
+                "reuse_planning_cache": True,
+                "planning_cache_bucket_grain": "day",
+                "planning_cache_prefix": "custom_prefix",
+            },
+        )
+        request_arg = mock_fn.call_args[0][0]
+        assert request_arg.reuse_planning_cache is True
+        assert request_arg.refresh_planning_cache is False
+        assert request_arg.planning_cache_bucket_grain == "day"
+        assert request_arg.planning_cache_prefix == "custom_prefix"
+
+    def test_build_cohort_guard_still_intact_with_planning_cache_fields(
+        self, mock_archiver_client, mocker
+    ):
+        mock_fn = mocker.patch("archiver.app._export_ci_lake_snapshot")
+        resp = mock_archiver_client.post(
+            "/snapshots/adaptive-refresh/run",
+            json={
+                "tier": "edge", "dry_run": True, "run_selectors": True,
+                "build_cohort": True, "reuse_planning_cache": True,
+            },
+        )
+        assert resp.status_code == 409
+        assert not mock_fn.called
+
+
+# ---------------------------------------------------------------------------
 # GET /ready
 # ---------------------------------------------------------------------------
 

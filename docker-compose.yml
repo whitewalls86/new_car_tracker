@@ -320,6 +320,39 @@ services:
     networks:
       - cartracker-net
 
+  # Plan 120 Gate C.5: isolated one-shot worker for production-sized CI lake
+  # snapshot generation (selector scans, cohort allocation/closure). Reuses
+  # the archiver image/build context but never serves archiver API traffic
+  # and never starts with `docker compose up` (profile-gated, no restart
+  # policy, no ports). Invoke explicitly, e.g.:
+  #   docker compose run --rm snapshot-worker python -m \
+  #     archiver.processors.export_ci_lake_snapshot --tier edge --dry-run \
+  #     --run-selectors --build-cohort --source-window-months 1 --target-vins 100
+  snapshot-worker:
+    build:
+      context: .
+      dockerfile: archiver/Dockerfile
+    image: cartracker-archiver
+    container_name: cartracker-snapshot-worker
+    profiles: ["snapshot-worker"]
+    environment:
+      PGHOST: postgres
+      PGPORT: 5432
+      PGDATABASE: cartracker
+      PGUSER: scraper_user
+      POSTGRES_PASSWORD: ${SCRAPER_DB_PASSWORD}
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_BUCKET: bronze
+    depends_on:
+      flyway:
+        condition: service_completed_successfully
+      minio:
+        condition: service_started
+    networks:
+      - cartracker-net
+
   dashboard:
     build:
       context: ./dashboard
