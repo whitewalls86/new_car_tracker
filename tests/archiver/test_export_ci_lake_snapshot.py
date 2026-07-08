@@ -222,6 +222,194 @@ class TestSelectorRegistry:
         registry = build_selector_registry()
         assert set(RUNNABLE_SELECTORS) == set(registry.keys())
 
+    def test_selector_sql_loads_from_sql_files(self):
+        """Selector SQL is loaded from archiver/sql/lake_snapshot_selectors/*.sql
+        rather than embedded as Python string constants (Plan 120 Gate B
+        refactor) — every runnable selector's template must resolve to a
+        readable file, not an empty/placeholder string."""
+        from archiver.processors.lake_snapshot_selectors import (
+            _SELECTOR_CONFIGS,
+            _SQL_DIR,
+            _q,
+        )
+
+        assert _SQL_DIR.is_dir()
+        registry = build_selector_registry()
+        for name in RUNNABLE_SELECTORS:
+            config = _SELECTOR_CONFIGS[name]
+            assert (_SQL_DIR / f"{config.sql_template}.sql").is_file()
+            assert registry[name].sql.strip()
+            assert registry[name].sql == _q(config.sql_template)
+
+
+# ---------------------------------------------------------------------------
+# Selector config validation (archiver/config/lake_snapshot_selectors.yml)
+# ---------------------------------------------------------------------------
+
+class TestSelectorConfigValidation:
+    """Validates archiver/config/lake_snapshot_selectors.yml, the single
+    source of truth for selector metadata (Plan 120 Gate B config refactor)."""
+
+    def _load(self, tmp_path, yaml_text):
+        from archiver.processors.lake_snapshot_selectors import _load_selector_configs
+
+        config_path = tmp_path / "selectors.yml"
+        config_path.write_text(yaml_text)
+        return _load_selector_configs(config_path)
+
+    def test_real_config_loads_without_error(self):
+        from archiver.processors.lake_snapshot_selectors import _load_selector_configs
+
+        configs = _load_selector_configs()
+        assert configs
+
+    def test_missing_top_level_selectors_key_rejected(self, tmp_path):
+        with pytest.raises(ValueError, match="top-level 'selectors' mapping"):
+            self._load(tmp_path, "not_selectors: {}\n")
+
+    def test_top_level_selectors_must_be_a_mapping(self, tmp_path):
+        with pytest.raises(ValueError, match="top-level 'selectors' mapping"):
+            self._load(tmp_path, "selectors: []\n")
+
+    def test_missing_required_key_rejected(self, tmp_path):
+        with pytest.raises(ValueError, match="missing required key 'entity_key'"):
+            self._load(tmp_path, """
+selectors:
+  relisted_vin:
+    min_entities: 10
+    source_table: vin_to_listing_events
+    sql_template: relisted_vin
+    timestamp_column: event_at
+    description: test
+""")
+
+    def test_negative_min_entities_rejected(self, tmp_path):
+        with pytest.raises(ValueError, match="non-negative integer"):
+            self._load(tmp_path, """
+selectors:
+  relisted_vin:
+    min_entities: -1
+    entity_key: vin
+    source_table: vin_to_listing_events
+    sql_template: relisted_vin
+    timestamp_column: event_at
+    description: test
+""")
+
+    def test_non_integer_min_entities_rejected(self, tmp_path):
+        with pytest.raises(ValueError, match="non-negative integer"):
+            self._load(tmp_path, """
+selectors:
+  relisted_vin:
+    min_entities: "ten"
+    entity_key: vin
+    source_table: vin_to_listing_events
+    sql_template: relisted_vin
+    timestamp_column: event_at
+    description: test
+""")
+
+    def test_non_list_base_filters_rejected(self, tmp_path):
+        with pytest.raises(ValueError, match="key 'base_filters' must be a list of strings"):
+            self._load(tmp_path, """
+selectors:
+  relisted_vin:
+    min_entities: 10
+    entity_key: vin
+    source_table: vin_to_listing_events
+    sql_template: relisted_vin
+    timestamp_column: event_at
+    base_filters: "not a list"
+    description: test
+""")
+
+    def test_non_list_extra_source_tables_rejected(self, tmp_path):
+        with pytest.raises(ValueError, match="key 'extra_source_tables' must be a list of strings"):
+            self._load(tmp_path, """
+selectors:
+  no_price_history:
+    min_entities: 10
+    entity_key: vin
+    source_table: silver_observations
+    sql_template: no_price_history
+    timestamp_column: fetched_at
+    extra_source_tables: "not a list"
+    description: test
+""")
+
+    def test_invalid_window_anchor_rejected(self, tmp_path):
+        with pytest.raises(ValueError, match="window_anchor must be one of"):
+            self._load(tmp_path, """
+selectors:
+  price_changed_7d:
+    min_entities: 25
+    entity_key: listing_id
+    source_table: price_observation_events
+    sql_template: price_changed_7d
+    timestamp_column: event_at
+    window_anchor: window_start
+    description: test
+""")
+
+    def test_unknown_source_table_rejected(self, tmp_path):
+        with pytest.raises(ValueError, match="unknown source table"):
+            self._load(tmp_path, """
+selectors:
+  relisted_vin:
+    min_entities: 10
+    entity_key: vin
+    source_table: not_a_real_table
+    sql_template: relisted_vin
+    timestamp_column: event_at
+    description: test
+""")
+
+    def test_unknown_extra_source_table_rejected(self, tmp_path):
+        with pytest.raises(ValueError, match="unknown source table"):
+            self._load(tmp_path, """
+selectors:
+  no_price_history:
+    min_entities: 10
+    entity_key: vin
+    source_table: silver_observations
+    sql_template: no_price_history
+    timestamp_column: fetched_at
+    extra_source_tables:
+      - not_a_real_table
+    description: test
+""")
+
+    def test_unknown_sql_template_rejected(self, tmp_path):
+        with pytest.raises(ValueError, match="no matching .sql file"):
+            self._load(tmp_path, """
+selectors:
+  relisted_vin:
+    min_entities: 10
+    entity_key: vin
+    source_table: vin_to_listing_events
+    sql_template: does_not_exist
+    timestamp_column: event_at
+    description: test
+""")
+
+    def test_runnable_selectors_exactly_matches_yaml_keys(self):
+        import yaml
+
+        from archiver.processors.lake_snapshot_selectors import _CONFIG_PATH
+
+        raw = yaml.safe_load(_CONFIG_PATH.read_text())
+        assert set(RUNNABLE_SELECTORS) == set(raw["selectors"].keys())
+
+    def test_registry_returns_one_selector_per_yaml_entry(self):
+        import yaml
+
+        from archiver.processors.lake_snapshot_selectors import _CONFIG_PATH
+
+        raw = yaml.safe_load(_CONFIG_PATH.read_text())
+        registry = build_selector_registry()
+        assert set(registry.keys()) == set(raw["selectors"].keys())
+        assert len(registry) == len(raw["selectors"])
+
 
 # ---------------------------------------------------------------------------
 # export_ci_lake_snapshot — dry run

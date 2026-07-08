@@ -14,14 +14,29 @@ fingerprint fields from `int_listing_state_fingerprints.sql` exactly (see the
 dbt-equivalence tests in `tests/archiver/test_export_ci_lake_snapshot.py`).
 """
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
+from functools import lru_cache
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from archiver.processors.lake_source_audit import resolve_table_path
+import yaml
+
+from archiver.processors.lake_source_audit import SOURCE_TABLE_SPECS, resolve_table_path
 from shared.duckdb_s3 import get_duckdb_s3_connection
+from shared.query_loader import load_query
 
 logger = logging.getLogger("archiver")
+
+_SQL_DIR = Path(__file__).parents[1] / "sql" / "lake_snapshot_selectors"
+_CONFIG_PATH = Path(__file__).parents[1] / "config" / "lake_snapshot_selectors.yml"
+
+_VALID_WINDOW_ANCHORS = ("window_end",)
+
+
+@lru_cache(maxsize=None)
+def _q(name: str) -> str:
+    return load_query(_SQL_DIR, name)
 
 
 @dataclass(frozen=True)
@@ -33,606 +48,131 @@ class Selector:
     description: str
 
 
-# name -> (min_entities, entity_key, description)
-_SELECTOR_SPECS: List[tuple] = [
-    ("stable_state_run", 25, "vin",
-     "VINs with multiple detail observations where the business-state "
-     "fingerprint is unchanged (gaps-and-islands collapse)."),
-    ("state_change_run", 25, "vin",
-     "VINs with multiple distinct business-state fingerprints (price, "
-     "mileage, dealer, or listing_state changes)."),
-    ("relisted_vin", 10, "vin",
-     "VINs with more than one listing_id or remap events with "
-     "previous_listing_id."),
-    ("active_to_unlisted", 10, "listing_id",
-     "VIN/listing with an active detail row followed by an unlisted/delete "
-     "event."),
-    ("price_drop", 25, "listing_id",
-     "Consecutive price event where price < prev_price."),
-    ("price_increase", 25, "listing_id",
-     "Consecutive price event where price > prev_price."),
-    ("price_changed_7d", 25, "listing_id",
-     "Price change within seven days of the source window end."),
-    ("price_changed_30d_only", 25, "listing_id",
-     "Price change within thirty days but outside the seven-day window."),
-    ("no_price_history", 25, "vin",
-     "Observation VIN lacking any matching positive price events."),
-    ("detail_beats_srp", 25, "vin",
-     "VIN with both detail and SRP observations where detail should win "
-     "latest-observation source priority."),
-    ("srp_fallback", 25, "vin",
-     "VIN with usable SRP attributes and missing/incomplete detail "
-     "attributes."),
-    ("carousel_only_or_low_priority", 25, "vin",
-     "VIN/listing represented only by carousel observations, or where "
-     "carousel loses priority to richer sources."),
-    ("invalid_or_null_vin", 25, "artifact_id",
-     "Rows with null or invalid VINs that must not become vin17."),
-    ("benchmark_dense_make_model", 3, "make_model",
-     "Make/model groups with enough rows for stable percentile/median "
-     "benchmarks."),
-    ("benchmark_sparse_make_model", 3, "make_model",
-     "Make/model groups with only a few rows, which must not disappear "
-     "silently."),
-    ("cooldown_blocked", 10, "listing_id",
-     "First 403 blocked cooldown event."),
-    ("cooldown_incremented", 10, "listing_id",
-     "Repeated 403 blocked attempt event."),
-    ("cooldown_bucket_3_4", 1, "listing_id",
-     "Cooldown attempts between 3 and 4 (bucket boundary)."),
-    ("cooldown_bucket_5_10", 1, "listing_id",
-     "Cooldown attempts between 5 and 10 (bucket boundary)."),
-    ("cooldown_bucket_11_plus", 1, "listing_id",
-     "Cooldown attempts >= 11 (high-attempt bucket)."),
-    ("fresh_recent_listing", 25, "listing_id",
-     "Young/current active listing."),
-    ("stale_listing", 25, "listing_id",
-     "Old listing, or listing with stale SRP/detail recency."),
-]
+@dataclass(frozen=True)
+class SelectorConfig:
+    name: str
+    min_entities: int
+    entity_key: str
+    source_table: str
+    sql_template: str
+    timestamp_column: str
+    description: str
+    base_filters: Tuple[str, ...] = field(default_factory=tuple)
+    extra_source_tables: Tuple[str, ...] = field(default_factory=tuple)
+    window_anchor: Optional[str] = None
 
 
-def _placeholder_sql(name: str) -> str:
-    return f"-- TODO: implement selector SQL for '{name}'\nSELECT NULL WHERE FALSE"
+def _require(spec: Dict[str, Any], name: str, key: str) -> Any:
+    if key not in spec:
+        raise ValueError(
+            f"Selector config error: selector '{name}' is missing required key '{key}'"
+        )
+    return spec[key]
 
 
-# ---------------------------------------------------------------------------
-# Selector SQL
-#
-# Each template reads source Parquet table(s) (see _SELECTOR_TABLE and
-# _SELECTOR_EXTRA_TABLES) and is filled in with the resolved table path(s)
-# and a WHERE clause built by `_build_where`. Table/column names come from
-# the actual writers:
-#   archiver/processors/flush_silver_observations.py
-#   archiver/processors/flush_staging_events.py
-# ---------------------------------------------------------------------------
+def _as_str_list(spec: Dict[str, Any], name: str, key: str) -> Tuple[str, ...]:
+    value = spec.get(key, [])
+    if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+        raise ValueError(
+            f"Selector config error: selector '{name}' key '{key}' must be a list of strings"
+        )
+    return tuple(value)
 
-_RELISTED_VIN_SQL = """
-WITH events AS (
-    SELECT vin, listing_id, artifact_id, event_type, previous_listing_id, event_at
-    FROM read_parquet('{path}', union_by_name=true)
-    {where}
-),
-relisted AS (
-    SELECT vin FROM events GROUP BY vin HAVING count(DISTINCT listing_id) > 1
-)
-SELECT e.vin, e.listing_id, e.artifact_id, e.event_type, e.previous_listing_id, e.event_at
-FROM events e
-JOIN relisted r USING (vin)
-ORDER BY e.vin, e.event_at
-"""
 
-_PRICE_DROP_SQL = """
-WITH events AS (
-    SELECT event_id, listing_id, vin, artifact_id, price, event_type, event_at
-    FROM read_parquet('{path}', union_by_name=true)
-    {where}
-),
-diffed AS (
-    SELECT *, LAG(price) OVER (PARTITION BY listing_id ORDER BY event_at, event_id) AS prev_price
-    FROM events
-)
-SELECT event_id, listing_id, vin, artifact_id, price, prev_price, event_at
-FROM diffed
-WHERE prev_price IS NOT NULL AND price < prev_price
-ORDER BY listing_id, event_at
-"""
+def _load_selector_configs(config_path: Path = _CONFIG_PATH) -> Dict[str, SelectorConfig]:
+    """Load and validate archiver/config/lake_snapshot_selectors.yml.
 
-_PRICE_INCREASE_SQL = """
-WITH events AS (
-    SELECT event_id, listing_id, vin, artifact_id, price, event_type, event_at
-    FROM read_parquet('{path}', union_by_name=true)
-    {where}
-),
-diffed AS (
-    SELECT *, LAG(price) OVER (PARTITION BY listing_id ORDER BY event_at, event_id) AS prev_price
-    FROM events
-)
-SELECT event_id, listing_id, vin, artifact_id, price, prev_price, event_at
-FROM diffed
-WHERE prev_price IS NOT NULL AND price > prev_price
-ORDER BY listing_id, event_at
-"""
+    Raises ValueError with a descriptive message on any malformed entry, so
+    a bad config fails loudly at import time rather than surfacing as a
+    confusing runtime KeyError.
+    """
+    raw = yaml.safe_load(config_path.read_text())
+    if (
+        not isinstance(raw, dict)
+        or "selectors" not in raw
+        or not isinstance(raw["selectors"], dict)
+    ):
+        raise ValueError(
+            f"Selector config error: {config_path} must have a top-level 'selectors' mapping"
+        )
 
-# Generic "select event rows matching a base filter" shape. Reused for every
-# cooldown selector — the bucket boundaries live entirely in
-# _SELECTOR_BASE_FILTERS, so the query body does not change.
-_COOLDOWN_EVENTS_SQL = """
-SELECT event_id, listing_id, event_type, num_of_attempts, event_at
-FROM read_parquet('{path}', union_by_name=true)
-{where}
-ORDER BY listing_id, event_at
-"""
+    configs: Dict[str, SelectorConfig] = {}
+    for name, spec in raw["selectors"].items():
+        if not isinstance(spec, dict):
+            raise ValueError(f"Selector config error: selector '{name}' must be a mapping")
 
-# Shared fingerprint CTEs for stable_state_run/state_change_run. Mirrors the
-# dbt field list in int_listing_state_fingerprints.sql exactly, deriving
-# vin17 from the raw `vin` column the same way stg_observations.sql does,
-# since silver_normalized/observations stores only the raw `vin` column.
-_FINGERPRINT_CTE = """
-WITH obs AS (
-    SELECT
-        artifact_id, listing_id, fetched_at, vin,
-        price, mileage, msrp, make, model, trim AS vehicle_trim, year AS model_year,
-        stock_type, fuel_type, body_style, listing_state,
-        dealer_name, dealer_zip, dealer_city, dealer_state, customer_id
-    FROM read_parquet('{path}', union_by_name=true)
-    {where}
-),
-vinned AS (
-    SELECT *,
-        CASE WHEN vin IS NOT NULL AND length(vin) = 17
-                  AND regexp_matches(upper(vin), '^[A-Z0-9]{{17}}$')
-             THEN upper(vin) ELSE NULL END AS vin17
-    FROM obs
-),
-filtered AS (
-    SELECT *,
-        md5(concat_ws('|',
-            coalesce(listing_id,                   ''),
-            coalesce(vin17,                        ''),
-            coalesce(CAST(price       AS VARCHAR), ''),
-            coalesce(CAST(mileage     AS VARCHAR), ''),
-            coalesce(CAST(msrp        AS VARCHAR), ''),
-            coalesce(make,                         ''),
-            coalesce(model,                        ''),
-            coalesce(vehicle_trim,                 ''),
-            coalesce(CAST(model_year  AS VARCHAR), ''),
-            coalesce(stock_type,                   ''),
-            coalesce(fuel_type,                    ''),
-            coalesce(body_style,                   ''),
-            coalesce(listing_state,                ''),
-            coalesce(dealer_name,                  ''),
-            coalesce(dealer_zip,                   ''),
-            coalesce(dealer_city,                  ''),
-            coalesce(dealer_state,                 ''),
-            coalesce(customer_id,                  '')
-        )) AS fingerprint
-    FROM vinned
-    WHERE vin17 IS NOT NULL
-),
-fp AS (
-    SELECT *,
-        LAG(fingerprint) OVER (
-            PARTITION BY vin17 ORDER BY fetched_at, artifact_id
-        ) AS prev_fingerprint
-    FROM filtered
-)
-"""
+        min_entities = _require(spec, name, "min_entities")
+        is_valid_int = isinstance(min_entities, int) and not isinstance(min_entities, bool)
+        if not is_valid_int or min_entities < 0:
+            raise ValueError(
+                f"Selector config error: selector '{name}' min_entities must be a "
+                f"non-negative integer"
+            )
 
-_STABLE_STATE_RUN_SQL = _FINGERPRINT_CTE + """
-SELECT vin17 AS vin, listing_id, artifact_id, fetched_at, fingerprint
-FROM fp
-WHERE prev_fingerprint IS NOT NULL AND fingerprint = prev_fingerprint
-ORDER BY vin17, fetched_at
-"""
+        source_table = _require(spec, name, "source_table")
+        extra_source_tables = _as_str_list(spec, name, "extra_source_tables")
+        for table_name in (source_table, *extra_source_tables):
+            if table_name not in SOURCE_TABLE_SPECS:
+                raise ValueError(
+                    f"Selector config error: selector '{name}' references unknown "
+                    f"source table '{table_name}'"
+                )
 
-_STATE_CHANGE_RUN_SQL = _FINGERPRINT_CTE + """
-SELECT vin17 AS vin, listing_id, artifact_id, fetched_at, fingerprint, prev_fingerprint
-FROM fp
-WHERE prev_fingerprint IS NOT NULL AND fingerprint != prev_fingerprint
-ORDER BY vin17, fetched_at
-"""
+        sql_template = _require(spec, name, "sql_template")
+        if not (_SQL_DIR / f"{sql_template}.sql").is_file():
+            raise ValueError(
+                f"Selector config error: selector '{name}' sql_template "
+                f"'{sql_template}' has no matching .sql file in {_SQL_DIR}"
+            )
 
-_ACTIVE_TO_UNLISTED_SQL = """
-WITH obs AS (
-    SELECT vin, listing_id, artifact_id, fetched_at, listing_state
-    FROM read_parquet('{path}', union_by_name=true)
-    {where}
-),
-active AS (
-    SELECT listing_id, min(fetched_at) AS first_active_at
-    FROM obs
-    WHERE listing_state = 'active'
-    GROUP BY listing_id
-),
-unlisted AS (
-    SELECT listing_id, min(fetched_at) AS first_unlisted_at
-    FROM obs
-    WHERE listing_state = 'unlisted'
-    GROUP BY listing_id
-)
-SELECT a.listing_id, a.first_active_at, u.first_unlisted_at
-FROM active a
-JOIN unlisted u USING (listing_id)
-WHERE u.first_unlisted_at > a.first_active_at
-ORDER BY a.listing_id
-"""
+        window_anchor = spec.get("window_anchor")
+        if window_anchor is not None and window_anchor not in _VALID_WINDOW_ANCHORS:
+            raise ValueError(
+                f"Selector config error: selector '{name}' window_anchor must be one of "
+                f"{_VALID_WINDOW_ANCHORS}, got {window_anchor!r}"
+            )
 
-# Anchor "source window end" to the actual requested window_end when one is
-# supplied (bound as the first `?` in the diffed CTE below — see
-# _SELECTOR_WINDOW_ANCHOR / build_selector_query). Falling back to
-# MAX(event_at) OVER () unconditionally is wrong: if the export window ends
-# 2026-07-07 but the latest surviving price event is 2026-06-20, an
-# unconditional MAX() would anchor recency to June 20 and could misclassify
-# a stale change as "within 7d". MAX(event_at) OVER () is only used when no
-# window_end was requested at all (open-ended read), where "most recent
-# event in the table" is the only sensible anchor.
-_PRICE_CHANGED_7D_SQL = """
-WITH events AS (
-    SELECT event_id, listing_id, vin, artifact_id, price, event_type, event_at
-    FROM read_parquet('{path}', union_by_name=true)
-    {where}
-),
-diffed AS (
-    SELECT *,
-        LAG(price) OVER (PARTITION BY listing_id ORDER BY event_at, event_id) AS prev_price,
-        COALESCE(CAST(? AS TIMESTAMP), MAX(event_at) OVER ()) AS window_anchor
-    FROM events
-)
-SELECT event_id, listing_id, vin, artifact_id, price, prev_price, event_at
-FROM diffed
-WHERE prev_price IS NOT NULL AND price != prev_price
-  AND event_at >= window_anchor - INTERVAL 7 DAY
-ORDER BY listing_id, event_at
-"""
+        configs[name] = SelectorConfig(
+            name=name,
+            min_entities=min_entities,
+            entity_key=_require(spec, name, "entity_key"),
+            source_table=source_table,
+            sql_template=sql_template,
+            timestamp_column=_require(spec, name, "timestamp_column"),
+            description=_require(spec, name, "description"),
+            base_filters=_as_str_list(spec, name, "base_filters"),
+            extra_source_tables=extra_source_tables,
+            window_anchor=window_anchor,
+        )
+    return configs
 
-_PRICE_CHANGED_30D_ONLY_SQL = """
-WITH events AS (
-    SELECT event_id, listing_id, vin, artifact_id, price, event_type, event_at
-    FROM read_parquet('{path}', union_by_name=true)
-    {where}
-),
-diffed AS (
-    SELECT *,
-        LAG(price) OVER (PARTITION BY listing_id ORDER BY event_at, event_id) AS prev_price,
-        COALESCE(CAST(? AS TIMESTAMP), MAX(event_at) OVER ()) AS window_anchor
-    FROM events
-)
-SELECT event_id, listing_id, vin, artifact_id, price, prev_price, event_at
-FROM diffed
-WHERE prev_price IS NOT NULL AND price != prev_price
-  AND event_at >= window_anchor - INTERVAL 30 DAY
-  AND event_at <  window_anchor - INTERVAL 7 DAY
-ORDER BY listing_id, event_at
-"""
 
-# Two-table selector: candidate VINs come from silver_observations ({path}),
-# "priced" VINs come from price_observation_events
-# ({price_observation_events_path}), injected via _SELECTOR_EXTRA_TABLES.
-_NO_PRICE_HISTORY_SQL = """
-WITH obs AS (
-    SELECT DISTINCT vin
-    FROM read_parquet('{path}', union_by_name=true)
-    {where}
-),
-priced AS (
-    SELECT DISTINCT vin
-    FROM read_parquet('{price_observation_events_path}', union_by_name=true)
-    WHERE price IS NOT NULL AND price > 0
-)
-SELECT o.vin
-FROM obs o
-LEFT JOIN priced p USING (vin)
-WHERE p.vin IS NULL
-ORDER BY o.vin
-"""
+_SELECTOR_CONFIGS: Dict[str, SelectorConfig] = _load_selector_configs()
 
-# Mirrors int_latest_observation.sql's source-priority ranking:
-# detail (1) > srp (2) > carousel (3), then fetched_at desc, artifact_id desc.
-_DETAIL_BEATS_SRP_SQL = """
-WITH obs AS (
-    SELECT artifact_id, listing_id, vin, source, fetched_at, make
-    FROM read_parquet('{path}', union_by_name=true)
-    {where}
-),
-usable AS (
-    SELECT * FROM obs WHERE make IS NOT NULL
-),
-vin_sources AS (
-    SELECT vin, bool_or(source = 'detail') AS has_detail, bool_or(source = 'srp') AS has_srp
-    FROM usable
-    GROUP BY vin
-),
-ranked AS (
-    SELECT *,
-        ROW_NUMBER() OVER (
-            PARTITION BY vin
-            ORDER BY CASE source WHEN 'detail' THEN 1 WHEN 'srp' THEN 2 ELSE 3 END,
-                     fetched_at DESC, artifact_id DESC
-        ) AS rn
-    FROM usable
-)
-SELECT r.vin, r.listing_id, r.artifact_id, r.source, r.fetched_at
-FROM ranked r
-JOIN vin_sources v USING (vin)
-WHERE r.rn = 1 AND r.source = 'detail' AND v.has_detail AND v.has_srp
-ORDER BY r.vin
-"""
-
-_SRP_FALLBACK_SQL = """
-WITH obs AS (
-    SELECT artifact_id, listing_id, vin, source, fetched_at, make
-    FROM read_parquet('{path}', union_by_name=true)
-    {where}
-),
-usable AS (
-    SELECT * FROM obs WHERE make IS NOT NULL
-),
-vin_sources AS (
-    SELECT vin, bool_or(source = 'detail') AS has_detail
-    FROM usable
-    GROUP BY vin
-),
-ranked AS (
-    SELECT *,
-        ROW_NUMBER() OVER (
-            PARTITION BY vin
-            ORDER BY CASE source WHEN 'detail' THEN 1 WHEN 'srp' THEN 2 ELSE 3 END,
-                     fetched_at DESC, artifact_id DESC
-        ) AS rn
-    FROM usable
-)
-SELECT r.vin, r.listing_id, r.artifact_id, r.source, r.fetched_at
-FROM ranked r
-JOIN vin_sources v USING (vin)
-WHERE r.rn = 1 AND r.source = 'srp' AND NOT v.has_detail
-ORDER BY r.vin
-"""
-
-_CAROUSEL_ONLY_OR_LOW_PRIORITY_SQL = """
-WITH obs AS (
-    SELECT vin, source
-    FROM read_parquet('{path}', union_by_name=true)
-    {where}
-)
-SELECT DISTINCT vin
-FROM obs
-WHERE source = 'carousel'
-ORDER BY vin
-"""
-
-_INVALID_OR_NULL_VIN_SQL = """
-SELECT artifact_id, listing_id, vin, fetched_at
-FROM read_parquet('{path}', union_by_name=true)
-{where}
-ORDER BY fetched_at
-"""
-
-_BENCHMARK_DENSE_MAKE_MODEL_SQL = """
-WITH obs AS (
-    SELECT make, model
-    FROM read_parquet('{path}', union_by_name=true)
-    {where}
-),
-grouped AS (
-    SELECT make, model, count(*) AS row_count
-    FROM obs
-    WHERE make IS NOT NULL AND model IS NOT NULL
-    GROUP BY make, model
-)
-SELECT make || ' ' || model AS make_model, make, model, row_count
-FROM grouped
-WHERE row_count >= 20
-ORDER BY row_count DESC
-"""
-
-_BENCHMARK_SPARSE_MAKE_MODEL_SQL = """
-WITH obs AS (
-    SELECT make, model
-    FROM read_parquet('{path}', union_by_name=true)
-    {where}
-),
-grouped AS (
-    SELECT make, model, count(*) AS row_count
-    FROM obs
-    WHERE make IS NOT NULL AND model IS NOT NULL
-    GROUP BY make, model
-)
-SELECT make || ' ' || model AS make_model, make, model, row_count
-FROM grouped
-WHERE row_count > 0 AND row_count < 20
-ORDER BY row_count
-"""
-
-_FRESH_RECENT_LISTING_SQL = """
-WITH obs AS (
-    SELECT listing_id, fetched_at
-    FROM read_parquet('{path}', union_by_name=true)
-    {where}
-),
-agg AS (
-    SELECT listing_id,
-           min(fetched_at) AS first_seen_at,
-           max(fetched_at) AS last_seen_at
-    FROM obs
-    GROUP BY listing_id
-),
-anchored AS (
-    SELECT *, max(last_seen_at) OVER () AS window_anchor
-    FROM agg
-)
-SELECT listing_id, first_seen_at, last_seen_at, window_anchor
-FROM anchored
-WHERE window_anchor - first_seen_at <= INTERVAL 14 DAY
-  AND window_anchor - last_seen_at  <= INTERVAL 2 DAY
-ORDER BY listing_id
-"""
-
-_STALE_LISTING_SQL = """
-WITH obs AS (
-    SELECT listing_id, fetched_at
-    FROM read_parquet('{path}', union_by_name=true)
-    {where}
-),
-agg AS (
-    SELECT listing_id,
-           min(fetched_at) AS first_seen_at,
-           max(fetched_at) AS last_seen_at
-    FROM obs
-    GROUP BY listing_id
-),
-anchored AS (
-    SELECT *, max(last_seen_at) OVER () AS window_anchor
-    FROM agg
-)
-SELECT listing_id, first_seen_at, last_seen_at, window_anchor
-FROM anchored
-WHERE window_anchor - last_seen_at >= INTERVAL 30 DAY
-ORDER BY listing_id
-"""
-
-_SELECTOR_SQL_TEMPLATES: Dict[str, str] = {
-    "relisted_vin": _RELISTED_VIN_SQL,
-    "price_drop": _PRICE_DROP_SQL,
-    "price_increase": _PRICE_INCREASE_SQL,
-    "cooldown_incremented": _COOLDOWN_EVENTS_SQL,
-    "stable_state_run": _STABLE_STATE_RUN_SQL,
-    "state_change_run": _STATE_CHANGE_RUN_SQL,
-    "active_to_unlisted": _ACTIVE_TO_UNLISTED_SQL,
-    "price_changed_7d": _PRICE_CHANGED_7D_SQL,
-    "price_changed_30d_only": _PRICE_CHANGED_30D_ONLY_SQL,
-    "no_price_history": _NO_PRICE_HISTORY_SQL,
-    "detail_beats_srp": _DETAIL_BEATS_SRP_SQL,
-    "srp_fallback": _SRP_FALLBACK_SQL,
-    "carousel_only_or_low_priority": _CAROUSEL_ONLY_OR_LOW_PRIORITY_SQL,
-    "invalid_or_null_vin": _INVALID_OR_NULL_VIN_SQL,
-    "benchmark_dense_make_model": _BENCHMARK_DENSE_MAKE_MODEL_SQL,
-    "benchmark_sparse_make_model": _BENCHMARK_SPARSE_MAKE_MODEL_SQL,
-    "cooldown_blocked": _COOLDOWN_EVENTS_SQL,
-    "cooldown_bucket_3_4": _COOLDOWN_EVENTS_SQL,
-    "cooldown_bucket_5_10": _COOLDOWN_EVENTS_SQL,
-    "cooldown_bucket_11_plus": _COOLDOWN_EVENTS_SQL,
-    "fresh_recent_listing": _FRESH_RECENT_LISTING_SQL,
-    "stale_listing": _STALE_LISTING_SQL,
-}
-
-# selector name -> logical source table name (matches lake_source_audit.SOURCE_TABLE_SPECS)
-_SELECTOR_TABLE: Dict[str, str] = {
-    "relisted_vin": "vin_to_listing_events",
-    "price_drop": "price_observation_events",
-    "price_increase": "price_observation_events",
-    "cooldown_incremented": "blocked_cooldown_events",
-    "stable_state_run": "silver_observations",
-    "state_change_run": "silver_observations",
-    "active_to_unlisted": "silver_observations",
-    "price_changed_7d": "price_observation_events",
-    "price_changed_30d_only": "price_observation_events",
-    "no_price_history": "silver_observations",
-    "detail_beats_srp": "silver_observations",
-    "srp_fallback": "silver_observations",
-    "carousel_only_or_low_priority": "silver_observations",
-    "invalid_or_null_vin": "silver_observations",
-    "benchmark_dense_make_model": "silver_observations",
-    "benchmark_sparse_make_model": "silver_observations",
-    "cooldown_blocked": "blocked_cooldown_events",
-    "cooldown_bucket_3_4": "blocked_cooldown_events",
-    "cooldown_bucket_5_10": "blocked_cooldown_events",
-    "cooldown_bucket_11_plus": "blocked_cooldown_events",
-    "fresh_recent_listing": "silver_observations",
-    "stale_listing": "silver_observations",
-}
-
-# selector name -> extra logical source tables, resolved and passed to the SQL
-# template as `{<table_name>_path}` in addition to the primary `{path}`.
-_SELECTOR_EXTRA_TABLES: Dict[str, List[str]] = {
-    "no_price_history": ["price_observation_events"],
-}
-
-# selector name -> hardcoded (non-window) filter clauses
-_SELECTOR_BASE_FILTERS: Dict[str, List[str]] = {
-    "relisted_vin": [],
-    "price_drop": ["event_type = 'upserted'", "price IS NOT NULL"],
-    "price_increase": ["event_type = 'upserted'", "price IS NOT NULL"],
-    "cooldown_incremented": ["num_of_attempts > 1"],
-    "stable_state_run": ["source = 'detail'"],
-    "state_change_run": ["source = 'detail'"],
-    "active_to_unlisted": ["source = 'detail'"],
-    "price_changed_7d": ["event_type = 'upserted'", "price IS NOT NULL"],
-    "price_changed_30d_only": ["event_type = 'upserted'", "price IS NOT NULL"],
-    "no_price_history": ["vin IS NOT NULL"],
-    "detail_beats_srp": ["source IN ('detail', 'srp')", "vin IS NOT NULL"],
-    "srp_fallback": ["source IN ('detail', 'srp')", "vin IS NOT NULL"],
-    "carousel_only_or_low_priority": ["vin IS NOT NULL"],
-    "invalid_or_null_vin": [
-        "(vin IS NULL OR length(vin) != 17 OR NOT regexp_matches(upper(vin), '^[A-Z0-9]{17}$'))"
-    ],
-    "benchmark_dense_make_model": ["source = 'detail'"],
-    "benchmark_sparse_make_model": ["source = 'detail'"],
-    "cooldown_blocked": ["num_of_attempts = 1"],
-    "cooldown_bucket_3_4": ["num_of_attempts BETWEEN 3 AND 4"],
-    "cooldown_bucket_5_10": ["num_of_attempts BETWEEN 5 AND 10"],
-    "cooldown_bucket_11_plus": ["num_of_attempts >= 11"],
-    "fresh_recent_listing": [],
-    "stale_listing": [],
-}
-
-# selector name -> timestamp column used for window filtering
-_SELECTOR_TS_COL: Dict[str, str] = {
-    "relisted_vin": "event_at",
-    "price_drop": "event_at",
-    "price_increase": "event_at",
-    "cooldown_incremented": "event_at",
-    "stable_state_run": "fetched_at",
-    "state_change_run": "fetched_at",
-    "active_to_unlisted": "fetched_at",
-    "price_changed_7d": "event_at",
-    "price_changed_30d_only": "event_at",
-    "no_price_history": "fetched_at",
-    "detail_beats_srp": "fetched_at",
-    "srp_fallback": "fetched_at",
-    "carousel_only_or_low_priority": "fetched_at",
-    "invalid_or_null_vin": "fetched_at",
-    "benchmark_dense_make_model": "fetched_at",
-    "benchmark_sparse_make_model": "fetched_at",
-    "cooldown_blocked": "event_at",
-    "cooldown_bucket_3_4": "event_at",
-    "cooldown_bucket_5_10": "event_at",
-    "cooldown_bucket_11_plus": "event_at",
-    "fresh_recent_listing": "fetched_at",
-    "stale_listing": "fetched_at",
-}
-
-RUNNABLE_SELECTORS: Tuple[str, ...] = tuple(_SELECTOR_TABLE.keys())
-
-# selectors whose SQL template embeds a `?` for the requested window_end,
-# bound as the recency anchor (see _PRICE_CHANGED_7D_SQL/_30D_ONLY_SQL above).
-_SELECTOR_WINDOW_ANCHOR: Tuple[str, ...] = ("price_changed_7d", "price_changed_30d_only")
+RUNNABLE_SELECTORS: Tuple[str, ...] = tuple(_SELECTOR_CONFIGS.keys())
 
 
 def build_selector_registry() -> Dict[str, Selector]:
-    """Build the selector registry, keyed by selector name.
-
-    Raises ValueError if any selector name is duplicated in _SELECTOR_SPECS.
-    """
-    registry: Dict[str, Selector] = {}
-    for name, min_entities, entity_key, description in _SELECTOR_SPECS:
-        if name in registry:
-            raise ValueError(f"Duplicate selector name: {name}")
-        registry[name] = Selector(
-            name=name,
-            min_entities=min_entities,
-            entity_key=entity_key,
-            sql=_SELECTOR_SQL_TEMPLATES.get(name) or _placeholder_sql(name),
-            description=description,
+    """Build the selector registry, keyed by selector name."""
+    return {
+        name: Selector(
+            name=config.name,
+            min_entities=config.min_entities,
+            entity_key=config.entity_key,
+            sql=_q(config.sql_template),
+            description=config.description,
         )
-    return registry
+        for name, config in _SELECTOR_CONFIGS.items()
+    }
 
 
 def _build_where(
     name: str, window_start: Optional[datetime], window_end: Optional[datetime]
 ) -> Tuple[str, List[Any]]:
-    clauses = list(_SELECTOR_BASE_FILTERS[name])
+    config = _SELECTOR_CONFIGS[name]
+    clauses = list(config.base_filters)
     params: List[Any] = []
-    ts_col = _SELECTOR_TS_COL[name]
+    ts_col = config.timestamp_column
     if window_start is not None:
         clauses.append(f"{ts_col} >= ?")
         params.append(window_start)
@@ -653,9 +193,10 @@ def build_selector_query(
     """Build the executable SQL and bound params for a selector."""
     if name not in RUNNABLE_SELECTORS:
         raise ValueError(f"No executable query implemented for selector '{name}'")
-    template = _SELECTOR_SQL_TEMPLATES[name]
+    config = _SELECTOR_CONFIGS[name]
+    template = _q(config.sql_template)
     where_sql, params = _build_where(name, window_start, window_end)
-    if name in _SELECTOR_WINDOW_ANCHOR:
+    if config.window_anchor == "window_end":
         # Appended last: the `?` this binds sits in the diffed CTE, which
         # follows the {where} clause in the compiled SQL text, so DuckDB's
         # positional binding order matches.
@@ -706,8 +247,8 @@ def run_selector(
     """
     registry = registry or build_selector_registry()
     selector = registry[name]
-    table_name = _SELECTOR_TABLE[name]
-    path = resolve_table_path(table_name, base_path)
+    config = _SELECTOR_CONFIGS[name]
+    path = resolve_table_path(config.source_table, base_path)
 
     result: Dict[str, Any] = {
         "selector": name,
@@ -723,11 +264,10 @@ def run_selector(
 
     try:
         extra_paths = None
-        extra_tables = _SELECTOR_EXTRA_TABLES.get(name)
-        if extra_tables:
+        if config.extra_source_tables:
             extra_paths = {
                 f"{extra_table}_path": resolve_table_path(extra_table, base_path)
-                for extra_table in extra_tables
+                for extra_table in config.extra_source_tables
             }
         candidate_sql, params = build_selector_query(
             name, path, window_start, window_end, extra_paths=extra_paths
