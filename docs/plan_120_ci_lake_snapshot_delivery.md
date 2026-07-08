@@ -48,7 +48,35 @@ instead of rescanning the lake again. See
 fingerprint/flag contract. Reuse is opt-in only — no request implicitly reuses
 a cache.
 
-The next gate is **Gate D - fingerprint-addressed filtered Parquet writer**.
+VM validation of Gate C.75 also exposed a closure-correctness bug: recursive
+artifact-based expansion (an artifact_id resolving back to the VINs/listings
+of every row it appeared on) treated SRP/carousel co-occurrence as a
+vehicle-identity edge, causing runaway growth (143 seed VINs exploded to
+22,556 closed VINs across two passes). This was fixed by constraining core
+closure to only VIN<->listing_id and remap edges; artifact_ids are attached to
+the frozen core afterward, purely as diagnostics/provenance, never used to
+discover more VINs/listings. `COHORT_ALGORITHM_VERSION` was bumped so stale
+planning cache entries computed under the old (buggy) semantics are treated
+as fingerprint misses.
+
+**Gate D (fingerprint-addressed filtered Parquet writer) is now implemented.**
+`archiver/processors/lake_snapshot_export.py` filters the four source tables
+by the closed cohort and writes dbt-compatible Parquet under
+`{export_prefix}/fingerprints/{export_fingerprint}/data/`.
+`archiver/processors/lake_snapshot_export_cache.py` derives the export
+fingerprint from the planning fingerprint plus writer/schema/partition/
+compression semantics, and persists/loads the resulting manifest, mirroring
+the Gate C.75 cache pattern. Critically, the export writer inherits the
+closure fix's invariant: `artifact_id` is never used as a blanket
+`artifact_id IN (...)` filter against `silver_observations` (which would
+reintroduce the same SRP/carousel pollution at materialization time instead
+of at closure time). Artifact-only-seeded rows (currently just
+`invalid_or_null_vin`) are matched by an exact `(artifact_id, vin,
+listing_id)` row identity captured during selector candidate collection
+(`CandidateSet.selected_row_keys`), not by artifact_id membership alone. See
+[Filter semantics (Gate D)](#filter-semantics-gate-d) below.
+
+The next gate is **Gate E - manifest/package/upload**.
 
 The phase labels below describe product areas, not commit gates. For execution
 tracking, use the Step 1-11 checklist in
@@ -56,26 +84,25 @@ tracking, use the Step 1-11 checklist in
 
 | Area | Status | Notes |
 |------|--------|-------|
-| Exporter skeleton | Mostly done | Request/result models, validation, tier defaults, CLI, dry-run, source audit, selector diagnostics, and cohort dry-run diagnostics exist. Non-dry-run export still returns `not_implemented`. |
+| Exporter skeleton | Done through Gate D | Request/result models, validation, tier defaults, CLI, dry-run, source audit, selector diagnostics, cohort diagnostics, and a real non-dry-run export path (Gate D) exist. Non-dry-run requests always run full selector/cohort planning regardless of `run_selectors`/`build_cohort` (those flags now only scope dry-run diagnostics). |
 | Selector registry | Done (Gate B) | All 22 registered selectors are executable, derived entirely from the four supported source tables. `stable_state_run`/`state_change_run` reproduce the dbt fingerprint fields from `int_listing_state_fingerprints.sql` exactly; `detail_beats_srp`/`srp_fallback` mirror `int_latest_observation.sql`'s source-priority ranking. No selector remains a TODO placeholder. Coupling to dbt is guarded by a single CI test (`tests/integration/dbt/test_selector_dbt_equivalence.py`) that seeds fixture data (`scripts/seed_lake_snapshot_fixture.py`), runs the real dbt models, and diffs selector output against dbt's actual materialized tables — so drift in either the dbt SQL or the selector SQL fails CI. |
-| DuckDB source reads | Done for audit/selector reads | Shared DuckDB/MinIO helper exists, source audit reads four lake tables, and local fixture mode exists for tests. |
-| Cohort allocation and closure | Implemented, VM-hardened (Gate C.5) | `SnapshotCohort`, deterministic allocation/fill, VIN/listing/artifact closure, artifact-only seed closure, selector coverage diagnostics, and target-overrun diagnostics exist. Local and integration tests pass. VM source audit and selector diagnostics pass. Heavy `build_cohort` work now runs only in the isolated `snapshot-worker` container. |
-| Worker isolation and observability | Done (Gate C.5) | `snapshot-worker` is a profile-gated, port-free, one-shot Docker Compose service that reuses the archiver image/build context. The production archiver rejects `build_cohort=True` with `409` unless `ARCHIVER_ALLOW_SYNC_SNAPSHOT_COHORT=true`. Phase timing logs (`elapsed_s`) cover source audit, selector candidate collection, cohort allocation, and each closure pass. Selector diagnostics and cohort allocation share one candidate scan when both are requested. |
-| Persisted planning cache | Done (Gate C.75) | `lake_snapshot_planning_cache.py` fingerprints the heavy planning path (tier, selector/cohort toggles, normalized source window, target_vins, min_selector_coverage, source_base_path, selector config/SQL hashes, cohort algorithm version) and stores/loads a JSON planning artifact in MinIO, keyed by that fingerprint. `dry_run`, `audit_sources`, and `snapshot_id` never affect the fingerprint. Reuse/refresh are both opt-in flags; the default computes and persists but never reuses. |
-| Filtered Parquet writer | Not started | No fixture table materialization yet. Gate D should derive an export fingerprint from the planning fingerprint plus writer/export semantics, materialize dbt-compatible fixture prefixes under that fingerprint, and explicitly support reusing an existing materialized snapshot. |
+| DuckDB source reads | Done for audit/selector/export reads | Shared DuckDB/MinIO helper exists, source audit reads four lake tables, the Gate D writer filters and reads them for materialization, and local fixture mode exists for tests. |
+| Cohort allocation and closure | Implemented, VM-hardened, closure-corrected (Gate C.5) | `SnapshotCohort`, deterministic allocation/fill, VIN/listing closure (remap-aware), post-closure artifact attachment, artifact-only selector row-key capture, selector coverage diagnostics, and target-overrun diagnostics exist. Local and integration tests pass, including a regression test proving artifact co-occurrence does not expand the vehicle closure. VM source audit and selector diagnostics pass. Heavy `build_cohort` work now runs only in the isolated `snapshot-worker` container. |
+| Worker isolation and observability | Done (Gate C.5) | `snapshot-worker` is a profile-gated, port-free, one-shot Docker Compose service that reuses the archiver image/build context. The production archiver rejects `build_cohort=True` **or non-dry-run** with `409` unless `ARCHIVER_ALLOW_SYNC_SNAPSHOT_COHORT=true` (a real export always runs the same heavy planning, so it's guarded identically). `audit_sources` is exempt either way. Phase timing logs (`elapsed_s`) cover source audit, selector candidate collection, cohort allocation, each closure pass, and Gate D table materialization. |
+| Persisted planning cache | Done (Gate C.75) | `lake_snapshot_planning_cache.py` fingerprints the heavy planning path (tier, selector/cohort toggles, normalized source window, target_vins, min_selector_coverage, source_base_path, selector config/SQL hashes, cohort algorithm version) and stores/loads a JSON planning artifact in MinIO, keyed by that fingerprint. The artifact now persists actual cohort membership (VINs/listing_ids/artifact_ids/artifact_row_keys), not just counts, so a cache hit can feed Gate D materialization directly. `dry_run`, `audit_sources`, and `snapshot_id` never affect the fingerprint. Reuse/refresh are both opt-in flags; the default computes and persists but never reuses. |
+| Filtered Parquet writer | Done (Gate D) | `lake_snapshot_export.py` filters the four source tables by the closed cohort (VIN/listing membership, plus exact artifact row keys for artifact-only-seeded rows) and writes dbt-compatible Parquet under a fingerprint-addressed prefix. `lake_snapshot_export_cache.py` derives the export fingerprint and persists/loads the materialized manifest. `reuse_export_cache`/`refresh_export_cache` mirror the planning-cache flag contract. |
 | Manifest/package/upload | Not started | No `.tar.zst` generation, MinIO promotion, or `latest.json` update yet. Gate E should package from the materialized export fingerprint and reuse an existing archive when its checksum already matches. |
-| Archiver endpoint | Control-plane only (Gate C.5) | Internal endpoint is wired and wrapped with `active_job()`. Cheap `audit_sources`/`dry_run` (without `build_cohort`) calls remain allowed. `build_cohort=True` is rejected with `409` unless `ARCHIVER_ALLOW_SYNC_SNAPSHOT_COHORT=true`; production-sized work must go through `snapshot-worker`. |
-| Airflow DAG | Structurally done, worker target TBD | Manual DAG exists and passes params/defaults. It should trigger the isolated snapshot worker once Steps 4-6 are worker-safe — the DAG currently still posts to the archiver control-plane route, which will 409 if it requests `build_cohort=True` without the override flag. |
+| Archiver endpoint | Control-plane only (Gate C.5) | Internal endpoint is wired and wrapped with `active_job()`. Cheap `audit_sources` calls remain allowed regardless of dry_run. `build_cohort=True` or any non-dry-run request is rejected with `409` unless `ARCHIVER_ALLOW_SYNC_SNAPSHOT_COHORT=true`; production-sized work must go through `snapshot-worker`. |
+| Airflow DAG | Structurally done, worker target TBD | Manual DAG exists and passes params/defaults. It should trigger the isolated snapshot worker once Steps 4-6 are worker-safe — the DAG currently still posts to the archiver control-plane route, which will 409 if it requests `build_cohort=True` (or non-dry-run) without the override flag. |
 | Ops download API | Not started | Latest/manifest/download routes and CI token auth still need implementation. |
 | Download/seed scripts | Mostly done | Offline/local mode exists and verifies checksums. API mode is scaffolded but depends on the ops download API. |
 | CI pilot | Not started | Needs a real archive and ops download route first. |
 
-Next gate: **Gate D - fingerprint-addressed filtered Parquet writer**. Gate C.5 isolated
-production-sized cohort/export work into `snapshot-worker` and added phase
-timing logs, so the next step is materializing the closed cohort into
-dbt-compatible fixture Parquet. Gate D should preserve the Gate C.75 cache
-boundary: a planning cache hit should be able to flow directly to an existing
-materialized snapshot when the export fingerprint also matches.
+Next gate: **Gate E - manifest/package/upload**. Gate D materializes filtered
+Parquet under a fingerprint-addressed export prefix with a manifest recording
+row counts/file counts/checksums per table; the next step is packaging that
+materialized output into a `.tar.zst` archive, uploading it to MinIO, and
+promoting `latest.json`/aliases only after validation.
 
 ---
 
@@ -269,17 +296,34 @@ differences across DuckDB/Spark/Delta.
 Selector queries produce seed entities. The exporter must then expand them into
 a coherent entity closure before writing fixture Parquet.
 
-Closure rules:
+**Closure rule (corrected after VM validation — see Current Status):** core
+closure follows only vehicle-identity edges, repeated until stable:
 
 ```text
 seed VINs
   -> all listing_ids ever associated with those VINs
+  -> VINs for those listing_ids
   -> previous_listing_ids from remap events
-  -> artifact_ids tied to selected listing_ids
-  -> price events tied to selected VINs/listing_ids
-  -> blocked cooldown events tied to selected listing_ids
-  -> observation rows tied to selected VINs/listing_ids/artifact_ids
+  (repeat until no set grows)
 ```
+
+Artifact IDs are **not** part of this loop. Once the core VIN/listing set is
+frozen, artifact_ids are attached for diagnostics/provenance only:
+
+```text
+frozen core VINs/listing_ids
+  -> artifact_ids observed on those VINs/listing_ids
+  + explicit artifact selector roots (e.g. invalid_or_null_vin)
+```
+
+The reason: an artifact_id (e.g. an SRP/carousel page fetch) can legitimately
+appear on many rows belonging to different, unrelated VINs/listings. Using
+that co-occurrence to pull those VINs into the closure caused runaway growth
+in VM validation (143 seed VINs -> 22,556 closed VINs across two passes).
+Gate D's export writer inherits this same invariant: it never filters
+`silver_observations` by a blanket `artifact_id IN (...)`, since that would
+reintroduce the same pollution at materialization time. See
+[Filter semantics (Gate D)](#filter-semantics-gate-d).
 
 Do not try to identify "the original production Parquet files for a VIN" and
 copy them whole. The production files are partitioned for ingestion/storage, not
@@ -297,8 +341,10 @@ The manifest should include both seed counts and closure counts:
 }
 ```
 
-Closed VIN count may exceed seed VIN count because carousel rows, remaps, or
-associated listing histories can reveal additional VINs needed for consistency.
+Closed VIN count may exceed seed VIN count because remaps or associated
+listing histories can reveal additional VINs needed for consistency.
+`artifact_count` is diagnostic/provenance context for the closed set, not a
+driver of VIN/listing membership.
 
 ---
 
@@ -587,52 +633,79 @@ docker compose run --rm snapshot-worker python -m archiver.processors.export_ci_
 
 ---
 
-## Export materialization cache (Gate D/E contract)
+## Export materialization cache (Gate D — implemented)
 
 Gate C.75 caches the expensive answer to "which cohort should this snapshot
-contain?" Gate D must preserve that win by making the next expensive answer
+contain?" Gate D preserves that win by making the next expensive answer
 cacheable too: "which Parquet fixture files represent this planned cohort under
 the current export rules?"
 
-Gate D should introduce:
+`archiver/processors/lake_snapshot_export_cache.py` implements:
 
-- `planning_fingerprint`: the existing Gate C.75 cache key.
-- `export_fingerprint`: a new SHA-256 key derived from the
-  `planning_fingerprint` plus export semantics.
-- `materialized_snapshot_path`: the final MinIO prefix for filtered Parquet.
-- `manifest_path`: the manifest for the materialized Parquet output.
-- `archive_path`: the eventual Gate E `.tar.zst` path, once packaging exists.
-- `export_cache_hit` and `export_cache_action`: response fields mirroring the
-  planning-cache observability pattern.
+- `planning_fingerprint`: the existing Gate C.75 cache key (passed through).
+- `export_fingerprint`: a SHA-256 key derived from `planning_fingerprint` plus
+  writer semantics (`compute_export_fingerprint`).
+- `materialized_snapshot_path` (`export_data_prefix`): the MinIO prefix for
+  filtered Parquet, `{export_prefix}/fingerprints/{export_fingerprint}/data`.
+- `manifest_path` (`export_manifest_path`): the manifest for the materialized
+  output, `{export_prefix}/fingerprints/{export_fingerprint}/manifest.json`.
+- `export_cache_hit`/`export_cache_action` on `SnapshotResult`, mirroring the
+  planning-cache observability pattern (`"computed"`/`"reused"`/`"refreshed"`).
+- `archive_path`: still Gate E — not yet implemented.
 
-The export fingerprint should include only fields that change the bytes or
-interpretation of the materialized output:
+The export fingerprint hashes `EXPORT_ALGORITHM_VERSION`,
+`OUTPUT_SCHEMA_VERSION`, `PARTITION_LAYOUT_VERSION`, `PARQUET_COMPRESSION`, and
+the included table list, alongside `planning_fingerprint`. These are
+code-level constants (this first-pass writer has no user-configurable output
+format), so `SnapshotRequest` doesn't carry separate export-semantic fields —
+only `reuse_export_cache`/`refresh_export_cache`/`export_cache_prefix`, which
+control cache behavior, not output bytes. It excludes `snapshot_id`,
+`dry_run`, `audit_sources`, and other run labels, mirroring the Gate C.75
+exclusion rationale.
 
-- `planning_fingerprint`
-- included logical table list and source table mapping
-- output schema/manifest version
-- writer algorithm/version
-- partition layout
-- Parquet compression/settings
-- sanitization/drop-column rules
-- expected-output generation version, once expected artifacts are written
-
-It should exclude `snapshot_id`, `dry_run`, `audit_sources`, and other run
-labels that do not change output bytes.
-
-Expected Gate D flow:
+Implemented flow (`export_ci_lake_snapshot()`, non-dry-run branch):
 
 ```text
-resolve planning artifact
-derive export fingerprint
-if reuse_export_cache and complete materialized output exists:
-  return manifest/archive metadata without scanning source Parquet
+resolve or reuse planning artifact (same heavy path as dry_run+build_cohort)
+if min_selector_coverage and coverage_failures: return status="coverage_failed"
+derive export fingerprint from planning_fingerprint
+if reuse_export_cache and a matching manifest exists:
+  return manifest metadata (export_cache_action="reused") without scanning source Parquet
 else:
-  write filtered Parquet to temporary fingerprint staging prefix
-  compute row counts, file counts, and checksums
-  validate expected coverage and table invariants
-  promote/write manifest under snapshot_exports/fingerprints/{export_fingerprint}/
+  materialize_filtered_tables(...) writes filtered Parquet under the fingerprint prefix
+  build + write the export manifest (row counts, file counts, checksums per table)
+  return status="exported"
 ```
+
+### Filter semantics (Gate D)
+
+`materialize_filtered_tables` (`lake_snapshot_export.py`) filters each source
+table by the closed cohort:
+
+| Table | Predicate |
+|-------|-----------|
+| `silver_observations` | `vin IN closed_vins` OR `listing_id IN listing_ids` OR exact `(artifact_id, vin, listing_id) IN artifact_row_keys` |
+| `price_observation_events` | `vin IN closed_vins` OR `listing_id IN listing_ids` |
+| `vin_to_listing_events` | `vin IN closed_vins` OR `listing_id IN listing_ids` |
+| `blocked_cooldown_events` | `listing_id IN listing_ids` |
+
+`artifact_row_keys` is a set of exact `(artifact_id, vin, listing_id)` tuples
+captured during selector candidate collection for artifact_id-keyed selectors
+(`CandidateSet.selected_row_keys`, currently populated only for
+`invalid_or_null_vin`) — never a bare `artifact_id IN (...)` filter. The
+distinction matters: a bare artifact_id filter would match every row sharing
+that artifact_id, including unrelated VINs on the same SRP/carousel page —
+exactly the pollution the cohort-closure fix removed, just reintroduced at
+materialization time instead. The exact-tuple filter matches only the
+specific flagged row, e.g. an `invalid_or_null_vin` row with a NULL vin (using
+`IS NOT DISTINCT FROM` for NULL-safe equality).
+
+`cohort.artifact_ids` (the diagnostic/provenance set) is deliberately **not**
+used as a table filter — only `cohort.artifact_row_keys` is. This is tested
+directly in both the unit suite (`tests/archiver/test_lake_snapshot_export.py`)
+with small local Parquet fixtures, and the integration suite
+(`tests/integration/archiver/test_lake_snapshot_export.py`) against the real
+MinIO fixture's `ARTIFACT_SRP_SHARED` co-occurrence scenario.
 
 Gate E should package from the materialized snapshot path and write the archive
 under `snapshot_archives/fingerprints/{export_fingerprint}/`. If the archive
@@ -644,7 +717,7 @@ This gives us three reusable layers:
 ```text
 planning fingerprint -> cohort plan JSON
 export fingerprint   -> filtered Parquet fixture directory + manifest
-export fingerprint   -> packaged archive + archive manifest
+export fingerprint   -> packaged archive + archive manifest (Gate E, not yet implemented)
 ```
 
 The friendly `snapshot_id` can still be stored in manifests and alias files,

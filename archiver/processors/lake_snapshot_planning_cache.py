@@ -38,7 +38,7 @@ from shared.minio import read_json, write_json
 
 logger = logging.getLogger("archiver")
 
-CACHE_SCHEMA_VERSION = 1
+CACHE_SCHEMA_VERSION = 2
 COHORT_ALGORITHM_VERSION = 2
 
 VALID_BUCKET_GRAINS: Tuple[str, ...] = ("week", "day", "none")
@@ -214,6 +214,7 @@ def serialize_candidate_sets(candidate_sets: Dict[str, CandidateSet]) -> Dict[st
             "status": cs.status,
             "error": cs.error,
             "entity_count": cs.entity_count,
+            "selected_row_keys": [list(key) for key in cs.selected_row_keys],
         }
         for name, cs in candidate_sets.items()
     }
@@ -228,11 +229,24 @@ def build_planning_cache_artifact(
     candidate_sets: Dict[str, CandidateSet],
     selector_diagnostics: Dict[str, Any],
     cohort_diagnostics: Dict[str, Any],
-    seed_vin_count: int,
-    closed_vin_count: int,
-    listing_count: int,
-    artifact_count: int,
+    seed_vins,
+    closed_vins,
+    listing_ids,
+    artifact_ids,
+    artifact_row_keys,
 ) -> Dict[str, Any]:
+    """Build the persisted planning artifact.
+
+    Stores the actual cohort membership (not just counts) so a cache hit can
+    feed straight into Gate D export filtering without recomputing the
+    cohort. Sets are sorted for deterministic JSON (stable diffs, easier
+    debugging), not for any correctness reason.
+    """
+    seed_vins = sorted(seed_vins, key=str)
+    closed_vins = sorted(closed_vins, key=str)
+    listing_ids = sorted(listing_ids, key=str)
+    artifact_ids = sorted(artifact_ids, key=str)
+    artifact_row_keys = sorted((list(k) for k in artifact_row_keys), key=str)
     return {
         "cache_schema_version": CACHE_SCHEMA_VERSION,
         "fingerprint": fingerprint,
@@ -242,10 +256,15 @@ def build_planning_cache_artifact(
         "selector_candidates": serialize_candidate_sets(candidate_sets),
         "selector_diagnostics": selector_diagnostics,
         "cohort_diagnostics": cohort_diagnostics,
-        "seed_vin_count": seed_vin_count,
-        "closed_vin_count": closed_vin_count,
-        "listing_count": listing_count,
-        "artifact_count": artifact_count,
+        "seed_vins": seed_vins,
+        "closed_vins": closed_vins,
+        "listing_ids": listing_ids,
+        "artifact_ids": artifact_ids,
+        "artifact_row_keys": artifact_row_keys,
+        "seed_vin_count": len(seed_vins),
+        "closed_vin_count": len(closed_vins),
+        "listing_count": len(listing_ids),
+        "artifact_count": len(artifact_ids),
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
 

@@ -510,6 +510,7 @@ class TestExportSelectorCohortDedup:
         fake_cohort.diagnostics = {}
         fake_cohort.seed_vins = fake_cohort.closed_vins = fake_cohort.listing_ids = set()
         fake_cohort.artifact_ids = set()
+        fake_cohort.artifact_row_keys = set()
         mock_build_cohort = mocker.patch(
             "archiver.processors.export_ci_lake_snapshot.build_snapshot_cohort",
             return_value=fake_cohort,
@@ -545,30 +546,35 @@ class TestExportSelectorCohortDedup:
 # export_ci_lake_snapshot — persisted planning cache (Plan 120 Gate C.75)
 # ---------------------------------------------------------------------------
 
+def _mock_heavy_path(mocker, candidate_sets=None):
+    """Mock the heavy selector-collection + cohort-closure path so tests can
+    exercise the surrounding planning/export logic without a real DuckDB/
+    MinIO connection."""
+    mocker.patch("archiver.processors.export_ci_lake_snapshot.open_duckdb_connection")
+    mock_collect = mocker.patch(
+        "archiver.processors.export_ci_lake_snapshot.collect_all_selector_candidates",
+        return_value=candidate_sets if candidate_sets is not None else {},
+    )
+    mocker.patch(
+        "archiver.processors.export_ci_lake_snapshot.candidate_sets_to_selector_diagnostics",
+        return_value={"selectors": {}, "errors": [], "ok": True},
+    )
+    fake_cohort = mocker.Mock()
+    fake_cohort.diagnostics = {"closed_vins": 1}
+    fake_cohort.seed_vins = fake_cohort.closed_vins = fake_cohort.listing_ids = {"x"}
+    fake_cohort.artifact_ids = {1}
+    fake_cohort.artifact_row_keys = set()
+    mock_build_cohort = mocker.patch(
+        "archiver.processors.export_ci_lake_snapshot.build_snapshot_cohort",
+        return_value=fake_cohort,
+    )
+    return mock_collect, mock_build_cohort
+
+
 class TestExportPlanningCache:
     """The heavy planning path (dry_run + run_selectors + build_cohort) reads/
     writes a persisted planning cache instead of always rescanning the lake.
     Cache reuse is always explicit (default flags never reuse)."""
-
-    def _mock_heavy_path(self, mocker, candidate_sets=None):
-        mocker.patch("archiver.processors.export_ci_lake_snapshot.open_duckdb_connection")
-        mock_collect = mocker.patch(
-            "archiver.processors.export_ci_lake_snapshot.collect_all_selector_candidates",
-            return_value=candidate_sets if candidate_sets is not None else {},
-        )
-        mocker.patch(
-            "archiver.processors.export_ci_lake_snapshot.candidate_sets_to_selector_diagnostics",
-            return_value={"selectors": {}, "errors": [], "ok": True},
-        )
-        fake_cohort = mocker.Mock()
-        fake_cohort.diagnostics = {"closed_vins": 1}
-        fake_cohort.seed_vins = fake_cohort.closed_vins = fake_cohort.listing_ids = {"x"}
-        fake_cohort.artifact_ids = {1}
-        mock_build_cohort = mocker.patch(
-            "archiver.processors.export_ci_lake_snapshot.build_snapshot_cohort",
-            return_value=fake_cohort,
-        )
-        return mock_collect, mock_build_cohort
 
     def test_query_and_response_use_the_resolved_planning_window(self, mocker):
         """The window actually passed to selector/cohort collection (and
@@ -579,7 +585,7 @@ class TestExportPlanningCache:
         would silently serve a cohort computed over the wrong window."""
         from datetime import datetime, timezone
 
-        mock_collect, mock_build_cohort = self._mock_heavy_path(mocker)
+        mock_collect, mock_build_cohort = _mock_heavy_path(mocker)
         mocker.patch(
             "archiver.processors.export_ci_lake_snapshot.load_planning_cache",
             return_value=None,
@@ -611,7 +617,7 @@ class TestExportPlanningCache:
         given the exact same 'now' — sampling datetime.now() independently
         in each could straddle a UTC day/week boundary and bucket the two
         resolutions differently."""
-        self._mock_heavy_path(mocker)
+        _mock_heavy_path(mocker)
         mocker.patch(
             "archiver.processors.export_ci_lake_snapshot.load_planning_cache",
             return_value=None,
@@ -637,7 +643,7 @@ class TestExportPlanningCache:
         assert source_window_now == planning_window_now
 
     def test_default_computes_and_writes_cache(self, mocker):
-        self._mock_heavy_path(mocker)
+        _mock_heavy_path(mocker)
         mock_load = mocker.patch(
             "archiver.processors.export_ci_lake_snapshot.load_planning_cache"
         )
@@ -660,7 +666,7 @@ class TestExportPlanningCache:
         """Progress logging (Plan 120 worker visibility): a fingerprint
         compute log must precede the cache lookup, and a write-start log must
         precede the (mocked) write itself."""
-        self._mock_heavy_path(mocker)
+        _mock_heavy_path(mocker)
         mocker.patch("archiver.processors.export_ci_lake_snapshot.load_planning_cache")
         mocker.patch("archiver.processors.export_ci_lake_snapshot.write_planning_cache")
 
@@ -676,11 +682,16 @@ class TestExportPlanningCache:
         )
 
     def test_reuse_hit_skips_write_start_log(self, mocker, caplog):
-        mock_collect, mock_build_cohort = self._mock_heavy_path(mocker)
+        mock_collect, mock_build_cohort = _mock_heavy_path(mocker)
         cached_artifact = {
             "cache_schema_version": 1,
             "selector_diagnostics": {"selectors": {}, "errors": [], "ok": True},
             "cohort_diagnostics": {"cached": True},
+            "seed_vins": ["v1", "v2", "v3", "v4", "v5", "v6", "v7"],
+            "closed_vins": ["v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8"],
+            "listing_ids": ["l1", "l2", "l3", "l4", "l5", "l6", "l7", "l8", "l9"],
+            "artifact_ids": list(range(10)),
+            "artifact_row_keys": [],
             "seed_vin_count": 7,
             "closed_vin_count": 8,
             "listing_count": 9,
@@ -705,11 +716,16 @@ class TestExportPlanningCache:
         assert not any("planning_cache write start" in m for m in messages)
 
     def test_reuse_loads_existing_cache_and_skips_computation(self, mocker):
-        mock_collect, mock_build_cohort = self._mock_heavy_path(mocker)
+        mock_collect, mock_build_cohort = _mock_heavy_path(mocker)
         cached_artifact = {
             "cache_schema_version": 1,
             "selector_diagnostics": {"selectors": {}, "errors": [], "ok": True},
             "cohort_diagnostics": {"cached": True},
+            "seed_vins": ["v1", "v2", "v3", "v4", "v5", "v6", "v7"],
+            "closed_vins": ["v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8"],
+            "listing_ids": ["l1", "l2", "l3", "l4", "l5", "l6", "l7", "l8", "l9"],
+            "artifact_ids": list(range(10)),
+            "artifact_row_keys": [],
             "seed_vin_count": 7,
             "closed_vin_count": 8,
             "listing_count": 9,
@@ -740,7 +756,7 @@ class TestExportPlanningCache:
         assert result.cohort_diagnostics == {"cached": True}
 
     def test_refresh_ignores_existing_cache_and_recomputes(self, mocker):
-        mock_collect, mock_build_cohort = self._mock_heavy_path(mocker)
+        mock_collect, mock_build_cohort = _mock_heavy_path(mocker)
         mock_load = mocker.patch(
             "archiver.processors.export_ci_lake_snapshot.load_planning_cache"
         )
@@ -762,7 +778,7 @@ class TestExportPlanningCache:
         assert result.planning_cache_action == "refreshed"
 
     def test_reuse_miss_computes_and_writes(self, mocker):
-        mock_collect, mock_build_cohort = self._mock_heavy_path(mocker)
+        mock_collect, mock_build_cohort = _mock_heavy_path(mocker)
         mock_load = mocker.patch(
             "archiver.processors.export_ci_lake_snapshot.load_planning_cache",
             return_value=None,
@@ -878,11 +894,126 @@ class TestMainLogging:
 # ---------------------------------------------------------------------------
 
 class TestExportNonDryRun:
-    def test_non_dry_run_returns_not_implemented(self):
-        result = export_ci_lake_snapshot(SnapshotRequest(tier="ci", dry_run=False))
-        assert result.status == "not_implemented"
-        assert result.archive_key is None
-        assert result.manifest_key is None
+    """A real export always needs a closed cohort, so it always runs the same
+    heavy planning as dry_run+run_selectors+build_cohort — regardless of
+    those flags — then materializes filtered Parquet under an
+    export-fingerprint-addressed prefix (Gate D)."""
+
+    def _mock_materialize(self, mocker, tables=None):
+        return mocker.patch(
+            "archiver.processors.export_ci_lake_snapshot.materialize_filtered_tables",
+            return_value=tables if tables is not None else {},
+        )
+
+    def test_non_dry_run_exports_and_writes_manifest(self, mocker):
+        _mock_heavy_path(mocker)
+        mocker.patch("archiver.processors.export_ci_lake_snapshot.write_planning_cache")
+        mock_materialize = self._mock_materialize(mocker)
+        mock_write_manifest = mocker.patch(
+            "archiver.processors.export_ci_lake_snapshot.write_export_manifest"
+        )
+        mocker.patch(
+            "archiver.processors.export_ci_lake_snapshot.load_export_manifest",
+            return_value=None,
+        )
+
+        result = export_ci_lake_snapshot(
+            SnapshotRequest(tier="ci", dry_run=False, build_cohort=True)
+        )
+
+        assert result.status == "exported"
+        assert result.export_fingerprint is not None
+        assert result.export_cache_hit is False
+        assert result.export_cache_action == "computed"
+        assert result.manifest_key is not None
+        assert result.materialized_snapshot_path is not None
+        assert mock_materialize.called
+        assert mock_write_manifest.called
+
+    def test_non_dry_run_ignores_run_selectors_flag(self, mocker):
+        """run_selectors only gates dry-run diagnostic scope — a real export
+        runs the same planning whether or not it's set."""
+        _mock_heavy_path(mocker)
+        mocker.patch("archiver.processors.export_ci_lake_snapshot.write_planning_cache")
+        self._mock_materialize(mocker)
+        mocker.patch("archiver.processors.export_ci_lake_snapshot.write_export_manifest")
+        mocker.patch(
+            "archiver.processors.export_ci_lake_snapshot.load_export_manifest",
+            return_value=None,
+        )
+
+        result = export_ci_lake_snapshot(SnapshotRequest(
+            tier="ci", dry_run=False, run_selectors=False, build_cohort=True,
+        ))
+        assert result.status == "exported"
+
+    def test_non_dry_run_reuses_export_cache(self, mocker):
+        _mock_heavy_path(mocker)
+        mocker.patch("archiver.processors.export_ci_lake_snapshot.write_planning_cache")
+        mock_materialize = self._mock_materialize(mocker)
+        mocker.patch(
+            "archiver.processors.export_ci_lake_snapshot.load_export_manifest",
+            return_value={"export_cache_schema_version": 1, "export_fingerprint": "x"},
+        )
+        mock_write_manifest = mocker.patch(
+            "archiver.processors.export_ci_lake_snapshot.write_export_manifest"
+        )
+
+        result = export_ci_lake_snapshot(SnapshotRequest(
+            tier="ci", dry_run=False, build_cohort=True, reuse_export_cache=True,
+        ))
+
+        assert result.status == "exported"
+        assert result.export_cache_hit is True
+        assert result.export_cache_action == "reused"
+        assert not mock_materialize.called
+        assert not mock_write_manifest.called
+
+    def test_non_dry_run_blocked_by_coverage_failures(self, mocker):
+        _mock_heavy_path(mocker)
+        mocker.patch("archiver.processors.export_ci_lake_snapshot.write_planning_cache")
+        mocker.patch(
+            "archiver.processors.export_ci_lake_snapshot.candidate_sets_to_selector_diagnostics",
+            return_value={
+                "selectors": {
+                    "cooldown_bucket_11_plus": {"required": 1, "entities": 0},
+                },
+                "errors": [], "ok": True,
+            },
+        )
+        mock_materialize = self._mock_materialize(mocker)
+
+        result = export_ci_lake_snapshot(
+            SnapshotRequest(tier="ci", dry_run=False, build_cohort=True)
+        )
+
+        assert result.status == "coverage_failed"
+        assert result.coverage_failures
+        assert not mock_materialize.called
+
+    def test_non_dry_run_min_selector_coverage_false_ignores_failures(self, mocker):
+        _mock_heavy_path(mocker)
+        mocker.patch("archiver.processors.export_ci_lake_snapshot.write_planning_cache")
+        mocker.patch(
+            "archiver.processors.export_ci_lake_snapshot.candidate_sets_to_selector_diagnostics",
+            return_value={
+                "selectors": {
+                    "cooldown_bucket_11_plus": {"required": 1, "entities": 0},
+                },
+                "errors": [], "ok": True,
+            },
+        )
+        self._mock_materialize(mocker)
+        mocker.patch("archiver.processors.export_ci_lake_snapshot.write_export_manifest")
+        mocker.patch(
+            "archiver.processors.export_ci_lake_snapshot.load_export_manifest",
+            return_value=None,
+        )
+
+        result = export_ci_lake_snapshot(SnapshotRequest(
+            tier="ci", dry_run=False, build_cohort=True, min_selector_coverage=False,
+        ))
+        assert result.status == "exported"
 
 
 # ---------------------------------------------------------------------------

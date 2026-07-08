@@ -1122,19 +1122,19 @@ Use this section as the source of truth for commit gates. The shorter
 `docs/plan_120_ci_lake_snapshot_delivery.md` uses phase labels for product
 areas, but implementation tracking should use these numbered steps.
 
-Current status as of 2026-07-08 (Gate C.5 and Gate C.75 implemented, Gate D next):
+Current status as of 2026-07-08 (Gate C.5, Gate C.75, and Gate D implemented; Gate E next):
 
 | Step | Gate | Status | Current branch state | Remaining work |
 |------|------|--------|----------------------|----------------|
-| 1 | Processor skeleton | Mostly done | `SnapshotRequest`, `SnapshotResult`, validation, tier defaults, CLI, dry-run, audit mode, selector/cohort diagnostics, and basic manifest skeleton exist. | Replace `not_implemented` non-dry-run path once worker isolation and Steps 5-6 exist. Extend manifest helper when real counts/checksums are available. |
+| 1 | Processor skeleton | Done through Gate D | `SnapshotRequest`, `SnapshotResult`, validation, tier defaults, CLI, dry-run, audit mode, selector/cohort diagnostics, and a real non-dry-run export path exist. Non-dry-run always runs full planning regardless of `run_selectors`/`build_cohort`. | Extend manifest/result fields further only as Gate E (archive packaging) needs them. |
 | 2 | Selector registry | Done (Gate B) | Registry exists. All 22 selectors are executable, each derived from one or more of the four supported source tables. `stable_state_run`/`state_change_run` reproduce the dbt fingerprint fields exactly; `detail_beats_srp`/`srp_fallback` mirror `int_latest_observation.sql`'s source-priority ranking. Coupling is guarded by one CI test (`tests/integration/dbt/test_selector_dbt_equivalence.py`) that runs the actual dbt models against seeded fixture data and diffs selector output against dbt's real materialized tables. | None. |
-| 3 | DuckDB source reads | Done for current scope | Shared DuckDB/MinIO helper exists. Source audit reads the four included tables. Local fixture mode exists for tests. | Reuse these reads for table materialization. Add source views only if they reduce duplication in the next steps. |
-| 4 | Cohort allocation and closure | Implemented, VM-hardened (Gate C.5) | `SnapshotCohort`, candidate collection, required selector allocation, deterministic fill, VIN/listing/artifact closure, artifact-only seed closure, selector coverage diagnostics, and target-overrun diagnostics exist. Local/integration tests pass. VM source audit and selector diagnostics pass. Production-sized `build_cohort` runs now execute in the isolated `snapshot-worker` container instead of the production archiver process. | None for this scope; continue to Gate D. |
-| 4.5 | Worker isolation and observability | Done (Gate C.5) | `snapshot-worker` one-shot Compose service (profile-gated, no ports) reuses the archiver image/build context. Production archiver rejects `build_cohort=True` with `409` unless `ARCHIVER_ALLOW_SYNC_SNAPSHOT_COHORT=true`. Phase timing logs cover source audit, selector candidate collection, cohort allocation, and each closure pass. Selector diagnostics and cohort allocation share one candidate scan when both are requested. | Retarget the Airflow DAG to invoke `snapshot-worker` directly (or set the override flag) before production-sized VM runs — see Step 8. |
-| 4.75 | Persisted planning cache | Done (Gate C.75) | `archiver/processors/lake_snapshot_planning_cache.py` fingerprints the heavy planning path (semantic identity only — excludes `dry_run`/`audit_sources`/`snapshot_id`; includes a `source_table_paths_hash` so a lake layout/bucket change invalidates old entries even if `source_base_path` is unchanged) and stores/loads a JSON planning artifact via `shared.minio.write_json`/`read_json`. `resolve_planning_window()` re-anchors a relative `source_window_months` window to the bucketed timestamp *before* both fingerprinting and querying, so the fingerprint's identity and the window actually queried always agree. `reuse_planning_cache`/`refresh_planning_cache`/`planning_cache_bucket_grain`/`planning_cache_prefix` are new `SnapshotRequest`/CLI/API fields; reuse is opt-in only. `SnapshotResult` exposes `planning_cache_key`/`planning_cache_path`/`planning_cache_hit`/`planning_cache_action`. | None for this scope; continue to Gate D. |
-| 5 | Write filtered Parquet | Not started | No fixture output is written. | Derive an `export_fingerprint` from the planning fingerprint plus export semantics, support explicit materialized-output reuse, filter production Parquet by closed cohort, preserve dbt-compatible prefixes, and compute row counts/table checksums. Start after Gate C.75. |
+| 3 | DuckDB source reads | Done, including Gate D materialization reads | Shared DuckDB/MinIO helper exists. Source audit and the Gate D writer both read the four included tables. Local fixture mode exists for tests. | None for this scope. |
+| 4 | Cohort allocation and closure | Implemented, VM-hardened, closure-corrected (Gate C.5) | `SnapshotCohort`, candidate collection, required selector allocation, deterministic fill, VIN/listing closure (remap-aware), post-closure artifact attachment, artifact-only selector row-key capture (`selected_row_keys`), selector coverage diagnostics, and target-overrun diagnostics exist. Local/integration tests pass, including a regression test proving artifact co-occurrence does not expand the vehicle closure. VM source audit and selector diagnostics pass. Production-sized `build_cohort` runs now execute in the isolated `snapshot-worker` container instead of the production archiver process. | None for this scope. |
+| 4.5 | Worker isolation and observability | Done (Gate C.5) | `snapshot-worker` one-shot Compose service (profile-gated, no ports) reuses the archiver image/build context. Production archiver rejects `build_cohort=True` **or non-dry-run** with `409` unless `ARCHIVER_ALLOW_SYNC_SNAPSHOT_COHORT=true` (a real export always runs the same heavy planning). `audit_sources` is exempt either way. Phase timing logs cover source audit, selector candidate collection, cohort allocation, each closure pass, and Gate D table materialization. Selector diagnostics and cohort allocation share one candidate scan when both are requested. | Retarget the Airflow DAG to invoke `snapshot-worker` directly (or set the override flag) before production-sized VM runs — see Step 8. |
+| 4.75 | Persisted planning cache | Done (Gate C.75), extended for Gate D | `archiver/processors/lake_snapshot_planning_cache.py` fingerprints the heavy planning path (semantic identity only — excludes `dry_run`/`audit_sources`/`snapshot_id`; includes a `source_table_paths_hash` so a lake layout/bucket change invalidates old entries even if `source_base_path` is unchanged) and stores/loads a JSON planning artifact via `shared.minio.write_json`/`read_json`. The persisted artifact now includes actual cohort membership (`seed_vins`/`closed_vins`/`listing_ids`/`artifact_ids`/`artifact_row_keys`), not just counts, so a cache hit can feed Gate D materialization directly — `CACHE_SCHEMA_VERSION` was bumped to invalidate entries from before this change. `resolve_planning_window()` re-anchors a relative `source_window_months` window to the bucketed timestamp *before* both fingerprinting and querying, so the fingerprint's identity and the window actually queried always agree. `reuse_planning_cache`/`refresh_planning_cache`/`planning_cache_bucket_grain`/`planning_cache_prefix` are `SnapshotRequest`/CLI/API fields; reuse is opt-in only. `SnapshotResult` exposes `planning_cache_key`/`planning_cache_path`/`planning_cache_hit`/`planning_cache_action`. | None for this scope. |
+| 5 | Write filtered Parquet | Done (Gate D) | `archiver/processors/lake_snapshot_export.py` filters the four source tables by the closed cohort and writes dbt-compatible Parquet under a fingerprint-addressed prefix. `archiver/processors/lake_snapshot_export_cache.py` derives `export_fingerprint` from `planning_fingerprint` plus writer/schema/partition/compression constants, and persists/loads the materialized manifest (row counts, file counts, per-file checksums). `reuse_export_cache`/`refresh_export_cache`/`export_cache_prefix` are new `SnapshotRequest`/CLI fields. Filter predicates never use a bare `artifact_id IN (...)` match against `silver_observations` — artifact-only-seeded rows are matched by an exact `(artifact_id, vin, listing_id)` row key (`CandidateSet.selected_row_keys`) instead, so materialization can't reintroduce the SRP/carousel co-occurrence pollution the closure fix removed. Covered by unit tests (local Parquet fixtures) and an integration test against the real MinIO fixture's `ARTIFACT_SRP_SHARED` scenario. | Wire `export_cache_prefix`/reuse-export-cache fields into the archiver HTTP payload if/when the endpoint needs to expose them (currently CLI-only; the endpoint is guarded off for real work anyway). |
 | 6 | Package and upload | Not started | No archive or MinIO snapshot prefix is written. | Package from the fingerprint-addressed materialized snapshot, upload to temp prefix, validate manifest/archive, promote under `snapshot_archives/fingerprints/{export_fingerprint}/`, and update `latest.json`/aliases. |
-| 7 | Archiver endpoint | Partial, control-plane only | `POST /snapshots/adaptive-refresh/run` is wired, guarded by `active_job()`, and tested for dry-run/audit/cohort request handling. | Do not use production archiver for production-sized cohort/export work. Keep cheap audit/dry-run behavior or convert to worker trigger/status API. |
+| 7 | Archiver endpoint | Partial, control-plane only | `POST /snapshots/adaptive-refresh/run` is wired, guarded by `active_job()`, and tested for dry-run/audit/cohort/non-dry-run request handling. The sync-cohort guard now also fires on any non-dry-run request (not just `build_cohort=True`), since a real export always runs the same heavy planning; `audit_sources` remains exempt. | Do not use production archiver for production-sized cohort/export work. Keep cheap audit/dry-run behavior or convert to worker trigger/status API. |
 | 8 | Airflow DAG | Structurally done, worker target TBD | Manual DAG exists, passes params/defaults, logs result fields, and fails on unsupported statuses. | Retarget generation to the isolated snapshot worker before VM production-sized runs. Add cadence only after manual worker runs are stable. |
 | 9 | Ops download API | Not started | No `ops` routes exist yet. | Add latest/manifest/download routes, CI token auth, and download tests. |
 | 10 | Download and seed scripts | Mostly done | Downloader and seeder exist. Offline/local mode works against manifest/archive paths. API mode is scaffolded. Seeder guards production-like targets and verifies checksums. | Test against the real ops API once Step 9 exists. Run local end-to-end seed with a generated archive. |
@@ -1166,12 +1166,15 @@ Gate names for the next commits:
    fields only (excludes `dry_run`/`audit_sources`/`snapshot_id`). Reuse and
    refresh are both explicit opt-in flags; the default still computes fresh
    and persists, matching Gate C.5 behavior otherwise.
-5. **Gate D - fingerprint-addressed filtered Parquet writer:** complete when a
-   closed cohort can be materialized into dbt-compatible fixture prefixes with
-   row counts and table checksums under
-   `snapshot_exports/fingerprints/{export_fingerprint}/`, and when a matching
-   materialized export can be explicitly reused without rescanning source
-   Parquet.
+5. **Gate D - fingerprint-addressed filtered Parquet writer:** complete
+   (2026-07-08). A closed cohort materializes into dbt-compatible fixture
+   prefixes with row counts and per-file checksums under
+   `snapshot_exports/fingerprints/{export_fingerprint}/`, and a matching
+   materialized export can be explicitly reused (`reuse_export_cache`)
+   without rescanning source Parquet. Filter predicates use exact
+   `(artifact_id, vin, listing_id)` row keys for artifact-only-seeded rows
+   rather than a blanket `artifact_id IN (...)` match, preserving the Gate C.5
+   closure fix's invariant at materialization time.
 6. **Gate E - manifest/package/upload:** complete when an `edge` snapshot can be
    packaged from the materialized export path, written to MinIO under
    `snapshot_archives/fingerprints/{export_fingerprint}/`, validated, promoted,
@@ -1384,13 +1387,21 @@ docker compose run --rm snapshot-worker python -m archiver.processors.export_ci_
   --target-vins 100
 ```
 
-Do not run production-sized `build_cohort` or export work through
+As of Gate D, dropping `--dry-run` (as above) performs a real materialization:
+it filters the four source tables by the closed cohort and writes fixture
+Parquet under `snapshot_exports/fingerprints/{export_fingerprint}/data/` in
+MinIO, returning `status="exported"` with `export_fingerprint`,
+`manifest_key`, and `materialized_snapshot_path` populated. Add
+`--reuse-export-cache` to skip rematerialization when an equivalent export
+already exists, or `--refresh-export-cache` to force overwrite.
+
+Do not run production-sized `build_cohort`/export work through
 `docker compose exec archiver ...` or through the production archiver HTTP API
-(`POST /snapshots/adaptive-refresh/run`) — as of Gate C.5, that endpoint
-rejects `build_cohort=True` with `409` unless the archiver process has
-`ARCHIVER_ALLOW_SYNC_SNAPSHOT_COHORT=true` set, and that flag must not be set
-in the production `archiver` service's environment. Always use the
-`snapshot-worker` path above for real generation.
+(`POST /snapshots/adaptive-refresh/run`) — that endpoint rejects
+`build_cohort=True` **or any non-dry-run request** with `409` unless the
+archiver process has `ARCHIVER_ALLOW_SYNC_SNAPSHOT_COHORT=true` set, and that
+flag must not be set in the production `archiver` service's environment.
+Always use the `snapshot-worker` path above for real generation.
 
 Download locally:
 

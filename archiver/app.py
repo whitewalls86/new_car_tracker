@@ -115,11 +115,23 @@ def trigger_snapshot_export(payload: dict = Body(default={})) -> Dict[str, Any]:
                 status_code=400,
                 detail="source_base_path is not permitted on this endpoint",
             )
-        if payload.get("build_cohort", False) and not _ALLOW_SYNC_SNAPSHOT_COHORT:
+        # A non-dry-run request also always runs full selector/cohort
+        # planning (Gate D — a real export needs a closed cohort regardless
+        # of the build_cohort flag), so it must be guarded exactly like
+        # build_cohort=True; otherwise a plain dry_run=False request would
+        # slip past this check and run production-sized work synchronously.
+        # audit_sources is exempt either way — it never runs selector/cohort
+        # planning, dry-run or not.
+        requires_sync_cohort_guard = (
+            not payload.get("audit_sources", False)
+            and (payload.get("build_cohort", False) or not payload.get("dry_run", False))
+        )
+        if requires_sync_cohort_guard and not _ALLOW_SYNC_SNAPSHOT_COHORT:
             raise HTTPException(
                 status_code=409,
                 detail=(
-                    "build_cohort is disabled on the production archiver API. "
+                    "build_cohort/non-dry-run export is disabled on the production "
+                    "archiver API. "
                     "Production-sized cohort/export work must run in the isolated "
                     "snapshot-worker container, e.g.: docker compose run --rm "
                     "snapshot-worker python -m archiver.processors."

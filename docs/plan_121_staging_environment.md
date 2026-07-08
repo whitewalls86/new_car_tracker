@@ -38,6 +38,30 @@ lower operational cost.
 
 ---
 
+## Related: Shared Dependency Pinning (CI/project sanity)
+
+Per-service `requirements.txt` files currently duplicate shared third-party
+packages (e.g. `boto3`) with no version coordination — a package can be
+present in one service's image and silently missing or drifted in another
+(see: archiver's `shared.minio` needing `boto3`, which was only added to
+`archiver/requirements.txt` after a runtime `ModuleNotFoundError` in Plan 120
+Gate C.75 planning-cache writes).
+
+Candidate fix: a root `constraints.txt` pinning shared packages
+(`boto3`, `pyarrow`, `duckdb`, etc.), with each service's Dockerfile/CI install
+step passing `pip install -c constraints.txt -r requirements.txt`. Keeps
+per-service requirement lists independent while removing version drift for
+packages multiple services share. Lower cost than a shared base Docker image;
+revisit a shared base image only if constraint-file drift keeps recurring.
+
+Scope for this plan:
+
+- add `constraints.txt` at repo root
+- update each service's Dockerfile/CI pip install to use `-c constraints.txt`
+- audit current `requirements.txt` files for already-drifted shared packages
+
+---
+
 ## Context
 
 CarTracker currently has:

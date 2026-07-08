@@ -20,6 +20,7 @@ from archiver.processors.lake_snapshot_selectors import (
     build_selector_query,
     build_selector_registry,
 )
+from archiver.processors.lake_snapshot_sql import in_clause, table_time_where
 from archiver.processors.lake_source_audit import resolve_table_path
 from shared.duckdb_s3 import get_duckdb_s3_connection
 
@@ -50,6 +51,13 @@ class CandidateSet:
     # larger than candidate_cap). Defaults to len(entities) for callers/tests
     # that build a CandidateSet directly from an already-bounded list.
     entity_count: int = -1
+    # Exact (artifact_id, vin, listing_id) row identity for each selected
+    # entity, populated only when entity_key == "artifact_id" (e.g.
+    # invalid_or_null_vin). Gate D's export writer uses this to include the
+    # exact flagged row without a blanket `artifact_id IN (...)` table
+    # filter, which would also pull in unrelated rows that happen to share
+    # the same artifact_id (e.g. an SRP/carousel page's other listings).
+    selected_row_keys: Tuple[Tuple[Any, Any, Any], ...] = ()
 
     def __post_init__(self) -> None:
         if self.entity_count == -1:
@@ -66,6 +74,11 @@ class CohortAllocation:
     fill_vins_added: int
     pre_fill_vin_count: int
     required_vin_seeds: FrozenSet[str]
+    # Exact (artifact_id, vin, listing_id) row identities for artifact_id-keyed
+    # selectors (e.g. invalid_or_null_vin). Used by the Gate D export writer
+    # to include the exact flagged row without a blanket artifact_id table
+    # filter. See CandidateSet.selected_row_keys.
+    artifact_row_keys: FrozenSet[Tuple[Any, Any, Any]] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -76,6 +89,7 @@ class SnapshotCohort:
     artifact_ids: FrozenSet[Any]
     selector_coverage: Dict[str, Dict[str, Any]]
     diagnostics: Dict[str, Any]
+    artifact_row_keys: FrozenSet[Tuple[Any, Any, Any]] = frozenset()
 
 
 def open_duckdb_connection(base_path: Optional[str]):
@@ -114,6 +128,32 @@ SELECT
         ) AS bounded
     ) AS bounded_entities
 """
+
+
+def _selected_row_keys_for_artifact_candidates(
+    con, candidate_sql: str, params: List[Any], selected: Tuple[Any, ...],
+) -> Tuple[Tuple[Any, Any, Any], ...]:
+    """Resolve exact (artifact_id, vin, listing_id) row identity for each
+    selected artifact_id, so the Gate D export writer can match the precise
+    flagged row instead of filtering by a bare artifact_id (which could also
+    match unrelated rows sharing that artifact_id, e.g. an SRP/carousel
+    page). Assumes the selector's candidate SQL exposes vin/listing_id
+    columns, which holds for every current artifact_id-keyed selector."""
+    if not selected:
+        return ()
+    clause, clause_params = in_clause("artifact_id", selected)
+    query = (
+        f"SELECT DISTINCT artifact_id, vin, listing_id FROM ({candidate_sql}) AS c "
+        f"WHERE {clause}"
+    )
+    try:
+        rows = con.execute(query, params + clause_params).fetchall()
+        return tuple((r[0], r[1], r[2]) for r in rows)
+    except Exception as e:
+        logger.warning(
+            "lake_snapshot_cohort: selected_row_keys_for_artifact_candidates error=%s", e
+        )
+        return ()
 
 
 def collect_selector_candidates(
@@ -157,6 +197,11 @@ def collect_selector_candidates(
         entities = tuple(entities) if entities else ()
         selected = entities[: selector.min_entities]
         status = "pass" if entity_count >= selector.min_entities else "fail"
+        selected_row_keys: Tuple[Tuple[Any, Any, Any], ...] = ()
+        if selector.entity_key == "artifact_id" and selected:
+            selected_row_keys = _selected_row_keys_for_artifact_candidates(
+                con, candidate_sql, params, selected,
+            )
         logger.info(
             "lake_snapshot_cohort: selector=%s end elapsed_s=%.2f entities=%s "
             "candidate_rows=%s status=%s",
@@ -171,6 +216,7 @@ def collect_selector_candidates(
             selected_entities=selected,
             status=status,
             entity_count=entity_count,
+            selected_row_keys=selected_row_keys,
         )
     except Exception as e:
         logger.warning(
@@ -331,6 +377,7 @@ def allocate_cohort(
     listing_seeds: set = set()
     artifact_seeds: set = set()
     make_model_seeds: set = set()
+    artifact_row_keys: set = set()
     coverage: Dict[str, Dict[str, Any]] = {}
 
     buckets = {
@@ -346,6 +393,7 @@ def allocate_cohort(
         if bucket is None:
             continue
         bucket.update(candidate.selected_entities)
+        artifact_row_keys.update(candidate.selected_row_keys)
 
     required_vin_seeds = frozenset(vin_seeds)
     pre_fill_vin_count = len(vin_seeds)
@@ -388,34 +436,13 @@ def allocate_cohort(
         fill_vins_added=fill_vins_added,
         pre_fill_vin_count=pre_fill_vin_count,
         required_vin_seeds=required_vin_seeds,
+        artifact_row_keys=frozenset(artifact_row_keys),
     )
 
 
 # ---------------------------------------------------------------------------
 # Entity closure
 # ---------------------------------------------------------------------------
-
-def _table_time_where(
-    window_start: Optional[datetime], window_end: Optional[datetime], ts_col: str
-) -> Tuple[List[str], List[Any]]:
-    clauses: List[str] = []
-    params: List[Any] = []
-    if window_start is not None:
-        clauses.append(f"{ts_col} >= ?")
-        params.append(window_start)
-    if window_end is not None:
-        clauses.append(f"{ts_col} < ?")
-        params.append(window_end)
-    return clauses, params
-
-
-def _in_clause(column: str, values) -> Tuple[str, List[Any]]:
-    values = list(values)
-    if not values:
-        return "FALSE", []
-    placeholders = ", ".join(["?"] * len(values))
-    return f"{column} IN ({placeholders})", values
-
 
 def _resolve_make_model_seeds(
     con,
@@ -429,12 +456,12 @@ def _resolve_make_model_seeds(
     if not make_models:
         return set(), set()
     path = resolve_table_path("silver_observations", base_path)
-    make_model_clause, make_model_params = _in_clause(
+    make_model_clause, make_model_params = in_clause(
         "concat_ws(' ', make, model)", make_models
     )
     where_clauses = ["vin IS NOT NULL", make_model_clause]
     params: List[Any] = list(make_model_params)
-    time_clauses, time_params = _table_time_where(window_start, window_end, "fetched_at")
+    time_clauses, time_params = table_time_where(window_start, window_end, "fetched_at")
     where_clauses += time_clauses
     params += time_params
     where_sql = " AND ".join(where_clauses)
@@ -466,10 +493,10 @@ def _listing_ids_for_vins(
     if not vins:
         return set()
     listing_ids: set = set()
-    vin_clause, vin_params = _in_clause("vin", vins)
+    vin_clause, vin_params = in_clause("vin", vins)
     for table, ts_col in _VIN_LISTING_TABLES:
         path = resolve_table_path(table, base_path)
-        time_clauses, time_params = _table_time_where(window_start, window_end, ts_col)
+        time_clauses, time_params = table_time_where(window_start, window_end, ts_col)
         clauses = [vin_clause, "listing_id IS NOT NULL"] + time_clauses
         query = (
             f"SELECT DISTINCT listing_id FROM read_parquet('{path}', union_by_name=true) "
@@ -491,10 +518,10 @@ def _vins_for_listing_ids(
     if not listing_ids:
         return set()
     vins: set = set()
-    listing_clause, listing_params = _in_clause("listing_id", listing_ids)
+    listing_clause, listing_params = in_clause("listing_id", listing_ids)
     for table, ts_col in _VIN_LISTING_TABLES:
         path = resolve_table_path(table, base_path)
-        time_clauses, time_params = _table_time_where(window_start, window_end, ts_col)
+        time_clauses, time_params = table_time_where(window_start, window_end, ts_col)
         clauses = [listing_clause, "vin IS NOT NULL"] + time_clauses
         query = (
             f"SELECT DISTINCT vin FROM read_parquet('{path}', union_by_name=true) "
@@ -517,17 +544,17 @@ def _previous_listing_ids_for(
     or_parts: List[str] = []
     params: List[Any] = []
     if vins:
-        clause, clause_params = _in_clause("vin", vins)
+        clause, clause_params = in_clause("vin", vins)
         or_parts.append(clause)
         params += clause_params
     if listing_ids:
-        clause, clause_params = _in_clause("listing_id", listing_ids)
+        clause, clause_params = in_clause("listing_id", listing_ids)
         or_parts.append(clause)
         params += clause_params
     if not or_parts:
         return set()
     clauses = [f"({' OR '.join(or_parts)})", "previous_listing_id IS NOT NULL"]
-    time_clauses, time_params = _table_time_where(window_start, window_end, "event_at")
+    time_clauses, time_params = table_time_where(window_start, window_end, "event_at")
     clauses += time_clauses
     params += time_params
     query = (
@@ -551,16 +578,16 @@ def _artifact_ids_for(
         or_parts: List[str] = []
         params: List[Any] = []
         if vins:
-            clause, clause_params = _in_clause("vin", vins)
+            clause, clause_params = in_clause("vin", vins)
             or_parts.append(clause)
             params += clause_params
         if listing_ids:
-            clause, clause_params = _in_clause("listing_id", listing_ids)
+            clause, clause_params = in_clause("listing_id", listing_ids)
             or_parts.append(clause)
             params += clause_params
         if not or_parts:
             continue
-        time_clauses, time_params = _table_time_where(window_start, window_end, ts_col)
+        time_clauses, time_params = table_time_where(window_start, window_end, ts_col)
         clauses = [f"({' OR '.join(or_parts)})", "artifact_id IS NOT NULL"] + time_clauses
         params += time_params
         query = (
@@ -742,4 +769,5 @@ def build_snapshot_cohort(
         artifact_ids=frozenset(closure["artifact_ids"]),
         selector_coverage=allocation.selector_coverage,
         diagnostics=diagnostics,
+        artifact_row_keys=allocation.artifact_row_keys,
     )
