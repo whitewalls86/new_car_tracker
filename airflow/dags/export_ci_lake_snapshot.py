@@ -91,8 +91,12 @@ def check_snapshot_result(result: Dict[str, Any], payload: Dict[str, Any]) -> No
 
 
 def _run_export(**context):
+    # context["params"] already reflects DAG-level defaults overridden by any
+    # dag_run.conf keys that match a declared param; conf is merged in on top
+    # so ad-hoc keys not declared as params (e.g. snapshot_id) still pass through.
+    params = context.get("params") or {}
     conf = context["dag_run"].conf or {}
-    payload = build_snapshot_payload(conf)
+    payload = build_snapshot_payload({**params, **conf})
     result = post_json(
         f"{ARCHIVER_URL}/snapshots/adaptive-refresh/run",
         payload=payload,
@@ -108,6 +112,7 @@ with DAG(
     start_date=datetime(2026, 1, 1),
     catchup=False,
     tags=["maintenance", "snapshots"],
+    params=DEFAULT_PARAMS,
 ):
     ready = deploy_intent_sensor()
     archiver_up = http_health_sensor("archiver", ARCHIVER_URL)
