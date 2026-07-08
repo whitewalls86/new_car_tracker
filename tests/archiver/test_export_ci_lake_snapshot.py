@@ -227,17 +227,14 @@ class TestSelectorRegistry:
         rather than embedded as Python string constants (Plan 120 Gate B
         refactor) — every runnable selector's template must resolve to a
         readable file, not an empty/placeholder string."""
-        from archiver.processors.lake_snapshot_selectors import (
-            _SELECTOR_CONFIGS,
-            _SQL_DIR,
-            _q,
-        )
+        from archiver.processors.lake_snapshot_selector_config import DEFAULT_SQL_DIR
+        from archiver.processors.lake_snapshot_selectors import _SELECTOR_CONFIGS, _q
 
-        assert _SQL_DIR.is_dir()
+        assert DEFAULT_SQL_DIR.is_dir()
         registry = build_selector_registry()
         for name in RUNNABLE_SELECTORS:
             config = _SELECTOR_CONFIGS[name]
-            assert (_SQL_DIR / f"{config.sql_template}.sql").is_file()
+            assert (DEFAULT_SQL_DIR / f"{config.sql_template}.sql").is_file()
             assert registry[name].sql.strip()
             assert registry[name].sql == _q(config.sql_template)
 
@@ -251,16 +248,19 @@ class TestSelectorConfigValidation:
     source of truth for selector metadata (Plan 120 Gate B config refactor)."""
 
     def _load(self, tmp_path, yaml_text):
-        from archiver.processors.lake_snapshot_selectors import _load_selector_configs
+        from archiver.processors.lake_snapshot_selector_config import (
+            DEFAULT_SQL_DIR,
+            load_selector_configs,
+        )
 
         config_path = tmp_path / "selectors.yml"
         config_path.write_text(yaml_text)
-        return _load_selector_configs(config_path)
+        return load_selector_configs(config_path, DEFAULT_SQL_DIR)
 
     def test_real_config_loads_without_error(self):
-        from archiver.processors.lake_snapshot_selectors import _load_selector_configs
+        from archiver.processors.lake_snapshot_selector_config import load_selector_configs
 
-        configs = _load_selector_configs()
+        configs = load_selector_configs()
         assert configs
 
     def test_missing_top_level_selectors_key_rejected(self, tmp_path):
@@ -395,17 +395,17 @@ selectors:
     def test_runnable_selectors_exactly_matches_yaml_keys(self):
         import yaml
 
-        from archiver.processors.lake_snapshot_selectors import _CONFIG_PATH
+        from archiver.processors.lake_snapshot_selector_config import DEFAULT_CONFIG_PATH
 
-        raw = yaml.safe_load(_CONFIG_PATH.read_text())
+        raw = yaml.safe_load(DEFAULT_CONFIG_PATH.read_text())
         assert set(RUNNABLE_SELECTORS) == set(raw["selectors"].keys())
 
     def test_registry_returns_one_selector_per_yaml_entry(self):
         import yaml
 
-        from archiver.processors.lake_snapshot_selectors import _CONFIG_PATH
+        from archiver.processors.lake_snapshot_selector_config import DEFAULT_CONFIG_PATH
 
-        raw = yaml.safe_load(_CONFIG_PATH.read_text())
+        raw = yaml.safe_load(DEFAULT_CONFIG_PATH.read_text())
         registry = build_selector_registry()
         assert set(registry.keys()) == set(raw["selectors"].keys())
         assert len(registry) == len(raw["selectors"])
