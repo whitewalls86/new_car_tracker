@@ -849,6 +849,31 @@ class TestParseArgsPlanningCache:
 
 
 # ---------------------------------------------------------------------------
+# CLI main() — logging must be configured (Plan 120 worker visibility)
+# ---------------------------------------------------------------------------
+
+class TestMainLogging:
+    def test_main_configures_logging_before_running(self, mocker):
+        """The snapshot-worker container runs this module's main() directly
+        (not archiver.app), so it never hits archiver.app's configure_logging()
+        call. Without configuring logging here, all the new progress
+        logger.info(...) calls are silently dropped by the default root
+        WARNING level and docker logs -f stays quiet."""
+        mock_configure = mocker.patch(
+            "archiver.processors.export_ci_lake_snapshot.configure_logging"
+        )
+        mocker.patch(
+            "archiver.processors.export_ci_lake_snapshot.export_ci_lake_snapshot",
+            return_value=mocker.Mock(to_dict=lambda: {}),
+        )
+        from archiver.processors.export_ci_lake_snapshot import main
+
+        main(["--tier", "ci", "--dry-run"])
+
+        mock_configure.assert_called_once_with()
+
+
+# ---------------------------------------------------------------------------
 # export_ci_lake_snapshot — non-dry-run (deferred)
 # ---------------------------------------------------------------------------
 

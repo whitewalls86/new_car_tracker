@@ -36,6 +36,7 @@ from archiver.processors.lake_snapshot_planning_cache import (
 )
 from archiver.processors.lake_snapshot_selectors import build_selector_registry, run_lake_selectors
 from archiver.processors.lake_source_audit import audit_source_tables
+from shared.logging_setup import configure_logging
 
 logger = logging.getLogger("archiver")
 
@@ -529,6 +530,7 @@ def _parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
 
 
 def main(argv: Optional[List[str]] = None) -> None:
+    configure_logging()
     args = _parse_args(argv)
     request = SnapshotRequest(
         tier=args.tier,
