@@ -11,7 +11,7 @@ drift from the real model on both sides without either test file changing),
 this test reads the dbt models' *actual* materialized output. The CI `dbt`
 job:
 
-  1. runs `scripts/seed_dbt_selector_equivalence_fixture.py` to upload known
+  1. runs `scripts/seed_lake_snapshot_fixture.py` to upload known
      business-state scenarios to MinIO,
   2. runs the existing `dbt build --profiles-dir dbt --target duckdb` step,
      which builds `int_listing_state_runs`/`int_latest_observation` for real
@@ -30,7 +30,7 @@ import pytest
 
 from archiver.processors.lake_snapshot_selectors import build_selector_query
 from archiver.processors.lake_source_audit import resolve_table_path
-from scripts.seed_dbt_selector_equivalence_fixture import (
+from scripts.seed_lake_snapshot_fixture import (
     VIN_ABA,
     VIN_DETAIL_WINS,
     VIN_IDENT,

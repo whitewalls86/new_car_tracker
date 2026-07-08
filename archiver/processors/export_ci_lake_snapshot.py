@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+from archiver.processors.lake_snapshot_cohort import build_snapshot_cohort, open_duckdb_connection
 from archiver.processors.lake_snapshot_selectors import build_selector_registry, run_lake_selectors
 from archiver.processors.lake_source_audit import audit_source_tables
 
@@ -53,6 +54,7 @@ class SnapshotRequest:
     dry_run: bool = False
     audit_sources: bool = False
     run_selectors: bool = False
+    build_cohort: bool = False
     source_base_path: Optional[str] = None
 
 
@@ -73,6 +75,7 @@ class SnapshotResult:
     coverage_failures: List[str] = field(default_factory=list)
     source_audit: Optional[Dict[str, Any]] = None
     selector_diagnostics: Optional[Dict[str, Any]] = None
+    cohort_diagnostics: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -91,6 +94,7 @@ class SnapshotResult:
             "coverage_failures": self.coverage_failures,
             "source_audit": self.source_audit,
             "selector_diagnostics": self.selector_diagnostics,
+            "cohort_diagnostics": self.cohort_diagnostics,
         }
 
 
@@ -150,6 +154,7 @@ def resolve_request_defaults(request: SnapshotRequest) -> SnapshotRequest:
         dry_run=request.dry_run,
         audit_sources=request.audit_sources,
         run_selectors=request.run_selectors,
+        build_cohort=request.build_cohort,
         source_base_path=request.source_base_path,
     )
 
@@ -278,6 +283,8 @@ def export_ci_lake_snapshot(request: SnapshotRequest) -> SnapshotResult:
         )
         selector_diagnostics = None
         coverage_failures: List[str] = []
+        cohort_diagnostics = None
+        seed_vin_count = closed_vin_count = listing_count = artifact_count = None
         if request.run_selectors:
             selector_diagnostics = run_lake_selectors(
                 base_path=request.source_base_path,
@@ -291,14 +298,39 @@ def export_ci_lake_snapshot(request: SnapshotRequest) -> SnapshotResult:
             )
             if request.min_selector_coverage:
                 coverage_failures = format_coverage_failures(selector_diagnostics["selectors"])
+            if request.build_cohort:
+                con = open_duckdb_connection(request.source_base_path)
+                try:
+                    cohort = build_snapshot_cohort(
+                        con, request.source_base_path, window_start, window_end,
+                        request.target_vins,
+                    )
+                finally:
+                    con.close()
+                cohort_diagnostics = cohort.diagnostics
+                seed_vin_count = len(cohort.seed_vins)
+                closed_vin_count = len(cohort.closed_vins)
+                listing_count = len(cohort.listing_ids)
+                artifact_count = len(cohort.artifact_ids)
+                logger.info(
+                    "export_ci_lake_snapshot: build_cohort snapshot_id=%s tier=%s "
+                    "seed_vins=%s closed_vins=%s listing_ids=%s artifact_ids=%s",
+                    snapshot_id, request.tier, seed_vin_count, closed_vin_count,
+                    listing_count, artifact_count,
+                )
         return SnapshotResult(
             snapshot_id=snapshot_id,
             tier=request.tier,
             status="planned",
             source_window_start=window_start.isoformat() if window_start else None,
             source_window_end=window_end.isoformat() if window_end else None,
+            seed_vin_count=seed_vin_count,
+            closed_vin_count=closed_vin_count,
+            listing_count=listing_count,
+            artifact_count=artifact_count,
             coverage_failures=coverage_failures,
             selector_diagnostics=selector_diagnostics,
+            cohort_diagnostics=cohort_diagnostics,
         )
 
     logger.info(
@@ -329,6 +361,7 @@ def _parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--dry-run", dest="dry_run", action="store_true")
     parser.add_argument("--audit-sources", dest="audit_sources", action="store_true")
     parser.add_argument("--run-selectors", dest="run_selectors", action="store_true")
+    parser.add_argument("--build-cohort", dest="build_cohort", action="store_true")
     parser.add_argument("--source-base-path", dest="source_base_path", default=None)
     return parser.parse_args(argv)
 
@@ -345,6 +378,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         dry_run=args.dry_run,
         audit_sources=args.audit_sources,
         run_selectors=args.run_selectors,
+        build_cohort=args.build_cohort,
         source_base_path=args.source_base_path,
     )
     result = export_ci_lake_snapshot(request)

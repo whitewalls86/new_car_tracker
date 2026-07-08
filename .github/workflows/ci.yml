@@ -266,15 +266,17 @@ jobs:
           ]))
           "
 
-      - name: Seed dbt/selector equivalence fixture data
-        # Uploads known business-state scenarios (Plan 120 Gate B) so the
-        # dbt build below materializes int_listing_state_runs/
-        # int_latest_observation against real data, not just the empty
-        # schema seed above. Compared against the selector SQL afterward in
-        # "Run selector/dbt equivalence tests".
+      - name: Seed lake snapshot fixture data
+        # Uploads the shared Plan 120 lake-snapshot fixture (known business-state
+        # scenarios across all four source tables) so the dbt build below
+        # materializes int_listing_state_runs/int_latest_observation against real
+        # data, and so the archiver selector/cohort integration tests have
+        # production-shaped Parquet to run their SQL against. Written under the
+        # reserved 2099 partition so it never collides with the empty-schema
+        # compilation seed above.
         run: |
           pip install pyarrow boto3
-          python scripts/seed_dbt_selector_equivalence_fixture.py
+          python scripts/seed_lake_snapshot_fixture.py
         env:
           PYTHONPATH: ${{ github.workspace }}
           MINIO_ENDPOINT: http://localhost:9000

@@ -1101,7 +1101,7 @@ Gate names for the next commits:
   services required. These test the selector SQL on its own merits (does it
   find the intended candidate); they do not assert anything about dbt. (done)
 - Add the dbt coupling guard in the CI `dbt` job:
-  `scripts/seed_dbt_selector_equivalence_fixture.py` seeds known
+  `scripts/seed_lake_snapshot_fixture.py` seeds known
   business-state scenarios into MinIO, the existing `dbt build` step
   materializes `int_listing_state_runs`/`int_latest_observation` against
   that data for real, and `tests/integration/dbt/test_selector_dbt_equivalence.py`

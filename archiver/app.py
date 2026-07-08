@@ -120,6 +120,7 @@ def trigger_snapshot_export(payload: dict = Body(default={})) -> Dict[str, Any]:
                 dry_run=payload.get("dry_run", False),
                 audit_sources=payload.get("audit_sources", False),
                 run_selectors=payload.get("run_selectors", False),
+                build_cohort=payload.get("build_cohort", False),
                 source_base_path=source_base_path,
             )
             result = _export_ci_lake_snapshot(request)
