@@ -28,19 +28,17 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-      - name: Install test dependencies
+      - name: Install dependencies
         run: |
+          pip install -r requirements-dev.txt
           pip install \
-            pytest pytest-mock pytest-asyncio \
-            fastapi httpx \
-            psycopg2-binary asyncpg \
-            requests pydantic jinja2 python-multipart \
-            boto3 zstandard pyarrow s3fs \
-            bs4 lxml \
-            resend \
-            prometheus-fastapi-instrumentator \
-            pyyaml \
-            duckdb
+            -r scraper/requirements.txt \
+            -r archiver/requirements.txt \
+            -r processing/requirements.txt \
+            -r ops/requirements.txt \
+            -r dashboard/requirements.txt \
+            -r dbt_runner/requirements.txt \
+            -r airflow/requirements.txt
       - run: pytest tests/ -v -m "not integration"
         env:
           PYTHONPATH: ${{ github.workspace }}
@@ -125,9 +123,20 @@ jobs:
         with:
           python-version: "3.13"
 
+      - name: Install dependencies
+        run: |
+          pip install -r requirements-dev.txt
+          pip install \
+            -r scraper/requirements.txt \
+            -r archiver/requirements.txt \
+            -r processing/requirements.txt \
+            -r ops/requirements.txt \
+            -r dashboard/requirements.txt \
+            -r dbt_runner/requirements.txt \
+            -r airflow/requirements.txt
+
       - name: Create MinIO bucket
         run: |
-          pip install boto3
           python -c "
           import boto3
           from botocore.client import Config
@@ -154,7 +163,6 @@ jobs:
 
       - name: Seed MinIO with empty Parquet schemas (required for dbt unit test compilation)
         run: |
-          pip install pyarrow
           python -c "
           import io
           import boto3
@@ -274,9 +282,7 @@ jobs:
         # production-shaped Parquet to run their SQL against. Written under the
         # reserved 2099 partition so it never collides with the empty-schema
         # compilation seed above.
-        run: |
-          pip install pyarrow boto3
-          python scripts/seed_lake_snapshot_fixture.py
+        run: python scripts/seed_lake_snapshot_fixture.py
         env:
           PYTHONPATH: ${{ github.workspace }}
           MINIO_ENDPOINT: http://localhost:9000
@@ -294,19 +300,6 @@ jobs:
           MINIO_ROOT_USER: cartracker
           MINIO_ROOT_PASSWORD: cartracker123
           MINIO_BUCKET: bronze
-
-      - name: Install test dependencies
-        run: |
-          pip install \
-            pytest psycopg2-binary \
-            pyarrow boto3 s3fs duckdb \
-            fastapi httpx jinja2 python-multipart requests resend \
-            prometheus-fastapi-instrumentator \
-            apache-airflow \
-            apache-airflow-providers-postgres \
-            apache-airflow-providers-http \
-            apache-airflow-providers-common-sql \
-            apache-airflow-providers-standard
 
       - name: Run SQL smoke tests (Layer 1)
         run: pytest tests/integration/sql/ -v -m integration

@@ -8,3 +8,5 @@ boto3
 zstandard
 pyyaml
 prometheus-fastapi-instrumentator
+# Pinned to match the apache/airflow base image tag in airflow/Dockerfile.
+apache-airflow==3.2.0
