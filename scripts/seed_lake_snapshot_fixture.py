@@ -33,18 +33,21 @@ Two design rules make this safe to share:
     compilation seed the CI `dbt` job also writes (which uses 2026 partitions).
     Do NOT reuse the 2099 partition for any other seed data.
 
-  * Schema is imported from the real writers, never re-declared. The in-file
-    Arrow schema for each table is the production writer's schema minus its
-    hive date-partition columns (obs_year/obs_month/obs_day, or year/month) —
-    those live only in the object path. `source` stays in-file because the
-    archiver reads with `union_by_name=true` and no explicit hive_partitioning,
-    so any column a selector filters on must exist in the file. If a writer
-    renames or drops a data column, this fixture (and the selector SQL that
-    references it) breaks loudly, which is the drift signal we want.
+  * Physically production-shaped. The Arrow schema is imported from the real
+    writers (never re-declared), and rows are written with the same
+    `pq.write_to_dataset(partition_cols=...)` call the flush uses. So the
+    on-disk layout matches production byte-for-byte: source/obs_year/obs_month
+    (silver) and year/month (ops) are stripped into the hive path, obs_day
+    stays in the file. This matters because the archiver reads with
+    `read_parquet(union_by_name=true)` and relies on DuckDB auto-detecting the
+    hive partitions to see `source`; a fixture that kept `source` in the file
+    would let a broken hive-partition read pass here while failing against real
+    Parquet. If a writer renames or drops a column, this fixture (and the
+    selector SQL that references it) breaks loudly, which is the drift signal
+    we want.
 """
 from __future__ import annotations
 
-import io
 from datetime import datetime, timezone
 from typing import Any, Dict, List
 
@@ -64,22 +67,30 @@ from archiver.processors.flush_staging_events import (
 from archiver.processors.flush_staging_events import (
     _VIN_TO_LISTING_EVENTS_SCHEMA as _VIN_TO_LISTING_WRITER_SCHEMA,
 )
-from shared.minio import BUCKET, ensure_bucket, get_boto3_client
+from shared.minio import BUCKET, ensure_bucket, get_s3fs
 
-_SILVER_PARTITION = "obs_year=2099/obs_month=1"
-_OPS_PARTITION = "year=2099/month=1"
+# Reserved partition. Everything lands under 2099, which no production flush or
+# other CI seed writes to.
+_RESERVED_OBS_YEAR = 2099
+_RESERVED_OBS_MONTH = 1
+_RESERVED_YEAR = 2099
+_RESERVED_MONTH = 1
 
+# Use the production writer schemas verbatim (they include the hive partition
+# columns). Rows are written with pq.write_to_dataset using the same
+# partition_cols as the real flush, so the physical layout is identical:
+# source/obs_year/obs_month (silver) and year/month (ops) are stripped into the
+# object path, while obs_day stays in the file. This forces the reader side to
+# resolve `source` (and the date partitions) from the hive path exactly as it
+# must in production — a fixture that kept `source` in-file would let a broken
+# hive-partition read pass here while failing against real Parquet.
+_SILVER_SCHEMA = _SILVER_WRITER_SCHEMA
+_PRICE_SCHEMA = _PRICE_WRITER_SCHEMA
+_VIN_TO_LISTING_SCHEMA = _VIN_TO_LISTING_WRITER_SCHEMA
+_COOLDOWN_SCHEMA = _COOLDOWN_WRITER_SCHEMA
 
-def _in_file_schema(writer_schema: pa.Schema, drop: set[str]) -> pa.Schema:
-    """Writer schema minus its hive date-partition columns (which live only in
-    the object path, never in the file bytes)."""
-    return pa.schema([f for f in writer_schema if f.name not in drop])
-
-
-_SILVER_SCHEMA = _in_file_schema(_SILVER_WRITER_SCHEMA, {"obs_year", "obs_month", "obs_day"})
-_PRICE_SCHEMA = _in_file_schema(_PRICE_WRITER_SCHEMA, {"year", "month"})
-_VIN_TO_LISTING_SCHEMA = _in_file_schema(_VIN_TO_LISTING_WRITER_SCHEMA, {"year", "month"})
-_COOLDOWN_SCHEMA = _in_file_schema(_COOLDOWN_WRITER_SCHEMA, {"year", "month"})
+_SILVER_PARTITION_COLS = ["source", "obs_year", "obs_month"]
+_OPS_PARTITION_COLS = ["year", "month"]
 
 
 def _vin17(tag: str) -> str:
@@ -337,60 +348,67 @@ def build_cooldown_event_rows() -> List[Dict[str, Any]]:
 # Upload
 # ===========================================================================
 
-def _write_parquet(schema: pa.Schema, rows: List[Dict[str, Any]], key: str) -> str:
+def _write_dataset(
+    schema: pa.Schema, rows: List[Dict[str, Any]], prefix: str, partition_cols: List[str],
+) -> str:
+    """Write rows as a hive-partitioned Parquet dataset, mirroring the
+    production flush (pq.write_to_dataset with the same partition_cols)."""
     table = pa.Table.from_pylist(rows, schema=schema)
-    buf = io.BytesIO()
-    pq.write_table(table, buf)
-    buf.seek(0)
-    ensure_bucket()
-    get_boto3_client().put_object(Bucket=BUCKET, Key=key, Body=buf.getvalue())
-    return key
+    pq.write_to_dataset(
+        table,
+        root_path=f"s3://{BUCKET}/{prefix}",
+        partition_cols=partition_cols,
+        filesystem=get_s3fs(),
+        existing_data_behavior="overwrite_or_ignore",
+        basename_template="lake_snapshot_fixture-{i}.parquet",
+    )
+    return prefix
 
 
-def _seed_silver() -> List[str]:
-    """Write silver rows grouped by source into their own hive partition folder.
-    Mixing sources under one source=X folder would let DuckDB's hive-partition
-    inference override the real per-row `source` value."""
+def _seed_silver() -> str:
     now = datetime.now(timezone.utc)
     rows = build_silver_rows()
     for row in rows:
+        # Force every row into the reserved partition (like the fixed 2099
+        # location before). obs_day stays an in-file column, as in production.
+        fetched_at = row["fetched_at"]
+        row["obs_year"] = _RESERVED_OBS_YEAR
+        row["obs_month"] = _RESERVED_OBS_MONTH
+        row["obs_day"] = fetched_at.day if fetched_at is not None else 1
         row.setdefault("written_at", now)
-    by_source: Dict[str, List[Dict[str, Any]]] = {}
+    return _write_dataset(
+        _SILVER_SCHEMA, rows, "silver_normalized/observations", _SILVER_PARTITION_COLS,
+    )
+
+
+def _seed_ops_table(schema: pa.Schema, rows: List[Dict[str, Any]], prefix: str) -> str:
     for row in rows:
-        by_source.setdefault(row["source"], []).append(row)
-    keys = []
-    for source, source_rows in by_source.items():
-        key = (
-            f"silver_normalized/observations/source={source}/{_SILVER_PARTITION}"
-            "/lake_snapshot_fixture.parquet"
-        )
-        keys.append(_write_parquet(_SILVER_SCHEMA, source_rows, key))
-    return keys
+        row["year"] = _RESERVED_YEAR
+        row["month"] = _RESERVED_MONTH
+    return _write_dataset(schema, rows, prefix, _OPS_PARTITION_COLS)
 
 
 def _seed_ops() -> List[str]:
     return [
-        _write_parquet(
+        _seed_ops_table(
             _PRICE_SCHEMA, build_price_event_rows(),
-            f"ops_normalized/price_observation_events/{_OPS_PARTITION}"
-            "/lake_snapshot_fixture.parquet",
+            "ops_normalized/price_observation_events",
         ),
-        _write_parquet(
+        _seed_ops_table(
             _VIN_TO_LISTING_SCHEMA, build_vin_to_listing_rows(),
-            f"ops_normalized/vin_to_listing_events/{_OPS_PARTITION}"
-            "/lake_snapshot_fixture.parquet",
+            "ops_normalized/vin_to_listing_events",
         ),
-        _write_parquet(
+        _seed_ops_table(
             _COOLDOWN_SCHEMA, build_cooldown_event_rows(),
-            f"ops_normalized/blocked_cooldown_events/{_OPS_PARTITION}"
-            "/lake_snapshot_fixture.parquet",
+            "ops_normalized/blocked_cooldown_events",
         ),
     ]
 
 
 def seed() -> List[str]:
     """Upload all fixture data across the four source tables. Returns the keys."""
-    return _seed_silver() + _seed_ops()
+    ensure_bucket()
+    return [_seed_silver()] + _seed_ops()
 
 
 def main() -> None:
