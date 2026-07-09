@@ -54,7 +54,24 @@ def test_build_snapshot_payload_applies_conf_overrides(dag_module):
 
 
 @pytest.mark.integration
-def test_check_snapshot_result_raises_on_coverage_failures(dag_module):
+def test_check_snapshot_result_coverage_failed_status_raises(dag_module):
+    """require_selector_coverage=True surfaces as status="coverage_failed",
+    which is not an acceptable status for a real (non-dry-run) export."""
+    payload = dag_module.build_snapshot_payload({})
+    result = {
+        "snapshot_id": "adaptive-refresh-x",
+        "status": "coverage_failed",
+        "coverage_failures": ["cooldown_bucket_11_plus: found 0, required 1"],
+    }
+    with pytest.raises(RuntimeError, match="unexpected snapshot status"):
+        dag_module.check_snapshot_result(result, payload)
+
+
+@pytest.mark.integration
+def test_check_snapshot_result_coverage_failures_do_not_block_by_default(dag_module):
+    """Coverage shortfalls are non-blocking by default (Plan 120 selector
+    policy correction) — they're logged, not raised, as long as status
+    itself is an acceptable one."""
     payload = dag_module.build_snapshot_payload({})
     result = {
         "snapshot_id": "adaptive-refresh-x",
@@ -63,8 +80,7 @@ def test_check_snapshot_result_raises_on_coverage_failures(dag_module):
         "manifest_key": "m",
         "coverage_failures": ["relisted_vin: found 1, required 10"],
     }
-    with pytest.raises(RuntimeError, match="coverage failures"):
-        dag_module.check_snapshot_result(result, payload)
+    dag_module.check_snapshot_result(result, payload)  # no raise
 
 
 @pytest.mark.integration

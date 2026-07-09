@@ -30,6 +30,8 @@ class SelectorConfig:
     base_filters: Tuple[str, ...] = field(default_factory=tuple)
     extra_source_tables: Tuple[str, ...] = field(default_factory=tuple)
     window_anchor: Optional[str] = None
+    lookback_days: Optional[int] = None
+    capture_boundary_row_key: bool = False
 
 
 def _require(spec: Dict[str, Any], name: str, key: str) -> Any:
@@ -84,6 +86,22 @@ def _parse_selector_config(name: str, spec: Dict[str, Any], sql_dir: Path) -> Se
             f"{VALID_WINDOW_ANCHORS}, got {window_anchor!r}"
         )
 
+    lookback_days = spec.get("lookback_days")
+    if lookback_days is not None:
+        is_valid_lookback = isinstance(lookback_days, int) and not isinstance(lookback_days, bool)
+        if not is_valid_lookback or lookback_days <= 0:
+            raise ValueError(
+                f"Selector config error: selector '{name}' lookback_days must be a "
+                f"positive integer"
+            )
+
+    capture_boundary_row_key = spec.get("capture_boundary_row_key", False)
+    if not isinstance(capture_boundary_row_key, bool):
+        raise ValueError(
+            f"Selector config error: selector '{name}' capture_boundary_row_key "
+            f"must be a boolean"
+        )
+
     return SelectorConfig(
         name=name,
         min_entities=min_entities,
@@ -95,6 +113,8 @@ def _parse_selector_config(name: str, spec: Dict[str, Any], sql_dir: Path) -> Se
         base_filters=_as_str_list(spec, name, "base_filters"),
         extra_source_tables=extra_source_tables,
         window_anchor=window_anchor,
+        lookback_days=lookback_days,
+        capture_boundary_row_key=capture_boundary_row_key,
     )
 
 

@@ -24,7 +24,7 @@ UTC = timezone.utc
 def _relative_request(**overrides):
     defaults = dict(
         tier="ci", run_selectors=True, build_cohort=True,
-        source_window_months=1, target_vins=5000, min_selector_coverage=True,
+        source_window_months=1, target_vins=5000,
         planning_cache_bucket_grain="week",
     )
     defaults.update(overrides)
@@ -86,11 +86,14 @@ class TestComputePlanningFingerprint:
         fp_b, _ = _fingerprint_for(_relative_request(target_vins=100), now=now)
         assert fp_a != fp_b
 
-    def test_min_selector_coverage_changes_fingerprint(self):
+    def test_require_selector_coverage_does_not_change_fingerprint(self):
+        """require_selector_coverage is validation policy only (whether a
+        coverage shortfall blocks the export) — it must never change cohort
+        membership, so it's deliberately excluded from the fingerprint."""
         now = datetime(2026, 7, 8, tzinfo=UTC)
-        fp_a, _ = _fingerprint_for(_relative_request(min_selector_coverage=True), now=now)
-        fp_b, _ = _fingerprint_for(_relative_request(min_selector_coverage=False), now=now)
-        assert fp_a != fp_b
+        fp_a, _ = _fingerprint_for(_relative_request(require_selector_coverage=True), now=now)
+        fp_b, _ = _fingerprint_for(_relative_request(require_selector_coverage=False), now=now)
+        assert fp_a == fp_b
 
     def test_dry_run_does_not_change_fingerprint(self):
         now = datetime(2026, 7, 8, tzinfo=UTC)
@@ -155,6 +158,34 @@ class TestComputePlanningFingerprint:
         )
         fp_b, _ = _fingerprint_for(_relative_request(), now=now)
         assert fp_a != fp_b
+
+    def test_cohort_algorithm_version_changes_fingerprint(self, mocker):
+        """Any cohort-allocation semantics change (e.g. allocate_cohort
+        seeding vin_seeds from a capture_boundary_row_key selector's row key)
+        must be paired with a COHORT_ALGORITHM_VERSION bump — otherwise a
+        planning cache entry computed under the old algorithm would be
+        silently reused as if nothing changed. This proves the constant is
+        actually load-bearing on the fingerprint, not just documentation."""
+        now = datetime(2026, 7, 8, tzinfo=UTC)
+        mocker.patch(
+            "archiver.processors.lake_snapshot_planning_cache.COHORT_ALGORITHM_VERSION", 1,
+        )
+        fp_a, _ = _fingerprint_for(_relative_request(), now=now)
+        mocker.patch(
+            "archiver.processors.lake_snapshot_planning_cache.COHORT_ALGORITHM_VERSION", 2,
+        )
+        fp_b, _ = _fingerprint_for(_relative_request(), now=now)
+        assert fp_a != fp_b
+
+    def test_cohort_algorithm_version_was_bumped_for_boundary_vin_seeding(self):
+        """Regression guard tying the constant to this specific fix: a
+        planning cache entry persisted before allocate_cohort started
+        seeding vin_seeds from capture_boundary_row_key selectors must be
+        treated as a miss. Bump this assertion (and the module constant)
+        again the next time cohort-allocation semantics change."""
+        from archiver.processors.lake_snapshot_planning_cache import COHORT_ALGORITHM_VERSION
+
+        assert COHORT_ALGORITHM_VERSION == 3
 
 
 # ---------------------------------------------------------------------------
@@ -310,3 +341,24 @@ class TestWritePlanningCache:
             side_effect=RuntimeError("boom"),
         )
         write_planning_cache("some/path", {"a": 1})
+
+    def test_write_ok_logs_elapsed_s(self, mocker, caplog):
+        mocker.patch("archiver.processors.lake_snapshot_planning_cache.write_json")
+        with caplog.at_level("INFO", logger="archiver"):
+            write_planning_cache("some/path", {"a": 1})
+        messages = [r.message for r in caplog.records]
+        assert any(
+            "write ok" in m and "some/path" in m and "elapsed_s=" in m for m in messages
+        )
+
+    def test_write_failure_logs_elapsed_s(self, mocker, caplog):
+        mocker.patch(
+            "archiver.processors.lake_snapshot_planning_cache.write_json",
+            side_effect=RuntimeError("boom"),
+        )
+        with caplog.at_level("INFO", logger="archiver"):
+            write_planning_cache("some/path", {"a": 1})
+        messages = [r.message for r in caplog.records]
+        assert any(
+            "write failed" in m and "elapsed_s=" in m and "boom" in m for m in messages
+        )

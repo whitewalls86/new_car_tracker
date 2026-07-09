@@ -288,23 +288,41 @@ class TestSnapshotExportRunEndpoint:
     def test_missing_body_defaults_to_empty_payload(self, mock_archiver_client, mocker):
         mock_fn = mocker.patch("archiver.app._export_ci_lake_snapshot")
         mock_fn.return_value.to_dict.return_value = {"status": "planned"}
-        resp = mock_archiver_client.post("/snapshots/adaptive-refresh/run", json={})
+        # dry_run=True: this test is about payload defaulting, not the
+        # non-dry-run sync-cohort guard.
+        resp = mock_archiver_client.post(
+            "/snapshots/adaptive-refresh/run", json={"dry_run": True}
+        )
         assert resp.status_code == 200
         request_arg = mock_fn.call_args[0][0]
         assert request_arg.tier is None
 
     def test_invalid_tier_returns_400(self, mock_archiver_client):
+        # dry_run=True: keeps this test scoped to tier validation rather than
+        # the non-dry-run sync-cohort guard.
         resp = mock_archiver_client.post(
-            "/snapshots/adaptive-refresh/run", json={"tier": "bogus"}
+            "/snapshots/adaptive-refresh/run", json={"tier": "bogus", "dry_run": True}
         )
         assert resp.status_code == 400
 
-    def test_non_dry_run_is_explicit_not_implemented(self, mock_archiver_client):
+    def test_non_dry_run_rejected_by_default_sync_cohort_guard(self, mock_archiver_client):
+        """Gate D: a real (non-dry-run) export always runs the same heavy
+        planning as build_cohort=True, so it must be blocked by the same
+        production sync-cohort guard by default."""
+        resp = mock_archiver_client.post(
+            "/snapshots/adaptive-refresh/run", json={"tier": "ci", "dry_run": False}
+        )
+        assert resp.status_code == 409
+
+    def test_non_dry_run_allowed_when_override_enabled(self, mock_archiver_client, mocker):
+        mocker.patch("archiver.app._ALLOW_SYNC_SNAPSHOT_COHORT", True)
+        mock_fn = mocker.patch("archiver.app._export_ci_lake_snapshot")
+        mock_fn.return_value.to_dict.return_value = {"status": "exported"}
         resp = mock_archiver_client.post(
             "/snapshots/adaptive-refresh/run", json={"tier": "ci", "dry_run": False}
         )
         assert resp.status_code == 200
-        assert resp.json()["status"] == "not_implemented"
+        assert mock_fn.called
 
     def test_tier_defaults_flow_through_to_dry_run_result(self, mock_archiver_client):
         resp = mock_archiver_client.post(

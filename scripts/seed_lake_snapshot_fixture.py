@@ -139,6 +139,15 @@ ARTIFACT_RELISTED_1 = 101            # VIN_RELISTED on L1
 ARTIFACT_RELISTED_2 = 102            # VIN_RELISTED on L2
 LISTING_NULL_VIN = "L8a"
 
+# artifact co-occurrence scenario: one artifact_id (e.g. an SRP/carousel page)
+# spans two otherwise-unrelated VIN/listing rows. Used to prove closure does
+# not treat artifact co-occurrence as a vehicle-identity edge.
+ARTIFACT_SRP_SHARED = 150
+VIN_SRP_COOCCUR_A = "VIN_SRP_COOCCUR_A"
+VIN_SRP_COOCCUR_B = "VIN_SRP_COOCCUR_B"
+LISTING_SRP_COOCCUR_A = "L30"
+LISTING_SRP_COOCCUR_B = "L31"
+
 # listing_id constants asserted on by the selector/cohort integration tests,
 # exported so seeding and assertions cannot drift apart.
 LISTING_RELISTED_1 = "L1"            # relisted VIN first listing (+ price drop/increase, cooldown)
@@ -271,6 +280,12 @@ def _selector_scenario_rows() -> List[Dict[str, Any]]:
         _obs_row(VIN_RELISTED, listing_id="L1", artifact_id=101, fetched_at=_ts(2026, 7, 1)),
         _obs_row(VIN_RELISTED, listing_id="L2", artifact_id=102, fetched_at=_ts(2026, 7, 2)),
         _obs_row(VIN_L16, listing_id="L16", artifact_id=116, fetched_at=_ts(2026, 7, 20)),
+        # artifact co-occurrence: same artifact_id (an SRP/carousel page) spans
+        # two unrelated VIN/listing rows — closure must not fuse them.
+        _obs_row(VIN_SRP_COOCCUR_A, listing_id=LISTING_SRP_COOCCUR_A,
+                 artifact_id=ARTIFACT_SRP_SHARED, fetched_at=_ts(2026, 7, 1)),
+        _obs_row(VIN_SRP_COOCCUR_B, listing_id=LISTING_SRP_COOCCUR_B,
+                 artifact_id=ARTIFACT_SRP_SHARED, fetched_at=_ts(2026, 7, 1)),
     ]
     rows += _dense_rows()
     rows += _sparse_rows()

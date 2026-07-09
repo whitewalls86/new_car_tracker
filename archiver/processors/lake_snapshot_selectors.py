@@ -16,7 +16,7 @@ dbt-equivalence tests in `tests/archiver/test_export_ci_lake_snapshot.py`).
 import logging
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import lru_cache
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -74,12 +74,26 @@ def _build_where(
     clauses = list(config.base_filters)
     params: List[Any] = []
     ts_col = config.timestamp_column
-    if window_start is not None:
-        clauses.append(f"{ts_col} >= ?")
-        params.append(window_start)
-    if window_end is not None:
-        clauses.append(f"{ts_col} < ?")
-        params.append(window_end)
+    if config.lookback_days is not None:
+        # As-of selectors (e.g. stale_listing) need history from *before*
+        # window_start to determine the latest observation as of window_end
+        # — the normal [window_start, window_end) filter would exclude
+        # exactly the rows that answer the question. A bounded lookback
+        # avoids an unbounded full-table scan while still comfortably
+        # covering the selector's staleness threshold (see selector config
+        # comments for the specific margin).
+        if window_end is not None:
+            clauses.append(f"{ts_col} >= ?")
+            params.append(window_end - timedelta(days=config.lookback_days))
+            clauses.append(f"{ts_col} <= ?")
+            params.append(window_end)
+    else:
+        if window_start is not None:
+            clauses.append(f"{ts_col} >= ?")
+            params.append(window_start)
+        if window_end is not None:
+            clauses.append(f"{ts_col} < ?")
+            params.append(window_end)
     where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     return where_sql, params
 
@@ -163,6 +177,11 @@ def run_selector(
         "error": None,
     }
 
+    t0 = time.monotonic()
+    logger.info(
+        "lake_snapshot_selectors: selector=%s start entity_key=%s required=%s",
+        name, selector.entity_key, selector.min_entities,
+    )
     try:
         extra_paths = None
         if config.extra_source_tables:
@@ -179,9 +198,17 @@ def run_selector(
         result["entities"] = entities
         result["sample_entities"] = list(sample_entities) if sample_entities else []
         result["status"] = "pass" if entities >= selector.min_entities else "fail"
+        logger.info(
+            "lake_snapshot_selectors: selector=%s end elapsed_s=%.2f entities=%s "
+            "candidate_rows=%s status=%s",
+            name, time.monotonic() - t0, entities, candidate_rows, result["status"],
+        )
     except Exception as e:
         result["error"] = str(e)
-        logger.warning("lake_snapshot_selectors: selector=%s path=%s error=%s", name, path, e)
+        logger.warning(
+            "lake_snapshot_selectors: selector=%s error elapsed_s=%.2f path=%s error=%s",
+            name, time.monotonic() - t0, path, e,
+        )
 
     return result
 
@@ -207,7 +234,12 @@ def run_lake_selectors(
         con = get_duckdb_s3_connection()
 
     t0 = time.monotonic()
-    logger.info("lake_snapshot_selectors: run_lake_selectors start selectors=%d", len(names))
+    logger.info(
+        "lake_snapshot_selectors: run_lake_selectors start selectors=%d window_start=%s "
+        "window_end=%s",
+        len(names), window_start.isoformat() if window_start else None,
+        window_end.isoformat() if window_end else None,
+    )
     try:
         selectors: Dict[str, Any] = {}
         errors: List[str] = []

@@ -38,6 +38,30 @@ lower operational cost.
 
 ---
 
+## Related: Shared Dependency Pinning (CI/project sanity)
+
+Per-service `requirements.txt` files currently duplicate shared third-party
+packages (e.g. `boto3`) with no version coordination — a package can be
+present in one service's image and silently missing or drifted in another
+(see: archiver's `shared.minio` needing `boto3`, which was only added to
+`archiver/requirements.txt` after a runtime `ModuleNotFoundError` in Plan 120
+Gate C.75 planning-cache writes).
+
+Candidate fix: a root `constraints.txt` pinning shared packages
+(`boto3`, `pyarrow`, `duckdb`, etc.), with each service's Dockerfile/CI install
+step passing `pip install -c constraints.txt -r requirements.txt`. Keeps
+per-service requirement lists independent while removing version drift for
+packages multiple services share. Lower cost than a shared base Docker image;
+revisit a shared base image only if constraint-file drift keeps recurring.
+
+Scope for this plan:
+
+- add `constraints.txt` at repo root
+- update each service's Dockerfile/CI pip install to use `-c constraints.txt`
+- audit current `requirements.txt` files for already-drifted shared packages
+
+---
+
 ## Context
 
 CarTracker currently has:
@@ -257,6 +281,34 @@ Minimum staging smoke checks:
 - scraper is disabled or dummy-only by default.
 - Caddy routes `dev.cartracker.info` to staging services only.
 - staging seed can be rerun idempotently.
+
+---
+
+## Follow-On: Testing Overhaul
+
+Use the staging environment as the foundation for a broader testing overhaul
+after Plan 121 is operational. Do not block the initial staging build on this
+work; staging first gives the project a realistic place to replace brittle
+mock-heavy coverage with higher-value workflow tests.
+
+Create a separate implementation plan covering:
+
+- a clear unit, component, integration, staging, and production-smoke test
+  taxonomy
+- consolidation of repetitive validation, argument-forwarding, and logging
+  tests
+- removal of low-value tests that primarily mirror implementation details
+- staging-backed tests for auth, routing, service wiring, dbt/Spark jobs, and
+  Plan 120 snapshot seeding
+- CI tiers that keep fast PR checks separate from heavier scheduled or
+  pre-deployment validation
+- preservation of high-value SQL semantics, entity-closure, cache
+  invalidation, and atomic-publication coverage
+
+The goal is not an arbitrary test-count reduction. It is a smaller,
+better-layered suite whose failures identify meaningful behavioral regressions
+and whose heavier checks run in an environment capable of exercising the real
+system.
 
 ---
 

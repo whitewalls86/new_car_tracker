@@ -262,5 +262,23 @@ selectors:
     source_table: silver_observations
     sql_template: stale_listing
     timestamp_column: fetched_at
+    window_anchor: window_end
+    # As-of semantics: a listing is stale when its last observation at or
+    # before window_end is >=30 days older than window_end. lookback_days
+    # bounds how far back the query reads to find that last observation —
+    # 60 is comfortably larger than the 30-day stale threshold (and larger
+    # than a typical 1-month export window). This is a deliberate bounded
+    # scan, not a full-history one: a listing whose last-ever observation
+    # predates the full lookback window (i.e. staler than ~60 days) is not
+    # found by this selector. The practical range this selector covers is
+    # "last observed 30-60 days before window_end", not open-ended staleness.
+    lookback_days: 60
+    # The selected listing's boundary (last-observation) row may predate
+    # window_start, so it needs an exact row-key export exemption from the
+    # snapshot window filter (see lake_snapshot_export.py) — otherwise the
+    # listing would be selected into the cohort but exported with zero
+    # supporting silver_observations rows.
+    capture_boundary_row_key: true
     description: >
-      Old listing, or listing with stale SRP/detail recency.
+      Listing whose most recent observation as of the snapshot window end is
+      between 30 and lookback_days days old.
