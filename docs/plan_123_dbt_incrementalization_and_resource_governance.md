@@ -176,6 +176,105 @@ Acceptance gate:
 - every dashboard/API dependency is assigned to a documented cadence;
 - daily/full builds cannot overlap the hourly build.
 
+### Phase 1 progress (2026-07-09)
+
+In progress on `feature/plan-123-dbt-cadences`. dbt/DuckDB resources are
+tagged, the hourly Airflow default now selects only `hourly_core`, and a
+`full_validation` path remains manually available. Not yet done: deploying
+to the VM, adding a scheduled `feature_daily` build, and Phase 2+
+incrementalization.
+
+Cadence assignment was derived from actual `ref()` dependencies
+(`dbt/models/**/*.sql`) and from what dashboard/ops code actually queries
+(`dashboard/queries.py`, `dashboard/sql/*.sql`, `ops/metrics/duckdb_gauges.py`,
+`ops/routers/info.py`), not from model name alone. Notably
+`dashboard/sql/deals_table.sql` selects from `mart_deal_scores`, which joins
+`int_benchmarks` — so `int_benchmarks` is `hourly_core` even though it is not
+directly queried by any dashboard endpoint.
+
+#### `hourly_core` (config tag on 17 models)
+
+Operational dashboards, freshness metrics, scrape health, and current
+production-facing views. Runs on `hourly_analytics_refresh` every hour.
+
+- `stg_observations`, `stg_price_events`, `stg_blocked_cooldown_events`,
+  `stg_search_configs` — hourly source staging views.
+- `stg_dealers` — depends on `int_latest_observation`; feeds
+  `mart_deal_scores`.
+- `int_latest_observation`, `int_active_make_models`, `int_price_history`,
+  `int_benchmarks` — direct or one-hop dependencies of `mart_vehicle_snapshot`
+  / `mart_deal_scores`.
+- `mart_vehicle_snapshot`, `mart_deal_scores` — queried by
+  `dashboard/sql/mart_freshness.sql`, `dashboard/sql/deals_table.sql`, and
+  the other `deals_*`/`inventory_*`/`market_trends_*` dashboard queries, plus
+  `ops/routers/info.py`.
+- `mart_scrape_volume`, `mart_block_rate`, `mart_detail_batch_outcomes`,
+  `mart_inventory_coverage`, `mart_cooldown_cohorts`,
+  `mart_price_freshness_trend` — queried by `ops/metrics/duckdb_gauges.py`
+  and `dashboard/sql/data_health_*.sql` for operational/data-health gauges.
+
+#### `feature_daily` + `backtest` (config tag on 3 models)
+
+Feature-store/backtesting models with no dashboard or API dependency:
+`int_listing_state_fingerprints`, `int_listing_state_runs`,
+`int_listing_volatility_features`. Tagged with both `feature_daily` and
+`backtest` — they are the Plan 112 reproducible feature-generation chain, and
+nothing distinguishes a separate `backtest`-only subset yet. Intended for a
+daily or on-demand schedule; not yet wired into an Airflow DAG (no scheduled
+daily build exists — a manual `dbt build --selector feature_daily` run is the
+only trigger today).
+
+#### `full_validation`
+
+Named selector `full_validation` (`dbt/selectors.yml`) selects the complete
+graph (`fqn:*`) plus all tests — equivalent to `dbt build` with no selector.
+Used for the manual `dbt_build` Airflow DAG and local pre-deploy validation,
+not for the hourly schedule.
+
+#### Manual commands / Airflow trigger examples
+
+```bash
+# Local: hourly cadence only
+dbt build --selector hourly_core
+
+# Local: feature/backtest models only
+dbt build --selector feature_daily
+dbt build --selector backtest
+
+# Local: full graph + all tests (same as plain `dbt build`)
+dbt build --selector full_validation
+```
+
+```bash
+# Airflow: manual full-graph build via the always-manual dbt_build DAG
+# (no conf needed — it has no default selector)
+airflow dags trigger dbt_build
+
+# Airflow: manual feature_daily build via the same DAG
+airflow dags trigger dbt_build --conf '{"select": ["tag:feature_daily"]}'
+
+# Airflow: override the hourly DAG's default hourly_core selection for one run
+airflow dags trigger hourly_analytics_refresh --conf '{"select": ["tag:full_validation"]}'
+```
+
+The hourly `dbt_runner` `/dbt/build` payload now defaults to
+`{"select": ["tag:hourly_core"]}` (`airflow/dags/hourly_analytics_refresh.py`)
+unless `dag_run.conf["select"]` is explicitly set. The manual `dbt_build` DAG
+(`airflow/dags/dbt_build.py`) is unchanged: it has no default selector, so an
+unparameterized manual trigger still builds the complete graph — this is the
+documented full-refresh path.
+
+#### Still needs VM validation
+
+- [ ] Confirm the hourly DAG's actual runtime/resource drop once only
+      `hourly_core` runs, using the Phase 0 observability fields
+      (`model_timings`, `duration_seconds`) from a real production run.
+- [ ] Stand up a scheduled `feature_daily` build (cadence/DAG not decided in
+      this phase — Phase 1 only adds the tag and a manual trigger path).
+- [ ] Confirm `full_validation` / manual `dbt_build` still completes within
+      the Phase 0 DuckDB memory budget now that it's exercised on its own
+      schedule rather than every hour.
+
 ## Phase 2: Incremental Fingerprints
 
 Convert `int_listing_state_fingerprints` first.

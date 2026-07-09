@@ -7,6 +7,8 @@ models:
       across all tracked VINs. One row per (make, model). Used by mart_deal_scores
       to rank individual listings against the national cohort.
       national_avg_discount_pct is null for make/models where no VIN has a known MSRP.
+    config:
+      tags: ["hourly_core"]
     columns:
       - name: make
         data_tests:

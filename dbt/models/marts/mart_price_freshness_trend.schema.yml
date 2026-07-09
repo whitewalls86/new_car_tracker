@@ -7,6 +7,8 @@ models:
       make/model. Buckets: fresh_lt_1d, fresh_1_3d, fresh_4_7d, fresh_8_14d,
       stale_gt_14d. Unlisted VINs are excluded — stale prices on sold listings
       are expected and would mask real scraping gaps. One row per (make, model).
+    config:
+      tags: ["hourly_core"]
     columns:
       - name: make
         data_tests:

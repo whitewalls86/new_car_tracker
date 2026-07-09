@@ -6,6 +6,8 @@ models:
       Price observation events from ops_events.price_observation_events.
       Filtered to exclude deleted events and rows with null or non-positive prices.
       One row per event — the source for all price history and benchmark calculations.
+    config:
+      tags: ["hourly_core"]
     columns:
       - name: event_id
         data_tests:

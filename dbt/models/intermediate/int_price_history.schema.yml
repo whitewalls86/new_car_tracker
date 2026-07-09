@@ -6,6 +6,8 @@ models:
       Aggregated price trajectory per VIN, built from stg_price_events.
       One row per VIN. All aggregate columns are non-null because stg_price_events
       guarantees price > 0 and vin is not null, so every group has at least one row.
+    config:
+      tags: ["hourly_core"]
     columns:
       - name: vin
         data_tests:

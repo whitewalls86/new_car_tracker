@@ -6,6 +6,8 @@ models:
       Hourly scrape throughput by source type. One row per (hour, source).
       vin_extraction_pct is only populated for source='detail'; null for srp and carousel.
       Composite PK: (hour, source).
+    config:
+      tags: ["hourly_core"]
     columns:
       - name: hour
         data_tests:

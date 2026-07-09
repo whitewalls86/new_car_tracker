@@ -9,6 +9,8 @@ models:
       hash) always opens a new run.
       hours_until_change and next_state_started_at are NULL for the open (most recent) run
       per VIN — this is the label target for Plan 112.
+    config:
+      tags: ["feature_daily", "backtest"]
     columns:
       - name: vin17
         description: VIN — grain for all downstream VIN-keyed models.

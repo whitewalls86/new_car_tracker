@@ -9,6 +9,8 @@ models:
       avoid inflating in-progress durations. price_vs_make_model_median is NULL when
       national_median_price is unavailable for a make/model. days_since_srp_seen is
       NULL when the current listing_id has never been observed in an SRP fetch.
+    config:
+      tags: ["feature_daily", "backtest"]
     columns:
       - name: vin17
         description: VIN — primary key.
