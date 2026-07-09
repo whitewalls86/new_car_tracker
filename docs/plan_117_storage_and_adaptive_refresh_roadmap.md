@@ -334,6 +334,7 @@ Do not introduce blunt raw HTML expiry until this research produces evidence.
 | Plan 114 | Sectioned raw HTML retention audit |
 | Plan 118 | dbt migration from DuckDB to Spark/Databricks-compatible execution |
 | Plan 119 | Governance/catalog expansion around Unity Catalog concepts |
+| Plan 123 | dbt incrementalization, cadence separation, and analytics resource governance after Plan 120 Gate D |
 
 ---
 

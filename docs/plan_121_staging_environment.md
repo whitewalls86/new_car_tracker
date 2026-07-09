@@ -284,6 +284,34 @@ Minimum staging smoke checks:
 
 ---
 
+## Follow-On: Testing Overhaul
+
+Use the staging environment as the foundation for a broader testing overhaul
+after Plan 121 is operational. Do not block the initial staging build on this
+work; staging first gives the project a realistic place to replace brittle
+mock-heavy coverage with higher-value workflow tests.
+
+Create a separate implementation plan covering:
+
+- a clear unit, component, integration, staging, and production-smoke test
+  taxonomy
+- consolidation of repetitive validation, argument-forwarding, and logging
+  tests
+- removal of low-value tests that primarily mirror implementation details
+- staging-backed tests for auth, routing, service wiring, dbt/Spark jobs, and
+  Plan 120 snapshot seeding
+- CI tiers that keep fast PR checks separate from heavier scheduled or
+  pre-deployment validation
+- preservation of high-value SQL semantics, entity-closure, cache
+  invalidation, and atomic-publication coverage
+
+The goal is not an arbitrary test-count reduction. It is a smaller,
+better-layered suite whose failures identify meaningful behavioral regressions
+and whose heavier checks run in an environment capable of exercising the real
+system.
+
+---
+
 ## Files Changed
 
 | File | Change |

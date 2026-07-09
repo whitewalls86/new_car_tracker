@@ -1,0 +1,286 @@
+# Plan 123: dbt Incrementalization and Analytics Resource Governance
+
+## Objective
+
+Make the current DuckDB-backed analytics pipeline reliable as the project grows,
+without turning short-term DuckDB optimization into a barrier to the planned
+Spark/Delta migration.
+
+The immediate driver is the production incident on 2026-07-09:
+
+- the hourly dbt graph grew from roughly 162 to 200 resources;
+- two dbt processes were killed by the Linux OOM killer;
+- each killed process held roughly 12.9 GB RSS;
+- the VM has roughly 23.4 GB total memory and already runs the production
+  application stack;
+- dbt used four DuckDB threads and had no DuckDB or container memory limit;
+- a later build also experienced a transient MinIO read failure while the host
+  was under heavy analytics pressure.
+
+This plan begins after Plan 120 Gate D is complete.
+
+## Goals
+
+1. Prevent analytics work from destabilizing production services.
+2. Reduce the amount of historical data rebuilt during every hourly dbt run.
+3. Separate operational dashboard freshness from feature-store refresh cadence.
+4. Preserve correctness with late-arriving and corrected events.
+5. Produce resource and runtime evidence for the later dbt/Spark migration.
+
+## Non-Goals
+
+- Do not migrate dbt to Spark in this plan; that remains Plan 118.
+- Do not convert every model to incremental materialization.
+- Do not make feature tables part of the hot scraper or claim path.
+- Do not hide failed builds by retrying indefinitely.
+- Do not rely on incremental state without a tested full-refresh recovery path.
+- Do not run snapshot-worker and heavy dbt builds concurrently on the VM.
+
+## Current Model Assessment
+
+| Model | Current grain | Recommendation | Reason |
+|-------|---------------|----------------|--------|
+| `int_listing_state_fingerprints` | One row per valid detail artifact | Incremental, append-oriented | Artifact rows are naturally immutable; use a watermark plus late-arrival lookback |
+| `int_price_history` | One mutable aggregate row per VIN | Incremental, replace affected VINs | New events only require full history recomputation for VINs touched by the incremental input |
+| `int_listing_state_runs` | Multiple ordered runs per VIN | Incremental, replace affected VINs | New fingerprints can extend or split the open run; recompute all runs for changed VINs |
+| `int_latest_observation` | One current row per VIN | Evaluate after upstream conversion | Per-VIN replacement is possible, but source-priority and late-arrival behavior require careful tests |
+| `int_benchmarks` | Current aggregate per make/model | Keep table; slower cadence initially | A changed VIN can alter make/model percentiles; targeted group replacement is possible but lower priority |
+| `int_listing_volatility_features` | One current feature row per VIN | Keep table; daily/on-demand cadence | Dealer and make/model aggregates can change many rows; time-relative features also age without new events |
+| `mart_vehicle_snapshot` | One current row per VIN | Keep table initially | Listing status is time-relative and can change without a new source row |
+
+## Phase 0: Immediate Production Guardrails
+
+Apply safety controls before incremental conversion.
+
+### DuckDB limits
+
+Change the DuckDB dbt target from four threads to two and configure an explicit
+memory budget:
+
+```yaml
+duckdb:
+  threads: 2
+  settings:
+    memory_limit: "8GB"
+```
+
+Validate the exact memory budget on the VM. It must leave sufficient headroom
+for Postgres, MinIO, Airflow, scraper, ops, and monitoring.
+
+### Container and orchestration controls
+
+- Add a dbt-runner container memory limit as a final containment boundary.
+- Ensure the limit is above DuckDB's configured memory budget but below the
+  amount that can trigger host-wide OOM.
+- Prevent overlapping dbt builds using the existing active-job guard.
+- Prevent snapshot-worker execution from overlapping a heavy dbt build.
+- Add one bounded Airflow retry for transient infrastructure failures.
+- Do not retry an OOM failure without changing execution conditions.
+
+### Observability
+
+Record for every dbt invocation:
+
+- invocation ID and command;
+- start/end time and return code;
+- peak RSS if available;
+- DuckDB thread and memory settings;
+- selected model set;
+- whether the run was incremental or full refresh;
+- model timing from `run_results.json`;
+- OOM/SIGKILL classification when return code is `-9` or `137`.
+
+Acceptance gate:
+
+- a complete production build succeeds without host OOM;
+- host memory retains an agreed safety margin;
+- production APIs and MinIO remain healthy during the build.
+
+## Phase 1: Split Build Cadences
+
+Stop treating all analytical outputs as equally time-sensitive.
+
+Create explicit dbt tags/selectors:
+
+- `hourly_core`: operational dashboards and current-state outputs that genuinely
+  require hourly freshness;
+- `feature_daily`: feature stores, state-history aggregates, and benchmarks;
+- `full_validation`: complete graph plus all tests;
+- `backtest`: models required for Plan 112 reproducible feature generation.
+
+Proposed scheduling:
+
+| Workload | Initial cadence |
+|----------|-----------------|
+| Hourly operational models | Hourly |
+| Fingerprint/price/run incremental models | Hourly or every few hours after profiling |
+| Benchmarks | Daily |
+| Volatility feature store | Daily or on demand |
+| Full graph validation | Daily and before deployment |
+| Full refresh | Manual maintenance window |
+
+The exact split must be derived from dashboard and API dependencies, not model
+names alone.
+
+Acceptance gate:
+
+- hourly DAG no longer executes the complete 200-resource graph;
+- every dashboard/API dependency is assigned to a documented cadence;
+- daily/full builds cannot overlap the hourly build.
+
+## Phase 2: Incremental Fingerprints
+
+Convert `int_listing_state_fingerprints` first.
+
+Requirements:
+
+- use `artifact_id` as the durable row identity;
+- derive a source watermark from the existing target;
+- include a configurable late-arrival lookback based on `fetched_at`;
+- deduplicate by `artifact_id`;
+- update an existing artifact if corrected source data is possible;
+- preserve deterministic fingerprint logic exactly;
+- make first run and `--full-refresh` behavior explicit.
+
+Tests:
+
+- empty target bootstrap;
+- no new artifacts;
+- new artifacts append once;
+- repeated run is idempotent;
+- late artifact inside lookback is included;
+- duplicate artifact does not duplicate target;
+- incremental output equals full-refresh output on the same fixture.
+
+Acceptance gate:
+
+- steady-state scan volume and peak memory are materially lower;
+- row count and checksum/grouped comparison match full refresh.
+
+## Phase 3: Incremental Price History
+
+Convert `int_price_history` using affected-VIN replacement.
+
+Algorithm:
+
+1. Identify VINs with new or corrected price events inside the watermark
+   lookback.
+2. Read complete price history only for those VINs.
+3. Recompute all aggregate and `lag()`-derived fields for those VINs.
+4. Delete and replace those VIN rows atomically.
+
+Do not increment counters from only the new batch. Consecutive-price logic
+depends on the event immediately before the incremental boundary.
+
+Tests:
+
+- new VIN;
+- additional event for existing VIN;
+- late event inserted between existing events;
+- duplicate event;
+- price correction;
+- drop/increase counts across the watermark boundary;
+- incremental/full-refresh equivalence.
+
+## Phase 4: Incremental Listing-State Runs
+
+Convert `int_listing_state_runs` only after fingerprints are stable.
+
+Algorithm:
+
+1. Identify VINs changed by incremental fingerprint input.
+2. Read all fingerprint history for those VINs.
+3. Recompute complete gaps-and-islands runs for those VINs.
+4. Replace all target runs for the affected VINs.
+
+This avoids trying to mutate only the open run, which is unsafe when late events
+can split historical runs or alter `lead()`-derived fields.
+
+Tests:
+
+- append extends open run;
+- append opens new run;
+- relisting opens new run;
+- late event splits an existing run;
+- late event merges what were previously separate runs;
+- `next_state_started_at`, `hours_until_change`, and `is_open_run` remain correct;
+- incremental/full-refresh equivalence.
+
+## Phase 5: Reassess Downstream Models
+
+Profile the graph again after Phases 2-4.
+
+Decide with evidence whether to:
+
+- incrementally replace affected VINs in `int_latest_observation`;
+- incrementally replace affected make/model groups in `int_benchmarks`;
+- retain daily full-table builds for benchmarks and volatility features;
+- split time-relative feature computation from event-derived feature state;
+- move selected feature preparation directly into the later PySpark/Delta work.
+
+Do not incrementalize a model merely because it is expensive. The update key
+must cover every way its output can change.
+
+## Phase 6: Recovery and Drift Controls
+
+Incremental pipelines require explicit recovery behavior.
+
+Add:
+
+- scheduled incremental/full-refresh equivalence checks on a bounded fixture;
+- row-count and uniqueness assertions after every incremental run;
+- watermark and affected-entity metrics;
+- a documented full-refresh maintenance procedure;
+- target backup/restore or atomic replacement behavior before destructive
+  rebuilds;
+- alerts for unexpectedly large affected-VIN sets;
+- a mechanism to force selected VINs or date ranges through recomputation.
+
+## Resource Baseline Report
+
+Capture before/after measurements for:
+
+- total runtime;
+- per-model runtime;
+- peak dbt RSS;
+- host peak memory;
+- MinIO read volume;
+- DuckDB file growth;
+- rows scanned or affected where available;
+- hourly and daily DAG duration;
+- behavior under a simultaneous production scrape workload.
+
+Store the report in:
+
+```text
+docs/plan_123_dbt_resource_baseline.md
+```
+
+## Rollout Order
+
+1. Deploy two threads and DuckDB memory limit.
+2. Verify one complete build under monitoring.
+3. Split hourly and daily model selections.
+4. Convert fingerprints.
+5. Convert price history.
+6. Convert state runs.
+7. Re-profile before touching downstream feature models.
+8. Add periodic full-refresh equivalence validation.
+
+Each incremental model should be its own reviewable commit or PR gate.
+
+## Acceptance Criteria
+
+- No dbt-triggered host OOM during seven consecutive days of scheduled runs.
+- Hourly analytics and snapshot-worker cannot overlap.
+- Hourly DAG executes only its documented model subset.
+- Fingerprints, price history, and state runs pass incremental/full-refresh
+  equivalence tests.
+- Late-arriving events are covered by tests and documented watermark policy.
+- A manual full refresh remains possible and has a safe runbook.
+- Feature-store freshness expectations are explicit.
+- Resource measurements demonstrate lower steady-state peak memory and source
+  scan volume.
+- The implementation does not add new DuckDB-specific business semantics that
+  would impede Plan 118's Spark/Delta migration.
+
