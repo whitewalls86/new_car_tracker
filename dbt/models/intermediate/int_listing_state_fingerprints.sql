@@ -1,5 +1,9 @@
 {{
-  config(materialized='table')
+  config(
+    materialized='incremental',
+    unique_key='artifact_id',
+    incremental_strategy='delete+insert'
+  )
 }}
 
 -- One row per detail artifact with a valid VIN.
@@ -11,6 +15,36 @@
 --                  different dealer should open a new run
 --   seller_id:     excluded — overlaps with customer_id and is unreliable for detail pages
 --   seller_customer_id: excluded — SRP-only UUID field, not present on detail pages
+--
+-- Incremental strategy: 'delete+insert' (not 'merge') — it's the base dbt-duckdb
+-- strategy available regardless of DuckDB version, and it's also supported by the
+-- Postgres/Spark-family adapters this project may migrate onto later (Plan 118),
+-- unlike DuckDB's newer native MERGE. artifact_id is the unique_key, so a source
+-- artifact_id reappearing inside the lookback window deletes and replaces the
+-- existing target row rather than duplicating it.
+--
+-- On an incremental run, only source rows at or after
+-- max(target.fetched_at) minus fingerprint_incremental_lookback_days are rescanned,
+-- to pick up late-arriving or corrected artifacts without rescanning the full table.
+-- A first run (or --full-refresh) has no target to watermark from, so it scans the
+-- full source, matching the non-incremental behavior exactly.
+
+with source_rows as (
+
+    select *
+    from {{ ref('stg_observations') }}
+    where source = 'detail'
+      and vin17 is not null
+
+    {% if is_incremental() %}
+      and fetched_at >= (
+          select coalesce(max(fetched_at), timestamp '1900-01-01')
+                 - interval '{{ var("fingerprint_incremental_lookback_days", 3) }}' day
+          from {{ this }}
+      )
+    {% endif %}
+
+)
 
 select
     vin17,
@@ -40,6 +74,4 @@ select
     price,
     mileage,
     listing_state
-from {{ ref('stg_observations') }}
-where source = 'detail'
-  and vin17 is not null
+from source_rows
