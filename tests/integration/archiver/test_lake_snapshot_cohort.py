@@ -287,9 +287,11 @@ class TestExportBuildCohort:
         assert result.cohort_diagnostics is None
         assert result.seed_vin_count is None
 
-    def test_non_dry_run_ignores_build_cohort(self):
+    def test_non_dry_run_materializes_export_with_cohort(self):
         result = export_ci_lake_snapshot(SnapshotRequest(
             tier="ci", dry_run=False, run_selectors=True, build_cohort=True,
         ))
-        assert result.status == "not_implemented"
-        assert result.cohort_diagnostics is None
+        assert result.status == "exported"
+        assert result.cohort_diagnostics is not None
+        assert result.manifest_key is not None
+        assert result.materialized_snapshot_path is not None
