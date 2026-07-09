@@ -719,6 +719,25 @@ guarantees the selected listing's boundary row is present in the export
 regardless of how far before `window_start` it falls, while every other
 row for that listing/vin (if any) stays subject to the normal window.
 
+The captured row key's non-null `vin` also seeds `vin_seeds` directly in
+`allocate_cohort` (`lake_snapshot_cohort.py`), not just `artifact_row_keys`.
+This matters because `expand_entity_closure`'s vin<->listing_id lookups
+(`_listing_ids_for_vins`/`_vins_for_listing_ids`) are themselves
+window-bounded — without an explicit vin seed, a listing whose only
+evidence predates `window_start` would never surface its vin through those
+lookups, so the vehicle's other listings, price events, and relist/remap
+history would be silently excluded from the export even though the stale
+listing itself was selected. This is deliberately gated on
+`capture_boundary_row_key` (not on having *any* row key at all):
+`invalid_or_null_vin`'s artifact-only row keys must keep their existing
+non-expanding behavior — a null/malformed vin, or artifact co-occurrence in
+general, must never seed vin/listing closure (see `expand_entity_closure`'s
+docstring on the artifact-fan-out regression this guards against). The two
+kinds of row keys share the same `(artifact_id, vin, listing_id)` tuple
+shape and the same `artifact_row_keys` pool for Gate D's export-match
+purposes, but only a `capture_boundary_row_key` selector's keys additionally
+seed closure.
+
 ---
 
 ## Export materialization cache (Gate D — implemented)

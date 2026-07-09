@@ -1264,6 +1264,20 @@ def _candidate(name, entity_key, required, entities):
     )
 
 
+def _candidate_with_row_keys(name, entity_key, entities, row_keys):
+    entities = tuple(entities)
+    return CandidateSet(
+        selector_name=name,
+        entity_key=entity_key,
+        required=len(entities),
+        entities=entities,
+        candidate_rows=len(entities),
+        selected_entities=entities,
+        status="pass",
+        selected_row_keys=tuple(row_keys),
+    )
+
+
 class TestAllocateCohortLogic:
     """allocate_cohort's dedup/bucketing/coverage logic. With target_vins=None
     no representative-fill query runs, so con is unused and passed as None."""
@@ -1306,6 +1320,42 @@ class TestAllocateCohortLogic:
         assert allocation.required_vin_seeds == frozenset({"VIN1", "VIN2"})
         assert allocation.pre_fill_vin_count == 2
         assert allocation.fill_vins_added == 0
+
+    def test_boundary_row_key_seeds_its_vin_into_closure(self):
+        """stale_listing's captured boundary row key establishes real
+        vehicle identity — its vin must seed vin_seeds directly, since the
+        listing's only evidence may predate window_start (making the normal
+        window-bounded vin<->listing_id closure lookup unable to discover it
+        on its own). Without this, the vehicle's other listings/price
+        events/remaps would be silently excluded from the export."""
+        candidate_sets = {
+            "stale_listing": _candidate_with_row_keys(
+                "stale_listing", "listing_id", ["L_STALE"],
+                [(900, "VIN_STALE", "L_STALE")],
+            ),
+        }
+        allocation = allocate_cohort(candidate_sets, None, None, None)
+        assert allocation.vin_seeds == frozenset({"VIN_STALE"})
+        assert allocation.listing_seeds == frozenset({"L_STALE"})
+
+    def test_artifact_only_row_key_does_not_seed_vin_closure(self):
+        """invalid_or_null_vin's row key is artifact-only provenance (often
+        a null/malformed vin) and must retain its existing non-expanding
+        behavior — it must never seed vin_seeds, unlike a
+        capture_boundary_row_key selector's row key."""
+        candidate_sets = {
+            "invalid_or_null_vin": _candidate_with_row_keys(
+                "invalid_or_null_vin", "artifact_id", [200],
+                [(200, None, "L_BAD_VIN")],
+            ),
+        }
+        allocation = allocate_cohort(candidate_sets, None, None, None)
+        assert allocation.vin_seeds == frozenset()
+        assert allocation.artifact_seeds == frozenset({200})
+        # listing_id is not this selector's entity_key, so it must not be
+        # bucketed as a listing seed either — only the artifact_row_keys
+        # pool (used solely for Gate D's exact-row export match) carries it.
+        assert allocation.listing_seeds == frozenset()
 
     def test_logs_required_allocation_without_fill(self, caplog):
         candidate_sets = {"relisted_vin": _candidate("relisted_vin", "vin", 10, ["VIN1", "VIN2"])}

@@ -405,6 +405,24 @@ def allocate_cohort(
 
     for name, candidate in candidate_sets.items():
         coverage[name] = _selector_coverage_entry(candidate)
+        config = _SELECTOR_CONFIGS.get(name)
+        if config is not None and config.capture_boundary_row_key:
+            # A capture_boundary_row_key selector's row key establishes real
+            # vehicle identity (e.g. stale_listing's last-observation row) —
+            # unlike an artifact-only malformed-row key (invalid_or_null_vin),
+            # which must never seed closure (see expand_entity_closure's
+            # docstring on why artifact co-occurrence must not expand
+            # vins/listing_ids). Seeding the vin directly here matters
+            # because the listing's only evidence may predate window_start,
+            # so the normal vin<->listing_id closure lookups (which are
+            # window-bounded) would never discover it on their own — leaving
+            # this vin's other listings, price events, and remaps out of the
+            # export even though the listing itself was selected.
+            for _artifact_id, vin, listing_id in candidate.selected_row_keys:
+                if vin is not None:
+                    vin_seeds.add(vin)
+                if listing_id is not None:
+                    listing_seeds.add(listing_id)
         bucket = buckets.get(candidate.entity_key)
         if bucket is None:
             continue
