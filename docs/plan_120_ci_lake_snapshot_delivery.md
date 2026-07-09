@@ -738,6 +738,13 @@ shape and the same `artifact_row_keys` pool for Gate D's export-match
 purposes, but only a `capture_boundary_row_key` selector's keys additionally
 seed closure.
 
+Because this changes what `allocate_cohort` computes for the exact same
+selector inputs, `COHORT_ALGORITHM_VERSION` was bumped `2` -> `3` (mirroring
+the earlier artifact-fan-out bump described above) — a planning cache entry
+persisted before this fix is a fingerprint miss, so it's never reused; the
+next request for that window recomputes and persists a fresh entry with the
+boundary vin correctly seeded.
+
 ---
 
 ## Export materialization cache (Gate D — implemented)

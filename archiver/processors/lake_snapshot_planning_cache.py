@@ -41,7 +41,12 @@ from shared.minio import read_json, write_json
 logger = logging.getLogger("archiver")
 
 CACHE_SCHEMA_VERSION = 3
-COHORT_ALGORITHM_VERSION = 2
+# Bumped 2->3: allocate_cohort now seeds vin_seeds/listing_seeds directly
+# from a capture_boundary_row_key selector's row key (e.g. stale_listing's
+# boundary vin), which a cached cohort computed under the old algorithm
+# would be missing. Bumping this forces a fresh planning-cache computation
+# instead of silently reusing a cohort that never discovered that vin.
+COHORT_ALGORITHM_VERSION = 3
 
 VALID_BUCKET_GRAINS: Tuple[str, ...] = ("week", "day", "none")
 DEFAULT_PLANNING_CACHE_PREFIX = "snapshot_planning_cache"

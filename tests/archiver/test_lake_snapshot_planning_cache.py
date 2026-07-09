@@ -159,6 +159,34 @@ class TestComputePlanningFingerprint:
         fp_b, _ = _fingerprint_for(_relative_request(), now=now)
         assert fp_a != fp_b
 
+    def test_cohort_algorithm_version_changes_fingerprint(self, mocker):
+        """Any cohort-allocation semantics change (e.g. allocate_cohort
+        seeding vin_seeds from a capture_boundary_row_key selector's row key)
+        must be paired with a COHORT_ALGORITHM_VERSION bump — otherwise a
+        planning cache entry computed under the old algorithm would be
+        silently reused as if nothing changed. This proves the constant is
+        actually load-bearing on the fingerprint, not just documentation."""
+        now = datetime(2026, 7, 8, tzinfo=UTC)
+        mocker.patch(
+            "archiver.processors.lake_snapshot_planning_cache.COHORT_ALGORITHM_VERSION", 1,
+        )
+        fp_a, _ = _fingerprint_for(_relative_request(), now=now)
+        mocker.patch(
+            "archiver.processors.lake_snapshot_planning_cache.COHORT_ALGORITHM_VERSION", 2,
+        )
+        fp_b, _ = _fingerprint_for(_relative_request(), now=now)
+        assert fp_a != fp_b
+
+    def test_cohort_algorithm_version_was_bumped_for_boundary_vin_seeding(self):
+        """Regression guard tying the constant to this specific fix: a
+        planning cache entry persisted before allocate_cohort started
+        seeding vin_seeds from capture_boundary_row_key selectors must be
+        treated as a miss. Bump this assertion (and the module constant)
+        again the next time cohort-allocation semantics change."""
+        from archiver.processors.lake_snapshot_planning_cache import COHORT_ALGORITHM_VERSION
+
+        assert COHORT_ALGORITHM_VERSION == 3
+
 
 # ---------------------------------------------------------------------------
 # source_table_paths_hash
