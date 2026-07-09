@@ -340,23 +340,36 @@ and `int_listing_state_runs` are left as full-table builds for Phases 3 and 4.
       `is_incremental()` as true, so the existing pinned-hash unit tests in
       `unit_tests.yml` exercise the same full-scan path as before and are
       unaffected.
+- [x] `delete+insert` only dedupes an incoming batch against the *existing
+      target* row for a given `unique_key` — it does not collapse multiple
+      rows sharing an `artifact_id` within the same incremental batch (e.g. an
+      ingestion retry landing two rows for one artifact in the same lookback
+      window). Added a `fingerprinted` CTE with
+      `row_number() over (partition by artifact_id order by fetched_at desc, parsed_fingerprint) = 1`
+      so the model itself guarantees `artifact_id` uniqueness regardless of
+      source duplicates, and added a `unique` data test on `artifact_id` in
+      `int_listing_state_fingerprints.schema.yml` (previously only `not_null`).
 - [x] Model remains tagged `feature_daily` and `backtest`
       (`int_listing_state_fingerprints.schema.yml`); tags were not touched.
 - [x] Added `tests/integration/dbt/test_fingerprints_incremental.py`: builds a
       throwaway dbt-duckdb project that seeds a `stg_observations` stand-in and
       runs the real model SQL (read directly from the repo) through real
       `dbt seed`/`dbt run`/`dbt run --full-refresh` invocations, since dbt unit
-      tests can't exercise state across multiple invocations. Covers: empty
-      target bootstrap excludes non-detail/null-vin17 rows; a second run with
-      unchanged source is idempotent; a new artifact appends exactly once; a
-      repeated run does not duplicate it; a late artifact inside the lookback
-      window is picked up; a corrected `artifact_id` replaces its existing row
-      rather than duplicating it; and `--full-refresh` output matches the
-      accumulated incremental output. Verified locally against
-      `dbt-core==1.10.20` / `dbt-duckdb==1.10.1` (pinned versions used in
-      `dbt_runner/Dockerfile` and CI) — all 7 cases pass. Runs in CI's existing
-      `pytest tests/integration/dbt/ -v -m integration` step in the `dbt` job;
-      no CI workflow changes were needed.
+      tests can't exercise state across multiple invocations. Written as one
+      sequential scenario test (not several independently-selectable test
+      methods sharing state) since each step's assertions depend on exactly
+      the state the previous step left behind. Covers: empty target bootstrap
+      excludes non-detail/null-vin17 rows; a second run with unchanged source
+      is idempotent; a new artifact appends exactly once; a repeated run does
+      not duplicate it; a late artifact inside the lookback window is picked
+      up; two source rows sharing one `artifact_id` in the same batch collapse
+      to a single row (the latest `fetched_at` wins); a corrected
+      `artifact_id` replaces its existing row rather than duplicating it; and
+      `--full-refresh` output matches the accumulated incremental output.
+      Verified locally against `dbt-core==1.10.20` / `dbt-duckdb==1.10.1`
+      (pinned versions used in `dbt_runner/Dockerfile` and CI). Runs in CI's
+      existing `pytest tests/integration/dbt/ -v -m integration` step in the
+      `dbt` job; no CI workflow changes were needed.
 
 Still needs VM verification before this is considered fully rolled out:
 

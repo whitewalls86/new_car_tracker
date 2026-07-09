@@ -13,6 +13,13 @@ instead of only in production.
 
 Requires a real `dbt` install (dbt-core + dbt-duckdb), same as the rest of
 tests/integration/dbt/. The CI `dbt` job installs these; skipped elsewhere.
+
+The scenario below is one test function, not several test methods sharing a
+module-scoped project: each step's assertions depend on exactly the state
+left by the step before it (bootstrap -> idempotent rerun -> append -> ...),
+so splitting it across separately-selectable tests would make partial reruns
+or randomized ordering silently meaningless. Each named `# --- step ---`
+section is independently readable even though they share one project.
 """
 import shutil
 import subprocess
@@ -38,6 +45,8 @@ SEED_HEADER = (
     "dealer_name,dealer_zip,dealer_city,dealer_state,customer_id"
 )
 
+DBT_BIN = shutil.which("dbt")
+
 
 def _row(
     artifact_id,
@@ -58,9 +67,9 @@ def _row(
     )
 
 
-@pytest.fixture(scope="module")
-def dbt_project(tmp_path_factory):
-    project_dir = tmp_path_factory.mktemp("fingerprints_incremental")
+@pytest.fixture
+def dbt_project(tmp_path):
+    project_dir = tmp_path
     (project_dir / "models").mkdir()
     (project_dir / "seeds").mkdir()
 
@@ -96,9 +105,6 @@ def _write_seed(project_dir, rows):
     )
 
 
-DBT_BIN = shutil.which("dbt")
-
-
 def _dbt(project_dir, *args):
     result = subprocess.run(
         [DBT_BIN, *args, "--profiles-dir", str(project_dir),
@@ -120,99 +126,107 @@ def _fingerprint_rows(project_dir):
         con.close()
 
 
-class TestFingerprintsIncrementalBehavior:
-    """Sequential scenario: each step builds on the target state left by the
-    previous one, mirroring how the model actually runs hourly in production."""
+def test_incremental_fingerprints_scenario(dbt_project):
+    # --- bootstrap: empty target behaves like a full build ---
+    _write_seed(dbt_project, [
+        _row(1, fetched_at="2026-01-01 00:00:00"),
+        _row(2, fetched_at="2026-01-01 06:00:00"),
+        _row(3, listing_id="L2", vin17="VIN0000000000002B", source="srp",
+             fetched_at="2026-01-01 12:00:00"),
+        _row(4, listing_id="L3", vin17=None, fetched_at="2026-01-01 12:00:00"),
+    ])
+    _dbt(dbt_project, "seed")
+    _dbt(dbt_project, "run")
 
-    def test_bootstrap_matches_full_build(self, dbt_project):
-        _write_seed(dbt_project, [
-            _row(1, fetched_at="2026-01-01 00:00:00"),
-            _row(2, fetched_at="2026-01-01 06:00:00"),
-            _row(3, listing_id="L2", vin17="VIN0000000000002B", source="srp",
-                 fetched_at="2026-01-01 12:00:00"),
-            _row(4, listing_id="L3", vin17=None, fetched_at="2026-01-01 12:00:00"),
-        ])
-        _dbt(dbt_project, "seed")
-        _dbt(dbt_project, "run")
+    rows = _fingerprint_rows(dbt_project)
+    assert {r[0] for r in rows} == {1, 2}, "srp row and null-vin17 row must be excluded"
 
-        rows = _fingerprint_rows(dbt_project)
-        artifact_ids = {r[0] for r in rows}
-        assert artifact_ids == {1, 2}, "srp row and null-vin17 row must be excluded"
+    # --- idempotent rerun: unchanged source produces no new/duplicate rows ---
+    before = rows
+    _dbt(dbt_project, "run")
+    assert _fingerprint_rows(dbt_project) == before
 
-    def test_second_run_is_idempotent(self, dbt_project):
-        before = _fingerprint_rows(dbt_project)
-        _dbt(dbt_project, "run")
-        after = _fingerprint_rows(dbt_project)
-        assert after == before
+    # --- new artifact inside the window appends exactly once ---
+    _write_seed(dbt_project, [
+        _row(1, fetched_at="2026-01-01 00:00:00"),
+        _row(2, fetched_at="2026-01-01 06:00:00"),
+        _row(3, listing_id="L2", vin17="VIN0000000000002B", source="srp",
+             fetched_at="2026-01-01 12:00:00"),
+        _row(4, listing_id="L3", vin17=None, fetched_at="2026-01-01 12:00:00"),
+        _row(5, fetched_at="2026-01-01 07:00:00", price=29000),
+    ])
+    _dbt(dbt_project, "seed")
+    _dbt(dbt_project, "run")
 
-    def test_new_artifact_appends_once(self, dbt_project):
-        _write_seed(dbt_project, [
-            _row(1, fetched_at="2026-01-01 00:00:00"),
-            _row(2, fetched_at="2026-01-01 06:00:00"),
-            _row(3, listing_id="L2", vin17="VIN0000000000002B", source="srp",
-                 fetched_at="2026-01-01 12:00:00"),
-            _row(4, listing_id="L3", vin17=None, fetched_at="2026-01-01 12:00:00"),
-            _row(5, fetched_at="2026-01-01 07:00:00", price=29000),
-        ])
-        _dbt(dbt_project, "seed")
-        _dbt(dbt_project, "run")
+    rows = _fingerprint_rows(dbt_project)
+    assert {r[0] for r in rows} == {1, 2, 5}
+    assert len(rows) == len({r[0] for r in rows}), "no duplicate artifact_id rows"
 
-        rows = _fingerprint_rows(dbt_project)
-        assert {r[0] for r in rows} == {1, 2, 5}
-        assert len(rows) == len({r[0] for r in rows}), "no duplicate artifact_id rows"
+    # --- repeated run with the same source data is still not duplicated ---
+    before = rows
+    _dbt(dbt_project, "run")
+    assert _fingerprint_rows(dbt_project) == before
 
-    def test_repeated_run_same_source_data_no_duplicates(self, dbt_project):
-        before = _fingerprint_rows(dbt_project)
-        _dbt(dbt_project, "run")
-        after = _fingerprint_rows(dbt_project)
-        assert after == before
+    # --- late artifact inside the lookback is picked up, and a source batch
+    #     with two rows sharing one artifact_id collapses to a single row ---
+    # artifact 6 is fetched *before* the current max(fetched_at) (2026-01-01 07:00)
+    # but well inside the 3-day lookback — simulates a late-arriving artifact
+    # discovered after the watermark had already advanced past it.
+    # artifact 7 appears twice in the same batch (e.g. an ingestion retry);
+    # the row_number()-based dedupe must keep exactly one, the latest fetched_at.
+    _write_seed(dbt_project, [
+        _row(1, fetched_at="2026-01-01 00:00:00"),
+        _row(2, fetched_at="2026-01-01 06:00:00"),
+        _row(3, listing_id="L2", vin17="VIN0000000000002B", source="srp",
+             fetched_at="2026-01-01 12:00:00"),
+        _row(4, listing_id="L3", vin17=None, fetched_at="2026-01-01 12:00:00"),
+        _row(5, fetched_at="2026-01-01 07:00:00", price=29000),
+        _row(6, listing_id="L2", vin17="VIN0000000000002B", source="detail",
+             fetched_at="2026-01-01 02:00:00", price=21000),
+        _row(7, listing_id="L3", vin17="VIN0000000000003C", source="detail",
+             fetched_at="2026-01-01 08:00:00", price=15000),
+        _row(7, listing_id="L3", vin17="VIN0000000000003C", source="detail",
+             fetched_at="2026-01-01 09:00:00", price=15500),
+    ])
+    _dbt(dbt_project, "seed")
+    _dbt(dbt_project, "run")
 
-    def test_late_artifact_inside_lookback_is_included(self, dbt_project):
-        # artifact 6 is fetched *before* the current max(fetched_at) (2026-01-01 07:00)
-        # but well inside the 3-day lookback — simulates a late-arriving artifact
-        # discovered after the watermark had already advanced past it.
-        _write_seed(dbt_project, [
-            _row(1, fetched_at="2026-01-01 00:00:00"),
-            _row(2, fetched_at="2026-01-01 06:00:00"),
-            _row(3, listing_id="L2", vin17="VIN0000000000002B", source="srp",
-                 fetched_at="2026-01-01 12:00:00"),
-            _row(4, listing_id="L3", vin17=None, fetched_at="2026-01-01 12:00:00"),
-            _row(5, fetched_at="2026-01-01 07:00:00", price=29000),
-            _row(6, listing_id="L2", vin17="VIN0000000000002B", source="detail",
-                 fetched_at="2026-01-01 02:00:00", price=21000),
-        ])
-        _dbt(dbt_project, "seed")
-        _dbt(dbt_project, "run")
+    rows = _fingerprint_rows(dbt_project)
+    assert 6 in {r[0] for r in rows}, "late artifact inside the lookback must be included"
+    assert len(rows) == len({r[0] for r in rows}), (
+        "duplicate artifact_id within one source batch must collapse to one row"
+    )
+    by_artifact = {r[0]: r[1] for r in rows}
+    assert by_artifact[7] == 15500, (
+        "duplicate artifact_id within one batch must keep the latest fetched_at row"
+    )
 
-        rows = _fingerprint_rows(dbt_project)
-        assert 6 in {r[0] for r in rows}
+    # --- corrected artifact_id inside the lookback replaces, not duplicates ---
+    _write_seed(dbt_project, [
+        _row(1, fetched_at="2026-01-01 00:00:00"),
+        _row(2, fetched_at="2026-01-01 06:00:00"),
+        _row(3, listing_id="L2", vin17="VIN0000000000002B", source="srp",
+             fetched_at="2026-01-01 12:00:00"),
+        _row(4, listing_id="L3", vin17=None, fetched_at="2026-01-01 12:00:00"),
+        _row(5, fetched_at="2026-01-01 07:00:00", price=28500),
+        _row(6, listing_id="L2", vin17="VIN0000000000002B", source="detail",
+             fetched_at="2026-01-01 02:00:00", price=21000),
+        _row(7, listing_id="L3", vin17="VIN0000000000003C", source="detail",
+             fetched_at="2026-01-01 08:00:00", price=15000),
+        _row(7, listing_id="L3", vin17="VIN0000000000003C", source="detail",
+             fetched_at="2026-01-01 09:00:00", price=15500),
+    ])
+    _dbt(dbt_project, "seed")
+    _dbt(dbt_project, "run")
 
-    def test_corrected_artifact_id_replaces_not_duplicates(self, dbt_project):
-        # artifact_id=5 reappears with a corrected price inside the lookback window.
-        _write_seed(dbt_project, [
-            _row(1, fetched_at="2026-01-01 00:00:00"),
-            _row(2, fetched_at="2026-01-01 06:00:00"),
-            _row(3, listing_id="L2", vin17="VIN0000000000002B", source="srp",
-                 fetched_at="2026-01-01 12:00:00"),
-            _row(4, listing_id="L3", vin17=None, fetched_at="2026-01-01 12:00:00"),
-            _row(5, fetched_at="2026-01-01 07:00:00", price=28500),
-            _row(6, listing_id="L2", vin17="VIN0000000000002B", source="detail",
-                 fetched_at="2026-01-01 02:00:00", price=21000),
-        ])
-        _dbt(dbt_project, "seed")
-        _dbt(dbt_project, "run")
+    rows = _fingerprint_rows(dbt_project)
+    by_artifact = {r[0]: r[1] for r in rows}
+    assert by_artifact[5] == 28500
+    assert len(rows) == len({r[0] for r in rows}), (
+        "corrected artifact_id must replace, not duplicate"
+    )
 
-        rows = _fingerprint_rows(dbt_project)
-        by_artifact = {r[0]: r[1] for r in rows}
-        assert by_artifact[5] == 28500
-        assert len(rows) == len({r[0] for r in rows}), (
-            "corrected artifact_id must replace, not duplicate"
-        )
-
-    def test_incremental_output_equals_full_refresh(self, dbt_project):
-        incremental_rows = sorted(_fingerprint_rows(dbt_project))
-
-        _dbt(dbt_project, "run", "--full-refresh")
-        full_refresh_rows = sorted(_fingerprint_rows(dbt_project))
-
-        assert full_refresh_rows == incremental_rows
+    # --- incremental output equals a full-refresh over the same fixture ---
+    incremental_rows = sorted(rows)
+    _dbt(dbt_project, "run", "--full-refresh")
+    assert sorted(_fingerprint_rows(dbt_project)) == incremental_rows

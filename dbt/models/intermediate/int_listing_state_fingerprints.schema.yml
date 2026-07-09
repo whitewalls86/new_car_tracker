@@ -27,9 +27,14 @@ models:
         data_tests:
           - not_null
       - name: artifact_id
-        description: Source artifact identifier.
+        description: >
+          Source artifact identifier — durable row identity and incremental
+          unique_key. A source batch with more than one row for the same
+          artifact_id is deduplicated to the row with the latest fetched_at
+          (see model SQL) before this constraint is checked.
         data_tests:
           - not_null
+          - unique
       - name: fetched_at
         description: Timestamp when this detail artifact was fetched.
         data_tests:
