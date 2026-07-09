@@ -31,11 +31,12 @@ cartracker:
     duckdb:
       type: duckdb
       path: "{{ env_var('DUCKDB_PATH') }}"
-      threads: 4
+      threads: 2
       extensions:
         - httpfs
         - postgres_scanner
       settings:
+        memory_limit: "8GB"
         httpfs_connection_caching: true
         s3_endpoint: "{{ env_var('MINIO_ENDPOINT', 'http://minio:9000') | replace('http://', '') | replace('https://', '') }}"
         s3_access_key_id: "{{ env_var('MINIO_ROOT_USER', 'cartracker') }}"

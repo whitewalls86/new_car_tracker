@@ -12,7 +12,10 @@ CLI:
 import argparse
 import json
 import logging
+import os
 import re
+import urllib.error
+import urllib.request
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
@@ -50,6 +53,32 @@ from shared.logging_setup import configure_logging
 logger = logging.getLogger("archiver")
 
 VALID_TIERS = ("edge", "ci", "dev", "full")
+
+
+def _check_dbt_runner_not_building() -> None:
+    """Plan 123 Phase 0 guardrail: refuse to start a real (non-dry-run) export
+    while dbt_runner reports a build in progress. Both are heavy DuckDB/MinIO
+    workloads on the same VM, so running them concurrently risks host OOM.
+
+    Best-effort: if DBT_RUNNER_URL isn't set (e.g. local/test invocation) or
+    dbt_runner can't be reached, this proceeds rather than blocking on
+    unrelated infra trouble.
+    """
+    dbt_runner_url = os.environ.get("DBT_RUNNER_URL")
+    if not dbt_runner_url:
+        return
+    try:
+        urllib.request.urlopen(f"{dbt_runner_url}/ready", timeout=5)
+    except urllib.error.HTTPError as e:
+        if e.code == 503:
+            raise SystemExit(
+                "Aborting snapshot export: dbt_runner reports a build in "
+                "progress (Plan 123 guardrail). Re-run once the dbt build "
+                "completes."
+            )
+        logger.warning("dbt_runner /ready check returned HTTP %s; proceeding", e.code)
+    except (urllib.error.URLError, OSError) as e:
+        logger.warning("Could not reach dbt_runner at %s (%s); proceeding", dbt_runner_url, e)
 
 _SNAPSHOT_ID_RE = re.compile(r"^adaptive-refresh-[A-Za-z0-9._-]+$")
 
@@ -863,6 +892,8 @@ def _parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
 def main(argv: Optional[List[str]] = None) -> None:
     configure_logging()
     args = _parse_args(argv)
+    if not args.dry_run:
+        _check_dbt_runner_not_building()
     request = SnapshotRequest(
         tier=args.tier,
         snapshot_id=args.snapshot_id,

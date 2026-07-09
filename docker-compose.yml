@@ -251,6 +251,11 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
       MINIO_BUCKET: bronze
       DUCKDB_PATH: /data/analytics/analytics.duckdb
+    # Plan 123 Phase 0: hard containment boundary above the 8GB DuckDB
+    # memory_limit (dbt/profiles.yml) but well below the ~23.4GB host total,
+    # so a runaway build is killed inside the container instead of triggering
+    # the host OOM killer against Postgres/MinIO/Airflow/scraper/ops.
+    mem_limit: 12g
     networks:
       - cartracker-net
     depends_on:
@@ -345,6 +350,9 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
       MINIO_BUCKET: bronze
+      # Plan 123 Phase 0: lets the exporter check dbt_runner's /ready endpoint
+      # before starting a real export, so it doesn't overlap a heavy dbt build.
+      DBT_RUNNER_URL: http://dbt_runner:8080
     depends_on:
       flyway:
         condition: service_completed_successfully
