@@ -28,7 +28,6 @@ from archiver.processors.lake_snapshot_export_cache import (
     DEFAULT_EXPORT_PREFIX,
     build_export_manifest,
     compute_export_fingerprint,
-    export_data_prefix,
     export_manifest_path,
     load_export_manifest,
     write_export_manifest,
@@ -620,7 +619,29 @@ def export_ci_lake_snapshot(request: SnapshotRequest) -> SnapshotResult:
 
     export_fingerprint, export_fingerprint_payload = compute_export_fingerprint(planning.cache_key)
     export_manifest_key = export_manifest_path(request.export_cache_prefix, export_fingerprint)
-    materialized_snapshot_path = export_data_prefix(request.export_cache_prefix, export_fingerprint)
+
+    def _export_failed(reason_failures: List[str], export_cache_action: str) -> SnapshotResult:
+        return SnapshotResult(
+            snapshot_id=snapshot_id,
+            tier=request.tier,
+            status="export_failed",
+            source_window_start=window_start.isoformat() if window_start else None,
+            source_window_end=window_end.isoformat() if window_end else None,
+            seed_vin_count=planning.seed_vin_count,
+            closed_vin_count=planning.closed_vin_count,
+            listing_count=planning.listing_count,
+            artifact_count=planning.artifact_count,
+            coverage_failures=reason_failures,
+            selector_diagnostics=planning.selector_diagnostics,
+            cohort_diagnostics=planning.cohort_diagnostics,
+            planning_cache_key=planning.cache_key,
+            planning_cache_path=planning.cache_path,
+            planning_cache_hit=planning.cache_hit,
+            planning_cache_action=planning.cache_action,
+            export_fingerprint=export_fingerprint,
+            export_cache_hit=False,
+            export_cache_action=export_cache_action,
+        )
 
     logger.info(
         "export_ci_lake_snapshot: export_cache lookup snapshot_id=%s export_fingerprint=%s "
@@ -635,6 +656,7 @@ def export_ci_lake_snapshot(request: SnapshotRequest) -> SnapshotResult:
     export_cache_hit = cached_manifest is not None
     if export_cache_hit:
         export_cache_action = "reused"
+        materialized_snapshot_path = cached_manifest["data_path"]
         logger.info(
             "export_ci_lake_snapshot: export_cache hit snapshot_id=%s export_fingerprint=%s",
             snapshot_id, export_fingerprint,
@@ -643,7 +665,7 @@ def export_ci_lake_snapshot(request: SnapshotRequest) -> SnapshotResult:
         export_cache_action = "refreshed" if request.refresh_export_cache else "computed"
         con = open_duckdb_connection(request.source_base_path)
         try:
-            tables = materialize_filtered_tables(
+            result = materialize_filtered_tables(
                 con, request.source_base_path, window_start, window_end,
                 planning.cohort_closed_vins, planning.cohort_listing_ids,
                 planning.cohort_artifact_row_keys,
@@ -652,38 +674,21 @@ def export_ci_lake_snapshot(request: SnapshotRequest) -> SnapshotResult:
         finally:
             con.close()
 
-        table_errors = {name: t["error"] for name, t in tables.items() if t["error"]}
-        if table_errors:
-            # materialize_filtered_tables already discarded the tmp staging
-            # prefix and left the final prefix untouched on error — never
-            # write/publish a manifest for a partial result, or a later
-            # reuse_export_cache request would accept an incomplete snapshot
-            # as valid.
+        if not result.ok:
+            # materialize_filtered_tables already discarded the failed
+            # generation directory — never write/publish a manifest for a
+            # partial result, or a later reuse_export_cache request would
+            # accept an incomplete snapshot as valid.
+            table_errors = {
+                name: t["error"] for name, t in result.tables.items() if t["error"]
+            }
             logger.warning(
                 "export_ci_lake_snapshot: export failed snapshot_id=%s "
                 "export_fingerprint=%s table_errors=%s",
                 snapshot_id, export_fingerprint, table_errors,
             )
-            return SnapshotResult(
-                snapshot_id=snapshot_id,
-                tier=request.tier,
-                status="export_failed",
-                source_window_start=window_start.isoformat() if window_start else None,
-                source_window_end=window_end.isoformat() if window_end else None,
-                seed_vin_count=planning.seed_vin_count,
-                closed_vin_count=planning.closed_vin_count,
-                listing_count=planning.listing_count,
-                artifact_count=planning.artifact_count,
-                coverage_failures=[f"{name}: {err}" for name, err in table_errors.items()],
-                selector_diagnostics=planning.selector_diagnostics,
-                cohort_diagnostics=planning.cohort_diagnostics,
-                planning_cache_key=planning.cache_key,
-                planning_cache_path=planning.cache_path,
-                planning_cache_hit=planning.cache_hit,
-                planning_cache_action=planning.cache_action,
-                export_fingerprint=export_fingerprint,
-                export_cache_hit=False,
-                export_cache_action=export_cache_action,
+            return _export_failed(
+                [f"{name}: {err}" for name, err in table_errors.items()], export_cache_action,
             )
 
         manifest = build_export_manifest(
@@ -706,9 +711,24 @@ def export_ci_lake_snapshot(request: SnapshotRequest) -> SnapshotResult:
                 planning.selector_diagnostics["selectors"]
                 if planning.selector_diagnostics else {}
             ),
-            tables=tables,
+            tables=result.tables,
+            data_path=result.data_path,
+            generation_id=result.generation_id,
         )
-        write_export_manifest(export_manifest_key, manifest)
+        manifest_written = write_export_manifest(export_manifest_key, manifest)
+        if not manifest_written:
+            # The manifest write is the actual "publish" step — a fully
+            # materialized generation that never got a manifest pointing at
+            # it is not reusable and must not be reported as exported.
+            logger.warning(
+                "export_ci_lake_snapshot: manifest write failed snapshot_id=%s "
+                "export_fingerprint=%s path=%s",
+                snapshot_id, export_fingerprint, export_manifest_key,
+            )
+            return _export_failed(
+                [f"manifest write failed: {export_manifest_key}"], export_cache_action,
+            )
+        materialized_snapshot_path = result.data_path
 
     return SnapshotResult(
         snapshot_id=snapshot_id,

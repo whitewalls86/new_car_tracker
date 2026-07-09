@@ -10,7 +10,6 @@ from archiver.processors.lake_snapshot_export_cache import (
     INCLUDED_TABLES,
     build_export_manifest,
     compute_export_fingerprint,
-    export_data_prefix,
     export_manifest_path,
     load_export_manifest,
     write_export_manifest,
@@ -21,6 +20,7 @@ def _complete_manifest(fingerprint="abc"):
     return {
         "export_cache_schema_version": EXPORT_CACHE_SCHEMA_VERSION,
         "export_fingerprint": fingerprint,
+        "data_path": "snapshot_exports/fingerprints/abc/generations/gen1/data",
         "tables": {name: {"rows": 1, "files": 1, "sha256": ["x"], "error": None}
                    for name in INCLUDED_TABLES},
     }
@@ -66,10 +66,6 @@ class TestExportPaths:
         path = export_manifest_path("snapshot_exports/", "abc123")
         assert path == "snapshot_exports/fingerprints/abc123/manifest.json"
 
-    def test_data_prefix_builds_deterministic_path(self):
-        path = export_data_prefix("snapshot_exports", "abc123")
-        assert path == "snapshot_exports/fingerprints/abc123/data"
-
 
 # ---------------------------------------------------------------------------
 # Manifest builder
@@ -87,12 +83,16 @@ class TestBuildExportManifest:
             counts={"closed_vins": 5},
             coverage={},
             tables={},
+            data_path="snapshot_exports/fingerprints/export-abc/generations/gen1/data",
+            generation_id="gen1",
         )
         assert manifest["export_cache_schema_version"] == EXPORT_CACHE_SCHEMA_VERSION
         assert manifest["export_fingerprint"] == "export-abc"
         assert manifest["planning_fingerprint"] == "planning-abc"
         assert manifest["snapshot_id"] == "adaptive-refresh-2026-07-08"
         assert manifest["counts"] == {"closed_vins": 5}
+        assert manifest["generation_id"] == "gen1"
+        assert manifest["data_path"].endswith("gen1/data")
 
 
 # ---------------------------------------------------------------------------
@@ -151,18 +151,26 @@ class TestLoadExportManifest:
         )
         assert load_export_manifest("some/path", "abc") is None
 
+    def test_missing_data_path_treated_as_miss(self, mocker):
+        manifest = _complete_manifest("abc")
+        del manifest["data_path"]
+        mocker.patch(
+            "archiver.processors.lake_snapshot_export_cache.read_json", return_value=manifest
+        )
+        assert load_export_manifest("some/path", "abc") is None
+
 
 class TestWriteExportManifest:
-    def test_write_calls_write_json(self, mocker):
+    def test_write_calls_write_json_and_returns_true(self, mocker):
         mock_write = mocker.patch(
             "archiver.processors.lake_snapshot_export_cache.write_json"
         )
-        write_export_manifest("some/path", {"a": 1})
+        assert write_export_manifest("some/path", {"a": 1}) is True
         mock_write.assert_called_once_with("some/path", {"a": 1})
 
-    def test_write_failure_does_not_raise(self, mocker):
+    def test_write_failure_returns_false_not_raise(self, mocker):
         mocker.patch(
             "archiver.processors.lake_snapshot_export_cache.write_json",
             side_effect=RuntimeError("boom"),
         )
-        write_export_manifest("some/path", {"a": 1})
+        assert write_export_manifest("some/path", {"a": 1}) is False

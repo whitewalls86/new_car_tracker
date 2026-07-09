@@ -27,7 +27,7 @@ from shared.minio import read_json, write_json
 
 logger = logging.getLogger("archiver")
 
-EXPORT_CACHE_SCHEMA_VERSION = 1
+EXPORT_CACHE_SCHEMA_VERSION = 2
 EXPORT_ALGORITHM_VERSION = 1
 OUTPUT_SCHEMA_VERSION = 1
 PARTITION_LAYOUT_VERSION = 1
@@ -77,10 +77,6 @@ def export_manifest_path(prefix: str, fingerprint: str) -> str:
     return f"{prefix.rstrip('/')}/fingerprints/{fingerprint}/manifest.json"
 
 
-def export_data_prefix(prefix: str, fingerprint: str) -> str:
-    return f"{prefix.rstrip('/')}/fingerprints/{fingerprint}/data"
-
-
 def build_export_manifest(
     *,
     fingerprint: str,
@@ -92,11 +88,17 @@ def build_export_manifest(
     counts: Dict[str, int],
     coverage: Dict[str, Any],
     tables: Dict[str, Any],
+    data_path: str,
+    generation_id: str,
 ) -> Dict[str, Any]:
     """Build the manifest for a materialized export.
 
     `tables` should map logical table name -> {"path", "rows", "files",
-    "sha256"} once the writer has actually written that table.
+    "sha256", "error"} once the writer has actually written that table.
+    `data_path`/`generation_id` identify the specific immutable generation
+    directory (see `lake_snapshot_export.materialize_filtered_tables`) this
+    manifest publishes — writing this manifest is the sole "publish" step;
+    the generation directory itself is never mutated in place.
     """
     return {
         "export_cache_schema_version": EXPORT_CACHE_SCHEMA_VERSION,
@@ -109,6 +111,8 @@ def build_export_manifest(
         "counts": counts,
         "coverage": coverage,
         "tables": tables,
+        "data_path": data_path,
+        "generation_id": generation_id,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -132,6 +136,8 @@ def _manifest_incompleteness_reason(
             f"export_fingerprint mismatch: manifest has "
             f"{manifest.get('export_fingerprint')!r}, expected {expected_fingerprint!r}"
         )
+    if not manifest.get("data_path"):
+        return "missing data_path"
     tables = manifest.get("tables") or {}
     missing = [name for name in INCLUDED_TABLES if name not in tables]
     if missing:
@@ -174,8 +180,11 @@ def load_export_manifest(path: str, expected_fingerprint: str) -> Optional[Dict[
     return manifest
 
 
-def write_export_manifest(path: str, manifest: Dict[str, Any]) -> None:
-    """Persist a materialized export manifest. Never raises."""
+def write_export_manifest(path: str, manifest: Dict[str, Any]) -> bool:
+    """Persist a materialized export manifest. Never raises — returns False
+    on failure instead, so the caller (the manifest write is the actual
+    "publish" step for a materialized export) can distinguish a failed
+    publish from a successful one rather than assuming success."""
     t0 = time.monotonic()
     try:
         write_json(path, manifest)
@@ -183,8 +192,10 @@ def write_export_manifest(path: str, manifest: Dict[str, Any]) -> None:
             "lake_snapshot_export_cache: write ok path=%s elapsed_s=%.2f",
             path, time.monotonic() - t0,
         )
+        return True
     except Exception as e:
         logger.warning(
             "lake_snapshot_export_cache: write failed path=%s elapsed_s=%.2f error=%s",
             path, time.monotonic() - t0, e,
         )
+        return False

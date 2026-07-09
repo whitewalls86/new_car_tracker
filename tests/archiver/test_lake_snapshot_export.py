@@ -109,12 +109,17 @@ def _seed_fixture_lake(tmp_path):
     ])
 
 
+def _read_data(tmp_path, data_path, relative_prefix):
+    export_data_dir = tmp_path / data_path / relative_prefix
+    return pq.read_table(str(export_data_dir)).to_pylist()
+
+
 class TestMaterializeFilteredTables:
     def test_artifact_cooccurrence_does_not_leak_unrelated_rows(self, tmp_path):
         _seed_fixture_lake(tmp_path)
         con = duckdb.connect()
         try:
-            tables = materialize_filtered_tables(
+            result = materialize_filtered_tables(
                 con, base_path=str(tmp_path), window_start=None, window_end=None,
                 vins=frozenset({"VIN_A"}), listing_ids=frozenset({"LA"}),
                 artifact_row_keys=frozenset({(200, None, "LC")}),
@@ -125,14 +130,11 @@ class TestMaterializeFilteredTables:
 
         # VIN_A (vin match) + the null-vin row (exact artifact row key) = 2.
         # VIN_B (artifact co-occurrence only) and VIN_D (unrelated) excluded.
-        assert tables["silver_observations"]["rows"] == 2
-        assert tables["silver_observations"]["error"] is None
+        assert result.ok
+        assert result.tables["silver_observations"]["rows"] == 2
+        assert result.tables["silver_observations"]["error"] is None
 
-        export_data_dir = (
-            tmp_path / "snapshot_exports/fingerprints/testfp/data"
-            / "silver_normalized/observations"
-        )
-        written = pq.read_table(str(export_data_dir)).to_pylist()
+        written = _read_data(tmp_path, result.data_path, "silver_normalized/observations")
         listing_ids = {row["listing_id"] for row in written}
         assert listing_ids == {"LA", "LC"}
         assert "LB" not in listing_ids
@@ -142,7 +144,7 @@ class TestMaterializeFilteredTables:
         _seed_fixture_lake(tmp_path)
         con = duckdb.connect()
         try:
-            tables = materialize_filtered_tables(
+            result = materialize_filtered_tables(
                 con, base_path=str(tmp_path), window_start=None, window_end=None,
                 vins=frozenset({"VIN_A"}), listing_ids=frozenset({"LA"}),
                 artifact_row_keys=frozenset(),
@@ -150,14 +152,14 @@ class TestMaterializeFilteredTables:
             )
         finally:
             con.close()
-        assert tables["price_observation_events"]["rows"] == 1
-        assert tables["vin_to_listing_events"]["rows"] == 1
+        assert result.tables["price_observation_events"]["rows"] == 1
+        assert result.tables["vin_to_listing_events"]["rows"] == 1
 
     def test_blocked_cooldown_events_filtered_by_listing_id_only(self, tmp_path):
         _seed_fixture_lake(tmp_path)
         con = duckdb.connect()
         try:
-            tables = materialize_filtered_tables(
+            result = materialize_filtered_tables(
                 con, base_path=str(tmp_path), window_start=None, window_end=None,
                 vins=frozenset(), listing_ids=frozenset({"LA"}),
                 artifact_row_keys=frozenset(),
@@ -165,27 +167,28 @@ class TestMaterializeFilteredTables:
             )
         finally:
             con.close()
-        assert tables["blocked_cooldown_events"]["rows"] == 1
+        assert result.tables["blocked_cooldown_events"]["rows"] == 1
 
     def test_empty_cohort_writes_zero_rows_everywhere(self, tmp_path):
         _seed_fixture_lake(tmp_path)
         con = duckdb.connect()
         try:
-            tables = materialize_filtered_tables(
+            result = materialize_filtered_tables(
                 con, base_path=str(tmp_path), window_start=None, window_end=None,
                 vins=frozenset(), listing_ids=frozenset(), artifact_row_keys=frozenset(),
                 export_fingerprint="testfp", export_prefix="snapshot_exports",
             )
         finally:
             con.close()
-        for name, entry in tables.items():
+        assert result.ok
+        for name, entry in result.tables.items():
             assert entry["rows"] == 0, name
             assert entry["files"] == 0, name
 
     def test_missing_table_captured_as_error_not_crash(self, tmp_path):
         con = duckdb.connect()
         try:
-            tables = materialize_filtered_tables(
+            result = materialize_filtered_tables(
                 con, base_path=str(tmp_path), window_start=None, window_end=None,
                 vins=frozenset({"VIN_A"}), listing_ids=frozenset(),
                 artifact_row_keys=frozenset(),
@@ -193,16 +196,18 @@ class TestMaterializeFilteredTables:
             )
         finally:
             con.close()
-        assert tables["silver_observations"]["error"] is not None
-        assert tables["silver_observations"]["rows"] == 0
+        assert not result.ok
+        assert result.tables["silver_observations"]["error"] is not None
+        assert result.tables["silver_observations"]["rows"] == 0
+        assert result.data_path is None
 
-    def test_table_error_does_not_promote_partial_output(self, tmp_path):
-        """A failed table read must never leave a materialized result under
-        the final fingerprints/ prefix — a caller that checks table errors
-        before publishing a manifest must find no promoted data either."""
+    def test_table_error_leaves_no_generation_directory(self, tmp_path):
+        """A failed table read must never leave a materialized generation
+        directory behind — a caller that checks `result.ok` before
+        publishing a manifest must find nothing to accidentally reference."""
         con = duckdb.connect()
         try:
-            materialize_filtered_tables(
+            result = materialize_filtered_tables(
                 con, base_path=str(tmp_path), window_start=None, window_end=None,
                 vins=frozenset({"VIN_A"}), listing_ids=frozenset(),
                 artifact_row_keys=frozenset(),
@@ -210,16 +215,15 @@ class TestMaterializeFilteredTables:
             )
         finally:
             con.close()
-        final_prefix = tmp_path / "snapshot_exports/fingerprints/testfp"
-        tmp_prefix = tmp_path / "snapshot_exports/_tmp/testfp"
-        assert not final_prefix.exists()
-        assert not tmp_prefix.exists()
+        generations_root = tmp_path / "snapshot_exports/fingerprints/testfp/generations"
+        assert not generations_root.exists() or not any(generations_root.iterdir())
+        assert result.generation_id is not None  # generated even on failure, for logging
 
-    def test_successful_export_leaves_no_tmp_staging_dir(self, tmp_path):
+    def test_successful_export_writes_success_marker(self, tmp_path):
         _seed_fixture_lake(tmp_path)
         con = duckdb.connect()
         try:
-            materialize_filtered_tables(
+            result = materialize_filtered_tables(
                 con, base_path=str(tmp_path), window_start=None, window_end=None,
                 vins=frozenset({"VIN_A"}), listing_ids=frozenset({"LA"}),
                 artifact_row_keys=frozenset(),
@@ -227,23 +231,27 @@ class TestMaterializeFilteredTables:
             )
         finally:
             con.close()
-        tmp_prefix = tmp_path / "snapshot_exports/_tmp/testfp"
-        assert not tmp_prefix.exists()
+        generation_root = (
+            tmp_path / "snapshot_exports/fingerprints/testfp/generations" / result.generation_id
+        )
+        assert (generation_root / "_SUCCESS").exists()
 
-    def test_refresh_replaces_stale_output_rather_than_merging(self, tmp_path):
-        """Re-running materialization for the same fingerprint with a
-        different cohort must fully replace the prior output, not merge with
-        it — otherwise a refresh could leave a mixture of old and new rows."""
+    def test_repeated_calls_produce_independent_untouched_generations(self, tmp_path):
+        """Two materialize_filtered_tables calls for the same export_fingerprint
+        (e.g. a refresh) must never mutate or delete each other's output —
+        each writes to its own immutable generation directory. It's the
+        caller's manifest update that decides which generation is "current";
+        this function itself never replaces anything in place."""
         _seed_fixture_lake(tmp_path)
         con = duckdb.connect()
         try:
-            materialize_filtered_tables(
+            first = materialize_filtered_tables(
                 con, base_path=str(tmp_path), window_start=None, window_end=None,
                 vins=frozenset({"VIN_A"}), listing_ids=frozenset({"LA"}),
                 artifact_row_keys=frozenset(),
                 export_fingerprint="testfp", export_prefix="snapshot_exports",
             )
-            materialize_filtered_tables(
+            second = materialize_filtered_tables(
                 con, base_path=str(tmp_path), window_start=None, window_end=None,
                 vins=frozenset({"VIN_D"}), listing_ids=frozenset({"LD"}),
                 artifact_row_keys=frozenset(),
@@ -251,14 +259,14 @@ class TestMaterializeFilteredTables:
             )
         finally:
             con.close()
-        export_data_dir = (
-            tmp_path / "snapshot_exports/fingerprints/testfp/data"
-            / "silver_normalized/observations"
-        )
-        written = pq.read_table(str(export_data_dir)).to_pylist()
-        listing_ids = {row["listing_id"] for row in written}
-        assert listing_ids == {"LD"}
-        assert "LA" not in listing_ids
+
+        assert first.generation_id != second.generation_id
+
+        first_rows = _read_data(tmp_path, first.data_path, "silver_normalized/observations")
+        assert {row["listing_id"] for row in first_rows} == {"LA"}
+
+        second_rows = _read_data(tmp_path, second.data_path, "silver_normalized/observations")
+        assert {row["listing_id"] for row in second_rows} == {"LD"}
 
     def test_silver_observations_rows_are_deterministically_sorted(self, tmp_path):
         # Seed all four tables (via the shared fixture) so this test isolates
@@ -274,7 +282,7 @@ class TestMaterializeFilteredTables:
         ])
         con = duckdb.connect()
         try:
-            materialize_filtered_tables(
+            result = materialize_filtered_tables(
                 con, base_path=str(tmp_path), window_start=None, window_end=None,
                 vins=frozenset({"VIN_SORT"}), listing_ids=frozenset(),
                 artifact_row_keys=frozenset(),
@@ -282,11 +290,7 @@ class TestMaterializeFilteredTables:
             )
         finally:
             con.close()
-        export_data_dir = (
-            tmp_path / "snapshot_exports/fingerprints/testfp/data"
-            / "silver_normalized/observations"
-        )
-        written = pq.read_table(str(export_data_dir)).to_pylist()
+        written = _read_data(tmp_path, result.data_path, "silver_normalized/observations")
         assert [row["fetched_at"] for row in written] == sorted(
             row["fetched_at"] for row in written
         )

@@ -45,9 +45,9 @@ def minio_con():
     con.close()
 
 
-def _read_written_table(fingerprint: str, relative_prefix: str):
+def _read_written_table(data_path: str, relative_prefix: str):
     fs = get_s3fs()
-    path = f"{BUCKET}/{_TEST_EXPORT_PREFIX}/fingerprints/{fingerprint}/data/{relative_prefix}"
+    path = f"{BUCKET}/{data_path}/{relative_prefix}"
     return pq.read_table(path, filesystem=fs).to_pylist()
 
 
@@ -61,30 +61,30 @@ class TestMaterializeFilteredTablesIntegration:
         listing_ids = frozenset({fx.LISTING_SRP_COOCCUR_A})
         fingerprint = "test-artifact-fanout"
 
-        tables = materialize_filtered_tables(
+        result = materialize_filtered_tables(
             minio_con, None, None, None,
             vins, listing_ids, frozenset(),
             fingerprint, _TEST_EXPORT_PREFIX,
         )
-        assert tables["silver_observations"]["error"] is None
-        assert tables["silver_observations"]["rows"] >= 1
+        assert result.ok
+        assert result.tables["silver_observations"]["rows"] >= 1
 
-        written = _read_written_table(fingerprint, "silver_normalized/observations")
+        written = _read_written_table(result.data_path, "silver_normalized/observations")
         listing_ids_written = {row["listing_id"] for row in written}
         assert fx.LISTING_SRP_COOCCUR_A in listing_ids_written
         assert fx.LISTING_SRP_COOCCUR_B not in listing_ids_written
 
     def test_explicit_artifact_row_key_included_without_vin_match(self, minio_con):
         fingerprint = "test-artifact-row-key"
-        tables = materialize_filtered_tables(
+        result = materialize_filtered_tables(
             minio_con, None, None, None,
             frozenset(), frozenset(),
             frozenset({(fx.ARTIFACT_NULL_VIN, None, fx.LISTING_NULL_VIN)}),
             fingerprint, _TEST_EXPORT_PREFIX,
         )
-        assert tables["silver_observations"]["rows"] == 1
+        assert result.tables["silver_observations"]["rows"] == 1
 
-        written = _read_written_table(fingerprint, "silver_normalized/observations")
+        written = _read_written_table(result.data_path, "silver_normalized/observations")
         assert len(written) == 1
         assert written[0]["listing_id"] == fx.LISTING_NULL_VIN
         assert written[0]["vin"] is None
@@ -97,13 +97,13 @@ class TestMaterializeFilteredTablesIntegration:
         assert fx.VIN_RELISTED in cohort.closed_vins
 
         fingerprint = "test-relisted-vin"
-        tables = materialize_filtered_tables(
+        result = materialize_filtered_tables(
             minio_con, None, None, None,
             cohort.closed_vins, cohort.listing_ids, cohort.artifact_row_keys,
             fingerprint, _TEST_EXPORT_PREFIX,
         )
-        assert tables["silver_observations"]["rows"] >= 2
+        assert result.tables["silver_observations"]["rows"] >= 2
 
-        written = _read_written_table(fingerprint, "silver_normalized/observations")
+        written = _read_written_table(result.data_path, "silver_normalized/observations")
         listing_ids_written = {row["listing_id"] for row in written}
         assert {fx.LISTING_RELISTED_1, fx.LISTING_RELISTED_2} <= listing_ids_written

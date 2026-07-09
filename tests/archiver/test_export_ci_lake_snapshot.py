@@ -31,6 +31,7 @@ from archiver.processors.lake_snapshot_cohort import (
     candidate_sets_to_selector_diagnostics,
     collect_selector_candidates,
 )
+from archiver.processors.lake_snapshot_export import MaterializationResult
 from archiver.processors.lake_snapshot_selectors import (
     RUNNABLE_SELECTORS,
     build_selector_query,
@@ -899,10 +900,16 @@ class TestExportNonDryRun:
     those flags — then materializes filtered Parquet under an
     export-fingerprint-addressed prefix (Gate D)."""
 
-    def _mock_materialize(self, mocker, tables=None):
+    def _mock_materialize(self, mocker, tables=None, data_path="data/path", ok=True):
+        tables = tables if tables is not None else {}
+        result = MaterializationResult(
+            tables=tables,
+            generation_id="gen1",
+            data_path=data_path if ok else None,
+        )
         return mocker.patch(
             "archiver.processors.export_ci_lake_snapshot.materialize_filtered_tables",
-            return_value=tables if tables is not None else {},
+            return_value=result,
         )
 
     def test_non_dry_run_exports_and_writes_manifest(self, mocker):
@@ -910,7 +917,8 @@ class TestExportNonDryRun:
         mocker.patch("archiver.processors.export_ci_lake_snapshot.write_planning_cache")
         mock_materialize = self._mock_materialize(mocker)
         mock_write_manifest = mocker.patch(
-            "archiver.processors.export_ci_lake_snapshot.write_export_manifest"
+            "archiver.processors.export_ci_lake_snapshot.write_export_manifest",
+            return_value=True,
         )
         mocker.patch(
             "archiver.processors.export_ci_lake_snapshot.load_export_manifest",
@@ -926,7 +934,7 @@ class TestExportNonDryRun:
         assert result.export_cache_hit is False
         assert result.export_cache_action == "computed"
         assert result.manifest_key is not None
-        assert result.materialized_snapshot_path is not None
+        assert result.materialized_snapshot_path == "data/path"
         assert mock_materialize.called
         assert mock_write_manifest.called
 
@@ -936,7 +944,10 @@ class TestExportNonDryRun:
         _mock_heavy_path(mocker)
         mocker.patch("archiver.processors.export_ci_lake_snapshot.write_planning_cache")
         self._mock_materialize(mocker)
-        mocker.patch("archiver.processors.export_ci_lake_snapshot.write_export_manifest")
+        mocker.patch(
+            "archiver.processors.export_ci_lake_snapshot.write_export_manifest",
+            return_value=True,
+        )
         mocker.patch(
             "archiver.processors.export_ci_lake_snapshot.load_export_manifest",
             return_value=None,
@@ -953,7 +964,10 @@ class TestExportNonDryRun:
         mock_materialize = self._mock_materialize(mocker)
         mocker.patch(
             "archiver.processors.export_ci_lake_snapshot.load_export_manifest",
-            return_value={"export_cache_schema_version": 1, "export_fingerprint": "x"},
+            return_value={
+                "export_cache_schema_version": 2, "export_fingerprint": "x",
+                "data_path": "cached/data/path",
+            },
         )
         mock_write_manifest = mocker.patch(
             "archiver.processors.export_ci_lake_snapshot.write_export_manifest"
@@ -966,8 +980,59 @@ class TestExportNonDryRun:
         assert result.status == "exported"
         assert result.export_cache_hit is True
         assert result.export_cache_action == "reused"
+        assert result.materialized_snapshot_path == "cached/data/path"
         assert not mock_materialize.called
         assert not mock_write_manifest.called
+
+    def test_non_dry_run_table_error_returns_export_failed(self, mocker):
+        """A table read error must surface as export_failed and must never
+        write/publish a manifest for the partial result."""
+        _mock_heavy_path(mocker)
+        mocker.patch("archiver.processors.export_ci_lake_snapshot.write_planning_cache")
+        self._mock_materialize(
+            mocker,
+            tables={"silver_observations": {"error": "boom", "rows": 0}},
+            ok=False,
+        )
+        mock_write_manifest = mocker.patch(
+            "archiver.processors.export_ci_lake_snapshot.write_export_manifest"
+        )
+        mocker.patch(
+            "archiver.processors.export_ci_lake_snapshot.load_export_manifest",
+            return_value=None,
+        )
+
+        result = export_ci_lake_snapshot(
+            SnapshotRequest(tier="ci", dry_run=False, build_cohort=True)
+        )
+
+        assert result.status == "export_failed"
+        assert any("boom" in f for f in result.coverage_failures)
+        assert result.materialized_snapshot_path is None
+        assert not mock_write_manifest.called
+
+    def test_non_dry_run_manifest_write_failure_returns_export_failed(self, mocker):
+        """The manifest write is the actual publish step — if it fails, the
+        export must not be reported as exported even though materialization
+        itself succeeded."""
+        _mock_heavy_path(mocker)
+        mocker.patch("archiver.processors.export_ci_lake_snapshot.write_planning_cache")
+        self._mock_materialize(mocker)
+        mocker.patch(
+            "archiver.processors.export_ci_lake_snapshot.write_export_manifest",
+            return_value=False,
+        )
+        mocker.patch(
+            "archiver.processors.export_ci_lake_snapshot.load_export_manifest",
+            return_value=None,
+        )
+
+        result = export_ci_lake_snapshot(
+            SnapshotRequest(tier="ci", dry_run=False, build_cohort=True)
+        )
+
+        assert result.status == "export_failed"
+        assert result.materialized_snapshot_path is None
 
     def test_non_dry_run_blocked_by_coverage_failures(self, mocker):
         _mock_heavy_path(mocker)
