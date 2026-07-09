@@ -253,8 +253,12 @@ airflow dags trigger dbt_build
 # Airflow: manual feature_daily build via the same DAG
 airflow dags trigger dbt_build --conf '{"select": ["tag:feature_daily"]}'
 
-# Airflow: override the hourly DAG's default hourly_core selection for one run
-airflow dags trigger hourly_analytics_refresh --conf '{"select": ["tag:full_validation"]}'
+# Airflow: override the hourly DAG's default hourly_core selection for one run,
+# building the complete graph instead (dbt_runner's /dbt/build only forwards
+# raw --select/--exclude tokens, not --selector, so "tag:full_validation" or
+# "fqn:*" do NOT work here — an empty select list omits --select entirely,
+# which is what makes dbt build everything; see dbt_runner/app.py).
+airflow dags trigger hourly_analytics_refresh --conf '{"select": []}'
 ```
 
 The hourly `dbt_runner` `/dbt/build` payload now defaults to
@@ -262,7 +266,11 @@ The hourly `dbt_runner` `/dbt/build` payload now defaults to
 unless `dag_run.conf["select"]` is explicitly set. The manual `dbt_build` DAG
 (`airflow/dags/dbt_build.py`) is unchanged: it has no default selector, so an
 unparameterized manual trigger still builds the complete graph — this is the
-documented full-refresh path.
+documented full-refresh path. The `full_validation` named selector
+(`dbt/selectors.yml`) is a local/manual `dbt` CLI convenience only — it is
+not reachable through the `dbt_runner` HTTP API, which validates each
+`--select`/`--exclude` token against `SAFE_TOKEN` and only ever passes them
+through as raw `--select`/`--exclude`, never `--selector`.
 
 #### Still needs VM validation
 

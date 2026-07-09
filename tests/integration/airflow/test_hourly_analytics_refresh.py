@@ -54,10 +54,10 @@ class TestHourlyDbtBuildPayload:
         """dag_run.conf={"select": [...]} must override the hourly_core default."""
         with patch.object(dbt_build_module, "post_json") as mock_post_json:
             mock_post_json.return_value = {"ok": True}
-            dbt_build_module._run_dbt_build(**_mock_context({"select": ["tag:full_validation"]}))
+            dbt_build_module._run_dbt_build(**_mock_context({"select": ["tag:feature_daily"]}))
 
         _, kwargs = mock_post_json.call_args
-        assert kwargs["payload"] == {"select": ["tag:full_validation"]}
+        assert kwargs["payload"] == {"select": ["tag:feature_daily"]}
 
     def test_full_refresh_conf_is_still_honored_alongside_default_select(self, dbt_build_module):
         """full_refresh from conf must pass through even when select falls back to the default."""
@@ -69,7 +69,14 @@ class TestHourlyDbtBuildPayload:
         assert kwargs["payload"] == {"select": ["tag:hourly_core"], "full_refresh": True}
 
     def test_explicit_empty_select_list_is_still_honored(self, dbt_build_module):
-        """An explicit empty list is a deliberate 'build everything' override, not a missing key."""
+        """
+        An explicit empty list is a deliberate 'build everything' override, not
+        a missing key. This is the documented way to force a full-graph build
+        through this DAG: dbt_runner only forwards raw --select/--exclude
+        tokens (never --selector), so neither "tag:full_validation" nor
+        "fqn:*" reaches dbt as a full-graph selection — an empty list is what
+        makes dbt_runner omit --select and build everything.
+        """
         with patch.object(dbt_build_module, "post_json") as mock_post_json:
             mock_post_json.return_value = {"ok": True}
             dbt_build_module._run_dbt_build(**_mock_context({"select": []}))

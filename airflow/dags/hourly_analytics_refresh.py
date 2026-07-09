@@ -33,8 +33,10 @@ def _run_dbt_build(**context):
 
     # Plan 123 Phase 1: default to the hourly_core cadence so this scheduled
     # run no longer rebuilds the complete dbt graph every hour. Pass
-    # dag_run.conf={"select": [...]} (e.g. ["fqn:*"]) to override, or trigger
-    # the dbt_build DAG directly for a manual full-graph run.
+    # dag_run.conf={"select": [...]} to override — e.g. {"select": []} to
+    # build everything (dbt_runner omits --select when the list is empty;
+    # "*" fails its SAFE_TOKEN validation) — or trigger the dbt_build DAG
+    # directly for a manual full-graph run.
     payload = {"select": DEFAULT_DBT_SELECT}
     if "select" in conf:
         payload["select"] = conf["select"]
