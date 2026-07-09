@@ -3,6 +3,7 @@ import os
 from datetime import datetime, timedelta
 
 import requests
+from airflow.exceptions import AirflowFailException
 from airflow.providers.standard.operators.python import PythonOperator
 from sensors import JsonPostError, deploy_intent_sensor, http_health_sensor, post_json
 
@@ -39,6 +40,14 @@ def _run_dbt_build(**context):
         return result
     except JsonPostError as e:
         context["ti"].xcom_push(key="result", value=e.result)
+        if e.result.get("likely_oom"):
+            # Plan 123 Phase 0: retrying an OOM-killed build without changing
+            # execution conditions just repeats the failure — fail immediately
+            # instead of consuming the bounded retry meant for transient
+            # infra errors.
+            raise AirflowFailException(
+                f"dbt build killed by OOM (rc={e.result.get('returncode')}); not retrying"
+            ) from e
         raise
 
 

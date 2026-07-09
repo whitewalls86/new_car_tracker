@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
 import shlex
 import subprocess
+import time
+import uuid
+from datetime import datetime, timezone
 from typing import Any, Dict, List
 
 from fastapi import Body, FastAPI, HTTPException
@@ -18,6 +22,38 @@ app = FastAPI()
 logger = logging.getLogger("dbt_runner")
 
 SAFE_TOKEN = re.compile(r"^[A-Za-z0-9_:+.@/-]+$")
+
+# Must match the duckdb target in dbt/profiles.yml (Plan 123 Phase 0).
+DUCKDB_THREADS = 2
+DUCKDB_MEMORY_LIMIT = "8GB"
+
+# Linux SIGKILL exit codes: -9 from a direct signal, 137 (128+9) from some
+# shells/container runtimes that report it as a plain exit status.
+_OOM_RETURNCODES = (-9, 137)
+
+
+def _likely_oom(returncode: int) -> bool:
+    return returncode in _OOM_RETURNCODES
+
+
+def _model_timings_from_run_results() -> List[Dict[str, Any]]:
+    """Best-effort per-model timing from the run_results.json dbt just wrote."""
+    path = os.path.join(os.getcwd(), "target", "run_results.json")
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path) as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return []
+    return [
+        {
+            "unique_id": result.get("unique_id"),
+            "status": result.get("status"),
+            "execution_time": result.get("execution_time"),
+        }
+        for result in data.get("results", [])
+    ]
 
 
 def _validate_tokens(tokens: List[str], field: str) -> None:
@@ -135,23 +171,45 @@ def dbt_build(payload: Dict[str, Any] = Body(default={})) -> Dict[str, Any]:
         if exclude:
             cmd += ["--exclude", *exclude]
 
-        logger.info("Running: %s", " ".join(shlex.quote(x) for x in cmd))
+        invocation_id = str(uuid.uuid4())
+        started_at = datetime.now(timezone.utc).isoformat()
+        cmd_str = " ".join(shlex.quote(x) for x in cmd)
+        logger.info("dbt build invocation=%s starting: %s", invocation_id, cmd_str)
+
+        start = time.monotonic()
         proc = subprocess.run(cmd, capture_output=True, text=True)
+        duration_seconds = round(time.monotonic() - start, 2)
+        ended_at = datetime.now(timezone.utc).isoformat()
+        likely_oom = _likely_oom(proc.returncode)
 
         result = {
             "ok": proc.returncode == 0,
             "returncode": proc.returncode,
+            "likely_oom": likely_oom,
+            "invocation_id": invocation_id,
+            "started_at": started_at,
+            "ended_at": ended_at,
+            "duration_seconds": duration_seconds,
             "select": select or "all",
             "exclude": exclude or [],
-            "cmd": " ".join(shlex.quote(x) for x in cmd),
+            "full_refresh": full_refresh,
+            "cmd": cmd_str,
+            "duckdb_threads": DUCKDB_THREADS,
+            "duckdb_memory_limit": DUCKDB_MEMORY_LIMIT,
+            "model_timings": _model_timings_from_run_results(),
             "stdout": _cap(proc.stdout),
             "stderr": _cap(proc.stderr),
         }
 
+        logger.info(
+            "dbt build invocation=%s rc=%d duration=%.2fs full_refresh=%s likely_oom=%s",
+            invocation_id, proc.returncode, duration_seconds, full_refresh, likely_oom,
+        )
+
         if proc.returncode != 0:
             logger.error(
-                "dbt build failed (rc=%d)\nstdout: %s\nstderr: %s",
-                proc.returncode, proc.stdout, proc.stderr,
+                "dbt build failed invocation=%s (rc=%d)\nstdout: %s\nstderr: %s",
+                invocation_id, proc.returncode, proc.stdout, proc.stderr,
             )
             raise HTTPException(status_code=500, detail=result)
 

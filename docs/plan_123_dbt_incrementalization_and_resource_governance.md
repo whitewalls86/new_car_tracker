@@ -96,6 +96,54 @@ Acceptance gate:
 - host memory retains an agreed safety margin;
 - production APIs and MinIO remain healthy during the build.
 
+### Phase 0 progress (2026-07-09)
+
+Implemented in `feature/plan-123-dbt-resource-guardrails`:
+
+- [x] `dbt/profiles.yml` duckdb target: `threads: 4` -> `2`, added
+      `settings.memory_limit: "8GB"`.
+- [x] `docker-compose.yml` `dbt_runner` service: added `mem_limit: 12g` —
+      above the 8GB DuckDB budget, below the ~23.4GB host total, leaving
+      headroom for Postgres/MinIO/Airflow/scraper/ops/monitoring.
+- [x] Active-job guard confirmed: `shared/job_counter.py` +
+      `dbt_runner/app.py` `/dbt/build` already returns 409 and refuses
+      overlapping builds within the dbt_runner process. No change needed.
+- [x] Snapshot-worker overlap: `snapshot-worker` had no way to know a dbt
+      build was running (separate container, separate in-process job
+      counter). Added `DBT_RUNNER_URL` env var to the `snapshot-worker`
+      service and a best-effort `_check_dbt_runner_not_building()` guard in
+      `archiver/processors/export_ci_lake_snapshot.py::main()` that checks
+      dbt_runner's `/ready` endpoint before a real (non-dry-run) export and
+      aborts if a build is in progress. Skips silently if `DBT_RUNNER_URL`
+      is unset or dbt_runner is unreachable, so it never blocks on
+      unrelated infra issues.
+- [x] Airflow retry: `dbt_build` task in both `dbt_build.py` and
+      `hourly_analytics_refresh.py` keeps its existing bounded
+      `retries=1` / 30s backoff for transient infra failures, but now
+      raises `AirflowFailException` (skips the retry) when the response is
+      classified as OOM/SIGKILL.
+- [x] Observability: `dbt_runner/app.py` `/dbt/build` now returns
+      `invocation_id`, `started_at`/`ended_at`/`duration_seconds`,
+      `duckdb_threads`/`duckdb_memory_limit`, `full_refresh`,
+      `model_timings` (from `target/run_results.json` when present), and
+      `likely_oom` (return code `-9` or `137`). All fields are also emitted
+      via the existing JSON logger.
+
+Not converted to incremental, not split into cadences, no Spark/Delta work —
+out of scope for this commit per plan.
+
+Still needs VM verification per the acceptance gate above:
+
+- [ ] Deploy and run one complete production build under monitoring to
+      confirm no host OOM and that production APIs/MinIO stay healthy.
+- [ ] Confirm the chosen `8GB` DuckDB budget / `12g` container limit are
+      sufficient for the current ~200-resource graph (the incident measured
+      ~12.9GB RSS per killed process with no memory_limit configured at
+      all, so 8GB may force spilling/slower runs — revisit after a real
+      run's `model_timings` and `duration_seconds` are observed).
+- [ ] Confirm the `AirflowFailException` OOM short-circuit fires correctly
+      against a real SIGKILL, not just the classification unit tests.
+
 ## Phase 1: Split Build Cadences
 
 Stop treating all analytical outputs as equally time-sensitive.
