@@ -312,6 +312,80 @@ Acceptance gate:
 - steady-state scan volume and peak memory are materially lower;
 - row count and checksum/grouped comparison match full refresh.
 
+### Phase 2 progress (2026-07-09)
+
+Implemented in `feature/plan-123-incremental-fingerprints`. This phase
+intentionally touches only `int_listing_state_fingerprints` — `int_price_history`
+and `int_listing_state_runs` are left as full-table builds for Phases 3 and 4.
+
+- [x] `dbt/models/intermediate/int_listing_state_fingerprints.sql` converted
+      to `materialized='incremental'`, `unique_key='artifact_id'`,
+      `incremental_strategy='delete+insert'`. `delete+insert` was chosen over
+      DuckDB's native `merge` strategy because it's the base strategy dbt-duckdb
+      supports on any DuckDB version and it's also available on the
+      Postgres/Spark-family adapters this project may migrate onto later (Plan
+      118) — it doesn't add DuckDB-only incremental semantics.
+- [x] Added `fingerprint_incremental_lookback_days` (default `3`, matching the
+      existing `staleness_window_days` convention) to `dbt/dbt_project.yml`
+      vars, documented there and in
+      `dbt/models/intermediate/int_listing_state_fingerprints.schema.yml`.
+- [x] On an incremental run, source rows are rescanned from
+      `max(target.fetched_at) - fingerprint_incremental_lookback_days` days;
+      first run and `--full-refresh` have no target to watermark from, so they
+      scan the full source, matching prior full-table behavior exactly.
+- [x] Fingerprint hash logic (the `md5(concat_ws(...))` expression, column
+      list, and `source = 'detail' and vin17 is not null` filters) is
+      byte-for-byte unchanged — only wrapped in a `source_rows` CTE with the
+      added incremental filter. dbt's unit test framework does not evaluate
+      `is_incremental()` as true, so the existing pinned-hash unit tests in
+      `unit_tests.yml` exercise the same full-scan path as before and are
+      unaffected.
+- [x] `delete+insert` only dedupes an incoming batch against the *existing
+      target* row for a given `unique_key` — it does not collapse multiple
+      rows sharing an `artifact_id` within the same incremental batch (e.g. an
+      ingestion retry landing two rows for one artifact in the same lookback
+      window). Added a `fingerprinted` CTE with
+      `row_number() over (partition by artifact_id order by fetched_at desc, parsed_fingerprint) = 1`
+      so the model itself guarantees `artifact_id` uniqueness regardless of
+      source duplicates, and added a `unique` data test on `artifact_id` in
+      `int_listing_state_fingerprints.schema.yml` (previously only `not_null`).
+- [x] Model remains tagged `feature_daily` and `backtest`
+      (`int_listing_state_fingerprints.schema.yml`); tags were not touched.
+- [x] Added `tests/integration/dbt/test_fingerprints_incremental.py`: builds a
+      throwaway dbt-duckdb project that seeds a `stg_observations` stand-in and
+      runs the real model SQL (read directly from the repo) through real
+      `dbt seed`/`dbt run`/`dbt run --full-refresh` invocations, since dbt unit
+      tests can't exercise state across multiple invocations. Written as one
+      sequential scenario test (not several independently-selectable test
+      methods sharing state) since each step's assertions depend on exactly
+      the state the previous step left behind. Covers: empty target bootstrap
+      excludes non-detail/null-vin17 rows; a second run with unchanged source
+      is idempotent; a new artifact appends exactly once; a repeated run does
+      not duplicate it; a late artifact inside the lookback window is picked
+      up; two source rows sharing one `artifact_id` in the same batch collapse
+      to a single row (the latest `fetched_at` wins); a corrected
+      `artifact_id` replaces its existing row rather than duplicating it; and
+      `--full-refresh` output matches the accumulated incremental output.
+      Verified locally against `dbt-core==1.10.20` / `dbt-duckdb==1.10.1`
+      (pinned versions used in `dbt_runner/Dockerfile` and CI). Runs in CI's
+      existing `pytest tests/integration/dbt/ -v -m integration` step in the
+      `dbt` job; no CI workflow changes were needed.
+
+Still needs VM verification before this is considered fully rolled out:
+
+- [ ] Run `feature_daily` once normally
+      (`dbt build --selector feature_daily` or dbt_runner with
+      `{"select": ["tag:feature_daily"]}`) and confirm success.
+- [ ] Run `feature_daily` again immediately after and confirm no new rows /
+      no duplicates (idempotency under real production data).
+- [ ] Run the full graph or `dbt build --full-refresh` and confirm it still
+      succeeds and rebuilds the complete table.
+- [ ] Check `artifact_id` uniqueness on the real table:
+      `select count(*), count(distinct artifact_id) from int_listing_state_fingerprints;`
+- [ ] Compare this model's runtime in `run_results.json` against the previous
+      full-table `feature_daily` run to confirm steady-state scan volume is
+      actually lower.
+
 ## Phase 3: Incremental Price History
 
 Convert `int_price_history` using affected-VIN replacement.

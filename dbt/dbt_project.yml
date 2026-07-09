@@ -15,6 +15,11 @@ macro-paths: ["macros"]
 
 vars:
   staleness_window_days: 3
+  # Plan 123 Phase 2: late-arrival lookback for int_listing_state_fingerprints'
+  # incremental scan. On incremental runs, source rows are rescanned from
+  # max(target.fetched_at) minus this many days, so late-arriving or corrected
+  # detail artifacts inside the window are still picked up.
+  fingerprint_incremental_lookback_days: 3
 
 models:
   cartracker:

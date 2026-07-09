@@ -186,6 +186,9 @@ unit_tests:
   - name: test_fingerprints_excludes_non_detail_and_null_vin
     description: "SRP rows and rows with null vin17 are excluded; only detail+valid-vin rows appear"
     model: int_listing_state_fingerprints
+    overrides:
+      macros:
+        is_incremental: false
     given:
       - input: ref('stg_observations')
         rows:
@@ -202,6 +205,9 @@ unit_tests:
   - name: test_fingerprints_identical_inputs_same_hash
     description: "Two detail rows with identical business fields produce the same parsed_fingerprint"
     model: int_listing_state_fingerprints
+    overrides:
+      macros:
+        is_incremental: false
     given:
       - input: ref('stg_observations')
         rows:
@@ -227,6 +233,9 @@ unit_tests:
   - name: test_fingerprints_price_sensitivity
     description: "A $1 price change (30000 → 29999) produces a different parsed_fingerprint"
     model: int_listing_state_fingerprints
+    overrides:
+      macros:
+        is_incremental: false
     given:
       - input: ref('stg_observations')
         rows:
@@ -250,6 +259,9 @@ unit_tests:
   - name: test_fingerprints_listing_state_sensitivity
     description: "A listing_state change (active → unavailable) produces a different parsed_fingerprint"
     model: int_listing_state_fingerprints
+    overrides:
+      macros:
+        is_incremental: false
     given:
       - input: ref('stg_observations')
         rows:

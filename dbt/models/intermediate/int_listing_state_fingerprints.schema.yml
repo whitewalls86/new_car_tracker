@@ -9,6 +9,12 @@ models:
       without any special-case logic. Source is filtered to detail only; rows with null
       vin17 are excluded. price, mileage, and listing_state are denormalized for
       downstream convenience.
+      Incremental (Plan 123 Phase 2): materialized with unique_key=artifact_id and the
+      delete+insert strategy. On incremental runs, source rows are rescanned from
+      max(target.fetched_at) minus the `fingerprint_incremental_lookback_days` var
+      (default 3) to pick up late-arriving or corrected artifacts. A reappearing
+      artifact_id replaces its existing target row rather than duplicating it.
+      First run and `--full-refresh` rebuild the complete table.
     config:
       tags: ["feature_daily", "backtest"]
     columns:
@@ -21,9 +27,14 @@ models:
         data_tests:
           - not_null
       - name: artifact_id
-        description: Source artifact identifier.
+        description: >
+          Source artifact identifier — durable row identity and incremental
+          unique_key. A source batch with more than one row for the same
+          artifact_id is deduplicated to the row with the latest fetched_at
+          (see model SQL) before this constraint is checked.
         data_tests:
           - not_null
+          - unique
       - name: fetched_at
         description: Timestamp when this detail artifact was fetched.
         data_tests:
