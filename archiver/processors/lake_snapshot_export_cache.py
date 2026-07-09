@@ -113,8 +113,39 @@ def build_export_manifest(
     }
 
 
-def load_export_manifest(path: str) -> Optional[Dict[str, Any]]:
-    """Load a materialized export manifest, or None on a miss/schema mismatch."""
+def _manifest_incompleteness_reason(
+    manifest: Dict[str, Any], expected_fingerprint: str,
+) -> Optional[str]:
+    """Return a reason string if `manifest` is not a complete, trustworthy
+    materialized export for `expected_fingerprint`, else None.
+
+    Deliberately does not re-verify file existence/checksums against MinIO —
+    that would require re-listing every object on every cache hit, defeating
+    the purpose of caching. This checks only what's cheaply knowable from the
+    manifest JSON itself: it's for the fingerprint the caller asked for, every
+    required table is present, and no table recorded a read/write error
+    (`lake_snapshot_export.materialize_filtered_tables` never promotes a
+    partial result, but this is defense-in-depth against a manifest written
+    by an older/buggy version that did)."""
+    if manifest.get("export_fingerprint") != expected_fingerprint:
+        return (
+            f"export_fingerprint mismatch: manifest has "
+            f"{manifest.get('export_fingerprint')!r}, expected {expected_fingerprint!r}"
+        )
+    tables = manifest.get("tables") or {}
+    missing = [name for name in INCLUDED_TABLES if name not in tables]
+    if missing:
+        return f"missing tables: {missing}"
+    errored = [name for name in INCLUDED_TABLES if tables[name].get("error")]
+    if errored:
+        return f"tables with recorded errors: {errored}"
+    return None
+
+
+def load_export_manifest(path: str, expected_fingerprint: str) -> Optional[Dict[str, Any]]:
+    """Load a materialized export manifest, or None on a miss, schema
+    mismatch, or incomplete/untrustworthy manifest (see
+    `_manifest_incompleteness_reason`)."""
     logger.info("lake_snapshot_export_cache: lookup start path=%s", path)
     try:
         manifest = read_json(path)
@@ -129,6 +160,14 @@ def load_export_manifest(path: str) -> Optional[Dict[str, Any]]:
             "lake_snapshot_export_cache: schema mismatch path=%s cached_version=%s "
             "expected_version=%s; treating as miss",
             path, manifest.get("export_cache_schema_version"), EXPORT_CACHE_SCHEMA_VERSION,
+        )
+        return None
+    incomplete_reason = _manifest_incompleteness_reason(manifest, expected_fingerprint)
+    if incomplete_reason is not None:
+        logger.warning(
+            "lake_snapshot_export_cache: incomplete manifest path=%s reason=%s; "
+            "treating as miss",
+            path, incomplete_reason,
         )
         return None
     logger.info("lake_snapshot_export_cache: hit path=%s", path)

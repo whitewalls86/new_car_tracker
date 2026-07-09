@@ -195,3 +195,100 @@ class TestMaterializeFilteredTables:
             con.close()
         assert tables["silver_observations"]["error"] is not None
         assert tables["silver_observations"]["rows"] == 0
+
+    def test_table_error_does_not_promote_partial_output(self, tmp_path):
+        """A failed table read must never leave a materialized result under
+        the final fingerprints/ prefix — a caller that checks table errors
+        before publishing a manifest must find no promoted data either."""
+        con = duckdb.connect()
+        try:
+            materialize_filtered_tables(
+                con, base_path=str(tmp_path), window_start=None, window_end=None,
+                vins=frozenset({"VIN_A"}), listing_ids=frozenset(),
+                artifact_row_keys=frozenset(),
+                export_fingerprint="testfp", export_prefix="snapshot_exports",
+            )
+        finally:
+            con.close()
+        final_prefix = tmp_path / "snapshot_exports/fingerprints/testfp"
+        tmp_prefix = tmp_path / "snapshot_exports/_tmp/testfp"
+        assert not final_prefix.exists()
+        assert not tmp_prefix.exists()
+
+    def test_successful_export_leaves_no_tmp_staging_dir(self, tmp_path):
+        _seed_fixture_lake(tmp_path)
+        con = duckdb.connect()
+        try:
+            materialize_filtered_tables(
+                con, base_path=str(tmp_path), window_start=None, window_end=None,
+                vins=frozenset({"VIN_A"}), listing_ids=frozenset({"LA"}),
+                artifact_row_keys=frozenset(),
+                export_fingerprint="testfp", export_prefix="snapshot_exports",
+            )
+        finally:
+            con.close()
+        tmp_prefix = tmp_path / "snapshot_exports/_tmp/testfp"
+        assert not tmp_prefix.exists()
+
+    def test_refresh_replaces_stale_output_rather_than_merging(self, tmp_path):
+        """Re-running materialization for the same fingerprint with a
+        different cohort must fully replace the prior output, not merge with
+        it — otherwise a refresh could leave a mixture of old and new rows."""
+        _seed_fixture_lake(tmp_path)
+        con = duckdb.connect()
+        try:
+            materialize_filtered_tables(
+                con, base_path=str(tmp_path), window_start=None, window_end=None,
+                vins=frozenset({"VIN_A"}), listing_ids=frozenset({"LA"}),
+                artifact_row_keys=frozenset(),
+                export_fingerprint="testfp", export_prefix="snapshot_exports",
+            )
+            materialize_filtered_tables(
+                con, base_path=str(tmp_path), window_start=None, window_end=None,
+                vins=frozenset({"VIN_D"}), listing_ids=frozenset({"LD"}),
+                artifact_row_keys=frozenset(),
+                export_fingerprint="testfp", export_prefix="snapshot_exports",
+            )
+        finally:
+            con.close()
+        export_data_dir = (
+            tmp_path / "snapshot_exports/fingerprints/testfp/data"
+            / "silver_normalized/observations"
+        )
+        written = pq.read_table(str(export_data_dir)).to_pylist()
+        listing_ids = {row["listing_id"] for row in written}
+        assert listing_ids == {"LD"}
+        assert "LA" not in listing_ids
+
+    def test_silver_observations_rows_are_deterministically_sorted(self, tmp_path):
+        # Seed all four tables (via the shared fixture) so this test isolates
+        # sort-order behavior rather than also exercising the table-error
+        # abort path — a VIN absent from the ops tables is fine (0 rows
+        # there, not an error), but a *missing table file* is a hard error.
+        _seed_fixture_lake(tmp_path)
+        ts_early = datetime(2026, 7, 1, tzinfo=UTC)
+        ts_late = datetime(2026, 7, 5, tzinfo=UTC)
+        _write_silver(tmp_path, [
+            {"vin": "VIN_SORT", "listing_id": "LB", "artifact_id": 2, "fetched_at": ts_late},
+            {"vin": "VIN_SORT", "listing_id": "LA", "artifact_id": 1, "fetched_at": ts_early},
+        ])
+        con = duckdb.connect()
+        try:
+            materialize_filtered_tables(
+                con, base_path=str(tmp_path), window_start=None, window_end=None,
+                vins=frozenset({"VIN_SORT"}), listing_ids=frozenset(),
+                artifact_row_keys=frozenset(),
+                export_fingerprint="testfp", export_prefix="snapshot_exports",
+            )
+        finally:
+            con.close()
+        export_data_dir = (
+            tmp_path / "snapshot_exports/fingerprints/testfp/data"
+            / "silver_normalized/observations"
+        )
+        written = pq.read_table(str(export_data_dir)).to_pylist()
+        assert [row["fetched_at"] for row in written] == sorted(
+            row["fetched_at"] for row in written
+        )
+        assert written[0]["listing_id"] == "LA"
+        assert written[1]["listing_id"] == "LB"

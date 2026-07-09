@@ -630,7 +630,7 @@ def export_ci_lake_snapshot(request: SnapshotRequest) -> SnapshotResult:
     )
     cached_manifest = None
     if request.reuse_export_cache:
-        cached_manifest = load_export_manifest(export_manifest_key)
+        cached_manifest = load_export_manifest(export_manifest_key, export_fingerprint)
 
     export_cache_hit = cached_manifest is not None
     if export_cache_hit:
@@ -651,6 +651,41 @@ def export_ci_lake_snapshot(request: SnapshotRequest) -> SnapshotResult:
             )
         finally:
             con.close()
+
+        table_errors = {name: t["error"] for name, t in tables.items() if t["error"]}
+        if table_errors:
+            # materialize_filtered_tables already discarded the tmp staging
+            # prefix and left the final prefix untouched on error — never
+            # write/publish a manifest for a partial result, or a later
+            # reuse_export_cache request would accept an incomplete snapshot
+            # as valid.
+            logger.warning(
+                "export_ci_lake_snapshot: export failed snapshot_id=%s "
+                "export_fingerprint=%s table_errors=%s",
+                snapshot_id, export_fingerprint, table_errors,
+            )
+            return SnapshotResult(
+                snapshot_id=snapshot_id,
+                tier=request.tier,
+                status="export_failed",
+                source_window_start=window_start.isoformat() if window_start else None,
+                source_window_end=window_end.isoformat() if window_end else None,
+                seed_vin_count=planning.seed_vin_count,
+                closed_vin_count=planning.closed_vin_count,
+                listing_count=planning.listing_count,
+                artifact_count=planning.artifact_count,
+                coverage_failures=[f"{name}: {err}" for name, err in table_errors.items()],
+                selector_diagnostics=planning.selector_diagnostics,
+                cohort_diagnostics=planning.cohort_diagnostics,
+                planning_cache_key=planning.cache_key,
+                planning_cache_path=planning.cache_path,
+                planning_cache_hit=planning.cache_hit,
+                planning_cache_action=planning.cache_action,
+                export_fingerprint=export_fingerprint,
+                export_cache_hit=False,
+                export_cache_action=export_cache_action,
+            )
+
         manifest = build_export_manifest(
             fingerprint=export_fingerprint,
             planning_fingerprint=planning.cache_key,

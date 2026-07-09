@@ -7,6 +7,7 @@ mocker, never real MinIO.
 """
 from archiver.processors.lake_snapshot_export_cache import (
     EXPORT_CACHE_SCHEMA_VERSION,
+    INCLUDED_TABLES,
     build_export_manifest,
     compute_export_fingerprint,
     export_data_prefix,
@@ -14,6 +15,15 @@ from archiver.processors.lake_snapshot_export_cache import (
     load_export_manifest,
     write_export_manifest,
 )
+
+
+def _complete_manifest(fingerprint="abc"):
+    return {
+        "export_cache_schema_version": EXPORT_CACHE_SCHEMA_VERSION,
+        "export_fingerprint": fingerprint,
+        "tables": {name: {"rows": 1, "files": 1, "sha256": ["x"], "error": None}
+                   for name in INCLUDED_TABLES},
+    }
 
 # ---------------------------------------------------------------------------
 # Fingerprint stability / sensitivity
@@ -94,34 +104,52 @@ class TestLoadExportManifest:
         mocker.patch(
             "archiver.processors.lake_snapshot_export_cache.read_json", return_value=None
         )
-        assert load_export_manifest("some/path") is None
+        assert load_export_manifest("some/path", "abc") is None
 
     def test_hit_returns_manifest(self, mocker):
-        manifest = {
-            "export_cache_schema_version": EXPORT_CACHE_SCHEMA_VERSION,
-            "export_fingerprint": "abc",
-        }
+        manifest = _complete_manifest("abc")
         mocker.patch(
             "archiver.processors.lake_snapshot_export_cache.read_json", return_value=manifest
         )
-        assert load_export_manifest("some/path") == manifest
+        assert load_export_manifest("some/path", "abc") == manifest
 
     def test_load_failure_returns_none(self, mocker):
         mocker.patch(
             "archiver.processors.lake_snapshot_export_cache.read_json",
             side_effect=RuntimeError("boom"),
         )
-        assert load_export_manifest("some/path") is None
+        assert load_export_manifest("some/path", "abc") is None
 
     def test_schema_mismatch_treated_as_miss(self, mocker):
-        manifest = {
-            "export_cache_schema_version": EXPORT_CACHE_SCHEMA_VERSION + 1,
-            "export_fingerprint": "abc",
-        }
+        manifest = _complete_manifest("abc")
+        manifest["export_cache_schema_version"] = EXPORT_CACHE_SCHEMA_VERSION + 1
         mocker.patch(
             "archiver.processors.lake_snapshot_export_cache.read_json", return_value=manifest
         )
-        assert load_export_manifest("some/path") is None
+        assert load_export_manifest("some/path", "abc") is None
+
+    def test_fingerprint_mismatch_treated_as_miss(self, mocker):
+        manifest = _complete_manifest("abc")
+        mocker.patch(
+            "archiver.processors.lake_snapshot_export_cache.read_json", return_value=manifest
+        )
+        assert load_export_manifest("some/path", "different-fingerprint") is None
+
+    def test_missing_table_treated_as_miss(self, mocker):
+        manifest = _complete_manifest("abc")
+        del manifest["tables"][INCLUDED_TABLES[0]]
+        mocker.patch(
+            "archiver.processors.lake_snapshot_export_cache.read_json", return_value=manifest
+        )
+        assert load_export_manifest("some/path", "abc") is None
+
+    def test_table_with_error_treated_as_miss(self, mocker):
+        manifest = _complete_manifest("abc")
+        manifest["tables"][INCLUDED_TABLES[0]]["error"] = "boom"
+        mocker.patch(
+            "archiver.processors.lake_snapshot_export_cache.read_json", return_value=manifest
+        )
+        assert load_export_manifest("some/path", "abc") is None
 
 
 class TestWriteExportManifest:
