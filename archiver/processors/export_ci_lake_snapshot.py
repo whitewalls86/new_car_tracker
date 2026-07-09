@@ -286,6 +286,30 @@ def build_manifest_skeleton(
     }
 
 
+def _selector_failure_status(
+    request: "SnapshotRequest",
+    selector_diagnostics: Optional[Dict[str, Any]],
+    coverage_failures: List[str],
+) -> Optional[str]:
+    """Return the failure status implied by selector diagnostics, or None if
+    neither applies. A selector query/source error always fails
+    (`"export_failed"`) — unlike a coverage shortfall, it means the
+    diagnostics themselves can't be trusted, regardless of
+    require_selector_coverage. A coverage shortfall only fails
+    (`"coverage_failed"`) when the caller opted into strict/audit mode.
+
+    Applied identically to dry-run diagnostics and a real export: an audit
+    dry run (`--dry-run --run-selectors --build-cohort --require-selector-coverage`)
+    must be able to catch the same failures a real export would, not just
+    report them as part of a "planned" diagnostics blob.
+    """
+    if selector_diagnostics is not None and not selector_diagnostics["ok"]:
+        return "export_failed"
+    if request.require_selector_coverage and coverage_failures:
+        return "coverage_failed"
+    return None
+
+
 def format_coverage_failures(coverage: Dict[str, Dict[str, int]]) -> List[str]:
     """Format selector names whose entity count is below the required minimum."""
     failures = []
@@ -564,6 +588,38 @@ def export_ci_lake_snapshot(request: SnapshotRequest) -> SnapshotResult:
                 selector_diagnostics["ok"], selector_diagnostics["errors"],
             )
             coverage_failures = format_coverage_failures(selector_diagnostics["selectors"])
+
+        failure_status = _selector_failure_status(request, selector_diagnostics, coverage_failures)
+        if failure_status:
+            logger.info(
+                "export_ci_lake_snapshot: dry_run selector diagnostics failure "
+                "snapshot_id=%s status=%s coverage_failures=%s",
+                snapshot_id, failure_status, coverage_failures,
+            )
+            reported_failures = (
+                list(selector_diagnostics["errors"])
+                if failure_status == "export_failed"
+                else coverage_failures
+            )
+            return SnapshotResult(
+                snapshot_id=snapshot_id,
+                tier=request.tier,
+                status=failure_status,
+                source_window_start=window_start.isoformat() if window_start else None,
+                source_window_end=window_end.isoformat() if window_end else None,
+                seed_vin_count=seed_vin_count,
+                closed_vin_count=closed_vin_count,
+                listing_count=listing_count,
+                artifact_count=artifact_count,
+                coverage_failures=reported_failures,
+                selector_diagnostics=selector_diagnostics,
+                cohort_diagnostics=cohort_diagnostics,
+                planning_cache_key=cache_key,
+                planning_cache_path=cache_path,
+                planning_cache_hit=cache_hit,
+                planning_cache_action=cache_action,
+            )
+
         return SnapshotResult(
             snapshot_id=snapshot_id,
             tier=request.tier,
@@ -590,55 +646,30 @@ def export_ci_lake_snapshot(request: SnapshotRequest) -> SnapshotResult:
     planning = _run_heavy_planning(request, snapshot_id, window_start, window_end, now)
     window_start, window_end = planning.window_start, planning.window_end
 
-    selector_errors = (
-        planning.selector_diagnostics["errors"] if planning.selector_diagnostics else []
+    failure_status = _selector_failure_status(
+        request, planning.selector_diagnostics, planning.coverage_failures,
     )
-    if selector_errors:
-        # Selector query/source failures (bad SQL, missing/unreadable source
-        # table) are always a hard failure — unlike a coverage shortfall,
-        # they mean the diagnostics themselves can't be trusted, regardless
-        # of require_selector_coverage.
+    if failure_status:
+        reported_failures = (
+            list(planning.selector_diagnostics["errors"])
+            if failure_status == "export_failed"
+            else planning.coverage_failures
+        )
         logger.warning(
-            "export_ci_lake_snapshot: export blocked by selector errors snapshot_id=%s "
-            "errors=%s",
-            snapshot_id, selector_errors,
+            "export_ci_lake_snapshot: export blocked snapshot_id=%s status=%s failures=%s",
+            snapshot_id, failure_status, reported_failures,
         )
         return SnapshotResult(
             snapshot_id=snapshot_id,
             tier=request.tier,
-            status="export_failed",
+            status=failure_status,
             source_window_start=window_start.isoformat() if window_start else None,
             source_window_end=window_end.isoformat() if window_end else None,
             seed_vin_count=planning.seed_vin_count,
             closed_vin_count=planning.closed_vin_count,
             listing_count=planning.listing_count,
             artifact_count=planning.artifact_count,
-            coverage_failures=list(selector_errors),
-            selector_diagnostics=planning.selector_diagnostics,
-            cohort_diagnostics=planning.cohort_diagnostics,
-            planning_cache_key=planning.cache_key,
-            planning_cache_path=planning.cache_path,
-            planning_cache_hit=planning.cache_hit,
-            planning_cache_action=planning.cache_action,
-        )
-
-    if request.require_selector_coverage and planning.coverage_failures:
-        logger.info(
-            "export_ci_lake_snapshot: export blocked by coverage_failures snapshot_id=%s "
-            "failures=%s",
-            snapshot_id, planning.coverage_failures,
-        )
-        return SnapshotResult(
-            snapshot_id=snapshot_id,
-            tier=request.tier,
-            status="coverage_failed",
-            source_window_start=window_start.isoformat() if window_start else None,
-            source_window_end=window_end.isoformat() if window_end else None,
-            seed_vin_count=planning.seed_vin_count,
-            closed_vin_count=planning.closed_vin_count,
-            listing_count=planning.listing_count,
-            artifact_count=planning.artifact_count,
-            coverage_failures=planning.coverage_failures,
+            coverage_failures=reported_failures,
             selector_diagnostics=planning.selector_diagnostics,
             cohort_diagnostics=planning.cohort_diagnostics,
             planning_cache_key=planning.cache_key,

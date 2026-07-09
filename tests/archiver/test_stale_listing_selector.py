@@ -29,18 +29,23 @@ UTC = timezone.utc
 
 _SCHEMA = pa.schema([
     pa.field("listing_id", pa.string()),
+    pa.field("vin", pa.string()),
+    pa.field("artifact_id", pa.int64()),
     pa.field("fetched_at", pa.timestamp("us", tz="UTC")),
 ])
 
 
 def _write_silver(tmp_path, rows):
+    for i, row in enumerate(rows):
+        row.setdefault("vin", f"VIN{i}")
+        row.setdefault("artifact_id", i)
     table = pa.Table.from_pylist(rows, schema=_SCHEMA)
     root = tmp_path / "silver_normalized" / "observations"
     root.mkdir(parents=True, exist_ok=True)
     pq.write_table(table, str(root / "data.parquet"))
 
 
-def _stale_candidates(tmp_path, window_start=None, window_end=None) -> set:
+def _stale_candidate_set(tmp_path, window_start=None, window_end=None):
     con = duckdb.connect()
     try:
         candidate = collect_selector_candidates(
@@ -50,7 +55,11 @@ def _stale_candidates(tmp_path, window_start=None, window_end=None) -> set:
     finally:
         con.close()
     assert candidate.error is None, candidate.error
-    return set(candidate.entities)
+    return candidate
+
+
+def _stale_candidates(tmp_path, window_start=None, window_end=None) -> set:
+    return set(_stale_candidate_set(tmp_path, window_start, window_end).entities)
 
 
 class TestStaleListingAsOfSemantics:
@@ -117,3 +126,52 @@ class TestStaleListingAsOfSemantics:
         first = _stale_candidates(tmp_path, window_start, window_end)
         second = _stale_candidates(tmp_path, window_start, window_end)
         assert first == second == {"L_STALE"}
+
+
+class TestStaleListingBoundaryRowKeyCapture:
+    """A selected stale listing's boundary (last-observation) row may predate
+    window_start, so it must be captured as an exact row-key export
+    exemption (`capture_boundary_row_key` in selector config) — otherwise the
+    listing is selected into the cohort but exported with zero supporting
+    silver_observations rows (see lake_snapshot_export._build_table_query)."""
+
+    def test_selected_stale_listing_captures_its_last_observation_row_key(self, tmp_path):
+        window_start = datetime(2026, 7, 1, tzinfo=UTC)
+        window_end = datetime(2026, 8, 1, tzinfo=UTC)
+        _write_silver(tmp_path, [
+            {
+                "listing_id": "L_STALE", "vin": "VIN_STALE", "artifact_id": 900,
+                "fetched_at": datetime(2026, 6, 20, tzinfo=UTC),
+            },
+        ])
+        candidate = _stale_candidate_set(tmp_path, window_start, window_end)
+        assert "L_STALE" in candidate.selected_entities
+        assert candidate.selected_row_keys == ((900, "VIN_STALE", "L_STALE"),)
+
+    def test_non_selected_fresh_listing_has_no_row_key_captured(self, tmp_path):
+        window_start = datetime(2026, 7, 1, tzinfo=UTC)
+        window_end = datetime(2026, 8, 1, tzinfo=UTC)
+        _write_silver(tmp_path, [
+            {
+                "listing_id": "L_FRESH", "vin": "VIN_FRESH", "artifact_id": 901,
+                "fetched_at": datetime(2026, 7, 28, tzinfo=UTC),
+            },
+        ])
+        candidate = _stale_candidate_set(tmp_path, window_start, window_end)
+        assert candidate.selected_row_keys == ()
+
+    def test_boundary_row_key_picks_the_last_observation_not_the_first(self, tmp_path):
+        window_start = datetime(2026, 7, 1, tzinfo=UTC)
+        window_end = datetime(2026, 8, 1, tzinfo=UTC)
+        _write_silver(tmp_path, [
+            {
+                "listing_id": "L_STALE", "vin": "VIN_STALE", "artifact_id": 100,
+                "fetched_at": datetime(2026, 6, 1, tzinfo=UTC),
+            },
+            {
+                "listing_id": "L_STALE", "vin": "VIN_STALE", "artifact_id": 200,
+                "fetched_at": datetime(2026, 6, 20, tzinfo=UTC),
+            },
+        ])
+        candidate = _stale_candidate_set(tmp_path, window_start, window_end)
+        assert candidate.selected_row_keys == ((200, "VIN_STALE", "L_STALE"),)

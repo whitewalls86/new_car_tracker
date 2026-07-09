@@ -667,12 +667,15 @@ inherently rare event selectors — so coverage shortfalls are now a
 
 `stale_listing` answers: "which listings' most recent observation at or
 before the requested `window_end` is at least 30 days older than
-`window_end`." Two things this is *not*: it is not "stale as of right now"
-(no wall-clock `now()` involved anywhere in the query), and it is not "stale
-relative to whichever row happens to be newest in the filtered window" (the
-prior bug — in a narrow one-month export window, a listing's last
-observation is almost always inside that same window, so it can essentially
-never be 30 days behind the newest row in it).
+`window_end`, and at most `lookback_days` (currently `60`) older." The
+practical range this selector covers is **30 to 60 days stale**, not
+open-ended staleness — see the lookback discussion below for why. Two things
+this definition is *not*: it is not "stale as of right now" (no wall-clock
+`now()` involved anywhere in the query), and it is not "stale relative to
+whichever row happens to be newest in the filtered window" (the prior bug —
+in a narrow one-month export window, a listing's last observation is almost
+always inside that same window, so it can essentially never be 30 days
+behind the newest row in it).
 
 The fix reads a **bounded lookback** ending at `window_end` —
 `[window_end - lookback_days, window_end]`, inclusive of `window_end` —
@@ -684,9 +687,12 @@ observation anywhere in the preceding two months is still found without an
 unbounded full-table scan. This deliberately reads history from *before*
 `window_start` — the exact rows a plain window filter would have excluded.
 A listing whose last-ever observation predates even the lookback window
-(i.e. staler than ~60 days) is not found by this selector; that's an
-accepted tradeoff of a bounded scan, not a correctness bug for the 30-day
-threshold this selector targets.
+(i.e. staler than ~60 days) is not found by this selector at all — that's a
+deliberate scope boundary of a bounded scan (avoiding an unbounded
+full-table scan per the design constraint on this fix), not an
+implementation bug; if "any staleness, however old" needs coverage later,
+that requires a different retrieval strategy (e.g. a materialized
+last-seen-per-listing index) and is out of scope here.
 
 Because `selector_sql_hash`/`selector_config_hash` are part of the planning
 fingerprint (see "Planning cache" above), this SQL/config change correctly
@@ -695,16 +701,23 @@ cache entry is simply never matched by a request made after this fix, and
 the next request for that window recomputes and persists a fresh entry. No
 migration or manual cache invalidation is needed.
 
-Interaction with the snapshot export window: `stale_listing` candidates are
-added to cohort membership (`closed_vins`/`listing_ids`) the same as any
-other selector's. But Gate D's writer (`materialize_filtered_tables`) still
-scopes each table's *exported rows* to `[window_start, window_end)` — so if
-a stale listing's actual last observation predates `window_start`, the
-materialized `silver_observations` output may contain zero rows for it. This
-is an existing, selector-agnostic limitation of the export window (it
-applies to any cohort member with no in-window activity, not just stale
-ones), not something this fix changes; broadening per-row export scope for
-pre-window history is out of scope here.
+**Interaction with the snapshot export window.** A selected stale listing's
+boundary (last-observation) row may predate `window_start`, so a blanket
+`[window_start, window_end)` export filter would otherwise export that
+listing with zero supporting `silver_observations` rows — selected into the
+cohort but with no evidence for closure/materialization. `stale_listing` is
+configured with `capture_boundary_row_key: true`, so
+`lake_snapshot_cohort.collect_selector_candidates` captures the exact
+`(artifact_id, vin, listing_id)` identity of each selected listing's
+boundary row (the same row whose `fetched_at` established `last_seen_at`),
+reusing the row-key mechanism `invalid_or_null_vin` already uses for
+artifact-only-seeded rows. Gate D's writer
+(`lake_snapshot_export._build_table_query`) matches these exact row keys
+with a predicate that bypasses the time window entirely — unlike plain
+`vin`/`listing_id` membership, which remains time-bound as before. This
+guarantees the selected listing's boundary row is present in the export
+regardless of how far before `window_start` it falls, while every other
+row for that listing/vin (if any) stays subject to the normal window.
 
 ---
 

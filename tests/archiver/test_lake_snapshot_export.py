@@ -140,6 +140,50 @@ class TestMaterializeFilteredTables:
         assert "LB" not in listing_ids
         assert "LD" not in listing_ids
 
+    def test_exact_row_key_bypasses_time_window_but_membership_does_not(self, tmp_path):
+        """An exact artifact_row_key match (e.g. stale_listing's captured
+        boundary row) must be exported even when its fetched_at falls outside
+        [window_start, window_end) — otherwise a selector-selected entity
+        would be exported with zero supporting rows. Plain vin/listing_id
+        membership rows remain time-bound as before."""
+        _seed_fixture_lake(tmp_path)  # provides all four tables + an in-window VIN_A/LA row
+        window_start = datetime(2026, 7, 1, tzinfo=UTC)
+        window_end = datetime(2026, 8, 1, tzinfo=UTC)
+        _write_silver(tmp_path, [
+            # Out-of-window vin membership row — excluded (time-bound).
+            {
+                "vin": "VIN_A", "listing_id": "LA", "artifact_id": 2,
+                "fetched_at": datetime(2026, 1, 1, tzinfo=UTC),
+            },
+            # Out-of-window row matched only by an exact row key — included
+            # despite predating window_start (the stale_listing case).
+            {
+                "vin": "VIN_STALE", "listing_id": "L_STALE", "artifact_id": 900,
+                "fetched_at": datetime(2026, 1, 1, tzinfo=UTC),
+            },
+        ])
+        con = duckdb.connect()
+        try:
+            result = materialize_filtered_tables(
+                con, base_path=str(tmp_path), window_start=window_start, window_end=window_end,
+                vins=frozenset({"VIN_A"}), listing_ids=frozenset(),
+                artifact_row_keys=frozenset({(900, "VIN_STALE", "L_STALE")}),
+                export_fingerprint="testfp", export_prefix="snapshot_exports",
+            )
+        finally:
+            con.close()
+
+        assert result.ok
+        written = _read_data(tmp_path, result.data_path, "silver_normalized/observations")
+        vin_artifact_pairs = {(row["vin"], row["artifact_id"]) for row in written}
+        # The seeded in-window VIN_A/LA row (artifact_id=150) and the
+        # out-of-window row-key match (artifact_id=900) are both present;
+        # the out-of-window VIN_A membership-only row (artifact_id=2) is
+        # excluded despite matching on vin.
+        assert ("VIN_A", 150) in vin_artifact_pairs
+        assert ("VIN_STALE", 900) in vin_artifact_pairs
+        assert ("VIN_A", 2) not in vin_artifact_pairs
+
     def test_vin_listing_membership_filters_price_and_vin_to_listing_events(self, tmp_path):
         _seed_fixture_lake(tmp_path)
         con = duckdb.connect()

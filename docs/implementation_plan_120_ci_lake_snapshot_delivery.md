@@ -232,7 +232,11 @@ strict/audit mode that fails the request with `status="coverage_failed"`
 when any selector is short. This is validation policy only — it never
 affects cohort membership and is excluded from the planning/export
 fingerprint. Selector query errors or missing source tables always fail the
-request regardless of this flag (`status="export_failed"`).
+request regardless of this flag (`status="export_failed"`). Both checks
+apply identically to a `dry_run=true` request with `run_selectors=true` (with
+or without `build_cohort=true`) — an audit dry run must be able to catch the
+same failures a real export would, not just report them inside a
+`status="planned"` diagnostics blob.
 
 Validation:
 
@@ -481,7 +485,7 @@ Initial selectors:
 | `cooldown_bucket_5_10` | Latest attempts between 5 and 10. |
 | `cooldown_bucket_11_plus` | Latest attempts >= 11. |
 | `fresh_recent_listing` | Recent active listing. |
-| `stale_listing` | Listing whose most recent observation as of `window_end` is >=30 days old (bounded lookback, not wall-clock `now()` — see `docs/plan_120_ci_lake_snapshot_delivery.md`). |
+| `stale_listing` | Listing whose most recent observation as of `window_end` is 30-60 days old (bounded lookback, not wall-clock `now()`; boundary row exempted from the export time window — see `docs/plan_120_ci_lake_snapshot_delivery.md`). |
 
 Minimum coverage defaults:
 

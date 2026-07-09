@@ -130,18 +130,29 @@ SELECT
 """
 
 
-def _selected_row_keys_for_artifact_candidates(
-    con, candidate_sql: str, params: List[Any], selected: Tuple[Any, ...],
+def _selected_row_keys_for_candidates(
+    con, candidate_sql: str, params: List[Any], key_column: str, selected: Tuple[Any, ...],
 ) -> Tuple[Tuple[Any, Any, Any], ...]:
     """Resolve exact (artifact_id, vin, listing_id) row identity for each
-    selected artifact_id, so the Gate D export writer can match the precise
-    flagged row instead of filtering by a bare artifact_id (which could also
-    match unrelated rows sharing that artifact_id, e.g. an SRP/carousel
-    page). Assumes the selector's candidate SQL exposes vin/listing_id
-    columns, which holds for every current artifact_id-keyed selector."""
+    selected entity, matched by *key_column* (the selector's own entity_key
+    column — `artifact_id` or `listing_id`).
+
+    For an artifact_id-keyed selector, this lets the Gate D export writer
+    match the precise flagged row instead of filtering by a bare artifact_id
+    (which could also match unrelated rows sharing that artifact_id, e.g. an
+    SRP/carousel page). For a `capture_boundary_row_key` listing_id-keyed
+    selector (e.g. stale_listing), this instead captures the exact boundary
+    row (e.g. the last-observation row establishing staleness), which may
+    predate window_start — an exact row-key match lets the Gate D writer
+    export that row despite the snapshot window filter (see
+    `lake_snapshot_export._build_table_query`), so a selected listing isn't
+    left with zero supporting rows.
+
+    Assumes the selector's candidate SQL exposes vin/artifact_id/listing_id
+    columns, which holds for every selector using this mechanism."""
     if not selected:
         return ()
-    clause, clause_params = in_clause("artifact_id", selected)
+    clause, clause_params = in_clause(key_column, selected)
     query = (
         f"SELECT DISTINCT artifact_id, vin, listing_id FROM ({candidate_sql}) AS c "
         f"WHERE {clause}"
@@ -151,7 +162,8 @@ def _selected_row_keys_for_artifact_candidates(
         return tuple((r[0], r[1], r[2]) for r in rows)
     except Exception as e:
         logger.warning(
-            "lake_snapshot_cohort: selected_row_keys_for_artifact_candidates error=%s", e
+            "lake_snapshot_cohort: selected_row_keys_for_candidates key_column=%s error=%s",
+            key_column, e,
         )
         return ()
 
@@ -199,8 +211,12 @@ def collect_selector_candidates(
         status = "pass" if entity_count >= selector.min_entities else "fail"
         selected_row_keys: Tuple[Tuple[Any, Any, Any], ...] = ()
         if selector.entity_key == "artifact_id" and selected:
-            selected_row_keys = _selected_row_keys_for_artifact_candidates(
-                con, candidate_sql, params, selected,
+            selected_row_keys = _selected_row_keys_for_candidates(
+                con, candidate_sql, params, "artifact_id", selected,
+            )
+        elif config.capture_boundary_row_key and selected:
+            selected_row_keys = _selected_row_keys_for_candidates(
+                con, candidate_sql, params, "listing_id", selected,
             )
         logger.info(
             "lake_snapshot_cohort: selector=%s end elapsed_s=%.2f entities=%s "

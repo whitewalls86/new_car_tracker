@@ -31,6 +31,7 @@ class SelectorConfig:
     extra_source_tables: Tuple[str, ...] = field(default_factory=tuple)
     window_anchor: Optional[str] = None
     lookback_days: Optional[int] = None
+    capture_boundary_row_key: bool = False
 
 
 def _require(spec: Dict[str, Any], name: str, key: str) -> Any:
@@ -94,6 +95,13 @@ def _parse_selector_config(name: str, spec: Dict[str, Any], sql_dir: Path) -> Se
                 f"positive integer"
             )
 
+    capture_boundary_row_key = spec.get("capture_boundary_row_key", False)
+    if not isinstance(capture_boundary_row_key, bool):
+        raise ValueError(
+            f"Selector config error: selector '{name}' capture_boundary_row_key "
+            f"must be a boolean"
+        )
+
     return SelectorConfig(
         name=name,
         min_entities=min_entities,
@@ -106,6 +114,7 @@ def _parse_selector_config(name: str, spec: Dict[str, Any], sql_dir: Path) -> Se
         extra_source_tables=extra_source_tables,
         window_anchor=window_anchor,
         lookback_days=lookback_days,
+        capture_boundary_row_key=capture_boundary_row_key,
     )
 
 

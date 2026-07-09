@@ -97,37 +97,39 @@ def _build_table_query(
     artifact_row_keys: FrozenSet[Tuple[Any, Any, Any]],
 ) -> Tuple[str, List[Any]]:
     spec = _TABLE_WRITE_SPECS[table_name]
-    or_parts: List[str] = []
-    params: List[Any] = []
+    time_clauses, time_params = table_time_where(window_start, window_end, spec["ts_col"])
 
     if table_name == "blocked_cooldown_events":
         # This table has no vin column; listing_id membership only.
-        where_sql, params = in_clause("listing_id", listing_ids)
+        membership_sql, params = in_clause("listing_id", listing_ids)
+        clauses = [membership_sql] + time_clauses
+        params += time_params
+        where_sql = " AND ".join(clauses)
     else:
         vin_clause, vin_params = in_clause("vin", vins)
-        or_parts.append(vin_clause)
-        params += vin_params
-
         listing_clause, listing_params = in_clause("listing_id", listing_ids)
-        or_parts.append(listing_clause)
-        params += listing_params
+        membership_sql = f"({vin_clause} OR {listing_clause})"
+        windowed_clauses = [membership_sql] + time_clauses
+        windowed_sql = " AND ".join(windowed_clauses)
+        params = vin_params + listing_params + time_params
 
         if table_name == "silver_observations":
             row_key_clause, row_key_params = _artifact_row_key_where(artifact_row_keys)
-            or_parts.append(row_key_clause)
+            # Exact row-key matches bypass the time window entirely, unlike
+            # blanket vin/listing_id membership. These are explicit
+            # evidentiary rows a selector captured for closure/materialization
+            # (e.g. stale_listing's boundary last-observation row, which may
+            # predate window_start) — restricting them to the window would
+            # silently export the selected entity with zero supporting rows.
+            where_sql = f"({windowed_sql}) OR {row_key_clause}"
             params += row_key_params
-
-        where_sql = f"({' OR '.join(or_parts)})"
-
-    clauses = [where_sql]
-    time_clauses, time_params = table_time_where(window_start, window_end, spec["ts_col"])
-    clauses += time_clauses
-    params += time_params
+        else:
+            where_sql = windowed_sql
 
     order_by = ", ".join(spec["sort_keys"])
     query = (
         f"SELECT * FROM read_parquet('{path}', union_by_name=true, hive_partitioning=true) "
-        f"WHERE {' AND '.join(clauses)} ORDER BY {order_by}"
+        f"WHERE {where_sql} ORDER BY {order_by}"
     )
     return query, params
 

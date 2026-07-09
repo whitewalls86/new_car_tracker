@@ -949,6 +949,86 @@ class TestMainLogging:
 
 
 # ---------------------------------------------------------------------------
+# export_ci_lake_snapshot — dry-run selector-failure enforcement
+# ---------------------------------------------------------------------------
+
+class TestExportDryRunSelectorFailures:
+    """An audit dry run (--dry-run --run-selectors --build-cohort
+    --require-selector-coverage) must be able to catch the same selector
+    failures a real export would — a dry run is often exactly how an
+    operator validates a planning cache before committing to a real,
+    expensive export, so it can't silently report status="planned" over a
+    selector error or (when requested) an unenforced coverage shortfall."""
+
+    def test_dry_run_selector_errors_return_export_failed(self, mocker):
+        _mock_heavy_path(mocker)
+        mocker.patch("archiver.processors.export_ci_lake_snapshot.write_planning_cache")
+        mocker.patch(
+            "archiver.processors.export_ci_lake_snapshot.candidate_sets_to_selector_diagnostics",
+            return_value={"selectors": {}, "errors": ["relisted_vin: boom"], "ok": False},
+        )
+
+        result = export_ci_lake_snapshot(SnapshotRequest(
+            tier="ci", dry_run=True, run_selectors=True, build_cohort=True,
+        ))
+
+        assert result.status == "export_failed"
+        assert any("boom" in f for f in result.coverage_failures)
+
+    def test_dry_run_require_selector_coverage_true_blocks(self, mocker):
+        _mock_heavy_path(mocker)
+        mocker.patch("archiver.processors.export_ci_lake_snapshot.write_planning_cache")
+        mocker.patch(
+            "archiver.processors.export_ci_lake_snapshot.candidate_sets_to_selector_diagnostics",
+            return_value={
+                "selectors": {"cooldown_bucket_11_plus": {"required": 1, "entities": 0}},
+                "errors": [], "ok": True,
+            },
+        )
+
+        result = export_ci_lake_snapshot(SnapshotRequest(
+            tier="ci", dry_run=True, run_selectors=True, build_cohort=True,
+            require_selector_coverage=True,
+        ))
+
+        assert result.status == "coverage_failed"
+        assert result.coverage_failures
+
+    def test_dry_run_default_does_not_block_on_coverage_failures(self, mocker):
+        _mock_heavy_path(mocker)
+        mocker.patch("archiver.processors.export_ci_lake_snapshot.write_planning_cache")
+        mocker.patch(
+            "archiver.processors.export_ci_lake_snapshot.candidate_sets_to_selector_diagnostics",
+            return_value={
+                "selectors": {"cooldown_bucket_11_plus": {"required": 1, "entities": 0}},
+                "errors": [], "ok": True,
+            },
+        )
+
+        result = export_ci_lake_snapshot(SnapshotRequest(
+            tier="ci", dry_run=True, run_selectors=True, build_cohort=True,
+        ))
+
+        assert result.status == "planned"
+        assert result.coverage_failures  # preserved as a warning
+
+    def test_dry_run_run_selectors_only_errors_return_export_failed(self, mocker):
+        """The run_selectors-only (no build_cohort) dry-run branch must also
+        enforce, not just the heavy run_selectors+build_cohort path."""
+        mocker.patch(
+            "archiver.processors.export_ci_lake_snapshot.run_lake_selectors",
+            return_value={"selectors": {}, "errors": ["relisted_vin: boom"], "ok": False},
+        )
+
+        result = export_ci_lake_snapshot(SnapshotRequest(
+            tier="ci", dry_run=True, run_selectors=True, build_cohort=False,
+        ))
+
+        assert result.status == "export_failed"
+        assert any("boom" in f for f in result.coverage_failures)
+
+
+# ---------------------------------------------------------------------------
 # export_ci_lake_snapshot — non-dry-run (deferred)
 # ---------------------------------------------------------------------------
 
