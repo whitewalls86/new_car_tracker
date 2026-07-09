@@ -151,7 +151,7 @@ def trigger_snapshot_export(payload: dict = Body(default={})) -> Dict[str, Any]:
                 source_window_start=datetime.fromisoformat(window_start) if window_start else None,
                 source_window_end=datetime.fromisoformat(window_end) if window_end else None,
                 source_window_months=payload.get("source_window_months"),
-                min_selector_coverage=payload.get("min_selector_coverage", True),
+                require_selector_coverage=payload.get("require_selector_coverage", False),
                 dry_run=payload.get("dry_run", False),
                 audit_sources=payload.get("audit_sources", False),
                 run_selectors=payload.get("run_selectors", False),

@@ -10,10 +10,12 @@ rescanning the lake.
 
 The cache key (fingerprint) represents *semantic planning identity* only —
 tier, selector/cohort toggles, the normalized source window, target_vins,
-min_selector_coverage, source table paths, and hashes of the selector
-config/SQL and cohort algorithm version. Execution/reporting-mode fields
-(dry_run, audit_sources, snapshot_id) never affect the fingerprint, since they
-don't change what planning would compute.
+source table paths, and hashes of the selector config/SQL and cohort
+algorithm version. Execution/reporting-mode fields (dry_run, audit_sources,
+snapshot_id) never affect the fingerprint, since they don't change what
+planning would compute. `require_selector_coverage` is validation policy
+only (whether a coverage shortfall blocks the export) — it never changes
+cohort membership, so it is deliberately excluded from the fingerprint too.
 
 Callers MUST resolve the actual planning window via `resolve_planning_window`
 *before* both running selectors/cohort and computing the fingerprint. The
@@ -38,7 +40,7 @@ from shared.minio import read_json, write_json
 
 logger = logging.getLogger("archiver")
 
-CACHE_SCHEMA_VERSION = 2
+CACHE_SCHEMA_VERSION = 3
 COHORT_ALGORITHM_VERSION = 2
 
 VALID_BUCKET_GRAINS: Tuple[str, ...] = ("week", "day", "none")
@@ -187,7 +189,6 @@ def compute_planning_fingerprint(
         "build_cohort": request.build_cohort,
         "fingerprint_window": fingerprint_window,
         "target_vins": request.target_vins,
-        "min_selector_coverage": request.min_selector_coverage,
         "source_base_path": request.source_base_path,
         "source_table_paths_hash": source_table_paths_hash(request.source_base_path),
         "selector_config_hash": selector_config_hash(),

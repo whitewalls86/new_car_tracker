@@ -89,7 +89,7 @@ tracking, use the Step 1-11 checklist in
 | DuckDB source reads | Done for audit/selector/export reads | Shared DuckDB/MinIO helper exists, source audit reads four lake tables, the Gate D writer filters and reads them for materialization, and local fixture mode exists for tests. |
 | Cohort allocation and closure | Implemented, VM-hardened, closure-corrected (Gate C.5) | `SnapshotCohort`, deterministic allocation/fill, VIN/listing closure (remap-aware), post-closure artifact attachment, artifact-only selector row-key capture, selector coverage diagnostics, and target-overrun diagnostics exist. Local and integration tests pass, including a regression test proving artifact co-occurrence does not expand the vehicle closure. VM source audit and selector diagnostics pass. Heavy `build_cohort` work now runs only in the isolated `snapshot-worker` container. |
 | Worker isolation and observability | Done (Gate C.5) | `snapshot-worker` is a profile-gated, port-free, one-shot Docker Compose service that reuses the archiver image/build context. The production archiver rejects `build_cohort=True` **or non-dry-run** with `409` unless `ARCHIVER_ALLOW_SYNC_SNAPSHOT_COHORT=true` (a real export always runs the same heavy planning, so it's guarded identically). `audit_sources` is exempt either way. Phase timing logs (`elapsed_s`) cover source audit, selector candidate collection, cohort allocation, each closure pass, and Gate D table materialization. |
-| Persisted planning cache | Done (Gate C.75) | `lake_snapshot_planning_cache.py` fingerprints the heavy planning path (tier, selector/cohort toggles, normalized source window, target_vins, min_selector_coverage, source_base_path, selector config/SQL hashes, cohort algorithm version) and stores/loads a JSON planning artifact in MinIO, keyed by that fingerprint. The artifact now persists actual cohort membership (VINs/listing_ids/artifact_ids/artifact_row_keys), not just counts, so a cache hit can feed Gate D materialization directly. `dry_run`, `audit_sources`, and `snapshot_id` never affect the fingerprint. Reuse/refresh are both opt-in flags; the default computes and persists but never reuses. |
+| Persisted planning cache | Done (Gate C.75) | `lake_snapshot_planning_cache.py` fingerprints the heavy planning path (tier, selector/cohort toggles, normalized source window, target_vins, source_base_path, selector config/SQL hashes, cohort algorithm version) and stores/loads a JSON planning artifact in MinIO, keyed by that fingerprint. The artifact now persists actual cohort membership (VINs/listing_ids/artifact_ids/artifact_row_keys), not just counts, so a cache hit can feed Gate D materialization directly. `dry_run`, `audit_sources`, `snapshot_id`, and `require_selector_coverage` never affect the fingerprint (the latter is validation policy only — see "Selector coverage policy" below). Reuse/refresh are both opt-in flags; the default computes and persists but never reuses. |
 | Filtered Parquet writer | Done (Gate D) | `lake_snapshot_export.py` filters the four source tables by the closed cohort (VIN/listing membership, plus exact artifact row keys for artifact-only-seeded rows) and writes each table into a fresh, immutable, uniquely-named generation directory (`fingerprints/{export_fingerprint}/generations/{generation_id}/data/`) — never overwriting or deleting any previously published generation. A table read error removes that (still-unpublished) generation directory and reports failure; a fully-succeeded generation gets a `_SUCCESS` marker for future GC/audit tooling. The caller (`export_ci_lake_snapshot`) only "publishes" a generation by writing `manifest.json` to point at it, and refuses to do so if any table errored *or* the manifest write itself failed — both cases return `status="export_failed"`, never a false `"exported"`. This sidesteps the atomicity hazard of promoting in place (delete-then-copy could leave an already-published manifest pointing at missing/partial data mid-copy). Rows are written in a stable per-table sort order for reproducible file bytes. `lake_snapshot_export_cache.py` derives the export fingerprint, persists/loads the materialized manifest, and a cache-hit reload re-validates the fingerprint/`data_path`/required tables/table errors before trusting it (not just the schema version) — cheaply, from the manifest JSON alone, without re-listing or re-hashing every object. `reuse_export_cache`/`refresh_export_cache` mirror the planning-cache flag contract. |
 | Manifest/package/upload | Not started | No `.tar.zst` generation, MinIO promotion, or `latest.json` update yet. Gate E should package from the materialized export fingerprint and reuse an existing archive when its checksum already matches. |
 | Archiver endpoint | Control-plane only (Gate C.5) | Internal endpoint is wired and wrapped with `active_job()`. Cheap `audit_sources` calls remain allowed regardless of dry_run. `build_cohort=True` or any non-dry-run request is rejected with `409` unless `ARCHIVER_ALLOW_SYNC_SNAPSHOT_COHORT=true`; production-sized work must go through `snapshot-worker`. |
@@ -282,7 +282,7 @@ Initial selectors:
 | `cooldown_bucket_5_10` | Validates cooldown bucket boundaries. |
 | `cooldown_bucket_11_plus` | Validates high-attempt cooldown behavior. |
 | `fresh_recent_listing` | Validates young/current active listings. |
-| `stale_listing` | Validates old listings and stale recency features. |
+| `stale_listing` | Validates old listings and stale recency features (as-of `window_end`, bounded lookback — see "Selector coverage policy" below). |
 
 This does not replace dbt unit tests. Unit tests protect exact branch behavior
 with tiny synthetic examples. The snapshot protects real-world composition:
@@ -562,7 +562,7 @@ caller asks for.
 
 **Fingerprint.** The cache key is a SHA-256 hash over the request's *semantic
 planning identity*: `tier`, `run_selectors`, `build_cohort`, the normalized
-source window (see below), `target_vins`, `min_selector_coverage`,
+source window (see below), `target_vins`,
 `source_base_path`, a hash of the resolved Parquet path for every supported
 source table (`source_table_paths_hash` — catches a lake layout/bucket change
 even when `source_base_path` itself is unchanged), a hash of the loaded
@@ -633,6 +633,81 @@ docker compose run --rm snapshot-worker python -m archiver.processors.export_ci_
 
 ---
 
+## Selector coverage policy (corrected)
+
+A production VM run once had its Gate D export blocked because a handful of
+rare selectors (e.g. `cooldown_bucket_11_plus`) didn't meet their configured
+`min_entities` over a narrow historical window. A selector returning fewer
+entities than desired is normal — especially for narrow windows or
+inherently rare event selectors — so coverage shortfalls are now a
+**warning by default**, not a blocking condition.
+
+- Every real (non-dry-run) export, and any dry-run with
+  `run_selectors=True`, always computes `coverage_failures` — the list of
+  selectors below their configured minimum, with actual vs. required counts.
+  This detail is preserved on `SnapshotResult.coverage_failures` and in the
+  exported manifest regardless of whether coverage is enforced.
+- `require_selector_coverage` (`SnapshotRequest` field, `--require-selector-coverage`
+  CLI flag, API payload key; default `false`) is an explicit **opt-in strict/audit
+  mode**. When set, a non-empty `coverage_failures` list short-circuits a
+  real export with `status="coverage_failed"` *before* materialization —
+  the same behavior the old `min_selector_coverage` flag had, just off by
+  default and renamed to make the opt-in nature explicit.
+- `require_selector_coverage` is validation policy only: it never changes
+  cohort membership, selector SQL, or candidate collection, so it is
+  deliberately excluded from the planning/export fingerprint (see "Planning
+  cache" above) — toggling it does not invalidate or fragment the cache.
+- This is orthogonal to real failures, which always block regardless of
+  `require_selector_coverage`: a selector query erroring or its source table
+  being missing/unreadable (`selector_diagnostics["errors"]` non-empty)
+  returns `status="export_failed"` before materialization even runs, exactly
+  like a materialization or manifest-publish failure does.
+
+### `stale_listing` as-of semantics
+
+`stale_listing` answers: "which listings' most recent observation at or
+before the requested `window_end` is at least 30 days older than
+`window_end`." Two things this is *not*: it is not "stale as of right now"
+(no wall-clock `now()` involved anywhere in the query), and it is not "stale
+relative to whichever row happens to be newest in the filtered window" (the
+prior bug — in a narrow one-month export window, a listing's last
+observation is almost always inside that same window, so it can essentially
+never be 30 days behind the newest row in it).
+
+The fix reads a **bounded lookback** ending at `window_end` —
+`[window_end - lookback_days, window_end]`, inclusive of `window_end` —
+instead of the normal `[window_start, window_end)` filter every other
+selector uses. `lookback_days` (currently `60`, see
+`archiver/config/lake_snapshot_selectors.yml`) is configured explicitly and
+kept comfortably larger than the 30-day stale threshold, so a listing's last
+observation anywhere in the preceding two months is still found without an
+unbounded full-table scan. This deliberately reads history from *before*
+`window_start` — the exact rows a plain window filter would have excluded.
+A listing whose last-ever observation predates even the lookback window
+(i.e. staler than ~60 days) is not found by this selector; that's an
+accepted tradeoff of a bounded scan, not a correctness bug for the 30-day
+threshold this selector targets.
+
+Because `selector_sql_hash`/`selector_config_hash` are part of the planning
+fingerprint (see "Planning cache" above), this SQL/config change correctly
+produced a new planning fingerprint — any previously persisted planning
+cache entry is simply never matched by a request made after this fix, and
+the next request for that window recomputes and persists a fresh entry. No
+migration or manual cache invalidation is needed.
+
+Interaction with the snapshot export window: `stale_listing` candidates are
+added to cohort membership (`closed_vins`/`listing_ids`) the same as any
+other selector's. But Gate D's writer (`materialize_filtered_tables`) still
+scopes each table's *exported rows* to `[window_start, window_end)` — so if
+a stale listing's actual last observation predates `window_start`, the
+materialized `silver_observations` output may contain zero rows for it. This
+is an existing, selector-agnostic limitation of the export window (it
+applies to any cohort member with no in-window activity, not just stale
+ones), not something this fix changes; broadening per-row export scope for
+pre-window history is out of scope here.
+
+---
+
 ## Export materialization cache (Gate D — implemented)
 
 Gate C.75 caches the expensive answer to "which cohort should this snapshot
@@ -667,7 +742,8 @@ Implemented flow (`export_ci_lake_snapshot()`, non-dry-run branch):
 
 ```text
 resolve or reuse planning artifact (same heavy path as dry_run+build_cohort)
-if min_selector_coverage and coverage_failures: return status="coverage_failed"
+if selector_diagnostics has errors: return status="export_failed"  # hard failure, always
+if require_selector_coverage and coverage_failures: return status="coverage_failed"  # opt-in
 derive export fingerprint from planning_fingerprint
 if reuse_export_cache and a matching manifest exists:
   return manifest metadata (export_cache_action="reused") without scanning source Parquet

@@ -76,7 +76,7 @@ class SnapshotRequest:
     source_window_start: Optional[datetime] = None
     source_window_end: Optional[datetime] = None
     source_window_months: Optional[int] = None
-    min_selector_coverage: bool = True
+    require_selector_coverage: bool = False
     dry_run: bool = False
     audit_sources: bool = False
     run_selectors: bool = False
@@ -213,7 +213,7 @@ def resolve_request_defaults(request: SnapshotRequest) -> SnapshotRequest:
         source_window_start=request.source_window_start,
         source_window_end=request.source_window_end,
         source_window_months=request.source_window_months,
-        min_selector_coverage=request.min_selector_coverage,
+        require_selector_coverage=request.require_selector_coverage,
         dry_run=request.dry_run,
         audit_sources=request.audit_sources,
         run_selectors=request.run_selectors,
@@ -384,9 +384,10 @@ def _run_heavy_planning(
         cohort_artifact_row_keys = {
             tuple(key) for key in cached_artifact["artifact_row_keys"]
         }
-        coverage_failures: List[str] = []
-        if request.min_selector_coverage:
-            coverage_failures = format_coverage_failures(selector_diagnostics["selectors"])
+        # Coverage shortfalls are always computed as diagnostics (they're
+        # normal for narrow windows/rare selectors) — request.require_selector_coverage
+        # only decides whether they later block the export.
+        coverage_failures = format_coverage_failures(selector_diagnostics["selectors"])
         logger.info(
             "export_ci_lake_snapshot: planning_cache hit snapshot_id=%s fingerprint=%s",
             snapshot_id, cache_key,
@@ -410,9 +411,7 @@ def _run_heavy_planning(
                 snapshot_id, request.tier,
                 selector_diagnostics["ok"], selector_diagnostics["errors"],
             )
-            coverage_failures = []
-            if request.min_selector_coverage:
-                coverage_failures = format_coverage_failures(selector_diagnostics["selectors"])
+            coverage_failures = format_coverage_failures(selector_diagnostics["selectors"])
             cohort = build_snapshot_cohort(
                 con, request.source_base_path, window_start, window_end,
                 request.target_vins, candidate_sets=candidate_sets,
@@ -564,8 +563,7 @@ def export_ci_lake_snapshot(request: SnapshotRequest) -> SnapshotResult:
                 snapshot_id, request.tier,
                 selector_diagnostics["ok"], selector_diagnostics["errors"],
             )
-            if request.min_selector_coverage:
-                coverage_failures = format_coverage_failures(selector_diagnostics["selectors"])
+            coverage_failures = format_coverage_failures(selector_diagnostics["selectors"])
         return SnapshotResult(
             snapshot_id=snapshot_id,
             tier=request.tier,
@@ -592,7 +590,39 @@ def export_ci_lake_snapshot(request: SnapshotRequest) -> SnapshotResult:
     planning = _run_heavy_planning(request, snapshot_id, window_start, window_end, now)
     window_start, window_end = planning.window_start, planning.window_end
 
-    if request.min_selector_coverage and planning.coverage_failures:
+    selector_errors = (
+        planning.selector_diagnostics["errors"] if planning.selector_diagnostics else []
+    )
+    if selector_errors:
+        # Selector query/source failures (bad SQL, missing/unreadable source
+        # table) are always a hard failure — unlike a coverage shortfall,
+        # they mean the diagnostics themselves can't be trusted, regardless
+        # of require_selector_coverage.
+        logger.warning(
+            "export_ci_lake_snapshot: export blocked by selector errors snapshot_id=%s "
+            "errors=%s",
+            snapshot_id, selector_errors,
+        )
+        return SnapshotResult(
+            snapshot_id=snapshot_id,
+            tier=request.tier,
+            status="export_failed",
+            source_window_start=window_start.isoformat() if window_start else None,
+            source_window_end=window_end.isoformat() if window_end else None,
+            seed_vin_count=planning.seed_vin_count,
+            closed_vin_count=planning.closed_vin_count,
+            listing_count=planning.listing_count,
+            artifact_count=planning.artifact_count,
+            coverage_failures=list(selector_errors),
+            selector_diagnostics=planning.selector_diagnostics,
+            cohort_diagnostics=planning.cohort_diagnostics,
+            planning_cache_key=planning.cache_key,
+            planning_cache_path=planning.cache_path,
+            planning_cache_hit=planning.cache_hit,
+            planning_cache_action=planning.cache_action,
+        )
+
+    if request.require_selector_coverage and planning.coverage_failures:
         logger.info(
             "export_ci_lake_snapshot: export blocked by coverage_failures snapshot_id=%s "
             "failures=%s",
@@ -765,6 +795,9 @@ def _parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--source-window-months", dest="source_window_months", type=int, default=None
     )
+    parser.add_argument(
+        "--require-selector-coverage", dest="require_selector_coverage", action="store_true"
+    )
     parser.add_argument("--dry-run", dest="dry_run", action="store_true")
     parser.add_argument("--audit-sources", dest="audit_sources", action="store_true")
     parser.add_argument("--run-selectors", dest="run_selectors", action="store_true")
@@ -806,6 +839,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         max_archive_mb=args.max_archive_mb,
         max_rows=args.max_rows,
         source_window_months=args.source_window_months,
+        require_selector_coverage=args.require_selector_coverage,
         dry_run=args.dry_run,
         audit_sources=args.audit_sources,
         run_selectors=args.run_selectors,

@@ -262,5 +262,15 @@ selectors:
     source_table: silver_observations
     sql_template: stale_listing
     timestamp_column: fetched_at
+    window_anchor: window_end
+    # As-of semantics: a listing is stale when its last observation at or
+    # before window_end is >=30 days older than window_end. lookback_days
+    # bounds how far back the query reads to find that last observation —
+    # 60 is comfortably larger than the 30-day stale threshold (and larger
+    # than a typical 1-month export window), so a listing whose last
+    # observation falls anywhere in the preceding two months is still found
+    # without scanning the full table.
+    lookback_days: 60
     description: >
-      Old listing, or listing with stale SRP/detail recency.
+      Listing whose most recent observation as of the snapshot window end is
+      at least 30 days old.

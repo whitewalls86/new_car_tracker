@@ -16,7 +16,7 @@ dbt-equivalence tests in `tests/archiver/test_export_ci_lake_snapshot.py`).
 import logging
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import lru_cache
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -74,12 +74,26 @@ def _build_where(
     clauses = list(config.base_filters)
     params: List[Any] = []
     ts_col = config.timestamp_column
-    if window_start is not None:
-        clauses.append(f"{ts_col} >= ?")
-        params.append(window_start)
-    if window_end is not None:
-        clauses.append(f"{ts_col} < ?")
-        params.append(window_end)
+    if config.lookback_days is not None:
+        # As-of selectors (e.g. stale_listing) need history from *before*
+        # window_start to determine the latest observation as of window_end
+        # — the normal [window_start, window_end) filter would exclude
+        # exactly the rows that answer the question. A bounded lookback
+        # avoids an unbounded full-table scan while still comfortably
+        # covering the selector's staleness threshold (see selector config
+        # comments for the specific margin).
+        if window_end is not None:
+            clauses.append(f"{ts_col} >= ?")
+            params.append(window_end - timedelta(days=config.lookback_days))
+            clauses.append(f"{ts_col} <= ?")
+            params.append(window_end)
+    else:
+        if window_start is not None:
+            clauses.append(f"{ts_col} >= ?")
+            params.append(window_start)
+        if window_end is not None:
+            clauses.append(f"{ts_col} < ?")
+            params.append(window_end)
     where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     return where_sql, params
 

@@ -270,7 +270,7 @@ class TestExportBuildCohort:
     def test_dry_run_with_build_cohort_returns_cohort_diagnostics(self):
         result = export_ci_lake_snapshot(SnapshotRequest(
             tier="ci", dry_run=True, run_selectors=True, build_cohort=True,
-            target_vins=15, min_selector_coverage=False,
+            target_vins=15,
         ))
         assert result.status == "planned"
         assert result.cohort_diagnostics is not None
@@ -282,7 +282,7 @@ class TestExportBuildCohort:
 
     def test_dry_run_without_build_cohort_skips_closure(self):
         result = export_ci_lake_snapshot(SnapshotRequest(
-            tier="ci", dry_run=True, run_selectors=True, min_selector_coverage=False,
+            tier="ci", dry_run=True, run_selectors=True,
         ))
         assert result.cohort_diagnostics is None
         assert result.seed_vin_count is None

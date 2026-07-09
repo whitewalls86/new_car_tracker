@@ -196,7 +196,7 @@ class TestRunLakeSelectorsContract:
 
     def test_export_run_selectors_returns_diagnostics(self):
         result = export_ci_lake_snapshot(SnapshotRequest(
-            tier="ci", dry_run=True, run_selectors=True, min_selector_coverage=False,
+            tier="ci", dry_run=True, run_selectors=True,
         ))
         assert result.status == "planned"
         assert result.selector_diagnostics is not None

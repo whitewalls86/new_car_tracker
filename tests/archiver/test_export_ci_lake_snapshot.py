@@ -365,6 +365,36 @@ selectors:
     description: test
 """)
 
+    def test_negative_lookback_days_rejected(self, tmp_path):
+        with pytest.raises(ValueError, match="lookback_days must be a positive integer"):
+            self._load(tmp_path, """
+selectors:
+  stale_listing:
+    min_entities: 25
+    entity_key: listing_id
+    source_table: silver_observations
+    sql_template: stale_listing
+    timestamp_column: fetched_at
+    window_anchor: window_end
+    lookback_days: 0
+    description: test
+""")
+
+    def test_non_integer_lookback_days_rejected(self, tmp_path):
+        with pytest.raises(ValueError, match="lookback_days must be a positive integer"):
+            self._load(tmp_path, """
+selectors:
+  stale_listing:
+    min_entities: 25
+    entity_key: listing_id
+    source_table: silver_observations
+    sql_template: stale_listing
+    timestamp_column: fetched_at
+    window_anchor: window_end
+    lookback_days: "sixty"
+    description: test
+""")
+
     def test_unknown_source_table_rejected(self, tmp_path):
         with pytest.raises(ValueError, match="unknown source table"):
             self._load(tmp_path, """
@@ -865,6 +895,34 @@ class TestParseArgsPlanningCache:
         assert args.refresh_planning_cache is True
 
 
+class TestParseArgsRequireSelectorCoverage:
+    def test_defaults_to_false(self):
+        from archiver.processors.export_ci_lake_snapshot import _parse_args
+
+        args = _parse_args(["--tier", "ci"])
+        assert args.require_selector_coverage is False
+
+    def test_flag_sets_true(self):
+        from archiver.processors.export_ci_lake_snapshot import _parse_args
+
+        args = _parse_args(["--tier", "ci", "--require-selector-coverage"])
+        assert args.require_selector_coverage is True
+
+    def test_main_threads_flag_into_request(self, mocker):
+        mock_export = mocker.patch(
+            "archiver.processors.export_ci_lake_snapshot.export_ci_lake_snapshot"
+        )
+        mock_export.return_value.to_dict.return_value = {}
+        mocker.patch("archiver.processors.export_ci_lake_snapshot.configure_logging")
+
+        from archiver.processors.export_ci_lake_snapshot import main
+
+        main(["--tier", "ci", "--require-selector-coverage"])
+
+        request = mock_export.call_args[0][0]
+        assert request.require_selector_coverage is True
+
+
 # ---------------------------------------------------------------------------
 # CLI main() — logging must be configured (Plan 120 worker visibility)
 # ---------------------------------------------------------------------------
@@ -1034,7 +1092,9 @@ class TestExportNonDryRun:
         assert result.status == "export_failed"
         assert result.materialized_snapshot_path is None
 
-    def test_non_dry_run_blocked_by_coverage_failures(self, mocker):
+    def test_non_dry_run_require_selector_coverage_true_blocks(self, mocker):
+        """require_selector_coverage=True is the explicit opt-in strict/audit
+        mode — a coverage shortfall blocks the export before materialization."""
         _mock_heavy_path(mocker)
         mocker.patch("archiver.processors.export_ci_lake_snapshot.write_planning_cache")
         mocker.patch(
@@ -1048,15 +1108,18 @@ class TestExportNonDryRun:
         )
         mock_materialize = self._mock_materialize(mocker)
 
-        result = export_ci_lake_snapshot(
-            SnapshotRequest(tier="ci", dry_run=False, build_cohort=True)
-        )
+        result = export_ci_lake_snapshot(SnapshotRequest(
+            tier="ci", dry_run=False, build_cohort=True, require_selector_coverage=True,
+        ))
 
         assert result.status == "coverage_failed"
         assert result.coverage_failures
         assert not mock_materialize.called
 
-    def test_non_dry_run_min_selector_coverage_false_ignores_failures(self, mocker):
+    def test_non_dry_run_default_does_not_block_on_coverage_failures(self, mocker):
+        """Coverage shortfalls are non-blocking by default (Plan 120 selector
+        policy correction) — the export proceeds, but the shortfall detail
+        is still preserved on the result/manifest as a warning."""
         _mock_heavy_path(mocker)
         mocker.patch("archiver.processors.export_ci_lake_snapshot.write_planning_cache")
         mocker.patch(
@@ -1075,10 +1138,33 @@ class TestExportNonDryRun:
             return_value=None,
         )
 
-        result = export_ci_lake_snapshot(SnapshotRequest(
-            tier="ci", dry_run=False, build_cohort=True, min_selector_coverage=False,
-        ))
+        result = export_ci_lake_snapshot(
+            SnapshotRequest(tier="ci", dry_run=False, build_cohort=True)
+        )
         assert result.status == "exported"
+        assert result.coverage_failures  # preserved as a warning, not cleared
+
+    def test_non_dry_run_selector_errors_return_export_failed(self, mocker):
+        """Unlike a coverage shortfall, a selector query/source error is
+        always a hard failure, regardless of require_selector_coverage."""
+        _mock_heavy_path(mocker)
+        mocker.patch("archiver.processors.export_ci_lake_snapshot.write_planning_cache")
+        mocker.patch(
+            "archiver.processors.export_ci_lake_snapshot.candidate_sets_to_selector_diagnostics",
+            return_value={
+                "selectors": {},
+                "errors": ["relisted_vin: boom"], "ok": False,
+            },
+        )
+        mock_materialize = self._mock_materialize(mocker)
+
+        result = export_ci_lake_snapshot(
+            SnapshotRequest(tier="ci", dry_run=False, build_cohort=True)
+        )
+
+        assert result.status == "export_failed"
+        assert any("boom" in f for f in result.coverage_failures)
+        assert not mock_materialize.called
 
 
 # ---------------------------------------------------------------------------

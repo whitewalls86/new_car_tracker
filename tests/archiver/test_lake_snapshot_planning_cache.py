@@ -24,7 +24,7 @@ UTC = timezone.utc
 def _relative_request(**overrides):
     defaults = dict(
         tier="ci", run_selectors=True, build_cohort=True,
-        source_window_months=1, target_vins=5000, min_selector_coverage=True,
+        source_window_months=1, target_vins=5000,
         planning_cache_bucket_grain="week",
     )
     defaults.update(overrides)
@@ -86,11 +86,14 @@ class TestComputePlanningFingerprint:
         fp_b, _ = _fingerprint_for(_relative_request(target_vins=100), now=now)
         assert fp_a != fp_b
 
-    def test_min_selector_coverage_changes_fingerprint(self):
+    def test_require_selector_coverage_does_not_change_fingerprint(self):
+        """require_selector_coverage is validation policy only (whether a
+        coverage shortfall blocks the export) — it must never change cohort
+        membership, so it's deliberately excluded from the fingerprint."""
         now = datetime(2026, 7, 8, tzinfo=UTC)
-        fp_a, _ = _fingerprint_for(_relative_request(min_selector_coverage=True), now=now)
-        fp_b, _ = _fingerprint_for(_relative_request(min_selector_coverage=False), now=now)
-        assert fp_a != fp_b
+        fp_a, _ = _fingerprint_for(_relative_request(require_selector_coverage=True), now=now)
+        fp_b, _ = _fingerprint_for(_relative_request(require_selector_coverage=False), now=now)
+        assert fp_a == fp_b
 
     def test_dry_run_does_not_change_fingerprint(self):
         now = datetime(2026, 7, 8, tzinfo=UTC)

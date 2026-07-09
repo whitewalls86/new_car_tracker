@@ -20,7 +20,7 @@ DEFAULT_PARAMS: Dict[str, Any] = {
     "target_vins": 5000,
     "max_archive_mb": 250,
     "source_window_months": 12,
-    "min_selector_coverage": True,
+    "require_selector_coverage": False,
     "dry_run": False,
     "audit_sources": False,
     "run_selectors": True,
@@ -67,8 +67,15 @@ def check_snapshot_result(result: Dict[str, Any], payload: Dict[str, Any]) -> No
             "export_ci_lake_snapshot: selector_diagnostics=%s", result["selector_diagnostics"]
         )
 
+    # Coverage shortfalls are logged above as a warning, not a hard failure —
+    # they're expected for rare selectors over narrow windows. Only
+    # require_selector_coverage=True (surfaced as status="coverage_failed")
+    # blocks the export; that's covered by the status check below.
     if coverage_failures:
-        raise RuntimeError(f"snapshot coverage failures: {coverage_failures}")
+        logger.warning(
+            "export_ci_lake_snapshot: coverage_failures snapshot_id=%s failures=%s",
+            result.get("snapshot_id"), coverage_failures,
+        )
 
     audit_sources = payload.get("audit_sources", False)
     dry_run = payload.get("dry_run", False)

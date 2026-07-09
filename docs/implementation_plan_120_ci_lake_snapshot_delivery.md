@@ -220,10 +220,19 @@ the ops service over the Docker network.
   "source_window_months": 12,
   "source_window_start": null,
   "source_window_end": null,
-  "min_selector_coverage": true,
+  "require_selector_coverage": false,
   "dry_run": false
 }
 ```
+
+`require_selector_coverage` defaults to `false`: a selector coverage
+shortfall is recorded as a warning (`coverage_failures` on the response and
+manifest) but does not block the export. Set it to `true` to opt into a
+strict/audit mode that fails the request with `status="coverage_failed"`
+when any selector is short. This is validation policy only — it never
+affects cohort membership and is excluded from the planning/export
+fingerprint. Selector query errors or missing source tables always fail the
+request regardless of this flag (`status="export_failed"`).
 
 Validation:
 
@@ -326,7 +335,7 @@ class SnapshotRequest:
     source_window_start: datetime | None
     source_window_end: datetime | None
     source_window_months: int | None
-    min_selector_coverage: bool
+    require_selector_coverage: bool  # default False; opt-in strict coverage mode
     dry_run: bool
 
 
@@ -472,7 +481,7 @@ Initial selectors:
 | `cooldown_bucket_5_10` | Latest attempts between 5 and 10. |
 | `cooldown_bucket_11_plus` | Latest attempts >= 11. |
 | `fresh_recent_listing` | Recent active listing. |
-| `stale_listing` | Older listing or listing with stale SRP/detail recency. |
+| `stale_listing` | Listing whose most recent observation as of `window_end` is >=30 days old (bounded lookback, not wall-clock `now()` — see `docs/plan_120_ci_lake_snapshot_delivery.md`). |
 
 Minimum coverage defaults:
 
@@ -484,8 +493,12 @@ Minimum coverage defaults:
 | benchmark dense group | 3 make/model groups |
 | benchmark sparse group | 3 make/model groups |
 
-The manifest should record actual counts and required counts. Snapshot creation
-should fail when `min_selector_coverage=true` and a required selector is short.
+The manifest should record actual counts and required counts as warnings by
+default. Snapshot creation only fails on a coverage shortfall when the caller
+opts into `require_selector_coverage=true` (an explicit strict/audit mode);
+by default a shortfall is recorded but does not block the export. A selector
+query error or missing source table always fails the request regardless of
+this flag.
 
 ---
 
@@ -945,9 +958,15 @@ Later schedule:
 The task should fail if archiver returns:
 
 - non-2xx status
-- `coverage_failures` not empty
+- `status="coverage_failed"` (only reachable when `require_selector_coverage=true`
+  was requested) or `status="export_failed"` (selector errors, missing source
+  tables, materialization, or manifest-publish failures — always fail)
 - missing archive key
 - missing manifest key
+
+A non-empty `coverage_failures` list on its own (with an otherwise
+successful `status`) is a warning to log, not a failure to raise on — that's
+the point of `require_selector_coverage` defaulting to `false`.
 
 ---
 
