@@ -6,6 +6,8 @@ models:
       Current state snapshot: one row per VIN. Combines latest observation
       attributes with current price and price history. listing_state is
       authoritative from detail observations, inferred for SRP-only VINs.
+    config:
+      tags: ["hourly_core"]
     columns:
       - name: vin
         data_tests:

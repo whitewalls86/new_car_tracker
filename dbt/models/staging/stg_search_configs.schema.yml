@@ -3,7 +3,8 @@ version: 2
 models:
   - name: stg_search_configs
     description: "Staging view for search configs. Explodes parameters into columns for easy retrieval."
-
+    config:
+      tags: ["hourly_core"]
     columns:
       - name: search_key #PK
       - name: enabled

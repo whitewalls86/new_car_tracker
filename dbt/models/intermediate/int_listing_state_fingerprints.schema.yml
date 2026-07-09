@@ -9,6 +9,8 @@ models:
       without any special-case logic. Source is filtered to detail only; rows with null
       vin17 are excluded. price, mileage, and listing_state are denormalized for
       downstream convenience.
+    config:
+      tags: ["feature_daily", "backtest"]
     columns:
       - name: vin17
         description: Validated 17-character VIN — primary key for downstream VIN-grained models.

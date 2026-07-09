@@ -8,6 +8,8 @@ models:
       already-blocked listings (event_type='incremented'). Join to
       mart_scrape_volume on hour to compute block rate against observations.
       One row per hour.
+    config:
+      tags: ["hourly_core"]
     columns:
       - name: hour
         data_tests:

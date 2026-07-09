@@ -7,6 +7,8 @@ models:
       observation comes from source='detail'. Used by the data health dashboard
       to identify make/model segments that need more detail scraping.
       One row per (make, model). Composite PK: (make, model).
+    config:
+      tags: ["hourly_core"]
     columns:
       - name: make
         data_tests:

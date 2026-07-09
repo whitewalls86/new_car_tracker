@@ -7,6 +7,8 @@ models:
       Derived from search_configs joined to tracked_models where enabled=true.
       Used by mart_vehicle_snapshot to filter the inventory to tracked models only.
       Composite PK: (make, model).
+    config:
+      tags: ["hourly_core"]
     columns:
       - name: make
         data_tests:

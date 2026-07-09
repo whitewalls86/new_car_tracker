@@ -8,6 +8,8 @@ models:
       fetched_at wins (artifact_id as tiebreaker). Rows with null vin17 or null
       make are excluded. The canonical source of vehicle attributes for all
       downstream marts.
+    config:
+      tags: ["hourly_core"]
     columns:
       - name: vin17
         data_tests:

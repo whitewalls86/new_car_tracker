@@ -1,0 +1,41 @@
+version: 2
+
+# Plan 123 Phase 1: named build cadences. dbt_runner's /dbt/build endpoint
+# only forwards raw `--select`/`--exclude` tokens (see dbt_runner/app.py), so
+# Airflow DAGs pass `tag:<cadence>` directly rather than `--selector <name>`.
+# These selectors exist for local/manual use, e.g.:
+#   dbt build --selector hourly_core
+#   dbt build --selector full_validation
+selectors:
+  - name: hourly_core
+    description: >
+      Operational dashboards, freshness metrics, scrape health, and
+      current-state marts that must stay fresh hourly. Runs by default on
+      the hourly_analytics_refresh Airflow DAG.
+    definition:
+      method: tag
+      value: hourly_core
+
+  - name: feature_daily
+    description: >
+      Feature-store and state-history models (listing fingerprints, runs,
+      volatility features) that do not need hourly freshness. Intended for
+      a daily or on-demand schedule.
+    definition:
+      method: tag
+      value: feature_daily
+
+  - name: backtest
+    description: >
+      Models required for Plan 112 reproducible feature generation and
+      ML/backtesting workflows. Overlaps feature_daily.
+    definition:
+      method: tag
+      value: backtest
+
+  - name: full_validation
+    description: >
+      The complete model graph plus all tests. Equivalent to `dbt build`
+      with no selector — used for daily/pre-deploy validation, not for the
+      hourly schedule.
+    definition: "fqn:*"

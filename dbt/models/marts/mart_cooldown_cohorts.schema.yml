@@ -8,6 +8,8 @@ models:
       then groups into buckets: 1, 2, 3-4, 5-10, 11+.
       One row per attempt_bucket. attempt_bucket is the display label;
       bucket_order is the sort key.
+    config:
+      tags: ["hourly_core"]
     columns:
       - name: attempt_bucket
         data_tests:

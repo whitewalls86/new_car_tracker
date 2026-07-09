@@ -8,6 +8,8 @@ models:
       vin17 is null when the raw VIN is absent, not 17 characters, or fails the
       ^[A-Z0-9]{17}$ format check. Most columns are nullable because observation
       completeness varies by source type.
+    config:
+      tags: ["hourly_core"]
     columns:
       - name: source
         data_tests:
