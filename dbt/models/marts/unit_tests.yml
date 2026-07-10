@@ -18,8 +18,7 @@ unit_tests:
           - {vin: "DETAIL0ACTIVE00001", current_price: 30000, price_observed_at: "2026-01-10 12:00:00+00",
              first_price: 30000, min_price: 30000, max_price: 30000,
              price_drop_count: 0, price_increase_count: 0, total_price_observations: 1,
-             first_seen_at: "2026-01-10 12:00:00+00", last_seen_at: "2026-01-10 12:00:00+00",
-             days_on_market: 0}
+             first_seen_at: "2026-01-10 12:00:00+00", last_seen_at: "2026-01-10 12:00:00+00"}
       - input: ref('int_active_make_models')
         rows:
           - {make: "honda", model: "crv"}
@@ -49,8 +48,7 @@ unit_tests:
              first_price: 30000, min_price: 30000, max_price: 30000,
              price_drop_count: 0, price_increase_count: 0, total_price_observations: 1,
              first_seen_at: "2026-01-05 12:00:00+00",
-             last_seen_at: "2026-01-13 12:00:00+00",
-             days_on_market: 5}
+             last_seen_at: "2026-01-13 12:00:00+00"}
       - input: ref('int_active_make_models')
         rows:
           - {make: "honda", model: "crv"}
@@ -76,8 +74,7 @@ unit_tests:
           - {vin: "SRPONLY00000OLD001", current_price: 30000, price_observed_at: "2025-12-01 12:00:00+00",
              first_price: 30000, min_price: 30000, max_price: 30000,
              price_drop_count: 0, price_increase_count: 0, total_price_observations: 1,
-             first_seen_at: "2025-12-01 12:00:00+00", last_seen_at: "2025-12-01 12:00:00+00",
-             days_on_market: 40}
+             first_seen_at: "2025-12-01 12:00:00+00", last_seen_at: "2025-12-01 12:00:00+00"}
       - input: ref('int_active_make_models')
         rows:
           - {make: "honda", model: "crv"}
@@ -130,8 +127,7 @@ unit_tests:
              first_price: 30000, min_price: 30000, max_price: 30000,
              price_drop_count: 0, price_increase_count: 0, total_price_observations: 1,
              first_seen_at: "2026-01-05 12:00:00+00",
-             last_seen_at: "2026-04-24 12:00:00+00",
-             days_on_market: 5}
+             last_seen_at: "2026-04-24 12:00:00+00"}
       - input: ref('int_active_make_models')
         rows:
           - {make: "honda", model: "crv"}

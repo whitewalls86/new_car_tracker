@@ -457,7 +457,7 @@ unit_tests:
           - {vin: "VIN1", price: 28000, event_at: "2026-01-28 00:00:00+00"}
       - input: ref('int_price_history')
         rows:
-          - {vin: "VIN1", current_price: 30000, days_on_market: 16,
+          - {vin: "VIN1", current_price: 30000,
              price_drop_count: 0, price_increase_count: 0,
              first_price: 30000, min_price: 30000, max_price: 30000,
              total_price_observations: 1}
@@ -539,7 +539,7 @@ unit_tests:
           - {vin: "VIN2", price: 32000, event_at: "2026-02-05 00:00:00+00"}
       - input: ref('int_price_history')
         rows:
-          - {vin: "VIN2", current_price: 30000, days_on_market: 29,
+          - {vin: "VIN2", current_price: 30000,
              price_drop_count: 0, price_increase_count: 2,
              first_price: 28000, min_price: 28000, max_price: 30000,
              total_price_observations: 3}
