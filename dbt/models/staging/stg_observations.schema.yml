@@ -21,3 +21,7 @@ models:
         description: City of the dealer — passed through from silver, populated for detail source only.
       - name: dealer_state
         description: State abbreviation of the dealer — passed through from silver, populated for detail source only.
+      - name: body
+        description: Carousel-only body-style text, distinct from the detail/SRP body_style field.
+      - name: condition
+        description: Carousel-only vehicle condition (e.g. new/used) text.

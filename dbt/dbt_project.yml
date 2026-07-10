@@ -20,6 +20,12 @@ vars:
   # max(target.fetched_at) minus this many days, so late-arriving or corrected
   # detail artifacts inside the window are still picked up.
   fingerprint_incremental_lookback_days: 3
+  # Plan 123 Phase 2b: late-arrival lookback for int_listing_observation_fingerprints'
+  # incremental scan (the all-source detail/SRP/carousel base layer). On
+  # incremental runs, source rows are rescanned from max(target.fetched_at)
+  # minus this many days, so late-arriving or corrected observations across
+  # all three sources are still picked up.
+  listing_observation_fingerprint_lookback_days: 3
   # Plan 123 Phase 3: late-arrival lookback for int_price_history's affected-VIN
   # incremental scan. On an incremental run, a VIN is "affected" (and its
   # complete price history reread/recomputed) if it has a price event at or

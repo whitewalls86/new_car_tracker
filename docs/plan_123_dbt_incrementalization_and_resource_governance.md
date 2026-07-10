@@ -40,9 +40,10 @@ This plan begins after Plan 120 Gate D is complete.
 
 | Model | Current grain | Recommendation | Reason |
 |-------|---------------|----------------|--------|
-| `int_listing_state_fingerprints` | One row per valid detail artifact | Incremental, append-oriented | Artifact rows are naturally immutable; use a watermark plus late-arrival lookback |
+| `int_listing_state_fingerprints` | One row per valid detail artifact | Keep as a detail-only canonical-state model or replace with a detail subset of the observation fingerprint model | Phase 2 made this incremental, but later review found it is too narrow for cadence learning because SRP and carousel observations also refresh price/visibility and can suppress detail scrapes |
+| `int_listing_observation_fingerprints` | One row per observed listing per artifact (`artifact_id` + `listing_id`) across detail, SRP, and carousel | Add as the defensible base feature-store layer, incremental append/update by observation row key | The processing writers already emit one normalized silver row per listing observation; this grain handles many-listing SRP/carousel artifacts without treating bare `artifact_id` as row-unique |
 | `int_price_history` | One mutable aggregate row per VIN | Incremental, replace affected VINs | New events only require full history recomputation for VINs touched by the incremental input |
-| `int_listing_state_runs` | Multiple ordered runs per VIN | Incremental, replace affected VINs | New fingerprints can extend or split the open run; recompute all runs for changed VINs |
+| `int_listing_state_runs` | Multiple ordered runs per VIN | Incremental, replace affected VINs after Phase 2b is resolved | New fingerprints can extend or split the open run; recompute all runs for changed VINs. Phase 4 currently depends on detail-only fingerprints and should be revisited after the all-source observation layer lands |
 | `int_latest_observation` | One current row per VIN | Evaluate after upstream conversion | Per-VIN replacement is possible, but source-priority and late-arrival behavior require careful tests |
 | `int_benchmarks` | Current aggregate per make/model | Keep table; slower cadence initially | A changed VIN can alter make/model percentiles; targeted group replacement is possible but lower priority |
 | `int_listing_volatility_features` | One current feature row per VIN | Keep table; daily/on-demand cadence | Dealer and make/model aggregates can change many rows; time-relative features also age without new events |
@@ -283,9 +284,14 @@ through as raw `--select`/`--exclude`, never `--selector`.
       the Phase 0 DuckDB memory budget now that it's exercised on its own
       schedule rather than every hour.
 
-## Phase 2: Incremental Fingerprints
+## Phase 2: Incremental Detail Fingerprints
 
 Convert `int_listing_state_fingerprints` first.
+
+This phase was originally framed as "the" listing-state fingerprint layer. After
+reviewing the SRP and detail/carousel write paths on 2026-07-10, that framing is
+too narrow: the implemented model is a valid **detail-only canonical state**
+fingerprint, but it is not a complete base layer for cadence learning.
 
 Requirements:
 
@@ -386,6 +392,144 @@ Still needs VM verification before this is considered fully rolled out:
       full-table `feature_daily` run to confirm steady-state scan volume is
       actually lower.
 
+### Phase 2 correction (2026-07-10): add all-source listing observation fingerprints
+
+The Phase 2 implementation is technically correct for its actual grain:
+
+```text
+source = detail
+grain = artifact_id
+one detail artifact -> one listing observation
+```
+
+But it is not sufficient for the ML cadence feature store. SRP and carousel
+observations are also meaningful listing refresh signals:
+
+- SRP rows can refresh price and VIN/listing mappings, and the system may avoid a
+  detail scrape when SRP already supplied enough data.
+- Carousel rows are "other vehicles at this dealer"; the inherited dealer
+  context is valid because the carousel membership is defined by the dealer.
+- Both SRP and carousel artifacts can contain many listing observations under one
+  `artifact_id`, so a bare `artifact_id` is not a defensible unique key for an
+  all-source model.
+
+The processing writers already emit one normalized silver row per observed
+listing:
+
+- SRP silver rows include `artifact_id`, `listing_id`, resolved `vin`, canonical
+  detail URL, price, make/model/trim/year, mileage, MSRP, stock/fuel/body style,
+  financing fields, seller fields, page/position, `trid`, `isa_context`,
+  `listing_state='active'`, `source='srp'`, and `fetched_at`.
+- Carousel silver rows include `artifact_id`, `listing_id`, resolved `vin` when
+  known, canonical detail URL, price, mileage, body, condition, year, inherited
+  dealer fields, `listing_state='active'`, `source='carousel'`, and
+  `fetched_at`.
+- Detail silver rows remain the richest canonical state source and include
+  listing state, full vehicle fields, and dealer/customer fields.
+
+Add a new model before treating the feature-store chain as semantically complete:
+
+```text
+int_listing_observation_fingerprints
+```
+
+Target grain:
+
+```text
+artifact_id + listing_id
+```
+
+Implementation notes:
+
+- Build from `stg_observations`.
+- Include `source in ('detail', 'srp', 'carousel')`.
+- Require `listing_id is not null`; keep `vin17` when present/resolved, but do
+  not drop rows solely because VIN is null.
+- Generate a stable `observation_id`, preferably
+  `md5(concat_ws('|', artifact_id, listing_id))`, unless production uniqueness
+  checks show `artifact_id + listing_id` is insufficient and requires a source or
+  card-position component.
+- Use `observation_id` or the composite equivalent as the incremental
+  `unique_key`, not bare `artifact_id`.
+- Preserve source-aware fields in the fingerprint. Common fields should include
+  `listing_id`, `vin17`, `source`, `price`, `mileage`, `year`, `make`, `model`,
+  `trim`, and `listing_state`. Detail/SRP fields should include stock, fuel,
+  body style, MSRP, and relevant dealer/seller IDs. Carousel fields should
+  include body, condition, year, price, mileage, and inherited dealer/customer
+  context.
+- Add uniqueness tests for the row key and unit/integration tests showing an SRP
+  artifact with multiple listings and a carousel artifact with multiple listings
+  produce multiple stable fingerprint rows without key collisions.
+
+**Implemented (2026-07-10):** `int_listing_observation_fingerprints` now exists
+(`dbt/models/intermediate/int_listing_observation_fingerprints.sql`) exactly as
+specified above — `observation_id = md5(concat_ws('|', artifact_id, listing_id))`,
+`unique_key='observation_id'`, `incremental_strategy='delete+insert'`, watermark
+lookback via `listing_observation_fingerprint_lookback_days` (default 3).
+`stg_observations` was extended to surface the carousel-only `body` and
+`condition` columns (previously present in the silver source but not selected)
+so the fingerprint hash can include them. Coverage: dbt unit tests in
+`unit_tests.yml` (all-three-sources inclusion, null-listing_id exclusion,
+multi-listing SRP/carousel key collisions) plus
+`tests/integration/dbt/test_observation_fingerprints_real_build.py`, which runs
+the **real** dbt project against the **real** shared lake-snapshot fixture
+(`scripts/seed_lake_snapshot_fixture.py`) rather than a throwaway
+dbt-duckdb shadow project.
+
+Testing-approach correction (2026-07-10, same day): an earlier version of this
+work added a fourth throwaway per-file dbt-duckdb project test (own CSV seed,
+own stubbed `stg_observations`), mirroring `test_fingerprints_incremental.py`.
+Review concluded that pattern — while it works — creates a second fake
+universe per model (fake source shape, fake project setup, separate fixture
+data/expectations) that is a maintenance tax as the model graph grows, and
+that this repo already has a stronger mechanism for this: the shared MinIO
+fixture (`scripts/seed_lake_snapshot_fixture.py`) that
+`test_selector_dbt_equivalence.py` and the archiver selector/cohort tests run
+the real dbt project against. That fixture was extended with **phases**:
+`seed(phase="base")` (unchanged content, plus new SRP/carousel
+multi-listing-per-artifact scenarios) and
+`seed(phase="observation_fingerprint_incremental")` (silver-only rows written
+under distinct filenames, landing alongside — not over — the base phase's
+files). `test_observation_fingerprints_real_build.py` seeds the base phase
+(already done by CI before this test runs), asserts on the real materialized
+table, then seeds the incremental phase, reruns
+`dbt build --select int_listing_observation_fingerprints` against the same
+DuckDB file with no `--full-refresh` (exercising late-arrival lookback and
+observation_id replace-on-correction for real), asserts again, reruns once
+more to confirm idempotency, then does a final `--full-refresh` build and
+confirms equivalence. The throwaway per-file CSV pattern used by
+`test_fingerprints_incremental.py` / `test_price_history_incremental.py` /
+`test_listing_state_runs_incremental.py` was **not** touched or removed in
+this pass — it may still be useful while Phase 2-4 incrementalization is
+actively being developed, but should be treated as temporary scaffolding: once
+the phased shared-fixture mechanism proves itself further, revisit those
+three and either demote them to a small smoke set or delete the parts fully
+covered by the phased fixture.
+
+VM verification of steady-state scan volume is still pending, same as the
+rest of Phase 2/2b.
+
+`int_listing_state_fingerprints` remains unchanged and is still the canonical
+detail-only state model — it is not being replaced or removed in this pass.
+`int_listing_observation_fingerprints` is additive: it is the new all-source
+base layer intended for cadence learning, sitting alongside (not instead of)
+the detail-only model. Downstream, `int_listing_state_runs` and
+`int_listing_volatility_features` still read from the detail-only fingerprint
+model as of this pass; see "Downstream impact" below for the follow-up this
+creates.
+
+Downstream impact:
+
+- `int_listing_state_fingerprints` can remain as a detail-only canonical-state
+  subset if useful for detail-specific semantics.
+- `int_listing_state_runs` should be reviewed after this model lands. It may
+  either continue to model detail-only canonical state runs, or be replaced by /
+  paired with an all-source `int_listing_observation_runs` model for cadence
+  learning.
+- `int_listing_volatility_features` should eventually consume the all-source
+  observation/cadence layer so SRP and carousel refreshes are visible to the ML
+  trainer.
+
 ## Phase 3: Incremental Price History
 
 Convert `int_price_history` using affected-VIN replacement.
@@ -484,6 +628,14 @@ the end of the Phase 4 section below.
 ## Phase 4: Incremental Listing-State Runs
 
 Convert `int_listing_state_runs` only after fingerprints are stable.
+
+Important correction after the 2026-07-10 Phase 2 review: the Phase 4 work
+implemented affected-VIN replacement over the current detail-only
+`int_listing_state_fingerprints` model. That is still useful for detail-state run
+correctness and resource reduction, but it should not be treated as the final
+cadence feature-store path until Phase 2b's all-source
+`int_listing_observation_fingerprints` model exists and the run/feature models
+are pointed at the right base layer.
 
 Algorithm:
 
@@ -612,6 +764,9 @@ Profile the graph again after Phases 2-4.
 
 Decide with evidence whether to:
 
+- add or replace `int_listing_state_runs` with all-source
+  `int_listing_observation_runs` over `artifact_id + listing_id` observation
+  fingerprints;
 - incrementally replace affected VINs in `int_latest_observation`;
 - incrementally replace affected make/model groups in `int_benchmarks`;
 - retain daily full-table builds for benchmarks and volatility features;
@@ -661,11 +816,14 @@ docs/plan_123_dbt_resource_baseline.md
 1. Deploy two threads and DuckDB memory limit.
 2. Verify one complete build under monitoring.
 3. Split hourly and daily model selections.
-4. Convert fingerprints.
-5. Convert price history.
-6. Convert state runs.
-7. Re-profile before touching downstream feature models.
-8. Add periodic full-refresh equivalence validation.
+4. Convert detail fingerprints as an initial resource-reduction step.
+5. Add all-source listing observation fingerprints at `artifact_id + listing_id`
+   grain.
+6. Convert price history.
+7. Convert state runs, or revise the existing state-run work to consume the
+   correct detail-only vs all-source base layer.
+8. Re-profile before touching downstream feature models.
+9. Add periodic full-refresh equivalence validation.
 
 Each incremental model should be its own reviewable commit or PR gate.
 

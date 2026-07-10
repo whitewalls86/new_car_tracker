@@ -2,7 +2,7 @@
 Single source of truth for the synthetic MinIO fixture used by the Plan 120
 lake-snapshot integration tests.
 
-    python scripts/seed_lake_snapshot_fixture.py
+    python scripts/seed_lake_snapshot_fixture.py [--phase base|observation_fingerprint_incremental]
 
 This module seeds deterministic business-state scenarios into MinIO across all
 four supported source tables:
@@ -12,7 +12,7 @@ four supported source tables:
     vin_to_listing_events     (ops_normalized/vin_to_listing_events/…)
     blocked_cooldown_events   (ops_normalized/blocked_cooldown_events/…)
 
-Two consumers read this fixture, and both import their expected entities from
+Three consumers read this fixture, and all import their expected entities from
 here so seeding and assertions cannot drift apart:
 
   1. tests/integration/dbt/test_selector_dbt_equivalence.py — after the CI
@@ -24,6 +24,22 @@ here so seeding and assertions cannot drift apart:
      (`run_lake_selectors`, `build_snapshot_cohort`) directly against this
      MinIO data to prove the SQL is correct against real, production-shaped
      Parquet.
+  3. tests/integration/dbt/test_observation_fingerprints_real_build.py (Plan 123
+     Phase 2b) — seeds the "observation_fingerprint_incremental" phase after
+     the base phase has already been built once, reruns `dbt build --select
+     int_listing_observation_fingerprints` against the real dbt project (no
+     throwaway shadow project), and asserts on the real materialized output —
+     both the single-build base-phase behavior and the second phase's
+     incremental/late-arrival/correction behavior.
+
+`seed(phase=...)` (default "base") controls which rows get written:
+
+  * "base" — the original single-shot fixture (silver + all three ops
+    tables), seeded once before the first `dbt build`.
+  * "observation_fingerprint_incremental" — silver-only, written under
+    distinct filenames (see `_write_dataset`) so it lands alongside, not over,
+    the base phase's files. A subsequent non-full-refresh `dbt build` then
+    sees base+phase-2 data combined, exercising real incremental behavior.
 
 Two design rules make this safe to share:
 
@@ -147,6 +163,35 @@ VIN_SRP_COOCCUR_A = "VIN_SRP_COOCCUR_A"
 VIN_SRP_COOCCUR_B = "VIN_SRP_COOCCUR_B"
 LISTING_SRP_COOCCUR_A = "L30"
 LISTING_SRP_COOCCUR_B = "L31"
+
+# --- Plan 123 Phase 2b: int_listing_observation_fingerprints scenarios -----
+# One SRP artifact_id carrying two listing_ids: the all-source observation
+# fingerprint model keys on artifact_id + listing_id, not bare artifact_id, so
+# these two rows must produce two distinct fingerprint rows, not a collision.
+ARTIFACT_SRP_MULTI = 400
+VIN_SRP_MULTI_A = _vin17("SRPMULTA")
+VIN_SRP_MULTI_B = _vin17("SRPMULTB")
+LISTING_SRP_MULTI_A = "L40"
+LISTING_SRP_MULTI_B = "L41"
+
+# One carousel artifact_id carrying two listing_ids, one with a resolved VIN
+# and one without — carousel rows commonly lack a resolved VIN, and the
+# observation fingerprint model must retain such a row as long as listing_id
+# is present.
+ARTIFACT_CAROUSEL_MULTI = 410
+VIN_CAROUSEL_MULTI_A = _vin17("CARMULTA")
+LISTING_CAROUSEL_MULTI_A = "L42"
+LISTING_CAROUSEL_MULTI_B = "L43"
+
+# Phase 2b incremental-run scenario (seeded separately via
+# seed(phase="observation_fingerprint_incremental"), never part of the base
+# phase): a late-arriving SRP artifact whose fetched_at falls inside the
+# model's lookback window, and a corrected observation replacing
+# ARTIFACT_SRP_MULTI/LISTING_SRP_MULTI_A's price.
+VIN_OBSFP_LATE_ARRIVAL = _vin17("LATEARR")
+LISTING_OBSFP_LATE_ARRIVAL = "L44"
+ARTIFACT_OBSFP_LATE_ARRIVAL = 420
+OBSFP_CORRECTED_PRICE = 17500
 
 # listing_id constants asserted on by the selector/cohort integration tests,
 # exported so seeding and assertions cannot drift apart.
@@ -292,9 +337,52 @@ def _selector_scenario_rows() -> List[Dict[str, Any]]:
     return rows
 
 
+def _observation_fingerprint_rows() -> List[Dict[str, Any]]:
+    """Plan 123 Phase 2b base-phase rows for int_listing_observation_fingerprints:
+    an SRP artifact and a carousel artifact each carrying two listing_ids, proving
+    the model's artifact_id + listing_id key does not collide."""
+    return [
+        _obs_row(VIN_SRP_MULTI_A, listing_id=LISTING_SRP_MULTI_A, artifact_id=ARTIFACT_SRP_MULTI,
+                 source="srp", fetched_at=_ts(2026, 7, 1), price=20000),
+        _obs_row(VIN_SRP_MULTI_B, listing_id=LISTING_SRP_MULTI_B, artifact_id=ARTIFACT_SRP_MULTI,
+                 source="srp", fetched_at=_ts(2026, 7, 1), price=21000),
+        _obs_row(VIN_CAROUSEL_MULTI_A, listing_id=LISTING_CAROUSEL_MULTI_A,
+                 artifact_id=ARTIFACT_CAROUSEL_MULTI, source="carousel",
+                 fetched_at=_ts(2026, 7, 1), price=18000),
+        _obs_row(None, listing_id=LISTING_CAROUSEL_MULTI_B, artifact_id=ARTIFACT_CAROUSEL_MULTI,
+                 source="carousel", fetched_at=_ts(2026, 7, 1), price=19000),
+    ]
+
+
 def build_silver_rows() -> List[Dict[str, Any]]:
     """All silver_observations fixture rows (dbt-equivalence + selector/cohort)."""
-    return _dbt_equivalence_rows() + _selector_scenario_rows()
+    return _dbt_equivalence_rows() + _selector_scenario_rows() + _observation_fingerprint_rows()
+
+
+def build_observation_fingerprint_incremental_rows() -> List[Dict[str, Any]]:
+    """Plan 123 Phase 2b incremental-phase rows, seeded only via
+    seed(phase="observation_fingerprint_incremental") after the base phase has
+    already been built once. Exercises int_listing_observation_fingerprints'
+    late-arrival lookback and observation_id replace-on-correction behavior on
+    a subsequent (non-full-refresh) dbt build:
+
+      * a late-arriving SRP artifact, never seen in the base phase, whose
+        fetched_at falls inside the model's default 3-day lookback window
+        relative to the base phase's global max fetched_at (2026-07-28, from
+        VIN_FRESH's second row in _selector_scenario_rows) — it must appear
+        after the incremental rebuild;
+      * a corrected observation for ARTIFACT_SRP_MULTI/LISTING_SRP_MULTI_A
+        (base phase price 20000) with a later fetched_at inside the lookback
+        window and a different price — the model must replace the existing
+        target row for that observation_id, not duplicate it.
+    """
+    return [
+        _obs_row(VIN_OBSFP_LATE_ARRIVAL, listing_id=LISTING_OBSFP_LATE_ARRIVAL,
+                 artifact_id=ARTIFACT_OBSFP_LATE_ARRIVAL, source="srp",
+                 fetched_at=_ts(2026, 7, 26), price=22000),
+        _obs_row(VIN_SRP_MULTI_A, listing_id=LISTING_SRP_MULTI_A, artifact_id=ARTIFACT_SRP_MULTI,
+                 source="srp", fetched_at=_ts(2026, 7, 27), price=OBSFP_CORRECTED_PRICE),
+    ]
 
 
 # Back-compat alias for the dbt-equivalence test, which imports the row builder
@@ -365,9 +453,19 @@ def build_cooldown_event_rows() -> List[Dict[str, Any]]:
 
 def _write_dataset(
     schema: pa.Schema, rows: List[Dict[str, Any]], prefix: str, partition_cols: List[str],
+    basename_prefix: str = "lake_snapshot_fixture",
 ) -> str:
     """Write rows as a hive-partitioned Parquet dataset, mirroring the
-    production flush (pq.write_to_dataset with the same partition_cols)."""
+    production flush (pq.write_to_dataset with the same partition_cols).
+
+    basename_prefix must be distinct per phase: pyarrow's `{i}` numbering in
+    basename_template restarts at 0 on every call, so two phases writing into
+    the same partition directory with the same prefix would silently
+    overwrite each other's file (existing_data_behavior="overwrite_or_ignore"
+    keeps pre-existing *differently-named* files but replaces same-named
+    ones). Distinct prefixes let a phase-2 seed add rows alongside phase-1's
+    without touching its files, exactly like separate production flush runs.
+    """
     table = pa.Table.from_pylist(rows, schema=schema)
     pq.write_to_dataset(
         table,
@@ -375,14 +473,13 @@ def _write_dataset(
         partition_cols=partition_cols,
         filesystem=get_s3fs(),
         existing_data_behavior="overwrite_or_ignore",
-        basename_template="lake_snapshot_fixture-{i}.parquet",
+        basename_template=f"{basename_prefix}-{{i}}.parquet",
     )
     return prefix
 
 
-def _seed_silver() -> str:
+def _seed_silver(rows: List[Dict[str, Any]], basename_prefix: str = "lake_snapshot_fixture") -> str:
     now = datetime.now(timezone.utc)
-    rows = build_silver_rows()
     for row in rows:
         # Force every row into the reserved partition (like the fixed 2099
         # location before). obs_day stays an in-file column, as in production.
@@ -393,6 +490,7 @@ def _seed_silver() -> str:
         row.setdefault("written_at", now)
     return _write_dataset(
         _SILVER_SCHEMA, rows, "silver_normalized/observations", _SILVER_PARTITION_COLS,
+        basename_prefix=basename_prefix,
     )
 
 
@@ -420,15 +518,39 @@ def _seed_ops() -> List[str]:
     ]
 
 
-def seed() -> List[str]:
-    """Upload all fixture data across the four source tables. Returns the keys."""
+# Phases: "base" is the original single-shot fixture (silver + all three ops
+# tables), seeded once by the CI `dbt` job before the real `dbt build`.
+# "observation_fingerprint_incremental" is Plan 123 Phase 2b's second wave —
+# silver-only, written under distinct filenames so it lands alongside (not
+# over) the base phase's files, letting a later non-full-refresh `dbt build`
+# exercise incremental behavior against the combined base+phase-2 data.
+PHASES = ("base", "observation_fingerprint_incremental")
+
+
+def seed(phase: str = "base") -> List[str]:
+    """Upload fixture data for the given phase. Returns the written keys."""
+    if phase not in PHASES:
+        raise ValueError(f"unknown phase {phase!r}; expected one of {PHASES}")
     ensure_bucket()
-    return [_seed_silver()] + _seed_ops()
+    if phase == "base":
+        return [_seed_silver(build_silver_rows())] + _seed_ops()
+    return [
+        _seed_silver(
+            build_observation_fingerprint_incremental_rows(),
+            basename_prefix="lake_snapshot_fixture_obsfp_incremental",
+        )
+    ]
 
 
 def main() -> None:
-    for key in seed():
-        print(f"Uploaded s3://{BUCKET}/{key}")
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--phase", choices=PHASES, default="base")
+    args = parser.parse_args()
+
+    for key in seed(phase=args.phase):
+        print(f"Uploaded s3://{BUCKET}/{key} (phase={args.phase})")
 
 
 if __name__ == "__main__":

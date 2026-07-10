@@ -42,5 +42,7 @@ select
     page_number,
     position_on_page,
     trid,
-    isa_context
+    isa_context,
+    body,
+    condition
 from {{ source('silver', 'observations') }}

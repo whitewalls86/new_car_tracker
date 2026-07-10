@@ -295,6 +295,84 @@ unit_tests:
         - {artifact_id: 2, parsed_fingerprint: "50711e6e84c56f7732b64b4e579428c6"}
 
   # ---------------------------------------------------------------------------
+  # int_listing_observation_fingerprints — all-source filter and key behavior
+  # ---------------------------------------------------------------------------
+
+  - name: test_observation_fingerprints_includes_all_three_sources
+    description: "detail, srp, and carousel rows all pass through when listing_id is present"
+    model: int_listing_observation_fingerprints
+    overrides:
+      macros:
+        is_incremental: false
+    given:
+      - input: ref('stg_observations')
+        rows:
+          - {artifact_id: 1, listing_id: "L1", vin17: "1HGBH41JXMN109186", source: "detail",
+             fetched_at: "2026-01-10 12:00:00+00", price: 30000, mileage: 100, listing_state: "active"}
+          - {artifact_id: 2, listing_id: "L2", vin17: "1HGBH41JXMN109186", source: "srp",
+             fetched_at: "2026-01-10 13:00:00+00", price: 30000, mileage: 100, listing_state: "active"}
+          - {artifact_id: 3, listing_id: "L3", vin17: null, source: "carousel",
+             fetched_at: "2026-01-10 14:00:00+00", price: 30000, mileage: 100, listing_state: "active"}
+    expect:
+      rows:
+        - {artifact_id: 1, listing_id: "L1", source: "detail"}
+        - {artifact_id: 2, listing_id: "L2", source: "srp"}
+        - {artifact_id: 3, listing_id: "L3", source: "carousel"}
+
+  - name: test_observation_fingerprints_excludes_null_listing_id
+    description: "Rows with a null listing_id are excluded regardless of source"
+    model: int_listing_observation_fingerprints
+    overrides:
+      macros:
+        is_incremental: false
+    given:
+      - input: ref('stg_observations')
+        rows:
+          - {artifact_id: 1, listing_id: null, vin17: "1HGBH41JXMN109186", source: "detail",
+             fetched_at: "2026-01-10 12:00:00+00"}
+          - {artifact_id: 2, listing_id: "L2", vin17: null, source: "srp",
+             fetched_at: "2026-01-10 13:00:00+00"}
+    expect:
+      rows:
+        - {artifact_id: 2, listing_id: "L2"}
+
+  - name: test_observation_fingerprints_srp_artifact_multiple_listings
+    description: "One SRP artifact_id with two listing_ids produces two distinct observation_id rows, not one"
+    model: int_listing_observation_fingerprints
+    overrides:
+      macros:
+        is_incremental: false
+    given:
+      - input: ref('stg_observations')
+        rows:
+          - {artifact_id: 100, listing_id: "L1", vin17: "1HGBH41JXMN109186", source: "srp",
+             fetched_at: "2026-01-10 12:00:00+00", price: 30000}
+          - {artifact_id: 100, listing_id: "L2", vin17: "2HGBH41JXMN209187", source: "srp",
+             fetched_at: "2026-01-10 12:00:00+00", price: 25000}
+    expect:
+      rows:
+        - {artifact_id: 100, listing_id: "L1", price: 30000}
+        - {artifact_id: 100, listing_id: "L2", price: 25000}
+
+  - name: test_observation_fingerprints_carousel_artifact_multiple_listings
+    description: "One carousel artifact_id with two listing_ids produces two distinct observation_id rows, not one"
+    model: int_listing_observation_fingerprints
+    overrides:
+      macros:
+        is_incremental: false
+    given:
+      - input: ref('stg_observations')
+        rows:
+          - {artifact_id: 200, listing_id: "L3", vin17: null, source: "carousel",
+             fetched_at: "2026-01-10 12:00:00+00", price: 20000}
+          - {artifact_id: 200, listing_id: "L4", vin17: null, source: "carousel",
+             fetched_at: "2026-01-10 12:00:00+00", price: 22000}
+    expect:
+      rows:
+        - {artifact_id: 200, listing_id: "L3", price: 20000}
+        - {artifact_id: 200, listing_id: "L4", price: 22000}
+
+  # ---------------------------------------------------------------------------
   # int_listing_state_runs — gaps-and-islands logic
   # ---------------------------------------------------------------------------
 
