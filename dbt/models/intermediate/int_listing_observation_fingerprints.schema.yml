@@ -1,0 +1,77 @@
+version: 2
+
+models:
+  - name: int_listing_observation_fingerprints
+    description: >
+      One row per observed listing per artifact, across detail, SRP, and
+      carousel sources (Plan 123 Phase 2b). Row key is artifact_id + listing_id
+      (observation_id), not bare artifact_id, because a single SRP or carousel
+      artifact can contain many listing_ids. vin17 is kept when present/resolved
+      but is not required — rows with a null vin17 are retained as long as
+      listing_id is present. parsed_fingerprint hashes all source-aware
+      business-state fields so a material change on any source (price refresh,
+      relisting, dealer move, state flip) opens a new fingerprint. This is the
+      all-source base layer for ML cadence learning; int_listing_state_fingerprints
+      remains the detail-only canonical-state model for now.
+      Incremental: materialized with unique_key=observation_id and the
+      delete+insert strategy. On incremental runs, source rows are rescanned from
+      max(target.fetched_at) minus the `listing_observation_fingerprint_lookback_days`
+      var (default 3) to pick up late-arriving or corrected observations. A
+      reappearing observation_id replaces its existing target row rather than
+      duplicating it. First run and `--full-refresh` rebuild the complete table.
+      Note the rescan window is fetched_at-based: a reprocessing correction whose
+      fetched_at already fell outside the lookback window before the correction
+      landed is not picked up until the next `--full-refresh`.
+    config:
+      tags: ["feature_daily", "backtest"]
+    columns:
+      - name: observation_id
+        description: >
+          md5(concat_ws('|', artifact_id, listing_id)) — durable row identity and
+          incremental unique_key. A source batch with more than one row for the
+          same artifact_id + listing_id is deduplicated to the row with the
+          latest fetched_at, then latest written_at, then parsed_fingerprint
+          (see model SQL) before this constraint is checked. written_at breaks
+          ties between rows sharing a fetched_at, e.g. a reprocessing correction
+          of an already-fetched artifact.
+        data_tests:
+          - not_null
+          - unique
+      - name: artifact_id
+        description: Source artifact identifier. Not unique alone — SRP/carousel artifacts can carry many listing_ids.
+        data_tests:
+          - not_null
+      - name: listing_id
+        description: Listing identifier active when this observation was fetched. Required — rows without it are excluded.
+        data_tests:
+          - not_null
+      - name: vin17
+        description: Validated 17-character VIN when present/resolved. Nullable — not required for SRP/carousel rows.
+      - name: source
+        description: Observation source.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['detail', 'srp', 'carousel']
+      - name: fetched_at
+        description: Timestamp when this observation was fetched.
+        data_tests:
+          - not_null
+      - name: parsed_fingerprint
+        description: >
+          md5 hash of source-aware business-state fields: listing_id, vin17, source,
+          price, mileage, model_year, make, model, vehicle_trim, listing_state,
+          canonical_detail_url, msrp, stock_type, fuel_type, body_style, dealer_name,
+          dealer_zip, dealer_city, dealer_state, customer_id, seller_customer_id,
+          seller_zip, financing_type, page_number, position_on_page, trid,
+          isa_context, body, condition. Null fields are coalesced to empty string
+          before hashing.
+        data_tests:
+          - not_null
+      - name: price
+        description: Parsed listing price — denormalized from stg_observations.
+      - name: mileage
+        description: Parsed mileage — denormalized from stg_observations.
+      - name: listing_state
+        description: Listing state (active/unavailable/unknown) — denormalized from stg_observations.

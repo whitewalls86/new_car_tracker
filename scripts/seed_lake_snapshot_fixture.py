@@ -2,7 +2,10 @@
 Single source of truth for the synthetic MinIO fixture used by the Plan 120
 lake-snapshot integration tests.
 
-    python scripts/seed_lake_snapshot_fixture.py
+    python scripts/seed_lake_snapshot_fixture.py --phase <phase>
+    # phase in: base, observation_fingerprint_incremental,
+    #           detail_fingerprint_incremental, price_history_incremental,
+    #           listing_state_runs_incremental
 
 This module seeds deterministic business-state scenarios into MinIO across all
 four supported source tables:
@@ -12,7 +15,7 @@ four supported source tables:
     vin_to_listing_events     (ops_normalized/vin_to_listing_events/…)
     blocked_cooldown_events   (ops_normalized/blocked_cooldown_events/…)
 
-Two consumers read this fixture, and both import their expected entities from
+Three consumers read this fixture, and all import their expected entities from
 here so seeding and assertions cannot drift apart:
 
   1. tests/integration/dbt/test_selector_dbt_equivalence.py — after the CI
@@ -24,6 +27,29 @@ here so seeding and assertions cannot drift apart:
      (`run_lake_selectors`, `build_snapshot_cohort`) directly against this
      MinIO data to prove the SQL is correct against real, production-shaped
      Parquet.
+  3. tests/integration/dbt/test_observation_fingerprints_real_build.py (Plan 123
+     Phase 2b) — seeds the "observation_fingerprint_incremental" phase after
+     the base phase has already been built once, reruns `dbt build --select
+     int_listing_observation_fingerprints` against the real dbt project (no
+     throwaway shadow project), and asserts on the real materialized output —
+     both the single-build base-phase behavior and the second phase's
+     incremental/late-arrival/correction behavior.
+  4. tests/integration/dbt/test_incremental_models_real_build.py — the same
+     real-build pattern as (3), extended to int_listing_state_fingerprints,
+     int_price_history, and int_listing_state_runs (replacing the throwaway
+     dbt-duckdb shadow-project tests those models used to have).
+
+`seed(phase=...)` (default "base") controls which rows get written:
+
+  * "base" — the original single-shot fixture (silver + all three ops
+    tables), seeded once before the first `dbt build`.
+  * "observation_fingerprint_incremental", "detail_fingerprint_incremental",
+    "price_history_incremental", "listing_state_runs_incremental" — each a
+    silver- or ops-only second wave for one real-build incremental test,
+    written under distinct filenames (see `_write_dataset`) so they land
+    alongside, not over, the base phase's (and each other's) files. A
+    subsequent non-full-refresh `dbt build` then sees base+phase-2 data
+    combined, exercising real incremental behavior.
 
 Two design rules make this safe to share:
 
@@ -147,6 +173,125 @@ VIN_SRP_COOCCUR_A = "VIN_SRP_COOCCUR_A"
 VIN_SRP_COOCCUR_B = "VIN_SRP_COOCCUR_B"
 LISTING_SRP_COOCCUR_A = "L30"
 LISTING_SRP_COOCCUR_B = "L31"
+
+# --- Plan 123 Phase 2b: int_listing_observation_fingerprints scenarios -----
+# One SRP artifact_id carrying two listing_ids: the all-source observation
+# fingerprint model keys on artifact_id + listing_id, not bare artifact_id, so
+# these two rows must produce two distinct fingerprint rows, not a collision.
+ARTIFACT_SRP_MULTI = 400
+VIN_SRP_MULTI_A = _vin17("SRPMULTA")
+VIN_SRP_MULTI_B = _vin17("SRPMULTB")
+LISTING_SRP_MULTI_A = "L40"
+LISTING_SRP_MULTI_B = "L41"
+
+# One carousel artifact_id carrying two listing_ids, one with a resolved VIN
+# and one without — carousel rows commonly lack a resolved VIN, and the
+# observation fingerprint model must retain such a row as long as listing_id
+# is present.
+ARTIFACT_CAROUSEL_MULTI = 410
+VIN_CAROUSEL_MULTI_A = _vin17("CARMULTA")
+LISTING_CAROUSEL_MULTI_A = "L42"
+LISTING_CAROUSEL_MULTI_B = "L43"
+
+# Phase 2b incremental-run scenario (seeded separately via
+# seed(phase="observation_fingerprint_incremental"), never part of the base
+# phase): a late-arriving SRP artifact whose fetched_at falls inside the
+# model's lookback window, and a newer fetch of an existing listing (later
+# fetched_at) that supersedes it.
+VIN_OBSFP_LATE_ARRIVAL = _vin17("LATEARR")
+LISTING_OBSFP_LATE_ARRIVAL = "L44"
+ARTIFACT_OBSFP_LATE_ARRIVAL = 420
+OBSFP_CORRECTED_PRICE = 17500
+
+# A true reprocessing correction: same artifact_id/listing_id/fetched_at as
+# the base-phase row, but re-landed in phase 2 with a different price. Since
+# fetched_at is identical, only written_at (later here, because this row is
+# seeded after the base phase in wall-clock time — see _seed_silver's
+# row.setdefault("written_at", now)) distinguishes the corrected row from the
+# original, proving the model's written_at dedupe tiebreaker actually works,
+# not just its fetched_at-desc ordering.
+VIN_OBSFP_CORRECTION = _vin17("CORRECT")
+LISTING_OBSFP_CORRECTION = "L45"
+ARTIFACT_OBSFP_CORRECTION = 430
+OBSFP_CORRECTION_FETCHED_AT = _ts(2026, 7, 26)
+OBSFP_CORRECTION_ORIGINAL_PRICE = 23000
+OBSFP_CORRECTION_FIXED_PRICE = 23500
+
+# --- Plan 123 replacement for the shadow-project incremental tests: real-build
+# coverage for int_listing_state_fingerprints, int_price_history, and
+# int_listing_state_runs (see tests/integration/dbt/test_incremental_models_real_build.py) ---
+
+# int_listing_state_fingerprints ("detail_fingerprint_incremental" phase).
+# ARTIFACT_FP_ANCHOR fetches at 2026-07-26, close to the other detail/vin17
+# scenario rows added below for int_listing_state_runs (2026-07-26 to
+# 2026-07-27) — all clustered together so the shared 3-day lookback window
+# comfortably covers every phase-2 addition regardless of which of these
+# base rows ends up the actual global max(fetched_at). (Rows added for other
+# scenarios earlier in this file, e.g. the dbt-equivalence VINs, top out at
+# 2026-07-03 and are unrelated to this cluster.)
+VIN_FP_TARGET = _vin17("FPTARGT")
+LISTING_FP_TARGET = "L50"
+ARTIFACT_FP_ANCHOR = 500
+ARTIFACT_FP_DUP = 501
+FP_ANCHOR_FETCHED_AT = _ts(2026, 7, 26)
+FP_DUP_BASE_FETCHED_AT = _ts(2026, 7, 24)
+FP_DUP_BASE_PRICE = 24000
+
+# Phase-2 rows: a never-before-seen artifact (late arrival), a re-publish of
+# ARTIFACT_FP_DUP with a later fetched_at (correction — the model's
+# row_number() dedupe has no written_at tiebreaker, only fetched_at desc, so
+# the corrected row must use a strictly later fetched_at to win
+# deterministically), and a same-batch retry duplicate (ARTIFACT_FP_RETRY
+# appears twice in the very same phase-2 seed, simulating an ingestion retry
+# landing two rows for one artifact_id in a single source scan).
+ARTIFACT_FP_LATE = 502
+FP_LATE_FETCHED_AT = _ts(2026, 7, 25)
+FP_DUP_CORRECTED_FETCHED_AT = _ts(2026, 7, 27)
+FP_DUP_CORRECTED_PRICE = 26000
+ARTIFACT_FP_RETRY = 503
+FP_RETRY_FETCHED_AT_EARLY = _ts(2026, 7, 26, 8)
+FP_RETRY_FETCHED_AT_LATE = _ts(2026, 7, 26, 14)
+FP_RETRY_LATE_PRICE = 200
+
+# int_price_history ("price_history_incremental" phase). VIN_PH_AFFECTED gets
+# base-phase events far outside any future lookback window, plus phase-2
+# events both inside the lookback and interleaved with the existing history —
+# proving the affected-VIN replacement rereads the VIN's COMPLETE history, not
+# just the new rows. VIN_PH_STABLE is a control VIN never touched by phase 2.
+VIN_PH_AFFECTED = "VIN_PH_AFFECTED"
+LISTING_PH_AFFECTED = "LPH1"
+VIN_PH_STABLE = "VIN_PH_STABLE"
+LISTING_PH_STABLE = "LPH2"
+PH_AFFECTED_EVENT_1 = _ts(2026, 7, 1)
+PH_AFFECTED_EVENT_2 = _ts(2026, 7, 2)
+PH_STABLE_EVENT = _ts(2026, 7, 1)
+PH_AFFECTED_LATE_EVENT = _ts(2026, 7, 29)     # late/corrected event inside lookback
+PH_AFFECTED_NEW_EVENT = _ts(2026, 7, 30)      # new event inside lookback
+
+# int_listing_state_runs ("listing_state_runs_incremental" phase).
+# VIN_RUNS_A: base rows form two runs (fp_a x2, fp_b x1); phase 2 inserts a
+# late artifact between the fp_a rows with a distinct fingerprint, splitting
+# the original fp_a run into fp_a -> fp_c -> fp_a (3 runs) + the open fp_b run
+# = 4 runs total.
+# VIN_RUNS_B: base rows form three runs (fp_m, fp_n, fp_m again); phase 2
+# republishes the middle artifact with a later fetched_at matching fp_m,
+# merging all three into one continuous open run.
+# VIN_RUNS_STABLE: untouched by phase 2, must be unaffected.
+VIN_RUNS_A = _vin17("RUNSA")
+LISTING_RUNS_A = "L60"
+ARTIFACT_RUNS_1 = 600
+ARTIFACT_RUNS_2 = 601
+ARTIFACT_RUNS_3 = 602
+ARTIFACT_RUNS_LATE_SPLIT = 603
+VIN_RUNS_B = _vin17("RUNSB")
+LISTING_RUNS_B = "L61"
+ARTIFACT_RUNS_M1 = 610
+ARTIFACT_RUNS_M2 = 611
+ARTIFACT_RUNS_M3 = 612
+ARTIFACT_RUNS_M2_CORRECTED_FETCHED_AT = _ts(2026, 7, 26, 6, 1)
+VIN_RUNS_STABLE = _vin17("RUNSTBL")
+LISTING_RUNS_STABLE = "L62"
+ARTIFACT_RUNS_STABLE = 620
 
 # listing_id constants asserted on by the selector/cohort integration tests,
 # exported so seeding and assertions cannot drift apart.
@@ -292,15 +437,202 @@ def _selector_scenario_rows() -> List[Dict[str, Any]]:
     return rows
 
 
+def _observation_fingerprint_rows() -> List[Dict[str, Any]]:
+    """Plan 123 Phase 2b base-phase rows for int_listing_observation_fingerprints:
+    an SRP artifact and a carousel artifact each carrying two listing_ids, proving
+    the model's artifact_id + listing_id key does not collide."""
+    return [
+        _obs_row(VIN_SRP_MULTI_A, listing_id=LISTING_SRP_MULTI_A, artifact_id=ARTIFACT_SRP_MULTI,
+                 source="srp", fetched_at=_ts(2026, 7, 1), price=20000),
+        _obs_row(VIN_SRP_MULTI_B, listing_id=LISTING_SRP_MULTI_B, artifact_id=ARTIFACT_SRP_MULTI,
+                 source="srp", fetched_at=_ts(2026, 7, 1), price=21000),
+        _obs_row(VIN_CAROUSEL_MULTI_A, listing_id=LISTING_CAROUSEL_MULTI_A,
+                 artifact_id=ARTIFACT_CAROUSEL_MULTI, source="carousel",
+                 fetched_at=_ts(2026, 7, 1), price=18000),
+        _obs_row(None, listing_id=LISTING_CAROUSEL_MULTI_B, artifact_id=ARTIFACT_CAROUSEL_MULTI,
+                 source="carousel", fetched_at=_ts(2026, 7, 1), price=19000),
+        # base row for the phase-2 true-correction scenario (see
+        # VIN_OBSFP_CORRECTION above) — same fetched_at as the phase-2 row,
+        # only written_at differs.
+        _obs_row(VIN_OBSFP_CORRECTION, listing_id=LISTING_OBSFP_CORRECTION,
+                 artifact_id=ARTIFACT_OBSFP_CORRECTION, source="srp",
+                 fetched_at=OBSFP_CORRECTION_FETCHED_AT, price=OBSFP_CORRECTION_ORIGINAL_PRICE),
+    ]
+
+
+def _detail_fingerprint_incremental_base_rows() -> List[Dict[str, Any]]:
+    """Base-phase rows for int_listing_state_fingerprints' real-build
+    incremental test (see build_detail_fingerprint_incremental_rows below)."""
+    return [
+        _obs_row(VIN_FP_TARGET, listing_id=LISTING_FP_TARGET, artifact_id=ARTIFACT_FP_ANCHOR,
+                 source="detail", fetched_at=FP_ANCHOR_FETCHED_AT, price=25000),
+        _obs_row(VIN_FP_TARGET, listing_id=LISTING_FP_TARGET, artifact_id=ARTIFACT_FP_DUP,
+                 source="detail", fetched_at=FP_DUP_BASE_FETCHED_AT, price=FP_DUP_BASE_PRICE),
+    ]
+
+
+def _listing_state_runs_base_rows() -> List[Dict[str, Any]]:
+    """Base-phase rows for int_listing_state_runs' real-build incremental test
+    (see build_listing_state_runs_incremental_rows below)."""
+    return [
+        # VIN_RUNS_A: fp_a (artifacts 600, 601) -> fp_b (artifact 602, open)
+        _obs_row(VIN_RUNS_A, listing_id=LISTING_RUNS_A, artifact_id=ARTIFACT_RUNS_1,
+                 source="detail", fetched_at=_ts(2026, 7, 26), price=30000),
+        _obs_row(VIN_RUNS_A, listing_id=LISTING_RUNS_A, artifact_id=ARTIFACT_RUNS_2,
+                 source="detail", fetched_at=_ts(2026, 7, 26, 6), price=30000),
+        _obs_row(VIN_RUNS_A, listing_id=LISTING_RUNS_A, artifact_id=ARTIFACT_RUNS_3,
+                 source="detail", fetched_at=_ts(2026, 7, 27), price=29000),
+        # VIN_RUNS_B: fp_m (610) -> fp_n (611) -> fp_m (612), three runs
+        _obs_row(VIN_RUNS_B, listing_id=LISTING_RUNS_B, artifact_id=ARTIFACT_RUNS_M1,
+                 source="detail", fetched_at=_ts(2026, 7, 26), price=40000),
+        _obs_row(VIN_RUNS_B, listing_id=LISTING_RUNS_B, artifact_id=ARTIFACT_RUNS_M2,
+                 source="detail", fetched_at=_ts(2026, 7, 26, 6), price=41000),
+        _obs_row(VIN_RUNS_B, listing_id=LISTING_RUNS_B, artifact_id=ARTIFACT_RUNS_M3,
+                 source="detail", fetched_at=_ts(2026, 7, 27), price=40000),
+        # VIN_RUNS_STABLE: single open run, never touched by phase 2
+        _obs_row(VIN_RUNS_STABLE, listing_id=LISTING_RUNS_STABLE, artifact_id=ARTIFACT_RUNS_STABLE,
+                 source="detail", fetched_at=_ts(2026, 7, 26), price=20000),
+    ]
+
+
 def build_silver_rows() -> List[Dict[str, Any]]:
     """All silver_observations fixture rows (dbt-equivalence + selector/cohort)."""
-    return _dbt_equivalence_rows() + _selector_scenario_rows()
+    return (
+        _dbt_equivalence_rows()
+        + _selector_scenario_rows()
+        + _observation_fingerprint_rows()
+        + _detail_fingerprint_incremental_base_rows()
+        + _listing_state_runs_base_rows()
+    )
+
+
+def build_observation_fingerprint_incremental_rows() -> List[Dict[str, Any]]:
+    """Plan 123 Phase 2b incremental-phase rows, seeded only via
+    seed(phase="observation_fingerprint_incremental") after the base phase has
+    already been built once. Exercises int_listing_observation_fingerprints'
+    late-arrival lookback and observation_id replace-on-correction behavior on
+    a subsequent (non-full-refresh) dbt build:
+
+      * a late-arriving SRP artifact, never seen in the base phase, whose
+        fetched_at falls inside the model's default 3-day lookback window
+        relative to the base phase's global max fetched_at (2026-07-28, from
+        VIN_FRESH's second row in _selector_scenario_rows) — it must appear
+        after the incremental rebuild;
+      * a newer fetch of ARTIFACT_SRP_MULTI/LISTING_SRP_MULTI_A (base phase
+        price 20000) with a later fetched_at inside the lookback window and a
+        different price — the model must replace the existing target row for
+        that observation_id, not duplicate it. This is fetched_at-desc
+        ordering doing the work: a real re-scrape with a new observation time;
+      * a true reprocessing correction of ARTIFACT_OBSFP_CORRECTION/
+        LISTING_OBSFP_CORRECTION: the SAME fetched_at as the base-phase row
+        (OBSFP_CORRECTION_FETCHED_AT), re-landed here with a different price.
+        Because fetched_at ties, only the written_at tiebreaker (this row's
+        written_at is naturally later — see _seed_silver — since it's seeded
+        after the base phase) picks the corrected row over the original.
+    """
+    return [
+        _obs_row(VIN_OBSFP_LATE_ARRIVAL, listing_id=LISTING_OBSFP_LATE_ARRIVAL,
+                 artifact_id=ARTIFACT_OBSFP_LATE_ARRIVAL, source="srp",
+                 fetched_at=_ts(2026, 7, 26), price=22000),
+        _obs_row(VIN_SRP_MULTI_A, listing_id=LISTING_SRP_MULTI_A, artifact_id=ARTIFACT_SRP_MULTI,
+                 source="srp", fetched_at=_ts(2026, 7, 27), price=OBSFP_CORRECTED_PRICE),
+        _obs_row(VIN_OBSFP_CORRECTION, listing_id=LISTING_OBSFP_CORRECTION,
+                 artifact_id=ARTIFACT_OBSFP_CORRECTION, source="srp",
+                 fetched_at=OBSFP_CORRECTION_FETCHED_AT, price=OBSFP_CORRECTION_FIXED_PRICE),
+    ]
 
 
 # Back-compat alias for the dbt-equivalence test, which imports the row builder
 # by its original name.
 def build_scenario_rows() -> List[Dict[str, Any]]:
     return build_silver_rows()
+
+
+def build_detail_fingerprint_incremental_rows() -> List[Dict[str, Any]]:
+    """Phase-2 rows for int_listing_state_fingerprints, seeded via
+    seed(phase="detail_fingerprint_incremental") after the base phase has
+    already been built once:
+
+      * ARTIFACT_FP_LATE — never seen in the base phase, fetched_at inside
+        the lookback window relative to the base phase's max fetched_at
+        (2026-07-26, from ARTIFACT_FP_ANCHOR) — must appear after the
+        incremental rebuild.
+      * ARTIFACT_FP_DUP — a correction of the base-phase row, republished
+        here with a later fetched_at and a different price. Since this
+        model's row_number() dedupe has no written_at tiebreaker (only
+        fetched_at desc, parsed_fingerprint), the corrected row must have a
+        strictly later fetched_at than the original to win deterministically.
+      * ARTIFACT_FP_RETRY — appears twice in this SAME phase-2 batch (an
+        ingestion-retry shape), proving the model's row_number() dedupe
+        collapses same-batch duplicates to the latest fetched_at, not just
+        duplicates against the existing target row.
+    """
+    return [
+        _obs_row(VIN_FP_TARGET, listing_id=LISTING_FP_TARGET, artifact_id=ARTIFACT_FP_LATE,
+                 source="detail", fetched_at=FP_LATE_FETCHED_AT, price=23000),
+        _obs_row(VIN_FP_TARGET, listing_id=LISTING_FP_TARGET, artifact_id=ARTIFACT_FP_DUP,
+                 source="detail", fetched_at=FP_DUP_CORRECTED_FETCHED_AT,
+                 price=FP_DUP_CORRECTED_PRICE),
+        _obs_row(VIN_FP_TARGET, listing_id=LISTING_FP_TARGET, artifact_id=ARTIFACT_FP_RETRY,
+                 source="detail", fetched_at=FP_RETRY_FETCHED_AT_EARLY, price=100),
+        _obs_row(VIN_FP_TARGET, listing_id=LISTING_FP_TARGET, artifact_id=ARTIFACT_FP_RETRY,
+                 source="detail", fetched_at=FP_RETRY_FETCHED_AT_LATE, price=FP_RETRY_LATE_PRICE),
+    ]
+
+
+def build_listing_state_runs_incremental_rows() -> List[Dict[str, Any]]:
+    """Phase-2 rows for int_listing_state_runs (and its upstream
+    int_listing_state_fingerprints), seeded via
+    seed(phase="listing_state_runs_incremental") after the base phase has
+    already been built once:
+
+      * ARTIFACT_RUNS_LATE_SPLIT (VIN_RUNS_A) — a late artifact landing
+        between the base phase's two fp_a artifacts with a distinct price/
+        fingerprint, splitting the original single fp_a run into
+        fp_a -> fp_c -> fp_a (three runs), leaving the open fp_b run
+        untouched (four runs total for this VIN).
+      * ARTIFACT_RUNS_M2 (VIN_RUNS_B) — a correction of the base phase's
+        middle (fp_n) artifact, republished with a later fetched_at and a
+        price matching fp_m — merges all three base-phase runs
+        (fp_m -> fp_n -> fp_m) into a single continuous open run.
+
+    VIN_RUNS_STABLE is intentionally never touched here, to prove unaffected
+    VINs are unchanged by this phase's incremental rebuild.
+    """
+    return [
+        _obs_row(VIN_RUNS_A, listing_id=LISTING_RUNS_A, artifact_id=ARTIFACT_RUNS_LATE_SPLIT,
+                 source="detail", fetched_at=_ts(2026, 7, 26, 3), price=31000),
+        _obs_row(VIN_RUNS_B, listing_id=LISTING_RUNS_B, artifact_id=ARTIFACT_RUNS_M2,
+                 source="detail", fetched_at=ARTIFACT_RUNS_M2_CORRECTED_FETCHED_AT, price=40000),
+    ]
+
+
+def build_price_history_incremental_rows() -> List[Dict[str, Any]]:
+    """Phase-2 price_observation_events rows for int_price_history, seeded via
+    seed(phase="price_history_incremental") after the base phase has already
+    been built once:
+
+      * PH_AFFECTED_LATE_EVENT — a late/corrected event landing chronologically
+        before PH_AFFECTED_NEW_EVENT but inside the lookback window, reordering
+        VIN_PH_AFFECTED's drop/increase sequence.
+      * PH_AFFECTED_NEW_EVENT — a brand new event inside the lookback window,
+        making VIN_PH_AFFECTED "affected" on this incremental run.
+
+    Both events force the model's affected-VIN replacement to reread
+    VIN_PH_AFFECTED's COMPLETE history (base phase's two events plus these
+    two), not just the new rows, to get price_drop_count/price_increase_count
+    right. VIN_PH_STABLE is never referenced here, to prove it is unaffected.
+    """
+    specs = [
+        (203, LISTING_PH_AFFECTED, VIN_PH_AFFECTED, 5001, 38000, PH_AFFECTED_LATE_EVENT),
+        (204, LISTING_PH_AFFECTED, VIN_PH_AFFECTED, 5002, 42000, PH_AFFECTED_NEW_EVENT),
+    ]
+    return [
+        dict(event_id=eid, listing_id=lid, vin=vin, artifact_id=aid, price=price,
+             make="Honda", model="Civic", event_type="upserted", source="detail",
+             event_at=event_at)
+        for (eid, lid, vin, aid, price, event_at) in specs
+    ]
 
 
 # ===========================================================================
@@ -333,6 +665,13 @@ def build_price_event_rows() -> List[Dict[str, Any]]:
         # L17: change on 7/10 -> within 30d but outside 7d
         (7, "L17", VIN_L17, 117, 8000, _ts(2026, 7, 1)),
         (8, "L17", VIN_L17, 117, 8500, _ts(2026, 7, 10)),
+        # int_price_history real-build incremental test (Plan 123 replacement
+        # for test_price_history_incremental.py): VIN_PH_AFFECTED's base-phase
+        # history, far outside any future lookback window, plus a stable
+        # control VIN never touched by the phase-2 seed.
+        (200, LISTING_PH_AFFECTED, VIN_PH_AFFECTED, 5000, 40000, PH_AFFECTED_EVENT_1),
+        (201, LISTING_PH_AFFECTED, VIN_PH_AFFECTED, 5000, 39000, PH_AFFECTED_EVENT_2),
+        (202, LISTING_PH_STABLE, VIN_PH_STABLE, 5003, 15000, PH_STABLE_EVENT),
     ]
     return [
         dict(event_id=eid, listing_id=lid, vin=vin, artifact_id=aid, price=price,
@@ -365,9 +704,19 @@ def build_cooldown_event_rows() -> List[Dict[str, Any]]:
 
 def _write_dataset(
     schema: pa.Schema, rows: List[Dict[str, Any]], prefix: str, partition_cols: List[str],
+    basename_prefix: str = "lake_snapshot_fixture",
 ) -> str:
     """Write rows as a hive-partitioned Parquet dataset, mirroring the
-    production flush (pq.write_to_dataset with the same partition_cols)."""
+    production flush (pq.write_to_dataset with the same partition_cols).
+
+    basename_prefix must be distinct per phase: pyarrow's `{i}` numbering in
+    basename_template restarts at 0 on every call, so two phases writing into
+    the same partition directory with the same prefix would silently
+    overwrite each other's file (existing_data_behavior="overwrite_or_ignore"
+    keeps pre-existing *differently-named* files but replaces same-named
+    ones). Distinct prefixes let a phase-2 seed add rows alongside phase-1's
+    without touching its files, exactly like separate production flush runs.
+    """
     table = pa.Table.from_pylist(rows, schema=schema)
     pq.write_to_dataset(
         table,
@@ -375,14 +724,13 @@ def _write_dataset(
         partition_cols=partition_cols,
         filesystem=get_s3fs(),
         existing_data_behavior="overwrite_or_ignore",
-        basename_template="lake_snapshot_fixture-{i}.parquet",
+        basename_template=f"{basename_prefix}-{{i}}.parquet",
     )
     return prefix
 
 
-def _seed_silver() -> str:
+def _seed_silver(rows: List[Dict[str, Any]], basename_prefix: str = "lake_snapshot_fixture") -> str:
     now = datetime.now(timezone.utc)
-    rows = build_silver_rows()
     for row in rows:
         # Force every row into the reserved partition (like the fixed 2099
         # location before). obs_day stays an in-file column, as in production.
@@ -393,14 +741,20 @@ def _seed_silver() -> str:
         row.setdefault("written_at", now)
     return _write_dataset(
         _SILVER_SCHEMA, rows, "silver_normalized/observations", _SILVER_PARTITION_COLS,
+        basename_prefix=basename_prefix,
     )
 
 
-def _seed_ops_table(schema: pa.Schema, rows: List[Dict[str, Any]], prefix: str) -> str:
+def _seed_ops_table(
+    schema: pa.Schema, rows: List[Dict[str, Any]], prefix: str,
+    basename_prefix: str = "lake_snapshot_fixture",
+) -> str:
     for row in rows:
         row["year"] = _RESERVED_YEAR
         row["month"] = _RESERVED_MONTH
-    return _write_dataset(schema, rows, prefix, _OPS_PARTITION_COLS)
+    return _write_dataset(
+        schema, rows, prefix, _OPS_PARTITION_COLS, basename_prefix=basename_prefix,
+    )
 
 
 def _seed_ops() -> List[str]:
@@ -420,15 +774,75 @@ def _seed_ops() -> List[str]:
     ]
 
 
-def seed() -> List[str]:
-    """Upload all fixture data across the four source tables. Returns the keys."""
+# Phases: "base" is the original single-shot fixture (silver + all three ops
+# tables), seeded once by the CI `dbt` job before the real `dbt build`.
+# The remaining phases are each a second wave for one real-build incremental
+# test, seeded only after the base phase has already been built once, and
+# written under distinct filenames so they land alongside (not over) the base
+# phase's (and each other's) files:
+#   * "observation_fingerprint_incremental" — Plan 123 Phase 2b,
+#     int_listing_observation_fingerprints (silver-only).
+#   * "detail_fingerprint_incremental" — int_listing_state_fingerprints
+#     (silver-only).
+#   * "price_history_incremental" — int_price_history (ops price events only).
+#   * "listing_state_runs_incremental" — int_listing_state_runs, via new
+#     silver rows that also feed its upstream int_listing_state_fingerprints
+#     (silver-only).
+PHASES = (
+    "base",
+    "observation_fingerprint_incremental",
+    "detail_fingerprint_incremental",
+    "price_history_incremental",
+    "listing_state_runs_incremental",
+)
+
+
+def seed(phase: str = "base") -> List[str]:
+    """Upload fixture data for the given phase. Returns the written keys."""
+    if phase not in PHASES:
+        raise ValueError(f"unknown phase {phase!r}; expected one of {PHASES}")
     ensure_bucket()
-    return [_seed_silver()] + _seed_ops()
+    if phase == "base":
+        return [_seed_silver(build_silver_rows())] + _seed_ops()
+    if phase == "observation_fingerprint_incremental":
+        return [
+            _seed_silver(
+                build_observation_fingerprint_incremental_rows(),
+                basename_prefix="lake_snapshot_fixture_obsfp_incremental",
+            )
+        ]
+    if phase == "detail_fingerprint_incremental":
+        return [
+            _seed_silver(
+                build_detail_fingerprint_incremental_rows(),
+                basename_prefix="lake_snapshot_fixture_fp_incremental",
+            )
+        ]
+    if phase == "price_history_incremental":
+        return [
+            _seed_ops_table(
+                _PRICE_SCHEMA, build_price_history_incremental_rows(),
+                "ops_normalized/price_observation_events",
+                basename_prefix="lake_snapshot_fixture_ph_incremental",
+            )
+        ]
+    return [
+        _seed_silver(
+            build_listing_state_runs_incremental_rows(),
+            basename_prefix="lake_snapshot_fixture_runs_incremental",
+        )
+    ]
 
 
 def main() -> None:
-    for key in seed():
-        print(f"Uploaded s3://{BUCKET}/{key}")
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--phase", choices=PHASES, default="base")
+    args = parser.parse_args()
+
+    for key in seed(phase=args.phase):
+        print(f"Uploaded s3://{BUCKET}/{key} (phase={args.phase})")
 
 
 if __name__ == "__main__":

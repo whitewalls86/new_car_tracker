@@ -12,6 +12,7 @@ select
     source,
     listing_state,
     fetched_at,
+    written_at,
     vin,
     case
         when vin is not null
@@ -42,5 +43,7 @@ select
     page_number,
     position_on_page,
     trid,
-    isa_context
+    isa_context,
+    body,
+    condition
 from {{ source('silver', 'observations') }}
