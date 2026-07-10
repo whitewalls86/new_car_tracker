@@ -73,9 +73,10 @@ models:
           row for this make/model or when national_median_price is zero.
       - name: listing_days_on_market
         description: >
-          Days from first_seen_at to as_of_at. Computed in this model rather than taken
-          from int_price_history.days_on_market, which uses wall-clock time and would
-          break backtest reproducibility.
+          Days from first_seen_at to as_of_at. Computed here from as_of_at rather than
+          wall-clock now() (int_price_history no longer exposes a days_on_market column
+          at all, as of Plan 123 Phase 3 — see mart_vehicle_snapshot for the hourly,
+          now()-based equivalent), so this stays reproducible for backtests.
       - name: dealer_avg_run_length_hours
         description: Mean run duration in hours across all completed runs at this dealer (customer_id).
       - name: dealer_median_run_length_hours

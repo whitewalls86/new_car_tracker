@@ -191,8 +191,10 @@ select
     end                                             as price_vs_make_model_median,
 
     -- Market / DOM signals
-    -- Computed from first_seen_at to as_of_at (not int_price_history.days_on_market,
-    -- which uses wall-clock time and would break backtest reproducibility).
+    -- Computed from first_seen_at to as_of_at rather than wall-clock now()
+    -- (int_price_history no longer exposes a days_on_market column at all,
+    -- as of Plan 123 Phase 3 — see mart_vehicle_snapshot for the hourly,
+    -- now()-based equivalent), so this stays reproducible for backtests.
     datediff('day', vs.first_seen_at, ao.ts)        as listing_days_on_market,
     ds.dealer_avg_run_length_hours,
     ds.dealer_median_run_length_hours,

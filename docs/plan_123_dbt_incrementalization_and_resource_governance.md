@@ -564,16 +564,36 @@ Phase 2's `int_listing_state_fingerprints` incremental conversion.
 
 #### Still needs VM verification (Phases 3 and 4)
 
-- [ ] Run `dbt build --select tag:hourly_core` (covers `int_price_history` and
-      its `mart_vehicle_snapshot`/`mart_deal_scores` dependents) and confirm
-      success with the new incremental config.
+**First deploy must start with a one-time full-refresh, not a normal
+incremental run.** The existing production `int_price_history` table was
+built as a plain `materialized='table'` model with a `days_on_market` column
+that this change removes; the existing `int_listing_state_runs` table
+likewise predates its new incremental config. If the first post-deploy build
+runs a normal (non-full-refresh) `dbt build`, dbt will attempt an incremental
+`delete+insert` against tables with the old schema/materialization history
+instead of rebuilding them under the new config — this is exactly the
+mistake Phase 2's rollout called out and avoided by rebuilding first. Deploy
+order:
+
+- [ ] One-time rebuild: run
+      `dbt build --select int_price_history int_listing_state_runs --full-refresh`
+      (or a full-graph `--full-refresh` if simpler operationally) and confirm
+      both models rebuild cleanly under the new incremental config, with
+      `int_price_history` no longer having a `days_on_market` column.
+- [ ] Only after that rebuild, run `dbt build --select tag:hourly_core`
+      (covers `int_price_history` and its `mart_vehicle_snapshot`/
+      `mart_deal_scores` dependents) as a normal incremental run and confirm
+      success.
 - [ ] Run `dbt build --selector feature_daily` (covers
       `int_listing_state_fingerprints`, `int_listing_state_runs`,
-      `int_listing_volatility_features`) and confirm success.
+      `int_listing_volatility_features`) as a normal incremental run and
+      confirm success.
 - [ ] Run each selector a second time immediately after and confirm no
       unexpected row-count drift (idempotency under real production data).
-- [ ] Run `dbt build --full-refresh` (or the equivalent full-graph rebuild)
-      and confirm both models still fully rebuild correctly.
+- [ ] Run `dbt build --full-refresh` again (or the equivalent full-graph
+      rebuild) later and confirm both models still fully rebuild correctly —
+      this is the ongoing full-refresh recovery path, not just the one-time
+      migration step above.
 - [ ] Check grain/uniqueness on the real tables:
       `select count(*), count(distinct vin) from int_price_history;` and
       confirm `int_listing_state_runs` still has multiple rows per `vin17`
