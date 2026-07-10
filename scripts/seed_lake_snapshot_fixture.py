@@ -222,11 +222,13 @@ OBSFP_CORRECTION_FIXED_PRICE = 23500
 # int_listing_state_runs (see tests/integration/dbt/test_incremental_models_real_build.py) ---
 
 # int_listing_state_fingerprints ("detail_fingerprint_incremental" phase).
-# ARTIFACT_FP_ANCHOR sets a clean, controlled global max(fetched_at) for the
-# model's detail/vin17-filtered source rows (2026-07-26), so the phase-2
-# lookback window (3 days back from whatever the incremental run's watermark
-# becomes) is easy to reason about independent of the other scenario VINs
-# above, which top out at 2026-07-03.
+# ARTIFACT_FP_ANCHOR fetches at 2026-07-26, close to the other detail/vin17
+# scenario rows added below for int_listing_state_runs (2026-07-26 to
+# 2026-07-27) — all clustered together so the shared 3-day lookback window
+# comfortably covers every phase-2 addition regardless of which of these
+# base rows ends up the actual global max(fetched_at). (Rows added for other
+# scenarios earlier in this file, e.g. the dbt-equivalence VINs, top out at
+# 2026-07-03 and are unrelated to this cluster.)
 VIN_FP_TARGET = _vin17("FPTARGT")
 LISTING_FP_TARGET = "L50"
 ARTIFACT_FP_ANCHOR = 500

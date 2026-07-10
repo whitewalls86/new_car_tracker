@@ -268,9 +268,11 @@ def test_listing_state_runs_incremental_real_build_scenario():
     # --- incremental output equals a full-refresh over the same final data ---
     incremental_a = sorted(runs_a)
     incremental_b = sorted(runs_b)
+    incremental_stable = sorted(runs_stable_before)
     _run_dbt(
         "build", "--select", "int_listing_state_fingerprints", "int_listing_state_runs",
         "--full-refresh",
     )
     assert sorted(_runs_rows(fx.VIN_RUNS_A)) == incremental_a
     assert sorted(_runs_rows(fx.VIN_RUNS_B)) == incremental_b
+    assert sorted(_runs_rows(fx.VIN_RUNS_STABLE)) == incremental_stable
