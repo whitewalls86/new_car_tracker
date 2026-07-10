@@ -6,6 +6,13 @@ models:
       Aggregated price trajectory per VIN, built from stg_price_events.
       One row per VIN. All aggregate columns are non-null because stg_price_events
       guarantees price > 0 and vin is not null, so every group has at least one row.
+      Incremental (Plan 123 Phase 3): affected-VIN replacement, unique_key='vin'.
+      On an incremental run, only VINs with a price event inside
+      price_history_incremental_lookback_days of the target's max(last_seen_at)
+      are rescanned, but their COMPLETE price history is reread and every
+      aggregate recomputed, since LAG()-derived counts depend on the full event
+      order. Does not expose days_on_market — see the model SQL for why (it moved
+      downstream to mart_vehicle_snapshot to avoid a stale time-relative value).
     config:
       tags: ["hourly_core"]
     columns:
@@ -41,8 +48,5 @@ models:
         data_tests:
           - not_null
       - name: last_seen_at
-        data_tests:
-          - not_null
-      - name: days_on_market
         data_tests:
           - not_null

@@ -71,7 +71,10 @@ select
     -- Time on market
     ph.first_seen_at,
     ph.last_seen_at,
-    ph.days_on_market
+    -- Computed here (not in int_price_history) so it stays fresh every hourly
+    -- rebuild even for VINs int_price_history's Plan 123 Phase 3 incremental
+    -- logic didn't reprocess this run.
+    datediff('day', ph.first_seen_at, {{ now_ts() }}) as days_on_market
 
 from {{ ref('int_latest_observation') }} obs
 left join {{ ref('int_price_history') }} ph

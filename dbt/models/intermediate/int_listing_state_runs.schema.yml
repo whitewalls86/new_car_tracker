@@ -9,6 +9,11 @@ models:
       hash) always opens a new run.
       hours_until_change and next_state_started_at are NULL for the open (most recent) run
       per VIN — this is the label target for Plan 112.
+      Incremental (Plan 123 Phase 4): affected-VIN replacement, unique_key='vin17'.
+      vin17 is an ENTITY REPLACEMENT KEY here, not a row-unique key — do not add
+      a `unique` data test on vin17, since multiple runs per VIN are expected by
+      design. On an incremental run, all runs for a changed vin17 are deleted and
+      recomputed from that VIN's complete fingerprint history.
     config:
       tags: ["feature_daily", "backtest"]
     columns:

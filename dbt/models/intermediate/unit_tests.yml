@@ -81,6 +81,9 @@ unit_tests:
       Five price events: 100 -> 120 -> 90 -> 90 -> 110.
       Drops: 120->90 (1). Increases: 100->120, 90->110 (2). Flat: 90->90 (ignored).
     model: int_price_history
+    overrides:
+      macros:
+        is_incremental: false
     given:
       - input: ref('stg_price_events')
         rows:
@@ -98,6 +101,9 @@ unit_tests:
   - name: test_single_observation_no_drops_or_increases
     description: "A single price event produces 0 drops and 0 increases"
     model: int_price_history
+    overrides:
+      macros:
+        is_incremental: false
     given:
       - input: ref('stg_price_events')
         rows:
@@ -111,6 +117,9 @@ unit_tests:
   - name: test_monotonic_drops
     description: "Three consecutive price drops: 50000 -> 45000 -> 40000"
     model: int_price_history
+    overrides:
+      macros:
+        is_incremental: false
     given:
       - input: ref('stg_price_events')
         rows:
@@ -125,6 +134,9 @@ unit_tests:
   - name: test_multiple_vins_independent
     description: "Price history is computed independently per VIN"
     model: int_price_history
+    overrides:
+      macros:
+        is_incremental: false
     given:
       - input: ref('stg_price_events')
         rows:
@@ -289,6 +301,9 @@ unit_tests:
   - name: test_runs_collapses_identical_fingerprints
     description: "Three detail rows with same fingerprint collapse to one run with artifact_count=3"
     model: int_listing_state_runs
+    overrides:
+      macros:
+        is_incremental: false
     given:
       - input: ref('int_listing_state_fingerprints')
         rows:
@@ -310,6 +325,9 @@ unit_tests:
   - name: test_runs_splits_on_price_or_state_change
     description: "Two rows with different fingerprints (simulating a price change) produce two runs"
     model: int_listing_state_runs
+    overrides:
+      macros:
+        is_incremental: false
     given:
       - input: ref('int_listing_state_fingerprints')
         rows:
@@ -329,6 +347,9 @@ unit_tests:
   - name: test_runs_relisting_new_listing_id_opens_new_run
     description: "Same VIN with a new listing_id (different fingerprint) opens a new run"
     model: int_listing_state_runs
+    overrides:
+      macros:
+        is_incremental: false
     given:
       - input: ref('int_listing_state_fingerprints')
         rows:
@@ -351,6 +372,9 @@ unit_tests:
       The third run is open (hours_until_change IS NULL). The second run's hours_until_change
       equals the gap between run 2 end and run 3 start.
     model: int_listing_state_runs
+    overrides:
+      macros:
+        is_incremental: false
     given:
       - input: ref('int_listing_state_fingerprints')
         rows:
@@ -433,7 +457,7 @@ unit_tests:
           - {vin: "VIN1", price: 28000, event_at: "2026-01-28 00:00:00+00"}
       - input: ref('int_price_history')
         rows:
-          - {vin: "VIN1", current_price: 30000, days_on_market: 16,
+          - {vin: "VIN1", current_price: 30000,
              price_drop_count: 0, price_increase_count: 0,
              first_price: 30000, min_price: 30000, max_price: 30000,
              total_price_observations: 1}
@@ -515,7 +539,7 @@ unit_tests:
           - {vin: "VIN2", price: 32000, event_at: "2026-02-05 00:00:00+00"}
       - input: ref('int_price_history')
         rows:
-          - {vin: "VIN2", current_price: 30000, days_on_market: 29,
+          - {vin: "VIN2", current_price: 30000,
              price_drop_count: 0, price_increase_count: 2,
              first_price: 28000, min_price: 28000, max_price: 30000,
              total_price_observations: 3}
