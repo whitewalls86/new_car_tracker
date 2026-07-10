@@ -377,6 +377,10 @@ and `int_listing_state_runs` are left as full-table builds for Phases 3 and 4.
       existing `pytest tests/integration/dbt/ -v -m integration` step in the
       `dbt` job; no CI workflow changes were needed.
 
+      **Superseded (2026-07-10):** this throwaway-project test was deleted and
+      its coverage ported to the shared-fixture pattern — see "Shadow test
+      removal" below.
+
 Still needs VM verification before this is considered fully rolled out:
 
 - [ ] Run `feature_daily` once normally
@@ -505,6 +509,52 @@ actively being developed, but should be treated as temporary scaffolding: once
 the phased shared-fixture mechanism proves itself further, revisit those
 three and either demote them to a small smoke set or delete the parts fully
 covered by the phased fixture.
+
+**Shadow test removal (2026-07-10, follow-up commit):** the three throwaway
+dbt-duckdb shadow-project tests flagged above as temporary scaffolding —
+`test_fingerprints_incremental.py`, `test_price_history_incremental.py`,
+`test_listing_state_runs_incremental.py` — were deleted and their coverage
+ported to the same phased shared-fixture pattern
+`test_observation_fingerprints_real_build.py` established. Two changes made
+this possible:
+
+- `scripts/seed_lake_snapshot_fixture.py` gained three more phases, each a
+  second wave of rows seeded only after the base phase has already been
+  built once, written under distinct filenames so they land alongside (not
+  over) the base phase's and each other's files:
+  - `detail_fingerprint_incremental` — silver rows for
+    `int_listing_state_fingerprints`: a late-arriving artifact
+    (`ARTIFACT_FP_LATE`), a correction with a later `fetched_at`
+    (`ARTIFACT_FP_DUP`), and a same-batch duplicate artifact_id
+    (`ARTIFACT_FP_RETRY`).
+  - `price_history_incremental` — price-event rows for `int_price_history`:
+    a late event and a new event for `VIN_PH_AFFECTED`, both inside the
+    lookback window, proving the affected-VIN replacement rereads that VIN's
+    complete history; `VIN_PH_STABLE` is a never-touched control.
+  - `listing_state_runs_incremental` — silver rows for
+    `int_listing_state_runs` (via its upstream
+    `int_listing_state_fingerprints`): a late artifact splitting
+    `VIN_RUNS_A`'s single run into three, and a correction merging
+    `VIN_RUNS_B`'s three runs into one; `VIN_RUNS_STABLE` is a never-touched
+    control.
+- `tests/integration/dbt/test_incremental_models_real_build.py` added one
+  test function per model, following the same shape as
+  `test_observation_fingerprints_real_build.py`: assert on the base-phase
+  real materialized output, seed the phase-2 wave, rerun
+  `dbt build --select <model>` with no `--full-refresh` against the same
+  DuckDB file and assert the incremental behavior, rerun once more to confirm
+  idempotency, then `--full-refresh` and confirm equivalence. The
+  `int_listing_state_runs` test rebuilds both `int_listing_state_fingerprints`
+  and `int_listing_state_runs` together (`--select int_listing_state_fingerprints
+  int_listing_state_runs`), since runs depends on the fingerprints chain.
+
+The `days_on_market`-tracking coverage from the old `int_price_history` shadow
+test (a stub downstream model recomputing it from `first_seen_at` at
+query time, checked across separate dbt invocations with later as-of dates)
+was not ported: that behavior lives in the real `mart_vehicle_snapshot`, not
+in a fixture-only stand-in, so it's out of scope for this fixture. What was
+ported is the simpler, still-load-bearing assertion that
+`int_price_history` itself never re-exposes `days_on_market` as a column.
 
 Correction (2026-07-10, same day): review found the original phase-2 fixture's
 "corrected observation" scenario actually tested a *newer fetch* (a later
@@ -643,6 +693,13 @@ Implemented in `feature/plan-123-affected-vin-incrementals` alongside Phase 4.
       locally against `dbt-core==1.10.20`/`dbt-duckdb==1.10.1` (matching CI's
       pinned versions).
 
+      **Superseded (2026-07-10):** this throwaway-project test was deleted and
+      its coverage ported to the shared-fixture pattern (except the
+      downstream `days_on_market` stub model, which isn't needed against the
+      real project — `days_on_market`'s absence from `int_price_history` is
+      asserted directly via `information_schema.columns`) — see "Shadow test
+      removal" below.
+
 Still needs VM verification — see the combined Phase 3/4 verification list at
 the end of the Phase 4 section below.
 
@@ -734,6 +791,10 @@ Phase 2's `int_listing_state_fingerprints` incremental conversion.
       Phase 3 integration tests — this test's focus is the gaps-and-islands
       recompute logic itself. Verified locally against
       `dbt-core==1.10.20`/`dbt-duckdb==1.10.1`.
+
+      **Superseded (2026-07-10):** this throwaway-project test was deleted and
+      its coverage ported to the shared-fixture pattern — see "Shadow test
+      removal" below.
 
 #### Still needs VM verification (Phases 3 and 4)
 
