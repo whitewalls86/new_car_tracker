@@ -411,6 +411,76 @@ Tests:
 - drop/increase counts across the watermark boundary;
 - incremental/full-refresh equivalence.
 
+### Phase 3 progress (2026-07-09)
+
+Implemented in `feature/plan-123-affected-vin-incrementals` alongside Phase 4.
+
+- [x] `dbt/models/intermediate/int_price_history.sql` converted to
+      `materialized='incremental'`, `unique_key='vin'`,
+      `incremental_strategy='delete+insert'` — the same base strategy as
+      `int_listing_state_fingerprints` (Phase 2), for the same portability
+      reasons.
+- [x] Affected-VIN replacement: an `affected_vins` CTE selects distinct VINs
+      from `stg_price_events` with `event_at >= max(target.last_seen_at) -
+      price_history_incremental_lookback_days` (new var, default `3`). A
+      `history` CTE then rereads **all** `stg_price_events` rows for those
+      VINs (not just the rows inside the lookback window) before the
+      existing `LAG()`-based aggregation runs, so drop/increase counts and
+      all aggregates are recomputed from complete history — never from only
+      the new batch. First run and `--full-refresh` skip both filters and
+      scan the full source, matching prior full-table behavior.
+- [x] **days_on_market correction (option 1 from the plan)**: the old
+      `datediff('day', min(event_at), now())` was time-relative and would go
+      stale for VINs the affected-VIN logic stops reprocessing every run.
+      `int_price_history` no longer computes or exposes `days_on_market` at
+      all — only the stable, event-derived `first_seen_at`/`last_seen_at`
+      remain. `days_on_market` is now computed downstream in
+      `dbt/models/marts/mart_vehicle_snapshot.sql` as
+      `datediff('day', ph.first_seen_at, {{ now_ts() }})`. Since
+      `mart_vehicle_snapshot` is a plain `materialized='table'` model that
+      fully rebuilds on every `hourly_core` run regardless of which VINs
+      `int_price_history` touched, this keeps `days_on_market` fresh for
+      every VIN every hour. `int_price_history.schema.yml`'s
+      `not_null`/data-test on `days_on_market` was removed along with the
+      column. No other downstream model reads `int_price_history.days_on_market`
+      directly — `mart_deal_scores` only reads it via `mart_vehicle_snapshot`,
+      and `int_listing_volatility_features` already computed its own
+      `listing_days_on_market` from `first_seen_at` rather than using
+      `int_price_history.days_on_market`, so this correction did not need to
+      touch it.
+- [x] New var `price_history_incremental_lookback_days` (default `3`) added to
+      `dbt/dbt_project.yml`, matching the `fingerprint_incremental_lookback_days`
+      convention.
+- [x] The four existing `int_price_history` dbt unit tests in
+      `dbt/models/intermediate/unit_tests.yml` got an explicit
+      `overrides: macros: is_incremental: false`, matching the convention set
+      by the Phase 2 fingerprints unit tests (dbt's unit test framework does
+      not evaluate `is_incremental()` as true regardless, but the override
+      documents that intent explicitly). None of these tests assert on
+      `days_on_market`, so removing the column did not require test changes
+      beyond the override.
+- [x] Added `tests/integration/dbt/test_price_history_incremental.py`: a
+      throwaway dbt-duckdb project seeding a `stg_price_events` stand-in and
+      running the real model SQL through real `dbt seed`/`dbt run`
+      invocations. Covers: bootstrap, idempotent rerun, a new VIN appended
+      without disturbing existing rows, an additional event recomputing an
+      existing VIN's aggregates, a late event inserted between existing
+      events reordering the `LAG()`-derived drop/increase sequence, a
+      duplicate event preserving the pre-incremental model's behavior
+      (duplicates were never deduplicated), a VIN with an old event outside
+      the lookback plus a new event inside it proving drop/increase counts
+      are computed from complete history across the watermark boundary, and
+      `--full-refresh` equivalence. Also includes a dedicated stub downstream
+      model mirroring the real `mart_vehicle_snapshot` days_on_market fix, to
+      prove `days_on_market` keeps advancing correctly across separate dbt
+      invocations with later as-of dates, independent of whether
+      `int_price_history` reprocessed that VIN on a given run. Verified
+      locally against `dbt-core==1.10.20`/`dbt-duckdb==1.10.1` (matching CI's
+      pinned versions).
+
+Still needs VM verification — see the combined Phase 3/4 verification list at
+the end of the Phase 4 section below.
+
 ## Phase 4: Incremental Listing-State Runs
 
 Convert `int_listing_state_runs` only after fingerprints are stable.
@@ -434,6 +504,87 @@ Tests:
 - late event merges what were previously separate runs;
 - `next_state_started_at`, `hours_until_change`, and `is_open_run` remain correct;
 - incremental/full-refresh equivalence.
+
+### Phase 4 progress (2026-07-09)
+
+Implemented in `feature/plan-123-affected-vin-incrementals`, depending on
+Phase 2's `int_listing_state_fingerprints` incremental conversion.
+
+- [x] `dbt/models/intermediate/int_listing_state_runs.sql` converted to
+      `materialized='incremental'`, `unique_key='vin17'`,
+      `incremental_strategy='delete+insert'`. `vin17` here is an **entity
+      replacement key**, not a row-unique key — the model's grain is still
+      multiple runs per `vin17`. `delete+insert` deletes every existing
+      target row for each affected `vin17` and reinserts its complete
+      recomputed run history; no `unique` data test was added on `vin17`
+      (this is called out explicitly in both the model SQL and
+      `int_listing_state_runs.schema.yml`, since multiple runs per VIN are
+      expected by design).
+- [x] Affected-VIN replacement: an `affected_vins` CTE selects distinct
+      `vin17` from `int_listing_state_fingerprints` with `fetched_at >=
+      max(target.run_ended_at) - listing_state_runs_incremental_lookback_days`
+      (new var, default `3`). The `ordered` CTE (the original gaps-and-islands
+      `LAG()` step) then joins against `affected_vins` to pull that VIN's
+      **entire** fingerprint history — not just fingerprints inside the
+      lookback — so a late or corrected fingerprint anywhere in a VIN's
+      history triggers a full gaps-and-islands recompute for that VIN, which
+      is required to correctly split or merge runs. First run and
+      `--full-refresh` skip the filter and join, scanning the full
+      fingerprints table.
+- [x] The rest of the gaps-and-islands SQL (`flagged`, `numbered`,
+      `collapsed`, `with_lead`, final select) is unchanged from the original
+      full-table model — only the `ordered` CTE's source changed.
+- [x] New var `listing_state_runs_incremental_lookback_days` (default `3`)
+      added to `dbt/dbt_project.yml`.
+- [x] The four existing `int_listing_state_runs` dbt unit tests in
+      `dbt/models/intermediate/unit_tests.yml` got an explicit
+      `overrides: macros: is_incremental: false`, matching the Phase 2/3
+      convention.
+- [x] `int_listing_state_runs.schema.yml` documents the entity-replacement-key
+      semantics of `vin17` in the model description; no schema test changes
+      were needed since it already had no `unique` test on `vin17`.
+- [x] Added `tests/integration/dbt/test_listing_state_runs_incremental.py`: a
+      throwaway dbt-duckdb project seeding a `stg_observations` stand-in and
+      running the **real SQL for both** `int_listing_state_fingerprints` and
+      `int_listing_state_runs` through real `dbt seed`/`dbt run` invocations,
+      since Phase 4 explicitly depends on Phase 2's incremental fingerprints
+      chain rather than testing `int_listing_state_runs` in isolation.
+      Covers: bootstrap, idempotent rerun, an append with the same
+      fingerprint extending the open run, an append with a different
+      fingerprint opening a new run, a relisting (new `listing_id`) opening a
+      new run, a late fingerprint inside the lookback splitting a single run
+      into three, a correction to a different VIN's fingerprint merging three
+      runs back into one, `next_state_started_at`/`hours_until_change`/
+      `is_open_run` correctness throughout, and `--full-refresh` equivalence.
+      Uses generous lookback vars (`60` days) in its fixture project since
+      lookback-window edge cases are already covered by the Phase 2 and
+      Phase 3 integration tests — this test's focus is the gaps-and-islands
+      recompute logic itself. Verified locally against
+      `dbt-core==1.10.20`/`dbt-duckdb==1.10.1`.
+
+#### Still needs VM verification (Phases 3 and 4)
+
+- [ ] Run `dbt build --select tag:hourly_core` (covers `int_price_history` and
+      its `mart_vehicle_snapshot`/`mart_deal_scores` dependents) and confirm
+      success with the new incremental config.
+- [ ] Run `dbt build --selector feature_daily` (covers
+      `int_listing_state_fingerprints`, `int_listing_state_runs`,
+      `int_listing_volatility_features`) and confirm success.
+- [ ] Run each selector a second time immediately after and confirm no
+      unexpected row-count drift (idempotency under real production data).
+- [ ] Run `dbt build --full-refresh` (or the equivalent full-graph rebuild)
+      and confirm both models still fully rebuild correctly.
+- [ ] Check grain/uniqueness on the real tables:
+      `select count(*), count(distinct vin) from int_price_history;` and
+      confirm `int_listing_state_runs` still has multiple rows per `vin17`
+      as expected (no accidental collapse to one row per VIN).
+- [ ] Spot-check real `days_on_market` values in `mart_vehicle_snapshot` for a
+      few known-old listings against their `first_seen_at`, to confirm the
+      downstream computation is live in production and not still returning
+      stale values from a cached/old build.
+- [ ] Compare `int_price_history` and `int_listing_state_runs` runtime in
+      `run_results.json` against their previous full-table build times to
+      confirm steady-state scan volume is actually lower.
 
 ## Phase 5: Reassess Downstream Models
 

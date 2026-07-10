@@ -20,6 +20,16 @@ vars:
   # max(target.fetched_at) minus this many days, so late-arriving or corrected
   # detail artifacts inside the window are still picked up.
   fingerprint_incremental_lookback_days: 3
+  # Plan 123 Phase 3: late-arrival lookback for int_price_history's affected-VIN
+  # incremental scan. On an incremental run, a VIN is "affected" (and its
+  # complete price history reread/recomputed) if it has a price event at or
+  # after max(target.last_seen_at) minus this many days.
+  price_history_incremental_lookback_days: 3
+  # Plan 123 Phase 4: late-arrival lookback for int_listing_state_runs'
+  # affected-VIN incremental scan. On an incremental run, a vin17 is "affected"
+  # (and all its runs recomputed) if it has a fingerprint at or after
+  # max(target.run_ended_at) minus this many days.
+  listing_state_runs_incremental_lookback_days: 3
 
 models:
   cartracker:

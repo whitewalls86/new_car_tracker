@@ -1,5 +1,9 @@
 {{
-  config(materialized='table')
+  config(
+    materialized='incremental',
+    unique_key='vin',
+    incremental_strategy='delete+insert'
+  )
 }}
 
 -- Price history per VIN aggregated from the price observation event stream.
@@ -7,14 +11,61 @@
 --
 -- Replaces: int_price_events + int_price_history_by_vin + int_latest_price_by_vin
 --           + int_listing_days_on_market
+--
+-- Incremental strategy: affected-VIN replacement (Plan 123 Phase 3), same
+-- delete+insert base strategy as int_listing_state_fingerprints (Phase 2) —
+-- portable across the Postgres/Spark-family adapters this project may migrate
+-- onto later (Plan 118). Consecutive-price LAG() logic depends on the event
+-- immediately before the incremental boundary, so a VIN touched by any new,
+-- late, or corrected event inside the lookback window has its ENTIRE price
+-- history reread and every aggregate recomputed here — not just the new
+-- batch of events.
+--
+-- days_on_market is intentionally NOT computed in this model anymore. It used
+-- to be `datediff('day', min(event_at), now())`, which is time-relative: once
+-- this model stopped rebuilding every VIN on every run, an untouched VIN's row
+-- would freeze at whatever days_on_market it had at its last recomputation
+-- instead of advancing with real time. first_seen_at (stable, event-derived)
+-- is kept here; days_on_market is now computed downstream in
+-- mart_vehicle_snapshot — a full-table rebuild on every hourly_core run —
+-- from first_seen_at against now_ts() at query time, so it stays fresh every
+-- run regardless of which VINs this model reprocessed.
 
-with ordered as (
+with affected_vins as (
+
+    select distinct vin
+    from {{ ref('stg_price_events') }}
+
+    {% if is_incremental() %}
+    where event_at >= (
+        select coalesce(max(last_seen_at), timestamp '1900-01-01')
+               - interval '{{ var("price_history_incremental_lookback_days", 3) }}' day
+        from {{ this }}
+    )
+    {% endif %}
+
+),
+
+history as (
+
+    select
+        e.vin,
+        e.price,
+        e.event_at
+    from {{ ref('stg_price_events') }} e
+    {% if is_incremental() %}
+    inner join affected_vins av on av.vin = e.vin
+    {% endif %}
+
+),
+
+ordered as (
     select
         vin,
         price,
         event_at,
         lag(price) over (partition by vin order by event_at) as prev_price
-    from {{ ref('stg_price_events') }}
+    from history
 )
 
 select
@@ -30,7 +81,6 @@ select
     count(*) filter (where price < prev_price and prev_price is not null)     as price_drop_count,
     count(*) filter (where price > prev_price and prev_price is not null)     as price_increase_count,
     min(event_at)                                                             as first_seen_at,
-    max(event_at)                                                             as last_seen_at,
-    datediff('day', min(event_at), now())                                     as days_on_market
+    max(event_at)                                                             as last_seen_at
 from ordered
 group by vin
