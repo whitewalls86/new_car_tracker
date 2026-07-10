@@ -17,6 +17,7 @@ ENV PYTHONUNBUFFERED=1
 COPY dbt/ /usr/app/
 COPY dbt_runner/app.py /usr/app/app.py
 COPY shared/ /usr/app/shared/
+COPY scripts/report_dbt_run_results.py /usr/app/scripts/report_dbt_run_results.py
 
 # Install dbt packages (dbt_packages/ is gitignored so not in the COPY above)
 RUN dbt deps

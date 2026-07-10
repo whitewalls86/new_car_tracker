@@ -844,19 +844,116 @@ order:
 
 Profile the graph again after Phases 2-4.
 
-Decide with evidence whether to:
+### Current deployed status (2026-07-10)
 
-- add or replace `int_listing_state_runs` with all-source
-  `int_listing_observation_runs` over `artifact_id + listing_id` observation
-  fingerprints;
-- incrementally replace affected VINs in `int_latest_observation`;
-- incrementally replace affected make/model groups in `int_benchmarks`;
-- retain daily full-table builds for benchmarks and volatility features;
-- split time-relative feature computation from event-derived feature state;
-- move selected feature preparation directly into the later PySpark/Delta work.
+Phases 2b, 3, and 4 are implemented and merged to `master`
+(`feature/plan-123-affected-vin-incrementals`, PR #150). VM verification of
+those phases' checklists (Phase 2/2b, Phase 3/4) is still pending — see the
+"Still needs VM verification" items in each phase above. This means:
 
-Do not incrementalize a model merely because it is expensive. The update key
-must cover every way its output can change.
+- `int_listing_observation_fingerprints` exists at the all-source
+  `artifact_id + listing_id` grain (~37.8M rows locally verified, 0
+  duplicate `observation_id`, `detail`/`srp`/`carousel` all present), but has
+  **no downstream consumer yet** — nothing reads it. It sits alongside the
+  detail-only `int_listing_state_fingerprints`.
+- `int_price_history` is incrementalized by affected VIN.
+- `int_listing_state_runs` is incrementalized by affected VIN, but its input
+  is still the detail-only `int_listing_state_fingerprints`, not the
+  all-source observation fingerprints.
+- `int_listing_volatility_features` is unchanged: full-table, and still
+  consumes the detail-only state/run chain, so SRP/carousel refresh signals
+  are not yet visible to the ML feature trainer.
+- `int_latest_observation`, `int_benchmarks`, and `mart_vehicle_snapshot` are
+  unchanged full-table builds.
+- No production resource measurements exist yet. `docs/plan_123_dbt_resource_baseline.md`
+  is a template/checklist with no VM data filled in — Phase 5 decisions below
+  cannot be made until that report has at least one real measurement round
+  (see its "Phase 5 evidence checklist").
+
+### Do not incrementalize yet without evidence
+
+Do not incrementalize a model merely because it is expensive, and do not
+convert a model merely because a lower layer just became incremental. Every
+Phase 5 candidate needs both of the following before a conversion commit is
+opened, not just one:
+
+1. Runtime/resource evidence from `docs/plan_123_dbt_resource_baseline.md`
+   showing the model is actually a meaningful share of `hourly_core` or
+   `feature_daily` runtime (via `scripts/report_dbt_run_results.py`) or a
+   meaningful share of DuckDB file growth/scan volume.
+2. A concrete update key that covers every way the model's output can
+   change. A fast model with a clean update key is not worth converting yet
+   (low payoff); a slow model with an update key that can't cover all change
+   paths is not safe to convert regardless of payoff (see the
+   `int_benchmarks` and `int_listing_volatility_features` notes below).
+
+### Questions Phase 5 must answer
+
+- What is `hourly_core`'s and `feature_daily`'s actual production runtime and
+  per-model breakdown post-Phase-2b/3/4 (not pre-Phase-0 incident numbers)?
+- Which models dominate each selector's runtime and DuckDB scan volume now
+  that fingerprints, price history, and state runs are incremental?
+- Does `int_listing_observation_fingerprints`' all-source coverage
+  (`detail`/`srp`/`carousel` row counts) hold up in production the way it
+  does against the local lake-snapshot fixture?
+- Is the detail-only `int_listing_state_runs` path materially cheaper than a
+  hypothetical all-source `int_listing_observation_runs` would be, or is the
+  gap small enough that correctness (capturing SRP/carousel cadence signal)
+  should win regardless of the runtime delta?
+- For `int_latest_observation`: does "latest per VIN" have a clean
+  affected-VIN replacement key, and does source-priority/late-arrival logic
+  survive being scoped to only affected VINs, or does it require full
+  visibility across VINs to resolve priority correctly?
+- For `int_benchmarks`: a single changed VIN can shift a make/model
+  percentile for every other VIN in that group — does an affected
+  make/model-group replacement actually bound the recompute, or does it
+  still require scanning most of the table on any change (in which case
+  incrementalizing adds complexity without reducing scan volume)?
+- For `int_listing_volatility_features`: how much of its cost is
+  event-derived (would benefit from affected-VIN replacement) versus
+  time-relative (ages independent of new events, and can't be fixed by an
+  update key at all — see the `int_price_history` `days_on_market` fix in
+  Phase 3, which moved a time-relative field out of an incremental model
+  entirely rather than trying to incrementalize it)?
+- Which of the above, if any, is more appropriately deferred to Plan 118's
+  Spark/Delta migration rather than solved twice (once here in DuckDB, once
+  again in Spark)?
+
+### Candidate decisions
+
+a. **Add `int_listing_observation_runs` over all-source observation
+   fingerprints, or point `int_listing_state_runs` at them?** Not yet
+   decided. Requires: (1) resource evidence that the all-source grain's
+   gaps-and-islands recompute is affordable at `hourly_core`/`feature_daily`
+   scale, and (2) a semantic decision on whether SRP/carousel-driven "runs"
+   mean the same thing as detail-driven canonical-state runs, or whether they
+   need distinct modeling (e.g. a run boundary defined by price/visibility
+   change instead of full canonical state change).
+
+b. **Should `int_listing_volatility_features` consume all-source runs?**
+   Directionally yes per the Phase 2b "Downstream impact" note (SRP/carousel
+   refreshes should be visible to the ML trainer), but blocked on (a) landing
+   first, and on splitting out the time-relative feature components per the
+   question above so incrementalizing the event-derived parts doesn't produce
+   silently-stale time-relative ones.
+
+c. **Are `int_latest_observation` or `int_benchmarks` worth
+   incrementalizing?** Likely lower priority than (a)/(b) until resource
+   evidence says otherwise — both currently have no confirmed production
+   cost problem, and `int_benchmarks`' group-recompute fan-out (one VIN
+   changing many percentiles) needs a scoping analysis before assuming an
+   affected-group replacement actually reduces scan volume.
+
+d. **What should defer to Plan 118 Spark/Delta?** Any time-relative feature
+   computation that can't be fixed by an update key at all (see
+   `int_listing_volatility_features` above), and any modeling question whose
+   answer would change under a different execution engine's cost model
+   (e.g. whether affected-group replacement is worth the complexity is a
+   DuckDB-scan-cost question that may simply not apply once Spark/Delta
+   handles partition pruning natively). Do not build DuckDB-specific
+   incremental machinery for a model that Plan 118 is likely to reimplement
+   soon after — check the Plan 118 model list before starting (a)/(b)/(c)
+   implementation work.
 
 ## Phase 6: Recovery and Drift Controls
 
