@@ -19,6 +19,9 @@ models:
       var (default 3) to pick up late-arriving or corrected observations. A
       reappearing observation_id replaces its existing target row rather than
       duplicating it. First run and `--full-refresh` rebuild the complete table.
+      Note the rescan window is fetched_at-based: a reprocessing correction whose
+      fetched_at already fell outside the lookback window before the correction
+      landed is not picked up until the next `--full-refresh`.
     config:
       tags: ["feature_daily", "backtest"]
     columns:
@@ -27,7 +30,10 @@ models:
           md5(concat_ws('|', artifact_id, listing_id)) — durable row identity and
           incremental unique_key. A source batch with more than one row for the
           same artifact_id + listing_id is deduplicated to the row with the
-          latest fetched_at (see model SQL) before this constraint is checked.
+          latest fetched_at, then latest written_at, then parsed_fingerprint
+          (see model SQL) before this constraint is checked. written_at breaks
+          ties between rows sharing a fetched_at, e.g. a reprocessing correction
+          of an already-fetched artifact.
         data_tests:
           - not_null
           - unique

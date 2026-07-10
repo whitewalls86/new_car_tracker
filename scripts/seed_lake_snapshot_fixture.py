@@ -186,12 +186,26 @@ LISTING_CAROUSEL_MULTI_B = "L43"
 # Phase 2b incremental-run scenario (seeded separately via
 # seed(phase="observation_fingerprint_incremental"), never part of the base
 # phase): a late-arriving SRP artifact whose fetched_at falls inside the
-# model's lookback window, and a corrected observation replacing
-# ARTIFACT_SRP_MULTI/LISTING_SRP_MULTI_A's price.
+# model's lookback window, and a newer fetch of an existing listing (later
+# fetched_at) that supersedes it.
 VIN_OBSFP_LATE_ARRIVAL = _vin17("LATEARR")
 LISTING_OBSFP_LATE_ARRIVAL = "L44"
 ARTIFACT_OBSFP_LATE_ARRIVAL = 420
 OBSFP_CORRECTED_PRICE = 17500
+
+# A true reprocessing correction: same artifact_id/listing_id/fetched_at as
+# the base-phase row, but re-landed in phase 2 with a different price. Since
+# fetched_at is identical, only written_at (later here, because this row is
+# seeded after the base phase in wall-clock time — see _seed_silver's
+# row.setdefault("written_at", now)) distinguishes the corrected row from the
+# original, proving the model's written_at dedupe tiebreaker actually works,
+# not just its fetched_at-desc ordering.
+VIN_OBSFP_CORRECTION = _vin17("CORRECT")
+LISTING_OBSFP_CORRECTION = "L45"
+ARTIFACT_OBSFP_CORRECTION = 430
+OBSFP_CORRECTION_FETCHED_AT = _ts(2026, 7, 26)
+OBSFP_CORRECTION_ORIGINAL_PRICE = 23000
+OBSFP_CORRECTION_FIXED_PRICE = 23500
 
 # listing_id constants asserted on by the selector/cohort integration tests,
 # exported so seeding and assertions cannot drift apart.
@@ -351,6 +365,12 @@ def _observation_fingerprint_rows() -> List[Dict[str, Any]]:
                  fetched_at=_ts(2026, 7, 1), price=18000),
         _obs_row(None, listing_id=LISTING_CAROUSEL_MULTI_B, artifact_id=ARTIFACT_CAROUSEL_MULTI,
                  source="carousel", fetched_at=_ts(2026, 7, 1), price=19000),
+        # base row for the phase-2 true-correction scenario (see
+        # VIN_OBSFP_CORRECTION above) — same fetched_at as the phase-2 row,
+        # only written_at differs.
+        _obs_row(VIN_OBSFP_CORRECTION, listing_id=LISTING_OBSFP_CORRECTION,
+                 artifact_id=ARTIFACT_OBSFP_CORRECTION, source="srp",
+                 fetched_at=OBSFP_CORRECTION_FETCHED_AT, price=OBSFP_CORRECTION_ORIGINAL_PRICE),
     ]
 
 
@@ -371,10 +391,17 @@ def build_observation_fingerprint_incremental_rows() -> List[Dict[str, Any]]:
         relative to the base phase's global max fetched_at (2026-07-28, from
         VIN_FRESH's second row in _selector_scenario_rows) — it must appear
         after the incremental rebuild;
-      * a corrected observation for ARTIFACT_SRP_MULTI/LISTING_SRP_MULTI_A
-        (base phase price 20000) with a later fetched_at inside the lookback
-        window and a different price — the model must replace the existing
-        target row for that observation_id, not duplicate it.
+      * a newer fetch of ARTIFACT_SRP_MULTI/LISTING_SRP_MULTI_A (base phase
+        price 20000) with a later fetched_at inside the lookback window and a
+        different price — the model must replace the existing target row for
+        that observation_id, not duplicate it. This is fetched_at-desc
+        ordering doing the work: a real re-scrape with a new observation time;
+      * a true reprocessing correction of ARTIFACT_OBSFP_CORRECTION/
+        LISTING_OBSFP_CORRECTION: the SAME fetched_at as the base-phase row
+        (OBSFP_CORRECTION_FETCHED_AT), re-landed here with a different price.
+        Because fetched_at ties, only the written_at tiebreaker (this row's
+        written_at is naturally later — see _seed_silver — since it's seeded
+        after the base phase) picks the corrected row over the original.
     """
     return [
         _obs_row(VIN_OBSFP_LATE_ARRIVAL, listing_id=LISTING_OBSFP_LATE_ARRIVAL,
@@ -382,6 +409,9 @@ def build_observation_fingerprint_incremental_rows() -> List[Dict[str, Any]]:
                  fetched_at=_ts(2026, 7, 26), price=22000),
         _obs_row(VIN_SRP_MULTI_A, listing_id=LISTING_SRP_MULTI_A, artifact_id=ARTIFACT_SRP_MULTI,
                  source="srp", fetched_at=_ts(2026, 7, 27), price=OBSFP_CORRECTED_PRICE),
+        _obs_row(VIN_OBSFP_CORRECTION, listing_id=LISTING_OBSFP_CORRECTION,
+                 artifact_id=ARTIFACT_OBSFP_CORRECTION, source="srp",
+                 fetched_at=OBSFP_CORRECTION_FETCHED_AT, price=OBSFP_CORRECTION_FIXED_PRICE),
     ]
 
 

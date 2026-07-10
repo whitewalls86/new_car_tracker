@@ -372,6 +372,29 @@ unit_tests:
         - {artifact_id: 200, listing_id: "L3", price: 20000}
         - {artifact_id: 200, listing_id: "L4", price: 22000}
 
+  - name: test_observation_fingerprints_written_at_breaks_fetched_at_tie
+    description: >
+      Two rows share the same artifact_id, listing_id, and fetched_at (a
+      reprocessing correction re-landed with the same observation time) —
+      only written_at differs. The later written_at row must win, proving the
+      dedupe tiebreaker isn't just fetched_at-desc.
+    model: int_listing_observation_fingerprints
+    overrides:
+      macros:
+        is_incremental: false
+    given:
+      - input: ref('stg_observations')
+        rows:
+          - {artifact_id: 300, listing_id: "L5", vin17: null, source: "srp",
+             fetched_at: "2026-01-10 12:00:00+00", written_at: "2026-01-10 13:00:00+00",
+             price: 23000}
+          - {artifact_id: 300, listing_id: "L5", vin17: null, source: "srp",
+             fetched_at: "2026-01-10 12:00:00+00", written_at: "2026-01-11 09:00:00+00",
+             price: 23500}
+    expect:
+      rows:
+        - {artifact_id: 300, listing_id: "L5", price: 23500}
+
   # ---------------------------------------------------------------------------
   # int_listing_state_runs — gaps-and-islands logic
   # ---------------------------------------------------------------------------

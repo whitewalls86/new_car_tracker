@@ -506,6 +506,27 @@ the phased shared-fixture mechanism proves itself further, revisit those
 three and either demote them to a small smoke set or delete the parts fully
 covered by the phased fixture.
 
+Correction (2026-07-10, same day): review found the original phase-2 fixture's
+"corrected observation" scenario actually tested a *newer fetch* (a later
+`fetched_at` for the same artifact_id/listing_id superseding the old one), not
+a true reprocessing correction (same `fetched_at`, re-landed later). Since the
+model's dedupe only ordered by `fetched_at desc, parsed_fingerprint`, two rows
+sharing an identical `fetched_at` had no defined tiebreak. Fixed by surfacing
+`written_at` (already present in the silver source, not previously selected)
+through `stg_observations`, adding it as a `fetched_at desc, written_at desc`
+tiebreaker in the model's dedupe `row_number()` (excluded from
+`parsed_fingerprint` itself — it's processing metadata, not business state),
+and adding a dedicated fixture scenario
+(`ARTIFACT_OBSFP_CORRECTION`/`LISTING_OBSFP_CORRECTION`) plus a dbt unit test
+(`test_observation_fingerprints_written_at_breaks_fetched_at_tie`) that pins
+two same-`fetched_at` rows differing only in `written_at` and asserts the
+later one wins. Residual limitation, now documented on the model: the
+incremental rescan window itself is still `fetched_at`-based, so a correction
+whose `fetched_at` already fell outside the lookback window before the
+correction landed is invisible to incremental runs until the next
+`--full-refresh`. `int_listing_state_fingerprints` has the same
+`fetched_at`-only limitation and was not changed in this pass.
+
 VM verification of steady-state scan volume is still pending, same as the
 rest of Phase 2/2b.
 

@@ -29,12 +29,21 @@
 -- row_number()-based dedupe below is required to guarantee the unique_key
 -- actually holds after every run, exactly as in the detail-only model.
 --
+-- Dedupe order is fetched_at desc, then written_at desc, then parsed_fingerprint.
+-- written_at (silver write time) breaks ties when two rows for the same
+-- observation_id share a fetched_at — e.g. a reprocessing correction of an
+-- already-fetched artifact, which lands with the same fetched_at as the
+-- original but a later written_at. written_at is intentionally excluded from
+-- parsed_fingerprint itself: it's processing metadata, not business state.
+--
 -- On an incremental run, only source rows at or after
 -- max(target.fetched_at) minus listing_observation_fingerprint_lookback_days are
 -- rescanned, to pick up late-arriving or corrected observations without
 -- rescanning the full table. A first run (or --full-refresh) has no target to
 -- watermark from, so it scans the full source, matching the non-incremental
--- behavior exactly.
+-- behavior exactly. Note this window is fetched_at-based: a reprocessing
+-- correction whose fetched_at already fell outside the lookback window before
+-- the correction landed will not be picked up until the next --full-refresh.
 
 with source_rows as (
 
@@ -65,6 +74,7 @@ fingerprinted as (
         vin17,
         source,
         fetched_at,
+        written_at,
         md5(concat_ws('|',
             coalesce(listing_id,                       ''),
             coalesce(vin17,                            ''),
@@ -101,7 +111,7 @@ fingerprinted as (
         listing_state,
         row_number() over (
             partition by artifact_id, listing_id
-            order by fetched_at desc, parsed_fingerprint
+            order by fetched_at desc, written_at desc, parsed_fingerprint
         )                               as observation_row_number
 
     from source_rows

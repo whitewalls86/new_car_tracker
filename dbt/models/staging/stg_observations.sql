@@ -12,6 +12,7 @@ select
     source,
     listing_state,
     fetched_at,
+    written_at,
     vin,
     case
         when vin is not null

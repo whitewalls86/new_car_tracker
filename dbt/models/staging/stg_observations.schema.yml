@@ -25,3 +25,9 @@ models:
         description: Carousel-only body-style text, distinct from the detail/SRP body_style field.
       - name: condition
         description: Carousel-only vehicle condition (e.g. new/used) text.
+      - name: written_at
+        description: >
+          Timestamp the row was written to silver — distinct from fetched_at
+          (when the listing was observed). Used by int_listing_observation_fingerprints
+          to break ties between rows that share a fetched_at (e.g. a reprocessing
+          correction of an already-fetched artifact).

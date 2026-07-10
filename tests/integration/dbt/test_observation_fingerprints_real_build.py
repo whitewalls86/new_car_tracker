@@ -14,10 +14,13 @@ The second half seeds the fixture's
 "observation_fingerprint_incremental" phase — silver-only rows written
 alongside (not over) the base phase's files — and reruns `dbt build --select
 int_listing_observation_fingerprints` against the SAME DuckDB file with no
-`--full-refresh`, so the model's real incremental logic (late-arrival
-lookback, observation_id replace-on-correction) runs for real against the
-combined base+phase-2 data. A final `--full-refresh` rebuild proves the
-incremental result matches a from-scratch build over the same final data.
+`--full-refresh`, so the model's real incremental logic runs for real against
+the combined base+phase-2 data: a late-arrival inside the lookback window, a
+newer fetch (later fetched_at) superseding an existing row, and a true
+reprocessing correction (same fetched_at as the original, only written_at
+differs — proving the written_at dedupe tiebreaker, not just fetched_at-desc
+ordering). A final `--full-refresh` rebuild proves the incremental result
+matches a from-scratch build over the same final data.
 
 This intentionally does not build its own dbt project, CSV seed, or model
 copy: a prior throwaway-project version of this test (see git history) worked
@@ -111,6 +114,10 @@ def test_observation_fingerprints_real_build_scenario():
         "SRP/carousel multi-listing artifacts must not collide on observation_id"
     )
 
+    assert by_key[(fx.ARTIFACT_OBSFP_CORRECTION, fx.LISTING_OBSFP_CORRECTION)][5] == (
+        fx.OBSFP_CORRECTION_ORIGINAL_PRICE
+    ), "sanity check: the pre-correction base-phase price must be the original one"
+
     # --- incremental phase: seed phase 2, rerun dbt build with no --full-refresh ---
     fx.seed(phase="observation_fingerprint_incremental")
     _run_dbt("build", "--select", "int_listing_observation_fingerprints")
@@ -122,17 +129,27 @@ def test_observation_fingerprints_real_build_scenario():
         "a late-arriving artifact inside the lookback window must appear after the "
         "incremental rebuild"
     )
-    corrected_price = by_key2[(fx.ARTIFACT_SRP_MULTI, fx.LISTING_SRP_MULTI_A)][5]
-    assert corrected_price == fx.OBSFP_CORRECTED_PRICE, (
-        "a corrected observation must replace the existing target row, not add a second one"
+    superseded_price = by_key2[(fx.ARTIFACT_SRP_MULTI, fx.LISTING_SRP_MULTI_A)][5]
+    assert superseded_price == fx.OBSFP_CORRECTED_PRICE, (
+        "a newer fetch (later fetched_at) of the same listing must replace the "
+        "existing target row, not add a second one"
     )
     assert by_key2[(fx.ARTIFACT_SRP_MULTI, fx.LISTING_SRP_MULTI_B)][5] == 21000, (
         "an unrelated base-phase row must be unaffected by the incremental rebuild"
     )
 
+    # true reprocessing correction: same fetched_at as the base-phase row, only
+    # written_at differs — proves the written_at dedupe tiebreaker, not just
+    # fetched_at-desc ordering.
+    corrected_price = by_key2[(fx.ARTIFACT_OBSFP_CORRECTION, fx.LISTING_OBSFP_CORRECTION)][5]
+    assert corrected_price == fx.OBSFP_CORRECTION_FIXED_PRICE, (
+        "a same-fetched_at reprocessing correction must win via the written_at "
+        "tiebreaker, replacing the existing target row rather than duplicating it"
+    )
+
     observation_ids_2 = [r[0] for r in rows2]
     assert len(observation_ids_2) == len(set(observation_ids_2)), (
-        "the corrected observation must not duplicate its observation_id"
+        "corrected/superseded observations must not duplicate their observation_id"
     )
 
     # --- repeated incremental run with no new data is idempotent ---
