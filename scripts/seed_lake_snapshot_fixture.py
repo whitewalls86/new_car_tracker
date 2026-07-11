@@ -5,7 +5,7 @@ lake-snapshot integration tests.
     python scripts/seed_lake_snapshot_fixture.py --phase <phase>
     # phase in: base, observation_fingerprint_incremental,
     #           detail_fingerprint_incremental, price_history_incremental,
-    #           listing_state_runs_incremental
+    #           listing_state_runs_incremental, scrape_volume_incremental
 
 This module seeds deterministic business-state scenarios into MinIO across all
 four supported source tables:
@@ -36,16 +36,18 @@ here so seeding and assertions cannot drift apart:
      incremental/late-arrival/correction behavior.
   4. tests/integration/dbt/test_incremental_models_real_build.py — the same
      real-build pattern as (3), extended to int_listing_state_fingerprints,
-     int_price_history, and int_listing_state_runs (replacing the throwaway
-     dbt-duckdb shadow-project tests those models used to have).
+     int_price_history, int_listing_state_runs (replacing the throwaway
+     dbt-duckdb shadow-project tests those models used to have), and
+     mart_scrape_volume (Plan 123 Phase 5).
 
 `seed(phase=...)` (default "base") controls which rows get written:
 
   * "base" — the original single-shot fixture (silver + all three ops
     tables), seeded once before the first `dbt build`.
   * "observation_fingerprint_incremental", "detail_fingerprint_incremental",
-    "price_history_incremental", "listing_state_runs_incremental" — each a
-    silver- or ops-only second wave for one real-build incremental test,
+    "price_history_incremental", "listing_state_runs_incremental",
+    "scrape_volume_incremental" — each a silver- or ops-only second wave for
+    one real-build incremental test,
     written under distinct filenames (see `_write_dataset`) so they land
     alongside, not over, the base phase's (and each other's) files. A
     subsequent non-full-refresh `dbt build` then sees base+phase-2 data
@@ -74,7 +76,7 @@ Two design rules make this safe to share:
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List
 
 import pyarrow as pa
@@ -293,6 +295,38 @@ VIN_RUNS_STABLE = _vin17("RUNSTBL")
 LISTING_RUNS_STABLE = "L62"
 ARTIFACT_RUNS_STABLE = 620
 
+# --- Plan 123 Phase 5: mart_scrape_volume real-build incremental test ------
+# ("scrape_volume_incremental" phase). Base build's global max(fetched_at)
+# across the whole fixture is 2026-07-28 (VIN_FRESH's second row above), so
+# mart_scrape_volume's base max(hour) is 2026-07-28T00:00.
+#
+# SV_AFFECTED_HOUR (2026-07-27T10:00) sits 14 hours before that max hour —
+# inside the default 72-hour scrape_volume_incremental_lookback_hours window —
+# and gets one base-phase detail/valid-vin row. Phase 2 adds a second,
+# invalid-vin detail row inside the SAME hour, proving the affected-hour
+# rebuild rereads the WHOLE hour (not just the new row): observation_count
+# 1 -> 2, artifact_count 1 -> 2, valid_vin_count stays 1,
+# vin_extraction_pct 100.0 -> 50.0.
+#
+# SV_NEW_HOUR (2026-07-28T14:00) exists only in phase 2 — a brand new
+# (hour, source) row that must appear after the incremental rebuild.
+#
+# SV_STABLE_HOUR (2026-07-01T10:00) is a base-only control far outside the
+# lookback window (>72 hours before the base max hour) — untouched by phase
+# 2, proving unaffected hours are left alone.
+SV_AFFECTED_HOUR = _ts(2026, 7, 27, 10)
+LISTING_SV_AFFECTED_1 = "L70"
+LISTING_SV_AFFECTED_2 = "L71"
+ARTIFACT_SV_AFFECTED_1 = 700
+ARTIFACT_SV_AFFECTED_2 = 701
+VIN_SV_AFFECTED = _vin17("SVAFFCT")
+SV_NEW_HOUR = _ts(2026, 7, 28, 14)
+LISTING_SV_NEW = "L72"
+ARTIFACT_SV_NEW = 702
+SV_STABLE_HOUR = _ts(2026, 7, 1, 10)
+LISTING_SV_STABLE = "L73"
+ARTIFACT_SV_STABLE = 703
+
 # listing_id constants asserted on by the selector/cohort integration tests,
 # exported so seeding and assertions cannot drift apart.
 LISTING_RELISTED_1 = "L1"            # relisted VIN first listing (+ price drop/increase, cooldown)
@@ -495,6 +529,18 @@ def _listing_state_runs_base_rows() -> List[Dict[str, Any]]:
     ]
 
 
+def _scrape_volume_base_rows() -> List[Dict[str, Any]]:
+    """Base-phase rows for mart_scrape_volume's real-build incremental test
+    (see build_scrape_volume_incremental_rows below)."""
+    return [
+        _obs_row(VIN_SV_AFFECTED, listing_id=LISTING_SV_AFFECTED_1,
+                 artifact_id=ARTIFACT_SV_AFFECTED_1, source="detail",
+                 fetched_at=SV_AFFECTED_HOUR + timedelta(minutes=5)),
+        _obs_row(None, listing_id=LISTING_SV_STABLE, artifact_id=ARTIFACT_SV_STABLE,
+                 source="carousel", fetched_at=SV_STABLE_HOUR),
+    ]
+
+
 def build_silver_rows() -> List[Dict[str, Any]]:
     """All silver_observations fixture rows (dbt-equivalence + selector/cohort)."""
     return (
@@ -503,6 +549,7 @@ def build_silver_rows() -> List[Dict[str, Any]]:
         + _observation_fingerprint_rows()
         + _detail_fingerprint_incremental_base_rows()
         + _listing_state_runs_base_rows()
+        + _scrape_volume_base_rows()
     )
 
 
@@ -604,6 +651,29 @@ def build_listing_state_runs_incremental_rows() -> List[Dict[str, Any]]:
                  source="detail", fetched_at=_ts(2026, 7, 26, 3), price=31000),
         _obs_row(VIN_RUNS_B, listing_id=LISTING_RUNS_B, artifact_id=ARTIFACT_RUNS_M2,
                  source="detail", fetched_at=ARTIFACT_RUNS_M2_CORRECTED_FETCHED_AT, price=40000),
+    ]
+
+
+def build_scrape_volume_incremental_rows() -> List[Dict[str, Any]]:
+    """Phase-2 rows for mart_scrape_volume, seeded via
+    seed(phase="scrape_volume_incremental") after the base phase has already
+    been built once:
+
+      * ARTIFACT_SV_AFFECTED_2 — a second, invalid-vin detail row landing in
+        the SAME hour as the base-phase ARTIFACT_SV_AFFECTED_1 row
+        (SV_AFFECTED_HOUR), proving the affected-hour rebuild recomputes the
+        WHOLE hour's aggregates, not just the new row.
+      * ARTIFACT_SV_NEW — a brand new (hour, source) row in SV_NEW_HOUR,
+        never seen in the base phase.
+
+    SV_STABLE_HOUR is intentionally never touched here, to prove an hour
+    outside the lookback window is left unchanged by the incremental rebuild.
+    """
+    return [
+        _obs_row(None, listing_id=LISTING_SV_AFFECTED_2, artifact_id=ARTIFACT_SV_AFFECTED_2,
+                 source="detail", fetched_at=SV_AFFECTED_HOUR + timedelta(minutes=45)),
+        _obs_row(None, listing_id=LISTING_SV_NEW, artifact_id=ARTIFACT_SV_NEW,
+                 source="srp", fetched_at=SV_NEW_HOUR + timedelta(minutes=10)),
     ]
 
 
@@ -788,12 +858,15 @@ def _seed_ops() -> List[str]:
 #   * "listing_state_runs_incremental" — int_listing_state_runs, via new
 #     silver rows that also feed its upstream int_listing_state_fingerprints
 #     (silver-only).
+#   * "scrape_volume_incremental" — Plan 123 Phase 5, mart_scrape_volume
+#     (silver-only).
 PHASES = (
     "base",
     "observation_fingerprint_incremental",
     "detail_fingerprint_incremental",
     "price_history_incremental",
     "listing_state_runs_incremental",
+    "scrape_volume_incremental",
 )
 
 
@@ -826,10 +899,17 @@ def seed(phase: str = "base") -> List[str]:
                 basename_prefix="lake_snapshot_fixture_ph_incremental",
             )
         ]
+    if phase == "listing_state_runs_incremental":
+        return [
+            _seed_silver(
+                build_listing_state_runs_incremental_rows(),
+                basename_prefix="lake_snapshot_fixture_runs_incremental",
+            )
+        ]
     return [
         _seed_silver(
-            build_listing_state_runs_incremental_rows(),
-            basename_prefix="lake_snapshot_fixture_runs_incremental",
+            build_scrape_volume_incremental_rows(),
+            basename_prefix="lake_snapshot_fixture_sv_incremental",
         )
     ]
 

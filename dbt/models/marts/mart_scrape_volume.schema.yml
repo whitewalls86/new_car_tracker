@@ -5,10 +5,21 @@ models:
     description: >
       Hourly scrape throughput by source type. One row per (hour, source).
       vin_extraction_pct is only populated for source='detail'; null for srp and carousel.
-      Composite PK: (hour, source).
+      Composite PK: (hour, source), surfaced via scrape_volume_key.
+      Incremental (Plan 123 Phase 5): affected-hour replacement, unique_key='scrape_volume_key'.
+      On an incremental run, only hours with a stg_observations row inside
+      scrape_volume_incremental_lookback_hours of the target's max(hour) are
+      rescanned, but ALL rows in those affected hours are reread so partial-hour
+      aggregates recomputed from a late-arriving row are still correct — not
+      just the new batch of rows.
     config:
       tags: ["hourly_core"]
     columns:
+      - name: scrape_volume_key
+        description: "md5(concat_ws('|', hour, source)) — synthetic surrogate for the (hour, source) grain."
+        data_tests:
+          - not_null
+          - unique
       - name: hour
         data_tests:
           - not_null

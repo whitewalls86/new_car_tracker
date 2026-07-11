@@ -61,7 +61,7 @@ for model, key in [
     ('int_listing_state_runs', None),
     ('int_latest_observation', 'vin'),
     ('int_benchmarks', None),
-    ('int_listing_volatility_features', 'vin'),
+    ('int_listing_volatility_features', 'vin17'),
 ]:
     total = con.execute(f'select count(*) from {model}').fetchone()[0]
     if key:
@@ -129,31 +129,38 @@ Fill in one row per collection date. Leave cells blank rather than guessing.
 
 | Date | Selector | duration_seconds | top 3 slowest models (name: execution_time) | DuckDB file size | OOMKilled/RestartCount | full_refresh? |
 |------|----------|-------------------|-----------------------------------------------|-------------------|--------------------------|----------------|
-|      | hourly_core |  |  |  |  |  |
-|      | feature_daily |  |  |  |  |  |
+| 2026-07-10 | hourly_core | 69.632s | `int_latest_observation`: 30.731s; `mart_scrape_volume`: 29.650s; `int_price_history`: 15.390s | 3.3G | false / 0 | false |
+| 2026-07-10 | hourly_core repeat | 62.448s | `mart_scrape_volume`: 27.318s; `int_latest_observation`: 26.416s; `int_price_history`: 15.286s | 3.3G | false / 0 | false |
+| 2026-07-10 | feature_daily | 46.980s | `int_listing_volatility_features`: 32.174s; `int_listing_observation_fingerprints`: 18.016s; `int_listing_state_runs`: 8.245s | 3.3G | false / 0 | false |
 |      | full_validation |  |  |  |  |  |
 
 ## Source coverage snapshot
 
 | Date | detail rows | srp rows | carousel rows |
 |------|-------------|----------|----------------|
-|      |             |          |                |
+| 2026-07-10 | 5,954,833 | 1,132,697 | 30,719,623 |
 
 ## Grain checks
 
 | Date | Model | total rows | distinct key rows (where applicable) |
 |------|-------|------------|----------------------------------------|
-|      |       |            |                                          |
+| 2026-07-10 | `int_listing_observation_fingerprints` | 37,807,153 | 37,807,153 distinct `observation_id`; 0 duplicates |
+| 2026-07-10 | `int_listing_state_fingerprints` | 5,851,997 | 5,851,997 distinct `artifact_id`; 0 duplicates |
+| 2026-07-10 | `int_price_history` | 249,520 | 249,520 distinct `vin`; 0 duplicates |
+| 2026-07-10 | `int_listing_state_runs` | 1,236,013 | N/A; multiple runs per `vin17` expected |
+| 2026-07-10 | `int_latest_observation` | 250,224 | 250,224 distinct `vin`; 0 duplicates |
+| 2026-07-10 | `int_benchmarks` | 100 | N/A; make/model benchmark grain |
+| 2026-07-10 | `int_listing_volatility_features` | 247,122 | 247,122 distinct `vin17`; 0 duplicates |
 
 ## Phase 5 evidence checklist
 
 Before deciding on any Phase 5 candidate conversion, confirm:
 
-- [ ] At least one `hourly_core` and one `feature_daily` run's
+- [x] At least one `hourly_core` and one `feature_daily` run's
       `model_timings`/`duration_seconds` captured post-Phase-2b/3/4 deploy.
-- [ ] `int_listing_observation_fingerprints` source coverage confirms
+- [x] `int_listing_observation_fingerprints` source coverage confirms
       `detail`/`srp`/`carousel` are all present in production (step 4).
-- [ ] Candidate model's current execution_time is identified from the
+- [x] Candidate model's current execution_time is identified from the
       per-model table (step 2), not assumed from its name.
 - [ ] Candidate model's update key has been checked against every way its
       output can change (see the per-model notes in Phase 5 of the main
@@ -161,4 +168,35 @@ Before deciding on any Phase 5 candidate conversion, confirm:
       runtime alone is not a reason either if the update key can't be made
       correct.
 - [ ] DuckDB file size trend recorded across at least two measurement dates.
-- [ ] No open OOM/restart in the collection window.
+- [x] No open OOM/restart in the collection window.
+
+## 2026-07-10 notes
+
+The first post-Phase-2b/3/4 VM profiling pass shows the pipeline is
+operationally stable under the current guardrails: no dbt-runner OOM, no
+container restart, and a 3.3G DuckDB file. The remaining risk is not host
+stability in this sample; it is deciding which downstream models are worth
+further incrementalization without building DuckDB-specific complexity that
+Plan 118 may replace.
+
+`hourly_core` is dominated by `int_latest_observation` and
+`mart_scrape_volume`, with `int_price_history` still visible but already
+incrementalized and stable. `feature_daily` is dominated by
+`int_listing_volatility_features`, followed by the new all-source
+`int_listing_observation_fingerprints`.
+
+The corrected `int_listing_volatility_features` grain check uses `vin17`
+and confirms 0 duplicates.
+
+## 2026-07-10 follow-up: mart_scrape_volume converted
+
+`mart_scrape_volume` was converted to incremental (affected-hour replacement,
+`unique_key='scrape_volume_key'`) — see "Phase 5 hourly_core optimization:
+mart_scrape_volume" in the main plan doc for the full rationale and rollout
+steps. After the required one-time `--full-refresh` deploy, re-run steps 1/2
+above for `hourly_core` and record a new row in the Measurements table; the
+before/after comparison to validate is `mart_scrape_volume`'s
+`execution_time` in `run_results.json` against its 2026-07-10 baseline
+(~27-30s) and `hourly_core`'s total `duration_seconds` against the 62-70s
+baseline. `int_latest_observation` remains the next `hourly_core` candidate,
+pending update-key analysis for its source-priority/late-arrival semantics.

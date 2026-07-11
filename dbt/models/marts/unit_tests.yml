@@ -531,6 +531,9 @@ unit_tests:
   - name: test_scrape_volume_vin_extraction_pct
     description: "vin_extraction_pct computed for detail source; null for srp and carousel"
     model: mart_scrape_volume
+    overrides:
+      macros:
+        is_incremental: false
     given:
       - input: ref('stg_observations')
         rows:
@@ -548,6 +551,9 @@ unit_tests:
   - name: test_scrape_volume_artifact_count_distinct
     description: "Two observations from the same artifact_id count as artifact_count=1"
     model: mart_scrape_volume
+    overrides:
+      macros:
+        is_incremental: false
     given:
       - input: ref('stg_observations')
         rows:
@@ -562,6 +568,9 @@ unit_tests:
   - name: test_scrape_volume_hourly_grouping
     description: "Observations in different hours produce separate rows"
     model: mart_scrape_volume
+    overrides:
+      macros:
+        is_incremental: false
     given:
       - input: ref('stg_observations')
         rows:
