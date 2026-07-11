@@ -1134,6 +1134,135 @@ Still needs VM verification (both `mart_scrape_volume` and
       baseline (~26-31s) in `run_results.json` to confirm steady-state scan
       volume is actually lower for both.
 
+### Phase 5 final modeling correction: int_listing_observation_runs + volatility features (2026-07-10)
+
+Closes the Plan 123 modeling gap flagged throughout Phase 2b/5 (candidate
+decisions (a) and (b) above): `int_listing_state_runs` alone cannot see
+SRP/carousel refresh cadence, and `int_listing_volatility_features` had no
+visibility into all-source refresh signal at all.
+
+**`int_listing_state_runs` is unchanged and remains the canonical detail-only
+business-state run model** — it is not replaced, and downstream consumers that
+need detail-only canonical state (e.g. `mart_vehicle_snapshot`'s dependents)
+keep reading it exactly as before.
+
+**New model: `int_listing_observation_runs`**
+(`dbt/models/intermediate/int_listing_observation_runs.sql`) — the all-source
+observation-cadence counterpart, built over `int_listing_observation_fingerprints`
+(detail + SRP + carousel).
+
+- Grain: one row per contiguous run of unchanged observation state,
+  partitioned by **listing_id**, not vin17. Unlike the detail-only fingerprint
+  model, `int_listing_observation_fingerprints` frequently has a null `vin17`
+  (SRP/carousel rows commonly lack a resolved VIN), so `vin17` cannot serve as
+  the partition key without silently dropping or mis-grouping rows. `vin17` is
+  carried forward as `max(vin17)` within the run for convenience joins, not as
+  the model's grain.
+- Run boundary: a new `observation_state_key` — `md5(price, mileage,
+  listing_state)` — computed inside this model, **not** reused from
+  `int_listing_observation_fingerprints.parsed_fingerprint`. That upstream hash
+  intentionally includes `source` (correct for its own artifact_id+listing_id
+  disambiguation purpose), so reusing it here would open a new "run" every
+  time the observing source changed — e.g. a detail scrape followed by an SRP
+  re-observation of the identical price — which is not a real cadence signal,
+  just a source alternation. `observation_state_key` is source-independent, so
+  a run represents a genuine period of unchanged price/mileage/listing_state
+  regardless of which source(s) observed it. Per-source participation within
+  that run is preserved via `detail_observation_count`/`srp_observation_count`/
+  `carousel_observation_count` and `detail_seen`/`srp_seen`/`carousel_seen`, so
+  SRP/carousel-only refreshes of an otherwise-unchanged state remain visible.
+- Materialization: incremental, affected-listing_id replacement
+  (`unique_key='listing_id'`, `delete+insert`), the same pattern as
+  `int_listing_state_runs`' affected-VIN replacement (Phase 4) — gaps-and-islands
+  requires the entity's complete history to correctly split or merge runs on a
+  late/corrected observation, so a sparse per-row incremental filter is unsafe
+  here for the same reason it was unsafe for Phase 4. New var
+  `listing_observation_runs_incremental_lookback_days` (default `3`,
+  `dbt/dbt_project.yml`) controls which listing_ids are treated as affected on
+  an incremental run; first run and `--full-refresh` scan the full table.
+  Chosen incremental from the start (rather than starting as a full table and
+  waiting for resource evidence, as Phase 5's general policy requires) because
+  it is a direct structural analog of the already-expensive
+  `int_listing_state_runs` gaps-and-islands recompute, over a strictly larger
+  all-source row set (detail+SRP+carousel vs. detail-only) — the cost profile
+  is not in question the way a brand-new model's would be.
+- Tests: dbt unit tests in `unit_tests.yml` (cross-source collapse into one
+  run, SRP-only refresh opening a new run, a same-price source switch staying
+  one run — the specific case that would break if `parsed_fingerprint` were
+  reused — and a carousel-only null-vin17 listing). Real-build integration
+  coverage in `tests/integration/dbt/test_incremental_models_real_build.py::test_observation_runs_incremental_real_build_scenario`,
+  following the same base-phase-assert / seed-phase-2 / rebuild / idempotency /
+  full-refresh-equivalence shape as the other five tests in that module, via a
+  new `observation_runs_incremental` phase in
+  `scripts/seed_lake_snapshot_fixture.py` (a late artifact splitting one
+  listing's run into three, and a corrected artifact merging another
+  listing's three runs into one; a third listing is an untouched control).
+
+**`int_listing_volatility_features` now also consumes the all-source signal**
+— the smallest coherent addition rather than a sibling model, since the
+existing detail-run-specific columns (`total_state_changes`,
+`unchanged_observation_streak`, etc.) are left completely untouched and the
+new columns are additive, joined by `listing_id` against
+`int_listing_observation_runs`' current open run:
+
+- `all_source_run_started_at`, `days_since_last_all_source_change` — when the
+  listing's current all-source observation state began, and how long it has
+  held (as-of-pinned, matching the existing `days_since_last_state_change`
+  convention).
+- `all_source_unchanged_observation_streak`,
+  `all_source_detail_observation_count`, `all_source_srp_observation_count`,
+  `all_source_carousel_observation_count` — cadence and per-source
+  contribution within the current open run.
+- `all_source_non_detail_refresh_seen` — true if an SRP or carousel
+  observation contributed to the current open run, i.e. a non-detail source
+  actually refreshed this listing while its state has held.
+
+Joined with `left join` (not `join`), since a listing with no all-source
+observation run should not happen in steady state (detail observations feed
+both models) but must not silently drop the feature row if it did; missing
+matches default to `NULL`/`0` via `coalesce`, documented inline in the model
+SQL and schema. Not filtered to `<= as_of_at` like the model's inline sources
+(`stg_observations`, `stg_price_events`) — it follows the same
+pre-materialized-join convention already established for
+`int_listing_state_runs`/`int_price_history`/`int_benchmarks`: Plan 112 must
+snapshot `int_listing_observation_runs` at the as_of point if backtest
+reproducibility requires it.
+
+**This closes Plan 123's modeling gap.** Phase 6 (scheduled incremental/
+full-refresh equivalence checks, watermark/affected-entity metrics, alerting,
+forced-recompute tooling) remains intentionally deferred — it is general
+recovery/drift infrastructure for the incremental pipeline as a whole, not
+specific to this correction, and is better addressed alongside Plan 120's
+CI lake-snapshot delivery work, which already owns the shared fixture and
+real-build test pattern this correction extends. After this PR, Plan 123 has
+no more open modeling questions blocking Plan 112 (refresh-policy
+backtesting) — the feature-store chain (`int_listing_state_runs` +
+`int_listing_observation_runs` + `int_listing_volatility_features`) now
+carries both detail-only canonical state and all-source refresh cadence.
+
+Still needs VM verification, same shape as every other Phase 2-5 conversion:
+
+- [ ] First deploy must run
+      `dbt build --select int_listing_observation_runs --full-refresh` once
+      (the model does not exist in production yet, so this is a first build,
+      not a migration hazard like Phases 3/4/5's pre-existing tables).
+- [ ] Run `dbt build --selector feature_daily` (now also covers
+      `int_listing_observation_runs`) as a normal incremental run afterward
+      and confirm success.
+- [ ] Run it again immediately after and confirm no unexpected row-count
+      drift (idempotency under real production data).
+- [ ] Check grain on the real table:
+      `select count(*), count(distinct listing_id) from int_listing_observation_runs;`
+      (expect more rows than distinct listing_ids — multiple runs per
+      listing_id is normal).
+- [ ] Compare `int_listing_observation_runs`' runtime in `run_results.json`
+      against `int_listing_state_runs`' to confirm the all-source row volume
+      does not blow the `feature_daily` DuckDB memory budget from Phase 0.
+- [ ] Spot-check `int_listing_volatility_features.all_source_*` columns for a
+      few known listings with recent SRP/carousel activity against
+      `int_listing_observation_runs` directly, to confirm the join is live and
+      not silently defaulting to 0/NULL in production.
+
 ## Phase 6: Recovery and Drift Controls
 
 Incremental pipelines require explicit recovery behavior.

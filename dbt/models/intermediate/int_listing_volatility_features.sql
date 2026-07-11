@@ -13,8 +13,19 @@
 -- Backtest isolation boundary: inline sources (stg_observations, stg_price_events)
 -- are all filtered to fetched_at/event_at <= as_of_at to prevent future data leaking
 -- into price windows, SRP recency, and metadata resolution.
--- Pre-materialized joins (int_listing_state_runs, int_price_history, int_benchmarks)
--- are NOT filtered here; Plan 112 must snapshot those tables at the as_of point.
+-- Pre-materialized joins (int_listing_state_runs, int_price_history, int_benchmarks,
+-- int_listing_observation_runs) are NOT filtered here; Plan 112 must snapshot those
+-- tables at the as_of point.
+--
+-- Plan 123 final modeling correction: all_source_* columns below join the
+-- listing's current OPEN run from int_listing_observation_runs (all-source:
+-- detail, SRP, carousel cadence), separate from the detail-only state-run
+-- columns above. This does not replace the detail-only semantics — it makes
+-- SRP/carousel refresh cadence visible to the ML trainer alongside them.
+-- Joined by listing_id (not vin17) since int_listing_observation_runs is
+-- listing_id-grained. A listing with no all-source observation run (should
+-- not happen in practice, since detail observations feed both models) yields
+-- NULL/0 defaults rather than dropping the row.
 
 with as_of as (
     select
@@ -164,6 +175,12 @@ srp_latest as (
     where o.source = 'srp'
       and o.fetched_at <= a.ts
     group by o.listing_id
+),
+
+open_observation_runs as (
+    select *
+    from {{ ref('int_listing_observation_runs') }}
+    where is_open_run = true
 )
 
 select
@@ -203,7 +220,21 @@ select
 
     -- Pipeline signals
     sl.recent_srp_seen_at,
-    datediff('day', sl.recent_srp_seen_at, ao.ts)   as days_since_srp_seen
+    datediff('day', sl.recent_srp_seen_at, ao.ts)   as days_since_srp_seen,
+
+    -- All-source observation cadence (Plan 123 final modeling correction)
+    oor.run_started_at                                     as all_source_run_started_at,
+    case
+        when oor.run_started_at is not null
+        then datediff('day', oor.run_started_at, ao.ts)
+        else null
+    end                                                     as days_since_last_all_source_change,
+    coalesce(oor.observation_count, 0)                      as all_source_unchanged_observation_streak,
+    coalesce(oor.detail_observation_count, 0)               as all_source_detail_observation_count,
+    coalesce(oor.srp_observation_count, 0)                  as all_source_srp_observation_count,
+    coalesce(oor.carousel_observation_count, 0)             as all_source_carousel_observation_count,
+    coalesce(oor.srp_seen, false) or coalesce(oor.carousel_seen, false)
+                                                             as all_source_non_detail_refresh_seen
 
 from open_runs o
 cross join as_of ao
@@ -215,3 +246,4 @@ left join {{ ref('int_benchmarks') }} bm      on bm.make = o.make and bm.model =
 left join dealer_stats ds                     on ds.customer_id = o.customer_id
 left join make_model_stats mms                on mms.make = o.make and mms.model = o.model
 left join srp_latest sl                       on sl.listing_id = o.listing_id
+left join open_observation_runs oor           on oor.listing_id = o.listing_id

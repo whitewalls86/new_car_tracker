@@ -6,7 +6,7 @@ lake-snapshot integration tests.
     # phase in: base, observation_fingerprint_incremental,
     #           detail_fingerprint_incremental, price_history_incremental,
     #           listing_state_runs_incremental, scrape_volume_incremental,
-    #           latest_observation_incremental
+    #           latest_observation_incremental, observation_runs_incremental
 
 This module seeds deterministic business-state scenarios into MinIO across all
 four supported source tables:
@@ -39,8 +39,10 @@ here so seeding and assertions cannot drift apart:
      real-build pattern as (3), extended to int_listing_state_fingerprints,
      int_price_history, int_listing_state_runs (replacing the throwaway
      dbt-duckdb shadow-project tests those models used to have),
-     mart_scrape_volume (Plan 123 Phase 5), and int_latest_observation (also
-     Plan 123 Phase 5).
+     mart_scrape_volume (Plan 123 Phase 5), int_latest_observation (also
+     Plan 123 Phase 5), and int_listing_observation_runs (Plan 123 final
+     modeling correction: the all-source, listing_id-grain observation-state
+     run model).
 
 `seed(phase=...)` (default "base") controls which rows get written:
 
@@ -383,6 +385,37 @@ ARTIFACT_LO_STABLE = 830
 LO_STABLE_FETCHED_AT = _ts(2026, 7, 10)
 LO_STABLE_MAKE = "Subaru"
 
+# --- Plan 123 final modeling correction: int_listing_observation_runs
+# real-build incremental test (all-source, listing_id-grain observation-state
+# runs; see tests/integration/dbt/test_incremental_models_real_build.py) ---
+# LISTING_OBSRUN_A: base rows form two runs — a detail+srp pair sharing one
+# observation_state_key (price/mileage/listing_state, price=30000), followed
+# by a carousel artifact at a different price (open run, price=29000). Phase 2
+# inserts a late detail artifact between the first two at a distinct price
+# (31000), splitting the original single run into three
+# (30000 -> 31000 -> 30000), leaving the open 29000 run untouched (four runs
+# total for this listing).
+# LISTING_OBSRUN_B: base rows alternate 40000 (detail) -> 41000 (srp) -> 40000
+# (carousel) — three runs. Phase 2 republishes the middle (srp) artifact_id
+# with a later fetched_at and a price matching the first/third run (40000),
+# which replaces the original 41000 row (same artifact_id+listing_id
+# observation_id) and merges all three runs into one continuous open run.
+# LISTING_OBSRUN_STABLE: single open run, never touched by phase 2 — proves an
+# unaffected listing_id is left unchanged by another listing's incremental
+# rebuild.
+LISTING_OBSRUN_A = "L90"
+ARTIFACT_OBSRUN_A1 = 900
+ARTIFACT_OBSRUN_A2 = 901
+ARTIFACT_OBSRUN_A3 = 902
+ARTIFACT_OBSRUN_LATE_SPLIT = 903
+LISTING_OBSRUN_B = "L91"
+ARTIFACT_OBSRUN_B1 = 910
+ARTIFACT_OBSRUN_B2 = 911
+ARTIFACT_OBSRUN_B3 = 912
+ARTIFACT_OBSRUN_B2_CORRECTED_FETCHED_AT = _ts(2026, 7, 26, 6, 1)
+LISTING_OBSRUN_STABLE = "L92"
+ARTIFACT_OBSRUN_STABLE = 920
+
 # listing_id constants asserted on by the selector/cohort integration tests,
 # exported so seeding and assertions cannot drift apart.
 LISTING_RELISTED_1 = "L1"            # relisted VIN first listing (+ price drop/increase, cooldown)
@@ -613,6 +646,63 @@ def _latest_observation_base_rows() -> List[Dict[str, Any]]:
     ]
 
 
+def _observation_runs_base_rows() -> List[Dict[str, Any]]:
+    """Base-phase rows for int_listing_observation_runs' real-build incremental
+    test (see build_observation_runs_incremental_rows below)."""
+    return [
+        # LISTING_OBSRUN_A: detail+srp share one observation-state (price
+        # 30000) -> carousel opens a new, open observation-state (price 29000)
+        _obs_row(_vin17("OBSRUNA"), listing_id=LISTING_OBSRUN_A, artifact_id=ARTIFACT_OBSRUN_A1,
+                 source="detail", fetched_at=_ts(2026, 7, 26), price=30000, mileage=5000),
+        _obs_row(None, listing_id=LISTING_OBSRUN_A, artifact_id=ARTIFACT_OBSRUN_A2,
+                 source="srp", fetched_at=_ts(2026, 7, 26, 6), price=30000, mileage=5000),
+        _obs_row(None, listing_id=LISTING_OBSRUN_A, artifact_id=ARTIFACT_OBSRUN_A3,
+                 source="carousel", fetched_at=_ts(2026, 7, 27), price=29000, mileage=5000),
+        # LISTING_OBSRUN_B: 40000 (detail) -> 41000 (srp) -> 40000 (carousel),
+        # three observation-state runs
+        _obs_row(_vin17("OBSRUNB"), listing_id=LISTING_OBSRUN_B, artifact_id=ARTIFACT_OBSRUN_B1,
+                 source="detail", fetched_at=_ts(2026, 7, 26), price=40000, mileage=6000),
+        _obs_row(None, listing_id=LISTING_OBSRUN_B, artifact_id=ARTIFACT_OBSRUN_B2,
+                 source="srp", fetched_at=_ts(2026, 7, 26, 6), price=41000, mileage=6000),
+        _obs_row(None, listing_id=LISTING_OBSRUN_B, artifact_id=ARTIFACT_OBSRUN_B3,
+                 source="carousel", fetched_at=_ts(2026, 7, 27), price=40000, mileage=6000),
+        # LISTING_OBSRUN_STABLE: single open run, never touched by phase 2
+        _obs_row(_vin17("OBSRUNC"), listing_id=LISTING_OBSRUN_STABLE,
+                 artifact_id=ARTIFACT_OBSRUN_STABLE,
+                 source="detail", fetched_at=_ts(2026, 7, 26), price=20000, mileage=1000),
+    ]
+
+
+def build_observation_runs_incremental_rows() -> List[Dict[str, Any]]:
+    """Phase-2 rows for int_listing_observation_runs (and its upstream
+    int_listing_observation_fingerprints), seeded via
+    seed(phase="observation_runs_incremental") after the base phase has
+    already been built once:
+
+      * ARTIFACT_OBSRUN_LATE_SPLIT (LISTING_OBSRUN_A) — a late detail artifact
+        landing between the base phase's two 30000-price artifacts with a
+        distinct price (31000), splitting the original single run into three
+        (30000 -> 31000 -> 30000), leaving the open 29000 run untouched (four
+        runs total for this listing).
+      * ARTIFACT_OBSRUN_B2 (LISTING_OBSRUN_B) — a correction of the base
+        phase's middle (srp) artifact, republished with a later fetched_at and
+        a price matching the first/third run (40000) — since this is the same
+        artifact_id+listing_id observation_id, it replaces the original 41000
+        row rather than adding a fourth, merging all three base-phase runs
+        into a single continuous open run.
+
+    LISTING_OBSRUN_STABLE is intentionally never touched here, to prove an
+    unaffected listing_id is unchanged by this phase's incremental rebuild.
+    """
+    return [
+        _obs_row(None, listing_id=LISTING_OBSRUN_A, artifact_id=ARTIFACT_OBSRUN_LATE_SPLIT,
+                 source="detail", fetched_at=_ts(2026, 7, 26, 3), price=31000, mileage=5000),
+        _obs_row(None, listing_id=LISTING_OBSRUN_B, artifact_id=ARTIFACT_OBSRUN_B2,
+                 source="srp", fetched_at=ARTIFACT_OBSRUN_B2_CORRECTED_FETCHED_AT,
+                 price=40000, mileage=6000),
+    ]
+
+
 def build_silver_rows() -> List[Dict[str, Any]]:
     """All silver_observations fixture rows (dbt-equivalence + selector/cohort)."""
     return (
@@ -623,6 +713,7 @@ def build_silver_rows() -> List[Dict[str, Any]]:
         + _listing_state_runs_base_rows()
         + _scrape_volume_base_rows()
         + _latest_observation_base_rows()
+        + _observation_runs_base_rows()
     )
 
 
@@ -966,6 +1057,9 @@ def _seed_ops() -> List[str]:
 #     (silver-only).
 #   * "latest_observation_incremental" — Plan 123 Phase 5,
 #     int_latest_observation (silver-only).
+#   * "observation_runs_incremental" — Plan 123 final modeling correction,
+#     int_listing_observation_runs (silver-only, via its upstream
+#     int_listing_observation_fingerprints).
 PHASES = (
     "base",
     "observation_fingerprint_incremental",
@@ -974,6 +1068,7 @@ PHASES = (
     "listing_state_runs_incremental",
     "scrape_volume_incremental",
     "latest_observation_incremental",
+    "observation_runs_incremental",
 )
 
 
@@ -1020,10 +1115,17 @@ def seed(phase: str = "base") -> List[str]:
                 basename_prefix="lake_snapshot_fixture_sv_incremental",
             )
         ]
+    if phase == "latest_observation_incremental":
+        return [
+            _seed_silver(
+                build_latest_observation_incremental_rows(),
+                basename_prefix="lake_snapshot_fixture_lo_incremental",
+            )
+        ]
     return [
         _seed_silver(
-            build_latest_observation_incremental_rows(),
-            basename_prefix="lake_snapshot_fixture_lo_incremental",
+            build_observation_runs_incremental_rows(),
+            basename_prefix="lake_snapshot_fixture_obsrun_incremental",
         )
     ]
 

@@ -49,6 +49,13 @@ vars:
   # one) if it has a stg_observations row with fetched_at at or after
   # max(target.fetched_at) minus this many days.
   latest_observation_incremental_lookback_days: 3
+  # Plan 123 final modeling correction: late-arrival lookback for
+  # int_listing_observation_runs' affected-listing_id incremental scan (the
+  # all-source, listing_id-grain counterpart to int_listing_state_runs). On an
+  # incremental run, a listing_id is "affected" (and all its runs recomputed)
+  # if it has an observation fingerprint at or after max(target.run_ended_at)
+  # minus this many days.
+  listing_observation_runs_incremental_lookback_days: 3
 
 models:
   cartracker:

@@ -1,0 +1,107 @@
+version: 2
+
+models:
+  - name: int_listing_observation_runs
+    description: >
+      One row per contiguous run of identical observation_state_key, partitioned
+      by listing_id, over int_listing_observation_fingerprints (all-source:
+      detail, SRP, carousel). This is the all-source observation-cadence
+      counterpart to the detail-only int_listing_state_runs — it answers how
+      often a listing is actually refreshed across every source that can see it,
+      not just detail scrapes. A run boundary means price, mileage, or
+      listing_state changed on any source's observation of this listing_id.
+      Deliberately does NOT reuse int_listing_observation_fingerprints'
+      parsed_fingerprint for the run boundary, because that hash includes
+      `source` (correct for that model's artifact_id+listing_id disambiguation
+      purpose) — reusing it here would open a new run on every source
+      alternation even when price/mileage/state did not change, which is not a
+      real cadence signal.
+      Partitioned by listing_id (not vin17) because vin17 is frequently null on
+      SRP/carousel rows — listing_id is the only column int_listing_observation_fingerprints
+      guarantees is present. vin17 is carried forward as any resolved VIN seen
+      within the run (max(vin17)) for convenience joins, not as this model's grain.
+      hours_until_next_observation and next_observation_started_at are NULL for
+      the open (most recent) run per listing_id.
+      Incremental: affected-listing_id replacement, unique_key='listing_id'.
+      listing_id is an ENTITY REPLACEMENT KEY here, not a row-unique key — do not
+      add a `unique` data test on listing_id, since multiple runs per listing_id
+      are expected by design. On an incremental run, all runs for a changed
+      listing_id are deleted and recomputed from that listing_id's complete
+      observation-fingerprint history.
+    config:
+      tags: ["feature_daily", "backtest"]
+    columns:
+      - name: listing_id
+        description: Listing identifier — grain for all downstream listing-keyed models.
+        data_tests:
+          - not_null
+      - name: vin17
+        description: >
+          Any resolved VIN seen within this run (max(vin17) across the run's
+          observations). Nullable — a run can consist entirely of SRP/carousel
+          observations with no resolved VIN.
+      - name: observation_state_key
+        description: >
+          md5 hash of price, mileage, and listing_state (source-independent) —
+          constant within a run by definition. See model description for why
+          this differs from parsed_fingerprint.
+        data_tests:
+          - not_null
+      - name: listing_state
+        description: Listing state (active/unavailable/unknown) — constant within a run since it is part of observation_state_key.
+      - name: price
+        description: Observed price — constant within a run since it is part of observation_state_key.
+      - name: mileage
+        description: Observed mileage — constant within a run since it is part of observation_state_key.
+      - name: run_started_at
+        description: Timestamp of the first observation in this run (MIN fetched_at), across all sources.
+        data_tests:
+          - not_null
+      - name: run_ended_at
+        description: Timestamp of the last observation in this run (MAX fetched_at), across all sources.
+        data_tests:
+          - not_null
+      - name: observation_count
+        description: Number of observations (any source) in this run.
+        data_tests:
+          - not_null
+      - name: detail_observation_count
+        description: Number of detail-source observations in this run.
+        data_tests:
+          - not_null
+      - name: srp_observation_count
+        description: Number of SRP-source observations in this run.
+        data_tests:
+          - not_null
+      - name: carousel_observation_count
+        description: Number of carousel-source observations in this run.
+        data_tests:
+          - not_null
+      - name: distinct_source_count
+        description: Number of distinct sources (1-3) that contributed an observation to this run.
+        data_tests:
+          - not_null
+      - name: detail_seen
+        description: True if at least one detail observation contributed to this run.
+        data_tests:
+          - not_null
+      - name: srp_seen
+        description: True if at least one SRP observation contributed to this run.
+        data_tests:
+          - not_null
+      - name: carousel_seen
+        description: True if at least one carousel observation contributed to this run.
+        data_tests:
+          - not_null
+      - name: run_duration_hours
+        description: Hours between run_started_at and run_ended_at. Zero for single-observation runs.
+        data_tests:
+          - not_null
+      - name: next_observation_started_at
+        description: run_started_at of the following run for this listing_id. NULL for the open run.
+      - name: hours_until_next_observation
+        description: Hours from run_ended_at to next_observation_started_at. NULL for the open run.
+      - name: is_open_run
+        description: True for the latest (open) run per listing_id — next_observation_started_at IS NULL.
+        data_tests:
+          - not_null

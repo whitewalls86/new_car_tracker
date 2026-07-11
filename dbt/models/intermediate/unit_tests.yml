@@ -528,6 +528,121 @@ unit_tests:
            is_open_run: true, hours_until_change: null}
 
   # ---------------------------------------------------------------------------
+  # int_listing_observation_runs — all-source gaps-and-islands, listing_id grain
+  # ---------------------------------------------------------------------------
+
+  - name: test_observation_runs_collapses_across_sources
+    description: >
+      One listing with detail + srp + carousel observations sharing the same
+      price/mileage/listing_state collapses to a single run with per-source
+      counts/flags set and vin17 resolved from the one row that has it — even
+      though each row's underlying parsed_fingerprint differs by source, this
+      model's own observation_state_key (price/mileage/listing_state only)
+      correctly treats them as one unchanged-state run.
+    model: int_listing_observation_runs
+    overrides:
+      macros:
+        is_incremental: false
+    given:
+      - input: ref('int_listing_observation_fingerprints')
+        rows:
+          - {listing_id: "L1", vin17: "1HGBH41JXMN109186", artifact_id: 1, source: "detail",
+             fetched_at: "2026-01-01 00:00:00+00",
+             price: 30000, mileage: 100, listing_state: "active"}
+          - {listing_id: "L1", vin17: null, artifact_id: 2, source: "srp",
+             fetched_at: "2026-01-01 06:00:00+00",
+             price: 30000, mileage: 100, listing_state: "active"}
+          - {listing_id: "L1", vin17: null, artifact_id: 3, source: "carousel",
+             fetched_at: "2026-01-01 12:00:00+00",
+             price: 30000, mileage: 100, listing_state: "active"}
+    expect:
+      rows:
+        - {listing_id: "L1", vin17: "1HGBH41JXMN109186",
+           observation_count: 3, detail_observation_count: 1, srp_observation_count: 1,
+           carousel_observation_count: 1, distinct_source_count: 3,
+           detail_seen: true, srp_seen: true, carousel_seen: true,
+           is_open_run: true, hours_until_next_observation: null,
+           next_observation_started_at: null}
+
+  - name: test_observation_runs_srp_only_refresh_opens_new_run
+    description: >
+      A detail observation followed by an SRP-only price refresh opens a new
+      run — proving a non-detail source alone can close out the prior run and
+      start a new cadence period.
+    model: int_listing_observation_runs
+    overrides:
+      macros:
+        is_incremental: false
+    given:
+      - input: ref('int_listing_observation_fingerprints')
+        rows:
+          - {listing_id: "L2", vin17: "2HGBH41JXMN209187", artifact_id: 10, source: "detail",
+             fetched_at: "2026-01-01 00:00:00+00",
+             price: 20000, mileage: 5000, listing_state: "active"}
+          - {listing_id: "L2", vin17: null, artifact_id: 11, source: "srp",
+             fetched_at: "2026-01-02 00:00:00+00",
+             price: 19000, mileage: 5000, listing_state: "active"}
+    expect:
+      rows:
+        - {listing_id: "L2", price: 20000,
+           observation_count: 1, detail_observation_count: 1, srp_observation_count: 0,
+           carousel_observation_count: 0, is_open_run: false, hours_until_next_observation: 24}
+        - {listing_id: "L2", price: 19000,
+           observation_count: 1, detail_observation_count: 0, srp_observation_count: 1,
+           carousel_observation_count: 0, detail_seen: false, srp_seen: true,
+           is_open_run: true, hours_until_next_observation: null}
+
+  - name: test_observation_runs_source_switch_without_state_change_stays_one_run
+    description: >
+      A detail observation followed by an SRP observation with the IDENTICAL
+      price/mileage/state must stay a single run — proving the run boundary is
+      not accidentally source-driven (parsed_fingerprint, which includes
+      source, would have split this into two runs; observation_state_key does
+      not).
+    model: int_listing_observation_runs
+    overrides:
+      macros:
+        is_incremental: false
+    given:
+      - input: ref('int_listing_observation_fingerprints')
+        rows:
+          - {listing_id: "L4", vin17: "3HGBH41JXMN309188", artifact_id: 30, source: "detail",
+             fetched_at: "2026-01-01 00:00:00+00",
+             price: 25000, mileage: 8000, listing_state: "active"}
+          - {listing_id: "L4", vin17: null, artifact_id: 31, source: "srp",
+             fetched_at: "2026-01-02 00:00:00+00",
+             price: 25000, mileage: 8000, listing_state: "active"}
+    expect:
+      rows:
+        - {listing_id: "L4", observation_count: 2, detail_observation_count: 1,
+           srp_observation_count: 1, distinct_source_count: 2, is_open_run: true}
+
+  - name: test_observation_runs_carousel_only_listing_null_vin17
+    description: >
+      A listing observed only via carousel (no resolved VIN on any row) still
+      produces a valid run keyed by listing_id, with vin17 NULL rather than
+      being dropped or mis-grouped.
+    model: int_listing_observation_runs
+    overrides:
+      macros:
+        is_incremental: false
+    given:
+      - input: ref('int_listing_observation_fingerprints')
+        rows:
+          - {listing_id: "L3", vin17: null, artifact_id: 20, source: "carousel",
+             fetched_at: "2026-01-01 00:00:00+00",
+             price: 15000, mileage: 12000, listing_state: "active"}
+          - {listing_id: "L3", vin17: null, artifact_id: 21, source: "carousel",
+             fetched_at: "2026-01-01 06:00:00+00",
+             price: 15000, mileage: 12000, listing_state: "active"}
+    expect:
+      rows:
+        - {listing_id: "L3", vin17: null,
+           observation_count: 2, detail_observation_count: 0, srp_observation_count: 0,
+           carousel_observation_count: 2, distinct_source_count: 1,
+           detail_seen: false, srp_seen: false, carousel_seen: true, is_open_run: true}
+
+  # ---------------------------------------------------------------------------
   # int_listing_volatility_features — feature row correctness
   # ---------------------------------------------------------------------------
 
@@ -582,6 +697,8 @@ unit_tests:
           - {make: "honda", model: "crv", national_listing_count: 1,
              national_avg_price: 25000, national_median_price: 25000,
              national_avg_discount_pct: null}
+      - input: ref('int_listing_observation_runs')
+        rows: []
     expect:
       rows:
         - {vin17: "VIN1", listing_id: "L2",
@@ -592,7 +709,13 @@ unit_tests:
            price_change_count_7d: 0,
            price_change_count_30d: 0,
            listing_state_change_count: 0,
-           days_since_srp_seen: null}
+           days_since_srp_seen: null,
+           days_since_last_all_source_change: null,
+           all_source_unchanged_observation_streak: 0,
+           all_source_detail_observation_count: 0,
+           all_source_srp_observation_count: 0,
+           all_source_carousel_observation_count: 0,
+           all_source_non_detail_refresh_seen: false}
 
   - name: test_volatility_features_price_windows_srp_and_priors
     description: >
@@ -664,6 +787,8 @@ unit_tests:
           - {make: "honda", model: "crv", national_listing_count: 1,
              national_avg_price: 25000, national_median_price: 25000,
              national_avg_discount_pct: null}
+      - input: ref('int_listing_observation_runs')
+        rows: []
     expect:
       rows:
         - {vin17: "VIN2", listing_id: "L2",
@@ -672,4 +797,75 @@ unit_tests:
            days_since_srp_seen: 3,
            dealer_avg_run_length_hours: 18.0,
            make_model_avg_run_length_hours: 18.0,
-           price_vs_make_model_median: 1.2}
+           price_vs_make_model_median: 1.2,
+           days_since_last_all_source_change: null,
+           all_source_unchanged_observation_streak: 0,
+           all_source_detail_observation_count: 0,
+           all_source_srp_observation_count: 0,
+           all_source_carousel_observation_count: 0,
+           all_source_non_detail_refresh_seen: false}
+
+  - name: test_volatility_features_consumes_all_source_cadence_signal
+    description: >
+      Same VIN/listing shape as test_volatility_features_state_history, but this
+      time int_listing_observation_runs has a real open run for the listing with
+      2 detail + 1 srp observation. Verifies the all_source_* columns surface
+      that cadence signal (non-detail refresh seen, correct per-source counts,
+      and days_since_last_all_source_change pinned to as_of_at) rather than
+      falling back to the zero/null defaults.
+    model: int_listing_volatility_features
+    overrides:
+      vars:
+        as_of_at: "2026-01-26 00:00:00+00"
+    given:
+      - input: ref('int_listing_state_runs')
+        rows:
+          - {vin17: "VIN3", listing_id: "L1", parsed_fingerprint: "fp_a",
+             listing_state: "active",
+             run_started_at: "2026-01-10 00:00:00+00", run_ended_at: "2026-01-24 00:00:00+00",
+             artifact_count: 1, run_duration_hours: 336, is_open_run: false,
+             next_state_started_at: "2026-01-25 00:00:00+00", hours_until_change: 24}
+          - {vin17: "VIN3", listing_id: "L2", parsed_fingerprint: "fp_b",
+             listing_state: "active",
+             run_started_at: "2026-01-25 00:00:00+00", run_ended_at: "2026-01-25 12:00:00+00",
+             artifact_count: 2, run_duration_hours: 12, is_open_run: true,
+             next_state_started_at: null, hours_until_change: null}
+      - input: ref('stg_observations')
+        rows:
+          - {vin17: "VIN3", listing_id: "L2", source: "detail",
+             fetched_at: "2026-01-25 00:00:00+00",
+             customer_id: "D001", make: "honda", model: "crv", artifact_id: 1}
+          - {vin17: "VIN3", listing_id: "L2", source: "detail",
+             fetched_at: "2026-01-25 12:00:00+00",
+             customer_id: "D001", make: "honda", model: "crv", artifact_id: 2}
+      - input: ref('stg_price_events')
+        rows:
+          - {vin: "VIN3", price: 30000, event_at: "2026-01-01 00:00:00+00"}
+      - input: ref('int_price_history')
+        rows:
+          - {vin: "VIN3", current_price: 30000,
+             price_drop_count: 0, price_increase_count: 0,
+             first_price: 30000, min_price: 30000, max_price: 30000,
+             total_price_observations: 1}
+      - input: ref('int_benchmarks')
+        rows:
+          - {make: "honda", model: "crv", national_listing_count: 1,
+             national_avg_price: 25000, national_median_price: 25000,
+             national_avg_discount_pct: null}
+      - input: ref('int_listing_observation_runs')
+        rows:
+          - {listing_id: "L2", vin17: "VIN3",
+             run_started_at: "2026-01-25 00:00:00+00", run_ended_at: "2026-01-25 18:00:00+00",
+             observation_count: 3, detail_observation_count: 2, srp_observation_count: 1,
+             carousel_observation_count: 0, distinct_source_count: 2,
+             detail_seen: true, srp_seen: true, carousel_seen: false,
+             is_open_run: true}
+    expect:
+      rows:
+        - {vin17: "VIN3", listing_id: "L2",
+           days_since_last_all_source_change: 1,
+           all_source_unchanged_observation_streak: 3,
+           all_source_detail_observation_count: 2,
+           all_source_srp_observation_count: 1,
+           all_source_carousel_observation_count: 0,
+           all_source_non_detail_refresh_seen: true}
