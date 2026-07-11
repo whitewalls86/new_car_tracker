@@ -586,7 +586,8 @@ unit_tests:
       rows:
         - {listing_id: "L2", price: 20000,
            observation_count: 1, detail_observation_count: 1, srp_observation_count: 0,
-           carousel_observation_count: 0, is_open_run: false, hours_until_next_observation: 24}
+           carousel_observation_count: 0, detail_seen: true, srp_seen: false,
+           is_open_run: false, hours_until_next_observation: 24}
         - {listing_id: "L2", price: 19000,
            observation_count: 1, detail_observation_count: 0, srp_observation_count: 1,
            carousel_observation_count: 0, detail_seen: false, srp_seen: true,
