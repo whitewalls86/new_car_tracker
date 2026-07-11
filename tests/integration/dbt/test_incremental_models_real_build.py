@@ -1,12 +1,13 @@
 """
 Plan 123: incremental behavior of int_listing_state_fingerprints,
-int_price_history, and int_listing_state_runs against the real dbt project and
-the shared MinIO lake-snapshot fixture — replacing test_fingerprints_incremental.py,
+int_price_history, int_listing_state_runs, mart_scrape_volume, and
+int_latest_observation against the real dbt project and the shared MinIO
+lake-snapshot fixture — replacing test_fingerprints_incremental.py,
 test_price_history_incremental.py, and test_listing_state_runs_incremental.py,
 each of which built its own throwaway dbt-duckdb shadow project (fake project
 config, a seeded CSV stand-in for the real source, and the model SQL copied
-into it). That worked but required inventing a parallel fake universe that can
-drift from the real model graph over time.
+into it). That worked but required inventing a parallel fake universe that
+can drift from the real model graph over time.
 
 Follows the same real-build pattern as
 test_observation_fingerprints_real_build.py (Plan 123 Phase 2b): the CI `dbt`
@@ -21,7 +22,7 @@ same-batch duplicates, and affected-entity replacement. Each test finishes
 with a repeated no-op incremental run (idempotency) and a `--full-refresh`
 rebuild compared against the incremental result.
 
-The three tests are independent (different models/fixture phases/VINs) except
+The five tests are independent (different models/fixture phases/VINs) except
 that the int_listing_state_runs test also rebuilds its upstream
 int_listing_state_fingerprints — rebuilding that model a second time is
 idempotent for every VIN the fingerprints test already asserted on, so
@@ -276,3 +277,181 @@ def test_listing_state_runs_incremental_real_build_scenario():
     assert sorted(_runs_rows(fx.VIN_RUNS_A)) == incremental_a
     assert sorted(_runs_rows(fx.VIN_RUNS_B)) == incremental_b
     assert sorted(_runs_rows(fx.VIN_RUNS_STABLE)) == incremental_stable
+
+
+# ===========================================================================
+# mart_scrape_volume — Plan 123 Phase 5 hourly_core optimization
+# ===========================================================================
+
+def _scrape_volume_row(hour, source):
+    con = _con()
+    try:
+        return con.execute(
+            "select hour, source, artifact_count, observation_count, "
+            "unique_listings, valid_vin_count, vin_extraction_pct "
+            "from main.mart_scrape_volume where hour = ? and source = ?",
+            [hour, source],
+        ).fetchone()
+    finally:
+        con.close()
+
+
+def _scrape_volume_key_count():
+    con = _con()
+    try:
+        return con.execute(
+            "select count(*), count(distinct scrape_volume_key) from main.mart_scrape_volume"
+        ).fetchone()
+    finally:
+        con.close()
+
+
+def _all_scrape_volume_rows():
+    con = _con()
+    try:
+        return con.execute(
+            "select hour, source, artifact_count, observation_count, "
+            "unique_listings, valid_vin_count, vin_extraction_pct "
+            "from main.mart_scrape_volume order by hour, source"
+        ).fetchall()
+    finally:
+        con.close()
+
+
+def test_scrape_volume_incremental_real_build_scenario():
+    # --- base phase: already seeded + built by the CI `dbt build` step ---
+    affected_before = _scrape_volume_row(fx.SV_AFFECTED_HOUR, "detail")
+    assert affected_before[2] == 1 and affected_before[3] == 1, "1 artifact, 1 observation"
+    assert affected_before[5] == 1 and affected_before[6] == 100.0, (
+        "the base row's valid vin17 gives valid_vin_count=1, vin_extraction_pct=100.0"
+    )
+    stable_before = _scrape_volume_row(fx.SV_STABLE_HOUR, "carousel")
+    assert stable_before[2] == 1 and stable_before[3] == 1
+    assert _scrape_volume_row(fx.SV_NEW_HOUR, "srp") is None
+
+    # --- incremental phase: seed phase 2, rerun dbt build with no --full-refresh ---
+    fx.seed(phase="scrape_volume_incremental")
+    _run_dbt("build", "--select", "mart_scrape_volume")
+
+    affected = _scrape_volume_row(fx.SV_AFFECTED_HOUR, "detail")
+    assert affected[2] == 2 and affected[3] == 2, (
+        "the affected hour's WHOLE aggregate must be recomputed from both rows, "
+        "not incremented from just the new one"
+    )
+    assert affected[5] == 1 and affected[6] == 50.0, (
+        "1 of 2 rows in the hour has a valid vin17 after the late row lands"
+    )
+
+    new_row = _scrape_volume_row(fx.SV_NEW_HOUR, "srp")
+    assert new_row is not None and new_row[3] == 1, (
+        "a brand new (hour, source) row must appear after the incremental rebuild"
+    )
+
+    assert _scrape_volume_row(fx.SV_STABLE_HOUR, "carousel") == stable_before, (
+        "an hour outside the lookback window must be unaffected by the incremental rebuild"
+    )
+
+    total, distinct_keys = _scrape_volume_key_count()
+    assert total == distinct_keys, (
+        "scrape_volume_key must remain unique after the incremental rebuild"
+    )
+
+    # --- repeated incremental run with no new data is idempotent ---
+    snapshot = _all_scrape_volume_rows()
+    _run_dbt("build", "--select", "mart_scrape_volume")
+    assert _all_scrape_volume_rows() == snapshot
+
+    # --- incremental output equals a full-refresh over the same final data ---
+    _run_dbt("build", "--select", "mart_scrape_volume", "--full-refresh")
+    assert _all_scrape_volume_rows() == snapshot
+
+
+# ===========================================================================
+# int_latest_observation — Plan 123 Phase 5 hourly_core optimization
+# ===========================================================================
+
+def _latest_observation_row(vin17: str):
+    con = _con()
+    try:
+        return con.execute(
+            "select vin17, source, make, fetched_at "
+            "from main.int_latest_observation where vin17 = ?",
+            [vin17],
+        ).fetchone()
+    finally:
+        con.close()
+
+
+def _latest_observation_vin_count():
+    con = _con()
+    try:
+        return con.execute(
+            "select count(*), count(distinct vin17) from main.int_latest_observation"
+        ).fetchone()
+    finally:
+        con.close()
+
+
+def test_latest_observation_incremental_real_build_scenario():
+    # --- base phase: already seeded + built by the CI `dbt build` step ---
+    priority_before = _latest_observation_row(fx.VIN_LO_PRIORITY)
+    assert priority_before[1] == "detail" and priority_before[2] == fx.LO_PRIORITY_DETAIL_MAKE
+    upgrade_before = _latest_observation_row(fx.VIN_LO_DETAIL_UPGRADE)
+    assert upgrade_before[1] == "detail" and upgrade_before[2] == fx.LO_DETAIL_OLD_MAKE
+    stable_before = _latest_observation_row(fx.VIN_LO_STABLE)
+    assert stable_before[1] == "detail" and stable_before[2] == fx.LO_STABLE_MAKE
+    assert _latest_observation_row(fx.VIN_LO_NEW) is None
+
+    # --- incremental phase: seed phase 2, rerun dbt build with no --full-refresh ---
+    fx.seed(phase="latest_observation_incremental")
+    _run_dbt("build", "--select", "int_latest_observation")
+
+    priority = _latest_observation_row(fx.VIN_LO_PRIORITY)
+    assert priority[1] == "detail" and priority[2] == fx.LO_PRIORITY_DETAIL_MAKE, (
+        "the older detail row must still win over the newer SRP row added in phase 2 — "
+        "source priority is checked before recency, even after a full history reread"
+    )
+    assert priority[3] == fx.LO_PRIORITY_DETAIL_FETCHED_AT
+
+    upgrade = _latest_observation_row(fx.VIN_LO_DETAIL_UPGRADE)
+    assert upgrade[1] == "detail" and upgrade[2] == fx.LO_DETAIL_NEW_MAKE, (
+        "a newer detail row (same source tier) must win over the base-phase detail row"
+    )
+    assert upgrade[3] == fx.LO_DETAIL_NEW_FETCHED_AT
+
+    new_row = _latest_observation_row(fx.VIN_LO_NEW)
+    assert new_row is not None and new_row[2] == fx.LO_NEW_MAKE, (
+        "a brand-new VIN with a late-arriving observation inside the lookback window "
+        "must appear after the incremental rebuild"
+    )
+
+    assert _latest_observation_row(fx.VIN_LO_STABLE) == stable_before, (
+        "a VIN untouched by the phase-2 rows must be unaffected by the incremental rebuild"
+    )
+
+    total, distinct_vins = _latest_observation_vin_count()
+    assert total == distinct_vins, "vin17 must remain unique after the incremental rebuild"
+
+    # --- repeated incremental run with no new data is idempotent ---
+    snapshot = (
+        _latest_observation_row(fx.VIN_LO_PRIORITY),
+        _latest_observation_row(fx.VIN_LO_DETAIL_UPGRADE),
+        _latest_observation_row(fx.VIN_LO_NEW),
+        _latest_observation_row(fx.VIN_LO_STABLE),
+    )
+    _run_dbt("build", "--select", "int_latest_observation")
+    assert (
+        _latest_observation_row(fx.VIN_LO_PRIORITY),
+        _latest_observation_row(fx.VIN_LO_DETAIL_UPGRADE),
+        _latest_observation_row(fx.VIN_LO_NEW),
+        _latest_observation_row(fx.VIN_LO_STABLE),
+    ) == snapshot
+
+    # --- incremental output equals a full-refresh over the same final data ---
+    _run_dbt("build", "--select", "int_latest_observation", "--full-refresh")
+    assert (
+        _latest_observation_row(fx.VIN_LO_PRIORITY),
+        _latest_observation_row(fx.VIN_LO_DETAIL_UPGRADE),
+        _latest_observation_row(fx.VIN_LO_NEW),
+        _latest_observation_row(fx.VIN_LO_STABLE),
+    ) == snapshot

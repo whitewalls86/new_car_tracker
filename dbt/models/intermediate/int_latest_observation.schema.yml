@@ -8,6 +8,13 @@ models:
       fetched_at wins (artifact_id as tiebreaker). Rows with null vin17 or null
       make are excluded. The canonical source of vehicle attributes for all
       downstream marts.
+      Incremental (Plan 123 Phase 5): affected-VIN replacement, unique_key='vin17'.
+      On an incremental run, only VINs with a stg_observations row inside
+      latest_observation_incremental_lookback_days of the target's
+      max(fetched_at) are rescanned, but their COMPLETE observation history is
+      reread and reranked, since source-priority means an older detail row can
+      beat a newer SRP/carousel one — scoping the rerank to only recent rows
+      would be wrong.
     config:
       tags: ["hourly_core"]
     columns:
