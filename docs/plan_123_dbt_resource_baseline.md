@@ -188,15 +188,31 @@ incrementalized and stable. `feature_daily` is dominated by
 The corrected `int_listing_volatility_features` grain check uses `vin17`
 and confirms 0 duplicates.
 
-## 2026-07-10 follow-up: mart_scrape_volume converted
+## 2026-07-10 follow-up: mart_scrape_volume and int_latest_observation converted
 
 `mart_scrape_volume` was converted to incremental (affected-hour replacement,
 `unique_key='scrape_volume_key'`) — see "Phase 5 hourly_core optimization:
 mart_scrape_volume" in the main plan doc for the full rationale and rollout
-steps. After the required one-time `--full-refresh` deploy, re-run steps 1/2
-above for `hourly_core` and record a new row in the Measurements table; the
-before/after comparison to validate is `mart_scrape_volume`'s
-`execution_time` in `run_results.json` against its 2026-07-10 baseline
-(~27-30s) and `hourly_core`'s total `duration_seconds` against the 62-70s
-baseline. `int_latest_observation` remains the next `hourly_core` candidate,
-pending update-key analysis for its source-priority/late-arrival semantics.
+steps.
+
+`int_latest_observation` was also converted to incremental in this same PR
+(affected-VIN replacement, `unique_key='vin17'`) — see "Phase 5 hourly_core
+optimization: int_latest_observation" in the main plan doc. It is safe only
+because the affected-VIN scan is used for *discovery* (which VINs changed)
+and every affected VIN then has its **complete** observation history reread
+and reranked from `stg_observations`; filtering ranking candidates to just
+the lookback window would be wrong, since source-priority (`detail` > `srp` >
+`carousel`, checked before recency) means an older detail row can outrank a
+newer but lower-priority one that falls inside the lookback window.
+
+Both models' existing production tables predate their incremental config, so
+first deploy needs **both**
+`dbt build --select mart_scrape_volume --full-refresh` and
+`dbt build --select int_latest_observation --full-refresh` run once, before
+any normal incremental `tag:hourly_core` run. After that one-time rebuild,
+re-run steps 1/2 above for `hourly_core` and record a new row in the
+Measurements table; the before/after comparison to validate is
+`mart_scrape_volume`'s `execution_time` against its 2026-07-10 baseline
+(~27-30s), `int_latest_observation`'s `execution_time` against its 2026-07-10
+baseline (~26-31s), and `hourly_core`'s total `duration_seconds` against the
+62-70s baseline.

@@ -42,6 +42,13 @@ vars:
   # stg_observations row with fetched_at at or after max(target.hour) minus
   # this many hours.
   scrape_volume_incremental_lookback_hours: 72
+  # Plan 123 Phase 5: late-arrival lookback for int_latest_observation's
+  # affected-VIN incremental scan. On an incremental run, a vin17 is
+  # "affected" (and its ENTIRE observation history reread/reranked, since
+  # source-priority means an older detail row can beat a newer SRP/carousel
+  # one) if it has a stg_observations row with fetched_at at or after
+  # max(target.fetched_at) minus this many days.
+  latest_observation_incremental_lookback_days: 3
 
 models:
   cartracker:

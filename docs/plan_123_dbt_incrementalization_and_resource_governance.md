@@ -863,8 +863,10 @@ trend checks remain open. This means:
 - `int_listing_volatility_features` is unchanged: full-table, and still
   consumes the detail-only state/run chain, so SRP/carousel refresh signals
   are not yet visible to the ML feature trainer.
-- `int_latest_observation`, `int_benchmarks`, and `mart_vehicle_snapshot` are
-  unchanged full-table builds.
+- `int_latest_observation` is incrementalized by affected VIN (this PR — see
+  "Phase 5 hourly_core optimization: int_latest_observation" below).
+  `int_benchmarks` and `mart_vehicle_snapshot` are unchanged full-table
+  builds.
 ### Phase 5 measurement update (2026-07-10)
 
 Initial production resource measurements were collected in
@@ -991,15 +993,13 @@ conversion criteria cleanly:
    window catches by construction. There is no cross-row priority or
    late-arrival ambiguity to resolve, unlike `int_latest_observation`.
 
-`int_latest_observation` remains the next `hourly_core` candidate but was
-**not** converted in this pass: its "latest row per VIN" semantics depend on
+`int_latest_observation` was **not** converted in the same commit as
+`mart_scrape_volume` — its "latest row per VIN" semantics depend on
 source-priority (detail beats SRP/carousel) and late-arrival ordering across
-potentially any historical VIN, not a fixed time dimension. Converting it
-safely requires first answering, with evidence rather than assumption,
-whether an affected-VIN replacement key can be scoped without re-deriving
-priority across a VIN's full observation history on every incremental run —
-the same category of question Phase 5 already flagged as open for
-`int_benchmarks`. That analysis is deferred to a follow-up commit.
+potentially any historical VIN, not a fixed time dimension, so it needed its
+own analysis before a conversion commit was safe to open. That analysis and
+implementation followed in this same PR — see "Phase 5 hourly_core
+optimization: int_latest_observation" below.
 
 Implementation:
 
@@ -1043,23 +1043,94 @@ Implementation:
   base-phase-assert / seed-phase-2 / rebuild / idempotency /
   full-refresh-equivalence shape as the other three tests in that module.
 
-Still needs VM verification:
+### Phase 5 hourly_core optimization: int_latest_observation (2026-07-10)
 
-- [ ] First deploy must run
-      `dbt build --select mart_scrape_volume --full-refresh` once before any
-      normal incremental run — the existing production table predates the
-      incremental config, so a plain incremental build against it would
-      attempt `delete+insert` against a table dbt has no watermark history
-      for (same rollout hazard already documented for Phases 3/4).
+Second implementation chunk against the two Phase 5 hourly_core candidates
+(`int_latest_observation` and `mart_scrape_volume`, converted in the same PR).
+`int_latest_observation` was deferred behind `mart_scrape_volume` because its
+update key needed a correctness argument, not just a scan-volume one:
+
+1. Resource evidence: `docs/plan_123_dbt_resource_baseline.md` shows it at
+   ~26-31s, the other dominant cost in a 62-70s `hourly_core` run alongside
+   `mart_scrape_volume`.
+2. Update key: `int_latest_observation` is **not** simply "latest row per
+   VIN" — its ranking is source-priority first (`detail` > `srp` > `carousel`),
+   recency second. An older `detail` observation can and does beat a newer
+   `srp`/`carousel` one. This means a naive "only look at recent rows"
+   incremental scan would be wrong: if a VIN's winning row is an old detail
+   observation and a new, lower-priority row lands, filtering candidates to
+   only the lookback window would incorrectly promote the new row (or drop
+   the VIN's true winner) because the old detail row wouldn't be in scope to
+   out-rank it. The safe key is **affected-VIN discovery, not affected-row
+   filtering**: use the lookback window only to decide *which VINs changed*,
+   then reread and rerank each affected VIN's **entire** observation history
+   from `stg_observations`, exactly like `int_price_history` (Phase 3) already
+   does for its LAG()-derived aggregates. This is the same pattern
+   `int_price_history` and `int_listing_state_runs` established, applied here
+   because source-priority ranking has the same "recompute needs full
+   context" property that LAG() and gaps-and-islands ordering do.
+
+Implementation:
+
+- `dbt/models/intermediate/int_latest_observation.sql` converted to
+  `materialized='incremental'`, `incremental_strategy='delete+insert'`,
+  `unique_key='vin17'`. An `affected_vins` CTE selects distinct `vin17` from
+  `stg_observations` where `fetched_at >= max(target.fetched_at) -
+  latest_observation_incremental_lookback_days` (discovery only, no source or
+  make filter, since a low-priority or NULL-make row can still be the signal
+  that a VIN changed). A `candidates` CTE then inner-joins on affected VINs
+  (full-table on first run / `--full-refresh`) before the unchanged
+  `row_number()` ranking (source-priority, `fetched_at desc`, `artifact_id
+  desc`) and `make is not null` filter run over that VIN's complete history —
+  not just the newly-discovered rows. The ranking logic itself is
+  byte-for-byte unchanged from the original full-table model.
+- New var `latest_observation_incremental_lookback_days` (default `3`,
+  `dbt/dbt_project.yml`), matching `int_price_history`'s and
+  `int_listing_state_runs`' lookback var naming/default.
+- `dbt/models/intermediate/int_latest_observation.schema.yml`: documented the
+  affected-VIN replacement and the source-priority caveat inline (existing
+  `vin17`/`source`/`make` tests untouched).
+- The five existing `int_latest_observation` dbt unit tests in
+  `dbt/models/intermediate/unit_tests.yml` got an explicit `overrides: macros:
+  is_incremental: false`, matching the Phase 2-4/mart_scrape_volume
+  convention.
+- `scripts/seed_lake_snapshot_fixture.py` gained a
+  `latest_observation_incremental` phase: base rows for `VIN_LO_PRIORITY`
+  (older detail winner) and `VIN_LO_DETAIL_UPGRADE` (older detail winner) plus
+  a stable control `VIN_LO_STABLE`, then a phase-2 wave adding a newer but
+  lower-priority SRP row to `VIN_LO_PRIORITY` (must NOT win), a newer same-tier
+  detail row to `VIN_LO_DETAIL_UPGRADE` (must win), and a first-ever row for a
+  brand-new `VIN_LO_NEW` (must appear).
+- `tests/integration/dbt/test_incremental_models_real_build.py`:
+  `test_latest_observation_incremental_real_build_scenario`, covering: (a)
+  source priority beats recency after a full-history reread, (b) same-tier
+  recency wins, (c) a late-arriving new VIN is picked up, (d) an unaffected
+  VIN is unchanged, (e) idempotency on a repeated incremental run, and (f)
+  full-refresh equivalence over the same final data.
+
+Still needs VM verification (both `mart_scrape_volume` and
+`int_latest_observation`):
+
+- [ ] First deploy must run **both**
+      `dbt build --select mart_scrape_volume --full-refresh` and
+      `dbt build --select int_latest_observation --full-refresh` once before
+      any normal incremental `tag:hourly_core` run — both existing
+      production tables predate their incremental config, so a plain
+      incremental build against either would attempt `delete+insert` against
+      a table dbt has no watermark history for (same rollout hazard already
+      documented for Phases 3/4).
 - [ ] Run `dbt build --select tag:hourly_core` (normal incremental) after
-      that rebuild and confirm success.
-- [ ] Run it again immediately after and confirm no row-count drift
-      (idempotency under real production data).
-- [ ] Check grain/uniqueness on the real table:
+      both rebuilds and confirm success.
+- [ ] Run it again immediately after and confirm no row-count drift for
+      either model (idempotency under real production data).
+- [ ] Check grain/uniqueness on the real tables:
       `select count(*), count(distinct scrape_volume_key) from mart_scrape_volume;`
-- [ ] Compare `mart_scrape_volume`'s runtime in `run_results.json` against
-      the Phase 5 baseline (~27-30s) to confirm steady-state scan volume is
-      actually lower.
+      and
+      `select count(*), count(distinct vin17) from int_latest_observation;`
+- [ ] Compare `mart_scrape_volume`'s runtime against the Phase 5 baseline
+      (~27-30s) and `int_latest_observation`'s runtime against its Phase 5
+      baseline (~26-31s) in `run_results.json` to confirm steady-state scan
+      volume is actually lower for both.
 
 ## Phase 6: Recovery and Drift Controls
 

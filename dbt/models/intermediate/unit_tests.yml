@@ -7,6 +7,9 @@ unit_tests:
   - name: test_detail_wins_over_srp_same_vin
     description: "Detail observation wins over SRP for the same VIN (source priority)"
     model: int_latest_observation
+    overrides:
+      macros:
+        is_incremental: false
     given:
       - input: ref('stg_observations')
         rows:
@@ -21,6 +24,9 @@ unit_tests:
   - name: test_detail_wins_even_when_srp_is_fresher
     description: "Detail always beats SRP regardless of recency — source_priority first"
     model: int_latest_observation
+    overrides:
+      macros:
+        is_incremental: false
     given:
       - input: ref('stg_observations')
         rows:
@@ -35,6 +41,9 @@ unit_tests:
   - name: test_srp_only_vin_passes_through
     description: "VIN with only SRP observations passes through as-is"
     model: int_latest_observation
+    overrides:
+      macros:
+        is_incremental: false
     given:
       - input: ref('stg_observations')
         rows:
@@ -47,6 +56,9 @@ unit_tests:
   - name: test_null_vin17_excluded
     description: "Rows with null vin17 are excluded from the output"
     model: int_latest_observation
+    overrides:
+      macros:
+        is_incremental: false
     given:
       - input: ref('stg_observations')
         rows:
@@ -61,6 +73,9 @@ unit_tests:
   - name: test_fresher_srp_wins_over_older_srp
     description: "When both are SRP, the fresher observation wins"
     model: int_latest_observation
+    overrides:
+      macros:
+        is_incremental: false
     given:
       - input: ref('stg_observations')
         rows:

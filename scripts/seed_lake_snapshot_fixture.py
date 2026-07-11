@@ -5,7 +5,8 @@ lake-snapshot integration tests.
     python scripts/seed_lake_snapshot_fixture.py --phase <phase>
     # phase in: base, observation_fingerprint_incremental,
     #           detail_fingerprint_incremental, price_history_incremental,
-    #           listing_state_runs_incremental, scrape_volume_incremental
+    #           listing_state_runs_incremental, scrape_volume_incremental,
+    #           latest_observation_incremental
 
 This module seeds deterministic business-state scenarios into MinIO across all
 four supported source tables:
@@ -37,8 +38,9 @@ here so seeding and assertions cannot drift apart:
   4. tests/integration/dbt/test_incremental_models_real_build.py — the same
      real-build pattern as (3), extended to int_listing_state_fingerprints,
      int_price_history, int_listing_state_runs (replacing the throwaway
-     dbt-duckdb shadow-project tests those models used to have), and
-     mart_scrape_volume (Plan 123 Phase 5).
+     dbt-duckdb shadow-project tests those models used to have),
+     mart_scrape_volume (Plan 123 Phase 5), and int_latest_observation (also
+     Plan 123 Phase 5).
 
 `seed(phase=...)` (default "base") controls which rows get written:
 
@@ -46,8 +48,8 @@ here so seeding and assertions cannot drift apart:
     tables), seeded once before the first `dbt build`.
   * "observation_fingerprint_incremental", "detail_fingerprint_incremental",
     "price_history_incremental", "listing_state_runs_incremental",
-    "scrape_volume_incremental" — each a silver- or ops-only second wave for
-    one real-build incremental test,
+    "scrape_volume_incremental", "latest_observation_incremental" — each a
+    silver- or ops-only second wave for one real-build incremental test,
     written under distinct filenames (see `_write_dataset`) so they land
     alongside, not over, the base phase's (and each other's) files. A
     subsequent non-full-refresh `dbt build` then sees base+phase-2 data
@@ -327,6 +329,60 @@ SV_STABLE_HOUR = _ts(2026, 7, 1, 10)
 LISTING_SV_STABLE = "L73"
 ARTIFACT_SV_STABLE = 703
 
+# --- Plan 123 Phase 5: int_latest_observation real-build incremental test --
+# ("latest_observation_incremental" phase). All four VINs are distinct from
+# every other scenario's VINs. Base build's max(fetched_at) among
+# int_latest_observation's own winning rows is 2026-07-27T10:05 (from
+# VIN_SV_AFFECTED above, a single-row winner) — comfortably above the other
+# scenario clusters (fingerprints/runs top out at 2026-07-27T00:00) — so the
+# default 3-day latest_observation_incremental_lookback_days window anchors on
+# it: 2026-07-24T10:05.
+#
+# VIN_LO_PRIORITY: base detail row (LO_PRIORITY_DETAIL_FETCHED_AT, well
+# outside the lookback window) is the base-phase winner. Phase 2 adds a newer
+# SRP row inside the lookback window — the VIN becomes "affected" and its
+# FULL history is reread, but the base detail row must still win because
+# source priority (detail > srp) is checked before recency. Proves the
+# affected-VIN replacement doesn't just look at the new row.
+VIN_LO_PRIORITY = _vin17("LOPRI")
+LISTING_LO_PRIORITY = "L80"
+ARTIFACT_LO_PRIORITY_DETAIL = 800
+ARTIFACT_LO_PRIORITY_SRP = 801
+LO_PRIORITY_DETAIL_FETCHED_AT = _ts(2026, 7, 20)
+LO_PRIORITY_DETAIL_MAKE = "Honda"
+LO_PRIORITY_SRP_FETCHED_AT = _ts(2026, 7, 26)
+LO_PRIORITY_SRP_MAKE = "SRP-Make"
+
+# VIN_LO_DETAIL_UPGRADE: base detail row is the winner. Phase 2 adds a NEWER
+# detail row inside the lookback window — same source tier, so recency
+# decides and the phase-2 row must win.
+VIN_LO_DETAIL_UPGRADE = _vin17("LODETUP")
+LISTING_LO_DETAIL_UPGRADE = "L81"
+ARTIFACT_LO_DETAIL_OLD = 810
+ARTIFACT_LO_DETAIL_NEW = 811
+LO_DETAIL_OLD_FETCHED_AT = _ts(2026, 7, 15)
+LO_DETAIL_OLD_MAKE = "Honda"
+LO_DETAIL_NEW_FETCHED_AT = _ts(2026, 7, 26)
+LO_DETAIL_NEW_MAKE = "Ford"
+
+# VIN_LO_NEW: absent from the base phase entirely. Its only row is added in
+# phase 2, with fetched_at inside the lookback window — a late-arriving
+# observation for a brand-new VIN, which must appear after the incremental
+# rebuild.
+VIN_LO_NEW = _vin17("LONEWVIN")
+LISTING_LO_NEW = "L82"
+ARTIFACT_LO_NEW = 820
+LO_NEW_FETCHED_AT = _ts(2026, 7, 25)
+LO_NEW_MAKE = "Mazda"
+
+# VIN_LO_STABLE: base-only detail row, never referenced by phase 2 — proves
+# an unaffected VIN is left unchanged by the incremental rebuild.
+VIN_LO_STABLE = _vin17("LOSTABLE")
+LISTING_LO_STABLE = "L83"
+ARTIFACT_LO_STABLE = 830
+LO_STABLE_FETCHED_AT = _ts(2026, 7, 10)
+LO_STABLE_MAKE = "Subaru"
+
 # listing_id constants asserted on by the selector/cohort integration tests,
 # exported so seeding and assertions cannot drift apart.
 LISTING_RELISTED_1 = "L1"            # relisted VIN first listing (+ price drop/increase, cooldown)
@@ -541,6 +597,22 @@ def _scrape_volume_base_rows() -> List[Dict[str, Any]]:
     ]
 
 
+def _latest_observation_base_rows() -> List[Dict[str, Any]]:
+    """Base-phase rows for int_latest_observation's real-build incremental
+    test (see build_latest_observation_incremental_rows below)."""
+    return [
+        _obs_row(VIN_LO_PRIORITY, listing_id=LISTING_LO_PRIORITY,
+                 artifact_id=ARTIFACT_LO_PRIORITY_DETAIL, source="detail",
+                 fetched_at=LO_PRIORITY_DETAIL_FETCHED_AT, make=LO_PRIORITY_DETAIL_MAKE),
+        _obs_row(VIN_LO_DETAIL_UPGRADE, listing_id=LISTING_LO_DETAIL_UPGRADE,
+                 artifact_id=ARTIFACT_LO_DETAIL_OLD, source="detail",
+                 fetched_at=LO_DETAIL_OLD_FETCHED_AT, make=LO_DETAIL_OLD_MAKE),
+        _obs_row(VIN_LO_STABLE, listing_id=LISTING_LO_STABLE,
+                 artifact_id=ARTIFACT_LO_STABLE, source="detail",
+                 fetched_at=LO_STABLE_FETCHED_AT, make=LO_STABLE_MAKE),
+    ]
+
+
 def build_silver_rows() -> List[Dict[str, Any]]:
     """All silver_observations fixture rows (dbt-equivalence + selector/cohort)."""
     return (
@@ -550,6 +622,7 @@ def build_silver_rows() -> List[Dict[str, Any]]:
         + _detail_fingerprint_incremental_base_rows()
         + _listing_state_runs_base_rows()
         + _scrape_volume_base_rows()
+        + _latest_observation_base_rows()
     )
 
 
@@ -674,6 +747,37 @@ def build_scrape_volume_incremental_rows() -> List[Dict[str, Any]]:
                  source="detail", fetched_at=SV_AFFECTED_HOUR + timedelta(minutes=45)),
         _obs_row(None, listing_id=LISTING_SV_NEW, artifact_id=ARTIFACT_SV_NEW,
                  source="srp", fetched_at=SV_NEW_HOUR + timedelta(minutes=10)),
+    ]
+
+
+def build_latest_observation_incremental_rows() -> List[Dict[str, Any]]:
+    """Phase-2 rows for int_latest_observation, seeded via
+    seed(phase="latest_observation_incremental") after the base phase has
+    already been built once:
+
+      * ARTIFACT_LO_PRIORITY_SRP (VIN_LO_PRIORITY) — a newer SRP row, inside
+        the lookback window, for a VIN whose base-phase winner is an older
+        detail row. The VIN becomes affected and its full history is reread,
+        but the older detail row must still win: source priority is checked
+        before recency.
+      * ARTIFACT_LO_DETAIL_NEW (VIN_LO_DETAIL_UPGRADE) — a newer detail row,
+        same source tier as the base-phase winner, which must win on recency.
+      * ARTIFACT_LO_NEW (VIN_LO_NEW) — a brand-new VIN, absent from the base
+        phase, whose only row lands inside the lookback window.
+
+    VIN_LO_STABLE is intentionally never touched here, to prove an unaffected
+    VIN is unchanged by this phase's incremental rebuild.
+    """
+    return [
+        _obs_row(VIN_LO_PRIORITY, listing_id=LISTING_LO_PRIORITY,
+                 artifact_id=ARTIFACT_LO_PRIORITY_SRP, source="srp",
+                 fetched_at=LO_PRIORITY_SRP_FETCHED_AT, make=LO_PRIORITY_SRP_MAKE),
+        _obs_row(VIN_LO_DETAIL_UPGRADE, listing_id=LISTING_LO_DETAIL_UPGRADE,
+                 artifact_id=ARTIFACT_LO_DETAIL_NEW, source="detail",
+                 fetched_at=LO_DETAIL_NEW_FETCHED_AT, make=LO_DETAIL_NEW_MAKE),
+        _obs_row(VIN_LO_NEW, listing_id=LISTING_LO_NEW,
+                 artifact_id=ARTIFACT_LO_NEW, source="detail",
+                 fetched_at=LO_NEW_FETCHED_AT, make=LO_NEW_MAKE),
     ]
 
 
@@ -860,6 +964,8 @@ def _seed_ops() -> List[str]:
 #     (silver-only).
 #   * "scrape_volume_incremental" — Plan 123 Phase 5, mart_scrape_volume
 #     (silver-only).
+#   * "latest_observation_incremental" — Plan 123 Phase 5,
+#     int_latest_observation (silver-only).
 PHASES = (
     "base",
     "observation_fingerprint_incremental",
@@ -867,6 +973,7 @@ PHASES = (
     "price_history_incremental",
     "listing_state_runs_incremental",
     "scrape_volume_incremental",
+    "latest_observation_incremental",
 )
 
 
@@ -906,10 +1013,17 @@ def seed(phase: str = "base") -> List[str]:
                 basename_prefix="lake_snapshot_fixture_runs_incremental",
             )
         ]
+    if phase == "scrape_volume_incremental":
+        return [
+            _seed_silver(
+                build_scrape_volume_incremental_rows(),
+                basename_prefix="lake_snapshot_fixture_sv_incremental",
+            )
+        ]
     return [
         _seed_silver(
-            build_scrape_volume_incremental_rows(),
-            basename_prefix="lake_snapshot_fixture_sv_incremental",
+            build_latest_observation_incremental_rows(),
+            basename_prefix="lake_snapshot_fixture_lo_incremental",
         )
     ]
 
