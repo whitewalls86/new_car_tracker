@@ -957,13 +957,15 @@ c. **Are `int_latest_observation` or `int_benchmarks` worth
    changing many percentiles) needs a scoping analysis before assuming an
    affected-group replacement actually reduces scan volume.
 
-**2026-07-10 priority update:** `int_latest_observation` is now a confirmed
-`hourly_core` cost center and should be investigated as a near-term candidate
-if its affected-VIN update key covers source-priority and late-arrival
-behavior. `int_benchmarks` remains lower priority: `mart_deal_scores` needs
-it hourly, but the benchmark table itself is small in row count and its
-group-recompute fan-out still needs a scoping analysis before assuming
-affected-group replacement would reduce scan volume.
+**2026-07-10 priority update:** `int_latest_observation` was a confirmed
+`hourly_core` cost center; its affected-VIN update key was investigated and
+found to cover source-priority and late-arrival behavior (full history reread
+per affected VIN, not just recent rows), and it has since been converted —
+see "Phase 5 hourly_core optimization: int_latest_observation" below.
+`int_benchmarks` remains lower priority: `mart_deal_scores` needs it hourly,
+but the benchmark table itself is small in row count and its group-recompute
+fan-out still needs a scoping analysis before assuming affected-group
+replacement would reduce scan volume.
 
 d. **What should defer to Plan 118 Spark/Delta?** Any time-relative feature
    computation that can't be fixed by an update key at all (see
