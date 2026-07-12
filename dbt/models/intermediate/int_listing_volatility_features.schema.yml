@@ -93,3 +93,38 @@ models:
         description: >
           Days from recent_srp_seen_at to as_of_at. NULL when the listing has never
           appeared in SRP at or before as_of_at.
+      - name: all_source_run_started_at
+        description: >
+          run_started_at of the listing's current open run in int_listing_observation_runs
+          (all-source: detail, SRP, carousel). NULL if no all-source observation run
+          exists for this listing_id.
+      - name: days_since_last_all_source_change
+        description: >
+          Days from all_source_run_started_at to as_of_at. NULL when
+          all_source_run_started_at is NULL.
+      - name: all_source_unchanged_observation_streak
+        description: >
+          Number of consecutive same-fingerprint observations (any source) in the
+          listing's current open all-source run. Zero when no all-source observation
+          run exists for this listing_id.
+        data_tests:
+          - not_null
+      - name: all_source_detail_observation_count
+        description: Number of detail-source observations in the listing's current open all-source run. Zero if none.
+        data_tests:
+          - not_null
+      - name: all_source_srp_observation_count
+        description: Number of SRP-source observations in the listing's current open all-source run. Zero if none.
+        data_tests:
+          - not_null
+      - name: all_source_carousel_observation_count
+        description: Number of carousel-source observations in the listing's current open all-source run. Zero if none.
+        data_tests:
+          - not_null
+      - name: all_source_non_detail_refresh_seen
+        description: >
+          True if the listing's current open all-source run includes at least one
+          SRP or carousel observation — i.e. a source other than detail refreshed
+          this listing while it has been in its current state.
+        data_tests:
+          - not_null

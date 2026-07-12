@@ -1,13 +1,14 @@
 """
 Plan 123: incremental behavior of int_listing_state_fingerprints,
-int_price_history, int_listing_state_runs, mart_scrape_volume, and
-int_latest_observation against the real dbt project and the shared MinIO
-lake-snapshot fixture — replacing test_fingerprints_incremental.py,
-test_price_history_incremental.py, and test_listing_state_runs_incremental.py,
-each of which built its own throwaway dbt-duckdb shadow project (fake project
-config, a seeded CSV stand-in for the real source, and the model SQL copied
-into it). That worked but required inventing a parallel fake universe that
-can drift from the real model graph over time.
+int_price_history, int_listing_state_runs, mart_scrape_volume,
+int_latest_observation, and int_listing_observation_runs against the real dbt
+project and the shared MinIO lake-snapshot fixture — replacing
+test_fingerprints_incremental.py, test_price_history_incremental.py, and
+test_listing_state_runs_incremental.py, each of which built its own throwaway
+dbt-duckdb shadow project (fake project config, a seeded CSV stand-in for the
+real source, and the model SQL copied into it). That worked but required
+inventing a parallel fake universe that can drift from the real model graph
+over time.
 
 Follows the same real-build pattern as
 test_observation_fingerprints_real_build.py (Plan 123 Phase 2b): the CI `dbt`
@@ -22,14 +23,15 @@ same-batch duplicates, and affected-entity replacement. Each test finishes
 with a repeated no-op incremental run (idempotency) and a `--full-refresh`
 rebuild compared against the incremental result.
 
-The five tests are independent (different models/fixture phases/VINs) except
-that the int_listing_state_runs test also rebuilds its upstream
-int_listing_state_fingerprints — rebuilding that model a second time is
-idempotent for every VIN the fingerprints test already asserted on, so
-execution order here does not matter for correctness, but they are kept in
-top-to-bottom definition order (pytest's natural execution order within a
-module) since that's the order the fixture phases document their lookback-
-window anchors relative to each other.
+The six tests are independent (different models/fixture phases/VINs/listing_ids)
+except that the int_listing_state_runs test also rebuilds its upstream
+int_listing_state_fingerprints, and the int_listing_observation_runs test
+rebuilds its upstream int_listing_observation_fingerprints — rebuilding those
+upstream models a second time is idempotent for every entity their own tests
+already asserted on, so execution order here does not matter for correctness,
+but they are kept in top-to-bottom definition order (pytest's natural
+execution order within a module) since that's the order the fixture phases
+document their lookback-window anchors relative to each other.
 
 Requires MINIO_ENDPOINT and DUCKDB_PATH (both set by the CI `dbt` job).
 Skipped everywhere else — there is no local dbt/MinIO stack to run this
@@ -455,3 +457,85 @@ def test_latest_observation_incremental_real_build_scenario():
         _latest_observation_row(fx.VIN_LO_NEW),
         _latest_observation_row(fx.VIN_LO_STABLE),
     ) == snapshot
+
+
+# ===========================================================================
+# int_listing_observation_runs — Plan 123 final modeling correction
+# (all-source, listing_id-grain observation-state cadence runs)
+# ===========================================================================
+
+def _observation_runs_rows(listing_id: str):
+    con = _con()
+    try:
+        return con.execute(
+            "select listing_id, price, run_started_at, run_ended_at, observation_count, "
+            "detail_observation_count, srp_observation_count, carousel_observation_count, "
+            "distinct_source_count, is_open_run "
+            "from main.int_listing_observation_runs where listing_id = ? order by run_started_at",
+            [listing_id],
+        ).fetchall()
+    finally:
+        con.close()
+
+
+def test_observation_runs_incremental_real_build_scenario():
+    # --- base phase: already seeded + built by the CI `dbt build` step ---
+    runs_a_before = _observation_runs_rows(fx.LISTING_OBSRUN_A)
+    assert len(runs_a_before) == 2, (
+        "base build: price 30000 run (detail+srp) + price 29000 open run (carousel)"
+    )
+    runs_b_before = _observation_runs_rows(fx.LISTING_OBSRUN_B)
+    assert len(runs_b_before) == 3, "base build: 40000 -> 41000 -> 40000 forms three runs"
+    runs_stable_before = _observation_runs_rows(fx.LISTING_OBSRUN_STABLE)
+    assert len(runs_stable_before) == 1
+
+    # --- incremental phase: seed phase 2, rerun dbt build (fingerprints + runs) ---
+    fx.seed(phase="observation_runs_incremental")
+    _run_dbt(
+        "build", "--select",
+        "int_listing_observation_fingerprints", "int_listing_observation_runs",
+    )
+
+    runs_a = _observation_runs_rows(fx.LISTING_OBSRUN_A)
+    assert len(runs_a) == 4, (
+        "a late artifact inside the lookback splits the original 30000-price run into "
+        "30000 -> 31000 -> 30000, leaving the open 29000 run untouched"
+    )
+    assert runs_a[-1][9] is True, "the last run stays open"
+
+    runs_b = _observation_runs_rows(fx.LISTING_OBSRUN_B)
+    assert len(runs_b) == 1, (
+        "a corrected artifact whose price matches the first/third run must merge all "
+        "three runs into one"
+    )
+    assert runs_b[0][4] == 3 and runs_b[0][9] is True, (
+        "merged run has all 3 observations and stays open"
+    )
+    assert runs_b[0][5] == 1 and runs_b[0][6] == 1 and runs_b[0][7] == 1, (
+        "merged run keeps one detail, one srp, one carousel observation"
+    )
+    assert runs_b[0][8] == 3, "merged run's distinct_source_count reflects all three sources"
+
+    assert _observation_runs_rows(fx.LISTING_OBSRUN_STABLE) == runs_stable_before, (
+        "an unaffected listing_id's runs must be unchanged by another listing's incremental rebuild"
+    )
+
+    # --- repeated incremental run with no new data is idempotent ---
+    _run_dbt(
+        "build", "--select",
+        "int_listing_observation_fingerprints", "int_listing_observation_runs",
+    )
+    assert _observation_runs_rows(fx.LISTING_OBSRUN_A) == runs_a
+    assert _observation_runs_rows(fx.LISTING_OBSRUN_B) == runs_b
+
+    # --- incremental output equals a full-refresh over the same final data ---
+    incremental_a = sorted(runs_a)
+    incremental_b = sorted(runs_b)
+    incremental_stable = sorted(runs_stable_before)
+    _run_dbt(
+        "build", "--select", "int_listing_observation_fingerprints", "int_listing_observation_runs",
+        "--full-refresh",
+    )
+    assert sorted(_observation_runs_rows(fx.LISTING_OBSRUN_A)) == incremental_a
+    assert sorted(_observation_runs_rows(fx.LISTING_OBSRUN_B)) == incremental_b
+    assert sorted(_observation_runs_rows(fx.LISTING_OBSRUN_STABLE)) == incremental_stable
