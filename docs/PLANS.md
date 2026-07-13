@@ -44,6 +44,7 @@ governance/catalog expansion.
 | [119](plan_119_lakehouse_governance.md) | Lakehouse governance + catalog expansion | Draft |
 | [120](plan_120_ci_lake_snapshot_delivery.md) | CI + local lake snapshot delivery | Draft |
 | [121](plan_121_staging_environment.md) | Staging environment | Draft |
+| [124](plan_124_trawl_memory_guardrails.md) | Trawl browser solver memory guardrails | Hotfix |
 
 ---
 
