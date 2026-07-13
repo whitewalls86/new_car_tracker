@@ -17,7 +17,7 @@ currently runs on DuckDB against MinIO silver, but DuckDB is now considered a
 transition analytics endpoint rather than the future platform target.
 
 **Now:** Plans 110 and 111 are complete as the storage/feature foundation for
-adaptive refresh. The next arc is the Databricks-style lakehouse track: Delta +
+adaptive refresh. The next arc is the open lakehouse track: Iceberg + Spark +
 MLflow backtesting, reproducible CI/local fixture snapshots, production
 adaptive refresh rollout, dbt migration away from DuckDB, and
 governance/catalog expansion.
@@ -28,7 +28,7 @@ governance/catalog expansion.
 
 | Plan | Title | Status |
 |------|-------|--------|
-| [117](plan_117_storage_and_adaptive_refresh_roadmap.md) | Databricks-style lakehouse + adaptive refresh roadmap | Draft |
+| [117](plan_117_storage_and_adaptive_refresh_roadmap.md) | Open lakehouse + adaptive refresh roadmap | Draft |
 
 ---
 
@@ -36,11 +36,11 @@ governance/catalog expansion.
 
 | Plan | Title | Status |
 |------|-------|--------|
-| [112](plan_112_refresh_policy_backtesting.md) | Delta + MLflow adaptive refresh backtesting | Draft |
+| [112](plan_112_refresh_policy_backtesting.md) | Iceberg + MLflow adaptive refresh backtesting | Draft |
 | [113](plan_113_production_adaptive_refresh.md) | Production adaptive refresh integration | Draft |
 | [114](plan_114_sectioned_html_artifact_audit.md) | Sectioned HTML artifact audit | Draft |
 | [115](plan_115_detail_unenriched_circuit_breaker.md) | Detail unenriched circuit breaker | Draft |
-| [118](plan_118_dbt_spark_migration.md) | dbt migration from DuckDB to Spark/Databricks-compatible execution | Draft |
+| [118](plan_118_dbt_spark_migration.md) | dbt migration from DuckDB to Spark-compatible execution | Draft |
 | [119](plan_119_lakehouse_governance.md) | Lakehouse governance + catalog expansion | Draft |
 | [120](plan_120_ci_lake_snapshot_delivery.md) | CI + local lake snapshot delivery | Draft |
 | [121](plan_121_staging_environment.md) | Staging environment | Draft |
@@ -76,12 +76,12 @@ needed.
 
 **Plans 110-121 lakehouse/adaptive-refresh sequence** - Plans 110 and 111 are
 the completed foundation: storage normalization and adaptive-refresh feature
-outputs. Plan 117 resets the forward roadmap toward a Databricks-style local
-lakehouse. Plan 112 audits the feature outputs, proves Delta/MLflow
+outputs. Plan 117 resets the forward roadmap toward a portable local
+lakehouse. Plan 112 audits the feature outputs, proves Iceberg/MLflow
 reproducibility, and selects a backtested policy. Plan 120 provides the
 production-derived fixture snapshots consumed by CI and local development. Plan
 113 deploys only an approved, pinned policy config into ops claim logic. Plan
-118 moves dbt away from DuckDB toward Spark/Databricks-compatible execution.
+118 moves dbt away from DuckDB toward Spark-compatible execution.
 Plans 114, 121, and 119 can follow in whichever order is most useful: raw HTML
 retention research, staging environment, and governance/catalog expansion.
 

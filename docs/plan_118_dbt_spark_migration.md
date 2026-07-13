@@ -1,13 +1,14 @@
-# Plan 118: dbt Migration From DuckDB to Spark/Databricks-Compatible Execution
+# Plan 118: dbt Migration From DuckDB to Spark-Compatible Execution
 
 ## Goal
 
 Move CarTracker's analytics transformation layer away from DuckDB and toward a
-Spark/Databricks-compatible dbt execution model.
+Spark-compatible dbt execution model.
 
 This supports the Plan 117 north star:
 
-> Databricks without Databricks now; portable toward Databricks later.
+> Portable open lakehouse now; transferable to Databricks, Snowflake/Iceberg,
+> and open-source Spark ecosystems later.
 
 The goal is not to remove dbt. The goal is to keep dbt's modeling, testing,
 lineage, and documentation value while changing the execution backend.
@@ -25,9 +26,9 @@ Current state:
 
 Future direction:
 
-- Delta Lake tables become the analytical table substrate.
+- Iceberg tables become the analytical table substrate.
 - Spark/PySpark becomes the primary write and feature-prep engine.
-- dbt should compile/run against a Spark or Databricks-compatible backend.
+- dbt should compile/run against a Spark-compatible backend.
 - DuckDB should become optional tooling, not the long-term analytics endpoint.
 
 ---
@@ -88,16 +89,16 @@ Candidates:
 | Adapter | Why consider it | Risk |
 |---------|-----------------|------|
 | `dbt-spark` | More directly self-hostable with local Spark/Thrift/JDBC patterns | May diverge from Databricks adapter behavior |
-| `dbt-databricks` | Best resume/portability signal for Databricks | May be awkward without managed Databricks |
+| `dbt-databricks` | Useful if managed Databricks becomes explicit target | May be awkward without managed Databricks |
 | Dual-profile approach | Local Spark now, Databricks profile later | More config and CI complexity |
 
 Decision criteria:
 
 - can run locally without managed Databricks
-- can read/write Delta tables
+- can read/write Iceberg tables
 - compatible with MinIO or local object storage
 - can run dbt tests in CI
-- minimizes SQL divergence from a future Databricks target
+- minimizes SQL divergence from future Spark/Databricks targets
 - keeps model definitions understandable
 
 Deliverable:
@@ -119,7 +120,7 @@ dbt model -> DuckDB external source -> MinIO Parquet glob
 Target pattern:
 
 ```text
-dbt model -> catalog/schema/table -> Delta table storage
+dbt model -> catalog/schema/table -> Iceberg table storage
 ```
 
 Initial source candidates:
@@ -179,10 +180,10 @@ Candidate materializations:
 |-------|-------------------------|
 | staging | view or table depending on Spark cost |
 | intermediate | table |
-| mart | Delta table |
-| backtest outputs | Delta table or MLflow artifact, depending on size |
+| mart | Iceberg table |
+| backtest outputs | Iceberg table or MLflow artifact, depending on size |
 
-Avoid creating a maze of transient views that repeatedly rescan large Delta
+Avoid creating a maze of transient views that repeatedly rescan large Iceberg
 tables. Spark startup and scan costs are different from DuckDB's local query
 costs.
 
@@ -197,7 +198,7 @@ Needed decisions:
 - where Spark runs locally
 - how dbt connects to Spark
 - how MinIO credentials are provided
-- how Delta dependencies are supplied
+- how Iceberg dependencies are supplied
 - whether dbt_runner remains FastAPI around `dbt build`
 - how build locks work with longer Spark jobs
 - how docs generation works
@@ -214,7 +215,7 @@ CI must prove model correctness without requiring managed Databricks.
 Minimum CI path:
 
 1. start Postgres and MinIO test services
-2. seed small Delta fixtures or create them during setup
+2. seed small Iceberg fixtures or create them during setup
 3. start local Spark or compatible test backend
 4. run `dbt deps`
 5. run selected `dbt build`
@@ -249,7 +250,7 @@ serving surface. Keep operational dashboard widgets on Postgres.
 ## Rollout
 
 1. Complete adapter decision.
-2. Build a minimal local Spark/dbt proof using one small Delta table.
+2. Build a minimal local Spark/dbt proof using one small Iceberg table.
 3. Port staging models.
 4. Port one representative mart end to end.
 5. Compare row counts and dashboard output to DuckDB baseline.
@@ -277,7 +278,7 @@ serving surface. Keep operational dashboard widgets on Postgres.
 | File | Change |
 |------|--------|
 | `docs/dbt_spark_adapter_decision.md` | New adapter decision record |
-| `dbt/profiles.yml` | Add Spark/Databricks-compatible target |
+| `dbt/profiles.yml` | Add Spark-compatible target |
 | `dbt/packages.yml` | Adapter/package updates if needed |
 | `dbt/models/sources.yml` | Move sources toward catalog tables |
 | `dbt/models/**` | SQL compatibility updates |

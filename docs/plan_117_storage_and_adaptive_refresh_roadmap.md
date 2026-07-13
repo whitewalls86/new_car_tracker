@@ -1,22 +1,22 @@
-# Plan 117: Databricks-Style Lakehouse + Adaptive Refresh Roadmap
+# Plan 117: Open Lakehouse + Adaptive Refresh Roadmap
 
 ## Goal
 
 Reset the storage and adaptive-refresh roadmap around a new north star:
 
-> Build a local, low-cost "Databricks without Databricks" data platform that can
-> later move toward managed Databricks/Azure-style infrastructure with minimal
-> conceptual rework.
+> Build a local, low-cost open lakehouse that is portable across Spark,
+> Databricks-style platforms, Snowflake/Iceberg integrations, and open-source
+> query engines.
 
 The prior roadmap assumed a DuckDB-centered analytics layer with a future
 Iceberg or DuckLake substrate decision. The revised direction is:
 
 1. Keep Postgres as the hot operational system.
-2. Move analytical history from loose Parquet + DuckDB toward Delta Lake tables.
+2. Move analytical history from loose Parquet + DuckDB toward Apache Iceberg
+   tables.
 3. Introduce Unity Catalog OSS or a compatible governance/catalog layer.
-4. Move dbt execution away from DuckDB and toward Spark/Databricks-compatible
-   semantics.
-5. Use MLflow, Delta table versions, and catalog metadata to make adaptive
+4. Move dbt execution away from DuckDB and toward Spark-compatible semantics.
+5. Use MLflow, Iceberg table snapshots, and catalog metadata to make adaptive
    refresh experiments reproducible.
 6. Add governance work deliberately, not as an afterthought.
 
@@ -40,16 +40,16 @@ CarTracker currently has a strong single-VM data platform:
 
 This architecture has worked well for the current project size. Its weakness is
 not correctness; it is professional portability. DuckDB is excellent local
-infrastructure, but it is not the center of gravity for Databricks, Azure
-Databricks, Microsoft Fabric, or Spark-based ML/data-platform work.
+infrastructure, but it is not the center of gravity for Spark-based
+ML/data-platform work or open lakehouse table management.
 
 The next roadmap should therefore optimize for:
 
 - Spark/PySpark experience.
-- Delta Lake table management.
-- Unity Catalog concepts.
+- Iceberg table management.
+- Unity Catalog / REST catalog concepts.
 - MLflow experiment tracking.
-- dbt against a Spark/Databricks-like backend.
+- dbt against a Spark-compatible backend.
 - governance and access-control patterns that resemble modern lakehouse
   platforms.
 
@@ -70,10 +70,10 @@ Postgres HOT tables  <---->  staging/event buffers
    |                       Spark/PySpark writers
    |                                |
    v                                v
-production claim path       Delta Lake tables on MinIO
+production claim path       Iceberg tables on MinIO
                                     |
                                     v
-                         Unity Catalog OSS / catalog layer
+                         Unity Catalog OSS / REST catalog layer
                                     |
                 +-------------------+-------------------+
                 |                   |                   |
@@ -83,38 +83,41 @@ production claim path       Delta Lake tables on MinIO
 
 Principles:
 
-- The hot production scraper path must not call MLflow, Unity Catalog, Spark, or
-  a live model server.
+- The hot production scraper path must not call MLflow, Unity Catalog, Spark,
+  Iceberg, or a live model server.
 - Postgres remains the operational source of truth for mutable current state.
-- Delta tables become the analytical history and reproducible experiment layer.
-- Unity Catalog OSS, if it passes the spike, becomes the governance/catalog
-  learning surface.
+- Iceberg tables become the analytical history and reproducible experiment
+  layer.
+- Unity Catalog OSS or a compatible REST catalog, if it passes the spike,
+  becomes the governance/catalog learning surface.
 - DuckDB is treated as a transition tool, not the future analytics endpoint.
 
 ---
 
-## Why Delta + Unity Catalog OSS
+## Why Iceberg + Unity Catalog OSS-Compatible Governance
 
-The project now prioritizes a Databricks/Microsoft-aligned professional story.
-Delta Lake is the native table-format center of gravity for Databricks, Azure
-Databricks, and Microsoft Fabric-style lakehouse work. Unity Catalog concepts
-show up frequently in modern data-platform job descriptions.
+The project still wants Spark, MLflow, and Databricks-transferable systems
+knowledge. The table-format choice now prioritizes portability.
 
-This does not mean Iceberg was a bad option. Iceberg remains the stronger
-vendor-neutral open lakehouse story, and Polaris/Lakekeeper remain credible
-fallbacks if the Delta + Unity Catalog OSS spike fails.
+Iceberg is the stronger vendor-neutral open lakehouse story. It is increasingly
+supported across Snowflake, Databricks access paths, Trino, Spark, and
+open-source catalogs. If a role requires managed Databricks as a hard stop, a
+local Delta clone would not fully satisfy that requirement anyway. The more
+durable project value is understanding table formats, catalogs, snapshots,
+schema evolution, and reproducible ML workflows.
 
 The revised tradeoff is intentional:
 
 | Path | Best for |
 |------|----------|
-| Delta + Unity Catalog OSS | Databricks/Azure/Fabric resume alignment and governance concepts |
+| Iceberg + Unity Catalog OSS-compatible governance | Portable open lakehouse with Databricks-transferable governance concepts |
 | Iceberg + Polaris | Open lakehouse / multi-engine table-format engineering |
 | Iceberg + Lakekeeper | Practical self-hosted Iceberg operations |
+| Delta + Unity Catalog OSS | Databricks-native semantics if managed Databricks becomes the explicit target |
 | DuckLake | Minimal-friction DuckDB-native local lakehouse |
 
-For this project, choose Delta + Unity Catalog OSS first because the explicit
-goal is "Databricks without Databricks."
+For this project, choose Iceberg first and use Unity Catalog OSS or a compatible
+catalog/governance layer to bridge the Databricks-style concepts.
 
 ---
 
@@ -139,7 +142,7 @@ Deliverables:
 
 This stage prevents the migration from turning into folklore.
 
-### Stage 1: Delta + Unity Catalog OSS Research Spike
+### Stage 1: Iceberg + Catalog Research Spike
 
 Prove or reject the new substrate on isolated data before touching production
 analytics.
@@ -147,13 +150,15 @@ analytics.
 Required checks:
 
 1. Stand up a local Spark/PySpark environment.
-2. Write a small Delta table to MinIO or an equivalent local object-store path.
+2. Write a small Iceberg table to MinIO or an equivalent local object-store
+   path.
 3. Read the table back through Spark.
-4. Create at least two Delta table versions.
-5. Time travel to an older version.
-6. Capture table version metadata programmatically.
-7. Log a smoke-test MLflow run containing the table version and input row count.
-8. Stand up Unity Catalog OSS or a compatible catalog/governance layer.
+4. Create at least two Iceberg snapshots.
+5. Time travel to an older snapshot.
+6. Capture table snapshot metadata programmatically.
+7. Log a smoke-test MLflow run containing the table snapshot and input row
+   count.
+8. Stand up Unity Catalog OSS or a compatible REST catalog/governance layer.
 9. Register or expose the test table through the catalog layer if feasible.
 10. Test permissions/governance concepts at the smallest useful scale.
 11. Document where Unity Catalog OSS differs from managed Databricks Unity
@@ -166,17 +171,18 @@ Decision output:
 - rejected alternatives
 - exact spike commands
 - cleanup proof
-- known gaps vs managed Databricks
+- known gaps vs managed Databricks and Snowflake-managed Iceberg
 
 Fallback rule:
 
-If Delta table reads/writes work but Unity Catalog OSS is too immature or too
-awkward locally, keep Delta and defer catalog integration. If Delta itself
-creates disproportionate friction, re-open Iceberg + Polaris.
+If Unity Catalog OSS is too immature or too awkward locally, keep Iceberg and
+use a simpler catalog while deferring deeper catalog integration to Plan 119. If
+Iceberg itself creates disproportionate friction, revisit the table-format
+decision before proceeding.
 
-### Stage 2: Delta Lake Table Foundation
+### Stage 2: Iceberg Table Foundation
 
-Create the first real analytical Delta tables from normalized history.
+Create the first real analytical Iceberg tables from normalized history.
 
 Candidate tables:
 
@@ -192,16 +198,16 @@ Parquet readers until row counts, schemas, and time-travel behavior are proven.
 
 Deliverables:
 
-- Delta table naming convention.
+- Iceberg table naming convention.
 - Physical storage convention.
-- table version capture helper.
+- table snapshot capture helper.
 - row-count and schema validation report.
 - operator commands for create, read, time travel, vacuum/retention inspection,
   and cleanup.
 
 ### Stage 3: dbt Migration Away From DuckDB
 
-Move dbt from DuckDB toward Spark/Databricks-compatible execution.
+Move dbt from DuckDB toward Spark-compatible execution.
 
 The first target does not need to be managed Databricks. The point is to stop
 making DuckDB the long-term analytical contract.
@@ -236,8 +242,8 @@ Initial deployment should be simple but real:
 Every serious backtest should log:
 
 - code SHA
-- Delta table name
-- Delta table version
+- Iceberg table name
+- Iceberg snapshot ID
 - input window
 - row counts
 - policy params
@@ -249,7 +255,7 @@ claim path.
 
 ### Stage 5: Adaptive Refresh Backtesting
 
-Use Delta table versions and MLflow runs to make policy experiments
+Use Iceberg table snapshots and MLflow runs to make policy experiments
 reproducible.
 
 Backtesting remains VIN-grained. The goal is to decide which detail pages need
@@ -272,7 +278,7 @@ model dependency.
 Deploy the approved refresh policy conservatively.
 
 Production claim logic should read a materialized priority table in Postgres,
-not query Delta, MLflow, Spark, or Unity Catalog at claim time.
+not query Iceberg, MLflow, Spark, or Unity Catalog at claim time.
 
 Required controls:
 
@@ -327,12 +333,12 @@ Do not introduce blunt raw HTML expiry until this research produces evidence.
 
 | Plan | Revised role |
 |------|--------------|
-| Plan 110 | Storage hygiene and normalized Parquet baseline; no longer assumes Iceberg is the inevitable next step |
-| Plan 111 | Feature foundation for adaptive refresh; write logic to be portable to Spark/Delta |
-| Plan 112 | Delta + Unity Catalog OSS + MLflow research spike and backtest foundation |
+| Plan 110 | Storage hygiene and normalized Parquet baseline |
+| Plan 111 | Feature foundation for adaptive refresh; write logic to be portable to Spark/Iceberg |
+| Plan 112 | Iceberg + catalog + MLflow research spike and backtest foundation |
 | Plan 113 | Production adaptive refresh integration using pinned policy outputs |
 | Plan 114 | Sectioned raw HTML retention audit |
-| Plan 118 | dbt migration from DuckDB to Spark/Databricks-compatible execution |
+| Plan 118 | dbt migration from DuckDB to Spark-compatible execution |
 | Plan 119 | Governance/catalog expansion around Unity Catalog concepts |
 | Plan 123 | dbt incrementalization, cadence separation, and analytics resource governance after Plan 120 Gate D |
 
@@ -342,7 +348,7 @@ Do not introduce blunt raw HTML expiry until this research produces evidence.
 
 - No production adaptive refresh before backtesting.
 - No ML serving in production.
-- No MLflow, Spark, Unity Catalog, or Delta calls in the hot ops claim path.
+- No MLflow, Spark, Unity Catalog, or Iceberg calls in the hot ops claim path.
 - No destructive cleanup before row counts, schema checks, and query checks pass.
 - No automatic raw HTML deletion until Plan 114 produces evidence.
 - No forced migration to managed Databricks as part of the local roadmap.
@@ -355,18 +361,18 @@ Do not introduce blunt raw HTML expiry until this research produces evidence.
 
 ### Platform Direction
 
-- The project can credibly be described as a local Databricks-style lakehouse.
+- The project can credibly be described as a portable open lakehouse.
 - DuckDB is no longer the long-term analytics endpoint.
 - Spark/PySpark is used for at least table writes, feature preparation, or ML
   training.
-- Delta table versions are captured for reproducible experiments.
+- Iceberg table snapshots are captured for reproducible experiments.
 - Unity Catalog OSS or a documented fallback catalog path is evaluated honestly.
 
 ### Experiment Reproducibility
 
-- MLflow records policy params, dataset table versions, metrics, and artifacts.
+- MLflow records policy params, dataset table snapshots, metrics, and artifacts.
 - A backtest run can be reproduced from recorded metadata.
-- XGBoost training is tied to explicit input table versions.
+- XGBoost training is tied to explicit input table snapshots.
 
 ### Adaptive Refresh
 

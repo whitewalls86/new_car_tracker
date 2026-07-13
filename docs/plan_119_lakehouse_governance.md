@@ -24,8 +24,8 @@ CarTracker already has governance foundations:
 - policy/version lineage in planned adaptive refresh
 
 Those are currently mostly Postgres/application concepts. Plan 117 introduces a
-Databricks-style direction where analytical history, experiment inputs, and
-feature outputs move toward Delta tables and a catalog/governance layer.
+portable open lakehouse direction where analytical history, experiment inputs,
+and feature outputs move toward Iceberg tables and a catalog/governance layer.
 
 This plan defines how to grow from "app RBAC plus Postgres tables" toward
 "governed lakehouse assets."
@@ -46,7 +46,7 @@ This plan owns:
 
 This plan does not own:
 
-- Delta table spike; see Plan 112
+- Iceberg table spike; see Plan 112
 - dbt migration; see Plan 118
 - production adaptive refresh; see Plan 113
 - managed Databricks migration
@@ -76,7 +76,7 @@ Protects analytical datasets.
 Examples:
 
 - who can create/register tables
-- which service can write Delta tables
+- which service can write Iceberg tables
 - which service can read feature tables
 - which tables are production-grade vs experimental
 - how table ownership is documented
@@ -91,7 +91,7 @@ Protects model/policy promotion.
 Examples:
 
 - which MLflow run approved a policy
-- which Delta table versions trained/evaluated it
+- which Iceberg table snapshots trained/evaluated it
 - who promoted it
 - when it entered shadow mode
 - when it entered enforced mode
@@ -165,7 +165,7 @@ Proposed service identities:
 | Identity | Purpose |
 |----------|---------|
 | `svc_archiver` | writes historical observation/event tables |
-| `svc_spark_writer` | creates/appends Delta tables |
+| `svc_spark_writer` | creates/appends Iceberg tables |
 | `svc_dbt` | builds models and marts |
 | `svc_mlflow` | reads experiment inputs and writes artifacts |
 | `svc_dashboard` | reads approved mart/serving tables |
@@ -223,8 +223,8 @@ Promotion record should include:
 |-------|-------------|
 | `policy_version` | Human-readable version |
 | `mlflow_run_id` | Approved Plan 112 run |
-| `input_table` | Primary Delta input table |
-| `input_table_version` | Version used for evaluation |
+| `input_table` | Primary Iceberg input table |
+| `input_snapshot_id` | Snapshot used for evaluation |
 | `quality_gate_summary` | Pass/fail metrics |
 | `promoted_by` | User/service that promoted it |
 | `promoted_at` | Timestamp |
@@ -244,7 +244,7 @@ Implement the first concrete lakehouse governance control.
 
 Good first candidates:
 
-- only `svc_spark_writer` can create/append Delta source tables
+- only `svc_spark_writer` can create/append Iceberg source tables
 - only `svc_dbt` can write mart/feature tables
 - dashboard uses read-only credentials
 - experimental namespaces cannot write to production prefixes
@@ -260,7 +260,7 @@ Create a lightweight lineage story that connects:
 
 ```text
 Postgres staging/event tables
-    -> Delta source tables
+    -> Iceberg source tables
     -> dbt/Spark feature tables
     -> MLflow run
     -> approved policy version
@@ -284,7 +284,7 @@ Avoid building a full lineage platform unless it directly helps the project.
 - table registration records require owner, grain, writer, and quality checks.
 - service identities cannot perform disallowed actions in tests or local spike.
 - dashboard read credentials are read-only where practical.
-- policy promotion cannot proceed without MLflow run ID and Delta table version.
+- policy promotion cannot proceed without MLflow run ID and Iceberg snapshot ID.
 - rollback policy version is recorded.
 - ops UI/API displays active policy lineage.
 
