@@ -136,6 +136,29 @@ class TestDockerComposeSnapshotWorker:
         assert "profiles" not in archiver
 
 
+class TestDockerComposeTrawlMemoryGuardrails:
+    """Plan 124: hard resource limits on the browser-solver stack so a
+    camoufox-bin memory spike can't OOM the host (2026-07-12 incident)."""
+
+    @staticmethod
+    def _services():
+        path = _REPO_ROOT / "docker-compose.yml"
+        assert path.exists(), "docker-compose.yml missing"
+        doc = yaml.safe_load(path.read_text())
+        return doc["services"]
+
+    def test_trawl_memory_limits(self):
+        service = self._services()["trawl"]
+        assert service["mem_limit"] == "3g"
+        assert service["memswap_limit"] == "3g"
+        assert service["pids_limit"] == 256
+
+    def test_redis_trawl_memory_limits(self):
+        service = self._services()["redis-trawl"]
+        assert service["mem_limit"] == "256m"
+        assert service["memswap_limit"] == "256m"
+
+
 class TestGrafanaDashboards:
     _DASHBOARD_DIR = _REPO_ROOT / "grafana" / "dashboards"
     _EXPECTED = {"pipeline_health.json", "infrastructure.json", "service_latency.json", "logs.json"}
