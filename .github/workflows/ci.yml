@@ -90,7 +90,7 @@ jobs:
           python-version: "3.13"
 
       - name: Install test dependencies
-        run: pip install -r requirements-dev.txt requests
+        run: pip install -r requirements-dev.txt requests psycopg2-binary
 
       - name: Run Lakekeeper management info smoke test
         # A1 smoke only: Lakekeeper process + metadata-store boot and the
