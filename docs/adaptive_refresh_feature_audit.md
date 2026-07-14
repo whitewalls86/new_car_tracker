@@ -226,21 +226,83 @@ this preflight PR:
 These should be added to the script (or a follow-up script) if Gate 0 VM
 verification surfaces concrete problems that need repeatable detection.
 
-## VM verification results (placeholder)
+## VM verification results
 
-**Not yet run.** The section below must be filled in with real output from
-`scripts/audit_adaptive_refresh_features.py --markdown` executed against
-`/data/analytics/analytics.duckdb` on the VM before Gate 0 is considered
-complete. Do not treat this section as evidence until it is replaced with an
-actual run's output, timestamp, and reviewer notes.
+The audit below was run against `/data/analytics/analytics.duckdb` on the
+production VM. The structural checks passed: all expected feature tables exist,
+grain checks show no duplicate groups, required not-null checks are clean, and
+run-duration checks show no negative durations.
 
 ```text
-Run date: <fill in>
-Run by: <fill in>
+Run date: 2026-07-13
+Run by: Andrew
 Command: python scripts/audit_adaptive_refresh_features.py --markdown
 Output:
-<paste real output here>
+# Adaptive Refresh Feature Audit
+
+## int_listing_state_fingerprints
+grain: artifact_id (detail-only)
+
+- row_count: 5949066
+- grain_distinct_count: 5949066
+- duplicate_group_count: 0
+- null_counts: {'vin17': 0, 'listing_id': 0, 'artifact_id': 0, 'fetched_at': 0, 'parsed_fingerprint': 0}
+- timestamp_range: {'min': '2026-01-26 21:47:36.498729+00:00', 'max': '2026-07-13 19:45:25.544061+00:00'}
+- vin_listing_coverage: {'distinct_vin_count': 250790, 'null_vin_count': 0, 'distinct_listing_count': 265817, 'null_listing_count': 0}
+
+## int_listing_state_runs
+grain: one row per (vin17, run_started_at); multiple runs per vin17 (detail-only)
+
+- row_count: 1251754
+- grain_distinct_count: 1251754
+- duplicate_group_count: 0
+- null_counts: {'vin17': 0, 'listing_id': 0, 'parsed_fingerprint': 0, 'run_started_at': 0, 'run_ended_at': 0, 'artifact_count': 0, 'run_duration_hours': 0, 'is_open_run': 0}
+- timestamp_range: {'min': '2026-01-26 21:47:37.467820+00:00', 'max': '2026-07-13 19:45:25.544061+00:00'}
+- vin_listing_coverage: {'distinct_vin_count': 250790, 'null_vin_count': 0, 'distinct_listing_count': 265817, 'null_listing_count': 0}
+- negative_durations: {'run_duration_hours': 0, 'hours_until_change': 0}
+
+## int_listing_observation_fingerprints
+grain: observation_id (all-source: detail, srp, carousel)
+
+- row_count: 38637191
+- grain_distinct_count: 38637191
+- duplicate_group_count: 0
+- null_counts: {'observation_id': 0, 'artifact_id': 0, 'listing_id': 0, 'source': 0, 'fetched_at': 0, 'parsed_fingerprint': 0}
+- timestamp_range: {'min': '2026-01-22 20:12:37.172000+00:00', 'max': '2026-07-13 19:45:25.544061+00:00'}
+- source_distribution: {'carousel': 31433775, 'detail': 6052256, 'srp': 1151160}
+- vin_listing_coverage: {'distinct_vin_count': 253890, 'null_vin_count': 5257092, 'distinct_listing_count': 412004, 'null_listing_count': 0}
+
+## int_listing_observation_runs
+grain: one row per (listing_id, run_started_at); multiple runs per listing_id (all-source)
+
+- row_count: 2767857
+- grain_distinct_count: 2767857
+- duplicate_group_count: 0
+- null_counts: {'listing_id': 0, 'observation_state_key': 0, 'run_started_at': 0, 'run_ended_at': 0, 'observation_count': 0, 'detail_observation_count': 0, 'srp_observation_count': 0, 'carousel_observation_count': 0, 'distinct_source_count': 0, 'detail_seen': 0, 'srp_seen': 0, 'carousel_seen': 0, 'run_duration_hours': 0, 'is_open_run': 0}
+- timestamp_range: {'min': '2026-01-22 20:12:37.172000+00:00', 'max': '2026-07-13 19:45:25.544061+00:00'}
+- vin_listing_coverage: {'distinct_vin_count': 253890, 'null_vin_count': 362000, 'distinct_listing_count': 412004, 'null_listing_count': 0}
+- negative_durations: {'run_duration_hours': 0, 'hours_until_next_observation': 0}
+
+## int_listing_volatility_features
+grain: one row per vin17
+
+- row_count: 250790
+- grain_distinct_count: 250790
+- duplicate_group_count: 0
+- null_counts: {'vin17': 0, 'listing_id': 0, 'latest_fetched_at': 0, 'first_seen_at': 0, 'total_state_changes': 0, 'listing_id_change_count': 0, 'days_since_last_state_change': 0, 'unchanged_observation_streak': 0, 'listing_state_change_count': 0, 'price_change_count_7d': 0, 'price_change_count_30d': 0, 'all_source_unchanged_observation_streak': 0, 'all_source_detail_observation_count': 0, 'all_source_srp_observation_count': 0, 'all_source_carousel_observation_count': 0, 'all_source_non_detail_refresh_seen': 0}
+- timestamp_range: {'min': '2026-01-28 21:25:01.314973+00:00', 'max': '2026-07-13 19:45:25.544061+00:00'}
+- vin_listing_coverage: {'distinct_vin_count': 250790, 'null_vin_count': 0, 'distinct_listing_count': 250790, 'null_listing_count': 0}
+
+## Not yet built
+- mart_detail_refresh_priority — see docs/adaptive_refresh_feature_audit.md
 
 Reviewer notes / anomalies found:
-<fill in>
+- No duplicate grain groups found in any audited feature table.
+- Required not-null checks are clean across all audited tables.
+- Negative-duration checks are clean for both run tables.
+- All-source observation models intentionally include null VIN coverage because
+  SRP/carousel observations can be listing-level before VIN resolution.
+- `mart_detail_refresh_priority` remains not yet built; current adaptive-refresh
+  inputs are the audited intermediate feature tables, especially
+  `int_listing_volatility_features`.
 ```
