@@ -104,6 +104,29 @@ produced by this plan.
 
 ## Gate 0: Feature and Substrate Preflight
 
+**Status: in progress.** Structural audit and first-pass substrate decision
+docs and script exist; the placeholder "VM verification results" / "Gate A
+spike results" sections in both docs are not yet filled in with real output.
+Gate 0 is not complete until those sections are replaced with actual VM runs
+and the audit script has been executed against
+`/data/analytics/analytics.duckdb`.
+
+Progress so far:
+
+- [x] `docs/adaptive_refresh_feature_audit.md` — structural audit doc (grain,
+  required fields, freshness, duplicate-key expectations, deferred checks).
+- [x] `docs/lakehouse_substrate_decision.md` — first-pass Iceberg/catalog
+  substrate decision, candidate tables, storage convention, cleanup rules.
+- [x] `scripts/audit_adaptive_refresh_features.py` — read-only DuckDB audit
+  script (row counts, grain/duplicate checks, null counts, freshness, source
+  distribution, VIN/listing coverage, negative-duration checks).
+- [ ] Real VM run of `scripts/audit_adaptive_refresh_features.py` against
+  `/data/analytics/analytics.duckdb`, with output pasted into
+  `docs/adaptive_refresh_feature_audit.md`'s placeholder section.
+- [ ] Sampled manual VIN/listing history review (SQL snippets provided in the
+  audit doc).
+- [ ] Gate A Iceberg spike itself (not started — this PR is preflight only).
+
 Before writing lakehouse code, confirm the current feature outputs and substrate
 targets are ready.
 
