@@ -2,13 +2,16 @@
 Plan 112 Gate A2: PySpark Iceberg write/read/append/time-travel/cleanup
 round-trip against a real Lakekeeper + MinIO stack.
 
-Runs in the dedicated `lakehouse` GitHub Actions job, against the same
-job-local, throwaway stack A1's smoke test uses (see
-docker-compose.lakehouse.yml, docker-compose.lakehouse.ci.yml,
-docs/runbook_lakehouse.md). Requires `pyspark` + the Iceberg-Spark-runtime/
-Hadoop-AWS jars, installed only in this job (§4.5 of the Gate A/B plan) --
-skipped automatically if pyspark isn't importable, so this file does not
-break the regular `unit-tests` job if ever collected there by mistake.
+The `lakehouse` GitHub Actions job's actual A2 round-trip runs this same
+logic (scripts.spike_iceberg_lakehouse.cmd_roundtrip) inside the
+`lakehouse-worker` container via `docker compose run`, not via pytest on the
+bare runner -- that way CI exercises the same lakehouse/Dockerfile image and
+container-DNS networking the VM/runbook path uses. This test file is a
+local-dev convenience for iterating against a stack reachable from the host
+(e.g. the CI override's published ports, or a manually port-forwarded VM
+stack) with pyspark installed on the host Python -- skipped automatically if
+pyspark isn't importable, so it never breaks the regular `unit-tests` job if
+ever collected there by mistake.
 """
 import os
 

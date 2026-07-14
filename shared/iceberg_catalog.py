@@ -100,11 +100,14 @@ def warehouse_storage_payload() -> dict:
             "region": "local",
             "path-style-access": True,
             "flavor": "s3-compat",
+            # Static access-key credentials only (below) -- Gate A has no STS
+            # vending set up. Required field per Lakekeeper's S3Profile schema.
+            "sts-enabled": False,
         },
         "storage-credential": {
             "type": "s3",
             "credential-type": "access-key",
-            "aws-access-key-id": os.environ.get("MINIO_ROOT_USER", ""),
-            "aws-secret-access-key": os.environ.get("MINIO_ROOT_PASSWORD", ""),
+            "access-key-id": os.environ.get("MINIO_ROOT_USER", ""),
+            "secret-access-key": os.environ.get("MINIO_ROOT_PASSWORD", ""),
         },
     }

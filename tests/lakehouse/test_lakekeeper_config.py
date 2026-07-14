@@ -85,4 +85,6 @@ class TestWarehouseStoragePayload:
         assert payload["warehouse-name"] == WAREHOUSE_NAME
         assert payload["storage-profile"]["bucket"] == "bronze"
         assert payload["storage-profile"]["key-prefix"] == SPIKE_PREFIX
-        assert payload["storage-credential"]["aws-access-key-id"] == "cartracker"
+        assert payload["storage-profile"]["sts-enabled"] is False
+        assert payload["storage-credential"]["access-key-id"] == "cartracker"
+        assert payload["storage-credential"]["secret-access-key"] == "secret"

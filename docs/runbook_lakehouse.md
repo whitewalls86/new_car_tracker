@@ -212,16 +212,19 @@ docker compose \
   Lakekeeper's warehouse-free management info endpoint over plain HTTP
   (`http://localhost:18181/management/v1/info`) -- no JVM, no Spark, no
   PyIceberg needed for this check.
-- A2 then registers the `cartracker_experiments` warehouse
-  (`python -m scripts.register_lakehouse_warehouse`, idempotent) and runs the
+- A2 then builds the `lakehouse-worker` image (`docker compose ... build
+  lakehouse-worker`) and runs both the warehouse registration
+  (`python -m scripts.register_lakehouse_warehouse`, idempotent) and the
   PySpark write/append/time-travel/cleanup round-trip
-  (`tests/integration/lakehouse/test_pyspark_iceberg_roundtrip.py`), with
-  `pyspark` + a JDK installed only in this job (isolated, mirrors the
-  Airflow-venv pattern) and the Iceberg-Spark-runtime/Hadoop-AWS jars cached
-  via `actions/cache`. This is the one component whose CI viability was
-  genuinely uncertain at planning time (plan Sec 4.3, Q2) -- it is attempted
-  here first per that recommendation; fall back to VM/local-manual only if it
-  proves too slow/flaky in practice.
+  (`python -m scripts.spike_iceberg_lakehouse roundtrip`) **inside that same
+  container** via `docker compose run --rm lakehouse-worker`, joined to the
+  job's Compose network by container-DNS service names
+  (`lakekeeper`/`minio`) -- the same image and networking model the
+  VM/runbook path uses, not a separate pip-installed pyspark on the bare
+  runner. This is the one component whose CI viability was genuinely
+  uncertain at planning time (plan Sec 4.3, Q2) -- it is attempted here first
+  per that recommendation; fall back to VM/local-manual only if it proves too
+  slow/flaky in practice.
 - Teardown at the end of the job:
   ```bash
   docker compose \
