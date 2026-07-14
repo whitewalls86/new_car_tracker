@@ -1,0 +1,104 @@
+# Plan 112 Gate A1: standalone Compose file for the Lakekeeper REST catalog
+# spike. Deliberately NOT merged into docker-compose.yml / the main Compose
+# project: `down`/`down -v` against this file can only ever affect resources
+# declared in *this* file, so it is safe to use freely, including full
+# teardown. Never add these services to the main docker-compose.yml under a
+# `profiles:` key instead -- `docker compose --profile <name> down -v`
+# against the main file still resolves against the ENTIRE main project. See
+# docs/runbook_lakehouse.md and docs/plan_112_gate_a_b_implementation_plan.md
+# ("Compose topology decision") for the full rationale.
+#
+# VM/local usage (joins the real cartracker-net + real minio):
+#   docker compose -f docker-compose.lakehouse.yml -p cartracker-lakehouse \
+#     up -d lakekeeper-postgres lakekeeper
+#
+# CI usage adds docker-compose.lakehouse.ci.yml as a second -f -- see
+# docs/runbook_lakehouse.md.
+#
+# This file touches no production Postgres, no Flyway migration, and no
+# production volume. This A1 revision stands up only the catalog + its
+# isolated metadata store. `lakehouse-worker` (profile-gated, PySpark) is
+# added to this file in Gate A2 -- it is not scaffolded here to avoid
+# referencing a `lakehouse/Dockerfile` build context that doesn't exist yet.
+
+services:
+  lakekeeper-postgres:
+    image: postgres:16
+    container_name: cartracker-lakekeeper-postgres
+    environment:
+      POSTGRES_DB: lakekeeper
+      POSTGRES_USER: lakekeeper
+      POSTGRES_PASSWORD: ${LAKEKEEPER_DB_PASSWORD}
+    volumes:
+      # Owned entirely by this project; never referenced by docker-compose.yml.
+      - lakekeeper_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lakekeeper -d lakekeeper"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - cartracker-net
+
+  lakekeeper-migrate:
+    # Pinned tagged release per Q6 of the Gate A/B plan: avoid `:latest-main`
+    # and avoid the old/wrong `quay.io/lakekeeper/lakekeeper` repository.
+    image: ${LAKEKEEPER_IMAGE:-quay.io/lakekeeper/catalog:v0.13.1}
+    container_name: cartracker-lakekeeper-migrate
+    command: ["migrate"]
+    restart: "no"
+    environment:
+      LAKEKEEPER__PG_ENCRYPTION_KEY: ${LAKEKEEPER_PG_ENCRYPTION_KEY}
+      LAKEKEEPER__PG_DATABASE_URL_READ: postgresql://lakekeeper:${LAKEKEEPER_DB_PASSWORD}@lakekeeper-postgres:5432/lakekeeper
+      LAKEKEEPER__PG_DATABASE_URL_WRITE: postgresql://lakekeeper:${LAKEKEEPER_DB_PASSWORD}@lakekeeper-postgres:5432/lakekeeper
+      LAKEKEEPER__AUTHZ_BACKEND: allowall
+    depends_on:
+      lakekeeper-postgres:
+        condition: service_healthy
+    networks:
+      - cartracker-net
+
+  lakekeeper:
+    # Pinned tagged release per Q6 of the Gate A/B plan: avoid `:latest-main`
+    # and avoid the old/wrong `quay.io/lakekeeper/lakekeeper` repository.
+    image: ${LAKEKEEPER_IMAGE:-quay.io/lakekeeper/catalog:v0.13.1}
+    container_name: cartracker-lakekeeper
+    command: ["serve"]
+    environment:
+      LAKEKEEPER__PG_ENCRYPTION_KEY: ${LAKEKEEPER_PG_ENCRYPTION_KEY}
+      LAKEKEEPER__PG_DATABASE_URL_READ: postgresql://lakekeeper:${LAKEKEEPER_DB_PASSWORD}@lakekeeper-postgres:5432/lakekeeper
+      LAKEKEEPER__PG_DATABASE_URL_WRITE: postgresql://lakekeeper:${LAKEKEEPER_DB_PASSWORD}@lakekeeper-postgres:5432/lakekeeper
+      LAKEKEEPER__AUTHZ_BACKEND: allowall
+      # A1 stands the catalog up only; storage-profile/warehouse registration
+      # against MinIO happens starting in A2 when Spark actually writes
+      # tables. These are carried here so the runbook's warehouse-registration
+      # step has what it needs without a second env surface later.
+      LAKEKEEPER_MINIO_ENDPOINT: http://minio:9000
+      LAKEKEEPER_MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      LAKEKEEPER_MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    depends_on:
+      lakekeeper-migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "/home/nonroot/lakekeeper", "healthcheck"]
+      interval: 5s
+      timeout: 10s
+      retries: 36
+      start_period: 5s
+    networks:
+      - cartracker-net
+
+  # `lakehouse-worker` (profile-gated PySpark one-shot runner, mirroring the
+  # `snapshot-worker` pattern in the main docker-compose.yml) is added to
+  # this file in Gate A2, once `lakehouse/Dockerfile` exists. A2 will also
+  # need to confirm the resolved name of the main project's `analytics_db`
+  # volume (it is not declared `external: true` there) via `docker volume
+  # ls` before this file can mount it read-only -- see
+  # docs/runbook_lakehouse.md.
+
+volumes:
+  lakekeeper_pgdata:
+
+networks:
+  cartracker-net:
+    external: true

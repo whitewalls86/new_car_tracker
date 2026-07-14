@@ -120,7 +120,7 @@ Progress so far:
 - [x] `scripts/audit_adaptive_refresh_features.py` — read-only DuckDB audit
   script (row counts, grain/duplicate checks, null counts, freshness, source
   distribution, VIN/listing coverage, negative-duration checks).
-- [ ] Real VM run of `scripts/audit_adaptive_refresh_features.py` against
+- [x] Real VM run of `scripts/audit_adaptive_refresh_features.py` against
   `/data/analytics/analytics.duckdb`, with output pasted into
   `docs/adaptive_refresh_feature_audit.md`'s placeholder section.
 - [ ] Sampled manual VIN/listing history review (SQL snippets provided in the
