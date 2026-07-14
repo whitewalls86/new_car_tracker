@@ -17,10 +17,9 @@ has been installed or stood up by this document or this PR.
   target (per `docs/plan_117_storage_and_adaptive_refresh_roadmap.md` — v3
   only if the selected toolchain forces it).
 - **Compute**: Spark/PySpark for the first spike's writes/reads.
-- **Catalog**: a Hadoop/file catalog (or the simplest Spark-bundled Iceberg
-  catalog that can create/read/time-travel isolated tables) for the *first*
-  spike. REST catalog / Unity Catalog OSS-compatible governance is the
-  intended follow-on, not the Gate A deliverable.
+- **Catalog**: First spike: minimal Lakekeeper REST catalog in standalone 
+  docker-compose.lakehouse.yml, with isolated lakekeeper-postgres metadata 
+  store, PySpark primary write/read, PyIceberg optional validation.
 - **Data scope**: first Iceberg tables are isolated copies/subsets of
   existing feature outputs (dbt/DuckDB `int_*` models or normalized Parquet),
   written to dedicated MinIO prefixes. Production Parquet/dbt outputs are
