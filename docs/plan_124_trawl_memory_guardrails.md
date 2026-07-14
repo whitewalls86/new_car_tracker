@@ -2,10 +2,10 @@
 
 ## Implementation Status: Hotfix implemented, VM verification pending
 
-- [x] `docker-compose.yml`: `trawl` gets `mem_limit: 3g`, `memswap_limit: 3g`,
-      `pids_limit: 256`.
-- [x] `docker-compose.yml`: `redis-trawl` gets `mem_limit: 256m`,
-      `memswap_limit: 256m`.
+- [x] `docker-compose.yml`: `trawl` gets `mem_limit: 4g`, `memswap_limit: 4g`,
+      `pids_limit: 512`.
+- [x] `docker-compose.yml`: `redis-trawl` gets `mem_limit: 512m`,
+      `memswap_limit: 512m`.
 - [x] `tests/test_observability_config.py::TestDockerComposeTrawlMemoryGuardrails`
       asserts the limits parse correctly (no Docker required).
 - [ ] Deployed to the production VM and verified with `docker inspect` /
@@ -56,21 +56,25 @@ Add hard resource limits to the browser-solver service in `docker-compose.yml`:
 
 ```yaml
 trawl:
-  mem_limit: 3g
-  memswap_limit: 3g
-  pids_limit: 256
+  mem_limit: 4g
+  memswap_limit: 4g
+  pids_limit: 512
 ```
 
 Also bound the supporting Redis container:
 
 ```yaml
 redis-trawl:
-  mem_limit: 256m
-  memswap_limit: 256m
+  mem_limit: 512m
+  memswap_limit: 512m
 ```
 
-Start with `3g` for Trawl. If normal challenge solving fails under that limit,
-raise to `4g`, but do not leave the solver unbounded.
+The first containment pass used `3g` memory/swap, `pids_limit: 256`, and
+`redis-trawl: 256m`. VM logs later showed the browser pool flapping with
+`EAGAIN: resource temporarily unavailable` and Camoufox `SIGSEGV` during normal
+challenge solving. The current default is therefore `4g` memory/swap,
+`pids_limit: 512`, and `redis-trawl: 512m`: still bounded, but with enough
+headroom for the two-browser pool.
 
 ### Deployment
 
@@ -132,11 +136,14 @@ This can remain follow-up work unless solver instability continues.
 
 ## Rollback
 
-If Trawl cannot solve normal challenges with the initial memory limit:
+If Trawl cannot solve normal challenges with the current bounded defaults:
 
-1. Increase `trawl` from `3g` to `4g`.
+1. First reduce concurrency in `.env`:
+   - `TRAWL_BROWSER_POOL_SIZE=1`
+   - `TRAWL_BROWSER_CONTENT_PROCESSES=1`
+   - `TRAWL_BROWSER_RECYCLE_AFTER_CONTEXTS=4`
 2. Redeploy only `trawl`.
-3. Re-test solver behavior.
+3. Re-test solver behavior and inspect OOM / restart / browser-pool logs.
 
 Do not roll back to an unbounded solver container unless the scraper is fully
 paused and the production blast radius is understood.
