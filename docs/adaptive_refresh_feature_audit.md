@@ -50,10 +50,14 @@ the existing DuckDB analytics database via
 | Model | Required non-null fields |
 |-------|---------------------------|
 | `int_listing_state_fingerprints` | `vin17`, `listing_id`, `artifact_id`, `fetched_at`, `parsed_fingerprint` |
-| `int_listing_state_runs` | `vin17`, `listing_id`, `run_started_at`, `run_ended_at`, `parsed_fingerprint`, `artifact_count`, `run_duration_hours`, `is_open_run` |
-| `int_listing_observation_fingerprints` | `observation_id`, `artifact_id`, `listing_id`, `fetched_at`, `parsed_fingerprint` (`vin17` is intentionally nullable) |
-| `int_listing_observation_runs` | `listing_id`, `run_started_at`, `run_ended_at`, `observation_state_key`, `observation_count`, `is_open_run` (`vin17` is intentionally nullable) |
-| `int_listing_volatility_features` | `vin17`, `listing_id`, `latest_fetched_at`, `first_seen_at`, `total_state_changes`, `listing_id_change_count` |
+| `int_listing_state_runs` | `vin17`, `listing_id`, `parsed_fingerprint`, `run_started_at`, `run_ended_at`, `artifact_count`, `run_duration_hours`, `is_open_run` |
+| `int_listing_observation_fingerprints` | `observation_id`, `artifact_id`, `listing_id`, `source`, `fetched_at`, `parsed_fingerprint` (`vin17` is intentionally nullable) |
+| `int_listing_observation_runs` | `listing_id`, `observation_state_key`, `run_started_at`, `run_ended_at`, `observation_count`, `detail_observation_count`, `srp_observation_count`, `carousel_observation_count`, `distinct_source_count`, `detail_seen`, `srp_seen`, `carousel_seen`, `run_duration_hours`, `is_open_run` (`vin17` is intentionally nullable) |
+| `int_listing_volatility_features` | `vin17`, `listing_id`, `latest_fetched_at`, `first_seen_at`, `total_state_changes`, `listing_id_change_count`, `days_since_last_state_change`, `unchanged_observation_streak`, `listing_state_change_count`, `price_change_count_7d`, `price_change_count_30d`, `all_source_unchanged_observation_streak`, `all_source_detail_observation_count`, `all_source_srp_observation_count`, `all_source_carousel_observation_count`, `all_source_non_detail_refresh_seen` |
+
+These lists match each model's `data_tests: not_null` entries in its
+`.schema.yml` — the audit script's `not_null_columns` per table is kept in
+sync with this table and with the schema.yml tests, not a narrower subset.
 
 ## Freshness expectations
 
