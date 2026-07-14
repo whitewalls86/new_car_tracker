@@ -131,11 +131,13 @@ docker compose \
   `18181`) so this job's ports can never collide with the `dbt` job's
   `9000`/`5432`, even though the two already run on separate runner VMs by
   default -- this is defense-in-depth, not a fix for a real collision today.
-- A1's smoke check hits Lakekeeper's REST `/v1/config` endpoint over plain
-  HTTP (`http://localhost:18181`) -- no JVM, no Spark, no PyIceberg needed
-  for this check. Namespace CRUD is not attempted in A1: it requires a
-  registered warehouse first, which is deferred to A2 alongside the actual
-  table writes that need one.
+- A1's readiness check waits for MinIO's live endpoint, then Lakekeeper's
+  container healthcheck (`/home/nonroot/lakekeeper healthcheck`), then probes
+  Lakekeeper's REST `/v1/config` endpoint over plain HTTP
+  (`http://localhost:18181`) -- no JVM, no Spark, no PyIceberg needed for
+  this check. Namespace CRUD is not attempted in A1: it requires a registered
+  warehouse first, which is deferred to A2 alongside the actual table writes
+  that need one.
 - Teardown at the end of the job:
   ```bash
   docker compose \

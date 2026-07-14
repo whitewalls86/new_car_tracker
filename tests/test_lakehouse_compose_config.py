@@ -93,6 +93,12 @@ class TestLakehouseComposeStandalone:
         assert services["lakekeeper-migrate"]["command"] == ["migrate"]
         assert services["lakekeeper"]["command"] == ["serve"]
 
+    def test_lakekeeper_has_container_healthcheck(self):
+        service = self._services()["lakekeeper"]
+        healthcheck = service["healthcheck"]
+        assert healthcheck["test"] == ["CMD", "/home/nonroot/lakekeeper", "healthcheck"]
+        assert healthcheck["retries"] >= 30
+
     def test_no_flyway_or_production_volume_reference(self):
         doc = yaml.safe_load((_REPO_ROOT / "docker-compose.lakehouse.yml").read_text())
         assert "flyway" not in doc["services"]

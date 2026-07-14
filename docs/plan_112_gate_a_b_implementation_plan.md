@@ -287,6 +287,12 @@ services:
       LAKEKEEPER_MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
     depends_on:
       lakekeeper-migrate: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD", "/home/nonroot/lakekeeper", "healthcheck"]
+      interval: 5s
+      timeout: 10s
+      retries: 36
+      start_period: 5s
     networks: [cartracker-net]
 
   lakehouse-worker:
