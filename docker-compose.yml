@@ -143,8 +143,8 @@ services:
     restart: unless-stopped
     profiles: ["trawl"]
     # Plan 124: bound Redis memory alongside the trawl solver it backs.
-    mem_limit: 256m
-    memswap_limit: 256m
+    mem_limit: 512m
+    memswap_limit: 512m
     volumes:
       - trawl_redis_data:/data
     networks:
@@ -159,9 +159,9 @@ services:
     # Plan 124: 2026-07-12 incident — an unbounded camoufox-bin browser
     # solver process consumed ~9.5GB RSS and triggered the host OOM killer.
     # Cap memory/swap/PIDs so a solver spike stays local to this container.
-    mem_limit: 3g
-    memswap_limit: 3g
-    pids_limit: 256
+    mem_limit: 4g
+    memswap_limit: 4g
+    pids_limit: 512
     environment:
       REDIS_URL: redis://redis-trawl:6379
       BROWSER_POOL_SIZE: ${TRAWL_BROWSER_POOL_SIZE:-2}
