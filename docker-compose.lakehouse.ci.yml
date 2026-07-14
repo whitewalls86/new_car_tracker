@@ -1,0 +1,51 @@
+# Plan 112 Gate A1: CI-only override for docker-compose.lakehouse.yml.
+#
+# CI has no persistent main Compose project to join, so this override:
+#   - adds a job-local, throwaway MinIO service (the `lakehouse` GitHub
+#     Actions job's own instance -- never the `dbt` job's MinIO; GitHub
+#     Actions jobs run on independent runners with no shared filesystem/
+#     network, so there is nothing to share anyway);
+#   - makes `cartracker-net` non-external so `docker compose up` creates it
+#     fresh for the job;
+#   - publishes host ports on non-default values (MinIO 19000, Lakekeeper
+#     18181) as defense-in-depth against any future port collision, even
+#     though separate GitHub Actions jobs already run on separate runner VMs.
+#
+# Usage (see docs/runbook_lakehouse.md and the `lakehouse` CI job):
+#   docker compose -f docker-compose.lakehouse.yml -f docker-compose.lakehouse.ci.yml \
+#     -p ci-lakehouse up -d minio lakekeeper-postgres lakekeeper
+#
+# This override has no dependency on, and shares no services with, the
+# existing `dbt` CI job.
+
+services:
+  minio:
+    image: minio/minio:latest
+    command: server /data
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-cartracker}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-cartracker123}
+    ports:
+      - "19000:9000"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - cartracker-net
+
+  lakekeeper:
+    ports:
+      - "18181:8181"
+    depends_on:
+      lakekeeper-postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      LAKEKEEPER_MINIO_ENDPOINT: http://minio:9000
+
+networks:
+  cartracker-net:
+    external: false

@@ -2,24 +2,42 @@
 
 ## Status
 
-This is the **first-pass** substrate decision written during Gate 0 preflight
-(`docs/plan_112_refresh_policy_backtesting.md`). It documents the intended
-toolchain and rationale so Gate A can execute the actual spike without
-re-litigating these choices. The Gate A section below (commands, cleanup
-proof, real snapshot IDs) is a placeholder until the spike runs.
+This revision (2026-07-14) supersedes the prior Hadoop/file-catalog-first
+pass per `docs/plan_112_gate_a_b_implementation_plan.md`'s locked decisions
+(D1/D2). Gate A1 (`docker-compose.lakehouse.yml`, isolated
+`lakekeeper-postgres`, CI smoke) has been implemented; PySpark table writes
+(A2), PyIceberg validation (A2b), and the real spike results below remain
+placeholders until those PRs run.
 
-No Spark, PySpark, Iceberg, MLflow, Unity Catalog OSS, Polaris, or Lakekeeper
-has been installed or stood up by this document or this PR.
+No PySpark table write, Iceberg table, MLflow, Unity Catalog OSS, or Polaris
+has been installed or stood up by this document or this PR. Lakekeeper's
+REST catalog server + isolated Postgres metadata store are stood up by A1,
+but no warehouse/table exists against them yet.
 
 ## Decision summary
 
 - **Table format**: Apache Iceberg, **v2** as the initial compatibility
   target (per `docs/plan_117_storage_and_adaptive_refresh_roadmap.md` — v3
   only if the selected toolchain forces it).
-- **Compute**: Spark/PySpark for the first spike's writes/reads.
-- **Catalog**: First spike: minimal Lakekeeper REST catalog in standalone 
-  docker-compose.lakehouse.yml, with isolated lakekeeper-postgres metadata 
-  store, PySpark primary write/read, PyIceberg optional validation.
+- **Compute**: Spark/PySpark is the primary writer/reader for the first
+  spike (Gate A2); PyIceberg is kept only as an optional secondary
+  validation client against the same REST catalog (A2b).
+- **Catalog**: minimal Lakekeeper REST catalog, deployed via a standalone
+  Compose file/project (`docker-compose.lakehouse.yml`, project
+  `cartracker-lakehouse`) — never a `profiles:` entry inside, or even the
+  same Compose project as, the main `docker-compose.yml` — with its own
+  isolated `lakekeeper-postgres` metadata store. One REST catalog
+  implementation serves both PySpark (`spark.sql.catalog.*.type=rest`) and
+  PyIceberg (`RestCatalog`) with zero per-engine adapter code, and the
+  standalone-file/project isolation makes the "never touches production
+  Postgres, never reachable by a broad teardown command" guarantee airtight
+  rather than merely conventional. Real governance (RBAC, multi-tenant
+  namespaces) is deferred to Plan 119.
+- **Catalog metadata store**: isolated `lakekeeper-postgres` for Gate A while
+  the catalog stack is still experimental. If the spike graduates, consolidate
+  onto the main Postgres server as a separate database/user, not as tables in
+  the operational `cartracker` database and not as a forever-separate Postgres
+  container.
 - **Data scope**: first Iceberg tables are isolated copies/subsets of
   existing feature outputs (dbt/DuckDB `int_*` models or normalized Parquet),
   written to dedicated MinIO prefixes. Production Parquet/dbt outputs are
@@ -43,42 +61,80 @@ Carried forward from `docs/plan_117_storage_and_adaptive_refresh_roadmap.md`:
   asset, and Iceberg is the more portable vehicle for that knowledge across
   Databricks, Snowflake, and open-source engines.
 
-## Why Hadoop/file catalog first, despite governance ambitions
+## Why a minimal Lakekeeper REST catalog first (revised 2026-07-14)
 
 Gate A's job is to prove the smallest real thing: write an Iceberg table to
 MinIO, read it back, snapshot it, time-travel it, and clean it up without
-touching production data. A REST catalog, Unity Catalog OSS, Polaris, or
-Lakekeeper each add their own service to stand up, configure, and secure
-before any of that proof exists.
+touching production data. A prior pass reasoned that a Hadoop/file catalog
+would keep this surface smallest, deferring any catalog service to Plan 119.
+That reasoning is superseded: a REST catalog is the correct *minimum* path,
+not a step to defer, because it is the one catalog interface both PySpark
+and PyIceberg speak without any per-engine adapter code, and Lakekeeper is a
+small, purpose-built REST catalog server (not a general application requiring
+integration work) rather than a heavyweight governance platform.
 
-Starting with a Hadoop/file catalog (or the default local/Spark-bundled
-catalog) keeps Gate A's surface area to "Spark + Iceberg only" so the table
-format itself can be validated in isolation. Governance/catalog concepts are
-real learning goals (Plan 119), but they are a second, separable proof —
-bundling them into the first PR risks a stalled spike where it's unclear
-whether Iceberg or the catalog service is the source of friction.
+Concretely, this is kept minimal by:
 
-This matches the fallback rule already written into both Plan 112 (Gate A)
-and Plan 117 (Stage 1): if Unity Catalog OSS blocks the local workflow,
-continue with Spark + Iceberg + MLflow on a simpler catalog and defer deeper
-catalog work to Plan 119.
+- a standalone Compose file/project (`docker-compose.lakehouse.yml`,
+  `cartracker-lakehouse`) rather than any change to the main
+  `docker-compose.yml` or production Postgres;
+- Lakekeeper's own isolated `lakekeeper-postgres` metadata store — no schema,
+  user, or connection against the production database;
+- no RBAC/multi-tenant/governance configuration in Gate A — a single
+  unauthenticated (or single-token) REST endpoint is acceptable for an
+  isolated spike. That deeper governance work remains Plan 119 scope, as the
+  fallback rule in both Plan 112 (Gate A) and Plan 117 (Stage 1) anticipated
+  for if Unity Catalog OSS ever blocked the local workflow.
 
-## What would trigger moving to REST catalog / Unity Catalog OSS / Polaris / Lakekeeper
+## Catalog metadata store lifecycle
 
-Move beyond the file catalog once:
+Lakekeeper's Postgres database is a **control-plane metadata store**, not the
+lakehouse data store. MinIO remains the storage layer for Parquet data files
+and Iceberg metadata/manifest files; Postgres stores Lakekeeper's durable
+catalog state such as warehouses, namespaces, table registration metadata,
+storage profiles, and commit coordination state.
 
-- The Gate A minimum checks pass cleanly (write, read, two snapshots, time
-  travel, cleanup proof, CI/local fixture recreation) with the file catalog.
-- A concrete governance behavior needs to be demonstrated (e.g.
-  reader/writer separation, table registration rules, ownership metadata) —
-  i.e. Plan 119 scope becomes active, not before.
-- Multi-engine table discovery becomes necessary (e.g. Trino or a second
-  Spark session needing to resolve a table by name without out-of-band path
-  knowledge).
+Gate A intentionally runs that metadata store as `lakekeeper-postgres`, a
+standalone container and volume. This is a safety choice for the spike:
 
-Until one of those is true, the file catalog is sufficient and adding a
-catalog service would be governance theater (explicitly discouraged in
-`docs/plan_117_storage_and_adaptive_refresh_roadmap.md`).
+- no production Postgres connection strings, users, schemas, or Flyway
+  migrations are needed before the catalog proves useful;
+- full lakehouse teardown can delete the experimental catalog metadata volume
+  without reaching the production Compose project;
+- failures in a pre-1.0 catalog service cannot add load or schema churn to
+  the operational database.
+
+If Lakekeeper graduates from spike infrastructure to a durable project
+component, the preferred steady-state shape is **one managed Postgres
+server/container with separate databases and users per service**, for example:
+
+```text
+postgres server/container
+|-- cartracker         # operational app data
+|-- airflow_metadata   # Airflow scheduler/task metadata
+|-- lakekeeper         # Iceberg catalog control-plane metadata
+`-- mlflow             # MLflow tracking backend metadata
+```
+
+That keeps operational ownership boundaries clearer than putting every
+service's metadata into one database with separate schemas, while avoiding the
+memory, backup, monitoring, and lifecycle overhead of several permanent
+Postgres containers on one VM. The consolidation decision belongs after A2/A3
+prove the catalog path and before Plan 119 turns governance into real
+operational infrastructure.
+
+## What Plan 119 still owns
+
+Even with the REST catalog now the Gate A baseline (not a later upgrade),
+the following remain explicitly deferred to Plan 119, not Gate A/A2/A3:
+
+- RBAC and multi-tenant namespace configuration.
+- A concrete governance behavior demonstration (e.g. reader/writer
+  separation via a scoped token, table registration rules, ownership
+  metadata beyond what the spike's metadata-capture JSON already records).
+- Multi-engine table discovery beyond Spark + PyIceberg (e.g. Trino
+  resolving a table by name).
+- Any decision about whether Lakekeeper's metadata store should ever move.
 
 ## Candidate first tables for the Iceberg spike
 
@@ -100,25 +156,35 @@ Candidates, in order of preference:
 smallest, most self-contained proof of write → read → snapshot → time-travel
 → cleanup, and it is a real Plan 112 output rather than a synthetic table.
 
-## Proposed MinIO/local path convention for isolated spike tables
+## Proposed MinIO path convention for isolated spike tables
+
+The real bucket is **`bronze`** (`MINIO_BUCKET` throughout
+`docker-compose.yml`), not a `cartracker` bucket:
 
 ```text
-s3a://<bucket>/lakehouse_spike/iceberg/<table_name>/
+s3://bronze/lakehouse_spike/warehouse/<namespace>/<table_name>/    (Lakekeeper / PyIceberg view)
+s3a://bronze/lakehouse_spike/warehouse/<namespace>/<table_name>/   (Spark / Hadoop-AWS view of the same objects)
 ```
 
-e.g. `s3a://cartracker/lakehouse_spike/iceberg/int_listing_volatility_features/`
+e.g.
+`s3a://bronze/lakehouse_spike/warehouse/cartracker_experiments/int_listing_volatility_features/`
+
+The `s3://` vs `s3a://` split is expected, not a mistake: Lakekeeper's Rust
+S3 client and PyIceberg's `s3fs` both use `s3://` semantics, while Spark's
+Hadoop-AWS connector requires `s3a://` for the same physical MinIO objects.
 
 Rules:
 
 - `lakehouse_spike/` is a dedicated top-level prefix, disjoint from the
-  existing `silver/`, `ops/`, and bronze HTML prefixes documented in
-  `docs/implementation_plan_110_storage_layout_hygiene.md`.
+  existing `silver/`, `ops_normalized/`, and bronze HTML prefixes documented
+  in `docs/implementation_plan_110_storage_layout_hygiene.md`.
 - Nothing under `lakehouse_spike/` is read by production dbt, the dashboard,
   or the ops API. It exists solely for Gate A/B experimentation.
-- Local/file-catalog metadata (if not colocated with the table data) lives
-  under a matching local path, e.g. `./lakehouse_spike/catalog/`, kept out of
-  the MinIO bucket and out of git (add to `.gitignore` when the spike script
-  is written).
+- The `cartracker_experiments` namespace is adopted from Plan 119 Phase 1 on
+  day one, so spike tables never need renaming when governance lands.
+- Lakekeeper's own catalog metadata lives in `lakekeeper-postgres` (see
+  `docs/runbook_lakehouse.md`), not in a local/file catalog directory — there
+  is no `./lakehouse_spike/catalog/` path to gitignore under this revision.
 
 ## Cleanup/safety rules
 
@@ -144,11 +210,11 @@ Rules:
 - **No managed compute autoscaling.** Local/single-node Spark does not
   reflect Databricks' cluster management, job scheduling, or Photon
   execution engine.
-- **No managed Unity Catalog governance.** A Hadoop/file catalog has none of
-  Unity Catalog's cross-workspace governance, lineage UI, or fine-grained
-  access control; a later Unity Catalog OSS or REST catalog spike narrows
-  but does not eliminate this gap (OSS Unity Catalog lags managed Databricks
-  Unity Catalog in feature completeness and support).
+- **No managed Unity Catalog governance.** A minimal self-hosted Lakekeeper
+  REST catalog has none of managed Unity Catalog's cross-workspace governance,
+  lineage UI, or fine-grained access control. Plan 119 can narrow this gap
+  with explicit governance behavior, but OSS/self-hosted catalog tooling still
+  will not be equivalent to managed Databricks Unity Catalog.
 - **No managed table maintenance.** Databricks and Snowflake-managed Iceberg
   handle compaction, vacuum, and clustering automatically; a local spike must
   invoke Iceberg maintenance operations (or Spark procedures) manually and

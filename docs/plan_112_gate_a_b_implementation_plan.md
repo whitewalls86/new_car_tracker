@@ -33,6 +33,7 @@ while still keeping the first PR small and rollback-safe.
 | D1 | **Gate A engine: PySpark is the primary writer/reader.** PyIceberg is kept only as an **optional secondary validation client** against the same REST catalog — useful for a lightweight sanity check or a future CI-only smoke path, never the primary implementation path. | Matches Plan 112/117's explicit goal ("Spark/PySpark for table writes, feature preparation, and model training") instead of deferring it. A REST catalog + Spark is also the more direct rehearsal of the target architecture (`docs/plan_117_storage_and_adaptive_refresh_roadmap.md`'s revised architecture diagram already shows Spark writers feeding Iceberg behind a catalog layer). |
 | D2 | **Catalog: minimal Lakekeeper REST catalog**, with its **own isolated Postgres metadata store, deployed via a standalone Compose file/project entirely separate from the main `docker-compose.yml`** — never a schema in, or even the same Compose project as, the production `postgres` service. | Lakekeeper is a REST-catalog server implementing the Iceberg REST Catalog spec, which is what both PySpark (`org.apache.iceberg.rest.RESTCatalog` / `spark.sql.catalog.<name>.type=rest`) and PyIceberg (`RestCatalog`) speak natively — one catalog implementation serves both engines with zero adapter code. Isolating its metadata store in a **separate Compose file/project** (not just a `profile:` inside the main file) avoids any Flyway migration, any new prod-Postgres user/schema, any coupling to production database load, **and** any risk that a broad teardown command scoped to the main project could ever reach production volumes/services (see §5 for the incident this specifically guards against). Real governance (RBAC, multi-tenant namespaces, whether Lakekeeper's metadata store should ever move) is explicitly deferred to Plan 119. |
 | D3 | **MLflow backend store: dedicated Postgres schema + user** (`mlflow` schema, `mlflow_user`), MLflow managing its own tables via `search_path`. Artifact store on MinIO. | Unchanged from the prior pass — consistent with how every other DB user/schema is provisioned here (Flyway placeholders, per-service least-privilege users). This is independent of the Gate A catalog choice: MLflow's backend store has no dependency on how/where Iceberg catalog metadata lives, and MLflow stays in the main `docker-compose.yml` because, unlike Gate A, touching production Postgres is its intended design (D3). |
+| D4 | **Postgres lifecycle: isolate Lakekeeper during Gate A; consolidate only after the spike proves useful, preferably as separate databases/users on one Postgres server/container.** | MinIO stores Iceberg table data and metadata files; Postgres stores Lakekeeper's catalog control-plane state. The isolated `lakekeeper-postgres` container is a spike safety boundary, not necessarily the forever shape. If Lakekeeper graduates, prefer one Postgres server with separate databases such as `cartracker`, `airflow_metadata`, `lakekeeper`, and `mlflow`: cleaner service ownership than one shared database with many schemas, less operational overhead than several permanent Postgres containers on one VM. |
 
 The hot production scrape/claim path must not call PySpark, PyIceberg, MLflow,
 Lakekeeper, or the catalog. That invariant (Plan 112/117) is preserved:
@@ -86,7 +87,7 @@ fourth is the VM-only realistic rehearsal.
 
 | PR | Title | Gate | Depends on | CI-runnable? | Rollback |
 |----|-------|------|-----------|--------------|----------|
-| **A1** | Lakekeeper REST catalog: standalone Compose file + isolated metadata store + runbook | A | Gate 0 | **Yes** — dedicated `lakehouse` CI job, catalog CRUD smoke only | Additive; `docker compose -f docker-compose.lakehouse.yml -p cartracker-lakehouse down -v` (safe — see Compose topology decision above), nothing else touched |
+| **A1** | Lakekeeper REST catalog: standalone Compose file + isolated metadata store + runbook | A | Gate 0 | **Yes** — dedicated `lakehouse` CI job, REST `/v1/config` smoke only (namespace CRUD deferred to A2 — see implementation note above) | Additive; `docker compose -f docker-compose.lakehouse.yml -p cartracker-lakehouse down -v` (safe — see Compose topology decision above), nothing else touched |
 | **A2** | PySpark Iceberg fixture spike: write/read/append/time-travel against Lakekeeper + MinIO | A | A1 | Same dedicated `lakehouse` CI job, budget-gated — see §4.3 | Additive; delete `lakehouse_spike/` MinIO prefix + drop the fixture table via the catalog |
 | **A2b** *(optional, small)* | PyIceberg REST-catalog validation script | A | A1, A2 | **Yes** (pure Python, talks REST to the same Lakekeeper) | Additive script only |
 | **A3** | VM rehearsal: real `int_listing_volatility_features` snapshot + cleanup proof | A | A2 | No (VM/local-manual only, real production-derived data) | Additive; no prod Parquet/DuckDB mutation (read-only source mount) |
@@ -96,6 +97,19 @@ fourth is the VM-only realistic rehearsal.
 
 **What belongs in PR A1 (the first real code):**
 
+> **Implementation note (2026-07-14):** A1 shipped slightly leaner than this
+> section originally planned. `lakehouse-worker` was **not** scaffolded in
+> A1 — it references a `lakehouse/Dockerfile` build context that doesn't
+> exist until A2, so adding it structurally now would have left a Compose
+> service pointing at a nonexistent Dockerfile. Likewise, no Lakekeeper
+> storage-profile/warehouse registration happened in A1, and the CI smoke
+> step only hits the REST `/v1/config` endpoint — **not** namespace CRUD,
+> since namespace operations require a registered warehouse first. Both the
+> worker and the warehouse/namespace registration are now explicitly A2
+> scope; see `docs/runbook_lakehouse.md`'s "Deferred to A2/A3" section. The
+> bullets below are left as originally planned for context, with the actual
+> delivered scope marked inline.
+
 - `docker-compose.lakehouse.yml` — a **standalone** Compose file (not part of
   `docker-compose.yml`), containing:
   - `lakekeeper` — the REST catalog server.
@@ -104,7 +118,8 @@ fourth is the VM-only realistic rehearsal.
     schema inside it; not even the same Compose project).
   - `lakehouse-worker` (profile-gated within this file so a bare
     `docker compose -f docker-compose.lakehouse.yml up` still cannot launch
-    it) — added structurally in A1, exercised starting in A2.
+    it) — **deferred to A2 in the actual implementation** (see note above),
+    not added structurally in A1.
   - Joins the existing external `cartracker-net` network (declared
     `external: true`, same as the main file) so it can reach the real
     `minio` service on the VM/local — see §2.2 for the one caveat this
@@ -113,12 +128,14 @@ fourth is the VM-only realistic rehearsal.
   throwaway `minio` service and making the network non-external (CI has no
   persistent main project to join) — §4.2.
 - Lakekeeper storage-profile configuration pointing at the `bronze` bucket
-  under `lakehouse_spike/warehouse/` (§2.3) — no new bucket on the VM; the CI
-  override creates its own throwaway `bronze` bucket.
+  under `lakehouse_spike/warehouse/` (§2.3) — **deferred to A2 in the actual
+  implementation** (see note above); not needed until a warehouse/table is
+  actually written.
 - A CI smoke step in the new dedicated `lakehouse` job: bring the stack up,
-  wait for health, hit Lakekeeper's REST config endpoint and create/list a
-  namespace via plain HTTP calls (no Spark, no PyIceberg needed for this
-  check).
+  wait for health, and hit Lakekeeper's REST **`/v1/config`** endpoint via
+  plain HTTP (no JVM, no Spark, no PyIceberg needed for this check).
+  **Namespace create/list is deferred to A2** in the actual implementation —
+  it needs a registered warehouse first, which A1 does not set up.
 - `docs/runbook_lakehouse.md` (start now, extend through B3): how to bring the
   stack up/down locally and on the VM, and the explicit "never in the hot
   path" + "never touches production Postgres" + "never run `down`/`down -v`
@@ -686,7 +703,7 @@ Job design:
 
 | File | What it exercises | Data source |
 |------|-------------------|-------------|
-| `tests/integration/lakehouse/test_lakekeeper_smoke.py` | Step 6 above: REST config endpoint responds; namespace CRUD via plain HTTP. **No Spark, no PyIceberg** — proves the catalog itself, independent of any client engine. | none — pure catalog CRUD |
+| `tests/integration/lakehouse/test_lakekeeper_smoke.py` | Step 6 above, **as originally planned**. **As actually implemented in A1: only the REST `/v1/config` endpoint** — namespace CRUD is deferred to A2, since it needs a registered warehouse first. **No Spark, no PyIceberg** either way — proves the catalog itself, independent of any client engine. | none — pure catalog check |
 | `tests/integration/lakehouse/test_pyspark_iceberg_roundtrip.py` | Step 7: full PySpark round-trip against Lakekeeper + the job-local MinIO: create → append → time-travel → snapshot-id capture → cleanup; asserts snapshot count = 2, time-travel row counts differ, cleanup empties the prefix. | Plan 120 fixture, seeded into the job-local MinIO in step 5 |
 | `tests/integration/lakehouse/test_pyiceberg_validation.py` *(A2b, optional)* | Step 8: PyIceberg `RestCatalog` reads the table the Spark test just wrote and confirms row count/schema match — the cross-engine proof. | table written by the Spark round-trip test above |
 | `tests/integration/lakehouse/test_mlflow_smoke_run.py` | MLflow logging against an **ephemeral local store** (file-based backend + tmp artifact dir), not the server — runs in the existing `unit-tests`/`dbt`-style flow, unrelated to the `lakehouse` job's Compose stack. | fixture-derived Iceberg table metadata dict |
@@ -699,7 +716,7 @@ about that tradeoff (raised as Open Question Q2 below) rather than hiding it:
 
 | Runs in CI (`lakehouse` job) | VM/local-manual only |
 |------------|----------------------|
-| Lakekeeper catalog CRUD smoke test (A1) — lightweight, no JVM | Real `int_listing_volatility_features` snapshot (A3) |
+| Lakekeeper REST `/v1/config` smoke test (A1) — lightweight, no JVM | Real `int_listing_volatility_features` snapshot (A3) |
 | MLflow field-logging smoke (B2, ephemeral store, separate flow) | MLflow **server** end-to-end against Postgres+MinIO (B1) |
 | Unit tests (A1/A2/B2, `unit-tests` job) | Cleanup-proof before/after on real prod row counts (A3) |
 | PySpark fixture round-trip (A2) — **attempted, but runtime-budget-gated** (below) | PySpark round-trip, if CI runtime/flakiness proves unacceptable (fallback) |
@@ -870,10 +887,10 @@ review flagged as a real production risk in the prior draft.
 
 | File | PR | Change |
 |------|----|--------|
-| `docker-compose.lakehouse.yml` | A1 | new standalone Compose file: `lakekeeper` + `lakekeeper-postgres` + profile-gated `lakehouse-worker`; own named volume `lakekeeper_pgdata`; joins the existing external `cartracker-net` |
+| `docker-compose.lakehouse.yml` | A1 | new standalone Compose file: `lakekeeper` + `lakekeeper-postgres`; own named volume `lakekeeper_pgdata`; joins the existing external `cartracker-net`. **As actually implemented, `lakehouse-worker` is NOT included in A1** — it references a `lakehouse/Dockerfile` build context that doesn't exist until A2, so it is added to this file in A2 instead (see implementation note above) |
 | `docker-compose.lakehouse.ci.yml` | A1 | CI-only override: job-local throwaway `minio`, network made non-external, distinct host ports (`19000`, `18181`) |
 | `docs/runbook_lakehouse.md` | A1, extended in B3 | bring-up/teardown commands, isolation invariants, explicit "never `down -v` the main file" warning, "never touches production Postgres" note, `analytics_db` external-volume-name check |
-| `.github/workflows/ci.yml` | A1 | new independent `lakehouse` job (§4.2): Lakekeeper catalog CRUD smoke step |
+| `.github/workflows/ci.yml` | A1 | new independent `lakehouse` job (§4.2): Lakekeeper REST `/v1/config` smoke step (namespace CRUD deferred to A2) |
 | `lakehouse/requirements.txt` | A2 | `pyspark`, pinned |
 | `lakehouse/Dockerfile` | A2 | JDK + pinned `pyspark` + `iceberg-spark-runtime` + `hadoop-aws` jars |
 | `scripts/spike_iceberg_lakehouse.py` | A2 | PySpark write/read/append/time-travel/info/cleanup subcommands; namespace guard; metadata capture |
@@ -906,7 +923,8 @@ review flagged as a real production risk in the prior draft.
   this repo has needed outside the existing Airflow/Flyway images.
 - **Lakekeeper (A1):** no Python dependency at all — it is a standalone
   server image; only `requests`/`httpx` (already available) is needed for
-  the CRUD smoke test and warehouse-registration script.
+  the REST config smoke test (A1) and the later warehouse-registration
+  script + namespace CRUD (A2).
 - **PyIceberg (optional, A2b only):** `pyiceberg[s3fs]` — no `[sql]` extra
   needed anymore, since PyIceberg only ever talks the REST catalog protocol
   here, not a SQLAlchemy-backed catalog.
