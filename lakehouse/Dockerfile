@@ -2,7 +2,13 @@
 # repo needs outside the existing Airflow/Flyway images -- kept fully
 # isolated here (own Dockerfile, own requirements.txt), never merged into
 # the shared FastAPI-services images.
-FROM python:3.13-slim
+#
+# Pinned to -bookworm (Debian 12), not the rolling python:3.13-slim tag:
+# Debian trixie (13) dropped the openjdk-17-jre-headless package in favor of
+# openjdk-21 only, and Spark 3.5.x's Java 21 support is less proven than 17.
+# Revisit this pin if/when pyspark is upgraded to a version with solid Java
+# 21 support.
+FROM python:3.13-slim-bookworm
 
 # Iceberg-Spark-runtime + Hadoop-AWS jar versions, pinned to match pyspark's
 # bundled Hadoop version (3.5.x ships Hadoop 3.3.4). Keep these three in sync
