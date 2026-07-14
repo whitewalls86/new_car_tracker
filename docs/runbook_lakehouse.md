@@ -133,11 +133,11 @@ docker compose \
   default -- this is defense-in-depth, not a fix for a real collision today.
 - A1's readiness check waits for MinIO's live endpoint, then Lakekeeper's
   container healthcheck (`/home/nonroot/lakekeeper healthcheck`), then probes
-  Lakekeeper's REST `/v1/config` endpoint over plain HTTP
-  (`http://localhost:18181`) -- no JVM, no Spark, no PyIceberg needed for
-  this check. Namespace CRUD is not attempted in A1: it requires a registered
-  warehouse first, which is deferred to A2 alongside the actual table writes
-  that need one.
+  Lakekeeper's warehouse-free management info endpoint over plain HTTP
+  (`http://localhost:18181/management/v1/info`) -- no JVM, no Spark, no
+  PyIceberg needed for this check. Iceberg REST `/v1/config` and namespace
+  CRUD are not attempted in A1: both require a registered warehouse first,
+  which is deferred to A2 alongside the actual table writes that need one.
 - Teardown at the end of the job:
   ```bash
   docker compose \
@@ -147,13 +147,12 @@ docker compose \
   Safe unconditionally: `ci-lakehouse` is its own project containing only
   job-local, throwaway resources.
 
-**Known limitation (A1):** the smoke check only exercises the `/v1/config`
-endpoint the pinned image version exposes for health/config -- it does not
-attempt namespace CRUD, since that needs a registered warehouse (A2 scope).
-The exact endpoint path was not independently re-verified against every
-historical Lakekeeper release; if the pinned version's REST surface differs,
-the smoke step's assertion may need adjusting at implementation time -- this
-is a documented limitation, not a design gap.
+**Known limitation (A1):** the smoke check only exercises Lakekeeper's
+warehouse-free management info endpoint. It does not attempt Iceberg REST
+`/v1/config` or namespace CRUD, since both need a registered warehouse (A2
+scope). A bare `/catalog/v1/config` call returns `400` on the pinned
+Lakekeeper release before warehouse registration, so treating that as an A1
+smoke endpoint is intentionally avoided.
 
 ---
 

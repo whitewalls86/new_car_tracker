@@ -55,7 +55,7 @@ jobs:
       - run: docker compose build
 
   lakehouse:
-    name: Lakehouse (Lakekeeper REST config smoke)
+    name: Lakehouse (Lakekeeper management info smoke)
     # Plan 112 Gate A1: independent of the `dbt` job's GitHub Actions
     # `services:` blocks -- this job brings up its own self-contained
     # Compose stack (job-local MinIO + Lakekeeper + isolated Postgres) on
@@ -83,7 +83,7 @@ jobs:
             -p ci-lakehouse ps
           timeout 60 bash -c 'until curl -sf http://localhost:19000/minio/health/live; do sleep 2; done'
           timeout 180 bash -c 'until [ "$(docker inspect -f "{{.State.Health.Status}}" cartracker-lakekeeper 2>/dev/null)" = "healthy" ]; do docker compose -f docker-compose.lakehouse.yml -f docker-compose.lakehouse.ci.yml -p ci-lakehouse ps; sleep 2; done'
-          timeout 60 bash -c 'until curl -fsSL http://localhost:18181/catalog/v1/config >/dev/null; do sleep 2; done'
+          timeout 60 bash -c 'until curl -fsSL http://localhost:18181/management/v1/info >/dev/null; do sleep 2; done'
 
       - uses: actions/setup-python@v5
         with:
@@ -92,16 +92,16 @@ jobs:
       - name: Install test dependencies
         run: pip install -r requirements-dev.txt requests
 
-      - name: Run Lakekeeper REST config smoke test
-        # A1 smoke only: the REST /v1/config endpoint over plain HTTP.
-        # Namespace CRUD needs a registered warehouse first (a Lakekeeper
-        # management-API step deferred to A2, when a warehouse is actually
-        # needed for table writes) -- not attempted here. No Spark, no
-        # PyIceberg either -- those are Gate A2/A2b scope.
+      - name: Run Lakekeeper management info smoke test
+        # A1 smoke only: Lakekeeper process + metadata-store boot and the
+        # warehouse-free management info endpoint over plain HTTP. Iceberg
+        # REST /v1/config and namespace CRUD need a registered warehouse first,
+        # so they are deferred to A2. No Spark, no PyIceberg either -- those
+        # are Gate A2/A2b scope.
         run: pytest tests/integration/lakehouse/ -v -m integration
         env:
           PYTHONPATH: ${{ github.workspace }}
-          LAKEKEEPER_CATALOG_URI: http://localhost:18181/catalog
+          LAKEKEEPER_BASE_URI: http://localhost:18181
 
       - name: Teardown (safe -- standalone ci-lakehouse project only)
         if: always()
