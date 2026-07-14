@@ -4,10 +4,26 @@ Operational runbook for the Gate A Lakekeeper REST catalog stack. Read
 `docs/plan_112_gate_a_b_implementation_plan.md` and
 `docs/lakehouse_substrate_decision.md` first for the design rationale.
 
-**Scope of this document (A1):** bring-up/teardown of the standalone
-Lakekeeper catalog + its isolated Postgres metadata store, and the CI
-topology. PySpark table writes (A2), PyIceberg validation (A2b), and MLflow
-(Gate B) are out of scope here and will extend this doc as they land.
+**Scope of this document (A1 + A2):** bring-up/teardown of the standalone
+Lakekeeper catalog + its isolated Postgres metadata store, the CI topology,
+and (A2) the profile-gated `lakehouse-worker` PySpark round-trip against a
+fixture-derived Iceberg table. PyIceberg validation (A2b) and MLflow (Gate B)
+are out of scope here and will extend this doc as they land.
+
+## LAKEKEEPER_DB_PASSWORD / LAKEKEEPER_PG_ENCRYPTION_KEY value format
+
+Learned during VM A1 verification: generate these as URL-safe/hex strings,
+not arbitrary text with symbols. `lakekeeper-postgres`'s DSN
+(`postgresql://lakekeeper:${LAKEKEEPER_DB_PASSWORD}@...`) is built by
+substituting the raw env var into a URL, so a password containing `@`, `:`,
+`/`, `#`, or similar breaks DSN parsing. Generate both with:
+
+```bash
+python3 -c "import secrets; print(secrets.token_hex(32))"
+```
+
+`.env.example` already documents this for `LAKEKEEPER_PG_ENCRYPTION_KEY`;
+apply the same rule to `LAKEKEEPER_DB_PASSWORD`.
 
 ---
 
@@ -46,6 +62,12 @@ docker compose -f docker-compose.lakehouse.yml -p cartracker-lakehouse \
 # Check status / logs
 docker compose -f docker-compose.lakehouse.yml -p cartracker-lakehouse ps
 docker compose -f docker-compose.lakehouse.yml -p cartracker-lakehouse logs -f lakekeeper
+
+# Smoke the management API from the Docker network. The base VM/local stack
+# does not publish Lakekeeper's 8181 port to the host; only the CI override
+# publishes 18181 for GitHub Actions.
+docker run --rm --network cartracker-net curlimages/curl:8.10.1 \
+  -fsSL http://lakekeeper:8181/management/v1/info
 ```
 
 Required env vars (see `.env.example`): `LAKEKEEPER_DB_PASSWORD`,
@@ -111,6 +133,60 @@ direct copy, no production restart without explicit confirmation.
 
 ---
 
+## A2: PySpark Iceberg fixture round-trip (local / VM)
+
+```bash
+# Build the lakehouse-worker image (new files are not in cached layers --
+# rebuild after every git pull that touches lakehouse/ or scripts/).
+docker compose -f docker-compose.lakehouse.yml -p cartracker-lakehouse \
+  build lakehouse-worker
+
+# One-time (idempotent) warehouse bootstrap -- required before any Iceberg
+# REST /v1/config call or table write; A1's known limitation is exactly this.
+docker compose -f docker-compose.lakehouse.yml -p cartracker-lakehouse \
+  run --rm lakehouse-worker python -m scripts.register_lakehouse_warehouse
+
+# Full write -> append -> time-travel -> cleanup round-trip against a small
+# fixture-derived table (cartracker_experiments.spike_fixture). Prints the
+# captured snapshot metadata as JSON.
+docker compose -f docker-compose.lakehouse.yml -p cartracker-lakehouse \
+  run --rm lakehouse-worker python -m scripts.spike_iceberg_lakehouse roundtrip
+
+# Individual steps (useful for debugging one stage at a time):
+docker compose -f docker-compose.lakehouse.yml -p cartracker-lakehouse \
+  run --rm lakehouse-worker python -m scripts.spike_iceberg_lakehouse write
+docker compose -f docker-compose.lakehouse.yml -p cartracker-lakehouse \
+  run --rm lakehouse-worker python -m scripts.spike_iceberg_lakehouse append
+docker compose -f docker-compose.lakehouse.yml -p cartracker-lakehouse \
+  run --rm lakehouse-worker python -m scripts.spike_iceberg_lakehouse info
+docker compose -f docker-compose.lakehouse.yml -p cartracker-lakehouse \
+  run --rm lakehouse-worker python -m scripts.spike_iceberg_lakehouse cleanup
+```
+
+A2's table is a small deterministic synthetic fixture (5 VINs, two batches),
+generated in-process by `scripts/spike_iceberg_lakehouse.py` rather than a
+Parquet slice read from the Plan 120 seeded fixture -- a deliberate scope
+simplification to keep the spike script decoupled from the dbt/silver
+schema. The real `int_listing_volatility_features` snapshot is A3 (VM-only).
+
+`lakehouse-worker` is profile-gated (`profiles: ["lakehouse-worker"]`), so it
+never starts on a bare `docker compose -f docker-compose.lakehouse.yml up`;
+every invocation above is an explicit `run --rm`.
+
+**Every write/cleanup is guarded** (`shared/iceberg_catalog.py`) to the
+`cartracker_experiments` namespace and the `lakehouse_spike/warehouse/`
+MinIO prefix under the `bronze` bucket -- both scripts refuse to touch
+anything else, even given a bad table-name/namespace argument.
+
+**A2 leaves state behind on success, by design:** the warehouse registration
+and namespace live on in Lakekeeper's isolated `lakekeeper_pgdata` volume
+after a `roundtrip` run (only the *table* is dropped by cleanup, not the
+warehouse/namespace registration itself). This is expected and harmless --
+re-running `register_lakehouse_warehouse` is a no-op, and a full
+`down -v` (see "Safe teardown" above) clears it entirely if ever needed.
+
+---
+
 ## CI topology
 
 The dedicated `lakehouse` GitHub Actions job is independent of the existing
@@ -135,9 +211,17 @@ docker compose \
   container healthcheck (`/home/nonroot/lakekeeper healthcheck`), then probes
   Lakekeeper's warehouse-free management info endpoint over plain HTTP
   (`http://localhost:18181/management/v1/info`) -- no JVM, no Spark, no
-  PyIceberg needed for this check. Iceberg REST `/v1/config` and namespace
-  CRUD are not attempted in A1: both require a registered warehouse first,
-  which is deferred to A2 alongside the actual table writes that need one.
+  PyIceberg needed for this check.
+- A2 then registers the `cartracker_experiments` warehouse
+  (`python -m scripts.register_lakehouse_warehouse`, idempotent) and runs the
+  PySpark write/append/time-travel/cleanup round-trip
+  (`tests/integration/lakehouse/test_pyspark_iceberg_roundtrip.py`), with
+  `pyspark` + a JDK installed only in this job (isolated, mirrors the
+  Airflow-venv pattern) and the Iceberg-Spark-runtime/Hadoop-AWS jars cached
+  via `actions/cache`. This is the one component whose CI viability was
+  genuinely uncertain at planning time (plan Sec 4.3, Q2) -- it is attempted
+  here first per that recommendation; fall back to VM/local-manual only if it
+  proves too slow/flaky in practice.
 - Teardown at the end of the job:
   ```bash
   docker compose \
@@ -147,28 +231,30 @@ docker compose \
   Safe unconditionally: `ci-lakehouse` is its own project containing only
   job-local, throwaway resources.
 
-**Known limitation (A1):** the smoke check only exercises Lakekeeper's
-warehouse-free management info endpoint. It does not attempt Iceberg REST
-`/v1/config` or namespace CRUD, since both need a registered warehouse (A2
-scope). A bare `/catalog/v1/config` call returns `400` on the pinned
-Lakekeeper release before warehouse registration, so treating that as an A1
-smoke endpoint is intentionally avoided.
+**Known limitation (A1, still true):** the A1 smoke check only exercises
+Lakekeeper's warehouse-free management info endpoint. It does not attempt
+Iceberg REST `/v1/config` or namespace CRUD directly -- A2's warehouse
+registration + PySpark round-trip exercise that path instead, via the real
+client libraries (Spark's `SparkCatalog`) rather than a bare REST call. A
+bare `/catalog/v1/config` call returns `400` on the pinned Lakekeeper release
+before warehouse registration, so treating that as an A1 smoke endpoint was
+intentionally avoided.
 
 ---
 
-## Deferred to A2/A3 (not wired in A1)
+## Deferred to A3 (not wired in A2)
 
-- **PySpark table writes** and the `lakehouse-worker` one-shot container are
-  added to `docker-compose.lakehouse.yml` in Gate A2.
-- **`analytics_db` volume name check:** when `lakehouse-worker` is added, it
-  needs to mount the main project's `analytics_db` volume read-only. That
-  volume is not declared `external: true` in `docker-compose.yml`, so
-  Compose names it with the main project's prefix (e.g.
-  `cartracker-scraper_analytics_db`, depending on the checked-out directory
-  name / `COMPOSE_PROJECT_NAME`). **Confirm the exact resolved name via
-  `docker volume ls` on the VM at A2/A3 implementation time** and record it
-  here before wiring an `external: true` reference in
-  `docker-compose.lakehouse.yml` -- do not guess/hardcode it ahead of that
-  check.
+- **Real `int_listing_volatility_features` snapshot** (250,790 rows, one per
+  VIN) is A3, VM-only, real production-derived data, read-only from
+  `/data/analytics/analytics.duckdb`.
+- **`analytics_db` volume mount:** A2's `lakehouse-worker` does not mount
+  `analytics_db` -- the fixture-derived spike doesn't need it. When A3 adds
+  the mount, confirm the main project's resolved volume name via
+  `docker volume ls` on the VM first (it is not declared `external: true` in
+  `docker-compose.yml`, so Compose names it with the main project's prefix --
+  expected to be `cartracker-scraper_analytics_db` given this repo's checkout
+  directory name, but **do not hardcode that without confirming on the VM**)
+  before wiring an `external: true` reference in
+  `docker-compose.lakehouse.yml`.
 - **PyIceberg validation** (A2b) and **MLflow** (Gate B) are unrelated to
   this stack's bring-up/teardown and are documented separately as they land.

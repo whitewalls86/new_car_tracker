@@ -16,10 +16,9 @@
 # docs/runbook_lakehouse.md.
 #
 # This file touches no production Postgres, no Flyway migration, and no
-# production volume. This A1 revision stands up only the catalog + its
-# isolated metadata store. `lakehouse-worker` (profile-gated, PySpark) is
-# added to this file in Gate A2 -- it is not scaffolded here to avoid
-# referencing a `lakehouse/Dockerfile` build context that doesn't exist yet.
+# production volume. A1 stood up only the catalog + its isolated metadata
+# store. Gate A2 adds `lakehouse-worker` (profile-gated, PySpark), built from
+# lakehouse/Dockerfile -- see docs/runbook_lakehouse.md for A2 commands.
 
 services:
   lakekeeper-postgres:
@@ -88,13 +87,31 @@ services:
     networks:
       - cartracker-net
 
-  # `lakehouse-worker` (profile-gated PySpark one-shot runner, mirroring the
-  # `snapshot-worker` pattern in the main docker-compose.yml) is added to
-  # this file in Gate A2, once `lakehouse/Dockerfile` exists. A2 will also
-  # need to confirm the resolved name of the main project's `analytics_db`
-  # volume (it is not declared `external: true` there) via `docker volume
-  # ls` before this file can mount it read-only -- see
-  # docs/runbook_lakehouse.md.
+  # Gate A2: PySpark one-shot runner, mirroring the `snapshot-worker` pattern
+  # in the main docker-compose.yml. Profile-gated so `docker compose -f
+  # docker-compose.lakehouse.yml up` (no profile) never launches it --
+  # invoke explicitly via `docker compose ... run --rm lakehouse-worker ...`.
+  # Read-only `analytics_db` mount is A3 (VM real-table rehearsal) scope; A2's
+  # fixture-derived spike does not need it, so it is omitted here until A3.
+  lakehouse-worker:
+    build:
+      context: .
+      dockerfile: lakehouse/Dockerfile
+    image: cartracker-lakehouse
+    profiles: ["lakehouse-worker"]
+    mem_limit: 6g
+    environment:
+      LAKEKEEPER_CATALOG_URI: ${LAKEKEEPER_CATALOG_URI:-http://lakekeeper:8181/catalog}
+      ICEBERG_WAREHOUSE_NAME: cartracker_experiments
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_BUCKET: bronze
+    networks:
+      - cartracker-net
+    depends_on:
+      lakekeeper:
+        condition: service_started
 
 volumes:
   lakekeeper_pgdata:

@@ -26,6 +26,7 @@ class TestMainComposeUntouched:
         services = doc["services"]
         assert "lakekeeper" not in services
         assert "lakekeeper-postgres" not in services
+        assert "lakehouse-worker" not in services
 
     def test_main_compose_volumes_unaffected(self):
         doc = _load("docker-compose.yml")
@@ -104,6 +105,65 @@ class TestLakehouseComposeStandalone:
         assert "flyway" not in doc["services"]
         declared_volumes = set(doc.get("volumes") or {})
         assert declared_volumes == {"lakekeeper_pgdata"}
+
+
+class TestLakehouseWorkerService:
+    """Plan 112 Gate A2: lakehouse-worker must exist only in the standalone
+    lakehouse file, be profile-gated so a bare `up` never starts it, and
+    build from the isolated lakehouse/ image -- never the shared
+    FastAPI-services images."""
+
+    @staticmethod
+    def _service():
+        doc = yaml.safe_load(
+            (_REPO_ROOT / "docker-compose.lakehouse.yml").read_text()
+        )
+        return doc["services"]["lakehouse-worker"]
+
+    def test_present_in_standalone_lakehouse_file(self):
+        service = self._service()
+        assert service is not None
+
+    def test_profile_gated(self):
+        service = self._service()
+        assert service.get("profiles") == ["lakehouse-worker"]
+
+    def test_not_started_by_bare_up(self):
+        """A profile-gated service must not appear among services with no
+        `profiles` key (those are the ones a bare `up` starts)."""
+        doc = yaml.safe_load(
+            (_REPO_ROOT / "docker-compose.lakehouse.yml").read_text()
+        )
+        bare_up_services = {
+            name for name, spec in doc["services"].items() if not spec.get("profiles")
+        }
+        assert "lakehouse-worker" not in bare_up_services
+
+    def test_builds_from_isolated_lakehouse_dockerfile(self):
+        service = self._service()
+        build = service["build"]
+        assert build["dockerfile"] == "lakehouse/Dockerfile"
+
+    def test_joins_cartracker_net(self):
+        service = self._service()
+        assert "cartracker-net" in service["networks"]
+
+    def test_has_bounded_memory_limit(self):
+        service = self._service()
+        assert service["mem_limit"] == "6g"
+
+    def test_depends_on_lakekeeper(self):
+        service = self._service()
+        depends_on = service.get("depends_on") or {}
+        assert "lakekeeper" in depends_on
+
+    def test_no_production_postgres_reference(self):
+        service = self._service()
+        env = service.get("environment") or {}
+        assert "PGHOST" not in env
+        depends_on = service.get("depends_on") or {}
+        assert "postgres" not in depends_on
+        assert "flyway" not in depends_on
 
 
 class TestLakehouseComposeCiOverride:

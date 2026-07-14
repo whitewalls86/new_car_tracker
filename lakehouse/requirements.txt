@@ -1,0 +1,11 @@
+# Plan 112 Gate A2: PySpark Iceberg fixture spike (lakehouse-worker image).
+# Isolated from the shared FastAPI-services pip install, same convention as
+# airflow/requirements.txt -- installing a JVM-backed engine alongside the
+# rest of the repo's dependencies is not worth the resolver risk.
+#
+# pyspark is pinned to a version with a published matching
+# iceberg-spark-runtime artifact (3.5_2.12) -- see lakehouse/Dockerfile for
+# the exact Iceberg/Hadoop-AWS jar versions fetched at build time.
+pyspark==3.5.3
+boto3
+requests

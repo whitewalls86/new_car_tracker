@@ -5,14 +5,23 @@
 This revision (2026-07-14) supersedes the prior Hadoop/file-catalog-first
 pass per `docs/plan_112_gate_a_b_implementation_plan.md`'s locked decisions
 (D1/D2). Gate A1 (`docker-compose.lakehouse.yml`, isolated
-`lakekeeper-postgres`, CI smoke) has been implemented; PySpark table writes
-(A2), PyIceberg validation (A2b), and the real spike results below remain
-placeholders until those PRs run.
+`lakekeeper-postgres`, CI smoke) has been implemented. Gate A2
+(`lakehouse-worker`, warehouse registration, PySpark write/append/
+time-travel/cleanup round-trip against a fixture-derived table) has also
+landed -- see `docs/runbook_lakehouse.md`'s A2 section for the commands.
+PyIceberg validation (A2b) and the real A3 spike results (real
+`int_listing_volatility_features` snapshot, VM-only) below remain
+placeholders until those land.
 
-No PySpark table write, Iceberg table, MLflow, Unity Catalog OSS, or Polaris
-has been installed or stood up by this document or this PR. Lakekeeper's
-REST catalog server + isolated Postgres metadata store are stood up by A1,
-but no warehouse/table exists against them yet.
+Iceberg table writes now exist, but only against the isolated
+`lakehouse_spike/` MinIO prefix and a small synthetic fixture table -- no
+real production feature table, MLflow, Unity Catalog OSS, or Polaris has
+been touched by this document or by A1/A2. Lakekeeper's REST catalog server
++ isolated Postgres metadata store are stood up by A1; the
+`cartracker_experiments` warehouse and a `spike_fixture` table now exist
+against them via A2 (the table itself is dropped by the spike's own cleanup
+step, but the warehouse/namespace registration persists in Lakekeeper's
+isolated `lakekeeper_pgdata` volume -- expected, see the runbook).
 
 ## Decision summary
 
