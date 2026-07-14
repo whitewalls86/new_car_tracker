@@ -39,6 +39,8 @@ services:
     ports:
       - "18181:8181"
     depends_on:
+      lakekeeper-migrate:
+        condition: service_completed_successfully
       lakekeeper-postgres:
         condition: service_healthy
       minio:

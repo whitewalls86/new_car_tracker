@@ -10,7 +10,7 @@
 #
 # VM/local usage (joins the real cartracker-net + real minio):
 #   docker compose -f docker-compose.lakehouse.yml -p cartracker-lakehouse \
-#     up -d lakekeeper lakekeeper-postgres
+#     up -d lakekeeper-postgres lakekeeper
 #
 # CI usage adds docker-compose.lakehouse.ci.yml as a second -f -- see
 # docs/runbook_lakehouse.md.
@@ -40,16 +40,35 @@ services:
     networks:
       - cartracker-net
 
-  lakekeeper:
+  lakekeeper-migrate:
     # Pinned tagged release per Q6 of the Gate A/B plan: avoid `:latest-main`
-    # for a spike whose exact env-var surface still needs implementation-time
-    # confirmation against the pinned version's release notes.
-    image: ${LAKEKEEPER_IMAGE:-quay.io/lakekeeper/lakekeeper:v0.9.1}
-    container_name: cartracker-lakekeeper
+    # and avoid the old/wrong `quay.io/lakekeeper/lakekeeper` repository.
+    image: ${LAKEKEEPER_IMAGE:-quay.io/lakekeeper/catalog:v0.13.1}
+    container_name: cartracker-lakekeeper-migrate
+    command: ["migrate"]
+    restart: "no"
     environment:
       LAKEKEEPER__PG_ENCRYPTION_KEY: ${LAKEKEEPER_PG_ENCRYPTION_KEY}
       LAKEKEEPER__PG_DATABASE_URL_READ: postgresql://lakekeeper:${LAKEKEEPER_DB_PASSWORD}@lakekeeper-postgres:5432/lakekeeper
       LAKEKEEPER__PG_DATABASE_URL_WRITE: postgresql://lakekeeper:${LAKEKEEPER_DB_PASSWORD}@lakekeeper-postgres:5432/lakekeeper
+      LAKEKEEPER__AUTHZ_BACKEND: allowall
+    depends_on:
+      lakekeeper-postgres:
+        condition: service_healthy
+    networks:
+      - cartracker-net
+
+  lakekeeper:
+    # Pinned tagged release per Q6 of the Gate A/B plan: avoid `:latest-main`
+    # and avoid the old/wrong `quay.io/lakekeeper/lakekeeper` repository.
+    image: ${LAKEKEEPER_IMAGE:-quay.io/lakekeeper/catalog:v0.13.1}
+    container_name: cartracker-lakekeeper
+    command: ["serve"]
+    environment:
+      LAKEKEEPER__PG_ENCRYPTION_KEY: ${LAKEKEEPER_PG_ENCRYPTION_KEY}
+      LAKEKEEPER__PG_DATABASE_URL_READ: postgresql://lakekeeper:${LAKEKEEPER_DB_PASSWORD}@lakekeeper-postgres:5432/lakekeeper
+      LAKEKEEPER__PG_DATABASE_URL_WRITE: postgresql://lakekeeper:${LAKEKEEPER_DB_PASSWORD}@lakekeeper-postgres:5432/lakekeeper
+      LAKEKEEPER__AUTHZ_BACKEND: allowall
       # A1 stands the catalog up only; storage-profile/warehouse registration
       # against MinIO happens starting in A2 when Spark actually writes
       # tables. These are carried here so the runbook's warehouse-registration
@@ -58,8 +77,8 @@ services:
       LAKEKEEPER_MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       LAKEKEEPER_MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
     depends_on:
-      lakekeeper-postgres:
-        condition: service_healthy
+      lakekeeper-migrate:
+        condition: service_completed_successfully
     networks:
       - cartracker-net
 

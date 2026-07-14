@@ -224,7 +224,7 @@ The prior pass chose a Postgres-backed PyIceberg `SqlCatalog` against the
 **REST catalog is the correct minimal path**, not a step to defer: it is the
 one catalog interface both PySpark and PyIceberg speak without any
 per-engine adapter code, and Lakekeeper is a small, purpose-built REST
-catalog server (Rust binary, `lakekeeper/lakekeeper` image) rather than a
+catalog server (Rust binary, `quay.io/lakekeeper/catalog` image) rather than a
 general application requiring integration work.
 
 Deployment shape — **`docker-compose.lakehouse.yml`, a standalone file, not
@@ -243,7 +243,7 @@ an addition to `docker-compose.yml`** (see "Compose topology decision"):
 #
 # VM/local usage (joins the real cartracker-net + real minio):
 #   docker compose -f docker-compose.lakehouse.yml -p cartracker-lakehouse \
-#     up -d lakekeeper lakekeeper-postgres
+#     up -d lakekeeper-postgres lakekeeper
 #
 # CI usage adds docker-compose.lakehouse.ci.yml as a second -f — see §4.2.
 
@@ -258,12 +258,27 @@ services:
       - lakekeeper_pgdata:/var/lib/postgresql/data   # a volume owned by THIS project only
     networks: [cartracker-net]
 
-  lakekeeper:
-    image: ${LAKEKEEPER_IMAGE:-quay.io/lakekeeper/lakekeeper:latest-main}
+  lakekeeper-migrate:
+    image: ${LAKEKEEPER_IMAGE:-quay.io/lakekeeper/catalog:v0.13.1}
+    command: ["migrate"]
+    restart: "no"
     environment:
       LAKEKEEPER__PG_ENCRYPTION_KEY: ${LAKEKEEPER_PG_ENCRYPTION_KEY}
       LAKEKEEPER__PG_DATABASE_URL_READ: postgresql://lakekeeper:${LAKEKEEPER_DB_PASSWORD}@lakekeeper-postgres:5432/lakekeeper
       LAKEKEEPER__PG_DATABASE_URL_WRITE: postgresql://lakekeeper:${LAKEKEEPER_DB_PASSWORD}@lakekeeper-postgres:5432/lakekeeper
+      LAKEKEEPER__AUTHZ_BACKEND: allowall
+    depends_on:
+      lakekeeper-postgres: { condition: service_healthy }
+    networks: [cartracker-net]
+
+  lakekeeper:
+    image: ${LAKEKEEPER_IMAGE:-quay.io/lakekeeper/catalog:v0.13.1}
+    command: ["serve"]
+    environment:
+      LAKEKEEPER__PG_ENCRYPTION_KEY: ${LAKEKEEPER_PG_ENCRYPTION_KEY}
+      LAKEKEEPER__PG_DATABASE_URL_READ: postgresql://lakekeeper:${LAKEKEEPER_DB_PASSWORD}@lakekeeper-postgres:5432/lakekeeper
+      LAKEKEEPER__PG_DATABASE_URL_WRITE: postgresql://lakekeeper:${LAKEKEEPER_DB_PASSWORD}@lakekeeper-postgres:5432/lakekeeper
+      LAKEKEEPER__AUTHZ_BACKEND: allowall
       # Storage profile registered at warehouse-create time, not env vars,
       # but the MinIO credentials it needs are supplied the same way every
       # other service here gets them:
@@ -271,7 +286,7 @@ services:
       LAKEKEEPER_MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       LAKEKEEPER_MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
     depends_on:
-      lakekeeper-postgres: { condition: service_started }
+      lakekeeper-migrate: { condition: service_completed_successfully }
     networks: [cartracker-net]
 
   lakehouse-worker:

@@ -41,7 +41,15 @@ class TestLakehouseComposeStandalone:
     def test_lakekeeper_and_postgres_present(self):
         services = self._services()
         assert "lakekeeper" in services
+        assert "lakekeeper-migrate" in services
         assert "lakekeeper-postgres" in services
+
+    def test_uses_public_lakekeeper_catalog_image(self):
+        services = self._services()
+        for service_name in ("lakekeeper", "lakekeeper-migrate"):
+            image = services[service_name]["image"]
+            assert "quay.io/lakekeeper/catalog:" in image
+            assert "quay.io/lakekeeper/lakekeeper" not in image
 
     def test_lakekeeper_postgres_uses_own_named_volume(self):
         service = self._services()["lakekeeper-postgres"]
@@ -70,9 +78,20 @@ class TestLakehouseComposeStandalone:
             depends_on = spec.get("depends_on") or {}
             assert "postgres" not in depends_on, f"{name} depends on production postgres"
 
-    def test_lakekeeper_depends_on_isolated_postgres(self):
+    def test_lakekeeper_migrate_depends_on_isolated_postgres(self):
+        service = self._services()["lakekeeper-migrate"]
+        depends_on = service.get("depends_on") or {}
+        assert depends_on["lakekeeper-postgres"]["condition"] == "service_healthy"
+
+    def test_lakekeeper_depends_on_successful_migration(self):
         service = self._services()["lakekeeper"]
-        assert "lakekeeper-postgres" in (service.get("depends_on") or {})
+        depends_on = service.get("depends_on") or {}
+        assert depends_on["lakekeeper-migrate"]["condition"] == "service_completed_successfully"
+
+    def test_lakekeeper_commands_are_explicit(self):
+        services = self._services()
+        assert services["lakekeeper-migrate"]["command"] == ["migrate"]
+        assert services["lakekeeper"]["command"] == ["serve"]
 
     def test_no_flyway_or_production_volume_reference(self):
         doc = yaml.safe_load((_REPO_ROOT / "docker-compose.lakehouse.yml").read_text())
@@ -104,3 +123,8 @@ class TestLakehouseComposeCiOverride:
     def test_no_production_postgres_service(self):
         services = self._doc()["services"]
         assert "postgres" not in services
+
+    def test_lakekeeper_still_depends_on_migration(self):
+        services = self._doc()["services"]
+        depends_on = services["lakekeeper"].get("depends_on") or {}
+        assert depends_on["lakekeeper-migrate"]["condition"] == "service_completed_successfully"
