@@ -149,14 +149,14 @@ class TestDockerComposeTrawlMemoryGuardrails:
 
     def test_trawl_memory_limits(self):
         service = self._services()["trawl"]
-        assert service["mem_limit"] == "3g"
-        assert service["memswap_limit"] == "3g"
-        assert service["pids_limit"] == 256
+        assert service["mem_limit"] == "4g"
+        assert service["memswap_limit"] == "4g"
+        assert service["pids_limit"] == 512
 
     def test_redis_trawl_memory_limits(self):
         service = self._services()["redis-trawl"]
-        assert service["mem_limit"] == "256m"
-        assert service["memswap_limit"] == "256m"
+        assert service["mem_limit"] == "512m"
+        assert service["memswap_limit"] == "512m"
 
 
 class TestGrafanaDashboards:
