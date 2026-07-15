@@ -124,6 +124,30 @@ class TestSnapshotManifest:
         assert resp.status_code == 400
         read_json_mock.assert_not_called()
 
+    @pytest.mark.parametrize("bad_manifest_key", [
+        "s3://other-bucket/snapshot_archives/fingerprints/abc123/archive_manifest.json",
+        "/etc/passwd",
+        "snapshot_archives/fingerprints/../../../etc/passwd",
+        "snapshot_archives/fingerprints/abc123/../../secret.json",
+        "some/other/prefix/archive_manifest.json",
+        "snapshot_archives/fingerprints/abc123/snapshot.tar.zst",  # wrong object name
+        "snapshot_planning_cache/fingerprints/abc123/planning.json",
+    ])
+    def test_tampered_archive_manifest_key_rejected(self, mock_client, mocker, bad_manifest_key):
+        tampered_alias = dict(ALIAS, archive_manifest_key=bad_manifest_key)
+        alias_key = "ci_snapshots/adaptive_refresh/aliases/adaptive-refresh-2026-07-07-174500.json"
+        read_json_mock = mocker.patch.object(
+            snapshots, "read_json",
+            side_effect=lambda key: tampered_alias if key == alias_key else MANIFEST,
+        )
+
+        resp = mock_client.get(f"{BASE}/adaptive-refresh-2026-07-07-174500", headers=AUTH)
+
+        assert resp.status_code == 404
+        # Only the alias lookup should ever happen — the bad key must never
+        # be passed through to a second read_json call.
+        read_json_mock.assert_called_once_with(alias_key)
+
 
 # ---------------------------------------------------------------------------
 # GET /{snapshot_id}/download
@@ -176,3 +200,31 @@ class TestDownload:
         resp = mock_client.get(f"{BASE}/../etc/download", headers=AUTH)
         assert resp.status_code in (400, 404)
         object_size_mock.assert_not_called()
+
+    @pytest.mark.parametrize("bad_archive_key", [
+        "s3://other-bucket/snapshot_archives/fingerprints/abc123/snapshot.tar.zst",
+        "/etc/passwd",
+        "snapshot_archives/fingerprints/../../../etc/passwd",
+        "snapshot_archives/fingerprints/abc123/../../secret.tar.zst",
+        "some/other/prefix/snapshot.tar.zst",
+        "snapshot_archives/fingerprints/abc123/archive_manifest.json",  # wrong object name
+        "html/year=2026/month=1/artifact_type=detail_page/x.html.zst",
+    ])
+    def test_tampered_archive_key_rejected(self, mock_client, mocker, bad_archive_key):
+        tampered_alias = dict(ALIAS, archive_key=bad_archive_key)
+        alias_key = "ci_snapshots/adaptive_refresh/aliases/adaptive-refresh-2026-07-07-174500.json"
+        mocker.patch.object(
+            snapshots, "read_json",
+            side_effect=lambda key: tampered_alias if key == alias_key else None,
+        )
+        object_size_mock = mocker.patch.object(snapshots, "object_size")
+        open_stream_mock = mocker.patch.object(snapshots, "open_stream")
+
+        resp = mock_client.get(
+            f"{BASE}/adaptive-refresh-2026-07-07-174500/download", headers=AUTH,
+        )
+
+        assert resp.status_code == 404
+        # The bad key must never reach object_size or open_stream.
+        object_size_mock.assert_not_called()
+        open_stream_mock.assert_not_called()

@@ -986,7 +986,16 @@ contract, so no downloader changes were needed.
 **Path safety.** `snapshot_id` is validated against
 `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$` (no `/`, no `..`) before it is used to
 build the `aliases/{snapshot_id}.json` key — an invalid id is rejected with
-`400` before any MinIO read is attempted.
+`400` before any MinIO read is attempted. The alias pointer's own
+`archive_manifest_key`/`archive_key` fields are *also* re-validated (against
+`^snapshot_archives/fingerprints/[A-Za-z0-9]{1,128}/archive_manifest\.json$`
+and the equivalent `snapshot.tar.zst` pattern) before either is passed to
+`read_json`/`object_size`/`open_stream` — the alias object is stored data,
+not caller input, but a corrupted or tampered alias must not be able to
+redirect an authenticated request to read or stream an arbitrary MinIO key
+(e.g. an `s3://` URI, an absolute path, a `..`-traversal, or an
+out-of-prefix object). A key that fails this check is treated the same as
+"not found" (`404`).
 
 **Download headers.** `Content-Type: application/zstd`,
 `Content-Disposition: attachment; filename="{snapshot_id}.tar.zst"`,

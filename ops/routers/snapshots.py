@@ -35,6 +35,20 @@ SNAPSHOT_DOWNLOAD_TOKEN = os.environ.get("SNAPSHOT_DOWNLOAD_TOKEN", "")
 # path separators or ".." allowed.
 _SNAPSHOT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
+# The alias pointer (ci_snapshots/adaptive_refresh/aliases/{snapshot_id}.json)
+# is itself an object read from MinIO, not caller input — but its
+# archive_manifest_key/archive_key fields are still untrusted content (a
+# corrupted or tampered alias object must not turn an authenticated request
+# into an arbitrary-object read/stream). Constrain both to the exact known
+# Gate E archive prefix before ever passing them to read_json/object_size/
+# open_stream.
+_ARCHIVE_MANIFEST_KEY_RE = re.compile(
+    r"^snapshot_archives/fingerprints/[A-Za-z0-9]{1,128}/archive_manifest\.json$"
+)
+_ARCHIVE_KEY_RE = re.compile(
+    r"^snapshot_archives/fingerprints/[A-Za-z0-9]{1,128}/snapshot\.tar\.zst$"
+)
+
 
 # ---------------------------------------------------------------------------
 # Auth
@@ -80,6 +94,21 @@ def _resolve_alias(snapshot_id: str) -> Dict[str, Any]:
     return alias
 
 
+def _validated_prefixed_key(value: Any, pattern: "re.Pattern[str]") -> str:
+    """Return *value* only if it matches an allowed Gate E object-key shape.
+
+    Treats a non-conforming key (wrong prefix, s3:// URI, absolute path,
+    "..", or anything outside snapshot_archives/fingerprints/<id>/...) the
+    same as "not found" rather than passing it through to MinIO reads —
+    the alias pointer is a stored object, not caller input, but a
+    corrupted/tampered one must not be trusted to name an arbitrary key.
+    """
+    if not isinstance(value, str) or not pattern.match(value):
+        logger.warning("snapshot alias referenced an out-of-prefix key: %r", value)
+        raise HTTPException(status_code=404, detail="snapshot not found")
+    return value
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -100,6 +129,7 @@ def get_snapshot_manifest(snapshot_id: str) -> Dict[str, Any]:
     manifest_key = alias.get("archive_manifest_key")
     if not manifest_key:
         raise HTTPException(status_code=404, detail="snapshot manifest not found")
+    manifest_key = _validated_prefixed_key(manifest_key, _ARCHIVE_MANIFEST_KEY_RE)
 
     manifest = _read_json_safe(manifest_key)
     if not manifest:
@@ -115,6 +145,7 @@ def download_snapshot_archive(snapshot_id: str) -> StreamingResponse:
     archive_key = alias.get("archive_key")
     if not archive_key:
         raise HTTPException(status_code=404, detail="snapshot archive not found")
+    archive_key = _validated_prefixed_key(archive_key, _ARCHIVE_KEY_RE)
 
     size = object_size(archive_key)
     if size is None:
