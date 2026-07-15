@@ -91,6 +91,14 @@ def _resolve_alias(snapshot_id: str) -> Dict[str, Any]:
     alias = _read_json_safe(_alias_key(snapshot_id))
     if not alias:
         raise HTTPException(status_code=404, detail="snapshot not found")
+    if alias.get("snapshot_id") != snapshot_id:
+        # A corrupted/mismatched alias object must never silently serve a
+        # different snapshot's manifest/archive under this snapshot_id's URL.
+        logger.warning(
+            "snapshot alias snapshot_id mismatch: requested=%s alias_snapshot_id=%r",
+            snapshot_id, alias.get("snapshot_id"),
+        )
+        raise HTTPException(status_code=404, detail="snapshot not found")
     return alias
 
 
@@ -133,6 +141,12 @@ def get_snapshot_manifest(snapshot_id: str) -> Dict[str, Any]:
 
     manifest = _read_json_safe(manifest_key)
     if not manifest:
+        raise HTTPException(status_code=404, detail="snapshot manifest not found")
+    if manifest.get("snapshot_id") != snapshot_id:
+        logger.warning(
+            "snapshot manifest snapshot_id mismatch: requested=%s manifest_snapshot_id=%r",
+            snapshot_id, manifest.get("snapshot_id"),
+        )
         raise HTTPException(status_code=404, detail="snapshot manifest not found")
     return manifest
 

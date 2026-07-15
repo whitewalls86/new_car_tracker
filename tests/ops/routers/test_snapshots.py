@@ -106,6 +106,28 @@ class TestSnapshotManifest:
         resp = mock_client.get(f"{BASE}/nonexistent-snapshot", headers=AUTH)
         assert resp.status_code == 404
 
+    def test_alias_snapshot_id_mismatch_is_404(self, mock_client, mocker):
+        alias_key = "ci_snapshots/adaptive_refresh/aliases/adaptive-refresh-2026-07-07-174500.json"
+        mismatched_alias = dict(ALIAS, snapshot_id="some-other-snapshot")
+        read_json_mock = mocker.patch.object(
+            snapshots, "read_json",
+            side_effect=lambda key: mismatched_alias if key == alias_key else MANIFEST,
+        )
+
+        resp = mock_client.get(f"{BASE}/adaptive-refresh-2026-07-07-174500", headers=AUTH)
+
+        assert resp.status_code == 404
+        read_json_mock.assert_called_once_with(alias_key)
+
+    def test_manifest_snapshot_id_mismatch_is_404(self, mock_client, mocker):
+        mismatched_manifest = dict(MANIFEST, snapshot_id="some-other-snapshot")
+        mocker.patch.object(
+            snapshots, "read_json",
+            side_effect=lambda key: ALIAS if "aliases/" in key else mismatched_manifest,
+        )
+        resp = mock_client.get(f"{BASE}/adaptive-refresh-2026-07-07-174500", headers=AUTH)
+        assert resp.status_code == 404
+
     def test_missing_manifest_is_404(self, mock_client, mocker):
         mocker.patch.object(
             snapshots, "read_json",
@@ -175,6 +197,24 @@ class TestDownload:
         mocker.patch.object(snapshots, "read_json", return_value=None)
         resp = mock_client.get(f"{BASE}/nonexistent-snapshot/download", headers=AUTH)
         assert resp.status_code == 404
+
+    def test_alias_snapshot_id_mismatch_is_404(self, mock_client, mocker):
+        alias_key = "ci_snapshots/adaptive_refresh/aliases/adaptive-refresh-2026-07-07-174500.json"
+        mismatched_alias = dict(ALIAS, snapshot_id="some-other-snapshot")
+        mocker.patch.object(
+            snapshots, "read_json",
+            side_effect=lambda key: mismatched_alias if key == alias_key else None,
+        )
+        object_size_mock = mocker.patch.object(snapshots, "object_size")
+        open_stream_mock = mocker.patch.object(snapshots, "open_stream")
+
+        resp = mock_client.get(
+            f"{BASE}/adaptive-refresh-2026-07-07-174500/download", headers=AUTH,
+        )
+
+        assert resp.status_code == 404
+        object_size_mock.assert_not_called()
+        open_stream_mock.assert_not_called()
 
     def test_missing_archive_object_is_404(self, mock_client, mocker):
         mocker.patch.object(
