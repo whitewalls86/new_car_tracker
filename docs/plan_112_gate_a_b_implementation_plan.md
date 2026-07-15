@@ -205,9 +205,20 @@ cleanup (§2.6).
 > `spike_fixture`) under the same `cartracker_experiments`
 > namespace/`lakehouse_spike/warehouse/` MinIO-prefix safety posture. The
 > confirmed VM analytics volume name is `cartracker_analytics_db` (via
-> `docker volume ls | grep analytics`), now declared `external: true` in
-> `docker-compose.lakehouse.yml` and mounted `:ro` on `lakehouse-worker` --
-> resolving the "volume-name caveat" flagged in §2.2 above. `export` reads
+> `docker volume ls | grep analytics`), now declared `external: true` and
+> mounted `:ro` on `lakehouse-worker` -- but in a new, separate
+> `docker-compose.lakehouse.a3.yml` override, not the base
+> `docker-compose.lakehouse.yml`. This split was a correction after initial
+> review: the base file is also what the CI `lakehouse` job runs A2 against,
+> and a CI runner has no `cartracker_analytics_db` volume to mount, so the
+> base file must stay fully CI-safe on its own; A3 commands add
+> `docker-compose.lakehouse.a3.yml` as a second `-f` (see
+> `docs/runbook_lakehouse.md`'s A3 section) and CI must never reference it.
+> This resolves the "volume-name caveat" flagged in §2.2 above. `lakehouse/
+> requirements.txt` also gained `duckdb`, `pyarrow`, and `pandas` (another
+> review correction) -- A2's requirements only had `pyspark`/`boto3`/
+> `requests`, since its synthetic fixture needs no DuckDB/Arrow/pandas
+> conversion; A3's `_read_source_duckdb()` does. `export` reads
 > the DuckDB source read-only, validates it (no null `vin17`, `distinct(vin17)
 > == row_count`, matching §2.7's "vin17 is the primary key" invariant) before
 > writing, then re-validates the written Iceberg table's row count against
@@ -407,6 +418,23 @@ is the one place the standalone-file design needs a concrete environment
 check; it does not change the isolation guarantee (a wrong/missing external
 volume name fails the mount loudly, it cannot accidentally attach to the
 wrong writable volume).
+
+> **Correction at A3 implementation time (2026-07-15):** the snippet above
+> puts the `analytics_db` mount directly on `lakehouse-worker` in the base
+> `docker-compose.lakehouse.yml` — that was the original planning-level
+> shape, but it turned out to be wrong in practice: the same base file is
+> also what the CI `lakehouse` job runs A2 against, and a CI runner has no
+> such external volume to mount, so a mount declared there would break CI.
+> The actual A3 implementation instead adds a **separate**
+> `docker-compose.lakehouse.a3.yml` override (mirroring
+> `docker-compose.lakehouse.ci.yml`'s pattern of layering environment-specific
+> concerns via a second `-f`) that adds the `DUCKDB_PATH` env var and the
+> `cartracker_analytics_db:/data/analytics:ro` mount only when explicitly
+> passed. The base file's `lakehouse-worker` service (both A2 and A3) never
+> references `analytics_db`/`DUCKDB_PATH` at all. See
+> `docs/runbook_lakehouse.md`'s A3 section for the exact commands. The
+> confirmed resolved volume name is `cartracker_analytics_db`, not the
+> `cartracker-scraper_analytics_db` guessed above.
 
 Exact Lakekeeper env var names should be confirmed against the pinned
 version at implementation time (Lakekeeper's config surface is still
@@ -912,6 +940,14 @@ review flagged as a real production risk in the prior draft.
   cannot open a write connection to the production DuckDB file. That is the
   strongest form of the §2.7 cleanup guarantee, unchanged from the prior
   pass.
+
+  > **Correction at A3 implementation time (2026-07-15):** as in §2.2, this
+  > excerpt's `analytics_db`/`DUCKDB_PATH` lines are the original
+  > planning-level shape, not the delivered one — they moved to a separate
+  > `docker-compose.lakehouse.a3.yml` override so the base file (which CI's
+  > `lakehouse` job also runs A2 against) stays mountable on a runner with no
+  > such external volume. The read-only guarantee this paragraph describes is
+  > unchanged; only which file declares the mount changed.
 
 - **No production Postgres load of any kind from Gate A.** This revision
   removes the prior pass's largest operational-safety caveat (a new schema

@@ -91,9 +91,11 @@ services:
   # in the main docker-compose.yml. Profile-gated so `docker compose -f
   # docker-compose.lakehouse.yml up` (no profile) never launches it --
   # invoke explicitly via `docker compose ... run --rm lakehouse-worker ...`.
-  # Gate A3 adds the read-only `analytics_db` mount below (VM/local-manual
-  # rehearsal against the real int_listing_volatility_features table) --
-  # A2's fixture-derived spike never needed it.
+  # The read-only `analytics_db` mount (A3, VM/local-manual rehearsal against
+  # the real int_listing_volatility_features table) lives in the separate
+  # docker-compose.lakehouse.a3.yml override, not here -- this base file is
+  # also what the CI `lakehouse` job runs A2 against, and a CI runner has no
+  # such external volume to mount.
   lakehouse-worker:
     build:
       context: .
@@ -108,15 +110,6 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
       MINIO_BUCKET: bronze
-      DUCKDB_PATH: /data/analytics/analytics.duckdb
-    volumes:
-      # Read-only, VM/local-manual (A3) scope: the analytics DuckDB file
-      # is produced by the main project's `docker-compose.yml`, which does
-      # not declare it `external`, so Compose names it with the main
-      # project's prefix -- confirmed on the VM as `cartracker_analytics_db`
-      # (see docs/runbook_lakehouse.md's A3 section). Mounted `:ro` -- this
-      # worker must never write to the analytics DB.
-      - cartracker_analytics_db:/data/analytics:ro
     networks:
       - cartracker-net
     depends_on:
@@ -125,10 +118,6 @@ services:
 
 volumes:
   lakekeeper_pgdata:
-  # A3: external volume owned by the main project's docker-compose.yml.
-  # Confirmed name on the VM via `docker volume ls`; mounted read-only above.
-  cartracker_analytics_db:
-    external: true
 
 networks:
   cartracker-net:

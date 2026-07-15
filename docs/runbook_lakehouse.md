@@ -219,37 +219,44 @@ re-running `register_lakehouse_warehouse` is a no-op, and a full
 
 **Confirmed VM analytics volume name:** `cartracker_analytics_db` (via
 `docker volume ls | grep analytics` on the VM) -- this is the exact name
-declared `external: true` in `docker-compose.lakehouse.yml`. If the checkout
-directory or `COMPOSE_PROJECT_NAME` of the *main* project ever changes, this
-name would need reconfirming; do not assume it stays `cartracker_analytics_db`
-without checking `docker volume ls` again first.
+declared `external: true` in `docker-compose.lakehouse.a3.yml`. If the
+checkout directory or `COMPOSE_PROJECT_NAME` of the *main* project ever
+changes, this name would need reconfirming; do not assume it stays
+`cartracker_analytics_db` without checking `docker volume ls` again first.
+
+**Every A3 command below adds `docker-compose.lakehouse.a3.yml` as a second
+`-f`.** That override, not the base `docker-compose.lakehouse.yml`, is what
+adds the read-only analytics mount -- kept out of the base file on purpose
+because the CI `lakehouse` job runs A2 against that same base file, and a CI
+runner has no `cartracker_analytics_db` volume to mount. Never add `-f
+docker-compose.lakehouse.a3.yml` to any CI step.
 
 ```bash
 # Rebuild the lakehouse-worker image -- picks up the procps fix and the new
 # script; new files/Dockerfile changes are never in cached layers.
-docker compose -f docker-compose.lakehouse.yml -p cartracker-lakehouse \
-  build lakehouse-worker
+docker compose -f docker-compose.lakehouse.yml -f docker-compose.lakehouse.a3.yml \
+  -p cartracker-lakehouse build lakehouse-worker
 
 # Full export -> info -> cleanup rehearsal against the real
 # int_listing_volatility_features table (250,790 rows, one per VIN per the
 # Gate 0 audit). Reads /data/analytics/analytics.duckdb read-only; prints the
 # captured metadata (snapshot id, row_count, distinct_vin17,
 # max_latest_fetched_at, location) as JSON before cleaning up.
-docker compose -f docker-compose.lakehouse.yml -p cartracker-lakehouse \
-  run --rm lakehouse-worker \
+docker compose -f docker-compose.lakehouse.yml -f docker-compose.lakehouse.a3.yml \
+  -p cartracker-lakehouse run --rm lakehouse-worker \
   python -m scripts.export_volatility_features_to_iceberg rehearsal
 
 # Individual steps (useful for debugging one stage at a time; --keep on
 # rehearsal skips the final cleanup so `info`/manual inspection has something
 # to look at):
-docker compose -f docker-compose.lakehouse.yml -p cartracker-lakehouse \
-  run --rm lakehouse-worker \
+docker compose -f docker-compose.lakehouse.yml -f docker-compose.lakehouse.a3.yml \
+  -p cartracker-lakehouse run --rm lakehouse-worker \
   python -m scripts.export_volatility_features_to_iceberg export
-docker compose -f docker-compose.lakehouse.yml -p cartracker-lakehouse \
-  run --rm lakehouse-worker \
+docker compose -f docker-compose.lakehouse.yml -f docker-compose.lakehouse.a3.yml \
+  -p cartracker-lakehouse run --rm lakehouse-worker \
   python -m scripts.export_volatility_features_to_iceberg info
-docker compose -f docker-compose.lakehouse.yml -p cartracker-lakehouse \
-  run --rm lakehouse-worker \
+docker compose -f docker-compose.lakehouse.yml -f docker-compose.lakehouse.a3.yml \
+  -p cartracker-lakehouse run --rm lakehouse-worker \
   python -m scripts.export_volatility_features_to_iceberg cleanup
 ```
 
@@ -277,7 +284,7 @@ that `rehearsal` re-checks after:**
   will consume.
 
 **Read-only posture:** the analytics DuckDB file is mounted `:ro` in
-`docker-compose.lakehouse.yml`; `_read_source_duckdb()` opens it with
+`docker-compose.lakehouse.a3.yml`; `_read_source_duckdb()` opens it with
 `duckdb.connect(..., read_only=True)`. This script never opens a write
 connection to the analytics DB and never writes to any MinIO prefix other
 than `lakehouse_spike/warehouse/`.
@@ -355,7 +362,9 @@ snapshot writes to `cartracker_experiments.volatility_features_snapshot` via
 the same `lakehouse-worker`, read-only from
 `/data/analytics/analytics.duckdb`. The `cartracker_analytics_db` external
 volume name was confirmed on the VM via `docker volume ls | grep analytics`
-and is wired into `docker-compose.lakehouse.yml`.
+and is wired into `docker-compose.lakehouse.a3.yml`, a separate VM/local-
+manual-only override -- never the base `docker-compose.lakehouse.yml`, which
+the CI `lakehouse` job also runs A2 against.
 
 Still deferred:
 

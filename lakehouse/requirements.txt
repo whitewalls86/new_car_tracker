@@ -10,3 +10,11 @@
 pyspark==3.5.3
 boto3
 requests
+
+# Plan 112 Gate A3: reading the real int_listing_volatility_features table
+# out of the analytics DuckDB file and converting it to a Spark DataFrame
+# (scripts/export_volatility_features_to_iceberg.py). Not needed by A2's
+# in-process synthetic fixture.
+duckdb
+pyarrow
+pandas
