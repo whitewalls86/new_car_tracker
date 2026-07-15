@@ -100,11 +100,16 @@ class TestLakehouseComposeStandalone:
         assert healthcheck["test"] == ["CMD", "/home/nonroot/lakekeeper", "healthcheck"]
         assert healthcheck["retries"] >= 30
 
-    def test_no_flyway_or_production_volume_reference(self):
+    def test_no_flyway_reference(self):
         doc = yaml.safe_load((_REPO_ROOT / "docker-compose.lakehouse.yml").read_text())
         assert "flyway" not in doc["services"]
+
+    def test_only_expected_volumes_declared(self):
+        """lakekeeper_pgdata (owned) + cartracker_analytics_db (A3, external,
+        read-only) -- no other production volume may be referenced."""
+        doc = yaml.safe_load((_REPO_ROOT / "docker-compose.lakehouse.yml").read_text())
         declared_volumes = set(doc.get("volumes") or {})
-        assert declared_volumes == {"lakekeeper_pgdata"}
+        assert declared_volumes == {"lakekeeper_pgdata", "cartracker_analytics_db"}
 
 
 class TestLakehouseWorkerService:
@@ -164,6 +169,34 @@ class TestLakehouseWorkerService:
         depends_on = service.get("depends_on") or {}
         assert "postgres" not in depends_on
         assert "flyway" not in depends_on
+
+
+class TestLakehouseWorkerAnalyticsVolume:
+    """Plan 112 Gate A3: lakehouse-worker mounts the real analytics DuckDB
+    file read-only for the VM rehearsal. Must be external (owned by the main
+    project's docker-compose.yml, never created/written by this stack) and
+    mounted `:ro`."""
+
+    @staticmethod
+    def _service():
+        doc = yaml.safe_load((_REPO_ROOT / "docker-compose.lakehouse.yml").read_text())
+        return doc["services"]["lakehouse-worker"]
+
+    def test_mounts_analytics_db_read_only(self):
+        service = self._service()
+        assert "cartracker_analytics_db:/data/analytics:ro" in service["volumes"]
+
+    def test_analytics_db_volume_declared_external(self):
+        doc = yaml.safe_load((_REPO_ROOT / "docker-compose.lakehouse.yml").read_text())
+        spec = doc["volumes"]["cartracker_analytics_db"]
+        assert spec["external"] is True
+
+    def test_no_volume_mount_is_writable(self):
+        """Defense in depth: every lakehouse-worker volume mount must be
+        read-only -- this worker never writes to a main-project volume."""
+        service = self._service()
+        for mount in service["volumes"]:
+            assert mount.endswith(":ro"), f"non-read-only mount: {mount}"
 
 
 class TestLakehouseComposeCiOverride:

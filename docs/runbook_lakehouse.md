@@ -4,11 +4,17 @@ Operational runbook for the Gate A Lakekeeper REST catalog stack. Read
 `docs/plan_112_gate_a_b_implementation_plan.md` and
 `docs/lakehouse_substrate_decision.md` first for the design rationale.
 
-**Scope of this document (A1 + A2):** bring-up/teardown of the standalone
+**Scope of this document (A1 + A2 + A3):** bring-up/teardown of the standalone
 Lakekeeper catalog + its isolated Postgres metadata store, the CI topology,
-and (A2) the profile-gated `lakehouse-worker` PySpark round-trip against a
-fixture-derived Iceberg table. PyIceberg validation (A2b) and MLflow (Gate B)
-are out of scope here and will extend this doc as they land.
+(A2) the profile-gated `lakehouse-worker` PySpark round-trip against a
+fixture-derived Iceberg table, and (A3) the VM/local-manual rehearsal writing
+the real `int_listing_volatility_features` table to Iceberg. PyIceberg
+validation (A2b) and MLflow (Gate B) are out of scope here and will extend
+this doc as they land.
+
+**A3 is VM/local-manual only, never CI.** It reads the real analytics DuckDB
+file, which only exists on the VM (or a local box with that volume seeded) --
+there is no CI job for it, and none should be added.
 
 **A2 status: verified end to end, both in CI and on the production VM
 (2026-07-15)** -- write, append, time-travel, and cleanup all succeeded
@@ -209,6 +215,80 @@ re-running `register_lakehouse_warehouse` is a no-op, and a full
 
 ---
 
+## A3: real `int_listing_volatility_features` rehearsal (VM/local-manual only)
+
+**Confirmed VM analytics volume name:** `cartracker_analytics_db` (via
+`docker volume ls | grep analytics` on the VM) -- this is the exact name
+declared `external: true` in `docker-compose.lakehouse.yml`. If the checkout
+directory or `COMPOSE_PROJECT_NAME` of the *main* project ever changes, this
+name would need reconfirming; do not assume it stays `cartracker_analytics_db`
+without checking `docker volume ls` again first.
+
+```bash
+# Rebuild the lakehouse-worker image -- picks up the procps fix and the new
+# script; new files/Dockerfile changes are never in cached layers.
+docker compose -f docker-compose.lakehouse.yml -p cartracker-lakehouse \
+  build lakehouse-worker
+
+# Full export -> info -> cleanup rehearsal against the real
+# int_listing_volatility_features table (250,790 rows, one per VIN per the
+# Gate 0 audit). Reads /data/analytics/analytics.duckdb read-only; prints the
+# captured metadata (snapshot id, row_count, distinct_vin17,
+# max_latest_fetched_at, location) as JSON before cleaning up.
+docker compose -f docker-compose.lakehouse.yml -p cartracker-lakehouse \
+  run --rm lakehouse-worker \
+  python -m scripts.export_volatility_features_to_iceberg rehearsal
+
+# Individual steps (useful for debugging one stage at a time; --keep on
+# rehearsal skips the final cleanup so `info`/manual inspection has something
+# to look at):
+docker compose -f docker-compose.lakehouse.yml -p cartracker-lakehouse \
+  run --rm lakehouse-worker \
+  python -m scripts.export_volatility_features_to_iceberg export
+docker compose -f docker-compose.lakehouse.yml -p cartracker-lakehouse \
+  run --rm lakehouse-worker \
+  python -m scripts.export_volatility_features_to_iceberg info
+docker compose -f docker-compose.lakehouse.yml -p cartracker-lakehouse \
+  run --rm lakehouse-worker \
+  python -m scripts.export_volatility_features_to_iceberg cleanup
+```
+
+Table name: `cartracker_experiments.volatility_features_snapshot` (distinct
+from A2's `spike_fixture`, same namespace/prefix safety posture --
+`cartracker_experiments` namespace, `lakehouse_spike/warehouse/` MinIO
+prefix, same non-PURGE real-location cleanup as A2).
+
+**Validation the `export` step enforces before it will write anything, and
+that `rehearsal` re-checks after:**
+
+- Source row count, `count(distinct vin17)`, and null-`vin17` count are read
+  directly from DuckDB before any Spark session starts.
+- `vin17` is `int_listing_volatility_features`'s declared primary key
+  (`not_null` + `unique` in
+  `dbt/models/intermediate/int_listing_volatility_features.schema.yml`) --
+  `export` refuses to write if any row has a null `vin17` or if
+  `distinct(vin17) != row_count`.
+- After the write, `export` re-reads the Iceberg table's row count and
+  refuses to proceed (raises) if it does not exactly equal the DuckDB source
+  row count.
+- `info` additionally reports `distinct_vin17` and `max_latest_fetched_at`
+  read back from the *written* Iceberg table, and the table's real
+  location/snapshot id(s) -- the same metadata shape Gate B's MLflow bridge
+  will consume.
+
+**Read-only posture:** the analytics DuckDB file is mounted `:ro` in
+`docker-compose.lakehouse.yml`; `_read_source_duckdb()` opens it with
+`duckdb.connect(..., read_only=True)`. This script never opens a write
+connection to the analytics DB and never writes to any MinIO prefix other
+than `lakehouse_spike/warehouse/`.
+
+**A3 is not wired into CI** -- it depends on a VM-only, production-derived
+DuckDB volume that CI has no access to and should never try to seed. All
+unit tests for this script (`tests/lakehouse/test_export_volatility_features_metadata.py`)
+mock/avoid live DuckDB, Spark, and MinIO, exactly like A2's spike tests.
+
+---
+
 ## CI topology
 
 The dedicated `lakehouse` GitHub Actions job is independent of the existing
@@ -267,19 +347,17 @@ intentionally avoided.
 
 ---
 
-## Deferred to A3 (not wired in A2)
+## A3 status and what remains deferred
 
-- **Real `int_listing_volatility_features` snapshot** (250,790 rows, one per
-  VIN) is A3, VM-only, real production-derived data, read-only from
-  `/data/analytics/analytics.duckdb`.
-- **`analytics_db` volume mount:** A2's `lakehouse-worker` does not mount
-  `analytics_db` -- the fixture-derived spike doesn't need it. When A3 adds
-  the mount, confirm the main project's resolved volume name via
-  `docker volume ls` on the VM first (it is not declared `external: true` in
-  `docker-compose.yml`, so Compose names it with the main project's prefix --
-  expected to be `cartracker-scraper_analytics_db` given this repo's checkout
-  directory name, but **do not hardcode that without confirming on the VM**)
-  before wiring an `external: true` reference in
-  `docker-compose.lakehouse.yml`.
+**A3 is implemented** (`scripts/export_volatility_features_to_iceberg.py`,
+see the "A3" section above) -- the real `int_listing_volatility_features`
+snapshot writes to `cartracker_experiments.volatility_features_snapshot` via
+the same `lakehouse-worker`, read-only from
+`/data/analytics/analytics.duckdb`. The `cartracker_analytics_db` external
+volume name was confirmed on the VM via `docker volume ls | grep analytics`
+and is wired into `docker-compose.lakehouse.yml`.
+
+Still deferred:
+
 - **PyIceberg validation** (A2b) and **MLflow** (Gate B) are unrelated to
   this stack's bring-up/teardown and are documented separately as they land.

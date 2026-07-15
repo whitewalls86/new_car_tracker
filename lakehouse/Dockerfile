@@ -25,8 +25,11 @@ ARG ICEBERG_AWS_BUNDLE_VERSION=1.6.1
 # OCI A1/Ampere ARM64 VM -- see docs/plan_105_vm_migration.md) -- resolve it
 # dynamically via a stable symlink instead of hardcoding one architecture,
 # so this image builds correctly on both.
+# procps provides `ps`, which Spark's load-spark-env.sh shells out to on
+# startup -- without it, every Spark session logs a harmless but noisy
+# "ps: command not found" warning (observed during VM A2 verification).
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends openjdk-17-jre-headless curl \
+    && apt-get install -y --no-install-recommends openjdk-17-jre-headless curl procps \
     && rm -rf /var/lib/apt/lists/* \
     && ln -sfn "$(dirname "$(dirname "$(readlink -f "$(command -v java)")")")" /usr/lib/jvm/default-java
 

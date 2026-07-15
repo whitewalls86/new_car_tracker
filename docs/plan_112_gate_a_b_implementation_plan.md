@@ -195,9 +195,38 @@ cleanup (§2.6).
 > "Gate A spike results" section for the real VM run's snapshot IDs and
 > cleanup proof.
 
-**Explicitly deferred out of A1/A2:** the real `int_listing_volatility_features`
-snapshot (A3, needs the VM), any MLflow (B*), and any Lakekeeper
-RBAC/multi-tenant/governance configuration (Plan 119).
+**What belongs in PR A3:** the VM/local-manual rehearsal writing the real
+`int_listing_volatility_features` table to Iceberg (§2.4 point 2).
+
+> **Implementation note (2026-07-15):** A3 shipped as
+> `scripts/export_volatility_features_to_iceberg.py`, run through the same
+> profile-gated `lakehouse-worker` as A2, against a new table name
+> (`cartracker_experiments.volatility_features_snapshot`, distinct from A2's
+> `spike_fixture`) under the same `cartracker_experiments`
+> namespace/`lakehouse_spike/warehouse/` MinIO-prefix safety posture. The
+> confirmed VM analytics volume name is `cartracker_analytics_db` (via
+> `docker volume ls | grep analytics`), now declared `external: true` in
+> `docker-compose.lakehouse.yml` and mounted `:ro` on `lakehouse-worker` --
+> resolving the "volume-name caveat" flagged in §2.2 above. `export` reads
+> the DuckDB source read-only, validates it (no null `vin17`, `distinct(vin17)
+> == row_count`, matching §2.7's "vin17 is the primary key" invariant) before
+> writing, then re-validates the written Iceberg table's row count against
+> the source count; `info` additionally reports `distinct_vin17` and
+> `max_latest_fetched_at` read back from the table. Cleanup reuses A2's
+> non-PURGE, real-location-read pattern unchanged (`cleanup_keys` is imported
+> directly from `scripts/spike_iceberg_lakehouse.py`, not duplicated). Also
+> landed in this PR: `procps` added to `lakehouse/Dockerfile` to silence the
+> `ps: command not found` warning Spark's `load-spark-env.sh` emitted during
+> VM A2 verification (harmless, but noisy on every session start). A3 is
+> VM/local-manual only, same as planned -- no CI job exists or should exist
+> for it, since it depends on a VM-only, production-derived DuckDB volume;
+> unit tests for the new script's metadata/validation/cleanup-guard logic run
+> in the existing `unit-tests` job with everything live (DuckDB, Spark,
+> MinIO) mocked or avoided at import time, exactly like A2's spike tests.
+
+**Explicitly deferred out of A1/A2/A3:** any MLflow (B*), PyIceberg
+validation (A2b), and any Lakekeeper RBAC/multi-tenant/governance
+configuration (Plan 119).
 
 **Dependency / rollback safety notes:**
 
