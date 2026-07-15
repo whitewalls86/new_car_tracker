@@ -27,3 +27,14 @@ pandas
 # A3 run (_duckdb.InvalidInputException: Required module 'pytz' failed to
 # import).
 pytz
+
+# Python 3.13 (this image's base -- see lakehouse/Dockerfile) removed
+# distutils from the stdlib entirely. PySpark 3.5.3's
+# require_minimum_pandas_version() still does
+# `from distutils.version import LooseVersion`, which otherwise fails with
+# ModuleNotFoundError (confirmed on the second VM A3 run, right after the
+# DuckDB .df() fix). setuptools installs a `.pth`-based import shim
+# (`distutils -> setuptools._distutils`) that's active for every subsequent
+# Python process in the image, regardless of import order -- no code change
+# needed, just this dependency.
+setuptools
