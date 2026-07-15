@@ -6,7 +6,7 @@ module import time.
 """
 import pytest
 
-from scripts.spike_iceberg_lakehouse import TABLE_NAME, capture_metadata, cleanup_keys
+from scripts.spike_iceberg_lakehouse import capture_metadata, cleanup_keys
 from shared.iceberg_catalog import CATALOG_NAME, WAREHOUSE_NAME, UnsafePrefixError
 
 
@@ -28,31 +28,37 @@ class TestCaptureMetadata:
 
 
 class TestCleanupKeys:
-    def test_filters_to_table_prefix_only(self):
-        prefix = f"lakehouse_spike/warehouse/{WAREHOUSE_NAME}/{TABLE_NAME}/"
+    """cleanup_keys() takes the table's actual, Lakekeeper-allocated prefix
+    (see shared.iceberg_catalog.key_prefix_from_location) -- not a
+    reconstructed <namespace>/<table_name> guess, since Lakekeeper uses
+    UUID-based object paths."""
+
+    def test_filters_to_given_prefix_only(self):
+        prefix = "lakehouse_spike/warehouse/019f65f6-b861-7363-bc46-0dd926f68637/"
         all_keys = [
             f"{prefix}data/f1.parquet",
             f"{prefix}metadata/v1.metadata.json",
-            "lakehouse_spike/warehouse/cartracker_experiments/other_table/data/f2.parquet",
+            "lakehouse_spike/warehouse/some-other-table-uuid/data/f2.parquet",
             "silver_normalized/observations/f3.parquet",
         ]
 
-        matching = cleanup_keys(all_keys, TABLE_NAME)
+        matching = cleanup_keys(all_keys, prefix)
 
         assert matching == [f"{prefix}data/f1.parquet", f"{prefix}metadata/v1.metadata.json"]
 
     def test_empty_when_no_keys_match(self):
-        assert cleanup_keys(["silver_normalized/observations/f3.parquet"], TABLE_NAME) == []
+        prefix = "lakehouse_spike/warehouse/019f65f6-b861-7363-bc46-0dd926f68637/"
+        assert cleanup_keys(["silver_normalized/observations/f3.parquet"], prefix) == []
 
     def test_raises_if_a_matching_key_somehow_escapes_the_spike_prefix(self, monkeypatch):
-        # Defense in depth: even a key that happens to start with the table's
-        # own prefix string must still pass the shared spike-prefix guard.
+        # Defense in depth: even a key that happens to start with the given
+        # prefix must still pass the shared spike-prefix guard.
         import scripts.spike_iceberg_lakehouse as module
 
         def _always_unsafe(key):
             raise UnsafePrefixError(key)
 
         monkeypatch.setattr(module, "require_spike_prefix", _always_unsafe)
-        prefix = f"lakehouse_spike/warehouse/{WAREHOUSE_NAME}/{TABLE_NAME}/"
+        prefix = "lakehouse_spike/warehouse/019f65f6-b861-7363-bc46-0dd926f68637/"
         with pytest.raises(UnsafePrefixError):
-            cleanup_keys([f"{prefix}data/f1.parquet"], TABLE_NAME)
+            cleanup_keys([f"{prefix}data/f1.parquet"], prefix)

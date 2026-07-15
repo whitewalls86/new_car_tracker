@@ -35,11 +35,11 @@ import sys
 from shared.iceberg_catalog import (
     CATALOG_NAME,
     WAREHOUSE_NAME,
+    key_prefix_from_location,
     require_spike_namespace,
     require_spike_prefix,
     spark_conf_for_rest_catalog,
     table_identifier,
-    table_location_prefix,
 )
 from shared.minio import BUCKET, get_boto3_client
 
@@ -83,14 +83,13 @@ def capture_metadata(
     }
 
 
-def cleanup_keys(all_keys: list[str], table_name: str) -> list[str]:
-    """Filter a bucket's full key listing down to the ones this table's
-    cleanup is allowed to delete: only keys under this table's own
-    lakehouse_spike/ prefix. Raises if any candidate key would fall outside
-    that prefix (shared.iceberg_catalog.require_spike_prefix) -- a guard
-    against a future table-name typo silently widening the delete.
+def cleanup_keys(all_keys: list[str], prefix: str) -> list[str]:
+    """Filter a bucket's full key listing down to the ones under `prefix`
+    (the table's actual, Lakekeeper-allocated location -- see
+    shared.iceberg_catalog.key_prefix_from_location). Every matching key is
+    re-verified via shared.iceberg_catalog.require_spike_prefix as defense
+    in depth against a bad prefix argument.
     """
-    prefix = f"{table_location_prefix(table_name)}/"
     matching = [k for k in all_keys if k.startswith(prefix)]
     for key in matching:
         require_spike_prefix(key)
@@ -158,18 +157,31 @@ def cmd_info(args):
 
 def cmd_cleanup(args):
     spark = _get_spark()
-    spark.sql(f"DROP TABLE IF EXISTS {table_identifier(TABLE_NAME)} PURGE")
+
+    # Read the table's real location BEFORE dropping it -- Lakekeeper
+    # allocates its own (UUID-based) object paths, not a
+    # <namespace>/<table_name> convention, so this can't be reconstructed
+    # from the table name alone (see key_prefix_from_location).
+    location = _table_location(spark, TABLE_NAME)
+    prefix = f"{key_prefix_from_location(location)}/"
+
+    # No PURGE: Spark's PURGE unregisters the table from Lakekeeper first,
+    # then tries to delete/verify data files via Lakekeeper's REST
+    # request-signing endpoint -- which then rejects those S3 calls because
+    # the table it needs to authorize against no longer exists. We delete
+    # the underlying MinIO objects ourselves below instead, directly, with
+    # our own static credentials -- no Lakekeeper signing involved.
+    spark.sql(f"DROP TABLE IF EXISTS {table_identifier(TABLE_NAME)}")
     print(f"Dropped {table_identifier(TABLE_NAME)}.")
 
     client = get_boto3_client()
-    prefix = f"{table_location_prefix(TABLE_NAME)}/"
     paginator = client.get_paginator("list_objects_v2")
     all_keys = [
         obj["Key"]
         for page in paginator.paginate(Bucket=BUCKET, Prefix=prefix)
         for obj in page.get("Contents", [])
     ]
-    keys_to_delete = cleanup_keys(all_keys, TABLE_NAME)
+    keys_to_delete = cleanup_keys(all_keys, prefix)
     if keys_to_delete:
         client.delete_objects(
             Bucket=BUCKET,

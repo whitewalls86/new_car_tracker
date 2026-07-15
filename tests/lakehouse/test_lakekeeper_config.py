@@ -11,13 +11,14 @@ from shared.iceberg_catalog import (
     WAREHOUSE_NAME,
     UnsafeNamespaceError,
     UnsafePrefixError,
+    key_prefix_from_location,
     require_spike_namespace,
     require_spike_prefix,
     spark_conf_for_rest_catalog,
     table_identifier,
-    table_location_prefix,
     warehouse_storage_payload,
 )
+from shared.minio import BUCKET
 
 
 class TestNamespaceGuard:
@@ -46,10 +47,22 @@ class TestTableIdentifiers:
     def test_table_identifier_uses_catalog_and_warehouse(self):
         assert table_identifier("spike_fixture") == f"{CATALOG_NAME}.{WAREHOUSE_NAME}.spike_fixture"
 
-    def test_table_location_prefix_is_under_spike_prefix(self):
-        prefix = table_location_prefix("spike_fixture")
-        assert prefix.startswith(f"{SPIKE_PREFIX}/")
-        assert prefix.endswith("/spike_fixture")
+
+class TestKeyPrefixFromLocation:
+    def test_strips_bucket_scheme_prefix(self):
+        # Real shape: Lakekeeper allocates a UUID-based path, not
+        # <namespace>/<table_name> -- the helper must not assume otherwise.
+        location = f"s3://{BUCKET}/{SPIKE_PREFIX}/019f65f6-b861-7363-bc46-0dd926f68637"
+        prefix = key_prefix_from_location(location)
+        assert prefix == f"{SPIKE_PREFIX}/019f65f6-b861-7363-bc46-0dd926f68637"
+
+    def test_rejects_location_outside_spike_prefix(self):
+        with pytest.raises(UnsafePrefixError):
+            key_prefix_from_location(f"s3://{BUCKET}/silver_normalized/observations")
+
+    def test_rejects_location_in_a_different_bucket(self):
+        with pytest.raises(UnsafePrefixError):
+            key_prefix_from_location(f"s3://some-other-bucket/{SPIKE_PREFIX}/abc")
 
 
 class TestSparkConfBuilder:

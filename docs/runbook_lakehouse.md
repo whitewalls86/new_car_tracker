@@ -182,6 +182,18 @@ every invocation above is an explicit `run --rm`.
 MinIO prefix under the `bronze` bucket -- both scripts refuse to touch
 anything else, even given a bad table-name/namespace argument.
 
+**Cleanup does not use Iceberg/Spark's `PURGE`.** `DROP TABLE ... PURGE`
+unregisters the table from Lakekeeper first, then tries to delete/verify its
+data files via Lakekeeper's REST request-signing endpoint -- which then
+rejects those S3 calls because the table it needs to authorize against no
+longer exists. `cmd_cleanup` instead does a plain `DROP TABLE IF EXISTS`
+(catalog metadata only), then deletes the underlying MinIO objects itself
+directly via boto3 with our own static credentials, no Lakekeeper signing
+involved. It reads the table's *real* location before dropping it
+(`key_prefix_from_location`) rather than reconstructing a
+`<namespace>/<table_name>` path -- Lakekeeper allocates its own UUID-based
+object paths, so a guessed path would silently match nothing.
+
 **A2 leaves state behind on success, by design:** the warehouse registration
 and namespace live on in Lakekeeper's isolated `lakekeeper_pgdata` volume
 after a `roundtrip` run (only the *table* is dropped by cleanup, not the

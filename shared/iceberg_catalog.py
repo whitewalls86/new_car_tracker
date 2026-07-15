@@ -50,8 +50,27 @@ def table_identifier(table_name: str) -> str:
     return f"{CATALOG_NAME}.{WAREHOUSE_NAME}.{table_name}"
 
 
-def table_location_prefix(table_name: str) -> str:
-    return f"{SPIKE_PREFIX}/{WAREHOUSE_NAME}/{table_name}"
+def key_prefix_from_location(location: str) -> str:
+    """Convert a table's actual `s3://bucket/...` location (as reported by
+    Spark/Iceberg) into a bucket-relative MinIO key prefix for boto3
+    listing/deletion.
+
+    Lakekeeper allocates its own (UUID-based) object paths under the
+    warehouse's key-prefix -- it does NOT follow a
+    `<namespace>/<table_name>` naming convention. Cleanup must read a
+    table's real location rather than reconstructing a guessed path, or it
+    silently deletes nothing. Still guarded by require_spike_prefix so a
+    location outside lakehouse_spike/ is rejected rather than trusted.
+    """
+    scheme_prefix = f"s3://{BUCKET}/"
+    if not location.startswith(scheme_prefix):
+        raise UnsafePrefixError(
+            f"Table location {location!r} does not start with {scheme_prefix!r}; "
+            "refusing to derive a cleanup prefix from it."
+        )
+    key_prefix = location[len(scheme_prefix):]
+    require_spike_prefix(f"{key_prefix}/")
+    return key_prefix
 
 
 def spark_conf_for_rest_catalog() -> dict:
