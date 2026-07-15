@@ -71,18 +71,20 @@ the next Plan 112 bridge is not "more PySpark logic" yet; it is a local
 integration harness that uses Plan 120 snapshots as the common substrate for
 local MinIO, dbt, DuckDB, Lakekeeper, Iceberg, and PySpark.
 
-That harness depends on Plan 120 Gate E:
+That harness depends on Plan 120 Gate E, which is now complete and
+VM-verified:
 
 - package a materialized snapshot into a reproducible `.tar.zst` archive;
 - publish/checksum the archive and its manifest under stable MinIO keys;
-- expose a usable latest/manifest/download path for CI and local development;
+- expose a usable `latest.json`/manifest/archive path for CI and local
+  development;
 - keep the existing offline seed path working so local testing can use either a
   downloaded archive or a manually supplied archive.
 
-Until Gate E exists, local lakehouse work can still use VM/manual exports, but
-the broader "test local" strategy is incomplete: local development cannot
-reliably recreate the same production-shaped fixture that CI and PySpark jobs
-are meant to share.
+Gate E VM validation generated an `edge` snapshot, promoted
+`ci_snapshots/adaptive_refresh/latest.json`, and confirmed archive-cache reuse
+on a repeat run. Gate A4 can now build the broader "test local" strategy on
+that contract instead of relying on ad hoc VM/manual exports.
 
 ---
 
@@ -243,7 +245,16 @@ decision before proceeding to backtests.
 
 ### Gate A4: Local Integration Harness
 
-**Status: next.**
+**Status: scaffolding implemented (2026-07-15); end-to-end local run not yet
+exercised.** Landed: `docker-compose.lakehouse.local.yml` (self-contained
+local stack: throwaway MinIO on 19000, Lakekeeper published on 18181,
+non-external network, read-only local analytics bind mount -- no production
+Docker resource referenced), `scripts/preflight_local_lakehouse_snapshot.py`
+(read-only checks with actionable errors for every prerequisite below), the
+runbook's "A4" section (exact commands, honest about the two manual gaps),
+and compose/preflight unit tests. Remaining manual: acquiring the archive off
+the VM (Plan 120 Gate F not built) and the local dbt build's Postgres
+dependency (`postgres_scan` sources) -- see `docs/runbook_lakehouse.md`.
 
 Gate A1-A3 proved the catalog, Spark/Iceberg mechanics, CI-safe synthetic
 round-trip, and VM rehearsal against the real `int_listing_volatility_features`
@@ -287,13 +298,11 @@ Deliverables:
 4. Keep the local harness aligned with CI where practical: CI runs a smaller
    version of the same path; local runs may use a richer Plan 120 archive.
 
-Explicit Plan 120 dependency:
+Explicit Plan 120 handoff:
 
-- Plan 120 Gate E (`manifest/package/upload`) must land before this becomes a
-  smooth local-development workflow. Gate E is responsible for turning the
-  already-materialized Gate D export into an archive + manifest + stable
-  download target. Without it, Gate A4 can only be partially tested with
-  manually copied exports.
+- Plan 120 Gate E (`manifest/package/upload`) is complete and VM-verified. It
+  turns the already-materialized Gate D export into an archive + manifest +
+  stable latest pointer, and repeat runs can reuse the archive cache.
 - The local harness should not reimplement snapshot packaging. It should call
   or consume Plan 120's download/seed contract.
 

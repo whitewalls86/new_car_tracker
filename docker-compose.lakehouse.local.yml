@@ -1,0 +1,84 @@
+# Plan 112 Gate A4: local-development-only override for
+# docker-compose.lakehouse.yml.
+#
+# Distinct from both sibling overrides, on purpose:
+#   - docker-compose.lakehouse.a3.yml is VM-only: it mounts the VM's external
+#     `cartracker_analytics_db` production-derived volume, which does not
+#     exist on a dev box. This file references NO external volume and NO
+#     production Docker resource of any kind.
+#   - docker-compose.lakehouse.ci.yml is CI-only: same throwaway-MinIO /
+#     non-external-network shape as this file, but with no analytics mount
+#     (CI's A2 round-trip needs none).
+#
+# This override makes the lakehouse stack fully self-contained locally:
+#   - adds a job-local, throwaway MinIO (seed it from a Plan 120 snapshot
+#     archive via scripts/seed_lake_snapshot.py; its data is ephemeral and
+#     lost on `down` -- reseeding is cheap and expected);
+#   - makes `cartracker-net` non-external, so `up` creates it fresh and the
+#     stack never joins (or depends on) a locally running main project;
+#   - publishes the same non-default host ports the CI override uses
+#     (MinIO 19000, Lakekeeper 18181) so host-side tools -- dbt building
+#     analytics.duckdb, scripts/seed_lake_snapshot.py, and
+#     scripts/preflight_local_lakehouse_snapshot.py -- can reach both
+#     services from localhost without colliding with a main local stack's
+#     9000;
+#   - bind-mounts a local analytics directory READ-ONLY into
+#     `lakehouse-worker` (default ./.cache/analytics; override with
+#     LAKEHOUSE_LOCAL_ANALYTICS_DIR). Put/build analytics.duckdb there --
+#     see docs/runbook_lakehouse.md's A4 section.
+#
+# Safe to run and tear down freely: like the base file, this project
+# declares no production service or volume, so
+#   docker compose -f docker-compose.lakehouse.yml -f docker-compose.lakehouse.local.yml \
+#     -p local-lakehouse down -v
+# can only ever affect its own throwaway resources. Never reference this
+# file from CI, and never add it to a VM command.
+#
+# Usage (see docs/runbook_lakehouse.md's A4 section):
+#   docker compose -f docker-compose.lakehouse.yml -f docker-compose.lakehouse.local.yml \
+#     -p local-lakehouse up -d minio lakekeeper-postgres lakekeeper
+
+services:
+  minio:
+    image: minio/minio:latest
+    command: server /data
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-cartracker}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-cartracker123}
+    ports:
+      - "19000:9000"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - cartracker-net
+
+  lakekeeper:
+    ports:
+      # Published locally (unlike the base VM file) so the host-side
+      # preflight script and browser can reach the management/catalog APIs.
+      - "18181:8181"
+    depends_on:
+      lakekeeper-migrate:
+        condition: service_completed_successfully
+      lakekeeper-postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      LAKEKEEPER_MINIO_ENDPOINT: http://minio:9000
+
+  lakehouse-worker:
+    environment:
+      DUCKDB_PATH: /data/analytics/analytics.duckdb
+    volumes:
+      # Local host directory (NOT a production volume), mounted `:ro` --
+      # the worker must never write to the analytics DB, same posture as
+      # the A3 override's read-only volume mount.
+      - ${LAKEHOUSE_LOCAL_ANALYTICS_DIR:-./.cache/analytics}:/data/analytics:ro
+
+networks:
+  cartracker-net:
+    external: false
