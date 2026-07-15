@@ -20,6 +20,7 @@ from .routers.deploy import router as deploy_router
 from .routers.info import router as info_router
 from .routers.maintenance import router as maintenance_router
 from .routers.scrape import router as scrape_router
+from .routers.snapshots import router as snapshots_router
 from .routers.users import public_router as users_public_router
 from .routers.users import router as users_router
 
@@ -51,6 +52,7 @@ app.include_router(deploy_router)
 app.include_router(scrape_router)
 app.include_router(admin_router, prefix="/admin")
 app.include_router(users_router, prefix="/admin")
+app.include_router(snapshots_router)
 # Public access-request routes — mounted at root so Caddy can reach them
 # for authenticated-but-unauthorised users (no /admin prefix).
 app.include_router(users_public_router)

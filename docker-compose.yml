@@ -122,6 +122,11 @@ services:
       SCRAPER_URL: http://scraper:8000
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       DUCKDB_PATH: /data/analytics/analytics.duckdb
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-cartracker}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_BUCKET: bronze
+      SNAPSHOT_DOWNLOAD_TOKEN: ${SNAPSHOT_DOWNLOAD_TOKEN:-}
     networks:
       - cartracker-net
     depends_on:

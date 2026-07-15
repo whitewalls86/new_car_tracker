@@ -236,6 +236,27 @@ def read_bytes(minio_path: str) -> bytes:
     return response["Body"].read()
 
 
+def open_stream(minio_path: str):
+    """
+    Return an iterator of byte chunks for a stored object, without loading
+    the whole object into memory (unlike read_bytes). Raises the underlying
+    ClientError (e.g. NoSuchKey) if the object does not exist — callers that
+    want a clean 404 should check object_size() first.
+
+    *minio_path* may be a full S3 URI (``s3://bucket/key``) or a bare key.
+    """
+    if minio_path.startswith("s3://"):
+        remainder = minio_path[len("s3://"):]
+        bucket, key = remainder.split("/", 1)
+    else:
+        bucket = BUCKET
+        key = minio_path
+
+    client = get_boto3_client()
+    response = client.get_object(Bucket=bucket, Key=key)
+    return response["Body"].iter_chunks(chunk_size=1 << 20)
+
+
 def object_size(minio_path: str) -> "int | None":
     """
     Return an object's byte size via HEAD (no body download), or None if it

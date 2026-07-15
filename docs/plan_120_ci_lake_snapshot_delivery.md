@@ -97,9 +97,13 @@ archive+manifest publish, and the alias file is always written before
 pointing at a snapshot with no alias. See
 [Packaging and upload (Gate E)](#packaging-and-upload-gate-e) below.
 
-The next Plan 120 gate is **Gate F - ops download API**. In parallel, Plan 112
-Gate A4 should now consume the VM-verified Gate E archive contract through the
-existing download/seed scripts.
+**Gate F (ops download API) is now implemented** (not yet VM-verified).
+`ops/routers/snapshots.py` adds three read-only routes under
+`/admin/snapshots/adaptive-refresh/` — see
+[Ops download API (Gate F)](#ops-download-api-gate-f) below for the exact
+route contract. In parallel, Plan 112 Gate A4 should now consume the
+VM-verified Gate E archive contract through the existing download/seed
+scripts.
 
 The phase labels below describe product areas, not commit gates. For execution
 tracking, use the Step 1-11 checklist in
@@ -117,9 +121,9 @@ tracking, use the Step 1-11 checklist in
 | Manifest/package/upload | Done (Gate E) | `lake_snapshot_archive.py` packages the materialized Gate D export into `snapshot.tar.zst`, uploads it and a full `archive_manifest.json` to `snapshot_archives/fingerprints/{export_fingerprint}/`, and promotes `latest.json`/`aliases/{snapshot_id}.json` only after a successful publish. A non-dry-run `export_ci_lake_snapshot()` call now always runs packaging as the last step (for both a freshly materialized export and an export-cache hit), keyed by the same `export_fingerprint`. `reuse_archive_cache`/`refresh_archive_cache` mirror the Gate D flag contract; a checksum conflict at the same fingerprint (which should not normally happen, since packaging is a pure function of the materialized data) is refused rather than silently overwritten unless `refresh_archive_cache` is set. |
 | Archiver endpoint | Control-plane only (Gate C.5) | Internal endpoint is wired and wrapped with `active_job()`. Cheap `audit_sources` calls remain allowed regardless of dry_run. `build_cohort=True` or any non-dry-run request is rejected with `409` unless `ARCHIVER_ALLOW_SYNC_SNAPSHOT_COHORT=true`; production-sized work (which now includes Gate E packaging, since it runs as part of the same non-dry-run flow) must go through `snapshot-worker`. |
 | Airflow DAG | Structurally done, worker target TBD | Manual DAG exists and passes params/defaults. It should trigger the isolated snapshot worker once Steps 4-6 are worker-safe — the DAG currently still posts to the archiver control-plane route, which will 409 if it requests `build_cohort=True` (or non-dry-run) without the override flag. |
-| Ops download API | Not started | Latest/manifest/download routes and CI token auth still need implementation. |
-| Download/seed scripts | Mostly done | Offline/local mode exists and verifies checksums. API mode is scaffolded but depends on the ops download API. |
-| CI pilot | Not started | Needs a real archive and ops download route first. |
+| Ops download API | Done (Gate F, VM verification pending) | `ops/routers/snapshots.py` implements latest/manifest/download routes with bearer-token auth; see [Ops download API (Gate F)](#ops-download-api-gate-f). |
+| Download/seed scripts | Mostly done | Offline/local mode exists and verifies checksums. API mode is exercised against the real ops router in `tests/scripts/test_download_lake_snapshot.py`; still needs a VM pilot run. |
+| CI pilot | Not started | Needs a VM-verified live archive + ops download route round trip first. |
 
 Current cross-plan handoff: Plan 112 Gate A4 (`Local Integration Harness`)
 should consume the VM-verified Gate E output rather than inventing its own
@@ -945,6 +949,110 @@ a second snapshot packaging or download format.
 
 ---
 
+## Ops download API (Gate F)
+
+`ops/routers/snapshots.py` implements Gate F: a small, read-only facade over
+the Gate E `ci_snapshots/adaptive_refresh/` pointers and
+`snapshot_archives/fingerprints/{export_fingerprint}/` objects. It never
+generates, mutates, or promotes a snapshot — every route is a pure read of
+objects Gate E already published; snapshot generation still only happens
+through `snapshot-worker`/the archiver control-plane route.
+
+**Routes** (mounted at `/admin/snapshots/adaptive-refresh` in the `ops`
+container, matching `scripts/download_lake_snapshot.py`'s hardcoded
+`_SNAPSHOTS_PATH`):
+
+```http
+GET /admin/snapshots/adaptive-refresh/latest
+GET /admin/snapshots/adaptive-refresh/{snapshot_id}
+GET /admin/snapshots/adaptive-refresh/{snapshot_id}/download
+```
+
+| Route | Behavior |
+|-------|----------|
+| `GET latest` | Reads `ci_snapshots/adaptive_refresh/latest.json` and returns it verbatim (the pointer dict `promote_snapshot_pointers` writes: `snapshot_id`, `export_fingerprint`, `archive_key`, `archive_manifest_key`, `archive_bytes`, `archive_sha256`, `created_at`). 404 if no snapshot has ever been published. |
+| `GET {snapshot_id}` | Reads `ci_snapshots/adaptive_refresh/aliases/{snapshot_id}.json` for the pointer, follows its `archive_manifest_key`, and returns that `archive_manifest.json` (the Gate D export manifest plus the `archive: {path, bytes, sha256, file_count}` block). 404 if the alias or manifest is missing. |
+| `GET {snapshot_id}/download` | Resolves the same alias, then streams the object at `archive_key` (`snapshot.tar.zst`) via `shared.minio.open_stream` (chunked, not loaded fully into memory). 404 if the alias or the archive object is missing. |
+
+**Auth.** A standalone bearer token (`SNAPSHOT_DOWNLOAD_TOKEN` env var),
+independent of the cookie/session admin auth in `ops/routers/auth.py` — CI
+callers and `scripts/download_lake_snapshot.py` have no browser session to
+present. Missing/malformed `Authorization` header is `401`; a
+present-but-wrong token is `403`; an unconfigured (empty) token disables the
+routes entirely with `503`. The token is never logged. This matches
+`scripts/download_lake_snapshot.py`'s existing `--token`/`$CARTRACKER_SNAPSHOT_TOKEN`
+contract, so no downloader changes were needed.
+
+**Path safety.** `snapshot_id` is validated against
+`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$` (no `/`, no `..`) before it is used to
+build the `aliases/{snapshot_id}.json` key — an invalid id is rejected with
+`400` before any MinIO read is attempted. The alias pointer's own
+`archive_manifest_key`/`archive_key` fields are *also* re-validated (against
+`^snapshot_archives/fingerprints/[A-Za-z0-9]{1,128}/archive_manifest\.json$`
+and the equivalent `snapshot.tar.zst` pattern) before either is passed to
+`read_json`/`object_size`/`open_stream` — the alias object is stored data,
+not caller input, but a corrupted or tampered alias must not be able to
+redirect an authenticated request to read or stream an arbitrary MinIO key
+(e.g. an `s3://` URI, an absolute path, a `..`-traversal, or an
+out-of-prefix object). A key that fails this check is treated the same as
+"not found" (`404`). The alias and manifest's own `snapshot_id` fields are
+also cross-checked against the requested `snapshot_id` (`alias.snapshot_id`
+in `_resolve_alias`, `manifest.snapshot_id` in `get_snapshot_manifest`) — a
+corrupted or mismatched alias/manifest object must never silently serve a
+different snapshot's manifest or archive under this snapshot_id's URL.
+
+**Download headers.** `Content-Type: application/zstd`,
+`Content-Disposition: attachment; filename="{snapshot_id}.tar.zst"`,
+`Content-Length` (from `shared.minio.object_size`, checked before opening
+the stream so a missing archive is a clean `404` rather than a
+mid-stream error), and `X-Archive-SHA256` (from the alias pointer's
+`archive_sha256`) for client-side verification alongside the manifest
+checksum `scripts/lake_snapshot_common.py` already checks.
+
+**Testing.** `tests/ops/routers/test_snapshots.py` covers auth (missing/wrong
+token, unconfigured token), latest success/missing, manifest resolution
+through the alias, missing alias/manifest, download streaming/missing
+archive, and invalid/path-traversal `snapshot_id` rejection — all against
+mocked `shared.minio` calls, no real MinIO required.
+`tests/scripts/test_download_lake_snapshot.py::TestDownloadApiAgainstOpsRouter`
+additionally runs `scripts/download_lake_snapshot.py`'s `download_api()`
+against the real `ops` FastAPI app (via `fastapi.testclient.TestClient`,
+MinIO calls mocked) to prove the route shapes match the downloader's
+expectations on the wire, not just in a hand-rolled mock transport.
+
+**VM verification (not yet run).** Once a real Gate E archive exists on the
+VM:
+
+```bash
+# 1. Latest pointer
+curl -sS -H "Authorization: Bearer $SNAPSHOT_DOWNLOAD_TOKEN" \
+  https://cartracker.info/admin/snapshots/adaptive-refresh/latest
+
+# 2. Manifest for that snapshot id (use snapshot_id from step 1's response)
+curl -sS -H "Authorization: Bearer $SNAPSHOT_DOWNLOAD_TOKEN" \
+  https://cartracker.info/admin/snapshots/adaptive-refresh/<snapshot_id>
+
+# 3. Download the archive
+curl -sS -H "Authorization: Bearer $SNAPSHOT_DOWNLOAD_TOKEN" \
+  https://cartracker.info/admin/snapshots/adaptive-refresh/<snapshot_id>/download \
+  -o /tmp/snapshot.tar.zst
+
+# 4. Full round trip through the downloader script
+python scripts/download_lake_snapshot.py --latest \
+  --base-url https://cartracker.info --token "$SNAPSHOT_DOWNLOAD_TOKEN"
+
+# 5. Optional: seed local MinIO from the downloaded archive
+python scripts/seed_lake_snapshot.py \
+  --snapshot-id <snapshot_id> \
+  --manifest-path .cache/lake_snapshots/<snapshot_id>/manifest.json
+```
+
+Expected result: step 1's `snapshot_id` matches step 4's resolved snapshot;
+step 3's downloaded bytes sha256-match step 2's manifest `archive.sha256`;
+step 4 exits 0 and prints the destination archive path.
+
+---
+
 ## Phase 2: API Delivery
 
 Add a protected download surface, either in `ops` or a dedicated lightweight
@@ -1149,7 +1257,9 @@ second response reports `planning_cache_hit=true` and
 | `ops/routers/snapshots.py` | Snapshot metadata/download routes |
 | `ops/app.py` | Include snapshot router |
 | `.github/workflows/ci.yml` | Optional medium-snapshot integration job |
-| `tests/ops/test_snapshot_downloads.py` | API auth/download tests |
+| `tests/ops/routers/test_snapshots.py` | API auth/download tests |
+| `shared/minio.py` | Adds `open_stream()` for chunked archive download without full in-memory buffering |
+| `tests/scripts/test_download_lake_snapshot.py` | Adds a real-app (`TestClient`) round trip proving downloader/ops route wire compatibility |
 | `tests/scripts/test_lake_snapshot_export.py` | Export/manifest tests |
 | `tests/integration/test_lake_snapshot_seed.py` | Seeder integration test |
 

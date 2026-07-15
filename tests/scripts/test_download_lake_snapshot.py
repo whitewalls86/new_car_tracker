@@ -180,3 +180,64 @@ class TestDownloadApi:
                 latest=False, snapshot_id=manifest["snapshot_id"],
                 out_dir=tmp_path / "out", client=client,
             )
+
+
+# ── Against the real ops Gate F router (Plan 120 Gate F wire compatibility) ─
+
+class TestDownloadApiAgainstOpsRouter:
+    """
+    Exercises download_api() against the actual ops FastAPI app (in-process,
+    via ASGITransport) instead of a hand-rolled mock transport, proving the
+    Gate F route shapes in ops/routers/snapshots.py match what this
+    downloader script expects on the wire.
+    """
+
+    def test_latest_and_download_round_trip(self, tmp_path, mocker):
+        from fastapi.testclient import TestClient
+
+        from ops.app import app
+        from ops.routers import snapshots as snapshots_router
+
+        manifest_path, archive, manifest = _build_snapshot(
+            tmp_path, snapshot_id="adaptive-refresh-2026-07-07-174500",
+        )
+        archive_bytes = archive.read_bytes()
+        alias = {
+            "snapshot_id": manifest["snapshot_id"],
+            "export_fingerprint": "abc123",
+            "archive_key": "snapshot_archives/fingerprints/abc123/snapshot.tar.zst",
+            "archive_manifest_key": "snapshot_archives/fingerprints/abc123/archive_manifest.json",
+            "archive_bytes": len(archive_bytes),
+            "archive_sha256": manifest["archive"]["sha256"],
+        }
+
+        mocker.patch.object(snapshots_router, "SNAPSHOT_DOWNLOAD_TOKEN", "test-token")
+
+        def fake_read_json(key):
+            if key == "ci_snapshots/adaptive_refresh/latest.json":
+                return alias
+            if key == alias["archive_manifest_key"]:
+                return manifest
+            if key.endswith(f"aliases/{manifest['snapshot_id']}.json"):
+                return alias
+            return None
+
+        mocker.patch.object(snapshots_router, "read_json", side_effect=fake_read_json)
+        mocker.patch.object(snapshots_router, "object_size", return_value=len(archive_bytes))
+        mocker.patch.object(
+            snapshots_router, "open_stream", return_value=iter([archive_bytes]),
+        )
+
+        client = TestClient(
+            app,
+            base_url="https://cartracker.info",
+            headers={"Authorization": "Bearer test-token"},
+        )
+        dest_archive = download_api(
+            base_url="https://cartracker.info", token="test-token",
+            latest=True, snapshot_id=None,
+            out_dir=tmp_path / "out", client=client,
+        )
+
+        assert dest_archive.read_bytes() == archive_bytes
+        assert dest_archive.parent.name == manifest["snapshot_id"]
