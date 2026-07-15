@@ -259,6 +259,22 @@ class TestLakehouseLocalOverride:
         service = self._doc()["services"]["lakehouse-worker"]
         assert service["environment"]["DUCKDB_PATH"] == "/data/analytics/analytics.duckdb"
 
+    def test_worker_minio_credentials_have_local_defaults(self):
+        """A fresh local checkout has no .env yet -- unlike the base file's
+        ${MINIO_ROOT_USER} (no default, fine on the VM/CI where real env
+        vars are always set), this override must supply usable defaults or
+        warehouse registration/Spark silently gets blank MinIO credentials."""
+        service = self._doc()["services"]["lakehouse-worker"]
+        env = service["environment"]
+        assert env["MINIO_ROOT_USER"] == "${MINIO_ROOT_USER:-cartracker}"
+        assert env["MINIO_ROOT_PASSWORD"] == "${MINIO_ROOT_PASSWORD:-cartracker123}"
+
+    def test_lakekeeper_minio_credentials_have_local_defaults(self):
+        service = self._doc()["services"]["lakekeeper"]
+        env = service["environment"]
+        assert env["LAKEKEEPER_MINIO_ROOT_USER"] == "${MINIO_ROOT_USER:-cartracker}"
+        assert env["LAKEKEEPER_MINIO_ROOT_PASSWORD"] == "${MINIO_ROOT_PASSWORD:-cartracker123}"
+
     def test_declares_no_volumes_at_all(self):
         """No named volumes, external or otherwise -- in particular never
         the VM's cartracker_analytics_db or any production volume."""

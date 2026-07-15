@@ -152,18 +152,29 @@ class _FakeS3Client:
 
 class TestSnapshotSeeded:
     def test_all_prefixes_seeded(self):
-        client = _FakeS3Client({p: 1 for p in preflight.FIXTURE_PREFIXES})
+        client = _FakeS3Client({p: 1 for p in preflight.REQUIRED_SEED_PREFIXES})
         result = check_snapshot_seeded("http://localhost:19000", "bronze", client=client)
         assert result.status == PASS
 
     def test_empty_prefix_fails_with_seed_hint(self):
-        counts = {p: 1 for p in preflight.FIXTURE_PREFIXES}
+        counts = {p: 1 for p in preflight.REQUIRED_SEED_PREFIXES}
         counts["silver_normalized/"] = 0
         client = _FakeS3Client(counts)
         result = check_snapshot_seeded("http://localhost:19000", "bronze", client=client)
         assert result.status == FAIL
         assert "silver_normalized/" in result.message
         assert "seed_lake_snapshot" in result.message
+
+    def test_expected_prefix_not_required(self):
+        """Gate D/E never materializes expected/ (see REQUIRED_SEED_PREFIXES'
+        docstring) -- a real, correctly-seeded VM-generated archive must not
+        fail this check just because expected/ is empty."""
+        assert "expected/" not in preflight.REQUIRED_SEED_PREFIXES
+        counts = {p: 1 for p in preflight.REQUIRED_SEED_PREFIXES}
+        counts["expected/"] = 0
+        client = _FakeS3Client(counts)
+        result = check_snapshot_seeded("http://localhost:19000", "bronze", client=client)
+        assert result.status == PASS
 
     def test_listing_error_fails(self):
         class BrokenClient:

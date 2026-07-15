@@ -69,10 +69,25 @@ services:
         condition: service_healthy
     environment:
       LAKEKEEPER_MINIO_ENDPOINT: http://minio:9000
+      # Same "no .env yet" reasoning as lakehouse-worker's override below --
+      # the base file's `${MINIO_ROOT_USER}` (no default) assumes the VM/CI
+      # always sets real env vars, which a fresh local checkout may not have.
+      LAKEKEEPER_MINIO_ROOT_USER: ${MINIO_ROOT_USER:-cartracker}
+      LAKEKEEPER_MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-cartracker123}
 
   lakehouse-worker:
     environment:
       DUCKDB_PATH: /data/analytics/analytics.duckdb
+      # Same defaults as this file's own minio/lakekeeper services above --
+      # without these, a fresh local checkout with no .env still starts
+      # every container fine (compose only warns on an unset var), but
+      # lakehouse-worker gets a blank MINIO_ROOT_PASSWORD and warehouse
+      # registration/Spark silently fail auth against MinIO. The base
+      # docker-compose.lakehouse.yml's `${MINIO_ROOT_USER}` (no default) is
+      # fine there because the VM/CI always set real env vars; this local
+      # override cannot assume that.
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-cartracker}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-cartracker123}
     volumes:
       # Local host directory (NOT a production volume), mounted `:ro` --
       # the worker must never write to the analytics DB, same posture as

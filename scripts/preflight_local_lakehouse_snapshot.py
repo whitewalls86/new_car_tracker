@@ -62,6 +62,16 @@ DEFAULT_SNAPSHOT_DIR = ".cache/lake_snapshots"
 DEFAULT_ANALYTICS_PATH = ".cache/analytics/analytics.duckdb"
 DEFAULT_REQUIRED_TABLES = ("int_listing_volatility_features",)
 
+# scripts/lake_snapshot_common.FIXTURE_PREFIXES also lists "expected/", but
+# the actual Gate D/E export (archiver/processors/lake_snapshot_export.py)
+# only ever materializes/packages the four source-table prefixes below --
+# "expected/" is an aspirational fixture-shape note in
+# docs/plan_120_ci_lake_snapshot_delivery.md that nothing currently writes.
+# Requiring it here would make a real, correctly-seeded VM-generated archive
+# fail this check forever. Seed verification only checks what the harness
+# actually needs: the dbt sources under silver_normalized/ and ops_normalized/.
+REQUIRED_SEED_PREFIXES = tuple(p for p in FIXTURE_PREFIXES if p != "expected/")
+
 REQUIRED_FILES = (
     "docker-compose.lakehouse.yml",
     "docker-compose.lakehouse.local.yml",
@@ -236,7 +246,7 @@ def check_snapshot_seeded(endpoint: str, bucket: str, client=None) -> CheckResul
             )
     empty = []
     try:
-        for prefix in FIXTURE_PREFIXES:
+        for prefix in REQUIRED_SEED_PREFIXES:
             resp = client.list_objects_v2(Bucket=bucket, Prefix=prefix, MaxKeys=1)
             if resp.get("KeyCount", 0) == 0:
                 empty.append(prefix)
@@ -253,7 +263,7 @@ def check_snapshot_seeded(endpoint: str, bucket: str, client=None) -> CheckResul
         )
     return CheckResult(
         "snapshot-seeded", PASS,
-        f"objects present under all of {', '.join(FIXTURE_PREFIXES)}",
+        f"objects present under all of {', '.join(REQUIRED_SEED_PREFIXES)}",
     )
 
 
