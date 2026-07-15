@@ -10,12 +10,15 @@
 # 21 support.
 FROM python:3.13-slim-bookworm
 
-# Iceberg-Spark-runtime + Hadoop-AWS jar versions, pinned to match pyspark's
-# bundled Hadoop version (3.5.x ships Hadoop 3.3.4). Keep these three in sync
-# if pyspark is ever upgraded -- see docs/runbook_lakehouse.md.
+# Iceberg-Spark-runtime + iceberg-aws-bundle jar versions. iceberg-aws-bundle
+# (AWS SDK v2, shaded) backs Iceberg's native S3FileIO -- Lakekeeper hands
+# Spark `s3://...` table locations, and S3FileIO is what actually serves
+# that scheme; Hadoop-AWS's S3AFileSystem only registers `s3a://` and was
+# tried first here, which does not exist for this catalog. Keep this version
+# in sync with ICEBERG_SPARK_RUNTIME_VERSION if pyspark is ever upgraded --
+# see docs/runbook_lakehouse.md.
 ARG ICEBERG_SPARK_RUNTIME_VERSION=1.6.1
-ARG HADOOP_AWS_VERSION=3.3.4
-ARG AWS_SDK_BUNDLE_VERSION=1.12.262
+ARG ICEBERG_AWS_BUNDLE_VERSION=1.6.1
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends openjdk-17-jre-headless curl \
@@ -31,10 +34,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 RUN SPARK_JARS_DIR="$(python -c 'import pyspark, os; print(os.path.join(os.path.dirname(pyspark.__file__), "jars"))')" \
     && curl -fsSL -o "$SPARK_JARS_DIR/iceberg-spark-runtime-3.5_2.12-${ICEBERG_SPARK_RUNTIME_VERSION}.jar" \
        "https://repo1.maven.org/maven2/org/apache/iceberg/iceberg-spark-runtime-3.5_2.12/${ICEBERG_SPARK_RUNTIME_VERSION}/iceberg-spark-runtime-3.5_2.12-${ICEBERG_SPARK_RUNTIME_VERSION}.jar" \
-    && curl -fsSL -o "$SPARK_JARS_DIR/hadoop-aws-${HADOOP_AWS_VERSION}.jar" \
-       "https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-aws/${HADOOP_AWS_VERSION}/hadoop-aws-${HADOOP_AWS_VERSION}.jar" \
-    && curl -fsSL -o "$SPARK_JARS_DIR/aws-java-sdk-bundle-${AWS_SDK_BUNDLE_VERSION}.jar" \
-       "https://repo1.maven.org/maven2/com/amazonaws/aws-java-sdk-bundle/${AWS_SDK_BUNDLE_VERSION}/aws-java-sdk-bundle-${AWS_SDK_BUNDLE_VERSION}.jar"
+    && curl -fsSL -o "$SPARK_JARS_DIR/iceberg-aws-bundle-${ICEBERG_AWS_BUNDLE_VERSION}.jar" \
+       "https://repo1.maven.org/maven2/org/apache/iceberg/iceberg-aws-bundle/${ICEBERG_AWS_BUNDLE_VERSION}/iceberg-aws-bundle-${ICEBERG_AWS_BUNDLE_VERSION}.jar"
 
 COPY . .
 

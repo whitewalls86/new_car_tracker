@@ -5,7 +5,8 @@
 #
 # pyspark is pinned to a version with a published matching
 # iceberg-spark-runtime artifact (3.5_2.12) -- see lakehouse/Dockerfile for
-# the exact Iceberg/Hadoop-AWS jar versions fetched at build time.
+# the exact Iceberg-Spark-runtime/iceberg-aws-bundle jar versions fetched at
+# build time.
 pyspark==3.5.3
 boto3
 requests

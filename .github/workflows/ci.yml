@@ -60,8 +60,9 @@ jobs:
     # `services:` blocks -- this job brings up its own self-contained
     # Compose stack (job-local MinIO + Lakekeeper + isolated Postgres) on
     # non-default ports, per docs/runbook_lakehouse.md. A2 adds the heavier
-    # PySpark + Iceberg-Spark-runtime + Hadoop-AWS round-trip step (plan
-    # Sec 4.3): attempted here first per the plan's Q2 recommendation, run
+    # PySpark + Iceberg-Spark-runtime + iceberg-aws-bundle (S3FileIO) round-
+    # trip step (plan Sec 4.3): attempted here first per the plan's Q2
+    # recommendation, run
     # through the same `lakehouse-worker` image/service the VM/runbook path
     # uses (built via Compose, not pip-installed on the bare runner) so CI
     # actually exercises lakehouse/Dockerfile and the real operating path;

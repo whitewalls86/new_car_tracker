@@ -70,9 +70,11 @@ class TestSparkConfBuilder:
         assert conf[f"spark.sql.catalog.{CATALOG_NAME}.type"] == "rest"
         assert conf[f"spark.sql.catalog.{CATALOG_NAME}.uri"] == "http://lakekeeper:8181/catalog"
         assert conf[f"spark.sql.catalog.{CATALOG_NAME}.warehouse"] == WAREHOUSE_NAME
-        assert conf["spark.hadoop.fs.s3a.access.key"] == "cartracker"
-        assert conf["spark.hadoop.fs.s3a.secret.key"] == "secret"
-        assert conf["spark.hadoop.fs.s3a.path.style.access"] == "true"
+        io_impl = conf[f"spark.sql.catalog.{CATALOG_NAME}.io-impl"]
+        assert io_impl == "org.apache.iceberg.aws.s3.S3FileIO"
+        assert conf[f"spark.sql.catalog.{CATALOG_NAME}.s3.access-key-id"] == "cartracker"
+        assert conf[f"spark.sql.catalog.{CATALOG_NAME}.s3.secret-access-key"] == "secret"
+        assert conf[f"spark.sql.catalog.{CATALOG_NAME}.s3.path-style-access"] == "true"
 
 
 class TestWarehouseStoragePayload:

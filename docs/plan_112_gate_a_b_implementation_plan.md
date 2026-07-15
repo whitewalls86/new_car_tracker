@@ -165,9 +165,22 @@ cleanup (§2.6).
 > `int_listing_volatility_features` snapshot remains A3 (VM-only) scope,
 > unaffected. Also landed: `scripts/register_lakehouse_warehouse.py` (the
 > idempotent Lakekeeper warehouse-bootstrap script implied by §2.2 but not
-> separately named there), and the CI `lakehouse` job's A2 round-trip step
-> was attempted per the Q2 recommendation (see docs/runbook_lakehouse.md for
-> current pass/fail status rather than assuming success here).
+> separately named there, which also has to bootstrap the Lakekeeper server
+> itself via `POST /management/v1/bootstrap` before a first warehouse can be
+> created against its default project), and the CI `lakehouse` job's A2
+> round-trip step was attempted per the Q2 recommendation (see
+> docs/runbook_lakehouse.md for current pass/fail status rather than
+> assuming success here).
+>
+> One correction to §2.5's Spark-conf sample: it configures Hadoop-AWS's
+> S3AFileSystem (`spark.hadoop.fs.s3a.*`, `s3a://` scheme). In practice,
+> Lakekeeper hands Spark `s3://` table locations (not `s3a://`), which
+> Iceberg's native `S3FileIO` serves, not Hadoop's generic FileSystem --
+> `shared/iceberg_catalog.py` instead sets
+> `spark.sql.catalog.cartracker.io-impl=org.apache.iceberg.aws.s3.S3FileIO`
+> plus `s3.access-key-id`/`s3.secret-access-key` catalog properties, and
+> `lakehouse/Dockerfile` ships `iceberg-aws-bundle` (AWS SDK v2) instead of
+> `hadoop-aws`/`aws-java-sdk-bundle` (AWS SDK v1).
 
 **Explicitly deferred out of A1/A2:** the real `int_listing_volatility_features`
 snapshot (A3, needs the VM), any MLflow (B*), and any Lakekeeper

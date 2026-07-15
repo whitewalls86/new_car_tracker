@@ -56,9 +56,14 @@ def table_location_prefix(table_name: str) -> str:
 
 def spark_conf_for_rest_catalog() -> dict:
     """Build the Spark session config dict wiring Iceberg's SparkCatalog at
-    spark.sql.catalog.cartracker to Lakekeeper's REST endpoint, and Hadoop-AWS
-    (S3A) to MinIO. Env-driven, no live Spark session required to construct
-    or unit-test this.
+    spark.sql.catalog.cartracker to Lakekeeper's REST endpoint, and Iceberg's
+    native S3FileIO (iceberg-aws-bundle, AWS SDK v2) to MinIO. Env-driven, no
+    live Spark session required to construct or unit-test this.
+
+    S3FileIO, not Hadoop-AWS's S3AFileSystem, is deliberate: Lakekeeper hands
+    Spark `s3://...` table locations (not `s3a://`), and S3FileIO is what
+    actually serves that scheme -- Hadoop's generic FileSystem has no
+    registered handler for a bare `s3` scheme.
     """
     catalog_uri = os.environ["LAKEKEEPER_CATALOG_URI"]
     minio_endpoint = os.environ.get("MINIO_ENDPOINT", "http://minio:9000")
@@ -72,13 +77,11 @@ def spark_conf_for_rest_catalog() -> dict:
         f"spark.sql.catalog.{CATALOG_NAME}.type": "rest",
         f"spark.sql.catalog.{CATALOG_NAME}.uri": catalog_uri,
         f"spark.sql.catalog.{CATALOG_NAME}.warehouse": WAREHOUSE_NAME,
+        f"spark.sql.catalog.{CATALOG_NAME}.io-impl": "org.apache.iceberg.aws.s3.S3FileIO",
         f"spark.sql.catalog.{CATALOG_NAME}.s3.endpoint": minio_endpoint,
         f"spark.sql.catalog.{CATALOG_NAME}.s3.path-style-access": "true",
-        "spark.hadoop.fs.s3a.access.key": minio_user,
-        "spark.hadoop.fs.s3a.secret.key": minio_password,
-        "spark.hadoop.fs.s3a.endpoint": minio_endpoint,
-        "spark.hadoop.fs.s3a.path.style.access": "true",
-        "spark.hadoop.fs.s3a.impl": "org.apache.hadoop.fs.s3a.S3AFileSystem",
+        f"spark.sql.catalog.{CATALOG_NAME}.s3.access-key-id": minio_user,
+        f"spark.sql.catalog.{CATALOG_NAME}.s3.secret-access-key": minio_password,
     }
 
 
