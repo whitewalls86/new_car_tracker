@@ -4,11 +4,13 @@ Operational runbook for the Gate A Lakekeeper REST catalog stack. Read
 `docs/plan_112_gate_a_b_implementation_plan.md` and
 `docs/lakehouse_substrate_decision.md` first for the design rationale.
 
-**Scope of this document (A1 + A2 + A3):** bring-up/teardown of the standalone
-Lakekeeper catalog + its isolated Postgres metadata store, the CI topology,
-(A2) the profile-gated `lakehouse-worker` PySpark round-trip against a
-fixture-derived Iceberg table, and (A3) the VM/local-manual rehearsal writing
-the real `int_listing_volatility_features` table to Iceberg. PyIceberg
+**Scope of this document (A1 + A2 + A3 + A4):** bring-up/teardown of the
+standalone Lakekeeper catalog + its isolated Postgres metadata store, the CI
+topology, (A2) the profile-gated `lakehouse-worker` PySpark round-trip against
+a fixture-derived Iceberg table, (A3) the VM/local-manual rehearsal writing
+the real `int_listing_volatility_features` table to Iceberg, and (A4) the
+local integration harness that runs the same worker path on a dev box against
+a Plan 120 snapshot. PyIceberg
 validation (A2b) and MLflow (Gate B) are out of scope here and will extend
 this doc as they land.
 
@@ -306,6 +308,166 @@ mock/avoid live DuckDB, Spark, and MinIO, exactly like A2's spike tests.
 
 ---
 
+## A4: local integration harness (Plan 120 snapshot -> local smoke)
+
+The A4 local path makes the VM a production *rehearsal* environment rather
+than the first place missing dependencies, stale dbt schemas, bad Compose
+mounts, or Spark/Lakekeeper config regressions are found. It consumes the
+Plan 120 Gate E snapshot contract (`snapshot.tar.zst` +
+`archive_manifest.json` + `latest.json`) -- it does **not** define a second
+packaging/download format.
+
+Three Compose overrides now exist; never mix their environments:
+
+| Override | Environment | Analytics source | MinIO |
+|----------|-------------|------------------|-------|
+| `docker-compose.lakehouse.ci.yml` | CI only | none | throwaway, port 19000 |
+| `docker-compose.lakehouse.a3.yml` | VM only | external `cartracker_analytics_db` volume, `:ro` | the real `minio` service |
+| `docker-compose.lakehouse.local.yml` | local dev only | local dir bind mount (`LAKEHOUSE_LOCAL_ANALYTICS_DIR`, default `./.cache/analytics`), `:ro` | throwaway, port 19000 |
+
+The local override is fully self-contained: non-external network, throwaway
+MinIO, no external volume, no production Docker resource of any kind.
+`down -v` against project `local-lakehouse` is safe by construction, exactly
+like the base file. The throwaway MinIO's contents are ephemeral -- a `down`
+loses the seeded snapshot, and reseeding is cheap and expected.
+
+### 0. Preflight (run any time; read-only)
+
+```bash
+python -m scripts.preflight_local_lakehouse_snapshot
+```
+
+Checks, with actionable errors: required repo files; a downloaded Plan 120
+manifest+archive pair (size-verified; `--verify-checksum` for full sha256);
+MinIO reachable at `localhost:19000` (and **refuses** production-like
+endpoints/buckets, with no override flag); fixture prefixes seeded;
+`analytics.duckdb` present; required dbt feature tables exist (default
+`int_listing_volatility_features`; add more via `--required-table`);
+Lakekeeper's management endpoint answers at `localhost:18181`; the
+`cartracker_experiments` warehouse is registered. Every default path/endpoint
+is overridable -- see `--help`. It never writes, deletes, or registers
+anything.
+
+### 1. Acquire a Plan 120 snapshot archive (manual today)
+
+Plan 120's Gate F ops download API is not implemented yet, so getting the
+archive+manifest pair off the VM is a manual copy: the snapshot-worker
+publishes them under
+`s3://bronze/snapshot_archives/fingerprints/{export_fingerprint}/`
+(`snapshot.tar.zst`, `archive_manifest.json`), with the current pointer at
+`s3://bronze/ci_snapshots/adaptive_refresh/latest.json`. Fetch them however
+is convenient (e.g. `mc`/boto3 against the VM's MinIO over an SSH tunnel),
+then normalize into the local cache with checksum verification:
+
+```bash
+python -m scripts.download_lake_snapshot \
+  --manifest-path /path/to/archive_manifest.json \
+  --archive-path /path/to/snapshot.tar.zst
+# -> .cache/lake_snapshots/<snapshot_id>/{snapshot.tar.zst,manifest.json}
+```
+
+(Once the ops download API lands, the same script's `--latest --base-url ...
+--token ...` mode replaces the manual copy; nothing downstream changes.)
+
+### 2. Start the local stack
+
+```bash
+docker compose -f docker-compose.lakehouse.yml -f docker-compose.lakehouse.local.yml \
+  -p local-lakehouse up -d minio lakekeeper-postgres lakekeeper
+```
+
+Same env vars as the base stack (`LAKEKEEPER_DB_PASSWORD`,
+`LAKEKEEPER_PG_ENCRYPTION_KEY`; `MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD`
+default to `cartracker`/`cartracker123` in this override, like CI).
+
+### 3. Seed the local MinIO from the snapshot
+
+```bash
+python -m scripts.seed_lake_snapshot \
+  --snapshot .cache/lake_snapshots/<snapshot_id>/snapshot.tar.zst \
+  --minio-endpoint http://localhost:19000
+```
+
+Creates the `bronze` bucket if needed and uploads the fixture prefixes
+(`silver_normalized/`, `ops_normalized/`, `expected/`). The script's
+production-target guard applies here too.
+
+### 4. Build analytics.duckdb from the seeded data (partly manual today)
+
+The dbt DuckDB target reads the seeded MinIO prefixes, but two sources
+(`stg_search_configs`, `tracked_models`) are `postgres_scan()` reads that
+need a reachable Postgres with the migrated schema -- locally that means
+reproducing the CI `dbt` job's recipe (throwaway Postgres + Flyway +
+`dbt build --target duckdb` with `DUCKDB_PATH` pointed into
+`./.cache/analytics/`), containerized via the `dbt/Dockerfile` image per the
+"never pip-install dbt locally" convention:
+
+```bash
+docker build -f dbt/Dockerfile -t cartracker-dbt-local .
+docker run --rm --network local-lakehouse_cartracker-net \
+  -e DUCKDB_PATH=/out/analytics.duckdb \
+  -e MINIO_ENDPOINT=http://minio:9000 \
+  -e MINIO_ROOT_USER=cartracker -e MINIO_ROOT_PASSWORD=cartracker123 \
+  -e MINIO_BUCKET=bronze \
+  -e POSTGRES_URL=<postgresql://...local postgres with migrated schema...> \
+  -v "$(pwd)/.cache/analytics:/out" \
+  cartracker-dbt-local build --target duckdb
+```
+
+Standing up that local Postgres is the one genuinely manual gap in the A4
+flow today (tracked as an A4 open item, not silently glossed). Until it is
+scripted, the pragmatic alternative is to copy an existing
+`analytics.duckdb` (e.g. CI's `/tmp/ci_analytics.duckdb` artifact or a
+VM-derived copy) into `./.cache/analytics/` -- the preflight's
+`feature-tables` check will tell you whether whatever you supplied is usable.
+
+### 5. Register the warehouse and run the rehearsal
+
+```bash
+docker compose -f docker-compose.lakehouse.yml -f docker-compose.lakehouse.local.yml \
+  -p local-lakehouse build lakehouse-worker
+
+docker compose -f docker-compose.lakehouse.yml -f docker-compose.lakehouse.local.yml \
+  -p local-lakehouse run --rm lakehouse-worker \
+  python -m scripts.register_lakehouse_warehouse
+
+# A2 synthetic round-trip (no analytics.duckdb needed -- proves Spark/
+# Lakekeeper/MinIO wiring alone):
+docker compose -f docker-compose.lakehouse.yml -f docker-compose.lakehouse.local.yml \
+  -p local-lakehouse run --rm lakehouse-worker \
+  python -m scripts.spike_iceberg_lakehouse roundtrip
+
+# A3 rehearsal against the local analytics.duckdb (validates source counts,
+# writes the Iceberg table, re-validates row counts, prints metadata JSON,
+# cleans up):
+docker compose -f docker-compose.lakehouse.yml -f docker-compose.lakehouse.local.yml \
+  -p local-lakehouse run --rm lakehouse-worker \
+  python -m scripts.export_volatility_features_to_iceberg rehearsal
+```
+
+Row-count validation is built into `export`/`rehearsal` (source vs Iceberg
+exact match) -- the same guards the VM A3 run uses.
+
+### 6. Clean up (lakehouse-local resources only)
+
+```bash
+# Iceberg table + its lakehouse_spike/ objects (if --keep was used):
+docker compose -f docker-compose.lakehouse.yml -f docker-compose.lakehouse.local.yml \
+  -p local-lakehouse run --rm lakehouse-worker \
+  python -m scripts.export_volatility_features_to_iceberg cleanup
+
+# Full local teardown, safe by construction (this project owns only
+# throwaway resources; the seeded MinIO data is lost, by design):
+docker compose -f docker-compose.lakehouse.yml -f docker-compose.lakehouse.local.yml \
+  -p local-lakehouse down -v
+```
+
+Never point the local override's commands at the VM, never reference it from
+CI, and never mount a production volume into it -- the A3 override exists
+for the VM path.
+
+---
+
 ## CI topology
 
 The dedicated `lakehouse` GitHub Actions job is independent of the existing
@@ -364,7 +526,7 @@ intentionally avoided.
 
 ---
 
-## A3 status and what remains deferred
+## A3/A4 status and what remains deferred
 
 **A3 is implemented and VM-verified** (`scripts/export_volatility_features_to_iceberg.py`,
 see the "A3" section above) -- the real `int_listing_volatility_features`
@@ -379,7 +541,18 @@ ran successfully against the real 250,790-row table on 2026-07-15 -- see
 `docs/lakehouse_substrate_decision.md`'s "Gate A spike results" section for
 the real output.
 
-Still deferred:
+**A4 scaffolding is implemented** (`docker-compose.lakehouse.local.yml`,
+`scripts/preflight_local_lakehouse_snapshot.py`, the "A4" section above) --
+the local flow reuses the A2/A3 scripts unchanged against a self-contained
+local stack seeded from a Plan 120 archive.
 
+Still deferred / manual:
+
+- **Plan 120 Gate F ops download API** -- acquiring the snapshot
+  archive+manifest pair off the VM is a manual copy today (A4 step 1);
+  `scripts/download_lake_snapshot.py --latest` takes over once the API lands.
+- **Scripted local dbt build** -- `dbt build --target duckdb` needs a local
+  Postgres with the migrated schema for the two `postgres_scan()` sources
+  (A4 step 4); until that is scripted, supply/copy an `analytics.duckdb`.
 - **PyIceberg validation** (A2b) and **MLflow** (Gate B) are unrelated to
   this stack's bring-up/teardown and are documented separately as they land.

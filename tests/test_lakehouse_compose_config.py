@@ -213,6 +213,97 @@ class TestLakehouseA3Override:
             assert "analytics" not in mount
 
 
+class TestLakehouseLocalOverride:
+    """Plan 112 Gate A4: docker-compose.lakehouse.local.yml makes the stack
+    fully self-contained on a dev box -- throwaway MinIO, non-external
+    network, host-published ports, and a read-only bind mount of a *local*
+    analytics directory. It must reference no production Docker volume
+    (unlike the VM-only a3 override) and no external resource at all."""
+
+    @staticmethod
+    def _doc():
+        return yaml.safe_load((_REPO_ROOT / "docker-compose.lakehouse.local.yml").read_text())
+
+    def test_adds_throwaway_minio(self):
+        services = self._doc()["services"]
+        assert "minio" in services
+
+    def test_network_made_non_external(self):
+        doc = self._doc()
+        assert doc["networks"]["cartracker-net"]["external"] is False
+
+    def test_publishes_local_host_ports(self):
+        services = self._doc()["services"]
+        assert any(p.startswith("19000:") for p in services["minio"]["ports"])
+        assert any(p.startswith("18181:") for p in services["lakekeeper"]["ports"])
+
+    def test_mounts_local_analytics_dir_read_only(self):
+        service = self._doc()["services"]["lakehouse-worker"]
+        mounts = service["volumes"]
+        analytics_mounts = [m for m in mounts if ":/data/analytics" in m]
+        assert len(analytics_mounts) == 1
+        mount = analytics_mounts[0]
+        assert mount.endswith(":ro"), f"analytics mount not read-only: {mount}"
+        # A bind mount of a local host directory, not a named Docker volume.
+        source = mount.split(":/data/analytics")[0]
+        assert source.startswith("${LAKEHOUSE_LOCAL_ANALYTICS_DIR:-./"), (
+            f"expected an env-overridable local bind mount, got: {source}"
+        )
+
+    def test_no_volume_mount_is_writable(self):
+        service = self._doc()["services"]["lakehouse-worker"]
+        for mount in service["volumes"]:
+            assert mount.endswith(":ro"), f"non-read-only mount: {mount}"
+
+    def test_sets_duckdb_path(self):
+        service = self._doc()["services"]["lakehouse-worker"]
+        assert service["environment"]["DUCKDB_PATH"] == "/data/analytics/analytics.duckdb"
+
+    def test_worker_minio_credentials_have_local_defaults(self):
+        """A fresh local checkout has no .env yet -- unlike the base file's
+        ${MINIO_ROOT_USER} (no default, fine on the VM/CI where real env
+        vars are always set), this override must supply usable defaults or
+        warehouse registration/Spark silently gets blank MinIO credentials."""
+        service = self._doc()["services"]["lakehouse-worker"]
+        env = service["environment"]
+        assert env["MINIO_ROOT_USER"] == "${MINIO_ROOT_USER:-cartracker}"
+        assert env["MINIO_ROOT_PASSWORD"] == "${MINIO_ROOT_PASSWORD:-cartracker123}"
+
+    def test_lakekeeper_minio_credentials_have_local_defaults(self):
+        service = self._doc()["services"]["lakekeeper"]
+        env = service["environment"]
+        assert env["LAKEKEEPER_MINIO_ROOT_USER"] == "${MINIO_ROOT_USER:-cartracker}"
+        assert env["LAKEKEEPER_MINIO_ROOT_PASSWORD"] == "${MINIO_ROOT_PASSWORD:-cartracker123}"
+
+    def test_declares_no_volumes_at_all(self):
+        """No named volumes, external or otherwise -- in particular never
+        the VM's cartracker_analytics_db or any production volume."""
+        doc = self._doc()
+        assert not doc.get("volumes")
+
+    def test_no_production_volume_or_service_referenced(self):
+        """Comments may mention production volume names as documentation, so
+        check the parsed YAML's real references, not the raw text."""
+        doc = self._doc()
+        volume_refs = str(doc.get("volumes")) + str(
+            [spec.get("volumes") for spec in doc["services"].values()]
+        )
+        assert "cartracker_analytics_db" not in volume_refs
+        assert "cartracker_pgdata" not in volume_refs
+        assert "postgres" not in doc["services"]
+        for spec in doc["services"].values():
+            for vol_spec in (spec.get("volumes") or []):
+                assert "external" not in str(vol_spec)
+
+    def test_ci_override_untouched_by_a4(self):
+        """The CI override must not have gained an analytics mount -- CI's
+        A2 round-trip needs none, and adding one would break the runner."""
+        ci_doc = yaml.safe_load((_REPO_ROOT / "docker-compose.lakehouse.ci.yml").read_text())
+        worker = ci_doc["services"].get("lakehouse-worker") or {}
+        for mount in worker.get("volumes") or []:
+            assert "analytics" not in mount
+
+
 class TestLakehouseComposeCiOverride:
     @staticmethod
     def _doc():

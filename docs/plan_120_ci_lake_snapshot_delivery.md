@@ -17,9 +17,15 @@ and distributing them.
 
 ## Current Status
 
-Status as of 2026-07-08: **Gate C.5 (worker isolation and observability)** is
-implemented, and **Gate C.75 (persisted planning cache)** has been added on
-top of it. VM validation had exposed an operational issue: production-sized
+Status as of 2026-07-15: **Gate E (manifest/package/upload)** is implemented
+and VM-verified. An `edge` snapshot was generated through the isolated
+`snapshot-worker`, packaged into `snapshot.tar.zst`, published with
+`archive_manifest.json`, promoted to
+`ci_snapshots/adaptive_refresh/latest.json`, and then rerun with
+`--reuse-archive-cache`, confirming `archive_cache_hit=true` /
+`archive_cache_action=reused`.
+
+Earlier VM validation had exposed an operational issue: production-sized
 cohort planning is too heavy to run inside the always-on production archiver
 service. Source audit and selector diagnostics passed against the VM lake, but
 a six-month `build_cohort` dry run consumed sustained CPU/network for hours
@@ -91,7 +97,9 @@ archive+manifest publish, and the alias file is always written before
 pointing at a snapshot with no alias. See
 [Packaging and upload (Gate E)](#packaging-and-upload-gate-e) below.
 
-The next gate is **Gate F - ops download API**.
+The next Plan 120 gate is **Gate F - ops download API**. In parallel, Plan 112
+Gate A4 should now consume the VM-verified Gate E archive contract through the
+existing download/seed scripts.
 
 The phase labels below describe product areas, not commit gates. For execution
 tracking, use the Step 1-11 checklist in
@@ -113,17 +121,11 @@ tracking, use the Step 1-11 checklist in
 | Download/seed scripts | Mostly done | Offline/local mode exists and verifies checksums. API mode is scaffolded but depends on the ops download API. |
 | CI pilot | Not started | Needs a real archive and ops download route first. |
 
-Next gate: **Gate E - manifest/package/upload**. Gate D materializes filtered
-Parquet under a fingerprint-addressed export prefix with a manifest recording
-row counts/file counts/checksums per table; the next step is packaging that
-materialized output into a `.tar.zst` archive, uploading it to MinIO, and
-promoting `latest.json`/aliases only after validation.
-
-Downstream dependency: Plan 112 Gate A4 (`Local Integration Harness`) should
-consume this Gate E output rather than inventing its own snapshot packaging or
-download contract. A4 needs a stable archive + manifest + checksum path so
-local MinIO/dbt/DuckDB/Lakekeeper/PySpark tests can all run from the same
-production-shaped fixture that CI can also consume.
+Current cross-plan handoff: Plan 112 Gate A4 (`Local Integration Harness`)
+should consume the VM-verified Gate E output rather than inventing its own
+snapshot packaging or download contract. A4 now has a stable archive +
+manifest + checksum path so local MinIO/dbt/DuckDB/Lakekeeper/PySpark tests
+can all run from the same production-shaped fixture that CI can also consume.
 
 ---
 

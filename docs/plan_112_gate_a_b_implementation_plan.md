@@ -265,6 +265,25 @@ configuration (Plan 119).
 snapshot artifacts and runs the same lakehouse worker path locally, before we
 add more PySpark business logic.
 
+> **Implementation note (2026-07-15):** A4 scaffolding shipped as planned,
+> with one shape decision worth recording: `docker-compose.lakehouse.local.yml`
+> is **fully self-contained** (its own throwaway MinIO on host port 19000,
+> Lakekeeper published on 18181, `cartracker-net` made non-external, and a
+> read-only *bind mount* of a local analytics directory,
+> `LAKEHOUSE_LOCAL_ANALYTICS_DIR` defaulting to `./.cache/analytics`) rather
+> than joining a locally running main project's network/MinIO. This mirrors
+> the CI override's pattern instead of the A3 override's, so a dev box needs
+> no main-project stack at all and `down -v` on project `local-lakehouse` is
+> safe by construction. The preflight
+> (`scripts/preflight_local_lakehouse_snapshot.py`) is read-only, refuses
+> production-like MinIO endpoints/buckets with no override flag, and lazily
+> imports httpx/boto3/duckdb so its unit tests (and a bare host) degrade to
+> actionable FAILs rather than import errors. Two steps remain honestly
+> manual, tracked in the runbook's A4 section: acquiring the archive off the
+> VM (Gate F not built) and the local dbt build's `postgres_scan` Postgres
+> dependency. No CI job was added or broadened for A4 -- the new tests are
+> plain unit tests in the existing `unit-tests` job.
+
 The goal is a broader **test-local strategy**, not a one-off convenience
 script. The VM remains the production rehearsal environment; local development
 should catch missing Python/JVM dependencies, stale dbt schemas, bad Compose
@@ -298,15 +317,16 @@ A4 deliverables:
   a tiny seeded snapshot path, while local development can use richer Plan 120
   archives.
 
-Explicit Plan 120 dependency:
+Explicit Plan 120 handoff:
 
 - A4 should **not** invent its own snapshot packaging/download contract. It
   should consume the Plan 120 Gate E output.
-- Plan 120 Gate E is still required to package the already-materialized Gate D
-  export into `snapshot.tar.zst`, publish the manifest/archive with checksums,
-  and expose a stable latest/manifest/download path. Until that lands, A4 can
-  be partially rehearsed with manually copied/exported snapshot data, but it is
-  not the final local-testing workflow.
+- Plan 120 Gate E is complete and VM-verified: the already-materialized Gate D
+  export is packaged into `snapshot.tar.zst`, published with
+  `archive_manifest.json`, promoted through `latest.json`/aliases, and
+  reusable through `--reuse-archive-cache`. A4 can now build the final local
+  testing workflow around that contract instead of relying on manually copied
+  exports.
 
 **Dependency / rollback safety notes:**
 
