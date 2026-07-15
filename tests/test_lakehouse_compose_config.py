@@ -100,9 +100,18 @@ class TestLakehouseComposeStandalone:
         assert healthcheck["test"] == ["CMD", "/home/nonroot/lakekeeper", "healthcheck"]
         assert healthcheck["retries"] >= 30
 
-    def test_no_flyway_or_production_volume_reference(self):
+    def test_no_flyway_reference(self):
         doc = yaml.safe_load((_REPO_ROOT / "docker-compose.lakehouse.yml").read_text())
         assert "flyway" not in doc["services"]
+
+    def test_only_expected_volumes_declared(self):
+        """Only lakekeeper_pgdata (owned by this project) may be declared in
+        the base file -- no production volume reference here at all. The A3
+        analytics_db mount lives only in the separate
+        docker-compose.lakehouse.a3.yml override (never loaded by CI), so
+        that a CI run of the base file (+ its own ci.yml override) never
+        needs an external volume that doesn't exist on the runner."""
+        doc = yaml.safe_load((_REPO_ROOT / "docker-compose.lakehouse.yml").read_text())
         declared_volumes = set(doc.get("volumes") or {})
         assert declared_volumes == {"lakekeeper_pgdata"}
 
@@ -164,6 +173,44 @@ class TestLakehouseWorkerService:
         depends_on = service.get("depends_on") or {}
         assert "postgres" not in depends_on
         assert "flyway" not in depends_on
+
+
+class TestLakehouseA3Override:
+    """Plan 112 Gate A3: the read-only analytics DuckDB mount lives only in
+    docker-compose.lakehouse.a3.yml, a separate VM/local-manual-only
+    override -- never in the base docker-compose.lakehouse.yml, which the CI
+    `lakehouse` job also runs A2 against and which has no such external
+    volume on the runner."""
+
+    @staticmethod
+    def _doc():
+        return yaml.safe_load((_REPO_ROOT / "docker-compose.lakehouse.a3.yml").read_text())
+
+    def test_mounts_analytics_db_read_only(self):
+        service = self._doc()["services"]["lakehouse-worker"]
+        assert "cartracker_analytics_db:/data/analytics:ro" in service["volumes"]
+
+    def test_analytics_db_volume_declared_external(self):
+        spec = self._doc()["volumes"]["cartracker_analytics_db"]
+        assert spec["external"] is True
+
+    def test_no_volume_mount_is_writable(self):
+        """Defense in depth: every lakehouse-worker volume mount in this
+        override must be read-only -- this worker never writes to a
+        main-project volume."""
+        service = self._doc()["services"]["lakehouse-worker"]
+        for mount in service["volumes"]:
+            assert mount.endswith(":ro"), f"non-read-only mount: {mount}"
+
+    def test_base_file_has_no_analytics_volume_reference(self):
+        """The CI job never loads this override, so the base file must be
+        fully CI-safe on its own: no analytics_db mount, no external volume
+        declaration that doesn't exist on a CI runner."""
+        base_doc = yaml.safe_load((_REPO_ROOT / "docker-compose.lakehouse.yml").read_text())
+        base_service = base_doc["services"]["lakehouse-worker"]
+        assert "cartracker_analytics_db" not in (base_doc.get("volumes") or {})
+        for mount in base_service.get("volumes") or []:
+            assert "analytics" not in mount
 
 
 class TestLakehouseComposeCiOverride:

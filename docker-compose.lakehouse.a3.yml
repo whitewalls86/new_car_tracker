@@ -1,0 +1,31 @@
+# Plan 112 Gate A3: VM/local-manual-only override for docker-compose.lakehouse.yml.
+#
+# Adds the read-only analytics DuckDB mount `lakehouse-worker` needs to run
+# scripts/export_volatility_features_to_iceberg.py against the real
+# int_listing_volatility_features table. Deliberately kept out of the base
+# docker-compose.lakehouse.yml (which the CI `lakehouse` job also runs A2
+# against) because the `cartracker_analytics_db` volume is external -- owned
+# by the main project's docker-compose.yml -- and does not exist on a CI
+# runner. Only ever add this file as a second `-f` for VM/local A3 runs; the
+# CI job must never reference it.
+#
+# Usage (see docs/runbook_lakehouse.md's A3 section):
+#   docker compose \
+#     -f docker-compose.lakehouse.yml -f docker-compose.lakehouse.a3.yml \
+#     -p cartracker-lakehouse run --rm lakehouse-worker \
+#     python -m scripts.export_volatility_features_to_iceberg rehearsal
+
+services:
+  lakehouse-worker:
+    environment:
+      DUCKDB_PATH: /data/analytics/analytics.duckdb
+    volumes:
+      # Confirmed VM volume name via `docker volume ls | grep analytics` --
+      # not declared `external: true` in the main project's
+      # docker-compose.yml, so Compose names it with that project's prefix.
+      # Mounted `:ro` -- this worker must never write to the analytics DB.
+      - cartracker_analytics_db:/data/analytics:ro
+
+volumes:
+  cartracker_analytics_db:
+    external: true

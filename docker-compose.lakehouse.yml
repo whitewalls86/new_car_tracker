@@ -91,8 +91,11 @@ services:
   # in the main docker-compose.yml. Profile-gated so `docker compose -f
   # docker-compose.lakehouse.yml up` (no profile) never launches it --
   # invoke explicitly via `docker compose ... run --rm lakehouse-worker ...`.
-  # Read-only `analytics_db` mount is A3 (VM real-table rehearsal) scope; A2's
-  # fixture-derived spike does not need it, so it is omitted here until A3.
+  # The read-only `analytics_db` mount (A3, VM/local-manual rehearsal against
+  # the real int_listing_volatility_features table) lives in the separate
+  # docker-compose.lakehouse.a3.yml override, not here -- this base file is
+  # also what the CI `lakehouse` job runs A2 against, and a CI runner has no
+  # such external volume to mount.
   lakehouse-worker:
     build:
       context: .
