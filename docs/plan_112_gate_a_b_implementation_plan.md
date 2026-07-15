@@ -168,9 +168,8 @@ cleanup (§2.6).
 > separately named there, which also has to bootstrap the Lakekeeper server
 > itself via `POST /management/v1/bootstrap` before a first warehouse can be
 > created against its default project), and the CI `lakehouse` job's A2
-> round-trip step was attempted per the Q2 recommendation (see
-> docs/runbook_lakehouse.md for current pass/fail status rather than
-> assuming success here).
+> round-trip step was attempted per the Q2 recommendation and **passes**
+> (see docs/runbook_lakehouse.md's A2 section).
 >
 > One correction to §2.5's Spark-conf sample: it configures Hadoop-AWS's
 > S3AFileSystem (`spark.hadoop.fs.s3a.*`, `s3a://` scheme). In practice,
@@ -181,6 +180,20 @@ cleanup (§2.6).
 > plus `s3.access-key-id`/`s3.secret-access-key` catalog properties, and
 > `lakehouse/Dockerfile` ships `iceberg-aws-bundle` (AWS SDK v2) instead of
 > `hadoop-aws`/`aws-java-sdk-bundle` (AWS SDK v1).
+>
+> **A2 is now verified end to end, both in CI and on the production VM
+> (2026-07-15).** Two more fixes landed getting there, beyond what's
+> described above: (1) `DROP TABLE ... PURGE` failed because Lakekeeper
+> rejects the S3 request-signing calls PURGE issues for a table it has
+> already unregistered -- cleanup now does a plain `DROP TABLE` and deletes
+> the MinIO objects itself directly via boto3, reading the table's *actual*
+> (UUID-based, not `<namespace>/<table_name>`-shaped) location first; (2)
+> `lakehouse/Dockerfile` hardcoded `JAVA_HOME` to the x86_64 JVM path, which
+> doesn't exist on the production VM (an OCI A1/Ampere ARM64 shape, per Plan
+> 105) -- fixed via a build-time symlink that resolves the actual installed
+> JVM path regardless of architecture. See `docs/lakehouse_substrate_decision.md`'s
+> "Gate A spike results" section for the real VM run's snapshot IDs and
+> cleanup proof.
 
 **Explicitly deferred out of A1/A2:** the real `int_listing_volatility_features`
 snapshot (A3, needs the VM), any MLflow (B*), and any Lakekeeper

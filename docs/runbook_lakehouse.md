@@ -10,6 +10,12 @@ and (A2) the profile-gated `lakehouse-worker` PySpark round-trip against a
 fixture-derived Iceberg table. PyIceberg validation (A2b) and MLflow (Gate B)
 are out of scope here and will extend this doc as they land.
 
+**A2 status: verified end to end, both in CI and on the production VM
+(2026-07-15)** -- write, append, time-travel, and cleanup all succeeded
+against real Lakekeeper + MinIO on the VM's OCI A1 (Ampere/ARM64) hardware.
+See `docs/lakehouse_substrate_decision.md`'s "Gate A spike results" section
+for the real snapshot IDs and cleanup proof.
+
 ## LAKEKEEPER_DB_PASSWORD / LAKEKEEPER_PG_ENCRYPTION_KEY value format
 
 Learned during VM A1 verification: generate these as URL-safe/hex strings,

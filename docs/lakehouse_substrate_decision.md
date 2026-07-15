@@ -5,13 +5,15 @@
 This revision (2026-07-14) supersedes the prior Hadoop/file-catalog-first
 pass per `docs/plan_112_gate_a_b_implementation_plan.md`'s locked decisions
 (D1/D2). Gate A1 (`docker-compose.lakehouse.yml`, isolated
-`lakekeeper-postgres`, CI smoke) has been implemented. Gate A2
-(`lakehouse-worker`, warehouse registration, PySpark write/append/
-time-travel/cleanup round-trip against a fixture-derived table) has also
-landed -- see `docs/runbook_lakehouse.md`'s A2 section for the commands.
-PyIceberg validation (A2b) and the real A3 spike results (real
-`int_listing_volatility_features` snapshot, VM-only) below remain
-placeholders until those land.
+`lakekeeper-postgres`, CI smoke) has been implemented. **Gate A2 is complete
+and verified**, both in the dedicated CI `lakehouse` job and on the
+production VM (2026-07-15): `lakehouse-worker`, idempotent server
+bootstrap + warehouse registration, and the full PySpark write/append/
+time-travel/cleanup round-trip against a fixture-derived table all ran
+successfully end to end -- see `docs/runbook_lakehouse.md`'s A2 section for
+the commands and the results below for the real output. PyIceberg validation
+(A2b) and the real A3 spike (real `int_listing_volatility_features`
+snapshot, VM-only) remain outstanding.
 
 Iceberg table writes now exist, but only against the isolated
 `lakehouse_spike/` MinIO prefix and a small synthetic fixture table -- no
@@ -240,12 +242,34 @@ Rules:
   Iceberg table-format mechanics (snapshots, manifests, schema evolution),
   not replicating Snowflake's managed operational layer.
 
-## Gate A spike results (placeholder)
+## Gate A spike results
 
-**Not yet run.** This section must be replaced with real output once the
-Gate A Iceberg spike executes: exact commands used, table/catalog names,
-snapshot IDs, row counts, schema, time-travel proof, and cleanup
-verification (before/after production Parquet row counts and schema hashes).
+**A2 (fixture-derived table): run and verified, both in CI and on the VM
+(2026-07-15).** A3's real `int_listing_volatility_features` snapshot with
+before/after production-data cleanup proof is still outstanding -- see the
+placeholder further below.
+
+```text
+Spike date: 2026-07-15
+Run by: docker compose -f docker-compose.lakehouse.yml -p cartracker-lakehouse
+  run --rm lakehouse-worker python -m scripts.spike_iceberg_lakehouse roundtrip
+  (dedicated `lakehouse` CI job, and the OCI A1/Ampere ARM64 production VM)
+Spark version: pyspark 3.5.3
+Iceberg version: iceberg-spark-runtime-3.5_2.12 1.6.1 + iceberg-aws-bundle 1.6.1 (S3FileIO)
+Catalog type: Lakekeeper REST catalog, quay.io/lakekeeper/catalog:v0.13.1
+Table: cartracker.cartracker_experiments.spike_fixture (5-VIN synthetic fixture, two batches)
+Snapshot IDs (VM run): 6545653745595400329 -> 179396139582586898
+Time-travel proof: snapshot 1 = 5 rows, current (snapshot 2) = 10 rows
+Cleanup proof: table dropped from the catalog; all 14 underlying MinIO objects
+  deleted from the table's actual (Lakekeeper-allocated, UUID-based) location
+  under lakehouse_spike/warehouse/ -- verified via boto3 listing before/after,
+  not assumed
+```
+
+**A3 (real `int_listing_volatility_features` snapshot, VM-only): not yet run.**
+This sub-section must be replaced with real output once A3 executes: exact
+commands used, row counts, schema, time-travel proof, and before/after
+production Parquet row-count/schema-hash cleanup verification.
 
 ```text
 Spike date: <fill in>
