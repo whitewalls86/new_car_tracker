@@ -11,9 +11,13 @@ production VM (2026-07-15): `lakehouse-worker`, idempotent server
 bootstrap + warehouse registration, and the full PySpark write/append/
 time-travel/cleanup round-trip against a fixture-derived table all ran
 successfully end to end -- see `docs/runbook_lakehouse.md`'s A2 section for
-the commands and the results below for the real output. PyIceberg validation
-(A2b) and the real A3 spike (real `int_listing_volatility_features`
-snapshot, VM-only) remain outstanding.
+the commands and the results below for the real output. **A3 is also now
+complete and verified on the production VM (2026-07-15)**: the real
+`int_listing_volatility_features` table (250,790 rows) wrote successfully to
+`cartracker_experiments.volatility_features_snapshot`, validated against the
+DuckDB source, and cleanup dropped the table and deleted every underlying
+MinIO object -- see the results below for the real output. PyIceberg
+validation (A2b) remains outstanding.
 
 Iceberg table writes now exist, but only against the isolated
 `lakehouse_spike/` MinIO prefix and a small synthetic fixture table -- no
@@ -245,9 +249,9 @@ Rules:
 ## Gate A spike results
 
 **A2 (fixture-derived table): run and verified, both in CI and on the VM
-(2026-07-15).** A3's real `int_listing_volatility_features` snapshot with
-before/after production-data cleanup proof is still outstanding -- see the
-placeholder further below.
+(2026-07-15).** A3 (real `int_listing_volatility_features` snapshot,
+VM-only) is also now run and verified, including cleanup, on the production
+VM (2026-07-15) -- see below.
 
 ```text
 Spike date: 2026-07-15
@@ -266,19 +270,34 @@ Cleanup proof: table dropped from the catalog; all 14 underlying MinIO objects
   not assumed
 ```
 
-**A3 (real `int_listing_volatility_features` snapshot, VM-only): not yet run.**
-This sub-section must be replaced with real output once A3 executes: exact
-commands used, row counts, schema, time-travel proof, and before/after
-production Parquet row-count/schema-hash cleanup verification.
+**A3 (real `int_listing_volatility_features` snapshot, VM-only): run and
+verified, including cleanup, on the production VM (2026-07-15).** Three
+dependency/API fixes landed getting here (PRs #161-#163: missing `pytz`,
+duckdb's `.arrow()` returning a `RecordBatchReader` instead of a `Table`,
+and Python 3.13 dropping `distutils` from the stdlib that PySpark 3.5.3
+still imports) -- see `project_plan112_backtest_mlflow` memory for the full
+list. The first run used `--keep` to leave the table in place for
+inspection before running `cleanup` as a separate step, so the row-count/
+cleanup proof below comes from two separate command invocations, not one
+`rehearsal` run.
 
 ```text
-Spike date: <fill in>
-Run by: <fill in>
-Spark version: <fill in>
-Iceberg version: <fill in>
-Catalog type: <fill in>
-Table: <fill in>
-Snapshot IDs: <fill in>
-Time-travel proof: <fill in>
-Cleanup proof: <fill in>
+Spike date: 2026-07-15
+Run by: docker compose -f docker-compose.lakehouse.yml -f docker-compose.lakehouse.a3.yml \
+  -p cartracker-lakehouse run --rm lakehouse-worker \
+  python -m scripts.export_volatility_features_to_iceberg rehearsal --keep
+  (then a separate `cleanup` invocation -- production OCI A1/Ampere ARM64 VM)
+Spark version: pyspark 3.5.3
+Iceberg version: iceberg-spark-runtime-3.5_2.12 1.6.1 + iceberg-aws-bundle 1.6.1 (S3FileIO)
+Catalog type: Lakekeeper REST catalog, quay.io/lakekeeper/catalog:v0.13.1
+Table: cartracker.cartracker_experiments.volatility_features_snapshot
+  (real dbt int_listing_volatility_features snapshot, one row per VIN)
+Source validation: row_count=250790, distinct_vin17=250790 (no null vin17),
+  max_latest_fetched_at=2026-07-13 19:45:25.544061
+Snapshot ID: 2630085324796564860
+Location: s3://bronze/lakehouse_spike/warehouse/019f66a3-1674-75e2-8321-379bccd86457
+Iceberg row count: 250790 -- exact match against the DuckDB source row_count
+Cleanup proof: table dropped from the catalog; all 7 underlying MinIO objects
+  deleted from the table's actual (Lakekeeper-allocated, UUID-based) location
+  under lakehouse_spike/warehouse/019f66a3-1674-75e2-8321-379bccd86457/
 ```
