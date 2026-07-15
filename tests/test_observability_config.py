@@ -159,6 +159,32 @@ class TestDockerComposeTrawlMemoryGuardrails:
         assert service["memswap_limit"] == "512m"
 
 
+class TestCaddySnapshotDownloadRoute:
+    """Plan 120 Gate F: script-token snapshot downloads must reach ops
+    directly instead of being intercepted by the browser OAuth /admin* block."""
+
+    @staticmethod
+    def _caddyfile() -> str:
+        path = _REPO_ROOT / "Caddyfile"
+        assert path.exists(), "Caddyfile missing"
+        return path.read_text()
+
+    def test_snapshot_download_route_precedes_generic_admin_auth(self):
+        text = self._caddyfile()
+        snapshot_route = text.index("handle /admin/snapshots/adaptive-refresh*")
+        generic_admin_route = text.index("handle /admin*")
+        assert snapshot_route < generic_admin_route
+
+    def test_snapshot_download_route_uses_ops_token_auth_not_oauth_redirect(self):
+        text = self._caddyfile()
+        start = text.index("handle /admin/snapshots/adaptive-refresh*")
+        end = text.index("handle /admin/users*")
+        block = text[start:end]
+        assert "reverse_proxy ops:8060" in block
+        assert "forward_auth" not in block
+        assert "oauth2-proxy" not in block
+
+
 class TestGrafanaDashboards:
     _DASHBOARD_DIR = _REPO_ROOT / "grafana" / "dashboards"
     _EXPECTED = {"pipeline_health.json", "infrastructure.json", "service_latency.json", "logs.json"}
