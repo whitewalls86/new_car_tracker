@@ -1,7 +1,14 @@
 """
-Plan 112 Gate A2: idempotent Lakekeeper warehouse bootstrap.
+Plan 112 Gate A2: idempotent Lakekeeper server bootstrap + warehouse
+registration.
 
-Registers the single `cartracker_experiments` warehouse (shared.iceberg_catalog)
+A fresh Lakekeeper server (as `lakekeeper-postgres`/`lakekeeper` always are
+in the isolated Gate A stack) has no default project until it is bootstrapped
+via POST /management/v1/bootstrap -- warehouse creation against the default
+project (`00000000-0000-0000-0000-000000000000`) 404s with `ProjectNotFound`
+otherwise. This script bootstraps the server first (idempotent -- skipped if
+`/management/v1/info` already reports `bootstrapped: true`), then registers
+the single `cartracker_experiments` warehouse (shared.iceberg_catalog)
 against Lakekeeper's management API, storage profile pointed at the isolated
 `lakehouse_spike/warehouse/` prefix of the `bronze` MinIO bucket -- never any
 other prefix. Iceberg REST /v1/config and namespace CRUD both need a
@@ -10,10 +17,8 @@ makes A2's PySpark round-trip possible.
 
     python -m scripts.register_lakehouse_warehouse
 
-Idempotent: if a warehouse named `cartracker_experiments` already exists
-(checked via GET, and also treated as success on a 409 from POST), this exits
-0 without making changes -- safe to call every time before the spike script
-runs, in CI, on the VM, or locally.
+Idempotent end to end: safe to call every time before the spike script runs,
+in CI, on the VM, or locally.
 
 Exact Lakekeeper management-API request/response shape is pinned to
 quay.io/lakekeeper/catalog:v0.13.1 and is the one part of this script most
@@ -53,6 +58,30 @@ def _request(method: str, path: str, body: dict | None = None) -> tuple[int, dic
             return e.code, {"raw": payload.decode(errors="replace")}
 
 
+def server_bootstrapped() -> bool:
+    status, body = _request("GET", "/management/v1/info")
+    if status != 200:
+        raise RuntimeError(f"Failed to fetch server info: HTTP {status} {body}")
+    return bool(body.get("bootstrapped"))
+
+
+def ensure_bootstrapped() -> None:
+    if server_bootstrapped():
+        print("Lakekeeper server already bootstrapped; nothing to do.")
+        return
+
+    status, body = _request(
+        "POST", "/management/v1/bootstrap", {"accept-terms-of-use": True}
+    )
+    if status in (200, 201, 204):
+        print("Bootstrapped Lakekeeper server.")
+        return
+    if status == 409:
+        print("Lakekeeper server already bootstrapped (409); treating as success.")
+        return
+    raise RuntimeError(f"Failed to bootstrap Lakekeeper server: HTTP {status} {body}")
+
+
 def warehouse_exists(name: str) -> bool:
     status, body = _request("GET", "/management/v1/warehouse")
     if status != 200:
@@ -62,6 +91,8 @@ def warehouse_exists(name: str) -> bool:
 
 
 def register_warehouse() -> None:
+    ensure_bootstrapped()
+
     if warehouse_exists(WAREHOUSE_NAME):
         print(f"Warehouse {WAREHOUSE_NAME!r} already registered; nothing to do.")
         return

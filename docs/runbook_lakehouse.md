@@ -141,8 +141,12 @@ direct copy, no production restart without explicit confirmation.
 docker compose -f docker-compose.lakehouse.yml -p cartracker-lakehouse \
   build lakehouse-worker
 
-# One-time (idempotent) warehouse bootstrap -- required before any Iceberg
-# REST /v1/config call or table write; A1's known limitation is exactly this.
+# One-time (idempotent) server bootstrap + warehouse registration --
+# required before any Iceberg REST /v1/config call or table write; A1's
+# known limitation is exactly this. A fresh Lakekeeper server has no default
+# project until POST /management/v1/bootstrap runs once (warehouse creation
+# otherwise 404s with ProjectNotFound) -- this script does that first, then
+# registers the warehouse.
 docker compose -f docker-compose.lakehouse.yml -p cartracker-lakehouse \
   run --rm lakehouse-worker python -m scripts.register_lakehouse_warehouse
 
