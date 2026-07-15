@@ -12,9 +12,12 @@ boto3
 requests
 
 # Plan 112 Gate A3: reading the real int_listing_volatility_features table
-# out of the analytics DuckDB file and converting it to a Spark DataFrame
-# (scripts/export_volatility_features_to_iceberg.py). Not needed by A2's
-# in-process synthetic fixture.
+# out of the analytics DuckDB file as a pandas DataFrame
+# (scripts/export_volatility_features_to_iceberg.py, via duckdb's `.df()`)
+# and handing it to spark.createDataFrame. Not needed by A2's in-process
+# synthetic fixture. pyarrow is kept alongside pandas even though the script
+# doesn't import it directly -- PySpark's createDataFrame(pandas_df) uses it
+# for the Arrow-optimized conversion path when available.
 duckdb
 pyarrow
 pandas
