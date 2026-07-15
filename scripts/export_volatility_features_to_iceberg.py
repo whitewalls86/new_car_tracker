@@ -107,7 +107,15 @@ def validate_iceberg_matches_source(iceberg_row_count: int, source_row_count: in
 
 def _read_source_duckdb():
     """Open the analytics DuckDB file read-only, validate it, and return
-    (arrow_table, row_count, distinct_vin17, max_latest_fetched_at)."""
+    (source_df, row_count, distinct_vin17, max_latest_fetched_at).
+
+    Reads straight to a pandas DataFrame via `.df()` rather than going
+    through `.arrow()` -- confirmed on the VM that `.arrow()` returns a
+    `pyarrow.lib.RecordBatchReader` (no `.to_pandas()`) rather than a
+    `pyarrow.Table` on the duckdb version this image resolves to; `.df()`
+    is unambiguous and is all `cmd_export` needs before handing off to
+    `spark.createDataFrame`.
+    """
     import duckdb
 
     con = duckdb.connect(DUCKDB_PATH, read_only=True)
@@ -123,10 +131,10 @@ def _read_source_duckdb():
             """
         ).fetchone()
         validate_source_counts(row_count, distinct_vin17, null_vin17_count)
-        arrow_table = con.execute(f"SELECT * FROM {SOURCE_TABLE}").arrow()
+        source_df = con.execute(f"SELECT * FROM {SOURCE_TABLE}").df()
     finally:
         con.close()
-    return arrow_table, row_count, distinct_vin17, max_latest_fetched_at
+    return source_df, row_count, distinct_vin17, max_latest_fetched_at
 
 
 def _get_spark():
@@ -160,11 +168,11 @@ def _table_location(spark, table_name):
 
 
 def cmd_export(args):
-    arrow_table, source_row_count, distinct_vin17, _max_latest_fetched_at = _read_source_duckdb()
+    source_df, source_row_count, distinct_vin17, _max_latest_fetched_at = _read_source_duckdb()
 
     spark = _get_spark()
     _ensure_namespace(spark)
-    df = spark.createDataFrame(arrow_table.to_pandas())
+    df = spark.createDataFrame(source_df)
     df.writeTo(table_identifier(TABLE_NAME)).createOrReplace()
 
     iceberg_row_count = spark.table(table_identifier(TABLE_NAME)).count()
