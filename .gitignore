@@ -21,3 +21,4 @@ scripts/provision_oracle_vm.py
 /audit*
 graphify-out/
 /rewrite*
+.cache/
