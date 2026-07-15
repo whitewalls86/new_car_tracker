@@ -20,11 +20,17 @@ FROM python:3.13-slim-bookworm
 ARG ICEBERG_SPARK_RUNTIME_VERSION=1.6.1
 ARG ICEBERG_AWS_BUNDLE_VERSION=1.6.1
 
+# Debian's openjdk-17 package installs to an architecture-suffixed path
+# (java-17-openjdk-amd64 on x86_64 CI runners, java-17-openjdk-arm64 on the
+# OCI A1/Ampere ARM64 VM -- see docs/plan_105_vm_migration.md) -- resolve it
+# dynamically via a stable symlink instead of hardcoding one architecture,
+# so this image builds correctly on both.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends openjdk-17-jre-headless curl \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -sfn "$(dirname "$(dirname "$(readlink -f "$(command -v java)")")")" /usr/lib/jvm/default-java
 
-ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+ENV JAVA_HOME=/usr/lib/jvm/default-java
 
 WORKDIR /app
 
