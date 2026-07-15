@@ -117,6 +117,26 @@ jobs:
             -f docker-compose.lakehouse.yml -f docker-compose.lakehouse.ci.yml \
             -p ci-lakehouse build lakehouse-worker
 
+      - name: Create bronze bucket in the job-local MinIO
+        # Unlike the VM/local stack (real minio, bronze bucket already
+        # provisioned), this job's throwaway MinIO starts empty -- the
+        # warehouse registration below fails with a 400 IO error otherwise.
+        # Same one-off boto3 snippet the `dbt` job uses, pointed at this
+        # job's published port.
+        run: |
+          python -c "
+          import boto3
+          from botocore.client import Config
+          s3 = boto3.client('s3',
+              endpoint_url='http://localhost:19000',
+              aws_access_key_id='${{ env.MINIO_ROOT_USER }}',
+              aws_secret_access_key='${{ env.MINIO_ROOT_PASSWORD }}',
+              config=Config(signature_version='s3v4'),
+              region_name='us-east-1')
+          s3.create_bucket(Bucket='bronze')
+          print('Created bucket: bronze')
+          "
+
       - name: Register the cartracker_experiments warehouse (A2)
         # Iceberg REST /v1/config and namespace CRUD both need a registered
         # warehouse first (A1's documented limitation) -- idempotent, safe to
