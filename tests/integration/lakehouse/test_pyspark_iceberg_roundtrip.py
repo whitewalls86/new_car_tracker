@@ -12,14 +12,28 @@ local-dev convenience for iterating against a stack reachable from the host
 stack) with pyspark installed on the host Python -- skipped automatically if
 pyspark isn't importable, so it never breaks the regular `unit-tests` job if
 ever collected there by mistake.
+
+Uses importlib.util.find_spec (not pytest.importorskip) for that presence
+check specifically so it stays a lazy, collection-safe skipif condition,
+matching every other conditionally-runnable integration test in this repo
+(see e.g. tests/integration/dbt/test_incremental_models_real_build.py's
+`shutil.which("dbt") is None` check) -- importorskip actually performs the
+import inline at module-import time, which fires before pytest's `-m`
+marker filtering ever gets a chance to deselect the test, so it would show
+up as SKIPPED instead of cleanly deselected under `-m "not integration"`.
 """
+import importlib.util
 import os
 
 import pytest
 
-pytestmark = pytest.mark.integration
-
-pyspark = pytest.importorskip("pyspark", reason="pyspark only installed in the lakehouse CI job")
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.skipif(
+        importlib.util.find_spec("pyspark") is None,
+        reason="pyspark only installed in the lakehouse CI job",
+    ),
+]
 
 
 def _base_uri():

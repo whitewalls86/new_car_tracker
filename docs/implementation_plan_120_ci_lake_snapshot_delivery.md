@@ -1156,7 +1156,7 @@ Current status as of 2026-07-08 (Gate C.5, Gate C.75, and Gate D implemented; Ga
 | 4.5 | Worker isolation and observability | Done (Gate C.5) | `snapshot-worker` one-shot Compose service (profile-gated, no ports) reuses the archiver image/build context. Production archiver rejects `build_cohort=True` **or non-dry-run** with `409` unless `ARCHIVER_ALLOW_SYNC_SNAPSHOT_COHORT=true` (a real export always runs the same heavy planning). `audit_sources` is exempt either way. Phase timing logs cover source audit, selector candidate collection, cohort allocation, each closure pass, and Gate D table materialization. Selector diagnostics and cohort allocation share one candidate scan when both are requested. | Retarget the Airflow DAG to invoke `snapshot-worker` directly (or set the override flag) before production-sized VM runs — see Step 8. |
 | 4.75 | Persisted planning cache | Done (Gate C.75), extended for Gate D | `archiver/processors/lake_snapshot_planning_cache.py` fingerprints the heavy planning path (semantic identity only — excludes `dry_run`/`audit_sources`/`snapshot_id`; includes a `source_table_paths_hash` so a lake layout/bucket change invalidates old entries even if `source_base_path` is unchanged) and stores/loads a JSON planning artifact via `shared.minio.write_json`/`read_json`. The persisted artifact now includes actual cohort membership (`seed_vins`/`closed_vins`/`listing_ids`/`artifact_ids`/`artifact_row_keys`), not just counts, so a cache hit can feed Gate D materialization directly — `CACHE_SCHEMA_VERSION` was bumped to invalidate entries from before this change. `resolve_planning_window()` re-anchors a relative `source_window_months` window to the bucketed timestamp *before* both fingerprinting and querying, so the fingerprint's identity and the window actually queried always agree. `reuse_planning_cache`/`refresh_planning_cache`/`planning_cache_bucket_grain`/`planning_cache_prefix` are `SnapshotRequest`/CLI/API fields; reuse is opt-in only. `SnapshotResult` exposes `planning_cache_key`/`planning_cache_path`/`planning_cache_hit`/`planning_cache_action`. | None for this scope. |
 | 5 | Write filtered Parquet | Done (Gate D) | `archiver/processors/lake_snapshot_export.py`'s `materialize_filtered_tables` filters the four source tables by the closed cohort and writes each table into a fresh, immutable, uniquely-named generation directory (`fingerprints/{export_fingerprint}/generations/{generation_id}/data/`) — it never overwrites, deletes, or promotes-in-place over any previously published generation, so a refresh or a mid-write crash can never leave an already-published manifest pointing at missing/partial data. Returns a `MaterializationResult` (`tables`, `generation_id`, `data_path`, `ok` property). On any table error the (still-unpublished) generation directory is removed and `ok` is False; on success a `_SUCCESS` marker is written for future GC/audit tooling. `export_ci_lake_snapshot` treats the manifest write as the actual publish step: it refuses to write a manifest when `not result.ok`, and if `write_export_manifest` itself fails (now returns a bool instead of silently swallowing the error), also returns `status="export_failed"` rather than a false `"exported"`. Each table is written in a stable sort order (per Plan 120's table) for reproducible file bytes. `archiver/processors/lake_snapshot_export_cache.py` derives `export_fingerprint` from `planning_fingerprint` plus writer/schema/partition/compression constants, and persists/loads the materialized manifest (row counts, file counts, per-file checksums, `data_path`, `generation_id`); `load_export_manifest` re-validates the fingerprint, `data_path` presence, required-table presence, and absence of table errors before treating a cache hit as reusable — cheaply, from the manifest JSON alone. `reuse_export_cache`/`refresh_export_cache`/`export_cache_prefix` are new `SnapshotRequest`/CLI fields. Filter predicates never use a bare `artifact_id IN (...)` match against `silver_observations` — artifact-only-seeded rows are matched by an exact `(artifact_id, vin, listing_id)` row key (`CandidateSet.selected_row_keys`) instead, so materialization can't reintroduce the SRP/carousel co-occurrence pollution the closure fix removed. Covered by unit tests (local Parquet fixtures) and an integration test against the real MinIO fixture's `ARTIFACT_SRP_SHARED` scenario. | Wire `export_cache_prefix`/reuse-export-cache fields into the archiver HTTP payload if/when the endpoint needs to expose them (currently CLI-only; the endpoint is guarded off for real work anyway). File-existence/checksum re-verification on cache hit is intentionally not done (would require re-listing every object on every hit); only manifest-JSON-level completeness is checked. Orphaned/superseded generation directories are not yet garbage-collected. |
-| 6 | Package and upload | Not started | No archive or MinIO snapshot prefix is written. | Package from the fingerprint-addressed materialized snapshot, upload to temp prefix, validate manifest/archive, promote under `snapshot_archives/fingerprints/{export_fingerprint}/`, and update `latest.json`/aliases. |
+| 6 | Package and upload | Done (Gate E) | `archiver/processors/lake_snapshot_archive.py` packages the materialized Gate D export into a deterministic `snapshot.tar.zst` (sorted member order, fixed mtime/uid/gid/mode) and publishes it plus `archive_manifest.json` (the Gate D export manifest + an `archive: {path, bytes, sha256, file_count}` block) under `snapshot_archives/fingerprints/{export_fingerprint}/`. `export_ci_lake_snapshot()`'s non-dry-run path calls this as its last step (for both a fresh materialization and an export-cache hit), then promotes `aliases/{snapshot_id}.json` and `latest.json` (in that order) under `ci_snapshots/adaptive_refresh/` only after a successful publish. `reuse_archive_cache`/`refresh_archive_cache` mirror the Gate D flag contract; because there is exactly one canonical archive object per fingerprint (unlike Gate D's per-generation directories), a freshly built archive that conflicts with an already-published one at the same fingerprint is refused rather than silently overwritten unless `refresh_archive_cache=True` is passed. `scripts/lake_snapshot_common.py`'s `get_archive_meta` already tolerates the `archive_manifest.json` shape, so the downloader/seeder scripts needed no changes. | Reads/writes go through new `shared.minio.write_bytes`/`read_bytes`/`object_size` helpers (mirroring the existing `write_json`/`read_json` pattern) for the MinIO path; a local `base_path` fixture-mode path (mirroring Gate D's writer) covers the same logic without real MinIO for unit tests. No dedicated MinIO-container integration test was added for this gate — VM validation is the next real-world check. |
 | 7 | Archiver endpoint | Partial, control-plane only | `POST /snapshots/adaptive-refresh/run` is wired, guarded by `active_job()`, and tested for dry-run/audit/cohort/non-dry-run request handling. The sync-cohort guard now also fires on any non-dry-run request (not just `build_cohort=True`), since a real export always runs the same heavy planning; `audit_sources` remains exempt. | Do not use production archiver for production-sized cohort/export work. Keep cheap audit/dry-run behavior or convert to worker trigger/status API. |
 | 8 | Airflow DAG | Structurally done, worker target TBD | Manual DAG exists, passes params/defaults, logs result fields, and fails on unsupported statuses. | Retarget generation to the isolated snapshot worker before VM production-sized runs. Add cadence only after manual worker runs are stable. |
 | 9 | Ops download API | Not started | No `ops` routes exist yet. | Add latest/manifest/download routes, CI token auth, and download tests. |
@@ -1198,10 +1198,15 @@ Gate names for the next commits:
    `(artifact_id, vin, listing_id)` row keys for artifact-only-seeded rows
    rather than a blanket `artifact_id IN (...)` match, preserving the Gate C.5
    closure fix's invariant at materialization time.
-6. **Gate E - manifest/package/upload:** complete when an `edge` snapshot can be
-   packaged from the materialized export path, written to MinIO under
-   `snapshot_archives/fingerprints/{export_fingerprint}/`, validated, promoted,
-   and exposed through `latest.json`/aliases.
+6. **Gate E - manifest/package/upload:** complete (2026-07-15). An `edge`
+   snapshot can be packaged from the materialized export path, written to
+   MinIO under `snapshot_archives/fingerprints/{export_fingerprint}/`
+   (`snapshot.tar.zst` + `archive_manifest.json`), and exposed through
+   `latest.json`/aliases under `ci_snapshots/adaptive_refresh/` — promoted
+   only after a successful archive+manifest publish. Plan 112 Gate A4 should
+   consume this archive/manifest contract via the existing
+   `scripts/download_lake_snapshot.py`/`scripts/seed_lake_snapshot.py`
+   scripts rather than inventing a second packaging format.
 7. **Gate F - ops download API:** complete when authenticated latest/manifest/
    download routes can serve an existing snapshot archive.
 8. **Gate G - end-to-end smoke:** complete when the VM can generate an `edge`
@@ -1303,14 +1308,20 @@ Gate names for the next commits:
 - Preserve dbt-compatible prefixes.
 - Add row counts and table checksums.
 
-### Step 6: Package and Upload
+### Step 6: Package and Upload (done — Gate E)
 
-- Add `.tar.zst` packaging.
-- Package from `snapshot_exports/fingerprints/{export_fingerprint}/`.
-- Upload to temporary MinIO prefix.
-- Validate uploaded manifest/archive.
-- Promote to `snapshot_archives/fingerprints/{export_fingerprint}/`.
-- Update `latest.json` and `aliases/{snapshot_id}.json`.
+- Add `.tar.zst` packaging. (done — `build_archive_tar_zst`, deterministic
+  member order/mtime/uid/gid/mode)
+- Package from `snapshot_exports/fingerprints/{export_fingerprint}/`. (done)
+- Upload archive + archive manifest directly to
+  `snapshot_archives/fingerprints/{export_fingerprint}/` — the archive
+  identity is already the fingerprint-addressed final key, so no separate
+  temp-prefix promotion step was needed for the archive itself (only the
+  friendly alias/latest pointers are promoted as a distinct last step). (done)
+- Validate manifest/archive on reuse (schema/fingerprint/field checks plus an
+  object-size check against the recorded `archive.bytes`). (done)
+- Update `latest.json` and `aliases/{snapshot_id}.json`, alias written first.
+  (done)
 
 ### Step 7: Add Archiver Endpoint
 
@@ -1417,6 +1428,18 @@ MinIO, returning `status="exported"` with `export_fingerprint`,
 `manifest_key`, and `materialized_snapshot_path` populated. Add
 `--reuse-export-cache` to skip rematerialization when an equivalent export
 already exists, or `--refresh-export-cache` to force overwrite.
+
+As of Gate E, that same non-dry-run run also packages and uploads the
+archive as its last step: `snapshot.tar.zst` and `archive_manifest.json`
+under `snapshot_archives/fingerprints/{export_fingerprint}/`, plus
+`latest.json`/`aliases/{snapshot_id}.json` under
+`ci_snapshots/adaptive_refresh/`. The response additionally includes
+`archive_key`, `archive_bytes`, `archive_sha256`, `archive_manifest_key`,
+`archive_cache_hit`, and `archive_cache_action`. Add
+`--reuse-archive-cache` to skip repackaging when a valid, size-verified
+archive already exists for that fingerprint, or `--refresh-archive-cache` to
+force overwrite (packaging otherwise refuses to overwrite an existing
+archive whose checksum doesn't match a freshly built one).
 
 Do not run production-sized `build_cohort`/export work through
 `docker compose exec archiver ...` or through the production archiver HTTP API

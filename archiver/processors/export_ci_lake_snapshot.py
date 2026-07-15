@@ -20,6 +20,12 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+from archiver.processors.lake_snapshot_archive import (
+    DEFAULT_ALIAS_PREFIX,
+    DEFAULT_ARCHIVE_PREFIX,
+    package_snapshot_archive,
+    promote_snapshot_pointers,
+)
 from archiver.processors.lake_snapshot_cohort import (
     build_snapshot_cohort,
     candidate_sets_to_selector_diagnostics,
@@ -118,6 +124,10 @@ class SnapshotRequest:
     reuse_export_cache: bool = False
     refresh_export_cache: bool = False
     export_cache_prefix: str = DEFAULT_EXPORT_PREFIX
+    reuse_archive_cache: bool = False
+    refresh_archive_cache: bool = False
+    archive_prefix: str = DEFAULT_ARCHIVE_PREFIX
+    alias_prefix: str = DEFAULT_ALIAS_PREFIX
 
 
 @dataclass(frozen=True)
@@ -146,6 +156,10 @@ class SnapshotResult:
     export_cache_hit: bool = False
     export_cache_action: Optional[str] = None
     materialized_snapshot_path: Optional[str] = None
+    archive_manifest_key: Optional[str] = None
+    archive_sha256: Optional[str] = None
+    archive_cache_hit: bool = False
+    archive_cache_action: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -173,6 +187,10 @@ class SnapshotResult:
             "export_cache_hit": self.export_cache_hit,
             "export_cache_action": self.export_cache_action,
             "materialized_snapshot_path": self.materialized_snapshot_path,
+            "archive_manifest_key": self.archive_manifest_key,
+            "archive_sha256": self.archive_sha256,
+            "archive_cache_hit": self.archive_cache_hit,
+            "archive_cache_action": self.archive_cache_action,
         }
 
 
@@ -218,6 +236,10 @@ def validate_request(request: SnapshotRequest) -> None:
         raise SnapshotRequestError(
             "reuse_export_cache and refresh_export_cache cannot both be set"
         )
+    if request.reuse_archive_cache and request.refresh_archive_cache:
+        raise SnapshotRequestError(
+            "reuse_archive_cache and refresh_archive_cache cannot both be set"
+        )
 
 
 def resolve_request_defaults(request: SnapshotRequest) -> SnapshotRequest:
@@ -255,6 +277,10 @@ def resolve_request_defaults(request: SnapshotRequest) -> SnapshotRequest:
         reuse_export_cache=request.reuse_export_cache,
         refresh_export_cache=request.refresh_export_cache,
         export_cache_prefix=request.export_cache_prefix,
+        reuse_archive_cache=request.reuse_archive_cache,
+        refresh_archive_cache=request.refresh_archive_cache,
+        archive_prefix=request.archive_prefix,
+        alias_prefix=request.alias_prefix,
     )
 
 
@@ -746,6 +772,7 @@ def export_ci_lake_snapshot(request: SnapshotRequest) -> SnapshotResult:
     export_cache_hit = cached_manifest is not None
     if export_cache_hit:
         export_cache_action = "reused"
+        manifest = cached_manifest
         materialized_snapshot_path = cached_manifest["data_path"]
         logger.info(
             "export_ci_lake_snapshot: export_cache hit snapshot_id=%s export_fingerprint=%s",
@@ -820,6 +847,67 @@ def export_ci_lake_snapshot(request: SnapshotRequest) -> SnapshotResult:
             )
         materialized_snapshot_path = result.data_path
 
+    # Gate E: package the materialized export into snapshot.tar.zst and
+    # publish it (plus its archive manifest) under a fingerprint-addressed
+    # prefix. This runs for both a freshly materialized export and an
+    # export-cache hit, since packaging/upload is cached independently
+    # (keyed by the same export_fingerprint) from materialization itself.
+    logger.info(
+        "export_ci_lake_snapshot: archive package start snapshot_id=%s export_fingerprint=%s "
+        "reuse=%s refresh=%s",
+        snapshot_id, export_fingerprint, request.reuse_archive_cache,
+        request.refresh_archive_cache,
+    )
+    archive_result = package_snapshot_archive(
+        request.source_base_path, materialized_snapshot_path, manifest,
+        export_fingerprint, archive_prefix=request.archive_prefix,
+        reuse_archive_cache=request.reuse_archive_cache,
+        refresh_archive_cache=request.refresh_archive_cache,
+    )
+    if not archive_result.ok:
+        logger.warning(
+            "export_ci_lake_snapshot: archive packaging failed snapshot_id=%s "
+            "export_fingerprint=%s error=%s",
+            snapshot_id, export_fingerprint, archive_result.error,
+        )
+        return _export_failed(
+            [f"archive packaging failed: {archive_result.error}"], export_cache_action,
+        )
+
+    if request.max_archive_mb is not None and archive_result.archive_bytes is not None:
+        max_bytes = request.max_archive_mb * 1024 * 1024
+        if archive_result.archive_bytes > max_bytes:
+            logger.warning(
+                "export_ci_lake_snapshot: archive exceeds max_archive_mb snapshot_id=%s "
+                "export_fingerprint=%s archive_bytes=%s max_bytes=%s",
+                snapshot_id, export_fingerprint, archive_result.archive_bytes, max_bytes,
+            )
+            return _export_failed(
+                [
+                    f"archive_bytes {archive_result.archive_bytes} exceeds "
+                    f"max_archive_mb limit of {request.max_archive_mb} MB "
+                    f"({max_bytes} bytes)"
+                ],
+                export_cache_action,
+            )
+
+    # latest.json/aliases are promoted only after a successful archive
+    # publish, so a failed/partial packaging attempt never moves the
+    # friendly pointers CI/local downloaders read.
+    promotion = promote_snapshot_pointers(
+        request.source_base_path, snapshot_id, export_fingerprint, archive_result,
+        alias_prefix=request.alias_prefix,
+    )
+    if not promotion["ok"]:
+        logger.warning(
+            "export_ci_lake_snapshot: pointer promotion failed snapshot_id=%s "
+            "export_fingerprint=%s error=%s",
+            snapshot_id, export_fingerprint, promotion["error"],
+        )
+        return _export_failed(
+            [f"pointer promotion failed: {promotion['error']}"], export_cache_action,
+        )
+
     return SnapshotResult(
         snapshot_id=snapshot_id,
         tier=request.tier,
@@ -842,6 +930,12 @@ def export_ci_lake_snapshot(request: SnapshotRequest) -> SnapshotResult:
         export_cache_hit=export_cache_hit,
         export_cache_action=export_cache_action,
         materialized_snapshot_path=materialized_snapshot_path,
+        archive_key=archive_result.archive_key,
+        archive_manifest_key=archive_result.archive_manifest_key,
+        archive_bytes=archive_result.archive_bytes,
+        archive_sha256=archive_result.archive_sha256,
+        archive_cache_hit=archive_result.cache_hit,
+        archive_cache_action=archive_result.cache_action,
     )
 
 
@@ -886,6 +980,18 @@ def _parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--export-cache-prefix", dest="export_cache_prefix", default=DEFAULT_EXPORT_PREFIX,
     )
+    parser.add_argument(
+        "--reuse-archive-cache", dest="reuse_archive_cache", action="store_true"
+    )
+    parser.add_argument(
+        "--refresh-archive-cache", dest="refresh_archive_cache", action="store_true"
+    )
+    parser.add_argument(
+        "--archive-prefix", dest="archive_prefix", default=DEFAULT_ARCHIVE_PREFIX,
+    )
+    parser.add_argument(
+        "--alias-prefix", dest="alias_prefix", default=DEFAULT_ALIAS_PREFIX,
+    )
     return parser.parse_args(argv)
 
 
@@ -914,6 +1020,10 @@ def main(argv: Optional[List[str]] = None) -> None:
         reuse_export_cache=args.reuse_export_cache,
         refresh_export_cache=args.refresh_export_cache,
         export_cache_prefix=args.export_cache_prefix,
+        reuse_archive_cache=args.reuse_archive_cache,
+        refresh_archive_cache=args.refresh_archive_cache,
+        archive_prefix=args.archive_prefix,
+        alias_prefix=args.alias_prefix,
     )
     result = export_ci_lake_snapshot(request)
     print(json.dumps(result.to_dict(), indent=2))

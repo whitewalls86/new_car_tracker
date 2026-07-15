@@ -81,9 +81,11 @@ here, rather than left ambiguous across sections:
 
 ## 1. Recommended PR sequence
 
-Six PRs. The first two stand up infrastructure without touching real data;
+Seven PRs. The first two stand up infrastructure without touching real data;
 the third proves the full Iceberg mechanics against a CI-safe fixture; the
-fourth is the VM-only realistic rehearsal.
+fourth is the VM-only realistic rehearsal; the fifth turns Plan 120 snapshot
+delivery into a reusable local integration harness before this plan moves on
+to MLflow.
 
 | PR | Title | Gate | Depends on | CI-runnable? | Rollback |
 |----|-------|------|-----------|--------------|----------|
@@ -91,6 +93,7 @@ fourth is the VM-only realistic rehearsal.
 | **A2** | PySpark Iceberg fixture spike: write/read/append/time-travel against Lakekeeper + MinIO | A | A1 | Same dedicated `lakehouse` CI job, budget-gated — see §4.3 | Additive; delete `lakehouse_spike/` MinIO prefix + drop the fixture table via the catalog |
 | **A2b** *(optional, small)* | PyIceberg REST-catalog validation script | A | A1, A2 | **Yes** (pure Python, talks REST to the same Lakekeeper) | Additive script only |
 | **A3** | VM rehearsal: real `int_listing_volatility_features` snapshot + cleanup proof | A | A2 | No (VM/local-manual only, real production-derived data) | Additive; no prod Parquet/DuckDB mutation (read-only source mount) |
+| **A4** | Local integration harness: Plan 120 snapshot archive -> local MinIO/dbt/DuckDB -> Lakekeeper/PySpark/Iceberg smoke | A | A3, **Plan 120 Gate E** | Partially: CI should run the smallest feasible version; local runs may use richer snapshots | Additive local override + preflight/runbook; no production VM dependency |
 | **B1** | MLflow service + Postgres backend + MinIO artifact store | B | none (parallel to A) | Smoke via ephemeral store; server VM/local | Remove service + drop `mlflow` schema |
 | **B2** | Iceberg→MLflow metadata bridge + smoke experiment | B | A2 (A2b optional), B1 | **Yes** (fixture table → MLflow file store) | Additive helper + test |
 | **B3** *(thin)* | Runbook + substrate/feature-audit doc finalization | A+B | A3, B2 | docs only | n/a |
@@ -234,10 +237,76 @@ cleanup (§2.6).
 > unit tests for the new script's metadata/validation/cleanup-guard logic run
 > in the existing `unit-tests` job with everything live (DuckDB, Spark,
 > MinIO) mocked or avoided at import time, exactly like A2's spike tests.
+>
+> **A3 is now verified end to end on the production VM (2026-07-15).** Three
+> more dependency/API fixes landed getting there, all found by running the
+> real rehearsal on the VM rather than in any local/CI test (none of this
+> stack's actual DuckDB/Spark interaction has test coverage, by design --
+> those imports are deferred to keep the unit tests dependency-free): (1)
+> missing `pytz` -- duckdb's Python client needs it to convert timestamp
+> columns even for a plain `fetchone()`; (2) `duckdb.execute(sql).arrow()`
+> returns a `pyarrow.lib.RecordBatchReader` (no `.to_pandas()`) on the
+> resolved duckdb version, not a `pyarrow.Table` as the original code
+> assumed -- fixed by reading straight to a pandas DataFrame via `.df()`
+> instead; (3) Python 3.13 (this image's base) removed `distutils` from the
+> stdlib entirely, and PySpark 3.5.3's `require_minimum_pandas_version()`
+> still imports it directly -- fixed by adding `setuptools`, which installs
+> a `.pth`-based shim (`distutils -> setuptools._distutils`) with no code
+> change needed. See `docs/lakehouse_substrate_decision.md`'s "Gate A spike
+> results" section for the real VM run's row counts, snapshot ID, table
+> location, and cleanup proof (250,790 rows written, matched the DuckDB
+> source exactly, 7 MinIO objects deleted on cleanup).
 
 **Explicitly deferred out of A1/A2/A3:** any MLflow (B*), PyIceberg
 validation (A2b), and any Lakekeeper RBAC/multi-tenant/governance
 configuration (Plan 119).
+
+**What belongs in PR A4:** a local integration harness that consumes Plan 120
+snapshot artifacts and runs the same lakehouse worker path locally, before we
+add more PySpark business logic.
+
+The goal is a broader **test-local strategy**, not a one-off convenience
+script. The VM remains the production rehearsal environment; local development
+should catch missing Python/JVM dependencies, stale dbt schemas, bad Compose
+mounts, bad Spark/Lakekeeper config, and cleanup guard failures first.
+
+Target flow:
+
+```text
+Plan 120 snapshot archive
+    -> local MinIO seed
+    -> local dbt build
+    -> local analytics.duckdb
+    -> local Lakekeeper + lakehouse-worker / PySpark / Iceberg
+    -> local assertions + cleanup
+```
+
+A4 deliverables:
+
+- `docker-compose.lakehouse.local.yml` (or equivalent) that mounts a local
+  analytics DuckDB directory read-only into `lakehouse-worker`. This is
+  separate from `docker-compose.lakehouse.a3.yml`, which is VM-only and mounts
+  the VM's external `cartracker_analytics_db` volume.
+- A local preflight script or command sequence that checks, with clear error
+  messages: MinIO reachability, snapshot manifest/archive presence, snapshot
+  seeded status, `analytics.duckdb` existence, required dbt feature tables,
+  Lakekeeper health, and warehouse registration.
+- A runbook path from a fresh local environment to a successful PySpark Iceberg
+  smoke: acquire snapshot, seed local MinIO, run dbt, start Lakekeeper, run the
+  exporter/rehearsal, validate row counts, and clean up.
+- CI alignment where practical: CI can run the smaller synthetic A2 path and/or
+  a tiny seeded snapshot path, while local development can use richer Plan 120
+  archives.
+
+Explicit Plan 120 dependency:
+
+- A4 should **not** invent its own snapshot packaging/download contract. It
+  should consume the Plan 120 Gate E output.
+- Plan 120 Gate E is still required to package the already-materialized Gate D
+  export into `snapshot.tar.zst`, publish the manifest/archive with checksums,
+  and expose a stable latest/manifest/download path. Until that lands, A4 can
+  be partially rehearsed with manually copied/exported snapshot data, but it is
+  not the final local-testing workflow.
 
 **Dependency / rollback safety notes:**
 

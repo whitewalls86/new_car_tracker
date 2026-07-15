@@ -306,6 +306,95 @@ class TestReadJson:
 
 
 # ---------------------------------------------------------------------------
+# write_bytes / read_bytes / object_size
+# ---------------------------------------------------------------------------
+
+class TestWriteBytes:
+    def test_returns_s3_uri(self, mocker):
+        from shared.minio import BUCKET, write_bytes
+        _mock_client(mocker)
+        uri = write_bytes("snapshot_archives/fingerprints/abc/snapshot.tar.zst", b"data")
+        assert uri == f"s3://{BUCKET}/snapshot_archives/fingerprints/abc/snapshot.tar.zst"
+
+    def test_uploads_raw_bytes_uncompressed(self, mocker):
+        mock_c = _mock_client(mocker)
+        from shared.minio import write_bytes
+        write_bytes("k", b"raw-bytes-not-compressed")
+        assert mock_c.put_object.call_args[1]["Body"] == b"raw-bytes-not-compressed"
+
+    def test_default_content_type(self, mocker):
+        mock_c = _mock_client(mocker)
+        from shared.minio import write_bytes
+        write_bytes("k", b"data")
+        assert mock_c.put_object.call_args[1]["ContentType"] == "application/octet-stream"
+
+    def test_ensures_bucket_exists(self, mocker):
+        mock_c = _mock_client(mocker, bucket_exists=True)
+        from shared.minio import write_bytes
+        write_bytes("k", b"data")
+        mock_c.head_bucket.assert_called_once()
+
+
+class TestReadBytes:
+    def test_parses_full_s3_uri_bucket_and_key(self, mocker):
+        mock_c = _mock_client(mocker)
+        mock_body = MagicMock()
+        mock_body.read.return_value = b"data"
+        mock_c.get_object.return_value = {"Body": mock_body}
+
+        from shared.minio import read_bytes
+        result = read_bytes("s3://mybucket/some/path/file.bin")
+        assert result == b"data"
+        mock_c.get_object.assert_called_once_with(Bucket="mybucket", Key="some/path/file.bin")
+
+    def test_bare_key_uses_default_bucket(self, mocker):
+        mock_c = _mock_client(mocker)
+        mock_body = MagicMock()
+        mock_body.read.return_value = b"data"
+        mock_c.get_object.return_value = {"Body": mock_body}
+
+        from shared.minio import BUCKET, read_bytes
+        read_bytes("some/path/file.bin")
+        mock_c.get_object.assert_called_once_with(Bucket=BUCKET, Key="some/path/file.bin")
+
+
+class TestObjectSize:
+    def test_returns_content_length(self, mocker):
+        mock_c = _mock_client(mocker)
+        mock_c.head_object.return_value = {"ContentLength": 12345}
+        from shared.minio import object_size
+        assert object_size("some/key") == 12345
+
+    def test_returns_none_when_missing(self, mocker):
+        from botocore.exceptions import ClientError
+
+        mock_c = _mock_client(mocker)
+        mock_c.head_object.side_effect = ClientError(
+            {"Error": {"Code": "404", "Message": "Not Found"}}, "HeadObject",
+        )
+        from shared.minio import object_size
+        assert object_size("some/key") is None
+
+    def test_non_missing_client_error_propagates(self, mocker):
+        from botocore.exceptions import ClientError
+
+        mock_c = _mock_client(mocker)
+        mock_c.head_object.side_effect = ClientError(
+            {"Error": {"Code": "403", "Message": "Forbidden"}}, "HeadObject",
+        )
+        from shared.minio import object_size
+        with pytest.raises(ClientError):
+            object_size("some/key")
+
+    def test_parses_full_s3_uri(self, mocker):
+        mock_c = _mock_client(mocker)
+        mock_c.head_object.return_value = {"ContentLength": 1}
+        from shared.minio import object_size
+        object_size("s3://mybucket/some/key")
+        mock_c.head_object.assert_called_once_with(Bucket="mybucket", Key="some/key")
+
+
+# ---------------------------------------------------------------------------
 # ensure_bucket
 # ---------------------------------------------------------------------------
 
