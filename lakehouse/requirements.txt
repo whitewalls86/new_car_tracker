@@ -18,3 +18,9 @@ requests
 duckdb
 pyarrow
 pandas
+# duckdb's Python client requires pytz to convert timestamp columns (e.g.
+# latest_fetched_at) even for a plain fetchone() -- not installed
+# transitively by duckdb/pandas/pyarrow, confirmed missing on the first VM
+# A3 run (_duckdb.InvalidInputException: Required module 'pytz' failed to
+# import).
+pytz
