@@ -154,6 +154,34 @@ loop against a fixture-derived table (§2.4), run through the profile-gated
 one-shot `lakehouse-worker`, plus snapshot-metadata capture (§2.5) and
 cleanup (§2.6).
 
+> **Implementation note (2026-07-14):** A2 shipped with one deliberate
+> simplification versus §2.4's original text. Rather than seeding the Plan
+> 120 lake-snapshot fixture into MinIO and having the PySpark job read a
+> bounded Parquet slice of it, `scripts/spike_iceberg_lakehouse.py` generates
+> a small deterministic synthetic dataset in-process (5 VINs, two batches).
+> This keeps the spike script fully decoupled from the dbt/silver schema
+> while still exercising the complete write → append → time-travel → cleanup
+> mechanics against the real REST catalog + MinIO. The real
+> `int_listing_volatility_features` snapshot remains A3 (VM-only) scope,
+> unaffected. Also landed: `scripts/register_lakehouse_warehouse.py` (the
+> idempotent Lakekeeper warehouse-bootstrap script implied by §2.2 but not
+> separately named there, which also has to bootstrap the Lakekeeper server
+> itself via `POST /management/v1/bootstrap` before a first warehouse can be
+> created against its default project), and the CI `lakehouse` job's A2
+> round-trip step was attempted per the Q2 recommendation (see
+> docs/runbook_lakehouse.md for current pass/fail status rather than
+> assuming success here).
+>
+> One correction to §2.5's Spark-conf sample: it configures Hadoop-AWS's
+> S3AFileSystem (`spark.hadoop.fs.s3a.*`, `s3a://` scheme). In practice,
+> Lakekeeper hands Spark `s3://` table locations (not `s3a://`), which
+> Iceberg's native `S3FileIO` serves, not Hadoop's generic FileSystem --
+> `shared/iceberg_catalog.py` instead sets
+> `spark.sql.catalog.cartracker.io-impl=org.apache.iceberg.aws.s3.S3FileIO`
+> plus `s3.access-key-id`/`s3.secret-access-key` catalog properties, and
+> `lakehouse/Dockerfile` ships `iceberg-aws-bundle` (AWS SDK v2) instead of
+> `hadoop-aws`/`aws-java-sdk-bundle` (AWS SDK v1).
+
 **Explicitly deferred out of A1/A2:** the real `int_listing_volatility_features`
 snapshot (A3, needs the VM), any MLflow (B*), and any Lakekeeper
 RBAC/multi-tenant/governance configuration (Plan 119).

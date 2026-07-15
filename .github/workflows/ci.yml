@@ -55,11 +55,18 @@ jobs:
       - run: docker compose build
 
   lakehouse:
-    name: Lakehouse (Lakekeeper management info smoke)
-    # Plan 112 Gate A1: independent of the `dbt` job's GitHub Actions
+    name: Lakehouse (Lakekeeper smoke + PySpark Iceberg round-trip)
+    # Plan 112 Gate A: independent of the `dbt` job's GitHub Actions
     # `services:` blocks -- this job brings up its own self-contained
     # Compose stack (job-local MinIO + Lakekeeper + isolated Postgres) on
-    # non-default ports, per docs/runbook_lakehouse.md.
+    # non-default ports, per docs/runbook_lakehouse.md. A2 adds the heavier
+    # PySpark + Iceberg-Spark-runtime + iceberg-aws-bundle (S3FileIO) round-
+    # trip step (plan Sec 4.3): attempted here first per the plan's Q2
+    # recommendation, run
+    # through the same `lakehouse-worker` image/service the VM/runbook path
+    # uses (built via Compose, not pip-installed on the bare runner) so CI
+    # actually exercises lakehouse/Dockerfile and the real operating path;
+    # move to VM/local-manual only if this step proves too slow/flaky.
     runs-on: ubuntu-latest
     needs: lint
     env:
@@ -92,16 +99,62 @@ jobs:
       - name: Install test dependencies
         run: pip install -r requirements-dev.txt requests psycopg2-binary
 
-      - name: Run Lakekeeper management info smoke test
+      - name: Run Lakekeeper management info smoke test (A1)
         # A1 smoke only: Lakekeeper process + metadata-store boot and the
-        # warehouse-free management info endpoint over plain HTTP. Iceberg
-        # REST /v1/config and namespace CRUD need a registered warehouse first,
-        # so they are deferred to A2. No Spark, no PyIceberg either -- those
-        # are Gate A2/A2b scope.
-        run: pytest tests/integration/lakehouse/ -v -m integration
+        # warehouse-free management info endpoint over plain HTTP. No Spark,
+        # no PyIceberg -- those are the A2/A2b steps below.
+        run: pytest tests/integration/lakehouse/test_lakekeeper_smoke.py -v -m integration
         env:
           PYTHONPATH: ${{ github.workspace }}
           LAKEKEEPER_BASE_URI: http://localhost:18181
+
+      - name: Build lakehouse-worker image (A2)
+        # Same image/Dockerfile the VM/runbook path uses -- building it here
+        # (rather than pip-installing pyspark straight on the bare runner)
+        # means CI actually catches a broken lakehouse/Dockerfile or jar pin,
+        # not just a broken Python script.
+        run: |
+          docker compose \
+            -f docker-compose.lakehouse.yml -f docker-compose.lakehouse.ci.yml \
+            -p ci-lakehouse build lakehouse-worker
+
+      - name: Create bronze bucket in the job-local MinIO
+        # Unlike the VM/local stack (real minio, bronze bucket already
+        # provisioned), this job's throwaway MinIO starts empty -- the
+        # warehouse registration below fails with a 400 IO error otherwise.
+        # Same one-off boto3 snippet the `dbt` job uses, pointed at this
+        # job's published port.
+        run: |
+          python -c "
+          import boto3
+          from botocore.client import Config
+          s3 = boto3.client('s3',
+              endpoint_url='http://localhost:19000',
+              aws_access_key_id='${{ env.MINIO_ROOT_USER }}',
+              aws_secret_access_key='${{ env.MINIO_ROOT_PASSWORD }}',
+              config=Config(signature_version='s3v4'),
+              region_name='us-east-1')
+          s3.create_bucket(Bucket='bronze')
+          print('Created bucket: bronze')
+          "
+
+      - name: Register the cartracker_experiments warehouse (A2)
+        # Iceberg REST /v1/config and namespace CRUD both need a registered
+        # warehouse first (A1's documented limitation) -- idempotent, safe to
+        # re-run. Runs inside lakehouse-worker, joined to the same Compose
+        # network as lakekeeper/minio via container-DNS service names.
+        run: |
+          docker compose \
+            -f docker-compose.lakehouse.yml -f docker-compose.lakehouse.ci.yml \
+            -p ci-lakehouse run --rm lakehouse-worker \
+            python -m scripts.register_lakehouse_warehouse
+
+      - name: Run PySpark Iceberg round-trip (A2, budget-gated per plan Sec 4.3)
+        run: |
+          docker compose \
+            -f docker-compose.lakehouse.yml -f docker-compose.lakehouse.ci.yml \
+            -p ci-lakehouse run --rm lakehouse-worker \
+            python -m scripts.spike_iceberg_lakehouse roundtrip
 
       - name: Teardown (safe -- standalone ci-lakehouse project only)
         if: always()
