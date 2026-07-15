@@ -22,6 +22,16 @@ against real Lakekeeper + MinIO on the VM's OCI A1 (Ampere/ARM64) hardware.
 See `docs/lakehouse_substrate_decision.md`'s "Gate A spike results" section
 for the real snapshot IDs and cleanup proof.
 
+**A3 status: verified end to end on the production VM (2026-07-15)** --
+export, info, and cleanup all succeeded against the real
+`int_listing_volatility_features` table (250,790 rows, exact match against
+the DuckDB source). Three dependency/API fixes landed getting there (missing
+`pytz`; duckdb's `.arrow()` returning a `RecordBatchReader` instead of a
+`Table`; Python 3.13 dropping `distutils`, which PySpark 3.5.3 still
+imports) -- see `docs/lakehouse_substrate_decision.md`'s "Gate A spike
+results" section for the real row counts, snapshot ID, table location, and
+cleanup proof.
+
 ## LAKEKEEPER_DB_PASSWORD / LAKEKEEPER_PG_ENCRYPTION_KEY value format
 
 Learned during VM A1 verification: generate these as URL-safe/hex strings,
@@ -356,7 +366,7 @@ intentionally avoided.
 
 ## A3 status and what remains deferred
 
-**A3 is implemented** (`scripts/export_volatility_features_to_iceberg.py`,
+**A3 is implemented and VM-verified** (`scripts/export_volatility_features_to_iceberg.py`,
 see the "A3" section above) -- the real `int_listing_volatility_features`
 snapshot writes to `cartracker_experiments.volatility_features_snapshot` via
 the same `lakehouse-worker`, read-only from
@@ -364,7 +374,10 @@ the same `lakehouse-worker`, read-only from
 volume name was confirmed on the VM via `docker volume ls | grep analytics`
 and is wired into `docker-compose.lakehouse.a3.yml`, a separate VM/local-
 manual-only override -- never the base `docker-compose.lakehouse.yml`, which
-the CI `lakehouse` job also runs A2 against.
+the CI `lakehouse` job also runs A2 against. Export, info, and cleanup all
+ran successfully against the real 250,790-row table on 2026-07-15 -- see
+`docs/lakehouse_substrate_decision.md`'s "Gate A spike results" section for
+the real output.
 
 Still deferred:
 

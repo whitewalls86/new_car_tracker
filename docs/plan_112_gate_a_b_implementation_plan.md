@@ -234,6 +234,25 @@ cleanup (§2.6).
 > unit tests for the new script's metadata/validation/cleanup-guard logic run
 > in the existing `unit-tests` job with everything live (DuckDB, Spark,
 > MinIO) mocked or avoided at import time, exactly like A2's spike tests.
+>
+> **A3 is now verified end to end on the production VM (2026-07-15).** Three
+> more dependency/API fixes landed getting there, all found by running the
+> real rehearsal on the VM rather than in any local/CI test (none of this
+> stack's actual DuckDB/Spark interaction has test coverage, by design --
+> those imports are deferred to keep the unit tests dependency-free): (1)
+> missing `pytz` -- duckdb's Python client needs it to convert timestamp
+> columns even for a plain `fetchone()`; (2) `duckdb.execute(sql).arrow()`
+> returns a `pyarrow.lib.RecordBatchReader` (no `.to_pandas()`) on the
+> resolved duckdb version, not a `pyarrow.Table` as the original code
+> assumed -- fixed by reading straight to a pandas DataFrame via `.df()`
+> instead; (3) Python 3.13 (this image's base) removed `distutils` from the
+> stdlib entirely, and PySpark 3.5.3's `require_minimum_pandas_version()`
+> still imports it directly -- fixed by adding `setuptools`, which installs
+> a `.pth`-based shim (`distutils -> setuptools._distutils`) with no code
+> change needed. See `docs/lakehouse_substrate_decision.md`'s "Gate A spike
+> results" section for the real VM run's row counts, snapshot ID, table
+> location, and cleanup proof (250,790 rows written, matched the DuckDB
+> source exactly, 7 MinIO objects deleted on cleanup).
 
 **Explicitly deferred out of A1/A2/A3:** any MLflow (B*), PyIceberg
 validation (A2b), and any Lakekeeper RBAC/multi-tenant/governance
