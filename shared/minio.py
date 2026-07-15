@@ -206,6 +206,63 @@ def read_json(minio_path: str):
     return json.loads(response["Body"].read())
 
 
+def write_bytes(key: str, data: bytes, content_type: str = "application/octet-stream") -> str:
+    """
+    Upload raw *data* to MinIO at *key* with no compression/encoding applied
+    (unlike write_html, which always zstd-compresses). Returns the full S3
+    URI: ``s3://<bucket>/<key>``.
+    """
+    client = get_boto3_client()
+    ensure_bucket()
+    client.put_object(Bucket=BUCKET, Key=key, Body=data, ContentType=content_type)
+    return f"s3://{BUCKET}/{key}"
+
+
+def read_bytes(minio_path: str) -> bytes:
+    """
+    Fetch a raw (uncompressed) object's bytes.
+
+    *minio_path* may be a full S3 URI (``s3://bucket/key``) or a bare key.
+    """
+    if minio_path.startswith("s3://"):
+        remainder = minio_path[len("s3://"):]
+        bucket, key = remainder.split("/", 1)
+    else:
+        bucket = BUCKET
+        key = minio_path
+
+    client = get_boto3_client()
+    response = client.get_object(Bucket=bucket, Key=key)
+    return response["Body"].read()
+
+
+def object_size(minio_path: str) -> "int | None":
+    """
+    Return an object's byte size via HEAD (no body download), or None if it
+    does not exist.
+
+    *minio_path* may be a full S3 URI (``s3://bucket/key``) or a bare key.
+    """
+    from botocore.exceptions import ClientError
+
+    if minio_path.startswith("s3://"):
+        remainder = minio_path[len("s3://"):]
+        bucket, key = remainder.split("/", 1)
+    else:
+        bucket = BUCKET
+        key = minio_path
+
+    client = get_boto3_client()
+    try:
+        response = client.head_object(Bucket=bucket, Key=key)
+    except ClientError as e:
+        code = e.response["Error"]["Code"]
+        if code in ("404", "NoSuchKey", "NotFound"):
+            return None
+        raise
+    return response["ContentLength"]
+
+
 def read_html(minio_path: str) -> bytes:
     """
     Fetch and decompress a zstd-compressed HTML object.

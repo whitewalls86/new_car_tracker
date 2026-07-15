@@ -66,7 +66,23 @@ This plan starts from completed or in-flight foundations:
   distraction before lakehouse work begins.
 
 Plan 112 should consume Plan 120 fixture snapshots in CI/local development and
-can run fuller production-corpus validation manually on the VM.
+can run fuller production-corpus validation manually on the VM. After Gate A3,
+the next Plan 112 bridge is not "more PySpark logic" yet; it is a local
+integration harness that uses Plan 120 snapshots as the common substrate for
+local MinIO, dbt, DuckDB, Lakekeeper, Iceberg, and PySpark.
+
+That harness depends on Plan 120 Gate E:
+
+- package a materialized snapshot into a reproducible `.tar.zst` archive;
+- publish/checksum the archive and its manifest under stable MinIO keys;
+- expose a usable latest/manifest/download path for CI and local development;
+- keep the existing offline seed path working so local testing can use either a
+  downloaded archive or a manually supplied archive.
+
+Until Gate E exists, local lakehouse work can still use VM/manual exports, but
+the broader "test local" strategy is incomplete: local development cannot
+reliably recreate the same production-shaped fixture that CI and PySpark jobs
+are meant to share.
 
 ---
 
@@ -224,6 +240,62 @@ If Unity Catalog OSS blocks the local workflow, continue with Spark + Iceberg +
 MLflow using a simpler catalog and defer deeper catalog work to Plan 119. If
 Iceberg itself is disproportionately fragile locally, revisit the table-format
 decision before proceeding to backtests.
+
+### Gate A4: Local Integration Harness
+
+**Status: next.**
+
+Gate A1-A3 proved the catalog, Spark/Iceberg mechanics, CI-safe synthetic
+round-trip, and VM rehearsal against the real `int_listing_volatility_features`
+table. Gate A4 turns that into a repeatable local testing path so the VM is a
+production rehearsal environment, not the first place missing dependencies,
+stale dbt schemas, bad Compose mounts, or Spark catalog regressions are found.
+
+Target local flow:
+
+```text
+Plan 120 snapshot archive
+        |
+        v
+local MinIO seed
+        |
+        v
+local dbt build
+        |
+        v
+local analytics.duckdb
+        |
+        v
+local Lakekeeper + lakehouse-worker / PySpark / Iceberg
+        |
+        v
+local assertions + cleanup
+```
+
+Deliverables:
+
+1. Add a local-only lakehouse Compose override, distinct from the VM-only A3
+   override, that mounts a local analytics DuckDB path read-only into
+   `lakehouse-worker`.
+2. Add a preflight/check script or documented command sequence that verifies:
+   MinIO is reachable; the Plan 120 snapshot manifest/archive exists; the
+   snapshot has been seeded; `analytics.duckdb` exists; required dbt feature
+   tables exist; Lakekeeper is up; the Iceberg warehouse is registered.
+3. Document the "fresh clone to local lakehouse smoke" path:
+   download or supply a Plan 120 archive, seed MinIO, run dbt, start
+   Lakekeeper, run the PySpark Iceberg rehearsal, and clean up.
+4. Keep the local harness aligned with CI where practical: CI runs a smaller
+   version of the same path; local runs may use a richer Plan 120 archive.
+
+Explicit Plan 120 dependency:
+
+- Plan 120 Gate E (`manifest/package/upload`) must land before this becomes a
+  smooth local-development workflow. Gate E is responsible for turning the
+  already-materialized Gate D export into an archive + manifest + stable
+  download target. Without it, Gate A4 can only be partially tested with
+  manually copied exports.
+- The local harness should not reimplement snapshot packaging. It should call
+  or consume Plan 120's download/seed contract.
 
 ---
 

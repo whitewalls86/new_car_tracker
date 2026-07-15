@@ -25,6 +25,7 @@ from archiver.processors.export_ci_lake_snapshot import (
     resolve_request_defaults,
     validate_request,
 )
+from archiver.processors.lake_snapshot_archive import ArchiveResult
 from archiver.processors.lake_snapshot_cohort import (
     CandidateSet,
     allocate_cohort,
@@ -837,6 +838,18 @@ class TestExportPlanningCache:
                 reuse_planning_cache=True, refresh_planning_cache=True,
             ))
 
+    def test_reuse_and_refresh_export_cache_together_fails_validation(self):
+        with pytest.raises(SnapshotRequestError):
+            validate_request(SnapshotRequest(
+                tier="ci", reuse_export_cache=True, refresh_export_cache=True,
+            ))
+
+    def test_reuse_and_refresh_archive_cache_together_fails_validation(self):
+        with pytest.raises(SnapshotRequestError):
+            validate_request(SnapshotRequest(
+                tier="ci", reuse_archive_cache=True, refresh_archive_cache=True,
+            ))
+
     def test_invalid_bucket_grain_fails_validation(self):
         with pytest.raises(SnapshotRequestError):
             export_ci_lake_snapshot(SnapshotRequest(
@@ -1050,6 +1063,30 @@ class TestExportNonDryRun:
             return_value=result,
         )
 
+    def _mock_archive_success(self, mocker):
+        """Mock a successful Gate E package/promote so non-dry-run tests can
+        exercise the surrounding export logic without real tar/zstd/MinIO
+        work. Gate E's own packaging behavior is covered directly in
+        tests/archiver/test_lake_snapshot_archive.py."""
+        archive_result = ArchiveResult(
+            ok=True, archive_key="snapshot_archives/fingerprints/x/snapshot.tar.zst",
+            archive_manifest_key="snapshot_archives/fingerprints/x/archive_manifest.json",
+            archive_bytes=123, archive_sha256="deadbeef", file_count=3,
+            cache_hit=False, cache_action="computed",
+        )
+        mock_package = mocker.patch(
+            "archiver.processors.export_ci_lake_snapshot.package_snapshot_archive",
+            return_value=archive_result,
+        )
+        mock_promote = mocker.patch(
+            "archiver.processors.export_ci_lake_snapshot.promote_snapshot_pointers",
+            return_value={
+                "ok": True, "alias_key": "alias/x.json", "latest_key": "latest.json",
+                "error": None,
+            },
+        )
+        return mock_package, mock_promote
+
     def test_non_dry_run_exports_and_writes_manifest(self, mocker):
         _mock_heavy_path(mocker)
         mocker.patch("archiver.processors.export_ci_lake_snapshot.write_planning_cache")
@@ -1062,6 +1099,7 @@ class TestExportNonDryRun:
             "archiver.processors.export_ci_lake_snapshot.load_export_manifest",
             return_value=None,
         )
+        mock_package, mock_promote = self._mock_archive_success(mocker)
 
         result = export_ci_lake_snapshot(
             SnapshotRequest(tier="ci", dry_run=False, build_cohort=True)
@@ -1075,6 +1113,12 @@ class TestExportNonDryRun:
         assert result.materialized_snapshot_path == "data/path"
         assert mock_materialize.called
         assert mock_write_manifest.called
+        assert mock_package.called
+        assert mock_promote.called
+        assert result.archive_key == "snapshot_archives/fingerprints/x/snapshot.tar.zst"
+        assert result.archive_sha256 == "deadbeef"
+        assert result.archive_bytes == 123
+        assert result.archive_cache_action == "computed"
 
     def test_non_dry_run_ignores_run_selectors_flag(self, mocker):
         """run_selectors only gates dry-run diagnostic scope — a real export
@@ -1090,6 +1134,7 @@ class TestExportNonDryRun:
             "archiver.processors.export_ci_lake_snapshot.load_export_manifest",
             return_value=None,
         )
+        self._mock_archive_success(mocker)
 
         result = export_ci_lake_snapshot(SnapshotRequest(
             tier="ci", dry_run=False, run_selectors=False, build_cohort=True,
@@ -1110,6 +1155,7 @@ class TestExportNonDryRun:
         mock_write_manifest = mocker.patch(
             "archiver.processors.export_ci_lake_snapshot.write_export_manifest"
         )
+        self._mock_archive_success(mocker)
 
         result = export_ci_lake_snapshot(SnapshotRequest(
             tier="ci", dry_run=False, build_cohort=True, reuse_export_cache=True,
@@ -1121,6 +1167,104 @@ class TestExportNonDryRun:
         assert result.materialized_snapshot_path == "cached/data/path"
         assert not mock_materialize.called
         assert not mock_write_manifest.called
+
+    def test_non_dry_run_archive_packaging_failure_returns_export_failed(self, mocker):
+        """A packaging failure must surface as export_failed and must never
+        promote latest.json/alias pointers."""
+        _mock_heavy_path(mocker)
+        mocker.patch("archiver.processors.export_ci_lake_snapshot.write_planning_cache")
+        self._mock_materialize(mocker)
+        mocker.patch(
+            "archiver.processors.export_ci_lake_snapshot.write_export_manifest",
+            return_value=True,
+        )
+        mocker.patch(
+            "archiver.processors.export_ci_lake_snapshot.load_export_manifest",
+            return_value=None,
+        )
+        mocker.patch(
+            "archiver.processors.export_ci_lake_snapshot.package_snapshot_archive",
+            return_value=ArchiveResult(ok=False, error="conflict: checksum mismatch"),
+        )
+        mock_promote = mocker.patch(
+            "archiver.processors.export_ci_lake_snapshot.promote_snapshot_pointers",
+        )
+
+        result = export_ci_lake_snapshot(
+            SnapshotRequest(tier="ci", dry_run=False, build_cohort=True)
+        )
+
+        assert result.status == "export_failed"
+        assert any("conflict" in f for f in result.coverage_failures)
+        assert not mock_promote.called
+
+    def test_non_dry_run_oversized_archive_returns_export_failed(self, mocker):
+        """max_archive_mb is a real enforceable cap on the packaged archive —
+        an export whose archive exceeds it must not be promoted as
+        successfully exported."""
+        _mock_heavy_path(mocker)
+        mocker.patch("archiver.processors.export_ci_lake_snapshot.write_planning_cache")
+        self._mock_materialize(mocker)
+        mocker.patch(
+            "archiver.processors.export_ci_lake_snapshot.write_export_manifest",
+            return_value=True,
+        )
+        mocker.patch(
+            "archiver.processors.export_ci_lake_snapshot.load_export_manifest",
+            return_value=None,
+        )
+        mocker.patch(
+            "archiver.processors.export_ci_lake_snapshot.package_snapshot_archive",
+            return_value=ArchiveResult(
+                ok=True, archive_key="k", archive_manifest_key="mk",
+                archive_bytes=100 * 1024 * 1024, archive_sha256="x",
+            ),
+        )
+        mock_promote = mocker.patch(
+            "archiver.processors.export_ci_lake_snapshot.promote_snapshot_pointers",
+        )
+
+        result = export_ci_lake_snapshot(SnapshotRequest(
+            tier="edge", dry_run=False, build_cohort=True, max_archive_mb=50,
+        ))
+
+        assert result.status == "export_failed"
+        assert any("max_archive_mb" in f for f in result.coverage_failures)
+        assert not mock_promote.called
+
+    def test_non_dry_run_pointer_promotion_failure_returns_export_failed(self, mocker):
+        """A failed alias/latest pointer write must not be reported as a
+        successful export — otherwise callers would believe latest.json was
+        moved when it wasn't."""
+        _mock_heavy_path(mocker)
+        mocker.patch("archiver.processors.export_ci_lake_snapshot.write_planning_cache")
+        self._mock_materialize(mocker)
+        mocker.patch(
+            "archiver.processors.export_ci_lake_snapshot.write_export_manifest",
+            return_value=True,
+        )
+        mocker.patch(
+            "archiver.processors.export_ci_lake_snapshot.load_export_manifest",
+            return_value=None,
+        )
+        mocker.patch(
+            "archiver.processors.export_ci_lake_snapshot.package_snapshot_archive",
+            return_value=ArchiveResult(
+                ok=True, archive_key="k", archive_manifest_key="mk",
+                archive_bytes=1, archive_sha256="x",
+            ),
+        )
+        mocker.patch(
+            "archiver.processors.export_ci_lake_snapshot.promote_snapshot_pointers",
+            return_value={"ok": False, "error": "alias pointer write failed: alias/x.json"},
+        )
+
+        result = export_ci_lake_snapshot(
+            SnapshotRequest(tier="ci", dry_run=False, build_cohort=True)
+        )
+
+        assert result.status == "export_failed"
+        assert any("pointer promotion failed" in f for f in result.coverage_failures)
 
     def test_non_dry_run_table_error_returns_export_failed(self, mocker):
         """A table read error must surface as export_failed and must never
@@ -1217,6 +1361,7 @@ class TestExportNonDryRun:
             "archiver.processors.export_ci_lake_snapshot.load_export_manifest",
             return_value=None,
         )
+        self._mock_archive_success(mocker)
 
         result = export_ci_lake_snapshot(
             SnapshotRequest(tier="ci", dry_run=False, build_cohort=True)
