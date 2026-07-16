@@ -25,7 +25,10 @@ recurring dialect enforcement, that is a better-scoped follow-up (see
   [dbt/profiles.yml](../dbt/profiles.yml) are Postgres and are not what production
   runs. Anyone reading `target: prod` at the top of that file will draw the wrong
   conclusion — worth noting because the Postgres targets look like a portability
-  asset and are not one.
+  asset and are not one. CI's dbt materialization path also uses
+  `dbt build --profiles-dir . --target duckdb`; Postgres is still present in CI
+  because DuckDB's `postgres_scan(...)` models need a live source database, not
+  because CI uses the Postgres dbt target.
 - **Sources are file globs and live Postgres reads**, declared via
   `meta.external_location` in [dbt/models/sources.yml](../dbt/models/sources.yml)
   and registered by `register_upstream_external_models()` (dbt_project.yml
@@ -335,10 +338,13 @@ repo alone, ordered by how much they'd change the plan:
    against fixture inputs, so every dialect change in F2–F12 lands on them too,
    and dbt unit-test support varies by adapter. This is unscoped work in the
    current plan.
-5. **Do the Postgres targets in `profiles.yml` stay?** They are unused by
-   production (`--target duckdb` is hardcoded in dbt_runner). If they are dead,
-   removing them removes a misleading portability signal; if they are the CI path,
-   the Iceberg target needs its own CI story.
+5. **Retire or demote the Postgres dbt targets.** They are not the production
+   build path (`--target duckdb` is hardcoded in dbt_runner), and the main CI dbt
+   build also passes `--target duckdb`. They may still be useful as legacy/manual
+   compile targets, but they should not be treated as migration scaffolding. One
+   concrete cleanup: `dbt_runner`'s `/dbt/docs/generate` endpoint currently runs
+   `dbt docs generate` without `--target`, so it inherits `target: prod`; Gate A
+   should either pass `--target duckdb` there or make the docs target explicit.
 6. **Parity tolerance for rounding.** F5, F10, and F12 all imply the Iceberg
    output may differ from DuckDB by ±1 on cast/round boundaries. Gate B's parity
    checks need a stated tolerance, or "row count matches, checksums don't" will
