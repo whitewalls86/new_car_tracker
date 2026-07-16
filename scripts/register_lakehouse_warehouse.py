@@ -31,14 +31,29 @@ import sys
 import urllib.error
 import urllib.request
 
-from shared.iceberg_catalog import WAREHOUSE_NAME, warehouse_storage_payload
+from shared.iceberg_catalog import (
+    WAREHOUSE_NAME,
+    catalog_uri,
+    warehouse_storage_payload,
+)
 
 
 def _management_base_uri() -> str:
-    # LAKEKEEPER_CATALOG_URI is e.g. "http://lakekeeper:8181/catalog"; the
-    # management API lives at the same host:port under /management.
-    catalog_uri = os.environ["LAKEKEEPER_CATALOG_URI"]
-    return catalog_uri.rsplit("/catalog", 1)[0]
+    """Base URI of Lakekeeper's management API.
+
+    This script is provisioning, so it is allowed to know Lakekeeper's shape
+    (Plan 125 Gate 0.5 / R6): the catalog URI is e.g.
+    "http://lakekeeper:8181/catalog", and the management API lives at the same
+    host:port under /management -- a Lakekeeper-specific layout, hence the
+    /catalog suffix strip stays here rather than in shared config.
+
+    LAKEKEEPER_CATALOG_URI wins over the neutral name when both are set: if an
+    operator points consumers at some other catalog while a Lakekeeper server
+    is still up, provisioning must keep addressing Lakekeeper. Falls back to
+    the shared neutral resolver so the common single-var setup still works.
+    """
+    uri = os.environ.get("LAKEKEEPER_CATALOG_URI") or catalog_uri()
+    return uri.rsplit("/catalog", 1)[0]
 
 
 def _request(method: str, path: str, body: dict | None = None) -> tuple[int, dict]:

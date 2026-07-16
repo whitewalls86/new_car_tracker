@@ -175,6 +175,36 @@ class TestLakehouseWorkerService:
         assert "postgres" not in depends_on
         assert "flyway" not in depends_on
 
+    def test_sets_neutral_catalog_uri(self):
+        """Plan 125 Gate 0.5: consumer scripts resolve ICEBERG_CATALOG_URI, so
+        the worker must supply it."""
+        env = self._service()["environment"]
+        assert env["ICEBERG_CATALOG_URI"] == (
+            "${ICEBERG_CATALOG_URI:-"
+            "${LAKEKEEPER_CATALOG_URI:-http://lakekeeper:8181/catalog}}"
+        )
+
+    def test_still_sets_legacy_catalog_uri_for_provisioning(self):
+        """The worker also runs the Lakekeeper-specific warehouse-registration
+        script -- dropping this var would leave it with no management endpoint."""
+        env = self._service()["environment"]
+        assert env["LAKEKEEPER_CATALOG_URI"] == (
+            "${LAKEKEEPER_CATALOG_URI:-http://lakekeeper:8181/catalog}"
+        )
+
+    def test_neutral_catalog_uri_falls_back_to_legacy_at_interpolation_time(self):
+        """Compose always populates the container's ICEBERG_CATALOG_URI, so
+        catalog_uri()'s runtime fallback can never fire inside the worker. The
+        host-side legacy fallback therefore has to be nested here, or a shell
+        exporting only LAKEKEEPER_CATALOG_URI is silently ignored by consumers.
+        See TestWorkerCatalogUriInterpolation for the resolved-value proof."""
+        env = self._service()["environment"]
+        assert "${LAKEKEEPER_CATALOG_URI:-" in env["ICEBERG_CATALOG_URI"]
+
+    def test_warehouse_name_uses_neutral_env_name(self):
+        env = self._service()["environment"]
+        assert env["ICEBERG_WAREHOUSE_NAME"] == "cartracker_experiments"
+
 
 class TestLakehouseA3Override:
     """Plan 112 Gate A3: the read-only analytics DuckDB mount lives only in
