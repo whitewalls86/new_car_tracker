@@ -36,6 +36,14 @@ https://cartracker.info {
     # ── ADMIN-ONLY routes ─────────────────────────────────────────────────────
     # User management and infra tools — admins only.
 
+    # Plan 120 Gate F snapshot downloads are used by CI/local scripts, not
+    # browser sessions. Route them directly to ops so SNAPSHOT_DOWNLOAD_TOKEN
+    # bearer auth can run there instead of oauth2-proxy redirecting to login.
+    # Must come before the generic /admin* block.
+    handle /admin/snapshots/adaptive-refresh* {
+        reverse_proxy ops:8060
+    }
+
     handle /admin/users* {
         forward_auth oauth2-proxy:4180 {
             uri /oauth2/auth

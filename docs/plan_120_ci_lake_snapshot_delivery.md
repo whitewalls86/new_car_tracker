@@ -983,6 +983,13 @@ routes entirely with `503`. The token is never logged. This matches
 `scripts/download_lake_snapshot.py`'s existing `--token`/`$CARTRACKER_SNAPSHOT_TOKEN`
 contract, so no downloader changes were needed.
 
+**Proxy routing.** Because these endpoints live under `/admin/...` but are
+called by scripts, `Caddyfile` has a dedicated
+`handle /admin/snapshots/adaptive-refresh*` block before the generic
+OAuth-protected `/admin*` block. It reverse-proxies directly to `ops:8060`
+so the route's bearer-token auth runs in FastAPI instead of Caddy redirecting
+script callers to `/oauth2/sign_in`.
+
 **Path safety.** `snapshot_id` is validated against
 `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$` (no `/`, no `..`) before it is used to
 build the `aliases/{snapshot_id}.json` key — an invalid id is rejected with
