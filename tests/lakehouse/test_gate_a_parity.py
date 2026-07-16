@@ -94,12 +94,33 @@ class TestDetectsRealDifferences:
 
 
 class TestEmptyOutput:
+    def test_two_empty_builds_fail_rather_than_report_parity(self):
+        """The most dangerous outcome for a proof gate: an unseeded MinIO or a
+        wrong source path makes both builds empty, and every equality check is
+        then trivially satisfied by 0 == 0. That must FAIL, not pass."""
+        checks = compare_mart_block_rate([], [])
+
+        assert "output is non-empty (both builds)" in _failed(checks)
+        assert not all(c.passed for c in checks)
+
     def test_two_empty_builds_do_not_crash(self):
-        """Both empty is degenerate but not a *difference*; it must not raise
-        on the min/max checks."""
+        """Empty must fail cleanly via the non-empty check, not blow up on the
+        min/max reducers."""
         checks = compare_mart_block_rate([], [])
 
         assert "row count" not in _failed(checks)
 
+    def test_allow_empty_permits_the_degenerate_case(self):
+        assert _failed(compare_mart_block_rate([], [], allow_empty=True)) == set()
+
     def test_one_empty_build_fails(self):
-        assert "row count" in _failed(compare_mart_block_rate([_row(10)], []))
+        failed = _failed(compare_mart_block_rate([_row(10)], []))
+
+        assert "row count" in failed
+        assert "output is non-empty (both builds)" in failed
+
+    def test_non_empty_matching_builds_still_pass(self):
+        """The non-empty guard must not fire on a real, healthy comparison."""
+        rows = [_row(10)]
+
+        assert _failed(compare_mart_block_rate(rows, list(rows))) == set()

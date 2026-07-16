@@ -4,7 +4,11 @@ catalog (Lakekeeper) and MinIO.
 
     docker compose -f docker-compose.lakehouse.yml -f docker-compose.lakehouse.local.yml \
       -p local-lakehouse run --rm lakehouse-worker \
-      python -m scripts.run_dbt_spark build --select tag:gate_a
+      python -m scripts.run_dbt_spark --verify-table mart_block_rate -- \
+      run --select stg_blocked_cooldown_events mart_block_rate
+
+Always pass --verify-table for a build: it is the only thing that proves dbt
+wrote Iceberg (see below). A run without it can succeed having written nothing.
 
 Why a runner instead of plain `dbt build --target spark`
 --------------------------------------------------------
@@ -151,16 +155,27 @@ def verify_iceberg_tables(spark, table_names: Sequence[str]) -> None:
 
     for name in table_names:
         fqn = f"{CATALOG_NAME}.{WAREHOUSE_NAME}.{name}"
-        rows = spark.sql(f"SELECT count(*) AS n FROM {fqn}").collect()
-        provider = {
+        row_count = spark.sql(f"SELECT count(*) AS n FROM {fqn}").collect()[0]["n"]
+        described = {
             r["col_name"].strip(): (r["data_type"] or "").strip()
             for r in spark.sql(f"DESCRIBE EXTENDED {fqn}").collect()
         }
-        location = provider.get("Location", "")
+        provider = described.get("Provider", "")
+        location = described.get("Location", "")
         print(
-            f"  verified {fqn}: rows={rows[0]['n']} "
-            f"provider={provider.get('Provider', '?')} location={location}"
+            f"  verified {fqn}: rows={row_count} "
+            f"provider={provider or '?'} location={location or '?'}"
         )
+        # Both halves matter, and neither implies the other: a non-Iceberg
+        # provider would mean dbt wrote a plain Spark table, while a
+        # non-s3:// location would mean it landed outside the
+        # Lakekeeper-backed warehouse.
+        if provider.lower() != "iceberg":
+            raise SystemExit(
+                f"{fqn} has provider {provider!r}, expected 'iceberg' -- dbt did "
+                "not write an Iceberg table. Check file_format on the model and "
+                "spark.sql.defaultCatalog."
+            )
         if not location.startswith("s3://"):
             raise SystemExit(
                 f"{fqn} has location {location!r}, which is not an s3:// Iceberg "
@@ -175,7 +190,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument(
         "dbt_args",
         nargs=argparse.REMAINDER,
-        help="dbt command and flags, e.g. `build --select tag:gate_a`.",
+        help=(
+            "dbt command and flags, e.g. "
+            "`run --select stg_blocked_cooldown_events mart_block_rate`."
+        ),
     )
     parser.add_argument(
         "--verify-table",
@@ -191,7 +209,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     dbt_args = [a for a in args.dbt_args if a != "--"]
     if not dbt_args:
-        parser.error("no dbt command given, e.g. `build --select tag:gate_a`")
+        parser.error(
+            "no dbt command given, e.g. "
+            "`run --select stg_blocked_cooldown_events mart_block_rate`"
+        )
 
     stub_parse_only_env()
     spark = build_spark_session()

@@ -77,11 +77,39 @@ class CheckResult:
 
 
 def compare_mart_block_rate(
-    duck_rows: Sequence[Row], spark_rows: Sequence[Row]
+    duck_rows: Sequence[Row],
+    spark_rows: Sequence[Row],
+    allow_empty: bool = False,
 ) -> List[CheckResult]:
     """Compare the two builds. Pure function over two row lists, so it is
-    unit-testable without Spark, DuckDB, MinIO, or Docker."""
+    unit-testable without Spark, DuckDB, MinIO, or Docker.
+
+    `allow_empty=False` (the default) treats two empty builds as a FAILURE, not
+    a match. Every equality check below is trivially satisfied by 0 == 0, so an
+    unseeded MinIO, a wrong source path, or a filter that silently matches
+    nothing would otherwise report "PARITY PASSED" while proving exactly
+    nothing. For a gate whose entire purpose is evidence, vacuous success is
+    the most dangerous possible outcome. Pass allow_empty=True only to test the
+    degenerate case deliberately.
+    """
     checks: List[CheckResult] = []
+
+    if not allow_empty:
+        checks.append(
+            CheckResult(
+                "output is non-empty (both builds)",
+                bool(duck_rows) and bool(spark_rows),
+                len(duck_rows),
+                len(spark_rows),
+                detail=(
+                    ""
+                    if duck_rows and spark_rows
+                    else "Empty output makes every check below vacuous. Check that "
+                    "MinIO is seeded from a Plan 120 snapshot and that the source "
+                    "path resolves -- this is not a parity result."
+                ),
+            )
+        )
 
     checks.append(
         CheckResult(
@@ -221,6 +249,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         default=os.environ.get("DUCKDB_PATH", DEFAULT_DUCKDB_PATH),
         help="analytics.duckdb built from the same seeded snapshot.",
     )
+    parser.add_argument(
+        "--allow-empty",
+        action="store_true",
+        help=(
+            "Treat two empty builds as parity instead of a failure. Off by "
+            "default: 0 == 0 satisfies every check while proving nothing, so an "
+            "unseeded MinIO would otherwise report success."
+        ),
+    )
     args = parser.parse_args(argv)
 
     if not os.path.exists(args.duckdb_path):
@@ -241,7 +278,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         f"({args.duckdb_path}) vs iceberg={len(spark_rows)} rows "
         f"({table_identifier(TABLE_NAME)})"
     )
-    checks.extend(compare_mart_block_rate(duck_rows, spark_rows))
+    checks.extend(
+        compare_mart_block_rate(duck_rows, spark_rows, allow_empty=args.allow_empty)
+    )
 
     print("\nGate A parity checks:")
     for check in checks:
