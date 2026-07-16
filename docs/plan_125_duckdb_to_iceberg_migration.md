@@ -192,9 +192,14 @@ provisioning module. No consumer script changes.
 
 Audit the current dbt project for DuckDB-specific assumptions.
 
-Deliverables:
+**Status: implemented.** Full findings:
+[docs/plan_125_portability_audit.md](plan_125_portability_audit.md) — a
+human-readable audit doc, not a script; the checks were one-time reads that
+would not pay for a maintained tool.
 
-- Script or doc table listing every model with:
+Deliverables (all covered by the audit doc):
+
+- Doc table listing every model with:
   - materialization
   - tags (`hourly_core`, `feature_daily`, `backtest`)
   - source dependencies
@@ -203,7 +208,36 @@ Deliverables:
   - candidate migration difficulty
 - Recommendation for first migration chain.
 
-Likely first chain:
+### Audit outcomes that change the plan
+
+1. **`delete+insert` may not exist on dbt-spark (audit F1).** Seven models use it,
+   and in-repo comments assert Spark-family support as an already-settled fact —
+   that assertion is untested. Four of those models use their `unique_key` as an
+   **entity-replacement key** (all rows for the key are deleted and a recomputed
+   multi-row history reinserted), which `merge` does not reproduce. This is the
+   largest Gate C risk and must be verified before Gate C design.
+2. **`postgres_scan` against live Postgres (audit F8)** is an architectural
+   blocker, not a dialect one. `stg_search_configs` and `int_active_make_models`
+   read live HOT tables, and `int_active_make_models` inner-joins into
+   `mart_vehicle_snapshot` — so it filters the whole mart layer. Spark needs a
+   JDBC read or a snapshot of that reference data in MinIO/Iceberg before the
+   serving chain can move.
+3. **First chain revised — Gate A should not start on the volatility chain.**
+   The chain below remains the right first *useful* chain for **Gate B**, but the
+   audit recommends Gate A spike on `stg_blocked_cooldown_events` →
+   `mart_block_rate` (two models, one Parquet source, no incrementals, near-zero
+   SQL translation), then resolve the incremental-strategy question on
+   `mart_scrape_volume` before it entangles with entity-replacement semantics.
+   See the audit's "Recommended First Migration Chain".
+4. **The reader abstraction is cheaper than feared (Gate D).**
+   `dashboard/db.py::run_duckdb_query` is a single chokepoint for all 25 dashboard
+   SQL files. But `mart_deal_scores` backs 15 of those 25 files and has no
+   `unique` test on `vin`; reader risk concentrates in it and
+   `mart_vehicle_snapshot`, while the easiest models to port are also the safest
+   to cut over first.
+
+Gate B first chain (unchanged, now with audit difficulty grades — all High except
+the two staging views):
 
 - `stg_observations`
 - `stg_price_events`
@@ -214,14 +248,25 @@ Likely first chain:
 - `int_price_history`
 - `int_listing_volatility_features`
 
-Open question: whether staging models should read normalized Parquet directly
-through Spark or first register normalized Parquet as external Iceberg/metadata
-tables.
+Open question (**answered by the audit**): whether staging models should read
+normalized Parquet directly through Spark or first register normalized Parquet as
+external Iceberg/metadata tables. → **Read Parquet directly through Spark for
+Gate A.** External Iceberg registration is a second migration with its own failure
+modes, and guardrail R5 (Iceberg tables stay rebuildable, normalized Parquet stays
+the recovery point) argues for keeping Parquet a plain input. Revisit at Gate C if
+snapshot-consistent reads matter for incremental watermarks.
 
 ## Gate A: Spark/dbt Execution Spike
 
 Add the smallest dbt/Spark execution path that can materialize one model into
 Iceberg.
+
+Open questions Gate A must settle before Gate B/C design — see
+[the portability audit's Gate A blockers](plan_125_portability_audit.md#gate-a-blockers-and-open-questions)
+for the full list with rationale: the `delete+insert` strategy question (F1), the
+`postgres_scan` replacement path (F8), the concrete adapter choice verified on
+ARM64, the fate of the 85 dbt unit tests, and a stated parity tolerance for
+cast/rounding differences.
 
 Candidate implementation:
 
