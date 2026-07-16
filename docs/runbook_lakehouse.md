@@ -669,18 +669,42 @@ mlflow ui --backend-store-uri file:./.cache/mlruns   # then open http://localhos
 Where the inputs come from in the A4 local flow:
 - `--manifest` is the file `scripts/download_lake_snapshot.py --latest`
   already wrote to `.cache/lake_snapshots/<snapshot_id>/manifest.json`.
-- `--iceberg-info-json` is the stdout of
-  `export_volatility_features_to_iceberg info` (redirect it to a file), e.g.
-  ```bash
-  docker compose -f docker-compose.lakehouse.yml -f docker-compose.lakehouse.local.yml \
-      -p local-lakehouse run --rm lakehouse-worker \
-      python -m scripts.export_volatility_features_to_iceberg info > /tmp/iceberg_info.json
-  ```
+- `--iceberg-info-json` is the stdout of the exporter's `info` subcommand.
+  **Caveat:** the default A4 runner
+  (`python -m scripts.run_local_lakehouse_rehearsal`) runs A3 as `rehearsal`
+  **without `--keep`, so it drops `volatility_features_snapshot` immediately
+  after** — a bare `info` afterwards fails ("table not found"). Two ways to
+  have a live table to read `info` from:
+  - Run the A4 runner with `--keep-iceberg-table` (passes `--keep`, skips the
+    A3 cleanup), then run `info`; **remember to clean up manually afterwards**
+    (`... run --rm lakehouse-worker python -m
+    scripts.export_volatility_features_to_iceberg cleanup`).
+  - Or create-and-read in one shot with `export` (which leaves the table) then
+    `info`, independent of the runner:
+    ```bash
+    LH="docker compose -f docker-compose.lakehouse.yml -f docker-compose.lakehouse.local.yml -p local-lakehouse"
+    $LH run --rm lakehouse-worker python -m scripts.export_volatility_features_to_iceberg export
+    $LH run --rm lakehouse-worker python -m scripts.export_volatility_features_to_iceberg info \
+        > /tmp/iceberg_info.json
+    # ... log provenance ..., then clean up the table you just left behind:
+    $LH run --rm lakehouse-worker python -m scripts.export_volatility_features_to_iceberg cleanup
+    ```
 
 ### Smoke B -- standalone MLflow server (browsable UI + MinIO artifacts)
 
+**Requires the main stack's `cartracker-net` + `minio` (the VM, or a locally
+running main `cartracker` project).** `docker-compose.mlflow.yml` joins the
+**external** `cartracker-net` and resolves `minio` by container DNS for its
+artifact store. It is **not** reachable from an A4-only local box: the A4
+stack (`docker-compose.lakehouse.local.yml`, project `local-lakehouse`) runs
+its own **isolated, non-external** network + throwaway MinIO, which this file
+does not join. On a pure A4-only setup use **Smoke A** (file store) instead;
+Smoke B is for the VM / main-stack environment where `cartracker-net` and
+`minio` exist.
+
 ```bash
-# 1. Start the standalone server (joins the real/local cartracker-net + minio):
+# 1. Start the standalone server (joins the EXTERNAL cartracker-net + minio;
+#    needs the main cartracker stack / VM running -- see note above):
 docker compose -f docker-compose.mlflow.yml -p cartracker-mlflow up -d --build
 #    UI at http://localhost:15000
 

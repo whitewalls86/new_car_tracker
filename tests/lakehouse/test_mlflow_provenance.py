@@ -277,3 +277,55 @@ class TestCliFieldCollection:
         ])
         payload = build_provenance_payload(fields)
         assert payload.params["row_count"] == "5"
+
+
+class TestCliCleanErrors:
+    """A user-facing smoke CLI must return a clean nonzero on bad input, never
+    a raw traceback (missing/invalid input files, missing required fields)."""
+
+    @staticmethod
+    def _main(argv):
+        from scripts.log_lakehouse_experiment_provenance import main
+
+        return main(argv)
+
+    def test_missing_manifest_returns_clean_error(self, capsys):
+        rc = self._main([
+            "--manifest", "/no/such/manifest.json",
+            "--feature-table-name", "int_listing_volatility_features",
+            "--dry-run",
+        ])
+        assert rc == 2
+        err = capsys.readouterr().err
+        assert "--manifest not found" in err
+        assert "Traceback" not in err
+
+    def test_missing_metadata_json_returns_clean_error(self, capsys):
+        rc = self._main(["--metadata-json", "/no/such/meta.json", "--dry-run"])
+        assert rc == 2
+        assert "--metadata-json not found" in capsys.readouterr().err
+
+    def test_invalid_json_returns_clean_error(self, tmp_path, capsys):
+        bad = tmp_path / "bad.json"
+        bad.write_text("{not valid json")
+        rc = self._main(["--iceberg-info-json", str(bad), "--dry-run"])
+        assert rc == 2
+        assert "not valid JSON" in capsys.readouterr().err
+
+    def test_missing_required_field_returns_clean_error(self, capsys):
+        # Only a snapshot id -- missing iceberg_catalog/table/feature/row_count.
+        rc = self._main(["--snapshot-id", "s", "--dry-run"])
+        assert rc == 2
+        err = capsys.readouterr().err
+        assert "missing required provenance field" in err
+        assert "Traceback" not in err
+
+    def test_valid_dry_run_returns_zero(self, capsys):
+        rc = self._main([
+            "--snapshot-id", "s", "--iceberg-catalog", "cartracker",
+            "--iceberg-table", "cartracker_experiments.t",
+            "--feature-table-name", "int_listing_volatility_features",
+            "--row-count", "5", "--dry-run",
+        ])
+        assert rc == 0
+        assert '"row_count": "5"' in capsys.readouterr().out

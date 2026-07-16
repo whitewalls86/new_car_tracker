@@ -47,7 +47,6 @@ import json
 import os
 import subprocess
 import sys
-from pathlib import Path
 from typing import Any, Dict, Optional
 
 from shared.mlflow_provenance import (
@@ -123,9 +122,21 @@ def _parse_args(argv: Optional[list] = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def _load_json(path: str) -> Dict[str, Any]:
-    with open(path, "r", encoding="utf-8") as fh:
-        return json.load(fh)
+class InputError(Exception):
+    """A user-facing input problem (missing/unreadable/invalid input file or
+    field), reported as a clean nonzero exit rather than a raw traceback."""
+
+
+def _load_json(path: str, *, label: str) -> Dict[str, Any]:
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            return json.load(fh)
+    except FileNotFoundError:
+        raise InputError(f"{label} not found at {path}")
+    except OSError as e:
+        raise InputError(f"could not read {label} at {path}: {e}")
+    except json.JSONDecodeError as e:
+        raise InputError(f"{label} at {path} is not valid JSON: {e}")
 
 
 def _detect_code_sha() -> Optional[str]:
@@ -152,13 +163,14 @@ def _collect_fields(args: argparse.Namespace) -> Dict[str, Any]:
     fields: Dict[str, Any] = {}
 
     if args.metadata_json:
-        fields.update(_load_json(args.metadata_json))
+        fields.update(_load_json(args.metadata_json, label="--metadata-json"))
 
     if args.iceberg_info_json:
-        fields.update(provenance_fields_from_iceberg_info(_load_json(args.iceberg_info_json)))
+        info = _load_json(args.iceberg_info_json, label="--iceberg-info-json")
+        fields.update(provenance_fields_from_iceberg_info(info))
 
     if args.manifest:
-        manifest = _load_json(args.manifest)
+        manifest = _load_json(args.manifest, label="--manifest")
         fields.update(
             provenance_fields_from_manifest(manifest, manifest_key=args.manifest_key)
         )
@@ -174,25 +186,24 @@ def _collect_fields(args: argparse.Namespace) -> Dict[str, Any]:
 
 def main(argv: Optional[list] = None) -> int:
     args = _parse_args(argv)
-    fields = _collect_fields(args)
 
-    manifest_artifact_path = None
-    if args.manifest:
-        if not Path(args.manifest).is_file():
-            print(f"error: manifest not found at {args.manifest}", file=sys.stderr)
-            return 2
-        manifest_artifact_path = args.manifest
-
-    code_sha = args.code_sha or _detect_code_sha()
-
-    payload = build_provenance_payload(
-        fields,
-        experiment=args.experiment,
-        run_name=args.run_name,
-        env=args.env,
-        code_sha=code_sha,
-        manifest_artifact_path=manifest_artifact_path,
-    )
+    # All user-input problems (missing/invalid input files, missing/invalid
+    # provenance fields) surface as a clean nonzero exit, never a raw
+    # traceback -- this is a user-facing smoke CLI.
+    try:
+        fields = _collect_fields(args)
+        code_sha = args.code_sha or _detect_code_sha()
+        payload = build_provenance_payload(
+            fields,
+            experiment=args.experiment,
+            run_name=args.run_name,
+            env=args.env,
+            code_sha=code_sha,
+            manifest_artifact_path=args.manifest,
+        )
+    except (InputError, ValueError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
 
     if args.dry_run:
         print(json.dumps(

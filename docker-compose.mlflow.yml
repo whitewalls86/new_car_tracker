@@ -15,6 +15,14 @@
 # artifacts/, disjoint from silver/, ops_normalized/, bronze html/, and the
 # lakehouse_spike/ prefixes -- nothing production reads it.
 #
+# NETWORK REQUIREMENT: this joins the EXTERNAL cartracker-net and resolves
+# `minio` by container DNS, so it needs the main `cartracker` stack (the VM,
+# or a locally running main project) up. It is NOT reachable from an A4-only
+# local box -- the A4 stack (docker-compose.lakehouse.local.yml, project
+# `local-lakehouse`) uses its own isolated, non-external network + throwaway
+# MinIO, which this file does not join. For a pure A4-only setup, use the
+# file-store provenance smoke ("Smoke A") instead of this server.
+#
 # VM/local usage (joins the real cartracker-net + real minio):
 #   docker compose -f docker-compose.mlflow.yml -p cartracker-mlflow up -d
 #   # UI: http://localhost:15000
