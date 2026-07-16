@@ -39,6 +39,14 @@ The plan should be complete when the core adaptive-refresh feature/mart chain
 can be built, validated, and consumed from Iceberg without relying on
 `analytics.duckdb` as the source of truth.
 
+## Relationship To Plan 118
+
+Plan 125 supersedes/refines [Plan 118](plan_118_dbt_spark_migration.md). Plan
+118 correctly scoped the move from DuckDB to Spark-compatible dbt execution, but
+Plan 125 is the active implementation path because it incorporates the Plan 112
+Iceberg/Lakekeeper proof, makes Iceberg the explicit analytical contract, and
+adds the dashboard/ops/Grafana reader migration detail needed for cutover.
+
 ## Non-Goals
 
 - No production adaptive-refresh claim integration. Plan 113 owns that.

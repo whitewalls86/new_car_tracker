@@ -1,5 +1,34 @@
 # Plan 118: dbt Migration From DuckDB to Spark-Compatible Execution
 
+## Status
+
+**Superseded / refined by Plan 125.** This document is retained as historical
+planning context for the dbt/Spark migration, but the active implementation
+track is now [Plan 125: DuckDB to Iceberg Analytics Migration](plan_125_duckdb_to_iceberg_migration.md).
+
+Plan 118 correctly identified the need to move dbt away from DuckDB and toward a
+Spark-compatible execution model. Plan 125 narrows and updates that work around
+the Plan 112 Iceberg/Lakekeeper proof: the explicit target is now
+DuckDB-to-Iceberg migration, with dashboard/ops/Grafana reader cutover and local
+Plan 120 snapshot rehearsal as first-class requirements.
+
+## Overlap With Plan 125
+
+Plan 118 and Plan 125 overlap heavily:
+
+| Plan 118 area | Plan 125 replacement |
+|---|---|
+| Adapter decision | Plan 125 Gate A: Spark/dbt execution spike, using the existing lakehouse runtime and catalog-neutral config. |
+| Source redesign | Plan 125 Gate 0/Gate A: move from file-glob sources toward Iceberg/catalog tables. |
+| Model compatibility pass | Plan 125 Gates B/C: migrate the adaptive-refresh feature chain and reproduce incremental semantics. |
+| Materialization strategy | Plan 125 Gates B/C/E: Iceberg-native feature/mart tables become the analytical contract. |
+| dbt runner changes | Plan 125 Gate A/E: runner/runtime work happens only after the smallest Spark/dbt proof. |
+| CI strategy | Plan 125 Testing Strategy: local Plan 120 snapshot, CI where feasible, VM proof for heavy Spark paths. |
+| Dashboard transition | Plan 125 Gate D: dashboard, `/info`, Prometheus/Grafana, and Loki verification are explicitly covered. |
+
+Use Plan 118 as background when reviewing old dbt/Spark assumptions, but do not
+start new implementation from this file. New work should update Plan 125.
+
 ## Goal
 
 Move CarTracker's analytics transformation layer away from DuckDB and toward a
