@@ -179,6 +179,15 @@ read — either a JDBC read, or a snapshot of these tables landed into
 MinIO/Iceberg by the existing processing/flush path. Recommend the latter, and
 recommend deciding it *before* Gate B rather than during it.
 
+Specific recommendation: treat `public.search_configs` and `ops.tracked_models`
+as low-change operational reference dimensions and snapshot them hourly to
+MinIO/Iceberg for the Plan 125 migration. This keeps the lakehouse build from
+depending on live Postgres while preserving enough freshness for dashboards and
+adaptive-refresh features. Later, Plan 126 can make this one of the first
+streaming jobs: the ops routers that mutate those tables can publish durable
+change events, and a consumer can update the lakehouse copy, while the hourly
+snapshot remains a reconciliation/repair mechanism.
+
 ### F9. `regexp_matches` and `!~`
 
 `stg_observations.sql:20` uses `regexp_matches(...)`; the custom test

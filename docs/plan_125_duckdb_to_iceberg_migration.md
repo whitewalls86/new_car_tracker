@@ -221,7 +221,14 @@ Deliverables (all covered by the audit doc):
    read live HOT tables, and `int_active_make_models` inner-joins into
    `mart_vehicle_snapshot` — so it filters the whole mart layer. Spark needs a
    JDBC read or a snapshot of that reference data in MinIO/Iceberg before the
-   serving chain can move.
+   serving chain can move. Recommendation: use an hourly snapshot of
+   `public.search_configs` and `ops.tracked_models` as the Plan 125 path. They
+   are low-change operational reference tables, so a scheduled export to
+   MinIO/Iceberg is simpler and safer than making the Spark/dbt build reach back
+   into live Postgres. A future streaming pass can improve this by publishing
+   change events from the ops routers that mutate these tables and having a
+   consumer update the lakehouse copy, with the hourly snapshot retained as a
+   reconciliation/repair path.
 3. **First chain revised — Gate A should not start on the volatility chain.**
    The chain below remains the right first *useful* chain for **Gate B**, but the
    audit recommends Gate A spike on `stg_blocked_cooldown_events` →

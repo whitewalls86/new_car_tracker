@@ -50,6 +50,7 @@ transactional outbox or feed a parallel outbox, rather than adding direct
 
 Candidate event streams:
 
+- `search_configs` / `tracked_models` reference-table changes
 - price observation events
 - VIN-to-listing mapping events
 - blocked cooldown events
@@ -62,6 +63,14 @@ preserve useful ordering:
 - `listing_id` for listing-scoped events
 - `vin` or `vin17` for vehicle-scoped events
 - `artifact_id` for artifact-processing events
+
+Recommended first streaming job: publish `search_configs` and `tracked_models`
+changes from the ops routers that already own those mutations, then have a small
+consumer update the MinIO/Iceberg reference copy introduced by Plan 125. These
+tables are low-volume, low-change, and easy to reconcile against Postgres, so
+they exercise the core streaming shape without immediately taking on the much
+larger silver observation/event-firehose problem. Keep the hourly Plan 125
+snapshot as the repair/reconciliation path until the stream has proven itself.
 
 ## Likely Technology Choice
 
