@@ -2,7 +2,7 @@
 Plan 112 Gate A4: preflight checks for the local lakehouse harness.
 
 Read-only sanity checks for the "fresh clone to local lakehouse smoke" path
-(docs/runbook_lakehouse.md, A4 section) so missing dependencies, an unseeded
+(docs/plan_112_refresh_policy_backtesting.md, A4 section) so missing dependencies, an unseeded
 MinIO, a stale/absent analytics.duckdb, or an unregistered Iceberg warehouse
 are caught with an actionable message *before* a Spark container run fails
 half an hour in. Run it from the repo root on the host:

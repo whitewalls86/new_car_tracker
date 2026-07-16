@@ -152,6 +152,7 @@ class TestLakehouseWorkerService:
         service = self._service()
         build = service["build"]
         assert build["dockerfile"] == "lakehouse/Dockerfile"
+        assert build["target"] == "lakehouse-worker"
 
     def test_joins_cartracker_net(self):
         service = self._service()

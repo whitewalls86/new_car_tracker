@@ -25,7 +25,7 @@
 #   - bind-mounts a local analytics directory READ-ONLY into
 #     `lakehouse-worker` (default ./.cache/analytics; override with
 #     LAKEHOUSE_LOCAL_ANALYTICS_DIR). Put/build analytics.duckdb there --
-#     see docs/runbook_lakehouse.md's A4 section.
+#     see docs/plan_112_refresh_policy_backtesting.md's A4 section.
 #
 # Safe to run and tear down freely: like the base file, this project
 # declares no production service or volume, so
@@ -34,7 +34,7 @@
 # can only ever affect its own throwaway resources. Never reference this
 # file from CI, and never add it to a VM command.
 #
-# Usage (see docs/runbook_lakehouse.md's A4 section):
+# Usage (see docs/plan_112_refresh_policy_backtesting.md's A4 section):
 #   docker compose -f docker-compose.lakehouse.yml -f docker-compose.lakehouse.local.yml \
 #     -p local-lakehouse up -d minio lakekeeper-postgres lakekeeper
 

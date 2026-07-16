@@ -14,7 +14,7 @@ data). To keep this script decoupled from the dbt/silver schema, the fixture
 here is a small deterministic synthetic dataset generated in-process (VIN,
 observed_at, price, mileage) rather than a Parquet slice read from an
 existing seeded fixture -- a deliberate scope simplification over the
-original plan text, called out in docs/runbook_lakehouse.md.
+original plan text, called out in docs/plan_112_refresh_policy_backtesting.md.
 
 Subcommands:
     write     - create the table from the first synthetic batch (snapshot 1)

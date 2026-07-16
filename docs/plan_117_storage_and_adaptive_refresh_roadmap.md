@@ -166,7 +166,7 @@ Required checks:
 
 Decision output:
 
-- `docs/lakehouse_substrate_decision.md`
+- `docs/plan_112_refresh_policy_backtesting.md`
 - selected table/catalog path
 - rejected alternatives
 - exact spike commands

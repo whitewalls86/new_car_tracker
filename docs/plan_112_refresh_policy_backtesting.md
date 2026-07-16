@@ -1,615 +1,310 @@
 # Plan 112: Iceberg + MLflow Adaptive Refresh Backtesting
 
+## Status
+
+**Paused after foundation/proof work.**
+
+Plan 112 proved the open-lakehouse substrate we wanted to learn from:
+
+- Lakekeeper REST catalog can run in an isolated Compose project.
+- Spark/PySpark can write, append, read, time-travel, and clean up Iceberg
+  tables on MinIO.
+- A real dbt/DuckDB feature table (`int_listing_volatility_features`) can be
+  exported to Iceberg with row-count/grain validation.
+- A local rehearsal can download a Plan 120 snapshot through the ops API, seed
+  local MinIO, build a targeted local DuckDB, publish to Iceberg, and clean up.
+- MLflow can record dataset/table provenance for the Iceberg snapshot.
+
+That is enough for Plan 112's original foundation goal. The plan is paused
+before deeper MLflow/backtesting/model work because the better next move is to
+make Iceberg a real analytics contract instead of a sidecar export. That work
+is split into **Plan 125: DuckDB to Iceberg Analytics Migration**.
+
+Plan 112 should resume only after Plan 125 establishes how dbt/Spark/Iceberg
+own analytical tables.
+
 ## Goal
 
 Build the reproducible experiment layer for adaptive detail refresh on an open,
-portable lakehouse foundation.
+portable lakehouse foundation:
 
-This plan is the first real implementation step after the Plan 110/111 storage
-and feature foundations and the Plan 123 dbt resource work. The new direction is
-not "fake Databricks." It is a Databricks-portable open lakehouse:
+- Apache Iceberg tables on object storage.
+- Spark/PySpark for writes and future feature/model preparation.
+- MLflow for experiment tracking and dataset/model provenance.
+- Lakekeeper REST catalog as the local/open catalog proof, with deeper
+  governance deferred to Plan 119.
+- Plan 120 snapshots as the reproducible local/CI substrate.
 
-- Apache Iceberg tables on object storage
-- Spark/PySpark for table writes, feature preparation, and model training
-- MLflow for experiment tracking and policy artifacts
-- Unity Catalog OSS or a compatible catalog/governance layer where practical
-- Postgres remains the hot operational system
-- DuckDB remains transitional, not the long-term analytical contract
+Plan 112 does **not** change production scraping or claim logic. Production
+integration belongs to Plan 113.
 
-This plan does **not** change production scraping. Production integration
-belongs to Plan 113.
-
----
-
-## Context
-
-Earlier versions of this roadmap moved from a DuckDB-centered analytics layer
-toward Delta Lake because the project was framed as "Databricks without
-Databricks." That was defensible, but the industry direction has shifted enough
-to revisit the choice.
-
-The current strategic read:
-
-- Iceberg is becoming the strongest vendor-neutral table-format story.
-- Snowflake, Databricks, Trino, Spark, and catalog vendors are converging around
-  Iceberg interoperability.
-- Databricks remains Delta-native, but supports Iceberg access paths and Unity
-  Catalog-style governance concepts.
-- If a role requires managed Databricks experience as a hard gate, a local Delta
-  clone would not fully satisfy that anyway.
-- The systems knowledge in Iceberg + Spark + MLflow + catalog governance should
-  transfer well to Databricks, Snowflake, and open lakehouse roles.
-
-Therefore Plan 112 should use **Iceberg first**, with MLflow unchanged as the
-experiment layer. The professional story becomes:
-
-> Built an open lakehouse architecture using Apache Iceberg, Spark/PySpark,
-> MLflow, and catalog/governance patterns aligned with Unity Catalog, designed
-> for portability across Databricks, Snowflake, and open-source query engines.
-
-Use Iceberg v2 for the initial implementation unless a selected tool requires
-v3. Iceberg v3 support is important strategically, but v2 is the safer first
-compatibility target.
-
----
-
-## Foundations
-
-This plan starts from completed or in-flight foundations:
-
-- Plan 110 normalized storage layout and object-store hygiene.
-- Plan 111 adaptive-refresh feature foundation.
-- Plan 120 CI/local lake snapshot delivery.
-- Plan 123 dbt cadence separation, feature-store correction, and DuckDB resource
-  guardrails.
-- Plan 124 browser-solver memory containment, removing a production instability
-  distraction before lakehouse work begins.
-
-Plan 112 should consume Plan 120 fixture snapshots in CI/local development and
-can run fuller production-corpus validation manually on the VM. After Gate A3,
-the next Plan 112 bridge is not "more PySpark logic" yet; it is a local
-integration harness that uses Plan 120 snapshots as the common substrate for
-local MinIO, dbt, DuckDB, Lakekeeper, Iceberg, and PySpark.
-
-That harness depends on Plan 120 Gate E, which is now complete and
-VM-verified:
-
-- package a materialized snapshot into a reproducible `.tar.zst` archive;
-- publish/checksum the archive and its manifest under stable MinIO keys;
-- expose a usable `latest.json`/manifest/archive path for CI and local
-  development;
-- keep the existing offline seed path working so local testing can use either a
-  downloaded archive or a manually supplied archive.
-
-Gate E VM validation generated an `edge` snapshot, promoted
-`ci_snapshots/adaptive_refresh/latest.json`, and confirmed archive-cache reuse
-on a repeat run. Gate A4 can now build the broader "test local" strategy on
-that contract instead of relying on ad hoc VM/manual exports.
-
----
-
-## Architecture
-
-```text
-Plan 110 normalized Parquet / Plan 123 dbt feature outputs
-        |
-        v
-Spark/PySpark Iceberg writers
-        |
-        v
-Iceberg tables on MinIO
-        |
-        +--> catalog path:
-        |      Unity Catalog OSS / REST catalog / documented fallback
-        |
-        v
-snapshot/version-pinned replay inputs
-        |
-        +--> rule-based policy backtests
-        |
-        +--> XGBoost experiment
-        |
-        v
-MLflow:
-  params + metrics + artifacts + models + Iceberg table snapshot metadata
-```
-
-The hot production claim path must not call MLflow, Spark, Iceberg, Unity
-Catalog, or a live model server. Plan 113 consumes pinned outputs/configs
-produced by this plan.
-
----
-
-## Gate 0: Feature and Substrate Preflight
-
-**Status: in progress.** Structural audit and first-pass substrate decision
-docs and script exist; the placeholder "VM verification results" / "Gate A
-spike results" sections in both docs are not yet filled in with real output.
-Gate 0 is not complete until those sections are replaced with actual VM runs
-and the audit script has been executed against
-`/data/analytics/analytics.duckdb`.
-
-Progress so far:
-
-- [x] `docs/adaptive_refresh_feature_audit.md` — structural audit doc (grain,
-  required fields, freshness, duplicate-key expectations, deferred checks).
-- [x] `docs/lakehouse_substrate_decision.md` — first-pass Iceberg/catalog
-  substrate decision, candidate tables, storage convention, cleanup rules.
-- [x] `scripts/audit_adaptive_refresh_features.py` — read-only DuckDB audit
-  script (row counts, grain/duplicate checks, null counts, freshness, source
-  distribution, VIN/listing coverage, negative-duration checks).
-- [x] Real VM run of `scripts/audit_adaptive_refresh_features.py` against
-  `/data/analytics/analytics.duckdb`, with output pasted into
-  `docs/adaptive_refresh_feature_audit.md`'s placeholder section.
-- [ ] Sampled manual VIN/listing history review (SQL snippets provided in the
-  audit doc).
-- [ ] Gate A Iceberg spike itself (not started — this PR is preflight only).
-
-Before writing lakehouse code, confirm the current feature outputs and substrate
-targets are ready.
-
-Tables to audit:
-
-- `int_listing_state_fingerprints`
-- `int_listing_state_runs`
-- `int_listing_observation_fingerprints`
-- `int_listing_observation_runs`
-- `int_listing_volatility_features`
-- `mart_detail_refresh_priority` if still present or replaced by later feature
-  outputs
-
-Required checks:
-
-1. Row counts by source window.
-2. Distinct VIN/listing coverage.
-3. Null rates on key fields.
-4. Duplicate key checks at expected grain.
-5. Freshness and input-window checks.
-6. Fingerprint stability on repeated identical parsed states.
-7. State-run continuity: no impossible overlaps or negative durations.
-8. Observation-run continuity: source switches should not create false business
-   state changes.
-9. Volatility feature sanity: no unbounded scores, obvious date inversions, or
-   impossible counts.
-10. Sampled manual review for several VIN/listing histories.
-11. Decide which backtest rows are VIN-grained and which supporting signals
-    remain listing-grained.
-
-Substrate preflight:
-
-1. Choose first Iceberg catalog path:
-   - preferred: REST-compatible catalog that can grow toward Unity Catalog OSS,
-     Polaris, or Lakekeeper-style governance;
-   - acceptable first spike: Hadoop/file catalog if it keeps the first PR small.
-2. Choose physical storage prefixes under MinIO for isolated Iceberg tables.
-3. Decide which tables are copied from dbt/DuckDB outputs versus written from
-   normalized Parquet sources.
-4. Document cleanup rules so spike tables cannot mutate production Parquet.
-
-Deliverables:
-
-- `docs/adaptive_refresh_feature_audit.md`
-- first-pass catalog/storage decision section in
-  `docs/lakehouse_substrate_decision.md`
-
-Plan 112 should not proceed to model/backtest claims until this audit is
-complete.
-
----
-
-## Gate A: Iceberg + Catalog Foundation
-
-Run this first on isolated data and isolated object-store prefixes.
-
-Minimum Iceberg checks:
-
-1. Stand up a local Spark/PySpark environment.
-2. Configure Spark to write Iceberg tables to MinIO or a local object-store
-   equivalent.
-3. Write a small Iceberg table from a Plan 110/123 fixture subset.
-4. Read it back through Spark.
-5. Append a second snapshot.
-6. Time travel to a previous snapshot.
-7. Capture table name, catalog name, snapshot ID, path, row count, and schema
-   programmatically.
-8. Prove cleanup does not mutate source Parquet or production dbt outputs.
-9. Confirm the same table can be recreated from a fixture snapshot in CI or a
-   local development environment.
-
-Minimum catalog/governance checks:
-
-1. Stand up Unity Catalog OSS or document why it is deferred.
-2. If Unity Catalog OSS is not viable for the first PR, evaluate a simpler REST
-   catalog or file catalog and record the tradeoff.
-3. Register or expose a test table if feasible.
-4. Test the smallest useful governance behavior, such as reader/writer
-   separation, table ownership metadata, or catalog/schema/table naming rules.
-5. Document differences from managed Databricks Unity Catalog.
-
-Decision output:
-
-- `docs/lakehouse_substrate_decision.md`
-- selected local Iceberg catalog path
-- selected storage prefix convention
-- rejected alternatives
-- exact spike commands
-- cleanup proof
-- known gaps vs managed Databricks and Snowflake-managed Iceberg
-
-Fallback rule:
-
-If Unity Catalog OSS blocks the local workflow, continue with Spark + Iceberg +
-MLflow using a simpler catalog and defer deeper catalog work to Plan 119. If
-Iceberg itself is disproportionately fragile locally, revisit the table-format
-decision before proceeding to backtests.
-
-### Gate A4: Local Integration Harness
-
-**Status: scaffolding implemented (2026-07-15); end-to-end local run not yet
-exercised.** Landed: `docker-compose.lakehouse.local.yml` (self-contained
-local stack: throwaway MinIO on 19000, Lakekeeper published on 18181,
-non-external network, read-only local analytics bind mount -- no production
-Docker resource referenced), `scripts/preflight_local_lakehouse_snapshot.py`
-(read-only checks with actionable errors for every prerequisite below), the
-runbook's "A4" section (exact commands, honest about the two manual gaps),
-and compose/preflight unit tests. Remaining manual: acquiring the archive off
-the VM (Plan 120 Gate F not built) and the local dbt build's Postgres
-dependency (`postgres_scan` sources) -- see `docs/runbook_lakehouse.md`.
-
-Gate A1-A3 proved the catalog, Spark/Iceberg mechanics, CI-safe synthetic
-round-trip, and VM rehearsal against the real `int_listing_volatility_features`
-table. Gate A4 turns that into a repeatable local testing path so the VM is a
-production rehearsal environment, not the first place missing dependencies,
-stale dbt schemas, bad Compose mounts, or Spark catalog regressions are found.
-
-Target local flow:
+## Current Architecture
 
 ```text
 Plan 120 snapshot archive
         |
         v
-local MinIO seed
+local or VM MinIO seed
         |
         v
-local dbt build
+targeted dbt/DuckDB build
         |
         v
-local analytics.duckdb
+lakehouse-worker / PySpark
         |
         v
-local Lakekeeper + lakehouse-worker / PySpark / Iceberg
+Iceberg table in Lakekeeper + MinIO
         |
         v
-local assertions + cleanup
+MLflow provenance run
 ```
 
-Deliverables:
+This proved the mechanics, but DuckDB/dbt still owns the real analytics
+contract. Plan 125 exists to close that gap.
 
-1. Add a local-only lakehouse Compose override, distinct from the VM-only A3
-   override, that mounts a local analytics DuckDB path read-only into
-   `lakehouse-worker`.
-2. Add a preflight/check script or documented command sequence that verifies:
-   MinIO is reachable; the Plan 120 snapshot manifest/archive exists; the
-   snapshot has been seeded; `analytics.duckdb` exists; required dbt feature
-   tables exist; Lakekeeper is up; the Iceberg warehouse is registered.
-3. Document the "fresh clone to local lakehouse smoke" path:
-   download or supply a Plan 120 archive, seed MinIO, run dbt, start
-   Lakekeeper, run the PySpark Iceberg rehearsal, and clean up.
-4. Keep the local harness aligned with CI where practical: CI runs a smaller
-   version of the same path; local runs may use a richer Plan 120 archive.
+## Consolidated Decisions
 
-Explicit Plan 120 handoff:
+| Decision | Current call |
+|---|---|
+| Table format | Iceberg v2 for the first implementation. Revisit v3 only when a tool or platform requires it. |
+| Primary engine | Spark/PySpark for Iceberg writes and validation. |
+| Optional engine | PyIceberg remains optional validation, not the primary writer. |
+| Catalog | Lakekeeper REST catalog for local/VM proof. |
+| Catalog metadata store | Isolated `lakekeeper-postgres` during Plan 112; no production Postgres coupling. |
+| Object store | MinIO bucket `bronze`, isolated `lakehouse_spike/warehouse/` prefix. |
+| Governance | RBAC/multi-tenant catalog policy deferred to Plan 119. |
+| MLflow service | Standalone experimental service for provenance smoke; production-ish always-on service deferred. |
+| Runtime images | Plan 112 runtimes are consolidated into `lakehouse/Dockerfile` with separate targets. |
 
-- Plan 120 Gate E (`manifest/package/upload`) is complete and VM-verified. It
-  turns the already-materialized Gate D export into an archive + manifest +
-  stable latest pointer, and repeat runs can reuse the archive cache.
-- The local harness should not reimplement snapshot packaging. It should call
-  or consume Plan 120's download/seed contract.
+## Completed Work
 
----
+### Gate 0: Feature and Substrate Preflight
 
-## Gate B: MLflow Foundation
+Completed:
 
-Stand up MLflow before serious backtesting.
+- Read-only audit script: `scripts/audit_adaptive_refresh_features.py`.
+- VM audit of current adaptive-refresh feature outputs.
+- Documented feature grains, required fields, freshness, duplicates, source
+  coverage, and known caveats.
+- Confirmed `int_listing_volatility_features` as the first real Iceberg export
+  candidate.
 
-Initial deployment:
+Outstanding but non-blocking:
 
-- Backend store: existing Postgres if practical.
-- Artifact store: MinIO or a mounted Docker volume.
-- Access: internal first.
+- Sampled manual VIN/listing review remains useful before serious policy
+  backtesting, but it no longer blocks the infrastructure proof.
 
-Create one smoke-test experiment and log:
+### Gate A: Iceberg + Catalog Foundation
 
-- code SHA
-- Iceberg catalog/table name
-- Iceberg snapshot ID
-- input row count
-- placeholder metrics
-- `dataset_snapshot.json`
+Completed:
 
-Required MLflow metadata:
+- `docker-compose.lakehouse.yml`: isolated Lakekeeper + Lakekeeper Postgres.
+- `docker-compose.lakehouse.ci.yml`: CI-only throwaway MinIO/network override.
+- `lakehouse/Dockerfile` target `lakehouse-worker`: PySpark/Iceberg runtime.
+- `scripts/register_lakehouse_warehouse.py`: idempotent warehouse registration.
+- `scripts/spike_iceberg_lakehouse.py`: synthetic fixture write/read/append
+  and cleanup proof.
+- `scripts/export_volatility_features_to_iceberg.py`: VM/local real-table
+  export/info/cleanup for `int_listing_volatility_features`.
+- `docker-compose.lakehouse.a3.yml`: VM/local read-only analytics DuckDB mount.
+- `docker-compose.lakehouse.local.yml`: isolated local Lakekeeper + MinIO flow.
+- `scripts/preflight_local_lakehouse_snapshot.py`: local readiness checks.
+- `scripts/run_local_lakehouse_rehearsal.py`: one-command local A4 rehearsal.
 
-| Field | Description |
-|-------|-------------|
-| `policy_family` | `baseline`, `rule`, or `xgboost` |
-| `input_window_start` | First `fetched_at` included |
-| `input_window_end` | Last `fetched_at` included |
-| `code_sha` | Git commit used for replay |
-| `entity_grain` | Expected primary grain for decisions, likely `vin17` |
-| `iceberg.catalog` | Source catalog |
-| `iceberg.table` | Source table |
-| `iceberg.snapshot_id` | Source snapshot ID |
-| `dataset.row_count` | Input row count |
-| `dataset.distinct_vins` | Distinct VIN count |
+Verified:
 
-Artifacts:
+- A2 synthetic Iceberg round-trip in CI and on the VM.
+- A3 real `int_listing_volatility_features` export on the VM: 250,790 rows,
+  exact source/Iceberg row-count match, cleanup removed table/data.
+- A4 local rehearsal against a Plan 120 snapshot.
 
-- `dataset_snapshot.json`
-- `policy_config.json`
-- `environment.json`
+### Gate B: MLflow Provenance Smoke
 
----
+Completed:
 
-## Gate C: Backtest Input Preparation
+- `shared/mlflow_provenance.py`: pure payload construction/validation.
+- `scripts/log_lakehouse_experiment_provenance.py`: CLI to log one dataset
+  provenance run.
+- `docker-compose.mlflow.yml`: standalone experimental MLflow service.
+- `lakehouse/Dockerfile` target `mlflow`: MLflow server/provenance client image.
+- VM smoke logged an `adaptive_refresh_provenance` run with Plan 120 archive
+  metadata and Iceberg table metadata.
 
-Prepare stable replay inputs once per dataset/snapshot/window.
+Deferred:
 
-Required inputs:
+- Production-style MLflow backend in Postgres.
+- Flyway migration/user/schema for MLflow.
+- Caddy `/mlflow` route.
+- Real backtest/model runs.
 
-- historical detail fetch points
-- parsed state fingerprints
-- detail-only state runs
-- all-source observation runs
-- volatility features
-- SRP/carousel recency signals
-- listing/VIN relisting signals
-- 403/cooldown signals where relevant
+## Operational Guide
 
-Backtesting and modeling are primarily VIN-grained. Listing-level signals should
-remain available for relisting, dealer, and observation-cadence edge cases.
+### Required Environment
 
-Backtest decision rows should be keyed by:
+Lakekeeper:
+
+- `LAKEKEEPER_DB_PASSWORD`
+- `LAKEKEEPER_PG_ENCRYPTION_KEY`
+
+Local MinIO defaults in the local/CI overrides:
+
+- `MINIO_ROOT_USER=cartracker`
+- `MINIO_ROOT_PASSWORD=cartracker123`
+
+Snapshot download:
+
+- `CARTRACKER_SNAPSHOT_TOKEN` or `--token`, sourced from
+  `SNAPSHOT_DOWNLOAD_TOKEN`.
+
+Use URL-safe values for Lakekeeper secrets. Avoid raw `@`, `/`, `:`, `?`, `#`,
+and whitespace because the password is interpolated into a Postgres URL.
+
+### Lakekeeper Stack
+
+Bring up the VM/local catalog:
+
+```bash
+docker compose -f docker-compose.lakehouse.yml -p cartracker-lakehouse \
+  up -d lakekeeper-postgres lakekeeper
+```
+
+Check status:
+
+```bash
+docker compose -f docker-compose.lakehouse.yml -p cartracker-lakehouse ps
+docker run --rm --network cartracker-net curlimages/curl:8.10.1 \
+  -fsSL http://lakekeeper:8181/management/v1/info
+```
+
+Safe teardown for the lakehouse project only:
+
+```bash
+docker compose -f docker-compose.lakehouse.yml -p cartracker-lakehouse down
+```
+
+Use `down -v` only against standalone lakehouse projects, never against the
+main `docker-compose.yml`.
+
+### Synthetic Iceberg Round Trip
+
+```bash
+docker compose -f docker-compose.lakehouse.yml -p cartracker-lakehouse \
+  build lakehouse-worker
+
+docker compose -f docker-compose.lakehouse.yml -p cartracker-lakehouse \
+  run --rm lakehouse-worker python -m scripts.register_lakehouse_warehouse
+
+docker compose -f docker-compose.lakehouse.yml -p cartracker-lakehouse \
+  run --rm lakehouse-worker python -m scripts.spike_iceberg_lakehouse roundtrip
+```
+
+### VM Real-Table Export
+
+Uses the VM-only read-only analytics volume override:
+
+```bash
+LH="docker compose -f docker-compose.lakehouse.yml -f docker-compose.lakehouse.a3.yml -p cartracker-lakehouse"
+
+$LH run --rm lakehouse-worker python -m scripts.export_volatility_features_to_iceberg export
+$LH run --rm lakehouse-worker python -m scripts.export_volatility_features_to_iceberg info
+$LH run --rm lakehouse-worker python -m scripts.export_volatility_features_to_iceberg cleanup
+```
+
+### Local One-Command Rehearsal
+
+From a local checkout with Docker running and `CARTRACKER_SNAPSHOT_TOKEN` set:
+
+```bash
+python -m scripts.run_local_lakehouse_rehearsal --refresh-seed-data
+```
+
+Useful flags:
+
+- `--keep-iceberg-table`: leave the Iceberg table behind for inspection.
+- `--force-dbt`: rebuild `.cache/analytics/analytics.duckdb`.
+- `--reseed-only`: refresh the local MinIO seed without running Spark.
+
+The runner intentionally does not tear down the local stack. Clean up manually:
+
+```bash
+docker compose -f docker-compose.lakehouse.yml -f docker-compose.lakehouse.local.yml \
+  -p local-lakehouse down
+```
+
+### MLflow Provenance Smoke
+
+File-store smoke:
+
+```bash
+python -m scripts.log_lakehouse_experiment_provenance \
+  --manifest .cache/lake_snapshots/<snapshot_id>/manifest.json \
+  --iceberg-info-json /tmp/iceberg_info.json \
+  --feature-table-name int_listing_volatility_features \
+  --tracking-uri file:./.cache/mlruns
+```
+
+Standalone server smoke on VM/main-stack environment:
+
+```bash
+docker compose -f docker-compose.mlflow.yml -p cartracker-mlflow build mlflow
+docker compose -f docker-compose.mlflow.yml -p cartracker-mlflow up -d
+
+docker cp /tmp/archive_manifest.json cartracker-mlflow:/tmp/archive_manifest.json
+docker cp /tmp/iceberg_info.json cartracker-mlflow:/tmp/iceberg_info.json
+
+docker exec -i cartracker-mlflow python -m scripts.log_lakehouse_experiment_provenance \
+  --manifest /tmp/archive_manifest.json \
+  --iceberg-info-json /tmp/iceberg_info.json \
+  --feature-table-name int_listing_volatility_features \
+  --env vm \
+  --tracking-uri http://localhost:5000
+```
+
+UI is exposed locally as `http://localhost:15000` for the standalone project.
+Caddy `/mlflow` exposure is deferred.
+
+## Deferred Original Gates
+
+The following remain valid, but are intentionally paused until after Plan 125:
+
+### Gate C: Backtest Input Preparation
+
+Prepare stable replay inputs keyed by:
 
 ```text
 (policy_run_id, vin17, fetch_time)
 ```
 
-Recommended supporting fields:
+Inputs should include detail fetch points, detail state runs, all-source
+observation runs, volatility features, SRP/carousel recency, relisting signals,
+and cooldown/403 signals.
 
-- `listing_id`
-- `latest_listing_id`
-- `listing_id_change_count`
-- `source`
-- observation-run source counts
-- dealer/customer identifiers
-- make/model/trim/year
+### Gate D: Rule-Based Replay
 
----
+Run an interpretable grid of refresh policies and measure fetch reduction,
+change-detection delay, missed active periods, and estimated 403 reduction.
 
-## Gate D: Rule-Based Replay
+### Gate E: XGBoost Experiment
 
-Run an interpretable policy grid before ML training.
+Train an experimental model such as `material_change_within_48h`, log metrics
+and model artifacts to MLflow, and compare against the rule baseline.
 
-Candidate parameters:
+### Gate F: Policy Artifact for Plan 113
 
-| Parameter | Description |
-|-----------|-------------|
-| `hot_threshold` | Min score for `hot` tier |
-| `daily_threshold` | Min score for `daily` tier |
-| `cool_threshold` | Min score for `cool` tier |
-| `hot_interval_hours` | Fetch interval for hot tier |
-| `daily_interval_hours` | Fetch interval for daily tier |
-| `cool_interval_hours` | Fetch interval for cool tier |
-| `cold_interval_hours` | Fetch interval for cold tier |
-| `srp_recent_hours` | Promotion window for recent SRP appearance |
-| `carousel_recent_hours` | Promotion window for recent carousel appearance |
-| `new_vin_hours` | Promotion window for new VINs |
+Emit a pinned `policy_config.json` containing policy family/version, code SHA,
+MLflow run ID, Iceberg snapshot metadata, selected thresholds or model URI, and
+escape-hatch rules. Plan 113 owns production integration.
 
-Replay algorithm:
+## Handoff to Plan 125
 
-1. Walk historical detail fetch points for each VIN in chronological order.
-2. Track the latest state the policy would have observed.
-3. At each historical fetch point:
-   - fetch if `next_detail_fetch_after <= fetch_time`
-   - otherwise skip
-4. When actual parsed state changes, compute when the policy would detect it.
-5. Aggregate skip, delay, and missed-window metrics.
+Plan 112 showed Iceberg works, but it did not make Iceberg the project’s
+analytics contract. Before building more backtesting/modeling on top, Plan 125
+should answer:
 
-Primary metrics:
+- Which dbt execution path replaces DuckDB?
+- Which existing models can materialize directly to Iceberg?
+- How do dashboards and scripts read Iceberg-backed analytics?
+- What local/CI fixture path proves parity without depending on the VM?
 
-| Metric | Description |
-|--------|-------------|
-| `fetches_total` | Baseline fetch count |
-| `fetches_skipped` | Fetches policy would skip |
-| `fetches_skipped_pct` | Primary efficiency metric |
-| `price_changes_delayed_pct` | Price changes delayed |
-| `state_changes_delayed_pct` | Listing-state changes delayed |
-| `relisting_changes_delayed_pct` | Listing-ID changes delayed |
-| `median_detection_delay_hours` | Typical delay |
-| `p95_detection_delay_hours` | Tail delay |
-| `missed_active_periods_pct` | Inventory tracking gaps |
-| `estimated_403_reduction_pct` | Proxy from reduced detail fetches |
-
----
-
-## Gate E: XGBoost Experiment
-
-After the rule baseline and labels are stable, train an XGBoost model.
-
-This is a learning goal and an experiment. It does not go to production in this
-plan.
-
-Start with one binary target:
-
-- `material_change_within_48h`
-
-Candidate features:
-
-- days since last detail-state change
-- days since last all-source observation change
-- unchanged observation streak
-- price change counts
-- listing ID change counts
-- SRP recency
-- carousel recency
-- make/model priors
-- dealer priors
-- current price band
-- mileage band
-- stock type
-- fuel/body style
-- cooldown/403 pressure
-
-Log to MLflow:
-
-- train/validation window boundaries
-- Iceberg table snapshot IDs
-- XGBoost hyperparameters
-- AUC/PR-AUC/log-loss
-- calibration summary
-- confusion matrix at candidate thresholds
-- feature importance
-- model artifact
-- prediction sample
-
----
-
-## Gate F: Policy Artifact For Plan 113
-
-The output of this plan is a pinned policy candidate, not a production rollout.
-
-Required artifact:
-
-- `policy_config.json`
-
-Required fields:
-
-- policy family
-- policy version
-- code SHA
-- MLflow run ID
-- Iceberg table/snapshot metadata
-- input window
-- selected thresholds or model URI
-- escape-hatch rules for:
-  - new listings
-  - never-scraped listings
-  - SRP/carousel-recent listings
-  - forced refreshes
-  - cooldown/blocked listings
-
-Plan 113 owns production claim-query integration, shadow mode, feature flags,
-and rollback.
-
----
-
-## Output Tables / Artifacts
-
-### `int_backtest_policy_decisions`
-
-Row per `(policy_run_id, vin17, fetch_time)`.
-
-| Column | Description |
-|--------|-------------|
-| `policy_run_id` | Policy run identifier |
-| `mlflow_run_id` | MLflow run identifier |
-| `vin17` | Primary entity key |
-| `listing_id` | Historical listing ID at fetch time |
-| `fetch_time` | Historical candidate fetch point |
-| `would_fetch` | Boolean |
-| `would_skip` | Boolean |
-| `score_at_time` | Rule/model score used |
-| `tier_at_time` | Tier assigned |
-| `reason` | Dominant decision reason |
-| `actual_change_at` | Change timestamp if applicable |
-| `policy_detected_at` | Policy detection timestamp if delayed |
-| `delay_hours` | Detection delay |
-
-### `mart_backtest_policy_summary`
-
-One row per policy run.
-
-| Column | Description |
-|--------|-------------|
-| `policy_run_id` | Policy run identifier |
-| `mlflow_run_id` | MLflow run identifier |
-| `input_catalog` | Primary Iceberg catalog |
-| `input_table` | Primary Iceberg table |
-| `input_snapshot_id` | Primary Iceberg snapshot ID |
-| `policy_family` | `baseline`, `rule`, or `xgboost` |
-| `fetches_total` | Baseline fetch count |
-| `fetches_skipped` | Fetches policy would skip |
-| `fetches_skipped_pct` | Skip rate |
-| `price_changes_delayed` | Price changes detected late |
-| `state_changes_delayed` | Listing-state changes detected late |
-| `relisting_changes_delayed` | Listing-ID changes detected late |
-| `median_detection_delay_hours` | Typical delay |
-| `p95_detection_delay_hours` | Tail delay |
-| `missed_active_periods` | Short-lived inventory missed |
-| `estimated_403_reduction_pct` | Proxy from reduced detail fetches |
-
----
-
-## Evaluation Gates
-
-Before approving any policy for Plan 113, the chosen run must satisfy
-provisional gates:
-
-| Gate | Provisional Threshold |
-|------|-----------------------|
-| `fetches_skipped_pct` | >= 50% |
-| `p95_detection_delay_hours` | <= 48h |
-| `missed_active_periods_pct` | <= 2% |
-| `price_changes_delayed_pct` | reviewed against business impact |
-
-XGBoost does not need to beat the rule policy to be valuable. It should teach
-whether the available features support useful predictive signal.
-
----
-
-## Testing
-
-- Feature audit queries catch duplicate keys, null keys, impossible date spans,
-  and unstable grains.
-- Iceberg spike can create, append, read, time travel, and clean up a fixture
-  table.
-- Catalog test confirms whichever catalog path is selected can resolve a table
-  by name.
-- MLflow run logs params, metrics, tags, and artifacts.
-- Replay algorithm correctly identifies skipped fetches and detection delay.
-- Baseline run produces `fetches_skipped_pct = 0`.
-- Newly discovered VINs remain eligible.
-- Recent price drops remain high priority.
-- Known state changes produce expected `delay_hours`.
-
----
-
-## Files Changed
-
-| File | Change |
-|------|--------|
-| `docs/adaptive_refresh_feature_audit.md` | New feature output audit |
-| `docs/lakehouse_substrate_decision.md` | New Iceberg/catalog spike result |
-| `scripts/spike_iceberg_lakehouse.py` | New isolated Iceberg spike helper |
-| `scripts/register_iceberg_tables.py` | New selected-table setup helper |
-| `scripts/backtest_refresh_policy.py` | New replay runner |
-| `scripts/train_refresh_xgboost.py` | New XGBoost experiment runner |
-| `mlflow/` or config file | MLflow server/config wiring |
-| `tests/test_backtest_replay.py` | Replay algorithm unit tests |
-| `tests/test_refresh_xgboost.py` | Model training/evaluation tests |
-| `tests/integration/test_iceberg_refresh_snapshots.py` | Iceberg snapshot/time-travel tests |
-| `tests/integration/test_mlflow_refresh_runs.py` | MLflow tracking tests |
-
----
-
-## Out Of Scope
-
-- Production ops claim-query integration. See Plan 113.
-- CI/local fixture snapshot export and delivery. See Plan 120.
-- Full dbt migration away from DuckDB. See Plan 118.
-- Governance/catalog expansion beyond the spike. See Plan 119.
-- Online model serving.
-- Automatic model promotion.
-- Calling MLflow, Spark, Iceberg, or Unity Catalog in the hot production scrape
-  path.
-- Raw HTML sectioning/deduplication. See Plan 114.
+Once Plan 125 has a stable Iceberg-native feature layer, resume Plan 112 at
+Gate C with those tables as the replay input.

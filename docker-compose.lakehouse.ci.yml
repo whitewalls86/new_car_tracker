@@ -11,7 +11,7 @@
 #     18181) as defense-in-depth against any future port collision, even
 #     though separate GitHub Actions jobs already run on separate runner VMs.
 #
-# Usage (see docs/runbook_lakehouse.md and the `lakehouse` CI job):
+# Usage (see docs/plan_112_refresh_policy_backtesting.md and the `lakehouse` CI job):
 #   docker compose -f docker-compose.lakehouse.yml -f docker-compose.lakehouse.ci.yml \
 #     -p ci-lakehouse up -d minio lakekeeper-postgres lakekeeper
 #

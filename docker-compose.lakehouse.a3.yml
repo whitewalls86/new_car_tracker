@@ -9,7 +9,7 @@
 # runner. Only ever add this file as a second `-f` for VM/local A3 runs; the
 # CI job must never reference it.
 #
-# Usage (see docs/runbook_lakehouse.md's A3 section):
+# Usage (see docs/plan_112_refresh_policy_backtesting.md's A3 section):
 #   docker compose \
 #     -f docker-compose.lakehouse.yml -f docker-compose.lakehouse.a3.yml \
 #     -p cartracker-lakehouse run --rm lakehouse-worker \

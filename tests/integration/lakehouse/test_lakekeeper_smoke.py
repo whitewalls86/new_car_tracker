@@ -3,11 +3,11 @@ Plan 112 Gate A1: Lakekeeper management info smoke test.
 
 Runs in the dedicated `lakehouse` GitHub Actions job (see
 docker-compose.lakehouse.yml, docker-compose.lakehouse.ci.yml, and
-docs/runbook_lakehouse.md), against a job-local, throwaway Lakekeeper +
+docs/plan_112_refresh_policy_backtesting.md), against a job-local, throwaway Lakekeeper +
 MinIO + Postgres stack. Proves the catalog itself, independent of any
 client engine -- no Spark, no PyIceberg (Gate A2/A2b scope).
 
-Known limitation (documented in docs/runbook_lakehouse.md): this exercises
+Known limitation (documented in docs/plan_112_refresh_policy_backtesting.md): this exercises
 only the warehouse-free management /v1/info endpoint. Iceberg REST /v1/config
 and namespace CRUD are NOT attempted here -- they need a registered warehouse,
 a Lakekeeper-specific management-API step deferred to A2 when a warehouse is
