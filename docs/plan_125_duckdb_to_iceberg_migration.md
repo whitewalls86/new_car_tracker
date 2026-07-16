@@ -11,6 +11,12 @@ contract. Today, dbt still builds the important analytics tables into
 `analytics.duckdb`, and dashboards/scripts still assume DuckDB is the serving
 surface.
 
+> **Catalog governance decision (read first):** before implementation, settle
+> whether to keep Lakekeeper or spike an alternate governed catalog now. See
+> [docs/plan_125_catalog_decision_report.md](plan_125_catalog_decision_report.md)
+> and **Gate 0.5** below. The current recommendation is to keep Lakekeeper and
+> apply the report's catalog-neutral guardrails (R1-R7).
+
 Plan 125 moves the project from:
 
 ```text
@@ -62,6 +68,50 @@ can be built, validated, and consumed from Iceberg without relying on
 5. **Treat resource limits as product requirements.**
    Spark jobs need bounded memory, explicit one-shot execution, and clear
    cleanup behavior.
+
+## Gate 0.5: Catalog Governance Decision (before implementation)
+
+Before any migration code is written, ratify the catalog posture so we are not
+wiring dbt/Spark writers, readers, ops metrics, and MLflow provenance to a
+catalog shape we intend to leave.
+
+See the full analysis in
+[docs/plan_125_catalog_decision_report.md](plan_125_catalog_decision_report.md).
+
+Decision:
+
+- **Default: keep Lakekeeper through Plan 125.** Do not stand up Unity Catalog
+  OSS, Apache Polaris, or Apache Gravitino as part of this plan unless a spike
+  first proves the candidate is better for the exact operations Plan 125 needs.
+- Re-open the question when Plan 119 (governance) or Plan 113 (policy
+  promotion) presents a concrete RBAC / credential-vending / lineage /
+  shared-metastore requirement.
+- Any alternate catalog is **gated on a write-compatibility spike**: prove native
+  Iceberg REST create, append, replace, and time-travel on MinIO/ARM64 before
+  committing.
+- If a spike is needed, compare candidates in this order: **Apache Polaris**,
+  **Apache Gravitino**, then **Unity Catalog OSS**, with Lakekeeper as the
+  control. Polaris and Lakekeeper are the most Iceberg-native governance
+  candidates; Gravitino has the broader metadata/lineage surface; UC OSS remains
+  strategically interesting but must prove self-hosted native-Iceberg write.
+- Design service identities now but enforce later: `lakehouse_writer`,
+  `dashboard_reader`, `ops_metrics_reader`, `mlflow_provenance_writer`, and
+  `ci_local_lakehouse`.
+
+Deliverable (regardless of catalog): adopt the report's **catalog-neutral
+guardrails R1-R7** as Plan 125 implementation rules -- single catalog-config
+chokepoint, env-driven catalog identity, consumers read a serving layer (not the
+catalog directly), static-key `S3FileIO`, rebuildable Iceberg tables until
+cutover, isolated/idempotent provisioning, and catalog-agnostic provenance.
+
+Gate 0.5 implementation work before Gate A:
+
+- Introduce neutral consumer-facing `ICEBERG_CATALOG_*` env/config names, with
+  temporary fallback to existing Lakekeeper names where needed.
+- Keep Lakekeeper-specific payloads and env names inside provisioning code.
+- Add tests proving Spark/dbt scripts use the neutral config path.
+- Do not run a Polaris/Gravitino/UC OSS spike unless the team explicitly chooses
+  to challenge the default Lakekeeper path.
 
 ## Gate 0: Portability Audit
 
