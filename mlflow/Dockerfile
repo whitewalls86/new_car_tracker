@@ -17,6 +17,16 @@ WORKDIR /app
 COPY mlflow/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
+# Package the provenance client into the same image as the tracking server so
+# VM smoke tests can run:
+#   python -m scripts.log_lakehouse_experiment_provenance ...
+# without installing repo dependencies on the host or hot-copying files into a
+# running container. .dockerignore keeps local caches, secrets, snapshots, and
+# virtualenvs out of this build context.
+COPY shared /app/shared
+COPY scripts /app/scripts
+COPY __init__.py /app/__init__.py
+
 # SQLite backend store lives on a mounted volume at /mlflow/store (see
 # docker-compose.mlflow.yml). Create the mount point so a fresh volume is
 # writable by the server on first start.
