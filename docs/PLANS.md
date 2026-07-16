@@ -46,6 +46,8 @@ stable substrate.
 | [121](plan_121_staging_environment.md) | Staging environment | Draft |
 | [124](plan_124_trawl_memory_guardrails.md) | Trawl browser solver memory guardrails | Hotfix |
 | [125](plan_125_duckdb_to_iceberg_migration.md) | DuckDB to Iceberg analytics migration | Draft |
+| [126](plan_126_basic_event_streaming.md) | Basic event streaming foundation | Draft / future |
+| [127](plan_127_streaming_adaptive_scrape_control.md) | Streaming adaptive scrape control | Draft / future |
 
 ---
 
@@ -54,7 +56,6 @@ stable substrate.
 | Priority | Plan | Title | Blocked on |
 |----------|------|-------|------------|
 | - | [79](plan_79_multi_instance.md) | Multi-instance detail scraping | Resume when IP flagging requires it |
-| - | **87** | Kafka event-driven layer | event stubs in processing/events.py |
 | - | **88** | Kubernetes | 5+ services under management |
 | - | [69](plan_69_terraform.md) | Terraform IaC | Manual provisioning stable |
 | - | [66](plan_66_sql_injection.md) | SQL injection audit | Lower urgency with DB-backed auth and Caddy as sole gatekeeper |
@@ -66,10 +67,13 @@ stable substrate.
 
 ## Sequencing Rationale
 
-**Plan 102 before Plan 87** - Track 4 of Plan 102 wires
-`staging.artifacts_queue_events` properly. Plan 87 (Kafka) builds on that
-foundation; the event stubs in `processing/events.py` become real Kafka
-producer calls.
+**Plans 126-127 after the lakehouse/adaptive-refresh substrate** - The old
+Plan 87 Kafka placeholder is superseded by Plan 126. The natural streaming seam
+is the existing staging-event/outbox pattern, not direct app-to-broker writes.
+Plan 126 should first prove Kafka-compatible event transport, replay, and a
+low-risk consumer while preserving Airflow/batch parity. Plan 127 can then use
+those events for adaptive scrape-control feedback once Plan 125 provides the
+stable analytics substrate and Plans 112/113 clarify refresh-policy promotion.
 
 **Plan 79 whenever needed** - IP flagging is not currently active.
 Prerequisites all exist. Provision Oracle Cloud VMs and fan out the DAG when
@@ -96,6 +100,7 @@ research, staging environment, and governance/catalog expansion.
 | [89](plan_89_ops_analytics_split.md) | Operational/analytics dbt split | Philosophy preserved; implementation superseded by Plans 93, 97, 96 |
 | [90](plan_90_dbt_cleanup.md) | dbt decommission / dbt-duckdb migration | Superseded by Plan 102; DuckDB source layer done in Plan 96; the new forward migration is Plan 125 |
 | [118](plan_118_dbt_spark_migration.md) | dbt migration from DuckDB to Spark-compatible execution | Superseded/refined by Plan 125, which uses the Iceberg proof from Plan 112 and makes DuckDB-to-Iceberg migration the explicit objective |
+| **87** | Kafka event-driven layer | Superseded/refined by Plan 126, which keeps the Kafka-compatible streaming idea but roots it in the staging-event/outbox pattern |
 
 ---
 
