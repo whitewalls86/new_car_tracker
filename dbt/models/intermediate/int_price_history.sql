@@ -13,9 +13,19 @@
 --           + int_listing_days_on_market
 --
 -- Incremental strategy: affected-VIN replacement (Plan 123 Phase 3), same
--- delete+insert base strategy as int_listing_state_fingerprints (Phase 2) —
--- portable across the Postgres/Spark-family adapters this project may migrate
--- onto later (Plan 118). Consecutive-price LAG() logic depends on the event
+-- delete+insert base strategy as int_listing_state_fingerprints (Phase 2).
+--
+-- NOTE (Plan 125 Gate A): this comment previously claimed the strategy was
+-- "portable across the Postgres/Spark-family adapters this project may migrate
+-- onto later (Plan 118)". That is false for dbt-spark, which validates only
+-- 'append', 'merge', 'insert_overwrite', and 'microbatch'. Migration path here
+-- is 'merge' on vin: this model is one row per vin (see the `unique` test in the
+-- schema file), so merge replaces that row rather than a multi-row set. The one
+-- behavioural gap is that merge cannot remove a vin whose events all disappear;
+-- the price event stream is append-only, so that case does not arise. See
+-- docs/plan_125_portability_audit.md § "Incremental strategy decision".
+--
+-- Consecutive-price LAG() logic depends on the event
 -- immediately before the incremental boundary, so a VIN touched by any new,
 -- late, or corrected event inside the lookback window has its ENTIRE price
 -- history reread and every aggregate recomputed here — not just the new

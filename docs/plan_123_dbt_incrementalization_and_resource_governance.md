@@ -331,6 +331,15 @@ and `int_listing_state_runs` are left as full-table builds for Phases 3 and 4.
       supports on any DuckDB version and it's also available on the
       Postgres/Spark-family adapters this project may migrate onto later (Plan
       118) — it doesn't add DuckDB-only incremental semantics.
+
+      > **Correction (Plan 125 Gate A, 2026-07-16):** the "also available on the
+      > Postgres/Spark-family adapters" half of that rationale is **false**.
+      > dbt-spark validates only `append`, `merge`, `insert_overwrite`, and
+      > `microbatch` — there is no `delete+insert`. The choice was still right for
+      > dbt-duckdb, and this model's Iceberg path is a straight `merge` on
+      > `artifact_id` (row-unique), so nothing here needs redoing. Left in place as
+      > the historical record; see
+      > [Plan 125 § Incremental strategy decision](plan_125_portability_audit.md#incremental-strategy-decision).
 - [x] Added `fingerprint_incremental_lookback_days` (default `3`, matching the
       existing `staleness_window_days` convention) to `dbt/dbt_project.yml`
       vars, documented there and in

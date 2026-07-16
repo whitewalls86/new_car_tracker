@@ -17,9 +17,18 @@
 --   seller_customer_id: excluded — SRP-only UUID field, not present on detail pages
 --
 -- Incremental strategy: 'delete+insert' (not 'merge') — it's the base dbt-duckdb
--- strategy available regardless of DuckDB version, and it's also supported by the
--- Postgres/Spark-family adapters this project may migrate onto later (Plan 118),
--- unlike DuckDB's newer native MERGE. artifact_id is the unique_key, so a source
+-- strategy available regardless of DuckDB version, unlike DuckDB's newer native
+-- MERGE. It is also a dbt-postgres strategy.
+--
+-- NOTE (Plan 125 Gate A): this comment previously claimed delete+insert was
+-- "supported by the Postgres/Spark-family adapters this project may migrate onto
+-- later (Plan 118)". That is false for dbt-spark, which validates only 'append',
+-- 'merge', 'insert_overwrite', and 'microbatch'. This model's migration path is
+-- 'merge' on artifact_id — equivalent here because artifact_id is row-unique
+-- (see the `unique` test in the schema file). See
+-- docs/plan_125_portability_audit.md § "Incremental strategy decision".
+--
+-- artifact_id is the unique_key, so a source
 -- artifact_id reappearing inside the lookback window deletes and replaces the
 -- existing target row rather than duplicating it. delete+insert only dedupes
 -- against the *existing target* row, though — it does not collapse multiple

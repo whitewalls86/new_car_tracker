@@ -1,5 +1,8 @@
 {{
-  config(materialized='table')
+  config(
+    materialized='table',
+    file_format='iceberg' if target.type == 'spark' else none
+  )
 }}
 
 -- Hourly 403 blocking events.
@@ -9,7 +12,10 @@
 -- One row per hour.
 
 select
-    date_trunc('hour', event_at)::timestamp                         as hour,
+    -- cast(... as timestamp), not ::timestamp: `::` is DuckDB/Postgres-only
+    -- syntax and Spark cannot parse it. This is the same operation on DuckDB
+    -- (`::` IS cast), so the production DuckDB output is unchanged.
+    cast(date_trunc('hour', event_at) as timestamp)                 as hour,
     count(*) filter (where event_type = 'blocked')                  as new_blocks,
     count(*) filter (where event_type = 'incremented')              as block_increments,
     count(*)                                                        as total_block_events,

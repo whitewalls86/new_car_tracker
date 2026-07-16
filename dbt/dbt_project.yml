@@ -5,7 +5,13 @@ config-version: 2
 profile: cartracker
 
 on-run-start:
-  - "{{ register_upstream_external_models() }}"
+  # register_upstream_external_models() ships with dbt-duckdb and registers
+  # each source's meta.external_location as a view. It does not exist on other
+  # adapters, so guard it by target type -- the Plan 125 Gate A `spark` target
+  # would otherwise fail at on-run-start with an unknown-macro error before
+  # running a single model. Spark resolves the same sources through the
+  # parquet_source() macro instead (dbt/macros/parquet_source.sql).
+  - "{% if target.type == 'duckdb' %}{{ register_upstream_external_models() }}{% endif %}"
 
 model-paths: ["models"]
 analysis-paths: ["analysis"]

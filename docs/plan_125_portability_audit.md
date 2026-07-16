@@ -2,8 +2,34 @@
 
 ## Status
 
-**Implemented.** This document is the Gate 0 deliverable for
+**Implemented, plus a Gate A research pass and a Gate A implementation pass
+(both 2026-07-16).** This document is the Gate 0 deliverable for
 [Plan 125: DuckDB to Iceberg Analytics Migration](plan_125_duckdb_to_iceberg_migration.md).
+
+> **The Gate A implementation corrected two of this document's claims.** Read
+> these before trusting anything below:
+>
+> 1. **"Hadoop AWS jars: none — do not add" was wrong.** They are required for
+>    plain `s3a://` Parquet reads (a different code path from Iceberg's
+>    `S3FileIO`, which is unaffected). See
+>    [the corrected section](#gate-a-adapter-choice).
+> 2. **"dbt-spark unit tests: documented, unproven here" is now proven.** 3/3
+>    run and pass in session mode; the `+00` timestamp risk is closed. See
+>    [Does dbt-spark support unit tests?](#does-dbt-spark-support-unit-tests).
+>
+> Full evidence, deviations, and reproduction commands:
+> [Gate A results](plan_125_duckdb_to_iceberg_migration.md#gate-a-results-2026-07-16).
+
+The Gate A pass resolved three of the Gate 0 open questions from primary sources —
+the adapter's own macros and the dbt/Iceberg/Spark docs — without implementing any
+Gate A model. It added
+[Gate A adapter choice](#gate-a-adapter-choice),
+[Incremental strategy decision](#incremental-strategy-decision),
+[Unit-Test Strategy For Spark/Iceberg Migration](#unit-test-strategy-for-sparkiceberg-migration),
+[Unit-test impact](#unit-test-impact), and
+[Risks/unknowns remaining](#risksunknowns-remaining); it confirmed F1, corrected
+F1's model grouping, and corrected the unit-test count (64, not 85). Findings marked
+**CONFIRMED** are verified against source; everything else is still a hypothesis.
 
 It is a repo-based audit of the current dbt/DuckDB analytics stack, written to
 answer three questions before Gate A starts:
@@ -16,7 +42,7 @@ No dbt behavior is changed here. No script was added: the audit is a one-time
 read of 22 models plus their readers, and a checked-in table is more useful to
 the next reader than a linter that would need maintaining. If Gate B/C wants
 recurring dialect enforcement, that is a better-scoped follow-up (see
-[Open Questions](#gate-a-blockers-and-open-questions)).
+[Risks/unknowns remaining](#risksunknowns-remaining)).
 
 ## How The Stack Is Wired Today
 
@@ -92,35 +118,111 @@ rest of staging.
 
 ## DuckDB-Specific Findings
 
-Ordered by how much work each will cost. Spark-equivalence claims below are
-**hypotheses to verify in Gate A**, not confirmed adapter behavior — see
-[Open Questions](#gate-a-blockers-and-open-questions).
+Ordered by how much work each will cost. Except where a finding is explicitly
+marked **CONFIRMED**, Spark-equivalence claims below remain **hypotheses to verify**,
+not confirmed adapter behavior — see
+[Risks/unknowns remaining](#risksunknowns-remaining). F1 has since been verified
+against the adapter source; the rest have not.
 
-### F1. `delete+insert` is not a dbt-spark strategy (highest risk)
+### F1. `delete+insert` is not a dbt-spark strategy — **CONFIRMED** (highest risk)
 
-Seven models use `incremental_strategy='delete+insert'`. The model comments state
+**Status: verified at Gate A (2026-07-16). The hypothesis was correct.** See
+[Incremental strategy decision](#incremental-strategy-decision) for the resulting
+per-model plan.
+
+Seven models use `incremental_strategy='delete+insert'`. The model comments stated
 this choice was made *for* portability (Plan 118): "it's also supported by the
 Postgres/Spark-family adapters this project may migrate onto later"
-(`int_listing_state_fingerprints.sql:19-21`).
+(`int_listing_state_fingerprints.sql`). **That claim is false and has now been
+corrected in-repo** (`int_listing_state_fingerprints.sql`, `int_price_history.sql`).
 
-That assumption needs verifying before Gate C. dbt-spark's documented strategies
-are `append`, `merge`, and `insert_overwrite`; `delete+insert` is a
-dbt-duckdb/dbt-postgres strategy. If it is unavailable, every incremental model
-needs a strategy decision, and two distinct semantics must be preserved:
+dbt-spark accepts exactly four strategies. From the adapter's own validation macro
+(`dbt-spark/src/dbt/include/spark/macros/materializations/incremental/validate.sql`):
 
-- **Row-unique keys** (`observation_id`, `artifact_id`, `scrape_volume_key`) —
-  probably `merge` on the key.
-- **Entity-replacement keys** (`int_listing_state_runs.vin17`,
-  `int_listing_observation_runs.listing_id`, `int_price_history.vin`,
-  `int_latest_observation.vin17`) — these delete **all** rows for a key and
-  reinsert a recomputed multi-row history. `merge` on that key is *wrong*: it
-  would update matching rows rather than replacing the set, silently leaving
-  stale runs behind. These need delete-then-insert semantics, which on Iceberg
-  likely means an explicit `DELETE FROM ... WHERE key IN (...)` plus append, or
-  `insert_overwrite` with the key as partition — both are real design work.
+> `Invalid incremental strategy provided: {{ raw_strategy }} Expected one of:
+> 'append', 'merge', 'insert_overwrite', 'microbatch'`
 
-This is the single biggest Gate C item and the reason the audit recommends
-starting the port on a chain that exercises it early rather than late.
+Corroborated three independent ways: the validation macro above, the strategy
+implementations in `strategies.sql` (which define only `get_insert_overwrite_sql`,
+`get_insert_into_sql`, `spark__get_merge_sql`, and the `dbt_spark_get_incremental_sql`
+dispatcher — no delete+insert macro exists), and the published
+[Spark configs reference](https://docs.getdbt.com/reference/resource-configs/spark-configs),
+which documents only those four and never mentions `delete+insert`.
+
+Caution for future readers: the prose table on
+[About incremental strategy](https://docs.getdbt.com/docs/build/incremental-strategy)
+is easy to misread as granting dbt-spark `delete+insert`. The adapter source is
+authoritative and disagrees. Trust `validate.sql`.
+
+#### The audit's original grouping was wrong on two models
+
+The Gate 0 draft grouped four models as "entity-replacement". Re-checking each
+model's schema file shows **only two** actually are:
+
+| Model | `unique_key` | Rows per key | `unique` test? | Is `merge` equivalent? |
+|---|---|---|---|---|
+| int_listing_observation_fingerprints | `observation_id` | 1 | yes | **Yes** |
+| int_listing_state_fingerprints | `artifact_id` | 1 | yes | **Yes** |
+| int_price_history | `vin` | **1** | **yes** (`int_price_history.schema.yml`) | **Yes** |
+| int_latest_observation | `vin17` | **1** | **yes** (`int_latest_observation.schema.yml`) | **Yes** |
+| mart_scrape_volume | `scrape_volume_key` | 1 | yes | **Almost** — see below |
+| int_listing_state_runs | `vin17` | **many** | no, explicitly forbidden | **No** |
+| int_listing_observation_runs | `listing_id` | **many** | no, explicitly forbidden | **No** |
+
+`int_price_history` and `int_latest_observation` re-read an entity's *entire input
+history* to recompute its row, but they still **emit one row per key**. "Recomputed
+from full history" is a property of the SELECT, not of the write. `merge` replaces
+that single row correctly. Five of the seven models are therefore a straight
+`merge` port, not a design problem.
+
+#### Why `merge` fails on the two `_runs` models
+
+`int_listing_state_runs` (multiple runs per `vin17`) and
+`int_listing_observation_runs` (multiple runs per `listing_id`) delete **all** rows
+for a key and reinsert a recomputed multi-row history. Both schema files explicitly
+forbid a `unique` test on the key.
+
+The Gate 0 draft predicted merge would "silently leave stale runs behind". The real
+failure is **louder and better**: Iceberg enforces a MERGE cardinality check, and
+errors when one target row matches multiple source rows —
+[Iceberg Spark writes](https://iceberg.apache.org/docs/latest/spark-writes/): "only
+one record in the source data can update any given row of the target table, or else
+an error will be thrown." So `merge` on these two models **fails the build** rather
+than corrupting data. That is a meaningful de-risking: this class of mistake cannot
+ship silently.
+
+#### There is no clean drop-in replacement, and custom strategies are blocked
+
+dbt's documented escape hatch — define a `get_incremental_delete_insert_sql` macro —
+**does not work here**. Per the dbt docs: *"Custom strategies are not currently
+supported on the BigQuery and Spark adapters."* This is structural, not an
+oversight: `incremental.sql` calls `dbt_spark_get_incremental_sql(strategy, ...)`,
+a hardcoded if/elif dispatcher, and never resolves `get_incremental_{strategy}_sql`
+dynamically.
+
+A second constraint compounds it: **Spark executes one statement per call.**
+`DELETE` + `INSERT` cannot be returned as a single string from a strategy macro the
+way DuckDB's delete+insert is. Any true delete+insert on Spark must issue two
+statements — meaning two Iceberg commits, so it is **not atomic**. A reader between
+the commits sees an entity with rows missing. DuckDB's delete+insert is one
+transaction; this is a genuine semantic regression, not a syntax port.
+
+Options for the two `_runs` models, with honest costs:
+
+| Option | Mechanism | Cost / risk |
+|---|---|---|
+| **A. Full rebuild (`table`)** | Drop the incremental config for these two models | Correct by construction; costs compute. **Recommended for Gate B.** |
+| **B. `pre_hook` DELETE + `append`** | Hook deletes affected keys; strategy appends | Uses supported strategy, but the affected-entity predicate is duplicated in the hook, and tmp_relation doesn't exist at pre-hook time. Non-atomic. |
+| **C. Override adapter macros / materialization** | Override `dbt_spark_validate_get_incremental_strategy` + `dbt_spark_get_incremental_sql`, or the whole `incremental` materialization | Full control; forks adapter internals and must be re-verified on **every** dbt-spark upgrade. Non-atomic. |
+| **D. `insert_overwrite` partitioned by the key** | Dynamic partition overwrite | **Not viable.** `vin17`/`listing_id` are high-cardinality; a partition per VIN is a metadata explosion. |
+
+**Recommendation: Option A for Gate B, revisit C at Gate C with measured evidence.**
+The decisive fact is cadence: both `_runs` models are tagged `feature_daily`/
+`backtest` — **daily, not hourly** — and their own downstream consumer
+`int_listing_volatility_features` is *already* a full-rebuild `table` in the same
+chain. Making its inputs full-rebuild costs compute but loses no freshness and is
+consistent with what the chain already does. Do not pay for Option C's adapter fork
+until a VM run proves the rebuild is actually too slow.
 
 ### F2. `select * exclude (...)` — DuckDB-only syntax
 
@@ -290,7 +392,15 @@ materialized into Iceberg at all.
 
 Proposed sequencing instead:
 
-1. **Gate A spike: `stg_blocked_cooldown_events` → `mart_block_rate`.**
+1. **Gate A spike: `stg_blocked_cooldown_events` → `mart_block_rate`. — DONE
+   (2026-07-16), and the choice was vindicated.** Exact DuckDB parity; the only
+   SQL change needed was `::timestamp` → `cast(... as timestamp)` (`count(*) filter`
+   ported untouched, as F6 predicted). Because SQL translation was ~zero, both
+   surprises that did surface — the missing `hadoop-aws` filesystem driver and the
+   persisted-view catalog-qualification failure — were unambiguously
+   infrastructure, diagnosable in minutes. That is precisely the property this
+   recommendation was chosen for.
+
    Two models, one MinIO Parquet source, no incremental logic, no Postgres, and
    the only dialect items are `date_trunc(...)::timestamp` and `count(*) filter`.
    It proves the whole Gate A success list — dbt-spark target, Lakekeeper REST
@@ -302,10 +412,13 @@ Proposed sequencing instead:
 
 2. **Immediately after Gate A, resolve F1 (incremental strategy) on
    `mart_scrape_volume`.** It is the simplest incremental model (single-column
-   md5 surrogate key, contiguous-window replacement) and it will answer the
-   `delete+insert` question before that question is entangled with the
-   entity-replacement semantics of the run models. Do not discover F1 for the
-   first time on `int_listing_state_runs`.
+   md5 surrogate key, contiguous-window replacement). *Updated by the Gate A pass:*
+   the `delete+insert` question is now settled from source (it does not exist on
+   dbt-spark), so this model's job is narrower — prove **`insert_overwrite` vs
+   `merge`** for window replacement, specifically that a `(hour, source)` combo
+   dropping out of the recomputed window is actually removed. Still do not discover
+   write-strategy problems for the first time on `int_listing_state_runs`. See
+   [Incremental strategy decision](#incremental-strategy-decision).
 
 3. **Then Gate B on the volatility chain as planned**, with the entity-replacement
    models (`int_listing_state_runs`, `int_listing_observation_runs`,
@@ -323,41 +436,395 @@ point) argues for keeping normalized Parquet as a plain input for now. Revisit a
 Gate C, where snapshot-consistent reads may start to matter for incremental
 watermarks.
 
-## Gate A Blockers And Open Questions
+## Gate A adapter choice
 
-Verification items — these are the claims this audit could not settle from the
-repo alone, ordered by how much they'd change the plan:
+**Recommendation: `dbt-spark` with `method: session`, in the existing
+`lakehouse/Dockerfile` `lakehouse-worker` image.**
 
-1. **Does dbt-spark support `delete+insert`, and if not, what reproduces
-   entity-replacement semantics on Iceberg?** (F1) Blocks Gate C. Verify against
-   the pinned dbt-spark/Iceberg versions before committing to a strategy per
-   model. The in-repo comments asserting Spark-family support for `delete+insert`
-   should be corrected once this is settled — they currently record an untested
-   assumption as fact.
-2. **How does Spark reach `search_configs` / `tracked_models`?** (F8) Blocks the
-   serving chain. Options: JDBC read from Spark, or land a periodic snapshot to
-   MinIO via the existing flush path. Recommend deciding at Gate A time even
-   though it is not needed until Gate B.
-3. **Which dbt adapter, concretely?** Plan 125 says "prefer dbt-spark or a
-   similarly standard dbt-compatible path". Gate A must pick one and confirm it
-   writes Iceberg through the REST catalog on ARM64 (the prod VM is ARM64; CI is
-   x86_64).
-4. **What happens to the 85 dbt unit tests?** `unit_tests.yml` files hold 37
-   (intermediate), 40 (marts), and 8 (staging) entries. They render model SQL
-   against fixture inputs, so every dialect change in F2–F12 lands on them too,
-   and dbt unit-test support varies by adapter. This is unscoped work in the
-   current plan.
-5. **Retire or demote the Postgres dbt targets.** They are not the production
-   build path (`--target duckdb` is hardcoded in dbt_runner), and the main CI dbt
-   build also passes `--target duckdb`. They may still be useful as legacy/manual
-   compile targets, but they should not be treated as migration scaffolding. One
-   concrete cleanup: `dbt_runner`'s `/dbt/docs/generate` endpoint currently runs
-   `dbt docs generate` without `--target`, so it inherits `target: prod`; Gate A
-   should either pass `--target duckdb` there or make the docs target explicit.
-6. **Parity tolerance for rounding.** F5, F10, and F12 all imply the Iceberg
-   output may differ from DuckDB by ±1 on cast/round boundaries. Gate B's parity
-   checks need a stated tolerance, or "row count matches, checksums don't" will
-   be the outcome and will read as failure.
+### Why not the alternatives
+
+Only options that can actually write Iceberg through a REST catalog on ARM64 were
+considered real:
+
+| Candidate | Verdict |
+|---|---|
+| **dbt-spark (`session`)** | **Chosen.** In-process PySpark; no extra service. The image already has PySpark 3.5.3 + Iceberg runtime jars + Java 17 building on both arches. |
+| dbt-spark (`thrift`) | Rejected. Needs an always-on Spark Thrift Server — contradicts Plan 125 design principle 5 ("explicit one-shot execution") and adds VM footprint for no gain. |
+| dbt-trino | Rejected. Trino is Iceberg-native and a genuinely good fit, but it is another always-on coordinator service, and nothing in the repo runs Trino today. Revisit only if Gate D picks the "live query service" serving pattern (D2 option 3), where one engine could serve both. |
+| dbt-databricks | Rejected. Not self-hostable; the whole stack is on one OCI VM. |
+| dbt-duckdb + Iceberg | Rejected. DuckDB's Iceberg support is **read-oriented**; it cannot be the writer this plan needs. This is the thing Plan 125 exists to move off. |
+| Hand-rolled PySpark | Rejected by design principle 4, and it would strand all 64 unit tests and every `ref()`/lineage/docs affordance. |
+
+`session` carries one honest caveat: dbt labels it **experimental**. It is the
+right call anyway — it is the only option that keeps the one-shot worker shape —
+but Gate A should treat "session mode works against Lakekeeper" as a thing to
+*prove*, not assume, and the pin should not float.
+
+### Pinned versions
+
+Match the existing `1.10.x` line rather than jumping to `dbt-spark 1.11.0`, which
+released 2026-07-16 (the day of this audit) and has no track record here.
+
+| Component | Pin | Rationale |
+|---|---|---|
+| `dbt-core` | `1.10.20` | Already pinned repo-wide (`dbt/Dockerfile`, `dbt_runner/Dockerfile`, CI). Do not diverge. |
+| `dbt-spark[session]` | `1.10.3` | Latest `1.10.x`; requires `dbt-core>=1.8.0rc1,<2.0` → compatible. `[session]` extra pulls the PySpark integration. |
+| `pyspark` | `3.5.3` | Already pinned in `lakehouse/requirements.txt`; matches the `3.5_2.12` Iceberg runtime artifact. |
+| `iceberg-spark-runtime-3.5_2.12` | `1.6.1` | Already pinned via `ICEBERG_SPARK_RUNTIME_VERSION` in `lakehouse/Dockerfile`. |
+| `iceberg-aws-bundle` | `1.6.1` | Already pinned; **keep in lockstep** with the runtime jar. |
+| `hadoop-aws` / `aws-java-sdk-bundle` | `3.3.4` / `1.12.262` | **Corrected at Gate A — the original "none — do not add" was wrong.** Required for plain `s3a://` Parquet reads. See below. |
+| Java | 17 (`openjdk-17-jre-headless`, `-bookworm`) | Already resolved dynamically per-arch in the Dockerfile. |
+
+**On Hadoop AWS jars — this section was WRONG, and Gate A corrected it.**
+
+The original claim, preserved for the record: *"the answer is that we
+deliberately need none… adding `hadoop-aws` + `aws-java-sdk-bundle` would
+reintroduce a known dead end and a classpath conflict with the shaded bundle."*
+
+Both halves of that were wrong, and the mistake is instructive: it collapsed two
+different code paths into one.
+
+| Code path | Who serves it | Scheme | Correct? |
+|---|---|---|---|
+| Iceberg **table** read/write (Lakekeeper locations) | Iceberg `S3FileIO` (shaded `iceberg-aws-bundle`, SDK v2) | `s3://` | **Yes — unchanged.** `hadoop-aws` genuinely cannot serve this, and is not used for it. |
+| Plain **Parquet** read of `ops_normalized/` | Hadoop FileSystem API (`hadoop-aws`) | `s3a://` | **This is what the audit missed entirely.** |
+
+A plain `spark.read.parquet(...)` never involves Iceberg, so `S3FileIO` is not in
+the picture — Spark resolves the scheme through Hadoop's FileSystem, which has no
+handler for `s3`/`s3a` without `hadoop-aws`. Verified at Gate A before any model
+was written:
+
+```text
+s3://…/part-0.parquet   -> UnsupportedFileSystemException: No FileSystem for scheme "s3"
+s3a://…/part-0.parquet  -> ClassNotFoundException: org.apache.hadoop.fs.s3a.S3AFileSystem
+```
+
+**Why nobody caught this earlier:** nothing in this repo had ever asked Spark to
+read a Parquet file. Plan 112's A2 wrote synthetic in-memory rows
+(`spark.createDataFrame(_BATCH_1, ...)`); A3 read `analytics.duckdb` via DuckDB
+and handed Spark a pandas DataFrame. Both sidestep the filesystem entirely. Gate
+A is the first Spark-native Parquet read in the project — which is also why "read
+normalized Parquet directly through Spark" was a riskier assumption than it looked.
+
+**And there is no classpath conflict.** `hadoop-aws` uses AWS SDK v1
+(`com.amazonaws`); `iceberg-aws-bundle` shades SDK v2 (`software.amazon.awssdk`).
+Different packages, no collision. Verified: a single Spark session reads `s3a://`
+Parquet *and* resolves the Iceberg REST catalog, in the same query.
+
+Constraint to preserve: `hadoop-aws` **must** match the `hadoop-client-api` /
+`hadoop-client-runtime` version pyspark 3.5.3 bundles (**3.3.4**) — a mismatch is
+a `NoSuchMethodError` at runtime, not a resolution error. Bump both together, and
+only with pyspark.
+
+The part of the original claim that survives: **do not** try to make `hadoop-aws`
+serve Lakekeeper's `s3://` table locations. That dead end is real. The two stacks
+coexist, each on its own scheme.
+
+### Environment compatibility
+
+- **Iceberg REST / Lakekeeper + MinIO** — reuse `spark_conf_for_rest_catalog()`
+  (`shared/iceberg_catalog.py`) verbatim; it is the R1 chokepoint and already
+  produces the full `rest` + `S3FileIO` + path-style-access config. Inject it into
+  the dbt target via `server_side_parameters`. **Do not** hand-write catalog config
+  into `profiles.yml` — that would fork the chokepoint and break the R2 guarantee
+  that a catalog swap edits one file.
+- **ARM64 VM / x86_64 CI** — the image already builds on both; the arch-specific
+  `JAVA_HOME` is resolved via symlink, not hardcoded (per Plan 105). PySpark and
+  dbt-spark are pure-Python wheels; the jars are arch-independent. No new arch risk.
+- **Dependency isolation** — install dbt-spark **only** in the lakehouse image,
+  never alongside `dbt-duckdb`/`dbt-postgres` in `dbt_runner`. Same convention as
+  `airflow/requirements.txt`: a JVM-backed engine does not share a resolver with the
+  rest of the repo. CI needs its own isolated venv for it for the same reason.
+
+### Two config details that will bite Gate A
+
+Both are cheap now and confusing later:
+
+1. **`spark.sql.defaultCatalog=cartracker`.** dbt-spark relations are two-part
+   (`schema.identifier`); it has no `catalog:` profile field (that is a
+   dbt-databricks/Unity feature). Without setting the default catalog, dbt writes
+   into `spark_catalog` — i.e. **not Iceberg at all** — and the build may appear to
+   succeed. `CATALOG_NAME` is already the stable `cartracker` constant.
+2. **`spark.sql.session.timeZone=UTC`.** Spark has no `TIMESTAMPTZ`; its `TIMESTAMP`
+   is instant-typed (`TIMESTAMP_LTZ`) and resolves offsets against the session zone.
+   Unpinned, this silently shifts every timestamp and would surface as parity drift
+   (F5/F10/F12 territory) rather than an error.
+
+Also set `file_format: iceberg` in the target's `+models` config — dbt-spark
+**requires** it for `merge` (delta/iceberg/hudi only), which the strategy decision
+below depends on.
+
+## Incremental strategy decision
+
+Grounded in F1 above (verified, not hypothesised). Five of seven models are a
+straight `merge` port; two need a real decision.
+
+| Model | Cadence | Today | **Gate B/C target** | Notes |
+|---|---|---|---|---|
+| int_listing_state_fingerprints | daily | `delete+insert` / `artifact_id` | **`merge`** | Row-unique + `unique` test. In-model dedupe (`row_number()=1`) already guarantees no duplicate source key, which also satisfies Iceberg's MERGE cardinality check. |
+| int_listing_observation_fingerprints | daily | `delete+insert` / `observation_id` | **`merge`** | Same shape. |
+| int_price_history | hourly | `delete+insert` / `vin` | **`merge`** | One row per vin. Gap: merge cannot delete a vin whose events all vanish — the event stream is append-only, so unreachable. |
+| int_latest_observation | hourly | `delete+insert` / `vin17` | **`merge`** | One row per vin17. Same gap, same reasoning. |
+| mart_scrape_volume | hourly | `delete+insert` / `scrape_volume_key` | **`insert_overwrite`** partitioned by hour/day — *prove first* | **The one genuine subtlety.** It replaces a contiguous 72h window. `merge` would leave a stale row behind for any `(hour, source)` combo that disappears from the recomputed window; delete+insert removes it. Dynamic partition overwrite reproduces window-replacement correctly. |
+| int_listing_state_runs | **daily** | `delete+insert` / `vin17` (multi-row) | **`table`** (full rebuild) | No equivalent strategy. See F1 Option A. |
+| int_listing_observation_runs | **daily** | `delete+insert` / `listing_id` (multi-row) | **`table`** (full rebuild) | Same. |
+
+Sequencing (refines the audit's original step 2): `mart_scrape_volume` remains the
+right F1 canary, but the question it now answers is narrower and sharper —
+**`merge` vs `insert_overwrite` for window replacement**, not "does delete+insert
+exist". Prove specifically that a `(hour, source)` combination which disappears
+from the recomputed window is actually *removed* from the target. That is the exact
+behaviour `merge` gets wrong, and it is invisible to a row-count check.
+
+**Do not** implement the Option C adapter-macro fork during Gate A. Two daily models
+being full-rebuild is a cheaper problem than a forked incremental materialization
+that must be re-verified on every dbt-spark upgrade. Revisit only with a VM
+measurement showing the rebuild is too slow.
+
+## Unit-Test Strategy For Spark/Iceberg Migration
+
+### What exists today — corrected inventory
+
+The Gate 0 draft said **85** unit tests (37 intermediate / 40 marts / 8 staging).
+**That count is wrong.** The actual inventory, counted from the three
+`unit_tests.yml` files (the only files in the project defining `unit_tests:`):
+
+| Layer | Tests | Models covered |
+|---|---|---|
+| Staging | **2** | `stg_dealers` only |
+| Intermediate | **31** | 8 models |
+| Marts | **31** | 8 models |
+| **Total** | **64** | **17 of 22 models** |
+
+Per model: `int_listing_observation_fingerprints` 5, `int_latest_observation` 5,
+`int_price_history` 4, `int_listing_state_runs` 4, `int_listing_state_fingerprints` 4,
+`int_listing_observation_runs` 4, `int_listing_volatility_features` 3,
+`int_benchmarks` 2; `mart_vehicle_snapshot` 5, `mart_price_freshness_trend` 4,
+`mart_inventory_coverage` 4, `mart_detail_batch_outcomes` 4, `mart_deal_scores` 4,
+`mart_cooldown_cohorts` 4, `mart_scrape_volume` 3, `mart_block_rate` 3;
+`stg_dealers` 2.
+
+Five models have **no** unit tests: `stg_observations`, `stg_price_events`,
+`stg_blocked_cooldown_events`, `stg_search_configs`, `int_active_make_models`. For
+the first three this is deliberate and correct — they are pure pass-through views,
+and dbt 1.11's unit-test schema gives nothing to assert on them. The absence of
+coverage on `int_active_make_models` is more notable, since it filters the entire
+mart layer via its inner join (F8).
+
+The staging layer is therefore **not** a migration concern for unit tests: its only
+covered model is `stg_dealers`, which is the layering wrinkle (it refs an
+intermediate model) and ports with the serving chain, not with staging.
+
+### Does dbt-spark support unit tests?
+
+**Yes — and this is now PROVEN here, not merely documented (Gate A, 2026-07-16).**
+dbt-spark implemented `spark__safe_cast` and added functional unit-testing tests in
+**v1.8.0**; `safe_cast` is the adapter capability dbt-core's unit-test feature
+requires (unit tests render fixtures as `select … union all` CTEs wrapped in
+`safe_cast`). Our pin (1.10.3) is well past that.
+
+All 3 `mart_block_rate` unit tests were executed end-to-end against dbt-spark in
+session mode and **passed**:
+
+```text
+1 of 3 PASS mart_block_rate::test_block_rate_event_type_split ... [PASS in 1.23s]
+2 of 3 PASS mart_block_rate::test_block_rate_hourly_grouping .... [PASS in 0.39s]
+3 of 3 PASS mart_block_rate::test_block_rate_unique_listings .... [PASS in 0.29s]
+```
+
+What that one run settles:
+
+- **The `+00` timestamp question below is closed.** These fixtures use the exact
+  `"YYYY-MM-DD HH:MM:SS+00"` form, and they parse correctly under
+  `spark.sql.session.timeZone=UTC`. The silent-NULL failure mode did not occur.
+- `safe_cast` renders; session mode drives the unit-test path.
+- **Per-test cost measured: ~0.3–1.2s**, the first test paying warm-up, plus ~10s
+  JVM startup per invocation. Extrapolated to all 64: ≈30s + startup. Slower than
+  DuckDB's milliseconds, but well short of the multi-minute job feared below — the
+  "keep the Spark selection narrow" advice stands, but it is a preference, not a
+  constraint.
+
+Still unproven, and not weakened by the above: that *all 64* tests pass on Spark.
+Only 3 have run. The triage below stands as an estimate.
+
+One structural advantage is already confirmed by reading the fixtures: every
+unit test on an incremental model uses
+
+```yaml
+overrides:
+  macros:
+    is_incremental: false
+```
+
+That is adapter-agnostic dbt-core machinery. It means **the unit tests never
+exercise the incremental strategy at all** — they test the SELECT, not the write.
+So the entire F1 `delete+insert` problem, which is the biggest item in this audit,
+lands on **zero** unit tests. The unit-test migration and the incremental-strategy
+migration are independent workstreams. This is the single most useful finding in
+this section: it decouples the two hardest parts of the plan.
+
+The corollary is the risk: **nothing in the unit-test suite will catch an
+incremental-strategy regression.** That gap is real today and gets worse on Spark,
+where the strategies differ per model. It must be covered by fixture/parity tests
+(below), not by unit tests.
+
+### Portability triage of the 64 tests
+
+Unit tests render the *model's* SQL, so every F2–F12 dialect item lands on them —
+but only via the model. A test whose model needs no SQL change needs no test change.
+
+| Bucket | Tests | Models | What's needed |
+|---|---|---|---|
+| **Likely portable unchanged** | ~14 | `mart_block_rate` (3), `mart_cooldown_cohorts` (4, but `arg_max`→`max_by` in the model), `mart_detail_batch_outcomes` (4), `mart_inventory_coverage` (4) | Model-side dialect fixes only; fixtures and expectations untouched. These are the Low-difficulty chains. |
+| **Fixture/expectation changes likely** | ~24 | `int_price_history` (4), `int_benchmarks` (2), `int_latest_observation` (5), `mart_vehicle_snapshot` (5), `mart_price_freshness_trend` (4), `mart_scrape_volume` (3) | Driven by `arg_max`/`arg_min`, `percentile_cont` + `::int` rounding, `distinct on`, `select * exclude`, `now_ts()`. Rounding items (F10/F12) may shift *expected values* by ±1, not just syntax. |
+| **Highest churn** | ~23 | the 4 fingerprint/run models (17), `int_listing_volatility_features` (3), `stg_dealers` (2) | `datediff('hour', …)` feeds `run_duration_hours` (F5) — a **model feature**, so expectations may legitimately change. Hash/fingerprint tests (`test_fingerprints_identical_inputs_same_hash`) depend on `md5`/concat semantics matching across engines. |
+| **Should become parity tests instead** | 3 | `int_listing_volatility_features` | Already the widest-input model (6 refs, ~90-row fixtures). Re-authoring these as Spark unit tests is high cost for low marginal signal when Gate B parity already compares this model's real output VIN-by-VIN. |
+
+**Cross-cutting fixture risk: 208 timestamp literals** in the `"YYYY-MM-DD HH:MM:SS+00"`
+form across the three files. Spark's `stringToTimestamp` is documented to accept
+`+|-h[h]` offsets (SPARK-31005), so `+00` **should** parse — but this is exactly the
+kind of thing that must be proven, not assumed, because the failure mode is a silent
+`NULL` (non-ANSI mode) or a whole-suite time shift rather than an error. Pinning
+`spark.sql.session.timeZone=UTC` is a prerequisite. **This one check gates roughly the
+entire suite**; run it first (see the Gate A proof below).
+
+### Recommended Gate A test policy
+
+1. **Migrated models are NOT required to keep dbt unit tests immediately.**
+   Gate A's first model is `stg_blocked_cooldown_events → mart_block_rate`, chosen
+   precisely so failures are unambiguously infrastructure failures. Porting 64 unit
+   tests concurrently would destroy that property. Unit tests become **required at
+   Gate B**, per chain, once the adapter is proven.
+
+2. **Minimum bar if dbt unit tests do not work on Spark:** the `merge`/
+   `insert_overwrite`/full-rebuild decisions above are *write-path* semantics that
+   unit tests structurally cannot cover, so these are required **regardless**:
+   - Extend `scripts/seed_lake_snapshot_fixture.py` phases (never a throwaway
+     shadow dbt project) to cover, per migrated incremental model: bootstrap from
+     empty, idempotent rerun, late-arrival pickup, correction replacement, and
+     full-refresh equivalence.
+   - One **negative** fixture proving the disappearing-`(hour, source)` case for
+     `mart_scrape_volume` — the exact case `merge` gets wrong.
+   - Gate B parity (row count, distinct/duplicate key count, null counts, sampled
+     entity histories) with a **stated numeric tolerance** for the ±1 rounding of
+     F5/F10/F12. Without a stated tolerance, "rows match, checksums don't" reads as
+     failure and stalls the gate.
+
+3. **How long DuckDB unit tests stay useful: keep all 64 running on DuckDB until
+   the chain they cover is cut over at Gate E — do not delete them at Gate B.**
+   During dual-run they are the *executable specification* of intended behaviour.
+   When Spark and DuckDB disagree, the DuckDB unit test is what says which one is
+   right; deleting it turns a parity failure into an argument. Retire per chain,
+   only after that chain's readers are migrated.
+
+4. **CI job shape.** Do not add Spark to the existing `dbt build + test` job.
+   - Keep the DuckDB unit-test path exactly where it is: it is fast, and it is the
+     regression net for the 5 models never migrating early.
+   - Add a **separate, isolated** `dbt-spark` job with its own venv (per the
+     `airflow/requirements.txt` convention — dbt-spark must not share a resolver
+     with dbt-duckdb).
+   - Keep it **narrow**: select only migrated models (`--select tag:iceberg` or the
+     ported chain), not the whole project. Every Spark unit test pays JVM startup
+     plus per-test Spark job overhead — seconds each, against milliseconds on
+     DuckDB. 64 tests × Spark overhead is a multi-minute job and would be the
+     slowest thing in CI for no added signal on unmigrated models.
+   - Respect the existing Layer 1 → Layer 2 ordering: SQL smoke before dbt
+     integration tests.
+   - If JVM startup makes even the narrow job unacceptable, fall back to the pattern
+     Gate A already allows: unit coverage in CI plus a documented VM/local smoke.
+
+5. ~~**The cheap Gate A proof that de-risks all of the above.**~~ **DONE
+   (2026-07-16) — and it paid off exactly as hoped.** All 3 `mart_block_rate` unit
+   tests ran end-to-end on dbt-spark and passed. Session mode works, `safe_cast`
+   renders, `+00` parses, the session timezone holds, and the cost is ~0.3–1.2s per
+   test (plus ~10s JVM startup per invocation). The measured cost is low enough
+   that the CI-shape worry in item 4 above is softer than written: all 64 tests
+   would be ≈30s of Spark time, not minutes. Narrow selection remains the
+   recommendation, but on cost-efficiency grounds, not feasibility.
+
+## Unit-test impact
+
+Short version for the plan-level reader:
+
+- **64 unit tests, not 85** (the Gate 0 figure was wrong); 17 of 22 models covered.
+- **dbt-spark supports unit tests** (since 1.8.0, via `spark__safe_cast`) —
+  documented, **unproven in this repo**. Do not record this as "covered".
+- **Zero unit tests exercise `delete+insert`**, because every incremental model's
+  tests override `is_incremental: false`. The F1 strategy migration and the
+  unit-test migration are **independent**. Corollary: no unit test will catch an
+  incremental regression — that needs fixture/parity coverage.
+- Rough triage: ~14 portable unchanged, ~24 needing fixture/expectation edits, ~23
+  high-churn, 3 better re-scoped as parity tests.
+- Biggest single unknown: **208 `+00` timestamp literals** — documented as
+  parseable by Spark, not yet proven, silent-`NULL` failure mode.
+- Unit tests are **not** required at Gate A; required at Gate B per chain; DuckDB
+  tests stay until per-chain cutover at Gate E.
+
+## Risks/unknowns remaining
+
+Resolved by the research pass: F1 (`delete+insert` confirmed absent, per-model plan
+agreed), the adapter choice, and the unit-test question.
+
+**Resolved by the Gate A implementation pass (2026-07-16)** — items 1–3 below were
+the top three risks and are now all closed:
+
+1. ~~**`session` mode is officially experimental.**~~ **Proven to work.** It drove a
+   full dbt build (parse → compile → `CREATE TABLE ... USING iceberg` → catalog
+   commit) against Lakekeeper + `S3FileIO`, plus 3 unit tests. It remains labeled
+   experimental upstream, so the `thrift` fallback stays the contingency and the
+   pin stays at `dbt-spark==1.10.3` — but "does it work at all" is answered.
+2. ~~**The `+00` timestamp fixture question** (208 sites).~~ **Closed.** The
+   `mart_block_rate` fixtures use exactly that form and parse correctly under
+   `spark.sql.session.timeZone=UTC`. The silent-NULL mode did not occur. (Proven
+   for these fixtures; the other ~205 sites are the same literal form, so the risk
+   is now low rather than eliminated.)
+3. ~~**`spark.sql.defaultCatalog` behaviour with dbt-spark's two-part relations.**~~
+   **Confirmed honoured.** dbt wrote to `cartracker.cartracker_experiments.mart_block_rate`
+   with `provider=iceberg` and an `s3://` location. The advice stands and is now
+   implemented in code: verify via the catalog, never the exit code
+   (`run_dbt_spark.assert_default_catalog` + `verify_iceberg_tables`).
+
+**New, discovered at Gate A** (neither predicted here):
+
+- **`hadoop-aws` is required** for plain Parquet reads — see the corrected
+  [adapter choice](#gate-a-adapter-choice) section.
+- **Staging cannot be a `view` on Spark**; a persisted view re-qualifies the
+  `parquet.`s3a://…`` reference against its own catalog and fails. `ephemeral` is
+  the equivalent (both = no stored data).
+- **F8 leaks into every target.** dbt renders all sources' Jinja at parse time
+  regardless of `--select`, so `POSTGRES_URL` must exist even for a DAG that never
+  touches Postgres.
+
+Still open, ordered by how much they'd change the plan:
+
+4. **Non-atomic writes are now unavoidable on Spark**, for any future
+   delete+insert-equivalent (two Iceberg commits vs DuckDB's one transaction).
+   Guardrails R3 (consumers read a serving layer) and R5 (Iceberg stays rebuildable)
+   mitigate this; Gate D's serving choice must not expose mid-build state to readers.
+   Not a Gate A blocker, but it constrains Gate C and should not be rediscovered then.
+5. **`arg_max`/`md5`/concat parity for the fingerprint hashes.** If Spark's `md5` or
+   string-concat/null semantics differ at all from DuckDB's, *every* fingerprint
+   changes → every run boundary changes → the entire volatility feature chain drifts.
+   Low probability, very high blast radius. Check on real data at Gate B, not on
+   fixtures.
+6. **How does Spark reach `search_configs` / `tracked_models`?** (F8) Unchanged from
+   Gate 0 and still open. Blocks the serving chain, not Gate A. Recommendation stands:
+   hourly snapshot to MinIO/Iceberg over a live JDBC read. Decide before Gate B.
+7. **Parity tolerance for rounding** (F5/F10/F12) — still needs a stated number.
+   Unchanged from Gate 0.
+8. **Retire or demote the Postgres dbt targets.** Unchanged from Gate 0: they are not
+   the production build path (`--target duckdb` is hardcoded in dbt_runner) and are
+   not migration scaffolding. Concrete cleanup: `dbt_runner`'s `/dbt/docs/generate`
+   runs `dbt docs generate` without `--target`, inheriting `target: prod`; Gate A
+   should pass `--target duckdb` or make the docs target explicit.
+
+Two small cleanups this audit recommends folding into Gate A rather than tracking
+separately, since both make the port measurably cheaper:
+
+- Route `mart_price_freshness_trend`'s six bare `now()` calls through the
+  existing `now_ts()` macro (F11).
+- Add a `unique` test on `mart_deal_scores.vin` so the most-read table in the
+  project has a comparable key before parity testing starts.
 
 Two small cleanups this audit recommends folding into Gate A rather than tracking
 separately, since both make the port measurably cheaper:

@@ -178,6 +178,19 @@ sources:
               's3://{{ env_var("MINIO_BUCKET", "bronze") }}/ops_normalized/blocked_cooldown_events/**/*.parquet',
               hive_partitioning=true
             )
+          # Plan 125 Gate A: the same files, addressed for Spark.
+          # Read by the parquet_source() macro on the `spark` target only;
+          # dbt-duckdb ignores it and keeps using external_location above.
+          #
+          # Two deliberate differences from external_location:
+          #   * s3a://, not s3:// -- hadoop-aws (which serves plain Parquet
+          #     reads) only registers the `s3a` scheme. Iceberg TABLE
+          #     locations stay s3:// via S3FileIO. See
+          #     shared/iceberg_catalog.spark_conf_for_s3a_reads.
+          #   * a bare directory, no /**/*.parquet glob -- Spark's Parquet
+          #     reader discovers files recursively and infers the year=/month=
+          #     Hive partitions from the directory layout on its own.
+          spark_external_location: "s3a://{{ env_var('MINIO_BUCKET', 'bronze') }}/ops_normalized/blocked_cooldown_events/"
         columns:
           - name: event_id
           - name: listing_id
