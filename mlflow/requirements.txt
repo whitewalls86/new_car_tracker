@@ -1,5 +1,0 @@
-# Plan 112 Gate B: MLflow tracking server (standalone docker-compose.mlflow.yml).
-# Isolated from the shared FastAPI-services images -- own Dockerfile, own
-# requirements -- same convention as lakehouse/requirements.txt.
-mlflow==2.17.2
-boto3==1.35.36

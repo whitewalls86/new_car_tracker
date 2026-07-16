@@ -5,20 +5,19 @@
 # teardown. Never add these services to the main docker-compose.yml under a
 # `profiles:` key instead -- `docker compose --profile <name> down -v`
 # against the main file still resolves against the ENTIRE main project. See
-# docs/runbook_lakehouse.md and docs/plan_112_gate_a_b_implementation_plan.md
-# ("Compose topology decision") for the full rationale.
+# docs/plan_112_refresh_policy_backtesting.md for the full rationale.
 #
 # VM/local usage (joins the real cartracker-net + real minio):
 #   docker compose -f docker-compose.lakehouse.yml -p cartracker-lakehouse \
 #     up -d lakekeeper-postgres lakekeeper
 #
 # CI usage adds docker-compose.lakehouse.ci.yml as a second -f -- see
-# docs/runbook_lakehouse.md.
+# docs/plan_112_refresh_policy_backtesting.md.
 #
 # This file touches no production Postgres, no Flyway migration, and no
 # production volume. A1 stood up only the catalog + its isolated metadata
 # store. Gate A2 adds `lakehouse-worker` (profile-gated, PySpark), built from
-# lakehouse/Dockerfile -- see docs/runbook_lakehouse.md for A2 commands.
+# lakehouse/Dockerfile -- see docs/plan_112_refresh_policy_backtesting.md for A2 commands.
 
 services:
   lakekeeper-postgres:
@@ -100,6 +99,7 @@ services:
     build:
       context: .
       dockerfile: lakehouse/Dockerfile
+      target: lakehouse-worker
     image: cartracker-lakehouse
     profiles: ["lakehouse-worker"]
     mem_limit: 6g

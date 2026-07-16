@@ -1,8 +1,8 @@
 """
 Plan 112 Gate B: lakehouse experiment-provenance bridge.
 
-This module is the engine-agnostic seam described in
-`docs/plan_112_gate_a_b_implementation_plan.md` Sec 3.6: it turns a plain,
+This module is the engine-agnostic provenance bridge described in
+`docs/plan_112_refresh_policy_backtesting.md`: it turns a plain,
 JSON-serializable metadata dict (from the Plan 120 snapshot archive manifest
 and the Gate A Iceberg metadata capture) into the exact set of MLflow
 params/tags/artifacts that make an experiment traceable back to its input

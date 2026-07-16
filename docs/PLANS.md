@@ -16,11 +16,12 @@ operational state. MinIO stores bronze HTML and analytical history. dbt
 currently runs on DuckDB against MinIO silver, but DuckDB is now considered a
 transition analytics endpoint rather than the future platform target.
 
-**Now:** Plans 110 and 111 are complete as the storage/feature foundation for
-adaptive refresh. The next arc is the open lakehouse track: Iceberg + Spark +
-MLflow backtesting, reproducible CI/local fixture snapshots, production
-adaptive refresh rollout, dbt migration away from DuckDB, and
-governance/catalog expansion.
+**Now:** Plans 110, 111, 120, 123, and 124 are complete enough to support the
+open lakehouse track. Plan 112 proved the Iceberg/Lakekeeper/Spark/MLflow
+foundation, then was intentionally paused before deeper backtesting. The next
+major work is Plan 125: move the analytics contract from DuckDB to
+Iceberg-native tables, then resume Plan 112's backtest/model gates on that
+stable substrate.
 
 ---
 
@@ -36,15 +37,15 @@ governance/catalog expansion.
 
 | Plan | Title | Status |
 |------|-------|--------|
-| [112](plan_112_refresh_policy_backtesting.md) | Iceberg + MLflow adaptive refresh backtesting | Draft |
+| [112](plan_112_refresh_policy_backtesting.md) | Iceberg + MLflow adaptive refresh backtesting | Paused after foundation proof |
 | [113](plan_113_production_adaptive_refresh.md) | Production adaptive refresh integration | Draft |
 | [114](plan_114_sectioned_html_artifact_audit.md) | Sectioned HTML artifact audit | Draft |
 | [115](plan_115_detail_unenriched_circuit_breaker.md) | Detail unenriched circuit breaker | Draft |
-| [118](plan_118_dbt_spark_migration.md) | dbt migration from DuckDB to Spark-compatible execution | Draft |
 | [119](plan_119_lakehouse_governance.md) | Lakehouse governance + catalog expansion | Draft |
 | [120](plan_120_ci_lake_snapshot_delivery.md) | CI + local lake snapshot delivery | Draft |
 | [121](plan_121_staging_environment.md) | Staging environment | Draft |
 | [124](plan_124_trawl_memory_guardrails.md) | Trawl browser solver memory guardrails | Hotfix |
+| [125](plan_125_duckdb_to_iceberg_migration.md) | DuckDB to Iceberg analytics migration | Draft |
 
 ---
 
@@ -74,16 +75,17 @@ producer calls.
 Prerequisites all exist. Provision Oracle Cloud VMs and fan out the DAG when
 needed.
 
-**Plans 110-121 lakehouse/adaptive-refresh sequence** - Plans 110 and 111 are
+**Plans 110-125 lakehouse/adaptive-refresh sequence** - Plans 110 and 111 are
 the completed foundation: storage normalization and adaptive-refresh feature
-outputs. Plan 117 resets the forward roadmap toward a portable local
-lakehouse. Plan 112 audits the feature outputs, proves Iceberg/MLflow
-reproducibility, and selects a backtested policy. Plan 120 provides the
-production-derived fixture snapshots consumed by CI and local development. Plan
-113 deploys only an approved, pinned policy config into ops claim logic. Plan
-118 moves dbt away from DuckDB toward Spark-compatible execution.
-Plans 114, 121, and 119 can follow in whichever order is most useful: raw HTML
-retention research, staging environment, and governance/catalog expansion.
+outputs. Plan 117 resets the forward roadmap toward a portable local lakehouse.
+Plan 120 provides production-derived fixture snapshots consumed by CI and local
+development. Plan 112 proved Iceberg/MLflow reproducibility, but it is paused
+before backtest/model gates because DuckDB still owns the analytics contract.
+Plan 125 now moves dbt/analytics from DuckDB toward Iceberg-native tables. Once
+that substrate is stable, Plan 112 resumes policy backtesting and Plan 113
+deploys only an approved, pinned policy config into ops claim logic. Plans 114,
+121, and 119 can follow in whichever order is most useful: raw HTML retention
+research, staging environment, and governance/catalog expansion.
 
 ---
 
@@ -92,7 +94,8 @@ retention research, staging environment, and governance/catalog expansion.
 | Plan | Title | Reason |
 |------|-------|--------|
 | [89](plan_89_ops_analytics_split.md) | Operational/analytics dbt split | Philosophy preserved; implementation superseded by Plans 93, 97, 96 |
-| [90](plan_90_dbt_cleanup.md) | dbt decommission / dbt-duckdb migration | Superseded by Plan 102; DuckDB source layer done in Plan 96; the new forward migration is Plan 118 |
+| [90](plan_90_dbt_cleanup.md) | dbt decommission / dbt-duckdb migration | Superseded by Plan 102; DuckDB source layer done in Plan 96; the new forward migration is Plan 125 |
+| [118](plan_118_dbt_spark_migration.md) | dbt migration from DuckDB to Spark-compatible execution | Superseded/refined by Plan 125, which uses the Iceberg proof from Plan 112 and makes DuckDB-to-Iceberg migration the explicit objective |
 
 ---
 

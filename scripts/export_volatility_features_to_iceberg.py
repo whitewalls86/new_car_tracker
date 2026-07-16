@@ -3,7 +3,7 @@ Plan 112 Gate A3: VM/local-manual rehearsal writing the real dbt
 `int_listing_volatility_features` feature table to Iceberg via Lakekeeper +
 MinIO, through the same profile-gated `lakehouse-worker` used by A2.
 
-VM/local only -- not run in CI (see docs/runbook_lakehouse.md's A3 section).
+VM/local only -- not run in CI (see docs/plan_112_refresh_policy_backtesting.md's A3 section).
 Reads the real production-derived analytics DuckDB file **read-only**:
 
     docker compose -f docker-compose.lakehouse.yml -p cartracker-lakehouse \\

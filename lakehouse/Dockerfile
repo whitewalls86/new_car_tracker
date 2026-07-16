@@ -1,14 +1,21 @@
-# Plan 112 Gate A2: lakehouse-worker image. The first JVM dependency this
-# repo needs outside the existing Airflow/Flyway images -- kept fully
-# isolated here (own Dockerfile, own requirements.txt), never merged into
-# the shared FastAPI-services images.
+# Plan 112 lakehouse image targets.
+#
+# This Dockerfile intentionally owns every Plan 112 runtime target so the
+# exploratory lakehouse work does not sprawl across one-off image definitions:
+#
+#   - lakehouse-worker: PySpark/Iceberg one-shot worker.
+#   - mlflow: standalone MLflow provenance/tracking smoke server.
+#
+# They remain separate build targets because their base-runtime constraints are
+# genuinely different: Spark currently runs on Python 3.13 + Java 17, while
+# mlflow==2.17.2 is kept on Python 3.12 for reliable ARM64 wheels.
 #
 # Pinned to -bookworm (Debian 12), not the rolling python:3.13-slim tag:
 # Debian trixie (13) dropped the openjdk-17-jre-headless package in favor of
 # openjdk-21 only, and Spark 3.5.x's Java 21 support is less proven than 17.
 # Revisit this pin if/when pyspark is upgraded to a version with solid Java
 # 21 support.
-FROM python:3.13-slim-bookworm
+FROM python:3.13-slim-bookworm AS lakehouse-worker
 
 # Iceberg-Spark-runtime + iceberg-aws-bundle jar versions. iceberg-aws-bundle
 # (AWS SDK v2, shaded) backs Iceberg's native S3FileIO -- Lakekeeper hands
@@ -16,7 +23,7 @@ FROM python:3.13-slim-bookworm
 # that scheme; Hadoop-AWS's S3AFileSystem only registers `s3a://` and was
 # tried first here, which does not exist for this catalog. Keep this version
 # in sync with ICEBERG_SPARK_RUNTIME_VERSION if pyspark is ever upgraded --
-# see docs/runbook_lakehouse.md.
+# see docs/plan_112_refresh_policy_backtesting.md.
 ARG ICEBERG_SPARK_RUNTIME_VERSION=1.6.1
 ARG ICEBERG_AWS_BUNDLE_VERSION=1.6.1
 
@@ -52,3 +59,34 @@ COPY . .
 # default CMD that starts a long-running process; invoked directly via
 # `docker compose run --rm lakehouse-worker python -m scripts....`.
 CMD ["python", "-c", "print('lakehouse-worker: run a script via docker compose run --rm lakehouse-worker python -m scripts....')"]
+
+
+# Plan 112 Gate B: standalone MLflow tracking/provenance target.
+#
+# Keep this on Python 3.12 for now: mlflow==2.17.2 constrains pyarrow<18,
+# and pyarrow 17 does not have a reliable Python 3.13 ARM64 wheel on the OCI
+# A1 VM. Python 3.13 falls back to a source build there and fails before the
+# server image can build.
+FROM python:3.12-slim-bookworm AS mlflow
+
+WORKDIR /app
+
+COPY lakehouse/mlflow-requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt
+
+# Package the provenance client into the same image as the tracking server so
+# VM smoke tests can run:
+#   python -m scripts.log_lakehouse_experiment_provenance ...
+# without installing repo dependencies on the host or hot-copying files into a
+# running container. .dockerignore keeps local caches, secrets, snapshots, and
+# virtualenvs out of this build context.
+COPY shared /app/shared
+COPY scripts /app/scripts
+COPY __init__.py /app/__init__.py
+
+# SQLite backend store lives on a mounted volume at /mlflow/store (see
+# docker-compose.mlflow.yml). Create the mount point so a fresh volume is
+# writable by the server on first start.
+RUN mkdir -p /mlflow/store
+
+EXPOSE 5000

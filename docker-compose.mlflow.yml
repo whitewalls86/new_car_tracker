@@ -31,13 +31,14 @@
 #   # is declared here):
 #   docker compose -f docker-compose.mlflow.yml -p cartracker-mlflow down -v
 #
-# See docs/runbook_lakehouse.md ("Gate B provenance smoke").
+# See docs/plan_112_refresh_policy_backtesting.md ("Gate B provenance smoke").
 
 services:
   mlflow:
     build:
       context: .
-      dockerfile: mlflow/Dockerfile
+      dockerfile: lakehouse/Dockerfile
+      target: mlflow
     image: cartracker-mlflow
     container_name: cartracker-mlflow
     restart: unless-stopped

@@ -41,16 +41,18 @@ class TestMlflowComposeStandalone:
     def test_mlflow_service_present(self):
         assert "mlflow" in self._doc()["services"]
 
-    def test_builds_from_isolated_mlflow_dockerfile(self):
-        assert self._service()["build"]["dockerfile"] == "mlflow/Dockerfile"
+    def test_builds_from_lakehouse_mlflow_target(self):
+        build = self._service()["build"]
+        assert build["dockerfile"] == "lakehouse/Dockerfile"
+        assert build["target"] == "mlflow"
 
     def test_mlflow_image_uses_python_312_for_arm64_wheels(self):
-        dockerfile = (_REPO_ROOT / "mlflow" / "Dockerfile").read_text()
-        assert "FROM python:3.12-slim-bookworm" in dockerfile
+        dockerfile = (_REPO_ROOT / "lakehouse" / "Dockerfile").read_text()
+        assert "FROM python:3.12-slim-bookworm AS mlflow" in dockerfile
         assert "pyarrow 17" in dockerfile
 
     def test_mlflow_image_packages_provenance_client(self):
-        dockerfile = (_REPO_ROOT / "mlflow" / "Dockerfile").read_text()
+        dockerfile = (_REPO_ROOT / "lakehouse" / "Dockerfile").read_text()
         assert "COPY shared /app/shared" in dockerfile
         assert "COPY scripts /app/scripts" in dockerfile
         assert "COPY __init__.py /app/__init__.py" in dockerfile

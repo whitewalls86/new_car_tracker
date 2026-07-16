@@ -1,7 +1,7 @@
 """
 Plan 112 Gate A4: one-command local lakehouse rehearsal runner.
 
-Orchestrates the full A4 flow (docs/runbook_lakehouse.md, A4 section) on a
+Orchestrates the full A4 flow (docs/plan_112_refresh_policy_backtesting.md, A4 section) on a
 dev box, consuming the Plan 120 Gate F ops download API for snapshot
 refresh -- never SSH, never production MinIO/Postgres:
 
