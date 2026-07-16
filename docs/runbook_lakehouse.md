@@ -703,9 +703,13 @@ Smoke B is for the VM / main-stack environment where `cartracker-net` and
 `minio` exist.
 
 ```bash
+# 0. Pre-PR / pre-VM smoke: build the image. This catches Python/package/ARM64
+#    wheel issues before the server is started.
+docker compose -f docker-compose.mlflow.yml -p cartracker-mlflow build mlflow
+
 # 1. Start the standalone server (joins the EXTERNAL cartracker-net + minio;
 #    needs the main cartracker stack / VM running -- see note above):
-docker compose -f docker-compose.mlflow.yml -p cartracker-mlflow up -d --build
+docker compose -f docker-compose.mlflow.yml -p cartracker-mlflow up -d
 #    UI at http://localhost:15000
 
 # 2. Log a provenance run against it:

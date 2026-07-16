@@ -1238,8 +1238,11 @@ in a separate Compose project with no relationship to the production
   main file, by design.
 - No changes to any existing service's runtime config anywhere. New files
   require `docker compose -f docker-compose.lakehouse.yml build
-  lakehouse-worker` (Gate A) or `docker compose build mlflow` (Gate B) on the
-  VM before they take effect.
+  lakehouse-worker` (Gate A) or
+  `docker compose -f docker-compose.mlflow.yml -p cartracker-mlflow build mlflow`
+  (Gate B provenance bridge) on the VM before they take effect. The MLflow
+  image intentionally uses Python 3.12 because `mlflow==2.17.2` pulls
+  `pyarrow<18`, and Python 3.13 on the ARM64 VM falls back to a source build.
 
 ### 6.5 Scripts / modules to scaffold
 

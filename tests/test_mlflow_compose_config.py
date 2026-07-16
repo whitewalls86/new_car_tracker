@@ -44,6 +44,11 @@ class TestMlflowComposeStandalone:
     def test_builds_from_isolated_mlflow_dockerfile(self):
         assert self._service()["build"]["dockerfile"] == "mlflow/Dockerfile"
 
+    def test_mlflow_image_uses_python_312_for_arm64_wheels(self):
+        dockerfile = (_REPO_ROOT / "mlflow" / "Dockerfile").read_text()
+        assert "FROM python:3.12-slim-bookworm" in dockerfile
+        assert "pyarrow 17" in dockerfile
+
     def test_backend_store_is_isolated_sqlite_not_postgres(self):
         """This first Gate B chunk must NOT couple to production Postgres:
         the backend store is SQLite on this project's own volume."""
