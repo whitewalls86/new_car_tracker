@@ -185,6 +185,24 @@ class TestCaddySnapshotDownloadRoute:
         assert "oauth2-proxy" not in block
 
 
+class TestOpsRuntimeRequirements:
+    """Config-level checks for dependencies required by ops routes."""
+
+    @staticmethod
+    def _requirements() -> set[str]:
+        path = _REPO_ROOT / "ops" / "requirements.txt"
+        assert path.exists(), "ops/requirements.txt missing"
+        return {
+            line.strip().split("==", 1)[0].split(">=", 1)[0].split("[", 1)[0].lower()
+            for line in path.read_text().splitlines()
+            if line.strip() and not line.strip().startswith("#")
+        }
+
+    def test_snapshot_downloads_have_boto3_available(self):
+        """Gate F uses shared.minio.read_json/object_size/open_stream in ops."""
+        assert "boto3" in self._requirements()
+
+
 class TestGrafanaDashboards:
     _DASHBOARD_DIR = _REPO_ROOT / "grafana" / "dashboards"
     _EXPECTED = {"pipeline_health.json", "infrastructure.json", "service_latency.json", "logs.json"}
