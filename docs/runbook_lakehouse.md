@@ -331,6 +331,46 @@ MinIO, no external volume, no production Docker resource of any kind.
 like the base file. The throwaway MinIO's contents are ephemeral -- a `down`
 loses the seeded snapshot, and reseeding is cheap and expected.
 
+### Preferred: the one-command runner
+
+`scripts/run_local_lakehouse_rehearsal.py` orchestrates the whole A4 flow
+(stack up -> snapshot -> seed -> dbt DuckDB build -> warehouse registration
+-> preflight -> A2 roundtrip -> A3 rehearsal), cache-aware and idempotent:
+
+```powershell
+# Everyday run: reuses the newest cached snapshot, skips seeding when MinIO
+# already holds the fixture prefixes, skips the dbt build when
+# .cache/analytics/analytics.duckdb exists.
+python -m scripts.run_local_lakehouse_rehearsal
+
+# Pull a fresh snapshot through the Plan 120 Gate F ops API, clear+reseed
+# local MinIO, and rebuild the local DuckDB (needs $CARTRACKER_SNAPSHOT_TOKEN
+# or --token):
+python -m scripts.run_local_lakehouse_rehearsal --refresh-seed-data
+
+# Other useful flags:
+#   --reseed-only          clear+reseed MinIO from the cached snapshot
+#   --rebuild-duckdb       rebuild analytics.duckdb only
+#   --snapshot-id <id>     pin a specific snapshot (download or cached)
+#   --snapshot-path <p>    offline: explicit snapshot.tar.zst (+ manifest.json beside it)
+#   --skip-a2 / --skip-a3  skip the roundtrip / real-table rehearsal
+#   --keep-iceberg-table   pass --keep to A3 for debugging
+#   --no-build-images      skip lakehouse-worker/dbt image builds
+```
+
+The dbt step builds the `dbt/Dockerfile` image and runs a **targeted**
+`dbt build --target duckdb --full-refresh --select
++int_listing_volatility_features` against the seeded local MinIO. That
+selection includes no `postgres_scan()` source, so no local Postgres is
+needed -- `POSTGRES_URL` is a deliberate dummy. The runner passes the local
+override's MinIO credentials (`cartracker`/`cartracker123`) explicitly to
+every subprocess, so parent-shell/production env vars can never leak in. It
+never runs `down`, `-v`, or anything destructive; Gate F is the only
+supported refresh path (no SSH).
+
+The numbered steps below are the manual equivalents -- keep them for
+troubleshooting individual stages or running one step at a time.
+
 ### 0. Preflight (run any time; read-only)
 
 ```bash
@@ -348,26 +388,21 @@ Lakekeeper's management endpoint answers at `localhost:18181`; the
 is overridable -- see `--help`. It never writes, deletes, or registers
 anything.
 
-### 1. Acquire a Plan 120 snapshot archive (manual today)
+### 1. Acquire a Plan 120 snapshot archive (Gate F ops API)
 
-Plan 120's Gate F ops download API is not implemented yet, so getting the
-archive+manifest pair off the VM is a manual copy: the snapshot-worker
-publishes them under
-`s3://bronze/snapshot_archives/fingerprints/{export_fingerprint}/`
-(`snapshot.tar.zst`, `archive_manifest.json`), with the current pointer at
-`s3://bronze/ci_snapshots/adaptive_refresh/latest.json`. Fetch them however
-is convenient (e.g. `mc`/boto3 against the VM's MinIO over an SSH tunnel),
-then normalize into the local cache with checksum verification:
+Plan 120's Gate F ops download API is live -- download and
+checksum-normalize into the local cache directly (token from
+`$CARTRACKER_SNAPSHOT_TOKEN` or `--token`):
 
-```bash
-python -m scripts.download_lake_snapshot \
-  --manifest-path /path/to/archive_manifest.json \
-  --archive-path /path/to/snapshot.tar.zst
+```powershell
+python -m scripts.download_lake_snapshot --latest --base-url https://cartracker.info
 # -> .cache/lake_snapshots/<snapshot_id>/{snapshot.tar.zst,manifest.json}
 ```
 
-(Once the ops download API lands, the same script's `--latest --base-url ...
---token ...` mode replaces the manual copy; nothing downstream changes.)
+For offline/manual use (e.g. an archive+manifest pair already on disk), the
+same script's `--manifest-path`/`--archive-path` local mode normalizes it
+into the cache with the same checksum verification. There is no SSH path;
+Gate F is the supported refresh mechanism.
 
 ### 2. Start the local stack
 
@@ -392,15 +427,13 @@ Creates the `bronze` bucket if needed and uploads the fixture prefixes
 (`silver_normalized/`, `ops_normalized/`, `expected/`). The script's
 production-target guard applies here too.
 
-### 4. Build analytics.duckdb from the seeded data (partly manual today)
+### 4. Build analytics.duckdb from the seeded data (targeted; no Postgres)
 
-The dbt DuckDB target reads the seeded MinIO prefixes, but two sources
-(`stg_search_configs`, `tracked_models`) are `postgres_scan()` reads that
-need a reachable Postgres with the migrated schema -- locally that means
-reproducing the CI `dbt` job's recipe (throwaway Postgres + Flyway +
-`dbt build --target duckdb` with `DUCKDB_PATH` pointed into
-`./.cache/analytics/`), containerized via the `dbt/Dockerfile` image per the
-"never pip-install dbt locally" convention:
+A **targeted** build selecting `+int_listing_volatility_features` reads only
+the seeded MinIO prefixes -- none of its upstream models touch the two
+`postgres_scan()` sources (`stg_search_configs`, `tracked_models`), so
+`POSTGRES_URL` can be a dummy. Containerized via the `dbt/Dockerfile` image
+per the "never pip-install dbt locally" convention:
 
 ```bash
 docker build -f dbt/Dockerfile -t cartracker-dbt-local .
@@ -409,17 +442,18 @@ docker run --rm --network local-lakehouse_cartracker-net \
   -e MINIO_ENDPOINT=http://minio:9000 \
   -e MINIO_ROOT_USER=cartracker -e MINIO_ROOT_PASSWORD=cartracker123 \
   -e MINIO_BUCKET=bronze \
-  -e POSTGRES_URL=<postgresql://...local postgres with migrated schema...> \
+  -e POSTGRES_URL=postgresql://unused:unused@localhost:5432/unused \
   -v "$(pwd)/.cache/analytics:/out" \
-  cartracker-dbt-local build --target duckdb
+  cartracker-dbt-local build --target duckdb --full-refresh \
+  --select +int_listing_volatility_features
 ```
 
-Standing up that local Postgres is the one genuinely manual gap in the A4
-flow today (tracked as an A4 open item, not silently glossed). Until it is
-scripted, the pragmatic alternative is to copy an existing
-`analytics.duckdb` (e.g. CI's `/tmp/ci_analytics.duckdb` artifact or a
-VM-derived copy) into `./.cache/analytics/` -- the preflight's
-`feature-tables` check will tell you whether whatever you supplied is usable.
+A **full** `dbt build --target duckdb` (no `--select`) still needs a real
+Postgres with the migrated schema for those two sources -- that remains
+out of scope for the A4 harness; the targeted build is all A2/A3 need. If
+you have an `analytics.duckdb` from elsewhere (CI artifact, VM-derived
+copy), dropping it into `./.cache/analytics/` also works -- the preflight's
+`feature-tables` check will tell you whether it is usable.
 
 ### 5. Register the warehouse and run the rehearsal
 
@@ -541,18 +575,22 @@ ran successfully against the real 250,790-row table on 2026-07-15 -- see
 `docs/lakehouse_substrate_decision.md`'s "Gate A spike results" section for
 the real output.
 
-**A4 scaffolding is implemented** (`docker-compose.lakehouse.local.yml`,
-`scripts/preflight_local_lakehouse_snapshot.py`, the "A4" section above) --
-the local flow reuses the A2/A3 scripts unchanged against a self-contained
-local stack seeded from a Plan 120 archive.
+**A4 is implemented end to end** (`docker-compose.lakehouse.local.yml`,
+`scripts/preflight_local_lakehouse_snapshot.py`,
+`scripts/run_local_lakehouse_rehearsal.py`, the "A4" section above) -- the
+local flow reuses the A2/A3 scripts unchanged against a self-contained local
+stack seeded from a Plan 120 archive, with
+`python -m scripts.run_local_lakehouse_rehearsal` as the one-command entry
+point. Snapshot acquisition goes through the Plan 120 Gate F ops download
+API (`scripts/download_lake_snapshot.py --latest`), and the local DuckDB is
+built by the scripted targeted dbt build (A4 step 4) -- no VM copy, no SSH,
+no local Postgres.
 
-Still deferred / manual:
+Still deferred:
 
-- **Plan 120 Gate F ops download API** -- acquiring the snapshot
-  archive+manifest pair off the VM is a manual copy today (A4 step 1);
-  `scripts/download_lake_snapshot.py --latest` takes over once the API lands.
-- **Scripted local dbt build** -- `dbt build --target duckdb` needs a local
-  Postgres with the migrated schema for the two `postgres_scan()` sources
-  (A4 step 4); until that is scripted, supply/copy an `analytics.duckdb`.
+- **Full local `dbt build --target duckdb`** (no `--select`) -- still needs
+  a local Postgres with the migrated schema for the two `postgres_scan()`
+  sources; the A4 harness deliberately uses the targeted
+  `+int_listing_volatility_features` build instead.
 - **PyIceberg validation** (A2b) and **MLflow** (Gate B) are unrelated to
   this stack's bring-up/teardown and are documented separately as they land.

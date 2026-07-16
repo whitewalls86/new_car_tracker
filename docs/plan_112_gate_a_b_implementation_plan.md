@@ -284,6 +284,27 @@ add more PySpark business logic.
 > dependency. No CI job was added or broadened for A4 -- the new tests are
 > plain unit tests in the existing `unit-tests` job.
 
+> **Implementation note (2026-07-16):** both remaining manual steps are now
+> closed and A4 has a one-command runner,
+> `scripts/run_local_lakehouse_rehearsal.py`
+> (`python -m scripts.run_local_lakehouse_rehearsal`). Snapshot acquisition
+> consumes the now-live Plan 120 Gate F ops download API via
+> `scripts/download_lake_snapshot.py --latest` (no SSH path exists or should
+> be added), and the local `analytics.duckdb` is built by a scripted
+> **targeted** dbt build (`--select +int_listing_volatility_features`
+> through the `dbt/Dockerfile` image on the local Compose network) whose
+> selection includes no `postgres_scan()` source -- so no local Postgres is
+> required; `POSTGRES_URL` is a deliberate dummy. The runner is cache-aware
+> (skips seeding when the fixture prefixes are populated, skips the dbt
+> build when the DuckDB file exists; `--refresh-seed-data`/`--reseed-only`/
+> `--rebuild-duckdb` force the respective stages), passes the local
+> override's MinIO credentials explicitly to every subprocess, targets only
+> the `local-lakehouse` Compose project, and runs nothing destructive (no
+> `down`, no `-v`). Command construction is unit-tested without Docker
+> (`tests/scripts/test_run_local_lakehouse_rehearsal.py`); see the runbook's
+> A4 section for usage. Still out of A4 scope: a full unselected local
+> `dbt build --target duckdb`, which would need a migrated local Postgres.
+
 The goal is a broader **test-local strategy**, not a one-off convenience
 script. The VM remains the production rehearsal environment; local development
 should catch missing Python/JVM dependencies, stale dbt schemas, bad Compose
