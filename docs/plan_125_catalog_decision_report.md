@@ -175,14 +175,32 @@ These are implementation rules for Plan 125 regardless of catalog choice.
 
 Before Gate A migration code:
 
-- Add or confirm neutral `ICEBERG_CATALOG_*` env names for consumer-facing
+- [x] Add or confirm neutral `ICEBERG_CATALOG_*` env names for consumer-facing
   Spark/dbt config, with backward-compatible fallback to the existing
   Lakekeeper env names.
-- Keep Lakekeeper-specific env names and payloads inside provisioning scripts.
-- Add tests that prove the neutral config path is used by Spark/dbt scripts.
-- Record the service identity model above in the implementation docs/runbooks.
-- Defer any Polaris/Gravitino/UC OSS spike unless the team explicitly chooses
-  to challenge the default Lakekeeper path.
+- [x] Keep Lakekeeper-specific env names and payloads inside provisioning scripts.
+- [x] Add tests that prove the neutral config path is used by Spark/dbt scripts.
+- [ ] Record the service identity model above in the implementation docs.
+  Still open: the identities are defined in this report but are not yet reflected
+  in the migration plan's implementation sections
+  ([docs/plan_125_duckdb_to_iceberg_migration.md](plan_125_duckdb_to_iceberg_migration.md)),
+  which is where Gate D's reader abstraction will need them. Gate D scope, not
+  Gate 0.5's.
+- [x] Defer any Polaris/Gravitino/UC OSS spike unless the team explicitly chooses
+  to challenge the default Lakekeeper path. **Deferred; not run.**
+
+The decision is unchanged: **Lakekeeper remains the default through Plan 125**,
+and the alternate-catalog spike above is deferred until Plan 119/113 presents a
+concrete governance requirement.
+
+Implemented shape (see the Plan 125 plan's "Catalog config contract" section for
+the full table): consumers read `ICEBERG_CATALOG_URI` through
+`shared/iceberg_catalog.py::catalog_uri()` and fall back to
+`LAKEKEEPER_CATALOG_URI`; provisioning
+(`scripts/register_lakehouse_warehouse.py`, `warehouse_storage_payload()`) keeps
+the Lakekeeper-specific names, management-API layout, and storage-profile schema.
+R1, R2, R4, R6, and R7 hold today. R3 (consumers read a serving layer) and R5
+(Iceberg tables stay rebuildable) are Gate D/E obligations, not yet exercised.
 
 ## Recommendation Summary
 

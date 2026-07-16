@@ -42,6 +42,10 @@ def _base_uri():
 
 @pytest.fixture(autouse=True, scope="module")
 def _lakehouse_env():
+    # Mirrors docker-compose.lakehouse.yml's lakehouse-worker env: the neutral
+    # var is what the Spark/consumer path reads (Plan 125 Gate 0.5), the legacy
+    # one is what the Lakekeeper warehouse-registration step below uses.
+    os.environ.setdefault("ICEBERG_CATALOG_URI", f"{_base_uri()}/catalog")
     os.environ.setdefault("LAKEKEEPER_CATALOG_URI", f"{_base_uri()}/catalog")
     os.environ.setdefault("MINIO_ENDPOINT", "http://localhost:19000")
     os.environ.setdefault("MINIO_ROOT_USER", "cartracker")

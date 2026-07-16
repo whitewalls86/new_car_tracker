@@ -99,6 +99,17 @@ jobs:
       - name: Install test dependencies
         run: pip install -r requirements-dev.txt requests psycopg2-binary
 
+      - name: Check compose catalog-URI interpolation (Plan 125 Gate 0.5)
+        # Runs `docker compose config` only -- no stack needed, so it is cheap
+        # and does not depend on the steps around it. Lives here rather than in
+        # unit-tests because it needs the docker CLI and so carries the
+        # integration marker, which that job deselects. Proves the
+        # neutral/legacy catalog-URI fallback chain resolves as the config
+        # contract claims, which a YAML-parsing test cannot.
+        run: pytest tests/integration/lakehouse/test_compose_catalog_interpolation.py -v -m integration
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+
       - name: Run Lakekeeper management info smoke test (A1)
         # A1 smoke only: Lakekeeper process + metadata-store boot and the
         # warehouse-free management info endpoint over plain HTTP. No Spark,

@@ -106,12 +106,79 @@ cutover, isolated/idempotent provisioning, and catalog-agnostic provenance.
 
 Gate 0.5 implementation work before Gate A:
 
-- Introduce neutral consumer-facing `ICEBERG_CATALOG_*` env/config names, with
+- [x] Introduce neutral consumer-facing `ICEBERG_CATALOG_*` env/config names, with
   temporary fallback to existing Lakekeeper names where needed.
-- Keep Lakekeeper-specific payloads and env names inside provisioning code.
-- Add tests proving Spark/dbt scripts use the neutral config path.
-- Do not run a Polaris/Gravitino/UC OSS spike unless the team explicitly chooses
-  to challenge the default Lakekeeper path.
+- [x] Keep Lakekeeper-specific payloads and env names inside provisioning code.
+- [x] Add tests proving Spark/dbt scripts use the neutral config path.
+- [x] Do not run a Polaris/Gravitino/UC OSS spike unless the team explicitly chooses
+  to challenge the default Lakekeeper path. **Not run; default stands.**
+
+**Status: implemented.** The catalog decision is unchanged -- Lakekeeper remains
+the default through Plan 125, and no alternate catalog spike has been run.
+
+### Catalog config contract (as implemented)
+
+`shared/iceberg_catalog.py` is the single catalog-config chokepoint (R1). It
+splits consumer config from provisioning config:
+
+| Env var | Read by | Role |
+|---|---|---|
+| `ICEBERG_CATALOG_URI` | `catalog_uri()` -> `spark_conf_for_rest_catalog()` | **Preferred.** Iceberg REST endpoint for all consumer (Spark/dbt) code. |
+| `LAKEKEEPER_CATALOG_URI` | `catalog_uri()` fallback; `register_lakehouse_warehouse._management_base_uri()` | **Legacy/compat.** Consumers fall back to it when the neutral var is unset; provisioning prefers it. |
+| `ICEBERG_WAREHOUSE_NAME` | `WAREHOUSE_NAME` | Already neutral. Warehouse/namespace name. |
+
+Resolution rules:
+
+- **Consumers prefer neutral.** `catalog_uri()` reads `ICEBERG_CATALOG_URI`
+  first, falls back to `LAKEKEEPER_CATALOG_URI`, and raises `CatalogConfigError`
+  naming both if neither is set. An empty value is treated as unset, so
+  `ICEBERG_CATALOG_URI=` in an env file falls through rather than configuring
+  Spark with an empty endpoint.
+- **Provisioning prefers Lakekeeper-specific.**
+  `register_lakehouse_warehouse._management_base_uri()` reads
+  `LAKEKEEPER_CATALOG_URI` first and falls back to the neutral resolver. The
+  precedence is deliberately the inverse of the consumer path: if consumers are
+  ever pointed at another catalog while a Lakekeeper server is still up,
+  provisioning must keep addressing Lakekeeper. The `/catalog` -> `/management`
+  suffix strip and `warehouse_storage_payload()`'s storage-profile schema are
+  Lakekeeper-specific and stay on this side of the line (R6).
+- **The `cartracker` catalog alias is not env-driven.** It is baked into every
+  `cartracker.<namespace>.<table>` identifier and into captured MLflow
+  provenance, so it stays a stable constant across a catalog swap.
+
+Compatibility: `docker-compose.lakehouse.yml`'s `lakehouse-worker` sets both
+vars, defaulting to `http://lakekeeper:8181/catalog`:
+
+```yaml
+ICEBERG_CATALOG_URI: ${ICEBERG_CATALOG_URI:-${LAKEKEEPER_CATALOG_URI:-http://lakekeeper:8181/catalog}}
+LAKEKEEPER_CATALOG_URI: ${LAKEKEEPER_CATALOG_URI:-http://lakekeeper:8181/catalog}
+```
+
+The neutral var's fallback is nested rather than a plain default, and that
+nesting is load-bearing: compose always populates the container's
+`ICEBERG_CATALOG_URI`, so `catalog_uri()`'s runtime fallback can never fire
+inside the worker. With a plain default, a shell exporting only
+`LAKEKEEPER_CATALOG_URI` at a non-default endpoint would be silently ignored by
+consumers, which would still get the baked-in default. The host-side fallback
+has to happen at interpolation time.
+
+Resulting behaviour, per host shell:
+
+| Host exports | Consumers get | Provisioning gets |
+|---|---|---|
+| neither | default | default |
+| `LAKEKEEPER_CATALOG_URI` only | the legacy value | the legacy value |
+| `ICEBERG_CATALOG_URI` only | the neutral value | default (stays on Lakekeeper) |
+| both | the neutral value | the legacy value |
+
+So existing A2/A3/A4 local, CI, and VM flows that export only
+`LAKEKEEPER_CATALOG_URI` keep working unchanged.
+`tests/integration/lakehouse/test_compose_catalog_interpolation.py` proves this
+matrix against real `docker compose config`. Remove the fallback once no
+environment sets the legacy name.
+
+A catalog swap then means: repoint `ICEBERG_CATALOG_URI`, and rewrite the
+provisioning module. No consumer script changes.
 
 ## Gate 0: Portability Audit
 

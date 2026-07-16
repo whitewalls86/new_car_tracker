@@ -104,6 +104,21 @@ services:
     profiles: ["lakehouse-worker"]
     mem_limit: 6g
     environment:
+      # Plan 125 Gate 0.5: consumer-facing Spark/dbt scripts read the neutral
+      # ICEBERG_CATALOG_URI (shared/iceberg_catalog.py::catalog_uri); a catalog
+      # swap repoints this var, not the scripts. LAKEKEEPER_CATALOG_URI stays
+      # set alongside it because this same worker also runs the Lakekeeper-
+      # specific provisioning script (scripts/register_lakehouse_warehouse.py),
+      # which addresses Lakekeeper's management API directly.
+      #
+      # The neutral var's fallback chain is nested rather than a plain default:
+      # compose always populates the container's ICEBERG_CATALOG_URI, so
+      # catalog_uri()'s own runtime fallback can never fire inside the worker.
+      # Without the nesting, an existing A2/A3/A4 shell exporting only
+      # LAKEKEEPER_CATALOG_URI at a non-default endpoint would be silently
+      # ignored by consumers, which would still get the baked-in default. The
+      # host-side fallback has to happen here, at interpolation time.
+      ICEBERG_CATALOG_URI: ${ICEBERG_CATALOG_URI:-${LAKEKEEPER_CATALOG_URI:-http://lakekeeper:8181/catalog}}
       LAKEKEEPER_CATALOG_URI: ${LAKEKEEPER_CATALOG_URI:-http://lakekeeper:8181/catalog}
       ICEBERG_WAREHOUSE_NAME: cartracker_experiments
       MINIO_ENDPOINT: http://minio:9000

@@ -3,6 +3,19 @@ Spark / Iceberg REST catalog configuration helper for the Plan 112 Gate A2
 spike (docker-compose.lakehouse.yml, lakehouse-worker). Mirrors
 shared/duckdb_s3.py's env-driven config pattern for the Spark side.
 
+Plan 125 Gate 0.5 (catalog-neutral preflight) makes this module the single
+catalog-config chokepoint (report guardrail R1) and splits it in two:
+
+  * Consumer-facing config (`catalog_uri`, `spark_conf_for_rest_catalog`)
+    standardizes on the neutral `ICEBERG_CATALOG_*` env names, and still
+    accepts the legacy `LAKEKEEPER_CATALOG_URI` as a fallback during the
+    migration (see `catalog_uri`). Either way the Lakekeeper name stops at
+    this module: swapping Lakekeeper for another Iceberg REST catalog edits
+    this file rather than every Spark/dbt script (R2).
+  * Provisioning-facing config (`warehouse_storage_payload`) stays
+    Lakekeeper-specific -- its management-API schema has no neutral
+    equivalent, and per R6 that coupling is confined to provisioning (R6).
+
 Kept dependency-free (no pyspark import) so it can be unit-tested in the
 regular `unit-tests` CI job, which does not install pyspark.
 """
@@ -10,11 +23,20 @@ import os
 
 from shared.minio import BUCKET
 
+# Spark-side catalog alias. Deliberately named for this project, not for the
+# catalog implementation behind it: it is baked into every `cartracker.<ns>.<table>`
+# identifier in scripts, dbt models, and captured MLflow provenance, so it must
+# stay stable across a future catalog swap (Plan 125 Gate 0.5 / R1).
 CATALOG_NAME = "cartracker"
 WAREHOUSE_NAME = os.environ.get("ICEBERG_WAREHOUSE_NAME", "cartracker_experiments")
 # Dedicated top-level MinIO prefix, disjoint from silver/, ops_normalized/,
 # and bronze html/. Nothing production reads it.
 SPIKE_PREFIX = "lakehouse_spike/warehouse"
+
+
+class CatalogConfigError(RuntimeError):
+    """Raised when neither the neutral nor the legacy catalog URI env var is
+    set, so no Iceberg REST endpoint can be resolved."""
 
 
 class UnsafeNamespaceError(RuntimeError):
@@ -44,6 +66,33 @@ def require_spike_prefix(key: str) -> None:
             f"Gate A cleanup only ever touches keys under {SPIKE_PREFIX}/; "
             f"refusing to touch {key!r}."
         )
+
+
+def catalog_uri() -> str:
+    """Resolve the Iceberg REST catalog endpoint for consumer (Spark/dbt)
+    code, preferring the neutral Plan 125 name over the legacy Lakekeeper one.
+
+    Resolution order (Plan 125 Gate 0.5 / R2):
+
+      1. ICEBERG_CATALOG_URI    -- neutral, what new config should set.
+      2. LAKEKEEPER_CATALOG_URI -- legacy fallback, kept so existing A2/A3/A4
+         local, CI, and VM env files and shells keep working unchanged. It is
+         a compatibility shim, not a second supported name; remove it once no
+         environment sets it.
+
+    Raises CatalogConfigError (not KeyError) if neither is set, so the error
+    names both accepted vars rather than only whichever we happened to read
+    first.
+    """
+    uri = os.environ.get("ICEBERG_CATALOG_URI") or os.environ.get(
+        "LAKEKEEPER_CATALOG_URI"
+    )
+    if not uri:
+        raise CatalogConfigError(
+            "No Iceberg catalog URI configured: set ICEBERG_CATALOG_URI "
+            "(preferred) or the legacy LAKEKEEPER_CATALOG_URI."
+        )
+    return uri
 
 
 def table_identifier(table_name: str) -> str:
@@ -84,7 +133,7 @@ def spark_conf_for_rest_catalog() -> dict:
     actually serves that scheme -- Hadoop's generic FileSystem has no
     registered handler for a bare `s3` scheme.
     """
-    catalog_uri = os.environ["LAKEKEEPER_CATALOG_URI"]
+    uri = catalog_uri()
     minio_endpoint = os.environ.get("MINIO_ENDPOINT", "http://minio:9000")
     minio_user = os.environ["MINIO_ROOT_USER"]
     minio_password = os.environ["MINIO_ROOT_PASSWORD"]
@@ -94,7 +143,7 @@ def spark_conf_for_rest_catalog() -> dict:
         ),
         f"spark.sql.catalog.{CATALOG_NAME}": "org.apache.iceberg.spark.SparkCatalog",
         f"spark.sql.catalog.{CATALOG_NAME}.type": "rest",
-        f"spark.sql.catalog.{CATALOG_NAME}.uri": catalog_uri,
+        f"spark.sql.catalog.{CATALOG_NAME}.uri": uri,
         f"spark.sql.catalog.{CATALOG_NAME}.warehouse": WAREHOUSE_NAME,
         f"spark.sql.catalog.{CATALOG_NAME}.io-impl": "org.apache.iceberg.aws.s3.S3FileIO",
         f"spark.sql.catalog.{CATALOG_NAME}.s3.endpoint": minio_endpoint,

@@ -18,7 +18,7 @@ from scripts.register_lakehouse_warehouse import (
     server_bootstrapped,
     warehouse_exists,
 )
-from shared.iceberg_catalog import WAREHOUSE_NAME
+from shared.iceberg_catalog import WAREHOUSE_NAME, CatalogConfigError
 
 
 def _urlopen_response(status, body):
@@ -38,8 +38,29 @@ def _urlopen_response(status, body):
 
 class TestManagementBaseUri:
     def test_strips_catalog_suffix(self, monkeypatch):
+        monkeypatch.delenv("ICEBERG_CATALOG_URI", raising=False)
         monkeypatch.setenv("LAKEKEEPER_CATALOG_URI", "http://lakekeeper:8181/catalog")
         assert _management_base_uri() == "http://lakekeeper:8181"
+
+    def test_falls_back_to_neutral_env_var(self, monkeypatch):
+        """Plan 125 Gate 0.5: the common setup sets only the neutral var, and
+        provisioning must still find the management API behind it."""
+        monkeypatch.delenv("LAKEKEEPER_CATALOG_URI", raising=False)
+        monkeypatch.setenv("ICEBERG_CATALOG_URI", "http://lakekeeper:8181/catalog")
+        assert _management_base_uri() == "http://lakekeeper:8181"
+
+    def test_lakekeeper_specific_var_wins_when_both_are_set(self, monkeypatch):
+        """Inverse of the consumer precedence: if consumers have been pointed at
+        another catalog, provisioning must still address the Lakekeeper server."""
+        monkeypatch.setenv("ICEBERG_CATALOG_URI", "http://other-catalog:8181/catalog")
+        monkeypatch.setenv("LAKEKEEPER_CATALOG_URI", "http://lakekeeper:8181/catalog")
+        assert _management_base_uri() == "http://lakekeeper:8181"
+
+    def test_raises_when_no_catalog_uri_configured(self, monkeypatch):
+        monkeypatch.delenv("ICEBERG_CATALOG_URI", raising=False)
+        monkeypatch.delenv("LAKEKEEPER_CATALOG_URI", raising=False)
+        with pytest.raises(CatalogConfigError):
+            _management_base_uri()
 
 
 class TestServerBootstrapped:
