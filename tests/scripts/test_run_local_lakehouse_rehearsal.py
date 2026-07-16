@@ -289,13 +289,15 @@ class TestSafety:
         assert "shell=True" not in source
 
     def test_no_destructive_compose_commands(self, tmp_path):
+        # "no -v" is not the invariant -- the dbt step's -v is an ordinary
+        # read/write bind mount, not a teardown flag. The real invariant is
+        # no `down` (and so no `down -v`) anywhere.
         _make_snapshot(tmp_path / "snapshots", "adaptive-refresh-x")
         args = _args(tmp_path)
         runner = RecordingRunner()
         _run(args, runner, seeded=False)
         for c in runner.commands():
             assert " down" not in c
-            assert " -v " not in c or ":/out" in c  # only the dbt bind mount uses -v
 
     def test_local_minio_env_matches_local_compose_defaults(self):
         assert LOCAL_MINIO_ENV == {

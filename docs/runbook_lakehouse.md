@@ -365,8 +365,9 @@ selection includes no `postgres_scan()` source, so no local Postgres is
 needed -- `POSTGRES_URL` is a deliberate dummy. The runner passes the local
 override's MinIO credentials (`cartracker`/`cartracker123`) explicitly to
 every subprocess, so parent-shell/production env vars can never leak in. It
-never runs `down`, `-v`, or anything destructive; Gate F is the only
-supported refresh path (no SSH).
+never runs `down` or `down -v` (the dbt step's `-v` is an ordinary
+read/write bind mount for its output, not a teardown flag); Gate F is the
+only supported refresh path (no SSH).
 
 The numbered steps below are the manual equivalents -- keep them for
 troubleshooting individual stages or running one step at a time.
@@ -424,8 +425,12 @@ python -m scripts.seed_lake_snapshot \
 ```
 
 Creates the `bronze` bucket if needed and uploads the fixture prefixes
-(`silver_normalized/`, `ops_normalized/`, `expected/`). The script's
-production-target guard applies here too.
+present in the archive: `silver_normalized/` and `ops_normalized/` --
+the two the Gate E archiver actually materializes and the preflight's
+`snapshot-seeded` check requires. (`expected/` is also recognized if
+present, but the real archiver never writes it -- see
+`scripts/preflight_local_lakehouse_snapshot.py`'s `REQUIRED_SEED_PREFIXES`
+comment.) The script's production-target guard applies here too.
 
 ### 4. Build analytics.duckdb from the seeded data (targeted; no Postgres)
 

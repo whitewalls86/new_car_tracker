@@ -33,7 +33,9 @@ localhost:19000, non-external network). The local MinIO credentials
 (cartracker/cartracker123, the local override's defaults) are passed
 explicitly to every subprocess that needs them, so a production
 MINIO_ROOT_PASSWORD in the parent shell or .env can never leak into the
-local stack or its seeding. No `down`, no `-v`, nothing destructive.
+local stack or its seeding. No `down`, no `down -v`, no other destructive/
+volume-teardown command (the dbt build's `-v` is an ordinary read/write bind
+mount for output, not a teardown flag).
 """
 from __future__ import annotations
 
@@ -238,6 +240,8 @@ def _stream_run(cmd: List[str], env_overrides: Optional[Dict[str, str]] = None) 
 
 
 def _default_downloader(args: argparse.Namespace, token: str) -> Path:
+    import httpx
+
     from scripts.download_lake_snapshot import download_api
     from scripts.lake_snapshot_common import LakeSnapshotError
 
@@ -252,6 +256,14 @@ def _default_downloader(args: argparse.Namespace, token: str) -> Path:
             )
         )
     except LakeSnapshotError as e:
+        raise RehearsalError(f"Gate F download failed: {e}") from e
+    except httpx.HTTPStatusError as e:
+        raise RehearsalError(
+            f"Gate F download failed: {e.response.status_code} from "
+            f"{e.request.url} -- check --base-url/--token and that the "
+            f"snapshot exists"
+        ) from e
+    except httpx.HTTPError as e:
         raise RehearsalError(f"Gate F download failed: {e}") from e
 
 
