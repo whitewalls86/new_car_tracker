@@ -82,7 +82,7 @@ MANIFEST = {
     "snapshot_id": ALIAS["snapshot_id"],
     "tier": "edge",
     "archive": {
-        "path": "snapshot.tar.zst",
+        "path": ALIAS["archive_key"],
         "bytes": 1024,
         "sha256": "deadbeef",
         "file_count": 3,
@@ -119,11 +119,31 @@ class TestSnapshotManifest:
         assert resp.status_code == 404
         read_json_mock.assert_called_once_with(alias_key)
 
-    def test_manifest_snapshot_id_mismatch_is_404(self, mock_client, mocker):
-        mismatched_manifest = dict(MANIFEST, snapshot_id="some-other-snapshot")
+    def test_reused_archive_manifest_snapshot_id_is_overlaid(self, mock_client, mocker):
+        reused_manifest = dict(MANIFEST, snapshot_id="original-packaging-snapshot")
         mocker.patch.object(
             snapshots, "read_json",
-            side_effect=lambda key: ALIAS if "aliases/" in key else mismatched_manifest,
+            side_effect=lambda key: ALIAS if "aliases/" in key else reused_manifest,
+        )
+        resp = mock_client.get(f"{BASE}/adaptive-refresh-2026-07-07-174500", headers=AUTH)
+        assert resp.status_code == 200
+        assert resp.json()["snapshot_id"] == ALIAS["snapshot_id"]
+
+    @pytest.mark.parametrize(("archive_field", "bad_value"), [
+        ("path", "snapshot_archives/fingerprints/other/snapshot.tar.zst"),
+        ("bytes", 2048),
+        ("sha256", "bad-sha"),
+    ])
+    def test_manifest_archive_mismatch_is_404(
+        self, mock_client, mocker, archive_field, bad_value,
+    ):
+        bad_manifest = {
+            **MANIFEST,
+            "archive": {**MANIFEST["archive"], archive_field: bad_value},
+        }
+        mocker.patch.object(
+            snapshots, "read_json",
+            side_effect=lambda key: ALIAS if "aliases/" in key else bad_manifest,
         )
         resp = mock_client.get(f"{BASE}/adaptive-refresh-2026-07-07-174500", headers=AUTH)
         assert resp.status_code == 404
