@@ -565,7 +565,7 @@ straight `merge` port; two need a real decision.
 | int_listing_observation_fingerprints | daily | `delete+insert` / `observation_id` | **`merge`** | Same shape. |
 | int_price_history | hourly | `delete+insert` / `vin` | **`merge`** | One row per vin. Gap: merge cannot delete a vin whose events all vanish — the event stream is append-only, so unreachable. |
 | int_latest_observation | hourly | `delete+insert` / `vin17` | **`merge`** | One row per vin17. Same gap, same reasoning. |
-| mart_scrape_volume | hourly | `delete+insert` / `scrape_volume_key` | **`insert_overwrite`** partitioned by hour/day — *prove first* | **The one genuine subtlety.** It replaces a contiguous 72h window. `merge` would leave a stale row behind for any `(hour, source)` combo that disappears from the recomputed window; delete+insert removes it. Dynamic partition overwrite reproduces window-replacement correctly. |
+| mart_scrape_volume | hourly | `delete+insert` / `scrape_volume_key` | **`merge`** — *the recommendation below was wrong; see the correction* | ~~The one genuine subtlety.~~ **Measured at Gate B: delete+insert does NOT remove a disappeared `(hour, source)`, so merge is exactly equivalent to today's behaviour and insert_overwrite would be a behaviour change.** See [the correction](#correction-the-mart_scrape_volume-canary-premise-was-false). |
 | int_listing_state_runs | **daily** | `delete+insert` / `vin17` (multi-row) | **`table`** (full rebuild) | No equivalent strategy. See F1 Option A. |
 | int_listing_observation_runs | **daily** | `delete+insert` / `listing_id` (multi-row) | **`table`** (full rebuild) | Same. |
 
@@ -576,10 +576,114 @@ exist". Prove specifically that a `(hour, source)` combination which disappears
 from the recomputed window is actually *removed* from the target. That is the exact
 behaviour `merge` gets wrong, and it is invisible to a row-count check.
 
+### Correction: the `mart_scrape_volume` canary premise was FALSE
+
+**Ran the canary (Gate B, 2026-07-16). The paragraph immediately above is wrong,
+and so is the `insert_overwrite` recommendation it justifies.**
+
+The premise was that dbt-duckdb's `delete+insert` *removes* a `(hour, source)`
+row that drops out of the recomputed 72h window, and that `merge` would strand
+it. Both halves are false. dbt-duckdb's
+`duckdb__get_delete_insert_merge_sql` generates, for a single-column key:
+
+```sql
+delete from target where (unique_key) in (select (unique_key) from source);
+insert into target (...) (select ... from source);
+```
+
+It deletes **only keys present in the incoming batch**. A `(hour, source)` that
+disappears from the recomputed window is by definition *absent from the source*,
+so the DELETE never matches it and it survives. Verified by replaying that exact
+SQL against a real DuckDB table with a disappearing key: the row survived.
+
+Consequences, all of which cut *toward* the simpler port:
+
+1. **`merge` on `scrape_volume_key` is exactly equivalent to today's production
+   behaviour**, not a regression. Both are key-wise upserts.
+2. **`insert_overwrite` would be a behaviour CHANGE** — it would start removing
+   rows production currently keeps. Gate B measures fidelity to the DuckDB
+   baseline, so adopting it here would have manufactured a parity failure and
+   then "fixed" it in the wrong direction.
+3. **The "one genuine subtlety" of the whole strategy port does not exist.**
+   `delete+insert` on a *surrogate* key was never window replacement; the model's
+   comment describing it as "window replacement" describes the SELECT, not the
+   write.
+4. Today's DuckDB build genuinely strands such rows. That may be a real (if
+   low-impact) modelling bug, but it is **not a migration concern** — if we want
+   to fix it, fix it on DuckDB first, deliberately, so both engines change
+   together.
+
+There is also a `partition_by` trap this correction avoids stumbling into: had we
+gone with `insert_overwrite`, the only safe partition granularity would have been
+`hour`, because the 72h window starts on an hour boundary, not a day boundary —
+dynamic overwrite partitioned by *day* would have silently deleted the
+pre-window rows of the boundary day.
+
+**Canary result (real snapshot, 16,847 observations, 1,354 `(hour, source)`
+buckets):** `merge` on Iceberg via dbt-spark ran, was idempotent on rerun (1,354
+rows, 0 duplicate keys), and hit **exact parity with DuckDB — 1,354/1,354 rows,
+zero value differences**. Iceberg's snapshot history confirms the write was a
+real MERGE (`op=overwrite`), not a rebuild.
+
+One Gate C signal fell out of it: that MERGE reported `deleted=1354 added=1354`.
+Iceberg MERGE is copy-on-write and rewrites whole *data files*, so touching a few
+rows in the 72h window rewrote the single file holding the entire table. Correct,
+but it means merge cost here scales with file layout, not with window size.
+
 **Do not** implement the Option C adapter-macro fork during Gate A. Two daily models
 being full-rebuild is a cheaper problem than a forked incremental materialization
 that must be re-verified on every dbt-spark upgrade. Revisit only with a VM
 measurement showing the rebuild is too slow.
+
+## Gate B dialect measurements
+
+**Measured 2026-07-16 against both real engines** (DuckDB 1.5.4 in `dbt/Dockerfile`;
+Spark 3.5.3 in `lakehouse/Dockerfile`, session timezone pinned UTC), before any
+Gate B model was ported. Implemented as adapter-dispatched macros in
+[dbt/macros/dialect.sql](../dbt/macros/dialect.sql).
+
+The headline: **three of the "mechanical" translations in F4/F5/F12 are wrong**,
+and the one flagged as highest-blast-radius (md5/fingerprint) is **exactly
+identical**. The audit's risk ranking was inverted.
+
+| Item | Obvious translation | Measured verdict |
+|---|---|---|
+| **F5 `datediff('hour', a, b)`** | `(unix_timestamp(b) - unix_timestamp(a))/3600` | **WRONG on 3/6 cases.** DuckDB counts *hour boundaries crossed*, not elapsed time: `01:59→02:01` (2 min) = **1**, `00:30→03:10` (2h40m) = **3**. The naive form gives 0 and 2. Correct: truncate both to `HOUR`, then diff — 6/6 exact. |
+| **F5 `datediff('day', a, b)`** | `datediff(b, a)` | **Correct as-is**, 4/4 (note reversed arg order). |
+| **F12 `x::int`** | `cast(x as int)` | **WRONG.** DuckDB *rounds*; Spark *truncates*. `1.9` → DuckDB 2, Spark 1. DuckDB rounds a DOUBLE **half-to-even**, so the match is `bround()`, not `round()` (which is half-up). `cast(bround(x) as int)` → 7/7 exact. |
+| **F4 `arg_max(v, o)`** | `max_by(v, o)` | **WRONG on nulls.** DuckDB ignores rows whose *value* is null; Spark returns the null. On `((null,2),('b',1))`: DuckDB `'b'`, Spark `NULL`. Fix: `max_by(v,o) filter (where v is not null)` → matches. |
+| **F4 ties in `arg_max`** | — | **Genuinely divergent, not fixed.** On a tie in the ordering column DuckDB takes the first row, Spark the last. Neither engine guarantees either. The DuckDB model is *already* non-deterministic here; the port does not worsen it, but a tie can surface as a parity difference. |
+| **F10 `percentile_cont(p) within group`** | same syntax | **Supported on Spark 3.5.3**, and the raw values agree exactly (`p10` over 1..10 = 1.9 on both). The divergence is entirely the `::int` cast above — i.e. the audit's predicted "one-dollar difference on every benchmark row" is real, but it is an F12 bug, not an F10 one. |
+| **F4 `median(x)`** | `percentile(x, 0.5)` | **Correct.** Both interpolate (2.5 over 1,2,3,4). |
+| **F9 `regexp_matches` / `!~`** | `rlike` / `not rlike` | **Correct**, and both return NULL (not false) on null input, so the null-guards behave identically. |
+| **`md5` / `concat_ws`** | — | **IDENTICAL on every probe.** Same digest; both skip nulls in `concat_ws`; `timestamp`, `int`, `double`, and `decimal(p,s)` all render to the same string. `md5(concat_ws('|', ts, src))` agreed digit-for-digit. |
+| **`decimal(p,s)` casts** | `cast(x as decimal(5,2))` | **Identical**, including half-up at `2.555 → 2.56`. |
+| **`trim` as a column name** | needs backticks? | **No change needed** — Spark accepts it bare. |
+
+### The md5/fingerprint risk is closed — on real data
+
+Risk #5 ("`md5`/concat parity… low probability, very high blast radius — check on
+real data at Gate B, not on fixtures") is **resolved, on real data as required**.
+Beyond the unit probes above, the `mart_scrape_volume` canary compared **1,354
+md5 surrogate keys** derived from 16,847 real observations: **1,354/1,354
+matched**, zero value differences. Since `scrape_volume_key` is
+`md5(concat_ws('|', <timestamp>, <varchar>))`, that jointly exercises md5,
+`concat_ws`, and timestamp→string rendering at scale.
+
+This does not yet cover the *wide* fingerprints
+(`int_listing_state_fingerprints`' 18-field and
+`int_listing_observation_fingerprints`' 28-field hashes), which add nullable
+varchar and numeric fields. But the mechanism is the same and the null/format
+semantics are now measured, so the residual risk is low rather than unknown.
+
+### Consequence for the models
+
+`dbt/macros/dialect.sql` exists because of these measurements, and each `spark__`
+implementation reproduces **what DuckDB actually does**, not what Spark's
+similarly-named function does. DuckDB is the incumbent spec for the whole
+dual-run period. Do not "simplify" `bround`, the `filter` on `max_by`, or the
+truncate-then-diff `datediff_hours` back to the obvious spelling — the obvious
+spelling is measurably wrong.
 
 ## Unit-Test Strategy For Spark/Iceberg Migration
 
@@ -802,11 +906,15 @@ Still open, ordered by how much they'd change the plan:
    Guardrails R3 (consumers read a serving layer) and R5 (Iceberg stays rebuildable)
    mitigate this; Gate D's serving choice must not expose mid-build state to readers.
    Not a Gate A blocker, but it constrains Gate C and should not be rediscovered then.
-5. **`arg_max`/`md5`/concat parity for the fingerprint hashes.** If Spark's `md5` or
-   string-concat/null semantics differ at all from DuckDB's, *every* fingerprint
-   changes → every run boundary changes → the entire volatility feature chain drifts.
-   Low probability, very high blast radius. Check on real data at Gate B, not on
-   fixtures.
+5. ~~**`arg_max`/`md5`/concat parity for the fingerprint hashes.**~~ **Largely
+   closed at Gate B (2026-07-16), on real data.** `md5`/`concat_ws`/null/format
+   semantics are **identical** across the two engines on every probe, and the
+   canary matched **1,354/1,354** real md5 surrogate keys. See
+   [Gate B dialect measurements](#gate-b-dialect-measurements). Two residuals,
+   both narrower than the original risk: the *wide* (18/28-field) fingerprints
+   have not been compared yet, and `arg_max` — which was bundled into this risk —
+   turned out to diverge for its own unrelated reasons (null values, and ties),
+   now handled by a macro rather than by hash luck.
 6. **How does Spark reach `search_configs` / `tracked_models`?** (F8) Unchanged from
    Gate 0 and still open. Blocks the serving chain, not Gate A. Recommendation stands:
    hourly snapshot to MinIO/Iceberg over a live JDBC read. Decide before Gate B.

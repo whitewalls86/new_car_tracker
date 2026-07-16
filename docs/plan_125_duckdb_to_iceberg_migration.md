@@ -576,10 +576,97 @@ production scale or on wide/rounding-sensitive models (F5/F10/F12); fingerprint
 
 ## Gate B: First Real Model Chain
 
+**Status: IN PROGRESS (2026-07-16).** The F1 canary is done and its result
+inverts the audit's recommendation; the dialect translation is measured and
+implemented; the staging layer builds on Spark. The seven remaining models are
+not yet ported. See [Gate B progress](#gate-b-progress-2026-07-16).
+
 Port the first useful adaptive-refresh feature chain to Iceberg.
 
 Recommended target: `int_listing_volatility_features`, because Plan 112 already
 proved it can be exported and validated as one row per `vin17`.
+
+### Correction: the chain is TEN models, not eight
+
+The eight-model list under "Audit outcomes that change the plan" above is
+**incomplete**, verified against the real graph
+(`dbt list --select +int_listing_volatility_features --resource-type model`):
+
+- **`int_benchmarks`** is missing — `int_listing_volatility_features` refs it
+  directly for `price_vs_make_model_median`. Difficulty **Medium**.
+- **`int_latest_observation`** is missing — pulled in *transitively*, because
+  `int_benchmarks` refs it. Difficulty **High**, and it brings F2
+  (`select * exclude`) into scope, which the audit had assumed was
+  serving-chain-only.
+
+There is no viable eight-model subset: the capstone model cannot build without
+`int_benchmarks`, which cannot build without `int_latest_observation`.
+
+Crucially, **this does not drag F8 in**: `int_latest_observation` refs only
+`stg_observations`. The `postgres_scan` blocker is confined to
+`int_active_make_models` / `stg_search_configs`, which stay out of scope. So the
+ten-model chain builds without an F8 decision — F8 blocks the *serving* chain,
+as the audit said, just not this one.
+
+## Gate B progress (2026-07-16)
+
+Evidence, not intent. What is not listed here is not done.
+
+### Proven
+
+| Claim | Evidence |
+|---|---|
+| **`merge` works on Iceberg via dbt-spark** — the central Gate B risk | `mart_scrape_volume` built and then re-ran incrementally; Iceberg snapshot history shows `op=overwrite added=1354 deleted=1354`, i.e. a real MERGE, not a rebuild |
+| **The merge is idempotent** | rerun → 1,354 rows, 1,354 distinct keys, **0 duplicates** |
+| **Exact DuckDB parity on the canary** | 1,354/1,354 rows, **zero** value differences, on 16,847 real observations |
+| **md5/fingerprint parity on real data** | 1,354/1,354 md5 surrogate keys matched (see the audit's [dialect measurements](plan_125_portability_audit.md#gate-b-dialect-measurements)) |
+| **`stg_observations` builds on Spark** | `rlike`, `ephemeral`, and `s3a://` Hive-partitioned Parquet all work; feeds the canary |
+| **DuckDB production path is unaffected** | full `dbt build --target duckdb --full-refresh` → **201/201 PASS**, including all 64 dbt unit tests and the refactored `valid_vin` tests |
+
+### The canary answered the opposite of what was asked
+
+The audit's step 2 said to prove `insert_overwrite` over `merge`, because
+"delete+insert removes a disappeared `(hour, source)`; merge would strand it".
+**Measured: it doesn't.** dbt-duckdb's delete+insert deletes only keys present in
+the incoming batch, so today's production build strands that row too. `merge` is
+therefore *exactly* equivalent to current behaviour and `insert_overwrite` would
+be a behaviour change. Full detail and the generated SQL:
+[the correction](plan_125_portability_audit.md#correction-the-mart_scrape_volume-canary-premise-was-false).
+
+**`mart_scrape_volume`'s Gate C row above is updated accordingly: `merge`, not
+`insert_overwrite`.**
+
+### Correction: the seeded snapshot is NOT too small for Gate B
+
+The Gate B data plan assumed the Plan 120 fixture was "tiny (26 rows)" and that a
+larger snapshot was needed for runtime signal and hash confidence. That 26-row
+figure is `blocked_cooldown_events` — **the Gate A source only**. The already-seeded
+local snapshot carries, for the *Gate B* chain:
+
+| Source | Rows | Spread |
+|---|---|---|
+| `silver_normalized/observations` | **16,847** | 3 sources, 320 listings, 2 months, 1,354 `(hour, source)` buckets |
+| `ops_normalized/price_observation_events` | **16,615** | 232 VINs, 1 month |
+
+That is production-shaped and was enough to match 1,354 md5 keys exactly. No new
+snapshot download is needed for hash/rounding confidence. A larger snapshot may
+still be worth it for the *runtime* question on the two full-rebuild `_runs`
+models, but that is a Gate C measurement, not a Gate B blocker.
+
+### Not yet done
+
+- Seven of the ten models (`int_price_history`, both fingerprint models, both
+  `_runs` models, `int_latest_observation`, `int_benchmarks`,
+  `int_listing_volatility_features`).
+- The Gate B parity script with a stated numeric tolerance. **The tolerance is
+  now easier to argue than expected:** every measured divergence is either
+  exactly reproducible (`bround`, the `filter`, truncate-then-diff `datediff`) or
+  a genuine tie-nondeterminism. So the working proposal is **exact equality on
+  all fields, with arg_max/arg_min tie rows reported as a separate, explicitly
+  enumerated category** rather than a blanket ±1 tolerance — a numeric tolerance
+  would hide the F12 truncation bug that `bround` actually fixes.
+- Extended seed fixture phases; per-model dbt unit tests on Spark; the CI
+  decision.
 
 Required parity checks against existing DuckDB output:
 
@@ -609,7 +696,7 @@ dbt-spark:
 | `int_listing_observation_fingerprints` | daily | `merge` on `observation_id` | row-unique |
 | `int_price_history` | hourly | `merge` on `vin` | one row per vin; merge can't delete a vanished vin, but the event stream is append-only |
 | `int_latest_observation` | hourly | `merge` on `vin17` | one row per vin17; same reasoning |
-| `mart_scrape_volume` | hourly | `insert_overwrite` by hour/day — **prove first** | window replacement: `merge` would strand a `(hour, source)` row that drops out of the recomputed window |
+| `mart_scrape_volume` | hourly | **`merge` on `scrape_volume_key` — PROVEN at Gate B** | ~~window replacement~~ **The premise was false and was measured: dbt-duckdb's delete+insert does not remove a disappeared `(hour, source)` either, so merge is equivalent to today. `insert_overwrite` would be a behaviour change.** |
 | `int_listing_state_runs` | **daily** | `table` (full rebuild) | multi-row per `vin17`; no equivalent strategy |
 | `int_listing_observation_runs` | **daily** | `table` (full rebuild) | multi-row per `listing_id`; no equivalent strategy |
 
