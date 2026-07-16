@@ -1002,11 +1002,20 @@ not caller input, but a corrupted or tampered alias must not be able to
 redirect an authenticated request to read or stream an arbitrary MinIO key
 (e.g. an `s3://` URI, an absolute path, a `..`-traversal, or an
 out-of-prefix object). A key that fails this check is treated the same as
-"not found" (`404`). The alias and manifest's own `snapshot_id` fields are
-also cross-checked against the requested `snapshot_id` (`alias.snapshot_id`
-in `_resolve_alias`, `manifest.snapshot_id` in `get_snapshot_manifest`) — a
-corrupted or mismatched alias/manifest object must never silently serve a
+"not found" (`404`). The alias's own `snapshot_id` field is
+cross-checked against the requested `snapshot_id` (`alias.snapshot_id`
+in `_resolve_alias`) -- a
+corrupted or mismatched alias object must never silently serve a
 different snapshot's manifest or archive under this snapshot_id's URL.
+
+**Archive-cache reuse correction.** The alias's own `snapshot_id` is
+cross-checked against the requested `snapshot_id`, but the archive manifest's
+`snapshot_id` is **not** required to match. Gate E archive-cache reuse means
+a new snapshot id can legitimately point at an existing archive manifest that
+was first packaged by an earlier snapshot id. `get_snapshot_manifest` therefore
+checks the manifest's `archive.path`/`archive.bytes`/`archive.sha256` against
+the alias's `archive_key`/`archive_bytes`/`archive_sha256`, then overlays the
+requested `snapshot_id` in the response returned to download clients.
 
 **Download headers.** `Content-Type: application/zstd`,
 `Content-Disposition: attachment; filename="{snapshot_id}.tar.zst"`,

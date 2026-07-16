@@ -210,6 +210,7 @@ class TestDownloadApiAgainstOpsRouter:
             "archive_bytes": len(archive_bytes),
             "archive_sha256": manifest["archive"]["sha256"],
         }
+        manifest["archive"]["path"] = alias["archive_key"]
 
         mocker.patch.object(snapshots_router, "SNAPSHOT_DOWNLOAD_TOKEN", "test-token")
 

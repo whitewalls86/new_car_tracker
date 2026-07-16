@@ -117,6 +117,45 @@ def _validated_prefixed_key(value: Any, pattern: "re.Pattern[str]") -> str:
     return value
 
 
+def _manifest_for_alias(
+    snapshot_id: str, alias: Dict[str, Any], manifest: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Return the archive manifest adapted to the requested snapshot id.
+
+    Gate E archives are keyed by export_fingerprint and can be reused by
+    multiple snapshot ids. That means the persisted archive_manifest.json may
+    legitimately carry the original snapshot_id from the first packaging run.
+    The per-snapshot alias is the identity pointer for Gate F URLs, so we
+    enforce archive consistency against the alias and overlay the requested
+    snapshot_id before returning the manifest to download clients.
+    """
+    archive = manifest.get("archive")
+    if not isinstance(archive, dict):
+        logger.warning("snapshot manifest missing archive block: snapshot_id=%s", snapshot_id)
+        raise HTTPException(status_code=404, detail="snapshot manifest not found")
+
+    expected = {
+        "path": alias.get("archive_key"),
+        "bytes": alias.get("archive_bytes"),
+        "sha256": alias.get("archive_sha256"),
+    }
+    actual = {
+        "path": archive.get("path"),
+        "bytes": archive.get("bytes"),
+        "sha256": archive.get("sha256"),
+    }
+    if actual != expected:
+        logger.warning(
+            "snapshot manifest archive mismatch: snapshot_id=%s expected=%r actual=%r",
+            snapshot_id, expected, actual,
+        )
+        raise HTTPException(status_code=404, detail="snapshot manifest not found")
+
+    response = dict(manifest)
+    response["snapshot_id"] = snapshot_id
+    return response
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -142,13 +181,7 @@ def get_snapshot_manifest(snapshot_id: str) -> Dict[str, Any]:
     manifest = _read_json_safe(manifest_key)
     if not manifest:
         raise HTTPException(status_code=404, detail="snapshot manifest not found")
-    if manifest.get("snapshot_id") != snapshot_id:
-        logger.warning(
-            "snapshot manifest snapshot_id mismatch: requested=%s manifest_snapshot_id=%r",
-            snapshot_id, manifest.get("snapshot_id"),
-        )
-        raise HTTPException(status_code=404, detail="snapshot manifest not found")
-    return manifest
+    return _manifest_for_alias(snapshot_id, alias, manifest)
 
 
 @router.get("/{snapshot_id}/download", dependencies=[Depends(require_snapshot_token)])
