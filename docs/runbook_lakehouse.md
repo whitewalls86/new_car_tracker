@@ -712,26 +712,38 @@ docker compose -f docker-compose.mlflow.yml -p cartracker-mlflow build mlflow
 docker compose -f docker-compose.mlflow.yml -p cartracker-mlflow up -d
 #    UI at http://localhost:15000
 
-# 2. Log a provenance run against it:
-python -m scripts.log_lakehouse_experiment_provenance \
-    --manifest .cache/lake_snapshots/<snapshot_id>/manifest.json \
+# 2. Copy the two provenance input files into the running MLflow container.
+#    The MLflow image packages scripts/ + shared/, so no host Python deps or
+#    manual code hot-patching are needed.
+docker cp /tmp/archive_manifest.json cartracker-mlflow:/tmp/archive_manifest.json
+docker cp /tmp/iceberg_info.json cartracker-mlflow:/tmp/iceberg_info.json
+
+# 3. Log a provenance run from inside the MLflow container. localhost:5000 is
+#    the server process in the same container.
+docker exec -i cartracker-mlflow python -m scripts.log_lakehouse_experiment_provenance \
+    --manifest /tmp/archive_manifest.json \
     --iceberg-info-json /tmp/iceberg_info.json \
     --feature-table-name int_listing_volatility_features \
-    --env local \
-    --tracking-uri http://localhost:15000
+    --env vm \
+    --tracking-uri http://localhost:5000
 
-# 3. Inspect: open http://localhost:15000, experiment "adaptive_refresh_provenance".
+# 4. Inspect: open http://localhost:15000, experiment "adaptive_refresh_provenance".
 #    The manifest artifact is served from s3://${MINIO_BUCKET}/mlflow/artifacts/.
 
-# 4. Teardown (safe -- standalone project, no production resource declared):
+# 5. Teardown (safe -- standalone project, no production resource declared):
 docker compose -f docker-compose.mlflow.yml -p cartracker-mlflow down       # keep data
 docker compose -f docker-compose.mlflow.yml -p cartracker-mlflow down -v    # + drop volume
 ```
 
 On the VM the same commands apply; the server joins the real `cartracker-net`
 and writes artifacts to the real MinIO under the isolated `mlflow/` prefix
-only. It is **not** wired into the A4 runner by default -- provenance logging
-is an explicit, separate step in this PR.
+only. The VM smoke on 2026-07-16 logged run `341e3a53d2494b4996f061ad4890d119`
+after manually hot-copying `scripts/` and `shared/`; the MLflow image now
+packages that client code permanently. `GIT_PYTHON_REFRESH=quiet` is set in
+the service env because the image intentionally does not install git; pass
+`--code-sha` explicitly when a run needs a code SHA tag. It is **not** wired
+into the A4 runner by default -- provenance logging is an explicit, separate
+step in this PR.
 
 Still deferred for Gate B: backtest policy runs, the production always-on
 MLflow service (Postgres backend + Flyway), and any Caddy `/mlflow` route.

@@ -52,6 +52,10 @@ services:
       MLFLOW_S3_ENDPOINT_URL: http://minio:9000
       AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-cartracker}
       AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-cartracker123}
+      # The image does not install git; provenance callers pass --code-sha
+      # explicitly when they need it. Keep GitPython from printing noisy
+      # "bad git executable" warnings during smoke runs.
+      GIT_PYTHON_REFRESH: quiet
     command: >
       mlflow server
       --host 0.0.0.0 --port 5000

@@ -49,6 +49,12 @@ class TestMlflowComposeStandalone:
         assert "FROM python:3.12-slim-bookworm" in dockerfile
         assert "pyarrow 17" in dockerfile
 
+    def test_mlflow_image_packages_provenance_client(self):
+        dockerfile = (_REPO_ROOT / "mlflow" / "Dockerfile").read_text()
+        assert "COPY shared /app/shared" in dockerfile
+        assert "COPY scripts /app/scripts" in dockerfile
+        assert "COPY __init__.py /app/__init__.py" in dockerfile
+
     def test_backend_store_is_isolated_sqlite_not_postgres(self):
         """This first Gate B chunk must NOT couple to production Postgres:
         the backend store is SQLite on this project's own volume."""
@@ -98,3 +104,7 @@ class TestMlflowComposeStandalone:
         env = self._service()["environment"]
         assert env["AWS_ACCESS_KEY_ID"] == "${MINIO_ROOT_USER:-cartracker}"
         assert env["AWS_SECRET_ACCESS_KEY"] == "${MINIO_ROOT_PASSWORD:-cartracker123}"
+
+    def test_gitpython_warning_is_silenced(self):
+        env = self._service()["environment"]
+        assert env["GIT_PYTHON_REFRESH"] == "quiet"
