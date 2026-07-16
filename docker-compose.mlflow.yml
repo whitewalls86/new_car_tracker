@@ -1,0 +1,77 @@
+# Plan 112 Gate B: standalone MLflow tracking server for experiment
+# provenance (and, later, backtest runs).
+#
+# Deliberately a STANDALONE file / project (`-p cartracker-mlflow`), NOT a
+# service added to docker-compose.yml. This first Gate B chunk is a
+# provenance bridge, not the production always-on service: it uses an
+# ISOLATED SQLite backend store on its own named volume -- NOT a schema in
+# production Postgres, and NO Flyway migration. The Postgres-backed always-on
+# `mlflow` service in the main compose (plan Sec 3.1/3.2, PR "B1") is the
+# graduation path and is intentionally deferred. Keeping this standalone
+# means `down -v` here can only ever touch this project's own resources (same
+# safety rationale as docker-compose.lakehouse.yml).
+#
+# Artifacts land under an ISOLATED MinIO prefix, s3://${MINIO_BUCKET}/mlflow/
+# artifacts/, disjoint from silver/, ops_normalized/, bronze html/, and the
+# lakehouse_spike/ prefixes -- nothing production reads it.
+#
+# NETWORK REQUIREMENT: this joins the EXTERNAL cartracker-net and resolves
+# `minio` by container DNS, so it needs the main `cartracker` stack (the VM,
+# or a locally running main project) up. It is NOT reachable from an A4-only
+# local box -- the A4 stack (docker-compose.lakehouse.local.yml, project
+# `local-lakehouse`) uses its own isolated, non-external network + throwaway
+# MinIO, which this file does not join. For a pure A4-only setup, use the
+# file-store provenance smoke ("Smoke A") instead of this server.
+#
+# VM/local usage (joins the real cartracker-net + real minio):
+#   docker compose -f docker-compose.mlflow.yml -p cartracker-mlflow up -d
+#   # UI: http://localhost:15000
+#   docker compose -f docker-compose.mlflow.yml -p cartracker-mlflow down
+#   # Full teardown incl. the SQLite volume (safe -- no production resource
+#   # is declared here):
+#   docker compose -f docker-compose.mlflow.yml -p cartracker-mlflow down -v
+#
+# See docs/runbook_lakehouse.md ("Gate B provenance smoke").
+
+services:
+  mlflow:
+    build:
+      context: .
+      dockerfile: mlflow/Dockerfile
+    image: cartracker-mlflow
+    container_name: cartracker-mlflow
+    restart: unless-stopped
+    mem_limit: 1g                          # tracking server is light; cap it
+    ports:
+      - "15000:5000"                       # non-default host port (defensive; 5000 is common)
+    environment:
+      # SQLite backend store on this project's own volume -- isolated, no
+      # production Postgres, no Flyway.
+      MLFLOW_BACKEND_STORE_URI: sqlite:////mlflow/store/mlflow.db
+      MLFLOW_ARTIFACTS_DESTINATION: s3://${MINIO_BUCKET:-bronze}/mlflow/artifacts
+      MLFLOW_S3_ENDPOINT_URL: http://minio:9000
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-cartracker}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-cartracker123}
+    command: >
+      mlflow server
+      --host 0.0.0.0 --port 5000
+      --backend-store-uri sqlite:////mlflow/store/mlflow.db
+      --artifacts-destination s3://${MINIO_BUCKET:-bronze}/mlflow/artifacts
+      --serve-artifacts
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    volumes:
+      - mlflow_store:/mlflow/store        # owned entirely by THIS project
+    networks: [cartracker-net]
+
+volumes:
+  mlflow_store:                            # never referenced by docker-compose.yml
+
+networks:
+  cartracker-net:
+    external: true
