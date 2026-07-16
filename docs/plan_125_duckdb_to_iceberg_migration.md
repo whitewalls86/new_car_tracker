@@ -164,21 +164,149 @@ reintroducing tiny throwaway dbt projects as the main coverage path.
 
 Move consumers off `analytics.duckdb` one by one.
 
-Reader options to evaluate:
+This gate needs to be treated as an application and observability migration,
+not just a SQL-reader swap. The current DuckDB file is read by:
 
-1. Dashboard queries read Iceberg through Spark/Thrift or another query service.
-2. Dashboard queries use DuckDB only as a lightweight Iceberg reader/cache.
-3. A scheduled job publishes dashboard-serving extracts from Iceberg.
+- Streamlit dashboard pages through `dashboard/db.py::run_duckdb_query`.
+- Dashboard SQL files under `dashboard/sql/`.
+- Public `/info` stats through `ops/routers/info.py`.
+- Custom Prometheus gauges through `ops/metrics/duckdb_gauges.py`.
+- Grafana panels and alerts that consume those custom gauges.
+- Plan 112 backtest scripts and local rehearsal/preflight scripts.
 
 The target is not "DuckDB is forbidden"; the target is "DuckDB is no longer
 the authoritative build artifact."
 
-Required consumers:
+### D1: Reader Inventory
 
-- dashboard routes/queries
-- ops health/info surfaces that inspect analytics tables
-- Plan 112 backtest scripts
-- local rehearsal/preflight scripts
+Build a concrete inventory before changing code:
+
+| Consumer | Current dependency | Notes |
+|---|---|---|
+| `dashboard/db.py` | `DUCKDB_PATH`, read-only DuckDB connection | Central Streamlit reader used by dashboard pages. |
+| `dashboard/sql/*.sql` | DuckDB SQL over mart/int tables | Uses marts such as `mart_deal_scores`, `mart_vehicle_snapshot`, `mart_scrape_volume`, `mart_block_rate`, `mart_detail_batch_outcomes`, `mart_price_freshness_trend`, `mart_cooldown_cohorts`, `mart_inventory_coverage`, and `int_latest_observation`. |
+| `ops/routers/info.py` | direct DuckDB reads | Public portfolio stats from `mart_vehicle_snapshot` and `mart_scrape_volume`; failures are currently soft. |
+| `ops/metrics/duckdb_gauges.py` | direct DuckDB reads | Populates Prometheus gauges from mart tables. |
+| `grafana/dashboards/pipeline_health.json` | Prometheus gauge names | Depends on custom metrics such as `cartracker_observation_count_last_hour`, `cartracker_artifact_count_last_hour`, `cartracker_block_events_last_hour`, `cartracker_extraction_yield_last_day`, `cartracker_stale_listings_pct`, `cartracker_cooldown_backlog`, and `cartracker_cooldown_permanent`. |
+| `grafana/provisioning/alerting/rules.yml` | Prometheus gauge names | Some alerts depend on the custom DuckDB-derived metrics. |
+| Loki/Promtail | logs, not analytics tables | Not a reader to migrate, but mandatory for cutover verification. |
+
+Deliverable: a checked-in reader inventory doc or script output that names each
+table/query/metric and its proposed Iceberg-era source.
+
+### D2: Choose Dashboard Serving Pattern
+
+Evaluate these options in this order:
+
+1. **Dashboard-serving extracts from Iceberg.**
+   A scheduled job reads Iceberg and publishes small dashboard-serving tables or
+   files. This is likely the lowest-risk first cut because Streamlit stays
+   fast and simple.
+
+2. **DuckDB as a non-authoritative Iceberg reader/cache.**
+   Dashboard still uses DuckDB, but the file is rebuilt from Iceberg snapshots
+   and is explicitly a cache, not the canonical build output.
+
+3. **Dashboard queries Iceberg through a live query service.**
+   Spark Thrift/Trino/other service. This is closer to a warehouse pattern, but
+   adds an always-on query service and more operational surface.
+
+Do not switch the dashboard directly to an expensive per-request Spark job.
+Dashboard pages need predictable latency and failure behavior.
+
+### D3: Dashboard and `/info` Migration
+
+Port the user-facing readers first in a compatibility layer:
+
+- Add a reader abstraction around `dashboard/db.py` instead of spreading engine
+  selection through every page.
+- Keep existing dashboard SQL files stable where possible; if SQL dialect must
+  diverge, split by backend with a naming convention rather than inline
+  conditionals.
+- Migrate `/info` stats in `ops/routers/info.py` to the same serving source or
+  an equivalent lightweight reader.
+- Keep the current soft-failure posture for `/info`: missing analytics should
+  omit stats, not break the public page.
+
+Validation:
+
+- Page-level smoke for Deals, Inventory, Market Trends, and Data Health.
+- Query-level row/freshness parity against the DuckDB build during the dual-run
+  period.
+- Latency check for the dashboard pages that load the largest tables.
+
+### D4: Prometheus/Grafana Observability Migration
+
+The custom Prometheus gauges are part of the reader migration because Grafana
+pipeline health panels and alerts depend on them.
+
+Current producer:
+
+- `ops/metrics/duckdb_gauges.py`
+
+Current derived metrics:
+
+- `cartracker_observation_count_last_hour`
+- `cartracker_artifact_count_last_hour`
+- `cartracker_block_events_last_hour`
+- `cartracker_extraction_yield_last_day`
+- `cartracker_stale_listings_pct`
+- `cartracker_cooldown_backlog`
+- `cartracker_cooldown_permanent`
+
+Required work:
+
+1. Rename the module or add a parallel implementation so the code no longer
+   describes itself as DuckDB-specific once the source changes.
+2. Keep metric names stable for the first migration so Grafana dashboards and
+   alert rules do not all churn at once.
+3. Add a health metric for the analytics reader itself, for example:
+   - last successful refresh timestamp
+   - source backend (`duckdb_cache`, `iceberg_extract`, etc.)
+   - query/update duration
+   - failure count
+4. Update Grafana dashboards only if the metric meaning changes. Do not change
+   dashboard JSON just because the backend changed.
+5. Verify Prometheus scrapes continue and Grafana alerts still evaluate after
+   the reader switch.
+
+Acceptance checks:
+
+- `curl /metrics` on ops contains all existing custom metric names.
+- Grafana `pipeline_health.json` panels still populate.
+- Grafana alerting rules referencing the custom gauges evaluate without
+  `NoData`/query errors.
+- A forced reader failure produces a visible ops log and increments/sets a
+  failure signal without crashing the service.
+
+### D5: Loki/Promtail Cutover Verification
+
+Loki and Promtail do not need an Iceberg migration, but they are how we prove
+the migration is operationally boring.
+
+During each reader cutover:
+
+- Check dashboard container logs for backend/query errors.
+- Check ops logs for reader update failures from the metrics/info path.
+- Check dbt/lakehouse-worker logs for failed Iceberg refreshes.
+- Confirm no new recurring `Conflicting lock` style DuckDB messages remain
+  once DuckDB stops being canonical.
+
+Deliverable: a short VM verification snippet in this plan or a follow-up
+runbook section with the exact Grafana/Loki queries used during cutover.
+
+### D6: Dual-Run and Rollback
+
+Do not remove DuckDB readers in the same PR that introduces Iceberg readers.
+
+Dual-run requirements:
+
+- Keep DuckDB and Iceberg-backed serving outputs available for at least one
+  release cycle.
+- Add a feature flag/env var for dashboard/ops reader backend selection.
+- Record source backend in logs and, ideally, in a Prometheus gauge.
+- Document rollback as changing the backend flag and restarting only affected
+  services, not rebuilding the whole stack.
 
 ## Gate E: Cutover and Retirement
 
@@ -206,6 +334,9 @@ Integration tests:
 - Local Plan 120 snapshot -> seeded MinIO -> Spark/dbt -> Iceberg chain.
 - Existing seeded fixture phases for incremental scenarios.
 - Parity comparison between DuckDB and Iceberg for the migration chain.
+- Dashboard reader smoke using the selected Gate D backend.
+- Ops metrics/info reader smoke proving the custom Prometheus gauges still
+  populate from the selected backend.
 
 VM tests:
 
@@ -213,6 +344,10 @@ VM tests:
 - Resource/OOM check.
 - Runtime comparison vs DuckDB.
 - Reader smoke for dashboards/backtest scripts.
+- Grafana pipeline-health panels still populate after the reader switch.
+- Grafana alert rules evaluate without query errors.
+- Loki/Promtail show no recurring dashboard/ops/lakehouse reader failures
+  during the dual-run window.
 
 ## Risks
 
