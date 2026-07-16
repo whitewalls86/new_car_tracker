@@ -5,7 +5,12 @@
 # The server uses a SQLite backend store (isolated, no production Postgres)
 # and serves MinIO-backed artifacts via --serve-artifacts, so it needs boto3
 # but not psycopg2 in this first Gate B chunk.
-FROM python:3.13-slim-bookworm
+#
+# Keep this on Python 3.12 for now: mlflow==2.17.2 constrains pyarrow<18,
+# and pyarrow 17 does not have a reliable Python 3.13 ARM64 wheel on the OCI
+# A1 VM. Python 3.13 falls back to a source build there and fails before the
+# server image can build.
+FROM python:3.12-slim-bookworm
 
 WORKDIR /app
 
