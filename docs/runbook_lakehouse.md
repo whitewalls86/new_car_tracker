@@ -10,9 +10,15 @@ topology, (A2) the profile-gated `lakehouse-worker` PySpark round-trip against
 a fixture-derived Iceberg table, (A3) the VM/local-manual rehearsal writing
 the real `int_listing_volatility_features` table to Iceberg, and (A4) the
 local integration harness that runs the same worker path on a dev box against
-a Plan 120 snapshot. PyIceberg
-validation (A2b) and MLflow (Gate B) are out of scope here and will extend
-this doc as they land.
+a Plan 120 snapshot, and (Gate B, first chunk) the MLflow **experiment
+provenance bridge** that records enough metadata to trace an experiment back
+to its Plan 120 snapshot and Iceberg table. PyIceberg validation (A2b) and
+the rest of Gate B (backtest runs, the production always-on MLflow service)
+are out of scope here and will extend this doc as they land.
+
+**The Gate B provenance bridge trains no model and schedules no backtest.**
+It logs one MLflow run of input-snapshot provenance -- see the "Gate B
+provenance smoke" section below.
 
 **A3 is VM/local-manual only, never CI.** It reads the real analytics DuckDB
 file, which only exists on the VM (or a local box with that volume seeded) --
@@ -597,5 +603,107 @@ Still deferred:
   a local Postgres with the migrated schema for the two `postgres_scan()`
   sources; the A4 harness deliberately uses the targeted
   `+int_listing_volatility_features` build instead.
-- **PyIceberg validation** (A2b) and **MLflow** (Gate B) are unrelated to
-  this stack's bring-up/teardown and are documented separately as they land.
+- **Full local `dbt build --target duckdb`** graduation and **PyIceberg
+  validation** (A2b) remain deferred as noted above.
+- **The rest of Gate B** -- backtest policy runs and the production always-on
+  MLflow service (Postgres backend, Flyway migration; plan Sec 3.1/3.2, "B1")
+  -- is deferred. The provenance bridge below is the first Gate B chunk.
+
+---
+
+## Gate B provenance smoke (MLflow experiment provenance bridge)
+
+**This trains no model and schedules no backtest.** It logs one MLflow run
+recording where a lakehouse/backtesting input snapshot came from: its Plan 120
+snapshot archive (`snapshot_id`, `export_fingerprint`, `archive_sha256`,
+`archive_key`, `archive_manifest_key`) and its Gate A Iceberg table
+(`iceberg_catalog`, `iceberg_table`, `iceberg_snapshot_id`, `row_count`,
+`distinct_vin17`, `max_latest_fetched_at`), with the Plan 120
+`archive_manifest.json` attached as an artifact.
+
+Two pieces:
+
+- `shared/mlflow_provenance.py` -- pure, MLflow-free payload
+  construction/validation (unit-tested in
+  `tests/lakehouse/test_mlflow_provenance.py`).
+- `scripts/log_lakehouse_experiment_provenance.py` -- the CLI that assembles
+  the fields (from a Plan 120 manifest, an Iceberg `info` JSON, a metadata
+  JSON, and/or individual flags) and logs exactly one MLflow run.
+
+### Backend choice (why SQLite here, not production Postgres yet)
+
+This first chunk deliberately does **not** touch production Postgres. The
+standalone `docker-compose.mlflow.yml` (`-p cartracker-mlflow`) runs the
+tracking server against an **isolated SQLite backend store** on its own
+`mlflow_store` volume, with artifacts under an **isolated MinIO prefix**
+`s3://${MINIO_BUCKET}/mlflow/artifacts/`. No Flyway migration, no new prod DB
+user/schema -- same isolation posture as `docker-compose.lakehouse.yml`, so
+`down -v` against this project can only touch its own resources. The
+Postgres-backed always-on service (plan Sec 3.1/3.2, "B1") is the graduation
+path and is intentionally out of scope for this PR.
+
+### Smoke A -- pure local file store (no server, no Docker)
+
+The zero-infrastructure smoke: needs only `pip install mlflow` in a throwaway
+venv (never the shared project venv). Logs to a local file store.
+
+```bash
+# Build + print the exact params/tags/artifact WITHOUT logging (no mlflow needed):
+python -m scripts.log_lakehouse_experiment_provenance \
+    --manifest .cache/lake_snapshots/<snapshot_id>/manifest.json \
+    --iceberg-info-json /tmp/iceberg_info.json \
+    --feature-table-name int_listing_volatility_features \
+    --dry-run
+
+# Actually log a run to a local file store (requires mlflow installed):
+python -m scripts.log_lakehouse_experiment_provenance \
+    --manifest .cache/lake_snapshots/<snapshot_id>/manifest.json \
+    --iceberg-info-json /tmp/iceberg_info.json \
+    --feature-table-name int_listing_volatility_features \
+    --tracking-uri file:./.cache/mlruns
+
+# Inspect it:
+mlflow ui --backend-store-uri file:./.cache/mlruns   # then open http://localhost:5000
+```
+
+Where the inputs come from in the A4 local flow:
+- `--manifest` is the file `scripts/download_lake_snapshot.py --latest`
+  already wrote to `.cache/lake_snapshots/<snapshot_id>/manifest.json`.
+- `--iceberg-info-json` is the stdout of
+  `export_volatility_features_to_iceberg info` (redirect it to a file), e.g.
+  ```bash
+  docker compose -f docker-compose.lakehouse.yml -f docker-compose.lakehouse.local.yml \
+      -p local-lakehouse run --rm lakehouse-worker \
+      python -m scripts.export_volatility_features_to_iceberg info > /tmp/iceberg_info.json
+  ```
+
+### Smoke B -- standalone MLflow server (browsable UI + MinIO artifacts)
+
+```bash
+# 1. Start the standalone server (joins the real/local cartracker-net + minio):
+docker compose -f docker-compose.mlflow.yml -p cartracker-mlflow up -d --build
+#    UI at http://localhost:15000
+
+# 2. Log a provenance run against it:
+python -m scripts.log_lakehouse_experiment_provenance \
+    --manifest .cache/lake_snapshots/<snapshot_id>/manifest.json \
+    --iceberg-info-json /tmp/iceberg_info.json \
+    --feature-table-name int_listing_volatility_features \
+    --env local \
+    --tracking-uri http://localhost:15000
+
+# 3. Inspect: open http://localhost:15000, experiment "adaptive_refresh_provenance".
+#    The manifest artifact is served from s3://${MINIO_BUCKET}/mlflow/artifacts/.
+
+# 4. Teardown (safe -- standalone project, no production resource declared):
+docker compose -f docker-compose.mlflow.yml -p cartracker-mlflow down       # keep data
+docker compose -f docker-compose.mlflow.yml -p cartracker-mlflow down -v    # + drop volume
+```
+
+On the VM the same commands apply; the server joins the real `cartracker-net`
+and writes artifacts to the real MinIO under the isolated `mlflow/` prefix
+only. It is **not** wired into the A4 runner by default -- provenance logging
+is an explicit, separate step in this PR.
+
+Still deferred for Gate B: backtest policy runs, the production always-on
+MLflow service (Postgres backend + Flyway), and any Caddy `/mlflow` route.

@@ -863,6 +863,37 @@ contract. This is the seam the rest of Plan 112 builds on; keeping it
 engine-agnostic avoids each later runner re-implementing provenance logging
 per engine.
 
+> **Implementation note (2026-07-16): the provenance bridge is the next Gate B
+> chunk and shipped first, ahead of the full B1 always-on service.** It landed
+> as `shared/mlflow_provenance.py` (the engine-agnostic seam this section
+> describes, named for its broader role — it also carries the Plan 120 archive
+> provenance, not just the `iceberg.*` fields) plus the CLI
+> `scripts/log_lakehouse_experiment_provenance.py`. **This chunk trains no
+> model and schedules no backtest** — it logs exactly one MLflow run of
+> input-snapshot provenance. Deliberate scoping vs. §3.1/§3.2: to avoid
+> coupling this PR to a production Postgres Flyway migration, the tracking
+> server runs from a **standalone `docker-compose.mlflow.yml`
+> (`-p cartracker-mlflow`) against an isolated SQLite backend store** on its
+> own `mlflow_store` volume, artifacts under the isolated MinIO prefix
+> `s3://${MINIO_BUCKET}/mlflow/artifacts/` — same isolation posture as the
+> standalone lakehouse stack, no main-compose edit, no Flyway. The
+> Postgres-backed always-on `mlflow` service (§3.1/§3.2, "B1") is the
+> graduation path and stays deferred. The payload builder is fully unit-tested
+> without MLflow installed (`tests/lakehouse/test_mlflow_provenance.py`):
+> required/optional fields, type normalization, missing-manifest behavior, the
+> Plan 120 manifest + Iceberg-`info` field extractors, and the exact
+> params/tags/artifact contract. Fields consumed from the real upstreams: the
+> Plan 120 archive manifest (`snapshot_id`, `export_fingerprint`,
+> `archive.sha256`/`path`) via the shared `get_archive_meta` reader, and
+> `export_volatility_features_to_iceberg info`'s dict
+> (`catalog`/`table`/`current_snapshot_id`/`row_count`/`distinct_vin17`/
+> `max_latest_fetched_at`). **Not** wired into the A4 runner by default —
+> provenance logging is an explicit, opt-in step. Smoke commands: see
+> `docs/runbook_lakehouse.md`'s "Gate B provenance smoke" section (a
+> zero-infra local file-store path and a standalone-server path). Still
+> deferred: backtest policy runs, the always-on Postgres-backed service, and
+> any Caddy `/mlflow` route.
+
 ---
 
 ## 4. Testing strategy
