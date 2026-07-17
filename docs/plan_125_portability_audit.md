@@ -224,6 +224,22 @@ chain. Making its inputs full-rebuild costs compute but loses no freshness and i
 consistent with what the chain already does. Do not pay for Option C's adapter fork
 until a VM run proves the rebuild is actually too slow.
 
+> **Gate C update (2026-07-17): if the measurement ever does show the rebuild
+> is too slow, the answer is a refined Option B — not Option C.** A two-model
+> decompose fixes Option B's stated weakness: the affected-entity predicate is
+> materialized once, as its own small row-unique `merge` model, and the
+> `pre_hook` merely refs it (no duplicated predicate, no tmp_relation needed).
+> The DELETE-with-subquery + INSERT sequence is proven correct via direct
+> Spark SQL on a MoR Iceberg table, including a cardinality-changing entity
+> replacement — and a subquery in a `MERGE ... WHEN NOT MATCHED BY SOURCE`
+> condition is a hard Spark error (`UNSUPPORTED_MERGE_CONDITION.SUBQUERY`),
+> which is why it is two statements. Option C is dominated: it buys nothing
+> the vanilla design doesn't, at the cost of an adapter fork. Still
+> non-atomic (two commits) — that caveat is unchanged. Full design and what
+> remains unverified (the dbt-level hook wiring):
+> [Gate C shape decisions](plan_125_duckdb_to_iceberg_migration.md#gate-c-shape-decisions-2026-07-17),
+> decision 3.
+
 ### F2. `select * exclude (...)` — DuckDB-only syntax
 
 `int_latest_observation.sql:62`. Spark has no `EXCLUDE` in the select list.
@@ -280,6 +296,13 @@ Iceberg-era `mart_vehicle_snapshot` needs this reference data in a form Spark ca
 read — either a JDBC read, or a snapshot of these tables landed into
 MinIO/Iceberg by the existing processing/flush path. Recommend the latter, and
 recommend deciding it *before* Gate B rather than during it.
+
+> **Status note (Gate C, 2026-07-17): this plan is UNAFFECTED by the Gate C
+> `add_files` findings (F17 and the signing-scope requirement).** The snapshot
+> was always going to be a **native** scheduled write (Postgres JDBC read →
+> Iceberg write) — there is no pre-existing Parquet file to import for
+> Postgres-sourced tables, so no `add_files` and no signing-scope exposure.
+> F8 is not blocked by any of the Gate C gotchas.
 
 Specific recommendation: treat `public.search_configs` and `ops.tracked_models`
 as low-change operational reference dimensions and snapshot them hourly to
@@ -455,6 +478,70 @@ md5 digests** (e.g. `bb31f33225ad43103c76daa93981a307`). Those now pass on Spark
 which unit-proves `md5` + `concat_ws` + `cast_to_string` produce identical
 digests — evidence independent of the parity run.
 
+A sibling trigger of the same introspection mechanism surfaced after Gate B
+shipped: the 13 dict fixtures that mock **materialized** `int_*` models ERROR
+on a fresh catalog where those relations don't exist *yet* (as on every CI
+run). The fix there is `dbt run --empty` before `dbt test`, **not** `format:
+sql` conversion — the relation is one cheap empty build away, unlike the
+ephemeral case above where it can never exist. Do not convert those 13
+fixtures. Full write-up:
+[the CI amendment](plan_125_duckdb_to_iceberg_migration.md#ci-decision-add-a-narrow-dbt-spark-unit-test-job--the-gate-a-calculus-has-changed).
+
+### F17. `add_files` bypasses S3FileIO, and Lakekeeper's LOCATION check is scheme-sensitive — **FOUND AT THE GATE C SPIKE**
+
+Two config-level traps hit while proving the Gate C source-exposure decision
+([Gate C shape decisions](plan_125_duckdb_to_iceberg_migration.md#gate-c-shape-decisions-2026-07-17),
+decision 1). Both verified against the real local Lakekeeper/MinIO/Spark stack
+(2026-07-17); neither is documented upstream anywhere you would find it before
+losing the afternoon. Recorded per this document's convention for things the
+audit could not have caught but implementation will re-hit.
+
+**a. `add_files`'s manifest writer resolves `s3://` through raw Hadoop, not the
+catalog's S3FileIO.** Internally (`SparkTableUtil.buildManifest` →
+`HadoopFileIO`) it calls Hadoop `FileSystem.get()` on the source files' bare
+`s3://` URIs — even though the catalog is configured with
+`io-impl=org.apache.iceberg.aws.s3.S3FileIO` and **every other Iceberg
+operation correctly uses S3FileIO for that scheme**. Without extra config it
+fails with `UnsupportedFileSystemException: No FileSystem for scheme "s3"`.
+The workaround is to mirror the same values
+`shared/iceberg_catalog.py::spark_conf_for_s3a_reads()` already sets under the
+`fs.s3a.*` prefix, ALSO under `fs.s3.*`:
+
+```text
+spark.hadoop.fs.s3.impl              = org.apache.hadoop.fs.s3a.S3AFileSystem
+spark.hadoop.fs.s3.endpoint          = <same as fs.s3a.endpoint>
+spark.hadoop.fs.s3.access.key        = <same as fs.s3a.access.key>
+spark.hadoop.fs.s3.secret.key        = <same as fs.s3a.secret.key>
+spark.hadoop.fs.s3.path.style.access = true
+```
+
+Verified that this does **not** silently reroute normal Iceberg operations off
+S3FileIO: a plain `CREATE TABLE` / `INSERT` / `DESCRIBE EXTENDED` afterwards
+still reports `provider=iceberg`, the correct `s3://` location, and correct
+data. When the `add_files` sync is actually built, this belongs as a
+documented, tested function in `shared/iceberg_catalog.py` alongside
+`spark_conf_for_rest_catalog()` / `spark_conf_for_s3a_reads()` — today it was
+proven only in a throwaway spike script that was not kept.
+
+**b. The `LOCATION` sub-path check is a scheme-sensitive string comparison.**
+`CREATE TABLE ... LOCATION 's3a://bronze/...'` fails Lakekeeper's
+storage-profile sublocation check against a base reported as
+`s3://bronze/...`, even though they are the same physical MinIO path. Rule:
+use `s3://` (Iceberg/S3FileIO's scheme) for `CREATE TABLE ... LOCATION` and
+anything Iceberg-facing; keep `s3a://` (Hadoop-AWS's scheme) for the plain
+compaction-style write that lands at that same physical path. This extends the
+Gate A finding that `s3://` and `s3a://` are two separate, coexisting
+mechanisms (see the corrected [adapter choice](#gate-a-adapter-choice)): the
+schemes are not even interchangeable as *strings* in Lakekeeper's validation.
+
+Related but distinct, documented with the decision itself rather than here:
+Lakekeeper's remote request signing is scoped **per-table-location**, so
+`add_files` can only import files that live under the table's own registered
+location — which is why the production warehouse must be registered with a
+key-prefix wide enough to cover both `silver_normalized/` and the Iceberg
+tables. Full evidence chain:
+[Gate C shape decisions](plan_125_duckdb_to_iceberg_migration.md#gate-c-shape-decisions-2026-07-17).
+
 ### Not found (good news)
 
 No `qualify`, no `generate_series`/sequence helpers, no list/struct syntax, and
@@ -552,7 +639,11 @@ Registering silver as external Iceberg metadata is a second migration with its o
 failure modes, and R5 (Iceberg tables stay rebuildable, Parquet stays the recovery
 point) argues for keeping normalized Parquet as a plain input for now. Revisit at
 Gate C, where snapshot-consistent reads may start to matter for incremental
-watermarks.
+watermarks. → **Revisited and decided at Gate C (2026-07-17): silver is
+registered metadata-only via `add_files` over a widened warehouse prefix,
+keeping Parquet the recovery point. See
+[Gate C shape decisions](plan_125_duckdb_to_iceberg_migration.md#gate-c-shape-decisions-2026-07-17)
+and [F17](#f17-add_files-bypasses-s3fileio-and-lakekeepers-location-check-is-scheme-sensitive--found-at-the-gate-c-spike).**
 
 ## Gate A adapter choice
 
@@ -747,6 +838,11 @@ One Gate C signal fell out of it: that MERGE reported `deleted=1354 added=1354`.
 Iceberg MERGE is copy-on-write and rewrites whole *data files*, so touching a few
 rows in the 72h window rewrote the single file holding the entire table. Correct,
 but it means merge cost here scales with file layout, not with window size.
+**Acted on at Gate C: this measurement is the core of the case for
+merge-on-read as the Gate C-era write mode — see
+[Gate C shape decisions](plan_125_duckdb_to_iceberg_migration.md#gate-c-shape-decisions-2026-07-17),
+decision 2. Whether the already-shipped merge models get reconfigured to MoR +
+a partition spec awaits the Gate C runtime measurement.**
 
 **Do not** implement the Option C adapter-macro fork during Gate A. Two daily models
 being full-rebuild is a cheaper problem than a forked incremental materialization

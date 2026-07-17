@@ -185,6 +185,29 @@ jobs:
             -p ci-lakehouse run --rm lakehouse-worker \
             python -m scripts.verify_dialect_datediff --check
 
+      - name: Create empty relations for unit-test introspection (Plan 125 Gate C)
+        # Without this, 13 of the 38 unit tests below ERROR on every CI run:
+        # "Not able to get columns for unit test '<model>' from relation ...
+        # because the relation doesn't exist". Those 13 mock MATERIALIZED int_*
+        # models with dict-format fixtures, and dict fixtures are built by
+        # introspecting the mocked input's relation (get_fixture_sql ->
+        # get_columns_in_relation) -- the same mechanism as audit F16, with a
+        # different trigger: F16's relation could NEVER exist (ephemeral),
+        # these just don't exist YET on this job's freshly-registered catalog.
+        #
+        # `dbt run --empty` is dbt's own mechanism for exactly this: it limits
+        # refs/sources to zero rows, creating schema-correct EMPTY relations
+        # cheaply -- zero fixture changes, zero storage. Verified locally on a
+        # freshly-dropped catalog: ERROR=13 -> 0. The selector is the proven
+        # Gate B chain, deliberately NOT `config.materialized:*`, which would
+        # pull in the F8-blocked serving models that cannot compile on Spark.
+        run: |
+          docker compose \
+            -f docker-compose.lakehouse.yml -f docker-compose.lakehouse.ci.yml \
+            -p ci-lakehouse run --rm lakehouse-worker \
+            python -m scripts.run_dbt_spark -- \
+            run --empty --select +int_listing_volatility_features
+
       - name: dbt-spark unit tests (Plan 125 Gate B)
         # The Gate B CI decision (docs/plan_125_duckdb_to_iceberg_migration.md).
         # Deliberately narrow: unit tests only, no parity run. Unit tests mock

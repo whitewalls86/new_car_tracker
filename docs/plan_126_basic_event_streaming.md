@@ -109,6 +109,14 @@ Confluent later if deployment requirements change.
 - Dual-run against the existing Airflow flush path.
 - Compare row counts, event IDs, duplicates, freshness, and replay behavior.
 
+Two Plan 125 Gate C decisions already anticipate this gate
+([Gate C shape decisions](plan_125_duckdb_to_iceberg_migration.md#gate-c-shape-decisions-2026-07-17)):
+this sink is the documented eventual replacement for the batch-era `add_files`
+silver sync (decision 1), and the Iceberg tables it would write into are
+merge-on-read partly *because* frequent small streaming writes are untenable
+on copy-on-write tables (decision 2). The sink inherits shapes that were
+chosen with it in mind rather than needing them redone.
+
 ### Gate E: Cutover Decision
 
 - Decide whether any staging-table flushes should be retired.

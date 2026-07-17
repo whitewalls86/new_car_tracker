@@ -74,7 +74,10 @@ adds the dashboard/ops/Grafana reader migration detail needed for cutover.
    express the operation. *Settled at Gate A:* `dbt-spark==1.10.3`, `method: session`
    — see [Gate A adapter choice](plan_125_portability_audit.md#gate-a-adapter-choice).
    This principle also rules out forking dbt-spark's incremental internals to
-   recreate `delete+insert` unless a measurement proves it necessary.
+   recreate `delete+insert` unless a measurement proves it necessary. *Gate C
+   later removed even that exception: a vanilla `pre_hook` + `append` design
+   dominates the fork — see
+   [Gate C shape decisions](#gate-c-shape-decisions-2026-07-17), decision 3.*
 
 5. **Treat resource limits as product requirements.**
    Spark jobs need bounded memory, explicit one-shot execution, and clear
@@ -272,7 +275,10 @@ external Iceberg/metadata tables. → **Read Parquet directly through Spark for
 Gate A.** External Iceberg registration is a second migration with its own failure
 modes, and guardrail R5 (Iceberg tables stay rebuildable, normalized Parquet stays
 the recovery point) argues for keeping Parquet a plain input. Revisit at Gate C if
-snapshot-consistent reads matter for incremental watermarks.
+snapshot-consistent reads matter for incremental watermarks. → **Revisited and
+decided at Gate C (2026-07-17): silver is registered metadata-only via
+`add_files`, keeping Parquet the recovery point — see
+[Gate C shape decisions](#gate-c-shape-decisions-2026-07-17), decision 1.**
 
 ## Gate A: Spark/dbt Execution Spike
 
@@ -952,6 +958,36 @@ Scope, deliberately narrow:
   weight.
 - The existing `dbt build + test` job stays untouched and no slower.
 
+> **Amendment (2026-07-17): the job as first shipped ERRORed 13 of its 38 unit
+> tests on every CI run, and the fix is a prior `dbt run --empty`.** The 13 are
+> the dict-format fixtures that mock **materialized** `int_*` models
+> (`int_latest_observation`, both fingerprint models, `int_listing_state_runs`).
+> Dict fixtures are built by introspecting the mocked input's relation
+> (`get_fixture_sql` → `get_columns_in_relation`) — the same mechanism as
+> [F16](plan_125_portability_audit.md#f16-dbt-unit-tests-cannot-mock-an-ephemeral-model--found-at-gate-b-disproves-a-gate-a-claim),
+> with a different trigger: F16's relation could *never* exist (ephemeral),
+> these relations just don't exist *yet* on the CI job's freshly-registered
+> catalog, where no model has ever been built. Error signature:
+> `Not able to get columns for unit test '<model>' from relation ... because
+> the relation doesn't exist`. It never showed locally because local catalogs
+> already carried the Gate B tables — reproduced on a freshly-dropped catalog:
+> `ERROR=13` of 32 intermediate tests.
+>
+> Fix, verified 13 → 0 with all 13 fixtures untouched: run
+> `dbt run --empty --select +int_listing_volatility_features` before the
+> unit-test step. `--empty` is dbt's own documented mechanism for exactly this —
+> it limits refs/sources to zero rows, creating schema-correct **empty**
+> relations cheaply, with zero fixture changes and zero storage cost. The
+> selector is the proven Gate B chain, deliberately **not**
+> `config.materialized:*`, which would pull in the F8-blocked serving models
+> that cannot compile on Spark.
+>
+> Converting the 13 fixtures to `format: sql` was considered and **rejected**:
+> F16's conversion (the 21 fixtures mocking ephemeral `stg_*` models) was
+> forced — no relation can ever exist — and stays. Here the relation is one
+> `--empty` run away, and 13 more hand-enumerated column lists (~20–33 columns
+> each) would be pure maintenance weight for nothing.
+
 Unchanged from Gate A, and still running in the normal fast unit job with neither
 pyspark nor a container:
 `tests/lakehouse/test_dbt_spark_session_config.py`,
@@ -982,11 +1018,30 @@ hold on Spark, including
 [late-arrival pickup and correction replacement under `merge`](#late-arrival-and-correction-under-merge-closed-2026-07-17)
 — demonstrated with the Plan 123 fixture phases, not argued.
 
-What Gate C still genuinely owns:
+**Status update (Gate C shape decisions, 2026-07-17):** the three "lakehouse
+shape" questions this gate owned — how silver is exposed to Iceberg, what write
+mode the tables use, and how the two full-rebuild `_runs` models get an
+incremental path — are now **decided, with each mechanism proven by direct
+testing against the real local Lakekeeper/MinIO/Spark stack**. See
+[Gate C shape decisions](#gate-c-shape-decisions-2026-07-17). Nothing from those
+decisions is *built* yet; what was proven is the mechanisms.
 
-- **The runtime measurement on the two full-rebuild `_runs` models.** This is the
-  only thing that can justify revisiting Option C, and the bar is a measurement
-  showing the rebuild is too slow — not a suspicion that it might be.
+What Gate C still genuinely owns, updated for those decisions:
+
+- **The runtime measurement on the two full-rebuild `_runs` models.** Now doing
+  double duty: it is the build/don't-build call on the two-model decompose
+  (decision 3 below), and it gates the partition-spec/MoR reconfiguration of the
+  already-shipped Gate B `merge` models (decision 2 below). The bar is unchanged:
+  a measurement showing the rebuild is too slow, not a suspicion that it might
+  be. Note the fallback has changed: Option C (the adapter fork) is no longer
+  what a bad measurement buys — decision 3's vanilla-dbt design is.
+- **The dbt-level wiring of decision 3** — the DELETE+INSERT SQL sequence is
+  proven, but `pre_hook` + `append` ordering through actual dbt (including the
+  first run, where `{{ this }}` does not exist yet) is not.
+- **Building decision 1**: the `add_files` sync job co-mingled with
+  `compact_silver.py`, the `fs.s3.*` mirror config (audit
+  [F17](plan_125_portability_audit.md#f17-add_files-bypasses-s3fileio-and-lakekeepers-location-check-is-scheme-sensitive--found-at-the-gate-c-spike)),
+  and the production warehouse registration with a wide key-prefix.
 - **Automating the late-arrival verification.** It was run by hand. F16 is the
   standing lesson that an unautomated PASS decays silently; the Gate B CI job
   deliberately does not cover this (it needs a seeded snapshot + a matching DuckDB
@@ -1030,6 +1085,212 @@ Required checks:
 
 Use the shared seeded fixture phases from Plan 123/120 where possible. Avoid
 reintroducing tiny throwaway dbt projects as the main coverage path.
+
+## Gate C shape decisions (2026-07-17)
+
+Decided by direct testing against the real local Lakekeeper/MinIO/Spark stack
+(the same `cartracker-lakekeeper` + `local-lakehouse-minio-1` stack Gate A/B
+used), in throwaway spike tables and a throwaway wide-prefix warehouse. What
+follows is evidence, not intent; each decision states plainly what remains
+unproven. Nothing here is built into the repo yet — the spike scripts were
+deliberately not kept.
+
+### 1. Source exposure: `add_files` over a widened warehouse prefix — mechanism PROVEN
+
+Silver stays exactly as `archiver/processors/compact_silver.py` writes it —
+plain Parquet, 2-day watermark, per-source/month, incrementally re-mergeable —
+and gets registered into Iceberg tables **metadata-only** via Spark's
+`system.add_files` procedure. No data copy, no second write path, **zero
+changes to the archiver or compaction**. The plan is to co-mingle the
+`add_files` sync with the existing compaction cadence rather than adding a
+faster separate sync: Plan 112's backtest reproducibility is keyed by Iceberg
+snapshot ID per dbt run, not real-time freshness (confirmed against
+[docs/plan_112_refresh_policy_backtesting.md](plan_112_refresh_policy_backtesting.md)),
+so the 2-day watermark is granularity enough.
+
+This looked blocked at first, and the failure mode is worth recording because
+it will be re-encountered by anyone testing against the spike warehouse:
+
+- `add_files` importing a file from OUTSIDE the spike warehouse's
+  `lakehouse_spike/` storage-profile prefix failed **at read time** with
+  `BadRequestException: Table does not exist or user does not have permission
+  to view it at location <path>`. Lakekeeper's remote S3 request signing
+  (`S3V4RestSignerClient`) is scoped to a table's own registered storage
+  location and rejects reads outside it even with valid static credentials
+  configured client-side.
+- The same failure occurs with the external file INSIDE the warehouse's prefix
+  but outside the specific table's own directory — the signing scope is
+  **per-table-location**, not merely per-warehouse-prefix.
+- `CREATE TABLE ... LOCATION 's3://...'` is a hard Lakekeeper invariant: a
+  location that is not a sub-path of the warehouse's registered prefix fails
+  outright with `not a valid sublocation of the storage profile`.
+
+None of that is an architectural obstacle — it is Lakekeeper correctly
+refusing to let a warehouse reach outside its own boundary. The Gate A/B spike
+warehouse was deliberately scoped narrow (`lakehouse_spike/` isolation, the
+right call for a spike), and the earlier "blocker" reported against it was an
+artifact of that narrow scope, not of the mechanism. Proven resolution, on a
+throwaway wide-prefix warehouse (`spike_wide_prefix`, key-prefix
+`spike_wide_root/`), end to end:
+
+1. `CREATE TABLE ... LOCATION 's3://bronze/spike_wide_root/silver_normalized/observations'`
+   — succeeds (now a valid sub-path of the storage profile).
+2. A plain, Iceberg-unaware Spark write — mimicking exactly what
+   `compact_silver.py` does (`df.write.mode('overwrite').parquet(...)`, no
+   Iceberg APIs) — lands a file inside that same path.
+3. `CALL <catalog>.system.add_files(table => ..., source_table =>
+   `` `parquet`.`<path>` ``)` registers the file into the table's manifest
+   with **no data copy** — original filename preserved, `records=5` matching
+   the source file, no rewrite.
+4. A normal `SELECT` against the table returns the correct data.
+5. A `DELETE` against rows in the `add_files`-imported file succeeds and (with
+   MoR, decision 2) produces a position-delete file rather than a rewrite.
+
+**The one requirement this imposes:** the real (non-spike) warehouse's
+storage-profile `key-prefix` must be set, **at registration time**, to a
+common ancestor of both `silver_normalized/` (and `ops_normalized/` for the F8
+reference tables) and wherever the Iceberg tables themselves live — e.g. the
+bucket root or a shared parent directory.
+`shared/iceberg_catalog.py::warehouse_storage_payload()` currently hardcodes
+the narrow spike prefix; the production registration is where that changes.
+
+Two non-obvious config gotchas hit along the way — `add_files`'s manifest
+writer bypassing Iceberg's own `S3FileIO`, and the scheme-sensitivity of the
+`LOCATION` sub-path check — are recorded precisely as audit
+[F17](plan_125_portability_audit.md#f17-add_files-bypasses-s3fileio-and-lakekeepers-location-check-is-scheme-sensitive--found-at-the-gate-c-spike).
+Both will bite again if forgotten.
+
+This also closes Gate 0's deferred question ("read Parquet directly through
+Spark for Gate A … revisit at Gate C if snapshot-consistent reads matter"):
+silver becomes readable through Iceberg table metadata without becoming a
+second write path, and normalized Parquet remains the recovery point (R5) —
+the files `add_files` registers are the same files compaction owns.
+
+Boundary notes, so this decision is not over-read:
+
+- **F8 is unaffected.** The `search_configs`/`tracked_models` reference-table
+  plan was always a **native** scheduled write (Postgres JDBC read → Iceberg
+  write) — there is no pre-existing Parquet file to import for
+  Postgres-sourced tables, so no `add_files` and no signing-scope exposure.
+  Nothing in this section blocks F8.
+- **Plan 126 Gate D is the documented eventual replacement.** Its stated
+  "append-only sink from selected topics to MinIO/Iceberg" supersedes the
+  batch-era `add_files` sync when it lands. This decision is right for now,
+  and the plan already knows what replaces it — it is not a permanent
+  architecture commitment.
+
+### 2. Write mode: merge-on-read — PROVEN, including on `add_files`-imported files
+
+Gate C-era tables are **format-version 2, merge-on-read**, set via table
+properties:
+
+```sql
+TBLPROPERTIES (
+  'format-version'='2',
+  'write.delete.mode'='merge-on-read',
+  'write.update.mode'='merge-on-read',
+  'write.merge.mode'='merge-on-read'
+)
+```
+
+Verified on a table deliberately coalesced to **one multi-row data file**
+before the delete — this matters, because a trivial one-row-per-file delete
+would prove nothing (Iceberg can drop a whole file for free in that case, and
+the rewrite-vs-delta choice never gets exercised). Deleting 2 of 5 rows left
+the original 5-record DATA file byte-for-byte untouched and added a 2-record
+POS-DELETE file; reads after the delete were correct. Then re-verified
+identically against a file registered via `add_files` rather than natively
+written — **no behavioural difference between imported and native data
+files**.
+
+Why MoR and not copy-on-write: the Gate B canary already measured CoW's
+failure shape. `mart_scrape_volume`'s MERGE reported `deleted=1354 added=1354`
+for a 72-hour-window change on an unpartitioned CoW table — a small change
+rewrote the entire table (the "Gate C signal" the audit flagged). Tolerable at
+1,354 rows; not at production scale. CoW is also incompatible with Plan 126
+Gate D's stated direction — frequent small writes from a streaming consumer
+into a CoW table would mean a whole-table rewrite per micro-batch. MoR is the
+shape that does not need redoing when that lands.
+
+**Open, blocked on the runtime measurement (item 4):** whether the
+already-shipped Gate B `merge` models (`mart_scrape_volume`,
+`int_price_history`, both fingerprint models, `int_latest_observation`) should
+be reconfigured to MoR + a partition spec now that this is confirmed, and what
+that partition spec should be.
+
+### 3. `_runs` entity replacement: two-model decompose + pre-hook DELETE + append — SQL PROVEN, dbt wiring not yet
+
+The problem is unchanged from F1: `int_listing_state_runs` and
+`int_listing_observation_runs` are one row per **run**, many runs per entity
+(`vin17`/`listing_id`), and an incremental run must replace an affected
+entity's ENTIRE existing run set with a freshly recomputed set of possibly
+**different cardinality** — a late-arriving fingerprint can split one run into
+two, or merge two into one. `MERGE`'s 1:1 key-based row matching cannot
+express that; dbt-spark has no `delete+insert`. Gate B shipped both as
+full-rebuild `table`s.
+
+Confirmed design — and it is **not** Option C:
+
+1. **Model A** (new, small, cheap): the distinct set of "affected" entity keys
+   in the lookback window. Trivially row-unique, so an ordinary cheap `merge`
+   model with no entity-replacement problem of its own.
+2. **Model B** (the existing runs-recompute logic, restructured):
+   `incremental` + `incremental_strategy='append'`, with a `pre_hook` running
+   `DELETE FROM {{ this }} WHERE <entity_key> IN (SELECT <entity_key> FROM
+   {{ ref('Model A') }})` before the model's own SELECT — recomputed only for
+   the affected entities' full history — gets appended.
+
+The SQL primitive was verified end-to-end via direct Spark SQL against a MoR
+table shaped like the real models, including the case that actually matters —
+a cardinality-changing incremental run:
+
+```text
+first run (empty target):
+  INSERT VIN_A×3 runs, VIN_B×1 run  -> 4 single-row DATA files
+
+second run (VIN_A affected, cardinality changes 3 runs -> 2 runs):
+  Model A: affected keys = {VIN_A}
+  DELETE VIN_A's 3 current rows + INSERT the fresh 2-row recomputed set
+
+result: VIN_A = exactly the new 2-row set (correct — cardinality changed)
+        VIN_B = untouched at 1 row (correct — never touched)
+files:  6x DATA (all originals + the 2 new, no rewrites) + 1x POS-DELETE (3 records)
+```
+
+`MERGE ... WHEN NOT MATCHED BY SOURCE ... THEN DELETE` with a subquery in its
+condition was tried first and rejected by Spark
+(`UNSUPPORTED_MERGE_CONDITION.SUBQUERY: Subqueries are not allowed`) — but the
+identical subquery is legal in a plain `DELETE FROM ... WHERE key IN
+(subquery)`. That is *why* this is a two-statement (two Iceberg commit)
+design, not a single MERGE. The existing two-commit caveat — a reader between
+commits could see a partially-replaced entity — applies unchanged.
+
+Why this is not Option C: Option C is a custom dbt-spark incremental-strategy
+adapter fork, deferred behind a measured-necessity bar because it would need
+re-verification on every dbt-spark upgrade. This design uses **only vanilla,
+built-in, supported dbt features** — a `pre_hook` and the `append` strategy —
+and its SQL primitive (DELETE-with-subquery + INSERT) is the same one that
+closed the Gate B late-arrival gap
+([above](#late-arrival-and-correction-under-merge-closed-2026-07-17)), proven
+exact there on real data. Option C is now dominated: even if the runtime
+measurement says the full rebuild is too slow, the answer is this design, not
+an adapter fork.
+
+**What is genuinely unverified, stated narrowly:** whether dbt's `pre_hook` +
+`incremental`/`append` machinery actually sequences DELETE-then-INSERT
+correctly against a Spark/Iceberg target — especially on a first run, where
+`{{ this }}` does not exist yet. That is ordinary dbt hook-ordering behaviour,
+not an Iceberg/Spark capability question, but it has only been tested as raw
+`SparkSession.sql()` calls, never through an actual dbt model.
+
+### 4. Still owed: the runtime measurement
+
+Nothing above answers whether decision 2's partition spec for the shipped
+merge models needs to change, or whether decision 3's two-model design is
+actually cheaper than the current full rebuild at production scale. The
+measurement this gate has owed since Gate B has not been run. It blocks
+finalizing decision 2's partition spec and the build/don't-build call on
+decision 3 — whose mechanism is proven correct either way.
 
 ## Gate D: Reader Migration
 
