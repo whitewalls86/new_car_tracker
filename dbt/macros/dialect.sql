@@ -163,6 +163,86 @@
 
 
 {#- ---------------------------------------------------------------------------
+    F12 (cont.): casting to a string.
+
+    THE TRAP: `cast(x as varchar)` is a hard PARSE ERROR on Spark --
+    [DATATYPE_MISSING_SIZE] DataType "VARCHAR" requires a length parameter.
+    The audit filed this under F12 as "mechanical; the parity risk is rounding,
+    not syntax". It is the opposite: this one is pure syntax, and it fails loudly
+    rather than silently. Spark's unbounded string type is `string`.
+
+    Rendering is what actually matters, since every use site feeds an md5
+    fingerprint. Measured identical across both engines for the types this chain
+    hashes: int/smallint ('12345'), decimal(10,2) ('1234.50'), timestamp
+    ('2026-01-01 03:10:00'), and null -> null (which concat_ws then skips on
+    both).
+
+    BOUNDED CLAIM: every column the Gate B fingerprints cast is integer-family
+    (price/mileage/msrp integer; model_year/page_number/position_on_page
+    smallint) or already varchar (dealer_zip, seller_zip). DOUBLE is NOT safe
+    here and is deliberately not covered: DuckDB renders 1e21 as '1e+21' where
+    Spark renders '1.0E21'. The only float column in the source
+    (dealer_rating) is in no fingerprint. If a float is ever added to one,
+    re-measure before trusting this macro.
+---------------------------------------------------------------------------- -#}
+
+{% macro cast_to_string(value_expr) %}
+  {{ return(adapter.dispatch('cast_to_string', 'cartracker')(value_expr)) }}
+{% endmacro %}
+
+{% macro default__cast_to_string(value_expr) %}
+  cast({{ value_expr }} as varchar)
+{% endmacro %}
+
+{% macro spark__cast_to_string(value_expr) %}
+  cast({{ value_expr }} as string)
+{% endmacro %}
+
+
+{#- ---------------------------------------------------------------------------
+    F12 (cont.): the BARE `::numeric` cast.
+
+    Not the same item as `::numeric(5,2)`, which the audit measured as identical
+    and which stays a literal `cast(x as decimal(5,2))` in the models.
+
+    THE TRAP, measured, and it is two traps stacked:
+      1. DuckDB's bare `numeric` is DECIMAL(18,3). Spark's bare `decimal` is
+         DECIMAL(10,0) -- which ROUNDS: 5.5::numeric is 5.500 on DuckDB but
+         cast(5.5 as decimal) is 6 on Spark.
+      2. More decisive: in DuckDB, DIVISION promotes decimal to DOUBLE.
+         Measured: typeof(5::numeric / 2) = DOUBLE, while typeof(5::numeric * 100)
+         and typeof(5::numeric + 1) stay DECIMAL(18,3). Both use sites in this
+         chain divide immediately after the cast, so BOTH are double arithmetic
+         end to end. Spark's decimal division instead stays decimal at a derived,
+         truncated scale.
+
+    So the faithful translation of `x::numeric / y` is Spark's
+    `cast(x as double) / y` -- NOT any decimal spelling.
+
+    Why this matters unequally at the two sites:
+      * int_benchmarks rounds to decimal(5,2) at the end, which happens to mask
+        the difference (all three spellings measured 3.98 there). Coincidence at
+        that magnitude, not a guarantee.
+      * int_listing_volatility_features exposes price_vs_make_model_median RAW,
+        with no final rounding. There the divergence is live and visible:
+        DuckDB double 0.9602222222222222 vs Spark decimal(21,11) 0.96022222222 --
+        a different value AND a different column type.
+---------------------------------------------------------------------------- -#}
+
+{% macro cast_to_numeric(value_expr) %}
+  {{ return(adapter.dispatch('cast_to_numeric', 'cartracker')(value_expr)) }}
+{% endmacro %}
+
+{% macro default__cast_to_numeric(value_expr) %}
+  cast({{ value_expr }} as numeric)
+{% endmacro %}
+
+{% macro spark__cast_to_numeric(value_expr) %}
+  cast({{ value_expr }} as double)
+{% endmacro %}
+
+
+{#- ---------------------------------------------------------------------------
     F9: regex matching. DuckDB uses regexp_matches()/the Postgres `!~`
     operator; Spark uses RLIKE. Both return NULL (not false) on a null input,
     measured -- so the null-guard in stg_observations' CASE and in the

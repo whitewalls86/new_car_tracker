@@ -318,8 +318,36 @@ to keep backtests reproducible.
 ### F12. Casts (`::int`, `::numeric(5,2)`, `::timestamp`, `::date`)
 
 ~20 sites. Spark accepts `cast(x as ...)` but not `::`. `::numeric(5,2)`
-(`int_benchmarks.sql:23`) maps to `decimal(5,2)`. Mechanical; the parity risk is
-rounding, not syntax.
+(`int_benchmarks.sql:23`) maps to `decimal(5,2)`. ~~Mechanical; the parity risk is
+rounding, not syntax.~~
+
+**CORRECTED at Gate B (2026-07-16). "Mechanical; the parity risk is rounding, not
+syntax" was wrong on both halves, and this entry understated the most dangerous
+item in the audit.** Measured against both engines:
+
+| Cast | Audit said | Measured |
+|---|---|---|
+| `::int` | rounding risk | **Real, and it is the one that bites.** DuckDB rounds, Spark truncates: `1.9` → 2 vs 1. The match is `bround` (half-to-even), NOT `round` (half-up, wrong at 2.5). This — not F10 — is the source of the predicted "one-dollar difference on every benchmark row". |
+| `::numeric(5,2)` | maps to `decimal(5,2)` | **Correct**, identical including half-up at `2.555 → 2.56`. |
+| `::varchar` | not listed at all | **A hard PARSE ERROR on Spark**: `[DATATYPE_MISSING_SIZE] DataType "VARCHAR" requires a length parameter`. Pure syntax, not rounding. ~50 sites across the two fingerprint models and `int_listing_observation_runs`, every one feeding an `md5`. Spark's spelling is `string`. |
+| bare `::numeric` | not distinguished from `::numeric(5,2)` | **Two stacked divergences.** DuckDB's bare `numeric` is `DECIMAL(18,3)`; Spark's bare `decimal` is `DECIMAL(10,0)` and *rounds* (`5.5` → `6` vs DuckDB's `5.500`). Worse, DuckDB's **division promotes decimal to DOUBLE** (`typeof(5::numeric / 2)` = `DOUBLE`, while `* 100` and `+ 1` stay decimal). Both use sites divide immediately, so the faithful translation is `cast(x as double)`, not any decimal spelling. |
+
+The bare-`::numeric` divergence is invisible in `int_benchmarks` (its trailing
+`::numeric(5,2)` rounds all spellings to the same answer — a coincidence of
+magnitude) but **live and visible** in `int_listing_volatility_features`, which
+exposes `price_vs_make_model_median` raw: DuckDB `double 0.9602222222222222` vs
+Spark `decimal(21,11) 0.96022222222` — different value *and* different column type.
+
+Both are now adapter-dispatched macros (`cast_to_string`, `cast_to_numeric`) in
+[dbt/macros/dialect.sql](../dbt/macros/dialect.sql).
+
+**Bounded claim on `cast_to_string`:** every column the Gate B fingerprints cast
+is integer-family (`price`/`mileage`/`msrp` integer; `model_year`/`page_number`/
+`position_on_page` smallint) or already varchar (`dealer_zip`, `seller_zip`).
+Rendering is measured identical for those. **DOUBLE is NOT safe and is
+deliberately out of scope**: DuckDB renders `1e21` as `1e+21` where Spark renders
+`1.0E21`. The source's only float (`dealer_rating`) is in no fingerprint. If a
+float is ever added to one, re-measure before trusting the macro.
 
 ### F13. `join ... using (a, b)`
 
@@ -336,6 +364,96 @@ non-blocking.
 - The `httpfs`/`postgres_scanner` extensions and `s3_*` settings in
   `profiles.yml:31-45` are the DuckDB-specific MinIO wiring; the Iceberg path
   replaces this with `spark_conf_for_rest_catalog()`.
+
+### F15. Lateral column alias in a window ORDER BY — **FOUND AT GATE B, missed by the audit**
+
+Not in the original audit at all. It is neither a cast nor an aggregate, which is
+probably why a grep-driven pass missed it: the offending SQL contains no
+DuckDB-specific *token*.
+
+Both fingerprint models computed `parsed_fingerprint` in a SELECT list and then,
+**in that same SELECT list**, ordered a window function by it:
+
+```sql
+select
+    md5(concat_ws('|', ...)) as parsed_fingerprint,
+    row_number() over (
+        partition by artifact_id
+        order by fetched_at desc, parsed_fingerprint   -- <- lateral column alias
+    ) as artifact_row_number
+from source_rows
+```
+
+DuckDB permits it. Spark rejects it outright:
+`[UNSUPPORTED_FEATURE.LATERAL_COLUMN_ALIAS_IN_WINDOW]`.
+
+**Fix: rank in a separate CTE** (portable to both). The tempting alternative —
+inlining the `md5(...)` expression into the `ORDER BY` — was rejected
+deliberately: it would leave **two copies of an 18- and a 28-field hash** that
+must stay byte-identical forever, in the one model where the hash *is* the row's
+identity. A drifted copy would silently re-cut every run boundary.
+
+Fails loudly at build time, so blast radius is low. Noted because it shows the
+audit's grep-for-DuckDB-tokens method has a blind spot for *syntax DuckDB allows
+and Spark does not*, where the SQL itself looks ordinary.
+
+### F16. dbt unit tests cannot mock an `ephemeral` model — **FOUND AT GATE B; disproves a Gate A claim**
+
+Gate A recorded "dbt unit tests run on Spark" as **PROVEN**, citing 3 passing
+`mart_block_rate` tests. **Re-run at Gate B: they ERROR.** The claim was
+invalidated by Gate A's own later decision, and nobody re-ran it.
+
+The mechanism: dbt builds a dict-format fixture by introspecting the mocked
+input's relation to synthesize typed NULLs for unspecified columns
+(`get_fixture_sql` → `adapter.get_columns_in_relation`). Gate A's tests passed
+while `stg_blocked_cooldown_events` was still a `view` (a real relation). When
+Gate A switched staging to `ephemeral` on Spark — correctly, to fix a persisted
+view's `parquet.`s3a://…`` re-analysis failure — the relation ceased to exist,
+and with it the ability to mock it. **Ephemeral models never materialize at any
+point in a run**, so `dbt build` does not help either.
+
+Scope: it is a **test-harness metadata limitation, not a correctness or engine
+issue**. In the same failing run, the `not_null_stg_price_events_*` *data* tests
+PASS on Spark against the same ephemeral model — only *unit* tests introspect,
+and they fail at compile time before any SQL runs. 21 of 31 intermediate unit
+tests were affected (those mocking staging); the 10 mocking materialized models
+were fine.
+
+**Fix, measured and adopted: `format: sql` fixtures.** dbt-core skips
+`get_fixture_sql` entirely for SQL-format fixtures:
+
+```python
+if fixture_format == UnitTestFormat.SQL:
+    return rows          # no introspection
+else:
+    return "{{ get_fixture_sql(...) }}"   # always introspects
+```
+
+Zero behaviour change to any model. **Result: 38/38 unit tests pass on Spark**,
+and all 64 still pass on DuckDB (one file serves both).
+
+Two options were considered and rejected:
+
+- **Materialize staging as `table` on Spark.** Would work, but persists a full
+  copy of silver every run and diverges from DuckDB's `view` semantics — a real
+  production modelling change adopted to satisfy a *test* harness. Wrong trade.
+- **Declare column types on the input.** Not available: dbt-core passes
+  `column_name_to_data_types` empty for dict fixtures, with the comment *"We're
+  not currently using column_name_to_data_types, but leaving here for possible
+  future use."*
+
+Costs of the adopted fix, recorded honestly: SQL fixtures must spell out **every**
+column the model references (33 for `int_latest_observation`, ~31 and ~20 for the
+fingerprint models), because the auto-NULL fill is exactly what is being given up.
+Type names must be valid on **both** engines — `varchar` is a Spark parse error,
+so the fixtures use `string`, which is DuckDB's alias for VARCHAR and Spark's
+native name (verified on both). Only the first row of each union needs casts; it
+fixes the union's schema.
+
+Silver lining, and it is a real one: the fingerprint fixtures assert **hardcoded
+md5 digests** (e.g. `bb31f33225ad43103c76daa93981a307`). Those now pass on Spark,
+which unit-proves `md5` + `concat_ws` + `cast_to_string` produce identical
+digests — evidence independent of the parity run.
 
 ### Not found (good news)
 
@@ -659,6 +777,10 @@ identical**. The audit's risk ranking was inverted.
 | **`md5` / `concat_ws`** | — | **IDENTICAL on every probe.** Same digest; both skip nulls in `concat_ws`; `timestamp`, `int`, `double`, and `decimal(p,s)` all render to the same string. `md5(concat_ws('|', ts, src))` agreed digit-for-digit. |
 | **`decimal(p,s)` casts** | `cast(x as decimal(5,2))` | **Identical**, including half-up at `2.555 → 2.56`. |
 | **`trim` as a column name** | needs backticks? | **No change needed** — Spark accepts it bare. |
+| **`cast(x as varchar)`** | *(not measured — assumed mechanical under F12)* | **HARD PARSE ERROR on Spark** (`DATATYPE_MISSING_SIZE`). Spark's spelling is `string`; DuckDB accepts `string` as a VARCHAR alias, so `string` is the one spelling valid on both. See the [F12 correction](#f12-casts-int-numeric52-timestamp-date). |
+| **bare `x::numeric`** | *(not distinguished from `::numeric(5,2)`)* | **WRONG twice.** DuckDB `DECIMAL(18,3)` vs Spark `DECIMAL(10,0)` (which rounds `5.5`→`6`); and DuckDB's **division promotes to DOUBLE** while Spark's stays decimal. Correct translation: `cast(x as double)`. |
+| **lateral column alias in a window `ORDER BY`** | *(not found by the audit at all)* | **UNSUPPORTED on Spark** (`LATERAL_COLUMN_ALIAS_IN_WINDOW`); DuckDB allows it. Fix: rank in a separate CTE. See [F15](#f15-lateral-column-alias-in-a-window-order-by--found-at-gate-b-missed-by-the-audit). |
+| **`datediff('hour')` — full re-verification** | truncate-then-diff, 6 hand-picked cases | **830/830 exact** on a generated corpus (both directions, partial hours, near-boundary, cross-day/month/year, DST date, leap day). Critically, the corpus **discriminates**: the naive translation misses **392/830**. The original 6-case probe could not tell the two apart — its only negative case had both endpoints on exact hour boundaries. Reproduce: `scripts/verify_dialect_datediff.py`. |
 
 ### The md5/fingerprint risk is closed — on real data
 
@@ -670,11 +792,30 @@ matched**, zero value differences. Since `scrape_volume_key` is
 `md5(concat_ws('|', <timestamp>, <varchar>))`, that jointly exercises md5,
 `concat_ws`, and timestamp→string rendering at scale.
 
-This does not yet cover the *wide* fingerprints
+~~This does not yet cover the *wide* fingerprints
 (`int_listing_state_fingerprints`' 18-field and
 `int_listing_observation_fingerprints`' 28-field hashes), which add nullable
 varchar and numeric fields. But the mechanism is the same and the null/format
-semantics are now measured, so the residual risk is low rather than unknown.
+semantics are now measured, so the residual risk is low rather than unknown.~~
+
+**The wide fingerprints are now covered too, and risk #5 is fully closed
+(2026-07-16).** Both were built on Spark and compared field-for-field against
+DuckDB on the real snapshot:
+
+| Model | Hash width | Rows compared | Result |
+|---|---|---|---|
+| `int_listing_state_fingerprints` | 18 fields | **2,486** | exact, zero differences |
+| `int_listing_observation_fingerprints` | 28 fields | **16,847** | exact, zero differences |
+
+That jointly exercises `md5`, `concat_ws`, nullable varchar/numeric fields, and
+the new `cast_to_string` macro at scale. Independently, the fingerprint dbt unit
+tests assert **hardcoded md5 digests** and now pass on Spark — so the digests are
+proven both on real data and against literal expected values.
+
+One caveat worth keeping: this closes the risk **for the types this chain
+hashes** (integer-family and varchar). It says nothing about DOUBLE, which is
+measurably NOT identical (`1e+21` vs `1.0E21`) and is excluded by the
+`cast_to_string` bounded claim in [F12](#f12-casts-int-numeric52-timestamp-date).
 
 ### Consequence for the models
 
@@ -748,8 +889,28 @@ What that one run settles:
   "keep the Spark selection narrow" advice stands, but it is a preference, not a
   constraint.
 
-Still unproven, and not weakened by the above: that *all 64* tests pass on Spark.
-Only 3 have run. The triage below stands as an estimate.
+~~Still unproven, and not weakened by the above: that *all 64* tests pass on Spark.
+Only 3 have run. The triage below stands as an estimate.~~
+
+> **Two corrections from Gate B (2026-07-16).**
+>
+> **1. That run stopped being reproducible almost immediately.** Those same 3
+> tests ERROR today. Gate A's later switch of `stg_blocked_cooldown_events` from
+> `view` to `ephemeral` removed the relation dbt introspects to build a
+> dict-format fixture. The finding is written up as
+> [F16](#f16-dbt-unit-tests-cannot-mock-an-ephemeral-model--found-at-gate-b-disproves-a-gate-a-claim);
+> the fix is `format: sql` fixtures, which need no relation. The `+00` and
+> `safe_cast` conclusions above survive; the "unit tests run on Spark" headline
+> did not, until re-established below.
+>
+> **2. The coverage question is now settled, not estimated.** Every unit test for
+> every Spark-buildable model has been run: **38/38 PASS** (31 intermediate +
+> `mart_block_rate` 3 + `mart_scrape_volume` 3), in ~11s of Spark work plus JVM
+> startup — consistent with the per-test cost above. The remaining 26 of the 64
+> belong to models still blocked by F8 (`mart_vehicle_snapshot` and the rest of
+> the serving chain), so they cannot run on Spark for reasons unrelated to unit
+> testing. All 64 continue to pass on DuckDB. The triage below is therefore
+> superseded for the Gate B chain and stands only for the F8-blocked models.
 
 One structural advantage is already confirmed by reading the fixtures: every
 unit test on an incremental model uses

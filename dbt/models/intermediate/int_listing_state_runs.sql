@@ -1,8 +1,9 @@
 {{
   config(
-    materialized='incremental',
+    materialized='table' if target.type == 'spark' else 'incremental',
     unique_key='vin17',
-    incremental_strategy='delete+insert'
+    incremental_strategy='delete+insert',
+    file_format='iceberg' if target.type == 'spark' else none
   )
 }}
 
@@ -20,6 +21,20 @@
 -- per vin17. delete+insert with this unique_key deletes ALL existing target
 -- rows for each affected vin17 and reinserts its complete recomputed run
 -- history, so do not add a `unique` data test on vin17.
+--
+-- Plan 125 Gate B: on the spark target this is a full-rebuild `table`, and that
+-- is a deliberate downgrade, not an oversight. There is NO dbt-spark equivalent
+-- of entity-replacement delete+insert: 'merge' matches one target row per key
+-- and would strand this model's other runs for the same vin17, and the very
+-- absence of a `unique` test on vin17 (above) is what proves merge unsafe here.
+-- 'insert_overwrite' would need vin17 to be a partition column, which would
+-- shatter the table into one partition per VIN. dbt-spark supports no custom
+-- strategies at all (audit F1), so a forked materialization (Option C) is the
+-- only alternative and is explicitly deferred to Gate C behind a measured-
+-- necessity bar. This model is daily and already feeds a full-rebuild table
+-- (int_listing_volatility_features), so the cost is compute, not freshness.
+-- The `unique_key`/`incremental_strategy` configs above are inert under `table`
+-- and are kept solely for the duckdb target.
 --
 -- A late-arriving or corrected fingerprint can split a previously single run
 -- into two, or collapse what looked like two runs into one — both require
@@ -116,8 +131,8 @@ select
     run_started_at,
     run_ended_at,
     artifact_count,
-    datediff('hour', run_started_at, run_ended_at)        as run_duration_hours,
+    {{ datediff_hours('run_started_at', 'run_ended_at') }}        as run_duration_hours,
     next_state_started_at,
-    datediff('hour', run_ended_at, next_state_started_at) as hours_until_change,
-    next_state_started_at is null                         as is_open_run
+    {{ datediff_hours('run_ended_at', 'next_state_started_at') }} as hours_until_change,
+    next_state_started_at is null                                 as is_open_run
 from with_lead

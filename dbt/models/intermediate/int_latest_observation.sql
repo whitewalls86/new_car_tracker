@@ -2,7 +2,8 @@
   config(
     materialized='incremental',
     unique_key='vin17',
-    incremental_strategy='delete+insert'
+    incremental_strategy='merge' if target.type == 'spark' else 'delete+insert',
+    file_format='iceberg' if target.type == 'spark' else none
   )
 }}
 
@@ -59,7 +60,59 @@ candidates as (
 
 )
 
-select * exclude (_rn)
+-- Plan 125 Gate B (audit F2): `select * exclude (_rn)` is DuckDB-only syntax
+-- and is now spelled out as an explicit column list, which both targets share.
+--
+-- This makes the model's output schema EXPLICIT for the first time. Worth
+-- naming as a real risk rather than a tidy-up: `* exclude` meant this model's
+-- columns were whatever stg_observations happened to select, so a new source
+-- column used to flow through to every downstream consumer automatically. Now
+-- it will not — a column added to stg_observations must be added here too, or
+-- it silently stops appearing downstream.
+--
+-- Nothing currently catches that drift automatically, and it is worth being
+-- precise about why: this model's schema file documents only vin17/source/make,
+-- not the full column list, so it is not a backstop. Until Gate E the Gate B
+-- parity script's column-set check is the thing that would surface a mismatch,
+-- and only while the dual-run lasts. A `select *`-shaped contract cannot be
+-- both portable and drift-proof; explicit + tested beats implicit + unportable.
+--
+-- The list below is stg_observations' select list verbatim (vin17 replacing the
+-- raw vin passthrough position), minus _rn. Keep it in sync with that model.
+select
+    artifact_id,
+    listing_id,
+    source,
+    listing_state,
+    fetched_at,
+    written_at,
+    vin,
+    vin17,
+    price,
+    make,
+    model,
+    vehicle_trim,
+    model_year,
+    mileage,
+    msrp,
+    stock_type,
+    fuel_type,
+    body_style,
+    dealer_name,
+    dealer_zip,
+    dealer_city,
+    dealer_state,
+    customer_id,
+    canonical_detail_url,
+    financing_type,
+    seller_zip,
+    seller_customer_id,
+    page_number,
+    position_on_page,
+    trid,
+    isa_context,
+    body,
+    condition
 from (
     select
         *,

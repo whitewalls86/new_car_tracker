@@ -536,6 +536,57 @@ $COMPOSE run --rm lakehouse-worker python -m scripts.run_dbt_spark -- \
 $COMPOSE run --rm lakehouse-worker python -m scripts.compare_gate_a_parity
 ```
 
+### Commands to reproduce Gate B locally
+
+Same stack. **Both builds must use the same `--vars as_of_at`**: without it
+`int_listing_volatility_features` falls back to `now()`, the two builds run
+minutes apart, and every `days_since_*` feature drifts for reasons that have
+nothing to do with the engines.
+
+```bash
+AS_OF='{"as_of_at": "2026-06-01T00:00:00+00:00"}'
+
+# 0. Rebuild BOTH images after touching any dbt file -- cached layers won't
+#    include them. This costs a debugging pass every time it is skipped.
+docker build -f dbt/Dockerfile -t cartracker-dbt-local .
+docker build -f lakehouse/Dockerfile --target lakehouse-worker -t cartracker-lakehouse:latest .
+
+# 1. DuckDB baseline (the parity reference). Expect PASS=201; the single
+#    stg_search_configs error is the F8 postgres_scan model and is expected
+#    locally -- there is no local Postgres.
+MSYS_NO_PATHCONV=1 docker run --rm --network local-lakehouse_cartracker-net \
+  -e DUCKDB_PATH=/out/analytics.duckdb -e MINIO_ENDPOINT=http://minio:9000 \
+  -e MINIO_ROOT_USER=cartracker -e MINIO_ROOT_PASSWORD=cartracker123 \
+  -e MINIO_BUCKET=bronze \
+  -e POSTGRES_URL=postgresql://unused:unused@localhost:5432/unused \
+  -v "$(pwd -W)/.cache/analytics:/out" cartracker-dbt-local \
+  build --target duckdb --full-refresh --vars "$AS_OF"
+
+# 2. Build all ten models into Iceberg, verifying every table via the catalog.
+$COMPOSE run --rm lakehouse-worker python -m scripts.run_dbt_spark \
+  --verify-table int_price_history --verify-table int_listing_state_fingerprints \
+  --verify-table int_listing_observation_fingerprints --verify-table int_listing_state_runs \
+  --verify-table int_listing_observation_runs --verify-table int_latest_observation \
+  --verify-table int_benchmarks --verify-table int_listing_volatility_features -- \
+  run --select +int_listing_volatility_features --vars "$AS_OF"
+
+# 3. dbt unit tests on Spark (expect 38/38).
+$COMPOSE run --rm lakehouse-worker python -m scripts.run_dbt_spark -- \
+  test --select "intermediate,test_type:unit" "mart_block_rate,test_type:unit" \
+               "mart_scrape_volume,test_type:unit"
+
+# 4. Parity (expect 101/101, exact). Needs the MinIO vars: the tie queries read
+#    stg_* which are views over Parquet, not tables in the .duckdb file.
+MSYS_NO_PATHCONV=1 $COMPOSE run --rm \
+  -e MINIO_ROOT_USER=cartracker -e MINIO_ROOT_PASSWORD=cartracker123 \
+  -e MINIO_ENDPOINT=http://minio:9000 \
+  -v "$(pwd -W)/.cache/analytics:/data/analytics" \
+  lakehouse-worker python -m scripts.compare_gate_b_parity
+
+# 5. Re-verify the datediff macros against the committed 830-case corpus.
+$COMPOSE run --rm lakehouse-worker python -m scripts.verify_dialect_datediff --check
+```
+
 On Windows/Git Bash, prefix the `docker run` in step 1 with `MSYS_NO_PATHCONV=1`
 or the `/out` mount path is mangled into a Windows path.
 
@@ -560,26 +611,53 @@ narrow, isolated dbt-spark CI job at Gate B, when migrated models start carrying
 required unit tests — the measured per-test cost above (~0.4s) makes that look
 affordable.
 
+> **Revisited at Gate B, and the answer flipped to yes** (unit tests only, not
+> parity): [CI decision](#ci-decision-add-a-narrow-dbt-spark-unit-test-job--the-gate-a-calculus-has-changed).
+> The deciding evidence was not cost but F16 — Gate A's own unit-test claim
+> silently stopped being true and no job existed to notice.
+
 ### What Gate A does and does not prove
 
 Proven: dbt-spark session mode drives Lakekeeper + `S3FileIO` through a full dbt
 build; Spark reads normalized Parquet directly (`hadoop-aws`, `s3a://`,
 Hive-partition discovery); dbt writes a real Iceberg table to the intended
-catalog; DuckDB parity is exact; dbt unit tests run on Spark, `+00` literals and
-all.
+catalog; DuckDB parity is exact; ~~dbt unit tests run on Spark, `+00` literals and
+all.~~
 
-Not proven, and explicitly still open: **any incremental strategy** (Gate A has
+> **CORRECTED at Gate B: the unit-test claim above was invalidated by Gate A
+> itself.** Those 3 `mart_block_rate` tests passed while
+> `stg_blocked_cooldown_events` was still a `view`. Gate A then switched staging
+> to `ephemeral` — correctly — which removed the relation dbt introspects to
+> build a dict fixture, and the tests began to ERROR. Nobody re-ran them, so the
+> table above kept saying PROVEN for a claim that had stopped being true. They
+> pass again as of Gate B, via `format: sql` fixtures. Full mechanism and fix:
+> [F16](plan_125_portability_audit.md#f16-dbt-unit-tests-cannot-mock-an-ephemeral-model--found-at-gate-b-disproves-a-gate-a-claim).
+> The `+00` literal half of the claim stands.
+>
+> This is the clearest evidence in the whole plan that a documented PASS decays.
+> It is the main argument behind [the Gate B CI decision](#ci-decision-add-a-narrow-dbt-spark-unit-test-job--the-gate-a-calculus-has-changed).
+
+~~Not proven, and explicitly still open: **any incremental strategy** (Gate A has
 none — `merge`/`insert_overwrite` remain unproven, and `mart_scrape_volume` is
 still the right canary); the F8 `postgres_scan` replacement; parity at
 production scale or on wide/rounding-sensitive models (F5/F10/F12); fingerprint
-`md5` parity; and the `session`-mode-is-experimental risk over long runs.
+`md5` parity; and the `session`-mode-is-experimental risk over long runs.~~
+
+**Updated after Gate B.** Of that list: `merge` is proven (and
+`insert_overwrite` was measured to be the *wrong* choice, not merely unproven);
+parity on wide/rounding-sensitive models is proven exactly (F5/F10/F12, including
+the 28-field fingerprint); `md5` parity is proven on 16,847 real rows. Still open
+and unchanged: the **F8 `postgres_scan` replacement** (blocks the serving chain
+only), the **`session`-mode-is-experimental risk over long runs**, and
+`insert_overwrite` (now deliberately unused rather than pending). Newly open:
+[late-arrival/correction behaviour under `merge`](#open-gap-the-phases-have-no-spark-target-consumer).
 
 ## Gate B: First Real Model Chain
 
-**Status: IN PROGRESS (2026-07-16).** The F1 canary is done and its result
-inverts the audit's recommendation; the dialect translation is measured and
-implemented; the staging layer builds on Spark. The seven remaining models are
-not yet ported. See [Gate B progress](#gate-b-progress-2026-07-16).
+**Status: COMPLETE for the port + parity + unit tests (2026-07-16); one
+verification gap remains open and is named below.** All ten models build into
+Iceberg and hit exact parity with DuckDB on the real snapshot. See
+[Gate B progress](#gate-b-progress-2026-07-16).
 
 Port the first useful adaptive-refresh feature chain to Iceberg.
 
@@ -653,20 +731,171 @@ snapshot download is needed for hash/rounding confidence. A larger snapshot may
 still be worth it for the *runtime* question on the two full-rebuild `_runs`
 models, but that is a Gate C measurement, not a Gate B blocker.
 
-### Not yet done
+### All ten models are ported and at exact parity (2026-07-16)
 
-- Seven of the ten models (`int_price_history`, both fingerprint models, both
-  `_runs` models, `int_latest_observation`, `int_benchmarks`,
-  `int_listing_volatility_features`).
-- The Gate B parity script with a stated numeric tolerance. **The tolerance is
-  now easier to argue than expected:** every measured divergence is either
-  exactly reproducible (`bround`, the `filter`, truncate-then-diff `datediff`) or
-  a genuine tie-nondeterminism. So the working proposal is **exact equality on
-  all fields, with arg_max/arg_min tie rows reported as a separate, explicitly
-  enumerated category** rather than a blanket ±1 tolerance — a numeric tolerance
-  would hide the F12 truncation bug that `bround` actually fixes.
-- Extended seed fixture phases; per-model dbt unit tests on Spark; the CI
-  decision.
+Every model was built into Iceberg via `scripts/run_dbt_spark` and **verified
+through the catalog** (`provider=iceberg`, `s3://` location), not via dbt's exit
+code. Parity is `scripts/compare_gate_b_parity.py` against a DuckDB build from
+the same snapshot and the same `--vars as_of_at`:
+
+| Model | Spark materialization | Rows | Parity |
+|---|---|---|---|
+| `int_price_history` | `merge` on `vin` | 206 | exact |
+| `int_listing_state_fingerprints` | `merge` on `artifact_id` | 2,486 | exact (18-field md5) |
+| `int_listing_observation_fingerprints` | `merge` on `observation_id` | 16,847 | exact (28-field md5) |
+| `int_listing_state_runs` | `table` (full rebuild) | 529 | exact |
+| `int_listing_observation_runs` | `table` (full rebuild) | 1,135 | exact |
+| `int_latest_observation` | `merge` on `vin17` | 239 | exact |
+| `int_benchmarks` | `table` | 12 | exact |
+| `int_listing_volatility_features` | `table` | 214 | exact |
+
+`stg_observations` / `stg_price_events` are ephemeral on Spark — no stored output
+to compare, by construction. **Result: 101/101 parity checks passed, 0 differences.**
+
+Also verified along the way:
+
+- **DuckDB is unaffected**: full `dbt build --target duckdb --full-refresh` →
+  **PASS=201**, identical to the pre-Gate-B baseline. (The 1 error is
+  `stg_search_configs`, the F8 `postgres_scan` model, which needs a real Postgres
+  no local run has. Pre-existing and environmental; it accounts for the 40 skips.)
+- **Merge idempotency on Iceberg**: a second `run --select
+  +int_listing_volatility_features` held every row count and produced 0 duplicate
+  keys on all four merge models.
+- **dbt unit tests: 38/38 PASS on Spark** (31 intermediate + `mart_block_rate` 3 +
+  `mart_scrape_volume` 3), and all 64 still pass on DuckDB.
+
+Before any model was ported, two cast items the audit had filed as "mechanical"
+turned out not to be, and one construct the audit never found at all blocked the
+build. Both are written up in the audit:
+[F12 corrected](plan_125_portability_audit.md#f12-casts-int-numeric52-timestamp-date),
+[F15](plan_125_portability_audit.md#f15-lateral-column-alias-in-a-window-order-by--found-at-gate-b-missed-by-the-audit).
+
+### The datediff verification gap is closed — and the old probe could not have caught it
+
+`spark__datediff_hours` was previously verified on **6 hand-picked cases**, whose
+only negative case had both endpoints on exact hour boundaries — so it could not
+discriminate the truncate-then-diff form from the naive elapsed-time form at all.
+
+Re-verified on an **830-case generated corpus** (both directions, arbitrary
+minute/second offsets, adversarial near-boundary, cross-day/month/year, a DST
+date, a leap day, large spans), with DuckDB's real answers as expected values:
+
+- `datediff_hours`: **830/830 exact**
+- `datediff_days`: **830/830 exact**
+- the naive `(unix_timestamp(b) - unix_timestamp(a)) / 3600` translation would
+  **miss 392/830** — i.e. the corpus genuinely discriminates.
+
+This matters because these feed `run_duration_hours` and `hours_until_change`,
+real model features, where a miss is silent feature drift rather than an error.
+`scripts/verify_dialect_datediff.py --check` re-runs it against the committed
+corpus (`tests/fixtures/datediff_cases.json`), and **fails loudly if the corpus
+ever stops discriminating** — a corpus both forms pass would prove nothing, which
+is exactly how the 6-case probe passed while leaving the bug reachable. It renders
+the real macro bodies out of `dialect.sql` rather than a hand-copy, so it tests
+the macro the models actually compile with.
+
+### Parity tolerance: exact, with ties enumerated separately
+
+**Decision: exact equality on every field. No numeric tolerance.** Reasoning, from
+`scripts/compare_gate_b_parity.py`'s docstring:
+
+- Every measured divergence is either exactly reproducible via
+  `dbt/macros/dialect.sql` or a genuine tie nondeterminism. There is no third
+  "close enough" category for a tolerance to absorb.
+- A ±1 tolerance would specifically **hide** the F12 truncation bug that
+  `cast_to_int`/`bround` exists to fix — a one-dollar difference on every
+  benchmark row. The bug and the tolerance are the same size. Disqualifying.
+- Ties differ in kind, not degree, so they are reported and counted but excluded
+  from the verdict. Tie keys are computed from the **source** data, never inferred
+  from the observed differences — otherwise a real defect on a tied key could
+  excuse itself.
+
+The comparator does normalize three *representation* differences, none of which is
+a tolerance: tz-aware DuckDB vs naive Spark datetimes (compared as instants —
+sound only because the session is pinned to UTC, which the script now **asserts**
+as a first-class check rather than assuming), `Decimal` vs `float`, and `bool` vs
+0/1.
+
+**Honest caveat: the real snapshot contains ZERO arg_max ties**, so the tie path
+never executed during the parity run. It is proven only by unit test
+(`tests/lakehouse/test_gate_b_parity.py`, 25 tests), which covers that a tie is
+reported not swallowed, that a tie key does not excuse unrelated columns, and
+that a tie column on a non-tie key still fails.
+
+### Fixture phases: the required phases already existed
+
+**Correction to the Gate B plan.** It called for extending
+`scripts/seed_lake_snapshot_fixture.py` "with crafted phases per migrated model".
+Checked against the file: **all seven already exist**, built by Plan 123 —
+`observation_fingerprint`, `detail_fingerprint`, `price_history`,
+`listing_state_runs`, `scrape_volume`, `latest_observation`, and
+`observation_runs`. `int_benchmarks` and `int_listing_volatility_features` are
+`table` models with no incremental logic, so they need none. No new phases were
+required, and none were invented.
+
+The audit's proposed negative fixture — proving a disappearing `(hour, source)`
+row is *removed* from `mart_scrape_volume` — remains **moot**: that premise was
+measured false (delete+insert strands it too), so a fixture asserting it would
+encode a behaviour neither engine has.
+
+### OPEN GAP: the phases have no Spark-target consumer
+
+**Not verified, and not claimed.** The existing phases are consumed only by
+`tests/integration/dbt/*` against `--target duckdb`. Nothing runs them against
+Spark, so **late-arrival lookback pickup and correction replacement are unproven
+on the `merge` strategy**. This is precisely the gap no unit test can close (all
+unit tests override `is_incremental: false`).
+
+What *is* proven on Spark: bootstrap-from-empty (the first build) and idempotent
+rerun (row counts held, 0 duplicate keys) — plus full-refresh equivalence, since
+the parity run compares a full-refresh DuckDB build against the Spark build.
+
+It could not be verified in this environment: the seeder imports the archiver's
+writer schemas, which pull in `psycopg2`, absent from the lakehouse image; no
+local image has both the archiver's dependencies and Spark. Closing this needs
+either that dependency available to a Spark-capable image or the CI job below.
+**Until then, treat merge-vs-delete+insert equivalence under late arrivals and
+corrections as argued (from the F1 canary measurement) but not demonstrated.**
+
+### CI decision: add a narrow dbt-spark unit-test job — the Gate A calculus has changed
+
+**Decision: yes, add one — but scoped to unit tests only, not a parity job.**
+Gate A said "revisit at Gate B, when migrated models start carrying required unit
+tests; the measured per-test cost (~0.4s) makes that look affordable." Three
+things have changed, and two of them only became true today:
+
+1. **There is now something worth running.** Gate A had 2 models and 3 unit tests
+   behind a target nothing uses. Gate B has 10 models, real incremental logic, and
+   38 passing Spark unit tests.
+2. **Unit tests on Spark were silently broken for ~a day and nobody noticed**
+   ([F16](plan_125_portability_audit.md#f16-dbt-unit-tests-cannot-mock-an-ephemeral-model--found-at-gate-b-disproves-a-gate-a-claim)).
+   Gate A recorded them PASSING; Gate A's own later `view`→`ephemeral` switch broke
+   them; the doc still said PROVEN. **That is the strongest possible argument for
+   this job**: the regression was invisible precisely because nothing re-ran it.
+   A green doc table is not a test.
+3. **The cost is now measured, not estimated**: 38 tests in **~11s** of Spark work
+   plus ~10s JVM startup. No Lakekeeper, no MinIO, no seeded snapshot — unit tests
+   mock all inputs, so the job needs only the image and a local SparkSession.
+
+Scope, deliberately narrow:
+
+- **In:** `dbt test --select "<migrated models>,test_type:unit"` via
+  `scripts/run_dbt_spark`, in its own isolated venv (dbt-spark must not share a
+  resolver with dbt-duckdb — see the standing constraint that packages isolated in
+  their own prod image need their own isolated CI venv).
+- **Out: the parity run and the phased fixtures.** Those need Lakekeeper + MinIO +
+  a seeded snapshot + a DuckDB build — minutes, and a lot of moving infrastructure
+  to guard a non-production target. They stay local/VM-verified until the Spark
+  path is closer to authoritative (Gate D/E). This is the honest trade: the CI job
+  catches *dialect and compile* regressions cheaply and would have caught F16; it
+  does **not** close the open gap above.
+- The existing `dbt build + test` job stays untouched and no slower.
+
+Unchanged from Gate A, and still running in the normal fast unit job with neither
+pyspark nor a container:
+`tests/lakehouse/test_dbt_spark_session_config.py`,
+`tests/lakehouse/test_gate_a_parity.py`, and now
+`tests/lakehouse/test_gate_b_parity.py` (25 tests).
 
 Required parity checks against existing DuckDB output:
 
@@ -684,6 +913,13 @@ This gate should not switch dashboards yet. It proves correctness.
 ## Gate C: Incremental Semantics
 
 Recreate the Plan 123 incremental behavior in the Iceberg path.
+
+**Status update (Gate B, 2026-07-16): every strategy in the table below is now
+implemented and building on Spark, and all eight models hit exact parity.** What
+Gate C still owns is the part Gate B could not demonstrate: late-arrival and
+correction behaviour under `merge`, which needs a Spark-target consumer of the
+seed fixture phases (see [the open gap](#open-gap-the-phases-have-no-spark-target-consumer)),
+plus the runtime measurement on the two full-rebuild models.
 
 Per-model strategy, decided at the Gate A research pass (full rationale:
 [Incremental strategy decision](plan_125_portability_audit.md#incremental-strategy-decision)).
