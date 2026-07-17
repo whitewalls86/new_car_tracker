@@ -27,6 +27,34 @@ FROM python:3.13-slim-bookworm AS lakehouse-worker
 ARG ICEBERG_SPARK_RUNTIME_VERSION=1.6.1
 ARG ICEBERG_AWS_BUNDLE_VERSION=1.6.1
 
+# Plan 125 Gate A: hadoop-aws + the AWS SDK v1 bundle it needs, serving ONLY
+# `s3a://` reads of plain (non-Iceberg) Parquet.
+#
+# This does not contradict the S3FileIO note above -- the two cover genuinely
+# different code paths, and both are required:
+#
+#   * Iceberg TABLE reads/writes (Lakekeeper's `s3://` locations) go through
+#     Iceberg's own S3FileIO, from the shaded iceberg-aws-bundle. Unchanged.
+#   * Plain `spark.read.parquet(...)` of the normalized silver/ops_normalized
+#     Parquet does NOT involve Iceberg at all -- it resolves the scheme via
+#     Hadoop's FileSystem API, which has no handler for `s3`/`s3a` unless
+#     hadoop-aws is on the classpath. Verified empirically at Gate A: without
+#     these jars, reading ops_normalized Parquet fails with
+#     `UnsupportedFileSystemException: No FileSystem for scheme "s3"` and
+#     `ClassNotFoundException: ...s3a.S3AFileSystem`. No previous script hit
+#     this because A2 used synthetic in-memory rows and A3 read via DuckDB.
+#
+# The two coexist: hadoop-aws uses AWS SDK v1 (com.amazonaws), while
+# iceberg-aws-bundle shades SDK v2 (software.amazon.awssdk) -- different
+# packages, no classpath conflict. Verified: a single Spark session reads
+# s3a:// Parquet AND resolves the Iceberg REST catalog.
+#
+# hadoop-aws MUST match the hadoop-client-api/runtime version pyspark 3.5.3
+# bundles (3.3.4) -- a mismatch is a NoSuchMethodError at runtime. The SDK
+# bundle version is the one hadoop 3.3.4 was built against.
+ARG HADOOP_AWS_VERSION=3.3.4
+ARG AWS_JAVA_SDK_BUNDLE_VERSION=1.12.262
+
 # Debian's openjdk-17 package installs to an architecture-suffixed path
 # (java-17-openjdk-amd64 on x86_64 CI runners, java-17-openjdk-arm64 on the
 # OCI A1/Ampere ARM64 VM -- see docs/plan_105_vm_migration.md) -- resolve it
@@ -51,9 +79,19 @@ RUN SPARK_JARS_DIR="$(python -c 'import pyspark, os; print(os.path.join(os.path.
     && curl -fsSL -o "$SPARK_JARS_DIR/iceberg-spark-runtime-3.5_2.12-${ICEBERG_SPARK_RUNTIME_VERSION}.jar" \
        "https://repo1.maven.org/maven2/org/apache/iceberg/iceberg-spark-runtime-3.5_2.12/${ICEBERG_SPARK_RUNTIME_VERSION}/iceberg-spark-runtime-3.5_2.12-${ICEBERG_SPARK_RUNTIME_VERSION}.jar" \
     && curl -fsSL -o "$SPARK_JARS_DIR/iceberg-aws-bundle-${ICEBERG_AWS_BUNDLE_VERSION}.jar" \
-       "https://repo1.maven.org/maven2/org/apache/iceberg/iceberg-aws-bundle/${ICEBERG_AWS_BUNDLE_VERSION}/iceberg-aws-bundle-${ICEBERG_AWS_BUNDLE_VERSION}.jar"
+       "https://repo1.maven.org/maven2/org/apache/iceberg/iceberg-aws-bundle/${ICEBERG_AWS_BUNDLE_VERSION}/iceberg-aws-bundle-${ICEBERG_AWS_BUNDLE_VERSION}.jar" \
+    && curl -fsSL -o "$SPARK_JARS_DIR/hadoop-aws-${HADOOP_AWS_VERSION}.jar" \
+       "https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-aws/${HADOOP_AWS_VERSION}/hadoop-aws-${HADOOP_AWS_VERSION}.jar" \
+    && curl -fsSL -o "$SPARK_JARS_DIR/aws-java-sdk-bundle-${AWS_JAVA_SDK_BUNDLE_VERSION}.jar" \
+       "https://repo1.maven.org/maven2/com/amazonaws/aws-java-sdk-bundle/${AWS_JAVA_SDK_BUNDLE_VERSION}/aws-java-sdk-bundle-${AWS_JAVA_SDK_BUNDLE_VERSION}.jar"
 
 COPY . .
+
+# Plan 125 Gate A: install the dbt project's packages (dbt/packages.yml) so
+# `dbt build --target spark` can run -- dbt refuses to build when packages.yml
+# lists packages that are not installed. Same step dbt/Dockerfile performs;
+# resolved from dbt Hub over HTTPS, so no git in the image is required.
+RUN cd /app/dbt && dbt deps
 
 # One-shot worker (profile-gated in docker-compose.lakehouse.yml) -- no
 # default CMD that starts a long-running process; invoked directly via

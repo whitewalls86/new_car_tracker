@@ -28,6 +28,38 @@ cartracker:
       dbname: "{{ env_var('DBT_DBNAME', 'cartracker') }}"
       schema: analytics_ci
       threads: 4
+    # Plan 125 Gate A: dbt-spark -> Iceberg via the Lakekeeper REST catalog.
+    # NOT a production target -- `dbt_runner` still hardcodes `--target duckdb`.
+    #
+    # Run this ONLY through `python -m scripts.run_dbt_spark` inside
+    # lakehouse-worker. That runner pre-creates the SparkSession from
+    # shared/iceberg_catalog.py's spark_conf_for_dbt_session() before handing
+    # off to dbt; dbt-spark's session mode then picks that session up via
+    # SparkSession.builder.getOrCreate().
+    #
+    # Why the catalog/MinIO config is NOT spelled out here as
+    # `server_side_parameters`: that would duplicate the catalog wiring into a
+    # second file and break the Gate 0.5 R1/R2 guarantee that a catalog swap
+    # edits shared/iceberg_catalog.py alone. The cost is that a bare
+    # `dbt build --target spark` (no runner) gets an unconfigured session and
+    # would silently write to `spark_catalog` instead of Iceberg -- which is
+    # exactly why run_dbt_spark asserts the default catalog before running and
+    # verifies the table in Lakekeeper afterwards, rather than trusting dbt's
+    # exit code.
+    spark:
+      type: spark
+      method: session
+      # Required by dbt-spark's schema, unused by session mode (in-process,
+      # no server to connect to).
+      host: NA
+      # The Iceberg namespace. dbt-spark relations are two-part
+      # (schema.identifier), so the catalog half comes from
+      # spark.sql.defaultCatalog -- see spark_conf_for_dbt_session().
+      schema: "{{ env_var('ICEBERG_WAREHOUSE_NAME', 'cartracker_experiments') }}"
+      # One in-process JVM; parallelism here would contend for the same
+      # driver rather than add throughput.
+      threads: 1
+
     duckdb:
       type: duckdb
       path: "{{ env_var('DUCKDB_PATH') }}"

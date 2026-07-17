@@ -1,3 +1,14 @@
+# The stg_* fixtures below are `format: sql` rather than the nicer dict form for
+# the reason documented at the top of models/intermediate/unit_tests.yml: dbt
+# builds a dict fixture by introspecting the mocked input's relation, and the
+# staging models are `ephemeral` on the spark target, which never materializes
+# one. See docs/plan_125_portability_audit.md § F16.
+#
+# Note for mart_vehicle_snapshot / mart_detail_batch_outcomes / mart_deal_scores:
+# these are still F8-blocked (postgres_scan) and so cannot build on spark at all
+# yet. Their fixtures were converted alongside the rest to keep one convention in
+# this file, and they are verified on duckdb only until F8 is resolved.
+
 unit_tests:
 
   # ---------------------------------------------------------------------------
@@ -23,9 +34,41 @@ unit_tests:
         rows:
           - {make: "honda", model: "crv"}
       - input: ref('stg_observations')
-        rows:
-          - {vin17: "DETAIL0ACTIVE00001", source: "detail", listing_state: "active",
-             fetched_at: "2026-01-10 12:00:00+00"}
+        format: sql
+        rows: |
+          select cast(null as bigint) as artifact_id,
+                 cast(null as string) as listing_id,
+                 cast('detail' as string) as source,
+                 cast('active' as string) as listing_state,
+                 cast('2026-01-10 12:00:00+00' as timestamp) as fetched_at,
+                 cast(null as timestamp) as written_at,
+                 cast(null as string) as vin,
+                 cast('DETAIL0ACTIVE00001' as string) as vin17,
+                 cast(null as integer) as price,
+                 cast(null as string) as make,
+                 cast(null as string) as model,
+                 cast(null as string) as vehicle_trim,
+                 cast(null as smallint) as model_year,
+                 cast(null as integer) as mileage,
+                 cast(null as integer) as msrp,
+                 cast(null as string) as stock_type,
+                 cast(null as string) as fuel_type,
+                 cast(null as string) as body_style,
+                 cast(null as string) as dealer_name,
+                 cast(null as string) as dealer_zip,
+                 cast(null as string) as dealer_city,
+                 cast(null as string) as dealer_state,
+                 cast(null as string) as customer_id,
+                 cast(null as string) as canonical_detail_url,
+                 cast(null as string) as financing_type,
+                 cast(null as string) as seller_zip,
+                 cast(null as string) as seller_customer_id,
+                 cast(null as smallint) as page_number,
+                 cast(null as smallint) as position_on_page,
+                 cast(null as string) as trid,
+                 cast(null as string) as isa_context,
+                 cast(null as string) as body,
+                 cast(null as string) as condition
     expect:
       rows:
         - {vin: "DETAIL0ACTIVE00001", listing_state: "active"}
@@ -53,9 +96,41 @@ unit_tests:
         rows:
           - {make: "honda", model: "crv"}
       - input: ref('stg_observations')
-        rows:
-          - {vin17: "SRPONLY0RECENT0001", source: "srp", listing_state: null,
-             fetched_at: "2026-01-10 12:00:00+00"}
+        format: sql
+        rows: |
+          select cast(null as bigint) as artifact_id,
+                 cast(null as string) as listing_id,
+                 cast('srp' as string) as source,
+                 cast(null as string) as listing_state,
+                 cast('2026-01-10 12:00:00+00' as timestamp) as fetched_at,
+                 cast(null as timestamp) as written_at,
+                 cast(null as string) as vin,
+                 cast('SRPONLY0RECENT0001' as string) as vin17,
+                 cast(null as integer) as price,
+                 cast(null as string) as make,
+                 cast(null as string) as model,
+                 cast(null as string) as vehicle_trim,
+                 cast(null as smallint) as model_year,
+                 cast(null as integer) as mileage,
+                 cast(null as integer) as msrp,
+                 cast(null as string) as stock_type,
+                 cast(null as string) as fuel_type,
+                 cast(null as string) as body_style,
+                 cast(null as string) as dealer_name,
+                 cast(null as string) as dealer_zip,
+                 cast(null as string) as dealer_city,
+                 cast(null as string) as dealer_state,
+                 cast(null as string) as customer_id,
+                 cast(null as string) as canonical_detail_url,
+                 cast(null as string) as financing_type,
+                 cast(null as string) as seller_zip,
+                 cast(null as string) as seller_customer_id,
+                 cast(null as smallint) as page_number,
+                 cast(null as smallint) as position_on_page,
+                 cast(null as string) as trid,
+                 cast(null as string) as isa_context,
+                 cast(null as string) as body,
+                 cast(null as string) as condition
     expect:
       rows:
         - {vin: "SRPONLY0RECENT0001", listing_state: "active"}
@@ -79,9 +154,41 @@ unit_tests:
         rows:
           - {make: "honda", model: "crv"}
       - input: ref('stg_observations')
-        rows:
-          - {vin17: "SRPONLY00000OLD001", source: "srp", listing_state: null,
-             fetched_at: "2025-12-01 12:00:00+00"}
+        format: sql
+        rows: |
+          select cast(null as bigint) as artifact_id,
+                 cast(null as string) as listing_id,
+                 cast('srp' as string) as source,
+                 cast(null as string) as listing_state,
+                 cast('2025-12-01 12:00:00+00' as timestamp) as fetched_at,
+                 cast(null as timestamp) as written_at,
+                 cast(null as string) as vin,
+                 cast('SRPONLY00000OLD001' as string) as vin17,
+                 cast(null as integer) as price,
+                 cast(null as string) as make,
+                 cast(null as string) as model,
+                 cast(null as string) as vehicle_trim,
+                 cast(null as smallint) as model_year,
+                 cast(null as integer) as mileage,
+                 cast(null as integer) as msrp,
+                 cast(null as string) as stock_type,
+                 cast(null as string) as fuel_type,
+                 cast(null as string) as body_style,
+                 cast(null as string) as dealer_name,
+                 cast(null as string) as dealer_zip,
+                 cast(null as string) as dealer_city,
+                 cast(null as string) as dealer_state,
+                 cast(null as string) as customer_id,
+                 cast(null as string) as canonical_detail_url,
+                 cast(null as string) as financing_type,
+                 cast(null as string) as seller_zip,
+                 cast(null as string) as seller_customer_id,
+                 cast(null as smallint) as page_number,
+                 cast(null as smallint) as position_on_page,
+                 cast(null as string) as trid,
+                 cast(null as string) as isa_context,
+                 cast(null as string) as body,
+                 cast(null as string) as condition
     expect:
       rows:
         - {vin: "SRPONLY00000OLD001", listing_state: "unlisted"}
@@ -101,9 +208,41 @@ unit_tests:
         rows:
           - {make: "honda", model: "crv"}
       - input: ref('stg_observations')
-        rows:
-          - {vin17: "NOPRICEHIST000001", source: "srp", listing_state: null,
-             fetched_at: "2026-01-10 12:00:00+00"}
+        format: sql
+        rows: |
+          select cast(null as bigint) as artifact_id,
+                 cast(null as string) as listing_id,
+                 cast('srp' as string) as source,
+                 cast(null as string) as listing_state,
+                 cast('2026-01-10 12:00:00+00' as timestamp) as fetched_at,
+                 cast(null as timestamp) as written_at,
+                 cast(null as string) as vin,
+                 cast('NOPRICEHIST000001' as string) as vin17,
+                 cast(null as integer) as price,
+                 cast(null as string) as make,
+                 cast(null as string) as model,
+                 cast(null as string) as vehicle_trim,
+                 cast(null as smallint) as model_year,
+                 cast(null as integer) as mileage,
+                 cast(null as integer) as msrp,
+                 cast(null as string) as stock_type,
+                 cast(null as string) as fuel_type,
+                 cast(null as string) as body_style,
+                 cast(null as string) as dealer_name,
+                 cast(null as string) as dealer_zip,
+                 cast(null as string) as dealer_city,
+                 cast(null as string) as dealer_state,
+                 cast(null as string) as customer_id,
+                 cast(null as string) as canonical_detail_url,
+                 cast(null as string) as financing_type,
+                 cast(null as string) as seller_zip,
+                 cast(null as string) as seller_customer_id,
+                 cast(null as smallint) as page_number,
+                 cast(null as smallint) as position_on_page,
+                 cast(null as string) as trid,
+                 cast(null as string) as isa_context,
+                 cast(null as string) as body,
+                 cast(null as string) as condition
     expect:
       rows:
         - {vin: "NOPRICEHIST000001", price: null, listing_state: "unlisted"}
@@ -132,13 +271,42 @@ unit_tests:
         rows:
           - {make: "honda", model: "crv"}
       - input: ref('stg_observations')
-        rows:
-          # Detail/unlisted is the most recent — this drives listing_state
-          - {vin17: "UNLISTEDDTL00001", source: "detail", listing_state: "unlisted",
-             fetched_at: "2026-04-25 10:00:00+00"}
-          # Prior SRP obs — older, has make/model (but listing_state comes from above)
-          - {vin17: "UNLISTEDDTL00001", source: "srp", listing_state: null,
-             fetched_at: "2026-01-10 12:00:00+00"}
+        format: sql
+        rows: |
+          select cast(null as bigint) as artifact_id,
+                 cast(null as string) as listing_id,
+                 cast('detail' as string) as source,
+                 cast('unlisted' as string) as listing_state,
+                 cast('2026-04-25 10:00:00+00' as timestamp) as fetched_at,
+                 cast(null as timestamp) as written_at,
+                 cast(null as string) as vin,
+                 cast('UNLISTEDDTL00001' as string) as vin17,
+                 cast(null as integer) as price,
+                 cast(null as string) as make,
+                 cast(null as string) as model,
+                 cast(null as string) as vehicle_trim,
+                 cast(null as smallint) as model_year,
+                 cast(null as integer) as mileage,
+                 cast(null as integer) as msrp,
+                 cast(null as string) as stock_type,
+                 cast(null as string) as fuel_type,
+                 cast(null as string) as body_style,
+                 cast(null as string) as dealer_name,
+                 cast(null as string) as dealer_zip,
+                 cast(null as string) as dealer_city,
+                 cast(null as string) as dealer_state,
+                 cast(null as string) as customer_id,
+                 cast(null as string) as canonical_detail_url,
+                 cast(null as string) as financing_type,
+                 cast(null as string) as seller_zip,
+                 cast(null as string) as seller_customer_id,
+                 cast(null as smallint) as page_number,
+                 cast(null as smallint) as position_on_page,
+                 cast(null as string) as trid,
+                 cast(null as string) as isa_context,
+                 cast(null as string) as body,
+                 cast(null as string) as condition
+          union all select null, null, 'srp', null, cast('2026-01-10 12:00:00+00' as timestamp), null, null, 'UNLISTEDDTL00001', null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null
     expect:
       rows:
         - {vin: "UNLISTEDDTL00001", listing_state: "unlisted"}
@@ -373,8 +541,13 @@ unit_tests:
     model: mart_cooldown_cohorts
     given:
       - input: ref('stg_blocked_cooldown_events')
-        rows:
-          - {listing_id: "L001", num_of_attempts: 4, event_at: "2026-01-10 12:00:00+00"}
+        format: sql
+        rows: |
+          select cast(null as bigint) as event_id,
+                 'L001' as listing_id,
+                 cast(null as string) as event_type,
+                 4 as num_of_attempts,
+                 cast('2026-01-10 12:00:00+00' as timestamp) as event_at
     expect:
       rows:
         - {attempt_bucket: "3-4", listing_count: 1}
@@ -384,8 +557,13 @@ unit_tests:
     model: mart_cooldown_cohorts
     given:
       - input: ref('stg_blocked_cooldown_events')
-        rows:
-          - {listing_id: "L001", num_of_attempts: 15, event_at: "2026-01-10 12:00:00+00"}
+        format: sql
+        rows: |
+          select cast(null as bigint) as event_id,
+                 'L001' as listing_id,
+                 cast(null as string) as event_type,
+                 15 as num_of_attempts,
+                 cast('2026-01-10 12:00:00+00' as timestamp) as event_at
     expect:
       rows:
         - {attempt_bucket: "11+", listing_count: 1}
@@ -395,9 +573,14 @@ unit_tests:
     model: mart_cooldown_cohorts
     given:
       - input: ref('stg_blocked_cooldown_events')
-        rows:
-          - {listing_id: "L001", num_of_attempts: 2, event_at: "2026-01-09 12:00:00+00"}
-          - {listing_id: "L001", num_of_attempts: 7, event_at: "2026-01-10 12:00:00+00"}
+        format: sql
+        rows: |
+          select cast(null as bigint) as event_id,
+                 'L001' as listing_id,
+                 cast(null as string) as event_type,
+                 2 as num_of_attempts,
+                 cast('2026-01-09 12:00:00+00' as timestamp) as event_at
+          union all select null, 'L001', null, 7, cast('2026-01-10 12:00:00+00' as timestamp)
     expect:
       rows:
         - {attempt_bucket: "5-10", listing_count: 1}
@@ -407,9 +590,14 @@ unit_tests:
     model: mart_cooldown_cohorts
     given:
       - input: ref('stg_blocked_cooldown_events')
-        rows:
-          - {listing_id: "L001", num_of_attempts: 1, event_at: "2026-01-10 12:00:00+00"}
-          - {listing_id: "L002", num_of_attempts: 1, event_at: "2026-01-10 12:00:00+00"}
+        format: sql
+        rows: |
+          select cast(null as bigint) as event_id,
+                 'L001' as listing_id,
+                 cast(null as string) as event_type,
+                 1 as num_of_attempts,
+                 cast('2026-01-10 12:00:00+00' as timestamp) as event_at
+          union all select null, 'L002', null, 1, cast('2026-01-10 12:00:00+00' as timestamp)
     expect:
       rows:
         - {attempt_bucket: "1", listing_count: 2}
@@ -423,9 +611,42 @@ unit_tests:
     model: mart_detail_batch_outcomes
     given:
       - input: ref('stg_observations')
-        rows:
-          - {source: "detail", fetched_at: "2026-01-10 10:00:00+00", artifact_id: 1, vin17: "VALIDVIN00000001"}
-          - {source: "detail", fetched_at: "2026-01-10 11:00:00+00", artifact_id: 1, vin17: "VALIDVIN00000002"}
+        format: sql
+        rows: |
+          select cast(1 as bigint) as artifact_id,
+                 cast(null as string) as listing_id,
+                 cast('detail' as string) as source,
+                 cast(null as string) as listing_state,
+                 cast('2026-01-10 10:00:00+00' as timestamp) as fetched_at,
+                 cast(null as timestamp) as written_at,
+                 cast(null as string) as vin,
+                 cast('VALIDVIN00000001' as string) as vin17,
+                 cast(null as integer) as price,
+                 cast(null as string) as make,
+                 cast(null as string) as model,
+                 cast(null as string) as vehicle_trim,
+                 cast(null as smallint) as model_year,
+                 cast(null as integer) as mileage,
+                 cast(null as integer) as msrp,
+                 cast(null as string) as stock_type,
+                 cast(null as string) as fuel_type,
+                 cast(null as string) as body_style,
+                 cast(null as string) as dealer_name,
+                 cast(null as string) as dealer_zip,
+                 cast(null as string) as dealer_city,
+                 cast(null as string) as dealer_state,
+                 cast(null as string) as customer_id,
+                 cast(null as string) as canonical_detail_url,
+                 cast(null as string) as financing_type,
+                 cast(null as string) as seller_zip,
+                 cast(null as string) as seller_customer_id,
+                 cast(null as smallint) as page_number,
+                 cast(null as smallint) as position_on_page,
+                 cast(null as string) as trid,
+                 cast(null as string) as isa_context,
+                 cast(null as string) as body,
+                 cast(null as string) as condition
+          union all select 1, null, 'detail', null, cast('2026-01-10 11:00:00+00' as timestamp), null, null, 'VALIDVIN00000002', null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null
     expect:
       rows:
         - {obs_date: "2026-01-10", detail_observations: 2, valid_vin_count: 2,
@@ -436,9 +657,42 @@ unit_tests:
     model: mart_detail_batch_outcomes
     given:
       - input: ref('stg_observations')
-        rows:
-          - {source: "detail", fetched_at: "2026-01-10 10:00:00+00", artifact_id: 1, vin17: "VALIDVIN00000001"}
-          - {source: "detail", fetched_at: "2026-01-10 11:00:00+00", artifact_id: 1, vin17: null}
+        format: sql
+        rows: |
+          select cast(1 as bigint) as artifact_id,
+                 cast(null as string) as listing_id,
+                 cast('detail' as string) as source,
+                 cast(null as string) as listing_state,
+                 cast('2026-01-10 10:00:00+00' as timestamp) as fetched_at,
+                 cast(null as timestamp) as written_at,
+                 cast(null as string) as vin,
+                 cast('VALIDVIN00000001' as string) as vin17,
+                 cast(null as integer) as price,
+                 cast(null as string) as make,
+                 cast(null as string) as model,
+                 cast(null as string) as vehicle_trim,
+                 cast(null as smallint) as model_year,
+                 cast(null as integer) as mileage,
+                 cast(null as integer) as msrp,
+                 cast(null as string) as stock_type,
+                 cast(null as string) as fuel_type,
+                 cast(null as string) as body_style,
+                 cast(null as string) as dealer_name,
+                 cast(null as string) as dealer_zip,
+                 cast(null as string) as dealer_city,
+                 cast(null as string) as dealer_state,
+                 cast(null as string) as customer_id,
+                 cast(null as string) as canonical_detail_url,
+                 cast(null as string) as financing_type,
+                 cast(null as string) as seller_zip,
+                 cast(null as string) as seller_customer_id,
+                 cast(null as smallint) as page_number,
+                 cast(null as smallint) as position_on_page,
+                 cast(null as string) as trid,
+                 cast(null as string) as isa_context,
+                 cast(null as string) as body,
+                 cast(null as string) as condition
+          union all select 1, null, 'detail', null, cast('2026-01-10 11:00:00+00' as timestamp), null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null
     expect:
       rows:
         - {obs_date: "2026-01-10", detail_observations: 2, valid_vin_count: 1,
@@ -449,9 +703,42 @@ unit_tests:
     model: mart_detail_batch_outcomes
     given:
       - input: ref('stg_observations')
-        rows:
-          - {source: "srp",    fetched_at: "2026-01-10 10:00:00+00", artifact_id: 1, vin17: "SRPVIN000000001"}
-          - {source: "detail", fetched_at: "2026-01-10 11:00:00+00", artifact_id: 2, vin17: "DETAILVIN000001"}
+        format: sql
+        rows: |
+          select cast(1 as bigint) as artifact_id,
+                 cast(null as string) as listing_id,
+                 cast('srp' as string) as source,
+                 cast(null as string) as listing_state,
+                 cast('2026-01-10 10:00:00+00' as timestamp) as fetched_at,
+                 cast(null as timestamp) as written_at,
+                 cast(null as string) as vin,
+                 cast('SRPVIN000000001' as string) as vin17,
+                 cast(null as integer) as price,
+                 cast(null as string) as make,
+                 cast(null as string) as model,
+                 cast(null as string) as vehicle_trim,
+                 cast(null as smallint) as model_year,
+                 cast(null as integer) as mileage,
+                 cast(null as integer) as msrp,
+                 cast(null as string) as stock_type,
+                 cast(null as string) as fuel_type,
+                 cast(null as string) as body_style,
+                 cast(null as string) as dealer_name,
+                 cast(null as string) as dealer_zip,
+                 cast(null as string) as dealer_city,
+                 cast(null as string) as dealer_state,
+                 cast(null as string) as customer_id,
+                 cast(null as string) as canonical_detail_url,
+                 cast(null as string) as financing_type,
+                 cast(null as string) as seller_zip,
+                 cast(null as string) as seller_customer_id,
+                 cast(null as smallint) as page_number,
+                 cast(null as smallint) as position_on_page,
+                 cast(null as string) as trid,
+                 cast(null as string) as isa_context,
+                 cast(null as string) as body,
+                 cast(null as string) as condition
+          union all select 2, null, 'detail', null, cast('2026-01-10 11:00:00+00' as timestamp), null, null, 'DETAILVIN000001', null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null
     expect:
       rows:
         - {obs_date: "2026-01-10", detail_observations: 1, valid_vin_count: 1}
@@ -461,9 +748,42 @@ unit_tests:
     model: mart_detail_batch_outcomes
     given:
       - input: ref('stg_observations')
-        rows:
-          - {source: "detail", fetched_at: "2026-01-10 10:00:00+00", artifact_id: 1, vin17: "VALIDVIN00000001"}
-          - {source: "detail", fetched_at: "2026-01-11 10:00:00+00", artifact_id: 2, vin17: "VALIDVIN00000002"}
+        format: sql
+        rows: |
+          select cast(1 as bigint) as artifact_id,
+                 cast(null as string) as listing_id,
+                 cast('detail' as string) as source,
+                 cast(null as string) as listing_state,
+                 cast('2026-01-10 10:00:00+00' as timestamp) as fetched_at,
+                 cast(null as timestamp) as written_at,
+                 cast(null as string) as vin,
+                 cast('VALIDVIN00000001' as string) as vin17,
+                 cast(null as integer) as price,
+                 cast(null as string) as make,
+                 cast(null as string) as model,
+                 cast(null as string) as vehicle_trim,
+                 cast(null as smallint) as model_year,
+                 cast(null as integer) as mileage,
+                 cast(null as integer) as msrp,
+                 cast(null as string) as stock_type,
+                 cast(null as string) as fuel_type,
+                 cast(null as string) as body_style,
+                 cast(null as string) as dealer_name,
+                 cast(null as string) as dealer_zip,
+                 cast(null as string) as dealer_city,
+                 cast(null as string) as dealer_state,
+                 cast(null as string) as customer_id,
+                 cast(null as string) as canonical_detail_url,
+                 cast(null as string) as financing_type,
+                 cast(null as string) as seller_zip,
+                 cast(null as string) as seller_customer_id,
+                 cast(null as smallint) as page_number,
+                 cast(null as smallint) as position_on_page,
+                 cast(null as string) as trid,
+                 cast(null as string) as isa_context,
+                 cast(null as string) as body,
+                 cast(null as string) as condition
+          union all select 2, null, 'detail', null, cast('2026-01-11 10:00:00+00' as timestamp), null, null, 'VALIDVIN00000002', null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null
     expect:
       rows:
         - {obs_date: "2026-01-10"}
@@ -536,13 +856,43 @@ unit_tests:
         is_incremental: false
     given:
       - input: ref('stg_observations')
-        rows:
-          - {fetched_at: "2026-01-10 10:00:00+00", source: "detail",
-             artifact_id: 1, listing_id: "L1", vin17: "VALIDVIN00000001A"}
-          - {fetched_at: "2026-01-10 10:30:00+00", source: "detail",
-             artifact_id: 1, listing_id: "L2", vin17: null}
-          - {fetched_at: "2026-01-10 10:00:00+00", source: "srp",
-             artifact_id: 2, listing_id: "L3", vin17: "VALIDVIN00000003A"}
+        format: sql
+        rows: |
+          select cast(1 as bigint) as artifact_id,
+                 cast('L1' as string) as listing_id,
+                 cast('detail' as string) as source,
+                 cast(null as string) as listing_state,
+                 cast('2026-01-10 10:00:00+00' as timestamp) as fetched_at,
+                 cast(null as timestamp) as written_at,
+                 cast(null as string) as vin,
+                 cast('VALIDVIN00000001A' as string) as vin17,
+                 cast(null as integer) as price,
+                 cast(null as string) as make,
+                 cast(null as string) as model,
+                 cast(null as string) as vehicle_trim,
+                 cast(null as smallint) as model_year,
+                 cast(null as integer) as mileage,
+                 cast(null as integer) as msrp,
+                 cast(null as string) as stock_type,
+                 cast(null as string) as fuel_type,
+                 cast(null as string) as body_style,
+                 cast(null as string) as dealer_name,
+                 cast(null as string) as dealer_zip,
+                 cast(null as string) as dealer_city,
+                 cast(null as string) as dealer_state,
+                 cast(null as string) as customer_id,
+                 cast(null as string) as canonical_detail_url,
+                 cast(null as string) as financing_type,
+                 cast(null as string) as seller_zip,
+                 cast(null as string) as seller_customer_id,
+                 cast(null as smallint) as page_number,
+                 cast(null as smallint) as position_on_page,
+                 cast(null as string) as trid,
+                 cast(null as string) as isa_context,
+                 cast(null as string) as body,
+                 cast(null as string) as condition
+          union all select 1, 'L2', 'detail', null, cast('2026-01-10 10:30:00+00' as timestamp), null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null
+          union all select 2, 'L3', 'srp', null, cast('2026-01-10 10:00:00+00' as timestamp), null, null, 'VALIDVIN00000003A', null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null
     expect:
       rows:
         - {source: "detail", vin_extraction_pct: 50.0}
@@ -556,11 +906,42 @@ unit_tests:
         is_incremental: false
     given:
       - input: ref('stg_observations')
-        rows:
-          - {fetched_at: "2026-01-10 10:00:00+00", source: "srp",
-             artifact_id: 99, listing_id: "L1", vin17: null}
-          - {fetched_at: "2026-01-10 10:30:00+00", source: "srp",
-             artifact_id: 99, listing_id: "L2", vin17: null}
+        format: sql
+        rows: |
+          select cast(99 as bigint) as artifact_id,
+                 cast('L1' as string) as listing_id,
+                 cast('srp' as string) as source,
+                 cast(null as string) as listing_state,
+                 cast('2026-01-10 10:00:00+00' as timestamp) as fetched_at,
+                 cast(null as timestamp) as written_at,
+                 cast(null as string) as vin,
+                 cast(null as string) as vin17,
+                 cast(null as integer) as price,
+                 cast(null as string) as make,
+                 cast(null as string) as model,
+                 cast(null as string) as vehicle_trim,
+                 cast(null as smallint) as model_year,
+                 cast(null as integer) as mileage,
+                 cast(null as integer) as msrp,
+                 cast(null as string) as stock_type,
+                 cast(null as string) as fuel_type,
+                 cast(null as string) as body_style,
+                 cast(null as string) as dealer_name,
+                 cast(null as string) as dealer_zip,
+                 cast(null as string) as dealer_city,
+                 cast(null as string) as dealer_state,
+                 cast(null as string) as customer_id,
+                 cast(null as string) as canonical_detail_url,
+                 cast(null as string) as financing_type,
+                 cast(null as string) as seller_zip,
+                 cast(null as string) as seller_customer_id,
+                 cast(null as smallint) as page_number,
+                 cast(null as smallint) as position_on_page,
+                 cast(null as string) as trid,
+                 cast(null as string) as isa_context,
+                 cast(null as string) as body,
+                 cast(null as string) as condition
+          union all select 99, 'L2', 'srp', null, cast('2026-01-10 10:30:00+00' as timestamp), null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null
     expect:
       rows:
         - {source: "srp", artifact_count: 1, observation_count: 2}
@@ -573,11 +954,42 @@ unit_tests:
         is_incremental: false
     given:
       - input: ref('stg_observations')
-        rows:
-          - {fetched_at: "2026-01-10 10:00:00+00", source: "srp",
-             artifact_id: 1, listing_id: "L1", vin17: null}
-          - {fetched_at: "2026-01-10 11:00:00+00", source: "srp",
-             artifact_id: 2, listing_id: "L2", vin17: null}
+        format: sql
+        rows: |
+          select cast(1 as bigint) as artifact_id,
+                 cast('L1' as string) as listing_id,
+                 cast('srp' as string) as source,
+                 cast(null as string) as listing_state,
+                 cast('2026-01-10 10:00:00+00' as timestamp) as fetched_at,
+                 cast(null as timestamp) as written_at,
+                 cast(null as string) as vin,
+                 cast(null as string) as vin17,
+                 cast(null as integer) as price,
+                 cast(null as string) as make,
+                 cast(null as string) as model,
+                 cast(null as string) as vehicle_trim,
+                 cast(null as smallint) as model_year,
+                 cast(null as integer) as mileage,
+                 cast(null as integer) as msrp,
+                 cast(null as string) as stock_type,
+                 cast(null as string) as fuel_type,
+                 cast(null as string) as body_style,
+                 cast(null as string) as dealer_name,
+                 cast(null as string) as dealer_zip,
+                 cast(null as string) as dealer_city,
+                 cast(null as string) as dealer_state,
+                 cast(null as string) as customer_id,
+                 cast(null as string) as canonical_detail_url,
+                 cast(null as string) as financing_type,
+                 cast(null as string) as seller_zip,
+                 cast(null as string) as seller_customer_id,
+                 cast(null as smallint) as page_number,
+                 cast(null as smallint) as position_on_page,
+                 cast(null as string) as trid,
+                 cast(null as string) as isa_context,
+                 cast(null as string) as body,
+                 cast(null as string) as condition
+          union all select 2, 'L2', 'srp', null, cast('2026-01-10 11:00:00+00' as timestamp), null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null
     expect:
       rows:
         - {source: "srp", observation_count: 1}
@@ -592,13 +1004,15 @@ unit_tests:
     model: mart_block_rate
     given:
       - input: ref('stg_blocked_cooldown_events')
-        rows:
-          - {listing_id: "L1", event_type: "blocked",     num_of_attempts: 1,
-             event_at: "2026-01-10 10:00:00+00"}
-          - {listing_id: "L2", event_type: "incremented", num_of_attempts: 3,
-             event_at: "2026-01-10 10:15:00+00"}
-          - {listing_id: "L3", event_type: "incremented", num_of_attempts: 7,
-             event_at: "2026-01-10 10:30:00+00"}
+        format: sql
+        rows: |
+          select cast(null as bigint) as event_id,
+                 'L1' as listing_id,
+                 'blocked' as event_type,
+                 1 as num_of_attempts,
+                 cast('2026-01-10 10:00:00+00' as timestamp) as event_at
+          union all select null, 'L2', 'incremented', 3, cast('2026-01-10 10:15:00+00' as timestamp)
+          union all select null, 'L3', 'incremented', 7, cast('2026-01-10 10:30:00+00' as timestamp)
     expect:
       rows:
         - {new_blocks: 1, block_increments: 2, total_block_events: 3,
@@ -609,11 +1023,14 @@ unit_tests:
     model: mart_block_rate
     given:
       - input: ref('stg_blocked_cooldown_events')
-        rows:
-          - {listing_id: "L1", event_type: "blocked",     num_of_attempts: 1,
-             event_at: "2026-01-10 10:00:00+00"}
-          - {listing_id: "L1", event_type: "incremented", num_of_attempts: 2,
-             event_at: "2026-01-10 10:30:00+00"}
+        format: sql
+        rows: |
+          select cast(null as bigint) as event_id,
+                 'L1' as listing_id,
+                 'blocked' as event_type,
+                 1 as num_of_attempts,
+                 cast('2026-01-10 10:00:00+00' as timestamp) as event_at
+          union all select null, 'L1', 'incremented', 2, cast('2026-01-10 10:30:00+00' as timestamp)
     expect:
       rows:
         - {unique_listings_blocked: 1, total_block_events: 2}
@@ -623,11 +1040,14 @@ unit_tests:
     model: mart_block_rate
     given:
       - input: ref('stg_blocked_cooldown_events')
-        rows:
-          - {listing_id: "L1", event_type: "blocked", num_of_attempts: 1,
-             event_at: "2026-01-10 10:00:00+00"}
-          - {listing_id: "L2", event_type: "blocked", num_of_attempts: 1,
-             event_at: "2026-01-10 11:00:00+00"}
+        format: sql
+        rows: |
+          select cast(null as bigint) as event_id,
+                 'L1' as listing_id,
+                 'blocked' as event_type,
+                 1 as num_of_attempts,
+                 cast('2026-01-10 10:00:00+00' as timestamp) as event_at
+          union all select null, 'L2', 'blocked', 1, cast('2026-01-10 11:00:00+00' as timestamp)
     expect:
       rows:
         - {new_blocks: 1}

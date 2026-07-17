@@ -2,9 +2,32 @@
   config(
     materialized='incremental',
     unique_key='scrape_volume_key',
-    incremental_strategy='delete+insert'
+    incremental_strategy='merge' if target.type == 'spark' else 'delete+insert',
+    file_format='iceberg' if target.type == 'spark' else none
   )
 }}
+
+-- Plan 125 Gate B (F1 canary): 'merge' on the spark target, because dbt-spark
+-- has no delete+insert. The audit recommended 'insert_overwrite' here on the
+-- grounds that "merge would strand a (hour, source) row that drops out of the
+-- recomputed 72h window, whereas delete+insert removes it" -- and called that
+-- the one genuine subtlety of the whole strategy port.
+--
+-- THAT PREMISE IS FALSE, and it was measured, not argued. dbt-duckdb's
+-- delete+insert generates:
+--     delete from target where (unique_key) in (select (unique_key) from source);
+--     insert into target select ... from source;
+-- It deletes only keys PRESENT IN THE NEW BATCH. A (hour, source) that
+-- disappears from the recomputed window is by definition absent from the
+-- source, so it is never deleted -- today's production build strands it too.
+-- Verified by replaying that exact SQL: the disappeared key survived.
+--
+-- So merge is EXACTLY equivalent to current production behaviour, and it is
+-- insert_overwrite that would be the behaviour change (it would start removing
+-- rows production currently keeps). Fidelity to the DuckDB baseline is what
+-- Gate B is measuring, so merge is the correct port. If we later decide the
+-- stranded row is a bug worth fixing, that is a deliberate cross-engine
+-- modelling change, not a migration detail -- fix it on DuckDB first.
 
 -- Hourly scrape throughput by source type.
 -- artifact_count  = distinct artifacts processed in the hour (proxy for scrape batches).
@@ -29,7 +52,7 @@
 with source_rows as (
 
     select
-        date_trunc('hour', fetched_at)::timestamp as hour,
+        cast(date_trunc('hour', fetched_at) as timestamp) as hour,
         source,
         artifact_id,
         listing_id,
@@ -38,7 +61,7 @@ with source_rows as (
     where fetched_at is not null
 
     {% if is_incremental() %}
-    and date_trunc('hour', fetched_at)::timestamp >= (
+    and cast(date_trunc('hour', fetched_at) as timestamp) >= (
         select coalesce(max(hour), timestamp '1900-01-01')
                - interval '{{ var("scrape_volume_incremental_lookback_hours", 72) }}' hour
         from {{ this }}

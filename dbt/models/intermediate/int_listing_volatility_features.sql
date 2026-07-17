@@ -1,5 +1,8 @@
 {{
-  config(materialized='table')
+  config(
+    materialized='table',
+    file_format='iceberg' if target.type == 'spark' else none
+  )
 }}
 
 -- One row per VIN — current-state feature row for Plan 112 backtesting.
@@ -27,10 +30,23 @@
 -- not happen in practice, since detail observations feed both models) yields
 -- NULL/0 defaults rather than dropping the row.
 
+-- Plan 125 Gate B: the capstone of the ported chain, and the densest
+-- concentration of dialect items in the project — arg_max x3, median x2,
+-- datediff('day') x4, the as_of_at timestamptz cast, and a bare ::numeric.
+-- All go through dbt/macros/dialect.sql; see that file for why the obvious
+-- Spark spelling is wrong for most of them.
+--
+-- The as_of_at cast is the subtlest: Spark has no TIMESTAMPTZ at all. Its
+-- TIMESTAMP is instant-typed and resolves this literal's offset against
+-- spark.sql.session.timeZone, so cast_to_timestamptz is only equivalent
+-- because spark_conf_for_dbt_session() pins that to UTC. Without the pin every
+-- backtest as_of boundary would silently shift by the host's offset — which
+-- would corrupt backtest results rather than fail.
+
 with as_of as (
     select
         {% if var('as_of_at', '') %}
-            '{{ var("as_of_at") }}'::timestamptz
+            {{ cast_to_timestamptz("'" ~ var("as_of_at") ~ "'") }}
         {% else %}
             now()
         {% endif %} as ts
@@ -42,9 +58,9 @@ vin_listing_meta as (
     select
         o.vin17,
         o.listing_id,
-        arg_max(o.customer_id, o.fetched_at) as customer_id,
-        arg_max(o.make,        o.fetched_at) as make,
-        arg_max(o.model,       o.fetched_at) as model
+        {{ arg_max('o.customer_id', 'o.fetched_at') }} as customer_id,
+        {{ arg_max('o.make',        'o.fetched_at') }} as make,
+        {{ arg_max('o.model',       'o.fetched_at') }} as model
     from {{ ref('stg_observations') }} o
     cross join as_of a
     where o.source = 'detail'
@@ -91,8 +107,8 @@ vin_stats as (
 dealer_stats as (
     select
         customer_id,
-        avg(run_duration_hours)    as dealer_avg_run_length_hours,
-        median(run_duration_hours) as dealer_median_run_length_hours
+        avg(run_duration_hours)                       as dealer_avg_run_length_hours,
+        {{ median_of('run_duration_hours') }}         as dealer_median_run_length_hours
     from runs_with_meta
     where not is_open_run
       and customer_id is not null
@@ -103,8 +119,8 @@ make_model_stats as (
     select
         make,
         model,
-        avg(run_duration_hours)    as make_model_avg_run_length_hours,
-        median(run_duration_hours) as make_model_median_run_length_hours
+        avg(run_duration_hours)                       as make_model_avg_run_length_hours,
+        {{ median_of('run_duration_hours') }}         as make_model_median_run_length_hours
     from runs_with_meta
     where not is_open_run
       and make is not null
@@ -193,7 +209,7 @@ select
     -- State history
     vs.total_state_changes,
     vs.listing_id_change_count,
-    datediff('day', o.run_started_at, ao.ts)        as days_since_last_state_change,
+    {{ datediff_days('o.run_started_at', 'ao.ts') }} as days_since_last_state_change,
     o.artifact_count                                as unchanged_observation_streak,
     coalesce(lsc.listing_state_change_count, 0)     as listing_state_change_count,
 
@@ -201,9 +217,14 @@ select
     ph.current_price,
     coalesce(pc.price_change_count_7d,  0)          as price_change_count_7d,
     coalesce(pc.price_change_count_30d, 0)          as price_change_count_30d,
+    -- The one place a bare ::numeric is exposed RAW, with no final rounding to
+    -- hide the difference: DuckDB's division promotes this to DOUBLE
+    -- (0.9602222222222222), while Spark's bare `decimal` would yield
+    -- decimal(21,11) (0.96022222222) -- a different value and a different
+    -- column type. cast_to_numeric reproduces the DOUBLE. Measured, Gate B.
     case
         when bm.national_median_price > 0
-        then ph.current_price::numeric / bm.national_median_price
+        then {{ cast_to_numeric('ph.current_price') }} / bm.national_median_price
         else null
     end                                             as price_vs_make_model_median,
 
@@ -212,7 +233,7 @@ select
     -- (int_price_history no longer exposes a days_on_market column at all,
     -- as of Plan 123 Phase 3 — see mart_vehicle_snapshot for the hourly,
     -- now()-based equivalent), so this stays reproducible for backtests.
-    datediff('day', vs.first_seen_at, ao.ts)        as listing_days_on_market,
+    {{ datediff_days('vs.first_seen_at', 'ao.ts') }} as listing_days_on_market,
     ds.dealer_avg_run_length_hours,
     ds.dealer_median_run_length_hours,
     mms.make_model_avg_run_length_hours,
@@ -220,13 +241,13 @@ select
 
     -- Pipeline signals
     sl.recent_srp_seen_at,
-    datediff('day', sl.recent_srp_seen_at, ao.ts)   as days_since_srp_seen,
+    {{ datediff_days('sl.recent_srp_seen_at', 'ao.ts') }} as days_since_srp_seen,
 
     -- All-source observation cadence (Plan 123 final modeling correction)
     oor.run_started_at                                     as all_source_run_started_at,
     case
         when oor.run_started_at is not null
-        then datediff('day', oor.run_started_at, ao.ts)
+        then {{ datediff_days('oor.run_started_at', 'ao.ts') }}
         else null
     end                                                     as days_since_last_all_source_change,
     coalesce(oor.observation_count, 0)                      as all_source_unchanged_observation_streak,

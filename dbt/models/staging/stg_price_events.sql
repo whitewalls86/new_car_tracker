@@ -1,7 +1,11 @@
 {{
-  config(materialized='view')
+  config(materialized='ephemeral' if target.type == 'spark' else 'view')
 }}
 
+-- Plan 125 Gate B: `ephemeral` on spark, `view` elsewhere -- same reason as
+-- stg_observations (a persisted Spark view re-qualifies the parquet.`s3a://...`
+-- reference against its own catalog and fails). Both mean "no stored data".
+--
 -- Price observation events from MinIO.
 -- One row per write to ops.price_observations — not deduplicated by change,
 -- every observation is recorded. Use this for price history and trend analysis.
@@ -22,7 +26,7 @@ select
     event_type,
     source,
     event_at
-from {{ source('ops_events', 'price_observation_events') }}
+from {{ parquet_source('ops_events', 'price_observation_events') }}
 where vin is not null
   and event_type != 'deleted'
   and price is not null

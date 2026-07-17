@@ -28,6 +28,26 @@ pandas
 # import).
 pytz
 
+# Plan 125 Gate A: dbt-spark execution against the Lakekeeper REST catalog,
+# in-process via `method: session` (no Thrift server -- keeps the one-shot
+# worker shape this image already has). Pins are deliberate, not floating:
+#
+#   * dbt-core 1.10.20 matches the repo-wide pin (dbt/Dockerfile,
+#     dbt_runner/Dockerfile, CI). Do not diverge -- the same dbt/ project
+#     directory is compiled by both this image and dbt_runner.
+#   * dbt-spark 1.10.3 is the latest 1.10.x. dbt-spark 1.11.0 released
+#     2026-07-16 and has no track record here.
+#   * The [session] extra pulls dbt-spark's PySpark integration; pyspark
+#     itself stays pinned at 3.5.3 above (matching the 3.5_2.12 Iceberg
+#     runtime jar), and the extra's `pyspark>=3.0,<4.0` range accepts it.
+#
+# This is installed ONLY in the lakehouse image -- never alongside
+# dbt-duckdb/dbt-postgres in dbt_runner, per the same isolation convention
+# that keeps airflow/requirements.txt separate (docs/plan_125_portability_audit.md,
+# "Gate A adapter choice").
+dbt-core==1.10.20
+dbt-spark[session]==1.10.3
+
 # Python 3.13 (this image's base -- see lakehouse/Dockerfile) removed
 # distutils from the stdlib entirely. PySpark 3.5.3's
 # require_minimum_pandas_version() still does

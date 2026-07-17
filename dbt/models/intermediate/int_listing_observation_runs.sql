@@ -1,8 +1,9 @@
 {{
   config(
-    materialized='incremental',
+    materialized='table' if target.type == 'spark' else 'incremental',
     unique_key='listing_id',
-    incremental_strategy='delete+insert'
+    incremental_strategy='delete+insert',
+    file_format='iceberg' if target.type == 'spark' else none
   )
 }}
 
@@ -48,6 +49,16 @@
 -- rows for each affected listing_id and reinserts its complete recomputed run
 -- history, so do not add a `unique` data test on listing_id.
 --
+-- Plan 125 Gate B: full-rebuild `table` on the spark target, for exactly the
+-- reasons spelled out in int_listing_state_runs — entity-replacement
+-- delete+insert has no dbt-spark equivalent, and the deliberate absence of a
+-- `unique` test on listing_id is what rules 'merge' out. Daily model feeding a
+-- full-rebuild table, so this costs compute, not freshness. See
+-- int_listing_state_runs.sql for the full rationale and the Option C deferral.
+-- The varchar casts in observation_state_key go through cast_to_string: they
+-- feed an md5 that defines run boundaries, so a spelling change here would
+-- silently re-cut every run.
+--
 -- A late-arriving or corrected observation can split a previously single run
 -- into two, or collapse what looked like two runs into one — both require
 -- recomputing gaps-and-islands over that listing_id's ENTIRE observation
@@ -84,13 +95,13 @@ ordered as (
         f.mileage,
         f.listing_state,
         md5(concat_ws('|',
-            coalesce(cast(f.price as varchar), ''),
-            coalesce(cast(f.mileage as varchar), ''),
+            coalesce({{ cast_to_string('f.price') }}, ''),
+            coalesce({{ cast_to_string('f.mileage') }}, ''),
             coalesce(f.listing_state, '')
         ))                                      as observation_state_key,
         lag(md5(concat_ws('|',
-            coalesce(cast(f.price as varchar), ''),
-            coalesce(cast(f.mileage as varchar), ''),
+            coalesce({{ cast_to_string('f.price') }}, ''),
+            coalesce({{ cast_to_string('f.mileage') }}, ''),
             coalesce(f.listing_state, '')
         ))) over (
             partition by f.listing_id order by f.fetched_at, f.artifact_id
@@ -170,8 +181,8 @@ select
     detail_observation_count > 0                                        as detail_seen,
     srp_observation_count > 0                                           as srp_seen,
     carousel_observation_count > 0                                      as carousel_seen,
-    datediff('hour', run_started_at, run_ended_at)                      as run_duration_hours,
+    {{ datediff_hours('run_started_at', 'run_ended_at') }}              as run_duration_hours,
     next_observation_started_at,
-    datediff('hour', run_ended_at, next_observation_started_at)         as hours_until_next_observation,
+    {{ datediff_hours('run_ended_at', 'next_observation_started_at') }} as hours_until_next_observation,
     next_observation_started_at is null                                 as is_open_run
 from with_lead

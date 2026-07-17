@@ -2,7 +2,8 @@
   config(
     materialized='incremental',
     unique_key='vin',
-    incremental_strategy='delete+insert'
+    incremental_strategy='merge' if target.type == 'spark' else 'delete+insert',
+    file_format='iceberg' if target.type == 'spark' else none
   )
 }}
 
@@ -13,9 +14,27 @@
 --           + int_listing_days_on_market
 --
 -- Incremental strategy: affected-VIN replacement (Plan 123 Phase 3), same
--- delete+insert base strategy as int_listing_state_fingerprints (Phase 2) —
--- portable across the Postgres/Spark-family adapters this project may migrate
--- onto later (Plan 118). Consecutive-price LAG() logic depends on the event
+-- delete+insert base strategy as int_listing_state_fingerprints (Phase 2).
+--
+-- NOTE (Plan 125 Gate A): this comment previously claimed the strategy was
+-- "portable across the Postgres/Spark-family adapters this project may migrate
+-- onto later (Plan 118)". That is false for dbt-spark, which validates only
+-- 'append', 'merge', 'insert_overwrite', and 'microbatch'. Migration path here
+-- is 'merge' on vin: this model is one row per vin (see the `unique` test in the
+-- schema file), so merge replaces that row rather than a multi-row set. The one
+-- behavioural gap is that merge cannot remove a vin whose events all disappear;
+-- the price event stream is append-only, so that case does not arise. See
+-- docs/plan_125_portability_audit.md § "Incremental strategy decision".
+--
+-- Plan 125 Gate B: that migration path is now taken -- 'merge' on the spark
+-- target. merge is safe here only because `vin` is genuinely row-unique, which
+-- the schema file's `unique` test enforces on every DuckDB build; Iceberg's
+-- MERGE would otherwise fail its cardinality check outright rather than
+-- silently duplicate. arg_max/arg_min go through the dialect macros rather than
+-- bare max_by/min_by: DuckDB's arg_max ignores rows whose VALUE is null and
+-- Spark's max_by does not (measured -- see dbt/macros/dialect.sql).
+--
+-- Consecutive-price LAG() logic depends on the event
 -- immediately before the incremental boundary, so a VIN touched by any new,
 -- late, or corrected event inside the lookback window has its ENTIRE price
 -- history reread and every aggregate recomputed here — not just the new
@@ -71,10 +90,10 @@ ordered as (
 select
     vin,
     -- Current price = most recent event
-    arg_max(price, event_at)                                                  as current_price,
+    {{ arg_max('price', 'event_at') }}                                        as current_price,
     max(event_at)                                                             as price_observed_at,
     -- First price = oldest event
-    arg_min(price, event_at)                                                  as first_price,
+    {{ arg_min('price', 'event_at') }}                                        as first_price,
     min(price)                                                                as min_price,
     max(price)                                                                as max_price,
     count(*)                                                                  as total_price_observations,

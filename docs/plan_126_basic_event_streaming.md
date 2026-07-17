@@ -50,6 +50,7 @@ transactional outbox or feed a parallel outbox, rather than adding direct
 
 Candidate event streams:
 
+- `search_configs` / `tracked_models` reference-table changes
 - price observation events
 - VIN-to-listing mapping events
 - blocked cooldown events
@@ -62,6 +63,14 @@ preserve useful ordering:
 - `listing_id` for listing-scoped events
 - `vin` or `vin17` for vehicle-scoped events
 - `artifact_id` for artifact-processing events
+
+Recommended first streaming job: publish `search_configs` and `tracked_models`
+changes from the ops routers that already own those mutations, then have a small
+consumer update the MinIO/Iceberg reference copy introduced by Plan 125. These
+tables are low-volume, low-change, and easy to reconcile against Postgres, so
+they exercise the core streaming shape without immediately taking on the much
+larger silver observation/event-firehose problem. Keep the hourly Plan 125
+snapshot as the repair/reconciliation path until the stream has proven itself.
 
 ## Likely Technology Choice
 
@@ -99,6 +108,14 @@ Confluent later if deployment requirements change.
 - Add an append-only sink from selected topics to MinIO/Iceberg.
 - Dual-run against the existing Airflow flush path.
 - Compare row counts, event IDs, duplicates, freshness, and replay behavior.
+
+Two Plan 125 Gate C decisions already anticipate this gate
+([Gate C shape decisions](plan_125_duckdb_to_iceberg_migration.md#gate-c-shape-decisions-2026-07-17)):
+this sink is the documented eventual replacement for the batch-era `add_files`
+silver sync (decision 1), and the Iceberg tables it would write into are
+merge-on-read partly *because* frequent small streaming writes are untenable
+on copy-on-write tables (decision 2). The sink inherits shapes that were
+chosen with it in mind rather than needing them redone.
 
 ### Gate E: Cutover Decision
 

@@ -153,6 +153,67 @@ def spark_conf_for_rest_catalog() -> dict:
     }
 
 
+def spark_conf_for_s3a_reads() -> dict:
+    """Hadoop-AWS `s3a://` config, for Spark reading plain (non-Iceberg)
+    Parquet -- i.e. the normalized silver/ops_normalized files that dbt
+    staging models sit on top of.
+
+    This is a SEPARATE mechanism from spark_conf_for_rest_catalog()'s
+    S3FileIO, and both are needed. S3FileIO is Iceberg-internal: it only
+    serves Iceberg's own table reads/writes. A plain `spark.read.parquet(...)`
+    never touches Iceberg, so it resolves the URI scheme through Hadoop's
+    FileSystem API instead, which needs hadoop-aws on the classpath and its
+    own credentials. Without this, reading normalized Parquet fails with
+    `UnsupportedFileSystemException: No FileSystem for scheme "s3"`
+    (verified at Gate A).
+
+    `s3a://` (not `s3://`) is deliberate: hadoop-aws only registers the
+    `s3a` scheme. Iceberg table locations keep using `s3://` via S3FileIO --
+    the two schemes coexist in one session, each served by its own stack.
+    """
+    minio_endpoint = os.environ.get("MINIO_ENDPOINT", "http://minio:9000")
+    minio_user = os.environ["MINIO_ROOT_USER"]
+    minio_password = os.environ["MINIO_ROOT_PASSWORD"]
+    return {
+        "spark.hadoop.fs.s3a.endpoint": minio_endpoint,
+        "spark.hadoop.fs.s3a.access.key": minio_user,
+        "spark.hadoop.fs.s3a.secret.key": minio_password,
+        # MinIO serves bucket-as-path, not bucket-as-subdomain.
+        "spark.hadoop.fs.s3a.path.style.access": "true",
+        # The local/VM MinIO endpoint is plain http.
+        "spark.hadoop.fs.s3a.connection.ssl.enabled": str(
+            minio_endpoint.startswith("https://")
+        ).lower(),
+        "spark.hadoop.fs.s3a.aws.credentials.provider": (
+            "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider"
+        ),
+    }
+
+
+def spark_conf_for_dbt_session() -> dict:
+    """Full Spark session config for a dbt-spark (`method: session`) run
+    against the Iceberg REST catalog.
+
+    Composed from the two read/write mechanisms above, plus the two settings
+    that fail SILENTLY if omitted (docs/plan_125_portability_audit.md, "Two
+    config details that will bite Gate A"):
+
+      * spark.sql.defaultCatalog -- dbt-spark relations are two-part
+        (`schema.identifier`); the adapter has no `catalog:` profile field.
+        Without this, dbt resolves into the built-in `spark_catalog` and
+        writes NO Iceberg at all, while still exiting 0.
+      * spark.sql.session.timeZone -- Spark has no TIMESTAMPTZ; its TIMESTAMP
+        is instant-typed and resolves offsets against the session zone.
+        Unpinned, every timestamp silently shifts by the host's local offset,
+        surfacing as parity drift rather than an error.
+    """
+    conf = spark_conf_for_rest_catalog()
+    conf.update(spark_conf_for_s3a_reads())
+    conf["spark.sql.defaultCatalog"] = CATALOG_NAME
+    conf["spark.sql.session.timeZone"] = "UTC"
+    return conf
+
+
 def warehouse_storage_payload() -> dict:
     """Lakekeeper management-API warehouse-registration payload for the
     single Gate A `cartracker_experiments` warehouse. Points the storage

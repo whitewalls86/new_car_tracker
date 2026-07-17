@@ -1,10 +1,18 @@
 {{
-  config(materialized='view')
+  config(materialized='ephemeral' if target.type == 'spark' else 'view')
 }}
 
 -- Unified view of all parsed observations from MinIO silver.
 -- Single source of truth for all three observation types (srp, detail, carousel).
 -- Adds vin17: cleaned, validated 17-character VIN. All other fields pass through.
+--
+-- Plan 125 Gate B: `ephemeral` on the spark target, `view` everywhere else.
+-- Not a semantic difference -- both mean "no stored data, recomputed on demand".
+-- A persisted Spark view stores its body and re-analyzes it against the VIEW's
+-- own catalog on read, which rewrites the parquet.`s3a://...` reference below
+-- into cartracker.parquet.`s3a://...` and fails with TABLE_OR_VIEW_NOT_FOUND.
+-- ephemeral compiles to a CTE, where the reference resolves correctly.
+-- (Found at Gate A on stg_blocked_cooldown_events; same cause here.)
 
 select
     artifact_id,
@@ -17,7 +25,7 @@ select
     case
         when vin is not null
          and length(vin) = 17
-         and regexp_matches(upper(vin), '^[A-Z0-9]{17}$')
+         and {{ regex_matches('upper(vin)', '^[A-Z0-9]{17}$') }}
         then upper(vin)
         else null
     end                  as vin17,
@@ -46,4 +54,4 @@ select
     isa_context,
     body,
     condition
-from {{ source('silver', 'observations') }}
+from {{ parquet_source('silver', 'observations') }}
