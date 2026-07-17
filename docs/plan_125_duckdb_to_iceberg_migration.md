@@ -922,15 +922,18 @@ things have changed, and two of them only became true today:
    plus ~10s JVM startup. Unit tests mock all inputs, so no seeded snapshot and no
    MinIO *data* are needed.
 
-**Implemented (2026-07-17) — and cheaper than the decision above assumed.** The
-initial write-up proposed a new job with "its own isolated venv". That was
-unnecessary: the existing **`lakehouse`** job already brings up Lakekeeper +
-MinIO, builds the `lakehouse-worker` image, and registers the warehouse. The
-Gate B steps are two `docker compose run` lines appended to it — no new job, no
-new stack, no venv. Running in that image rather than a bare-runner venv also
-satisfies the isolation constraint *more* strongly than a venv would (dbt-spark
-never shares a resolver with dbt-duckdb because it is a different image), and it
-exercises the real `lakehouse/Dockerfile`, exactly as the A2 steps do.
+**Implemented (2026-07-17), then reversed the same day — see the amendment
+below the scope list.** The initial write-up proposed a new job with "its own
+isolated venv". That was judged unnecessary: the existing **`lakehouse`** job
+already brought up Lakekeeper + MinIO, built the `lakehouse-worker` image, and
+registered the warehouse, so the Gate B steps were added as two
+`docker compose run` lines appended to it — no new job, no new stack, no venv.
+Running in that image rather than a bare-runner venv also satisfied the
+isolation constraint *more* strongly than a venv would have (dbt-spark never
+shares a resolver with dbt-duckdb because it is a different image), and it
+exercised the real `lakehouse/Dockerfile`, exactly as the A2 steps did. That
+reasoning about isolation stands; what did not survive contact with a routine
+PR run was the fixture story underneath it — see the amendment.
 
 Two steps were added:
 
@@ -958,8 +961,13 @@ Scope, deliberately narrow:
   weight.
 - The existing `dbt build + test` job stays untouched and no slower.
 
-> **Amendment (2026-07-17): the job as first shipped ERRORed 13 of its 38 unit
-> tests on every CI run, and the fix is a prior `dbt run --empty`.** The 13 are
+> **Reversed (2026-07-17): the `lakehouse` CI job has been pulled out of CI
+> entirely, including the Gate A/A2 smoke steps that predate Gate B.** It is
+> not deleted from the repo's capability — it is deliberately absent from
+> `.github/workflows/ci.yml` until a real fixture strategy exists for it.
+>
+> What happened: the job's unit-test step was found broken on a routine PR run
+> — `ERROR=13` of its 38 unit tests, on every run, not intermittent. The 13 are
 > the dict-format fixtures that mock **materialized** `int_*` models
 > (`int_latest_observation`, both fingerprint models, `int_listing_state_runs`).
 > Dict fixtures are built by introspecting the mocked input's relation
@@ -969,24 +977,42 @@ Scope, deliberately narrow:
 > these relations just don't exist *yet* on the CI job's freshly-registered
 > catalog, where no model has ever been built. Error signature:
 > `Not able to get columns for unit test '<model>' from relation ... because
-> the relation doesn't exist`. It never showed locally because local catalogs
-> already carried the Gate B tables — reproduced on a freshly-dropped catalog:
-> `ERROR=13` of 32 intermediate tests.
+> the relation doesn't exist`. It never showed locally because local dev
+> catalogs already carried the Gate B tables from prior spike work — this is
+> exactly the "PASS nobody re-ran" failure mode F16 itself warns about, one
+> layer further out.
 >
-> Fix, verified 13 → 0 with all 13 fixtures untouched: run
-> `dbt run --empty --select +int_listing_volatility_features` before the
-> unit-test step. `--empty` is dbt's own documented mechanism for exactly this —
-> it limits refs/sources to zero rows, creating schema-correct **empty**
-> relations cheaply, with zero fixture changes and zero storage cost. The
-> selector is the proven Gate B chain, deliberately **not**
-> `config.materialized:*`, which would pull in the F8-blocked serving models
-> that cannot compile on Spark.
+> The first attempted fix (`dbt run --empty --select
+> +int_listing_volatility_features` before the unit-test step) traded that
+> failure for a worse one: `--empty` still requires Spark to *resolve* each
+> source's Parquet path (list the directory, infer a schema) before it can
+> limit rows to zero, and the CI job's MinIO is — by design — completely
+> unseeded (the unit-test step's whole premise was "no seeded snapshot and no
+> MinIO data are needed", since unit tests mock all inputs). Result:
+> `PATH_NOT_FOUND: s3a://bronze/silver_normalized/observations`, failing
+> *earlier* than the original bug and skipping the unit-test step's signal
+> entirely. This was verified against a long-lived local dev stack that
+> already had both the target tables *and* seeded source data — neither of
+> which CI's fresh stack has — so the local "fix confirmed" result did not
+> transfer. The lesson: verifying a CI fix against warm local state proves
+> nothing about a job whose entire point is that it starts cold.
 >
-> Converting the 13 fixtures to `format: sql` was considered and **rejected**:
-> F16's conversion (the 21 fixtures mocking ephemeral `stg_*` models) was
-> forced — no relation can ever exist — and stays. Here the relation is one
-> `--empty` run away, and 13 more hand-enumerated column lists (~20–33 columns
-> each) would be pure maintenance weight for nothing.
+> **Decision, given the job doesn't gate anything production-relevant** (dbt-
+> duckdb — the actual production build — is the separate `dbt` job below, and
+> nothing on this branch deploys until an explicit `git pull` on the VM): stop
+> patching the symptom and pull the whole job rather than ship a second
+> half-fix. The real problem is that this job invents its own ad hoc fixture
+> story every time it needs data (Gate A's tiny synthetic round-trip, the
+> `--empty`-without-a-seed attempt above) instead of sharing one with the `dbt`
+> job's already-working DuckDB-side fixture handling, which solved this exact
+> empty-relation-compilation problem already, by seeding schema-correct empty
+> Parquet before the build (see that job's "Seed MinIO with empty Parquet
+> schemas" step). **Planned direction, not yet built:** fold the Spark path
+> into the same Plan 120 fixture the `dbt` job already seeds, so both
+> `dbt-duckdb` and `dbt-spark` build off identical data and a parity check
+> becomes possible in CI, not just locally. Until that lands, Gate A/B/C's
+> Spark-side proofs remain local/VM-verified only, exactly as Gate A originally
+> was before the Gate B CI job existed.
 
 Unchanged from Gate A, and still running in the normal fast unit job with neither
 pyspark nor a container:
@@ -1043,9 +1069,13 @@ What Gate C still genuinely owns, updated for those decisions:
   [F17](plan_125_portability_audit.md#f17-add_files-bypasses-s3fileio-and-lakekeepers-location-check-is-scheme-sensitive--found-at-the-gate-c-spike)),
   and the production warehouse registration with a wide key-prefix.
 - **Automating the late-arrival verification.** It was run by hand. F16 is the
-  standing lesson that an unautomated PASS decays silently; the Gate B CI job
-  deliberately does not cover this (it needs a seeded snapshot + a matching DuckDB
-  build), so deciding whether that cost is now worth paying belongs here.
+  standing lesson that an unautomated PASS decays silently — and the
+  `lakehouse` CI job's own removal (see the CI decision below) is now a second
+  instance of exactly that lesson, one layer out: the job that was supposed to
+  guard against silent regressions decayed itself, because it never shared a
+  fixture with anything that gets rebuilt regularly. Automating this needs
+  that shared fixture (a seeded snapshot + a matching DuckDB build) to exist
+  in CI first, which it does not yet.
 - Extending the same treatment to any model not in the Gate B ten.
 
 Per-model strategy, decided at the Gate A research pass (full rationale:
