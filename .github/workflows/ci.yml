@@ -167,6 +167,51 @@ jobs:
             -p ci-lakehouse run --rm lakehouse-worker \
             python -m scripts.spike_iceberg_lakehouse roundtrip
 
+      - name: Verify the datediff dialect macros against DuckDB's answers (Gate B)
+        # Guards dbt/macros/dialect.sql's spark__datediff_hours/days against the
+        # "obvious" translation, which is measurably wrong: DuckDB counts hour
+        # BOUNDARIES CROSSED, not elapsed time. The macro file says in comments
+        # not to simplify it; this step is what makes that binding.
+        #
+        # Checks the real macro bodies (rendered out of dialect.sql, not a
+        # hand-copy) against 830 committed cases carrying DuckDB's own answers,
+        # and additionally FAILS if the corpus ever stops discriminating against
+        # the naive form -- a corpus both forms pass would prove nothing, which
+        # is exactly how the original 6-case probe passed while leaving the bug
+        # reachable. Needs no MinIO data: it is pure SQL over literals.
+        run: |
+          docker compose \
+            -f docker-compose.lakehouse.yml -f docker-compose.lakehouse.ci.yml \
+            -p ci-lakehouse run --rm lakehouse-worker \
+            python -m scripts.verify_dialect_datediff --check
+
+      - name: dbt-spark unit tests (Plan 125 Gate B)
+        # The Gate B CI decision (docs/plan_125_duckdb_to_iceberg_migration.md).
+        # Deliberately narrow: unit tests only, no parity run. Unit tests mock
+        # every input, so this needs no seeded snapshot and no MinIO data -- only
+        # the image (already built above) and Lakekeeper (already up), because
+        # run_dbt_spark asserts the default catalog before running.
+        #
+        # Why this job exists at all: Gate A recorded "dbt unit tests run on
+        # Spark -- PROVEN", then Gate A's own later view->ephemeral switch broke
+        # them (audit F16) and nothing re-ran them, so the doc kept claiming a
+        # PASS that had stopped being true for weeks. A green doc table is not a
+        # test. Measured cost: ~11s of Spark work on top of a job whose stack and
+        # image already exist.
+        #
+        # Runs in the lakehouse-worker image rather than a bare-runner venv:
+        # dbt-spark must never share a dependency resolver with dbt-duckdb, and a
+        # separate image guarantees that more strongly than a separate venv --
+        # while also exercising the real lakehouse/Dockerfile, as the A2 steps do.
+        run: |
+          docker compose \
+            -f docker-compose.lakehouse.yml -f docker-compose.lakehouse.ci.yml \
+            -p ci-lakehouse run --rm lakehouse-worker \
+            python -m scripts.run_dbt_spark -- \
+            test --select "intermediate,test_type:unit" \
+                          "mart_block_rate,test_type:unit" \
+                          "mart_scrape_volume,test_type:unit"
+
       - name: Teardown (safe -- standalone ci-lakehouse project only)
         if: always()
         run: |

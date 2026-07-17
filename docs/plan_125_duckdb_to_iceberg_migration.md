@@ -649,15 +649,18 @@ parity on wide/rounding-sensitive models is proven exactly (F5/F10/F12, includin
 the 28-field fingerprint); `md5` parity is proven on 16,847 real rows. Still open
 and unchanged: the **F8 `postgres_scan` replacement** (blocks the serving chain
 only), the **`session`-mode-is-experimental risk over long runs**, and
-`insert_overwrite` (now deliberately unused rather than pending). Newly open:
-[late-arrival/correction behaviour under `merge`](#open-gap-the-phases-have-no-spark-target-consumer).
+`insert_overwrite` (now deliberately unused rather than pending). Late-arrival and
+correction behaviour under `merge` was briefly open and is now
+[closed](#late-arrival-and-correction-under-merge-closed-2026-07-17).
 
 ## Gate B: First Real Model Chain
 
-**Status: COMPLETE for the port + parity + unit tests (2026-07-16); one
-verification gap remains open and is named below.** All ten models build into
-Iceberg and hit exact parity with DuckDB on the real snapshot. See
-[Gate B progress](#gate-b-progress-2026-07-16).
+**Status: COMPLETE (2026-07-17).** All ten models build into Iceberg and hit exact
+parity with DuckDB on the real snapshot (101/101 checks, 0 differences); 38/38 dbt
+unit tests pass on Spark; the `merge` strategy is demonstrated equivalent to
+`delete+insert` under late arrival and correction; and a narrow dbt-spark CI job
+now guards the dialect macros and unit tests. The one gap this gate opened was
+closed before it shipped. See [Gate B progress](#gate-b-progress-2026-07-16).
 
 Port the first useful adaptive-refresh feature chain to Iceberg.
 
@@ -838,24 +841,60 @@ row is *removed* from `mart_scrape_volume` — remains **moot**: that premise wa
 measured false (delete+insert strands it too), so a fixture asserting it would
 encode a behaviour neither engine has.
 
-### OPEN GAP: the phases have no Spark-target consumer
+### Late-arrival and correction under `merge`: CLOSED (2026-07-17)
 
-**Not verified, and not claimed.** The existing phases are consumed only by
-`tests/integration/dbt/*` against `--target duckdb`. Nothing runs them against
-Spark, so **late-arrival lookback pickup and correction replacement are unproven
-on the `merge` strategy**. This is precisely the gap no unit test can close (all
-unit tests override `is_incremental: false`).
+> **This section previously said "OPEN GAP — could not be verified in this
+> environment", on the grounds that the seeder needs `psycopg2` (via the
+> archiver's writer schemas) and the lakehouse image does not have it. That
+> conclusion was wrong, and the reasoning error is worth recording: the seeder
+> was only ever tried *inside the lakehouse image*. It does not need to run
+> there. It needs **MinIO access**, nothing more — and the host Python (and the
+> CI runner, which already `pip install`s `psycopg2-binary`) has every
+> dependency it needs. "I couldn't run it in the container" was generalised to
+> "it can't be verified here" without checking the obvious alternative.**
 
-What *is* proven on Spark: bootstrap-from-empty (the first build) and idempotent
-rerun (row counts held, 0 duplicate keys) — plus full-refresh equivalence, since
-the parity run compares a full-refresh DuckDB build against the Spark build.
+The `merge` strategy is now demonstrated equivalent to `delete+insert` under a
+late arrival that **reorders history**, using the existing Plan 123 fixture
+phases. Procedure — the ordering is the whole point, since a full-refresh at the
+end would prove nothing:
 
-It could not be verified in this environment: the seeder imports the archiver's
-writer schemas, which pull in `psycopg2`, absent from the lakehouse image; no
-local image has both the archiver's dependencies and Spark. Closing this needs
-either that dependency available to a Spark-capable image or the CI job below.
-**Until then, treat merge-vs-delete+insert equivalence under late arrivals and
-corrections as argued (from the F1 canary measurement) but not demonstrated.**
+1. Seed the `base` phase into MinIO (host Python, `MINIO_ENDPOINT=http://localhost:19000`).
+2. `--full-refresh` **both** targets, establishing a common base.
+3. Seed `price_history_incremental` (+ `detail_fingerprint_incremental`,
+   `latest_observation_incremental`).
+4. Build **incrementally** — no `--full-refresh` — on both targets, so DuckDB
+   exercises `delete+insert` and Spark exercises `merge`.
+5. Compare.
+
+**Result: 101/101 parity checks, exact**, on the grown dataset (`int_price_history`
+212 rows, `int_listing_observation_fingerprints` 16,929, `int_latest_observation`
+284, `int_listing_volatility_features` 254).
+
+Parity alone would be satisfied by both engines doing nothing, so the scenario
+was checked directly to prove it is **not vacuous**. `VIN_PH_AFFECTED`'s base
+history is `40000 → 39000`; the phase adds a late `38000` (landing *before*) and
+a new `42000`:
+
+| VIN | `total_price_observations` | `price_drop_count` | `price_increase_count` | `current_price` |
+|---|---|---|---|---|
+| `VIN_PH_AFFECTED` | 4 | **2** | **1** | 42000 |
+| `VIN_PH_STABLE` | 1 | 0 | 0 | 15000 |
+
+**Identical on both engines.** `price_drop_count = 2` is the load-bearing number:
+the base run produced 1 drop, and no append-only path can yield 2 drops + 1
+increase — both engines rewound and recomputed the VIN's *entire* history, which
+is exactly what the affected-entity replacement contract promises and what
+`merge` was suspected of not doing. `VIN_PH_STABLE` being untouched proves the
+lookback filter is real rather than a full rebuild wearing a disguise.
+
+So all five Gate C checks now hold on Spark: bootstrap from empty, idempotent
+rerun, **late-arrival lookback pickup**, **correction replacement**, and
+full-refresh equivalence.
+
+**Still not automated.** This was run by hand; nothing re-runs it. That is the
+same failure mode as F16 (a PASS nobody re-ran), so it should not be treated as
+permanently settled. The CI job below deliberately does **not** cover it — see
+the scope note there.
 
 ### CI decision: add a narrow dbt-spark unit-test job — the Gate A calculus has changed
 
@@ -874,21 +913,43 @@ things have changed, and two of them only became true today:
    this job**: the regression was invisible precisely because nothing re-ran it.
    A green doc table is not a test.
 3. **The cost is now measured, not estimated**: 38 tests in **~11s** of Spark work
-   plus ~10s JVM startup. No Lakekeeper, no MinIO, no seeded snapshot — unit tests
-   mock all inputs, so the job needs only the image and a local SparkSession.
+   plus ~10s JVM startup. Unit tests mock all inputs, so no seeded snapshot and no
+   MinIO *data* are needed.
+
+**Implemented (2026-07-17) — and cheaper than the decision above assumed.** The
+initial write-up proposed a new job with "its own isolated venv". That was
+unnecessary: the existing **`lakehouse`** job already brings up Lakekeeper +
+MinIO, builds the `lakehouse-worker` image, and registers the warehouse. The
+Gate B steps are two `docker compose run` lines appended to it — no new job, no
+new stack, no venv. Running in that image rather than a bare-runner venv also
+satisfies the isolation constraint *more* strongly than a venv would (dbt-spark
+never shares a resolver with dbt-duckdb because it is a different image), and it
+exercises the real `lakehouse/Dockerfile`, exactly as the A2 steps do.
+
+Two steps were added:
+
+- **`dbt-spark unit tests`** — `test --select "intermediate,test_type:unit"` plus
+  `mart_block_rate` and `mart_scrape_volume`. Lakekeeper must be up (the runner
+  asserts the default catalog before running), which it already is.
+- **`Verify the datediff dialect macros`** — `scripts/verify_dialect_datediff --check`.
+  `dialect.sql` tells the reader in comments not to "simplify" `bround`, the
+  `filter` on `max_by`, or truncate-then-diff `datediff`. A comment is not
+  enforcement; this step is. It renders the real macro bodies out of the file
+  (not a hand-copy), checks them against 830 committed DuckDB answers, and fails
+  if the corpus ever stops discriminating against the naive form. Pure SQL over
+  literals — no MinIO data.
 
 Scope, deliberately narrow:
 
-- **In:** `dbt test --select "<migrated models>,test_type:unit"` via
-  `scripts/run_dbt_spark`, in its own isolated venv (dbt-spark must not share a
-  resolver with dbt-duckdb — see the standing constraint that packages isolated in
-  their own prod image need their own isolated CI venv).
-- **Out: the parity run and the phased fixtures.** Those need Lakekeeper + MinIO +
-  a seeded snapshot + a DuckDB build — minutes, and a lot of moving infrastructure
-  to guard a non-production target. They stay local/VM-verified until the Spark
-  path is closer to authoritative (Gate D/E). This is the honest trade: the CI job
-  catches *dialect and compile* regressions cheaply and would have caught F16; it
-  does **not** close the open gap above.
+- **Out: the parity run and the phased fixtures**, including the late-arrival
+  verification above. Those need a seeded snapshot *and* a DuckDB build of the
+  same chain with a matching `as_of_at` — minutes of runtime and a lot of moving
+  infrastructure to guard a target nothing in production reads. They stay
+  local/VM-verified until the Spark path is closer to authoritative (Gate D/E).
+  **The honest trade: this job catches dialect and compile regressions cheaply and
+  would have caught F16; it does not protect the incremental-strategy equivalence
+  proven by hand above.** Revisit at Gate C, when that equivalence starts carrying
+  weight.
 - The existing `dbt build + test` job stays untouched and no slower.
 
 Unchanged from Gate A, and still running in the normal fast unit job with neither
@@ -914,12 +975,23 @@ This gate should not switch dashboards yet. It proves correctness.
 
 Recreate the Plan 123 incremental behavior in the Iceberg path.
 
-**Status update (Gate B, 2026-07-16): every strategy in the table below is now
-implemented and building on Spark, and all eight models hit exact parity.** What
-Gate C still owns is the part Gate B could not demonstrate: late-arrival and
-correction behaviour under `merge`, which needs a Spark-target consumer of the
-seed fixture phases (see [the open gap](#open-gap-the-phases-have-no-spark-target-consumer)),
-plus the runtime measurement on the two full-rebuild models.
+**Status update (Gate B, 2026-07-17): most of this gate is already done.** Every
+strategy in the table below is implemented and building on Spark; all eight models
+hit exact parity; and all five "required checks" at the bottom of this section now
+hold on Spark, including
+[late-arrival pickup and correction replacement under `merge`](#late-arrival-and-correction-under-merge-closed-2026-07-17)
+— demonstrated with the Plan 123 fixture phases, not argued.
+
+What Gate C still genuinely owns:
+
+- **The runtime measurement on the two full-rebuild `_runs` models.** This is the
+  only thing that can justify revisiting Option C, and the bar is a measurement
+  showing the rebuild is too slow — not a suspicion that it might be.
+- **Automating the late-arrival verification.** It was run by hand. F16 is the
+  standing lesson that an unautomated PASS decays silently; the Gate B CI job
+  deliberately does not cover this (it needs a seeded snapshot + a matching DuckDB
+  build), so deciding whether that cost is now worth paying belongs here.
+- Extending the same treatment to any model not in the Gate B ten.
 
 Per-model strategy, decided at the Gate A research pass (full rationale:
 [Incremental strategy decision](plan_125_portability_audit.md#incremental-strategy-decision)).
