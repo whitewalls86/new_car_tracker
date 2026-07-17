@@ -1060,17 +1060,21 @@ What Gate C still genuinely owns, updated for those decisions:
   below. Full-refresh costs only ~1.2–1.5x incremental at current production
   scale, not an order of magnitude — the bar for building decision 3 ("a
   measurement showing the rebuild is too slow") is not met. **Current
-  recommendation: do not build the two-model decompose yet.** The
-  partition-spec question for the already-shipped Gate B `merge` models
-  (decision 2) is a separate decision this measurement does not answer — it's
-  about write-cost shape for models already using `merge`, not full-rebuild
-  cost for models that aren't.
+  recommendation: do not build the two-model decompose yet.**
 - **The dbt-level wiring of decision 3** — the DELETE+INSERT SQL sequence is
   proven, but `pre_hook` + `append` ordering through actual dbt (including the
   first run, where `{{ this }}` does not exist yet) is not. Given the
   measurement above, this stays unbuilt for now; the design remains proven and
   ready if a future measurement (e.g. on Spark itself, or at larger scale)
   reverses the call.
+- **The partition-spec question for the five shipped Gate B `merge` models —
+  DONE (2026-07-17).** See
+  [2a. Partition spec](#2a-partition-spec-for-the-five-shipped-gate-b-merge-models--decided-2026-07-17)
+  below. Reasoned from query/write shape, then checked against real production
+  file sizes: `mart_scrape_volume`/`int_price_history`/`int_latest_observation`
+  get no partitioning, `int_listing_state_fingerprints` gets `month(fetched_at)`,
+  `int_listing_observation_fingerprints` gets `day(fetched_at)`. Not yet
+  built — this decided the spec, not the migration.
 - **Building decision 1**: the `add_files` sync job co-mingled with
   `compact_silver.py`, the `fs.s3.*` mirror config (audit
   [F17](plan_125_portability_audit.md#f17-add_files-bypasses-s3fileio-and-lakekeepers-location-check-is-scheme-sensitive--found-at-the-gate-c-spike)),
@@ -1317,13 +1321,71 @@ Gate D's stated direction — frequent small writes from a streaming consumer
 into a CoW table would mean a whole-table rewrite per micro-batch. MoR is the
 shape that does not need redoing when that lands.
 
-**Still open — not answered by the item-4 runtime measurement below.** That
-measurement covered the two full-rebuild `_runs` models only; it says nothing
-about whether the already-shipped Gate B `merge` models (`mart_scrape_volume`,
-`int_price_history`, both fingerprint models, `int_latest_observation`) should
-be reconfigured to MoR + a partition spec, or what that partition spec should
-be. This is the next decision to work out — it needs its own investigation
-into these models' write/query shape, not a rerun of the same measurement.
+### 2a. Partition spec for the five shipped Gate B `merge` models — DECIDED (2026-07-17)
+
+Not answered by the item-4 runtime measurement (that covered only the two
+full-rebuild `_runs` models). Reasoned from each model's actual query/write
+shape, then checked against real production file-size measurements — not a
+new spike (partition evolution means this isn't a one-way door if wrong).
+
+**The five models split into two shapes that need opposite treatment.**
+
+**Group A — genuine time series** (`mart_scrape_volume`, both fingerprint
+models): every consumer query filters on time (`hour >= now() - 14 days`,
+`hour >= now() - 24 hours`, `ORDER BY hour DESC LIMIT 1`), and the incremental
+write side is itself a contiguous recent-window lookback (72h / 3 days). Time
+partitioning is the right shape here — the open question was only
+granularity, and the first-pass answer (day, uniformly) turned out wrong for
+two of the three once measured against real production data:
+
+| Model | Day-partition reality (measured on real production data) | Partition spec |
+|---|---|---|
+| `mart_scrape_volume` | 54 rows / **4.5 KB** per day — and the *whole table* is only 7,110 rows (~600KB total, ever). One row per `(hour, source)`, max 3 sources. | **No partitioning.** Any partition scheme adds manifest/metadata overhead for a table small enough to full-scan trivially. |
+| `int_listing_state_fingerprints` | 32,468 rows / **2.95 MB** per day — too small against Iceberg's usual 128–512MB file-size target. | **`month(fetched_at)`.** ~30x day's data ≈ 90MB/partition, much closer to a healthy single-file size. |
+| `int_listing_observation_fingerprints` | 276,669 rows / **32.4 MB** per day — a reasonable single-file size already; month would overshoot to ~960MB/partition (Iceberg would just split it into multiple files per partition anyway, but day is the cleaner natural fit). | **`day(fetched_at)`**, as first proposed. |
+
+**Group B — entity-keyed, one row per VIN for its entire lifetime**
+(`int_price_history` on `vin`, `int_latest_observation` on `vin17`): both use
+"affected-VIN full-history reread" — a VIN touched today may have first been
+seen months ago, so its row's *update* time has no correlation with a
+time-bucketed partition. Time-partitioning here would actively hurt `MERGE`:
+to find an affected VIN's existing row, Iceberg would have to search across
+every partition it might live in, since the merge doesn't know in advance
+which old bucket that VIN's row sits in. `int_latest_observation` does have
+one dashboard query filtering `fetched_at > now() - 30 days`
+(`inventory_unlisted_over_time.sql`), but one read pattern doesn't justify
+shaping the whole table's physical layout against the dominant write pattern —
+better served later by a small downstream extract if it becomes a bottleneck.
+
+Checked against real production size too, not just the join-key argument:
+
+| Model | Real total table size | Verdict |
+|---|---|---|
+| `int_price_history` | 257,389 rows / **11.8 MB** | Comfortably one file, unpartitioned. |
+| `int_latest_observation` | 258,120 rows / **30.2 MB** | Same. |
+
+**Partition spec: no partitioning for either.** If compaction or scan cost
+becomes a real problem at much larger scale, reach for `write.sort-order` on
+`vin`/`vin17` (or bucket-partitioning on the key) rather than a time bucket —
+but at current and 5–10x scale (growth here is bounded by fleet size, not
+scrape cadence, unlike Group A) this isn't a near-term concern.
+
+**Summary:**
+
+| Model | Partition spec |
+|---|---|
+| `mart_scrape_volume` | none |
+| `int_listing_state_fingerprints` | `month(fetched_at)` |
+| `int_listing_observation_fingerprints` | `day(fetched_at)` |
+| `int_price_history` | none |
+| `int_latest_observation` | none |
+
+**Not yet done:** actually reconfiguring the five shipped models' Iceberg
+table properties/partition specs to these values — this decision covers the
+spec, not the migration. Also unmeasured: growth trajectory. All of the above
+are snapshots of current production scale (2026-07-17); `int_listing_observation_fingerprints`
+in particular is the one to re-check if scrape volume grows materially before
+this ships, since day-partitioning is the tightest-fitting call of the five.
 
 ### 3. `_runs` entity replacement: two-model decompose + pre-hook DELETE + append — SQL PROVEN, dbt wiring not yet
 
