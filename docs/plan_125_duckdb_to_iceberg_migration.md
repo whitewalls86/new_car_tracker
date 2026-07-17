@@ -1054,16 +1054,23 @@ decisions is *built* yet; what was proven is the mechanisms.
 
 What Gate C still genuinely owns, updated for those decisions:
 
-- **The runtime measurement on the two full-rebuild `_runs` models.** Now doing
-  double duty: it is the build/don't-build call on the two-model decompose
-  (decision 3 below), and it gates the partition-spec/MoR reconfiguration of the
-  already-shipped Gate B `merge` models (decision 2 below). The bar is unchanged:
-  a measurement showing the rebuild is too slow, not a suspicion that it might
-  be. Note the fallback has changed: Option C (the adapter fork) is no longer
-  what a bad measurement buys — decision 3's vanilla-dbt design is.
+- **The runtime measurement on the two full-rebuild `_runs` models — DONE
+  (2026-07-17), and it argues against building decision 3.** See
+  [Runtime measurement](#runtime-measurement-two-full-rebuild-_runs-models-2026-07-17)
+  below. Full-refresh costs only ~1.2–1.5x incremental at current production
+  scale, not an order of magnitude — the bar for building decision 3 ("a
+  measurement showing the rebuild is too slow") is not met. **Current
+  recommendation: do not build the two-model decompose yet.** The
+  partition-spec question for the already-shipped Gate B `merge` models
+  (decision 2) is a separate decision this measurement does not answer — it's
+  about write-cost shape for models already using `merge`, not full-rebuild
+  cost for models that aren't.
 - **The dbt-level wiring of decision 3** — the DELETE+INSERT SQL sequence is
   proven, but `pre_hook` + `append` ordering through actual dbt (including the
-  first run, where `{{ this }}` does not exist yet) is not.
+  first run, where `{{ this }}` does not exist yet) is not. Given the
+  measurement above, this stays unbuilt for now; the design remains proven and
+  ready if a future measurement (e.g. on Spark itself, or at larger scale)
+  reverses the call.
 - **Building decision 1**: the `add_files` sync job co-mingled with
   `compact_silver.py`, the `fs.s3.*` mirror config (audit
   [F17](plan_125_portability_audit.md#f17-add_files-bypasses-s3fileio-and-lakekeepers-location-check-is-scheme-sensitive--found-at-the-gate-c-spike)),
@@ -1096,7 +1103,75 @@ dbt-spark:
 The two full-rebuild models are daily and already feed a full-rebuild `table`
 (`int_listing_volatility_features`), so this loses no freshness — only compute. Do
 not fork dbt-spark's incremental materialization to recreate delete+insert until a
-VM measurement shows the rebuild is too slow.
+VM measurement shows the rebuild is too slow. **That measurement has now been
+run — see below — and it does not show that.**
+
+### Runtime measurement: two full-rebuild `_runs` models (2026-07-17)
+
+Run directly on the production VM against real production data, via an
+isolated copy of `analytics.duckdb` (the live file and live `dbt_runner`
+container were never touched — see the housekeeping note at the end of this
+section). This measures dbt-duckdb, not dbt-spark: it is a same-SQL-logic
+compute-cost proxy, not a direct Iceberg/Lakekeeper wall-clock number — see
+the caveat below.
+
+**Discovery that reframed the measurement:** these two models are tagged
+`feature_daily`/`backtest`, but grepping every Airflow DAG file found none
+that reference those tags. The only scheduled dbt trigger
+(`hourly_analytics_refresh`, hourly) selects `tag:hourly_core` only. **These
+models are not on any live schedule** — they last built 2026-07-13 19:45 UTC,
+four days before this measurement, and only build via manual/ad hoc triggers
+(e.g. Plan 112 backtest rehearsals). There is no "typical daily production
+cost" already happening to simply read off; the number had to be produced.
+
+Three runs, same isolated copy, at real production scale (1,251,754 /
+2,767,857 rows):
+
+| Run | `int_listing_state_runs` | `int_listing_observation_runs` | Combined model time |
+|---|---|---|---|
+| Incremental, clearing the 4-day backlog | 14.19s | 58.42s | 72.6s |
+| Incremental, immediately re-run (essentially zero new data) | 13.91s | 74.43s | 88.3s |
+| **`--full-refresh`** | 29.35s | 80.42s | **109.8s** |
+
+Two findings:
+
+1. **Full-refresh costs ~1.2–1.5x incremental, not an order of magnitude
+   more.** The gap between the cheapest incremental run and full-refresh is
+   roughly 20–40 seconds combined, not minutes, at production scale.
+2. **Incremental cost is flat regardless of backlog size, and this explains
+   why.** The run with essentially no new data was not meaningfully cheaper
+   than the one clearing four days of backlog — for
+   `int_listing_observation_runs` it was slower. The models' fixed 3-day
+   lookback window ("affected-entity full-history reread", audit's own
+   phrase) dominates cost, not how much actually changed. Incremental buys
+   little here regardless of cadence.
+
+**Conclusion: the bar for building decision 3 is not met.** The measured
+penalty for the current Spark-forced full rebuild — 20–40 seconds combined,
+on models with no live schedule at all — does not clear "the rebuild is too
+slow." **Recommendation: do not build the two-model decompose now.** Its
+design stays proven and ready (SQL primitive verified, only the dbt-level
+hook wiring is untested) if a future measurement reverses this — e.g. once
+these models are actually scheduled, or a direct Spark/Iceberg measurement
+(not this DuckDB proxy) shows a materially different picture.
+
+**Caveat on scope, stated plainly:** this is dbt-duckdb, not dbt-spark. It
+measures the SQL logic's compute cost, which should carry over reasonably
+(same joins, same window functions, same lookback filter), but not the
+Iceberg/Lakekeeper-specific costs on top — JVM startup (~10s, fixed
+regardless of full-refresh vs incremental), S3/MinIO write I/O, and Iceberg
+commit/manifest overhead. Full-rebuild on Spark writes a fresh Iceberg
+snapshot either way (no MERGE cardinality check to pay for), so if anything
+those fixed costs should compress the *relative* gap between incremental and
+full-refresh further in full-refresh's favor, not widen it — but this has not
+been measured directly and should be treated as a hypothesis, not a proven
+extension.
+
+**Housekeeping:** the isolated copy (`~/gate_c_measure/analytics_copy.duckdb`,
+made via `docker cp` from the live `dbt_runner` container, never written back)
+and the scratch env-var file were deleted after the measurement. Disk on the
+VM returned to its prior 11GB free; all 28 production containers were
+unaffected throughout.
 
 **Note a semantic regression that cannot be engineered away:** any Spark
 delete+insert equivalent needs two statements, hence two Iceberg commits, where
@@ -1242,11 +1317,13 @@ Gate D's stated direction — frequent small writes from a streaming consumer
 into a CoW table would mean a whole-table rewrite per micro-batch. MoR is the
 shape that does not need redoing when that lands.
 
-**Open, blocked on the runtime measurement (item 4):** whether the
-already-shipped Gate B `merge` models (`mart_scrape_volume`,
+**Still open — not answered by the item-4 runtime measurement below.** That
+measurement covered the two full-rebuild `_runs` models only; it says nothing
+about whether the already-shipped Gate B `merge` models (`mart_scrape_volume`,
 `int_price_history`, both fingerprint models, `int_latest_observation`) should
-be reconfigured to MoR + a partition spec now that this is confirmed, and what
-that partition spec should be.
+be reconfigured to MoR + a partition spec, or what that partition spec should
+be. This is the next decision to work out — it needs its own investigation
+into these models' write/query shape, not a rerun of the same measurement.
 
 ### 3. `_runs` entity replacement: two-model decompose + pre-hook DELETE + append — SQL PROVEN, dbt wiring not yet
 
@@ -1313,14 +1390,22 @@ correctly against a Spark/Iceberg target — especially on a first run, where
 not an Iceberg/Spark capability question, but it has only been tested as raw
 `SparkSession.sql()` calls, never through an actual dbt model.
 
-### 4. Still owed: the runtime measurement
+### 4. Runtime measurement — DONE (2026-07-17): decision 3 does not clear the bar
 
-Nothing above answers whether decision 2's partition spec for the shipped
-merge models needs to change, or whether decision 3's two-model design is
-actually cheaper than the current full rebuild at production scale. The
-measurement this gate has owed since Gate B has not been run. It blocks
-finalizing decision 2's partition spec and the build/don't-build call on
-decision 3 — whose mechanism is proven correct either way.
+Full results and methodology:
+[Runtime measurement](#runtime-measurement-two-full-rebuild-_runs-models-2026-07-17)
+in the main Plan 125 doc. Summary: on real production data (1.25M / 2.77M
+rows), full-refresh cost `int_listing_state_runs` + `int_listing_observation_runs`
+combined **109.8s**, against **72.6–88.3s** for incremental (which turned out
+flat regardless of backlog size — the fixed 3-day lookback window dominates
+cost either way). A ~20–40 second combined gap does not meet "the rebuild is
+too slow" — **decision 3's two-model decompose is not being built now.** Its
+design stays proven and ready if a future measurement (a real schedule for
+these models, or a direct Spark measurement) reverses this.
+
+This does **not** answer decision 2's partition-spec question for the shipped
+`merge` models — that is a different measurement, on different models, and is
+the next open item.
 
 ## Gate D: Reader Migration
 
