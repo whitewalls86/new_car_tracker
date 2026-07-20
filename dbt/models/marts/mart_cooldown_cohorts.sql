@@ -10,20 +10,9 @@
 with latest_per_listing as (
     select
         listing_id,
-        arg_max(num_of_attempts, event_at) as current_attempts,
-        arg_max(event_type, event_at)      as latest_event_type
+        arg_max(num_of_attempts, event_at) as current_attempts
     from {{ ref('stg_blocked_cooldown_events') }}
     group by listing_id
-),
-
--- A listing whose most recent event is 'cleared' is no longer in cooldown.
--- Without this, resolved listings would accumulate in the backlog forever.
-active_cooldowns as (
-    select listing_id, current_attempts
-    from latest_per_listing
-    -- IS DISTINCT FROM keeps rows with a null latest_event_type (null <> 'cleared'
-    -- would drop them); ANSI, works on both DuckDB and Spark.
-    where latest_event_type is distinct from 'cleared'
 ),
 
 bucketed as (
@@ -44,7 +33,7 @@ bucketed as (
             when current_attempts between 5 and 10 then 4
             else 5
         end as bucket_order
-    from active_cooldowns
+    from latest_per_listing
 )
 
 select

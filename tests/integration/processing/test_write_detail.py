@@ -245,16 +245,6 @@ class TestWriteDetailActive:
 
         assert _blocked_cooldown_row(vc, lid) is None, "blocked_cooldown should be cleared"
 
-        # A 'cleared' lifecycle event is emitted so mart_cooldown_cohorts drops it.
-        vc.execute(
-            "SELECT event_type, num_of_attempts FROM staging.blocked_cooldown_events"
-            " WHERE listing_id = %s::uuid ORDER BY event_id DESC LIMIT 1",
-            (lid,),
-        )
-        row = vc.fetchone()
-        assert row is not None and row["event_type"] == "cleared"
-        assert row["num_of_attempts"] == 1
-
         _cleanup(vc, listing_ids=[lid], vins=["1HGCV1F34PA111001"],
                  artifact_id=artifact["artifact_id"])
 

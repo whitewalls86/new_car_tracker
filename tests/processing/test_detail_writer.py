@@ -51,43 +51,6 @@ def mock_search_configs(mocker):
 
 
 # ---------------------------------------------------------------------------
-# _clear_cooldown
-# ---------------------------------------------------------------------------
-
-class TestClearCooldown:
-    def test_emits_cleared_event_when_row_removed(self):
-        from processing.queries import INSERT_BLOCKED_COOLDOWN_CLEARED_EVENT
-        from processing.writers.detail_writer import _clear_cooldown
-
-        cur = MagicMock()
-        cur.fetchone.return_value = (3,)  # a row was deleted, attempts=3
-
-        _clear_cooldown(cur, "listing-1")
-
-        insert_calls = [
-            c for c in cur.execute.call_args_list
-            if c[0][0] == INSERT_BLOCKED_COOLDOWN_CLEARED_EVENT
-        ]
-        assert len(insert_calls) == 1
-        assert insert_calls[0][0][1] == {"listing_id": "listing-1", "num_of_attempts": 3}
-
-    def test_no_event_when_nothing_cleared(self):
-        from processing.queries import INSERT_BLOCKED_COOLDOWN_CLEARED_EVENT
-        from processing.writers.detail_writer import _clear_cooldown
-
-        cur = MagicMock()
-        cur.fetchone.return_value = None  # listing was not blocked
-
-        _clear_cooldown(cur, "listing-1")
-
-        insert_calls = [
-            c for c in cur.execute.call_args_list
-            if c[0][0] == INSERT_BLOCKED_COOLDOWN_CLEARED_EVENT
-        ]
-        assert insert_calls == []
-
-
-# ---------------------------------------------------------------------------
 # Active path
 # ---------------------------------------------------------------------------
 

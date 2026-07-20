@@ -31,7 +31,6 @@ from processing.queries import (
     DELETE_PRICE_OBSERVATION,
     DELETE_PRICE_OBSERVATION_BY_VIN,
     GET_TRACKED_MODELS,
-    INSERT_BLOCKED_COOLDOWN_CLEARED_EVENT,
     INSERT_DETAIL_CLAIM_EVENT,
     INSERT_PRICE_OBSERVATION_EVENT,
     INSERT_VIN_TO_LISTING_EVENT,
@@ -107,19 +106,6 @@ def _carousel_matches_search_config(hint: Dict[str, Any]) -> bool:
 # ---------------------------------------------------------------------------
 # Main write paths
 # ---------------------------------------------------------------------------
-
-def _clear_cooldown(cur, listing_id: str) -> None:
-    """Clear a listing's blocked_cooldown row and, if one was actually removed,
-    emit a 'cleared' lifecycle event so mart_cooldown_cohorts drops it from the
-    backlog. No-op event when the listing was not blocked."""
-    cur.execute(CLEAR_BLOCKED_COOLDOWN, {"listing_id": listing_id})
-    cleared = cur.fetchone()
-    if cleared:
-        cur.execute(INSERT_BLOCKED_COOLDOWN_CLEARED_EVENT, {
-            "listing_id": listing_id,
-            "num_of_attempts": cleared[0],
-        })
-
 
 def write_detail_active(
     primary: Dict[str, Any],
@@ -281,7 +267,7 @@ def write_detail_active(
                 carousel_filtered += 1
 
         # Step 7: Clear blocked_cooldown
-        _clear_cooldown(cur, listing_id)
+        cur.execute(CLEAR_BLOCKED_COOLDOWN, {"listing_id": listing_id})
 
         # Step 8: Release detail_scrape_claims
         cur.execute(RELEASE_DETAIL_CLAIMS, {"listing_id": listing_id})
@@ -406,7 +392,7 @@ def write_detail_unlisted(
             "event_type": "deleted",
             "source": "detail",
         })
-        _clear_cooldown(cur, listing_id)
+        cur.execute(CLEAR_BLOCKED_COOLDOWN, {"listing_id": listing_id})
         cur.execute(RELEASE_DETAIL_CLAIMS, {"listing_id": listing_id})
         cur.execute(INSERT_DETAIL_CLAIM_EVENT, {
             "listing_id": listing_id,

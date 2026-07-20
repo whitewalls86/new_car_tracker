@@ -48,7 +48,6 @@ stable substrate.
 | [125](plan_125_duckdb_to_iceberg_migration.md) | DuckDB to Iceberg analytics migration | Draft |
 | [126](plan_126_basic_event_streaming.md) | Basic event streaming foundation | Draft / future |
 | [127](plan_127_streaming_adaptive_scrape_control.md) | Streaming adaptive scrape control | Draft / future |
-| [128](plan_128_false_block_detection.md) | Cloudflare challenge pages swallowed as successful detail scrapes | Draft |
 
 ---
 
