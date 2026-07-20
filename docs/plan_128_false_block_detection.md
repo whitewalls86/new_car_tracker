@@ -160,20 +160,52 @@ confirm the gauges converge on the live-table truth.
 
 Tests: `tests/integration/scraper/test_blocked_cooldown.py` + a dbt cohort test.
 
-### Phase 3 — Evict orphaned rows
+### Phase 3 — Cleanup (implemented in the `plan-128-cleanup` PR)
 
-Reconciliation step (dbt test or a small periodic DAG task) that removes
+Three durable maintenance jobs, all as `POST /maintenance/*` endpoints on the
+ops service (runs as the `cartracker` owner — full privileges) driven by the
+existing `orphan_checker` DAG pattern. ops already reads the DuckDB analytics
+store (see `ops/metrics/duckdb_gauges.py`) and writes Postgres.
+
+**3a. Stuck-`processing` artifact reaper** — nothing resets `ops.artifacts_queue`
+rows stranded in `status='processing'` when the processing service dies
+mid-batch (`orphan_checker` only reaps `detail_scrape_claims`). ~56 stuck since
+2026-07-09. Endpoint `reap-stuck-processing`: select rows whose most recent
+`processing` event is older than 2h; for each, `retry` if the MinIO object still
+exists (`shared.minio.object_exists`), else `skip`. Wired into `orphan_checker`
+(every 5 min). The 2h/last-event gate avoids reaping an actively-processing row
+from a legitimately-old pending backlog. Also note: these rows inflate
+`/deploy/status` `number_running`, so this unblocks the deploy-drain gate too.
+
+**3b. Delisted-vehicle cooldown eviction** — `evict-delisted-cooldowns`: delete
 `ops.blocked_cooldown` rows whose `listing_id` is absent from
-`ops.price_observations`, emitting a `'cleared'` event for each. Decide cadence
-(piggyback an existing hourly/daily DAG).
+`ops.price_observations` (~3,495 delisted, can never clear via a successful
+scrape), emitting a `'cleared'` event for each. Naturally idempotent (deleted
+rows are gone). Wired into `orphan_checker`.
 
-### Phase 4 — (Consider) freshness repair
+**3c. Durable cohort reconciliation** (the ~32k gauge inflation) —
+`reconcile-cooldown-cohorts`: the mart counts a listing while its latest
+analytics event is `blocked`/`incremented`, but ~28k were deleted from the live
+table long ago without a `'cleared'` event. Read the `blocked_cooldown_events`
+parquet directly over S3 (`shared.duckdb_s3.get_duckdb_s3_connection` — a fresh
+in-memory DuckDB, not the persisted `analytics.duckdb` view, which would contend
+with dbt's write lock and whose plain connection lacks S3 credentials) for
+listings whose latest event is `blocked`/`incremented`, anti-join the live
+`ops.blocked_cooldown`, and emit a `'cleared'` event for each orphan.
+**Idempotency:** skip listings that already have a pending `'cleared'` event in
+`staging.blocked_cooldown_events` (not yet flushed), so re-runs before the next
+flush+build don't duplicate. Runs on a **slow cadence** (hourly, after the
+analytics build) — not every 5 min — because its effect lands only after the
+staging→parquet flush and next mart build. Fixes the historical 32k and
+self-heals any future drift.
+
+### Phase 4 — (Deferred) freshness repair
 
 Listings whose `last_seen_at` / `last_detail_scraped_at` were falsely refreshed
-by challenge artifacts now look fresh and are suppressed from re-queue. Assess
-whether a one-time correction is warranted (e.g. re-open recently "detail-scraped"
-listings that only ever received challenge-page artifacts). Scope TBD after
-Phase 1 stops new corruption.
+by challenge artifacts (pre-fix) look fresh and are suppressed from re-queue.
+Phase 1 stopped new corruption; a one-time backfill to re-open the
+already-corrupted listings is out of scope for this PR — revisit if the stale
+population proves material.
 
 ## Verification
 
