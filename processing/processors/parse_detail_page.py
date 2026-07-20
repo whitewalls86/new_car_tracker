@@ -16,6 +16,10 @@ _UUID_RE = re.compile(
 
 _UNLISTED_TEXT_RE = re.compile(r"\bno longer available\b|\bno longer listed\b", re.IGNORECASE)
 
+_CHALLENGE_TITLE_RE = re.compile(
+    r"just a moment|attention required|checking your browser", re.IGNORECASE
+)
+
 
 def _digits_to_int(val: Any) -> Optional[int]:
     if val is None:
@@ -73,6 +77,23 @@ def _detect_unlisted(soup: BeautifulSoup, html: str) -> Optional[Dict[str, Any]]
         }
 
     return None
+
+
+def _detect_challenge(soup: BeautifulSoup, html: str) -> bool:
+    """
+    Detect a Cloudflare interstitial/challenge page served in place of a real
+    detail page. These come back on genuine 403s and carry no vehicle data, so
+    they must not be written as observations or clear the cooldown.
+
+    Markers (grounded in a captured artifact): a "Just a moment..." title and
+    the Cloudflare challenge script path. Both are CF-specific and absent from
+    real detail pages.
+    """
+    title_el = soup.find("title")
+    title = title_el.get_text() if title_el else ""
+    if _CHALLENGE_TITLE_RE.search(title):
+        return True
+    return "cdn-cgi/challenge-platform" in html
 
 
 def _extract_listing_id_from_url(url: Optional[str]) -> Optional[str]:
@@ -279,6 +300,24 @@ def parse_cars_detail_page_html_v1(
       meta: diagnostics
     """
     soup = BeautifulSoup(html, "lxml")
+
+    # A genuine 403 Cloudflare challenge is served in place of the detail page.
+    # Short-circuit before any parsing so callers never treat it as a real
+    # observation (which would refresh freshness and clear the cooldown).
+    if _detect_challenge(soup, html):
+        listing_id = _extract_listing_id_from_url(url)
+        primary = {
+            "listing_state": "blocked",
+            "listing_id": listing_id,
+            "listing_id_source": "url" if listing_id else None,
+        }
+        meta = {
+            "parser": "cars_detail_page__v1",
+            "html_len": len(html),
+            "blocked": True,
+            "block_reason": "cloudflare_challenge",
+        }
+        return primary, [], meta
 
     unlisted = _detect_unlisted(soup, html)
     listing_state = (unlisted or {}).get("listing_state") or "active"
