@@ -87,6 +87,21 @@ UNLISTED_TEXT_HTML = """
 <html><body><p>This vehicle is no longer available for purchase.</p></body></html>
 """
 
+# Cloudflare "Just a moment..." interstitial served on a genuine 403 — markers
+# grounded in a captured production artifact.
+CHALLENGE_TITLE_HTML = """
+<!DOCTYPE html><html lang="en-US"><head>
+<title>Just a moment...</title>
+<meta name="robots" content="noindex,nofollow">
+</head><body></body></html>
+"""
+
+CHALLENGE_SCRIPT_HTML = """
+<!DOCTYPE html><html><head><title>www.cars.com</title></head><body>
+<script src="/cdn-cgi/challenge-platform/h/g/orchestrate/chl_page/v1"></script>
+</body></html>
+"""
+
 
 class TestReturnType:
     def test_returns_three_tuple(self):
@@ -125,6 +140,30 @@ class TestUnlistedDetection:
     def test_unlisted_message_present_for_spark_notification(self):
         primary, _, _ = parse_cars_detail_page_html_v1(UNLISTED_SPARK_HTML)
         assert primary["unlisted_message"] is not None
+
+
+class TestChallengeDetection:
+    def test_detect_challenge_via_title(self):
+        primary, carousel, meta = parse_cars_detail_page_html_v1(CHALLENGE_TITLE_HTML)
+        assert primary["listing_state"] == "blocked"
+        assert carousel == []
+        assert meta["blocked"] is True
+        assert meta["block_reason"] == "cloudflare_challenge"
+
+    def test_detect_challenge_via_script_path(self):
+        primary, _, meta = parse_cars_detail_page_html_v1(CHALLENGE_SCRIPT_HTML)
+        assert primary["listing_state"] == "blocked"
+        assert meta["blocked"] is True
+
+    def test_challenge_recovers_listing_id_from_url(self):
+        url = "https://www.cars.com/vehicledetail/11111111-aaaa-bbbb-cccc-000000000001/"
+        primary, _, _ = parse_cars_detail_page_html_v1(CHALLENGE_TITLE_HTML, url)
+        assert primary["listing_id"] == "11111111-aaaa-bbbb-cccc-000000000001"
+
+    def test_active_page_is_not_challenge(self):
+        primary, _, meta = parse_cars_detail_page_html_v1(ACTIVE_DETAIL_HTML)
+        assert primary["listing_state"] == "active"
+        assert meta.get("blocked") is not True
 
 
 class TestPrimaryJsonExtraction:
