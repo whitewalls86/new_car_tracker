@@ -11,6 +11,7 @@ from airflow import DAG
 
 ARCHIVER_URL = "http://archiver:8001"
 DBT_RUNNER_URL = "http://dbt_runner:8080"
+OPS_URL = "http://ops:8060"
 _TELEGRAM_API = os.environ.get("TELEGRAM_API", "")
 _TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
@@ -23,6 +24,13 @@ def _run_flush_silver():
 
 def _run_flush_staging():
     return post_json(f"{ARCHIVER_URL}/flush/staging/run", timeout=300)
+
+
+def _run_reconcile_cooldowns():
+    # Runs after the dbt build so it reads the freshly-rebuilt analytics state.
+    # Emits 'cleared' events for listings counted as blocked in analytics but
+    # gone from the live table; they flush + drop from the mart next cycle.
+    return post_json(f"{OPS_URL}/maintenance/reconcile-cooldown-cohorts", timeout=180)
 
 
 DEFAULT_DBT_SELECT = ["tag:hourly_core"]
@@ -123,6 +131,12 @@ with DAG(
         retries=1,
         retry_delay=timedelta(seconds=30),
     )
+    reconcile_cooldowns = PythonOperator(
+        task_id="reconcile_cooldown_cohorts",
+        python_callable=_run_reconcile_cooldowns,
+        retries=1,
+        retry_delay=timedelta(seconds=30),
+    )
     notify = PythonOperator(
         task_id="notify",
         python_callable=_notify,
@@ -130,4 +144,6 @@ with DAG(
     )
 
     ready >> archiver_up >> flush_silver >> flush_staging >> dbt_runner_up >> build
-    [ready, archiver_up, flush_silver, flush_staging, dbt_runner_up, build] >> notify
+    build >> reconcile_cooldowns
+    [ready, archiver_up, flush_silver, flush_staging, dbt_runner_up, build,
+     reconcile_cooldowns] >> notify

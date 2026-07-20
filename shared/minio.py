@@ -284,6 +284,35 @@ def object_size(minio_path: str) -> "int | None":
     return response["ContentLength"]
 
 
+def _split_s3_path(minio_path: str) -> tuple[str, str]:
+    """Split ``s3://bucket/key`` (or a bare key) into (bucket, key)."""
+    if minio_path.startswith("s3://"):
+        bucket, key = minio_path[len("s3://"):].split("/", 1)
+        return bucket, key
+    return BUCKET, minio_path
+
+
+def object_exists(minio_path: str) -> bool:
+    """Return True if the object exists in MinIO, False on a 404.
+
+    *minio_path* may be a full S3 URI (``s3://bucket/key``) or a bare key.
+    Non-404 errors propagate — a missing object and an unreachable store are
+    different outcomes, and callers must not treat a network blip as "gone".
+    """
+    from botocore.exceptions import ClientError
+
+    bucket, key = _split_s3_path(minio_path)
+    client = get_boto3_client()
+    try:
+        client.head_object(Bucket=bucket, Key=key)
+        return True
+    except ClientError as e:
+        code = e.response.get("Error", {}).get("Code")
+        if code in ("404", "NoSuchKey", "NotFound"):
+            return False
+        raise
+
+
 def read_html(minio_path: str) -> bytes:
     """
     Fetch and decompress a zstd-compressed HTML object.
@@ -293,12 +322,7 @@ def read_html(minio_path: str) -> bytes:
     """
     import zstandard as zstd
 
-    if minio_path.startswith("s3://"):
-        remainder = minio_path[len("s3://"):]
-        bucket, key = remainder.split("/", 1)
-    else:
-        bucket = BUCKET
-        key = minio_path
+    bucket, key = _split_s3_path(minio_path)
 
     client = get_boto3_client()
     response = client.get_object(Bucket=bucket, Key=key)

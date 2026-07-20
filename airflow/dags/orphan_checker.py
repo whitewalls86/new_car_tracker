@@ -15,6 +15,18 @@ def _expire_orphan_detail_claims():
     return resp.json()
 
 
+def _reap_stuck_processing():
+    resp = requests.post(f"{OPS_URL}/maintenance/reap-stuck-processing", timeout=120)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def _evict_delisted_cooldowns():
+    resp = requests.post(f"{OPS_URL}/maintenance/evict-delisted-cooldowns", timeout=60)
+    resp.raise_for_status()
+    return resp.json()
+
+
 with DAG(
     dag_id="orphan_checker",
     schedule="*/5 * * * *",
@@ -29,5 +41,17 @@ with DAG(
         task_id="expire_orphan_detail_claims",
         python_callable=_expire_orphan_detail_claims,
     )
+    reap_stuck_processing = PythonOperator(
+        task_id="reap_stuck_processing",
+        python_callable=_reap_stuck_processing,
+    )
+    evict_delisted_cooldowns = PythonOperator(
+        task_id="evict_delisted_cooldowns",
+        python_callable=_evict_delisted_cooldowns,
+    )
 
-    ready >> ops_up >> expire_detail_claims
+    ready >> ops_up >> [
+        expire_detail_claims,
+        reap_stuck_processing,
+        evict_delisted_cooldowns,
+    ]
