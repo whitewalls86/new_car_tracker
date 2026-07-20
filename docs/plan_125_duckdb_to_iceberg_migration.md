@@ -1088,6 +1088,13 @@ What Gate C still genuinely owns, updated for those decisions:
   that shared fixture (a seeded snapshot + a matching DuckDB build) to exist
   in CI first, which it does not yet.
 - Extending the same treatment to any model not in the Gate B ten.
+- **New from the VM-scale shadow build (2026-07-17):** an OOM building
+  `int_listing_observation_fingerprints` and an
+  `UNSUPPORTED_DATASOURCE_FOR_DIRECT_QUERY` error building
+  `int_listing_state_fingerprints`/`int_price_history`, both only visible at
+  real production scale (38.6M rows) — neither showed at local/CI scale. See
+  [5. VM-scale shadow build](#5-vm-scale-shadow-build-first-real-data-run--one-model-proven-two-new-failures-found-2026-07-17).
+  Needs local/synthetic-scale reproduction before either is debugged further.
 
 Per-model strategy, decided at the Gate A research pass (full rationale:
 [Incremental strategy decision](plan_125_portability_audit.md#incremental-strategy-decision)).
@@ -1468,6 +1475,75 @@ these models, or a direct Spark measurement) reverses this.
 This does **not** answer decision 2's partition-spec question for the shipped
 `merge` models — that is a different measurement, on different models, and is
 the next open item.
+
+### 5. VM-scale shadow build: first real-data run — one model proven, two new failures found (2026-07-17)
+
+Every "PROVEN" claim through Gate B and the decisions above was verified
+against the small local seeded Plan 120 snapshot (16,847 observations) or the
+Gate C shape spikes (throwaway tables, synthetic rows). **This was the first
+time any Gate B model was built against real production data, or touched the
+VM's actual lakehouse stack at all.** That gap turned out to matter.
+
+**What was found before running anything:** the VM's `cartracker-lakekeeper`
+(up 2 days) has exactly one warehouse registered — `cartracker_experiments`,
+still the narrow `lakehouse_spike/warehouse` prefix used throughout local
+testing — with **zero tables in it**. The VM's deployed checkout
+(`/opt/cartracker`) is on `master` at a commit that predates this entire
+branch; `dbt/macros/dialect.sql` and `scripts/run_dbt_spark.py` do not exist
+there, and `profiles.yml` has no `spark` target. The `cartracker-lakehouse`
+image present on the VM is stale, from earlier Plan 112 spike work. In short:
+infrastructure existed, but nothing had actually been exercised on it.
+
+**Method, chosen to touch nothing live:** cloned the feature branch into an
+isolated directory (`~/gate_c_shadow`, not `/opt/cartracker` — the live
+deployed checkout was never touched), built `lakehouse-worker` there under a
+distinct tag, and ran the proven Gate B selector
+(`run --select +int_listing_volatility_features`) against real production
+silver/ops Parquet (read-only source reads) and the existing
+`cartracker_experiments` warehouse (safe to write into — isolated, spike-
+prefixed, nothing else reads from it). `add_files`/the wide-prefix
+registration (decision 1) was not needed for this: dbt-spark reads silver as
+plain Parquet directly, the same mechanism proven since Gate A, and writes
+self-contained Iceberg tables inside the warehouse's own boundary. Cleaned up
+after: the shadow image and the clone were removed; the one table that landed
+was left in place as evidence, since it's harmless in that isolated
+namespace.
+
+**Proven: `int_latest_observation` builds correctly at real scale.**
+258,374 rows, `provider=iceberg`, correct `s3://` location — checked against
+the 258,120-row figure from the [runtime measurement](#runtime-measurement-two-full-rebuild-_runs-models-2026-07-17)'s
+DuckDB copy taken ~5–6 hours earlier; the small delta is exactly what live
+scraping in the interim would produce, not drift. The `merge`-on-`vin17`
+path, proven only on the small snapshot before now, holds at 258K real rows.
+
+**Found, not proven: two new failure modes, neither seen at local/CI scale.**
+
+1. **`OutOfMemoryError: Java heap space`** building
+   `int_listing_observation_fingerprints` — the widest model (28-field hash)
+   and, at real scale, the largest source: **38.6M rows**, versus ~277K/day
+   in the local snapshot. The ad hoc container run set no explicit
+   `spark.driver.memory` or container memory limit. Plausibly just needs
+   tuning, but that is a hypothesis, not a finding — it has not been
+   confirmed.
+2. **`[UNSUPPORTED_DATASOURCE_FOR_DIRECT_QUERY] Unsupported data source type
+   for direct query on files: parquet`** building `int_listing_state_fingerprints`
+   and `int_price_history`. This is not one of the documented dialect gotchas
+   (F1–F17) — a genuinely new Spark/dbt-spark error class, not yet
+   root-caused.
+
+Both models that failed are upstream of `int_listing_state_runs`,
+`int_listing_observation_runs`, `int_benchmarks`, and
+`int_listing_volatility_features`, so those four never ran (dbt reported
+`PASS=2 ... ERROR=3 SKIP=4`, and skipped Iceberg verification because the run
+as a whole failed).
+
+**What this changes:** the shadow-lakehouse question posed at the start of
+this session — "are we closing in on it" — has a sharper answer now. One
+model is proven at real scale; the rest of the chain has two live blockers
+that only real data exposed. **Next step: reproduce both failures locally or
+on a larger synthetic dataset, where iteration is cheap, rather than
+continuing to debug against production infrastructure.** Neither failure
+should be guessed at and "fixed" live on the VM.
 
 ## Gate D: Reader Migration
 
