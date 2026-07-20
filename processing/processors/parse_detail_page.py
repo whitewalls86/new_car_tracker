@@ -85,15 +85,22 @@ def _detect_challenge(soup: BeautifulSoup, html: str) -> bool:
     detail page. These come back on genuine 403s and carry no vehicle data, so
     they must not be written as observations or clear the cooldown.
 
-    Markers (grounded in a captured artifact): a "Just a moment..." title and
-    the Cloudflare challenge script path. Both are CF-specific and absent from
-    real detail pages.
+    A real detail page carries a parseable `initial-activity-data` JSON blob;
+    the challenge page does not. That presence is the safety gate: if the page
+    has real data we never treat it as a challenge, no matter what else it
+    contains. Only when the data blob is absent do we fall back to the CF
+    interstitial title ("Just a moment...").
+
+    Note: do NOT key on `cdn-cgi/challenge-platform` — Cloudflare injects that
+    script reference into *every* cars.com page, including valid detail pages,
+    so it is not a discriminator.
     """
+    activity = _extract_script_json_by_id(soup, "initial-activity-data")
+    if activity:
+        return False
     title_el = soup.find("title")
     title = title_el.get_text() if title_el else ""
-    if _CHALLENGE_TITLE_RE.search(title):
-        return True
-    return "cdn-cgi/challenge-platform" in html
+    return bool(_CHALLENGE_TITLE_RE.search(title))
 
 
 def _extract_listing_id_from_url(url: Optional[str]) -> Optional[str]:

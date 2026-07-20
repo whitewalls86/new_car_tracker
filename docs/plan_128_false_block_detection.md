@@ -112,10 +112,21 @@ them. Independent backlog inflation.
 ### Phase 1 — Recognize challenge pages in processing (primary)
 
 Add a Cloudflare/interstitial detector and short-circuit before any write.
-Signature (confirm against pulled samples): `<title>Just a moment...</title>`,
-`Attention Required! | Cloudflare`, CF challenge script markers, or the
-combination of *no* `initial-activity-data`, *no* unlisted markers, and an
-implausibly small body (~<20KB) for a detail page.
+
+**Discriminator (validated against a real 3-page corpus):** a genuine detail
+page carries a parseable `initial-activity-data` JSON blob; the challenge page
+does not. That presence is the safety gate — if the page has real data it is
+never a challenge, regardless of anything else it contains. Only when the blob
+is absent do we fall back to the CF interstitial title (`Just a moment...`,
+`Attention Required`, `Checking your browser`).
+
+**Do NOT key on `cdn-cgi/challenge-platform`.** A first attempt used that marker
+and had to be reverted from production: Cloudflare injects that script reference
+into *every* cars.com page, so it matched 100% of valid detail pages and caused
+the processor to `skip` real pages. Confirmed by pulling the wrongly-skipped
+artifacts (192KB Honda CR-V page, title `New 2026 Honda CR-V… $41,675`, *has*
+`initial-activity-data`, and *also* contains `cdn-cgi/challenge-platform`). The
+captured pages are committed as regression fixtures under `tests/fixtures/html/`.
 
 When detected, `_process_detail_page` must:
 
@@ -134,9 +145,10 @@ Alternative considered — have the scraper not enqueue 403 challenge artifacts 
 noted but not chosen, since keeping the artifact for audit is useful and the
 processing guard is needed regardless.
 
-Tests: `tests/processing/test_parse_detail_page.py` + `test_batch_functions.py`
-with a captured `Just a moment...` fixture → asserts no price_observation write,
-no cooldown clear, non-`complete` status.
+Tests: `tests/processing/test_parse_detail_page.py` (incl. a `TestRealCorpus`
+that runs the three captured pages through the parser — real pages must not be
+`blocked`, challenge must be) + `test_batch_functions.py` asserts the blocked
+short-circuit does no price_observation write, no cooldown clear, `skip` status.
 
 ### Phase 2 — Emit `'cleared'` events on legitimate clears
 

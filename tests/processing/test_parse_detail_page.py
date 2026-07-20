@@ -4,13 +4,26 @@ Ported from tests/scraper/processors/test_parse_detail_page.py.
 Contract test updated from n8n fields to writer fields — what
 processing/writers/detail_writer.py actually reads from primary.
 """
+import gzip
 import json
+from pathlib import Path
+
+import pytest
 
 from processing.processors.parse_detail_page import (
     _parse_carousel_cards,
     _parse_dealer_card,
     parse_cars_detail_page_html_v1,
 )
+
+_FIXTURE_DIR = Path(__file__).parent.parent / "fixtures" / "html"
+
+
+def _load_html_fixture(name: str) -> str:
+    """Load a gzip-compressed captured HTML artifact from tests/fixtures/html."""
+    return gzip.decompress((_FIXTURE_DIR / f"{name}.html.gz").read_bytes()).decode(
+        "utf-8", errors="replace"
+    )
 
 # Fields that detail_writer reads from the primary dict
 WRITER_PRIMARY_FIELDS = {
@@ -96,11 +109,14 @@ CHALLENGE_TITLE_HTML = """
 </head><body></body></html>
 """
 
-CHALLENGE_SCRIPT_HTML = """
-<!DOCTYPE html><html><head><title>www.cars.com</title></head><body>
-<script src="/cdn-cgi/challenge-platform/h/g/orchestrate/chl_page/v1"></script>
-</body></html>
-"""
+# A valid detail page that ALSO contains the Cloudflare challenge-platform
+# script — Cloudflare injects it into every cars.com page. This must NOT be
+# treated as a challenge (regression guard for the false positive that skipped
+# 100% of real pages by keying on the cdn-cgi marker).
+ACTIVE_WITH_CF_SCRIPT_HTML = (
+    ACTIVE_DETAIL_HTML
+    + '<script src="/cdn-cgi/challenge-platform/h/g/orchestrate/chl_page/v1"></script>'
+)
 
 
 class TestReturnType:
@@ -150,10 +166,12 @@ class TestChallengeDetection:
         assert meta["blocked"] is True
         assert meta["block_reason"] == "cloudflare_challenge"
 
-    def test_detect_challenge_via_script_path(self):
-        primary, _, meta = parse_cars_detail_page_html_v1(CHALLENGE_SCRIPT_HTML)
-        assert primary["listing_state"] == "blocked"
-        assert meta["blocked"] is True
+    def test_page_with_data_and_cf_script_is_not_challenge(self):
+        # Real page carrying initial-activity-data AND the cdn-cgi script must
+        # be treated as a real listing, never skipped.
+        primary, _, meta = parse_cars_detail_page_html_v1(ACTIVE_WITH_CF_SCRIPT_HTML)
+        assert primary["listing_state"] == "active"
+        assert meta.get("blocked") is not True
 
     def test_challenge_recovers_listing_id_from_url(self):
         url = "https://www.cars.com/vehicledetail/11111111-aaaa-bbbb-cccc-000000000001/"
@@ -163,7 +181,26 @@ class TestChallengeDetection:
     def test_active_page_is_not_challenge(self):
         primary, _, meta = parse_cars_detail_page_html_v1(ACTIVE_DETAIL_HTML)
         assert primary["listing_state"] == "active"
+
+
+class TestRealCorpus:
+    """Regression tests against real captured production artifacts. These are
+    the pages the original detector misclassified: valid detail pages that also
+    contain the cdn-cgi challenge script. Feeding real HTML through the parser
+    is what would have caught the 100%-false-positive bug."""
+
+    @pytest.mark.parametrize("fixture", ["real_detail_crv", "real_detail_2"])
+    def test_real_detail_pages_are_not_blocked(self, fixture):
+        html = _load_html_fixture(fixture)
+        primary, _, meta = parse_cars_detail_page_html_v1(html)
+        assert primary["listing_state"] == "active"
         assert meta.get("blocked") is not True
+
+    def test_real_challenge_page_is_blocked(self):
+        html = _load_html_fixture("challenge_just_a_moment")
+        primary, _, meta = parse_cars_detail_page_html_v1(html)
+        assert primary["listing_state"] == "blocked"
+        assert meta["blocked"] is True
 
 
 class TestPrimaryJsonExtraction:
