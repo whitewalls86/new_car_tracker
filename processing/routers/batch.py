@@ -158,6 +158,24 @@ def _process_detail_page(artifact: Dict[str, Any]) -> Dict[str, Any]:
     resolved_listing_id = primary.get("listing_id") or listing_id
     listing_state = primary.get("listing_state", "active")
 
+    # A Cloudflare challenge page is a genuine block, not a scrape result. Do
+    # not write an observation, refresh freshness, or clear the cooldown — leave
+    # the scraper's blocked_cooldown row intact so backoff accumulates. Mark the
+    # artifact 'skip' so it is not re-claimed.
+    if listing_state == "blocked":
+        logger.warning(
+            "detail_page %s: Cloudflare challenge page (listing_id=%s) — "
+            "skipping, cooldown left intact",
+            artifact_id, resolved_listing_id,
+        )
+        _set_status(artifact, "skip")
+        return {
+            "status": "skip",
+            "artifact_type": "detail_page",
+            "reason": "cloudflare_challenge",
+            "listing_id": resolved_listing_id,
+        }
+
     try:
         if listing_state == "unlisted":
             result = write_detail_unlisted(
