@@ -746,37 +746,142 @@ _EVENT_AT_EXPR = (
 )
 
 
-def observations_expr(rows: int, distinct_vins: int) -> List[str]:
+@dataclass(frozen=True)
+class StringWidths:
+    """Target character widths for the hashed string fields.
+
+    The 28-field fingerprint is string-bound: its cost in shuffle and window
+    state is dominated by how many BYTES each row carries, not by how many
+    rows there are. The first version of this generator emitted uniformly
+    short values (`body-7`, `isa-12`), which is a plausible reason 38.6M
+    synthetic rows fit in a 1 GiB heap that real data did not.
+
+    These profiles are DELIBERATELY GUESSES until measured. `describe-dataset`
+    reports real per-field p95/max widths from a production snapshot; those
+    numbers should replace these. Until they do, a `wide` run proves only that
+    width matters -- not that it matches production.
+    """
+
+    body: int = 24
+    canonical_detail_url: int = 48
+    trid: int = 12
+    isa_context: int = 12
+    dealer_name: int = 24
+    vehicle_trim: int = 12
+
+    @classmethod
+    def profile(cls, name: str) -> "StringWidths":
+        if name == "narrow":
+            return cls()
+        if name == "wide":
+            return cls(
+                body=512,
+                canonical_detail_url=180,
+                trid=64,
+                isa_context=96,
+                dealer_name=64,
+                vehicle_trim=48,
+            )
+        if name == "extreme":
+            return cls(
+                body=4096,
+                canonical_detail_url=512,
+                trid=128,
+                isa_context=256,
+                dealer_name=128,
+                vehicle_trim=96,
+            )
+        raise HarnessError(
+            f"unknown string-width profile {name!r}; expected narrow/wide/extreme"
+        )
+
+
+def _wide_string(seed_expr: str, width: int, alias: str) -> str:
+    """A high-entropy string of exactly `width` characters.
+
+    Entropy matters: padding with a repeated constant would compress to almost
+    nothing in Parquet, so the FILES would stay small while the in-memory rows
+    grew -- making bytes-per-row on disk a lie. Repeated md5 keeps on-disk and
+    in-heap size honest with each other.
+    """
+    repeats = max(1, -(-width // 32))
+    return (
+        f"substr(repeat(md5(cast({seed_expr} as string)), {repeats}), 1, {width}) "
+        f"AS {alias}"
+    )
+
+
+def _base_id(duplicate_modulus: int) -> str:
+    """Identity source for a row, folding a fraction of rows onto their
+    predecessor's (artifact_id, listing_id).
+
+    This is the reprocessing-correction case the model documents: the same
+    observation re-landing with the SAME fetched_at but a later written_at.
+    It is the only thing that exercises three paths at once -- the
+    row_number() dedupe, the `unique` contract on observation_id, and
+    Iceberg's MERGE cardinality check, which raises outright if the source
+    carries two rows for one key. With no duplicates the dedupe is dead code
+    and MERGE never meets the precondition it enforces.
+    """
+    if duplicate_modulus <= 0:
+        return "id"
+    return f"(CASE WHEN id % {duplicate_modulus} = 0 AND id > 0 THEN id - 1 ELSE id END)"
+
+
+def observations_expr(
+    rows: int,
+    distinct_vins: int,
+    listings_per_artifact: int = 1,
+    widths: Optional[StringWidths] = None,
+    duplicate_modulus: int = 0,
+) -> List[str]:
     """The synthetic silver observation projection, as Spark SQL expressions.
 
-    Shape matters more than realism here. Two properties drive both failures
-    and are therefore modelled deliberately:
+    Shape matters more than realism here, and the shape that matters is the
+    one the FAILING models window over.
 
-      * every column the 28-field fingerprint hashes exists and is a non-null
-        string/number of realistic width -- a table of nulls would compress to
-        nothing and never reproduce a memory-bound failure;
-      * vin17/listing_id have realistic REPEAT, because the failing models
-        window over (artifact_id, listing_id) and rank within partitions. A
-        unique-per-row key would make every window partition size 1 and hide
-        exactly the skew that makes the widest model expensive.
+    `int_listing_observation_fingerprints` ranks within
+    `partition by artifact_id, listing_id`; `int_listing_state_fingerprints`
+    ranks within `partition by artifact_id`. The first version of this
+    generator set `artifact_id = id`, which made both keys unique per row,
+    every window partition size 1, and the ranking a no-op -- so a passing run
+    exercised none of the sort/window state it was meant to stress, and the
+    MERGE cardinality precondition was never met either.
+
+    `listings_per_artifact` fixes that by giving one artifact many listing
+    rows, which is what SRP and carousel artifacts genuinely look like: the
+    model's own header says bare artifact_id "does not hold here because a
+    single SRP or carousel artifact can carry many listing_ids".
+    `duplicate_modulus` additionally folds a fraction of rows onto an existing
+    (artifact_id, listing_id).
 
     Kept as SQL expressions over spark.range so generation itself streams and
     never materializes the dataset in the driver.
     """
+    widths = widths or StringWidths()
+    base = _base_id(duplicate_modulus)
+    fanout = max(1, listings_per_artifact)
+    # Rows sharing an artifact_id are consecutive, so `base % distinct_vins`
+    # still differs within the group -- one artifact, many distinct listings.
+    artifact = f"cast({base} / {fanout} as bigint)"
     return [
-        "id AS artifact_id",
-        f"concat('L', cast(id % {distinct_vins} as string)) AS listing_id",
-        _VIN_EXPR.format(n=distinct_vins),
-        "concat('https://www.cars.com/vehicledetail/', cast(id as string), '/') "
-        "AS canonical_detail_url",
+        f"{artifact} AS artifact_id",
+        f"concat('L', cast({base} % {distinct_vins} as string)) AS listing_id",
+        f"concat('1HGCM82633A', lpad(cast({base} % {distinct_vins} as string), 6, '0')) "
+        "AS vin",
+        _wide_string(base, widths.canonical_detail_url, "canonical_detail_url"),
         _SOURCE_EXPR,
         "CASE WHEN id % 17 = 0 THEN 'unavailable' ELSE 'active' END AS listing_state",
-        _EVENT_AT_EXPR.format(alias="fetched_at"),
+        # fetched_at keyed off `base` so a correction row shares its
+        # predecessor's fetched_at, and written_at off `id` so it lands later
+        # -- exactly the tie the dedupe's `written_at desc` exists to break.
+        f"timestamp_millis(1700000000000 + cast({base} % 2592000 as bigint) * 1000) "
+        "AS fetched_at",
         "timestamp_millis(1700000060000 + cast(id % 2592000 as bigint) * 1000) AS written_at",
         "cast(15000 + (id % 60000) as int) AS price",
         _MAKE_EXPR,
         _MODEL_EXPR,
-        "concat('Trim-', cast(id % 11 as string)) AS trim",
+        _wide_string("id % 11", widths.vehicle_trim, "trim"),
         "cast(2018 + (id % 8) as smallint) AS year",
         "cast(id % 120000 as int) AS mileage",
         "cast(20000 + (id % 55000) as int) AS msrp",
@@ -786,7 +891,7 @@ def observations_expr(rows: int, distinct_vins: int) -> List[str]:
         "CASE cast(id % 6 as int) WHEN 0 THEN 'Sedan' WHEN 1 THEN 'SUV' "
         "WHEN 2 THEN 'Truck' WHEN 3 THEN 'Coupe' WHEN 4 THEN 'Wagon' "
         "ELSE 'Van' END AS body_style",
-        "concat('Dealer Number ', cast(id % 900 as string)) AS dealer_name",
+        _wide_string("id % 900", widths.dealer_name, "dealer_name"),
         "lpad(cast(id % 99999 as string), 5, '0') AS dealer_zip",
         "concat('City', cast(id % 400 as string)) AS dealer_city",
         "CASE cast(id % 5 as int) WHEN 0 THEN 'CA' WHEN 1 THEN 'TX' "
@@ -798,9 +903,9 @@ def observations_expr(rows: int, distinct_vins: int) -> List[str]:
         "concat('sc-', cast(id % 700 as string)) AS seller_customer_id",
         "cast(id % 50 as smallint) AS page_number",
         "cast(id % 30 as smallint) AS position_on_page",
-        "concat('trid-', cast(id % 5000 as string)) AS trid",
-        "concat('isa-', cast(id % 40 as string)) AS isa_context",
-        "concat('body-', cast(id % 25 as string)) AS body",
+        _wide_string("id % 5000", widths.trid, "trid"),
+        _wide_string("id % 40", widths.isa_context, "isa_context"),
+        _wide_string("id", widths.body, "body"),
         "CASE WHEN id % 2 = 0 THEN 'new' ELSE 'used' END AS condition",
         "cast(2024 + (id % 2) as int) AS obs_year",
         "cast(1 + (id % 12) as int) AS obs_month",
@@ -825,6 +930,139 @@ def price_events_expr(rows: int, distinct_vins: int) -> List[str]:
     ]
 
 
+# Fields whose width drives the 28-field hash's memory cost. Reported by
+# describe-dataset so the StringWidths profiles can be replaced by measured
+# production percentiles instead of guesses.
+HASHED_STRING_FIELDS = (
+    "body",
+    "canonical_detail_url",
+    "isa_context",
+    "trid",
+    "dealer_name",
+    "trim",
+    "listing_id",
+    "vin",
+    "customer_id",
+)
+
+
+def dataset_profile_sql(path: str) -> Dict[str, str]:
+    """The stat queries describe-dataset runs, as {name: SQL}.
+
+    Split out as data so the query shapes are unit-testable without Spark,
+    and so the same profile can be pointed at a real production snapshot --
+    which is the whole point. Row and file counts alone were what let the
+    earlier harness claim a faithful reproduction while every window
+    partition was size 1; these are the numbers that would have caught it.
+    """
+    src = f"parquet.`{path}`"
+    return {
+        "row_count": f"SELECT count(*) AS rows FROM {src}",
+        # Rows per artifact -- the SRP/carousel fan-out that the first
+        # generator flattened to 1.
+        "artifact_fanout": (
+            "SELECT min(n) AS min_rows, "
+            "percentile_approx(n, 0.5) AS p50, "
+            "percentile_approx(n, 0.95) AS p95, "
+            "percentile_approx(n, 0.99) AS p99, "
+            "max(n) AS max_rows, count(*) AS artifacts "
+            f"FROM (SELECT artifact_id, count(*) AS n FROM {src} GROUP BY artifact_id)"
+        ),
+        # Rows per (artifact_id, listing_id) -- the actual window partition of
+        # int_listing_observation_fingerprints. Anything above 1 is what the
+        # row_number() dedupe and Iceberg's MERGE cardinality check act on.
+        "observation_key_groups": (
+            "SELECT max(n) AS max_rows, "
+            "percentile_approx(n, 0.95) AS p95, "
+            "count(*) AS groups, "
+            "sum(CASE WHEN n > 1 THEN 1 ELSE 0 END) AS groups_with_duplicates "
+            f"FROM (SELECT artifact_id, listing_id, count(*) AS n FROM {src} "
+            "GROUP BY artifact_id, listing_id)"
+        ),
+        "string_widths": (
+            "SELECT "
+            + ", ".join(
+                f"avg(length({f})) AS {f}_avg, "
+                f"percentile_approx(length({f}), 0.95) AS {f}_p95, "
+                f"max(length({f})) AS {f}_max"
+                for f in HASHED_STRING_FIELDS
+            )
+            + f" FROM {src}"
+        ),
+    }
+
+
+def cmd_describe_dataset(args: argparse.Namespace) -> int:
+    """Profile a dataset's SHAPE, not just its size.
+
+    Point it at the synthetic bucket to verify the generator produces the
+    fan-out and widths it claims; point it at a real Plan 120 snapshot to get
+    the production percentiles that should replace the StringWidths guesses.
+    Comparing the two bundles is the bridge between "1 GiB passes locally"
+    and "1 GiB OOMed on the VM".
+    """
+    assert_isolated_bucket(args.bucket)
+    sizing = sizing_from_args(args)
+    conf = harness_spark_conf(sizing, args.bucket)
+    spark = build_spark(conf, "cartracker-describe-dataset")
+
+    path = args.path or f"s3a://{args.bucket}/{OBSERVATIONS_PREFIX}"
+    steps: List[StepResult] = []
+
+    for name, sql in dataset_profile_sql(path).items():
+        steps.append(
+            run_step(name, lambda sql=sql: {"stats": spark.sql(sql).collect()[0].asDict()})
+        )
+
+    # Bytes/row and bytes/file, which row counts alone cannot give -- a
+    # narrow-string dataset and a wide-string one of identical row and file
+    # count differ here by an order of magnitude, and that difference is what
+    # the fingerprint's memory cost tracks.
+    def storage() -> Dict[str, object]:
+        files = spark.read.parquet(path).inputFiles()
+        total = _prefix_bytes(args.bucket, path)
+        rows = steps[0].detail["stats"]["rows"] if steps[0].ok else 0
+        return {
+            "files": len(files),
+            "total_bytes": total,
+            "bytes_per_row": round(total / rows, 2) if rows else None,
+            "bytes_per_file": round(total / len(files), 2) if files else None,
+        }
+
+    steps.append(run_step("storage", storage))
+
+    bundle = evidence_bundle(
+        "describe-dataset", conf, steps, extra={"path": path}
+    )
+    out = write_evidence(Path(args.evidence_dir), args.evidence_name, bundle)
+    for step in steps:
+        detail = step.detail or step.error_message
+        print(f"  {step.name:24s} {'PASS' if step.ok else 'FAIL'} {detail}")
+    print(f"Evidence: {out}")
+    return 0 if all(s.ok for s in steps) else 1
+
+
+def _prefix_bytes(bucket: str, path: str) -> int:
+    """Total stored bytes under a dataset path, via the object store rather
+    than Spark -- Spark reports uncompressed sizes, and the interesting ratio
+    here is stored-bytes-per-row."""
+    import boto3
+
+    prefix = path.split(f"{bucket}/", 1)[1] if f"{bucket}/" in path else ""
+    client = boto3.client(
+        "s3",
+        endpoint_url=os.environ.get("MINIO_ENDPOINT", "http://minio:9000"),
+        aws_access_key_id=os.environ["MINIO_ROOT_USER"],
+        aws_secret_access_key=os.environ["MINIO_ROOT_PASSWORD"],
+    )
+    paginator = client.get_paginator("list_objects_v2")
+    return sum(
+        obj["Size"]
+        for page in paginator.paginate(Bucket=bucket, Prefix=prefix)
+        for obj in page.get("Contents", [])
+    )
+
+
 def cmd_generate(args: argparse.Namespace) -> int:
     assert_isolated_bucket(args.bucket)
     ensure_bucket(args.bucket)
@@ -846,13 +1084,20 @@ def cmd_generate(args: argparse.Namespace) -> int:
         )
         return {"path": path, "rows": rows}
 
+    widths = StringWidths.profile(args.string_widths)
     steps.append(
         run_step(
             "write_observations",
             lambda: write(
                 OBSERVATIONS_PREFIX,
                 args.rows,
-                observations_expr(args.rows, args.distinct_vins),
+                observations_expr(
+                    args.rows,
+                    args.distinct_vins,
+                    listings_per_artifact=args.listings_per_artifact,
+                    widths=widths,
+                    duplicate_modulus=args.duplicate_modulus,
+                ),
                 ["source", "obs_year", "obs_month"],
             ),
         )
@@ -1050,7 +1295,48 @@ def build_parser() -> argparse.ArgumentParser:
         help="Controls window-partition size; too high hides ranking skew.",
     )
     gen.add_argument("--write-partitions", type=int, default=32)
+    gen.add_argument(
+        "--listings-per-artifact",
+        type=int,
+        default=1,
+        help=(
+            "Listing rows sharing one artifact_id (SRP/carousel fan-out). "
+            "1 makes every (artifact_id, listing_id) window partition a "
+            "singleton and the models' ranking a no-op -- use >1 to exercise it."
+        ),
+    )
+    gen.add_argument(
+        "--duplicate-modulus",
+        type=int,
+        default=0,
+        help=(
+            "Every Nth row reuses its predecessor's (artifact_id, listing_id) "
+            "with a later written_at -- the reprocessing-correction case. 0 "
+            "disables, leaving the dedupe and MERGE cardinality paths untested."
+        ),
+    )
+    gen.add_argument(
+        "--string-widths",
+        default="narrow",
+        choices=("narrow", "wide", "extreme"),
+        help=(
+            "Width profile for the hashed string fields. The 28-field hash is "
+            "string-bound, so this drives memory more than row count does."
+        ),
+    )
     gen.set_defaults(func=cmd_generate)
+
+    desc = sub.add_parser(
+        "describe-dataset",
+        help="Profile a dataset's fan-out, key skew, string widths, and bytes/row.",
+    )
+    desc.add_argument(
+        "--path",
+        default=None,
+        help="s3a:// path to profile (default: the harness bucket's observations).",
+    )
+    desc.add_argument("--evidence-name", default="describe_dataset")
+    desc.set_defaults(func=cmd_describe_dataset)
 
     run = sub.add_parser("run-model", help="Run dbt over the synthetic data, instrumented.")
     run.add_argument("--verify-table", action="append", dest="verify_tables", default=None)

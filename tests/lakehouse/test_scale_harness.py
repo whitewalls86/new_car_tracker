@@ -31,12 +31,15 @@ import pytest
 
 from scripts.lakehouse_scale_harness import (
     DEFAULT_HARNESS_BUCKET,
+    HASHED_STRING_FIELDS,
     OBSERVATIONS_PREFIX,
     PRICE_EVENTS_PREFIX,
     PRODUCTION_BUCKET,
     HarnessError,
     SparkSizing,
+    StringWidths,
     assert_isolated_bucket,
+    dataset_profile_sql,
     evidence_bundle,
     harness_spark_conf,
     observations_expr,
@@ -266,15 +269,93 @@ class TestSyntheticSchema:
         for field in required:
             assert field in sql
 
-    def test_keys_repeat_so_window_partitions_are_not_singletons(self):
-        """The failing models rank within (artifact_id, listing_id) windows.
-        A unique-per-row key would make every partition size 1 and hide the
-        very skew that makes the widest model expensive -- the run would pass
-        while reproducing nothing."""
-        exprs = observations_expr(rows=1000, distinct_vins=10)
-        listing = next(e for e in exprs if e.endswith("AS listing_id"))
+    @staticmethod
+    def _expr_for(exprs, alias):
+        return next(e for e in exprs if e.endswith(f"AS {alias}"))
 
-        assert "% 10" in listing
+    def test_artifact_fanout_makes_the_composite_window_key_repeat(self):
+        """The regression this file previously FAILED to catch.
+
+        `int_listing_observation_fingerprints` ranks within
+        `partition by artifact_id, listing_id`. The original generator emitted
+        `id AS artifact_id`, so every window partition was size 1, the
+        row_number() dedupe was a no-op, and Iceberg's MERGE cardinality check
+        never met its precondition -- while the old version of this test
+        asserted only that listing_id repeated, and passed.
+
+        Assert on the artifact key itself: with fan-out, artifact_id must be a
+        DIVISION of the row id, not the id.
+        """
+        exprs = observations_expr(
+            rows=1000, distinct_vins=100, listings_per_artifact=8
+        )
+        artifact = self._expr_for(exprs, "artifact_id")
+
+        assert artifact != "id AS artifact_id"
+        assert "/ 8" in artifact
+
+    def test_fanout_of_one_is_the_degenerate_case(self):
+        """Kept reachable on purpose -- it is the control for a fan-out run --
+        but it must be an explicit choice, not the shape you get by accident."""
+        exprs = observations_expr(rows=10, distinct_vins=5, listings_per_artifact=1)
+
+        assert "/ 1" in self._expr_for(exprs, "artifact_id")
+
+    def test_listing_id_still_varies_within_one_artifact(self):
+        """Fan-out is only meaningful if the listings inside an artifact
+        DIFFER; identical rows would collapse to a duplicate-key case instead
+        of the many-listings-per-artifact case being modelled."""
+        exprs = observations_expr(
+            rows=1000, distinct_vins=100, listings_per_artifact=8
+        )
+
+        assert "% 100" in self._expr_for(exprs, "listing_id")
+
+    def test_duplicate_modulus_folds_rows_onto_their_predecessor(self):
+        """The reprocessing-correction case: same (artifact_id, listing_id),
+        same fetched_at, later written_at. Without it the dedupe's
+        `written_at desc` tiebreak is never exercised."""
+        exprs = observations_expr(
+            rows=1000, distinct_vins=100, listings_per_artifact=4, duplicate_modulus=10
+        )
+
+        for alias in ("artifact_id", "listing_id", "fetched_at"):
+            assert "id - 1" in self._expr_for(exprs, alias), alias
+        # written_at must NOT fold, or the correction would be indistinguishable
+        # from the original and the tiebreak still would not be exercised.
+        assert "id - 1" not in self._expr_for(exprs, "written_at")
+
+    def test_duplicates_are_off_unless_asked_for(self):
+        exprs = observations_expr(rows=10, distinct_vins=5)
+
+        assert "id - 1" not in self._expr_for(exprs, "artifact_id")
+
+    def test_string_width_profiles_actually_widen_the_hashed_fields(self):
+        """The 28-field hash is string-bound, so width is a first-class knob.
+        A profile that did not reach the SQL would make a 'wide' run a
+        relabelled narrow one."""
+        narrow = observations_expr(
+            rows=10, distinct_vins=5, widths=StringWidths.profile("narrow")
+        )
+        wide = observations_expr(
+            rows=10, distinct_vins=5, widths=StringWidths.profile("wide")
+        )
+
+        assert ", 1, 24) AS body" in self._expr_for(narrow, "body")
+        assert ", 1, 512) AS body" in self._expr_for(wide, "body")
+
+    def test_wide_strings_are_high_entropy_not_constant_padding(self):
+        """Constant padding would compress away in Parquet, so files would
+        stay small while rows grew -- making bytes-per-row on disk a lie."""
+        exprs = observations_expr(
+            rows=10, distinct_vins=5, widths=StringWidths.profile("wide")
+        )
+
+        assert "md5(" in self._expr_for(exprs, "body")
+
+    def test_unknown_width_profile_is_rejected(self):
+        with pytest.raises(HarnessError, match="narrow/wide/extreme"):
+            StringWidths.profile("enormous")
 
     def test_source_prefixes_match_sources_yml(self):
         """The generator writes where sources.yml reads. If either moved, the
@@ -284,6 +365,44 @@ class TestSyntheticSchema:
 
         assert OBSERVATIONS_PREFIX in sources
         assert PRICE_EVENTS_PREFIX in sources
+
+
+class TestDatasetProfile:
+    """describe-dataset is what would have caught the flattened-fan-out bug.
+
+    Row and file counts were the only shape evidence the harness reported, and
+    both looked correct while every window partition was a singleton. These
+    stats are the ones that distinguish a faithful reproduction from a
+    same-sized-but-differently-shaped one.
+    """
+
+    def test_profiles_the_real_window_partition_key(self):
+        sql = dataset_profile_sql("s3a://b/p")["observation_key_groups"]
+
+        assert "GROUP BY artifact_id, listing_id" in sql
+        assert "groups_with_duplicates" in sql
+
+    def test_profiles_artifact_fanout_distribution_not_just_a_count(self):
+        """A mean would hide skew; the failing model's cost lives in the tail."""
+        sql = dataset_profile_sql("s3a://b/p")["artifact_fanout"]
+
+        assert "GROUP BY artifact_id" in sql
+        for pct in ("0.5", "0.95", "0.99"):
+            assert pct in sql
+        assert "max(n)" in sql
+
+    def test_profiles_every_hashed_string_field_width(self):
+        sql = dataset_profile_sql("s3a://b/p")["string_widths"]
+
+        for field in HASHED_STRING_FIELDS:
+            assert f"length({field})" in sql
+        assert "percentile_approx" in sql
+
+    def test_profile_reads_the_given_path_as_parquet_files(self):
+        """Must work against a real snapshot path, not only the harness
+        bucket -- that comparison is the point of the subcommand."""
+        for sql in dataset_profile_sql("s3a://real/silver").values():
+            assert "parquet.`s3a://real/silver`" in sql
 
 
 class TestEvidence:

@@ -1634,11 +1634,62 @@ changing the relation syntax, adding a dialect gotcha — would be fixing a
 symptom of something else, which is exactly the outcome this task existed to
 prevent.
 
-#### Finding 2: the OOM does NOT reproduce on synthetic data at VM scale
+#### Finding 2: the OOM reproduces — the trigger is DATA SHAPE, not row count
 
-Acceptance item 4 asked whether bounded, explicit sizing fixes the OOM. That
-question could not be answered, because **the OOM never occurred** — including
-under the VM's own unbounded sizing.
+**Reproduced 2026-07-21**, locally, with the VM's exact result:
+`PASS=2 WARN=0 ERROR=3 SKIP=4 NO-OP=0 TOTAL=9`, the same model OOMing
+(`int_listing_observation_fingerprints`, `java.lang.OutOfMemoryError: Java
+heap space`), the same model passing before it (`int_latest_observation`), and
+the same four skipped downstream.
+
+Getting there took two passes, and the first one's negative result is kept
+below because it is what localized the cause.
+
+**Pass 1 — row count, file count, and parallelism, all eliminated.** Under the
+VM's own 1 GiB heap:
+
+| Run | Rows | Files | bytes/row | Result |
+|---|---|---|---|---|
+| Widest model only | 5M | 2,319 | ~64 | PASS, 15.5s |
+| Widest model only | 38.6M | 2,319 | ~64 | PASS, 91.9s |
+| Full VM selector, one session | 38.6M | 2,319 | ~64 | PASS ×9, 4m26s |
+| Full VM selector, fragmented | 38.6M | 36,015 | ~64 | PASS ×9, 7m39s |
+
+**Pass 2 — same everything, corrected data shape: OOM.** After fixing the
+generator defect described above (artifact fan-out, duplicate keys, realistic
+string widths), holding row count, file count, heap, and parallelism constant:
+
+| Run | Rows | artifact fan-out p50 | bytes/row | heap | Result |
+|---|---|---|---|---|---|
+| Full VM selector | 38.6M | **12** | **156** | 1 GiB | **OOM — `PASS=2 ERROR=3 SKIP=4`** |
+
+Measured session facts for that run: `jvm_max_heap_bytes = 1073741824`
+(1.00 GiB, matching the VM), `spark.master = local[4]` (matching the VM's
+`local[*]` = 4), 3,216,667 artifacts, 1,543,999 duplicate
+`(artifact_id, listing_id)` groups, 6.03 GB across 1,152 files.
+
+**The only variable that changed between the passing and failing runs is data
+shape.** Row count, file count, heap, and parallelism were all held constant.
+So the trigger is artifact/listing fan-out and string width — the window and
+sort state the widest model builds per `(artifact_id, listing_id)` partition —
+not the 38.6M row count the VM report attributed it to.
+
+**Cascade confirmed in situ, with a caveat.** The two models that failed on the
+VM failed here too, immediately after the OOM (0.11s and 0.03s), while
+`int_latest_observation` had already succeeded — the ordering that Finding 1
+predicted. But this run's cascade surfaced as `[Errno 111] Connection refused`
+(the py4j gateway died outright), *not* as
+`UNSUPPORTED_DATASOURCE_FOR_DIRECT_QUERY`. Same underlying phenomenon — an
+undefined post-OOM driver state — but this run did not reproduce that exact
+error string; `probe-oom-cascade` did, on 2 of 6 attempts. Both are needed to
+support Finding 1, and neither alone is the whole picture.
+
+The rest of this subsection is the pass-1 analysis, retained because the
+eliminations it establishes are still valid and still narrow the problem.
+
+Acceptance item 4 asked whether bounded, explicit sizing fixes the OOM. In
+pass 1 that question could not be answered, because **the OOM never occurred**
+— including under the VM's own unbounded sizing.
 
 The VM run set no `spark.driver.memory`. Spark's documented default is **1g**,
 and nothing sets `spark.master` either, so Spark runs `local[*]` with
@@ -1704,16 +1755,84 @@ Per-node timings, 38.6M rows, 1g driver:
 | `int_benchmarks` | 2.2 |
 | `int_listing_volatility_features` | 41.2 |
 
-**So row count is not the trigger.** That eliminates the explanation the VM
-report itself offered ("only visible at real production scale (38.6M rows)")
-— the row count reproduces nothing. The fourth row eliminates file
-fragmentation as well: 36,015 files instead of 2,319 cost 70% more wall time
-(driver-side listing and footer reads, as expected) but did not exhaust the
-heap either.
+**So row count is not the trigger**, and neither is file fragmentation:
+36,015 files instead of 2,319 cost 70% more wall time (driver-side listing and
+footer reads, as expected) but did not exhaust the heap.
 
 Reporting this rather than tuning memory until it passes is the point: raising
 `spark.driver.memory` would have "fixed" a failure whose trigger is still
 unidentified.
+
+**Scope of that elimination, corrected on review (2026-07-21).** An earlier
+version of this section said "row count and layout are therefore both
+eliminated", which claimed more than the evidence supports. The accurate
+statement is:
+
+> Row count, file count, and `local[4]` parallelism are eliminated **for the
+> current synthetic schema**. Real-data string widths and artifact/listing
+> fan-out and skew remain untested.
+
+The reason is a defect in the generator, described next — and once that defect
+was fixed, fan-out and string width turned out to be exactly what reproduces
+the OOM. The corrected claim was not merely more cautious, it was pointing at
+the answer.
+
+#### The harness's first synthetic schema did not reproduce the expensive shape
+
+Found by review of the committed harness, not by a failing run — which is
+exactly why it is worth recording.
+
+`int_listing_observation_fingerprints` ranks within
+`partition by artifact_id, listing_id`, and `int_listing_state_fingerprints`
+within `partition by artifact_id`. The first generator emitted
+`id AS artifact_id`, making **every artifact unique**. Consequences, all
+invisible in a green run:
+
+- every window partition was size 1, so the `row_number()` ranking was a no-op
+  and none of the sort/window state the widest model is expensive for was ever
+  built;
+- the dedupe those models document as a *hard precondition* was dead code;
+- Iceberg's MERGE cardinality check never met a duplicate key, so the one
+  thing it enforces went untested;
+- no artifact-level fan-out existed at all — despite the model's own header
+  stating that bare `artifact_id` "does not hold here because a single SRP or
+  carousel artifact can carry many listing_ids".
+
+The unit test meant to catch this made it worse. It was named
+`test_keys_repeat_so_window_partitions_are_not_singletons`, its docstring
+named `(artifact_id, listing_id)` — and it asserted only that `listing_id`
+repeated. It passed while the property it was named for was false. **A test
+that names the right invariant and checks a weaker one is worse than no test,
+because it is counted as coverage.**
+
+Separately, the generator used uniformly short strings (`body-7`, `isa-12`, a
+short synthetic URL) while the 28-field hash is string-bound — its shuffle and
+window cost tracks bytes per row, not rows.
+
+Both are now fixed, and *measured* rather than asserted:
+
+| Property | Before | After |
+|---|---|---|
+| Rows per `artifact_id` (p50 / max) | 1 / 1 | **12 / 13** |
+| `(artifact_id, listing_id)` groups with duplicates | 0 | **19,999** |
+| `body` width | 7 chars | **512 chars** (`--string-widths wide`) |
+| Stored bytes per row | ~64 | **183** |
+
+New generator knobs: `--listings-per-artifact` (SRP/carousel fan-out),
+`--duplicate-modulus` (reprocessing corrections — same key and `fetched_at`,
+later `written_at`, which is the tie the dedupe's `written_at desc` exists to
+break), and `--string-widths narrow|wide|extreme`. Wide strings are built from
+repeated md5 rather than constant padding, so they do not compress away, which
+keeps bytes-per-row on disk an honest proxy for bytes in heap.
+
+A new `describe-dataset` subcommand reports artifact fan-out percentiles,
+`(artifact_id, listing_id)` group-size distribution and duplicate counts,
+per-field string-width percentiles, and bytes per row and per file. Row and
+file counts alone were the harness's entire shape evidence, and both looked
+correct while every window partition was a singleton. `describe-dataset` also
+runs against a real Plan 120 snapshot path, which is how the `StringWidths`
+profiles — currently documented guesses — get replaced by measured production
+percentiles.
 
 #### What the local box can and cannot settle
 
@@ -1792,16 +1911,26 @@ build still OOMs at a sane heap size, that is a genuinely new finding, and the
 next step then is to capture the stack trace (lost from the original run) to
 learn where the heap goes.
 
-Two open items the harness has deliberately *not* closed:
+**This is now verifiable rather than merely justified.** The harness
+reproduces the OOM on demand, so a candidate `spark.driver.memory` can be
+tested against the reproduction directly — rerun the pass-2 command at the
+proposed heap and require `PASS=9`. That is the acceptance-item-4 experiment
+that pass 1 could not perform, and it should gate the change.
 
-- **Real vs synthetic data width.** Synthetic rows of the same count, key
-  cardinality, and file layout do not OOM at 1g. Real silver strings
-  (`canonical_detail_url`, `body`, `isa_context`, `trid`) are wider than the
-  generator's, and the 28-field hash is string-bound. Seeding the harness from
-  a real Plan 120 lake snapshot rather than `generate` is the faithful next
-  experiment if one is still needed.
-- **aarch64 vs x86_64.** Untested, and cheap to hold as a hypothesis rather
-  than chase — the harness runs on whatever machine it is given.
+Open items, in the order they should be closed:
+
+1. **Bisect the heap against the reproduction** — pass 2 fails at 1 GiB; find
+   the size at which it passes, and set `spark.driver.memory` above it with
+   headroom, in `shared/iceberg_catalog.py` (guardrail R1).
+2. **Measure real widths and fan-out**, by pointing `describe-dataset` at a
+   real Plan 120 snapshot, and replace the `StringWidths` profile guesses with
+   measured percentiles. The reproduction currently uses the `wide` profile,
+   which is a documented guess: it proves shape is the trigger, but the
+   *margin* between production's real shape and the failure threshold is
+   unknown until real percentiles are measured. Sizing chosen from a guessed
+   profile could be too tight.
+3. **aarch64 vs x86_64** — still untested, and now lower priority: the failure
+   reproduces on x86_64, so architecture is not required to explain it.
 
 #### Exact repro commands
 
@@ -1834,7 +1963,19 @@ $RUN probe-parquet
 # Intermittent -- reproduced 2 of 6 runs, so loop it rather than trusting one run.
 $RUN --driver-memory 900m probe-oom-cascade
 
-# Failure 1: VM-scale synthetic silver, then the VM's exact selector on the VM's default heap
+# Failure 1, REPRODUCES THE OOM: VM-scale silver with realistic artifact
+# fan-out, duplicate-key corrections, and wide hashed strings, then the VM's
+# exact selector on the VM's measured 1 GiB heap.
+# Expect: PASS=2 ERROR=3 SKIP=4, OOM in int_listing_observation_fingerprints.
+$RUN --driver-memory 4g generate --rows 38600000 --price-event-rows 8000000 \
+  --distinct-vins 3000000 --write-partitions 96 \
+  --listings-per-artifact 12 --duplicate-modulus 25 --string-widths wide
+$RUN --driver-memory 4g describe-dataset          # confirm the shape landed
+$RUN --driver-memory 1g run-model --evidence-name chain_38m_wide_fanout_1g -- \
+  run --full-refresh --select +int_listing_volatility_features
+
+# The control that PASSES: identical rows/files/heap, flat shape + narrow
+# strings. The delta between these two commands is the whole finding.
 $RUN --driver-memory 4g generate --rows 38600000 --price-event-rows 8000000 \
   --distinct-vins 3000000 --write-partitions 96
 $RUN --driver-memory 1g run-model --evidence-name chain_38m_driver1g -- \
