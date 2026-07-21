@@ -2240,6 +2240,103 @@ What to measure, read-only, against the actual VM source:
 `describe-dataset` already reports 1–3 and runs against any bucket; skew needs
 a max-group-size addition.
 
+
+#### Finding 5: measured the REAL production distribution — skew is bounded, and the OOM is still unexplained (2026-07-21)
+
+The read-only VM measurement Finding 4 called for. **Result: the Plan 120
+snapshot's fan-out and duplicate figures were biased, exactly as suspected —
+but correcting them makes production look like the profile that PASSED at
+1 GiB, not the one that OOMed.**
+
+Method: cloned this branch (`e3cb8e2`) into an isolated `~/gate_c_skew`, built
+under a distinct tag `cartracker-lakehouse-skew:measure`, ran
+`describe-dataset --path s3a://bronze/silver_normalized/observations
+--allow-production-read` in a container capped at `--memory 3g` with a 2 GiB
+driver heap, then removed the image, its build intermediates, and the clone.
+`/opt/cartracker` was never touched, nothing was deployed, restarted, or
+reconfigured, and every query was a `SELECT` plus one read-only object listing.
+Disk returned to its starting 11 GB free. The bundle is stamped
+`reads_production: true` so it can never be cited as snapshot-derived.
+
+**Snapshot vs production**
+
+| Metric | Snapshot fixture | **Production (measured)** | Verdict |
+|---|---|---|---|
+| Rows | 16,847 | **40,450,715** | — |
+| Files / stored bytes per row | 8 / 30.84 | **1,030 / 14.18** | compresses better at scale |
+| Artifact fan-out p50 | 1 | **9** | **badly understated** |
+| Fan-out p95 / p99 | 5 / 7 | **9 / 9** | understated |
+| Fan-out max | 10 | **112** | tail invisible in the fixture |
+| Fan-out mean | — | 6.43 over 6,287,439 artifacts | — |
+| `(artifact_id, listing_id)` max | 1 | **6** | — |
+| Duplicate groups | **0** | **232,247** of 40,186,331 (0.58%) | **zero WAS an export artifact** |
+| Hashed bytes/row p50 / p95 / p99 | 230 / 264 / 268 | **235 / 269 / 282** | **snapshot was accurate** |
+| Source mix | car 74.9 / det 15.5 / srp 9.6 | **car 81.1 / det 16.0 / srp 3.0** | srp overstated |
+
+The split verdict is the useful part: **widths and null rates held up, fan-out
+and duplicates did not** — which is precisely the caveat recorded when the
+snapshot profile was built, now confirmed rather than assumed. The seed-VIN
+filter suppressed multi-listing artifacts, and the export dedupes.
+
+Note also `mean 6.43 < p50 9`: the distribution is bimodal, not skewed —
+carousel rows (81.1%) carry fan-out 9 while detail rows (16.0%) are fan-out 1,
+and the mean sits between the two modes.
+
+**Skew is BOUNDED — the tail this whole investigation was aimed at is benign**
+
+The top 20 artifact groups are `[112 ×15, 111 ×5]`; the top 20
+`(artifact_id, listing_id)` groups are all exactly `6`. A hard ceiling at 112
+with no long tail above it is a **page-size cap**, not a hot partition. The
+largest window partition therefore carries roughly 112 × 330 B ≈ **37 KB** —
+irrelevant against any heap under discussion.
+
+This is a negative result and it is worth stating plainly: **the single hot
+`artifact_id` that a percentile summary would have hidden does not exist.**
+Adding the skew queries was still right — that claim could not be made before
+they existed, and "p99 = 1" was being read as evidence for it.
+
+**Why this deepens rather than resolves the OOM**
+
+Per-artifact window weight (fan-out × hashed bytes/row) across the three
+shapes now on record:
+
+| Shape | Fan-out | Bytes/row p95 | Weight per artifact | Result at 1 GiB |
+|---|---|---|---|---|
+| Sweep baseline (Finding 4) | 7 (flat) | 336 | ~2,352 B | **PASS** |
+| **Production (measured)** | **9** | **269** | **~2,421 B** | not run |
+| `wide` treatment (Finding 2) | 12 | 1,090 | ~13,080 B | **OOM** |
+
+Production sits **~3% above a profile that passed** and **5.4× below the one
+that OOMed**. Finding 2's reproduction used a shape real data does not have,
+in either dimension — it was 4× too wide and 33% too fanned-out at once.
+
+**Consequence: the OOM has not been reproduced under any realistic shape, and
+data shape alone no longer looks sufficient to explain it.** Finding 2's
+conclusion ("the trigger is data shape") is now known to rest on an unrealistic
+treatment, and should not be carried forward as established. What survives
+unchanged is the guardrail argument: a 1.00 GiB heap on a 23 GB machine is
+indefensible regardless of trigger.
+
+The remaining candidates are the things still unmeasured — driver-side file
+listing and planning across real partition layout, the other models in the
+`+int_listing_volatility_features` chain, and anything environmental on the VM
+(ARM64 JVM behaviour, memory pressure from concurrent scraper containers). The
+next experiment that would actually discriminate is a **shape-faithful
+synthetic run** — 40.45M rows, fan-out 9, the measured per-field null rates,
+0.58% duplicates at max group 6 — at 1 GiB. If that passes, synthetic shape is
+exhausted as an explanation and the investigation moves to the VM environment
+and a captured stack trace.
+
+**A defect this measurement found in its own instrument.** Dry-running the
+production invocation before pointing it at the VM caught `_prefix_bytes()`
+sizing storage from the `--bucket` flag rather than `--path`. Since the
+production call is `--bucket scale-harness --path s3a://bronze/...` (the flag
+governs writes and stays isolated), it would have listed the *isolated* bucket
+with an empty prefix and divided its bytes by *production's* row count —
+a fabricated bytes/row with nothing in the output to signal it. Fixed in
+`e3cb8e2`. Same failure class as the heap column in Finding 4: **a number whose
+label and provenance disagree, which no green run will ever catch.**
+
 ## Gate D: Reader Migration
 
 Move consumers off `analytics.duckdb` one by one.
