@@ -1545,6 +1545,307 @@ on a larger synthetic dataset, where iteration is cheap, rather than
 continuing to debug against production infrastructure.** Neither failure
 should be guessed at and "fixed" live on the VM.
 
+### 6. Scale-reproduction harness: failure 2 root-caused, failure 1 NOT reproduced (2026-07-21)
+
+`scripts/lakehouse_scale_harness.py` is the harness section 5 asked for. It
+runs entirely against the self-contained `local-lakehouse` Compose project —
+no production VM, no production credentials, no production MinIO — and writes
+its synthetic data into an isolated `scale-harness` bucket. Addressing the
+real `bronze` bucket is refused outright (`assert_isolated_bucket`), because
+the generator writes into `silver_normalized/observations/`, which is exactly
+where real silver lives.
+
+The isolation mechanism is deliberately boring: `sources.yml` already
+interpolates `MINIO_BUCKET` into both `external_location` and
+`spark_external_location`, so pointing dbt at synthetic data is an env var,
+not a source-file edit. Nothing in `dbt/` changed for any of this.
+
+Three subcommands, plus a fourth added mid-investigation once the first
+results came back:
+
+| Subcommand | Purpose |
+|---|---|
+| `probe-parquet` | Minimize failure 2. One tiny Parquet file, then a matrix of SQL shapes / catalog states. No dbt, no scale. |
+| `probe-oom-cascade` | Run the same direct query before and after deliberately exhausting the driver heap, in one session. |
+| `generate` | Synthesize silver observations + price events at a chosen row count, file count, and key cardinality. |
+| `run-model` | Run dbt over that data with explicit bounded sizing, capturing config, per-node timings, container cgroup limit, peak driver heap, and full error text. |
+
+Every subcommand writes a JSON evidence bundle (credentials redacted) under
+`.cache/lakehouse_scale_harness/<run-id>/`. 26 unit tests in
+`tests/lakehouse/test_scale_harness.py` cover the isolation guard, the sizing
+config, the probe matrix, and — the one most worth keeping — that the
+synthetic schema still covers every field the 28-field fingerprint hashes,
+asserted against the model SQL rather than a copied column list. A generator
+that silently stopped emitting a hashed column would still "pass" while no
+longer reproducing anything.
+
+#### Finding 1: failure 2 is a CASCADE from failure 1, not an independent defect
+
+This is the load-bearing result, and it reframes the VM report.
+
+`probe-parquet` ran eight SQL shapes against a healthy session — bare direct
+query, inside a CTE (what an `ephemeral` staging model compiles to),
+`CREATE TABLE … USING iceberg AS SELECT` (an incremental model's first run),
+`CREATE OR REPLACE TEMPORARY VIEW` (dbt-spark's tmp relation), `MERGE INTO …
+USING (SELECT … FROM parquet.\`…\`)` (an incremental model's later runs), with
+the Iceberg REST catalog as `defaultCatalog`, with `spark_catalog` as
+`defaultCatalog`, and with the Iceberg catalog made *current* via `USE`.
+
+**All eight passed.** The ninth case, `spark.sql.runSQLOnFiles=false`, failed
+with `TABLE_OR_VIEW_NOT_FOUND` — a *different* error class. So the VM error is
+not SQL shape, not relation syntax, not catalog resolution, and not adapter
+compilation. Every candidate cause named in the acceptance criteria was
+eliminated on a healthy session.
+
+Running the two "failing" models through actual dbt at small scale also
+passed (`PASS=3 ERROR=0`), which eliminated dbt compilation as well.
+
+What the VM run had that neither of those had is **order**. dbt ran with
+`threads: 1` on one long-lived SparkSession. `int_latest_observation` — the
+one model that passed — ran *before* the OOM;
+`int_listing_state_fingerprints` and `int_price_history` ran *after* it.
+`probe-oom-cascade` tests that causal chain directly: same query, same
+session, once on a healthy driver and once after a deliberate
+`OutOfMemoryError`.
+
+```
+write_probe_fixture            PASS
+direct_select_before_oom       PASS
+induce_driver_oom              FAIL  java.lang.OutOfMemoryError: Java heap space
+direct_select_after_oom        FAIL  [UNSUPPORTED_DATASOURCE_FOR_DIRECT_QUERY]
+                                     Unsupported data source type for direct query on files: parquet
+iceberg_ctas_after_oom         FAIL  Py4JJavaError
+```
+
+That is the VM's exact error class, reproduced on a dev box with a 900 MB
+driver heap and 100 rows of data. **The identical query passes before the OOM
+and fails after it, in the same session.**
+
+It is **intermittent: 2 of 6 runs**. In the other four the session recovered
+and both post-OOM steps passed. That intermittency is itself the finding — a
+driver OOM leaves the session in an *undefined* state, not a reliably broken
+one, which is why the Iceberg CTAS failed alongside the Parquet read in both
+reproducing runs. It is not a Parquet-specific defect.
+
+**Consequence: failure 2 needs no fix of its own.** It has no independent
+root cause to correct, and F1–F17 should not gain an eighteenth entry for it.
+Fix the OOM and this disappears. Chasing it separately — rewriting the models,
+changing the relation syntax, adding a dialect gotcha — would be fixing a
+symptom of something else, which is exactly the outcome this task existed to
+prevent.
+
+#### Finding 2: the OOM does NOT reproduce on synthetic data at VM scale
+
+Acceptance item 4 asked whether bounded, explicit sizing fixes the OOM. That
+question could not be answered, because **the OOM never occurred** — including
+under the VM's own unbounded sizing.
+
+The VM run set no `spark.driver.memory`. Spark's documented default is **1g**,
+and nothing sets `spark.master` either, so Spark runs `local[*]` with
+executors living *inside the driver JVM* — meaning the driver heap is the
+whole engine's budget, not just the coordinator's. Runs below therefore used
+an explicit `1g` to stand in for that default.
+
+**This was initially an inference from documentation. It has since been
+measured on the VM itself** (2026-07-21, read-only: no build re-run, nothing
+started, stopped, or deployed). Running the VM's own
+`cartracker-lakehouse` image with `spark.driver.memory` unset, exactly as the
+shadow build did:
+
+```
+ACTUAL_DRIVER_MAX_HEAP_BYTES 1073741824      # exactly 1.00 GiB
+AVAILABLE_PROCESSORS         4
+MASTER                       local[*]
+DEFAULT_PARALLELISM          4
+DRIVER_MEMORY_CONF           <unset>
+```
+
+against a VM of **4 OCPU / 23 GB / no swap / aarch64, with ~14 GB free**.
+
+Two consequences, both load-bearing:
+
+- **The heap really was capped at 1.00 GiB — 4% of the machine.** Spark's
+  launcher passes an explicit `-Xmx` derived from `spark.driver.memory`'s 1g
+  default, which *overrides JVM ergonomics*. Measured on the same VM, the
+  ergonomic default would have been **6.29 GB** with no container limit, or
+  1.61 GB under the base Compose file's `mem_limit: 6g`. Spark discarded both
+  and took 1g. So the failing run had 1 GB of heap while 14 GB sat unused.
+- **`local[*]` resolved to 4** — identical to the `local[4]` the harness pins.
+  The parallelism variable, which looked like the most promising untested
+  difference, is therefore **not** a difference at all. It is eliminated.
+
+`jvm_runtime_facts()` records all of this per run so it stays measured rather
+than assumed.
+
+| Run | Rows | Files | `driver.memory` | Result |
+|---|---|---|---|---|
+| Widest model only | 5M | 2,319 | 1g | PASS, 15.5s |
+| Widest model only | 38.6M | 2,319 | 1g | PASS, 91.9s |
+| Full VM selector, one session | 38.6M | 2,319 | 1g | **PASS — all 9 nodes**, 4m26s |
+| Full VM selector, fragmented | 38.6M | **36,015** | 1g | **PASS — all 9 nodes**, 7m39s |
+
+The third row is the significant one: it is the VM's exact command
+(`run --select +int_listing_volatility_features`), at the VM's exact source
+row count, in one session, on the VM's default heap — and it completed
+`PASS=9 ERROR=0 SKIP=0`, including the four models that never ran on the VM at
+all (`int_listing_state_runs`, `int_listing_observation_runs`,
+`int_benchmarks`, `int_listing_volatility_features`).
+
+Per-node timings, 38.6M rows, 1g driver:
+
+| Model | Seconds |
+|---|---|
+| `int_latest_observation` | 50.0 |
+| `int_listing_observation_fingerprints` | 90.2 |
+| `int_listing_state_fingerprints` | 20.7 |
+| `int_price_history` | 5.8 |
+| `int_listing_observation_runs` | 38.5 |
+| `int_listing_state_runs` | 15.3 |
+| `int_benchmarks` | 2.2 |
+| `int_listing_volatility_features` | 41.2 |
+
+**So row count is not the trigger.** That eliminates the explanation the VM
+report itself offered ("only visible at real production scale (38.6M rows)")
+— the row count reproduces nothing. The fourth row eliminates file
+fragmentation as well: 36,015 files instead of 2,319 cost 70% more wall time
+(driver-side listing and footer reads, as expected) but did not exhaust the
+heap either.
+
+Reporting this rather than tuning memory until it passes is the point: raising
+`spark.driver.memory` would have "fixed" a failure whose trigger is still
+unidentified.
+
+#### What the local box can and cannot settle
+
+One tempting experiment — rerun locally with sizing unset and `local[*]`,
+letting Spark take everything — was **deliberately not run**, because the two
+machines are asymmetric in opposite directions:
+
+| | Cores | Memory available to the run |
+|---|---|---|
+| Prod VM (OCI A1.Flex, ARM64) | 4 OCPU | 23 GB host, no swap |
+| Dev box (x86_64, Docker Desktop) | 28 | 6 GB container limit |
+
+`local[*]` on the dev box means ~7× the task parallelism against a quarter of
+the memory. A local OOM under those conditions would not be evidence that the
+VM OOMed for that reason, and a local pass would not exonerate it. The
+experiment is confounded by hardware in a way that running it carefully does
+not fix. The VM measurement above answered the same question directly and
+correctly instead: `local[*]` = 4 there, so the harness's pinned `local[4]`
+was already faithful.
+
+**The error class also constrains the answer, independent of hardware.** A JVM
+raising `java.lang.OutOfMemoryError: Java heap space` has hit its `-Xmx`. A JVM
+with no effective bound does not raise that — it grows until the kernel
+OOM-killer SIGKILLs it, producing no Java exception at all, just a dead
+process. (The VM's `dmesg` does show cgroup OOM-kills, but they are
+`camoufox-bin` — the scraper — not the Spark run.) So the failure was always
+evidence that the heap *was* bounded and the bound was too low, not that the
+run consumed the machine. The measurement then put a number on it: 1.00 GiB.
+
+**The original OOM stack trace is unrecoverable.** `~/gate_c_shadow` was
+removed during the shadow build's cleanup, no `dbt.log` survives, and the run
+used `--rm`. So *where* the heap went — file listing, shuffle, broadcast, or a
+driver-side collect — is not knowable from the 2026-07-17 run and would
+require re-triggering the failure to capture. That is worth doing only after
+the sizing change below, since it may not fail at all.
+
+**The DuckDB precedent does not transfer directly.** Plan 123 Phase 0
+(commit `755c39c`, driven by the 2026-07-09 production OOM) fixed a real OOM
+by *lowering* limits: DuckDB `memory_limit: 8GB`, `threads: 4→2`, plus
+`mem_limit: 12g` on the `dbt_runner` container as a containment boundary. That
+worked because DuckDB's `memory_limit` is a **spill threshold** — on hitting
+it, DuckDB moves operators out-of-core to its temp directory and degrades
+gracefully. `spark.driver.memory` is not a spill threshold, it is `-Xmx`:
+hitting it throws. Capping it *lower* would make this failure more likely, not
+less.
+
+The half of that precedent which **does** transfer is the observation that the
+Spark path has no engine-level resource guardrail at all — nothing in
+`spark_conf_for_dbt_session()` sets driver memory, master, or shuffle
+partitions, which is the same gap the DuckDB profile had before Phase 0. That
+gap should be closed on its own merits. It should not be closed *as a fix for
+this OOM* until the bound is measured, or we will have shipped a guess that
+happens to make the symptom go away.
+
+#### Next corrective action
+
+**Give `spark_conf_for_dbt_session()` an explicit `spark.driver.memory`.**
+
+This is now backed by measurement rather than hypothesis, and the justification
+does not depend on reproducing the OOM: the failing run had a **1.00 GiB heap
+on a 23 GB machine with 14 GB free**, because Spark's 1g default overrides the
+JVM's own 6.29 GB ergonomic sizing. That is indefensible regardless of what
+the extra memory pressure in real data turns out to be. It is also precisely
+the guardrail gap Plan 123 Phase 0 closed on the DuckDB side and never closed
+here.
+
+Sizing should be derived from the machine (the VM's 23 GB / dbt_runner's
+existing `mem_limit: 12g` are the reference points), not copied from the dev
+box, and it belongs in `shared/iceberg_catalog.py` so it stays on the single
+catalog-config chokepoint (guardrail R1).
+
+Note what this does **not** claim. The OOM has not been reproduced, so raising
+the heap is not yet *proven* to fix it — the corrective action is "stop running
+a 23 GB machine's workload in a 1 GB heap", which stands on its own. If the
+build still OOMs at a sane heap size, that is a genuinely new finding, and the
+next step then is to capture the stack trace (lost from the original run) to
+learn where the heap goes.
+
+Two open items the harness has deliberately *not* closed:
+
+- **Real vs synthetic data width.** Synthetic rows of the same count, key
+  cardinality, and file layout do not OOM at 1g. Real silver strings
+  (`canonical_detail_url`, `body`, `isa_context`, `trid`) are wider than the
+  generator's, and the 28-field hash is string-bound. Seeding the harness from
+  a real Plan 120 lake snapshot rather than `generate` is the faithful next
+  experiment if one is still needed.
+- **aarch64 vs x86_64.** Untested, and cheap to hold as a hypothesis rather
+  than chase — the harness runs on whatever machine it is given.
+
+#### Exact repro commands
+
+Stack (self-contained, safe to tear down — see the file headers):
+
+```bash
+docker compose -f docker-compose.lakehouse.yml -f docker-compose.lakehouse.local.yml \
+  -p local-lakehouse up -d minio lakekeeper-postgres lakekeeper
+docker compose -f docker-compose.lakehouse.yml -f docker-compose.lakehouse.local.yml \
+  -p local-lakehouse build lakehouse-worker
+docker compose -f docker-compose.lakehouse.yml -f docker-compose.lakehouse.local.yml \
+  -p local-lakehouse run --rm lakehouse-worker python -m scripts.register_lakehouse_warehouse
+```
+
+`MINIO_ROOT_USER=cartracker MINIO_ROOT_PASSWORD=cartracker123` must be set for
+these (the local override's throwaway defaults); `LAKEKEEPER_DB_PASSWORD` and
+`LAKEKEEPER_PG_ENCRYPTION_KEY` come from `.env` — passing your own recreates
+the Lakekeeper Postgres volume's password and the migration fails auth.
+
+Then, with `RUN='docker compose -f docker-compose.lakehouse.yml -f
+docker-compose.lakehouse.local.yml -p local-lakehouse run --rm -v
+<ABS_REPO_PATH>/.cache/lakehouse_scale_harness:/app/.cache/lakehouse_scale_harness
+lakehouse-worker python -m scripts.lakehouse_scale_harness'`:
+
+```bash
+# Failure 2, minimized: eight SQL shapes on a healthy session (all pass)
+$RUN probe-parquet
+
+# Failure 2, root cause: the same query either side of a driver OOM.
+# Intermittent -- reproduced 2 of 6 runs, so loop it rather than trusting one run.
+$RUN --driver-memory 900m probe-oom-cascade
+
+# Failure 1: VM-scale synthetic silver, then the VM's exact selector on the VM's default heap
+$RUN --driver-memory 4g generate --rows 38600000 --price-event-rows 8000000 \
+  --distinct-vins 3000000 --write-partitions 96
+$RUN --driver-memory 1g run-model --evidence-name chain_38m_driver1g -- \
+  run --full-refresh --select +int_listing_volatility_features
+```
+
+The `-v` bind mount must be an **absolute host path**. Under Git Bash on
+Windows a `$(pwd)`-relative mount silently resolves to nothing: the run
+succeeds, prints an evidence path, and no file lands on the host. Prefix with
+`MSYS_NO_PATHCONV=1`.
+
 ## Gate D: Reader Migration
 
 Move consumers off `analytics.duckdb` one by one.
