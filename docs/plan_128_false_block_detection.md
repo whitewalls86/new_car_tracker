@@ -199,13 +199,45 @@ analytics build) — not every 5 min — because its effect lands only after the
 staging→parquet flush and next mart build. Fixes the historical 32k and
 self-heals any future drift.
 
-### Phase 4 — (Deferred) freshness repair
+### Phase 4 — Freshness repair: **audited, no action taken** (2026-07-21)
 
-Listings whose `last_seen_at` / `last_detail_scraped_at` were falsely refreshed
-by challenge artifacts (pre-fix) look fresh and are suppressed from re-queue.
-Phase 1 stopped new corruption; a one-time backfill to re-open the
-already-corrupted listings is out of scope for this PR — revisit if the stale
-population proves material.
+Pre-fix, challenge pages were written as successful detail scrapes, refreshing
+`last_seen_at` and `last_detail_scraped_at` on no real data. Phase 1 stopped new
+corruption; this phase audited whether the *existing* corruption warranted a
+one-time repair. **Conclusion: it does not.** Evidence:
+
+**Blast radius is ≤21 listings out of 52,884 (0.04%).** The V040 circuit breaker
+only suppresses re-queue when `customer_id IS NULL`
+(`is_full_details_stale = customer_id IS NULL AND (last_detail_scraped_at IS NULL
+OR last_detail_scraped_at < now() - 7 days)`). A challenge page that hit a
+listing which already had a `customer_id` changed nothing material — COALESCE
+preserved the id, so the listing was never flagged unenriched regardless of the
+refreshed timestamp. Only unenriched listings can actually be suppressed, and in
+the risk window (last 7 days, before the 2026-07-20 18:50 fix deploy) that is 21
+rows.
+
+**Both corruptions self-heal, and are already rolling off.**
+- `last_seen_at` drives `is_price_stale` on a 24h window → fully self-healed
+  within 24h of the fix deploy.
+- `last_detail_scraped_at` drives the 7-day recheck → the earliest affected rows
+  (2026-07-14) rolled off on 2026-07-21; the latest (2026-07-20) roll off by
+  2026-07-27. Nothing is permanently stuck.
+
+**The corrupted subset can't be reliably identified, and a blanket reset would
+do harm.** Only 2 of the 21 still have their `last_artifact_id` row in
+`ops.artifacts_queue` (the rest were removed by `cleanup_artifacts`). Both
+traceable artifacts turned out to be **real 172KB detail pages** with
+`initial-activity-data` (`New 2026 Mazda CX-50 Hybrid Premium…`) — i.e.
+*legitimate* Plan 115 circuit-breaker suppressions (a real scrape that genuinely
+found no `customer_id`), not challenge corruption. Resetting
+`last_detail_scraped_at` for the 21 would defeat the Plan 115 breaker for the
+legitimate ones and cause exactly the repeated re-scraping that plan was built
+to prevent.
+
+**Decision:** let it age out. Actively mutating prod data for ≤21 self-healing
+rows — where the traceable sample shows no corruption at all and a blanket reset
+would undermine Plan 115 — is more risk than value. Re-open only if the
+unenriched-suppressed population is still non-trivial after 2026-07-27.
 
 ## Verification
 
