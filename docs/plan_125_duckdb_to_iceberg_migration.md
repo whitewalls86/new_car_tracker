@@ -2126,6 +2126,106 @@ Windows a `$(pwd)`-relative mount silently resolves to nothing: the run
 succeeds, prints an evidence path, and no file lands on the host. Prefix with
 `MSYS_NO_PATHCONV=1`.
 
+
+#### Finding 4: bounded-memory sweep — the snapshot profile does NOT reproduce the OOM (2026-07-21)
+
+The sweep § 6 asked for, run against the *measured* snapshot profile rather
+than the invented `wide` one. **Decision rule 1 applies: the baseline passes at
+1 GiB, so the Plan 120 snapshot does not reproduce the VM OOM, and production
+sizing must not be finalized from it.**
+
+Workload: 38.6M observation rows + 8M price events, 1,152 files,
+`--string-widths snapshot`, `--listings-per-artifact 7`, `local[4]`,
+`shuffle.partitions=32`, container `mem_limit: 6g` (cgroup v2, verified
+6,442,450,944 B in every bundle). Command is the VM's own:
+`run --full-refresh --select +int_listing_volatility_features`.
+
+| Heap | Effective `-Xmx` | Peak driver heap | Container limit | Result | Wall |
+|---|---|---|---|---|---|
+| `1g` baseline | 1.00 GiB | 650.9 MB (61%) | 6 GiB | **PASS 9/9** | 4m34s |
+| `2g` baseline | 2.00 GiB | 1,410.5 MB (69%) | 6 GiB | **PASS 9/9** | 4m18s |
+| `4g` baseline | 4.00 GiB | 2,663.6 MB (65%) | 6 GiB | **PASS 9/9** | 4m10s |
+| `1g` + duplicate stress | 1.00 GiB | 726.3 MB (68%) | 6 GiB | **PASS 9/9** | 5m50s |
+
+No error class to report: `PASS=9 WARN=0 ERROR=0 SKIP=0` on all four. Per-node
+seconds (baseline 1g / 2g / 4g / dupes 1g):
+
+| Model | 1g | 2g | 4g | dupes 1g |
+|---|---|---|---|---|
+| `int_latest_observation` | 69.7 | 57.5 | 50.7 | 87.4 |
+| `int_listing_observation_fingerprints` | 90.4 | 90.2 | 81.1 | 114.9 |
+| `int_listing_state_fingerprints` | 14.7 | 13.8 | 14.1 | 22.1 |
+| `int_price_history` | 6.3 | 5.7 | 6.3 | 6.3 |
+| `int_listing_observation_runs` | 39.8 | 37.1 | 31.5 | 57.1 |
+| `int_listing_state_runs` | 8.9 | 8.2 | 8.4 | 9.5 |
+| `int_benchmarks` | 2.3 | 2.2 | 2.3 | 4.1 |
+| `int_listing_volatility_features` | 35.8 | 33.7 | 36.8 | 43.2 |
+
+**Peak heap is not a sizing signal here.** It tracks the heap *granted*
+(651 MB → 1.4 GB → 2.7 GB at 1/2/4 GiB) at a near-constant ~65% utilization.
+That is GC running less often when it has more room, not a working set that
+grew. Sizing conclusions must come from the pass/fail floor, and this sweep
+produced no floor — the lowest point tested passes.
+
+**The baseline is deliberately heavier than production, which strengthens the
+negative result.** `describe-dataset` on the generated data measured p95 **336**
+hashed bytes/row against the real snapshot's **264** (+27%), because the
+`snapshot` profile carries real widths but models null rates for only some
+fields — `seller_customer_id`, `financing_type`, `make`, `model`, `fuel_type`,
+`stock_type`, `condition`, `body_style` are 0% null here versus 75–90% null in
+the snapshot. Fan-out is likewise a flat 7 per artifact against a real p50 of
+1 / p95 of 5. So the passing run is an upper bound on the measured shape, and
+real data at this row count has *more* headroom than the table shows, not less.
+
+**The duplicate-key run is stress evidence only.** 1,543,999 duplicate
+`(artifact_id, listing_id)` groups (`--duplicate-modulus 25`, isolated bucket
+`scale-harness-dupes`) cost 28% wall time and 75 MB of peak heap — it exercises
+the dedupe and Iceberg's MERGE cardinality check under load, and both hold. It
+is **not** a claim about production duplicate rates, which remain unmeasured;
+the snapshot's zero duplicates may be an export-time dedupe rather than
+evidence of absence.
+
+**The candidate VM heap was NOT verified, and could not be.** Docker Desktop
+allocates 7.7 GiB total and `docker-compose.lakehouse.yml:105` sets
+`mem_limit: 6g`, so 1/2/4 GiB are testable locally and 8 GiB+ is not. A
+candidate production heap on the VM's 23 GB is plausibly 8–12g — larger than
+this dev box can exercise at all. **That row is extrapolated, not verified, and
+is deliberately absent from the table above.** Verifying it requires either
+raising both the Docker Desktop allocation and the compose `mem_limit`, or
+measuring on the VM directly.
+
+**Consequently `spark.driver.memory` is still not set in
+`shared/iceberg_catalog.py`.** The sweep produced no measured floor, and the
+guardrail-gap argument from Finding 2 — a 23 GB machine running in a 1 GiB heap
+because Spark's 1g default overrides the JVM's 6.29 GB ergonomic sizing — stands
+on its own merits without this sweep. Setting a number now would be picking one
+this sweep did not measure.
+
+#### Next investigation: measure the real VM source distribution
+
+The snapshot cannot explain the OOM, and the reason is in its own caveats: it
+is a seed-VIN-filtered fixture of 282 `listing_id`s and 16,847 rows, with a
+source mix (carousel 74.9% / detail 15.5% / srp 9.6%) that is an artifact of
+that filter. Fan-out follows source mix, and fan-out is half of what Finding 2
+identified as the trigger. Widths and null rates from the snapshot are
+trustworthy; **fan-out and skew are not**, and neither is the zero duplicate
+count.
+
+What to measure, read-only, against the actual VM source:
+
+1. **SRP/carousel fan-out** — rows per `artifact_id` percentiles *and the tail*,
+   unfiltered. Finding 2 OOMed at p50 12; the snapshot says p50 1.
+2. **Duplicate `(artifact_id, listing_id)` groups** — the real reprocessing rate,
+   to replace the stress variant's invented 4%.
+3. **Field widths and null rates** at full population, to confirm the snapshot's
+   p95 264 B/row is not an artifact of the seed filter.
+4. **Skew** — the largest single `artifact_id` and `(artifact_id, listing_id)`
+   partition. A single hot artifact is the one shape a percentile summary hides
+   and a window function is most likely to OOM on.
+
+`describe-dataset` already reports 1–3 and runs against any bucket; skew needs
+a max-group-size addition.
+
 ## Gate D: Reader Migration
 
 Move consumers off `analytics.duckdb` one by one.
