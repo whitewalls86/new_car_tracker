@@ -602,6 +602,24 @@ unit_tests:
       rows:
         - {attempt_bucket: "1", listing_count: 2}
 
+  - name: test_cooldown_cleared_listing_drops_out
+    description: "A listing whose latest event is 'cleared' is excluded from the backlog"
+    model: mart_cooldown_cohorts
+    given:
+      - input: ref('stg_blocked_cooldown_events')
+        format: sql
+        rows: |
+          select cast(null as bigint) as event_id,
+                 'L001' as listing_id,
+                 'blocked' as event_type,
+                 2 as num_of_attempts,
+                 cast('2026-01-09 12:00:00+00' as timestamp) as event_at
+          union all select null, 'L001', 'cleared', 2, cast('2026-01-10 12:00:00+00' as timestamp)
+          union all select null, 'L002', 'blocked', 1, cast('2026-01-10 12:00:00+00' as timestamp)
+    expect:
+      rows:
+        - {attempt_bucket: "1", listing_count: 1}
+
   # ---------------------------------------------------------------------------
   # mart_detail_batch_outcomes — extraction yield per day
   # ---------------------------------------------------------------------------

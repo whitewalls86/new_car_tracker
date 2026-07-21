@@ -57,6 +57,7 @@ DAG_SPECS = {
             "flush_silver_observations",
             "flush_staging_events",
             "dbt_build",
+            "reconcile_cooldown_cohorts",
             "notify",
         },
     },
@@ -70,6 +71,8 @@ DAG_SPECS = {
             "check_deploy_intent",
             "check_ops_health",
             "expire_orphan_detail_claims",
+            "reap_stuck_processing",
+            "evict_delisted_cooldowns",
         },
     },
     "results_processing.py": {

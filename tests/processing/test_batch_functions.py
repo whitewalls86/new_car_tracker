@@ -222,6 +222,30 @@ class TestProcessDetailPage:
 
         assert result["status"] == "retry"
 
+    def test_challenge_page_skips_without_writing_or_clearing(self, mocker):
+        """A Cloudflare challenge page must not write an observation or clear
+        the cooldown — it is skipped, leaving the scraper's block intact."""
+        mocker.patch("processing.routers.batch._read_artifact_html", return_value="<html/>")
+        mocker.patch(
+            "processing.routers.batch.parse_cars_detail_page_html_v1",
+            return_value=(
+                {"listing_id": "aaaa-0000-0000-0000-000000000001", "listing_state": "blocked"},
+                [],
+                {"blocked": True, "block_reason": "cloudflare_challenge"},
+            ),
+        )
+        mock_active = mocker.patch("processing.routers.batch.write_detail_active")
+        mock_unlisted = mocker.patch("processing.routers.batch.write_detail_unlisted")
+        mock_set = mocker.patch("processing.routers.batch._set_status")
+
+        result = _process_detail_page(_detail_artifact())
+
+        assert result["status"] == "skip"
+        assert result["reason"] == "cloudflare_challenge"
+        mock_active.assert_not_called()
+        mock_unlisted.assert_not_called()
+        mock_set.assert_called_once_with(mocker.ANY, "skip")
+
     def test_listing_id_resolved_from_artifact_when_missing_from_parse(self, mocker):
         """When parser returns no listing_id, falls back to artifact.listing_id."""
         mocker.patch("processing.routers.batch._read_artifact_html", return_value="<html/>")
