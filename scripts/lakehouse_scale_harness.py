@@ -764,16 +764,22 @@ _SOURCE_EXPR = (
     "CASE cast(id % 3 as int) WHEN 0 THEN 'detail' WHEN 1 THEN 'srp' "
     "ELSE 'carousel' END AS source"
 )
-_MAKE_EXPR = (
+# Value-only forms, so observations_expr can wrap them in a measured null
+# rate while price_events_expr (which has no null modelling and needs none)
+# keeps using the aliased versions unchanged.
+_MAKE_VALUE = (
     "CASE cast(id % 5 as int) WHEN 0 THEN 'Honda' WHEN 1 THEN 'Toyota' "
-    "WHEN 2 THEN 'Ford' WHEN 3 THEN 'Subaru' ELSE 'Mazda' END AS make"
+    "WHEN 2 THEN 'Ford' WHEN 3 THEN 'Subaru' ELSE 'Mazda' END"
 )
-_MODEL_EXPR = (
+_MODEL_VALUE = (
     "CASE cast(id % 7 as int) WHEN 0 THEN 'Accord' WHEN 1 THEN 'Camry' "
     "WHEN 2 THEN 'F-150' WHEN 3 THEN 'Outback' WHEN 4 THEN 'CX-5' "
-    "WHEN 5 THEN 'Civic' ELSE 'Corolla' END AS model"
+    "WHEN 5 THEN 'Civic' ELSE 'Corolla' END"
 )
-_VIN_EXPR = "concat('1HGCM82633A', lpad(cast(id % {n} as string), 6, '0')) AS vin"
+_VIN_VALUE = "concat('1HGCM82633A', lpad(cast(id % {n} as string), 6, '0'))"
+_MAKE_EXPR = f"{_MAKE_VALUE} AS make"
+_MODEL_EXPR = f"{_MODEL_VALUE} AS model"
+_VIN_EXPR = f"{_VIN_VALUE} AS vin"
 _EVENT_AT_EXPR = (
     "timestamp_millis(1700000000000 + cast(id % 2592000 as bigint) * 1000) AS {alias}"
 )
@@ -801,6 +807,15 @@ class StringWidths:
     isa_context: int = 12
     dealer_name: int = 24
     vehicle_trim: int = 12
+    # Fields whose width was previously hardcoded in the generator. listing_id
+    # is the one that mattered: production uses 36-char UUIDs and the
+    # generator emitted ~8 chars, understating every row by ~28 bytes on a
+    # field that is NEVER null and so pays that cost on all of them.
+    listing_id: int = 8
+    dealer_city: int = 7
+    seller_customer_id: int = 6
+    financing_type: int = 5
+    condition: int = 4
     # Per-field null percentage. Load-bearing, not cosmetic: the hash
     # coalesces every field to '', so a field that is 90% null in production
     # contributes almost nothing to row size. A synthetic profile that
@@ -834,6 +849,52 @@ class StringWidths:
                     "trim": 75.91,
                 },
             )
+        if name == "production":
+            # MEASURED from real production silver on the VM (2026-07-21,
+            # read-only: s3a://bronze/silver_normalized/observations,
+            # 40,450,715 rows / 1,030 files). Widths are the measured p99,
+            # null rates the measured percentages. This is the ONLY profile
+            # taken from production rather than a fixture -- see
+            # PRODUCTION_PROFILE_PROVENANCE and Finding 5.
+            #
+            # The snapshot profile it supersedes had accurate widths but
+            # understated fan-out (p50 1 vs 9) and reported zero duplicates
+            # where production has 232,247 groups.
+            return cls(
+                body=55,
+                canonical_detail_url=72,
+                trid=22,
+                isa_context=12,
+                dealer_name=44,
+                vehicle_trim=28,
+                listing_id=36,
+                dealer_city=18,
+                seller_customer_id=36,
+                financing_type=11,
+                condition=9,
+                null_pct={
+                    "canonical_detail_url": 0.0,
+                    "body": 18.94,
+                    "condition": 18.94,
+                    "vin": 14.03,
+                    "dealer_name": 32.13,
+                    "customer_id": 32.99,
+                    "dealer_zip": 33.58,
+                    "dealer_city": 36.65,
+                    "dealer_state": 36.65,
+                    "make": 61.32,
+                    "model": 61.32,
+                    "stock_type": 85.41,
+                    "trim": 86.85,
+                    "fuel_type": 86.98,
+                    "body_style": 89.82,
+                    "seller_customer_id": 97.04,
+                    "trid": 97.04,
+                    "financing_type": 97.04,
+                    "seller_zip": 97.04,
+                    "isa_context": 97.04,
+                },
+            )
         if name == "wide":
             return cls(
                 body=512,
@@ -860,6 +921,28 @@ class StringWidths:
 
 # Where the `snapshot` profile's numbers came from, carried in every evidence
 # bundle that uses it so a future reader can tell measurement from guess.
+PRODUCTION_PROFILE_PROVENANCE = {
+    "source": "production silver, read-only VM measurement",
+    "path": "s3a://bronze/silver_normalized/observations",
+    "measured_at": "2026-07-21",
+    "rows": 40450715,
+    "files": 1030,
+    "hashed_bytes_per_row": {"p50": 235, "p95": 269, "p99": 282, "max": 330},
+    "artifact_fanout": {"p50": 9, "p95": 9, "p99": 9, "max": 112, "mean": 6.43},
+    "observation_key_groups": {
+        "max": 6,
+        "groups_with_duplicates": 232247,
+        "groups": 40186331,
+    },
+    "caveat": (
+        "Fan-out is modelled FLAT at 9 while production is bimodal (carousel "
+        "81.1% at ~9, detail 16.0% at 1, mean 6.43), so a flat-9 run is "
+        "HEAVIER than production, not equal to it. Duplicate groups reach 6 "
+        "in production; --duplicate-modulus tops out at 2."
+    ),
+}
+
+
 SNAPSHOT_PROFILE_PROVENANCE = {
     "snapshot_id": "adaptive-refresh-2026-07-15-181719",
     "measured_at": "2026-07-21",
@@ -898,6 +981,32 @@ def _wide_string(
         threshold = max(1, int(round(null_pct * 100)))
         value = f"CASE WHEN id % 10000 < {threshold} THEN NULL ELSE {value} END"
     return f"{value} AS {alias}"
+
+
+def _nullable(value_expr: str, alias: str, null_pct: float = 0.0) -> str:
+    """Apply a measured null rate to ANY generated column.
+
+    _wide_string() could already do this, but only the six fields it builds.
+    Everything else was emitted 100% populated, which is why the Finding 4
+    baseline carried 336 hashed bytes/row against production's measured 269:
+    fields that are 61-97% null in reality (seller_customer_id, financing_type,
+    make, model, fuel_type, ...) were contributing their full width to every
+    single row.
+
+    Nulls are keyed on the same `id % 10000` window as _wide_string, so fields
+    sharing a null rate go null on the SAME rows. That is deliberate rather
+    than a shortcut: production's rates cluster into obviously-correlated
+    groups (97.04% across seller_customer_id/trid/financing_type/seller_zip/
+    isa_context; 61.32% across make/model), which is what a field-group that
+    is present or absent together looks like. Independent nulls would model a
+    row that production does not produce.
+    """
+    if null_pct and null_pct > 0:
+        threshold = max(1, int(round(null_pct * 100)))
+        value_expr = (
+            f"CASE WHEN id % 10000 < {threshold} THEN NULL ELSE {value_expr} END"
+        )
+    return f"{value_expr} AS {alias}"
 
 
 def _base_id(duplicate_modulus: int) -> str:
@@ -955,9 +1064,15 @@ def observations_expr(
     artifact = f"cast({base} / {fanout} as bigint)"
     return [
         f"{artifact} AS artifact_id",
-        f"concat('L', cast({base} % {distinct_vins} as string)) AS listing_id",
-        f"concat('1HGCM82633A', lpad(cast({base} % {distinct_vins} as string), 6, '0')) "
-        "AS vin",
+        # Width matters and was wrong: production listing_ids are 36-char
+        # UUIDs, the generator emitted ~8 chars, understating every row by
+        # ~28 bytes on a field that is never null. lpad preserves
+        # distinctness while hitting the measured width exactly.
+        f"concat('L', lpad(cast({base} % {distinct_vins} as string), "
+        f"{max(1, widths.listing_id - 1)}, '0')) AS listing_id",
+        _nullable(
+            f"concat('1HGCM82633A', lpad(cast({base} % {distinct_vins} as string), "
+            "6, '0'))", "vin", widths.null_pct.get("vin", 0.0)),
         _wide_string(base, widths.canonical_detail_url, "canonical_detail_url",
                      widths.null_pct.get("canonical_detail_url", 0.0)),
         _SOURCE_EXPR,
@@ -969,30 +1084,43 @@ def observations_expr(
         "AS fetched_at",
         "timestamp_millis(1700000060000 + cast(id % 2592000 as bigint) * 1000) AS written_at",
         "cast(15000 + (id % 60000) as int) AS price",
-        _MAKE_EXPR,
-        _MODEL_EXPR,
+        _nullable(_MAKE_VALUE, "make", widths.null_pct.get("make", 0.0)),
+        _nullable(_MODEL_VALUE, "model", widths.null_pct.get("model", 0.0)),
         _wide_string("id % 11", widths.vehicle_trim, "trim",
                      widths.null_pct.get("trim", 0.0)),
         "cast(2018 + (id % 8) as smallint) AS year",
         "cast(id % 120000 as int) AS mileage",
         "cast(20000 + (id % 55000) as int) AS msrp",
-        "CASE WHEN id % 2 = 0 THEN 'New' ELSE 'Used' END AS stock_type",
-        "CASE cast(id % 4 as int) WHEN 0 THEN 'Gasoline' WHEN 1 THEN 'Hybrid' "
-        "WHEN 2 THEN 'Electric' ELSE 'Diesel' END AS fuel_type",
-        "CASE cast(id % 6 as int) WHEN 0 THEN 'Sedan' WHEN 1 THEN 'SUV' "
-        "WHEN 2 THEN 'Truck' WHEN 3 THEN 'Coupe' WHEN 4 THEN 'Wagon' "
-        "ELSE 'Van' END AS body_style",
+        _nullable("CASE WHEN id % 2 = 0 THEN 'New' ELSE 'Used' END", "stock_type",
+                  widths.null_pct.get("stock_type", 0.0)),
+        _nullable("CASE cast(id % 4 as int) WHEN 0 THEN 'Gasoline' WHEN 1 THEN 'Hybrid' "
+                  "WHEN 2 THEN 'Electric' ELSE 'Diesel' END", "fuel_type",
+                  widths.null_pct.get("fuel_type", 0.0)),
+        _nullable("CASE cast(id % 6 as int) WHEN 0 THEN 'Sedan' WHEN 1 THEN 'SUV' "
+                  "WHEN 2 THEN 'Truck' WHEN 3 THEN 'Coupe' WHEN 4 THEN 'Wagon' "
+                  "ELSE 'Van' END", "body_style",
+                  widths.null_pct.get("body_style", 0.0)),
         _wide_string("id % 900", widths.dealer_name, "dealer_name",
                      widths.null_pct.get("dealer_name", 0.0)),
-        "lpad(cast(id % 99999 as string), 5, '0') AS dealer_zip",
-        "concat('City', cast(id % 400 as string)) AS dealer_city",
-        "CASE cast(id % 5 as int) WHEN 0 THEN 'CA' WHEN 1 THEN 'TX' "
-        "WHEN 2 THEN 'NY' WHEN 3 THEN 'FL' ELSE 'WA' END AS dealer_state",
-        "concat('cust-', cast(id % 900 as string)) AS customer_id",
+        _nullable("lpad(cast(id % 99999 as string), 5, '0')", "dealer_zip",
+                  widths.null_pct.get("dealer_zip", 0.0)),
+        _nullable(f"concat('City', lpad(cast(id % 400 as string), "
+                  f"{max(1, widths.dealer_city - 4)}, '0'))", "dealer_city",
+                  widths.null_pct.get("dealer_city", 0.0)),
+        _nullable("CASE cast(id % 5 as int) WHEN 0 THEN 'CA' WHEN 1 THEN 'TX' "
+                  "WHEN 2 THEN 'NY' WHEN 3 THEN 'FL' ELSE 'WA' END", "dealer_state",
+                  widths.null_pct.get("dealer_state", 0.0)),
+        _nullable("concat('cust-', cast(id % 900 as string))", "customer_id",
+                  widths.null_pct.get("customer_id", 0.0)),
         "concat('seller-', cast(id % 900 as string)) AS seller_id",
-        "CASE WHEN id % 3 = 0 THEN 'cash' ELSE 'lease' END AS financing_type",
-        "lpad(cast(id % 99999 as string), 5, '0') AS seller_zip",
-        "concat('sc-', cast(id % 700 as string)) AS seller_customer_id",
+        _nullable(f"substr(repeat('financing-', 3), 1, {widths.financing_type})",
+                  "financing_type", widths.null_pct.get("financing_type", 0.0)),
+        _nullable("lpad(cast(id % 99999 as string), 5, '0')", "seller_zip",
+                  widths.null_pct.get("seller_zip", 0.0)),
+        _nullable(f"concat('sc-', lpad(cast(id % 700 as string), "
+                  f"{max(1, widths.seller_customer_id - 3)}, '0'))",
+                  "seller_customer_id",
+                  widths.null_pct.get("seller_customer_id", 0.0)),
         "cast(id % 50 as smallint) AS page_number",
         "cast(id % 30 as smallint) AS position_on_page",
         _wide_string("id % 5000", widths.trid, "trid",
@@ -1001,7 +1129,8 @@ def observations_expr(
                      widths.null_pct.get("isa_context", 0.0)),
         _wide_string("id", widths.body, "body",
                      widths.null_pct.get("body", 0.0)),
-        "CASE WHEN id % 2 = 0 THEN 'new' ELSE 'used' END AS condition",
+        _nullable(f"substr(repeat('condition-', 2), 1, {widths.condition})",
+                  "condition", widths.null_pct.get("condition", 0.0)),
         "cast(2024 + (id % 2) as int) AS obs_year",
         "cast(1 + (id % 12) as int) AS obs_month",
         "cast(1 + (id % 28) as int) AS obs_day",
@@ -1692,7 +1821,7 @@ def build_parser() -> argparse.ArgumentParser:
     gen.add_argument(
         "--string-widths",
         default="narrow",
-        choices=("narrow", "snapshot", "wide", "extreme"),
+        choices=("narrow", "snapshot", "production", "wide", "extreme"),
         help=(
             "Width profile for the hashed string fields. The 28-field hash is "
             "string-bound, so this drives memory more than row count does."

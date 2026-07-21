@@ -36,6 +36,7 @@ from scripts.lakehouse_scale_harness import (
     OBSERVATIONS_PREFIX,
     PRICE_EVENTS_PREFIX,
     PRODUCTION_BUCKET,
+    PRODUCTION_PROFILE_PROVENANCE,
     SNAPSHOT_PROFILE_PROVENANCE,
     HarnessError,
     SparkSizing,
@@ -515,6 +516,45 @@ class TestDatasetProfile:
         for pct in ("0.5", "0.95", "0.99"):
             assert pct in sql
         assert "max(n)" in sql
+
+    def test_production_profile_nulls_every_field_it_measured(self):
+        """The gap that made the Finding 4 baseline 336 B/row against
+        production's 269.
+
+        _wide_string() modelled nulls for six fields; every other hashed
+        string was emitted 100% populated. Fields that are 61-97% null in
+        production (make, model, seller_customer_id, financing_type, ...)
+        were therefore paying their full width on every row. A profile whose
+        null map lists them is useless unless the generator applies it, so
+        this asserts the generated SQL, not the dataclass.
+        """
+        widths = StringWidths.profile("production")
+        sql = " ".join(
+            observations_expr(1000, 100, listings_per_artifact=9, widths=widths)
+        )
+
+        for f in ("make", "model", "seller_customer_id", "financing_type",
+                  "fuel_type", "stock_type", "body_style", "vin"):
+            assert f"AS {f}" in sql
+        # Each of those has a measured non-zero null rate, so each must have
+        # been wrapped in a NULL-producing CASE.
+        assert sql.count("THEN NULL ELSE") >= 15
+
+    def test_production_profile_uses_the_measured_listing_id_width(self):
+        """listing_id is 36-char UUIDs in production and was ~8 here -- ~28
+        bytes understated on a field that is never null, so it was paid on
+        every row."""
+        assert StringWidths.profile("production").listing_id == 36
+
+    def test_production_provenance_records_the_flat_fanout_caveat(self):
+        """The profile models fan-out FLAT at 9 while production is bimodal
+        (mean 6.43). That makes a run HEAVIER than production, not equal to
+        it -- which is a fine direction for a floor test and a claim that
+        must travel with the numbers."""
+        caveat = PRODUCTION_PROFILE_PROVENANCE["caveat"]
+
+        assert "HEAVIER" in caveat
+        assert PRODUCTION_PROFILE_PROVENANCE["artifact_fanout"]["mean"] == 6.43
 
     def test_profiles_the_skew_tail_not_only_percentiles(self):
         """The gap that made the sweep's negative result weaker than it read.
