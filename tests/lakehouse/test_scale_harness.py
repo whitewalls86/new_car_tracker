@@ -42,6 +42,7 @@ from scripts.lakehouse_scale_harness import (
     StringWidths,
     assert_isolated_bucket,
     assert_isolated_path,
+    bucket_and_prefix,
     build_parser,
     dataset_profile_sql,
     evidence_bundle,
@@ -396,6 +397,27 @@ class TestSnapshotProfileIsolation:
 
     def test_isolated_snapshot_bucket_is_allowed(self):
         assert_isolated_path("s3a://snapshot-profile/silver_normalized/observations")
+
+    def test_storage_stats_follow_the_path_not_the_bucket_flag(self):
+        """The two diverge exactly when profiling production.
+
+        `--bucket scale-harness --path s3a://bronze/...` is the intended
+        production-read invocation: the flag stays isolated (it governs
+        WRITES) while the path names bronze. Sizing storage off the flag
+        listed the isolated bucket with an empty prefix and divided ITS bytes
+        by production's row count -- a fabricated bytes/row that looks
+        entirely normal. Nothing in the output would have flagged it.
+        """
+        bucket, prefix = bucket_and_prefix(
+            "s3a://bronze/silver_normalized/observations"
+        )
+
+        assert bucket == "bronze"
+        assert prefix == "silver_normalized/observations"
+
+    def test_bucket_and_prefix_rejects_a_non_s3_uri(self):
+        with pytest.raises(HarnessError):
+            bucket_and_prefix("/mnt/data/observations")
 
     def test_production_read_is_opt_in_and_off_by_default(self):
         """The escape hatch must never be the default.

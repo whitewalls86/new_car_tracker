@@ -57,7 +57,7 @@ import traceback
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Dict, List, Mapping, Optional, Sequence
+from typing import Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from shared.iceberg_catalog import (
     CATALOG_NAME,
@@ -1277,7 +1277,7 @@ def cmd_describe_dataset(args: argparse.Namespace) -> int:
     # the fingerprint's memory cost tracks.
     def storage() -> Dict[str, object]:
         files = spark.read.parquet(path).inputFiles()
-        total = _prefix_bytes(args.bucket, path)
+        total = _prefix_bytes(path)
         rows = steps[0].detail["stats"]["rows"] if steps[0].ok else 0
         return {
             "files": len(files),
@@ -1395,13 +1395,31 @@ def format_profile_summary(bundle: Dict[str, object]) -> str:
     return "\n".join(lines)
 
 
-def _prefix_bytes(bucket: str, path: str) -> int:
+def bucket_and_prefix(path: str) -> Tuple[str, str]:
+    """Split an s3a:// URI into (bucket, key prefix).
+
+    Derived from the PATH, never from the --bucket flag. Those two are the
+    same object for a normal harness run and different the moment --path
+    names another bucket -- which is exactly the production-profiling case.
+    Reading the flag there listed the isolated bucket with an empty prefix
+    and reported its size against production's row count: a bytes/row figure
+    that is entirely fictitious and looks completely ordinary.
+    """
+    for scheme in ("s3a://", "s3://"):
+        if path.startswith(scheme):
+            rest = path[len(scheme):]
+            bucket, _, prefix = rest.partition("/")
+            return bucket, prefix
+    raise HarnessError(f"expected an s3a:// URI, got {path!r}")
+
+
+def _prefix_bytes(path: str) -> int:
     """Total stored bytes under a dataset path, via the object store rather
     than Spark -- Spark reports uncompressed sizes, and the interesting ratio
     here is stored-bytes-per-row."""
     import boto3
 
-    prefix = path.split(f"{bucket}/", 1)[1] if f"{bucket}/" in path else ""
+    bucket, prefix = bucket_and_prefix(path)
     client = boto3.client(
         "s3",
         endpoint_url=os.environ.get("MINIO_ENDPOINT", "http://minio:9000"),
