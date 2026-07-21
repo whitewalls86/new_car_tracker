@@ -4,7 +4,8 @@ models:
   - name: stg_blocked_cooldown_events
     description: >
       403 blocked cooldown lifecycle events from MinIO. One row per event.
-      event_type values: 'blocked' (first 403), 'incremented' (subsequent attempts).
+      event_type values: 'blocked' (first 403), 'incremented' (subsequent attempts),
+      'cleared' (resolved by a successful scrape, or reconciled/evicted).
       num_of_attempts is the cumulative count at the time of the event.
     config:
       tags: ["hourly_core"]
@@ -21,7 +22,7 @@ models:
           - not_null
           - accepted_values:
               arguments:
-                values: ['blocked', 'incremented']
+                values: ['blocked', 'incremented', 'cleared']
       - name: num_of_attempts
         data_tests:
           - not_null
