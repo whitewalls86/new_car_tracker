@@ -2140,12 +2140,12 @@ Workload: 38.6M observation rows + 8M price events, 1,152 files,
 6,442,450,944 B in every bundle). Command is the VM's own:
 `run --full-refresh --select +int_listing_volatility_features`.
 
-| Heap | Effective `-Xmx` | Peak driver heap | Container limit | Result | Wall |
+| Heap | Effective `-Xmx` | Driver heap used at post-run sampling | Container limit | Result | Wall |
 |---|---|---|---|---|---|
-| `1g` baseline | 1.00 GiB | 650.9 MB (61%) | 6 GiB | **PASS 9/9** | 4m34s |
-| `2g` baseline | 2.00 GiB | 1,410.5 MB (69%) | 6 GiB | **PASS 9/9** | 4m18s |
-| `4g` baseline | 4.00 GiB | 2,663.6 MB (65%) | 6 GiB | **PASS 9/9** | 4m10s |
-| `1g` + duplicate stress | 1.00 GiB | 726.3 MB (68%) | 6 GiB | **PASS 9/9** | 5m50s |
+| `1g` baseline | 1.00 GiB | 650.9 MB | 6 GiB | **PASS 9/9** | 4m34s |
+| `2g` baseline | 2.00 GiB | 1,410.5 MB | 6 GiB | **PASS 9/9** | 4m18s |
+| `4g` baseline | 4.00 GiB | 2,663.6 MB | 6 GiB | **PASS 9/9** | 4m10s |
+| `1g` + duplicate stress | 1.00 GiB | 726.3 MB | 6 GiB | **PASS 9/9** | 5m50s |
 
 No error class to report: `PASS=9 WARN=0 ERROR=0 SKIP=0` on all four. Per-node
 seconds (baseline 1g / 2g / 4g / dupes 1g):
@@ -2161,11 +2161,24 @@ seconds (baseline 1g / 2g / 4g / dupes 1g):
 | `int_benchmarks` | 2.3 | 2.2 | 2.3 | 4.1 |
 | `int_listing_volatility_features` | 35.8 | 33.7 | 36.8 | 43.2 |
 
-**Peak heap is not a sizing signal here.** It tracks the heap *granted*
-(651 MB → 1.4 GB → 2.7 GB at 1/2/4 GiB) at a near-constant ~65% utilization.
-That is GC running less often when it has more room, not a working set that
-grew. Sizing conclusions must come from the pass/fail floor, and this sweep
-produced no floor — the lowest point tested passes.
+**The heap column is not a peak measurement and must not be used for
+sizing.** `heap_used_bytes_at_sampling()` takes a single
+`getHeapMemoryUsage().getUsed()` sample after the run finishes — it is whatever
+GC last left behind at that instant, not a high-water mark. Post-run heap usage
+scales with the configured heap (651 MB → 1.4 GB → 2.7 GB at 1/2/4 GiB), but
+this evidence cannot say *why*: a plausible reading is GC collecting less often
+when it has more room, and an equally plausible one is sampling luck relative
+to the last collection. Nothing here distinguishes them.
+
+Real peak evidence needs periodic sampling during dbt execution, or
+`getPeakUsage().getUsed()` summed across the heap `MemoryPoolMXBean`s. That is
+a worthwhile follow-up and is **not** implemented. Sizing conclusions therefore
+rest entirely on the pass/fail floor, and this sweep produced no floor — the
+lowest point tested passes.
+
+(Evidence bundles written before 2026-07-21 carry this under the old, wrong key
+name `peak_driver_heap_bytes`. The values are the same single samples; only the
+label was ever misleading.)
 
 **The baseline is deliberately heavier than production, which strengthens the
 negative result.** `describe-dataset` on the generated data measured p95 **336**
@@ -2174,12 +2187,13 @@ hashed bytes/row against the real snapshot's **264** (+27%), because the
 fields — `seller_customer_id`, `financing_type`, `make`, `model`, `fuel_type`,
 `stock_type`, `condition`, `body_style` are 0% null here versus 75–90% null in
 the snapshot. Fan-out is likewise a flat 7 per artifact against a real p50 of
-1 / p95 of 5. So the passing run is an upper bound on the measured shape, and
-real data at this row count has *more* headroom than the table shows, not less.
+1 / p95 of 5. So the passing run is an upper bound on the
+**snapshot-measured width/null/fan-out profile — not on unmeasured production
+skew**, which is exactly what the next investigation exists to establish.
 
 **The duplicate-key run is stress evidence only.** 1,543,999 duplicate
 `(artifact_id, listing_id)` groups (`--duplicate-modulus 25`, isolated bucket
-`scale-harness-dupes`) cost 28% wall time and 75 MB of peak heap — it exercises
+`scale-harness-dupes`) cost 28% wall time — it exercises
 the dedupe and Iceberg's MERGE cardinality check under load, and both hold. It
 is **not** a claim about production duplicate rates, which remain unmeasured;
 the snapshot's zero duplicates may be an export-time dedupe rather than

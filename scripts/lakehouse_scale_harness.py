@@ -270,8 +270,19 @@ def jvm_runtime_facts(spark) -> Dict[str, object]:
     return facts
 
 
-def peak_heap_bytes(spark) -> Optional[int]:
-    """Peak driver JVM heap used, via the JVM's own memory bean.
+def heap_used_bytes_at_sampling(spark) -> Optional[int]:
+    """Driver JVM heap in use *at this instant*, via the JVM's memory bean.
+
+    **This is NOT a peak or high-water measurement.** It is one
+    `getHeapMemoryUsage().getUsed()` sample taken whenever the caller asks —
+    in practice after the run, so whatever GC last left behind. It cannot
+    support sizing conclusions: a low number may mean the workload was cheap
+    or merely that a collection ran just before sampling, and those are
+    indistinguishable from this value alone.
+
+    Genuine peak evidence needs either periodic sampling during execution or
+    `getPeakUsage().getUsed()` summed across the heap `MemoryPoolMXBean`s.
+    Neither is implemented; do not read this field as if one were.
 
     Best-effort: this reaches through py4j into the driver JVM, and a session
     that already died (the OOM case) has no JVM to ask. Returns None rather
@@ -1393,7 +1404,10 @@ def cmd_generate(args: argparse.Namespace) -> int:
         "generate",
         conf,
         steps,
-        extra={"bucket": args.bucket, "peak_driver_heap_bytes": peak_heap_bytes(spark)},
+        extra={
+            "bucket": args.bucket,
+            "driver_heap_used_bytes_at_sampling": heap_used_bytes_at_sampling(spark),
+        },
     )
     out = write_evidence(Path(args.evidence_dir), "generate", bundle)
     for step in steps:
@@ -1470,7 +1484,7 @@ def cmd_run_model(args: argparse.Namespace) -> int:
         extra={
             "dbt_args": dbt_args,
             "bucket": args.bucket,
-            "peak_driver_heap_bytes": peak_heap_bytes(spark),
+            "driver_heap_used_bytes_at_sampling": heap_used_bytes_at_sampling(spark),
             "jvm_runtime_facts": jvm_facts,
         },
     )
