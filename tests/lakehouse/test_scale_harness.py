@@ -42,6 +42,7 @@ from scripts.lakehouse_scale_harness import (
     StringWidths,
     assert_isolated_bucket,
     assert_isolated_path,
+    build_parser,
     dataset_profile_sql,
     evidence_bundle,
     format_profile_summary,
@@ -396,6 +397,31 @@ class TestSnapshotProfileIsolation:
     def test_isolated_snapshot_bucket_is_allowed(self):
         assert_isolated_path("s3a://snapshot-profile/silver_normalized/observations")
 
+    def test_production_read_is_opt_in_and_off_by_default(self):
+        """The escape hatch must never be the default.
+
+        --allow-production-read exists so a deliberate, read-only VM
+        measurement is possible; the guard it relaxes is about PROVENANCE, so
+        the flag's job is to force the caller to say out loud that the numbers
+        came from production. A default of True would silently un-label every
+        profile ever taken.
+        """
+        args = build_parser().parse_args(["describe-dataset"])
+
+        assert args.allow_production_read is False
+
+    def test_production_read_flag_does_not_widen_the_write_guard(self):
+        """Relaxing the READ guard must not make the production bucket a legal
+        write target -- the generator writes into silver_normalized/, so that
+        would be data loss rather than a mislabelled bundle."""
+        args = build_parser().parse_args(
+            ["describe-dataset", "--allow-production-read"]
+        )
+
+        assert args.allow_production_read is True
+        with pytest.raises(HarnessError):
+            assert_isolated_bucket(PRODUCTION_BUCKET)
+
 
 class TestMeasuredSnapshotProfile:
     def test_snapshot_profile_carries_its_provenance(self):
@@ -467,6 +493,36 @@ class TestDatasetProfile:
         for pct in ("0.5", "0.95", "0.99"):
             assert pct in sql
         assert "max(n)" in sql
+
+    def test_profiles_the_skew_tail_not_only_percentiles(self):
+        """The gap that made the sweep's negative result weaker than it read.
+
+        Percentiles describe the bulk of a distribution and say nothing about
+        its largest member. With millions of artifacts, one partition of
+        500k rows moves no percentile at all -- and it is one partition that
+        must be sorted in the driver heap. So the profile must report the
+        heaviest groups directly, ordered, or "p99=1" will keep being read as
+        "no big partitions exist".
+        """
+        sql = dataset_profile_sql("s3a://b/p")
+
+        for key, group_by in (
+            ("artifact_skew_top", "GROUP BY artifact_id"),
+            ("observation_key_skew_top", "GROUP BY artifact_id, listing_id"),
+        ):
+            assert group_by in sql[key]
+            assert "ORDER BY n DESC" in sql[key]
+            assert "LIMIT" in sql[key]
+
+    def test_skew_queries_are_named_so_the_runner_keeps_all_rows(self):
+        """Coupling worth asserting: cmd_describe_dataset dispatches multi-row
+        handling on the `_skew_top` suffix. Renaming a skew query without
+        renaming that branch would silently collapse the tail to one row --
+        the exact failure the query exists to prevent, and a green one."""
+        skew = [k for k in dataset_profile_sql("s3a://b/p") if "skew" in k]
+
+        assert skew
+        assert all(k.endswith("_skew_top") for k in skew)
 
     def test_profiles_every_hashed_string_field_width(self):
         sql = dataset_profile_sql("s3a://b/p")["string_fields"]
@@ -574,6 +630,25 @@ class TestProfileSummary:
 
         assert "16847" in text
         assert "p95=5" in text
+
+    def test_summary_prints_the_tail_beside_the_percentiles(self):
+        """`p99=1, max=412880` only lands as one sentence. Splitting the two
+        halves across sections is how a percentile summary talks someone out
+        of noticing skew."""
+        bundle = {
+            "path": "s3a://bronze/silver_normalized/observations",
+            "steps": [
+                {"name": "observation_key_skew_top", "ok": True, "detail": {"stats": [
+                    {"artifact_id": "hot", "listing_id": "L1", "n": 412880},
+                    {"artifact_id": "b", "listing_id": "L2", "n": 12},
+                ]}},
+            ],
+        }
+
+        text = format_profile_summary(bundle)
+
+        assert "412880" in text
+        assert "hot" in text
 
     def test_summary_tolerates_failed_steps(self):
         """A partial profile is still worth reading; the formatter must not

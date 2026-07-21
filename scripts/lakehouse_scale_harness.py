@@ -1140,6 +1140,22 @@ def dataset_profile_sql(path: str) -> Dict[str, str]:
             f"FROM (SELECT artifact_id, listing_id, count(*) AS n FROM {src} "
             "GROUP BY artifact_id, listing_id)"
         ),
+        # SKEW. The three queries above summarise the distribution; these two
+        # describe its TAIL, which is what a window function actually OOMs on.
+        # A single hot artifact_id is invisible at p99 -- with millions of
+        # artifacts, one partition of 500k rows moves no percentile at all,
+        # and yet it is one partition that must be sorted in the driver heap.
+        # Percentiles said "p50 1, p95 5" for a snapshot whose real spread was
+        # never in question; the number that would change a sizing decision is
+        # the largest group, not the median one.
+        "artifact_skew_top": (
+            "SELECT artifact_id, count(*) AS n "
+            f"FROM {src} GROUP BY artifact_id ORDER BY n DESC LIMIT 20"
+        ),
+        "observation_key_skew_top": (
+            "SELECT artifact_id, listing_id, count(*) AS n "
+            f"FROM {src} GROUP BY artifact_id, listing_id ORDER BY n DESC LIMIT 20"
+        ),
         "row_bytes": f"SELECT {_pct(row_bytes_expr(), 'row_bytes')} FROM {src}",
         # Per-field width AND null rate. Nulls matter as much as widths here:
         # the hash coalesces every field to '', so a field that is mostly null
@@ -1192,7 +1208,21 @@ def cmd_describe_dataset(args: argparse.Namespace) -> int:
     # --path is free-form, so the bucket guard above does not cover it. Without
     # this, `--bucket snapshot-profile --path s3a://bronze/...` would read
     # production silver through a command that looks isolated.
-    assert_isolated_path(path)
+    #
+    # The guard's purpose is PROVENANCE, not safety -- profiling is read-only,
+    # and the risk it defends against is a production-derived number being
+    # filed as snapshot-derived. So the opt-in does not bypass it; it changes
+    # the labelling, stamping `reads_production: true` into the bundle and
+    # saying so on stdout. A run that reads production is then impossible to
+    # mistake for one that did not, which is what the guard was protecting.
+    if args.allow_production_read:
+        print(
+            f"*** READING PRODUCTION DATA: {path}\n"
+            "*** Read-only profiling. Evidence is stamped reads_production=true "
+            "and must NOT be cited as snapshot-derived."
+        )
+    else:
+        assert_isolated_path(path)
 
     sizing = sizing_from_args(args)
     conf = harness_spark_conf(sizing, args.bucket)
@@ -1226,6 +1256,18 @@ def cmd_describe_dataset(args: argparse.Namespace) -> int:
                     },
                 )
             )
+        elif name.endswith("_skew_top"):
+            # Multi-row by construction: collect_one would silently keep only
+            # the largest group and discard the shape of the tail, which is
+            # the entire reason these queries exist.
+            steps.append(
+                run_step(
+                    name,
+                    lambda sql=sql: {
+                        "stats": [r.asDict() for r in spark.sql(sql).collect()]
+                    },
+                )
+            )
         else:
             steps.append(run_step(name, lambda sql=sql: collect_one(sql)))
 
@@ -1247,7 +1289,10 @@ def cmd_describe_dataset(args: argparse.Namespace) -> int:
     steps.append(run_step("storage", storage))
 
     bundle = evidence_bundle(
-        "describe-dataset", conf, steps, extra={"path": path}
+        "describe-dataset",
+        conf,
+        steps,
+        extra={"path": path, "reads_production": bool(args.allow_production_read)},
     )
     out = write_evidence(Path(args.evidence_dir), args.evidence_name, bundle)
     print(format_profile_summary(bundle))
@@ -1300,6 +1345,28 @@ def format_profile_summary(bundle: Dict[str, object]) -> str:
             f"max={grp.get('group_max')}  duplicates={grp.get('groups_with_duplicates')}"
             f"/{grp.get('groups')}"
         )
+
+    # The tail, printed next to the percentiles it hides. Showing the top few
+    # groups inline is the point: "p99=1, max=412,880" is a sentence that
+    # changes a sizing decision, and it is unreadable if the two halves live
+    # in different sections of the bundle.
+    for label, key, cols in (
+        ("artifact_id", "artifact_skew_top", ("artifact_id",)),
+        (
+            "(artifact_id, listing_id)",
+            "observation_key_skew_top",
+            ("artifact_id", "listing_id"),
+        ),
+    ):
+        top = stats(key)
+        if isinstance(top, list) and top:
+            head = ", ".join(str(r.get("n")) for r in top[:5])
+            biggest = top[0]
+            ident = " / ".join(str(biggest.get(c)) for c in cols)
+            lines.append(
+                f"  {label} SKEW: largest 5 groups = [{head}]  "
+                f"heaviest = {ident}"
+            )
 
     rb = stats("row_bytes")
     if rb:
@@ -1625,6 +1692,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="s3a:// path to profile (default: the harness bucket's observations).",
     )
     desc.add_argument("--evidence-name", default="describe_dataset")
+    desc.add_argument(
+        "--allow-production-read",
+        action="store_true",
+        help="Permit profiling a path in the production bucket. Read-only, and "
+             "stamps reads_production=true into the evidence bundle so the "
+             "result can never be cited as snapshot-derived.",
+    )
     desc.set_defaults(func=cmd_describe_dataset)
 
     run = sub.add_parser("run-model", help="Run dbt over the synthetic data, instrumented.")
