@@ -88,6 +88,42 @@ class TestFailureClassification:
         assert replay.classify_failure("") == "unknown"
 
 
+class TestRuntimeFactsOnAnUnsetSession:
+    """Regression: reading facts must not kill the run whose facts it reads.
+
+    jvm_runtime_facts() passed a string sentinel as conf.get()'s default.
+    Spark type-checks that default against the key's declared type, so on an
+    int-typed key with no value set it raised
+    IllegalArgumentException("spark.sql.shuffle.partitions should be int, but
+    was <unset>"). Every harness run SETS shuffle partitions via SparkSizing,
+    so it never fired there -- it fired on the first run that deliberately
+    configured nothing, which is the shadow-build reproduction itself.
+    """
+
+    def test_unset_int_typed_conf_reports_unset_instead_of_raising(self):
+        from scripts.lakehouse_scale_harness import jvm_runtime_facts
+
+        class _Conf:
+            def get(self, key, *a):
+                if key == "spark.sql.shuffle.partitions":
+                    raise ValueError(
+                        "spark.sql.shuffle.partitions should be int, but was <unset>"
+                    )
+                return "someval"
+
+        class _Ctx:
+            defaultParallelism = 4
+
+        spark = types.SimpleNamespace(
+            _jvm=None, conf=_Conf(), sparkContext=_Ctx()
+        )
+
+        facts = jvm_runtime_facts(spark)
+
+        assert facts["spark.sql.shuffle.partitions"] == "<unset>"
+        assert facts["spark.master"] == "someval"
+
+
 class TestCgroupParsing:
     def test_parses_peak_and_oom_events(self, replay, tmp_path, monkeypatch):
         """memory.peak and memory.events are the facts that OUTLIVE a dead

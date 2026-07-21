@@ -265,7 +265,20 @@ def jvm_runtime_facts(spark) -> Dict[str, object]:
     except Exception as exc:  # noqa: BLE001
         facts["jvm_error"] = str(exc)[:200]
     for key in ("spark.driver.memory", "spark.master", "spark.sql.shuffle.partitions"):
-        facts[key] = spark.conf.get(key, "<unset>")
+        # Per-key try/except, and NO default passed to conf.get().
+        #
+        # Spark type-checks the default against the config's declared type, so
+        # a string sentinel raises IllegalArgumentException on an int-typed
+        # key ("spark.sql.shuffle.partitions should be int, but was <unset>").
+        # Every harness run SETS that key via SparkSizing, so this was
+        # invisible here -- it only fires when the key is genuinely unset,
+        # which is exactly the shadow-build configuration the replay
+        # reproduces. Reading facts must never be what kills the run whose
+        # facts are being read.
+        try:
+            facts[key] = spark.conf.get(key)
+        except Exception:  # noqa: BLE001
+            facts[key] = "<unset>"
     facts["default_parallelism"] = spark.sparkContext.defaultParallelism
     return facts
 
