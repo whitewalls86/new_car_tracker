@@ -947,19 +947,30 @@ def build_price_event_rows() -> List[Dict[str, Any]]:
 
 
 def build_cooldown_event_rows() -> List[Dict[str, Any]]:
-    """cooldown_blocked / cooldown_incremented / cooldown_bucket_{3_4,5_10,11_plus}."""
+    """cooldown_blocked / cooldown_incremented / cooldown_bucket_{3_4,5_10,11_plus}
+    plus a full blocked→cleared lifecycle (L23).
+
+    The 'cleared' row is load-bearing for CI: it exercises the event_type
+    accepted_values domain (['blocked','incremented','cleared']) and the
+    mart_cooldown_cohorts drop-out (a listing whose latest event is 'cleared'
+    is excluded from the backlog). Without it, CI's dbt build never sees a
+    'cleared' value and the accepted_values test can't catch a missing entry.
+    """
     specs = [
-        (1, "L1", 1, _ts(2026, 7, 1)),
-        (2, "L1", 2, _ts(2026, 7, 2)),
-        (3, "L5", 1, _ts(2026, 7, 1)),
-        (4, "L20", 3, _ts(2026, 7, 1)),
-        (5, "L21", 7, _ts(2026, 7, 1)),
-        (6, "L22", 15, _ts(2026, 7, 1)),
+        (1, "L1", 1, "blocked", _ts(2026, 7, 1)),
+        (2, "L1", 2, "blocked", _ts(2026, 7, 2)),
+        (3, "L5", 1, "blocked", _ts(2026, 7, 1)),
+        (4, "L20", 3, "blocked", _ts(2026, 7, 1)),
+        (5, "L21", 7, "blocked", _ts(2026, 7, 1)),
+        (6, "L22", 15, "blocked", _ts(2026, 7, 1)),
+        # Full lifecycle: blocked, then resolved by a successful scrape.
+        (7, "L23", 1, "blocked", _ts(2026, 7, 1)),
+        (8, "L23", 1, "cleared", _ts(2026, 7, 3)),
     ]
     return [
-        dict(event_id=eid, listing_id=lid, event_type="blocked",
+        dict(event_id=eid, listing_id=lid, event_type=event_type,
              num_of_attempts=attempts, event_at=event_at)
-        for (eid, lid, attempts, event_at) in specs
+        for (eid, lid, attempts, event_type, event_at) in specs
     ]
 
 
