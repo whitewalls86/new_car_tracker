@@ -57,7 +57,7 @@ import traceback
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Sequence
+from typing import Callable, Dict, List, Mapping, Optional, Sequence
 
 from shared.iceberg_catalog import (
     CATALOG_NAME,
@@ -103,6 +103,28 @@ def assert_isolated_bucket(bucket: str) -> None:
         )
     if not bucket:
         raise HarnessError("--bucket must be a non-empty bucket name.")
+
+
+def assert_isolated_path(path: str) -> None:
+    """Refuse to READ a path in the production bucket.
+
+    Separate from assert_isolated_bucket because `--path` bypasses it: the
+    bucket flag governs where the harness writes, while --path is free-form
+    and could name any bucket. describe-dataset is read-only, so this is not
+    about corruption -- it is about not pointing a local profiling run at
+    production silver and reporting the result as snapshot-derived.
+    """
+    if not path:
+        raise HarnessError("--path must be a non-empty s3a:// path.")
+    for scheme in ("s3a://", "s3://"):
+        if path.startswith(scheme):
+            bucket = path[len(scheme):].split("/", 1)[0]
+            assert_isolated_bucket(bucket)
+            return
+    raise HarnessError(
+        f"--path must be an s3a:// URI naming its bucket, got {path!r}; the "
+        "isolation guard cannot verify a path whose bucket it cannot read."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -768,11 +790,39 @@ class StringWidths:
     isa_context: int = 12
     dealer_name: int = 24
     vehicle_trim: int = 12
+    # Per-field null percentage. Load-bearing, not cosmetic: the hash
+    # coalesces every field to '', so a field that is 90% null in production
+    # contributes almost nothing to row size. A synthetic profile that
+    # populates it densely overstates memory pressure -- which is exactly what
+    # the `wide` profile did to trid and isa_context.
+    null_pct: Mapping[str, float] = field(default_factory=dict)
 
     @classmethod
     def profile(cls, name: str) -> "StringWidths":
         if name == "narrow":
             return cls()
+        if name == "snapshot":
+            # MEASURED from a real Plan 120 lake snapshot (2026-07-21,
+            # adaptive-refresh-2026-07-15-181719, 16,847 rows). Widths are the
+            # measured p99; null rates are measured directly. This is the only
+            # profile here that is evidence rather than guesswork -- see
+            # SNAPSHOT_PROFILE_PROVENANCE and the plan's measured-profile
+            # table for the caveats on how representative it is.
+            return cls(
+                body=47,
+                canonical_detail_url=72,
+                trid=22,
+                isa_context=8,
+                dealer_name=35,
+                vehicle_trim=23,
+                null_pct={
+                    "body": 25.05,
+                    "trid": 90.42,
+                    "isa_context": 90.42,
+                    "dealer_name": 10.54,
+                    "trim": 75.91,
+                },
+            )
         if name == "wide":
             return cls(
                 body=512,
@@ -792,23 +842,51 @@ class StringWidths:
                 vehicle_trim=96,
             )
         raise HarnessError(
-            f"unknown string-width profile {name!r}; expected narrow/wide/extreme"
+            f"unknown string-width profile {name!r}; expected "
+            "narrow/snapshot/wide/extreme"
         )
 
 
-def _wide_string(seed_expr: str, width: int, alias: str) -> str:
-    """A high-entropy string of exactly `width` characters.
+# Where the `snapshot` profile's numbers came from, carried in every evidence
+# bundle that uses it so a future reader can tell measurement from guess.
+SNAPSHOT_PROFILE_PROVENANCE = {
+    "snapshot_id": "adaptive-refresh-2026-07-15-181719",
+    "measured_at": "2026-07-21",
+    "rows_measured": 16847,
+    "widths": "measured p99",
+    "null_rates": "measured",
+    "caveats": (
+        "Seed-VIN-filtered CI fixture, not a uniform production sample: 282 "
+        "distinct listing_ids, source mix 74.9% carousel / 15.5% detail / "
+        "9.6% srp, and zero duplicate (artifact_id, listing_id) groups. "
+        "Per-row WIDTHS are trustworthy (real rows, real values). Source mix, "
+        "fan-out, and duplicate rate are likely biased by the seed selection "
+        "and should not be treated as production-representative."
+    ),
+}
+
+
+def _wide_string(
+    seed_expr: str, width: int, alias: str, null_pct: float = 0.0
+) -> str:
+    """A high-entropy string of exactly `width` characters, null `null_pct`
+    percent of the time.
 
     Entropy matters: padding with a repeated constant would compress to almost
     nothing in Parquet, so the FILES would stay small while the in-memory rows
     grew -- making bytes-per-row on disk a lie. Repeated md5 keeps on-disk and
     in-heap size honest with each other.
+
+    Nulls are applied on `id` (not the seed) so the null pattern does not
+    correlate with the value pattern, and so a field seeded off a low-
+    cardinality expression still gets its nulls spread across all rows.
     """
     repeats = max(1, -(-width // 32))
-    return (
-        f"substr(repeat(md5(cast({seed_expr} as string)), {repeats}), 1, {width}) "
-        f"AS {alias}"
-    )
+    value = f"substr(repeat(md5(cast({seed_expr} as string)), {repeats}), 1, {width})"
+    if null_pct > 0:
+        threshold = max(1, int(round(null_pct * 100)))
+        value = f"CASE WHEN id % 10000 < {threshold} THEN NULL ELSE {value} END"
+    return f"{value} AS {alias}"
 
 
 def _base_id(duplicate_modulus: int) -> str:
@@ -869,7 +947,8 @@ def observations_expr(
         f"concat('L', cast({base} % {distinct_vins} as string)) AS listing_id",
         f"concat('1HGCM82633A', lpad(cast({base} % {distinct_vins} as string), 6, '0')) "
         "AS vin",
-        _wide_string(base, widths.canonical_detail_url, "canonical_detail_url"),
+        _wide_string(base, widths.canonical_detail_url, "canonical_detail_url",
+                     widths.null_pct.get("canonical_detail_url", 0.0)),
         _SOURCE_EXPR,
         "CASE WHEN id % 17 = 0 THEN 'unavailable' ELSE 'active' END AS listing_state",
         # fetched_at keyed off `base` so a correction row shares its
@@ -881,7 +960,8 @@ def observations_expr(
         "cast(15000 + (id % 60000) as int) AS price",
         _MAKE_EXPR,
         _MODEL_EXPR,
-        _wide_string("id % 11", widths.vehicle_trim, "trim"),
+        _wide_string("id % 11", widths.vehicle_trim, "trim",
+                     widths.null_pct.get("trim", 0.0)),
         "cast(2018 + (id % 8) as smallint) AS year",
         "cast(id % 120000 as int) AS mileage",
         "cast(20000 + (id % 55000) as int) AS msrp",
@@ -891,7 +971,8 @@ def observations_expr(
         "CASE cast(id % 6 as int) WHEN 0 THEN 'Sedan' WHEN 1 THEN 'SUV' "
         "WHEN 2 THEN 'Truck' WHEN 3 THEN 'Coupe' WHEN 4 THEN 'Wagon' "
         "ELSE 'Van' END AS body_style",
-        _wide_string("id % 900", widths.dealer_name, "dealer_name"),
+        _wide_string("id % 900", widths.dealer_name, "dealer_name",
+                     widths.null_pct.get("dealer_name", 0.0)),
         "lpad(cast(id % 99999 as string), 5, '0') AS dealer_zip",
         "concat('City', cast(id % 400 as string)) AS dealer_city",
         "CASE cast(id % 5 as int) WHEN 0 THEN 'CA' WHEN 1 THEN 'TX' "
@@ -903,9 +984,12 @@ def observations_expr(
         "concat('sc-', cast(id % 700 as string)) AS seller_customer_id",
         "cast(id % 50 as smallint) AS page_number",
         "cast(id % 30 as smallint) AS position_on_page",
-        _wide_string("id % 5000", widths.trid, "trid"),
-        _wide_string("id % 40", widths.isa_context, "isa_context"),
-        _wide_string("id", widths.body, "body"),
+        _wide_string("id % 5000", widths.trid, "trid",
+                     widths.null_pct.get("trid", 0.0)),
+        _wide_string("id % 40", widths.isa_context, "isa_context",
+                     widths.null_pct.get("isa_context", 0.0)),
+        _wide_string("id", widths.body, "body",
+                     widths.null_pct.get("body", 0.0)),
         "CASE WHEN id % 2 = 0 THEN 'new' ELSE 'used' END AS condition",
         "cast(2024 + (id % 2) as int) AS obs_year",
         "cast(1 + (id % 12) as int) AS obs_month",
@@ -930,27 +1014,92 @@ def price_events_expr(rows: int, distinct_vins: int) -> List[str]:
     ]
 
 
-# Fields whose width drives the 28-field hash's memory cost. Reported by
-# describe-dataset so the StringWidths profiles can be replaced by measured
-# production percentiles instead of guesses.
+# Every STRING field the 28-field fingerprint hashes, in silver's own column
+# naming (stg_observations renames trim->vehicle_trim and year->model_year on
+# the way through, so the model's spelling differs from the source's).
+#
+# Load-bearing for sizing, not just reporting: the hash concatenates all of
+# these, so their combined width is what the window/sort state carries per
+# row. test_hashed_string_fields_match_the_model asserts this list against the
+# model SQL, so a field added to the hash cannot silently go unmeasured.
 HASHED_STRING_FIELDS = (
-    "body",
-    "canonical_detail_url",
-    "isa_context",
-    "trid",
-    "dealer_name",
-    "trim",
     "listing_id",
     "vin",
+    "source",
+    "make",
+    "model",
+    "trim",
+    "listing_state",
+    "canonical_detail_url",
+    "stock_type",
+    "fuel_type",
+    "body_style",
+    "dealer_name",
+    "dealer_zip",
+    "dealer_city",
+    "dealer_state",
     "customer_id",
+    "seller_customer_id",
+    "seller_zip",
+    "financing_type",
+    "trid",
+    "isa_context",
+    "body",
+    "condition",
 )
+
+# Numeric fields in the same hash. Fixed-width, so they contribute a constant
+# to row size rather than a distribution -- but they are not free, and a
+# bytes-per-row figure that ignored them would understate the row.
+HASHED_NUMERIC_BYTES = {
+    # Hashed into observation_id rather than parsed_fingerprint, but it is
+    # still payload the row carries through the window.
+    "artifact_id": 8,
+    "price": 4,
+    "mileage": 4,
+    "year": 2,
+    "msrp": 4,
+    "page_number": 2,
+    "position_on_page": 2,
+}
+
+PERCENTILES = (0.5, 0.95, 0.99)
+
+
+def row_bytes_expr() -> str:
+    """Per-row byte width of the hashed payload.
+
+    Deliberately an IN-MEMORY proxy, not a stored size. Parquet's on-disk
+    bytes/row is compressed and dictionary-encoded, so it can understate the
+    heap cost of the same row by a large factor -- and heap is what OOMs. This
+    sums actual string lengths plus fixed numeric widths, which is what the
+    window/sort state carries.
+
+    Both figures are reported: this one as `row_bytes_*` percentiles, and the
+    on-disk one as `bytes_per_row` under `storage`. They answer different
+    questions and neither substitutes for the other.
+    """
+    parts = [f"coalesce(length({f}), 0)" for f in HASHED_STRING_FIELDS]
+    parts.append(str(sum(HASHED_NUMERIC_BYTES.values())))
+    return " + ".join(parts)
+
+
+def _pct(expr: str, alias: str) -> str:
+    """percentile_approx at the standard set, plus max -- the tail is where
+    the memory cost of a skewed key lives, so a mean would hide it."""
+    cols = [
+        f"percentile_approx({expr}, {p}) AS {alias}_p{int(p * 100)}" for p in PERCENTILES
+    ]
+    cols.append(f"max({expr}) AS {alias}_max")
+    cols.append(f"avg({expr}) AS {alias}_avg")
+    return ", ".join(cols)
 
 
 def dataset_profile_sql(path: str) -> Dict[str, str]:
     """The stat queries describe-dataset runs, as {name: SQL}.
 
     Split out as data so the query shapes are unit-testable without Spark,
-    and so the same profile can be pointed at a real production snapshot --
+    and so the same profile can be pointed at a real Plan 120 snapshot --
     which is the whole point. Row and file counts alone were what let the
     earlier harness claim a faithful reproduction while every window
     partition was size 1; these are the numbers that would have caught it.
@@ -958,38 +1107,64 @@ def dataset_profile_sql(path: str) -> Dict[str, str]:
     src = f"parquet.`{path}`"
     return {
         "row_count": f"SELECT count(*) AS rows FROM {src}",
-        # Rows per artifact -- the SRP/carousel fan-out that the first
-        # generator flattened to 1.
+        # Which sources the rows come from. detail is one-listing-per-artifact;
+        # srp and carousel are where fan-out comes from, so a profile skewed
+        # toward detail would understate it.
+        "source_distribution": (
+            f"SELECT source, count(*) AS rows FROM {src} GROUP BY source ORDER BY source"
+        ),
+        # Rows per artifact -- the SRP/carousel fan-out the first generator
+        # flattened to 1.
         "artifact_fanout": (
-            "SELECT min(n) AS min_rows, "
-            "percentile_approx(n, 0.5) AS p50, "
-            "percentile_approx(n, 0.95) AS p95, "
-            "percentile_approx(n, 0.99) AS p99, "
-            "max(n) AS max_rows, count(*) AS artifacts "
+            f"SELECT {_pct('n', 'fanout')}, min(n) AS fanout_min, "
+            "count(*) AS artifacts "
             f"FROM (SELECT artifact_id, count(*) AS n FROM {src} GROUP BY artifact_id)"
         ),
         # Rows per (artifact_id, listing_id) -- the actual window partition of
         # int_listing_observation_fingerprints. Anything above 1 is what the
         # row_number() dedupe and Iceberg's MERGE cardinality check act on.
         "observation_key_groups": (
-            "SELECT max(n) AS max_rows, "
-            "percentile_approx(n, 0.95) AS p95, "
-            "count(*) AS groups, "
+            f"SELECT {_pct('n', 'group')}, count(*) AS groups, "
             "sum(CASE WHEN n > 1 THEN 1 ELSE 0 END) AS groups_with_duplicates "
             f"FROM (SELECT artifact_id, listing_id, count(*) AS n FROM {src} "
             "GROUP BY artifact_id, listing_id)"
         ),
-        "string_widths": (
-            "SELECT "
+        "row_bytes": f"SELECT {_pct(row_bytes_expr(), 'row_bytes')} FROM {src}",
+        # Per-field width AND null rate. Nulls matter as much as widths here:
+        # the hash coalesces every field to '', so a field that is mostly null
+        # in production contributes nothing to row size, and a synthetic
+        # profile that populates it densely would overstate memory pressure.
+        "string_fields": (
+            "SELECT count(*) AS rows, "
             + ", ".join(
-                f"avg(length({f})) AS {f}_avg, "
-                f"percentile_approx(length({f}), 0.95) AS {f}_p95, "
-                f"max(length({f})) AS {f}_max"
+                f"{_pct(f'length({f})', f)}, "
+                f"sum(CASE WHEN {f} IS NULL THEN 1 ELSE 0 END) AS {f}_nulls"
                 for f in HASHED_STRING_FIELDS
             )
             + f" FROM {src}"
         ),
     }
+
+
+def parse_string_field_stats(row: Dict[str, object]) -> Dict[str, Dict[str, object]]:
+    """Regroup the flat string_fields row into {field: {stat: value}}.
+
+    The query has to be one flat SELECT so Spark makes a single pass over the
+    data; this makes the resulting bundle readable rather than 100+ columns
+    of `body_p95`-style keys.
+    """
+    rows = row.get("rows")
+    out: Dict[str, Dict[str, object]] = {}
+    for name in HASHED_STRING_FIELDS:
+        stats: Dict[str, object] = {}
+        for suffix in ("p50", "p95", "p99", "max", "avg", "nulls"):
+            key = f"{name}_{suffix}"
+            if key in row:
+                stats[suffix] = row[key]
+        if isinstance(rows, int) and rows and isinstance(stats.get("nulls"), int):
+            stats["null_pct"] = round(100.0 * stats["nulls"] / rows, 2)
+        out[name] = stats
+    return out
 
 
 def cmd_describe_dataset(args: argparse.Namespace) -> int:
@@ -1002,17 +1177,46 @@ def cmd_describe_dataset(args: argparse.Namespace) -> int:
     and "1 GiB OOMed on the VM".
     """
     assert_isolated_bucket(args.bucket)
+    path = args.path or f"s3a://{args.bucket}/{OBSERVATIONS_PREFIX}"
+    # --path is free-form, so the bucket guard above does not cover it. Without
+    # this, `--bucket snapshot-profile --path s3a://bronze/...` would read
+    # production silver through a command that looks isolated.
+    assert_isolated_path(path)
+
     sizing = sizing_from_args(args)
     conf = harness_spark_conf(sizing, args.bucket)
     spark = build_spark(conf, "cartracker-describe-dataset")
 
-    path = args.path or f"s3a://{args.bucket}/{OBSERVATIONS_PREFIX}"
     steps: List[StepResult] = []
 
+    def collect_one(sql: str) -> Dict[str, object]:
+        return {"stats": spark.sql(sql).collect()[0].asDict()}
+
     for name, sql in dataset_profile_sql(path).items():
-        steps.append(
-            run_step(name, lambda sql=sql: {"stats": spark.sql(sql).collect()[0].asDict()})
-        )
+        if name == "source_distribution":
+            steps.append(
+                run_step(
+                    name,
+                    lambda sql=sql: {
+                        "stats": {
+                            r["source"]: r["rows"] for r in spark.sql(sql).collect()
+                        }
+                    },
+                )
+            )
+        elif name == "string_fields":
+            steps.append(
+                run_step(
+                    name,
+                    lambda sql=sql: {
+                        "stats": parse_string_field_stats(
+                            spark.sql(sql).collect()[0].asDict()
+                        )
+                    },
+                )
+            )
+        else:
+            steps.append(run_step(name, lambda sql=sql: collect_one(sql)))
 
     # Bytes/row and bytes/file, which row counts alone cannot give -- a
     # narrow-string dataset and a wide-string one of identical row and file
@@ -1035,11 +1239,82 @@ def cmd_describe_dataset(args: argparse.Namespace) -> int:
         "describe-dataset", conf, steps, extra={"path": path}
     )
     out = write_evidence(Path(args.evidence_dir), args.evidence_name, bundle)
-    for step in steps:
-        detail = step.detail or step.error_message
-        print(f"  {step.name:24s} {'PASS' if step.ok else 'FAIL'} {detail}")
+    print(format_profile_summary(bundle))
     print(f"Evidence: {out}")
     return 0 if all(s.ok for s in steps) else 1
+
+
+def format_profile_summary(bundle: Dict[str, object]) -> str:
+    """Concise human-readable profile.
+
+    The JSON bundle is the record; this is what makes a run readable without
+    opening it. Kept pure (takes the bundle, returns a string) so it is
+    testable and so the same formatting works on a bundle read back from disk
+    months later.
+    """
+    steps = {s["name"]: s for s in bundle.get("steps", [])}
+
+    def stats(name: str) -> Dict[str, object]:
+        step = steps.get(name) or {}
+        return (step.get("detail") or {}).get("stats") or {} if step.get("ok") else {}
+
+    lines = [f"\nDataset profile: {bundle.get('path', '?')}"]
+
+    rows = stats("row_count").get("rows")
+    storage = (steps.get("storage", {}).get("detail") or {}) if steps.get("storage") else {}
+    lines.append(f"  rows={rows}  files={storage.get('files')}  "
+                 f"stored_bytes_per_row={storage.get('bytes_per_row')}")
+
+    src = stats("source_distribution")
+    if src:
+        total = sum(v for v in src.values() if isinstance(v, int)) or 1
+        parts = ", ".join(
+            f"{k}={v} ({100.0 * v / total:.1f}%)" for k, v in sorted(src.items())
+        )
+        lines.append(f"  sources: {parts}")
+
+    fan = stats("artifact_fanout")
+    if fan:
+        lines.append(
+            f"  artifact fan-out: p50={fan.get('fanout_p50')} "
+            f"p95={fan.get('fanout_p95')} p99={fan.get('fanout_p99')} "
+            f"max={fan.get('fanout_max')} over {fan.get('artifacts')} artifacts"
+        )
+
+    grp = stats("observation_key_groups")
+    if grp:
+        lines.append(
+            f"  (artifact_id, listing_id) groups: p50={grp.get('group_p50')} "
+            f"p95={grp.get('group_p95')} p99={grp.get('group_p99')} "
+            f"max={grp.get('group_max')}  duplicates={grp.get('groups_with_duplicates')}"
+            f"/{grp.get('groups')}"
+        )
+
+    rb = stats("row_bytes")
+    if rb:
+        lines.append(
+            f"  hashed payload bytes/row (in-memory): p50={rb.get('row_bytes_p50')} "
+            f"p95={rb.get('row_bytes_p95')} p99={rb.get('row_bytes_p99')} "
+            f"max={rb.get('row_bytes_max')}"
+        )
+
+    fields = stats("string_fields")
+    if fields:
+        lines.append("  hashed string fields (p50/p95/p99/max chars, null%):")
+        # Widest first -- those are the ones that drive the row size, and the
+        # ones a synthetic profile most needs to match.
+        ordered = sorted(
+            fields.items(),
+            key=lambda kv: (kv[1].get("p95") or 0),
+            reverse=True,
+        )
+        for name, s in ordered:
+            lines.append(
+                f"    {name:22s} {str(s.get('p50')):>5}/{str(s.get('p95')):>5}/"
+                f"{str(s.get('p99')):>5}/{str(s.get('max')):>6}   "
+                f"{s.get('null_pct')}%"
+            )
+    return "\n".join(lines)
 
 
 def _prefix_bytes(bucket: str, path: str) -> int:
@@ -1318,7 +1593,7 @@ def build_parser() -> argparse.ArgumentParser:
     gen.add_argument(
         "--string-widths",
         default="narrow",
-        choices=("narrow", "wide", "extreme"),
+        choices=("narrow", "snapshot", "wide", "extreme"),
         help=(
             "Width profile for the hashed string fields. The 28-field hash is "
             "string-bound, so this drives memory more than row count does."

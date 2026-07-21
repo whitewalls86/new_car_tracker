@@ -1911,6 +1911,138 @@ build still OOMs at a sane heap size, that is a genuinely new finding, and the
 next step then is to capture the stack trace (lost from the original run) to
 learn where the heap goes.
 
+#### Finding 3: measured real-snapshot shape — the OOM treatment is ~4× heavier than production (2026-07-21)
+
+The `wide` profile that triggered the OOM was an invented guess. It has now
+been replaced by measurement against a real Plan 120 lake snapshot, read-only,
+seeded into an isolated local bucket (`snapshot-profile`) on the throwaway
+local-lakehouse stack. **No production MinIO access, no production
+credentials, no production data modified.**
+
+Source: snapshot `adaptive-refresh-2026-07-15-181719`, 16,847 observation
+rows across 8 Parquet files, seeded via the existing
+`scripts/seed_lake_snapshot.py --bucket snapshot-profile`.
+
+**Measured shape of `int_listing_observation_fingerprints`' source input**
+
+| Metric | Measured |
+|---|---|
+| Rows / files | 16,847 / 8 |
+| Stored bytes per row (on disk, compressed) | 30.84 |
+| **Hashed payload bytes per row (in-memory)** | **p50 230, p95 264, p99 268, max 287** |
+| Artifact fan-out (rows per `artifact_id`) | p50 1, p95 5, p99 7, max 10, over 11,761 artifacts |
+| `(artifact_id, listing_id)` group size | p50 1, p95 1, p99 1, max 1 — **0 duplicate groups** |
+| Source mix | carousel 74.9%, detail 15.5%, srp 9.6% |
+
+Two byte figures are reported deliberately and are not interchangeable: the
+on-disk 30.84 B/row is compressed and dictionary-encoded, while the ~264 B/row
+in-memory figure is what the window and sort state actually carries. **Heap is
+what OOMs**, so sizing arguments must use the second.
+
+**Per-field width and null rate, hashed string fields** (p50/p95/p99/max
+chars, null %) — widest first, since these drive row size:
+
+| Field | p50 | p95 | p99 | max | null % |
+|---|---|---|---|---|---|
+| `canonical_detail_url` | 71 | 72 | 72 | 72 | 0.0 |
+| `body` | 32 | 47 | 47 | 55 | **25.05** |
+| `listing_id` | 36 | 36 | 36 | 36 | 0.0 |
+| `seller_customer_id` | 36 | 36 | 36 | 36 | **90.42** |
+| `dealer_name` | 16 | 30 | 35 | 46 | 10.54 |
+| `trid` | 22 | 22 | 22 | 22 | **90.42** |
+| `vin` | 17 | 17 | 17 | 17 | 2.86 |
+| `model` | 8 | 15 | 15 | 15 | 75.10 |
+| `trim` | 6 | 15 | 23 | 28 | 75.91 |
+| `dealer_city` | 9 | 12 | 16 | 20 | 10.74 |
+| `financing_type` | 8 | 11 | 11 | 11 | 90.42 |
+| `make` | 4 | 10 | 10 | 10 | 75.10 |
+| `source` | 8 | 8 | 8 | 8 | 0.0 |
+| `fuel_type` | 8 | 8 | 8 | 13 | 75.92 |
+| `isa_context` | 8 | 8 | 8 | 8 | **90.42** |
+| `customer_id` | 6 | 7 | 7 | 7 | 9.73 |
+| `listing_state` | 6 | 6 | 6 | 8 | 0.0 |
+| `dealer_zip` | 5 | 5 | 5 | 5 | 10.54 |
+| `seller_zip` | 5 | 5 | 5 | 5 | 90.42 |
+| `stock_type` | 3 | 4 | 4 | 4 | 75.91 |
+| `condition` | 3 | 4 | 9 | 9 | 25.05 |
+| `body_style` | 3 | 3 | 3 | 3 | 75.91 |
+| `dealer_state` | 2 | 2 | 2 | 2 | 10.74 |
+
+Null rates are as load-bearing as widths here: the hash coalesces every field
+to `''`, so a 90%-null field contributes almost nothing to row size.
+
+**Comparison against the synthetic control and the OOM treatment**
+
+| Metric | Real snapshot | Synthetic control (PASSES at 1 GiB) | Synthetic `wide` treatment (**OOMs** at 1 GiB) |
+|---|---|---|---|
+| Hashed bytes/row p95 | **264** | ~210 (derived from profile constants) | **1,090** |
+| `body` width / null % | 47 / 25.1% | 24 / 0% | 512 / 0% |
+| `canonical_detail_url` | 72 | 48 | 180 |
+| `trid` / null % | 22 / 90.4% | 12 / 0% | 64 / 0% |
+| `isa_context` / null % | 8 / 90.4% | 12 / 0% | 96 / 0% |
+| `dealer_name` | 30 | 24 | 64 |
+| Artifact fan-out p99 | 7 | 1 | 13 |
+| Duplicate key groups | **0** | 0 | 1,543,999 |
+| Source mix | 74.9 / 15.5 / 9.6 | uniform | uniform |
+
+**The headline correction: the OOM-triggering treatment is ~4.1× wider per row
+than real data** (1,090 vs 264 B/row at p95), roughly 2× the fan-out at p99,
+and carries 1.5M duplicate key groups that the snapshot does not contain at
+all. Meanwhile the *control* that passed at 1 GiB is, on width alone, closer
+to production (~210 vs 264) than the treatment is.
+
+So Finding 2 stands as a demonstration that **shape** drives the OOM, but it
+does **not** establish that production's shape OOMs at 1 GiB. Sizing derived
+from the `wide` profile would be over-provisioned — safe in direction, but not
+justified by evidence.
+
+**How representative this snapshot is — stated, not assumed.** It is the
+seed-VIN-filtered CI fixture, not a uniform production sample: 282 distinct
+`listing_id`s and a carousel-dominated source mix.
+
+- **Trustworthy**: per-field widths and null rates. These are real values from
+  real rows; the seed filter selects *which* rows, not how wide a URL is.
+- **Likely biased**: source mix (74.9% carousel almost certainly over-weights
+  carousel relative to production), and therefore artifact fan-out, since
+  detail artifacts are one-listing-by-construction and SRP/carousel are where
+  fan-out comes from.
+- **Not evidence of absence**: zero duplicate `(artifact_id, listing_id)`
+  groups. The snapshot may be deduplicated on export, so this does not show
+  production has no reprocessing corrections.
+
+A `snapshot` string-width profile encoding these measurements — widths at
+measured p99, plus measured null rates — is now available as
+`--string-widths snapshot`, with its provenance and caveats carried in
+`SNAPSHOT_PROFILE_PROVENANCE` so a later reader can tell measurement from
+guess. Verified end-to-end: generating with it reproduces the measured widths
+and null rates, at 326 B/row p95 versus the real 264 — conservative by ~23%,
+because fixed p99 widths cannot reproduce a distribution's left tail.
+
+#### Target workload profile for the bounded-memory sweep
+
+Justified from the above, this is what the sweep should size against — **not**
+the `wide` profile that produced the reproduction:
+
+| Parameter | Value | Justification |
+|---|---|---|
+| Rows | 38.6M | The VM's measured source scale. |
+| `--string-widths` | `snapshot` | Measured p99 widths + measured null rates. |
+| `--listings-per-artifact` | **7** | Measured fan-out p99. Use p99, not p50 (=1): sizing to the median would under-provision every SRP/carousel artifact, and the tail is where window state costs. |
+| `--duplicate-modulus` | **0**, with a stress variant | Measured 0 in the snapshot. Since that may be an export artifact rather than a production truth, run a second point with duplicates enabled and treat the gap as risk, not as the baseline. |
+| Files | ~2,300 and ~36,000 | Both measured to be non-triggering; keep as controls so a sweep failure cannot be misattributed to layout. |
+| Heap | bisect from 1 GiB upward | 1 GiB is the VM's measured `-Xmx`; the sweep finds the first size that yields `PASS=9`. |
+
+Expected consequence, stated in advance so it is a prediction rather than a
+post-hoc rationalization: at ~264 B/row and fan-out 7, this profile is
+materially lighter than the treatment that OOMed, so **it may well pass at
+1 GiB**. If it does, that is a real result — it would mean production's
+observed OOM needs an explanation beyond the shape measured here, and the
+first suspects become the snapshot's known biases (true source mix and true
+duplicate rate at production scale), not the sizing.
+
+**This change deliberately does not set `spark.driver.memory`.** The sweep is
+the next task; this one supplies the workload profile it should sweep against.
+
 **This is now verifiable rather than merely justified.** The harness
 reproduces the OOM on demand, so a candidate `spark.driver.memory` can be
 tested against the reproduction directly — rerun the pass-2 command at the
@@ -1922,13 +2054,11 @@ Open items, in the order they should be closed:
 1. **Bisect the heap against the reproduction** — pass 2 fails at 1 GiB; find
    the size at which it passes, and set `spark.driver.memory` above it with
    headroom, in `shared/iceberg_catalog.py` (guardrail R1).
-2. **Measure real widths and fan-out**, by pointing `describe-dataset` at a
-   real Plan 120 snapshot, and replace the `StringWidths` profile guesses with
-   measured percentiles. The reproduction currently uses the `wide` profile,
-   which is a documented guess: it proves shape is the trigger, but the
-   *margin* between production's real shape and the failure threshold is
-   unknown until real percentiles are measured. Sizing chosen from a guessed
-   profile could be too tight.
+2. ~~**Measure real widths and fan-out**~~ — **DONE (2026-07-21)**, see
+   [Finding 3](#finding-3-measured-real-snapshot-shape--the-oom-treatment-is-4-heavier-than-production-2026-07-21).
+   The `wide` profile turned out to be ~4.1× heavier per row than real data,
+   so the sweep must size against the measured `snapshot` profile, not the one
+   that produced the reproduction.
 3. **aarch64 vs x86_64** — still untested, and now lower priority: the failure
    reproduces on x86_64, so architecture is not required to explain it.
 
@@ -1971,6 +2101,15 @@ $RUN --driver-memory 4g generate --rows 38600000 --price-event-rows 8000000 \
   --distinct-vins 3000000 --write-partitions 96 \
   --listings-per-artifact 12 --duplicate-modulus 25 --string-widths wide
 $RUN --driver-memory 4g describe-dataset          # confirm the shape landed
+
+# Profile a REAL Plan 120 snapshot, read-only, into an isolated bucket.
+# Needs no production credentials -- it reads a snapshot archive already
+# cached under .cache/lake_snapshots/ (or downloaded via the Gate F API).
+PYTHONPATH=. python -m scripts.seed_lake_snapshot \
+  --snapshot .cache/lake_snapshots/<id>/snapshot.tar.zst \
+  --minio-endpoint http://localhost:19000 --bucket snapshot-profile --clear-prefixes
+$RUN --bucket snapshot-profile --driver-memory 2g describe-dataset \
+  --evidence-name real_snapshot_profile
 $RUN --driver-memory 1g run-model --evidence-name chain_38m_wide_fanout_1g -- \
   run --full-refresh --select +int_listing_volatility_features
 

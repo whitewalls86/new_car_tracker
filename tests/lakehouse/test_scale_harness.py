@@ -31,21 +31,27 @@ import pytest
 
 from scripts.lakehouse_scale_harness import (
     DEFAULT_HARNESS_BUCKET,
+    HASHED_NUMERIC_BYTES,
     HASHED_STRING_FIELDS,
     OBSERVATIONS_PREFIX,
     PRICE_EVENTS_PREFIX,
     PRODUCTION_BUCKET,
+    SNAPSHOT_PROFILE_PROVENANCE,
     HarnessError,
     SparkSizing,
     StringWidths,
     assert_isolated_bucket,
+    assert_isolated_path,
     dataset_profile_sql,
     evidence_bundle,
+    format_profile_summary,
     harness_spark_conf,
     observations_expr,
+    parse_string_field_stats,
     price_events_expr,
     probe_cases,
     redact_conf,
+    row_bytes_expr,
     run_step,
     sizing_from_args,
     write_evidence,
@@ -354,7 +360,7 @@ class TestSyntheticSchema:
         assert "md5(" in self._expr_for(exprs, "body")
 
     def test_unknown_width_profile_is_rejected(self):
-        with pytest.raises(HarnessError, match="narrow/wide/extreme"):
+        with pytest.raises(HarnessError, match="narrow/snapshot/wide/extreme"):
             StringWidths.profile("enormous")
 
     def test_source_prefixes_match_sources_yml(self):
@@ -365,6 +371,77 @@ class TestSyntheticSchema:
 
         assert OBSERVATIONS_PREFIX in sources
         assert PRICE_EVENTS_PREFIX in sources
+
+
+class TestSnapshotProfileIsolation:
+    """describe-dataset reads; --path is free-form, so the bucket flag alone
+    does not constrain it. These guard the read path specifically."""
+
+    def test_path_in_the_production_bucket_is_refused(self):
+        with pytest.raises(HarnessError, match=PRODUCTION_BUCKET):
+            assert_isolated_path(f"s3a://{PRODUCTION_BUCKET}/silver_normalized/observations")
+
+    def test_plain_s3_scheme_is_also_checked(self):
+        """s3:// and s3a:// address the same object store; guarding only one
+        would leave the other as a way in."""
+        with pytest.raises(HarnessError, match=PRODUCTION_BUCKET):
+            assert_isolated_path(f"s3://{PRODUCTION_BUCKET}/silver_normalized")
+
+    def test_path_without_a_parseable_bucket_is_refused(self):
+        """A local filesystem path names no bucket, so the guard cannot verify
+        it. Refusing beats assuming it is safe."""
+        with pytest.raises(HarnessError, match="cannot verify"):
+            assert_isolated_path("/mnt/data/observations")
+
+    def test_isolated_snapshot_bucket_is_allowed(self):
+        assert_isolated_path("s3a://snapshot-profile/silver_normalized/observations")
+
+
+class TestMeasuredSnapshotProfile:
+    def test_snapshot_profile_carries_its_provenance(self):
+        """This is the only profile that is measurement rather than guess, so
+        a reader must be able to tell which snapshot and how many rows it came
+        from -- otherwise it is indistinguishable from the invented ones."""
+        assert SNAPSHOT_PROFILE_PROVENANCE["snapshot_id"]
+        assert SNAPSHOT_PROFILE_PROVENANCE["rows_measured"] > 0
+        assert "caveat" in str(SNAPSHOT_PROFILE_PROVENANCE).lower()
+
+    def test_snapshot_profile_records_measured_null_rates(self):
+        """trid and isa_context are ~90% null in the real snapshot. A profile
+        that populated them densely would overstate row size -- which is
+        exactly what `wide` did."""
+        snap = StringWidths.profile("snapshot")
+
+        assert snap.null_pct["trid"] > 50
+        assert snap.null_pct["isa_context"] > 50
+
+    def test_wide_profile_is_materially_heavier_than_measured_reality(self):
+        """Guards the comparison the plan reports: the OOM-triggering
+        treatment is several times wider per row than production. If someone
+        'corrected' wide down to snapshot values, the reproduction would stop
+        reproducing and this test should force that to be a deliberate act."""
+        snap = StringWidths.profile("snapshot")
+        wide = StringWidths.profile("wide")
+
+        assert wide.body > 5 * snap.body
+        assert wide.isa_context > 5 * snap.isa_context
+
+    def test_null_rate_reaches_the_generated_sql(self):
+        exprs = observations_expr(
+            rows=100, distinct_vins=10, widths=StringWidths.profile("snapshot")
+        )
+        trid = next(e for e in exprs if e.endswith("AS trid"))
+
+        assert "THEN NULL" in trid
+
+    def test_zero_null_rate_emits_no_null_branch(self):
+        """Narrow/wide have no measured null rates; they should generate plain
+        values rather than a no-op CASE."""
+        exprs = observations_expr(
+            rows=100, distinct_vins=10, widths=StringWidths.profile("wide")
+        )
+
+        assert "THEN NULL" not in next(e for e in exprs if e.endswith("AS trid"))
 
 
 class TestDatasetProfile:
@@ -392,7 +469,7 @@ class TestDatasetProfile:
         assert "max(n)" in sql
 
     def test_profiles_every_hashed_string_field_width(self):
-        sql = dataset_profile_sql("s3a://b/p")["string_widths"]
+        sql = dataset_profile_sql("s3a://b/p")["string_fields"]
 
         for field in HASHED_STRING_FIELDS:
             assert f"length({field})" in sql
@@ -403,6 +480,109 @@ class TestDatasetProfile:
         bucket -- that comparison is the point of the subcommand."""
         for sql in dataset_profile_sql("s3a://real/silver").values():
             assert "parquet.`s3a://real/silver`" in sql
+
+    def test_hashed_string_fields_match_the_models_hash(self):
+        """The drift guard that matters most here.
+
+        The profile's whole job is measuring what the 28-field hash carries.
+        If a field is added to the model's hash and not to this list, sizing
+        would be derived from an incomplete row -- silently, since every query
+        would still succeed. Asserted against the model SQL, in silver's own
+        column naming (stg_observations renames two columns on the way).
+        """
+        sql = (MODEL_DIR / "int_listing_observation_fingerprints.sql").read_text()
+        body = sql[sql.index("md5(concat_ws(") :]
+        hashed = set(re.findall(r"coalesce\(\s*([a-z_0-9]+)\s*,", body))
+        hashed |= set(re.findall(r"cast_to_string\('([a-z_0-9]+)'\)", body))
+        # Model spelling -> silver source spelling, and the numeric fields
+        # which are counted by HASHED_NUMERIC_BYTES rather than measured.
+        renames = {"vehicle_trim": "trim", "model_year": "year", "vin17": "vin"}
+        hashed = {renames.get(f, f) for f in hashed}
+        numeric = set(HASHED_NUMERIC_BYTES)
+
+        missing = hashed - numeric - set(HASHED_STRING_FIELDS)
+
+        assert not missing, f"hashed fields not measured by the profile: {sorted(missing)}"
+
+    def test_row_bytes_counts_every_hashed_field(self):
+        """Bytes-per-row is the number sizing will be argued from, so it must
+        cover the whole hashed payload, strings and numerics alike."""
+        expr = row_bytes_expr()
+
+        for f in HASHED_STRING_FIELDS:
+            assert f"length({f})" in expr
+        assert str(sum(HASHED_NUMERIC_BYTES.values())) in expr
+
+    def test_row_bytes_treats_null_as_zero_width(self):
+        """The hash coalesces nulls to '', so a null field genuinely costs
+        nothing. Counting it as anything else would overstate the row."""
+        assert "coalesce(length(" in row_bytes_expr()
+
+    def test_profile_reports_every_requested_percentile(self):
+        """p50/p95/p99/max on each distribution -- a mean would hide the tail,
+        and the tail is where a skewed key's memory cost lives."""
+        sql = dataset_profile_sql("s3a://b/p")
+        for name in ("artifact_fanout", "observation_key_groups", "row_bytes"):
+            for pct in ("0.5", "0.95", "0.99"):
+                assert pct in sql[name], f"{name} missing p{pct}"
+            assert "max(" in sql[name], name
+
+    def test_profile_reports_null_counts_per_string_field(self):
+        sql = dataset_profile_sql("s3a://b/p")["string_fields"]
+
+        for f in HASHED_STRING_FIELDS:
+            assert f"{f}_nulls" in sql
+
+    def test_profile_reports_source_distribution(self):
+        """detail is one-listing-per-artifact; srp and carousel are where
+        fan-out comes from, so the mix is needed to judge whether a measured
+        fan-out is representative."""
+        sql = dataset_profile_sql("s3a://b/p")["source_distribution"]
+
+        assert "GROUP BY source" in sql
+
+    def test_parse_string_field_stats_regroups_and_computes_null_pct(self):
+        parsed = parse_string_field_stats(
+            {"rows": 200, "body_p95": 47, "body_max": 55, "body_nulls": 50}
+        )
+
+        assert parsed["body"]["p95"] == 47
+        assert parsed["body"]["null_pct"] == 25.0
+
+    def test_parse_string_field_stats_survives_a_zero_row_dataset(self):
+        """An empty source is a PASS, not an error -- so the formatter must not
+        divide by zero on one."""
+        parsed = parse_string_field_stats({"rows": 0, "body_nulls": 0})
+
+        assert "null_pct" not in parsed["body"]
+
+
+class TestProfileSummary:
+    def test_summary_renders_the_headline_numbers(self, catalog_env):
+        bundle = {
+            "path": "s3a://snapshot-profile/silver_normalized/observations",
+            "steps": [
+                {"name": "row_count", "ok": True, "detail": {"stats": {"rows": 16847}}},
+                {"name": "artifact_fanout", "ok": True,
+                 "detail": {"stats": {"fanout_p50": 1, "fanout_p95": 5,
+                                      "fanout_p99": 7, "fanout_max": 10,
+                                      "artifacts": 11761}}},
+            ],
+        }
+
+        text = format_profile_summary(bundle)
+
+        assert "16847" in text
+        assert "p95=5" in text
+
+    def test_summary_tolerates_failed_steps(self):
+        """A partial profile is still worth reading; the formatter must not
+        raise on the step that failed."""
+        bundle = {"path": "p", "steps": [
+            {"name": "row_count", "ok": False, "detail": {}, "error_message": "boom"}
+        ]}
+
+        assert "Dataset profile" in format_profile_summary(bundle)
 
 
 class TestEvidence:
