@@ -2337,6 +2337,131 @@ a fabricated bytes/row with nothing in the output to signal it. Fixed in
 `e3cb8e2`. Same failure class as the heap column in Finding 4: **a number whose
 label and provenance disagree, which no green run will ever catch.**
 
+
+#### Finding 6: the OOM IS reproducible on the VM — and it is a SIZING problem, not a data-shape one (2026-07-22)
+
+Instrumented replay of the 2026-07-17 shadow build: same selector, same
+production Parquet sources, same unset `spark.driver.memory` (so Spark's 1g
+default applies). `scripts/gate_c_shadow_replay.py`, evidence archived at
+`.cache/lakehouse_scale_harness/vm_replay/`.
+
+**The OOM reproduced, and the stack trace that was lost in July is captured.**
+
+**Result 1 — dbt-spark CAN build this chain against real production data.**
+Four models completed into Iceberg at a 1 GiB heap, including the heaviest:
+
+| Model | Status | Seconds |
+|---|---|---|
+| `int_latest_observation` | success | 48.3 |
+| `int_listing_observation_fingerprints` | **success** | 561.2 |
+| `int_listing_state_fingerprints` | **success** | 63.3 |
+| `int_price_history` | **success** | 40.4 |
+| `int_listing_observation_runs` | **ERROR — OOM** | 131.6 |
+| `int_listing_state_runs` | error (cascade) | 0.2 |
+| `int_benchmarks` | error (cascade) | 0.8 |
+| `int_listing_volatility_features` | skipped | 0 |
+
+**Result 2 — the 2026-07-17 report named the wrong model.**
+`int_listing_observation_fingerprints`, which that report blamed, **succeeded**
+here in 561s over 40.45M rows. `int_listing_state_fingerprints` and
+`int_price_history`, reported as `UNSUPPORTED_DATASOURCE_FOR_DIRECT_QUERY`
+failures, also **succeeded** — consistent with Finding 1's conclusion that
+those were a post-OOM cascade rather than defects. The real failure site is
+`int_listing_observation_runs`.
+
+**Result 3 — the allocation site, which nothing before this could show.**
+
+```
+java.lang.OutOfMemoryError: Java heap space
+  at java.nio.HeapByteBuffer.<init>(HeapByteBuffer.java:64)
+  at java.nio.ByteBuffer.allocate(ByteBuffer.java:363)
+  at org.apache.spark.io.ReadAheadInputStream.<init>(ReadAheadInputStream.java:106)
+  at ...UnsafeSorterSpillReader.<init>(UnsafeSorterSpillReader.java:77)
+  at ...UnsafeExternalSorter.getIterator(UnsafeExternalSorter.java:766)
+  at ...ExternalAppendOnlyUnsafeRowArray.generateIterator(...:183)
+  at ...window.WindowExec$$anon$1.fetchNextPartition(WindowExec.scala:160)
+```
+
+This is **window execution reading spilled sort data back** — not planning,
+not file listing, not the Iceberg commit. The significance is that **Spark had
+already spilled successfully**: the graceful-degradation path engaged exactly
+as designed, and the heap ran out while allocating the read-ahead buffer to
+merge the spill back in. That is the signature of insufficient headroom to
+execute the fallback, not of data that cannot be processed.
+
+Measured session facts: `-Xmx1g` confirmed via `RuntimeMXBean` input
+arguments, `spark.driver.memory` `<unset>`, `spark.master` `local[*]`,
+`spark.sql.shuffle.partitions` **200** (the default — note the harness pinned
+32, so every synthetic run had 6× fewer concurrent spill readers). Sampled
+heap peaked at **1,058.8 MB of 1,073.7 MB — 98.6% of `-Xmx`**.
+
+**Result 4 — the container was at its ceiling while the heap was only 1 GiB.**
+cgroup `memory.peak` hit **exactly** `memory.max` (6,442,450,944 B) with
+**2,922** `max` events and **`oom_kill: 0`**. So ~5 GiB of non-heap — largely
+page cache from spill files — and the kernel reclaimed rather than killed. Two
+consequences: the JVM died on its own `-Xmx`, not the cgroup; and **a container
+limit behaves here like a container footprint**, which constrains how large a
+limit is safe to grant.
+
+Source inventory at the time of the run: **1,041 files / 575 MB stored**,
+largest file 55.6 MB, and **row groups up to 87.8 MB** uncompressed — a
+material per-task buffer against a 1 GiB heap with four concurrent tasks.
+Environment: pyspark 3.5.3, dbt-core 1.10.20, dbt-spark 1.10.3, pyarrow 25.0.0,
+Python 3.13.14, image `sha256:01d9a5c0e0ff…`. Pre-run catalog state recorded
+`int_latest_observation` at 258,374 rows (the table surviving from
+2026-07-17), so its `--full-refresh` rebuild here is superseded on the record
+rather than silently overwritten.
+
+**Interpretation: practically, this is a sizing question.**
+
+DuckDB runs the equivalent gaps-and-islands workload on this same VM against
+this same data today, under Plan 123 Phase 0's `memory_limit: 8GB` in a 12g
+container. The workload is demonstrably feasible on this hardware. Spark was
+handed **1 GiB — one eighth of that — on a 23 GB machine**. Combined with the
+spill-reader stack, the straightforward reading is that the heap is simply too
+small, and that stands on its own without any appeal to data shape.
+
+An earlier draft of this section argued the opposite — that a window over an
+entity's whole history makes this a design problem and that raising the heap
+only buys time. That over-read the evidence. The growth concern is real but
+long-term, DuckDB absorbs it today, and it is **not** what is breaking the
+build. It belongs on the backlog, not in front of the migration.
+
+**Two corrections this run forced, both in our own instruments**
+
+1. **The phase classifier reported this failure as
+   `oom_during_iceberg_write_or_commit`.** It keyword-scanned the entire
+   8,000-character stack, in which `WriteToDataSourceV2` plan frames put
+   "writeto" 6 times while "shuffle" appeared 0 times. The allocation site is
+   unambiguously `UnsafeSorterSpillReader` inside `WindowExec`. That label
+   would have aimed the next fix at the Iceberg writer. Now classified from
+   the frames immediately below the `OutOfMemoryError` line. The prior tests
+   passed because their fixtures were single-line strings with the keyword
+   adjacent to the OOM text — a shape no real stack has.
+
+2. **Finding 5's "skew is bounded" was measured on the wrong key.** It
+   profiled `artifact_id` and `(artifact_id, listing_id)` — the *fingerprints*
+   model's window keys — and found them bounded at 112 and 6. The model that
+   actually OOMs windows by **`listing_id` over all history**, whose
+   distribution was never measured. `describe-dataset` now reports it.
+   Finding 5's numbers are correct for the keys they name; the conclusion
+   drawn from them was broader than those keys support.
+
+**Next step, and the constraint on it.** The open question is the heap
+production should get. The next test point is **4g driver in an 8g container**
+— not the 8g/12g that mirrors DuckDB, because the VM has **13.7 GiB
+`MemAvailable` and no swap**, and Result 4 shows a container will occupy
+whatever limit it is given. 12g would leave under 2 GiB for the scraper,
+Airflow, Postgres, MinIO, Lakekeeper and Grafana combined, and the historical
+OOM-kill victim on this box is `camoufox-bin`. Starting at the smallest
+plausible bump is also sounder than copying DuckDB's figure across engines:
+DuckDB's `memory_limit` is a spill THRESHOLD with graceful degradation, while
+`spark.driver.memory` is a hard `-Xmx`. They are not the same quantity.
+
+`spark.driver.memory` remains unset in `shared/iceberg_catalog.py`. It should
+be set once a heap is shown to complete the chain, at the catalog chokepoint
+(guardrail R1), and documented as measured-at-this-data-size.
+
 ## Gate D: Reader Migration
 
 Move consumers off `analytics.duckdb` one by one.
