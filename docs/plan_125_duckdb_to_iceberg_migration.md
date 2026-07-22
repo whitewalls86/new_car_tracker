@@ -2284,6 +2284,15 @@ and the mean sits between the two modes.
 
 **Skew is BOUNDED — the tail this whole investigation was aimed at is benign**
 
+> **SCOPE CORRECTION (2026-07-22, Finding 6).** The measurements below are
+> correct for the keys they name, but the conclusion drawn from them was
+> broader than those keys support. `artifact_id` and
+> `(artifact_id, listing_id)` are `int_listing_observation_fingerprints`'
+> window keys. The model that actually OOMs on the VM,
+> `int_listing_observation_runs`, windows by **`listing_id` over all
+> history** — a key not measured here at all. Read "skew is bounded" as
+> "bounded *for the fingerprints model's keys*".
+
 The top 20 artifact groups are `[112 ×15, 111 ×5]`; the top 20
 `(artifact_id, listing_id)` groups are all exactly `6`. A hard ceiling at 112
 with no long tail above it is a **page-size cap**, not a hot partition. The
@@ -2291,7 +2300,8 @@ largest window partition therefore carries roughly 112 × 330 B ≈ **37 KB** �
 irrelevant against any heap under discussion.
 
 This is a negative result and it is worth stating plainly: **the single hot
-`artifact_id` that a percentile summary would have hidden does not exist.**
+`artifact_id` that a percentile summary would have hidden does not exist** —
+for this key, per the scope correction above.
 Adding the skew queries was still right — that claim could not be made before
 they existed, and "p99 = 1" was being read as evidence for it.
 
