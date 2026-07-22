@@ -1298,6 +1298,27 @@ def dataset_profile_sql(path: str) -> Dict[str, str]:
             "SELECT artifact_id, listing_id, count(*) AS n "
             f"FROM {src} GROUP BY artifact_id, listing_id ORDER BY n DESC LIMIT 20"
         ),
+        # listing_id ALONE -- the window key of int_listing_observation_runs,
+        # which is the model that actually OOMed on the VM (2026-07-22 replay,
+        # UnsafeSorterSpillReader inside WindowExec).
+        #
+        # Finding 5 measured artifact_id and (artifact_id, listing_id) because
+        # those are int_listing_observation_fingerprints' keys, found both
+        # bounded (112 and 6), and concluded "skew is bounded". That
+        # conclusion did not cover this key at all. int_listing_observation_runs
+        # runs gaps-and-islands over ALL history for a listing_id, so its
+        # window partition is every observation of one listing across its
+        # lifetime -- an unbounded-in-time group that the other two keys say
+        # nothing about.
+        "listing_fanout": (
+            f"SELECT {_pct('n', 'listing')}, count(*) AS listings "
+            f"FROM (SELECT listing_id, count(*) AS n FROM {src} "
+            "GROUP BY listing_id)"
+        ),
+        "listing_skew_top": (
+            "SELECT listing_id, count(*) AS n "
+            f"FROM {src} GROUP BY listing_id ORDER BY n DESC LIMIT 20"
+        ),
         "row_bytes": f"SELECT {_pct(row_bytes_expr(), 'row_bytes')} FROM {src}",
         # Per-field width AND null rate. Nulls matter as much as widths here:
         # the hash coalesces every field to '', so a field that is mostly null
@@ -1492,8 +1513,17 @@ def format_profile_summary(bundle: Dict[str, object]) -> str:
     # groups inline is the point: "p99=1, max=412,880" is a sentence that
     # changes a sizing decision, and it is unreadable if the two halves live
     # in different sections of the bundle.
+    lf = stats("listing_fanout")
+    if lf:
+        lines.append(
+            f"  rows per listing_id: p50={lf.get('listing_p50')} "
+            f"p95={lf.get('listing_p95')} p99={lf.get('listing_p99')} "
+            f"max={lf.get('listing_max')} over {lf.get('listings')} listings"
+        )
+
     for label, key, cols in (
         ("artifact_id", "artifact_skew_top", ("artifact_id",)),
+        ("listing_id", "listing_skew_top", ("listing_id",)),
         (
             "(artifact_id, listing_id)",
             "observation_key_skew_top",

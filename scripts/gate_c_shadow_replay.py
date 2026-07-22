@@ -346,34 +346,64 @@ class HeapSampler:
 # ---------------------------------------------------------------------------
 
 
+def _oom_frames(message: str, limit: int = 12) -> List[str]:
+    """The frames immediately following the OutOfMemoryError line.
+
+    The allocation site is at the TOP of the stack. Everything below it is the
+    call path that happened to be running, and on a Spark plan that includes
+    WriteToDataSourceV2, Iceberg, shuffle and window frames all at once --
+    which is why scanning the whole message for keywords cannot work.
+    """
+    lines = message.splitlines()
+    for i, line in enumerate(lines):
+        if "OutOfMemoryError" in line:
+            return [ln.strip() for ln in lines[i + 1: i + 1 + limit]]
+    return []
+
+
 def classify_failure(message: str) -> str:
     """Bucket a failure into the phase it happened in.
 
-    Deliberately coarse and keyword-driven; the raw text is always kept
-    alongside so this can be re-judged. The distinction that matters is
-    whether the driver died BEFORE touching data (planning/listing), while
-    executing (scan/shuffle/window), or while committing to Iceberg -- those
-    imply different fixes and the original report could not tell them apart.
+    Classified from the TOP frames of the stack, not from keyword presence
+    anywhere in the text. The first version of this scanned the whole message
+    and got the real replay WRONG: `writeto` appears 6 times (from
+    WriteToDataSourceV2 plan frames, not a commit) while `shuffle` appears 0
+    times, so an OOM whose allocation site was unambiguously
+    UnsafeSorterSpillReader inside WindowExec was reported as
+    "oom_during_iceberg_write_or_commit".
+
+    That mislabel would have sent the next fix at the Iceberg writer, which is
+    not where the memory goes. Keyword-anywhere matching on a 8,000-character
+    stack is not classification, it is coincidence.
+
+    The distinction matters because planning/listing, execution, and
+    write/commit imply three different fixes, and the 2026-07-17 report could
+    not tell them apart at all.
     """
     if not message:
         return "unknown"
     low = message.lower()
-    if "outofmemoryerror" in low or "java heap space" in low:
-        if any(k in low for k in ("listleaffiles", "inmemoryfileindex",
-                                  "listing leaf files", "filestatuscache")):
-            return "oom_during_planning_or_listing"
-        if any(k in low for k in ("commit", "snapshotproducer", "manifest",
-                                  "writeto", "icebergwrite")):
-            return "oom_during_iceberg_write_or_commit"
-        if any(k in low for k in ("shuffle", "sort", "window", "unsafe",
-                                  "externalsorter", "exchange")):
-            return "oom_during_scan_shuffle_or_window"
-        return "oom_phase_unclassified"
-    if "connection refused" in low or "py4j" in low and "gateway" in low:
-        return "driver_gateway_died_post_oom"
     if "unsupported_datasource_for_direct_query" in low:
         return "post_oom_session_cascade"
-    return "non_oom_failure"
+    if "outofmemoryerror" not in low and "java heap space" not in low:
+        if "connection refused" in low or ("py4j" in low and "gateway" in low):
+            return "driver_gateway_died_post_oom"
+        return "non_oom_failure"
+
+    frames = " ".join(_oom_frames(message)).lower()
+    # Order is by specificity of the ALLOCATION SITE, and each group is
+    # checked against the top frames only.
+    if any(k in frames for k in ("spill", "unsafesorter", "externalsorter",
+                                 "externalappendonly", "windowexec", "sortexec",
+                                 "shufflereader", "shufflewriter")):
+        return "oom_during_scan_shuffle_or_window"
+    if any(k in frames for k in ("inmemoryfileindex", "listleaffiles",
+                                 "filestatuscache", "listingfilecatalog")):
+        return "oom_during_planning_or_listing"
+    if any(k in frames for k in ("snapshotproducer", "manifest", "icebergwrite",
+                                 "datasourcev2 commit", "commitoperation")):
+        return "oom_during_iceberg_write_or_commit"
+    return "oom_phase_unclassified"
 
 
 # ---------------------------------------------------------------------------
@@ -381,13 +411,20 @@ def classify_failure(message: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def build_session(evidence_dir: Path) -> object:
+def build_session(evidence_dir: Path, driver_memory: Optional[str] = None) -> object:
     from pyspark.sql import SparkSession
 
     conf = dict(spark_conf_for_dbt_session())
-    # Deliberately NOT setting spark.driver.memory: the shadow build did not,
-    # and Spark's 1g default is the condition under test. Recording it is the
-    # point; changing it would answer a different question.
+    # Default is UNSET, because the shadow build did not set it and Spark's 1g
+    # default is the condition the reproduction exists to recreate. Recording
+    # that is the point; hardcoding a value would answer a different question.
+    #
+    # --driver-memory opts in explicitly, for the separate question of whether
+    # the chain completes at a SANE heap. That is a viability check for the
+    # migration, not a reproduction, and the two must not be confused -- so
+    # the value used is always recorded in the bundle.
+    if driver_memory:
+        conf["spark.driver.memory"] = driver_memory
     builder = SparkSession.builder.appName("cartracker-gate-c-shadow-replay")
     for key, value in conf.items():
         builder = builder.config(key, value)
@@ -409,6 +446,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="Bucket dbt reads sources from. Read-only.",
     )
     parser.add_argument("--sample-interval", type=float, default=3.0)
+    parser.add_argument(
+        "--driver-memory", default=None,
+        help="spark.driver.memory. UNSET by default, which reproduces the "
+             "shadow build (Spark then applies its 1g default). Pass a value "
+             "only for the separate 'does it complete at a sane heap' check.",
+    )
     args = parser.parse_args(argv)
 
     evidence = Path(args.evidence_dir)
@@ -437,7 +480,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         },
     }
 
-    spark = build_session(evidence)
+    bundle["driver_memory_requested"] = args.driver_memory or "<unset>"
+    spark = build_session(evidence, args.driver_memory)
     bundle["pre"]["jvm"] = jvm_runtime_facts(spark)
     bundle["pre"]["jvm_input_arguments"] = jvm_input_arguments(spark)
     bundle["pre"]["catalog_state"] = catalog_state(spark)
