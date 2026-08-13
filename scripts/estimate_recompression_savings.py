@@ -152,7 +152,8 @@ def make_sampler(sample_rate: float, random_sample: bool) -> Callable[[int], boo
 def measure_object(client, bucket: str, obj: ObjectInfo) -> MeasurementResult:
     """Download, decompress, recompress at level 9, return sizes. Never writes to MinIO."""
     import zstandard as zstd
-    from zstandard import ZstdError
+
+    from shared.compression import decompress_frame
 
     try:
         response = client.get_object(Bucket=bucket, Key=obj.key)
@@ -164,8 +165,8 @@ def measure_object(client, bucket: str, obj: ObjectInfo) -> MeasurementResult:
         )
 
     try:
-        raw = zstd.ZstdDecompressor().decompress(compressed)
-    except (ZstdError, Exception) as exc:
+        raw = decompress_frame(compressed)
+    except Exception as exc:
         return MeasurementResult(
             key=obj.key, old_compressed=len(compressed), raw_bytes=0,
             new_compressed=0, saved_bytes=0, error=str(exc),

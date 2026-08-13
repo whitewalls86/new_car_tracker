@@ -1,4 +1,4 @@
-"""Recompress existing bronze HTML .html.zst objects to zstd level 9.
+"""Recompress existing bronze HTML objects with a registered zstd dictionary.
 
 Default mode is dry-run: no writes to MinIO. Pass --apply to write.
 Never deletes objects.
@@ -6,10 +6,12 @@ Never deletes objects.
 Usage examples:
   python scripts/recompress_bronze_html.py \\
       --year 2026 --month 6 --artifact-type detail_page \\
+      --dictionary-id 123456789 \\
       --limit 1000 --progress-every 100
 
   python scripts/recompress_bronze_html.py \\
       --prefix html/year=2026/month=6/artifact_type=detail_page/ \\
+      --dictionary-id 123456789 \\
       --apply --checkpoint /tmp/recompress_2026_06.json \\
       --progress-every 500 --json-out /tmp/result_2026_06.json
 """
@@ -164,10 +166,16 @@ def process_object(
     checkpoint_keys: set[str],
     checkpoint_path: Path | None,
     summary: Summary,
+    dictionary_id: int | None = None,
 ) -> None:
-    """Download, recompress, and conditionally write one object. Mutates summary in-place."""
-    import zstandard as zstd
-    from zstandard import ZstdError
+    """Download, recompress, and conditionally write one object. Mutates summary in-place.
+
+    ``decompress_frame`` reads the dictionary ID from each frame's own header,
+    so it handles today's plain objects and dictionary objects alike -- which
+    is what makes a resumed or re-run backfill safe over a half-converted
+    prefix. ``dictionary_id`` therefore controls only what is *written*.
+    """
+    from shared.compression import compress_frame, decompress_frame
 
     try:
         old_compressed = client.get_object(Bucket=bucket, Key=obj.key)["Body"].read()
@@ -177,14 +185,14 @@ def process_object(
         return
 
     try:
-        raw = zstd.ZstdDecompressor().decompress(old_compressed)
-    except (ZstdError, Exception) as exc:
+        raw = decompress_frame(old_compressed)
+    except Exception as exc:
         LOG.warning("decompress failed: %s — %s", obj.key, exc)
         summary.failed += 1
         return
 
     try:
-        new_compressed = zstd.ZstdCompressor(level=_TARGET_LEVEL).compress(raw)
+        new_compressed = compress_frame(raw, level=_TARGET_LEVEL, dict_id=dictionary_id)
     except Exception as exc:
         LOG.warning("recompress failed: %s — %s", obj.key, exc)
         summary.failed += 1
@@ -303,7 +311,7 @@ def print_summary(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Recompress existing bronze HTML .html.zst objects to zstd level 9. "
+            "Recompress existing bronze HTML objects with a registered zstd dictionary. "
             "Default mode is dry-run. Pass --apply to write. "
             "Never deletes objects."
         )
@@ -350,6 +358,10 @@ def parse_args() -> argparse.Namespace:
         help="Write recompressed objects to MinIO",
     )
     apply_grp.add_argument(
+        "--dictionary-id", type=int, required=True,
+        help="Registered zstd dictionary ID to use for every output frame",
+    )
+    apply_grp.add_argument(
         "--force", action="store_true",
         help="In apply mode, overwrite even if recompressed output is larger",
     )
@@ -372,6 +384,8 @@ def parse_args() -> argparse.Namespace:
         parser.error("one of --prefix or --year is required")
     if args.force and not args.apply:
         parser.error("--force requires --apply")
+    if args.dictionary_id <= 0:
+        parser.error("--dictionary-id must be positive")
 
     return args
 
@@ -386,6 +400,22 @@ def main() -> int:
 
     if not args.apply:
         LOG.info("DRY-RUN mode — no writes to MinIO. Pass --apply to write.")
+
+    # Resolve the dictionary once, before touching a single object. Without
+    # this a typo'd ID fails per-object into summary.failed and the run walks
+    # the entire prefix doing nothing -- slowly, since an unresolvable ID also
+    # re-queries the registry for every object.
+    try:
+        from shared.compression import get_dictionary
+
+        registered = get_dictionary(args.dictionary_id)
+    except Exception as exc:
+        LOG.error("Dictionary ID %s is not usable: %s", args.dictionary_id, exc)
+        return 1
+    LOG.info(
+        "Dictionary %d resolved from %s (%d bytes)",
+        registered.dict_id, registered.source, len(registered.raw),
+    )
 
     fs = get_s3fs()
     client = get_boto3_client()
@@ -429,6 +459,7 @@ def main() -> int:
                 checkpoint_keys=checkpoint_keys,
                 checkpoint_path=args.checkpoint,
                 summary=summary,
+                dictionary_id=args.dictionary_id,
             )
 
             scanned_bytes += obj.size
@@ -444,6 +475,12 @@ def main() -> int:
                 break
 
     print_summary(summary, dry_run=not args.apply, json_out=args.json_out)
+    # A backfill that failed every object must not exit 0. This runs unattended
+    # in month-sized batches, so a clean exit code is the only signal anyone
+    # checks before starting the next one.
+    if summary.failed:
+        LOG.error("%d of %d objects failed", summary.failed, summary.scanned)
+        return 1
     return 0
 
 

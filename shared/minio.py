@@ -133,10 +133,10 @@ def write_html(key: str, content: bytes) -> str:
     """
     import hashlib
 
-    import zstandard as zstd
+    from shared.compression import compress_frame, configured_dictionary_id
 
-    cctx = zstd.ZstdCompressor(level=ZSTD_LEVEL)
-    compressed = cctx.compress(content)
+    dict_id = configured_dictionary_id()
+    compressed = compress_frame(content, level=ZSTD_LEVEL, dict_id=dict_id)
 
     client = get_boto3_client()
     ensure_bucket()
@@ -155,9 +155,9 @@ def write_html(key: str, content: bytes) -> str:
         artifact_type = "unknown"
     logger.info(
         "write_html: artifact_type=%s raw_bytes=%d compressed_bytes=%d "
-        "raw_sha256=%.12s minio_path=%s key=%s",
+        "raw_sha256=%.12s dictionary_id=%s minio_path=%s key=%s",
         artifact_type, len(content), len(compressed),
-        hashlib.sha256(content).hexdigest(), uri, key,
+        hashlib.sha256(content).hexdigest(), dict_id or 0, uri, key,
     )
     return uri
 
@@ -320,7 +320,7 @@ def read_html(minio_path: str) -> bytes:
     *minio_path* may be a full S3 URI (``s3://bucket/key``) or a bare key.
     Returns the raw (uncompressed) HTML bytes.
     """
-    import zstandard as zstd
+    from shared.compression import decompress_frame
 
     bucket, key = _split_s3_path(minio_path)
 
@@ -328,5 +328,4 @@ def read_html(minio_path: str) -> bytes:
     response = client.get_object(Bucket=bucket, Key=key)
     compressed = response["Body"].read()
 
-    dctx = zstd.ZstdDecompressor()
-    return dctx.decompress(compressed)
+    return decompress_frame(compressed)
