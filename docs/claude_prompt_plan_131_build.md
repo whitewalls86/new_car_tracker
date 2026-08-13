@@ -1,7 +1,7 @@
 # Claude Prompt: Plan 131 Stages 1-2 — Pack Format And First Cold Pack
 
-You are working in the `cartracker-scraper` repo on branch
-`plan-131-packed-cold-storage` (open as **PR #187**, branched from `master`).
+You are working in the `cartracker-scraper` repo. Plan 131 Stage 0 is merged to
+`master`. **Branch off `master`** for this work.
 
 Read `docs/plan_131_packed_cold_storage.md` first. It is the source of truth and
 it records every decision below along with the measurements behind them.
@@ -73,22 +73,26 @@ Do not propose these again.
 | Quarterly buckets | 3.19x amplification, worse than per-listing, for partial compression gain. |
 | Deferring write-time compression | Nothing recompresses today (`write_html` has two callers, both scraper; `read_html` one, processing). Saves one ~0.3 ms decompress, costs an extra PUT+DELETE per artifact and makes bronze durability depend on `processing`. |
 
-## BLOCKER: the archiver image must be rebuilt before Stage 2
+## Prerequisite: archiver rebuild — CLEARED 2026-08-13
+
+Recorded because the reasoning still matters, not because it blocks you.
 
 Plan 129 rebuilt only `processing` and `scraper`, reasoning a stale `archiver`
-was harmless because it never calls `read_html`. **Plan 131 invalidates that** —
-reading HTML is the packer's entire job.
+was harmless because it never calls `read_html`. **Plan 131 invalidated that** —
+reading HTML is the packer's entire job. The old archiver image had no
+`shared/compression.py` and a `shared/minio.py` with zero dictionary support, so
+it could not decode the frames the Plan 129 backfill creates.
 
-The running archiver image has **no `shared/compression.py`** and a
-`shared/minio.py` with zero dictionary support, so it cannot decode the frames
-the Plan 129 backfill is creating. `processing` has the read path but **no
-duckdb**; `archiver` has duckdb but not the read path. Neither container can
-currently do the whole job.
+**The archiver has since been rebuilt and verified**: `shared/compression.py`
+present, dictionary support in `shared/minio.py`, `duckdb` and `zstandard`
+importable, and `get_dictionary(1367127621)` resolves. It can now both sample
+and measure, so no cross-container split is needed.
 
-A `docker cp` does not fix this — the stale library is the problem, not a
-missing file. Stage 1 is offline and can be built now. **Stage 2 requires the
-rebuild**, which is a production deploy: merge, `git pull` on the VM, then
-`bash scripts/redeploy.sh archiver` (note the `bash` prefix — the script is
+The durable lesson: **re-ask "which images read HTML" whenever the read path
+changes.** A stale image fails at read time, long after the write looked fine.
+
+Any further image change is a production deploy — `git pull` on the VM then
+`bash scripts/redeploy.sh archiver` (note the `bash` prefix; the script is
 tracked `100644` and is not executable on a fresh checkout). **Ask before
 deploying. Never scp or docker cp code into production.**
 
