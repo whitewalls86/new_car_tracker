@@ -5,10 +5,11 @@
 **Draft. Stage 0a-0c measured 2026-08-13; 0d outstanding.** Stage 0 is a
 measurement gate and it can still fail on 0d.
 
-Headline from the measurements: the inode ceiling is ~61 days out, results-page
-deletion is not a viable substitute (0.7% of objects), and **monthly buckets beat
-the closure-cohort design this plan originally favoured** — see "Stage 0a-0c
-results".
+Headline from the measurements: the inode ceiling is ~61 days out and
+results-page deletion is not a viable substitute (0.7% of objects). **Grouping
+remains open** — weekly is rejected, monthly leads on simplicity, and the
+monthly-vs-closure-cohort margin turns on a base/delta ratio only 0d can
+measure.
 
 Comes out of [Plan 129](plan_129_zstd_dictionary_compression.md), whose Out of
 Scope section names "packing multiple artifacts per object" as the deferred
@@ -126,13 +127,16 @@ It matches the read pattern too: reprocessing after a parser fix wants every
 capture of the affected listings, which becomes one pack read instead of N
 object GETs.
 
-### Grouping: monthly buckets — DECIDED by Stage 0c (2026-08-13)
+### Grouping: STILL OPEN — monthly leads, 0d decides
 
-Ordering within a pack was always settled. Which artifacts share a pack was the
-plan's biggest open question; **0c answered it, and not the way this section
-originally predicted.** The analysis below is kept because it is why per-vehicle
-is disqualified; the closure-cohort recommendation it reaches is **superseded by
-the measurement** — see "Stage 0a-0c results".
+Ordering within a pack was always settled. Which artifacts share a pack is not,
+and **an earlier revision of this section wrongly marked it DECIDED in favour of
+monthly.** That call rested on a cost model that assumed an extra base copy
+costs the same as an extra ordinary capture — which assumes away the exact
+asymmetry that makes packing by listing worth doing. Corrected below.
+
+Per-vehicle remains disqualified on write-once grounds. Monthly and closure
+cohort are both live, and **0d measures real pack bytes under each.**
 
 | Grouping | Compression | Write-once? | Objects | Reprocessing |
 |---|---|---|---|---|
@@ -324,20 +328,58 @@ Detail listings, April+ only:
 | weekly | 1.7% | 5.02 |
 | monthly | 15.7% | **1.97** |
 
-**This reverses the plan's earlier expectation that closure cohorts would win
-outright.** Splitting a listing across *k* packs costs roughly *k* base copies
-instead of one, so at 1.97 monthly buckets against 20.3 mean captures the
-penalty is ~1 extra base copy per 20 — about **5%** against perfect per-listing
-grouping, and less than that in practice because the dictionary already supplies
-most of what a base copy costs.
-
-Five percent does not buy dormancy detection, a `LISTING_CLOSED_AFTER_DAYS`
-threshold, a force-archive backstop for listings that never close, and an index
-keyed by closure date rather than capture date. **Recommendation: monthly
-buckets, sealed on the calendar, ordered `listing_id, fetched_at` inside.**
-Closure cohorts drop from leading candidate to a measured control in 0d.
-
 Weekly bucketing is rejected outright at 5.02 buckets per listing.
+
+**Monthly vs closure cohort is NOT settled by these numbers.** A first pass
+concluded monthly cost only ~5% and flipped the recommendation. That was wrong:
+it modelled an extra base copy as costing the same as an extra ordinary capture,
+which assumes away the base/delta asymmetry that is the whole premise of packing
+by listing. Corrected model and follow-up measurement below.
+
+#### 0c follow-up (2026-08-13): calendar months, artifact-weighted
+
+The listing-weighted mean of 1.97 flattered monthly. Long-lived listings carry
+disproportionately many captures, so weighted by **artifacts** the mean is
+**2.84 calendar months**:
+
+| calendar months | % of listings | % of artifacts |
+|---|---|---|
+| 1 | 41.2% | 17.9% |
+| 2 | 35.3% | 27.4% |
+| 3 | 13.0% | 22.3% |
+| 4 | 6.5% | 17.7% |
+| 5+ | 3.9% | 14.7% |
+
+**54.7% of artifacts are in listings spanning 3+ calendar months.**
+
+Effect on group size, which is what actually drives compression:
+
+| grouping | groups | mean captures | p50 / p90 | artifacts alone | artifacts in groups ≤3 |
+|---|---|---|---|---|---|
+| per-listing (ceiling) | 224,459 | 20.9 | 12 / 51 | 0.3% | 2.2% |
+| monthly | 441,448 | 10.6 | 7 / 23 | 1.2% | 5.4% |
+
+The two views disagree, and they resolve to one unmeasured quantity. Total cost
+is `(#groups)·B + (artifacts − #groups)·D`, so the extra cost of monthly is
+exactly **216,989 × (B − D)**:
+
+| delta size D (B ≈ 7.3 KB) | monthly penalty vs perfect grouping |
+|---|---|
+| D ≈ B (the wrong assumption) | ~5% |
+| 3.0 KB | ~6% |
+| 1.5 KB | **~15%** |
+| 1.0 KB | **~22%** |
+
+Monthly roughly **doubles the number of base copies** (224K → 441K) while
+keeping groups healthy — median 7 captures, only 1.2% of artifacts stranded
+alone. Whether that is cheap or expensive cannot be decided analytically.
+**0d measures it.**
+
+*Data caveat: this query counted 4,681,233 `(artifact_id, listing_id,
+fetched_at)` triples against 4,557,751 distinct `artifact_id`s — ~2.7% of
+artifacts appear under more than one listing or timestamp, plausibly VIN-moved
+listings. It does not move any conclusion here but it is noise in the
+denominators.*
 
 **Two findings to carry forward:**
 
@@ -365,17 +407,20 @@ Report, per configuration:
 
 | Variable | Values to sweep |
 |---|---|
-| Grouping | **monthly (candidate)** / closure cohort (control) / per-vehicle (control) |
+| Grouping | **monthly** vs **closure cohort** (both live) / per-vehicle (ceiling control) |
 | Member ordering | `listing_id, fetched_at` vs arrival order |
 | Pages per frame | 100 / 1,000 / 10,000 |
 | Dictionary | with `1367127621` / without |
 
-Per-vehicle and closure cohort are measured as **controls**, not candidates.
-Per-vehicle is the compression ceiling and says how much any write-once grouping
-gives up; closure cohort says specifically what the ~5% modelled in 0c really
-costs. Weekly is dropped — 0c settled it at 5.02 buckets/listing. If a control
-beats monthly by materially more than the 0c model predicts, the model is wrong
-and the decision reopens.
+Weekly is dropped — 0c settled it at 5.02 buckets/listing. Per-vehicle is
+measured as the compression **ceiling** only, since it is disqualified on
+write-once grounds; it says how much any write-once grouping gives up.
+
+**Monthly and closure cohort are both live candidates and 0d decides between
+them.** Report `B` (bytes for the first capture in a group) and `D` (marginal
+bytes per subsequent capture) explicitly — they are what the 0c follow-up could
+not resolve, and the whole margin between the two groupings is
+`216,989 × (B − D)`.
 
 and for each, the three numbers that matter:
 
@@ -529,7 +574,8 @@ afterwards. Look first this time.
 | Single-artifact extraction latency | Measured and accepted, not assumed |
 | Consumers reading bronze outside `read_html` | Zero remaining before Stage 4 |
 | Source objects deleted without a verified pack member | Impossible |
-| Grouping chosen from measured capture-span, not assumed | **Met** — Stage 0c, monthly |
+| Grouping chosen from measured pack bytes, not a cost model | Stage 0d |
+| `B` and `D` reported explicitly | Stage 0d |
 | Scraper write path changed | None — deferred compression is rejected, see Design |
 
 ---
