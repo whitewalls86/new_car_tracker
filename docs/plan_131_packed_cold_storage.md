@@ -101,25 +101,61 @@ to the exact bytes that were written, forever.
 
 ## Design
 
-### Pack by listing, not by section type or by time
+### The redundancy is within a listing, so members are ordered by listing
 
-This is the one design decision the existing measurements already settle. Plan
-114 Stage 3, whole-section hash reuse:
+Plan 114 Stage 3, whole-section hash reuse:
 
 | Axis | Reuse |
 |---|---|
 | Within a listing, across captures | **30.42%** |
 | Across listings (additional) | **0.65%** |
 
-Grouping like content across *different* listings targets the 0.65%, and the
-trained dictionary already captures most of that class of redundancy. The 30%
-lives in repeat captures of the **same vehicle**, so pack members are ordered
-`listing_id, fetched_at` and a listing's captures are always adjacent inside one
-frame.
+The two techniques are complementary and neither substitutes for the other:
+**the dictionary handles cross-listing boilerplate; the frame window handles
+within-listing repeat captures.** That is why members are always ordered
+`listing_id, fetched_at` — a vehicle's captures must be adjacent inside one
+frame — and why the dictionary stays enabled inside packs.
 
 It matches the read pattern too: reprocessing after a parser fix wants every
 capture of the affected listings, which becomes one pack read instead of N
 object GETs.
+
+### Grouping: closure-cohort, time-bucket, or per-vehicle — OPEN, decided in Stage 0
+
+Ordering within a pack is settled. **Which artifacts share a pack is not**, and
+it is the plan's biggest open design question.
+
+| Grouping | Compression | Write-once? | Objects | Reprocessing |
+|---|---|---|---|---|
+| Per-vehicle, all time | Best — no split, ever | **No** | ~256K (~15×) | ~256K GETs |
+| Time bucket (week/month) | Loses cross-boundary reuse | Yes | ~200-800 | Natural by date |
+| **Closure cohort** | Best — no split, ever | Yes | ~200-800 | By closure week |
+
+**Per-vehicle is disqualified as stated, for a reason that is not about
+compression: it is not write-once.** An active listing keeps being captured, so
+its archive would need a read-modify-write on every new capture — repeatedly,
+over the listing's whole life, consuming exactly the transient free space the
+section below establishes is scarce. It also lands at only ~15× object
+reduction, which is marginal against this plan's gate.
+
+**Closure cohorts get per-vehicle's compression with a time bucket's
+ergonomics.** When a listing goes dormant — no observation for
+`LISTING_CLOSED_AFTER_DAYS` — its capture set is final and can never grow.
+Batch every listing that closed in week W into one pack, ordered by
+`listing_id, fetched_at`. A vehicle's captures are therefore never split across
+packs, and a pack is sealed on write.
+
+`int_price_history.last_seen_at` is already the closure signal; Plan 111's state-
+run machinery models this. Backstop for listings that never close: force-archive
+any listing whose oldest capture exceeds `PACK_FORCE_AFTER_DAYS`, accepting the
+split for that long-lived tail.
+
+**The measurement that decides this needs no MinIO reads and can run today:**
+the distribution of `max(fetched_at) - min(fetched_at)` per `listing_id` in
+silver. If p95 capture span is under a week, plain weekly buckets lose almost
+nothing and closure cohorts are over-engineering. If listings stay active for
+months, buckets fragment badly and closure cohorts win outright. One query
+collapses the design space — see Stage 0c.
 
 ### Pack layout
 
@@ -151,11 +187,36 @@ sidecar index: bronze/html_packs/.../pack-{seq}.idx.parquet
 - Keep writing dictionary `1367127621` inside frames. It costs nothing and helps
   the head of each frame; Stage 0 measures with and without.
 
-### Hot/cold boundary
+### Hot/cold boundary, and why the write path does not change
 
-Only months older than `PACK_MIN_AGE_DAYS` (start at 60) are eligible. The
-scraper write path is **unchanged** — new artifacts land as individual objects
-exactly as today. Packing is a background lifecycle job over settled data.
+Only artifacts older than `PACK_MIN_AGE_DAYS` (start at 60) are eligible. The
+scraper write path is **unchanged** — new artifacts land as individual
+dictionary-compressed objects exactly as today. Packing is a background
+lifecycle job over settled data.
+
+**Do not "save" the write-time compression by writing raw and compressing
+later.** This was proposed and rejected on 2026-08-13; recording it so it is not
+re-proposed:
+
+- **There is no recompression tax to remove.** `write_html` has exactly two
+  callers, both in the scraper (`scrape_detail.py:178`, `scrape_results.py:312`).
+  `read_html` has exactly one production caller
+  (`processing/routers/batch.py:87`). Nothing writes HTML back after parsing.
+  The cycle is compress-once, decompress-once.
+- **The saving is one decompress**, which is level-independent at 500+ MB/s —
+  ~0.3 ms for a 158 KB page. It is invisible next to the scraper's deliberate
+  8-20 s inter-page delay.
+- **The cost is an extra PUT and DELETE per artifact.** The compress is *moved*,
+  not saved, so raw objects must later be rewritten and removed — 2 more S3
+  operations and more inode churn on the resource this plan exists to protect.
+- **It makes bronze durability depend on a second service.** Today a processing
+  outage delays parsing and loses no bronze data. Under deferred compression it
+  leaves objects at ~158 KB instead of ~7.3 KB — 22x larger — on a disk that hit
+  100% twice during Plan 129's rollout. The "sweep for uncompressed objects" job
+  that would be needed is cleanup for a failure mode the change itself creates.
+- **It cannot be deferred to pack time either.** Artifacts sit individually for
+  the whole `PACK_MIN_AGE_DAYS` window; 60 days at ~1M objects/month stored raw
+  is ~316 GB against a 196 GB disk.
 
 ### The transient-doubling constraint, learned the hard way
 
@@ -200,7 +261,17 @@ Report the object-count and inode split between `detail_page` and
 for a fraction of the effort, it wins and this plan waits.** An archive format
 is not the answer to a problem a `DELETE` solves.
 
-**0c. Measure the pack win** on a real sample, offline, writing nothing to
+**0c. Settle the grouping question with a query, before measuring anything
+expensive.** Distribution of `max(fetched_at) - min(fetched_at)` per
+`listing_id` in silver, plus captures per listing. Silver only, no MinIO reads,
+no production writes. Report p50/p90/p95/p99 of capture span.
+
+This decides the "Grouping" table above: a short p95 span means plain time
+buckets lose almost nothing and closure cohorts are unnecessary complexity; a
+long one means the opposite. **Run this first — it is cheap and it changes what
+0d has to measure.**
+
+**0d. Measure the pack win** on a real sample, offline, writing nothing to
 production. Extend the Plan 129 measurement harness rather than starting fresh;
 `scripts/estimate_dictionary_savings.py` already samples the corpus correctly via
 `fetch_corpus_sample` (evenly across months, deterministic, **not** the
@@ -210,9 +281,14 @@ Report, per configuration:
 
 | Variable | Values to sweep |
 |---|---|
+| Grouping | closure cohort / weekly / bi-weekly / monthly / per-vehicle (control) |
 | Member ordering | `listing_id, fetched_at` vs arrival order |
 | Pages per frame | 100 / 1,000 / 10,000 |
 | Dictionary | with `1367127621` / without |
+
+Per-vehicle is measured as a **control**, not a candidate — it is the
+compression ceiling, so it says how much any write-once grouping gives up. It is
+disqualified on the write-once grounds above regardless of how well it scores.
 
 and for each, the three numbers that matter:
 
@@ -239,16 +315,31 @@ Below any of those, stop and write down why.
   outlive this plan's assumptions.
 - Offline only. Nothing in production reads or writes packs at this stage.
 
-### Stage 2 — Pack one cold month, delete nothing
+### Stage 2 — Pack one cold cohort, delete nothing
 
-- `scripts/pack_bronze_html.py`, `--apply` required, checkpointed, resumable
-  (Plan 129's backfill checkpoint was O(n²) once — see commit `f98e69b` — do not
-  reintroduce that shape).
+**This is archiver work, and it mirrors Plan 109's `compact_silver` exactly.**
+The archiver is the service that owns lifecycle and compaction jobs, and it
+already carries every dependency needed (`zstandard`, `boto3`, `duckdb`,
+`pyarrow`, `s3fs`) plus `shared/` via `COPY . .`.
+
+| Plan 109 precedent | Plan 131 equivalent |
+|---|---|
+| `archiver/processors/compact_silver.py` | `archiver/processors/pack_bronze_html.py` |
+| `POST /compact/silver/run` | `POST /pack/bronze/run` |
+| `airflow/dags/compact_silver.py` | `airflow/dags/pack_bronze_html.py` |
+| `COMPACT_SILVER_MAX_PARTITIONS` (default 10) | `PACK_BRONZE_MAX_COHORTS` |
+| write `.tmp` → assert row count → delete originals → rename | write pack → verify every member → delete sources |
+
+*(Plan 129's "run it in the `processing` container" note was advice for a
+**one-off backfill**, chosen because processing bundles `scripts/`. A recurring
+lifecycle job belongs in the archiver by every precedent in this repo.)*
+
 - Write packs alongside the source objects. **Delete nothing.**
 - Verify **100%** of members extract byte-identically against `raw_sha256`.
-- Run in the `processing` container, not over an SSH tunnel — Plan 129 measured
-  that at ~8× throughput. Note `ps` is not installed in that image; liveness-check
-  the checkpoint file.
+- Checkpointed and resumable — Plan 129's backfill checkpoint was O(n²) once
+  (commit `f98e69b`); do not reintroduce that shape.
+- Never run over an SSH tunnel; Plan 129 measured in-container at ~8x the
+  throughput.
 
 ### Stage 3 — Read path prefers objects, falls back to packs
 
@@ -274,8 +365,8 @@ between this plan and Plan 130.
 
 ### Stage 5 — Lifecycle DAG and observability
 
-- Airflow DAG packing eligible months on a schedule, respecting the free-space
-  floor.
+- Airflow DAG packing eligible cohorts on a schedule, respecting the free-space
+  floor, thin like `compact_silver` (sensors + one HTTP call, no logic).
 - Metrics: objects packed, packs written, bytes/inodes reclaimed, extraction
   latency p50/p95, verification failures (should be zero; alert on any).
 
@@ -310,7 +401,7 @@ afterwards. Look first this time.
 - Index sidecar and pack footer agree; disagreement is an error, not a silent
   preference.
 
-### `tests/scripts/test_pack_bronze_html.py`
+### `tests/archiver/test_pack_bronze_html.py`
 - Checkpoint resume packs each artifact exactly once, and is not O(n²).
 - Refuses to run below the free-space floor.
 - `--apply` absent deletes and writes nothing.
@@ -328,12 +419,15 @@ afterwards. Look first this time.
 |------|--------|
 | `shared/packfile.py` | New: pack format, writer, indexed reader, frame cache |
 | `shared/minio.py` | `read_html` falls back to pack lookup |
-| `scripts/estimate_pack_savings.py` | New: Stage 0 measurement |
-| `scripts/pack_bronze_html.py` | New: Stage 2 packer, `--apply`, checkpointed |
-| `scripts/delete_packed_source_html.py` | New: Stage 4, dry-run by default |
+| `scripts/estimate_pack_savings.py` | New: Stage 0 measurement, offline |
+| `archiver/processors/pack_bronze_html.py` | New: Stage 2 packer, checkpointed |
+| `archiver/processors/delete_packed_source_html.py` | New: Stage 4, dry-run default |
+| `archiver/app.py` | `POST /pack/bronze/run`, `POST /pack/bronze/prune` |
 | `airflow/dags/pack_bronze_html.py` | New: Stage 5 lifecycle DAG |
 | `tests/shared/test_packfile.py` | New |
-| `tests/scripts/test_pack_bronze_html.py` | New |
+| `tests/archiver/test_pack_bronze_html.py` | New |
+| `tests/integration/archiver/test_pack_bronze_html_integration.py` | New |
+| `tests/integration/airflow/test_dag_integrity.py` | Register the new DAG |
 
 ---
 
@@ -348,6 +442,8 @@ afterwards. Look first this time.
 | Single-artifact extraction latency | Measured and accepted, not assumed |
 | Consumers reading bronze outside `read_html` | Zero remaining before Stage 4 |
 | Source objects deleted without a verified pack member | Impossible |
+| Grouping chosen from measured capture-span, not assumed | Stage 0c, reported |
+| Scraper write path changed | None — deferred compression is rejected, see Design |
 
 ---
 
