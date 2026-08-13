@@ -112,6 +112,7 @@ This is **archiver** work and it mirrors Plan 109's `compact_silver` exactly.
 | `POST /compact/silver/run` | `POST /pack/bronze/run` |
 | `airflow/dags/compact_silver.py` | `airflow/dags/pack_bronze_html.py` (Stage 5) |
 | `COMPACT_SILVER_MAX_PARTITIONS` (default 10) | `PACK_BRONZE_MAX_BUCKETS` |
+| 2-day watermark via `_today_utc()` (patchable in tests) | `PACK_SETTLE_DAYS` (default 1), same patchable-clock pattern |
 | write `.tmp` → assert row count → delete originals → rename | write pack → verify every member → (Stage 4) delete sources |
 
 Read `archiver/processors/compact_silver.py` and `archiver/app.py` before
@@ -163,8 +164,21 @@ Requirements:
 
 ## Stage 2: pack one cold month, delete nothing
 
-- Eligibility: artifacts older than `PACK_MIN_AGE_DAYS` (start at 60), grouped
-  by calendar month of `fetched_at`, ordered `listing_id, fetched_at`.
+- **Eligibility: the calendar month of `fetched_at` is complete**, plus
+  `PACK_SETTLE_DAYS` (default 1) for boundary artifacts. Grouped by that month,
+  ordered `listing_id, fetched_at`.
+
+  **Do not gate packing on an age threshold.** Writing a pack is additive and
+  safe; deleting the sources is the irreversible step, and only the latter needs
+  a grace period. Bronze objects are written at fetch time (`write_html` is
+  called inline by the scraper), so nothing arrives late with an old
+  `fetched_at` and a closed month is genuinely closed. Conflating the two knobs
+  delays the inode relief that is the entire point of this plan — as of
+  2026-08-13 it is the difference between packing ~45% and ~85-90% of the
+  corpus.
+
+  Deletion eligibility (Stage 4, out of scope here) is a **separate** knob:
+  grace period **and** a check that the artifact has been processed.
 - Write packs **alongside** the source objects. Delete nothing.
 - Verify **100%** of members extract byte-identically against `raw_sha256`.
   Anything less is a bug in the extractor, not an acceptable rate.

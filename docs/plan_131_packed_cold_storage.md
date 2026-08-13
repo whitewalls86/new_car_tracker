@@ -259,9 +259,37 @@ sidecar index: bronze/html_packs/.../pack-{seq}.idx.parquet
 - Keep writing dictionary `1367127621` inside frames. It costs nothing and helps
   the head of each frame; Stage 0 measures with and without.
 
+### Pack eligibility and delete eligibility are separate knobs
+
+Corrected 2026-08-13. An earlier draft gated packing on
+`PACK_MIN_AGE_DAYS = 60`, a number chosen arbitrarily and never justified. It
+conflated two independent decisions:
+
+- **Writing a pack is additive and safe.** Nothing is lost if a pack is written
+  early; the sources still exist.
+- **Deleting the sources is the irreversible step**, and it is the only one that
+  needs a grace period — plus a check that the artifact has been processed.
+
+Gating both on one threshold meant deletion-safety concerns were silently
+delaying the inode relief that is this plan's entire purpose. As of 2026-08-13
+that was the difference between packing April-May (~45% of the corpus) and
+April-July (**~85-90%**).
+
+Nothing arrives late: `write_html` is called inline by the scraper, so an
+object's `fetched_at` is effectively its write time and a closed calendar month
+is genuinely closed. `PACK_SETTLE_DAYS` covers only artifacts fetched either
+side of midnight on the boundary.
+
+**Packing also improves the case a hot window would protect.** Reprocessing a
+month from individual objects is ~1M round trips at Plan 129's measured
+~83 obj/s — over three hours of pure latency. From packs it is a handful of
+sequential reads. Packing degrades only *single-artifact random access*, which
+is the rare case and still works.
+
 ### Hot/cold boundary, and why the write path does not change
 
-Only artifacts older than `PACK_MIN_AGE_DAYS` (start at 60) are eligible. The
+Only artifacts in a **completed calendar month** are eligible, plus
+`PACK_SETTLE_DAYS` (default 1) for boundary writes. The
 scraper write path is **unchanged** — new artifacts land as individual
 dictionary-compressed objects exactly as today. Packing is a background
 lifecycle job over settled data.
