@@ -29,8 +29,8 @@ import zstandard as zstd
 
 from shared.duckdb_s3 import get_duckdb_s3_connection
 
-SILVER_PATH = "s3://bronze/silver/observations/**/*.parquet"
-ARTIFACT_EVENTS_PATH = "s3://bronze/ops/artifacts_queue_events/**/*.parquet"
+SILVER_PATH = "s3://bronze/silver_normalized/observations/**/*.parquet"
+ARTIFACT_EVENTS_PATH = "s3://bronze/ops_normalized/artifacts_queue_events/**/*.parquet"
 SCRATCH_PREFIX = "scratch/diff_analysis"
 ZSTD_LEVEL = 9
 
@@ -198,11 +198,9 @@ def get_artifacts(
 
 
 def fetch_html(con: duckdb.DuckDBPyConnection, minio_path: str) -> str:
-    if not minio_path.startswith("s3://"):
-        minio_path = f"s3://bronze/{minio_path.lstrip('/')}"
-    escaped = minio_path.replace("'", "''")
-    row = con.execute(f"SELECT content FROM read_blob('{escaped}')").fetchone()
-    return zstd.ZstdDecompressor().decompress(bytes(row[0])).decode("utf-8", errors="replace")
+    from shared.minio import read_html
+
+    return read_html(minio_path).decode("utf-8", errors="replace")
 
 
 def fetch_blob_size(con: duckdb.DuckDBPyConnection, minio_path: str) -> int:

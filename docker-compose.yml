@@ -205,6 +205,9 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
       MINIO_BUCKET: bronze
+      # Plan 129 Stage 3: leave unset for legacy frames; set to the registered
+      # v1 zstd dictionary ID only after dictionary-aware readers are deployed.
+      HTML_COMPRESSION_DICT_ID: ${HTML_COMPRESSION_DICT_ID:-}
     networks:
       - cartracker-net
     depends_on:

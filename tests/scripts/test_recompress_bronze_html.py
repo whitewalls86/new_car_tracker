@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
@@ -73,12 +74,19 @@ _MOCK_NEW_LARGER = 110   # new > old → skip (unless --force)
 
 @contextmanager
 def _mock_zstd(new_size: int):
-    """Patch zstd so decompress returns raw bytes and compress returns new_size bytes."""
+    """Patch zstd so decompress returns raw bytes and compress returns new_size bytes.
+
+    ``get_frame_parameters`` is patched alongside them because the codec now
+    routes through ``shared.compression.decompress_frame``, which reads the
+    dictionary ID from the frame header before decompressing. dict_id 0 is the
+    legacy no-dictionary frame these size-controlled tests stand in for.
+    """
     raw = b"fake raw content"
     new_bytes = b"x" * new_size
     decomp = MagicMock(decompress=MagicMock(return_value=raw))
     comp = MagicMock(compress=MagicMock(return_value=new_bytes))
     with (
+        patch("zstandard.get_frame_parameters", return_value=MagicMock(dict_id=0)),
         patch("zstandard.ZstdDecompressor", return_value=decomp),
         patch("zstandard.ZstdCompressor", return_value=comp),
     ):
@@ -660,3 +668,104 @@ class TestSelectors:
         assert len(results) == 2
         assert all(isinstance(r, ObjectInfo) for r in results)
         assert all(r.key.endswith(".html.zst") for r in results)
+
+
+# ── Group J: main() exit codes and startup validation ─────────────────────────
+
+
+def _run_main(argv, *, objects=(), get_dictionary=None, process=None):
+    """Run main() with the S3 and registry seams stubbed out."""
+    import scripts.recompress_bronze_html as mod
+
+    registered = MagicMock(dict_id=123, source="minio", raw=b"x" * 10)
+    with (
+        patch.object(sys, "argv", ["recompress_bronze_html.py", *argv]),
+        patch("shared.compression.get_dictionary", get_dictionary or MagicMock(
+            return_value=registered)),
+        patch.object(mod, "get_s3fs", MagicMock()),
+        patch.object(mod, "get_boto3_client", MagicMock()),
+        patch.object(mod, "build_prefixes", MagicMock(return_value=["html/"])),
+        patch.object(mod, "iter_prefix", MagicMock(return_value=list(objects))),
+        patch.object(mod, "process_object", process or MagicMock()),
+        patch.object(mod, "print_summary", MagicMock()),
+    ):
+        return mod.main()
+
+
+class TestMainExitCodes:
+    def test_unusable_dictionary_id_aborts_before_touching_objects(self):
+        """A typo'd ID must stop at startup, not fail 3.9M times and exit 0."""
+        import scripts.recompress_bronze_html as mod
+
+        process = MagicMock()
+        code = _run_main(
+            ["--dictionary-id", "999999", "--year", "2026", "--month", "6"],
+            objects=[_obj()],
+            get_dictionary=MagicMock(side_effect=RuntimeError("unknown dictionary ID 999999")),
+            process=process,
+        )
+
+        assert code == 1
+        process.assert_not_called()
+        assert mod  # module imported cleanly
+
+    def test_all_objects_failing_exits_nonzero(self):
+        """Finding 1: a backfill that converted nothing must not report success."""
+        def fail(*_args, **kwargs):
+            kwargs["summary"].failed += 1
+
+        code = _run_main(
+            ["--dictionary-id", "123", "--year", "2026", "--month", "6"],
+            objects=[_obj(key=f"html/{i}.zst") for i in range(3)],
+            process=fail,
+        )
+
+        assert code == 1
+
+    def test_partial_failure_still_exits_nonzero(self):
+        calls = {"n": 0}
+
+        def sometimes_fail(*_args, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 2:
+                kwargs["summary"].failed += 1
+            else:
+                kwargs["summary"].recompressed += 1
+
+        code = _run_main(
+            ["--dictionary-id", "123", "--year", "2026", "--month", "6"],
+            objects=[_obj(key=f"html/{i}.zst") for i in range(3)],
+            process=sometimes_fail,
+        )
+
+        assert code == 1
+
+    def test_clean_run_exits_zero(self):
+        def succeed(*_args, **kwargs):
+            kwargs["summary"].recompressed += 1
+
+        code = _run_main(
+            ["--dictionary-id", "123", "--year", "2026", "--month", "6"],
+            objects=[_obj(key=f"html/{i}.zst") for i in range(3)],
+            process=succeed,
+        )
+
+        assert code == 0
+
+    def test_no_dictionary_id_writes_plain_frames_without_touching_the_registry(self):
+        """The zero-deploy path: plain level-9 needs no dictionary at all."""
+        get_dictionary = MagicMock()
+
+        def succeed(*_args, **kwargs):
+            assert kwargs["dictionary_id"] is None
+            kwargs["summary"].recompressed += 1
+
+        code = _run_main(
+            ["--year", "2026", "--month", "4"],
+            objects=[_obj()],
+            get_dictionary=get_dictionary,
+            process=succeed,
+        )
+
+        assert code == 0
+        get_dictionary.assert_not_called()
