@@ -436,8 +436,24 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     p.add_argument("--throttle-ms", type=int, default=0,
                    help="Sleep between object fetches. Use if the Plan 129 backfill is "
                         "running and you want to stay out of its way.")
+    p.add_argument("--allow-no-dictionary", action="store_true",
+                   help="Permit measuring with no dictionary. Refused by default: the "
+                        "production baseline is dictionary-compressed, and an "
+                        "undictionaried baseline silently OVERSTATES the pack win.")
     p.add_argument("--json-out", type=Path, default=None)
     p.add_argument("--verbose", action="store_true")
+
+    # No single container has both duckdb (to sample) and shared.compression (to
+    # measure): archiver has the first, processing the second. Same split Plan 129
+    # hit, same two flags.
+    p.add_argument("--sample-only", action="store_true",
+                   help="Run the DuckDB sample query, write it, and stop. For the "
+                        "archiver container, which has duckdb.")
+    p.add_argument("--sample-out", type=Path, default=None,
+                   help="Where --sample-only writes. Default: stdout.")
+    p.add_argument("--sample-in", type=Path, default=None,
+                   help="Measure from a sample file instead of querying. For the "
+                        "processing container, which has the dictionary read path.")
     return p.parse_args(argv)
 
 
@@ -448,23 +464,51 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         format="%(asctime)s %(levelname)s %(message)s",
     )
 
+    # --- sample: needs duckdb (archiver) ---------------------------------
+    if args.sample_in:
+        rows = json.loads(args.sample_in.read_text(encoding="utf-8"))
+        LOG.info("loaded %d sampled captures from %s", len(rows), args.sample_in)
+    else:
+        from shared.duckdb_s3 import get_duckdb_s3_connection
+
+        con = get_duckdb_s3_connection()
+        rows = fetch_listing_sample(
+            con,
+            listings=args.listings,
+            min_captures=args.min_captures,
+            max_captures=args.max_captures,
+            since=args.since,
+        )
+        if not rows:
+            LOG.error("sample is empty -- nothing to measure")
+            return 2
+
+    if args.sample_only:
+        payload = json.dumps(rows, indent=2, default=str)
+        if args.sample_out:
+            args.sample_out.parent.mkdir(parents=True, exist_ok=True)
+            args.sample_out.write_text(payload, encoding="utf-8")
+            LOG.info("wrote %d captures to %s", len(rows), args.sample_out)
+        else:
+            print(payload)
+        return 0
+
+    # --- measure: needs shared.compression (processing) -------------------
     from shared.compression import configured_dictionary_id
-    from shared.duckdb_s3 import get_duckdb_s3_connection
 
     dict_id = args.dict_id if args.dict_id is not None else configured_dictionary_id()
-    LOG.info("compressing at level %d with dictionary_id=%s", ZSTD_LEVEL, dict_id or 0)
-
-    con = get_duckdb_s3_connection()
-    rows = fetch_listing_sample(
-        con,
-        listings=args.listings,
-        min_captures=args.min_captures,
-        max_captures=args.max_captures,
-        since=args.since,
-    )
-    if not rows:
-        LOG.error("sample is empty -- nothing to measure")
+    if not dict_id and not args.allow_no_dictionary:
+        LOG.error(
+            "no dictionary resolved (dictionary_id=%s). Production writes "
+            "dictionary-compressed frames, so measuring without one would compare "
+            "packs against an inflated baseline and overstate the win. Pass "
+            "--dict-id <id>, or --allow-no-dictionary if that is genuinely intended. "
+            "Note HTML_COMPRESSION_DICT_ID is set on the writer (scraper), not on "
+            "readers, which resolve the id from each frame's own header.",
+            dict_id or 0,
+        )
         return 2
+    LOG.info("compressing at level %d with dictionary_id=%s", ZSTD_LEVEL, dict_id or 0)
 
     totals = Totals()
     totals.listings_sampled = len({r["listing_id"] for r in rows})
