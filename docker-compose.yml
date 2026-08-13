@@ -333,6 +333,10 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
       MINIO_BUCKET: bronze
+      # Plan 131: pack frames keep the trained dictionary the scraper writes
+      # with. HTML_COMPRESSION_DICT_ID is a *writer*-side variable and is not
+      # set on readers, so the packer has to be told explicitly.
+      PACK_BRONZE_DICT_ID: ${HTML_COMPRESSION_DICT_ID:-}
     depends_on:
       flyway:
         condition: service_completed_successfully

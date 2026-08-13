@@ -256,6 +256,41 @@ class TestCompactSilverRunEndpoint:
 
 
 # ---------------------------------------------------------------------------
+# POST /pack/bronze/run  (Plan 131)
+# ---------------------------------------------------------------------------
+
+class TestPackBronzeRunEndpoint:
+    def test_defaults_to_a_dry_run(self, mock_archiver_client, mocker):
+        fake = {"mode": "dry_run", "packs_written": 0, "error": None, "buckets": []}
+        mock_fn = mocker.patch("archiver.app._pack_bronze_html", return_value=fake)
+        resp = mock_archiver_client.post("/pack/bronze/run")
+        assert resp.status_code == 200
+        assert resp.json() == fake
+        assert mock_fn.call_args.kwargs == {}, "no payload means processor defaults"
+
+    def test_passes_through_the_documented_options(self, mock_archiver_client, mocker):
+        mock_fn = mocker.patch(
+            "archiver.app._pack_bronze_html", return_value={"mode": "apply"}
+        )
+        resp = mock_archiver_client.post(
+            "/pack/bronze/run",
+            json={"apply": True, "year": 2026, "month": 5, "max_packs": 2},
+        )
+        assert resp.status_code == 200
+        assert mock_fn.call_args.kwargs == {
+            "apply": True, "year": 2026, "month": 5, "max_packs": 2,
+        }
+
+    def test_unknown_payload_keys_are_ignored(self, mock_archiver_client, mocker):
+        mock_fn = mocker.patch("archiver.app._pack_bronze_html", return_value={})
+        resp = mock_archiver_client.post(
+            "/pack/bronze/run", json={"apply": True, "delete_sources": True}
+        )
+        assert resp.status_code == 200
+        assert "delete_sources" not in mock_fn.call_args.kwargs
+
+
+# ---------------------------------------------------------------------------
 # POST /snapshots/adaptive-refresh/run  (Plan 120)
 # ---------------------------------------------------------------------------
 
