@@ -49,7 +49,7 @@ stable substrate.
 | [126](plan_126_basic_event_streaming.md) | Basic event streaming foundation | Draft / future |
 | [127](plan_127_streaming_adaptive_scrape_control.md) | Streaming adaptive scrape control | Draft / future |
 | [128](plan_128_false_block_detection.md) | Cloudflare challenge pages swallowed as successful detail scrapes | Draft |
-| [129](plan_129_zstd_dictionary_compression.md) | Trained zstd dictionary compression for bronze HTML | Stage 0 measured — gate passed (−73.2%) |
+| [129](plan_129_zstd_dictionary_compression.md) | Trained zstd dictionary compression for bronze HTML | In production — dict v1 live, backfill running |
 | [130](plan_130_parser_input_projection.md) | Parser-input projection (truncating raw HTML) | Draft — blocked on 129 + taxonomy gap |
 
 ---

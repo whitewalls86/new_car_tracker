@@ -2,10 +2,11 @@
 
 ## Status
 
-**Stage 0 complete and passed (−73.15% on held-out listings from held-out
-months, 2026-08-10). Stages 1-4 are the implementation.** Comes out of Plan 114
-Stage 3, which measured it as the cheapest storage win available and the
-baseline any fancier scheme has to beat.
+**In production as of 2026-08-13.** Stage 0 passed (−73.15% held-out).
+Dictionary v1 (`dict_id` 1367127621) is registered, the read path is deployed,
+the scraper writes dictionary frames, and the Stage 4 backfill is running.
+Comes out of Plan 114 Stage 3, which measured it as the cheapest storage win
+available and the baseline any fancier scheme has to beat.
 
 **This plan is reversible.** No data is discarded, every artifact stays
 independently decompressable, and a bad dictionary choice is fixed by
@@ -360,6 +361,117 @@ win, which is the same arithmetic that killed sectioning in Plan 114.
 So roughly **90-95 GB reclaimed, ~60% physical** against ~73% logical. Still
 decisive, and worth restating whenever someone quotes the headline number.
 
+### Stages 1-4 — executed, 2026-08-13
+
+Run against production with `/mnt/data` at **99-100%, 1.8-1.9 GB free**. That
+context shaped everything below and is why the ordering notes are worth
+keeping.
+
+**Stage 1 — dictionary v1 registered.**
+
+| | |
+|---|---|
+| `dict_id` | **1367127621** |
+| Size | 786,432 B (the full 768 KB — the sample filled it) |
+| Training samples | 2,216 |
+| Saving on the *training* corpus | 75.8% (train-on-train; do not quote this) |
+| Saving on *held-out* listings and months | **73.04%** |
+
+Size sweep on the real training corpus (858 train / 247 test docs):
+
+| Dictionary | Saving |
+|---|---|
+| 512 KB | 71.97% |
+| 768 KB | 73.04% |
+| 1024 KB | 73.25% |
+| 2048 KB | 73.92% |
+
+Stage 0's warning that a bigger training set moves the optimum was right: at
+437 training documents 1 MB *regressed* against 768 KB, and at 858 it no longer
+does. **768 KB was still the correct choice, for a reason that has nothing to
+do with the logical curve** — see the object floor below.
+
+**Stages 2-3 — only two images needed rebuilding.** `processing` (the sole
+service reading HTML, `routers/batch.py:29`) and `scraper` (the sole writer,
+`scrape_detail.py:178` / `scrape_results.py:312`). `ops` and `archiver` bundle
+`shared/` via `COPY . .` but only ever call `object_size`/`read_json`/
+`get_s3fs`, never `read_html`, so a stale image is harmless; `dbt`, `dashboard`
+and `dbt_runner` do not carry `shared.minio` at all.
+
+**Stage 4 — April `detail_page` backfill**, sustained ~35 objects/sec with
+writes, **zero failures**, 72.4% saving, reclaiming ~50 MB/min (~3 GB/hour).
+
+---
+
+### What the rollout taught us
+
+**1. A full disk blocks the backfill entirely. It is not self-funding from a
+standing start.** This plan previously reasoned that because each rewrite frees
+more than it consumes, a nearly-full disk was safe to start from. That is true
+of the steady state and false at the boundary: MinIO enforces a *minimum free
+drive threshold* and refuses **every** `PutObject` below it —
+
+```
+XMinioStorageFull: Storage backend has reached its minimum free drive
+threshold. Please delete a few objects to proceed.
+```
+
+— including the small writes that would have freed space. It killed the Stage 1
+dictionary upload. **Deletion is the only way out of that state**, and only
+~40 MB had to be deleted to get back above the threshold; the backfill funded
+itself from there. Anyone starting a backfill under ~5 GB free should clear
+headroom first rather than assume the mechanism will bootstrap.
+
+**2. The object floor caps the physical win, and also caps the useful
+dictionary size.** Logical saving was 72-74%; disk moves ~60-62%:
+
+| | payload | file (4 KB-rounded) | + dir | physical |
+|---|---|---|---|---|
+| before | 28 KB | 28 KB | 4 KB | 32 KB |
+| after | 7.3 KB | 8 KB | 4 KB | 12 KB |
+
+This is also the real argument for 768 KB over 2048 KB. At 768 KB the mean
+payload is already *under* the 8 KB floor, so the extra 0.88 points that
+2048 KB buys rounds to the same 12 KB on disk — **it frees literally zero
+bytes** while tripling the blob every reader loads and that must be retained
+forever. Stop increasing dictionary size once the mean payload crosses the
+floor; past that point the logical curve is measuring something you cannot
+spend.
+
+**3. Run backfills inside the container.** Throughput:
+
+| | rate |
+|---|---|
+| over an SSH tunnel from a laptop | ~10 objects/sec |
+| in-container, dry-run (reads only) | ~83 objects/sec |
+| in-container, `--apply` (read + write) | ~35 objects/sec |
+
+The tunnel was the bottleneck by ~8x. `processing` bundles `scripts/` and has
+boto3, zstandard and DB access, so it is the natural host.
+
+**4. April was still at zstd level 3.** Plain level-9 recompression alone frees
+8-10% with no dictionary, no migration and no deploy, and today's deployed
+readers understand the output. That is why `--dictionary-id` is optional:
+it is the only recompression route available when nothing has been deployed
+yet, and removing it (briefly) removed the escape hatch.
+
+**5. Measured saving depends on which baseline you quote.** Against *stored*
+April bytes the dictionary saves 77.7% (detail) and 65.4% (results), because
+those objects were level 3. Against a like-for-like *level-9* baseline it is
+73%. Both are honest; say which one you mean.
+
+**6. `results_page` is a separate population.** Raw mean 706 KB against 158 KB
+for detail pages, stored mean 44.2 KB against 28.1 KB. The month-wide mean of
+58.1 KiB reflects that mix, not a larger detail page. Plan 114 put SRP
+reprocessing out of scope, so results pages are also the better deletion
+candidate if space is ever needed urgently.
+
+**7. Two papercuts worth fixing.** `scripts/deploy.sh` and `scripts/redeploy.sh`
+are tracked `100644`, so they are not executable on a fresh checkout and must be
+run as `bash scripts/redeploy.sh <service>` until `git update-index --chmod=+x`
+is applied. And `ps` is not installed in the `processing` image, so
+liveness checks there must test for the checkpoint file rather than the process.
+
 ### Stage 5 — Observability and retraining trigger
 
 - Metric: compressed/raw ratio per write, by dictionary ID.
@@ -453,6 +565,10 @@ decisive, and worth restating whenever someone quotes the headline number.
 - Dropping any content — that is [Plan 130](plan_130_parser_input_projection.md).
 - Packing multiple artifacts per object.
 - Changing `ZSTD_LEVEL`.
-- Retention or expiry of raw HTML. There is no lifecycle rule on the bucket and
-  no HTML deletion anywhere in the codebase; whether that should change is a
-  real question, and deliberately not this plan's.
+- Retention or expiry of raw HTML. Still out of scope here, but no longer
+  theoretical: the disk hit 100% *twice during this plan's own rollout*, and
+  the second time it blocked the plan itself. There is no lifecycle rule on
+  the bucket and no HTML deletion anywhere in the codebase, so bronze grows
+  without bound at roughly 1M objects/month. Dictionary compression cuts the
+  slope by ~73% and buys back a large one-off, but it does not change the fact
+  that the line still only goes up. This needs its own plan.
