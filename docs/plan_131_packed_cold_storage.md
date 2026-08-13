@@ -2,7 +2,13 @@
 
 ## Status
 
-**Draft. Nothing measured yet.** Stage 0 is a measurement gate and it can fail.
+**Draft. Stage 0a-0c measured 2026-08-13; 0d outstanding.** Stage 0 is a
+measurement gate and it can still fail on 0d.
+
+Headline from the measurements: the inode ceiling is ~61 days out, results-page
+deletion is not a viable substitute (0.7% of objects), and **monthly buckets beat
+the closure-cohort design this plan originally favoured** — see "Stage 0a-0c
+results".
 
 Comes out of [Plan 129](plan_129_zstd_dictionary_compression.md), whose Out of
 Scope section names "packing multiple artifacts per object" as the deferred
@@ -39,26 +45,26 @@ Plan 129 cut logical bytes by 73% and physical bytes by ~60%. It changed object
 count by **zero**. The inode ceiling is untouched by compression, and it is the
 nearer wall.
 
-Measured on the VM 2026-08-08 (Plan 114 Stage 3, "Storage Accounting"):
+Measured on the VM, two readings five days apart:
 
-| Measure | Value |
-|---|---|
-| Objects in `bronze` | 3,918,760 |
-| Inodes used on `/mnt/data` | 8,774,058 of 13,107,200 |
-| Inodes per object | ~2.24 (directory + `xl.meta`) |
-| Headroom | **4,333,142 inodes** |
+| Measure | 2026-08-08 (Plan 114 Stage 3) | 2026-08-13 (Stage 0a) |
+|---|---|---|
+| Objects in `bronze` | 3,918,760 | ~4.07M (derived) |
+| Inodes used on `/mnt/data` | 8,774,058 of 13,107,200 | **9,101,670** of 13,107,200 |
+| Inodes free | 4,333,142 | **4,005,530** |
+| Disk used of 196 G | 184 G | **162 G** |
 
-Plan 129 records bronze growing at **~1M objects/month** with no lifecycle rule
-and no HTML deletion anywhere in the codebase. At 2.24 inodes per object that is
-~2.24M inodes/month against 4.33M of headroom.
+Inodes per object is ~2.24 (directory + `xl.meta`). Plan 129 records bronze
+growing at **~1M objects/month** with no lifecycle rule and no HTML deletion
+anywhere in the codebase.
 
-> **Derived, not measured: that is under two months of headroom from 2026-08-08.**
-> The arithmetic is straightforward but the inputs are a single snapshot taken
-> while diagnosing an unrelated full disk. **Stage 0 re-reads `df -i /mnt/data`
-> before anything else in this plan is taken seriously.** If the real figure is
-> comfortable, this plan drops to normal priority. If it is not, packing and
-> retention are the only two levers that move it, and compression is not on the
-> list.
+> **Measured burn: ~65,500 inodes/day, so ~61 days of headroom — about
+> mid-October 2026.**
+>
+> The two readings bracket the Plan 129 backfill, which is what makes the point
+> rather than softening it: **disk fell 22 GB and the inode clock did not slow
+> at all.** Compression cannot move this number. Only packing and deletion can,
+> and Stage 0b establishes that deletion has nothing large enough to delete.
 
 ### The byte win, as arithmetic rather than estimate
 
@@ -120,10 +126,13 @@ It matches the read pattern too: reprocessing after a parser fix wants every
 capture of the affected listings, which becomes one pack read instead of N
 object GETs.
 
-### Grouping: closure-cohort, time-bucket, or per-vehicle — OPEN, decided in Stage 0
+### Grouping: monthly buckets — DECIDED by Stage 0c (2026-08-13)
 
-Ordering within a pack is settled. **Which artifacts share a pack is not**, and
-it is the plan's biggest open design question.
+Ordering within a pack was always settled. Which artifacts share a pack was the
+plan's biggest open question; **0c answered it, and not the way this section
+originally predicted.** The analysis below is kept because it is why per-vehicle
+is disqualified; the closure-cohort recommendation it reaches is **superseded by
+the measurement** — see "Stage 0a-0c results".
 
 | Grouping | Compression | Write-once? | Objects | Reprocessing |
 |---|---|---|---|---|
@@ -247,8 +256,7 @@ Consequences, which are requirements not suggestions:
 Nothing is built until this passes. Three questions, in order.
 
 **0a. Re-read the constraint.** `df -i /mnt/data` and current object count. The
-"under two months" figure above is extrapolated from one snapshot and drives the
-whole priority of this plan.
+headroom figure drives the whole priority of this plan. **DONE — see results.**
 
 **0b. Price the cheaper alternative first.** Plan 129 note 6 found `results_page`
 is a separate population — raw mean **706 KB** vs 158 KB for detail, stored
@@ -259,20 +267,96 @@ urgently."*
 Report the object-count and inode split between `detail_page` and
 `results_page`. **If a results-page retention policy reclaims comparable inodes
 for a fraction of the effort, it wins and this plan waits.** An archive format
-is not the answer to a problem a `DELETE` solves.
+is not the answer to a problem a `DELETE` solves. **DONE — see results.**
 
 **0c. Settle the grouping question with a query, before measuring anything
 expensive.** Distribution of `max(fetched_at) - min(fetched_at)` per
 `listing_id` in silver, plus captures per listing. Silver only, no MinIO reads,
-no production writes. Report p50/p90/p95/p99 of capture span.
+no production writes. **DONE — see results.**
 
-This decides the "Grouping" table above: a short p95 span means plain time
-buckets lose almost nothing and closure cohorts are unnecessary complexity; a
-long one means the opposite. **Run this first — it is cheap and it changes what
-0d has to measure.**
+---
 
-**0d. Measure the pack win** on a real sample, offline, writing nothing to
-production. Extend the Plan 129 measurement harness rather than starting fresh;
+### Stage 0a-0c results (2026-08-13)
+
+Read-only, run against production: `df -i` over SSH, and DuckDB over silver
+Parquet inside `cartracker-archiver` (2 GB memory limit, 2 threads).
+
+**0a — the inode clock is real, and compression did not slow it.**
+
+| | 2026-08-08 (Plan 114) | 2026-08-13 | delta |
+|---|---|---|---|
+| Inodes used on `/mnt/data` | 8,774,058 | **9,101,670** | +327,612 |
+| Inodes free | 4,333,142 | **4,005,530** | −327,612 |
+| Disk used | 184 G | **162 G** | −22 G |
+
+~65,500 inodes/day → **~61 days of headroom, about mid-October 2026.** The disk
+improved by 22 GB over the same window as the Plan 129 backfill ran, which is
+the point sharpened rather than softened: **bytes got better and the inode clock
+did not move at all.**
+
+**0b — the cheaper alternative is dead.** Distinct artifacts by source since
+2026-04-01 (the HTML-backed window):
+
+| source | artifacts | note |
+|---|---|---|
+| detail | 4,557,751 | |
+| carousel | 4,017,371 | the *same* detail-page artifacts — carousel is a block on the detail page |
+| **srp** | **32,443** | the entire `results_page` population |
+
+Results pages are **0.7%** of objects. They are large by bytes (~1.4 GB total)
+and negligible by object count: deleting every results page ever captured buys
+roughly **half a day** of inode headroom. Plan 129 note 6 was right that they are
+the best *byte* deletion candidate and that is simply not the constraint.
+**Packing has no cheaper substitute on this axis.**
+
+**0c — weekly buckets are wrong; monthly is much better than expected.**
+Detail listings, April+ only:
+
+| | value |
+|---|---|
+| listings / artifacts | 224,459 / 4,558,956 |
+| capture span days, p50 / p90 / p95 | 21 / 81 / 105 (mean 31.6) |
+| captures per listing, p50 / p90 / p95 | 12 / 50 / 67 (mean 20.3) |
+| single-capture listings | 5.7% of listings, **0.3% of artifacts** |
+
+| bucket | artifacts whose listing fits entirely inside one bucket | avg buckets/listing |
+|---|---|---|
+| weekly | 1.7% | 5.02 |
+| monthly | 15.7% | **1.97** |
+
+**This reverses the plan's earlier expectation that closure cohorts would win
+outright.** Splitting a listing across *k* packs costs roughly *k* base copies
+instead of one, so at 1.97 monthly buckets against 20.3 mean captures the
+penalty is ~1 extra base copy per 20 — about **5%** against perfect per-listing
+grouping, and less than that in practice because the dictionary already supplies
+most of what a base copy costs.
+
+Five percent does not buy dormancy detection, a `LISTING_CLOSED_AFTER_DAYS`
+threshold, a force-archive backstop for listings that never close, and an index
+keyed by closure date rather than capture date. **Recommendation: monthly
+buckets, sealed on the calendar, ordered `listing_id, fetched_at` inside.**
+Closure cohorts drop from leading candidate to a measured control in 0d.
+
+Weekly bucketing is rejected outright at 5.02 buckets per listing.
+
+**Two findings to carry forward:**
+
+- **0.3% of artifacts are in single-capture listings**, so the within-listing
+  redundancy applies to essentially the whole corpus.
+- **20.3 captures over a 31.6-day mean span is a capture every ~1.5 days per
+  vehicle.** [Plan 113](plan_113_production_adaptive_refresh.md)'s adaptive
+  refresh attacks object *creation* where this plan attacks object *count*. They
+  are the same problem from opposite ends and should be sequenced together.
+
+**Open discrepancy, do not paper over it:** silver holds ~4.56M detail artifacts
+since April but bronze held 3.92M objects on 2026-08-08 (~4.07M now). Some
+artifacts have no surviving HTML object — Plan 128's challenge-page eviction is
+one plausible source. **The packable universe is bronze objects, not silver
+rows.** Stage 1 counts from MinIO directly rather than inferring it from silver.
+
+**0d. Measure the pack win — the only Stage 0 step still outstanding.** On a
+real sample, offline, writing nothing to production. Extend the Plan 129
+measurement harness rather than starting fresh;
 `scripts/estimate_dictionary_savings.py` already samples the corpus correctly via
 `fetch_corpus_sample` (evenly across months, deterministic, **not** the
 duplicate-biased `fetch_sample` that cost Plan 114 a re-run).
@@ -281,14 +365,17 @@ Report, per configuration:
 
 | Variable | Values to sweep |
 |---|---|
-| Grouping | closure cohort / weekly / bi-weekly / monthly / per-vehicle (control) |
+| Grouping | **monthly (candidate)** / closure cohort (control) / per-vehicle (control) |
 | Member ordering | `listing_id, fetched_at` vs arrival order |
 | Pages per frame | 100 / 1,000 / 10,000 |
 | Dictionary | with `1367127621` / without |
 
-Per-vehicle is measured as a **control**, not a candidate — it is the
-compression ceiling, so it says how much any write-once grouping gives up. It is
-disqualified on the write-once grounds above regardless of how well it scores.
+Per-vehicle and closure cohort are measured as **controls**, not candidates.
+Per-vehicle is the compression ceiling and says how much any write-once grouping
+gives up; closure cohort says specifically what the ~5% modelled in 0c really
+costs. Weekly is dropped — 0c settled it at 5.02 buckets/listing. If a control
+beats monthly by materially more than the 0c model predicts, the model is wrong
+and the decision reopens.
 
 and for each, the three numbers that matter:
 
@@ -302,8 +389,8 @@ Also report single-artifact extraction latency at each frame size. "Slow" needs
 a number attached before it can be accepted.
 
 **Gate:** ≥50% *physical* reduction against the current post-dictionary state,
-**and** ≥20× object-count reduction, **and** 0b did not produce a cheaper answer.
-Below any of those, stop and write down why.
+**and** ≥20× object-count reduction. 0b is already satisfied — no cheaper
+alternative exists. Below either remaining bar, stop and write down why.
 
 ### Stage 1 — Format, writer, reader
 
@@ -435,14 +522,14 @@ afterwards. Look first this time.
 
 | Metric | Gate |
 |--------|------|
-| Stage 0 physical reduction vs post-dictionary state | ≥50% |
-| Stage 0 object-count reduction | ≥20× |
-| Cheaper alternative (results-page retention) priced first | Reported, explicitly |
+| Stage 0d physical reduction vs post-dictionary state | ≥50% |
+| Stage 0d object-count reduction | ≥20× |
+| Cheaper alternative (results-page retention) priced first | **Met** — 0.7% of objects, rejected |
 | Byte-identical extraction before any source delete | **100%, blocking** |
 | Single-artifact extraction latency | Measured and accepted, not assumed |
 | Consumers reading bronze outside `read_html` | Zero remaining before Stage 4 |
 | Source objects deleted without a verified pack member | Impossible |
-| Grouping chosen from measured capture-span, not assumed | Stage 0c, reported |
+| Grouping chosen from measured capture-span, not assumed | **Met** — Stage 0c, monthly |
 | Scraper write path changed | None — deferred compression is rejected, see Design |
 
 ---
