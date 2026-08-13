@@ -647,6 +647,13 @@ with no S3 code in `shared/packfile.py` at all.
 - **An orphan pack is reported, never deleted.** Its sequence number is
   respected so nothing overwrites it. Stage 2 deletes nothing at all, including
   its own mistakes.
+- **Eligibility is month completion plus `PACK_SETTLE_DAYS`, not an age
+  threshold** — `_month_has_settled()` asks whether `(today - month_end).days
+  >= settle_days`, against a `_today_utc()` that tests patch, exactly as
+  `compact_silver` does with its 2-day watermark. Naming a bucket explicitly
+  with `--year/--month` bypasses it and warns rather than refusing: Stage 2
+  deletes nothing, so packing an open month only means a later run packs the
+  rest of it.
 - `PACK_BRONZE_MAX_COHORTS` is `PACK_BRONZE_MAX_BUCKETS` — the grouping is
   calendar buckets, and cohorts were the rejected alternative.
 
@@ -681,9 +688,12 @@ What remains of WARC is then a text header per record (~200-400 bytes against
 
 ### Stage 4 — Delete packed source objects
 
-Only for artifacts that have a finalized pack, a verified `raw_sha256` match, and
-are past `PACK_MIN_AGE_DAYS`. Dry-run by default, hard per-run cap, one pack's
-worth of sources at a time.
+Only for artifacts that have a finalized pack, a verified `raw_sha256` match, are
+past a **delete** grace period, and have been processed. That grace period is
+this stage's own knob and is deliberately not `PACK_SETTLE_DAYS` — see
+[Pack eligibility and delete eligibility are separate
+knobs](#pack-eligibility-and-delete-eligibility-are-separate-knobs). Dry-run by
+default, hard per-run cap, one pack's worth of sources at a time.
 
 **This is the step that frees inodes**, and it is the first irreversible-ish one
 — though the bytes still exist inside the pack, which is the entire difference

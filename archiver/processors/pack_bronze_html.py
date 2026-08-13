@@ -70,9 +70,16 @@ _PACK_PREFIX = PACK_PREFIX
 _SILVER_PATH = "s3://{bucket}/silver_normalized/observations/**/*.parquet"
 _ARTIFACT_EVENTS_PATH = "s3://{bucket}/ops_normalized/artifacts_queue_events/**/*.parquet"
 
-#: Only artifacts settled for this long are eligible. The scraper write path is
-#: unchanged; packing is a background lifecycle job over cold data.
-MIN_AGE_DAYS = int(os.environ.get("PACK_MIN_AGE_DAYS", "60"))
+#: Days to wait after a calendar month closes before packing it. Covers only
+#: artifacts fetched either side of midnight on the boundary — nothing arrives
+#: late, because ``write_html`` is called inline by the scraper, so an object's
+#: ``fetched_at`` is effectively its write time.
+#:
+#: This is deliberately *not* an age threshold. Writing a pack is additive and
+#: safe; deleting the sources is the irreversible step, and only that one needs
+#: a grace period plus a processed check (Stage 4). Gating both on one number
+#: silently delayed the inode relief this plan exists to produce.
+SETTLE_DAYS = int(os.environ.get("PACK_SETTLE_DAYS", "1"))
 
 #: Monthly capture buckets processed per run (Plan 109's MAX_PARTITIONS analogue).
 MAX_BUCKETS = int(os.environ.get("PACK_BRONZE_MAX_BUCKETS", "1"))
@@ -222,21 +229,27 @@ def bucket_prefix(artifact_type: str, year: int, month: int) -> str:
     return f"{_HTML_PREFIX}/year={year}/month={month}/artifact_type={artifact_type}/"
 
 
+def _month_has_settled(year: int, month: int, today: date, settle_days: int) -> bool:
+    """True once the calendar month has closed and *settle_days* have passed."""
+    month_end = date(year, month, calendar.monthrange(year, month)[1])
+    return (today - month_end).days >= settle_days
+
+
 def discover_buckets(
     client: Any,
     bucket: str,
     artifact_type: str,
     *,
-    min_age_days: int,
+    settle_days: int,
     today: Optional[date] = None,
 ) -> List[Tuple[int, int]]:
-    """Return (year, month) buckets whose every artifact is older than the floor.
+    """Return (year, month) buckets whose calendar month has closed and settled.
 
-    A bucket qualifies only when its month-end is past the age floor, so a
-    bucket is never packed while it can still receive writes.
+    A bucket qualifies once its month is **complete** — so it can no longer
+    receive writes — plus *settle_days* for artifacts fetched either side of
+    midnight on the boundary. Not an age threshold: see SETTLE_DAYS.
     """
     today = today or _today_utc()
-    cutoff = today - timedelta(days=min_age_days)
 
     eligible: List[Tuple[int, int]] = []
     for year_prefix in _list_common_prefixes(client, bucket, f"{_HTML_PREFIX}/"):
@@ -247,8 +260,7 @@ def discover_buckets(
             month = _parse_hive_int(month_prefix, "month")
             if month is None or not 1 <= month <= 12:
                 continue
-            month_end = date(year, month, calendar.monthrange(year, month)[1])
-            if month_end > cutoff:
+            if not _month_has_settled(year, month, today, settle_days):
                 continue
             type_prefix = bucket_prefix(artifact_type, year, month)
             if _list_objects(client, bucket, type_prefix, limit=1):
@@ -634,7 +646,7 @@ def pack_bronze_html(
     max_packs: int = MAX_PACKS,
     max_pack_bytes: int = MAX_PACK_BYTES,
     frame_target_bytes: int = FRAME_TARGET_BYTES,
-    min_age_days: int = MIN_AGE_DAYS,
+    settle_days: int = SETTLE_DAYS,
     min_free_bytes: int = MIN_FREE_BYTES,
     dict_id: Optional[int] = None,
     allow_no_dictionary: bool = False,
@@ -684,25 +696,24 @@ def pack_bronze_html(
 
     if year is not None and month is not None:
         candidates = [(year, month)]
-        month_end = date(year, month, calendar.monthrange(year, month)[1])
-        if month_end > _today_utc() - timedelta(days=min_age_days):
+        if not _month_has_settled(year, month, _today_utc(), settle_days):
             # Not refused: naming a bucket explicitly is a deliberate act, and
             # Stage 2 deletes nothing, so the worst case is that later captures
             # in the month are packed by a later run. It is still worth saying.
             logger.warning(
-                "pack_bronze_html: %04d-%02d is inside the %d-day age floor and may "
-                "still be receiving writes",
-                year, month, min_age_days,
+                "pack_bronze_html: %04d-%02d has not closed and settled (%d day(s)) "
+                "and may still be receiving writes",
+                year, month, settle_days,
             )
     else:
         candidates = discover_buckets(
-            client, bucket, artifact_type, min_age_days=min_age_days
+            client, bucket, artifact_type, settle_days=settle_days
         )
     result["buckets_eligible"] = len(candidates)
     if not candidates:
         logger.info(
-            "pack_bronze_html: no bucket older than %d days under %s/",
-            min_age_days, _HTML_PREFIX,
+            "pack_bronze_html: no closed+settled (%d day(s)) bucket under %s/",
+            settle_days, _HTML_PREFIX,
         )
         return result
 
@@ -856,7 +867,10 @@ def _parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument("--max-pack-bytes", type=int, default=MAX_PACK_BYTES)
     parser.add_argument("--frame-bytes", type=int, default=FRAME_TARGET_BYTES)
-    parser.add_argument("--min-age-days", type=int, default=MIN_AGE_DAYS)
+    parser.add_argument(
+        "--settle-days", type=int, default=SETTLE_DAYS,
+        help="Days to wait after a calendar month closes [default: %(default)s]",
+    )
     parser.add_argument("--min-free-bytes", type=int, default=MIN_FREE_BYTES)
     parser.add_argument(
         "--dict-id", type=int, default=None,
@@ -892,7 +906,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         max_packs=args.max_packs,
         max_pack_bytes=args.max_pack_bytes,
         frame_target_bytes=args.frame_bytes,
-        min_age_days=args.min_age_days,
+        settle_days=args.settle_days,
         min_free_bytes=args.min_free_bytes,
         dict_id=args.dict_id,
         allow_no_dictionary=args.allow_no_dictionary,

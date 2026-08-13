@@ -7,7 +7,7 @@ registry: packs are built with ``allow_no_dictionary=True`` except in the test
 that covers the refusal.
 """
 from collections import Counter
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 
 import pytest
 
@@ -532,34 +532,53 @@ def test_configured_dictionary_is_resolved_before_any_object_is_read(
 # Bucket discovery
 # ---------------------------------------------------------------------------
 
-def test_discover_buckets_skips_months_inside_the_age_floor(store):
+def test_discover_buckets_skips_the_month_still_open(store):
     _seed(store, 2, year=2026, month=4)
     _seed(store, 2, year=2026, month=8)
 
     eligible = packer.discover_buckets(
-        store, "bronze", _TYPE, min_age_days=60, today=date(2026, 8, 13)
+        store, "bronze", _TYPE, settle_days=1, today=date(2026, 8, 13)
     )
 
     assert eligible == [(2026, 4)]
+
+
+def test_last_month_is_eligible_the_day_after_it_closes(store):
+    """Eligibility is month completion, not age. An age threshold would have
+    held back ~40% of the corpus for no safety benefit — writing a pack is
+    additive, and only Stage 4's delete needs a grace period."""
+    _seed(store, 2, year=2026, month=7)
+
+    assert packer.discover_buckets(
+        store, "bronze", _TYPE, settle_days=1, today=date(2026, 8, 1)
+    ) == [(2026, 7)]
+
+
+def test_a_month_is_not_eligible_before_its_settle_days_elapse(store):
+    _seed(store, 2, year=2026, month=7)
+
+    on_the_last_day = packer.discover_buckets(
+        store, "bronze", _TYPE, settle_days=1, today=date(2026, 7, 31)
+    )
+    with_a_longer_settle = packer.discover_buckets(
+        store, "bronze", _TYPE, settle_days=3, today=date(2026, 8, 2)
+    )
+
+    assert on_the_last_day == []
+    assert with_a_longer_settle == []
+    assert packer.discover_buckets(
+        store, "bronze", _TYPE, settle_days=3, today=date(2026, 8, 3)
+    ) == [(2026, 7)]
 
 
 def test_discover_buckets_ignores_other_artifact_types(store):
     store.objects["html/year=2026/month=4/artifact_type=results_page/a.html.zst"] = b"x"
 
     eligible = packer.discover_buckets(
-        store, "bronze", _TYPE, min_age_days=60, today=date(2026, 8, 13)
+        store, "bronze", _TYPE, settle_days=1, today=date(2026, 8, 13)
     )
 
     assert eligible == []
-
-
-def test_a_month_whose_end_just_clears_the_floor_is_eligible(store):
-    _seed(store, 1, year=2026, month=6)
-    today = date(2026, 6, 30) + timedelta(days=60)
-
-    assert packer.discover_buckets(
-        store, "bronze", _TYPE, min_age_days=60, today=today
-    ) == [(2026, 6)]
 
 
 def test_no_eligible_bucket_is_not_an_error(store):

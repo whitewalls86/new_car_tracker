@@ -112,7 +112,7 @@ def trigger_pack_bronze_html(payload: dict = Body(default={})) -> Dict[str, Any]
                 for key in (
                     "apply", "artifact_type", "year", "month", "max_buckets",
                     "max_packs", "max_pack_bytes", "frame_target_bytes",
-                    "min_age_days", "min_free_bytes", "dict_id",
+                    "settle_days", "min_free_bytes", "dict_id",
                     "allow_no_dictionary",
                 )
                 if key in payload
