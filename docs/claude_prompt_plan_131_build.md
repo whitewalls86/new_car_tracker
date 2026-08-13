@@ -1,7 +1,13 @@
 # Claude Prompt: Plan 131 Stages 1-2 — Pack Format And First Cold Pack
 
-You are working in the `cartracker-scraper` repo. Plan 131 Stage 0 is merged to
-`master`. **Branch off `master`** for this work.
+You are working in the `cartracker-scraper` repo. **Branch off
+`plan-131-packed-cold-storage`**, not `master`.
+
+Most of Plan 131 Stage 0 is on `master` (PR #187), but three docs-only commits
+are not: the Stage 0d grouping decision and this prompt. They live on
+`plan-131-packed-cold-storage` and are meant to ride along with your Stage 1-2
+PR rather than land on their own. `master`'s copy of the plan doc still says
+grouping is undecided; the branch's copy is correct.
 
 Read `docs/plan_131_packed_cold_storage.md` first. It is the source of truth and
 it records every decision below along with the measurements behind them.
