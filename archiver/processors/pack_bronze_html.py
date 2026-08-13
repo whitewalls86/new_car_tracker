@@ -83,6 +83,8 @@ MAX_PACKS = int(os.environ.get("PACK_BRONZE_MAX_PACKS", "1"))
 
 #: Small on purpose: this is the transient free space a pack needs while its
 #: sources still exist, and it is the blast radius if a pack is ever lost.
+#: Measured in *stored* bytes, and a pack is always at least one frame — a
+#: value below one frame's compressed size simply yields one-frame packs.
 MAX_PACK_BYTES = int(os.environ.get("PACK_BRONZE_MAX_PACK_BYTES", str(64 * 1024 * 1024)))
 
 #: Uncompressed bytes per frame — the bound on what reading one member costs.
@@ -447,16 +449,11 @@ def _write_one_pack(
     client: Any,
     bucket: str,
     plan: BucketPlan,
-    members: Sequence[PackMember],
+    writer: PackWriter,
     seq: int,
-    *,
-    dict_id: Optional[int],
-    frame_target_bytes: int,
+    raw_bytes: int,
 ) -> Dict[str, Any]:
-    """Build, store, and re-verify one pack. Deletes nothing."""
-    writer = PackWriter(dict_id=dict_id, frame_target_bytes=frame_target_bytes)
-    for member in members:
-        writer.add(member)
+    """Finalize, store, and re-verify one pack. Deletes nothing."""
     pack = writer.finish()
 
     key = pack_key(plan.artifact_type, plan.year, plan.month, seq, prefix=_PACK_PREFIX)
@@ -474,12 +471,11 @@ def _write_one_pack(
         ContentType="application/vnd.apache.parquet",
     )
 
-    raw_bytes = sum(len(m.content) for m in members)
     logger.info(
         "pack_bronze_html: wrote %s — members=%d frames=%d pack_bytes=%d raw_bytes=%d "
         "verified=%d dictionary_id=%s",
         key, pack.member_count, pack.frame_count, pack.size, raw_bytes,
-        verified, dict_id or 0,
+        verified, pack.dict_id,
     )
     return {
         "pack_key": key,
@@ -509,24 +505,26 @@ def _pack_bucket(
     packs: List[Dict[str, Any]] = []
     read_failures: List[Dict[str, str]] = []
     seq = plan.next_seq
-    batch: List[PackMember] = []
-    batch_bytes = 0
     stopped_early = False
 
+    # Members go straight into the writer rather than into a list first, so the
+    # roll decision can be made on *compressed* bytes. Cutting on raw bytes
+    # would be ~20x conservative — detail pages are ~158 KB raw against ~7.3 KB
+    # stored — and max_pack_bytes exists to bound the transient free space a
+    # pack needs, which is a compressed-bytes quantity. It also keeps memory
+    # bounded: sealing a frame releases the raw content behind it.
+    writer: Optional[PackWriter] = None
+    raw_bytes = 0
+
     def flush() -> bool:
-        """Write the accumulated batch. Returns False when the pack cap is hit."""
-        nonlocal batch, batch_bytes, seq
-        if not batch:
+        """Store the open pack, if any. Returns False when the pack cap is hit."""
+        nonlocal writer, raw_bytes, seq
+        if writer is None or writer.member_count == 0:
             return True
-        packs.append(
-            _write_one_pack(
-                client, bucket, plan, batch, seq,
-                dict_id=dict_id, frame_target_bytes=frame_target_bytes,
-            )
-        )
+        packs.append(_write_one_pack(client, bucket, plan, writer, seq, raw_bytes))
         seq += 1
-        batch = []
-        batch_bytes = 0
+        writer = None
+        raw_bytes = 0
         return not (max_packs and len(packs) >= max_packs)
 
     # A failure part-way through must still report the packs that were written
@@ -543,7 +541,11 @@ def _pack_bucket(
                 read_failures.append({"source_key": source_key, "error": str(exc)})
                 continue
 
-            batch.append(
+            if writer is None:
+                writer = PackWriter(
+                    dict_id=dict_id, frame_target_bytes=frame_target_bytes
+                )
+            writer.add(
                 PackMember(
                     source_key=source_key,
                     content=content,
@@ -552,10 +554,10 @@ def _pack_bucket(
                     fetched_at=fetched_at,
                 )
             )
-            batch_bytes += len(content)
-            # Raw bytes overshoot the stored pack (frames compress ~4x at these
-            # sizes), so this is a conservative cut: packs land at or under target.
-            if batch_bytes >= max_pack_bytes:
+            raw_bytes += len(content)
+            # compressed_bytes counts sealed frames only, so a pack overshoots
+            # its target by at most one frame.
+            if writer.compressed_bytes >= max_pack_bytes:
                 if not flush():
                     stopped_early = True
                     break

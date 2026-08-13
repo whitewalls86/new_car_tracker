@@ -329,7 +329,7 @@ def test_a_failure_still_reports_the_packs_that_were_written(store, duckdb, mock
 
     mocker.patch.object(packer, "_verify_stored_pack", side_effect=fail_on_third)
 
-    result = _run(max_pack_bytes=1, max_packs=0)
+    result = _run(max_pack_bytes=1, frame_target_bytes=1, max_packs=0)
 
     assert "stored pack differs" in result["error"]
     assert result["packs_written"] == 2
@@ -417,7 +417,7 @@ def test_checkpoint_state_does_not_grow_per_object(store, duckdb):
     keys = _seed(store, 12)
     duckdb(_metadata(keys))
 
-    result = _run(max_pack_bytes=1, max_packs=0)
+    result = _run(max_pack_bytes=1, frame_target_bytes=1, max_packs=0)
     packs = result["packs_written"]
     assert packs == 12, "one member per pack makes the per-pack cost visible"
     assert len(store.objects) == len(keys) + 2 * packs
@@ -437,14 +437,46 @@ def test_max_packs_caps_the_run_and_the_rest_resumes(store, duckdb):
     keys = _seed(store, 6)
     duckdb(_metadata(keys))
 
-    first = _run(max_pack_bytes=1, max_packs=2)
+    first = _run(max_pack_bytes=1, frame_target_bytes=1, max_packs=2)
     assert first["packs_written"] == 2
     assert first["buckets"][0]["stopped_at_max_packs"] is True
 
     duckdb(_metadata(keys))
-    second = _run(max_pack_bytes=1, max_packs=0)
+    second = _run(max_pack_bytes=1, frame_target_bytes=1, max_packs=0)
     assert second["members_packed"] == 4
     assert second["buckets"][0]["pending"] == 4
+
+
+def test_the_pack_size_cut_is_on_stored_bytes_not_raw_bytes(store, duckdb):
+    """max_pack_bytes bounds the transient free space a pack needs, which is a
+    compressed quantity. Detail pages are ~158 KB raw against ~7.3 KB stored,
+    so cutting on raw bytes would be ~20x conservative."""
+    keys = _seed(store, 12)
+    duckdb(_metadata(keys))
+    raw_total = sum(len(store.raw[k]) for k in keys)
+
+    result = _run(max_pack_bytes=raw_total // 2)
+
+    assert result["packs_written"] == 1
+    pack = result["buckets"][0]["packs"][0]
+    assert pack["raw_bytes"] > result["buckets"][0]["packs"][0]["pack_bytes"]
+    assert pack["pack_bytes"] < raw_total // 2
+
+
+def test_a_pack_rolls_once_its_stored_bytes_reach_the_target(store, duckdb):
+    keys = _seed(store, 12)
+    duckdb(_metadata(keys))
+
+    single = _run(max_pack_bytes=1 << 30)
+    target = single["buckets"][0]["packs"][0]["pack_bytes"] // 3
+
+    for key in [k for k in store.objects if k.startswith("html_packs/")]:
+        del store.objects[key]
+    duckdb(_metadata(keys))
+    rolled = _run(max_pack_bytes=target, frame_target_bytes=1024, max_packs=0)
+
+    assert rolled["packs_written"] > 1
+    assert rolled["members_packed"] == 12
 
 
 def test_apply_refuses_below_the_free_space_floor(store, duckdb, mocker):

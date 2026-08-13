@@ -638,6 +638,12 @@ with no S3 code in `shared/packfile.py` at all.
 - **The free-space floor refuses an apply run and warns a dry run.** "How much
   would packing this month free?" is precisely the question worth asking when
   the disk is full, and a dry run writes nothing.
+- **`PACK_BRONZE_MAX_PACK_BYTES` is measured in stored bytes**, because what it
+  bounds is the transient free space a pack needs. Cutting on raw bytes instead
+  would be ~20x conservative — detail pages are ~158 KB raw against ~7.3 KB
+  stored — and would have produced ~3 MB packs from a 64 MB setting. A pack is
+  always at least one frame, so a target below one frame's compressed size just
+  yields one-frame packs.
 - **An orphan pack is reported, never deleted.** Its sequence number is
   respected so nothing overwrites it. Stage 2 deletes nothing at all, including
   its own mistakes.
