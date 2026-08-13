@@ -2,8 +2,9 @@
 
 ## Status
 
-**Draft. Stage 0a-0c measured 2026-08-13; 0d outstanding.** Stage 0 is a
-measurement gate and it can still fail on 0d.
+**Draft. Stage 0 COMPLETE (2026-08-13) - gate passed, grouping decided.**
+Monthly capture buckets: ~68% logical / ~79-81% physical saving, 1.00x
+reprocessing, and the object count collapses from ~4.5M to a few hundred packs.
 
 Headline from the measurements: the inode ceiling is ~61 days out and
 results-page deletion is not a viable substitute (0.7% of objects). **Grouping
@@ -127,7 +128,53 @@ It matches the read pattern too: reprocessing after a parser fix wants every
 capture of the affected listings, which becomes one pack read instead of N
 object GETs.
 
-### Grouping: STILL OPEN — monthly leads, 0d decides
+### Grouping: monthly capture buckets - DECIDED by Stage 0d (2026-08-13)
+
+Measured, 140 listings / 2,394 captures, dictionary 1367127621, level 9:
+
+| | logical | physical |
+|---|---|---|
+| per-listing grouping (ceiling) | 71.3% | 85.0% |
+| **monthly capture bucket** | **67.8%** | **83.1%** (see correction) |
+| gap | 3.5 pts | **1.9 pts** |
+
+**Cold-listing cohorts would buy 1.9 percentage points of physical storage in
+exchange for a 4.46x full-corpus scan on every date-range reprocess.** Rejected.
+Monthly capture buckets get 1.00x reprocessing AND land within two points of the
+compression ceiling.
+
+`B` = 8,578 bytes (first capture in a group), `D` = 2,142 bytes (each
+subsequent), **D/B = 0.250**. The grouping win is real rather than pure floor
+elimination, which is why members stay ordered `listing_id, fetched_at`.
+
+**The dictionary is NOT subsumed by the frame window - but its entire
+contribution is to the first member of each frame.** Without it `B` rises to
+32,952 bytes while `D` is essentially unchanged (2,058 vs 2,142): inside a frame
+the window already supplies the context the dictionary would have. At 441,448
+groups that is still ~10 GiB. **Keep the dictionary in packs.** This closes the
+question raised under "Pack layout".
+
+#### Two measurement corrections - do not quote 83.1%
+
+- **The projection's baseline is inflated ~22%.** `B` is the mean *first*
+  capture (8,578 B); the mean *ordinary* capture is 7,313 B. 8,578 crosses a
+  4 KB block boundary, so `physical_bytes(B)` charges 16 KB per object where the
+  measured mean is ~13.4 KB, and the projection multiplies that across 4.56M
+  artifacts. The sample's own assumption-free figure is 30.6 MiB physical ->
+  5.8 MiB packed = **81%**. Honest range is **~79-81%**, roughly 45 GiB
+  reclaimed. Fix: project the baseline from mean per-capture physical bytes, not
+  from `physical_bytes(B)`.
+- **The sample under-represents fragmentation.** It reports monthly retaining
+  99.1% of the grouping win; the projection says 95%. The sampled listings span
+  fewer calendar months than the corpus does, so **trust the projection**, which
+  uses the Stage 0c census group counts (441,448 vs 224,459) rather than the
+  sample's own shape.
+
+Both corrections move the headline down and neither moves the decision.
+
+---
+
+#### Prior analysis, retained for the reasoning
 
 Ordering within a pack was always settled. Which artifacts share a pack is not,
 and **an earlier revision of this section wrongly marked it DECIDED in favour of
