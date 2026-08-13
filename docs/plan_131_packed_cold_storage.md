@@ -462,6 +462,20 @@ already carries every dependency needed (`zstandard`, `boto3`, `duckdb`,
 | `COMPACT_SILVER_MAX_PARTITIONS` (default 10) | `PACK_BRONZE_MAX_COHORTS` |
 | write `.tmp` → assert row count → delete originals → rename | write pack → verify every member → delete sources |
 
+**Prerequisite: the archiver image must be rebuilt before it can pack anything.**
+Discovered 2026-08-13 while trying to run Stage 0d there. Plan 129 rebuilt only
+`processing` and `scraper`, reasoning that a stale `archiver` was harmless
+because it "only ever calls `object_size`/`read_json`/`get_s3fs`, never
+`read_html`". That was correct at the time. **Plan 131 invalidates it:** the
+packer's whole job is reading HTML.
+
+The running archiver image today has no `shared/compression.py` at all, and its
+`shared/minio.py` contains zero references to dictionaries — so its `read_html`
+cannot decode the dictionary frames the Plan 129 backfill is actively creating.
+A `docker cp` of the packer alone would not fix this; the stale library is the
+problem, not the missing script. Rebuild `archiver` before Stage 2, and treat
+"which images read HTML" as a question to re-ask whenever the read path changes.
+
 *(Plan 129's "run it in the `processing` container" note was advice for a
 **one-off backfill**, chosen because processing bundles `scripts/`. A recurring
 lifecycle job belongs in the archiver by every precedent in this repo.)*
