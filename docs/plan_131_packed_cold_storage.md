@@ -2,15 +2,21 @@
 
 ## Status
 
-**Draft. Stage 0 COMPLETE (2026-08-13) - gate passed, grouping decided.**
+**Stage 0 COMPLETE (2026-08-13) - gate passed, grouping decided.**
 Monthly capture buckets: ~68% logical / ~79-81% physical saving, 1.00x
 reprocessing, and the object count collapses from ~4.5M to a few hundred packs.
 
+**Stages 1-2 BUILT (2026-08-13), not yet run against production.** Format,
+writer, indexed reader, sidecar index, and a checkpointed archiver job that
+writes packs alongside their sources and deletes nothing. See
+[Stage 1-2 as built](#stage-1-2-as-built) for what the implementation settled
+that the plan had left open, and for the one place the plan's own wording was
+wrong.
+
+**Stages 3-5 NOT STARTED.** Stage 4 is the only step that removes data.
+
 Headline from the measurements: the inode ceiling is ~61 days out and
-results-page deletion is not a viable substitute (0.7% of objects). **Grouping
-remains open** — weekly is rejected, monthly leads on simplicity, and the
-monthly-vs-closure-cohort margin turns on a base/delta ratio only 0d can
-measure.
+results-page deletion is not a viable substitute (0.7% of objects).
 
 Comes out of [Plan 129](plan_129_zstd_dictionary_compression.md), whose Out of
 Scope section names "packing multiple artifacts per object" as the deferred
@@ -18,11 +24,17 @@ lever, and out of [Plan 114](plan_114_sectioned_html_artifact_audit.md), which
 established that MinIO's ~8 KB/object floor is the cost that decides every
 storage question in this bucket.
 
-**This plan is lossless and reversible.** Packs contain the exact compressed
-bytes of the artifacts they replace, extraction is verified byte-for-byte before
-any source object is deleted, and nothing is discarded. That is the whole reason
-it is worth doing before [Plan 130](plan_130_parser_input_projection.md), which
-is not.
+**This plan is lossless and reversible.** Extracting a packed member returns the
+exact bytes `read_html` returned for its source object, verified byte-for-byte
+against a per-member `raw_sha256` before any source object is deleted, and
+nothing is discarded. That is the whole reason it is worth doing before
+[Plan 130](plan_130_parser_input_projection.md), which is not.
+
+*(An earlier revision said packs contain "the exact compressed bytes of the
+artifacts they replace". They do not, and could not: re-using each object's own
+frame would forfeit the shared compression window, which is where the measured
+`D/B = 0.250` comes from. What is preserved exactly is the decompressed HTML —
+the artifact — not one particular encoding of it.)*
 
 ---
 
@@ -484,7 +496,7 @@ a number attached before it can be accepted.
 **and** ≥20× object-count reduction. 0b is already satisfied — no cheaper
 alternative exists. Below either remaining bar, stop and write down why.
 
-### Stage 1 — Format, writer, reader
+### Stage 1 — Format, writer, reader — BUILT 2026-08-13
 
 - `shared/packfile.py`: write a pack + sidecar index; read a member by
   `artifact_id`; in-process LRU of decompressed frames.
@@ -494,7 +506,7 @@ alternative exists. Below either remaining bar, stop and write down why.
   outlive this plan's assumptions.
 - Offline only. Nothing in production reads or writes packs at this stage.
 
-### Stage 2 — Pack one cold cohort, delete nothing
+### Stage 2 — Pack one cold cohort, delete nothing — BUILT 2026-08-13, not yet run in production
 
 **This is archiver work, and it mirrors Plan 109's `compact_silver` exactly.**
 The archiver is the service that owns lifecycle and compaction jobs, and it
@@ -534,6 +546,93 @@ lifecycle job belongs in the archiver by every precedent in this repo.)*
 - Never run over an SSH tunnel; Plan 129 measured in-container at ~8x the
   throughput.
 
+---
+
+## Stage 1-2 as built
+
+Built 2026-08-13. Offline and dry-run-by-default; **nothing has been packed in
+production yet.**
+
+| File | What it is |
+|---|---|
+| `shared/packfile.py` | Format, writer, indexed reader, sidecar index |
+| `tests/shared/test_packfile.py` | 35 tests, no MinIO/DuckDB/dictionary needed |
+| `archiver/processors/pack_bronze_html.py` | Stage 2 packer + CLI |
+| `tests/archiver/test_pack_bronze_html.py` | 26 tests over an in-memory object store |
+| `tests/integration/archiver/test_pack_bronze_html_integration.py` | 5 tests, real MinIO |
+| `archiver/app.py` | `POST /pack/bronze/run` |
+| `docker-compose.yml` | `PACK_BRONZE_DICT_ID` on the archiver |
+
+### The format, concretely
+
+```
+header   32 B      magic, format version, dict_id, frame count, member count
+frame k            an independent zstd frame: members concatenated, compressed
+                   as one unit (~8 MiB uncompressed, tunable)
+footer   28 B/frame  offset, compressed length, uncompressed length, members
+trailer  20 B      footer offset, frame count, magic
+```
+
+The trailer is last so a reader that knows only the object's size finds
+everything in two ranged GETs, then fetches exactly one frame to read one
+member. `PackReader` takes a `fetch_range(offset, length)` callable and nothing
+else, which is why the same reader serves a local `bytes` and a ranged S3 GET
+with no S3 code in `shared/packfile.py` at all.
+
+### What the implementation settled
+
+- **The bronze hive partition already *is* the monthly capture bucket.**
+  `make_key` partitions by the capture's own `fetched_at`, so
+  `html/year=Y/month=M/artifact_type=T/` is exactly the Stage 0d grouping. No
+  regrouping, no scan to assign buckets — the packer's unit of work is one
+  existing prefix.
+- **The sidecar index is the checkpoint.** Resume reads the `.idx.parquet`
+  files already written for the bucket and subtracts their source keys. Cost is
+  one GET per existing pack, and nothing is re-serialised per object — the
+  O(n²) shape of Plan 129's first checkpoint (`f98e69b`) is not reachable from
+  this design rather than merely avoided in it.
+- **Verification runs twice.** `PackWriter.finish()` extracts and hashes every
+  member of the in-memory pack before returning it, so an unverified pack
+  cannot be uploaded; then the *stored* object is re-read over ranged GETs and
+  every member re-hashed before the sidecar is written. A pack with no sidecar
+  is therefore always an interrupted run, never a verified one.
+- **Objects with no silver row are packed, not skipped.** They sort after
+  everything silver can describe. An artifact nobody can name is still an
+  inode, and skipping it would leave it unpackable forever — the Stage 0c
+  discrepancy (~4.56M silver rows against ~4.07M objects) cuts both ways.
+- **The dictionary must be named explicitly.** `HTML_COMPRESSION_DICT_ID` is a
+  *writer*-side variable, so `configured_dictionary_id()` is empty in the
+  archiver. The packer reads `PACK_BRONZE_DICT_ID`, resolves it through the
+  registry before reading a single object, and **refuses to run** without one
+  unless `allow_no_dictionary` is passed — an undictionaried pack is a silent
+  ~10 GiB regression, which is exactly the kind of thing that should not be
+  possible to do by forgetting.
+- **The free-space floor refuses an apply run and warns a dry run.** "How much
+  would packing this month free?" is precisely the question worth asking when
+  the disk is full, and a dry run writes nothing.
+- **An orphan pack is reported, never deleted.** Its sequence number is
+  respected so nothing overwrites it. Stage 2 deletes nothing at all, including
+  its own mistakes.
+- `PACK_BRONZE_MAX_COHORTS` is `PACK_BRONZE_MAX_BUCKETS` — the grouping is
+  calendar buckets, and cohorts were the rejected alternative.
+
+### WARC, checked as the plan required
+
+WARC + CDX is the right *shape* and this plan borrowed it: one container, many
+captures, an external index. The WARC serialization itself was rejected, for a
+mechanical reason rather than a taste one.
+
+WARC compresses **per record** — that is what keeps records independently
+seekable, and it is the property this plan exists to give up. Stage 0d measured
+the win as coming from the shared window (`D/B = 0.250`); a per-record-gzipped
+WARC would deliver the container win and none of the window win. Compressing a
+whole WARC as one unit instead recovers the window but destroys random access
+unless an external offset index is added — which is the sidecar, already built.
+What remains of WARC is then a text header per record (~200-400 bytes against
+7.3 KB members) and a new pip dependency in the archiver. Nothing left to buy.
+
+---
+
 ### Stage 3 — Read path prefers objects, falls back to packs
 
 - `shared/minio.py::read_html` tries `html/` first, then resolves through the
@@ -570,11 +669,11 @@ between this plan and Plan 130.
 This is a solved problem and the plan should borrow rather than invent:
 
 - **WARC** (ISO 28500) + a **CDX** index — the web-archiving standard for
-  exactly this: many captures, one container, external index. Stage 1 should
-  check whether WARC + `warcio` gets there off the shelf before a bespoke format
-  is written. The argument against is that our members are already
-  dictionary-compressed zstd frames and WARC would add a second envelope; that
-  argument needs testing, not assuming.
+  exactly this: many captures, one container, external index. **Checked in
+  Stage 1 and rejected on a mechanism, not a preference — see
+  [WARC, checked as the plan required](#warc-checked-as-the-plan-required).**
+  Short version: WARC compresses per record, and per-record compression is the
+  exact property this plan gives up to win.
 - **Hadoop SequenceFile / HAR** — the same small-files problem, same answer.
 - **tar + zstd** — the degenerate case, rejected only because it has no index.
 
@@ -608,19 +707,21 @@ afterwards. Look first this time.
 
 ## Files Changed
 
-| File | Change |
-|------|--------|
-| `shared/packfile.py` | New: pack format, writer, indexed reader, frame cache |
-| `shared/minio.py` | `read_html` falls back to pack lookup |
-| `scripts/estimate_pack_savings.py` | New: Stage 0 measurement, offline |
-| `archiver/processors/pack_bronze_html.py` | New: Stage 2 packer, checkpointed |
-| `archiver/processors/delete_packed_source_html.py` | New: Stage 4, dry-run default |
-| `archiver/app.py` | `POST /pack/bronze/run`, `POST /pack/bronze/prune` |
-| `airflow/dags/pack_bronze_html.py` | New: Stage 5 lifecycle DAG |
-| `tests/shared/test_packfile.py` | New |
-| `tests/archiver/test_pack_bronze_html.py` | New |
-| `tests/integration/archiver/test_pack_bronze_html_integration.py` | New |
-| `tests/integration/airflow/test_dag_integrity.py` | Register the new DAG |
+| File | Change | Stage | Status |
+|------|--------|-------|--------|
+| `scripts/estimate_pack_savings.py` | Stage 0 measurement, offline | 0 | **done** |
+| `shared/packfile.py` | Pack format, writer, indexed reader, frame cache | 1 | **done** |
+| `tests/shared/test_packfile.py` | New | 1 | **done** |
+| `archiver/processors/pack_bronze_html.py` | Stage 2 packer, checkpointed | 2 | **done** |
+| `archiver/app.py` | `POST /pack/bronze/run` | 2 | **done** |
+| `docker-compose.yml` | `PACK_BRONZE_DICT_ID` on the archiver | 2 | **done** |
+| `tests/archiver/test_pack_bronze_html.py` | New | 2 | **done** |
+| `tests/integration/archiver/test_pack_bronze_html_integration.py` | New | 2 | **done** |
+| `shared/minio.py` | `read_html` falls back to pack lookup | 3 | not started |
+| `archiver/processors/delete_packed_source_html.py` | Stage 4, dry-run default | 4 | not started |
+| `archiver/app.py` | `POST /pack/bronze/prune` | 4 | not started |
+| `airflow/dags/pack_bronze_html.py` | Lifecycle DAG | 5 | not started |
+| `tests/integration/airflow/test_dag_integrity.py` | Register the new DAG | 5 | not started |
 
 ---
 

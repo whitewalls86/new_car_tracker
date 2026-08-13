@@ -21,6 +21,7 @@ from archiver.processors.flush_silver_observations import (
     flush_silver_observations as _flush_silver_observations,
 )
 from archiver.processors.flush_staging_events import flush_staging_events as _flush_staging_events
+from archiver.processors.pack_bronze_html import pack_bronze_html as _pack_bronze_html
 from shared.job_counter import active_job, is_idle
 from shared.logging_setup import configure_logging
 
@@ -93,6 +94,32 @@ def trigger_compact_silver() -> Dict[str, Any]:
     """Compact silver_normalized/observations partitions (Airflow DAG trigger)."""
     with active_job():
         return _compact_silver()
+
+
+@app.post("/pack/bronze/run")
+def trigger_pack_bronze_html(payload: dict = Body(default={})) -> Dict[str, Any]:
+    """Pack cold bronze HTML into indexed packs (Plan 131 Stage 2).
+
+    Dry-run unless the caller passes ``apply: true``. Stage 2 writes packs
+    alongside their sources and deletes nothing — deleting packed sources is
+    Stage 4 and has its own endpoint when it exists.
+    """
+    with active_job():
+        payload = payload or {}
+        try:
+            kwargs = {
+                key: payload[key]
+                for key in (
+                    "apply", "artifact_type", "year", "month", "max_buckets",
+                    "max_packs", "max_pack_bytes", "frame_target_bytes",
+                    "min_age_days", "min_free_bytes", "dict_id",
+                    "allow_no_dictionary",
+                )
+                if key in payload
+            }
+            return _pack_bronze_html(**kwargs)
+        except (ValueError, TypeError) as e:
+            raise HTTPException(status_code=400, detail=f"Invalid request payload: {e}")
 
 
 @app.post("/flush/staging/run")
