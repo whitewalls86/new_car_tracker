@@ -629,6 +629,46 @@ def test_iter_ordered_keys_consumes_remaining_and_appends_the_leftovers():
     assert remaining == set()
 
 
+def test_listing_reports_progress(store, caplog):
+    """A phase that owns most of a run's wall clock must not be silent.
+
+    The first production dry-run listed ~1M objects with no output between
+    "dictionary resolved" and the summary, and was indistinguishable from hung.
+    """
+    _seed(store, 12)
+
+    with caplog.at_level("INFO", logger="archiver"):
+        packer._list_objects(store, "bronze", _PREFIX, progress_every=5)
+
+    progress = [r for r in caplog.records if "listing" in r.getMessage()]
+    assert progress, "no progress lines emitted"
+    assert "keys/s" in progress[0].getMessage()
+    assert any("listed" in r.getMessage() for r in caplog.records)
+
+
+def test_the_per_month_existence_probe_stays_silent(store, caplog):
+    """discover_buckets probes every month with limit=1; that must not log."""
+    _seed(store, 12)
+
+    with caplog.at_level("INFO", logger="archiver"):
+        found = packer._list_objects(
+            store, "bronze", _PREFIX, limit=1, progress_every=0
+        )
+
+    assert len(found) == 1
+    assert [r for r in caplog.records if "listing" in r.getMessage()] == []
+
+
+def test_free_space_falls_back_when_the_configured_path_is_missing(caplog):
+    """The default is container-shaped; a CLI run elsewhere must not die on it."""
+    with caplog.at_level("WARNING", logger="archiver"):
+        reading = packer.free_space("/no/such/path/for/packing")
+
+    assert reading["path"] == "/"
+    assert reading["free_bytes"] > 0
+    assert any("does not exist" in r.getMessage() for r in caplog.records)
+
+
 def test_free_space_status_measures_a_real_filesystem():
     status = packer.free_space_status(0)
     assert status["ok"] is True

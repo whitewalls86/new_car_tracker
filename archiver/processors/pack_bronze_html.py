@@ -42,6 +42,7 @@ import math
 import os
 import shutil
 import sys
+import time
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, Iterator, List, Optional, Sequence, Set, Tuple
@@ -101,14 +102,27 @@ FRAME_TARGET_BYTES = int(
 
 MIN_FREE_BYTES = int(os.environ.get("PACK_BRONZE_MIN_FREE_BYTES", str(5 * 1024 ** 3)))
 
-#: Filesystem to measure. MinIO's data lives in a docker volume, so the
-#: archiver container's own root filesystem sits on the same device.
-FREE_SPACE_PATH = os.environ.get("PACK_BRONZE_FREE_SPACE_PATH", "/")
+#: Filesystem to measure for the free-space floor. **Not** the container's ``/``:
+#: measured on the production VM 2026-08-13, ``/`` is a 49 GB overlay on
+#: /dev/sda1 with 11.5 GiB free, while MinIO's data volume lives on /dev/sdb
+#: (196 GB, 38 GB free, and the 4.03M free inodes this plan is racing). A floor
+#: checked against ``/`` guards a disk the bucket is not on.
+#:
+#: ``/usr/app/logs`` is the archiver's own named docker volume, so it sits under
+#: the same docker volumes root as MinIO's ``parquet_data`` — verified identical
+#: to the host's /mnt/data reading, down to the inode count. It needs no compose
+#: change, which is why it is the default rather than a new bind mount.
+FREE_SPACE_PATH = os.environ.get("PACK_BRONZE_FREE_SPACE_PATH", "/usr/app/logs")
 
 #: DuckDB is bounded here for the same reason Plan 125 bounded it: an
 #: unconstrained scan of silver OOMs on the production VM.
 DUCKDB_MEMORY_LIMIT = os.environ.get("PACK_BRONZE_DUCKDB_MEMORY", "2GB")
 DUCKDB_THREADS = int(os.environ.get("PACK_BRONZE_DUCKDB_THREADS", "2"))
+
+#: Objects between progress lines while listing a bucket. At the measured
+#: ~700 keys/s this is a line every ~70s, which is the difference between a
+#: job that looks hung for 25 minutes and one that reports a rate.
+PROGRESS_EVERY = int(os.environ.get("PACK_BRONZE_PROGRESS_EVERY", "50000"))
 
 DEFAULT_ARTIFACT_TYPE = "detail_page"
 
@@ -152,7 +166,21 @@ def free_space(path: str = FREE_SPACE_PATH) -> Dict[str, Any]:
     Inodes are the constraint this whole plan exists for, so they are reported
     even though the floor is expressed in bytes: a run that frees bytes while
     the inode count keeps climbing is the exact failure Plan 129 recorded.
+
+    A path that does not exist falls back to ``/`` with a warning rather than
+    raising. The default is container-shaped, and a CLI run on a workstation
+    must not die measuring free space — but it must also not silently report a
+    different disk than the one it names, hence the warning and the reported
+    ``path``.
     """
+    if not os.path.exists(path):
+        logger.warning(
+            "pack_bronze_html: free-space path %s does not exist; measuring / "
+            "instead. On the production VM / is a different filesystem from the "
+            "one holding the bucket.",
+            path,
+        )
+        path = "/"
     usage = shutil.disk_usage(path)
     result: Dict[str, Any] = {
         "path": path,
@@ -263,23 +291,60 @@ def discover_buckets(
             if not _month_has_settled(year, month, today, settle_days):
                 continue
             type_prefix = bucket_prefix(artifact_type, year, month)
-            if _list_objects(client, bucket, type_prefix, limit=1):
+            if _list_objects(client, bucket, type_prefix, limit=1, progress_every=0):
                 eligible.append((year, month))
     return sorted(eligible)
 
 
 def _list_objects(
-    client: Any, bucket: str, prefix: str, *, limit: int = 0
+    client: Any,
+    bucket: str,
+    prefix: str,
+    *,
+    limit: int = 0,
+    progress_every: int = PROGRESS_EVERY,
 ) -> List[Tuple[str, int]]:
-    """List ``.html.zst`` objects under *prefix* as (key, size)."""
+    """List ``.html.zst`` objects under *prefix* as (key, size).
+
+    **This is the dominant cost of a run**, and it is measured, not guessed:
+    on the production VM 2026-08-13, enumerating April's ~1.02M objects took
+    ~25 minutes at ~700 keys/s. That is ~0.8 requests/s — a listing is a few
+    large requests, not many small ones, which is why it barely registers as
+    request rate while taking half an hour.
+
+    It is slow for the reason this plan exists: MinIO is walking a prefix
+    holding ~1M objects at 2.24 inodes each. The inode problem shows up here
+    as latency before it shows up as a full disk.
+
+    So it reports progress. A phase that occupies most of a run's wall clock
+    must not be silent — the first production dry-run looked hung for 25
+    minutes and was not.
+    """
     paginator = client.get_paginator("list_objects_v2")
     out: List[Tuple[str, int]] = []
+    started = time.monotonic()
+    next_report = progress_every
+
     for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
         for entry in page.get("Contents", []):
             if entry["Key"].endswith(".html.zst"):
                 out.append((entry["Key"], entry["Size"]))
                 if limit and len(out) >= limit:
                     return out
+        if progress_every and len(out) >= next_report:
+            elapsed = time.monotonic() - started
+            logger.info(
+                "pack_bronze_html: listing %s — %d objects in %.0fs (%.0f keys/s)",
+                prefix, len(out), elapsed, len(out) / elapsed if elapsed else 0.0,
+            )
+            next_report = len(out) + progress_every
+
+    if progress_every and out:
+        elapsed = time.monotonic() - started
+        logger.info(
+            "pack_bronze_html: listed %s — %d objects in %.0fs",
+            prefix, len(out), elapsed,
+        )
     return out
 
 
@@ -676,6 +741,19 @@ def pack_bronze_html(
 
     reading = free_space_status(min_free_bytes, FREE_SPACE_PATH)
     result["free_space"] = reading
+    # Logged on every run, including the good case: the floor is only as
+    # meaningful as the filesystem it measured, and a run that guarded the
+    # wrong disk should say so in its own log rather than in someone's
+    # postmortem. (The container's / is not the disk the bucket is on.)
+    logger.info(
+        "pack_bronze_html: free space on %s — %.1f GiB free of %.1f GiB, "
+        "%s free inodes, floor %.1f GiB",
+        reading["path"],
+        reading["free_bytes"] / 1024 ** 3,
+        reading["total_bytes"] / 1024 ** 3,
+        f"{reading['free_inodes']:,}" if reading["free_inodes"] is not None else "?",
+        min_free_bytes / 1024 ** 3,
+    )
     if not reading["ok"]:
         if apply:
             logger.error("pack_bronze_html: %s", reading["message"])
