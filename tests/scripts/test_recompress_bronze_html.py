@@ -769,3 +769,46 @@ class TestMainExitCodes:
 
         assert code == 0
         get_dictionary.assert_not_called()
+
+
+# ── Group K: checkpoint write frequency ───────────────────────────────────────
+
+
+class TestCheckpointEvery:
+    """Checkpointing every object is O(n^2): each save re-sorts and re-serialises
+    the whole key set. Measured on a real run, 51 ms/object at 66K keys."""
+
+    def _run(self, n, every, tmp_path):
+        from scripts.recompress_bronze_html import Summary, process_object
+
+        keys = set()
+        summary = Summary()
+        saves = []
+        with patch("scripts.recompress_bronze_html.save_checkpoint",
+                   side_effect=lambda *a, **k: saves.append(len(keys))):
+            for i in range(n):
+                client = _make_client(b"x" * _MOCK_OLD_SIZE)
+                with _mock_zstd(_MOCK_NEW_SMALLER):
+                    process_object(
+                        client, "bronze", _obj(key=f"html/{i}.zst"),
+                        apply=True, force=False,
+                        checkpoint_keys=keys, checkpoint_path=tmp_path / "ck.json",
+                        summary=summary, checkpoint_every=every,
+                    )
+        return saves
+
+    def test_default_of_one_saves_every_object(self, tmp_path):
+        assert self._run(5, 1, tmp_path) == [1, 2, 3, 4, 5]
+
+    def test_interval_saves_only_on_the_boundary(self, tmp_path):
+        assert self._run(10, 5, tmp_path) == [5, 10]
+
+    def test_interval_larger_than_the_run_never_saves_mid_run(self, tmp_path):
+        """The tail is flushed by main() instead, so nothing is lost."""
+        assert self._run(4, 500, tmp_path) == []
+
+    def test_cli_default_is_not_every_object(self):
+        from scripts.recompress_bronze_html import parse_args
+
+        with patch.object(sys, "argv", ["x", "--year", "2026", "--month", "4"]):
+            assert parse_args().checkpoint_every == 500

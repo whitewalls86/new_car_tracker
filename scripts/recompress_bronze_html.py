@@ -167,6 +167,7 @@ def process_object(
     checkpoint_path: Path | None,
     summary: Summary,
     dictionary_id: int | None = None,
+    checkpoint_every: int = 1,
 ) -> None:
     """Download, recompress, and conditionally write one object. Mutates summary in-place.
 
@@ -239,7 +240,17 @@ def process_object(
     summary.new_bytes += new_size
 
     checkpoint_keys.add(obj.key)
-    if checkpoint_path:
+    # Checkpointing every object is O(n^2) over a run: save_checkpoint sorts and
+    # re-serialises the whole key set each time, so the cost per object grows
+    # with the number already done. Measured on a real run: 51 ms/object at 66K
+    # keys (6.4 MiB of JSON), which by 515K keys would be ~400 ms/object and
+    # ~14 hours of pure bookkeeping for one month.
+    #
+    # Saving periodically makes it O(n/interval). The only cost is that a
+    # resumed run repeats up to `interval` objects, which is harmless:
+    # recompressing an already-converted object produces identical bytes, so it
+    # is skipped as "not smaller" rather than rewritten.
+    if checkpoint_path and len(checkpoint_keys) % checkpoint_every == 0:
         save_checkpoint(checkpoint_path, checkpoint_keys, summary)
 
     LOG.debug(
@@ -351,6 +362,14 @@ def parse_args() -> argparse.Namespace:
         help="JSON checkpoint file; load processed keys on start, append on each apply",
     )
     perf.add_argument("--json-out", type=Path, help="Write final summary JSON to PATH")
+    perf.add_argument(
+        "--checkpoint-every", type=int, default=500,
+        help=(
+            "Persist the checkpoint every N processed objects (default 500). "
+            "Writing every object is O(n^2) over a long run; a resume repeats "
+            "at most N objects, which is idempotent."
+        ),
+    )
 
     apply_grp = parser.add_argument_group("Apply mode (default is dry-run)")
     apply_grp.add_argument(
@@ -472,6 +491,7 @@ def main() -> int:
                 checkpoint_path=args.checkpoint,
                 summary=summary,
                 dictionary_id=args.dictionary_id,
+                checkpoint_every=args.checkpoint_every,
             )
 
             scanned_bytes += obj.size
@@ -485,6 +505,11 @@ def main() -> int:
                 LOG.info("Stopping at --max-bytes=%d", args.max_bytes)
                 done = True
                 break
+
+    # Flush the tail of the final interval, so a resume never re-does more than
+    # the last --checkpoint-every objects.
+    if args.checkpoint and args.apply:
+        save_checkpoint(args.checkpoint, checkpoint_keys, summary)
 
     print_summary(summary, dry_run=not args.apply, json_out=args.json_out)
     # A backfill that failed every object must not exit 0. This runs unattended
