@@ -51,6 +51,7 @@ stable substrate.
 | [128](plan_128_false_block_detection.md) | Cloudflare challenge pages swallowed as successful detail scrapes | Draft |
 | [129](plan_129_zstd_dictionary_compression.md) | Trained zstd dictionary compression for bronze HTML | In production — dict v1 live, backfill running |
 | [130](plan_130_parser_input_projection.md) | Parser-input projection (truncating raw HTML) | Draft — blocked on 129 + taxonomy gap |
+| [131](plan_131_packed_cold_storage.md) | Packed cold storage for bronze HTML | Draft — Stage 0 measurement gate not run |
 
 ---
 
@@ -81,6 +82,17 @@ stable analytics substrate and Plans 112/113 clarify refresh-policy promotion.
 **Plan 79 whenever needed** - IP flagging is not currently active.
 Prerequisites all exist. Provision Oracle Cloud VMs and fan out the DAG when
 needed.
+
+**Plans 114/129/130/131 bronze storage sequence** - Plan 114 measured sectioned
+dedup and rejected it (-223%; MinIO's ~8 KB/object floor). Plan 129 shipped the
+trained dictionary it recommended instead, cutting bytes ~73% logical / ~60%
+physical while leaving object count untouched. Plan 131 is the remaining lever
+and the only one that addresses **inodes**, which compression cannot; its Stage 0
+must first re-read `df -i` and price a results-page retention policy, which may
+be the cheaper answer. Plan 130 is the largest measured win and the only
+irreversible one, so it stays blocked until the reversible options are exhausted
+and the taxonomy gap is closed. Retention/expiry for raw HTML is still unwritten
+and is the gap behind all four.
 
 **Plans 110-125 lakehouse/adaptive-refresh sequence** - Plans 110 and 111 are
 the completed foundation: storage normalization and adaptive-refresh feature
