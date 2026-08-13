@@ -358,8 +358,12 @@ def parse_args() -> argparse.Namespace:
         help="Write recompressed objects to MinIO",
     )
     apply_grp.add_argument(
-        "--dictionary-id", type=int, required=True,
-        help="Registered zstd dictionary ID to use for every output frame",
+        "--dictionary-id", type=int, default=None,
+        help=(
+            "Registered zstd dictionary ID for every output frame. Omit to write "
+            "plain level-9 frames (Plan 116 behaviour), which today's deployed "
+            "readers understand and which therefore needs no prior deploy."
+        ),
     )
     apply_grp.add_argument(
         "--force", action="store_true",
@@ -384,7 +388,7 @@ def parse_args() -> argparse.Namespace:
         parser.error("one of --prefix or --year is required")
     if args.force and not args.apply:
         parser.error("--force requires --apply")
-    if args.dictionary_id <= 0:
+    if args.dictionary_id is not None and args.dictionary_id <= 0:
         parser.error("--dictionary-id must be positive")
 
     return args
@@ -405,17 +409,25 @@ def main() -> int:
     # this a typo'd ID fails per-object into summary.failed and the run walks
     # the entire prefix doing nothing -- slowly, since an unresolvable ID also
     # re-queries the registry for every object.
-    try:
-        from shared.compression import get_dictionary
+    if args.dictionary_id is None:
+        LOG.info(
+            "No --dictionary-id: writing plain level-%d frames, readable by "
+            "every deployed reader.", _TARGET_LEVEL,
+        )
+    else:
+        try:
+            from shared.compression import get_dictionary
 
-        registered = get_dictionary(args.dictionary_id)
-    except Exception as exc:
-        LOG.error("Dictionary ID %s is not usable: %s", args.dictionary_id, exc)
-        return 1
-    LOG.info(
-        "Dictionary %d resolved from %s (%d bytes)",
-        registered.dict_id, registered.source, len(registered.raw),
-    )
+            registered = get_dictionary(args.dictionary_id)
+        except Exception as exc:
+            LOG.error("Dictionary ID %s is not usable: %s", args.dictionary_id, exc)
+            return 1
+        LOG.info(
+            "Dictionary %d resolved from %s (%d bytes). Every object written by this "
+            "run becomes unreadable to any service without the dictionary-aware read "
+            "path deployed.",
+            registered.dict_id, registered.source, len(registered.raw),
+        )
 
     fs = get_s3fs()
     client = get_boto3_client()

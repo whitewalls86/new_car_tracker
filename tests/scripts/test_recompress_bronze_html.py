@@ -751,3 +751,21 @@ class TestMainExitCodes:
         )
 
         assert code == 0
+
+    def test_no_dictionary_id_writes_plain_frames_without_touching_the_registry(self):
+        """The zero-deploy path: plain level-9 needs no dictionary at all."""
+        get_dictionary = MagicMock()
+
+        def succeed(*_args, **kwargs):
+            assert kwargs["dictionary_id"] is None
+            kwargs["summary"].recompressed += 1
+
+        code = _run_main(
+            ["--year", "2026", "--month", "4"],
+            objects=[_obj()],
+            get_dictionary=get_dictionary,
+            process=succeed,
+        )
+
+        assert code == 0
+        get_dictionary.assert_not_called()
