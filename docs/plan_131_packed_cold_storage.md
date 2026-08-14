@@ -22,12 +22,12 @@ understood: see [April packed in full](#april-packed-in-full--measured-2026-08-1
 
 **Stage 3 DEPLOYED AND VERIFIED 2026-08-14.** `read_html` falls back to the
 pack index when an object is gone, transparently to every caller, and verifies
-every packed read against the sidecar's `raw_sha256`. **160/160 April members
-read byte-identically through both paths, 0 failed, with every source object
-still in place** — the Stage 4 precondition is met. Warm, a packed read costs
-5.90 ms against the object path's 5.79 ms; cold it is 206 ms, and the cost is
-the sidecar scan rather than decompression. See
-[Latency](#latency-measured-in-production-2026-08-14--the-gate-passed). The consumer survey found
+every packed read against the sidecar's `raw_sha256`. **365 members across April and
+May read byte-identically through both paths, 0 failed, with every source
+object still in place** — the Stage 4 precondition is met. The object path is
+unchanged at ~5.5-5.8 ms; a packed read is 6-20 ms with its index resident and
+207-296 ms cold, where the cost is the sidecar scan rather than decompression.
+See [Latency](#latency-measured-in-production-2026-08-14--the-gate-passed). The consumer survey found
 **four** bypasses where it had previously named one; two are fixed and two are
 harmless by construction. See [Stage 3 as built](#stage-3-as-built) — including
 the measurement that chose pyarrow over DuckDB and the latency number that is
@@ -1008,25 +1008,48 @@ container. **160 members sampled across all 32 packs, 160 verified, 0 failed,
 both paths while every source object still existed. That is the Stage 4
 precondition, met.
 
-| path | p50 | p95 | max |
-|---|---|---|---|
-| object (today's read) | **5.79 ms** | 8.35 ms | 100.95 ms |
-| pack, cold | **206.65 ms** | 361.93 ms | 483.19 ms |
-| pack, warm | **5.90 ms** | 34.31 ms | 34.31 ms |
+May was run immediately after and is the cleaner month — no null tail,
+complete metadata coverage: **41 sidecars, 205 sampled, 205 verified, 0 failed,
+every source still in place.** Across both months **365 artifacts verified,
+0 failures.**
 
-**Warm, a packed read costs what an object read costs.** 5.90 ms against
-5.79 ms — the frame decompress and the ranged GETs disappear into the same
-noise as a single object fetch. That is the number reprocessing sees, and it
-means the plan's "access to a single artifact becomes slower" trade barely
-applies to the case that actually matters. *(n=5 — the script only warms
-members of the first sampled pack, so a wider warm sample is worth taking.)*
+| path | April p50 | April p95 | May p50 | May p95 |
+|---|---|---|---|---|
+| object (today's read) | **5.79 ms** | 8.35 ms | **5.51 ms** | 7.49 ms |
+| pack, cold | **206.65 ms** | 361.93 ms | **296.34 ms** | 673.92 ms |
+| pack, warm | **5.90 ms** | 34.31 ms | **19.63 ms** | 62.97 ms |
 
-**Cold is 36x the object path, and the cost is not decompression.** It is the
-sidecar scan. `verify_pack_read_path --cold` drops every cache before each
-read, so resolving a key in pack *k* re-fetches and re-parses *k+1* sidecars at
-~1.2 MB each. The run's own throughput shows it directly: **9.4/s → 6.4/s →
-4.8/s**, degrading monotonically as the sample walks toward pack-00031. Frame
-decompression is a small constant on top.
+**The object path is unchanged and identical across months** — 5.79 and
+5.51 ms. That is the point: live parsing reads hot-month objects and never
+touches a pack.
+
+**`pack_warm` is index-warm but frame-cold, and that is the honest
+single-artifact number.** An earlier revision of this section called it "the
+reprocessing shape". It is not. The five warm samples come from one pack but
+land in five *different* frames (April: 238, 275, 373, 68, 286) and the reader
+caches two, so each read still decompresses a fresh ~16 MiB frame. 6-20 ms is
+therefore the cost of **random access within a pack whose index is already
+resident**. Sequential reprocessing walks members in frame order and amortizes
+one decompress across every member of that frame, so it is faster than this
+number, not slower. *(n=5 in both months — too small to read the April/May
+gap as signal.)*
+
+**Cold is 36-54x the object path, and the cost is not decompression.** It is
+the sidecar scan. `verify_pack_read_path` drops every cache before each cold
+read, so resolving a key in pack *k* re-fetches and re-parses *k+1* sidecars.
+April's throughput shows it directly: **9.4/s → 6.4/s → 4.8/s**, degrading
+monotonically as the sample walked toward pack-00031. Frame decompression is a
+small constant on top.
+
+**May confirms the mechanism by being worse, despite being the better-packed
+month.** It has no null tail and complete metadata, and it is still 43% slower
+cold (296 vs 207 ms p50) with a p95 nearly double (674 vs 362 ms) — because it
+has **41 packs to April's 32, and ~27,980 members per pack against ~17,500**,
+so both the number of sidecars scanned and the bytes parsed per sidecar are
+larger. The cold cost tracks packs-per-month times sidecar size, not data
+quality. **June and every later month will be slower again on the same
+trajectory**, which turns the cache defect below from a nuisance into the thing
+to fix before any large reparse.
 
 #### The cold figure is a deliberate worst case, but it exposes a real cache bug
 
