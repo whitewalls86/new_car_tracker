@@ -719,8 +719,10 @@ class TestCli:
 
     def test_sample_in_and_sample_out_are_available_for_iterating(self):
         args = parse_args(["--sample-in", "/tmp/s.json", "--sample-out", "/tmp/o.json"])
-        assert str(args.sample_in) == "/tmp/s.json"
-        assert str(args.sample_out) == "/tmp/o.json"
+        # Both are type=Path, so compare as paths — str() renders separators
+        # per platform and the assertion is about what the flag parsed to.
+        assert args.sample_in == Path("/tmp/s.json")
+        assert args.sample_out == Path("/tmp/o.json")
 
     def test_chunk_targets_accept_multiple_values(self):
         args = parse_args(["--chunk-targets", "256", "1024"])
