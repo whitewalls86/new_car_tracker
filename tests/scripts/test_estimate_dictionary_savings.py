@@ -18,6 +18,7 @@ critical dependency on the strength of a number nobody can reproduce.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -638,4 +639,5 @@ def test_cli_accepts_the_documented_flags():
     assert args.sample_size == 500
     assert args.dict_sizes == [32, 112]
     assert args.optimize_cover is True
-    assert str(args.json_out) == "/tmp/report.json"
+    # type=Path, so compare as a path — str() renders separators per platform.
+    assert args.json_out == Path("/tmp/report.json")

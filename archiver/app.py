@@ -1,7 +1,7 @@
 import logging
 import os
 from datetime import datetime
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from fastapi import Body, FastAPI, HTTPException
 
@@ -99,6 +99,76 @@ def trigger_compact_silver() -> Dict[str, Any]:
         return _compact_silver()
 
 
+# ---------------------------------------------------------------------------
+# Plan 131 — pack lifecycle (Stage 2 packing, Stage 4 pruning)
+# ---------------------------------------------------------------------------
+#
+# Both processors return a summary dict rather than raising: partial results
+# are still results, which is right for a job you run by hand and read. Both
+# then translate that summary into a failure *on the CLI* — and the HTTP side
+# never got the same translation, so resp.raise_for_status() passed on a run
+# that deleted nothing, refused forty thousand objects, or never started.
+#
+# These two predicates give the HTTP side that contract, so a curl gets the
+# same answer the DAG does. dbt_runner is the in-repo precedent: a 500 whose
+# detail carries the whole result, which sensors.post_json parses back out and
+# a notify task can quote.
+#
+# They start from each job's CLI exit code and diverge in one place: the packer
+# exits 1 on read_failures and the endpoint only warns. A human running the CLI
+# wants to know one object was unreadable; a monthly DAG must not throw away a
+# packed month over it. The deleter's predicate is the CLI's exactly.
+#
+# Deliberately scoped to the two Plan 131 endpoints. flush/silver,
+# flush/staging and compact/silver have exactly the same gap and should be
+# fixed the same way — but that converts long-standing *silent* failures into
+# sudden DAG failures and pages, which is its own change with its own blast
+# radius, not something to smuggle in under a packing plan.
+
+
+def _pack_failure_reason(summary: Dict[str, Any]) -> Optional[str]:
+    """Why this pack run counts as failed, or None.
+
+    Only an aborted run. Everything else warns and carries:
+
+    - ``read_failures`` — a source object could not be read, so it was left
+      unpacked and its bytes are still exactly where they were. Packing is
+      additive and nothing is deleted here, so an unreadable object costs a
+      later run, not any data. The packer's CLI exits 1 on this
+      (``pack_bronze_html.py:996``) and the endpoint deliberately does not: a
+      monthly DAG that fails on one bad object out of 557,065 abandons the
+      other 557,064. Each one is already logged at WARNING by the packer.
+    - ``stopped_at_max_packs`` — the cap doing its job.
+    - ``orphan_packs`` — an earlier run was interrupted. The packer reports
+      orphans and never writes into them, so carrying the condition is safe.
+    """
+    if summary.get("error"):
+        return f"run aborted: {summary['error']}"
+    return None
+
+
+def _prune_failure_reason(summary: Dict[str, Any]) -> Optional[str]:
+    """Why this prune run counts as failed, or None. Mirrors the CLI's exit 1.
+
+    ``objects_refused`` is the loudest signal this job produces: one of the
+    three per-member checks disagreed, so a pack or the resolver is wrong.
+    Nothing was lost — that is the safety property working — but it must not
+    return 200.
+
+    ``objects_deleted == 0`` is **not** a failure on its own: a fully drained
+    month legitimately deletes nothing and returns after one listing. Neither
+    is ``capped``.
+    """
+    if summary.get("error"):
+        return f"run aborted: {summary['error']}"
+    refused = summary.get("objects_refused") or 0
+    if refused:
+        return (
+            f"{refused} object(s) refused verification; nothing was deleted for them"
+        )
+    return None
+
+
 @app.post("/pack/bronze/run")
 def trigger_pack_bronze_html(payload: dict = Body(default={})) -> Dict[str, Any]:
     """Pack cold bronze HTML into indexed packs (Plan 131 Stage 2).
@@ -106,6 +176,9 @@ def trigger_pack_bronze_html(payload: dict = Body(default={})) -> Dict[str, Any]
     Dry-run unless the caller passes ``apply: true``. Stage 2 writes packs
     alongside their sources and deletes nothing — deleting packed sources is
     Stage 4 and has its own endpoint when it exists.
+
+    Returns **500** with the summary as ``detail`` when the run aborted.
+    ``read_failures`` warn and carry — see ``_pack_failure_reason``.
     """
     with active_job():
         payload = payload or {}
@@ -120,9 +193,25 @@ def trigger_pack_bronze_html(payload: dict = Body(default={})) -> Dict[str, Any]
                 )
                 if key in payload
             }
-            return _pack_bronze_html(**kwargs)
+            result = _pack_bronze_html(**kwargs)
         except (ValueError, TypeError) as e:
             raise HTTPException(status_code=400, detail=f"Invalid request payload: {e}")
+
+        reason = _pack_failure_reason(result)
+        if reason:
+            logger.error("pack_bronze_html: run failed — %s", reason)
+            raise HTTPException(
+                status_code=500, detail=dict(result, failure_reason=reason)
+            )
+        if result.get("read_failures"):
+            # Returning 200 on this is a decision, so it says so once here
+            # rather than only in the per-object warnings the packer emits.
+            logger.warning(
+                "pack_bronze_html: %d source object(s) could not be read and were "
+                "left unpacked; a later run will pick them up",
+                result["read_failures"],
+            )
+        return result
 
 
 @app.post("/pack/bronze/prune")
@@ -137,6 +226,10 @@ def trigger_prune_packed_source_html(payload: dict = Body(default={})) -> Dict[s
     ``year`` and ``month`` are required. Deliberately: the packer can discover
     what is eligible because packing is additive, and this cannot, because it
     is not.
+
+    Returns **500** with the summary as ``detail`` when the run aborted or
+    refused an object, matching the CLI's exit code — see
+    ``_prune_failure_reason``.
     """
     with active_job():
         payload = payload or {}
@@ -154,9 +247,17 @@ def trigger_prune_packed_source_html(payload: dict = Body(default={})) -> Dict[s
                 )
                 if key in payload
             }
-            return _delete_packed_source_html(**kwargs)
+            result = _delete_packed_source_html(**kwargs)
         except (ValueError, TypeError) as e:
             raise HTTPException(status_code=400, detail=f"Invalid request payload: {e}")
+
+        reason = _prune_failure_reason(result)
+        if reason:
+            logger.error("delete_packed_source_html: run failed — %s", reason)
+            raise HTTPException(
+                status_code=500, detail=dict(result, failure_reason=reason)
+            )
+        return result
 
 
 @app.post("/flush/staging/run")

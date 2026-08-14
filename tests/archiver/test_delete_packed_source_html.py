@@ -335,13 +335,42 @@ class TestCapsAndResume:
         assert len(store.deleted) == 3
         assert result["capped"] is True
 
-    def test_cap_of_zero_deletes_nothing(self, store):
-        _seed(store, 5)
+    def test_max_objects_zero_drains_the_whole_bucket(self, store):
+        # 0 means "no cap" in both jobs. It used to mean "budget 0" here, which
+        # tripped capped=True, deleted nothing, and reported success — the one
+        # shape of failure this job must never have, on the one caller (the
+        # Stage 5 DAG) that has to pass an uncapped delete.
+        first, _, _ = _seed(store, 4, seq=0, start=0)
+        second, _, _ = _seed(store, 4, seq=1, start=100)
+        third, _, _ = _seed(store, 4, seq=2, start=200)
 
         result = _run(apply=True, max_objects=0)
 
-        assert result["objects_deleted"] == 0
-        assert store.deleted == []
+        assert result["objects_deleted"] == 12
+        assert result["packs_drained"] == 3
+        assert result["capped"] is False
+        assert sorted(store.deleted) == sorted(first + second + third)
+
+    def test_negative_max_objects_is_also_uncapped(self, store):
+        keys, _, _ = _seed(store, 5)
+
+        result = _run(apply=True, max_objects=-1)
+
+        assert result["objects_deleted"] == 5
+        assert result["capped"] is False
+        assert sorted(store.deleted) == sorted(keys)
+
+    def test_max_packs_still_caps_when_max_objects_is_zero(self, store):
+        # The two caps are independent: uncapping objects must not uncap packs.
+        first, _, _ = _seed(store, 4, seq=0, start=0)
+        second, _, _ = _seed(store, 4, seq=1, start=100)
+
+        result = _run(apply=True, max_objects=0, max_packs=1)
+
+        assert result["packs_drained"] == 1
+        assert result["capped"] is True
+        assert set(store.deleted) == set(first)
+        assert all(key in store.objects for key in second)
 
     def test_resume_deletes_each_object_at_most_once(self, store):
         keys, _, _ = _seed(store, 9)
