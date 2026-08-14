@@ -161,6 +161,15 @@ There is no danger to the data either way — the bytes live in verified packs
 regardless — but the reparse job would start 404ing, and the failure would look
 like a bug rather than a sequencing mistake.
 
+> **Prerequisite: [Plan 133](plan_133_pack_read_path_hardening.md).** Verifying
+> Plan 131 Stage 3 in production surfaced two read-path defects that land
+> squarely on this plan and on nothing else currently scheduled: the stuck-
+> artifact reaper decides `retry` vs `skip` with `object_exists`, which has no
+> pack fallback and would abandon reparse jobs for a pruned month; and the
+> sidecar index cache thrashes on a month-sized scan, costing ~300 ms per cold
+> artifact — roughly 3 hours across this plan's 36K. **Do Plan 133 before
+> Stage 2.**
+
 ### New artifact_ids, and what that costs
 
 The orphans have no `artifact_id` to reuse; re-enqueueing mints new ones. The

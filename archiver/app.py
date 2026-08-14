@@ -10,6 +10,9 @@ from archiver.processors.cleanup_parquet import run_cleanup_parquet as _run_clea
 from archiver.processors.cleanup_queue import cleanup_queue as _cleanup_queue
 from archiver.processors.cleanup_queue import run_cleanup_queue as _run_cleanup_queue
 from archiver.processors.compact_silver import compact_silver as _compact_silver
+from archiver.processors.delete_packed_source_html import (
+    delete_packed_source_html as _delete_packed_source_html,
+)
 from archiver.processors.export_ci_lake_snapshot import (
     SnapshotRequest,
     SnapshotRequestError,
@@ -118,6 +121,40 @@ def trigger_pack_bronze_html(payload: dict = Body(default={})) -> Dict[str, Any]
                 if key in payload
             }
             return _pack_bronze_html(**kwargs)
+        except (ValueError, TypeError) as e:
+            raise HTTPException(status_code=400, detail=f"Invalid request payload: {e}")
+
+
+@app.post("/pack/bronze/prune")
+def trigger_prune_packed_source_html(payload: dict = Body(default={})) -> Dict[str, Any]:
+    """Delete bronze HTML objects that are inside a verified pack (Plan 131 Stage 4).
+
+    **Dry-run unless the caller passes ``apply: true``**, and capped by
+    ``max_objects`` / ``max_packs`` in either mode. This is the only endpoint on
+    this service that removes bronze data; the bucket is un-versioned, so a
+    delete is immediate and there is no undo.
+
+    ``year`` and ``month`` are required. Deliberately: the packer can discover
+    what is eligible because packing is additive, and this cannot, because it
+    is not.
+    """
+    with active_job():
+        payload = payload or {}
+        if "year" not in payload or "month" not in payload:
+            raise HTTPException(
+                status_code=400,
+                detail="year and month are required — this endpoint deletes data",
+            )
+        try:
+            kwargs = {
+                key: payload[key]
+                for key in (
+                    "apply", "artifact_type", "year", "month", "max_objects",
+                    "max_packs", "grace_days", "sample_full_reads", "status_breakdown",
+                )
+                if key in payload
+            }
+            return _delete_packed_source_html(**kwargs)
         except (ValueError, TypeError) as e:
             raise HTTPException(status_code=400, detail=f"Invalid request payload: {e}")
 

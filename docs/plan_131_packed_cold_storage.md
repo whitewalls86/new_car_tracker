@@ -20,15 +20,27 @@ physical** — both gates pass, both projections missed, and the cause is now
 understood: see [April packed in full](#april-packed-in-full--measured-2026-08-14).
 **May is packing overnight.**
 
-**Stage 3 BUILT 2026-08-14, NOT YET DEPLOYED.** `read_html` falls back to the
+**Stage 3 DEPLOYED AND VERIFIED 2026-08-14.** `read_html` falls back to the
 pack index when an object is gone, transparently to every caller, and verifies
-every packed read against the sidecar's `raw_sha256`. The consumer survey found
+every packed read against the sidecar's `raw_sha256`. **365 members across April and
+May read byte-identically through both paths, 0 failed, with every source
+object still in place** — the Stage 4 precondition is met. The object path is
+unchanged at ~5.5-5.8 ms; a packed read is 6-20 ms with its index resident and
+207-296 ms cold, where the cost is the sidecar scan rather than decompression.
+See [Latency](#latency-measured-in-production-2026-08-14--the-gate-passed). The consumer survey found
 **four** bypasses where it had previously named one; two are fixed and two are
 harmless by construction. See [Stage 3 as built](#stage-3-as-built) — including
 the measurement that chose pyarrow over DuckDB and the latency number that is
 still outstanding.
 
-**Stages 4-5 NOT STARTED.** Stage 4 is the only step that removes data. Two of
+**Stage 4 BUILT 2026-08-14, NEVER RUN.** `delete_packed_source_html` +
+`POST /pack/bronze/prune`: dry-run by default, hard per-run cap, one pack at a
+time, and three mandatory checks per member before anything is removed — see
+[Stage 4 as built](#stage-4-as-built). It must not run until Stage 3 is
+deployed and the read path verified against real April packs; the
+[run sheet](runbook_plan_131_stage_3_4.md) is the order of operations.
+
+**Stage 5 NOT STARTED.** Stage 4 is the only step that removes data. Two of
 its three would-be gates have now been settled and **neither is a gate**: the
 [delete grace period defaults to
 0](#the-delete-grace-period--0-days-revised-2026-08-14) (decided 2026-08-14 —
@@ -995,19 +1007,86 @@ checkpoint subtracts sidecar source keys from the objects it listed — so a
 key the fallback could now serve is a key the packer already skipped. The
 fallback cannot cause an artifact to be packed twice.
 
-### Latency: measured locally, **not yet measured in production**
+### Latency, measured in production 2026-08-14 — the gate passed
 
-Local synthetic packs put frame decompression at ~2 ms for a 16 MiB frame, but
-synthetic HTML compresses far better than real pages, so that is a lower bound
-and nothing more. **The production p50/p95 is still outstanding** and is what
-`scripts/verify_pack_read_path.py` exists to produce: it samples members from
-every April sidecar, reads each artifact through both the object path and the
-pack path, asserts they are byte-identical and match `raw_sha256`, and reports
-p50/p95 for `object`, `pack_cold` (caches dropped per read) and `pack_warm`
-(the reprocessing shape).
+`scripts/verify_pack_read_path.py`, April 2026 `detail_page`, in the archiver
+container. **160 members sampled across all 32 packs, 160 verified, 0 failed,
+`sources_already_deleted: 0`** — every artifact read byte-identically through
+both paths while every source object still existed. That is the Stage 4
+precondition, met.
 
-**Stage 3's definition of done is not met until that has run against real April
-packs while every source object still exists.**
+May was run immediately after and is the cleaner month — no null tail,
+complete metadata coverage: **41 sidecars, 205 sampled, 205 verified, 0 failed,
+every source still in place.** Across both months **365 artifacts verified,
+0 failures.**
+
+| path | April p50 | April p95 | May p50 | May p95 |
+|---|---|---|---|---|
+| object (today's read) | **5.79 ms** | 8.35 ms | **5.51 ms** | 7.49 ms |
+| pack, cold | **206.65 ms** | 361.93 ms | **296.34 ms** | 673.92 ms |
+| pack, warm | **5.90 ms** | 34.31 ms | **19.63 ms** | 62.97 ms |
+
+**The object path is unchanged and identical across months** — 5.79 and
+5.51 ms. That is the point: live parsing reads hot-month objects and never
+touches a pack.
+
+**`pack_warm` is index-warm but frame-cold, and that is the honest
+single-artifact number.** An earlier revision of this section called it "the
+reprocessing shape". It is not. The five warm samples come from one pack but
+land in five *different* frames (April: 238, 275, 373, 68, 286) and the reader
+caches two, so each read still decompresses a fresh ~16 MiB frame. 6-20 ms is
+therefore the cost of **random access within a pack whose index is already
+resident**. Sequential reprocessing walks members in frame order and amortizes
+one decompress across every member of that frame, so it is faster than this
+number, not slower. *(n=5 in both months — too small to read the April/May
+gap as signal.)*
+
+**Cold is 36-54x the object path, and the cost is not decompression.** It is
+the sidecar scan. `verify_pack_read_path` drops every cache before each cold
+read, so resolving a key in pack *k* re-fetches and re-parses *k+1* sidecars.
+April's throughput shows it directly: **9.4/s → 6.4/s → 4.8/s**, degrading
+monotonically as the sample walked toward pack-00031. Frame decompression is a
+small constant on top.
+
+**May confirms the mechanism by being worse, despite being the better-packed
+month.** It has no null tail and complete metadata, and it is still 43% slower
+cold (296 vs 207 ms p50) with a p95 nearly double (674 vs 362 ms) — because it
+has **41 packs to April's 32, and ~27,980 members per pack against ~17,500**,
+so both the number of sidecars scanned and the bytes parsed per sidecar are
+larger. The cold cost tracks packs-per-month times sidecar size, not data
+quality. **June and every later month will be slower again on the same
+trajectory**, which turns the cache defect below from a nuisance into the thing
+to fix before any large reparse.
+
+#### The cold figure is a deliberate worst case, but it exposes a real cache bug
+
+Production never drops its caches between reads, so the steady state sits much
+closer to warm. **But the LRU is pathological for exactly this access
+pattern:** `PACK_INDEX_CACHE_PACKS` defaults to 4 while a month holds 32-41
+sidecars, and the resolver scans from `pack-00000` upward. A single scan of 32
+sidecars evicts the low-numbered ones it will need first next time, leaving the
+cache holding 28-31 — so the *next* lookup re-fetches from the start. Classic
+LRU-versus-sequential-scan thrashing, and a random-access reader across a
+packed month would pay ~200 ms per artifact indefinitely rather than warming
+up.
+
+Two fixes, neither blocking Stage 4 (whose deleter walks one pack with its own
+`PackReader` and never uses the resolver), both relevant to
+[Plan 132](plan_132_unrecorded_artifact_recovery.md)'s 36K-artifact reparse:
+
+- **Cache the `source_key` column, not the whole sidecar.** Measured 1.30 ms to
+  parse and 1.69 MB in Arrow, against 1.69 ms and 3.78 MB for all columns; only
+  the one matching row ever needs the rest. A whole month resident becomes
+  ~68 MB instead of ~150 MB.
+- **Raise `PACK_INDEX_CACHE_PACKS` to hold a month.** With the column-pruned
+  cache, ~40 is affordable.
+
+Recorded rather than fixed in the same breath: the gate passed, and changing
+the read path after it was verified would invalidate the verification. Both
+this and the `object_exists` gap found alongside it are tracked in
+[Plan 133](plan_133_pack_read_path_hardening.md), which is sequenced before
+Plan 132's reparse rather than before Stage 4 — neither defect blocks
+deletion.
 
 ### Stage 4 — Delete packed source objects
 
@@ -1173,6 +1252,76 @@ which is the same delete set reached by a more expensive route.
 **This section is a proposal. Stage 4 is not implemented until it is agreed
 or amended.**
 
+---
+
+## Stage 4 as built
+
+Built 2026-08-14. **Never run.** Dry-run by default, and its first apply run is
+gated on Stage 3 being deployed and verified — see the
+[run sheet](runbook_plan_131_stage_3_4.md).
+
+### Three checks per member, none optional
+
+| check | what it proves |
+|---|---|
+| **Resolvable** — `pack_lookup_prefix(source_key)` names the prefix the pack actually lives under | a reader could still *find* it once the object is gone |
+| **Extractable** — pulled from the *stored* pack over ranged GETs, sha256 equals the sidecar's `raw_sha256` | the pack holds what its index claims |
+| **Identical** — the source object is read and compared byte-for-byte | the pack holds what *this object* holds |
+
+The third is the one that makes deletion safe rather than merely consistent: a
+pack that agrees with its own index but not with the object would pass the first
+two. Per *pack*, a bounded sample (25 by default) additionally goes through
+`read_packed_html` end to end, exercising the real resolver — prefix derivation,
+sidecar listing, index lookup — rather than inferring it from the per-member
+checks. Doing that for every member would rescan every earlier sidecar in the
+month for every artifact.
+
+**Verification deliberately does not call `read_html`.** With Stage 3 live,
+`read_html` answers from the pack once an object is missing, so using it would
+compare the pack against itself and always agree. There is a test asserting it
+is never called.
+
+### What the implementation settled
+
+- **The surviving-object listing is the checkpoint.** An object that is gone
+  has already been deleted, so a resumed run skips it with no request and each
+  object is deleted at most once. No state file, and the O(n²) shape of Plan
+  129's first checkpoint (`f98e69b`) is not reachable from this design. A
+  fully drained month costs one listing and nothing else — without that
+  short-circuit a re-run read all 32 April sidecars to discover there was
+  nothing to do.
+- **`year`/`month` are required; there is no discovery mode.** The packer can
+  discover what is eligible because packing is additive. This cannot, because
+  it is not.
+- **The free-space floor does not apply.** The packer refuses to start below
+  one because MinIO rejects every `PutObject` below its minimum-free-drive
+  threshold. A DELETE is not a PutObject and still succeeds on a full drive,
+  which is exactly what makes this job the recovery lever rather than another
+  casualty. Free space and inodes are reported, never gated.
+- **Inodes are reported two ways.** The estimate is what this run freed
+  (deleted objects × ~2.24, Stage 0a); the measured delta is what the
+  filesystem shows and moves with everything else on it. A reading, not a
+  proof — but the plan exists for this number, so a summary that omitted it
+  would be measuring the wrong thing.
+- **A sidecar that disagrees with its pack blocks that whole pack**, not just
+  the member that exposed it. Neither is trustworthy as evidence about the
+  other.
+- **An orphan pack is never deleted from.** Stage 2 reports and never deletes
+  them; an unverified pack is not evidence that anything is safe to remove.
+
+### Testing
+
+26 tests over an in-memory object store — real packs, real ranged GETs, real
+verification. The ones that matter are the refusals: no sidecar entry, orphan
+pack, sidecar/pack disagreement, sha256 mismatch, an object whose bytes differ
+from the pack, and objects living where the production resolver would not look.
+Plus: `--apply` absent deletes nothing, the per-run cap is honoured exactly,
+resume deletes each object at most once, `ok` and `pending` are deleted like
+any other status, and every deleted object is asserted still readable through
+`read_html` afterwards.
+
+---
+
 ### Stage 5 — Lifecycle DAG and observability
 
 - Airflow DAG packing eligible cohorts on a schedule, respecting the free-space
@@ -1242,8 +1391,10 @@ afterwards. Look first this time.
 | `tests/scripts/test_verify_pack_read_path.py` | New | 3 | **done** |
 | `scripts/audit_semantic_duplicate_html_hashes.py` | Bypass removed: hashes raw HTML via `read_html` | 3 | **done** |
 | `scripts/diff_log_analysis.py` | Bypass removed: `object_size()` HEAD, `None` = packed | 3 | **done** |
-| `archiver/processors/delete_packed_source_html.py` | Stage 4, dry-run default | 4 | not started |
-| `archiver/app.py` | `POST /pack/bronze/prune` | 4 | not started |
+| `archiver/processors/delete_packed_source_html.py` | Stage 4, dry-run default, hard cap, per-artifact verification | 4 | **done**, never run |
+| `archiver/app.py` | `POST /pack/bronze/prune` | 4 | **done** |
+| `tests/archiver/test_delete_packed_source_html.py` | New — 26 tests over an in-memory store | 4 | **done** |
+| `docs/runbook_plan_131_stage_3_4.md` | Deploy + verification + prune run sheet | 3-4 | **done** |
 | `airflow/dags/pack_bronze_html.py` | Lifecycle DAG | 5 | not started |
 | `tests/integration/airflow/test_dag_integrity.py` | Register the new DAG | 5 | not started |
 
