@@ -28,9 +28,16 @@ harmless by construction. See [Stage 3 as built](#stage-3-as-built) — includin
 the measurement that chose pyarrow over DuckDB and the latency number that is
 still outstanding.
 
-**Stages 4-5 NOT STARTED.** Stage 4 is the only step that removes data, and its
-processed-check policy is [proposed but not
-agreed](#the-has-been-processed-check--proposed-2026-08-14-needs-agreement-before-stage-4-is-built).
+**Stages 4-5 NOT STARTED.** Stage 4 is the only step that removes data. Two of
+its three would-be gates have now been settled and **neither is a gate**: the
+[delete grace period defaults to
+0](#the-delete-grace-period--0-days-revised-2026-08-14) (decided 2026-08-14 —
+nothing it was supposed to protect against survived examination), and
+[processing status is reported rather than
+enforced](#the-has-been-processed-check--proposed-2026-08-14-needs-agreement-before-stage-4-is-built)
+(still proposed, not yet agreed). What remains load-bearing is per-artifact
+verification through the production read path at delete time, a dry-run
+default, and a hard per-run cap.
 
 > **Sequencing constraint with [Plan 132](plan_132_unrecorded_artifact_recovery.md):**
 > 42,276 April captures were never recorded downstream and are recoverable
@@ -292,6 +299,14 @@ conflated two independent decisions:
   early; the sources still exist.
 - **Deleting the sources is the irreversible step**, and it is the only one that
   needs a grace period — plus a check that the artifact has been processed.
+
+*(Both halves of that second bullet were revised on 2026-08-14, in the same
+spirit as the correction above: neither a waiting period nor a processing status
+survived being asked what it protects against. See [the delete grace
+period](#the-delete-grace-period--0-days-revised-2026-08-14) and [the processed
+check](#the-has-been-processed-check--proposed-2026-08-14-needs-agreement-before-stage-4-is-built).
+What is irreversible about deletion is real; what makes it safe turned out to be
+verification, not delay.)*
 
 Gating both on one threshold meant deletion-safety concerns were silently
 delaying the inode relief that is this plan's entire purpose. As of 2026-08-13
@@ -996,12 +1011,16 @@ packs while every source object still exists.**
 
 ### Stage 4 — Delete packed source objects
 
-Only for artifacts that have a finalized pack, a verified `raw_sha256` match, are
-past a **delete** grace period, and have been processed. That grace period is
-this stage's own knob and is deliberately not `PACK_SETTLE_DAYS` — see
-[Pack eligibility and delete eligibility are separate
-knobs](#pack-eligibility-and-delete-eligibility-are-separate-knobs). Dry-run by
-default, hard per-run cap, one pack's worth of sources at a time.
+Only for artifacts that have a finalized pack and a verified `raw_sha256` match
+**through the production read path, at delete time**. Dry-run by default, hard
+per-run cap, one pack's worth of sources at a time.
+
+The two additional conditions this section used to require — a delete grace
+period and a processing-status check — were both revised on 2026-08-14 and
+neither is a gate. [The grace period defaults to
+0](#the-delete-grace-period--0-days-revised-2026-08-14); [status is reported,
+never a
+veto](#the-has-been-processed-check--proposed-2026-08-14-needs-agreement-before-stage-4-is-built).
 
 **Two things measured on 2026-08-14 that this stage must handle:**
 
@@ -1011,8 +1030,11 @@ default, hard per-run cap, one pack's worth of sources at a time.
   objects in the one fully packed month. They are inside verified packs, so
   deleting them loses nothing, but it needs an explicit *"packed and verified,
   no provenance"* branch rather than falling through the processed check.
-  Blocked on [Plan 132](plan_132_unrecorded_artifact_recovery.md)'s reparse —
-  see the sequencing constraint in Status.
+  **No longer blocked on [Plan 132](plan_132_unrecorded_artifact_recovery.md)'s
+  reparse**, once Stage 3 is deployed and verified: the reparse reads these
+  artifacts out of the packs, which is precisely what Stage 3 makes possible.
+  Landing Stage 3 first was always the option that removed the conflict rather
+  than sequencing around it.
 - **The retention policy this plan defers to Out of Scope already existed and
   was lost.** `n8n/workflows/Cleanup Artifacts.json`, pre-2026-04-16, deleted
   by processing status (`ok` after 48 h, `skip` immediately, `retry` after
@@ -1025,6 +1047,66 @@ default, hard per-run cap, one pack's worth of sources at a time.
 **This is the step that frees inodes**, and it is the first irreversible-ish one
 — though the bytes still exist inside the pack, which is the entire difference
 between this plan and Plan 130.
+
+#### The delete grace period — 0 days, REVISED 2026-08-14
+
+**`PACK_DELETE_GRACE_DAYS` defaults to 0.** The knob stays — it costs nothing
+and it is the lever if something ever does surface — but it defaults to no wait,
+because a 14-day default was proposed and could not survive being asked what it
+protects against.
+
+The proposal was 14 days measured from the sidecar's write time, on two
+arguments. Neither holds:
+
+- **"A window in which a lost pack is still recoverable from its sources."**
+  This assumes pack loss is concentrated in the fortnight after writing. It is
+  not. Write-time defects are already caught three times — `PackWriter.finish()`
+  on the in-memory pack, a re-read of the *stored* object over ranged GETs, and
+  the sidecar written only after both pass. What remains is flat over time, so a
+  14-day window covers 14 days of a risk that runs for years.
+- **"Time for a human to notice."** Notice by what mechanism? Nothing schedules
+  the looking. The per-artifact read-path verification runs at delete time on
+  every object, and a defect that passes it does not become visible by waiting.
+
+The precedent points the same way. The frame-boundary bug (2026-08-14) was found
+by **measuring the results**, not by waiting, and verification had passed
+17,291/17,291 because it was a compression-efficiency defect rather than a
+correctness one. No source object was ever at risk from it.
+
+Nor is there a failure mode that (a) passes per-member verification, (b) loses
+data when the source goes, and (c) surfaces in days rather than instantly. An
+object in no sidecar is never deleted — safe by construction. A key-derivation
+bug that verified A and deleted B would destroy the sources the moment it ran,
+and a timer would not help; the dry-run, the per-run cap and inspecting the
+first run by hand are what catch that.
+
+**What replaces the timer is a gate that gets satisfied rather than expires:**
+Stage 3 deployed and `scripts/verify_pack_read_path.py` clean against real
+April packs while every source still exists. That is already on this plan's
+definition of done. A clock is not.
+
+The bucket is un-versioned (verified 2026-08-10), so a delete is immediate and
+there is no undo. What makes that acceptable is not a waiting period — it is
+that the bytes are already inside a pack that was verified, stored, and re-read
+from storage before anything was removed.
+
+##### Recent months, and why they are not a grace-period problem
+
+Age does not make an artifact riskier to delete. Being **live** does — still
+queued for a first parse, still being retried, still likely to be read by
+something running now. That is a property of the *capture month*, not of how
+old the pack is, which is what made pack age the wrong anchor in the first
+place.
+
+The plan already expresses it: **month closure plus `PACK_SETTLE_DAYS`** is
+exactly "do not touch a month that might still be moving", and a month only
+becomes packable once it has passed that. July inherits it automatically when
+it is packed. Even then it is soft, because Stage 3 means a pending artifact is
+still readable and parseable after its object is gone — the concern is not
+surprising the live pipeline, not losing anything.
+
+So April, May and June are deleted by naming them explicitly: dry-run first,
+capped, verified per object, no timer.
 
 #### The "has been processed" check — PROPOSED 2026-08-14, needs agreement before Stage 4 is built
 
@@ -1040,8 +1122,7 @@ and becomes belt-and-braces.
 The proposal, in one sentence:
 
 > **Delete a source object when, and only when, the Stage 3 read path returns
-> its exact bytes and the pack holding it is past the delete grace period.
-> Processing status is reported, never a veto.**
+> its exact bytes. Processing status is reported, never a veto.**
 
 Concretely, per candidate object:
 
@@ -1049,7 +1130,7 @@ Concretely, per candidate object:
 |---|---|
 | sidecar entry exists | **required.** No entry, no delete — Stage 4 never deletes what it cannot name. |
 | read-path verification | **required.** `read_html` returns bytes whose sha256 matches the sidecar's `raw_sha256`, through the production path, for that artifact. |
-| delete grace period | **required.** This stage's own knob, deliberately not `PACK_SETTLE_DAYS`. |
+| delete grace period | **`PACK_DELETE_GRACE_DAYS`, default 0.** The knob exists; the wait does not — see [above](#the-delete-grace-period--0-days-revised-2026-08-14). |
 | pack has a sidecar (not an orphan) | **required.** Interrupted runs are reported and never deleted from, exactly as Stage 2 does. |
 | processing status | **reported, not required.** Counted and logged per class; no class blocks a delete. |
 
@@ -1074,8 +1155,9 @@ Why status cannot be a gate, from the measurements:
 status — `complete`, `ok`, `skip`, `retry`, `pending`, `processing`, `failed`,
 and `no_event_row` — so an unexpected shape is visible immediately. A run that
 suddenly deletes tens of thousands of `pending` objects is a signal worth
-having, and the delete grace period plus the per-run cap keep it a small,
-inspectable signal rather than a large irreversible one. The `no_event_row`
+having, and the dry-run default plus the per-run cap keep it a small,
+inspectable signal rather than a large irreversible one — which is the job a
+waiting period was proposed for and could not actually do. The `no_event_row`
 count is the *"packed and verified, no provenance"* branch the sequencing
 constraint asks for: it is a distinct, reported outcome rather than a silent
 fall-through.
