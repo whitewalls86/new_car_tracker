@@ -4,17 +4,19 @@ import threading
 import pytest
 
 import shared.job_counter as jc
-from shared.job_counter import active_job, is_idle
+from shared.job_counter import JobInFlight, active_job, is_idle, single_flight
 
 
 @pytest.fixture(autouse=True)
 def reset_counter():
-    """Reset the global counter before every test."""
+    """Reset the global counter and in-flight set before every test."""
     with jc._lock:
         jc._count = 0
+    jc._in_flight.clear()
     yield
     with jc._lock:
         jc._count = 0
+    jc._in_flight.clear()
 
 
 class TestIsIdle:
@@ -102,3 +104,79 @@ class TestThreadSafety:
         done.set()
         t.join()
         assert is_idle() is True
+
+
+# ---------------------------------------------------------------------------
+# single_flight (Plan 131 Stage 5 D3a)
+#
+# active_job counts and refuses nothing. This refuses: a multi-hour HTTP call
+# that dies on a dropped connection leaves the job running, and the DAG's retry
+# must not start a second packer on the same bucket.
+# ---------------------------------------------------------------------------
+
+class TestSingleFlight:
+    def test_a_second_entry_is_refused(self):
+        with single_flight("pack_bronze"):
+            with pytest.raises(JobInFlight):
+                with single_flight("pack_bronze"):
+                    pass
+
+    def test_the_refusal_names_the_job(self):
+        with single_flight("pack_bronze"):
+            with pytest.raises(JobInFlight) as exc:
+                with single_flight("pack_bronze"):
+                    pass
+        assert exc.value.job == "pack_bronze"
+        assert "pack_bronze" in str(exc.value)
+
+    def test_the_slot_is_released_on_exit(self):
+        with single_flight("pack_bronze"):
+            pass
+        with single_flight("pack_bronze"):
+            assert "pack_bronze" in jc._in_flight
+
+    def test_the_slot_is_released_on_exception(self):
+        with pytest.raises(RuntimeError):
+            with single_flight("pack_bronze"):
+                raise RuntimeError("boom")
+        # A run that crashes must not wedge the job out of existence until the
+        # container restarts.
+        assert jc._in_flight == set()
+
+    def test_different_jobs_do_not_block_each_other(self):
+        # A pack and a prune on different months are a normal thing to run at
+        # once; a global lock would make working a backlog by hand impossible.
+        with single_flight("pack_bronze"):
+            with single_flight("pack_prune"):
+                assert jc._in_flight == {"pack_bronze", "pack_prune"}
+
+    def test_refusal_does_not_release_the_holder(self):
+        with single_flight("pack_bronze"):
+            with pytest.raises(JobInFlight):
+                with single_flight("pack_bronze"):
+                    pass
+            # The loser's __exit__ must not discard the winner's slot.
+            assert "pack_bronze" in jc._in_flight
+
+    def test_it_refuses_across_threads(self):
+        ready = threading.Event()
+        done = threading.Event()
+        refused = []
+
+        def _holder():
+            with single_flight("pack_bronze"):
+                ready.set()
+                done.wait()
+
+        t = threading.Thread(target=_holder)
+        t.start()
+        ready.wait()
+        try:
+            with single_flight("pack_bronze"):
+                refused.append(False)
+        except JobInFlight:
+            refused.append(True)
+        done.set()
+        t.join()
+
+        assert refused == [True]

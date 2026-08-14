@@ -476,6 +476,94 @@ class TestPackEndpointsSignalFailure:
 
 
 # ---------------------------------------------------------------------------
+# Single-flight (Plan 131 Stage 5 D3a)
+#
+# There was no lock on either endpoint. That was fine while every run was a
+# human typing a command, and stops being fine the moment a DAG retries: a
+# multi-hour call that dies on a dropped connection leaves the job running, and
+# the retry would start a second packer on the same bucket.
+# ---------------------------------------------------------------------------
+
+class TestPackSingleFlight:
+    def test_a_pack_run_is_refused_while_one_is_in_flight(
+        self, mock_archiver_client, mocker
+    ):
+        from shared.job_counter import single_flight
+
+        mock_fn = mocker.patch("archiver.app._pack_bronze_html", return_value={})
+
+        with single_flight("pack_bronze"):
+            resp = mock_archiver_client.post("/pack/bronze/run")
+
+        assert resp.status_code == 409
+        assert "pack_bronze" in resp.json()["detail"]
+        # It must refuse *before* the processor, not after — the whole point is
+        # that a second packer never lists the bucket.
+        mock_fn.assert_not_called()
+
+    def test_a_prune_run_is_refused_while_one_is_in_flight(
+        self, mock_archiver_client, mocker
+    ):
+        from shared.job_counter import single_flight
+
+        mock_fn = mocker.patch("archiver.app._delete_packed_source_html", return_value={})
+
+        with single_flight("pack_prune"):
+            resp = mock_archiver_client.post(
+                "/pack/bronze/prune", json={"year": 2026, "month": 4}
+            )
+
+        assert resp.status_code == 409
+        mock_fn.assert_not_called()
+
+    def test_a_pack_in_flight_does_not_block_a_prune(
+        self, mock_archiver_client, mocker
+    ):
+        from shared.job_counter import single_flight
+
+        mocker.patch(
+            "archiver.app._delete_packed_source_html",
+            return_value={"error": None, "objects_refused": 0},
+        )
+
+        # Keyed per job. A pack and a prune on different months are a normal
+        # thing to run at once, and a global lock would make working the
+        # backlog by hand impossible.
+        with single_flight("pack_bronze"):
+            resp = mock_archiver_client.post(
+                "/pack/bronze/prune", json={"year": 2026, "month": 4}
+            )
+
+        assert resp.status_code == 200
+
+    def test_the_slot_is_released_after_a_run(self, mock_archiver_client, mocker):
+        mocker.patch(
+            "archiver.app._pack_bronze_html",
+            return_value={"error": None, "read_failures": 0},
+        )
+
+        assert mock_archiver_client.post("/pack/bronze/run").status_code == 200
+        assert mock_archiver_client.post("/pack/bronze/run").status_code == 200
+
+    def test_the_slot_is_released_after_a_failed_run(
+        self, mock_archiver_client, mocker
+    ):
+        # A 500 must not wedge the job out of existence until the container
+        # restarts.
+        mocker.patch(
+            "archiver.app._pack_bronze_html",
+            return_value={"error": "boom", "read_failures": 0},
+        )
+        assert mock_archiver_client.post("/pack/bronze/run").status_code == 500
+
+        mocker.patch(
+            "archiver.app._pack_bronze_html",
+            return_value={"error": None, "read_failures": 0},
+        )
+        assert mock_archiver_client.post("/pack/bronze/run").status_code == 200
+
+
+# ---------------------------------------------------------------------------
 # POST /snapshots/adaptive-refresh/run  (Plan 120)
 # ---------------------------------------------------------------------------
 

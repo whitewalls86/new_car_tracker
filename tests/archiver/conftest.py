@@ -9,6 +9,28 @@ from unittest.mock import MagicMock
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def no_deploy_pause(mocker):
+    """No deploy is pending, unless a test says otherwise.
+
+    Plan 131 Stage 5 D3b made both pack processors read ``deploy_intent`` at
+    their boundaries. Unmocked that is a real psycopg2 connect per call: it
+    fails open, so the tests still pass, but they pay the connect timeout to
+    get there — this fixture is why the archiver suite runs in seconds instead
+    of minutes.
+
+    Tests that exercise the pause patch the same targets with ``return_value``
+    or a ``side_effect`` sequence.
+    """
+    mocker.patch(
+        "archiver.processors.pack_bronze_html.long_jobs_paused", return_value=False
+    )
+    mocker.patch(
+        "archiver.processors.delete_packed_source_html.long_jobs_paused",
+        return_value=False,
+    )
+
+
 @pytest.fixture
 def mock_archiver_client():
     """TestClient for the archiver FastAPI app (no lifespan hooks to patch)."""

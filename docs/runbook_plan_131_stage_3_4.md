@@ -292,6 +292,23 @@ docker exec cartracker-archiver sh -c \
 Do not kill and restart it for the sake of logging — resume is safe, but the
 listing costs 12 minutes each time.
 
+> **A hand-run month and a scheduled one must not overlap.** Stage 5 adds a
+> single-flight guard that returns 409 while a run is in flight, but it is
+> in-process: it sees the HTTP endpoints on one service and **cannot see a
+> `docker exec` CLI run**, which cannot see it either. Two packers on the same
+> month would compute the same `next_seq` and overwrite each other's packs.
+> Nothing is lost — the sidecar/pack disagreement check refuses to delete from
+> the result — but that pack is then blocked and the work is wasted. The
+> scheduled DAG only ever takes the **oldest eligible closed month**, so while
+> you are working the backlog by hand, either stay ahead of it or pause it.
+>
+> **A deploy now stops these jobs cleanly.** `POST /deploy/start` sets
+> `pause_long_jobs` (default true), and a pack or prune returns at its next
+> boundary with everything so far durable. Resume is a re-run. Pass
+> `{"pause_long_jobs": false}` for a deploy that touches nothing they depend
+> on. A **manual CLI run is stopped by this too** — that is the same flag, read
+> from the same table.
+
 **Resume is free and safe.** The surviving-object listing is the checkpoint —
 an object that is gone is skipped with no request, each object is deleted at
 most once, and a fully drained month costs one listing and nothing else. Re-run

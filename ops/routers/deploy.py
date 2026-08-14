@@ -4,7 +4,7 @@ Deploy coordination API endpoints.
 import logging
 from typing import Any, Dict
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Body, HTTPException
 
 from shared.db import db_cursor
 
@@ -36,7 +36,8 @@ def _intent_status() -> Dict[str, Any]:
             di.requested_at,
             di.requested_by,
             pa.number_running + rdc.number_running AS number_running,
-            LEAST(pa.min_started_at, rdc.min_started_at) AS min_started_at
+            LEAST(pa.min_started_at, rdc.min_started_at) AS min_started_at,
+            di.pause_long_jobs
         FROM deploy_intent di
         LEFT JOIN pending_artifacts pa ON 1=1
         LEFT JOIN running_detail_claims rdc ON 1=1
@@ -55,28 +56,48 @@ def _intent_status() -> Dict[str, Any]:
                 "requested_by": row[2],
                 "number_running": row[3],
                 "min_started_at": row[4].isoformat() if row[4] else None,
+                "pause_long_jobs": row[5],
             }
         else:
-            results = {"intent": "none", "requested_at": None, "requested_by": None}
+            results = _no_intent()
     except Exception:
-        results = {"intent": "none", "requested_at": None, "requested_by": None}
+        results = _no_intent()
 
     return results
 
 
-def _set_intent(caller: str) -> str:
-    """Atomically try to set intent. Returns 'ok', 'locked', or 'error'."""
+def _no_intent() -> Dict[str, Any]:
+    """The shape returned when there is no row, or the read failed."""
+    return {
+        "intent": "none",
+        "requested_at": None,
+        "requested_by": None,
+        # The column default. It only means anything while intent is 'pending',
+        # so reporting it here is shape, not a claim about a deploy.
+        "pause_long_jobs": True,
+    }
+
+
+def _set_intent(caller: str, pause_long_jobs: bool = True) -> str:
+    """Atomically try to set intent. Returns 'ok', 'locked', or 'error'.
+
+    *pause_long_jobs* asks Plan 131's pack and prune jobs to stop at their next
+    safe boundary (see ``shared.deploy_intent``). It defaults to true because
+    the safe behaviour should be the one you get by forgetting; pass false for
+    a deploy that touches nothing those jobs depend on.
+    """
 
     sql = """UPDATE deploy_intent
                    SET
                         intent = 'pending',
                         requested_at = now(),
-                        requested_by = %s
+                        requested_by = %s,
+                        pause_long_jobs = %s
                    WHERE id = 1
                      AND (intent = 'none'
                           OR requested_at < now() - interval '%s minutes')
                    RETURNING intent;"""
-    params = (caller, STALE_LOCK_MINUTES)
+    params = (caller, pause_long_jobs, STALE_LOCK_MINUTES)
 
     try:
         with db_cursor(error_context="Set-Intent") as cur:
@@ -113,9 +134,14 @@ def get_current_intent() -> Dict[str, Any]:
 
 
 @router.post("/deploy/start")
-def start_deploy_intent() -> bool:
-    """Signals deploy intent to the system."""
-    result = _set_intent("Deploy Declared")
+def start_deploy_intent(payload: dict = Body(default={})) -> bool:
+    """Signals deploy intent to the system.
+
+    Optional ``pause_long_jobs`` (default **true**) asks Plan 131's pack and
+    prune jobs to stop at their next safe boundary and resume after the deploy.
+    """
+    pause_long_jobs = bool((payload or {}).get("pause_long_jobs", True))
+    result = _set_intent("Deploy Declared", pause_long_jobs)
     if result == "ok":
         return True
     elif result == "locked":
