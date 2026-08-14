@@ -1299,6 +1299,14 @@ is never called.
 - **`year`/`month` are required; there is no discovery mode.** The packer can
   discover what is eligible because packing is additive. This cannot, because
   it is not.
+- **Both caps mean "no cap" at `<= 0`** — aligned 2026-08-14, and they did not
+  start that way. `max_packs = 0` was always unlimited; `max_objects = 0` set
+  `budget = 0`, tripped `capped = True`, deleted nothing, and **reported
+  success**. Two adjacent caps on the same call with opposite meanings, and the
+  wrong one failed silently. It went unnoticed because every run so far named a
+  positive cap by hand; Stage 5's DAG is the first caller that has to pass an
+  uncapped delete, and the listing being the fixed cost (below) means uncapped
+  is how it has to run.
 - **The free-space floor does not apply.** The packer refuses to start below
   one because MinIO rejects every `PutObject` below its minimum-free-drive
   threshold. A DELETE is not a PutObject and still succeeds on a full drive,

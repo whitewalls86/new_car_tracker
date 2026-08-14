@@ -462,10 +462,12 @@ def drain_pack(
     outcome: BucketOutcome,
     *,
     apply: bool,
-    remaining_budget: int,
+    remaining_budget: Optional[int],
     sample_full_reads: int,
 ) -> int:
     """Verify and delete one pack's sources. Returns objects deleted (or eligible).
+
+    *remaining_budget* is ``None`` when the run is uncapped.
 
     Members are walked in sidecar order, which is frame order, so the reader's
     frame cache turns one frame decompress into one for the whole run of
@@ -507,7 +509,7 @@ def drain_pack(
     sampled = _sample_positions(len(pending), sample_full_reads)
     processed = 0
     for position, entry in enumerate(pending):
-        if processed >= remaining_budget:
+        if remaining_budget is not None and processed >= remaining_budget:
             break
         try:
             present, _ = verify_member(
@@ -651,6 +653,11 @@ def delete_packed_source_html(
     *year* and *month* are required. There is no discovery mode on purpose:
     this job removes data, and the month it removes data from is an operator's
     decision, not something inferred from what happens to be packed.
+
+    ``max_objects <= 0`` means no cap, matching ``max_packs``. The listing is
+    the fixed cost of a run — 700-800 s for April — so draining a whole month
+    in one pass is the cheap way to do it, and the caps exist for the small
+    deliberate first runs rather than for steady state.
     """
     result: Dict[str, Any] = {
         "mode": "apply" if apply else "dry_run",
@@ -688,9 +695,14 @@ def delete_packed_source_html(
     before = _free_space()
     result["free_space_before"] = before
     logger.info(
-        "delete_packed_source_html: %s %04d-%02d (%s) — cap %d object(s), %d pack(s), "
+        "delete_packed_source_html: %s %04d-%02d (%s) — cap %s object(s), %s pack(s), "
         "grace %d day(s); %s free inodes on %s",
-        artifact_type, year, month, result["mode"], max_objects, max_packs, grace_days,
+        artifact_type, year, month, result["mode"],
+        # Both caps mean "no cap" at 0, and a run that says "cap 0" while
+        # draining a whole month is the kind of quiet the summary already was.
+        f"{max_objects:,}" if max_objects > 0 else "no",
+        f"{max_packs:,}" if max_packs > 0 else "no",
+        grace_days,
         f"{before['free_inodes']:,}" if before["free_inodes"] is not None else "?",
         before["path"],
     )
@@ -732,12 +744,13 @@ def delete_packed_source_html(
         if status_breakdown:
             statuses = _load_statuses(bucket, artifact_type, year, month)
 
+        uncapped = max_objects <= 0
         budget = max_objects
         for plan in plans:
             if max_packs and result["packs_drained"] >= max_packs:
                 result["capped"] = True
                 break
-            if budget <= 0:
+            if not uncapped and budget <= 0:
                 result["capped"] = True
                 break
             if not _grace_expired(plan, grace_days):
@@ -752,7 +765,7 @@ def delete_packed_source_html(
             done = drain_pack(
                 client, bucket, plan, surviving, statuses, outcome,
                 apply=apply,
-                remaining_budget=budget,
+                remaining_budget=None if uncapped else budget,
                 sample_full_reads=sample_full_reads,
             )
             budget -= done
@@ -764,7 +777,7 @@ def delete_packed_source_html(
                 plan.seq, plan.members, plan.present, done,
                 outcome.deleted, outcome.refused,
             )
-        if budget <= 0:
+        if not uncapped and budget <= 0:
             result["capped"] = True
     except Exception as exc:  # noqa: BLE001 - partial results are still results.
         logger.error("delete_packed_source_html: aborted: %s", exc, exc_info=True)
@@ -819,7 +832,7 @@ def _parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--month", type=int, required=True)
     parser.add_argument(
         "--max-objects", type=int, default=MAX_OBJECTS,
-        help="Hard per-run cap on objects deleted [default: %(default)s]",
+        help="Objects deleted per run; 0 for no cap [default: %(default)s]",
     )
     parser.add_argument(
         "--max-packs", type=int, default=MAX_PACKS,
