@@ -14,7 +14,19 @@ and [the first production run](#stage-2-first-production-run--measured-2026-08-1
 for the measurements — including the one that came in **under** projection and
 the frame-boundary bug it exposed.
 
+**April `detail_page` PACKED IN FULL (2026-08-14).** 557,065 objects -> 64,
+**8,704x**, 100% verified, zero deleted. Measured **53.4% logical / ~72.5%
+physical** — both gates pass, both projections missed, and the cause is now
+understood: see [April packed in full](#april-packed-in-full--measured-2026-08-14).
+**May is packing overnight.**
+
 **Stages 3-5 NOT STARTED.** Stage 4 is the only step that removes data.
+
+> **Sequencing constraint with [Plan 132](plan_132_unrecorded_artifact_recovery.md):**
+> 42,276 April captures were never recorded downstream and are recoverable
+> only by reparsing their HTML. They are readable as individual objects today.
+> **Either run Plan 132's reparse before Stage 4, or land Stage 3 first.**
+> Stage 4 must not run over April while that is outstanding.
 
 Headline from the measurements: the inode ceiling is ~61 days out and
 results-page deletion is not a viable substitute (0.7% of objects).
@@ -708,30 +720,90 @@ enormous frame. The default target rose 8 -> 16 MiB, inside the plan's stated
 On synthetic members with production-like proportions the change removes every
 split and cuts the pack 67.4%; on this pack, Stage 0d's B and D applied to its
 544 real groups project 40.5 MB instead of 67.2 MB — **~74% logical / ~84%
-physical**, past the original projection. Not yet confirmed on real data; a
-re-pack is what settles it.
+physical**, past the original projection. **That projection was wrong. See the
+next section, which supersedes it.**
 
-#### Projection, from measured numbers only
+### April packed in full — measured 2026-08-14
 
-Post-dictionary stored bytes per month come from Plan 129's own `--json-out`
-summaries; the packing ratio is this pack's measurement with the alignment fix
-applied.
+30 further packs, `--max-packs 0`, one run. **522,314 / 522,314 members
+verified byte-identical, 0 read failures.** With the two earlier packs, all
+557,065 April `detail_page` objects are packed. Still zero source objects
+deleted.
 
-| bucket | objects | stored | packed | physical now | physical packed | objects after |
-|---|---|---|---|---|---|---|
-| April detail | 557,065 | 4.26 G | 1.10 G | 7.24 G | 1.13 G | 40 |
-| May detail | 1,021,266 | 6.64 G | 1.71 G | 11.27 G | 1.76 G | 74 |
-| June detail | 1,124,122 | 7.42 G | 1.91 G | 12.60 G | 1.97 G | 80 |
-| **total** | **2,702,453** | **18.32 G** | **4.73 G** | **31.12 G** | **4.85 G** | **194** |
+| | measured | previously projected |
+|---|---|---|
+| objects -> pack objects | 557,065 -> 64 (32 packs + 32 sidecars) | 40 |
+| **object reduction** | **8,704x** | >=20x gate |
+| pack bytes | 2,133,921,814 (+~44 MB sidecars) | 1.10 G |
+| logical, vs 4,579,267,375 stored | **53.4%** | 74% |
+| physical, 1.99 GiB vs 7.24 GiB | **~72.5%** | 84.4% |
 
-- **26.3 GiB physical reclaimed (84.4%)**
-- **2,702,453 objects -> 194 (13,930x)**
-- **~6.05M inodes**: free goes 3,983,261 -> 10,036,321 of 13,107,200
-- at 65,500 inodes/day that is **+92 days**, turning the 61-day ceiling into
-  roughly five months — from three months of one artifact type
+**Both gates still pass with room. Both projections were missed again, and
+this time the cause is understood.**
 
-Covers three of ~five months, `detail_page` only, and the packed ratio is
-projected rather than measured until a re-pack confirms it.
+#### The alignment fix worked. It was not the bottleneck.
+
+From the sidecar indexes, pre-fix packs against post-fix:
+
+| | pack-00000 / 00001 (pre-fix) | pack-00002-00025 (fixed) |
+|---|---|---|
+| listings split across frames | 270/544 and 313/668 — **~48%** | **0-5 per pack** of 786-2,560 (~0.1%) |
+| frames per pack | 387, 392 | 138-174 |
+| frame p50 uncompressed | 8.1 MB | 17-19 MB |
+
+Sealing at listing boundaries did exactly what it claimed. Two other things
+account for the shortfall.
+
+**1. 18% of April has no usable metadata.** 99,981 members carry a null
+`listing_id`; they sort last and land entirely in packs 00026-00031. The
+packer sees one listing 44K members long, so those frames pin at
+`frame_max_bytes` (32.1 MB) with no boundary ever found:
+
+| group | members | raw/member | packed/member |
+|---|---|---|---|
+| named listings | 457,084 | 180.7 KB | **3,900 B** |
+| small nulls | 55,996 | 36.9 KB | **1,060 B** |
+| full-size nulls | 43,985 | 164 KB | **7,157 B** |
+
+The full-size nulls cost ~143 MB, 6.7% of April's pack bytes. **This is an
+April-only data problem, not a packer defect — see
+[Plan 132](plan_132_unrecorded_artifact_recovery.md).** May and June have
+complete metadata coverage.
+
+**2. Stage 0d's `B`/`D` constants do not generalize.** `captures_per_listing`
+falls monotonically across the packs — 31.8, 26.1, 23.4 ... 6.4 — because
+members sort by `listing_id` ascending and low IDs are listings that predate
+April. April's named mean is **12.3** against Stage 0d's sample at 17.1.
+Applying `B=8,578 / D=2,142` to each pack's *measured* captures-per-listing
+predicts 2,417-3,148 B/member; measured, with zero splits, is 3,657-4,097 —
+**35-50% above the model.** The constants came from 140 listings and do not
+hold at 37,038.
+
+Fixing the nulls entirely would move April from 53.4% to about **56.5%**.
+**74% is not reachable on this corpus and the earlier projection should not be
+quoted.**
+
+#### Pack boundaries are nearly free
+
+Only **138 of 37,038** listings span more than one pack, which retroactively
+justifies the small `--max-pack-bytes` default: blast radius and transient
+free space were bought for almost nothing.
+
+#### May, first two packs — measured 2026-08-14
+
+May is running overnight. Early signal, 2 packs of ~37:
+
+| | April main body | May pack-00000/00001 |
+|---|---|---|
+| members per 64 MB pack | ~17,500 | **27,980** |
+| packed bytes/member | 3,900 | **2,410** |
+| stored bytes/object | 8,220 | 6,978 |
+| implied logical | 53.4% | **~65.5%** |
+
+No null tail, no pinned frames, more captures per listing. April showed a
+degradation gradient through the month, so expect May to drift up too — but at
+the equivalent position April was at 3,657 B/member. **Do not restate the
+three-month projection table until May completes.**
 
 #### Operational notes from the run
 
@@ -788,6 +860,25 @@ this stage's own knob and is deliberately not `PACK_SETTLE_DAYS` — see
 [Pack eligibility and delete eligibility are separate
 knobs](#pack-eligibility-and-delete-eligibility-are-separate-knobs). Dry-run by
 default, hard per-run cap, one pack's worth of sources at a time.
+
+**Two things measured on 2026-08-14 that this stage must handle:**
+
+- **42,276 April objects can never satisfy a "has been processed" check** —
+  they have no `artifacts_queue_events` row to check against. As specified,
+  Stage 4 would refuse them forever, stranding ~95K inodes as individual
+  objects in the one fully packed month. They are inside verified packs, so
+  deleting them loses nothing, but it needs an explicit *"packed and verified,
+  no provenance"* branch rather than falling through the processed check.
+  Blocked on [Plan 132](plan_132_unrecorded_artifact_recovery.md)'s reparse —
+  see the sequencing constraint in Status.
+- **The retention policy this plan defers to Out of Scope already existed and
+  was lost.** `n8n/workflows/Cleanup Artifacts.json`, pre-2026-04-16, deleted
+  by processing status (`ok` after 48 h, `skip` immediately, `retry` after
+  7 days). The Plan 102 n8n decommission removed it and nothing replaced it,
+  which is why Plan 129 found "no HTML deletion anywhere in the codebase."
+  **That removal is the origin of the inode problem this plan exists to
+  solve.** Plan 132 Stage 4 argues the recurring predicate belongs in this
+  plan's Stage 5 DAG rather than in a separate job.
 
 **This is the step that frees inodes**, and it is the first irreversible-ish one
 — though the bytes still exist inside the pack, which is the entire difference
