@@ -73,6 +73,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+from shared.deploy_intent import long_jobs_paused
 from shared.minio import BUCKET, get_boto3_client
 from shared.packfile import (
     PackIndexEntry,
@@ -163,6 +164,9 @@ class BucketOutcome:
     orphan_packs: List[str] = field(default_factory=list)
     failures: List[Dict[str, str]] = field(default_factory=list)
     by_status: Dict[str, int] = field(default_factory=dict)
+    # Set when a deploy asked the run to stop (D3b). Not an error: everything
+    # counted above is already durable, and an Airflow retry resumes.
+    stopped_for_deploy: bool = False
 
 
 def _now_utc() -> datetime:
@@ -554,6 +558,19 @@ def drain_pack(
                 "delete_packed_source_html: %s — %d deleted, %.1f MiB freed",
                 plan.seq, outcome.deleted, outcome.bytes_freed / 1024 ** 2,
             )
+            # A single pack is thousands of objects, so waiting for the pack
+            # boundary alone could be an hour. Between two deletes is a safe
+            # place to stop: each object is deleted at most once and the
+            # surviving-object listing is the checkpoint, so the next run picks
+            # up exactly here with no per-object cost for what is already gone.
+            if long_jobs_paused():
+                outcome.stopped_for_deploy = True
+                logger.info(
+                    "delete_packed_source_html: %s — stopping for a deploy after "
+                    "%d deletion(s); resume is a re-run",
+                    plan.seq, outcome.deleted,
+                )
+                break
 
     return processed
 
@@ -618,6 +635,11 @@ def _finalize(
     result["by_status"] = dict(sorted(outcome.by_status.items()))
     result["orphan_packs"] = outcome.orphan_packs
     result["failures"] = outcome.failures[:50]
+    # Only ever promoted to True: the early "a deploy is pending, not starting"
+    # return sets it on the summary before an outcome exists.
+    result["stopped_for_deploy"] = (
+        result["stopped_for_deploy"] or outcome.stopped_for_deploy
+    )
 
     logger.info(
         "delete_packed_source_html: run complete (%s) — deleted=%d verified=%d "
@@ -683,6 +705,7 @@ def delete_packed_source_html(
         "free_space_before": None,
         "free_space_after": None,
         "capped": False,
+        "stopped_for_deploy": False,
         "failures": [],
         "error": None,
     }
@@ -690,6 +713,17 @@ def delete_packed_source_html(
     if year is None or month is None:
         result["error"] = "year and month are required — this job deletes data"
         logger.error("delete_packed_source_html: %s", result["error"])
+        return result
+
+    if long_jobs_paused():
+        # Refusing to start is not an error: a retry that lands mid-deploy
+        # simply waits for the next one rather than beginning a multi-hour run
+        # that a container restart is about to interrupt.
+        result["stopped_for_deploy"] = True
+        logger.info(
+            "delete_packed_source_html: a deploy is pending — not starting. "
+            "This run will resume on retry once the intent clears."
+        )
         return result
 
     before = _free_space()
@@ -777,6 +811,18 @@ def delete_packed_source_html(
                 plan.seq, plan.members, plan.present, done,
                 outcome.deleted, outcome.refused,
             )
+            # Either drain_pack stopped mid-pack on its progress tick, or a
+            # deploy arrived while this pack was being drained. The pack
+            # boundary is the coarsest safe place to stop and the cheapest to
+            # resume from.
+            if outcome.stopped_for_deploy or long_jobs_paused():
+                outcome.stopped_for_deploy = True
+                logger.info(
+                    "delete_packed_source_html: stopping for a deploy after %d "
+                    "pack(s) and %d deletion(s)",
+                    result["packs_drained"], outcome.deleted,
+                )
+                break
         if not uncapped and budget <= 0:
             result["capped"] = True
     except Exception as exc:  # noqa: BLE001 - partial results are still results.

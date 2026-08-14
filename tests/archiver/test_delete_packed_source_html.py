@@ -410,6 +410,99 @@ class TestCapsAndResume:
 
 
 # ---------------------------------------------------------------------------
+# Cooperative stop on deploy intent (Plan 131 Stage 5 D3b)
+#
+# Nothing is killed. The job asks at a boundary it already has and returns
+# cleanly, with everything completed so far already durable.
+# ---------------------------------------------------------------------------
+
+class TestDeployStop:
+    def _pause(self, mocker, *values):
+        """Patch long_jobs_paused; a sequence exhausts to its last value."""
+        seq = list(values)
+        return mocker.patch.object(
+            pruner, "long_jobs_paused",
+            side_effect=lambda: seq.pop(0) if len(seq) > 1 else seq[0],
+        )
+
+    def test_a_pending_deploy_stops_the_run_before_it_starts(self, store, mocker):
+        keys, _, _ = _seed(store, 6)
+        self._pause(mocker, True)
+
+        result = _run(apply=True)
+
+        assert result["stopped_for_deploy"] is True
+        assert result["objects_deleted"] == 0
+        assert store.deleted == []
+        assert all(key in store.objects for key in keys)
+        # A clean stop, not a failure — the endpoint returns 200 and the DAG
+        # raises a *retryable* exception.
+        assert result["error"] is None
+
+    def test_it_stops_at_a_pack_boundary_not_mid_pack(self, store, mocker):
+        first, _, _ = _seed(store, 4, seq=0, start=0)
+        second, _, _ = _seed(store, 4, seq=1, start=100)
+        third, _, _ = _seed(store, 4, seq=2, start=200)
+        # Not paused at start, paused once the first pack is drained.
+        self._pause(mocker, False, True)
+
+        result = _run(apply=True, max_objects=0)
+
+        assert result["stopped_for_deploy"] is True
+        assert result["packs_drained"] == 1
+        # Whole packs, never part of one.
+        assert set(store.deleted) == set(first)
+        assert all(key in store.objects for key in second + third)
+
+    def test_everything_deleted_before_the_stop_stays_deleted(self, store, mocker):
+        first, _, _ = _seed(store, 4, seq=0, start=0)
+        _seed(store, 4, seq=1, start=100)
+        self._pause(mocker, False, True)
+
+        stopped = _run(apply=True, max_objects=0)
+
+        assert stopped["objects_deleted"] == 4
+        assert stopped["bytes_freed"] > 0
+        # Only verified objects were deleted — the stop changes when the job
+        # ends, never what it is allowed to remove.
+        assert stopped["objects_refused"] == 0
+        assert stopped["objects_verified"] == 4
+
+    def test_a_resumed_run_picks_up_where_it_stopped(self, store, mocker):
+        first, _, _ = _seed(store, 4, seq=0, start=0)
+        second, _, _ = _seed(store, 4, seq=1, start=100)
+        self._pause(mocker, False, True)
+        _run(apply=True, max_objects=0)
+
+        # The deploy finished; the retry resumes.
+        mocker.patch.object(pruner, "long_jobs_paused", return_value=False)
+        resumed = _run(apply=True, max_objects=0)
+
+        assert resumed["stopped_for_deploy"] is False
+        assert sorted(store.deleted) == sorted(first + second)
+        assert len(store.deleted) == len(set(store.deleted))
+
+    def test_a_db_error_does_not_stop_the_run(self, store, mocker):
+        # long_jobs_paused fails open, so this is really asserting that the
+        # deleter trusts it rather than adding a second opinion.
+        keys, _, _ = _seed(store, 6)
+        mocker.patch.object(pruner, "long_jobs_paused", return_value=False)
+
+        result = _run(apply=True)
+
+        assert result["stopped_for_deploy"] is False
+        assert result["objects_deleted"] == 6
+        assert sorted(store.deleted) == sorted(keys)
+
+    def test_an_unpaused_run_reports_the_flag_false(self, store):
+        _seed(store, 4)
+
+        result = _run(apply=True)
+
+        assert result["stopped_for_deploy"] is False
+
+
+# ---------------------------------------------------------------------------
 # The grace period
 # ---------------------------------------------------------------------------
 

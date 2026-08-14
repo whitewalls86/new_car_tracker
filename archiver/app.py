@@ -1,5 +1,6 @@
 import logging
 import os
+from contextlib import contextmanager
 from datetime import datetime
 from typing import Any, Dict, Optional
 
@@ -25,7 +26,7 @@ from archiver.processors.flush_silver_observations import (
 )
 from archiver.processors.flush_staging_events import flush_staging_events as _flush_staging_events
 from archiver.processors.pack_bronze_html import pack_bronze_html as _pack_bronze_html
-from shared.job_counter import active_job, is_idle
+from shared.job_counter import JobInFlight, active_job, is_idle, single_flight
 from shared.logging_setup import configure_logging
 
 configure_logging()
@@ -126,6 +127,31 @@ def trigger_compact_silver() -> Dict[str, Any]:
 # radius, not something to smuggle in under a packing plan.
 
 
+@contextmanager
+def _single_flight_or_409(job: str):
+    """Hold *job*'s single-flight slot, or 409 if something else has it.
+
+    There is no lock on either endpoint without this, which was fine while
+    every run was a human typing a command. It stops being fine the moment a
+    DAG retries: a multi-hour HTTP call that dies on a dropped connection
+    leaves the job **still running**, and the retry would start a second packer
+    on the same bucket — two runs computing the same ``next_seq`` and racing to
+    write packs under the same key.
+
+    See ``shared.job_counter.single_flight`` for what this does and does not
+    cover; in particular it does not see a manual CLI run in another process.
+    """
+    try:
+        with single_flight(job):
+            yield
+    except JobInFlight:
+        logger.warning("%s: refused — a run is already in flight", job)
+        raise HTTPException(
+            status_code=409,
+            detail=f"{job} is already in flight on this service; skipping.",
+        )
+
+
 def _pack_failure_reason(summary: Dict[str, Any]) -> Optional[str]:
     """Why this pack run counts as failed, or None.
 
@@ -179,8 +205,11 @@ def trigger_pack_bronze_html(payload: dict = Body(default={})) -> Dict[str, Any]
 
     Returns **500** with the summary as ``detail`` when the run aborted.
     ``read_failures`` warn and carry — see ``_pack_failure_reason``.
+
+    Returns **409** while another pack run is in flight (D3a), which
+    ``sensors.post_json`` turns into a graceful skip.
     """
-    with active_job():
+    with active_job(), _single_flight_or_409("pack_bronze"):
         payload = payload or {}
         try:
             kwargs = {
@@ -230,8 +259,11 @@ def trigger_prune_packed_source_html(payload: dict = Body(default={})) -> Dict[s
     Returns **500** with the summary as ``detail`` when the run aborted or
     refused an object, matching the CLI's exit code — see
     ``_prune_failure_reason``.
+
+    Returns **409** while another prune run is in flight (D3a). Packing is a
+    separate key, so a pack and a prune may run at once.
     """
-    with active_job():
+    with active_job(), _single_flight_or_409("pack_prune"):
         payload = payload or {}
         if "year" not in payload or "month" not in payload:
             raise HTTPException(

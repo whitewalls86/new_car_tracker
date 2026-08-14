@@ -447,6 +447,91 @@ def test_max_packs_caps_the_run_and_the_rest_resumes(store, duckdb):
     assert second["buckets"][0]["pending"] == 4
 
 
+# ---------------------------------------------------------------------------
+# Cooperative stop on deploy intent (Plan 131 Stage 5 D3b)
+#
+# The boundary is chosen so that stopping costs nothing beyond the members
+# already read into the open writer. What must never happen is a pack on
+# storage without a complete sidecar — that is an orphan, and Stage 4 refuses
+# to delete from one.
+# ---------------------------------------------------------------------------
+
+def _pause_after(mocker, *values):
+    """Patch long_jobs_paused; a sequence exhausts to its last value."""
+    seq = list(values)
+    return mocker.patch.object(
+        packer, "long_jobs_paused",
+        side_effect=lambda: seq.pop(0) if len(seq) > 1 else seq[0],
+    )
+
+
+def test_a_pending_deploy_stops_the_run_before_it_starts(store, duckdb, mocker):
+    keys = _seed(store, 6)
+    duckdb(_metadata(keys))
+    _pause_after(mocker, True)
+
+    result = _run()
+
+    assert result["stopped_for_deploy"] is True
+    assert result["packs_written"] == 0
+    assert result["error"] is None
+
+
+def test_a_deploy_stop_leaves_every_written_pack_with_a_complete_sidecar(
+    store, duckdb, mocker
+):
+    keys = _seed(store, 6)
+    duckdb(_metadata(keys))
+    # One pack per member, paused once the first is written and verified.
+    _pause_after(mocker, False, True)
+
+    result = _run(max_pack_bytes=1, frame_target_bytes=1, max_packs=0)
+
+    assert result["stopped_for_deploy"] is True
+    assert result["packs_written"] >= 1
+    for pack in result["buckets"][0]["packs"]:
+        sidecar = store.objects.get(packer.index_key(pack["pack_key"]))
+        assert sidecar is not None, "a pack without a sidecar is an orphan"
+        entries = read_index_parquet(sidecar)
+        assert len(entries) == pack["members"]
+
+
+def test_a_deploy_stop_writes_no_partial_tail_pack(store, duckdb, mocker):
+    keys = _seed(store, 6)
+    duckdb(_metadata(keys))
+    _pause_after(mocker, False, True)
+
+    result = _run(max_pack_bytes=1, frame_target_bytes=1, max_packs=0)
+
+    # Members still in the open writer are simply re-read next run. Flushing
+    # them here would be correct but would fragment the month for nothing.
+    assert result["members_packed"] < len(keys)
+
+
+def test_a_resumed_run_packs_what_the_stop_left(store, duckdb, mocker):
+    keys = _seed(store, 6)
+    duckdb(_metadata(keys))
+    _pause_after(mocker, False, True)
+    first = _run(max_pack_bytes=1, frame_target_bytes=1, max_packs=0)
+
+    duckdb(_metadata(keys))
+    mocker.patch.object(packer, "long_jobs_paused", return_value=False)
+    second = _run(max_pack_bytes=1, frame_target_bytes=1, max_packs=0)
+
+    assert second["stopped_for_deploy"] is False
+    assert first["members_packed"] + second["members_packed"] == len(keys)
+    assert second["buckets"][0]["orphan_packs"] == []
+
+
+def test_an_unpaused_run_reports_the_flag_false(store, duckdb):
+    keys = _seed(store, 6)
+    duckdb(_metadata(keys))
+
+    result = _run()
+
+    assert result["stopped_for_deploy"] is False
+
+
 def test_the_pack_size_cut_is_on_stored_bytes_not_raw_bytes(store, duckdb):
     """max_pack_bytes bounds the transient free space a pack needs, which is a
     compressed quantity. Detail pages are ~158 KB raw against ~7.3 KB stored,

@@ -47,6 +47,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, Iterator, List, Optional, Sequence, Set, Tuple
 
+from shared.deploy_intent import long_jobs_paused
 from shared.minio import BUCKET, get_boto3_client
 from shared.packfile import (
     DEFAULT_FRAME_TARGET_BYTES,
@@ -583,6 +584,7 @@ def _pack_bucket(
     read_failures: List[Dict[str, str]] = []
     seq = plan.next_seq
     stopped_early = False
+    stopped_for_deploy = False
 
     # Members go straight into the writer rather than into a list first, so the
     # roll decision can be made on *compressed* bytes. Cutting on raw bytes
@@ -638,11 +640,29 @@ def _pack_bucket(
                 if not flush():
                     stopped_early = True
                     break
+                # The pack above is written, verified and its sidecar stored,
+                # so it is durable and a resumed run will skip its members.
+                # **Never mid-pack** — the boundary is chosen so that stopping
+                # costs nothing beyond the members already read into the open
+                # writer, which the next run simply reads again.
+                if long_jobs_paused():
+                    stopped_for_deploy = True
+                    logger.info(
+                        "pack_bronze_html: bucket %s — stopping for a deploy after "
+                        "%d pack(s); resume is a re-run",
+                        plan.prefix, len(packs),
+                    )
+                    break
 
         # flush() returns False only when the cap has just been reached, and
         # that path breaks out above — so reaching here means the cap is still
         # short by at least one pack and this tail write cannot exceed it.
-        if not stopped_early:
+        #
+        # A deploy stop skips the tail write on purpose: those members are
+        # still in the open writer, unwritten, and the next run reads them
+        # again. Writing a short pack here would be correct but would leave the
+        # month more fragmented for nothing.
+        if not stopped_early and not stopped_for_deploy:
             flush()
     except Exception as exc:  # noqa: BLE001 - reported with the partial results.
         logger.error(
@@ -655,6 +675,7 @@ def _pack_bucket(
         "packs": packs,
         "read_failures": read_failures,
         "stopped_at_max_packs": stopped_early,
+        "stopped_for_deploy": stopped_for_deploy,
         "error": error,
     }
 
@@ -735,9 +756,21 @@ def pack_bronze_html(
         "pack_bytes": 0,
         "source_bytes": 0,
         "free_space": None,
+        "stopped_for_deploy": False,
         "error": None,
         "buckets": [],
     }
+
+    if long_jobs_paused():
+        # Not an error, and not a failed run: a retry that lands mid-deploy
+        # waits for the next one rather than starting hours of work a container
+        # restart is about to interrupt.
+        result["stopped_for_deploy"] = True
+        logger.info(
+            "pack_bronze_html: a deploy is pending — not starting. This run "
+            "will resume on retry once the intent clears."
+        )
+        return result
 
     reading = free_space_status(min_free_bytes, FREE_SPACE_PATH)
     result["free_space"] = reading
@@ -813,6 +846,9 @@ def pack_bronze_html(
         result["members_verified"] += sum(p["verified_members"] for p in summary["packs"])
         result["pack_bytes"] += sum(p["pack_bytes"] for p in summary["packs"])
         result["read_failures"] += len(summary["read_failures"])
+        if summary["stopped_for_deploy"]:
+            result["stopped_for_deploy"] = True
+            break
         if summary["error"]:
             result["error"] = summary["error"]
             break
@@ -869,6 +905,7 @@ def _process_bucket(
         "packs": [],
         "read_failures": [],
         "stopped_at_max_packs": False,
+        "stopped_for_deploy": False,
         "error": None,
     }
 
@@ -919,6 +956,7 @@ def _process_bucket(
     summary["packs"] = outcome["packs"]
     summary["read_failures"] = outcome["read_failures"]
     summary["stopped_at_max_packs"] = outcome["stopped_at_max_packs"]
+    summary["stopped_for_deploy"] = outcome["stopped_for_deploy"]
     summary["error"] = outcome["error"]
     return summary
 
