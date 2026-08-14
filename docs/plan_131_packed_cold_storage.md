@@ -733,8 +733,38 @@ applied.
 Covers three of ~five months, `detail_page` only, and the packed ratio is
 projected rather than measured until a re-pack confirms it.
 
+#### pack-00001, and the stale image that wrote it
+
+The second pack (17,460 members, 100% verified, 0 deleted, resume correct)
+came out a near-twin of the first: 392 frames against 387, 8.12 MiB of raw per
+frame against 8.12, and 3,856 B/member against 3,884 — a 0.7% difference where
+the alignment fix projected ~38%.
+
+The fix was merged and the VM's repo was at the merge commit. **The image was
+built 70 minutes before that merge**, so the container still held
+`DEFAULT_FRAME_TARGET_BYTES = 8 MiB`, no `frame_max_bytes`, and an `add()` that
+did not seal on listing. The run was measuring the old code against itself.
+
+**A `git pull` is not a deploy; only a rebuild is** — and the way to know is to
+ask the *container* what it loaded, not the repo what it contains:
+
+```
+docker exec cartracker-archiver python -c \
+  "import shared.packfile as p; print(p.DEFAULT_FRAME_TARGET_BYTES//1024//1024, 'MiB')"
+```
+
+This is the second time in this plan that a stale archiver image produced a
+confusing result — the first is recorded under Stage 2's prerequisite, where
+Plan 129 rebuilt only `processing` and `scraper`. The failure mode is identical
+and so is the fix: **verify the loaded code before drawing a conclusion from a
+run.** Three frame-level numbers said "old writer" before anything was checked;
+they should have been checked first, not used to raise a hypothesis.
+
 #### Operational notes from the run
 
+- **Listing rate swings ~2x with load.** The same 557,065-object prefix listed
+  at ~530 keys/s (18m42s) on one run and ~290 keys/s (~32 min) on the next,
+  climbing slightly within each rather than decaying. Budget the slow case.
 - **Listing is the fixed cost.** 557,065 objects took 18m42s at ~500 keys/s,
   paid on every run regardless of how much is packed. At `--max-packs 0` a
   whole month is one run and it amortizes to ~10%; caching the enumeration is
@@ -746,7 +776,10 @@ projected rather than measured until a re-pack confirms it.
   `/usr/app/logs`, the archiver's own named volume, which reads identical to
   /mnt/data down to the inode count.
 - **A detached `docker exec -d` is the only sane way to run this.** Two
-  foreground attempts died with their SSH connection mid-listing.
+  foreground attempts died with their SSH connection mid-listing. Note that
+  `ssh host docker exec ...` is *not* the tunnelling Plan 129 warned about —
+  the work runs in the container and only stdout crosses the wire — but the
+  process still dies with the connection unless detached.
 - **Packing is far faster than reading was assumed to be**: 152 objects/s
   including read, decompress, recompress, verify and upload, against Plan 129's
   ~35-83 obj/s. A whole month is ~1 hour of packing after the listing.
