@@ -201,18 +201,39 @@ print('inodes  est:', run['inodes_freed_estimated'], ' measured:', run['inodes_f
 "
 ```
 
-Pick a handful of deleted keys out of the archiver log (`served ... from pack`
-lines appear on every packed read) and read them back:
+**Do not hand-pick keys for this.** The run's JSON does not list what it
+deleted, and an earlier revision of this step left `<deleted-key-1>`
+placeholders that have no obvious source — pasted literally, they raise
+`NoSuchKey` from a key that was never real. Derive them from the sidecar
+instead, which also lets the check compare against `raw_sha256` rather than
+merely counting bytes:
 
 ```bash
 docker exec -w /app cartracker-archiver python -c "
-from shared.minio import read_html
-for key in ['<deleted-key-1>', '<deleted-key-2>']:
-    print(key, len(read_html(key)), 'bytes')
+import hashlib
+from shared.minio import BUCKET, get_boto3_client, object_exists, read_html
+from shared.packfile import read_index_parquet
+
+c = get_boto3_client()
+body = c.get_object(Bucket=BUCKET,
+    Key='html_packs/detail_page/2026/04/pack-00000.idx.parquet')['Body'].read()
+
+# The deleter walks members in frame order, so the first survivors it saw are
+# the ones it deleted.
+entries = sorted(read_index_parquet(body), key=lambda e: (e.frame_ordinal, e.offset_in_frame))
+gone = [e for e in entries[:150] if not object_exists(e.source_key)]
+print(f'{len(gone)} of the first 150 members have no source object left')
+
+for e in gone[:5]:
+    data = read_html(e.source_key)
+    match = hashlib.sha256(data).hexdigest() == e.raw_sha256
+    print(f'  {e.source_key.rsplit(chr(47),1)[-1]}  {len(data):>8} bytes  sha256_match={match}')
 "
 ```
 
-Both must return bytes. If either 404s, **stop** — that is the failure the whole
+Every line must print `sha256_match=True`, and `gone` must be non-zero — if it
+is zero, the apply run did not delete anything and there is nothing to verify
+yet. If any read 404s or mismatches, **stop**: that is the failure the whole
 plan is built to prevent, and the remaining sources are still intact.
 
 Then check the constraint moved:
