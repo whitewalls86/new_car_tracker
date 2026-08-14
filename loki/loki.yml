@@ -3,6 +3,12 @@ auth_enabled: false
 server:
   http_listen_port: 3100
   grpc_listen_port: 9096
+  # Loki's own boltdb-shipper chatter is ~9 lines/sec at info, all of it index
+  # handover bookkeeping (8.6 GB accumulated, 2 errors per 2M lines). Raise it
+  # temporarily for troubleshooting with POST /log_level?log_level=debug — that
+  # takes effect without a restart and reverts to this value when the container
+  # restarts. See docs/plan_135_storage_observability.md.
+  log_level: warn
 
 common:
   path_prefix: /loki
