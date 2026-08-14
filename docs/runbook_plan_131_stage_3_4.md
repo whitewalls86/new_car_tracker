@@ -201,18 +201,39 @@ print('inodes  est:', run['inodes_freed_estimated'], ' measured:', run['inodes_f
 "
 ```
 
-Pick a handful of deleted keys out of the archiver log (`served ... from pack`
-lines appear on every packed read) and read them back:
+**Do not hand-pick keys for this.** The run's JSON does not list what it
+deleted, and an earlier revision of this step left `<deleted-key-1>`
+placeholders that have no obvious source — pasted literally, they raise
+`NoSuchKey` from a key that was never real. Derive them from the sidecar
+instead, which also lets the check compare against `raw_sha256` rather than
+merely counting bytes:
 
 ```bash
 docker exec -w /app cartracker-archiver python -c "
-from shared.minio import read_html
-for key in ['<deleted-key-1>', '<deleted-key-2>']:
-    print(key, len(read_html(key)), 'bytes')
+import hashlib
+from shared.minio import BUCKET, get_boto3_client, object_exists, read_html
+from shared.packfile import read_index_parquet
+
+c = get_boto3_client()
+body = c.get_object(Bucket=BUCKET,
+    Key='html_packs/detail_page/2026/04/pack-00000.idx.parquet')['Body'].read()
+
+# The deleter walks members in frame order, so the first survivors it saw are
+# the ones it deleted.
+entries = sorted(read_index_parquet(body), key=lambda e: (e.frame_ordinal, e.offset_in_frame))
+gone = [e for e in entries[:150] if not object_exists(e.source_key)]
+print(f'{len(gone)} of the first 150 members have no source object left')
+
+for e in gone[:5]:
+    data = read_html(e.source_key)
+    match = hashlib.sha256(data).hexdigest() == e.raw_sha256
+    print(f'  {e.source_key.rsplit(chr(47),1)[-1]}  {len(data):>8} bytes  sha256_match={match}')
 "
 ```
 
-Both must return bytes. If either 404s, **stop** — that is the failure the whole
+Every line must print `sha256_match=True`, and `gone` must be non-zero — if it
+is zero, the apply run did not delete anything and there is nothing to verify
+yet. If any read 404s or mismatches, **stop**: that is the failure the whole
 plan is built to prevent, and the remaining sources are still intact.
 
 Then check the constraint moved:
@@ -229,26 +250,47 @@ One pack at a time, then a month at a time. Long runs must be detached —
 **two foreground attempts died with their SSH connection mid-listing**, and
 never run bulk object work over an SSH tunnel (~8x slower than in-container).
 
-```bash
-# one whole pack (~17,000 objects)
-docker exec -d -w /app cartracker-archiver \
-    python -m archiver.processors.delete_packed_source_html \
-    --year 2026 --month 4 --max-objects 20000 --max-packs 1 --apply \
-    --json-out /tmp/prune_pack0.json
+**A detached run must redirect its own output to a file.** `docker logs` shows
+only the container's *main* process — the uvicorn app — so a `docker exec -d`
+process never appears there. The CLI calls `logging.basicConfig`, which writes
+to stderr and installs no file handler, so with `-d` that output is simply
+lost. Detaching and watching `docker logs` are mutually exclusive, and an
+earlier revision of this run sheet told you to do both.
 
-# then the whole month, still one pack at a time internally
-docker exec -d -w /app cartracker-archiver \
-    python -m archiver.processors.delete_packed_source_html \
-    --year 2026 --month 4 --max-objects 600000 --max-packs 0 --apply \
-    --json-out /tmp/prune_april.json
+```bash
+# the whole month, one listing, output captured
+docker exec -d -w /app cartracker-archiver sh -c \
+  'python -m archiver.processors.delete_packed_source_html \
+     --year 2026 --month 4 --max-objects 600000 --max-packs 0 --apply \
+     --json-out /tmp/prune_april.json \
+     > /usr/app/logs/prune_april.log 2>&1'
 ```
+
+`/usr/app/logs` is the archiver's own named volume, so the log outlives both
+the exec and a container restart.
 
 Watch it:
 
 ```bash
-docker logs -f --tail 50 cartracker-archiver
+docker exec cartracker-archiver tail -f /usr/app/logs/prune_april.log
 watch -n 300 'df -i /mnt/data'
 ```
+
+`PACK_PRUNE_PROGRESS_EVERY` (default 1,000) drives both the listing tick and
+the deletion counter. At 557,065 objects that is ~557 listing lines; pass
+`-e PACK_PRUNE_PROGRESS_EVERY=25000` to the `docker exec` for a calmer log.
+
+**If a run is already detached without redirection**, it is working, just
+blind: it writes its JSON at the end, and `df -i /mnt/data` shows inodes
+falling meanwhile. Confirm it is alive with
+
+```bash
+docker exec cartracker-archiver sh -c \
+  'for p in /proc/[0-9]*; do tr "\0" " " < $p/cmdline 2>/dev/null | grep -q delete_packed && echo "RUNNING $p"; done'
+```
+
+Do not kill and restart it for the sake of logging — resume is safe, but the
+listing costs 12 minutes each time.
 
 **Resume is free and safe.** The surviving-object listing is the checkpoint —
 an object that is gone is skipped with no request, each object is deleted at

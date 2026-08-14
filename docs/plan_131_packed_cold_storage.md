@@ -33,7 +33,13 @@ harmless by construction. See [Stage 3 as built](#stage-3-as-built) — includin
 the measurement that chose pyarrow over DuckDB and the latency number that is
 still outstanding.
 
-**Stage 4 BUILT 2026-08-14, NEVER RUN.** `delete_packed_source_html` +
+**Stage 4 BUILT AND FIRST RUN 2026-08-14 — the first inodes this plan has
+freed.** 100 April objects deleted, 100/100 verified, **0 refused**, 1,423,143
+bytes and ~224 inodes freed, and **every deleted artifact read back
+byte-identically from its pack afterwards**. See
+[First production run](#first-production-run--measured-2026-08-14).
+
+**Stage 4 as originally specified:** `delete_packed_source_html` +
 `POST /pack/bronze/prune`: dry-run by default, hard per-run cap, one pack at a
 time, and three mandatory checks per member before anything is removed — see
 [Stage 4 as built](#stage-4-as-built). It must not run until Stage 3 is
@@ -1309,6 +1315,88 @@ is never called.
 - **An orphan pack is never deleted from.** Stage 2 reports and never deletes
   them; an unverified pack is not evidence that anything is safe to remove.
 
+### First production run — measured 2026-08-14
+
+April 2026, `--max-objects 100 --max-packs 1`, dry run then apply. **The first
+inodes this plan has ever freed.**
+
+| | dry run | apply |
+|---|---|---|
+| objects considered / verified | 100 / 100 | 100 / 100 |
+| **refused** | **0** | **0** |
+| deleted | 0 | **100** |
+| bytes freed | 0 | **1,423,143** |
+| inodes freed, estimated | 0 | **224** |
+| inodes freed, measured | −590 | +63 |
+| `by_status` | `complete: 97, ok: 3` | same |
+| `orphan_packs` | `[]` | `[]` |
+| `objects_surviving_before` | 557,065 | 557,065 |
+
+`objects_surviving_before` matching the Stage 2 census exactly (557,065) is the
+first independent confirmation that the deleter and the packer are looking at
+the same universe.
+
+**`ok` appears in real data**, three of the first hundred — the n8n-era success
+status that a naive processing gate would have had an opinion about, deleted
+like any other member under the agreed policy.
+
+**No `no_event_row` in this sample, and that is correct**: null-`artifact_id`
+members sort last and land in packs 00026-00031, so pack-00000 is entirely
+named artifacts. The no-provenance branch is exercised at the end of the month,
+not the start.
+
+#### Readback after deletion — the property the plan exists for
+
+Verified immediately afterwards, deriving keys from the sidecar rather than
+trusting the run's own account of itself:
+
+```
+100 of the first 150 members have no source object left
+  c116a381-...  824188 bytes  sha256_match=True
+  0d1edf51-...  211152 bytes  sha256_match=True
+  ff3a7ae8-...  212153 bytes  sha256_match=True
+  fadae602-...  599792 bytes  sha256_match=True
+  1bd534b5-...  600387 bytes  sha256_match=True
+```
+
+**Exactly 100 of the first 150 are gone**, which is an independent confirmation
+that the per-run cap is honoured to the object and that the deleter walks
+members in frame order. Every sampled read returned bytes matching the
+sidecar's `raw_sha256` — from artifacts that no longer exist anywhere except
+inside a pack.
+
+#### The measured inode delta is below its own noise floor at this size
+
+−590 on a run that deleted nothing, +63 on a run that freed an estimated 224.
+Both readings span ~12 minutes of wall clock — dominated by the 700-800 s
+listing — during which the scraper kept creating objects at ~65,500/day. The
+figure is a reading of the whole volume, not of this job, exactly as the
+summary claims; at 100 objects the signal is smaller than the concurrent
+churn. **It only becomes meaningful at month scale**, where April's ~1.248M
+dwarfs anything else moving.
+
+#### The listing is the fixed cost, and it decides how to run this
+
+701-809 s to enumerate 557,065 objects, **paid on every run regardless of the
+cap**. Draining April one pack at a time would be 32 listings — roughly seven
+hours of pure enumeration to do about an hour of work. One run at
+`--max-packs 0` pays it once.
+
+#### `sample_full_reads` collapses under a small cap
+
+The run logged **one** full-resolver read, not 25. `_sample_positions` spreads
+its samples across the whole pack — for 17,291 members that is positions 0,
+720, 1441, ... — while the per-run budget stops at 100, so only position 0 is
+ever reached. A capped run therefore carries a fraction of the end-to-end
+resolver evidence it reports.
+
+It does not weaken this run: the three load-bearing checks (resolvable,
+extractable, identical-to-object) ran on all 100, and Stage 3 already put 365
+members through the full resolver. It also self-corrects once the budget
+exceeds the pack size. **It matters only for small capped runs, which is
+precisely the first-run posture**, so the sample should be computed against
+`min(len(pending), remaining_budget)`.
+
 ### Testing
 
 26 tests over an in-memory object store — real packs, real ranged GETs, real
@@ -1328,6 +1416,64 @@ any other status, and every deleted object is asserted still readable through
   floor, thin like `compact_silver` (sensors + one HTTP call, no logic).
 - Metrics: objects packed, packs written, bytes/inodes reclaimed, extraction
   latency p50/p95, verification failures (should be zero; alert on any).
+
+#### Why Stage 5 is the point of the plan, not its tidy-up
+
+Stages 1-4 buy a **one-time** reclamation. April through July is ~3.65M objects
+— about 90% of everything in bronze — worth ~8.2M inodes, or ~125 days at the
+measured burn. That is a bigger deadline, not the absence of one, and framing
+this plan as "how many days does it buy" undersells what it actually does.
+
+**Run continuously, packing changes the shape of the problem.** A closed month
+collapses from ~1.1M objects to about **82 objects** — 41 packs plus 41
+sidecars, which is May's measured shape. At ~2.24 inodes each that is ~185
+inodes per month of permanent cold storage, or roughly **2,200 inodes a year**
+against a 13.1M total.
+
+The only meaningful consumer left is the hot window: the current month plus
+`PACK_SETTLE_DAYS`, peaking around **2.5M inodes** before it is packed and
+pruned. Against the ~12.2M free that the April-July cycle leaves behind, that
+is not years of headroom — **inodes stop being the binding constraint at all.**
+
+#### The constraint moves to bytes, and moves out about three years
+
+Estimated 2026-08-14, measured inputs marked:
+
+| | |
+|---|---|
+| free bytes now *(measured, archiver)* | 82.3 GiB |
+| + source bytes returned by pruning Apr-Jul | ~24 GiB |
+| − packs still to write for Jun + Jul | ~4.6 GiB |
+| **free after the full cycle** | **~102 GiB** |
+| reserve: hot month + transient pack space | ~15 GiB |
+| **usable for cold growth** | **~87 GiB** |
+| packed cold storage per month | **~2.4 GiB** |
+| **full-retention runway** | **~36 months** |
+
+So roughly **2.5-3.5 years of retaining every page ever scraped**, on the
+current 196 GB disk at the current scrape rate. Measured inputs are April's
+4.27 GiB of sources against 1.99 GiB packed, and May's 6,978 stored bytes per
+object against ~2,410 packed bytes per member. June and July are inferred from
+May's shape and should be *better* than April, which carries Plan 132's
+null-metadata tail.
+
+#### Three consequences worth stating
+
+- **[Plan 130](plan_130_parser_input_projection.md) stays unnecessary.** It is
+  the only irreversible lever in this arc — discarding HTML content — and it is
+  blocked until the reversible options are exhausted. A three-year runway means
+  they are not exhausted for a long time.
+- **[Plan 113](plan_113_production_adaptive_refresh.md) becomes an efficiency
+  play, not a rescue.** Adaptive refresh cuts object *creation*, so it extends
+  both the hot window and the per-month packed cost. Valuable, no longer
+  urgent.
+- **The cheapest remaining lever is not software.** At ~2.4 GiB/month, another
+  200 GB of disk buys roughly seven more years. Worth remembering before anyone
+  proposes a cleverer storage format.
+
+Two things would move these numbers: a change in scrape volume — all of it
+assumes ~1.1M objects/month — and whether June and July pack like May or like
+April.
 
 ---
 
