@@ -33,7 +33,12 @@ harmless by construction. See [Stage 3 as built](#stage-3-as-built) — includin
 the measurement that chose pyarrow over DuckDB and the latency number that is
 still outstanding.
 
-**Stage 4 BUILT 2026-08-14, NEVER RUN.** `delete_packed_source_html` +
+**Stage 4 BUILT AND FIRST RUN 2026-08-14 — the first inodes this plan has
+freed.** 100 April objects deleted, 100/100 verified, **0 refused**, 1,423,143
+bytes and ~224 inodes freed. See
+[First production run](#first-production-run--measured-2026-08-14).
+
+**Stage 4 as originally specified:** `delete_packed_source_html` +
 `POST /pack/bronze/prune`: dry-run by default, hard per-run cap, one pack at a
 time, and three mandatory checks per member before anything is removed — see
 [Stage 4 as built](#stage-4-as-built). It must not run until Stage 3 is
@@ -1308,6 +1313,68 @@ is never called.
   other.
 - **An orphan pack is never deleted from.** Stage 2 reports and never deletes
   them; an unverified pack is not evidence that anything is safe to remove.
+
+### First production run — measured 2026-08-14
+
+April 2026, `--max-objects 100 --max-packs 1`, dry run then apply. **The first
+inodes this plan has ever freed.**
+
+| | dry run | apply |
+|---|---|---|
+| objects considered / verified | 100 / 100 | 100 / 100 |
+| **refused** | **0** | **0** |
+| deleted | 0 | **100** |
+| bytes freed | 0 | **1,423,143** |
+| inodes freed, estimated | 0 | **224** |
+| inodes freed, measured | −590 | +63 |
+| `by_status` | `complete: 97, ok: 3` | same |
+| `orphan_packs` | `[]` | `[]` |
+| `objects_surviving_before` | 557,065 | 557,065 |
+
+`objects_surviving_before` matching the Stage 2 census exactly (557,065) is the
+first independent confirmation that the deleter and the packer are looking at
+the same universe.
+
+**`ok` appears in real data**, three of the first hundred — the n8n-era success
+status that a naive processing gate would have had an opinion about, deleted
+like any other member under the agreed policy.
+
+**No `no_event_row` in this sample, and that is correct**: null-`artifact_id`
+members sort last and land in packs 00026-00031, so pack-00000 is entirely
+named artifacts. The no-provenance branch is exercised at the end of the month,
+not the start.
+
+#### The measured inode delta is below its own noise floor at this size
+
+−590 on a run that deleted nothing, +63 on a run that freed an estimated 224.
+Both readings span ~12 minutes of wall clock — dominated by the 700-800 s
+listing — during which the scraper kept creating objects at ~65,500/day. The
+figure is a reading of the whole volume, not of this job, exactly as the
+summary claims; at 100 objects the signal is smaller than the concurrent
+churn. **It only becomes meaningful at month scale**, where April's ~1.248M
+dwarfs anything else moving.
+
+#### The listing is the fixed cost, and it decides how to run this
+
+701-809 s to enumerate 557,065 objects, **paid on every run regardless of the
+cap**. Draining April one pack at a time would be 32 listings — roughly seven
+hours of pure enumeration to do about an hour of work. One run at
+`--max-packs 0` pays it once.
+
+#### `sample_full_reads` collapses under a small cap
+
+The run logged **one** full-resolver read, not 25. `_sample_positions` spreads
+its samples across the whole pack — for 17,291 members that is positions 0,
+720, 1441, ... — while the per-run budget stops at 100, so only position 0 is
+ever reached. A capped run therefore carries a fraction of the end-to-end
+resolver evidence it reports.
+
+It does not weaken this run: the three load-bearing checks (resolvable,
+extractable, identical-to-object) ran on all 100, and Stage 3 already put 365
+members through the full resolver. It also self-corrects once the budget
+exceeds the pack size. **It matters only for small capped runs, which is
+precisely the first-run posture**, so the sample should be computed against
+`min(len(pending), remaining_budget)`.
 
 ### Testing
 
