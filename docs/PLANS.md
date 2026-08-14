@@ -53,6 +53,7 @@ stable substrate.
 | [130](plan_130_parser_input_projection.md) | Parser-input projection (truncating raw HTML) | Draft — blocked on 129 + taxonomy gap |
 | [131](plan_131_packed_cold_storage.md) | Packed cold storage for bronze HTML | In production — April packed in full, May running; Stage 3 read path built, not deployed; Stages 4-5 not started |
 | [132](plan_132_unrecorded_artifact_recovery.md) | Recovering unrecorded bronze artifacts | Draft — Stage 0 gate not run |
+| [133](plan_133_pack_read_path_hardening.md) | Pack read path hardening | Draft — two non-blocking defects found verifying 131 Stage 3; do before 132 Stage 2 |
 
 ---
 

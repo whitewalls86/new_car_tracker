@@ -1075,7 +1075,11 @@ Two fixes, neither blocking Stage 4 (whose deleter walks one pack with its own
   cache, ~40 is affordable.
 
 Recorded rather than fixed in the same breath: the gate passed, and changing
-the read path after it was verified would invalidate the verification.
+the read path after it was verified would invalidate the verification. Both
+this and the `object_exists` gap found alongside it are tracked in
+[Plan 133](plan_133_pack_read_path_hardening.md), which is sequenced before
+Plan 132's reparse rather than before Stage 4 — neither defect blocks
+deletion.
 
 ### Stage 4 — Delete packed source objects
 
