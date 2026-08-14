@@ -6,12 +6,13 @@
 Monthly capture buckets: ~68% logical / ~79-81% physical saving, 1.00x
 reprocessing, and the object count collapses from ~4.5M to a few hundred packs.
 
-**Stages 1-2 BUILT (2026-08-13), not yet run against production.** Format,
-writer, indexed reader, sidecar index, and a checkpointed archiver job that
-writes packs alongside their sources and deletes nothing. See
-[Stage 1-2 as built](#stage-1-2-as-built) for what the implementation settled
-that the plan had left open, and for the one place the plan's own wording was
-wrong.
+**Stages 1-2 BUILT and RUN IN PRODUCTION (2026-08-14).** One April pack:
+17,291 members, **100% byte-identical verification, zero source objects
+deleted**, 8,646x object reduction, 75.2% physical saving. See
+[Stage 1-2 as built](#stage-1-2-as-built) for what the implementation settled,
+and [the first production run](#stage-2-first-production-run--measured-2026-08-14)
+for the measurements — including the one that came in **under** projection and
+the frame-boundary bug it exposed.
 
 **Stages 3-5 NOT STARTED.** Stage 4 is the only step that removes data.
 
@@ -656,6 +657,99 @@ with no S3 code in `shared/packfile.py` at all.
   rest of it.
 - `PACK_BRONZE_MAX_COHORTS` is `PACK_BRONZE_MAX_BUCKETS` — the grouping is
   calendar buckets, and cohorts were the rejected alternative.
+
+### Stage 2 first production run — measured 2026-08-14
+
+One pack, April 2026 `detail_page`, on the production VM. **Zero source objects
+deleted.**
+
+| | |
+|---|---|
+| bucket | 557,065 objects, 4,579,267,375 B stored |
+| listing the bucket | 1,032 s at ~530 keys/s — flat, no deceleration |
+| pack | 17,291 members, 387 frames, 67,168,784 B + 1,365,502 B sidecar |
+| packing rate | 17,291 members in 114 s (**152 objects/s**) |
+| verification | **17,291 / 17,291 byte-identical**, 0 read failures |
+| independent re-check | 25/25 extracted byte-identically from the *stored* pack over ranged GETs; index and footer agree; `dict_id` 1367127621 present; listing order preserved |
+
+Saving on the packed members, every source object HEADed for an exact baseline:
+
+| | measured | Stage 0d projected |
+|---|---|---|
+| logical | **57.8%** | 67.8% |
+| physical | **75.2%** | 79-81% |
+| objects | 17,291 -> 2 (**8,646x**) | >=20x |
+| inodes | ~38,732 -> ~4.5 | |
+
+Both gates pass. Both projections were missed, and the cause is not the
+projection.
+
+#### Why it fell short: frames were sealed by byte count, not by listing
+
+| | measured in the pack |
+|---|---|
+| distinct listings | 544 (31.8 captures each — *better* than the corpus's 10.6) |
+| listings split across >1 frame | **270 of 544** |
+| implied D | **3,732 B** against Stage 0d's measured 2,142 B |
+
+Group sizes were never the problem. **A zstd frame is an independent
+compression window, so a boundary landing inside a listing makes the
+continuation frame re-pay that listing's full base cost instead of a ~2 KB
+delta.** Stage 0d measured one frame per (listing, month) group — never split.
+The first implementation cut frames at a fixed 8 MiB, which ignored listing
+boundaries and split half of them.
+
+Fixed by sealing frames at listing boundaries: `frame_target_bytes` became a
+*soft* target (seal at the first listing boundary at or after it) with
+`frame_max_bytes` as a hard ceiling so one enormous listing cannot produce one
+enormous frame. The default target rose 8 -> 16 MiB, inside the plan's stated
+4-16 MB range, because p90 here was 59 captures ~ 11 MB.
+
+On synthetic members with production-like proportions the change removes every
+split and cuts the pack 67.4%; on this pack, Stage 0d's B and D applied to its
+544 real groups project 40.5 MB instead of 67.2 MB — **~74% logical / ~84%
+physical**, past the original projection. Not yet confirmed on real data; a
+re-pack is what settles it.
+
+#### Projection, from measured numbers only
+
+Post-dictionary stored bytes per month come from Plan 129's own `--json-out`
+summaries; the packing ratio is this pack's measurement with the alignment fix
+applied.
+
+| bucket | objects | stored | packed | physical now | physical packed | objects after |
+|---|---|---|---|---|---|---|
+| April detail | 557,065 | 4.26 G | 1.10 G | 7.24 G | 1.13 G | 40 |
+| May detail | 1,021,266 | 6.64 G | 1.71 G | 11.27 G | 1.76 G | 74 |
+| June detail | 1,124,122 | 7.42 G | 1.91 G | 12.60 G | 1.97 G | 80 |
+| **total** | **2,702,453** | **18.32 G** | **4.73 G** | **31.12 G** | **4.85 G** | **194** |
+
+- **26.3 GiB physical reclaimed (84.4%)**
+- **2,702,453 objects -> 194 (13,930x)**
+- **~6.05M inodes**: free goes 3,983,261 -> 10,036,321 of 13,107,200
+- at 65,500 inodes/day that is **+92 days**, turning the 61-day ceiling into
+  roughly five months — from three months of one artifact type
+
+Covers three of ~five months, `detail_page` only, and the packed ratio is
+projected rather than measured until a re-pack confirms it.
+
+#### Operational notes from the run
+
+- **Listing is the fixed cost.** 557,065 objects took 18m42s at ~500 keys/s,
+  paid on every run regardless of how much is packed. At `--max-packs 0` a
+  whole month is one run and it amortizes to ~10%; caching the enumeration is
+  therefore a nice-to-have, not a prerequisite. (An earlier revision of this
+  section recommended the cache on the strength of a `--max-packs 1` run. That
+  was the wrong denominator.)
+- **The free-space floor must not measure the container's `/`.** On the VM `/`
+  is a 49 GB overlay on /dev/sda1; the bucket lives on /dev/sdb. Default is now
+  `/usr/app/logs`, the archiver's own named volume, which reads identical to
+  /mnt/data down to the inode count.
+- **A detached `docker exec -d` is the only sane way to run this.** Two
+  foreground attempts died with their SSH connection mid-listing.
+- **Packing is far faster than reading was assumed to be**: 152 objects/s
+  including read, decompress, recompress, verify and upload, against Plan 129's
+  ~35-83 obj/s. A whole month is ~1 hour of packing after the listing.
 
 ### WARC, checked as the plan required
 
