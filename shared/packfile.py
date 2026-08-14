@@ -63,10 +63,22 @@ HEADER_SIZE = _HEADER.size
 FRAME_ENTRY_SIZE = _FRAME_ENTRY.size
 TRAILER_SIZE = _TRAILER.size
 
-#: Uncompressed bytes per frame. Bounds the cost of reading a single member:
-#: one member read decompresses this much, and no more. 8 MiB is ~1,100 detail
-#: pages at the measured 7.3 KB mean.
-DEFAULT_FRAME_TARGET_BYTES = 8 * 1024 * 1024
+#: Uncompressed bytes per frame — a *soft* target. A frame is sealed at the
+#: first listing boundary at or after this, never in the middle of a listing.
+#:
+#: 16 MiB rather than 8: the first production pack (2026-08-14) held listings
+#: averaging 31.8 captures at ~190 KB raw, about 6 MB each, and 8 MiB frames
+#: split half of them. At 16 MiB roughly 90% of listings fit whole — p90 there
+#: was 59 captures, ~11 MB. The cost is that reading one member decompresses
+#: 16 MiB instead of 8, which is ~32 ms and the trade the plan accepts.
+DEFAULT_FRAME_TARGET_BYTES = 16 * 1024 * 1024
+
+#: Hard ceiling, as a multiple of the target. One listing must not be able to
+#: create an unbounded frame — the corpus contains a listing with 4,467
+#: captures, which at ~190 KB raw would be ~850 MB. Past this a frame is sealed
+#: mid-listing, paying one extra base copy rather than blowing up the cost of
+#: every single-member read in that frame.
+DEFAULT_FRAME_MAX_MULTIPLE = 2
 
 #: Frames decompressed and held in a reader. Two is enough to keep a sequential
 #: walk across a frame boundary from decompressing the same frame twice.
@@ -194,6 +206,22 @@ class PackWriter:
     ``listing_id, fetched_at`` — a vehicle's repeat captures must be adjacent
     inside one frame, because that is where the within-listing redundancy is
     (30.4% by whole-section hash, against 0.65% across listings).
+
+    **Frames are sealed at listing boundaries, not at a fixed byte count.**
+    Adjacency is worth nothing if a frame boundary lands in the middle of a
+    listing: a zstd frame is an independent compression window, so the
+    continuation frame re-pays that listing's full base cost instead of a
+    ~2 KB delta. Measured on the first production pack (2026-08-14): fixed
+    8 MiB frames split 270 of 544 listings and inflated the marginal cost per
+    capture from the 2,142 B Stage 0d measured to 3,732 B — which is the whole
+    difference between the projected 67.8% logical saving and the 57.8%
+    actually achieved.
+
+    So ``frame_target_bytes`` is a *soft* target: the frame is sealed at the
+    first listing boundary at or after it. ``frame_max_bytes`` is the hard
+    ceiling that keeps one enormous listing from producing one enormous frame.
+    Passing ``frame_max_bytes == frame_target_bytes`` restores the old
+    fixed-size behaviour, which is how the two are compared in tests.
     """
 
     def __init__(
@@ -202,12 +230,18 @@ class PackWriter:
         dict_id: int | None = None,
         level: int = ZSTD_LEVEL,
         frame_target_bytes: int = DEFAULT_FRAME_TARGET_BYTES,
+        frame_max_bytes: int | None = None,
     ):
         if frame_target_bytes <= 0:
             raise ValueError("frame_target_bytes must be positive")
+        if frame_max_bytes is None:
+            frame_max_bytes = frame_target_bytes * DEFAULT_FRAME_MAX_MULTIPLE
+        if frame_max_bytes < frame_target_bytes:
+            raise ValueError("frame_max_bytes must be >= frame_target_bytes")
         self._dict_id = dict_id
         self._level = level
         self._frame_target_bytes = frame_target_bytes
+        self._frame_max_bytes = frame_max_bytes
 
         self._frames: list[bytes] = []
         self._frame_meta: list[tuple[int, int]] = []  # (uncompressed_length, member_count)
@@ -235,9 +269,21 @@ class PackWriter:
     def add(self, member: PackMember) -> None:
         if self._finished:
             raise PackError("cannot add to a finished pack")
+
+        # Seal *before* accepting a member that opens a new listing, so the
+        # listing that just ended keeps all of its captures in one window.
+        if (
+            self._pending
+            and self._pending_bytes >= self._frame_target_bytes
+            and member.listing_id != self._pending[-1].listing_id
+        ):
+            self._seal_frame()
+
         self._pending.append(member)
         self._pending_bytes += len(member.content)
-        if self._pending_bytes >= self._frame_target_bytes:
+
+        # The hard ceiling is the only thing that can split a listing.
+        if self._pending_bytes >= self._frame_max_bytes:
             self._seal_frame()
 
     def _seal_frame(self) -> None:
@@ -321,10 +367,14 @@ def build_pack(
     dict_id: int | None = None,
     level: int = ZSTD_LEVEL,
     frame_target_bytes: int = DEFAULT_FRAME_TARGET_BYTES,
+    frame_max_bytes: int | None = None,
 ) -> Pack:
     """Build and verify one pack from *members*, in the order given."""
     writer = PackWriter(
-        dict_id=dict_id, level=level, frame_target_bytes=frame_target_bytes
+        dict_id=dict_id,
+        level=level,
+        frame_target_bytes=frame_target_bytes,
+        frame_max_bytes=frame_max_bytes,
     )
     for member in members:
         writer.add(member)
