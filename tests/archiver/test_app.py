@@ -291,6 +291,191 @@ class TestPackBronzeRunEndpoint:
 
 
 # ---------------------------------------------------------------------------
+# The Plan 131 failure contract (Stage 5 D5)
+#
+# Both processors return a summary rather than raising, and both translate that
+# summary into a failure on the CLI. These are the HTTP half of that contract:
+# a run that aborted or refused an object must not return 200, or
+# raise_for_status() — the entire check a DAG performs — passes on it.
+# ---------------------------------------------------------------------------
+
+class TestPackFailureReason:
+    """The predicate itself, against summary dicts, per D5."""
+
+    def test_clean_run_is_not_a_failure(self):
+        from archiver.app import _pack_failure_reason
+
+        assert _pack_failure_reason(
+            {"error": None, "read_failures": 0, "packs_written": 3}
+        ) is None
+
+    def test_error_is_a_failure(self):
+        from archiver.app import _pack_failure_reason
+
+        reason = _pack_failure_reason({"error": "disk full", "read_failures": 0})
+        assert reason and "disk full" in reason
+
+    def test_read_failures_only_warn(self):
+        from archiver.app import _pack_failure_reason
+
+        # The packer's CLI exits 1 on this; the endpoint deliberately does not.
+        # Nothing is deleted here and packing is additive, so an unreadable
+        # object costs a later run rather than any data — and a monthly DAG
+        # must not throw away a packed month over one bad object.
+        assert _pack_failure_reason({"error": None, "read_failures": 4}) is None
+
+    def test_stopped_at_max_packs_only_warns(self):
+        from archiver.app import _pack_failure_reason
+
+        # The cap doing its job. The next run picks up where this one stopped.
+        assert _pack_failure_reason({
+            "error": None, "read_failures": 0, "stopped_at_max_packs": True,
+        }) is None
+
+    def test_orphan_packs_only_warn(self):
+        from archiver.app import _pack_failure_reason
+
+        # An earlier run was interrupted. The packer reports orphans and never
+        # writes into them, so carrying the condition is safe.
+        assert _pack_failure_reason({
+            "error": None, "read_failures": 0, "orphan_packs": ["pack-00007"],
+        }) is None
+
+
+class TestPruneFailureReason:
+    def test_clean_run_is_not_a_failure(self):
+        from archiver.app import _prune_failure_reason
+
+        assert _prune_failure_reason(
+            {"error": None, "objects_refused": 0, "objects_deleted": 100}
+        ) is None
+
+    def test_error_is_a_failure(self):
+        from archiver.app import _prune_failure_reason
+
+        reason = _prune_failure_reason({
+            "error": "year and month are required — this job deletes data",
+            "objects_refused": 0,
+        })
+        assert reason and "year and month" in reason
+
+    def test_refused_objects_are_a_failure(self):
+        from archiver.app import _prune_failure_reason
+
+        # The loudest signal this job produces: verification disagreed.
+        reason = _prune_failure_reason({"error": None, "objects_refused": 40000})
+        assert reason and "40000" in reason
+
+    def test_a_drained_month_deleting_nothing_is_not_a_failure(self):
+        from archiver.app import _prune_failure_reason
+
+        # A fully pruned month legitimately deletes nothing and returns after
+        # one listing. objects_deleted == 0 is not a failure predicate.
+        assert _prune_failure_reason({
+            "error": None, "objects_refused": 0, "objects_deleted": 0,
+            "objects_surviving_before": 0,
+        }) is None
+
+    def test_capped_only_warns(self):
+        from archiver.app import _prune_failure_reason
+
+        assert _prune_failure_reason({
+            "error": None, "objects_refused": 0, "capped": True,
+        }) is None
+
+
+class TestPackEndpointsSignalFailure:
+    def test_pack_error_returns_500_carrying_the_summary(
+        self, mock_archiver_client, mocker
+    ):
+        fake = {"mode": "apply", "error": "no free space", "read_failures": 0}
+        mocker.patch("archiver.app._pack_bronze_html", return_value=fake)
+
+        resp = mock_archiver_client.post("/pack/bronze/run", json={"apply": True})
+
+        assert resp.status_code == 500
+        detail = resp.json()["detail"]
+        # The whole summary survives, so JsonPostError can carry it to notify.
+        assert detail["error"] == "no free space"
+        assert detail["mode"] == "apply"
+        assert "no free space" in detail["failure_reason"]
+
+    def test_pack_read_failures_still_return_200(self, mock_archiver_client, mocker):
+        fake = {"mode": "apply", "error": None, "read_failures": 2, "packs_written": 31}
+        mocker.patch("archiver.app._pack_bronze_html", return_value=fake)
+
+        resp = mock_archiver_client.post("/pack/bronze/run", json={"apply": True})
+
+        # 31 packs written is not a failed run because two objects were
+        # unreadable. The count stays in the body for whoever wants it.
+        assert resp.status_code == 200
+        assert resp.json() == fake
+
+    def test_prune_refusals_return_500_carrying_the_summary(
+        self, mock_archiver_client, mocker
+    ):
+        fake = {
+            "mode": "apply", "error": None, "objects_refused": 7,
+            "objects_deleted": 93,
+            "failures": [{"source_key": "html/...", "error": "sha256 mismatch"}],
+        }
+        mocker.patch("archiver.app._delete_packed_source_html", return_value=fake)
+
+        resp = mock_archiver_client.post(
+            "/pack/bronze/prune", json={"year": 2026, "month": 4, "apply": True}
+        )
+
+        assert resp.status_code == 500
+        detail = resp.json()["detail"]
+        assert detail["objects_refused"] == 7
+        assert detail["failures"][0]["error"] == "sha256 mismatch"
+        assert "7" in detail["failure_reason"]
+
+    def test_prune_error_returns_500(self, mock_archiver_client, mocker):
+        mocker.patch(
+            "archiver.app._delete_packed_source_html",
+            return_value={"error": "listing failed", "objects_refused": 0},
+        )
+
+        resp = mock_archiver_client.post(
+            "/pack/bronze/prune", json={"year": 2026, "month": 4}
+        )
+
+        assert resp.status_code == 500
+
+    def test_prune_deleting_nothing_still_returns_200(
+        self, mock_archiver_client, mocker
+    ):
+        # The drained-month case. It must stay green, or the Stage 5 DAG fails
+        # every month after the first one it packs.
+        fake = {
+            "mode": "apply", "error": None, "objects_refused": 0,
+            "objects_deleted": 0, "objects_surviving_before": 0, "capped": False,
+        }
+        mocker.patch("archiver.app._delete_packed_source_html", return_value=fake)
+
+        resp = mock_archiver_client.post(
+            "/pack/bronze/prune", json={"year": 2026, "month": 4, "apply": True}
+        )
+
+        assert resp.status_code == 200
+        assert resp.json() == fake
+
+    def test_a_clean_pack_run_is_unchanged(self, mock_archiver_client, mocker):
+        fake = {
+            "mode": "apply", "error": None, "read_failures": 0,
+            "packs_written": 32, "orphan_packs": [], "stopped_at_max_packs": False,
+        }
+        mocker.patch("archiver.app._pack_bronze_html", return_value=fake)
+
+        resp = mock_archiver_client.post("/pack/bronze/run", json={"apply": True})
+
+        assert resp.status_code == 200
+        assert resp.json() == fake
+        assert "failure_reason" not in resp.json()
+
+
+# ---------------------------------------------------------------------------
 # POST /snapshots/adaptive-refresh/run  (Plan 120)
 # ---------------------------------------------------------------------------
 
