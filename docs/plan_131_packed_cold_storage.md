@@ -20,9 +20,14 @@ physical** — both gates pass, both projections missed, and the cause is now
 understood: see [April packed in full](#april-packed-in-full--measured-2026-08-14).
 **May is packing overnight.**
 
-**Stage 3 BUILT 2026-08-14, NOT YET DEPLOYED.** `read_html` falls back to the
+**Stage 3 DEPLOYED AND VERIFIED 2026-08-14.** `read_html` falls back to the
 pack index when an object is gone, transparently to every caller, and verifies
-every packed read against the sidecar's `raw_sha256`. The consumer survey found
+every packed read against the sidecar's `raw_sha256`. **160/160 April members
+read byte-identically through both paths, 0 failed, with every source object
+still in place** — the Stage 4 precondition is met. Warm, a packed read costs
+5.90 ms against the object path's 5.79 ms; cold it is 206 ms, and the cost is
+the sidecar scan rather than decompression. See
+[Latency](#latency-measured-in-production-2026-08-14--the-gate-passed). The consumer survey found
 **four** bypasses where it had previously named one; two are fixed and two are
 harmless by construction. See [Stage 3 as built](#stage-3-as-built) — including
 the measurement that chose pyarrow over DuckDB and the latency number that is
@@ -995,19 +1000,59 @@ checkpoint subtracts sidecar source keys from the objects it listed — so a
 key the fallback could now serve is a key the packer already skipped. The
 fallback cannot cause an artifact to be packed twice.
 
-### Latency: measured locally, **not yet measured in production**
+### Latency, measured in production 2026-08-14 — the gate passed
 
-Local synthetic packs put frame decompression at ~2 ms for a 16 MiB frame, but
-synthetic HTML compresses far better than real pages, so that is a lower bound
-and nothing more. **The production p50/p95 is still outstanding** and is what
-`scripts/verify_pack_read_path.py` exists to produce: it samples members from
-every April sidecar, reads each artifact through both the object path and the
-pack path, asserts they are byte-identical and match `raw_sha256`, and reports
-p50/p95 for `object`, `pack_cold` (caches dropped per read) and `pack_warm`
-(the reprocessing shape).
+`scripts/verify_pack_read_path.py`, April 2026 `detail_page`, in the archiver
+container. **160 members sampled across all 32 packs, 160 verified, 0 failed,
+`sources_already_deleted: 0`** — every artifact read byte-identically through
+both paths while every source object still existed. That is the Stage 4
+precondition, met.
 
-**Stage 3's definition of done is not met until that has run against real April
-packs while every source object still exists.**
+| path | p50 | p95 | max |
+|---|---|---|---|
+| object (today's read) | **5.79 ms** | 8.35 ms | 100.95 ms |
+| pack, cold | **206.65 ms** | 361.93 ms | 483.19 ms |
+| pack, warm | **5.90 ms** | 34.31 ms | 34.31 ms |
+
+**Warm, a packed read costs what an object read costs.** 5.90 ms against
+5.79 ms — the frame decompress and the ranged GETs disappear into the same
+noise as a single object fetch. That is the number reprocessing sees, and it
+means the plan's "access to a single artifact becomes slower" trade barely
+applies to the case that actually matters. *(n=5 — the script only warms
+members of the first sampled pack, so a wider warm sample is worth taking.)*
+
+**Cold is 36x the object path, and the cost is not decompression.** It is the
+sidecar scan. `verify_pack_read_path --cold` drops every cache before each
+read, so resolving a key in pack *k* re-fetches and re-parses *k+1* sidecars at
+~1.2 MB each. The run's own throughput shows it directly: **9.4/s → 6.4/s →
+4.8/s**, degrading monotonically as the sample walks toward pack-00031. Frame
+decompression is a small constant on top.
+
+#### The cold figure is a deliberate worst case, but it exposes a real cache bug
+
+Production never drops its caches between reads, so the steady state sits much
+closer to warm. **But the LRU is pathological for exactly this access
+pattern:** `PACK_INDEX_CACHE_PACKS` defaults to 4 while a month holds 32-41
+sidecars, and the resolver scans from `pack-00000` upward. A single scan of 32
+sidecars evicts the low-numbered ones it will need first next time, leaving the
+cache holding 28-31 — so the *next* lookup re-fetches from the start. Classic
+LRU-versus-sequential-scan thrashing, and a random-access reader across a
+packed month would pay ~200 ms per artifact indefinitely rather than warming
+up.
+
+Two fixes, neither blocking Stage 4 (whose deleter walks one pack with its own
+`PackReader` and never uses the resolver), both relevant to
+[Plan 132](plan_132_unrecorded_artifact_recovery.md)'s 36K-artifact reparse:
+
+- **Cache the `source_key` column, not the whole sidecar.** Measured 1.30 ms to
+  parse and 1.69 MB in Arrow, against 1.69 ms and 3.78 MB for all columns; only
+  the one matching row ever needs the rest. A whole month resident becomes
+  ~68 MB instead of ~150 MB.
+- **Raise `PACK_INDEX_CACHE_PACKS` to hold a month.** With the column-pruned
+  cache, ~40 is affordable.
+
+Recorded rather than fixed in the same breath: the gate passed, and changing
+the read path after it was verified would invalidate the verification.
 
 ### Stage 4 — Delete packed source objects
 
