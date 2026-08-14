@@ -51,7 +51,7 @@ stable substrate.
 | [128](plan_128_false_block_detection.md) | Cloudflare challenge pages swallowed as successful detail scrapes | Draft |
 | [129](plan_129_zstd_dictionary_compression.md) | Trained zstd dictionary compression for bronze HTML | In production — dict v1 live, backfill running |
 | [130](plan_130_parser_input_projection.md) | Parser-input projection (truncating raw HTML) | Draft — blocked on 129 + taxonomy gap |
-| [131](plan_131_packed_cold_storage.md) | Packed cold storage for bronze HTML | In production — April packed in full, May running; Stage 3 read path built, not deployed; Stages 4-5 not started |
+| [131](plan_131_packed_cold_storage.md) | Packed cold storage for bronze HTML | In production — April packed in full, May running; Stages 3-4 built and not yet deployed ([run sheet](runbook_plan_131_stage_3_4.md)); Stage 5 not started |
 | [132](plan_132_unrecorded_artifact_recovery.md) | Recovering unrecorded bronze artifacts | Draft — Stage 0 gate not run |
 | [133](plan_133_pack_read_path_hardening.md) | Pack read path hardening | Draft — two non-blocking defects found verifying 131 Stage 3; do before 132 Stage 2 |
 

@@ -33,7 +33,14 @@ harmless by construction. See [Stage 3 as built](#stage-3-as-built) — includin
 the measurement that chose pyarrow over DuckDB and the latency number that is
 still outstanding.
 
-**Stages 4-5 NOT STARTED.** Stage 4 is the only step that removes data. Two of
+**Stage 4 BUILT 2026-08-14, NEVER RUN.** `delete_packed_source_html` +
+`POST /pack/bronze/prune`: dry-run by default, hard per-run cap, one pack at a
+time, and three mandatory checks per member before anything is removed — see
+[Stage 4 as built](#stage-4-as-built). It must not run until Stage 3 is
+deployed and the read path verified against real April packs; the
+[run sheet](runbook_plan_131_stage_3_4.md) is the order of operations.
+
+**Stage 5 NOT STARTED.** Stage 4 is the only step that removes data. Two of
 its three would-be gates have now been settled and **neither is a gate**: the
 [delete grace period defaults to
 0](#the-delete-grace-period--0-days-revised-2026-08-14) (decided 2026-08-14 —
@@ -1245,6 +1252,76 @@ which is the same delete set reached by a more expensive route.
 **This section is a proposal. Stage 4 is not implemented until it is agreed
 or amended.**
 
+---
+
+## Stage 4 as built
+
+Built 2026-08-14. **Never run.** Dry-run by default, and its first apply run is
+gated on Stage 3 being deployed and verified — see the
+[run sheet](runbook_plan_131_stage_3_4.md).
+
+### Three checks per member, none optional
+
+| check | what it proves |
+|---|---|
+| **Resolvable** — `pack_lookup_prefix(source_key)` names the prefix the pack actually lives under | a reader could still *find* it once the object is gone |
+| **Extractable** — pulled from the *stored* pack over ranged GETs, sha256 equals the sidecar's `raw_sha256` | the pack holds what its index claims |
+| **Identical** — the source object is read and compared byte-for-byte | the pack holds what *this object* holds |
+
+The third is the one that makes deletion safe rather than merely consistent: a
+pack that agrees with its own index but not with the object would pass the first
+two. Per *pack*, a bounded sample (25 by default) additionally goes through
+`read_packed_html` end to end, exercising the real resolver — prefix derivation,
+sidecar listing, index lookup — rather than inferring it from the per-member
+checks. Doing that for every member would rescan every earlier sidecar in the
+month for every artifact.
+
+**Verification deliberately does not call `read_html`.** With Stage 3 live,
+`read_html` answers from the pack once an object is missing, so using it would
+compare the pack against itself and always agree. There is a test asserting it
+is never called.
+
+### What the implementation settled
+
+- **The surviving-object listing is the checkpoint.** An object that is gone
+  has already been deleted, so a resumed run skips it with no request and each
+  object is deleted at most once. No state file, and the O(n²) shape of Plan
+  129's first checkpoint (`f98e69b`) is not reachable from this design. A
+  fully drained month costs one listing and nothing else — without that
+  short-circuit a re-run read all 32 April sidecars to discover there was
+  nothing to do.
+- **`year`/`month` are required; there is no discovery mode.** The packer can
+  discover what is eligible because packing is additive. This cannot, because
+  it is not.
+- **The free-space floor does not apply.** The packer refuses to start below
+  one because MinIO rejects every `PutObject` below its minimum-free-drive
+  threshold. A DELETE is not a PutObject and still succeeds on a full drive,
+  which is exactly what makes this job the recovery lever rather than another
+  casualty. Free space and inodes are reported, never gated.
+- **Inodes are reported two ways.** The estimate is what this run freed
+  (deleted objects × ~2.24, Stage 0a); the measured delta is what the
+  filesystem shows and moves with everything else on it. A reading, not a
+  proof — but the plan exists for this number, so a summary that omitted it
+  would be measuring the wrong thing.
+- **A sidecar that disagrees with its pack blocks that whole pack**, not just
+  the member that exposed it. Neither is trustworthy as evidence about the
+  other.
+- **An orphan pack is never deleted from.** Stage 2 reports and never deletes
+  them; an unverified pack is not evidence that anything is safe to remove.
+
+### Testing
+
+26 tests over an in-memory object store — real packs, real ranged GETs, real
+verification. The ones that matter are the refusals: no sidecar entry, orphan
+pack, sidecar/pack disagreement, sha256 mismatch, an object whose bytes differ
+from the pack, and objects living where the production resolver would not look.
+Plus: `--apply` absent deletes nothing, the per-run cap is honoured exactly,
+resume deletes each object at most once, `ok` and `pending` are deleted like
+any other status, and every deleted object is asserted still readable through
+`read_html` afterwards.
+
+---
+
 ### Stage 5 — Lifecycle DAG and observability
 
 - Airflow DAG packing eligible cohorts on a schedule, respecting the free-space
@@ -1314,8 +1391,10 @@ afterwards. Look first this time.
 | `tests/scripts/test_verify_pack_read_path.py` | New | 3 | **done** |
 | `scripts/audit_semantic_duplicate_html_hashes.py` | Bypass removed: hashes raw HTML via `read_html` | 3 | **done** |
 | `scripts/diff_log_analysis.py` | Bypass removed: `object_size()` HEAD, `None` = packed | 3 | **done** |
-| `archiver/processors/delete_packed_source_html.py` | Stage 4, dry-run default | 4 | not started |
-| `archiver/app.py` | `POST /pack/bronze/prune` | 4 | not started |
+| `archiver/processors/delete_packed_source_html.py` | Stage 4, dry-run default, hard cap, per-artifact verification | 4 | **done**, never run |
+| `archiver/app.py` | `POST /pack/bronze/prune` | 4 | **done** |
+| `tests/archiver/test_delete_packed_source_html.py` | New — 26 tests over an in-memory store | 4 | **done** |
+| `docs/runbook_plan_131_stage_3_4.md` | Deploy + verification + prune run sheet | 3-4 | **done** |
 | `airflow/dags/pack_bronze_html.py` | Lifecycle DAG | 5 | not started |
 | `tests/integration/airflow/test_dag_integrity.py` | Register the new DAG | 5 | not started |
 
