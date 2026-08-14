@@ -250,26 +250,47 @@ One pack at a time, then a month at a time. Long runs must be detached —
 **two foreground attempts died with their SSH connection mid-listing**, and
 never run bulk object work over an SSH tunnel (~8x slower than in-container).
 
-```bash
-# one whole pack (~17,000 objects)
-docker exec -d -w /app cartracker-archiver \
-    python -m archiver.processors.delete_packed_source_html \
-    --year 2026 --month 4 --max-objects 20000 --max-packs 1 --apply \
-    --json-out /tmp/prune_pack0.json
+**A detached run must redirect its own output to a file.** `docker logs` shows
+only the container's *main* process — the uvicorn app — so a `docker exec -d`
+process never appears there. The CLI calls `logging.basicConfig`, which writes
+to stderr and installs no file handler, so with `-d` that output is simply
+lost. Detaching and watching `docker logs` are mutually exclusive, and an
+earlier revision of this run sheet told you to do both.
 
-# then the whole month, still one pack at a time internally
-docker exec -d -w /app cartracker-archiver \
-    python -m archiver.processors.delete_packed_source_html \
-    --year 2026 --month 4 --max-objects 600000 --max-packs 0 --apply \
-    --json-out /tmp/prune_april.json
+```bash
+# the whole month, one listing, output captured
+docker exec -d -w /app cartracker-archiver sh -c \
+  'python -m archiver.processors.delete_packed_source_html \
+     --year 2026 --month 4 --max-objects 600000 --max-packs 0 --apply \
+     --json-out /tmp/prune_april.json \
+     > /usr/app/logs/prune_april.log 2>&1'
 ```
+
+`/usr/app/logs` is the archiver's own named volume, so the log outlives both
+the exec and a container restart.
 
 Watch it:
 
 ```bash
-docker logs -f --tail 50 cartracker-archiver
+docker exec cartracker-archiver tail -f /usr/app/logs/prune_april.log
 watch -n 300 'df -i /mnt/data'
 ```
+
+`PACK_PRUNE_PROGRESS_EVERY` (default 1,000) drives both the listing tick and
+the deletion counter. At 557,065 objects that is ~557 listing lines; pass
+`-e PACK_PRUNE_PROGRESS_EVERY=25000` to the `docker exec` for a calmer log.
+
+**If a run is already detached without redirection**, it is working, just
+blind: it writes its JSON at the end, and `df -i /mnt/data` shows inodes
+falling meanwhile. Confirm it is alive with
+
+```bash
+docker exec cartracker-archiver sh -c \
+  'for p in /proc/[0-9]*; do tr "\0" " " < $p/cmdline 2>/dev/null | grep -q delete_packed && echo "RUNNING $p"; done'
+```
+
+Do not kill and restart it for the sake of logging — resume is safe, but the
+listing costs 12 minutes each time.
 
 **Resume is free and safe.** The surviving-object listing is the checkpoint —
 an object that is gone is skipped with no request, each object is deleted at
