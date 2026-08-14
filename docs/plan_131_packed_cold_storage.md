@@ -1417,6 +1417,64 @@ any other status, and every deleted object is asserted still readable through
 - Metrics: objects packed, packs written, bytes/inodes reclaimed, extraction
   latency p50/p95, verification failures (should be zero; alert on any).
 
+#### Why Stage 5 is the point of the plan, not its tidy-up
+
+Stages 1-4 buy a **one-time** reclamation. April through July is ~3.65M objects
+— about 90% of everything in bronze — worth ~8.2M inodes, or ~125 days at the
+measured burn. That is a bigger deadline, not the absence of one, and framing
+this plan as "how many days does it buy" undersells what it actually does.
+
+**Run continuously, packing changes the shape of the problem.** A closed month
+collapses from ~1.1M objects to about **82 objects** — 41 packs plus 41
+sidecars, which is May's measured shape. At ~2.24 inodes each that is ~185
+inodes per month of permanent cold storage, or roughly **2,200 inodes a year**
+against a 13.1M total.
+
+The only meaningful consumer left is the hot window: the current month plus
+`PACK_SETTLE_DAYS`, peaking around **2.5M inodes** before it is packed and
+pruned. Against the ~12.2M free that the April-July cycle leaves behind, that
+is not years of headroom — **inodes stop being the binding constraint at all.**
+
+#### The constraint moves to bytes, and moves out about three years
+
+Estimated 2026-08-14, measured inputs marked:
+
+| | |
+|---|---|
+| free bytes now *(measured, archiver)* | 82.3 GiB |
+| + source bytes returned by pruning Apr-Jul | ~24 GiB |
+| − packs still to write for Jun + Jul | ~4.6 GiB |
+| **free after the full cycle** | **~102 GiB** |
+| reserve: hot month + transient pack space | ~15 GiB |
+| **usable for cold growth** | **~87 GiB** |
+| packed cold storage per month | **~2.4 GiB** |
+| **full-retention runway** | **~36 months** |
+
+So roughly **2.5-3.5 years of retaining every page ever scraped**, on the
+current 196 GB disk at the current scrape rate. Measured inputs are April's
+4.27 GiB of sources against 1.99 GiB packed, and May's 6,978 stored bytes per
+object against ~2,410 packed bytes per member. June and July are inferred from
+May's shape and should be *better* than April, which carries Plan 132's
+null-metadata tail.
+
+#### Three consequences worth stating
+
+- **[Plan 130](plan_130_parser_input_projection.md) stays unnecessary.** It is
+  the only irreversible lever in this arc — discarding HTML content — and it is
+  blocked until the reversible options are exhausted. A three-year runway means
+  they are not exhausted for a long time.
+- **[Plan 113](plan_113_production_adaptive_refresh.md) becomes an efficiency
+  play, not a rescue.** Adaptive refresh cuts object *creation*, so it extends
+  both the hot window and the per-month packed cost. Valuable, no longer
+  urgent.
+- **The cheapest remaining lever is not software.** At ~2.4 GiB/month, another
+  200 GB of disk buys roughly seven more years. Worth remembering before anyone
+  proposes a cleverer storage format.
+
+Two things would move these numbers: a change in scrape volume — all of it
+assumes ~1.1M objects/month — and whether June and July pack like May or like
+April.
+
 ---
 
 ## Prior art

@@ -93,7 +93,10 @@ and the only one that addresses **inodes**, which compression cannot; its Stage 
 must first re-read `df -i` and price a results-page retention policy, which may
 be the cheaper answer. Plan 130 is the largest measured win and the only
 irreversible one, so it stays blocked until the reversible options are exhausted
-and the taxonomy gap is closed. Retention/expiry for raw HTML is still unwritten
+and the taxonomy gap is closed. **Plan 131 Stage 5 pushes that exhaustion out
+~3 years**: run continuously it converts the inode deadline into a steady state
+and leaves bytes as the binding constraint, at roughly 36 months of full
+retention on the current disk. Retention/expiry for raw HTML is still unwritten
 and is the gap behind all four.
 
 **Plans 110-125 lakehouse/adaptive-refresh sequence** - Plans 110 and 111 are
