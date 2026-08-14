@@ -14,7 +14,36 @@ and [the first production run](#stage-2-first-production-run--measured-2026-08-1
 for the measurements — including the one that came in **under** projection and
 the frame-boundary bug it exposed.
 
-**Stages 3-5 NOT STARTED.** Stage 4 is the only step that removes data.
+**April `detail_page` PACKED IN FULL (2026-08-14).** 557,065 objects -> 64,
+**8,704x**, 100% verified, zero deleted. Measured **53.4% logical / ~72.5%
+physical** — both gates pass, both projections missed, and the cause is now
+understood: see [April packed in full](#april-packed-in-full--measured-2026-08-14).
+**May is packing overnight.**
+
+**Stage 3 BUILT 2026-08-14, NOT YET DEPLOYED.** `read_html` falls back to the
+pack index when an object is gone, transparently to every caller, and verifies
+every packed read against the sidecar's `raw_sha256`. The consumer survey found
+**four** bypasses where it had previously named one; two are fixed and two are
+harmless by construction. See [Stage 3 as built](#stage-3-as-built) — including
+the measurement that chose pyarrow over DuckDB and the latency number that is
+still outstanding.
+
+**Stages 4-5 NOT STARTED.** Stage 4 is the only step that removes data. Two of
+its three would-be gates have now been settled and **neither is a gate**: the
+[delete grace period defaults to
+0](#the-delete-grace-period--0-days-revised-2026-08-14) (decided 2026-08-14 —
+nothing it was supposed to protect against survived examination), and
+[processing status is reported rather than
+enforced](#the-has-been-processed-check--proposed-2026-08-14-needs-agreement-before-stage-4-is-built)
+(still proposed, not yet agreed). What remains load-bearing is per-artifact
+verification through the production read path at delete time, a dry-run
+default, and a hard per-run cap.
+
+> **Sequencing constraint with [Plan 132](plan_132_unrecorded_artifact_recovery.md):**
+> 42,276 April captures were never recorded downstream and are recoverable
+> only by reparsing their HTML. They are readable as individual objects today.
+> **Either run Plan 132's reparse before Stage 4, or land Stage 3 first.**
+> Stage 4 must not run over April while that is outstanding.
 
 Headline from the measurements: the inode ceiling is ~61 days out and
 results-page deletion is not a viable substitute (0.7% of objects).
@@ -270,6 +299,14 @@ conflated two independent decisions:
   early; the sources still exist.
 - **Deleting the sources is the irreversible step**, and it is the only one that
   needs a grace period — plus a check that the artifact has been processed.
+
+*(Both halves of that second bullet were revised on 2026-08-14, in the same
+spirit as the correction above: neither a waiting period nor a processing status
+survived being asked what it protects against. See [the delete grace
+period](#the-delete-grace-period--0-days-revised-2026-08-14) and [the processed
+check](#the-has-been-processed-check--proposed-2026-08-14-needs-agreement-before-stage-4-is-built).
+What is irreversible about deletion is real; what makes it safe turned out to be
+verification, not delay.)*
 
 Gating both on one threshold meant deletion-safety concerns were silently
 delaying the inode relief that is this plan's entire purpose. As of 2026-08-13
@@ -708,30 +745,90 @@ enormous frame. The default target rose 8 -> 16 MiB, inside the plan's stated
 On synthetic members with production-like proportions the change removes every
 split and cuts the pack 67.4%; on this pack, Stage 0d's B and D applied to its
 544 real groups project 40.5 MB instead of 67.2 MB — **~74% logical / ~84%
-physical**, past the original projection. Not yet confirmed on real data; a
-re-pack is what settles it.
+physical**, past the original projection. **That projection was wrong. See the
+next section, which supersedes it.**
 
-#### Projection, from measured numbers only
+### April packed in full — measured 2026-08-14
 
-Post-dictionary stored bytes per month come from Plan 129's own `--json-out`
-summaries; the packing ratio is this pack's measurement with the alignment fix
-applied.
+30 further packs, `--max-packs 0`, one run. **522,314 / 522,314 members
+verified byte-identical, 0 read failures.** With the two earlier packs, all
+557,065 April `detail_page` objects are packed. Still zero source objects
+deleted.
 
-| bucket | objects | stored | packed | physical now | physical packed | objects after |
-|---|---|---|---|---|---|---|
-| April detail | 557,065 | 4.26 G | 1.10 G | 7.24 G | 1.13 G | 40 |
-| May detail | 1,021,266 | 6.64 G | 1.71 G | 11.27 G | 1.76 G | 74 |
-| June detail | 1,124,122 | 7.42 G | 1.91 G | 12.60 G | 1.97 G | 80 |
-| **total** | **2,702,453** | **18.32 G** | **4.73 G** | **31.12 G** | **4.85 G** | **194** |
+| | measured | previously projected |
+|---|---|---|
+| objects -> pack objects | 557,065 -> 64 (32 packs + 32 sidecars) | 40 |
+| **object reduction** | **8,704x** | >=20x gate |
+| pack bytes | 2,133,921,814 (+~44 MB sidecars) | 1.10 G |
+| logical, vs 4,579,267,375 stored | **53.4%** | 74% |
+| physical, 1.99 GiB vs 7.24 GiB | **~72.5%** | 84.4% |
 
-- **26.3 GiB physical reclaimed (84.4%)**
-- **2,702,453 objects -> 194 (13,930x)**
-- **~6.05M inodes**: free goes 3,983,261 -> 10,036,321 of 13,107,200
-- at 65,500 inodes/day that is **+92 days**, turning the 61-day ceiling into
-  roughly five months — from three months of one artifact type
+**Both gates still pass with room. Both projections were missed again, and
+this time the cause is understood.**
 
-Covers three of ~five months, `detail_page` only, and the packed ratio is
-projected rather than measured until a re-pack confirms it.
+#### The alignment fix worked. It was not the bottleneck.
+
+From the sidecar indexes, pre-fix packs against post-fix:
+
+| | pack-00000 / 00001 (pre-fix) | pack-00002-00025 (fixed) |
+|---|---|---|
+| listings split across frames | 270/544 and 313/668 — **~48%** | **0-5 per pack** of 786-2,560 (~0.1%) |
+| frames per pack | 387, 392 | 138-174 |
+| frame p50 uncompressed | 8.1 MB | 17-19 MB |
+
+Sealing at listing boundaries did exactly what it claimed. Two other things
+account for the shortfall.
+
+**1. 18% of April has no usable metadata.** 99,981 members carry a null
+`listing_id`; they sort last and land entirely in packs 00026-00031. The
+packer sees one listing 44K members long, so those frames pin at
+`frame_max_bytes` (32.1 MB) with no boundary ever found:
+
+| group | members | raw/member | packed/member |
+|---|---|---|---|
+| named listings | 457,084 | 180.7 KB | **3,900 B** |
+| small nulls | 55,996 | 36.9 KB | **1,060 B** |
+| full-size nulls | 43,985 | 164 KB | **7,157 B** |
+
+The full-size nulls cost ~143 MB, 6.7% of April's pack bytes. **This is an
+April-only data problem, not a packer defect — see
+[Plan 132](plan_132_unrecorded_artifact_recovery.md).** May and June have
+complete metadata coverage.
+
+**2. Stage 0d's `B`/`D` constants do not generalize.** `captures_per_listing`
+falls monotonically across the packs — 31.8, 26.1, 23.4 ... 6.4 — because
+members sort by `listing_id` ascending and low IDs are listings that predate
+April. April's named mean is **12.3** against Stage 0d's sample at 17.1.
+Applying `B=8,578 / D=2,142` to each pack's *measured* captures-per-listing
+predicts 2,417-3,148 B/member; measured, with zero splits, is 3,657-4,097 —
+**35-50% above the model.** The constants came from 140 listings and do not
+hold at 37,038.
+
+Fixing the nulls entirely would move April from 53.4% to about **56.5%**.
+**74% is not reachable on this corpus and the earlier projection should not be
+quoted.**
+
+#### Pack boundaries are nearly free
+
+Only **138 of 37,038** listings span more than one pack, which retroactively
+justifies the small `--max-pack-bytes` default: blast radius and transient
+free space were bought for almost nothing.
+
+#### May, first two packs — measured 2026-08-14
+
+May is running overnight. Early signal, 2 packs of ~37:
+
+| | April main body | May pack-00000/00001 |
+|---|---|---|
+| members per 64 MB pack | ~17,500 | **27,980** |
+| packed bytes/member | 3,900 | **2,410** |
+| stored bytes/object | 8,220 | 6,978 |
+| implied logical | 53.4% | **~65.5%** |
+
+No null tail, no pinned frames, more captures per listing. April showed a
+degradation gradient through the month, so expect May to drift up too — but at
+the equivalent position April was at 3,657 B/member. **Do not restate the
+three-month projection table until May completes.**
 
 #### Operational notes from the run
 
@@ -768,7 +865,7 @@ What remains of WARC is then a text header per record (~200-400 bytes against
 
 ---
 
-### Stage 3 — Read path prefers objects, falls back to packs
+### Stage 3 — Read path prefers objects, falls back to packs — BUILT 2026-08-14, not yet deployed
 
 - `shared/minio.py::read_html` tries `html/` first, then resolves through the
   pack index. Transparent to every caller.
@@ -780,18 +877,301 @@ What remains of WARC is then a text header per record (~200-400 bytes against
 - Deploy and confirm reads still work **while every source object still exists**,
   so a bug is a latency regression rather than an outage.
 
+---
+
+## Stage 3 as built
+
+### The consumer survey, re-run 2026-08-14 — it named one bypass and there were four
+
+`read_html` still has **exactly one production caller**,
+`processing/routers/batch.py:87`, so a fallback inside `shared/minio.py` covers
+production and every offline script for free. All six offline scripts that read
+HTML — `train_html_dictionary`, `estimate_dictionary_savings`,
+`estimate_pack_savings`, `audit_sectioned_html_storage`,
+`diff_semantic_duplicate_html`, `diff_log_analysis` — go through it, as does
+the packer itself.
+
+**The bypass count was wrong.** Grepping for direct decompression rather than
+for the known script found four sites, not one:
+
+| site | what it did | decision |
+|---|---|---|
+| `audit_semantic_duplicate_html_hashes.py` | DuckDB `read_blob`, sha256 of the **stored** bytes | **routed through `read_html`**, now hashes the raw HTML |
+| `diff_log_analysis.py::fetch_blob_size` | DuckDB `read_blob`, `octet_length` of the stored bytes | **now `object_size()`** — a HEAD, and `None` means packed |
+| `recompress_bronze_html.py` | `get_object` over an enumerated prefix | **left as is** — it acts on the objects it enumerated |
+| `estimate_recompression_savings.py` | `get_object` over an enumerated prefix | **left as is**, same reason |
+
+The last two never 404 after Stage 4 because they only ever touch objects a
+listing just returned. The first two would have, and both were resolved rather
+than documented as a limitation — the plan's own success criteria say *zero*
+consumers reading bronze outside `read_html` before Stage 4, and two small
+edits are cheaper than an exception to that.
+
+**Routing the hash audit through `read_html` also fixes what it measures.** It
+hashed *compressed* bytes, and Plan 129's dictionary backfill re-compressed
+every object in the corpus on 2026-08-13 — so two byte-identical pages captured
+either side of that hash differently while nothing about the HTML changed. It
+now reports `raw_bytes`/`raw_sha256`, which is the same quantity a pack sidecar
+stores, so an audit's output is directly comparable to a pack index.
+
+**A quantity that stops existing.** `fetch_blob_size` is the general case worth
+naming: *stored bytes per artifact* is not defined for a packed member. Its
+bytes are a slice of a shared compression window — that is the entire win — so
+the script reports `packed` and excludes it from the byte comparison rather
+than inventing a number. Any future tooling that divides by per-object stored
+size has the same problem.
+
+### How a reader finds the pack: bounded by the key's own hive partition
+
+The plan proposed globbing every `.idx.parquet` through DuckDB. That is fine
+for an audit and wrong here, for a reason that is mechanical rather than
+performance-based:
+
+> **The processing image has `pyarrow` and `boto3`. It does not have DuckDB.**
+> The one production caller of `read_html` lives there, so a DuckDB resolver
+> means a new dependency on the parsing hot path.
+
+It would not buy anything either. Measured 2026-08-14 on April-shaped sidecars
+(32 packs, 17,291 rows each, 1.17 MB stored, local files, so network is
+excluded from both sides):
+
+| operation | cost |
+|---|---|
+| parse one sidecar to an Arrow table | **1.7 ms** |
+| parse one sidecar to `PackIndexEntry` objects | 58.8 ms |
+| lookup in a cached Arrow table (`pc.index`) | **0.04 ms** |
+| build a Python `dict` from a cached sidecar | 7.7 ms |
+| cold scan of a month, hit in sidecar 1 / 16 / 32 | 3.1 / 23.1 / **41.2 ms** |
+| DuckDB glob over the same 32 files, 2 threads | 19.0 ms |
+
+So the resolver reads one month's sidecars in sequence and looks up with
+`pyarrow.compute.index`. A source key under
+`html/year=2026/month=4/artifact_type=detail_page/` can only be in a pack under
+`html_packs/detail_page/2026/04/`, so the search is bounded to 32 sidecars
+rather than every month's — and a *warm* lookup is 0.04 ms, which is three
+orders of magnitude below the frame decompress it precedes.
+
+**Cache the index as Arrow, not as Python.** This is the measurement that
+changed the design: converting a sidecar to `PackIndexEntry` objects costs
+58.8 ms and several MB, against 1.7 ms and 3.8 MB to hold the same data as an
+Arrow table that answers lookups faster. Only the one row that matches is ever
+converted.
+
+Both caches are bounded and both are needed, at different steps:
+
+| knob | default | what it bounds |
+|---|---|---|
+| `PACK_INDEX_CACHE_PACKS` | 4 | sidecars held (~3.8 MB each) — resolution |
+| `PACK_READER_CACHE_PACKS` | 1 | open packs, each holding ≤2 decompressed frames (~32 MB) — extraction |
+| `PACK_INDEX_LIST_TTL_SECONDS` | 300 | how often an unchanged month pays for a LIST |
+| `PACK_READ_FALLBACK` | on | set to 0 to prove a failure is not the fallback's doing |
+
+A miss against a *cached* listing re-lists once before giving up, so a pack
+written since the listing was cached is never invisible.
+
+### Every packed read verifies itself
+
+`read_html` hashes what it extracted and compares it to the sidecar's own
+`raw_sha256` before returning. That costs ~0.15 ms against a ~16 MiB frame
+decompress, and it is the claim Stage 4 deletes source objects on the strength
+of, so it is checked on the path that will be doing the reading rather than
+only at pack time.
+
+Three failures are distinguished, and none of them silently prefers one source
+of truth over another:
+
+- sidecar row count vs the pack header's member count → `PackIndexMismatchError`
+- an index entry spanning past its frame → `PackIndexMismatchError`
+- extracted bytes not matching `raw_sha256` → `PackVerificationError`
+
+A key in **neither** place raises the same `NoSuchKey` from the original GET
+that it raises today. A stored object that fails to decompress raises too:
+falling back to the pack there would hide exactly the corruption this
+verification exists to catch.
+
+**The packer reads through `read_html` too, and that is safe.** A source object
+Stage 4 has deleted is by definition already in a sidecar, and the packer's
+checkpoint subtracts sidecar source keys from the objects it listed — so a
+key the fallback could now serve is a key the packer already skipped. The
+fallback cannot cause an artifact to be packed twice.
+
+### Latency: measured locally, **not yet measured in production**
+
+Local synthetic packs put frame decompression at ~2 ms for a 16 MiB frame, but
+synthetic HTML compresses far better than real pages, so that is a lower bound
+and nothing more. **The production p50/p95 is still outstanding** and is what
+`scripts/verify_pack_read_path.py` exists to produce: it samples members from
+every April sidecar, reads each artifact through both the object path and the
+pack path, asserts they are byte-identical and match `raw_sha256`, and reports
+p50/p95 for `object`, `pack_cold` (caches dropped per read) and `pack_warm`
+(the reprocessing shape).
+
+**Stage 3's definition of done is not met until that has run against real April
+packs while every source object still exists.**
+
 ### Stage 4 — Delete packed source objects
 
-Only for artifacts that have a finalized pack, a verified `raw_sha256` match, are
-past a **delete** grace period, and have been processed. That grace period is
-this stage's own knob and is deliberately not `PACK_SETTLE_DAYS` — see
-[Pack eligibility and delete eligibility are separate
-knobs](#pack-eligibility-and-delete-eligibility-are-separate-knobs). Dry-run by
-default, hard per-run cap, one pack's worth of sources at a time.
+Only for artifacts that have a finalized pack and a verified `raw_sha256` match
+**through the production read path, at delete time**. Dry-run by default, hard
+per-run cap, one pack's worth of sources at a time.
+
+The two additional conditions this section used to require — a delete grace
+period and a processing-status check — were both revised on 2026-08-14 and
+neither is a gate. [The grace period defaults to
+0](#the-delete-grace-period--0-days-revised-2026-08-14); [status is reported,
+never a
+veto](#the-has-been-processed-check--proposed-2026-08-14-needs-agreement-before-stage-4-is-built).
+
+**Two things measured on 2026-08-14 that this stage must handle:**
+
+- **42,276 April objects can never satisfy a "has been processed" check** —
+  they have no `artifacts_queue_events` row to check against. As specified,
+  Stage 4 would refuse them forever, stranding ~95K inodes as individual
+  objects in the one fully packed month. They are inside verified packs, so
+  deleting them loses nothing, but it needs an explicit *"packed and verified,
+  no provenance"* branch rather than falling through the processed check.
+  **No longer blocked on [Plan 132](plan_132_unrecorded_artifact_recovery.md)'s
+  reparse**, once Stage 3 is deployed and verified: the reparse reads these
+  artifacts out of the packs, which is precisely what Stage 3 makes possible.
+  Landing Stage 3 first was always the option that removed the conflict rather
+  than sequencing around it.
+- **The retention policy this plan defers to Out of Scope already existed and
+  was lost.** `n8n/workflows/Cleanup Artifacts.json`, pre-2026-04-16, deleted
+  by processing status (`ok` after 48 h, `skip` immediately, `retry` after
+  7 days). The Plan 102 n8n decommission removed it and nothing replaced it,
+  which is why Plan 129 found "no HTML deletion anywhere in the codebase."
+  **That removal is the origin of the inode problem this plan exists to
+  solve.** Plan 132 Stage 4 argues the recurring predicate belongs in this
+  plan's Stage 5 DAG rather than in a separate job.
 
 **This is the step that frees inodes**, and it is the first irreversible-ish one
 — though the bytes still exist inside the pack, which is the entire difference
 between this plan and Plan 130.
+
+#### The delete grace period — 0 days, REVISED 2026-08-14
+
+**`PACK_DELETE_GRACE_DAYS` defaults to 0.** The knob stays — it costs nothing
+and it is the lever if something ever does surface — but it defaults to no wait,
+because a 14-day default was proposed and could not survive being asked what it
+protects against.
+
+The proposal was 14 days measured from the sidecar's write time, on two
+arguments. Neither holds:
+
+- **"A window in which a lost pack is still recoverable from its sources."**
+  This assumes pack loss is concentrated in the fortnight after writing. It is
+  not. Write-time defects are already caught three times — `PackWriter.finish()`
+  on the in-memory pack, a re-read of the *stored* object over ranged GETs, and
+  the sidecar written only after both pass. What remains is flat over time, so a
+  14-day window covers 14 days of a risk that runs for years.
+- **"Time for a human to notice."** Notice by what mechanism? Nothing schedules
+  the looking. The per-artifact read-path verification runs at delete time on
+  every object, and a defect that passes it does not become visible by waiting.
+
+The precedent points the same way. The frame-boundary bug (2026-08-14) was found
+by **measuring the results**, not by waiting, and verification had passed
+17,291/17,291 because it was a compression-efficiency defect rather than a
+correctness one. No source object was ever at risk from it.
+
+Nor is there a failure mode that (a) passes per-member verification, (b) loses
+data when the source goes, and (c) surfaces in days rather than instantly. An
+object in no sidecar is never deleted — safe by construction. A key-derivation
+bug that verified A and deleted B would destroy the sources the moment it ran,
+and a timer would not help; the dry-run, the per-run cap and inspecting the
+first run by hand are what catch that.
+
+**What replaces the timer is a gate that gets satisfied rather than expires:**
+Stage 3 deployed and `scripts/verify_pack_read_path.py` clean against real
+April packs while every source still exists. That is already on this plan's
+definition of done. A clock is not.
+
+The bucket is un-versioned (verified 2026-08-10), so a delete is immediate and
+there is no undo. What makes that acceptable is not a waiting period — it is
+that the bytes are already inside a pack that was verified, stored, and re-read
+from storage before anything was removed.
+
+##### Recent months, and why they are not a grace-period problem
+
+Age does not make an artifact riskier to delete. Being **live** does — still
+queued for a first parse, still being retried, still likely to be read by
+something running now. That is a property of the *capture month*, not of how
+old the pack is, which is what made pack age the wrong anchor in the first
+place.
+
+The plan already expresses it: **month closure plus `PACK_SETTLE_DAYS`** is
+exactly "do not touch a month that might still be moving", and a month only
+becomes packable once it has passed that. July inherits it automatically when
+it is packed. Even then it is soft, because Stage 3 means a pending artifact is
+still readable and parseable after its object is gone — the concern is not
+surprising the live pipeline, not losing anything.
+
+So April, May and June are deleted by naming them explicitly: dry-run first,
+capped, verified per object, no timer.
+
+#### The "has been processed" check — PROPOSED 2026-08-14, needs agreement before Stage 4 is built
+
+The plan requires a processed check. **Stage 3 changes what it is for**, so it
+is worth stating what it protects against before deciding how strict it is.
+
+The check exists so an artifact is not deleted before it can be parsed. Once
+Stage 3 is live, **a packed artifact is still readable and still parseable
+after its source object is gone** — that is the whole point of Stage 3, and
+Plan 132's reparse is the concrete case. So the check stops being load-bearing
+and becomes belt-and-braces.
+
+The proposal, in one sentence:
+
+> **Delete a source object when, and only when, the Stage 3 read path returns
+> its exact bytes. Processing status is reported, never a veto.**
+
+Concretely, per candidate object:
+
+| gate | rule |
+|---|---|
+| sidecar entry exists | **required.** No entry, no delete — Stage 4 never deletes what it cannot name. |
+| read-path verification | **required.** `read_html` returns bytes whose sha256 matches the sidecar's `raw_sha256`, through the production path, for that artifact. |
+| delete grace period | **`PACK_DELETE_GRACE_DAYS`, default 0.** The knob exists; the wait does not — see [above](#the-delete-grace-period--0-days-revised-2026-08-14). |
+| pack has a sidecar (not an orphan) | **required.** Interrupted runs are reported and never deleted from, exactly as Stage 2 does. |
+| processing status | **reported, not required.** Counted and logged per class; no class blocks a delete. |
+
+Why status cannot be a gate, from the measurements:
+
+- **42,276 April objects have no `artifacts_queue_events` row at all**, so they
+  can never satisfy any status predicate. A gating check strands ~95K inodes
+  in the one fully packed month, forever, and it strands them for the artifacts
+  Plan 132 exists to recover — which will read them *out of the packs*.
+- **`ok` is success** (n8n era, 19,950 April artifacts), and treating it as
+  anything else is the single most expensive mistake available here.
+- **April's terminal statuses do not reconcile**: 445,796 `complete` + 19,950
+  `ok` = 465,746 against 457,084 artifacts holding a silver observation. A
+  delete predicate built on that arithmetic is built on a discrepancy nobody
+  has explained.
+- The historical record is `ops_normalized/artifacts_queue_events` in the lake
+  (timestamp column `event_at`), not `ops.artifacts_queue`, which is a hot
+  table pruned by `cleanup_queue` and held ~400 rows from the preceding 40
+  seconds when it was measured.
+
+**What the reporting is for.** Every run breaks its deletions down by terminal
+status — `complete`, `ok`, `skip`, `retry`, `pending`, `processing`, `failed`,
+and `no_event_row` — so an unexpected shape is visible immediately. A run that
+suddenly deletes tens of thousands of `pending` objects is a signal worth
+having, and the dry-run default plus the per-run cap keep it a small,
+inspectable signal rather than a large irreversible one — which is the job a
+waiting period was proposed for and could not actually do. The `no_event_row`
+count is the *"packed and verified, no provenance"* branch the sequencing
+constraint asks for: it is a distinct, reported outcome rather than a silent
+fall-through.
+
+**The alternative, and why it is not proposed.** A hard gate on
+`status IN ('complete','ok')` would refuse the 42,276 orphans forever, and
+would additionally need the event lake joined for every candidate — a DuckDB
+scan per batch, on a job whose whole purpose is to be small and boring. If the
+gate is wanted anyway, the honest version is *"delete only artifacts with a
+terminal status, plus the explicitly enumerated no-provenance population"*,
+which is the same delete set reached by a more expensive route.
+
+**This section is a proposal. Stage 4 is not implemented until it is agreed
+or amended.**
 
 ### Stage 5 — Lifecycle DAG and observability
 
@@ -855,7 +1235,13 @@ afterwards. Look first this time.
 | `docker-compose.yml` | `PACK_BRONZE_DICT_ID` on the archiver | 2 | **done** |
 | `tests/archiver/test_pack_bronze_html.py` | New | 2 | **done** |
 | `tests/integration/archiver/test_pack_bronze_html_integration.py` | New | 2 | **done** |
-| `shared/minio.py` | `read_html` falls back to pack lookup | 3 | not started |
+| `shared/minio.py` | `read_html` falls back to pack lookup, self-verifying | 3 | **done** |
+| `tests/shared/test_minio_packfallback.py` | New — 27 tests over an in-memory store | 3 | **done** |
+| `tests/integration/shared/test_read_html_pack_fallback.py` | New — packed and unpacked both readable, real MinIO | 3 | **done** |
+| `scripts/verify_pack_read_path.py` | Read-path proof + latency p50/p95, read-only | 3 | **done**, not yet run in production |
+| `tests/scripts/test_verify_pack_read_path.py` | New | 3 | **done** |
+| `scripts/audit_semantic_duplicate_html_hashes.py` | Bypass removed: hashes raw HTML via `read_html` | 3 | **done** |
+| `scripts/diff_log_analysis.py` | Bypass removed: `object_size()` HEAD, `None` = packed | 3 | **done** |
 | `archiver/processors/delete_packed_source_html.py` | Stage 4, dry-run default | 4 | not started |
 | `archiver/app.py` | `POST /pack/bronze/prune` | 4 | not started |
 | `airflow/dags/pack_bronze_html.py` | Lifecycle DAG | 5 | not started |

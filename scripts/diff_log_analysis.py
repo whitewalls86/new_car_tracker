@@ -203,12 +203,24 @@ def fetch_html(con: duckdb.DuckDBPyConnection, minio_path: str) -> str:
     return read_html(minio_path).decode("utf-8", errors="replace")
 
 
-def fetch_blob_size(con: duckdb.DuckDBPyConnection, minio_path: str) -> int:
+def fetch_blob_size(minio_path: str) -> int | None:
+    """Stored bytes for one artifact's object, or None once it has been packed.
+
+    A HEAD, not a DuckDB ``read_blob``: read_blob downloaded the whole object to
+    measure it, and it bypassed ``shared.minio`` entirely, so after Plan 131
+    Stage 4 deletes a packed source object this would have raised mid-run rather
+    than reporting the artifact.
+
+    None is the honest answer for a packed member: it no longer *has* a stored
+    size of its own. Its bytes are a slice of a shared compression window, which
+    is the whole point of packing, and inventing a per-member number would be
+    the kind of comparison Plan 131 spent three revisions correcting.
+    """
+    from shared.minio import object_size
+
     if not minio_path.startswith("s3://"):
         minio_path = f"s3://bronze/{minio_path.lstrip('/')}"
-    escaped = minio_path.replace("'", "''")
-    row = con.execute(f"SELECT octet_length(content) FROM read_blob('{escaped}')").fetchone()
-    return int(row[0])
+    return object_size(minio_path)
 
 
 def compress_and_write(fs: Any, bucket: str, key: str, data: bytes) -> int:
@@ -301,8 +313,19 @@ def analyse_listing(
             end="", flush=True,
         )
 
-        full_bytes = fetch_blob_size(con, minio_path)
         html = fetch_html(con, minio_path)
+        full_bytes = fetch_blob_size(minio_path)
+
+        if full_bytes is None:
+            # Packed by Plan 131 and its source object deleted, so it no longer
+            # has a stored size of its own to compare a diff against. The HTML
+            # is still readable, so the capture stays in the diff chain — it is
+            # only the byte accounting it drops out of, and saying so beats
+            # inventing a baseline.
+            print(" full=packed — excluded from the storage comparison")
+            prev_html = html
+            prev_fingerprint = fingerprint
+            continue
 
         semantic_changed = (prev_fingerprint is not None and fingerprint != prev_fingerprint)
         is_base = (i == 0)

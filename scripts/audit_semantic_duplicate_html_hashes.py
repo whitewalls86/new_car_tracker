@@ -6,8 +6,10 @@ This script answers a narrow Plan 110 question:
     parsed vehicle state, are the stored HTML blobs also byte-identical?
 
 It intentionally samples a few high-duplicate groups instead of scanning all
-HTML objects. It uses DuckDB for MinIO Parquet reads and targeted blob reads, so
-it is intended to run in the dbt_runner container.
+HTML objects. DuckDB reads the silver/ops Parquet; the HTML itself is read
+through ``shared.minio.read_html`` -- which decompresses, and since Plan 131
+Stage 3 also resolves artifacts whose source object has been packed away. Run
+it somewhere that has both duckdb and zstandard, i.e. the archiver container.
 """
 from __future__ import annotations
 
@@ -189,34 +191,38 @@ def fetch_sample(con: duckdb.DuckDBPyConnection, args: argparse.Namespace) -> li
     return [dict(zip(columns, row)) for row in rows]
 
 
-def s3_uri_to_duckdb_path(minio_path: str) -> str:
-    if minio_path.startswith("s3://"):
-        return minio_path
-    return f"s3://bronze/{minio_path.lstrip('/')}"
+def hash_blob(minio_path: str) -> tuple[int | None, str | None, str | None]:
+    """Return (raw_bytes, raw_sha256, error) for one artifact's HTML.
 
+    **Reads through ``read_html``, and hashes the decompressed HTML.** This was
+    a DuckDB ``read_blob`` over ``minio_path`` hashing the *stored* bytes until
+    Plan 131 Stage 3, and both halves of that were wrong for this script's own
+    question:
 
-def hash_blob(
-    con: duckdb.DuckDBPyConnection, minio_path: str
-) -> tuple[int | None, str | None, str | None]:
-    path = s3_uri_to_duckdb_path(minio_path)
-    escaped = path.replace("'", "''")
+    * A stored-byte hash does not answer "is the HTML identical". Plan 129's
+      dictionary backfill re-compressed every object in the corpus, so two
+      byte-identical pages captured either side of it hash differently while
+      nothing about the HTML changed.
+    * ``read_blob`` bypasses ``read_html`` entirely, so once Plan 131 Stage 4
+      deletes packed source objects this would return 404s for exactly the
+      cold artifacts an audit is most likely to sample. Going through
+      ``read_html`` picks up the pack fallback for free.
+
+    The hash is now the same quantity a pack sidecar stores as ``raw_sha256``,
+    which makes an audit's output directly comparable to a pack index.
+    """
     try:
-        row = con.execute(
-            f"""
-            SELECT
-                octet_length(content) AS compressed_bytes,
-                sha256(content) AS compressed_hash
-            FROM read_blob('{escaped}')
-            """
-        ).fetchone()
+        from shared.minio import read_html
+
+        raw = read_html(minio_path)
     except Exception as exc:  # noqa: BLE001 - audit should continue per artifact.
         return None, None, str(exc)
-    return int(row[0]), str(row[1]), None
+    import hashlib
+
+    return len(raw), hashlib.sha256(raw).hexdigest(), None
 
 
-def print_results(
-    con: duckdb.DuckDBPyConnection, rows: list[dict[str, Any]], show_paths: bool
-) -> None:
+def print_results(rows: list[dict[str, Any]], show_paths: bool) -> None:
     grouped: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
         grouped[(str(row["listing_id"]), str(row["parsed_fingerprint"]))].append(row)
@@ -246,15 +252,15 @@ def print_results(
         for row in group_rows:
             total_artifacts += 1
             minio_path = row.get("minio_path")
-            compressed_bytes = None
-            compressed_hash = None
+            raw_bytes = None
+            raw_hash = None
             error = None
             if minio_path:
-                compressed_bytes, compressed_hash, error = hash_blob(con, str(minio_path))
-                if compressed_hash:
-                    hash_counts[compressed_hash] += 1
+                raw_bytes, raw_hash, error = hash_blob(str(minio_path))
+                if raw_hash:
+                    hash_counts[raw_hash] += 1
 
-            if compressed_hash and hash_counts[compressed_hash] > 1:
+            if raw_hash and hash_counts[raw_hash] > 1:
                 total_hash_matches += 1
 
             path_text = f" path={minio_path}" if show_paths else ""
@@ -262,7 +268,7 @@ def print_results(
                 "  "
                 f"rank={row['sample_rank']} artifact_id={row['artifact_id']} "
                 f"fetched_at={row['fetched_at']} price={row['price']} mileage={row['mileage']} "
-                f"compressed_bytes={compressed_bytes} compressed_hash={compressed_hash} "
+                f"raw_bytes={raw_bytes} raw_sha256={raw_hash} "
                 f"error={error}{path_text}"
             )
 
@@ -271,7 +277,7 @@ def print_results(
             groups_with_identical_html += 1
         print(
             f"group_hash_summary: sampled={len(group_rows)} "
-            f"unique_compressed_hashes={unique_hashes} hash_counts={dict(hash_counts)}"
+            f"unique_raw_sha256={unique_hashes} hash_counts={dict(hash_counts)}"
         )
 
     print()
@@ -286,7 +292,7 @@ def main() -> int:
     args = parse_args()
     con = connect_duckdb()
     rows = fetch_sample(con, args)
-    print_results(con, rows, args.show_paths)
+    print_results(rows, args.show_paths)
     return 0
 
 

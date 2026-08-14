@@ -1,0 +1,304 @@
+# Run Sheet: Plan 131 Stages 3-4 — Pack Read Path, Then Source Deletion
+
+Operational companion to [Plan 131](plan_131_packed_cold_storage.md). Follow it
+in order. **Stage 3 is deployed and verified before Stage 4 deletes anything** —
+that ordering is the entire safety argument, not a preference.
+
+> **The bucket is un-versioned** (verified 2026-08-10). A delete is immediate
+> and there is no undo. What makes that acceptable is that the bytes are
+> already inside a pack that was verified, stored, and re-read from storage —
+> and that every deletion re-proves it for that artifact first.
+
+**Two PRs, two deploys.** Do not merge them into one.
+
+| | PR | Deploys | Safe to run? |
+|---|---|---|---|
+| Stage 3 | read path | `processing`, `archiver` | Yes — additive, deletes nothing |
+| Stage 4 | source deletion | `archiver` | **Only after Stage 3 is verified below** |
+
+---
+
+## 0. Before you start
+
+```bash
+ssh <the VM>
+cd ~/new_car_tracker    # wherever the checkout lives
+```
+
+Record the starting position. Everything after this is measured against it:
+
+```bash
+df -i /mnt/data          # inodes — the constraint this plan exists for
+df -h /mnt/data          # bytes
+```
+
+Write the `IUsed`/`IFree` numbers down. At ~65,500 inodes/day the ceiling was
+~mid-October 2026 from a 2026-08-13 reading of 4,005,530 free.
+
+---
+
+## 1. Deploy Stage 3
+
+```bash
+git pull
+bash scripts/redeploy.sh processing archiver
+```
+
+Three things that will cost you a debugging pass if skipped:
+
+- **`bash` prefix is required.** `scripts/redeploy.sh` is tracked `100644` and
+  is not executable on a fresh checkout.
+- **`archiver` as well as `processing`.** The archiver reads HTML now. A stale
+  archiver image was exactly the Stage 2 trap: its `shared/minio.py` had no
+  idea dictionaries existed.
+- **`docker compose build` runs inside `redeploy.sh`**, which matters because
+  this PR adds new files.
+
+Confirm both came up:
+
+```bash
+docker compose ps processing archiver
+docker logs --tail 20 cartracker-archiver
+```
+
+### Sanity check: an artifact that still exists reads from its object
+
+Nothing has been deleted, so every read should still be answered by the object
+path. This is only checking that the deploy did not break today's behaviour.
+
+```bash
+docker exec -w /app cartracker-processing python -c "
+from shared.minio import read_html
+key = 'html/year=2026/month=8/artifact_type=detail_page/<any-recent-uuid>.html.zst'
+print(len(read_html(key)), 'bytes')
+"
+```
+
+Pick any recent key from `ops_normalized/artifacts_queue_events`, or skip
+straight to step 2 — it covers this and more.
+
+---
+
+## 2. Verify the read path against real April packs — **the gate**
+
+This is the step Stage 4 depends on. It reads sampled members through **both**
+the object path and the pack path and asserts they are byte-identical, while
+every source object still exists.
+
+```bash
+docker exec -w /app cartracker-archiver \
+    python -m scripts.verify_pack_read_path \
+    --year 2026 --month 4 --per-pack 5 --json-out /tmp/verify_april.json
+```
+
+`--per-pack 5` over 32 packs is 160 artifacts and takes a few minutes. Note the
+app root is **`/app`**, not `/usr/app` — `/usr/app` holds only the logs volume,
+and `import shared` fails from there.
+
+### What good looks like
+
+```json
+{
+  "sidecars": 32,
+  "sampled": 160,
+  "verified": 160,
+  "failed": 0,
+  "latency_ms": {
+    "object":    {"p50": ..., "p95": ...},
+    "pack_cold": {"p50": ..., "p95": ...},
+    "pack_warm": {"p50": ..., "p95": ...}
+  }
+}
+```
+
+**`failed` must be 0 and `verified` must equal `sampled`.** Anything else stops
+the run — do not proceed to Stage 4, and read `failures[]`, which names the
+artifact and what disagreed.
+
+**Record the three latency figures in the plan doc.** Plan 131's success
+criteria require single-artifact extraction latency *measured and accepted*,
+not assumed, and this is the only place that number comes from. `pack_cold` is
+the honest worst case (every cache dropped per read); `pack_warm` is what
+reprocessing actually sees.
+
+### If it fails
+
+`PACK_READ_FALLBACK=0` on the processing/archiver services disables the pack
+fallback entirely and restores exactly the previous read behaviour. Nothing has
+been deleted at this point, so every artifact is still readable from its
+object — a failure here is a latency regression at worst.
+
+### Then widen it once
+
+```bash
+docker exec -w /app cartracker-archiver \
+    python -m scripts.verify_pack_read_path --year 2026 --month 5 \
+    --per-pack 5 --json-out /tmp/verify_may.json
+```
+
+May has complete metadata coverage where April does not, so it is the cleaner
+of the two and should be at least as good.
+
+---
+
+## 3. Deploy Stage 4
+
+Only after step 2 came back clean.
+
+```bash
+git pull
+bash scripts/redeploy.sh archiver
+```
+
+Nothing runs on deploy. The job is dry-run by default, requires `--apply`,
+requires an explicit `--year/--month`, and is capped.
+
+---
+
+## 4. First delete run — dry run
+
+```bash
+docker exec -w /app cartracker-archiver \
+    python -m archiver.processors.delete_packed_source_html \
+    --year 2026 --month 4 --max-objects 100 --max-packs 1 \
+    --json-out /tmp/prune_dry.json
+```
+
+A dry run performs **every** verification and read, and deletes nothing.
+
+Check, in this order:
+
+| field | expect |
+|---|---|
+| `objects_refused` | **0.** Anything else: read `failures[]` before going further. |
+| `objects_verified` | equals the objects it considered |
+| `objects_deleted` | **0** — it is a dry run |
+| `orphan_packs` | `[]`. A pack listed here has no sidecar and nothing will be deleted for it. |
+| `by_status` | a plausible spread. `ok` is **success**; `no_event_row` is April's 42,276 no-provenance captures and is expected here. |
+| `objects_surviving_before` | ~557,065 for April on the first run |
+
+---
+
+## 5. First delete run — apply, small
+
+```bash
+docker exec -w /app cartracker-archiver \
+    python -m archiver.processors.delete_packed_source_html \
+    --year 2026 --month 4 --max-objects 100 --max-packs 1 --apply \
+    --json-out /tmp/prune_apply_100.json
+```
+
+100 objects is small enough to inspect by hand. Then confirm the artifacts are
+still readable **through the pack**, which is the whole point:
+
+```bash
+docker exec -w /app cartracker-archiver python -c "
+import json
+from shared.minio import read_html
+run = json.load(open('/tmp/prune_apply_100.json'))
+print('deleted:', run['objects_deleted'], 'bytes:', run['bytes_freed'])
+print('inodes  est:', run['inodes_freed_estimated'], ' measured:', run['inodes_freed_measured'])
+"
+```
+
+Pick a handful of deleted keys out of the archiver log (`served ... from pack`
+lines appear on every packed read) and read them back:
+
+```bash
+docker exec -w /app cartracker-archiver python -c "
+from shared.minio import read_html
+for key in ['<deleted-key-1>', '<deleted-key-2>']:
+    print(key, len(read_html(key)), 'bytes')
+"
+```
+
+Both must return bytes. If either 404s, **stop** — that is the failure the whole
+plan is built to prevent, and the remaining sources are still intact.
+
+Then check the constraint moved:
+
+```bash
+df -i /mnt/data
+```
+
+---
+
+## 6. Scale up
+
+One pack at a time, then a month at a time. Long runs must be detached —
+**two foreground attempts died with their SSH connection mid-listing**, and
+never run bulk object work over an SSH tunnel (~8x slower than in-container).
+
+```bash
+# one whole pack (~17,000 objects)
+docker exec -d -w /app cartracker-archiver \
+    python -m archiver.processors.delete_packed_source_html \
+    --year 2026 --month 4 --max-objects 20000 --max-packs 1 --apply \
+    --json-out /tmp/prune_pack0.json
+
+# then the whole month, still one pack at a time internally
+docker exec -d -w /app cartracker-archiver \
+    python -m archiver.processors.delete_packed_source_html \
+    --year 2026 --month 4 --max-objects 600000 --max-packs 0 --apply \
+    --json-out /tmp/prune_april.json
+```
+
+Watch it:
+
+```bash
+docker logs -f --tail 50 cartracker-archiver
+watch -n 300 'df -i /mnt/data'
+```
+
+**Resume is free and safe.** The surviving-object listing is the checkpoint —
+an object that is gone is skipped with no request, each object is deleted at
+most once, and a fully drained month costs one listing and nothing else. Re-run
+the same command after an interruption.
+
+Expected relief, from the plan's measurements:
+
+| month | objects | ~inodes | ~headroom |
+|---|---|---|---|
+| April | 557,065 | ~1.248M | ~19 days |
+| April+May+June | — | ~6.05M | **~92 days** |
+
+May and June need their own runs (`--month 5`, `--month 6`) and are only
+eligible once packed — check `html_packs/detail_page/2026/{05,06}/` has
+sidecars before running.
+
+---
+
+## 7. July and later months
+
+July is packed only after its calendar month closed plus `PACK_SETTLE_DAYS`,
+which is what keeps a month that might still be moving out of scope. Deletion
+inherits that automatically: a month with no packs has nothing deletable.
+
+There is **no grace period** — `PACK_DELETE_GRACE_DAYS` defaults to 0, by
+decision (see the plan doc). If something ever does surface that a waiting
+period would have caught, `--grace-days N` is the lever, measured from the
+sidecar's write time.
+
+---
+
+## Abort and recovery
+
+| situation | do this |
+|---|---|
+| Read path misbehaving, nothing deleted yet | Set `PACK_READ_FALLBACK=0`, redeploy. Previous behaviour exactly. |
+| A delete run reports `objects_refused > 0` | It already refused those objects — nothing was lost. Read `failures[]`; each names the artifact and the disagreement. |
+| A delete run died mid-way | Re-run the same command. Resume is idempotent. |
+| An artifact 404s after deletion | Stop all delete runs. The bytes are in the pack; recover with `read_packed_html`, and check `html_packs/.../pack-*.idx.parquet` still exists. |
+| Disk full | Deletes still work — a DELETE is not a PutObject, and MinIO's minimum-free-drive threshold only blocks writes. This job is the recovery lever. |
+
+## Afterwards
+
+- Record the measured latency p50/p95 and the actual inodes freed in
+  [Plan 131](plan_131_packed_cold_storage.md). Both are success criteria, and
+  the plan has been wrong three times and corrected by measurement every time.
+- [Plan 132](plan_132_unrecorded_artifact_recovery.md)'s reparse of the 42,276
+  unrecorded April captures reads through the pack path once sources are gone.
+  That is unblocked by Stage 3, not by anything in Stage 4.
+- Stage 5 (lifecycle DAG + metrics) is not built. Until it is, packing and
+  pruning are manual and deliberate, which is the right posture for the first
+  months.
