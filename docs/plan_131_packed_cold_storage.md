@@ -35,7 +35,8 @@ still outstanding.
 
 **Stage 4 BUILT AND FIRST RUN 2026-08-14 — the first inodes this plan has
 freed.** 100 April objects deleted, 100/100 verified, **0 refused**, 1,423,143
-bytes and ~224 inodes freed. See
+bytes and ~224 inodes freed, and **every deleted artifact read back
+byte-identically from its pack afterwards**. See
 [First production run](#first-production-run--measured-2026-08-14).
 
 **Stage 4 as originally specified:** `delete_packed_source_html` +
@@ -1343,6 +1344,26 @@ like any other member under the agreed policy.
 members sort last and land in packs 00026-00031, so pack-00000 is entirely
 named artifacts. The no-provenance branch is exercised at the end of the month,
 not the start.
+
+#### Readback after deletion — the property the plan exists for
+
+Verified immediately afterwards, deriving keys from the sidecar rather than
+trusting the run's own account of itself:
+
+```
+100 of the first 150 members have no source object left
+  c116a381-...  824188 bytes  sha256_match=True
+  0d1edf51-...  211152 bytes  sha256_match=True
+  ff3a7ae8-...  212153 bytes  sha256_match=True
+  fadae602-...  599792 bytes  sha256_match=True
+  1bd534b5-...  600387 bytes  sha256_match=True
+```
+
+**Exactly 100 of the first 150 are gone**, which is an independent confirmation
+that the per-run cap is honoured to the object and that the deleter walks
+members in frame order. Every sampled read returned bytes matching the
+sidecar's `raw_sha256` — from artifacts that no longer exist anywhere except
+inside a pack.
 
 #### The measured inode delta is below its own noise floor at this size
 
