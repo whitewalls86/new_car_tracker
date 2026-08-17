@@ -15,6 +15,7 @@ import importlib.util
 import inspect
 import re
 import sys
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -110,6 +111,17 @@ DAG_SPECS = {
         "dag_id": "export_ci_lake_snapshot",
         "tasks": {"check_deploy_intent", "check_archiver_health", "export_ci_lake_snapshot"},
     },
+    "pack_bronze_html.py": {
+        "dag_id": "pack_bronze_html",
+        "tasks": {
+            "check_deploy_intent",
+            "check_pack_worker_health",
+            "pack_bronze_html",
+            "prune_packed_source_html",
+            "verify_pack_read_path",
+            "notify",
+        },
+    },
 }
 
 
@@ -201,6 +213,33 @@ def test_hourly_analytics_refresh_order():
         "dbt_build",
     ]:
         assert dag.task_dict[task_id] in dag.task_dict["notify"].upstream_list
+
+
+@pytest.mark.integration
+def test_pack_bronze_html_lifecycle_contract():
+    """The monthly lifecycle stays UTC, single-run, ordered, and retryable."""
+    dagbag = _make_dagbag()
+    dag = dagbag.dags["pack_bronze_html"]
+
+    assert dag.schedule == "0 6 3 * *"
+    assert str(dag.timezone) == "UTC"
+    assert dag.catchup is False
+    assert dag.max_active_runs == 1
+    assert set(dag.tags) == {"maintenance"}
+
+    ordered_tasks = [
+        "check_deploy_intent",
+        "check_pack_worker_health",
+        "pack_bronze_html",
+        "prune_packed_source_html",
+        "verify_pack_read_path",
+    ]
+    for upstream, downstream in zip(ordered_tasks, ordered_tasks[1:]):
+        assert dag.task_dict[upstream] in dag.task_dict[downstream].upstream_list
+
+    for task_id in ("pack_bronze_html", "prune_packed_source_html"):
+        assert dag.task_dict[task_id].retries == 6
+        assert dag.task_dict[task_id].retry_delay == timedelta(minutes=15)
 
 
 # ---------------------------------------------------------------------------
