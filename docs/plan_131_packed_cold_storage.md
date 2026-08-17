@@ -18,7 +18,14 @@ the frame-boundary bug it exposed.
 **8,704x**, 100% verified, zero deleted. Measured **53.4% logical / ~72.5%
 physical** — both gates pass, both projections missed, and the cause is now
 understood: see [April packed in full](#april-packed-in-full--measured-2026-08-14).
-**May is packing overnight.**
+
+**APRIL, MAY AND JUNE PACKED AND PRUNED (verified 2026-08-17).** 2,702,453
+members, 100% verified, 0 refused, **2,702,453 objects -> 222** (12,173x), and
+**447.5 GiB of raw HTML now occupies 7.01 GiB**. June measured **2,217
+B/member** — below the projection this plan retracted on April — and **82.8%
+physical**. July is a complete month and is **not packed yet**. See
+[May and June packed in full](#may-and-june-packed-in-full--measured-2026-08-17)
+and [the full compression cascade](#the-whole-compression-cascade-on-one-set-of-bytes--measured-2026-08-14).
 
 **Stage 3 DEPLOYED AND VERIFIED 2026-08-14.** `read_html` falls back to the
 pack index when an object is gone, transparently to every caller, and verifies
@@ -832,6 +839,89 @@ Only **138 of 37,038** listings span more than one pack, which retroactively
 justifies the small `--max-pack-bytes` default: blast radius and transient
 free space were bought for almost nothing.
 
+#### The whole compression cascade, on one set of bytes — measured 2026-08-14
+
+Every prior plan measured its own step against its own baseline, so the steps
+were never comparable. This is 300 members pulled from the real pack and run
+through all five encodings — same bytes, same order, one baseline.
+
+| stage | B/member | physical B/member | vs raw | step |
+|---|---|---|---|---|
+| uncompressed | 189,894 | 196,116 | — | — |
+| zstd level 3 | 34,488 | 40,400 | 81.8% | **81.8%** |
+| zstd level 9 ([Plan 116](plan_116_estimate_recompression_savings.md)) | 31,586 | 37,833 | 83.4% | **8.4%** |
+| zstd L9 + dictionary ([Plan 129](plan_129_zstd_dictionary_compression.md)) | 9,492 | 15,933 | 95.0% | **69.9%** |
+| *as actually stored today* | *9,492* | *15,933* | *95.0%* | *0.0%* |
+| packed (Plan 131, measured on `pack-00000`) | 3,964 | 3,964 | 97.9% | **58.2%** |
+| ~~packed (aligned, projected)~~ | ~~2,423~~ | ~~2,423~~ | ~~98.7%~~ | ~~74.5%~~ |
+
+**The bottom row is the retracted projection** — see
+[the alignment fix](#the-alignment-fix-worked-it-was-not-the-bottleneck). It is
+kept struck through because the rest of the table is a sound measurement and
+the row is what the fix was expected to buy. Full-April measured 3,900 B/member
+on named listings.
+
+Four things the table says that the individual plans could not:
+
+- **The "as stored today" row exactly equals the dictionary row — 9,492 both.**
+  Not arranged: it is independent confirmation that April is fully
+  dictionary-backfilled *and* that recompressing out of the pack reproduces
+  production's stored bytes byte-for-byte. Had the pack lost anything, the two
+  rows would diverge.
+- **Level 3 → level 9 measured 8.4%**, against Plan 116's claimed ~8-10%,
+  confirmed on real April data three plans later.
+- **Only the last step changes the object count.** Levels 3, 9 and the
+  dictionary all leave one object per artifact — April's 557,065 objects before
+  and after. (The original write-up of this table put 1,124,122 here, which is
+  not April's object count; it is June's, measured three days later. Treat the
+  count as unchanged-by-construction rather than as a measurement.) That is this
+  plan's whole thesis in one column, and it is why physical
+  is the honest view: the dictionary took physical from 37,833 to 15,933 per
+  artifact while the 4 KB directory entry and the 8 KB floor rode along
+  untouched. Packing is the only step that removes them, so physical
+  (15,933 → 3,964, **75.1%**) beats logical (58.2%).
+- **189,894 → 3,964 B is 47.9:1**, measured and in production.
+
+#### The average member is not a compressed page — measured 2026-08-14
+
+The per-member average hides two very different costs, and quoting it as a
+compression ratio overstates what packing does to any single page:
+
+| | cost | ratio vs ~190 KB |
+|---|---|---|
+| first capture of a vehicle | ~8,578 B | 22:1 |
+| each **repeat** capture | ~2,142 B | **89:1** |
+
+The 89:1 is not compressing a page; it is storing the difference between two
+photographs of the same listing a day apart, where nothing changed but the
+price. An isolated one-off page never does better than that first-capture 22:1.
+Three kinds of redundancy stack here, none lossy: HTML is ~82% air (plain zstd
+takes that), the dictionary knows what every Cars.com page looks like (another
+70%), and packing knows this specific car looked almost identical yesterday
+(another 75%).
+
+These are Stage 0d's `B`/`D` constants, and
+[they do not generalize](#the-alignment-fix-worked-it-was-not-the-bottleneck) —
+they came from 140 listings and ran 35-50% below measurement at 37,038.
+
+#### Corpus scale — projected 2026-08-14, superseded
+
+Recorded as it stood, because the shape of the argument is right even where the
+arithmetic moved:
+
+| | |
+|---|---|
+| raw HTML, 4,557,751 detail artifacts since April | **~806 GiB** |
+| stored today (physical) | ~67.6 GiB |
+| ~~packed + aligned (projected)~~ | ~~**~10.3 GiB**~~ |
+| objects | 4.56M → ~330 |
+| inodes | ~10.2M → ~740 |
+
+**The packed row assumed the retracted 2,423 B/member.** The object and inode
+rows stand — those follow from pack count, not from compression ratio. For the
+same table built on measured months rather than a projection, see
+[Corpus scale on complete months](#corpus-scale-on-complete-months--measured-2026-08-17).
+
 #### May, first two packs — measured 2026-08-14
 
 May is running overnight. Early signal, 2 packs of ~37:
@@ -846,7 +936,9 @@ May is running overnight. Early signal, 2 packs of ~37:
 No null tail, no pinned frames, more captures per listing. April showed a
 degradation gradient through the month, so expect May to drift up too — but at
 the equivalent position April was at 3,657 B/member. **Do not restate the
-three-month projection table until May completes.**
+three-month projection table until May completes.** *(It has. See
+[May and June packed in full](#may-and-june-packed-in-full--measured-2026-08-17),
+which restates it on measurement.)*
 
 #### Operational notes from the run
 
@@ -865,6 +957,107 @@ three-month projection table until May completes.**
 - **Packing is far faster than reading was assumed to be**: 152 objects/s
   including read, decompress, recompress, verify and upload, against Plan 129's
   ~35-83 obj/s. A whole month is ~1 hour of packing after the listing.
+
+### May and June packed in full — measured 2026-08-17
+
+April, May and June are packed and their source objects pruned — **2,702,453
+members, 100% verified, 0 refused, 0 read failures across the three months**.
+That is enough to test the retracted `2,423 B/member` projection against
+measurement instead of against April alone.
+
+Raw bytes are summed from every sidecar's `length` column (111 sidecars); stored
+bytes are the pack runs' own `source_bytes`, taken from the object listing at
+pack time; pack bytes are re-listed from the bucket today.
+
+| | April | May | June |
+|---|---|---|---|
+| members | 557,065 | 1,021,266 | 1,124,122 |
+| packs (each + one sidecar) | 32 | 41 | 38 |
+| distinct listings | 37,038 | 88,273 | 71,157 |
+| members with null `listing_id` | **99,981** | 1,320 | **0** |
+| captures per listing *(named members only)* | 12.3 | 11.6 | **15.8** |
+| raw B/member | 167,255 | 179,211 | 181,768 |
+| stored B/object (dictionary, as it was) | 8,220 | 6,978 | 7,088 |
+| **packed B/member** | 3,831 | 2,637 | **2,217** |
+| packed B/member incl. sidecar | 3,908 | 2,717 | 2,295 |
+| logical saving vs stored | 53.4% | 62.2% | **68.7%** |
+| ratio vs raw | 43.7:1 | 68.0:1 | **82.0:1** |
+
+**The projection was right to be retracted on April, and June beats it.** 2,217
+against 2,423, on a month 2x April's size. Retracting it was still correct: the
+claim was made about April, where it was unreachable for the two reasons already
+recorded — 18% null metadata and 12.3 captures per listing. Both move the right
+way in June, which has **no** null-metadata members at all and 15.8 captures per
+listing, and the per-member cost lands below the projection rather than 35-50%
+above the model.
+
+May sits between them for a reason the table shows: 88,273 distinct listings for
+1.02M members is **11.6 captures each**, the lowest of the three, so it amortizes
+fewer deltas per base. Captures per listing, not month size, is what sets the
+per-member cost.
+
+#### Physical, and the inodes — measured at prune time
+
+Physical is the honest view here for the reason the cascade table gives: the
+dictionary never touched the 4 KiB directory entry or the 8 KiB floor, and
+packing is the only step that removes them. These are the pruner's own
+before/after readings of the volume, not a model.
+
+| | April | May | June |
+|---|---|---|---|
+| objects deleted | 556,965 | 1,021,266 (2 runs) | 1,124,122 |
+| logical bytes freed | 4.26 GiB | 6.64 GiB | 7.42 GiB |
+| physical freed *(free-space delta)* | 6.79 GiB | ~13.4 GiB † | **14.01 GiB** |
+| physical / logical | 1.59 ‡ | 2.02 † | 1.89 |
+| inodes freed | 1,102,455 | 857,010 † | 2,227,795 |
+| inodes per object | 1.98 | 2.03 † | 1.98 |
+| **physical saving** | 70.1% | ~80.7% † | **82.8%** |
+
+† May was pruned in two runs and only the second's JSON survives, so its
+measured figures cover 421,266 of the 1,021,266 objects; the whole-month
+physical is that run's measured 2.018 ratio applied to the full logical total.
+‡ April's delta is the one number here that looks wrong, and it reads *low* —
+1.59 against the 1.73-1.76 the 4 KiB-block model predicts for its mean object
+size. June's packing was running during April's prune window, writing pack bytes
+into the same volume the delta was measured on. Treat 6.79 GiB as a floor.
+
+**1.98 inodes per object, twice, on 1.7M objects.** The plan's estimate was
+~2.24; the measurement is stable and slightly better.
+
+#### Corpus scale on complete months — measured 2026-08-17
+
+Replaces [the superseded projection](#corpus-scale--projected-2026-08-14-superseded).
+Everything here is measured, on the three months that are packed and pruned.
+July is a complete calendar month but is **not packed**, so it is not in this
+table.
+
+| | April-June, measured |
+|---|---|
+| raw HTML, 2,702,453 detail captures | **447.5 GiB** |
+| stored as dictionary objects (logical) | 18.32 GiB |
+| stored as dictionary objects (physical) | ~34.2 GiB |
+| **packed, incl. sidecars (logical = physical)** | **7.01 GiB** |
+| objects | 2,702,453 → **222** (**12,173x**) |
+| inodes | ~5.35M → ~500 |
+| ratio, raw → packed | **63.8:1** |
+
+447.5 GiB of web pages in 7.01 GiB, on a 196 GB disk — and the object count that
+was the actual constraint fell by four orders of magnitude. The sidecars are 2.8%
+of the packed total (212 MB against 7.32 GB of packs) and are the price of random
+access; the WARC alternative would have paid it in per-record headers instead and
+lost the shared window.
+
+#### What this does to the Stage 5 runway
+
+[The runway estimate](#the-constraint-moves-to-bytes-and-moves-out-about-three-years)
+assumed **~2.4 GiB per packed month**. Measured: 2.03, 2.58, 2.40 — mean **2.34
+GiB**. The assumption holds.
+
+It also predicted ~102 GiB free after the whole April-July cycle. The volume
+reads **114 GiB free today with July neither packed nor pruned**, so the estimate
+was conservative by at least 12 GiB, and July's prune should return roughly
+another 14 GiB physical against ~2.4 GiB of new packs. The ~36-month
+full-retention runway is a floor, not a midpoint.
 
 ### WARC, checked as the plan required
 
