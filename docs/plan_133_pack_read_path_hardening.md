@@ -86,7 +86,7 @@ scan therefore evicts exactly the low-numbered entries the next scan will need
 first, ending with the highest four resident — so the next lookup re-fetches
 from the start. Textbook LRU-versus-sequential-scan behaviour.
 
-Measured in production 2026-08-14 (`scripts/verify_pack_read_path.py`, cold
+Measured in production 2026-08-14 (`archiver/processors/verify_pack_read_path.py`, cold
 reads drop every cache by design):
 
 | | April (32 packs) | May (41 packs) |
@@ -131,7 +131,7 @@ which is the first thing that both re-enqueues a pruned month (defect 1) and
 reads packed artifacts in bulk (defect 2). Plan 132's Stage 0 gate has not run,
 so there is time.
 
-**Re-run `scripts/verify_pack_read_path.py` for April and May afterwards.**
+**Re-run `archiver/processors/verify_pack_read_path.py` for April and May afterwards.**
 Stage 3's gate was established against the current read path; any change to it
 re-opens that gate and the same script closes it again.
 

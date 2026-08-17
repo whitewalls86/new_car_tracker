@@ -346,6 +346,38 @@ services:
     networks:
       - cartracker-net
 
+  # Plan 131 Stage 5 D4: the month-scale pack/prune HTTP jobs run on their own
+  # service so they cannot starve the regular archiver's flush/cleanup/compact
+  # traffic. It deliberately reuses the archiver image and stays internal-only.
+  pack-worker:
+    build:
+      context: .
+      dockerfile: archiver/Dockerfile
+    image: cartracker-archiver
+    container_name: cartracker-pack-worker
+    volumes:
+      - pack_worker_logs:/usr/app/logs
+    environment:
+      PGHOST: postgres
+      PGPORT: 5432
+      PGDATABASE: cartracker
+      PGUSER: scraper_user
+      POSTGRES_PASSWORD: ${SCRAPER_DB_PASSWORD}
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_BUCKET: bronze
+      PACK_BRONZE_DICT_ID: ${HTML_COMPRESSION_DICT_ID:-}
+      ARCHIVER_ALLOW_PACK_JOBS: "true"
+    depends_on:
+      flyway:
+        condition: service_completed_successfully
+      minio:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - cartracker-net
+
   # Plan 120 Gate C.5: isolated one-shot worker for production-sized CI lake
   # snapshot generation (selector scans, cohort allocation/closure). Reuses
   # the archiver image/build context but never serves archiver API traffic
@@ -674,6 +706,7 @@ services:
       - processing_logs:/logs/processing:ro
       - dbt_runner_logs:/logs/dbt_runner:ro
       - archiver_logs:/logs/archiver:ro
+      - pack_worker_logs:/logs/pack-worker:ro
     depends_on:
       - loki
     networks:
@@ -706,6 +739,8 @@ volumes:
   processing_logs:
 
   archiver_logs:
+
+  pack_worker_logs:
 
   prometheus_data:
 

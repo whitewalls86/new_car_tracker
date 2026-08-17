@@ -53,7 +53,10 @@ time, and three mandatory checks per member before anything is removed — see
 deployed and the read path verified against real April packs; the
 [run sheet](runbook_plan_131_stage_3_4.md) is the order of operations.
 
-**Stage 5 NOT STARTED.** Stage 4 is the only step that removes data. Two of
+**Stage 5 IN PROGRESS.** Cap semantics, endpoint failure contracts,
+single-flight, deploy-intent pause/resume, the isolated pack worker, and the
+recurring read-path verifier endpoint are built. The lifecycle DAG and inode
+alerts remain. Stage 4 is the only step that removes data. Two of
 its three would-be gates have now been settled and **neither is a gate**: the
 [delete grace period defaults to
 0](#the-delete-grace-period--0-days-revised-2026-08-14) (decided 2026-08-14 —
@@ -1734,8 +1737,8 @@ afterwards. Look first this time.
 | `shared/minio.py` | `read_html` falls back to pack lookup, self-verifying | 3 | **done** |
 | `tests/shared/test_minio_packfallback.py` | New — 27 tests over an in-memory store | 3 | **done** |
 | `tests/integration/shared/test_read_html_pack_fallback.py` | New — packed and unpacked both readable, real MinIO | 3 | **done** |
-| `scripts/verify_pack_read_path.py` | Read-path proof + latency p50/p95, read-only | 3 | **done**, not yet run in production |
-| `tests/scripts/test_verify_pack_read_path.py` | New | 3 | **done** |
+| `archiver/processors/verify_pack_read_path.py` | Read-path proof + latency p50/p95, read-only | 3/5 | **done**, prior CLI path verified in production |
+| `tests/archiver/test_verify_pack_read_path.py` | New, then moved with the processor | 3/5 | **done** |
 | `scripts/audit_semantic_duplicate_html_hashes.py` | Bypass removed: hashes raw HTML via `read_html` | 3 | **done** |
 | `scripts/diff_log_analysis.py` | Bypass removed: `object_size()` HEAD, `None` = packed | 3 | **done** |
 | `archiver/processors/delete_packed_source_html.py` | Stage 4, dry-run default, hard cap, per-artifact verification | 4 | **done**, never run |

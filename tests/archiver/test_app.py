@@ -1,5 +1,23 @@
 """Unit tests for archiver/app.py — all HTTP endpoints."""
 
+import pytest
+
+
+@pytest.fixture(scope="module", autouse=True)
+def allow_pack_jobs_in_endpoint_tests():
+    """Keep the pre-D4 endpoint tests focused on their original contracts.
+
+    The production archiver defaults to refusing pack/prune after D4. This
+    override is intentionally local to this module: putting an app import in
+    tests/archiver/conftest.py would run configure_logging() for every processor
+    test and create its log directory as a collection-time side effect.
+    """
+    import archiver.app as archiver_app
+
+    previous = archiver_app._ALLOW_PACK_JOBS
+    archiver_app._ALLOW_PACK_JOBS = True
+    yield
+    archiver_app._ALLOW_PACK_JOBS = previous
 
 # ---------------------------------------------------------------------------
 # GET /health
@@ -561,6 +579,187 @@ class TestPackSingleFlight:
             return_value={"error": None, "read_failures": 0},
         )
         assert mock_archiver_client.post("/pack/bronze/run").status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# POST /pack/bronze/verify (Plan 131 Stage 5 Step 7b)
+# ---------------------------------------------------------------------------
+
+class TestVerifyEndpoint:
+    def test_clean_run_returns_200(self, mock_archiver_client, mocker):
+        fake = {"verified": 5, "failed": 0, "sampled": 5}
+        mocker.patch("archiver.app._verify_pack_read_path", return_value=fake)
+
+        resp = mock_archiver_client.post(
+            "/pack/bronze/verify", json={"year": 2026, "month": 4}
+        )
+
+        assert resp.status_code == 200
+        assert resp.json() == fake
+
+    def test_forwards_only_allow_listed_keys(self, mock_archiver_client, mocker):
+        import archiver.app as archiver_app
+
+        mock_fn = mocker.patch(
+            "archiver.app._verify_pack_read_path",
+            return_value={"verified": 1, "failed": 0},
+        )
+
+        resp = mock_archiver_client.post(
+            "/pack/bronze/verify",
+            json={
+                "artifact_type": "detail_page",
+                "year": 2026,
+                "month": 6,
+                "per_pack": 7,
+                "warm_reads": 9,
+                "seed": 42,
+                "bucket": "attacker-controlled",
+                "apply": True,
+            },
+        )
+
+        assert resp.status_code == 200
+        assert mock_fn.call_args.kwargs == {
+            "artifact_type": "detail_page",
+            "year": 2026,
+            "month": 6,
+            "per_pack": 7,
+            "warm_reads": 9,
+            "seed": 42,
+            "bucket": archiver_app._MINIO_BUCKET,
+        }
+
+    @pytest.mark.parametrize("payload", [{}, {"year": 2026}, {"month": 4}])
+    def test_year_and_month_are_required(self, mock_archiver_client, payload):
+        resp = mock_archiver_client.post("/pack/bronze/verify", json=payload)
+
+        assert resp.status_code == 400
+        assert "year and month" in resp.json()["detail"]
+
+    def test_failed_members_return_500_with_the_summary(
+        self, mock_archiver_client, mocker
+    ):
+        fake = {
+            "verified": 4,
+            "failed": 1,
+            "failures": [{"source_key": "html/bad", "error": "hash mismatch"}],
+        }
+        mocker.patch("archiver.app._verify_pack_read_path", return_value=fake)
+
+        resp = mock_archiver_client.post(
+            "/pack/bronze/verify", json={"year": 2026, "month": 4}
+        )
+
+        assert resp.status_code == 500
+        detail = resp.json()["detail"]
+        assert detail["failed"] == 1
+        assert detail["failures"] == fake["failures"]
+        assert "1" in detail["failure_reason"]
+
+    def test_nothing_verified_returns_500(self, mock_archiver_client, mocker):
+        mocker.patch(
+            "archiver.app._verify_pack_read_path",
+            return_value={"verified": 0, "failed": 0, "sidecars": 0},
+        )
+
+        resp = mock_archiver_client.post(
+            "/pack/bronze/verify", json={"year": 2026, "month": 4}
+        )
+
+        assert resp.status_code == 500
+        assert "no sampled members" in resp.json()["detail"]["failure_reason"]
+
+    def test_verify_is_available_while_both_mutation_slots_are_held(
+        self, mock_archiver_client, mocker
+    ):
+        from shared.job_counter import single_flight
+
+        mocker.patch(
+            "archiver.app._verify_pack_read_path",
+            return_value={"verified": 1, "failed": 0},
+        )
+
+        with single_flight("pack_bronze"), single_flight("pack_prune"):
+            resp = mock_archiver_client.post(
+                "/pack/bronze/verify", json={"year": 2026, "month": 4}
+            )
+
+        assert resp.status_code == 200
+
+
+class TestPackJobsGuard:
+    @pytest.mark.parametrize(
+        ("path", "processor", "payload", "slot"),
+        [
+            ("/pack/bronze/run", "_pack_bronze_html", {}, "pack_bronze"),
+            (
+                "/pack/bronze/prune",
+                "_delete_packed_source_html",
+                {"year": 2026, "month": 4},
+                "pack_prune",
+            ),
+        ],
+    )
+    def test_pack_and_prune_are_refused_before_work_or_a_slot(
+        self, mock_archiver_client, mocker, path, processor, payload, slot
+    ):
+        import archiver.app as archiver_app
+        from shared.job_counter import is_idle, single_flight
+
+        mocker.patch.object(archiver_app, "_ALLOW_PACK_JOBS", False)
+        processor_mock = mocker.patch.object(archiver_app, processor)
+
+        resp = mock_archiver_client.post(path, json=payload)
+
+        assert resp.status_code == 409
+        detail = resp.json()["detail"]
+        assert "pack-worker" in detail
+        assert "http://pack-worker:8001" in detail
+        assert "starves flush/cleanup/compact" in detail
+        assert "ARCHIVER_ALLOW_PACK_JOBS" in detail
+        processor_mock.assert_not_called()
+        assert is_idle(), "the guard must run before active_job()"
+        with single_flight(slot):
+            pass  # The refused request must not consume the mutation slot.
+
+    def test_pack_and_prune_run_when_explicitly_allowed(
+        self, mock_archiver_client, mocker
+    ):
+        import archiver.app as archiver_app
+
+        mocker.patch.object(archiver_app, "_ALLOW_PACK_JOBS", True)
+        mocker.patch.object(
+            archiver_app,
+            "_pack_bronze_html",
+            return_value={"error": None, "read_failures": 0},
+        )
+        mocker.patch.object(
+            archiver_app,
+            "_delete_packed_source_html",
+            return_value={"error": None, "objects_refused": 0},
+        )
+
+        assert mock_archiver_client.post("/pack/bronze/run").status_code == 200
+        assert mock_archiver_client.post(
+            "/pack/bronze/prune", json={"year": 2026, "month": 4}
+        ).status_code == 200
+
+    def test_verify_is_not_guarded(self, mock_archiver_client, mocker):
+        import archiver.app as archiver_app
+
+        mocker.patch.object(archiver_app, "_ALLOW_PACK_JOBS", False)
+        mocker.patch.object(
+            archiver_app,
+            "_verify_pack_read_path",
+            return_value={"verified": 1, "failed": 0},
+        )
+
+        resp = mock_archiver_client.post(
+            "/pack/bronze/verify", json={"year": 2026, "month": 4}
+        )
+
+        assert resp.status_code == 200
 
 
 # ---------------------------------------------------------------------------

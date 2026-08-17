@@ -44,14 +44,27 @@ class TestPrometheusAndLokiConfig:
         assert "server" in doc
         assert "clients" in doc
         assert "scrape_configs" in doc
-        assert len(doc["scrape_configs"]) == 5
+        assert len(doc["scrape_configs"]) == 6
 
     def test_promtail_all_services_present(self):
         path = _REPO_ROOT / "promtail" / "promtail.yml"
         doc = yaml.safe_load(path.read_text())
         job_names = {job["job_name"] for job in doc["scrape_configs"]}
-        expected = {"ops", "scraper", "processing", "dbt_runner", "archiver"}
+        expected = {
+            "ops", "scraper", "processing", "dbt_runner", "archiver",
+            "pack-worker",
+        }
         assert expected == job_names, f"Unexpected promtail jobs: {job_names ^ expected}"
+
+    def test_promtail_pack_worker_path(self):
+        path = _REPO_ROOT / "promtail" / "promtail.yml"
+        doc = yaml.safe_load(path.read_text())
+        job = next(
+            job for job in doc["scrape_configs"] if job["job_name"] == "pack-worker"
+        )
+        labels = job["static_configs"][0]["labels"]
+        assert labels["service"] == "pack-worker"
+        assert labels["__path__"] == "/logs/pack-worker/app.log*"
 
 
 class TestGrafanaProvisioning:
