@@ -85,7 +85,8 @@
     },
     {
       "id": 6,
-      "title": "MinIO Storage Used (bytes)",
+      "title": "MinIO Logical Object Bytes",
+      "description": "Sum of object payload sizes in the bucket. This is NOT disk usage -- it excludes the per-object storage floor and every non-MinIO volume sharing /mnt/data. Compare against the physical panel below.",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
       "targets": [
@@ -124,6 +125,114 @@
         }
       ],
       "fieldConfig": { "defaults": { "unit": "reqps" } }
+    },
+    {
+      "id": 9,
+      "title": "Filesystem Used %",
+      "description": "Both volumes. Selector matches ct-disk-space-warning / ct-disk-space-critical exactly, so what you see here is what those alerts evaluate.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 32 },
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "1 - node_filesystem_avail_bytes{fstype!=\"tmpfs\",mountpoint!~\"/boot.*\"} / node_filesystem_size_bytes{fstype!=\"tmpfs\",mountpoint!~\"/boot.*\"}",
+          "legendFormat": "{{mountpoint}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.8 },
+              { "color": "red", "value": 0.9 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 10,
+      "title": "Inode Used %",
+      "description": "Inodes bind before bytes when the bucket is full of small objects -- each MinIO object costs 2. Exhaustion presents as ENOSPC with free space still on the disk. Selector matches ct-inode-warning / ct-inode-critical.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 32 },
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "1 - node_filesystem_files_free{fstype!=\"tmpfs\",mountpoint!~\"/boot.*\"} / node_filesystem_files{fstype!=\"tmpfs\",mountpoint!~\"/boot.*\"}",
+          "legendFormat": "{{mountpoint}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.8 },
+              { "color": "red", "value": 0.9 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 11,
+      "title": "MinIO Logical vs Mount Physical",
+      "description": "The divergence is the point. Logical counts object payloads; physical is everything actually consumed on /mnt/data, which includes MinIO's per-object floor plus Postgres, Loki, Prometheus and the Airflow logs.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 40 },
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "sum(minio_bucket_usage_total_bytes)",
+          "legendFormat": "MinIO logical"
+        },
+        {
+          "datasource": "Prometheus",
+          "expr": "node_filesystem_size_bytes{mountpoint=\"/mnt/data\"} - node_filesystem_avail_bytes{mountpoint=\"/mnt/data\"}",
+          "legendFormat": "/mnt/data physical"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "bytes" } }
+    },
+    {
+      "id": 12,
+      "title": "Storage Amplification Ratio",
+      "description": "Mount physical / MinIO logical. This is a mount-level ratio, so it folds in the non-MinIO volumes (~15 GiB) and reads high; the trend is what matters. Stage 4's per-volume metric will give the MinIO-only figure.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 40 },
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "sum(node_filesystem_size_bytes{mountpoint=\"/mnt/data\"} - node_filesystem_avail_bytes{mountpoint=\"/mnt/data\"}) / sum(minio_bucket_usage_total_bytes)",
+          "legendFormat": "physical / logical"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "none", "decimals": 2 } }
+    },
+    {
+      "id": 13,
+      "title": "Mean Object Size",
+      "description": "Denominator is minio_bucket_usage_object_total, chosen deliberately: it is the exact sum of MinIO's mutually-exclusive size buckets. Do not substitute sum(minio_bucket_objects_size_distribution) -- that series carries two overlapping bucket schemes and double-counts the 1 KB - 1 MB range. Falling mean = rising per-object tax; this is the leading indicator for whether Plan 131's packing is earning its keep.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 40 },
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "minio_bucket_usage_total_bytes / minio_bucket_usage_object_total",
+          "legendFormat": "{{bucket}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "bytes" } }
     }
   ]
 }
