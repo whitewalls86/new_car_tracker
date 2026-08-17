@@ -640,7 +640,17 @@ services:
     command:
       - '--path.procfs=/host/proc'
       - '--path.sysfs=/host/sys'
-      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+      # Without this, node-exporter reads the host mount table via procfs, sees
+      # /dev/sdb at /mnt/data, then statfs()es it inside its own namespace where
+      # /mnt does not exist -- so the 196 GB data volume emitted
+      # node_filesystem_device_error and no capacity series at all.
+      # See docs/plan_135_storage_observability.md.
+      - '--path.rootfs=/rootfs'
+      # run/credentials/* is a ramfs mount whose statfs reports zero blocks and
+      # zero inodes. It is not tmpfs, so the disk/inode alert selectors do not
+      # filter it, and once rootfs resolves it would divide by zero into every
+      # filesystem panel. This mirrors node-exporter's own default exclusion.
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc|run/credentials/.+)($$|/)'
     networks:
       - cartracker-net
 

@@ -25,6 +25,82 @@ setting is what is holding, and it would revert if the container restarted.
 
 Everything else in this plan is still outstanding.
 
+### Stages 1-3 built 2026-08-17 — not yet deployed
+
+The node-exporter fix, the three inode rules and the five dashboard panels are
+committed. **None of it is live**: the fix needs a node-exporter restart and the
+rules/panels need a `cartracker-grafana` restart, both of which are production
+changes awaiting confirmation. Until then `/mnt/data` remains invisible.
+
+### Re-measured on the VM, 2026-08-17
+
+Every figure in this doc below was taken 2026-08-14. Plan 131's packer and
+pruner have run since, and the numbers moved enough to change two of this
+plan's conclusions. Read the tables below as history and these as current:
+
+| Measure | 2026-08-14 | 2026-08-17 |
+|---|---|---|
+| `df /` | 79% (later 63% after the Loki truncate) | **64%** (31 of 49 GiB) |
+| `df /mnt/data` bytes | 97.4 GiB, 52% | **75 GiB, 41%** |
+| `df -i /mnt/data` | 7,965,523, **61%** | **3,915,538, 30%** |
+| `minio_bucket_usage_total_bytes` | 65.5 GB (61.0 GiB) | **49.7 GB (46.3 GiB)** |
+| `minio_bucket_usage_object_total` | 4,085,872 | **1,463,427** |
+| Mean object size | ~16 KiB | **33.2 KiB** |
+
+Two consequences.
+
+**Inodes are no longer the binding constraint by ratio** — 30% inodes against
+41% bytes, an inversion of the 61-vs-52 that motivated Stage 3. Packing removed
+~4.05M inodes, roughly 2 per packed object. The alert is still worth building:
+the ratio inverted because a deliberate project ran, not because the underlying
+pressure went away, and the mean object size doubling is precisely what the
+Stage 2 panel exists to track. But the framing in *"Inodes are the binding
+constraint"* below is now a statement about August 14, not about today.
+
+**Widening the existing disk alerts is safe right now.** The Risks section
+worries that Stage 1 may trip `ct-disk-space-warning` immediately. Verified
+against live Prometheus: the existing byte expression evaluates `/` at
+**63.7%**, and `/mnt/data` will join it at 41%. Both are well under the 80%
+threshold, so Stage 1 will not fire anything on arrival.
+
+### The object-count discrepancy, resolved
+
+Stage 2 was told to settle `minio_bucket_usage_object_total` against the size
+histogram "deliberately". It is not a bookkeeping disagreement — **MinIO emits
+two overlapping bucket schemes in the same metric**, and `sum()` over them
+double-counts. Measured 2026-08-17:
+
+| Scheme | Ranges | Sum |
+|---|---|---|
+| Legacy (coarse) | `LESS_THAN_1024_B`, `BETWEEN_1024B_AND_1_MB`, `BETWEEN_1_MB_AND_10_MB`, `BETWEEN_10_MB_AND_64_MB`, `BETWEEN_64_MB_AND_128_MB`, `BETWEEN_128_MB_AND_512_MB`, `GREATER_THAN_512_MB` | **1,463,427** |
+| Modern (fine, subdivides 1 KB - 1 MB) | `BETWEEN_1024_B_AND_64_KB`, `BETWEEN_64_KB_AND_256_KB`, `BETWEEN_256_KB_AND_512_KB`, `BETWEEN_512_KB_AND_1_MB` | **1,461,158** |
+
+Note `BETWEEN_1024B_AND_1_MB` (1,461,158) and the modern scheme's sum agree to
+the object. The legacy scheme's total is **exactly**
+`minio_bucket_usage_object_total`, and a naive `sum()` of all eleven ranges
+gives 2,924,585 — very nearly double, which is the artefact, not a measurement.
+
+**Decision: `minio_bucket_usage_object_total` is the denominator.** It is the
+exact sum of a mutually-exclusive partition of the bucket. The
+2026-08-14 reading of "4,085,872 vs 3,528,807" was the same artefact seen from
+the other side — a partial sum across mixed schemes — not two scanners
+disagreeing. Recorded on panel 13's `description` so the next person editing
+that panel does not re-derive it.
+
+### A hazard Stage 1 did not anticipate: the ramfs mount
+
+`--path.rootfs` resolves *every* mount in the host table, not just the two that
+matter. The host carries `ramfs /run/credentials/systemd-sysusers.service`,
+whose `statfs` reports zero blocks and zero inodes. It is **not** tmpfs, so
+neither `fstype!="tmpfs"` nor `mountpoint!~"/boot.*"` filters it, and it would
+divide by zero into both new panels and all four capacity rules. Stage 1
+therefore extends `--collector.filesystem.mount-points-exclude` with
+`run/credentials/.+`, mirroring node-exporter's own default exclusion.
+
+The eight `squashfs` snap loop mounts need no handling — `squashfs` is in
+node-exporter's default `--collector.filesystem.fs-types-exclude`, which this
+compose file does not override.
+
 ### Inherited scope: Plan 131 Stage 5 Step 6 (2026-08-17)
 
 [Plan 131](plan_131_packed_cold_storage.md)'s Stage 5 specified its own inode
@@ -378,8 +454,11 @@ Add the missing flag in [docker-compose.yml](docker-compose.yml#L608):
       - '--path.procfs=/host/proc'
       - '--path.sysfs=/host/sys'
       - '--path.rootfs=/rootfs'
-      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc|run/credentials/.+)($$|/)'
 ```
+
+The `run/credentials/.+` addition is not cosmetic — see *"A hazard Stage 1 did
+not anticipate"* above.
 
 Verify:
 
@@ -440,6 +519,21 @@ In [rules.yml](grafana/provisioning/alerting/rules.yml), group
 
 Annotations should name the mountpoint and link to the Infrastructure dashboard,
 matching `ct-pipeline-failures`.
+
+**Validated against live Prometheus, 2026-08-17, in both directions.** An empty
+result proves nothing unless the query is otherwise alive:
+
+| Query | Result | What it proves |
+|---|---|---|
+| inode expression, all filesystems | `/` = **8.56%** | the expression is alive and returns data |
+| same query, `/mnt/data` | **absent from the result set** | the defect, not a typo in the selector |
+| `predict_linear(...{mountpoint="/"}[6h], 7d)` | **+5,849,744** | the forecast shape evaluates and reads healthy |
+| same, `mountpoint="/mnt/data"` | **empty** | the forecast is silent until Stage 1 lands |
+| byte expression (existing alerts) | `/` = **63.7%** | Stage 1's widening will not trip anything |
+
+The middle rows are the point. Writing these rules before Stage 1 would have
+produced an alert that evaluates `/` at 8.56%, looks healthy forever, and never
+mentions the volume it was written to protect.
 
 ### Stage 4 — "What is filling the disk", for both disks
 
@@ -718,7 +812,7 @@ be reached for.
 - Reducing Loki's own log verbosity. Flagged in Stage 5a as probably the better
   fix than rotating 8 GiB of it, but it is a config change to a service, not
   storage observability.
-- Reconciling `minio_bucket_usage_object_total` (4,085,872) against the size
-  histogram (3,528,807). Noted above; it affects the mean-object-size panel's
-  denominator and should be settled during Stage 2, but chasing MinIO's internal
-  scanner bookkeeping is not this plan's job.
+- ~~Reconciling `minio_bucket_usage_object_total` against the size histogram.~~
+  **Resolved 2026-08-17** — see *"The object-count discrepancy, resolved"*. It
+  was two overlapping bucket schemes in one metric, not scanner disagreement,
+  and it took one query rather than an excursion into MinIO's internals.

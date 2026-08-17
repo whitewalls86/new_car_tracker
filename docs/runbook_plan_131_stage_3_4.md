@@ -435,6 +435,36 @@ minutes for a deploy to land. It does **not** page. Exhausting the retries does.
 > `deploy intent remained pending through all retries`, check
 > `GET /deploy/status` first.
 
+### Re-test the alert
+
+`ct-pack-verification-refused` stays silent until a real failure, so it can rot
+unnoticed. To prove it still works, query Loki directly on port 3100 (Grafana is
+not port-published) and check both directions — the selector must match live
+streams, and the filter must reject them:
+
+```bash
+# 1. streams are live -- expect non-empty
+curl -sG http://localhost:3100/loki/api/v1/query \
+  --data-urlencode 'query=sum by (service) (count_over_time({service=~"archiver|pack-worker"}[10m]))'
+
+# 2. filter is discriminating -- expect [] with totalPostFilterLines: 0
+curl -sG http://localhost:3100/loki/api/v1/query \
+  --data-urlencode 'query=sum by (service) (count_over_time({service=~"archiver|pack-worker"} |= "REFUSED" [10m]))'
+```
+
+For an end-to-end test including Telegram, push a synthetic line — it fires
+within ~5 min and auto-resolves ~10-15 min later when the window rolls past:
+
+```bash
+curl -sS -X POST http://localhost:3100/loki/api/v1/push \
+  -H 'Content-Type: application/json' \
+  --data-raw "{\"streams\":[{\"stream\":{\"service\":\"pack-worker\",\"level\":\"ERROR\",\"synthetic\":\"alert-test\"},\"values\":[[\"$(date +%s%N)\",\"delete_packed_source_html: REFUSED SYNTHETIC ALERT TEST $(date -Is) - not a real verification failure\"]]}]}"
+```
+
+**Mark every synthetic line.** Loki has no retention yet, so each one is
+permanent and will surface in any future `REFUSED` search. See
+[Plan 131](plan_131_packed_cold_storage.md#the-alert-validated-in-production--2026-08-17).
+
 ### Do not hand-run a month the schedule might also take
 
 The single-flight guard is **in-process on the worker**. A `docker exec` CLI run

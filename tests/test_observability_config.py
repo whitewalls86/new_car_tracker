@@ -172,6 +172,37 @@ class TestDockerComposeTrawlMemoryGuardrails:
         assert service["memswap_limit"] == "512m"
 
 
+class TestNodeExporterFilesystemVisibility:
+    """Plan 135 Stage 1: without --path.rootfs, node-exporter reads the host
+    mount table, sees /dev/sdb at /mnt/data, then statfs()es it inside its own
+    namespace where /mnt does not exist. The 196 GB data volume emitted
+    node_filesystem_device_error and no capacity series -- so both disk alerts
+    silently covered / alone."""
+
+    @staticmethod
+    def _node_exporter():
+        path = _REPO_ROOT / "docker-compose.yml"
+        doc = yaml.safe_load(path.read_text())
+        return doc["services"]["node-exporter"]
+
+    def test_rootfs_flag_present(self):
+        assert "--path.rootfs=/rootfs" in self._node_exporter()["command"]
+
+    def test_rootfs_bind_mount_backs_the_flag(self):
+        """The flag is inert without the recursive bind mount it points at."""
+        assert "/:/rootfs:ro" in self._node_exporter()["volumes"]
+
+    def test_ramfs_credentials_mounts_excluded(self):
+        """run/credentials/* is ramfs: statfs reports zero blocks and zero
+        inodes. It is not tmpfs, so the alert selectors do not filter it, and
+        once rootfs resolves it divides by zero into every filesystem panel."""
+        exclude = next(
+            arg for arg in self._node_exporter()["command"]
+            if arg.startswith("--collector.filesystem.mount-points-exclude=")
+        )
+        assert "run/credentials/.+" in exclude
+
+
 class TestCaddySnapshotDownloadRoute:
     """Plan 120 Gate F: script-token snapshot downloads must reach ops
     directly instead of being intercepted by the browser OAuth /admin* block."""
@@ -234,6 +265,54 @@ class TestGrafanaDashboards:
         assert doc["uid"] == "cartracker-infrastructure"
         assert len(doc["panels"]) > 0
 
+    def _infrastructure_panels(self):
+        doc = json.loads((self._DASHBOARD_DIR / "infrastructure.json").read_text())
+        return doc["panels"]
+
+    def test_infrastructure_panel_ids_are_unique(self):
+        ids = [p["id"] for p in self._infrastructure_panels()]
+        assert len(ids) == len(set(ids)), f"duplicate panel ids: {ids}"
+
+    def test_infrastructure_charts_both_capacity_and_inodes(self):
+        """Plan 135 Stage 2. Neither existed before; inode % is the panel that
+        would have shown 61% while the byte panel looked fine."""
+        exprs = [
+            t["expr"]
+            for p in self._infrastructure_panels() for t in p.get("targets", [])
+        ]
+        assert any("node_filesystem_avail_bytes" in e for e in exprs)
+        assert any("node_filesystem_files_free" in e for e in exprs)
+
+    def test_infrastructure_filesystem_panels_match_the_alert_selectors(self):
+        """A panel that charts different filesystems than the alert evaluates
+        is worse than no panel -- it reads as confirmation."""
+        selector = '{fstype!="tmpfs",mountpoint!~"/boot.*"}'
+        for metric in ("node_filesystem_avail_bytes", "node_filesystem_files_free"):
+            target = next(
+                t for p in self._infrastructure_panels()
+                for t in p.get("targets", []) if metric in t["expr"]
+            )
+            assert target["expr"].count(selector) == 2
+            assert target["legendFormat"] == "{{mountpoint}}"
+
+    def test_mean_object_size_uses_the_authoritative_object_count(self):
+        """sum(minio_bucket_objects_size_distribution) carries two overlapping
+        bucket schemes and double-counts 1 KB - 1 MB. usage_object_total is the
+        exact sum of the mutually-exclusive set. See plan_135."""
+        exprs = [
+            t["expr"]
+            for p in self._infrastructure_panels() for t in p.get("targets", [])
+        ]
+        assert any("minio_bucket_usage_object_total" in e for e in exprs)
+        assert not any("minio_bucket_objects_size_distribution" in e for e in exprs)
+
+    def test_minio_logical_panel_is_not_titled_as_disk_usage(self):
+        """"MinIO Storage Used" is what made a payload-bytes gauge read as a df
+        reading, which is the misreading this whole plan started from."""
+        titles = [p["title"] for p in self._infrastructure_panels()]
+        assert "MinIO Storage Used (bytes)" not in titles
+        assert "MinIO Logical Object Bytes" in titles
+
     def test_service_latency_parses(self):
         doc = json.loads((self._DASHBOARD_DIR / "service_latency.json").read_text())
         assert doc["uid"] == "cartracker-service-latency"
@@ -277,6 +356,9 @@ class TestGrafanaAlertingProvisioning:
             "ct-scrape-volume-drop", "ct-extraction-yield-drop",
             "ct-stale-listings", "ct-cooldown-backlog", "ct-block-events-spike",
             "ct-pack-verification-refused",
+            "ct-disk-space-warning", "ct-disk-space-critical",
+            "ct-inode-warning", "ct-inode-critical",
+            "ct-inode-exhaustion-forecast",
         }
         assert expected <= all_uids, f"Missing rule UIDs: {expected - all_uids}"
 
@@ -306,3 +388,47 @@ class TestGrafanaAlertingProvisioning:
         condition = rule["data"][-1]["model"]["conditions"][0]["evaluator"]
         assert condition["type"] == "gt"
         assert condition["params"] == [0]
+
+    def test_inode_rules_cover_the_same_filesystems_as_the_byte_rules(self):
+        """Plan 135 Stage 3. If the two families drift apart, one disk gets
+        byte alerting and the other gets inode alerting and nobody notices."""
+        selector = '{fstype!="tmpfs",mountpoint!~"/boot.*"}'
+        for uid in ("ct-inode-warning", "ct-inode-critical",
+                    "ct-disk-space-warning", "ct-disk-space-critical"):
+            expr = self._rule(uid)["data"][0]["model"]["expr"]
+            assert expr.count(selector) == 2, f"{uid} selector drifted"
+
+    def test_inode_rules_measure_inodes_not_bytes(self):
+        """The whole point is that inodes bind before bytes; a copy-paste from
+        the byte rules would look correct and alert on the wrong thing."""
+        for uid in ("ct-inode-warning", "ct-inode-critical"):
+            expr = self._rule(uid)["data"][0]["model"]["expr"]
+            assert "node_filesystem_files_free" in expr
+            assert "node_filesystem_avail_bytes" not in expr
+
+    def test_inode_thresholds_and_durations_mirror_the_byte_rules(self):
+        for inode_uid, disk_uid, threshold in (
+            ("ct-inode-warning", "ct-disk-space-warning", 80),
+            ("ct-inode-critical", "ct-disk-space-critical", 90),
+        ):
+            inode_rule, disk_rule = self._rule(inode_uid), self._rule(disk_uid)
+            assert inode_rule["for"] == disk_rule["for"]
+            evaluator = inode_rule["data"][-1]["model"]["conditions"][0]["evaluator"]
+            assert evaluator["type"] == "gt"
+            assert evaluator["params"] == [threshold]
+
+    def test_inode_forecast_window_covers_its_own_range(self):
+        """predict_linear over [6h] returns no data if Grafana only hands the
+        query a 10-minute window -- the rule would be silent, not wrong."""
+        rule = self._rule("ct-inode-exhaustion-forecast")
+        query = rule["data"][0]
+        assert "predict_linear" in query["model"]["expr"]
+        assert "[6h]" in query["model"]["expr"]
+        assert query["relativeTimeRange"]["from"] >= 6 * 3600
+
+    def test_inode_forecast_watches_the_data_volume_and_fires_below_zero(self):
+        rule = self._rule("ct-inode-exhaustion-forecast")
+        assert 'mountpoint="/mnt/data"' in rule["data"][0]["model"]["expr"]
+        evaluator = rule["data"][-1]["model"]["conditions"][0]["evaluator"]
+        assert evaluator["type"] == "lt"
+        assert evaluator["params"] == [0]
