@@ -1,4 +1,4 @@
-"""Unit tests for scripts/verify_pack_read_path.py (Plan 131 Stage 3).
+"""Unit tests for archiver/processors/verify_pack_read_path.py (Plan 131 Stage 3).
 
 This script is what authorizes Stage 4's deletions, so the case that matters is
 the one where it must **not** report a match. A verifier that says "identical"
@@ -13,7 +13,7 @@ from __future__ import annotations
 import pytest
 
 import shared.minio as minio
-from scripts import verify_pack_read_path as verifier
+from archiver.processors import verify_pack_read_path as verifier
 from shared.compression import compress_frame
 from shared.packfile import (
     PackMember,
@@ -71,7 +71,7 @@ def _run(**kwargs):
         "bucket": _BUCKET,
     }
     params.update(kwargs)
-    return verifier.run(**params)
+    return verifier.verify_pack_read_path(**params)
 
 
 class TestPercentiles:

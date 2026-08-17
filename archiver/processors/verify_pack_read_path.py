@@ -1,7 +1,7 @@
 """Plan 131 Stage 3: prove the pack read path, and measure what it costs.
 
 Stage 4 deletes source objects on one claim: **that the production read path
-returns an artifact's exact bytes after its object is gone.** This script tests
+returns an artifact's exact bytes after its object is gone.** This verifier tests
 that claim while the safety net is still in place — every source object still
 exists, so a failure here is a finding rather than a loss.
 
@@ -30,7 +30,8 @@ nothing, and needs no dictionary configured — frames name their own dictionary
 Run it in the archiver container, whose app root is ``/app``::
 
     docker exec -w /app cartracker-archiver \\
-        python -m scripts.verify_pack_read_path --year 2026 --month 4 --sample 200
+        python -m archiver.processors.verify_pack_read_path \\
+        --year 2026 --month 4 --per-pack 5
 """
 from __future__ import annotations
 
@@ -194,7 +195,7 @@ def percentiles(values: Sequence[float]) -> Dict[str, Optional[float]]:
     }
 
 
-def run(
+def verify_pack_read_path(
     *,
     artifact_type: str,
     year: int,
@@ -318,7 +319,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     from shared.minio import BUCKET
 
-    result = run(
+    result = verify_pack_read_path(
         artifact_type=args.artifact_type,
         year=args.year,
         month=args.month,

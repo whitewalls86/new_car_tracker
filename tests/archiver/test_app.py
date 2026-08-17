@@ -1,5 +1,6 @@
 """Unit tests for archiver/app.py — all HTTP endpoints."""
 
+import pytest
 
 # ---------------------------------------------------------------------------
 # GET /health
@@ -561,6 +562,113 @@ class TestPackSingleFlight:
             return_value={"error": None, "read_failures": 0},
         )
         assert mock_archiver_client.post("/pack/bronze/run").status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# POST /pack/bronze/verify (Plan 131 Stage 5 Step 7b)
+# ---------------------------------------------------------------------------
+
+class TestVerifyEndpoint:
+    def test_clean_run_returns_200(self, mock_archiver_client, mocker):
+        fake = {"verified": 5, "failed": 0, "sampled": 5}
+        mocker.patch("archiver.app._verify_pack_read_path", return_value=fake)
+
+        resp = mock_archiver_client.post(
+            "/pack/bronze/verify", json={"year": 2026, "month": 4}
+        )
+
+        assert resp.status_code == 200
+        assert resp.json() == fake
+
+    def test_forwards_only_allow_listed_keys(self, mock_archiver_client, mocker):
+        import archiver.app as archiver_app
+
+        mock_fn = mocker.patch(
+            "archiver.app._verify_pack_read_path",
+            return_value={"verified": 1, "failed": 0},
+        )
+
+        resp = mock_archiver_client.post(
+            "/pack/bronze/verify",
+            json={
+                "artifact_type": "detail_page",
+                "year": 2026,
+                "month": 6,
+                "per_pack": 7,
+                "warm_reads": 9,
+                "seed": 42,
+                "bucket": "attacker-controlled",
+                "apply": True,
+            },
+        )
+
+        assert resp.status_code == 200
+        assert mock_fn.call_args.kwargs == {
+            "artifact_type": "detail_page",
+            "year": 2026,
+            "month": 6,
+            "per_pack": 7,
+            "warm_reads": 9,
+            "seed": 42,
+            "bucket": archiver_app._MINIO_BUCKET,
+        }
+
+    @pytest.mark.parametrize("payload", [{}, {"year": 2026}, {"month": 4}])
+    def test_year_and_month_are_required(self, mock_archiver_client, payload):
+        resp = mock_archiver_client.post("/pack/bronze/verify", json=payload)
+
+        assert resp.status_code == 400
+        assert "year and month" in resp.json()["detail"]
+
+    def test_failed_members_return_500_with_the_summary(
+        self, mock_archiver_client, mocker
+    ):
+        fake = {
+            "verified": 4,
+            "failed": 1,
+            "failures": [{"source_key": "html/bad", "error": "hash mismatch"}],
+        }
+        mocker.patch("archiver.app._verify_pack_read_path", return_value=fake)
+
+        resp = mock_archiver_client.post(
+            "/pack/bronze/verify", json={"year": 2026, "month": 4}
+        )
+
+        assert resp.status_code == 500
+        detail = resp.json()["detail"]
+        assert detail["failed"] == 1
+        assert detail["failures"] == fake["failures"]
+        assert "1" in detail["failure_reason"]
+
+    def test_nothing_verified_returns_500(self, mock_archiver_client, mocker):
+        mocker.patch(
+            "archiver.app._verify_pack_read_path",
+            return_value={"verified": 0, "failed": 0, "sidecars": 0},
+        )
+
+        resp = mock_archiver_client.post(
+            "/pack/bronze/verify", json={"year": 2026, "month": 4}
+        )
+
+        assert resp.status_code == 500
+        assert "no sampled members" in resp.json()["detail"]["failure_reason"]
+
+    def test_verify_is_available_while_both_mutation_slots_are_held(
+        self, mock_archiver_client, mocker
+    ):
+        from shared.job_counter import single_flight
+
+        mocker.patch(
+            "archiver.app._verify_pack_read_path",
+            return_value={"verified": 1, "failed": 0},
+        )
+
+        with single_flight("pack_bronze"), single_flight("pack_prune"):
+            resp = mock_archiver_client.post(
+                "/pack/bronze/verify", json={"year": 2026, "month": 4}
+            )
+
+        assert resp.status_code == 200
 
 
 # ---------------------------------------------------------------------------

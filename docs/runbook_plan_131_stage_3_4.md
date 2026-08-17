@@ -87,7 +87,7 @@ every source object still exists.
 
 ```bash
 docker exec -w /app cartracker-archiver \
-    python -m scripts.verify_pack_read_path \
+    python -m archiver.processors.verify_pack_read_path \
     --year 2026 --month 4 --per-pack 5 --json-out /tmp/verify_april.json
 ```
 
@@ -132,7 +132,7 @@ object — a failure here is a latency regression at worst.
 
 ```bash
 docker exec -w /app cartracker-archiver \
-    python -m scripts.verify_pack_read_path --year 2026 --month 5 \
+    python -m archiver.processors.verify_pack_read_path --year 2026 --month 5 \
     --per-pack 5 --json-out /tmp/verify_may.json
 ```
 
@@ -269,6 +269,10 @@ docker exec -d -w /app cartracker-archiver sh -c \
 `/usr/app/logs` is the archiver's own named volume, so the log outlives both
 the exec and a container restart.
 
+These operator-named `prune_*.log` files are **not** scraped by Promtail. The
+structured app stream is `app.log*`; detached CLI output remains a local
+run-sheet artifact until the separate manual-run logging convention is built.
+
 Watch it:
 
 ```bash
@@ -308,6 +312,11 @@ listing costs 12 minutes each time.
 > `{"pause_long_jobs": false}` for a deploy that touches nothing they depend
 > on. A **manual CLI run is stopped by this too** — that is the same flag, read
 > from the same table.
+>
+> `scripts/redeploy.sh` sends `/deploy/complete` on exit but does not send
+> `/deploy/start`. If a pack or prune is running, call
+> `curl -sf -X POST http://localhost:8060/deploy/start` by hand immediately
+> before `bash scripts/redeploy.sh ...`; the script's exit trap releases it.
 
 **Resume is free and safe.** The surviving-object listing is the checkpoint —
 an object that is gone is skipped with no request, each object is deleted at

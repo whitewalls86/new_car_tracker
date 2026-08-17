@@ -26,8 +26,12 @@ from archiver.processors.flush_silver_observations import (
 )
 from archiver.processors.flush_staging_events import flush_staging_events as _flush_staging_events
 from archiver.processors.pack_bronze_html import pack_bronze_html as _pack_bronze_html
+from archiver.processors.verify_pack_read_path import (
+    verify_pack_read_path as _verify_pack_read_path,
+)
 from shared.job_counter import JobInFlight, active_job, is_idle, single_flight
 from shared.logging_setup import configure_logging
+from shared.minio import BUCKET as _MINIO_BUCKET
 
 configure_logging()
 logger = logging.getLogger("archiver")
@@ -50,7 +54,6 @@ _ALLOW_SOURCE_BASE_PATH = (
 _ALLOW_SYNC_SNAPSHOT_COHORT = (
     os.environ.get("ARCHIVER_ALLOW_SYNC_SNAPSHOT_COHORT", "false").lower() == "true"
 )
-
 
 @app.post("/cleanup/parquet")
 def run_cleanup_parquet(payload: dict = Body(...)) -> Dict[str, Any]:
@@ -195,6 +198,21 @@ def _prune_failure_reason(summary: Dict[str, Any]) -> Optional[str]:
     return None
 
 
+def _verify_failure_reason(summary: Dict[str, Any]) -> Optional[str]:
+    """Why this read-path verification counts as failed, or None.
+
+    This is the verifier CLI's exit predicate exactly: any failed member or no
+    verified members is a failure. The endpoint carries the full summary in its
+    500 response so a scheduled canary can report the offending keys.
+    """
+    failed = summary.get("failed") or 0
+    if failed:
+        return f"{failed} sampled member(s) failed read-path verification"
+    if not (summary.get("verified") or 0):
+        return "no sampled members were verified"
+    return None
+
+
 @app.post("/pack/bronze/run")
 def trigger_pack_bronze_html(payload: dict = Body(default={})) -> Dict[str, Any]:
     """Pack cold bronze HTML into indexed packs (Plan 131 Stage 2).
@@ -286,6 +304,44 @@ def trigger_prune_packed_source_html(payload: dict = Body(default={})) -> Dict[s
         reason = _prune_failure_reason(result)
         if reason:
             logger.error("delete_packed_source_html: run failed — %s", reason)
+            raise HTTPException(
+                status_code=500, detail=dict(result, failure_reason=reason)
+            )
+        return result
+
+
+@app.post("/pack/bronze/verify")
+def trigger_verify_pack_read_path(payload: dict = Body(default={})) -> Dict[str, Any]:
+    """Sample a packed month through the production read path (read-only).
+
+    Unlike pack and prune this endpoint is intentionally outside their
+    single-flight slots and the pack-worker guard. A canary must stay available
+    while either mutation job is running, which is when it is most useful.
+    """
+    with active_job():
+        payload = payload or {}
+        if "year" not in payload or "month" not in payload:
+            raise HTTPException(
+                status_code=400,
+                detail="year and month are required for pack read-path verification",
+            )
+        try:
+            kwargs = {
+                "artifact_type": payload.get("artifact_type", "detail_page"),
+                "year": payload["year"],
+                "month": payload["month"],
+                "per_pack": payload.get("per_pack", 5),
+                "warm_reads": payload.get("warm_reads", 50),
+                "seed": payload.get("seed", 131),
+                "bucket": _MINIO_BUCKET,
+            }
+            result = _verify_pack_read_path(**kwargs)
+        except (ValueError, TypeError) as e:
+            raise HTTPException(status_code=400, detail=f"Invalid request payload: {e}")
+
+        reason = _verify_failure_reason(result)
+        if reason:
+            logger.error("verify_pack_read_path: run failed — %s", reason)
             raise HTTPException(
                 status_code=500, detail=dict(result, failure_reason=reason)
             )

@@ -114,3 +114,24 @@ scrape_configs:
       - timestamp:
           source: ts
           format: '2006-01-02 15:04:05,000'
+
+  - job_name: pack-worker
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          service: pack-worker
+          __path__: /logs/pack-worker/app.log*
+
+    pipeline_stages:
+      - json:
+          expressions:
+            ts: ts
+            level: level
+            logger: logger
+      - labels:
+          level:
+          logger:
+      - timestamp:
+          source: ts
+          format: '2006-01-02 15:04:05,000'
