@@ -1789,6 +1789,41 @@ UID is added. It is added, along with assertions on the service selector and
 the threshold — the two things whose silent regression would make the alert
 useless rather than noisy.
 
+### The alert, validated in production — 2026-08-17
+
+An alert that has never matched anything is not an alert that works. This one
+was proven in both directions against live data before it was trusted, using
+Loki's query API on the published port 3100 (Grafana itself is not
+port-published — it is reachable only through Caddy).
+
+| step | query | result |
+|---|---|---|
+| selector matches live streams | `sum by (service) (count_over_time({service=~"archiver\|pack-worker"}[10m]))` | `archiver` **14**, `pack-worker` **4** |
+| filter rejects normal traffic | the same, plus `\|= "REFUSED"` | `[]` — **81 lines in, `totalPostFilterLines: 0`** |
+| a real REFUSED fires | the same, after pushing one synthetic line | `pack-worker` **1** — 70 lines in, **1** post-filter |
+
+The middle row is the one that matters and is the row usually skipped. An empty
+result proves nothing on its own — an empty result against a *stream that is
+demonstrably carrying 81 lines* proves the filter is discriminating rather than
+the query being dead. Same corpus, same selector, one term added, everything
+rejected.
+
+The first row also settled the both-services question empirically: the archiver
+was actively logging at the time, so an archiver-scoped `REFUSED` had a live
+stream to appear in. A worker-only matcher would have been a silent gap.
+
+The synthetic line then carried the whole chain through Grafana's evaluation and
+the notification policy to Telegram.
+
+> **Two synthetic `REFUSED` lines are permanently in Loki**, pushed 2026-08-17
+> during this validation. Loki has no retention configured — that is
+> [Plan 135](plan_135_storage_observability.md) Stage 5b, still outstanding —
+> and the delete API needs a compactor with `delete_request_store`, which is not
+> set up either. Both carry the label `synthetic="alert-test"` and the text
+> `SYNTHETIC ALERT TEST` with a timestamp. **A future grep for `REFUSED` that
+> finds them has not found a verification failure.** A real one comes from
+> `delete_packed_source_html` and names an artifact.
+
 ---
 
 ## Prior art
