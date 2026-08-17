@@ -39,14 +39,22 @@ class TestPackWorkerComposeConfig:
         assert "pack_worker_logs:/usr/app/logs" in worker_mounts
         assert "pack_worker_logs" in doc["volumes"]
 
-    def test_worker_inherits_archiver_environment_plus_pack_override(self):
+    def test_worker_inherits_archiver_environment_plus_worker_overrides(self):
+        """Every worker-only variable must be listed here deliberately, so the
+        two services cannot drift apart by accident."""
         services = self._services()
         worker_env = dict(services["pack-worker"]["environment"])
         archiver_env = services["archiver"]["environment"]
+
+        # Plan 131 D4: long pack/prune jobs run here, not on the archiver.
         assert worker_env.pop("ARCHIVER_ALLOW_PACK_JOBS") == "true"
+        # Plan 135 Stage 4: only this service carries the host mounts.
+        assert worker_env.pop("DISK_USAGE_TEXTFILE_DIR") == "/textfile"
+
         assert worker_env == archiver_env
         assert worker_env["PACK_BRONZE_DICT_ID"] == "${HTML_COMPRESSION_DICT_ID:-}"
         assert "ARCHIVER_ALLOW_PACK_JOBS" not in archiver_env
+        assert "DISK_USAGE_TEXTFILE_DIR" not in archiver_env
 
     def test_promtail_mounts_worker_logs_read_only(self):
         mounts = self._services()["promtail"]["volumes"]

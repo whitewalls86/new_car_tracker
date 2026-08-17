@@ -233,6 +233,98 @@
         }
       ],
       "fieldConfig": { "defaults": { "unit": "bytes" } }
+    },
+    {
+      "id": 14,
+      "title": "What's Filling The Disks",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 48 },
+      "panels": []
+    },
+    {
+      "id": 15,
+      "title": "Root Disk by Path",
+      "description": "Fixed watchlist, measured daily by the disk_usage DAG. Stacked because the question is always 'which band grew'. The total should reconcile roughly with the / line on Filesystem Used % -- roughly, because the watchlist covers most of the disk, not all of it.",
+      "type": "timeseries",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 49 },
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "cartracker_path_bytes{disk=\"root\"}",
+          "legendFormat": "{{path}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": { "fillOpacity": 40, "stacking": { "mode": "normal" }, "showPoints": "never" }
+        }
+      }
+    },
+    {
+      "id": 16,
+      "title": "/mnt/data by Docker Volume",
+      "description": "cartracker_parquet_data is MinIO and is walked weekly, not daily -- its line is a step, and cartracker_disk_usage_measured_timestamp_seconds says when it was last actually walked. Every other volume here is measured on every run.",
+      "type": "timeseries",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 49 },
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "cartracker_volume_bytes",
+          "legendFormat": "{{volume}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": { "fillOpacity": 40, "stacking": { "mode": "normal" }, "showPoints": "never" }
+        }
+      }
+    },
+    {
+      "id": 17,
+      "title": "Biggest Consumers (current)",
+      "description": "Both disks in one table, largest first. This is the panel that answers 'what is filling this disk' without an SSH session.",
+      "type": "table",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 58 },
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "topk(10, cartracker_path_bytes or cartracker_volume_bytes)",
+          "legendFormat": "",
+          "instant": true,
+          "format": "table"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "bytes" } }
+    },
+    {
+      "id": 18,
+      "title": "Measurement Age",
+      "description": "How long ago each series was actually walked. The MinIO volume should sit under 7 days; everything else under 1. A line climbing without resetting means the disk_usage DAG has stopped running and the gauges above are frozen at their last value.",
+      "type": "timeseries",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 58 },
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "time() - cartracker_disk_usage_measured_timestamp_seconds",
+          "legendFormat": "{{target}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 691200 },
+              { "color": "red", "value": 1209600 }
+            ]
+          }
+        }
+      }
     }
   ]
 }

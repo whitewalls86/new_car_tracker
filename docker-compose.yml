@@ -357,6 +357,21 @@ services:
     container_name: cartracker-pack-worker
     volumes:
       - pack_worker_logs:/usr/app/logs
+      # Plan 135 Stage 4: the disk watchlist. Mounted per-path and read-only
+      # rather than binding the whole host root, because the watchlist is fixed
+      # by design -- adding a path should be a deliberate change here, not a
+      # side effect of editing a list in Python. This service already holds DB
+      # and MinIO credentials, so it gets exactly the five directories it
+      # measures and nothing else.
+      - /var/lib/containerd:/measure/root/var/lib/containerd:ro
+      - /var/lib/docker/containers:/measure/root/var/lib/docker/containers:ro
+      - /var/log/journal:/measure/root/var/log/journal:ro
+      - /usr:/measure/root/usr:ro
+      - /var/lib/snapd:/measure/root/var/lib/snapd:ro
+      # /var/lib/docker/volumes is a symlink to here (Plan 105), so the Docker
+      # volumes live on /mnt/data while image layers live on /.
+      - /mnt/data/docker-volumes:/measure/volumes:ro
+      - node_textfile:/textfile
     environment:
       PGHOST: postgres
       PGPORT: 5432
@@ -369,6 +384,10 @@ services:
       MINIO_BUCKET: bronze
       PACK_BRONZE_DICT_ID: ${HTML_COMPRESSION_DICT_ID:-}
       ARCHIVER_ALLOW_PACK_JOBS: "true"
+      # Setting this is what enables POST /disk-usage/run. Its absence on the
+      # regular archiver is the refusal: without these mounts every
+      # measurement fails and an empty .prom reads as "the disks are empty".
+      DISK_USAGE_TEXTFILE_DIR: /textfile
     depends_on:
       flyway:
         condition: service_completed_successfully
@@ -637,6 +656,9 @@ services:
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
       - /:/rootfs:ro
+      # Plan 135 Stage 4: pack-worker writes the disk watchlist here; this side
+      # only ever reads it.
+      - node_textfile:/textfile:ro
     command:
       - '--path.procfs=/host/proc'
       - '--path.sysfs=/host/sys'
@@ -651,6 +673,7 @@ services:
       # filter it, and once rootfs resolves it would divide by zero into every
       # filesystem panel. This mirrors node-exporter's own default exclusion.
       - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc|run/credentials/.+)($$|/)'
+      - '--collector.textfile.directory=/textfile'
     networks:
       - cartracker-net
 
@@ -757,6 +780,10 @@ volumes:
   grafana_data:
 
   loki_data:
+
+  # Plan 135 Stage 4: pack-worker writes the disk watchlist .prom here and
+  # node-exporter reads it. Holds one small file.
+  node_textfile:
 
 networks:
   cartracker-net:

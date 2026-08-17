@@ -651,6 +651,46 @@ The derived metric worth alerting on later is
 — the true MinIO amplification factor, with non-MinIO volumes excluded.
 Today that number is ~1.35.
 
+#### Stage 4 as built (2026-08-17)
+
+Four decisions the stage spec left open, settled with reasons.
+
+**One `.prom` file, not two.** The obvious shape is a cheap daily file plus an
+expensive weekly one, which makes carry-forward free — node-exporter keeps
+serving the weekly file untouched. It does not work: splitting a metric family
+across two files makes node-exporter rewrite the HELP text to name both files
+and then reject the second as inconsistent
+([node_exporter#1885](https://github.com/prometheus/node_exporter/issues/1885)).
+So the previous file is parsed as the input to the next one, exactly as the
+stage spec said.
+
+**Every series either gets a fresh measurement or keeps its previous value
+*with its previous timestamp*.** A skipped weekly walk and a failed walk are
+deliberately indistinguishable in the gauge, and
+`cartracker_disk_usage_measured_timestamp_seconds` is the only thing that
+separates either from a live reading. This is per-series rather than per-run
+because carry-forward means two series in one file can legitimately have been
+measured a week apart — it is not a competing convention to Plan 136's
+`cartracker_metrics_last_success_timestamp_seconds`, and should fold into it if
+that turns out to subsume it. The `Measurement Age` panel charts it.
+
+**`du -s -x --block-size=1`, not `-b`.** `--block-size=1` reports allocated
+blocks; `-b` reports apparent size. The per-object floor this plan exists to
+expose is *invisible* in apparent size, so `-b` would have produced a panel
+that confirms the wrong number. `-x` stops at the filesystem boundary so a
+nested bind mount cannot be counted into a total it does not belong to.
+
+**Per-path read-only mounts on pack-worker, not `/:/rootfs:ro`.** node-exporter
+already binds the host root, so there was precedent for the convenient version.
+pack-worker holds DB and MinIO credentials, and the watchlist is fixed *by
+design* — adding a path should be a deliberate edit to `docker-compose.yml`,
+not a side effect of editing a list in Python. It gets exactly the five
+directories it measures. The job lives on pack-worker for the same reason
+Plan 131 D4 put packing there: a 20-minute walk must not starve
+flush/cleanup/compact. `DISK_USAGE_TEXTFILE_DIR` being unset on the regular
+archiver *is* the refusal — without the mounts every measurement fails and an
+empty `.prom` would read as "the disks are empty".
+
 ### Stage 5 — Give each stream one job
 
 Applying the buffer/store split above. Note that Stream A (app file logs →
