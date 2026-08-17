@@ -53,10 +53,24 @@ time, and three mandatory checks per member before anything is removed — see
 deployed and the read path verified against real April packs; the
 [run sheet](runbook_plan_131_stage_3_4.md) is the order of operations.
 
-**Stage 5 IN PROGRESS.** Cap semantics, endpoint failure contracts,
-single-flight, deploy-intent pause/resume, the isolated pack worker, and the
-recurring read-path verifier endpoint are built. The lifecycle DAG and inode
-alerts remain. Stage 4 is the only step that removes data. Two of
+**Stage 5 BUILT (2026-08-17).** Cap semantics, endpoint failure contracts,
+single-flight, deploy-intent pause/resume, the isolated pack worker, the
+recurring read-path verifier endpoint, and the lifecycle DAG are all built and
+merged. The DAG runs `0 6 3 * *` against `pack-worker` — pack, then prune, then
+a bounded read-path canary — and holds no packing logic of its own. See
+[Stage 5 as built](#stage-5-as-built). **It is in production testing and has not
+yet completed a scheduled run**; the first falls on 2026-09-03, and the measured
+numbers this plan asks for are recorded there once it has.
+
+**Inode alerting moved to [Plan 135](plan_135_storage_observability.md).** It was
+Stage 5's Step 6, it is Plan 135's Stage 3, and it cannot work here on its own:
+node-exporter has never reported `/mnt/data` at all, so an inode rule written
+today would evaluate `/` — 9% used — while the volume this plan exists to protect
+sits at 61% and invisible. Plan 135 Stage 1 is the prerequisite, and one plan
+owning those rules beats two plans editing the same file. What stays here is the
+verification-failure alert, which is pack integrity rather than disk capacity.
+
+Stage 4 is the only step that removes data. Two of
 its three would-be gates have now been settled and **neither is a gate**: the
 [delete grace period defaults to
 0](#the-delete-grace-period--0-days-revised-2026-08-14) (decided 2026-08-14 —
@@ -1614,7 +1628,7 @@ any other status, and every deleted object is asserted still readable through
 
 ---
 
-### Stage 5 — Lifecycle DAG and observability
+### Stage 5 — Lifecycle DAG and observability — BUILT 2026-08-17, in production testing
 
 - Airflow DAG packing eligible cohorts on a schedule, respecting the free-space
   floor, thin like `compact_silver` (sensors + one HTTP call, no logic).
@@ -1681,6 +1695,102 @@ April.
 
 ---
 
+## Stage 5 as built
+
+Built 2026-08-17. **In production testing; no scheduled run has completed yet.**
+The first is 2026-09-03.
+
+### The DAG holds no logic
+
+`airflow/dags/pack_bronze_html.py` is two sensors, three HTTP calls and a
+notifier. Everything it knows how to do lives behind an endpoint on
+`pack-worker`, which is the same shape `compact_silver` and
+`export_ci_lake_snapshot` already have.
+
+```
+deploy_intent_sensor >> pack_worker_health >> pack >> prune >> verify
+[every task] >> notify            # trigger_rule="one_failed"
+```
+
+Each task pushes its summary to XCom under `result` **including on failure** —
+`JsonPostError` carries the endpoint's summary through, so `notify` can quote
+the actual `failure_reason` rather than an HTTP status. That is why the pack
+endpoints had to signal failure properly (D5) before the DAG could be thin: a
+DAG that has to infer failure from a 200 is a DAG that grows logic.
+
+### What the implementation settled
+
+- **The prune target comes from the pack task, not from the schedule.** `_run_prune`
+  pulls `check_pack_result`'s selected bucket out of XCom; a pack that selected
+  nothing yields `{"skipped": true}` and the prune never runs. This is D1's
+  "never automate the pack without the prune" in the only form that is safe —
+  the prune cannot address a month the pack did not just finish.
+- **The canary is bounded and sits last.** `verify` gets `retries=1` where pack
+  and prune get `retries=6`; it is a read-only sample, not a job worth grinding
+  on. It is also deliberately **outside** the single-flight lock — the moment it
+  most needs to run is the moment a pack job is in flight.
+- **Retries are sized for the deploy pause, not for flakiness.** `retries=6` at
+  15-minute intervals is 90 minutes of runway, which is what a deploy needs to
+  land and clear. A `stopped_for_deploy` return is an ordinary intermediate
+  failure and does not page; only exhausting the retries does.
+- **`timeout=43200`** on pack and prune. A backlog month is a ten-hour call, and
+  both jobs are resumable — sidecars checkpoint the packer, the surviving-object
+  listing checkpoints the deleter — so a retry re-enters cheaply.
+- **The schedule is steady-state only.** One month per run, `catchup=False`,
+  `max_active_runs=1`. July and any other backlog stays a deliberate manual
+  trigger with explicit params; the DAG exposes them precisely so that works.
+- **Single-flight is in-process and per-job-name.** A `docker exec` CLI run is
+  invisible to it and it to the CLI, so the run sheet's rule — do not hand-run a
+  month the schedule might also take — is load-bearing rather than advisory.
+- **`long_jobs_paused()` fails open with no staleness clause.** A Postgres blip
+  must not stop a ten-hour job; a *forgotten* deploy intent keeps jobs paused
+  until the retries exhaust and someone is paged. Both are the designed outcome.
+
+### Where the numbers come from
+
+Stage 5 asks for objects packed, packs written, bytes/inodes reclaimed,
+extraction latency p50/p95, and verification failures. None of it is a new
+metrics pipeline:
+
+| number | source |
+|---|---|
+| objects packed, packs written, bytes/inodes freed | the run summary each endpoint returns, in the task log and XCom |
+| extraction latency p50/p95 | the `verify` canary's summary, every run |
+| verification failures | `REFUSED` at ERROR from `delete_packed_source_html`, shipped to Loki, alerted on |
+| bronze object count over time | `minio_bucket_usage_object_total`, already scraped |
+
+**Per-run Prometheus gauges are deliberately not built.** A gauge resets to 0 on
+restart, and for a monthly job a zero is indistinguishable from a good run, so
+honest gauges need a `last_run_timestamp` and a staleness alert alongside them.
+[Plan 136](plan_136_solver_recycle_and_liveness.md) Stage 1 is building exactly
+that convention — a freshness timestamp plus NaN-on-failure — for the DuckDB
+gauges that have the same defect. When it lands, these numbers can adopt it.
+Inventing a second staleness pattern here first would be the wrong order.
+
+### The alert scope, which the original spec got wrong
+
+The Stage 5 prompt specified the verification alert as `{service="archiver"}`.
+That would never fire. `ARCHIVER_ALLOW_PACK_JOBS` is set only on `pack-worker`
+([docker-compose.yml](../docker-compose.yml)), and the archiver returns **409**
+for pack endpoints, so every scheduled run logs under `service="pack-worker"`
+([promtail.yml](../promtail/promtail.yml)). The spec predates Step 4 creating the
+worker.
+
+`ct-pack-verification-refused` matches `{service=~"archiver|pack-worker"}` —
+both, because the 409's own message points at `ARCHIVER_ALLOW_PACK_JOBS=true`
+as the manual-run override, so the archiver can still legitimately run one.
+It is `gt 0` with `for: 0s` rather than the spike thresholds the file's other
+two Loki rules use, because "should be zero; alert on any" is the requirement.
+
+A related assumption also proved wrong: the prompt expected
+`tests/test_observability_config.py` to cover new rules automatically. It
+checks an explicit UID allowlist, so a new rule is invisible to it until the
+UID is added. It is added, along with assertions on the service selector and
+the threshold — the two things whose silent regression would make the alert
+useless rather than noisy.
+
+---
+
 ## Prior art
 
 This is a solved problem and the plan should borrow rather than invent:
@@ -1741,12 +1851,26 @@ afterwards. Look first this time.
 | `tests/archiver/test_verify_pack_read_path.py` | New, then moved with the processor | 3/5 | **done** |
 | `scripts/audit_semantic_duplicate_html_hashes.py` | Bypass removed: hashes raw HTML via `read_html` | 3 | **done** |
 | `scripts/diff_log_analysis.py` | Bypass removed: `object_size()` HEAD, `None` = packed | 3 | **done** |
-| `archiver/processors/delete_packed_source_html.py` | Stage 4, dry-run default, hard cap, per-artifact verification | 4 | **done**, never run |
+| `archiver/processors/delete_packed_source_html.py` | Stage 4, dry-run default, hard cap, per-artifact verification; then `max_objects <= 0` = no cap and a deploy-intent boundary check | 4, 5 | **done**, April-June pruned |
 | `archiver/app.py` | `POST /pack/bronze/prune` | 4 | **done** |
-| `tests/archiver/test_delete_packed_source_html.py` | New — 26 tests over an in-memory store | 4 | **done** |
-| `docs/runbook_plan_131_stage_3_4.md` | Deploy + verification + prune run sheet | 3-4 | **done** |
-| `airflow/dags/pack_bronze_html.py` | Lifecycle DAG | 5 | not started |
-| `tests/integration/airflow/test_dag_integrity.py` | Register the new DAG | 5 | not started |
+| `tests/archiver/test_delete_packed_source_html.py` | New — 26 tests over an in-memory store; uncapped drain and deploy-intent stop | 4, 5 | **done** |
+| `docs/runbook_plan_131_stage_3_4.md` | Deploy + verification + prune run sheet; then the Stage 5 close | 3-5 | **done** |
+| `shared/job_counter.py` | Named, per-job single-flight lock (D3a) | 5 | **done** |
+| `db/migrations/V042__deploy_intent_pause_long_jobs.sql` | New — `pause_long_jobs` column + `scraper_user` grant | 5 | **done** |
+| `shared/deploy_intent.py` | New — `long_jobs_paused()`, fails open (D3b) | 5 | **done** |
+| `ops/routers/deploy.py` | `pause_long_jobs` on `/deploy/start`, surfaced in status | 5 | **done** |
+| `archiver/processors/pack_bronze_html.py` | Deploy-intent boundary check, skips the tail flush | 5 | **done** |
+| `archiver/app.py` | `_failure_reason` → 500 on the pack endpoints (D5); 409 unless `ARCHIVER_ALLOW_PACK_JOBS`; `POST /pack/bronze/verify` | 5 | **done** |
+| `docker-compose.yml` | `pack-worker` service, `pack_worker_logs` volume, promtail mount | 5 | **done** |
+| `promtail/promtail.yml` | `pack-worker` log job — where every scheduled run logs | 5 | **done** |
+| `scripts/verify_pack_read_path.py` | Deleted — moved to `archiver/processors/` | 5 | **done** |
+| `airflow/dags/pack_bronze_html.py` | Lifecycle DAG — sensors, three HTTP calls, notify | 5 | **done**, no scheduled run yet |
+| `tests/airflow/test_pack_bronze_html_dag.py` | New — result predicates (D5) without Airflow | 5 | **done** |
+| `tests/test_pack_worker_compose_config.py` | New — worker isolation, archiver unaffected | 5 | **done** |
+| `tests/integration/airflow/test_dag_integrity.py` | Register the new DAG | 5 | **done** |
+| `grafana/provisioning/alerting/rules.yml` | `ct-pack-verification-refused` — `REFUSED` on `{service=~"archiver\|pack-worker"}`, `gt 0`, `for: 0s` | 5 | **done** |
+| `tests/test_observability_config.py` | Register the new UID; assert the worker selector and the alert-on-any threshold | 5 | **done** |
+| Inode alerts + filesystem/inode panels | **Moved to [Plan 135](plan_135_storage_observability.md)** — blocked on its Stage 1 node-exporter fix | 5 → 135 | see Plan 135 |
 
 ---
 
@@ -1764,6 +1888,10 @@ afterwards. Look first this time.
 | Grouping chosen from measured pack bytes, not a cost model | Stage 0d |
 | `B` and `D` reported explicitly | Stage 0d |
 | Scraper write path changed | None — deferred compression is rejected, see Design |
+| Lifecycle is single-flight | **Met** — per-job lock, 409 on the second caller |
+| Lifecycle is deploy-aware | **Met** — sensor on the DAG, cooperative boundary checks in both processors, fails open |
+| Lifecycle is measured | Run summaries + the canary's p50/p95, every run; **first scheduled run 2026-09-03** |
+| Lifecycle is alertable | **Met** — `ct-pack-verification-refused` fires on any occurrence; inode alerting is [Plan 135](plan_135_storage_observability.md) Stage 3 |
 
 ---
 

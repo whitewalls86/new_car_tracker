@@ -276,5 +276,33 @@ class TestGrafanaAlertingProvisioning:
             "ct-pipeline-failures", "ct-service-down",
             "ct-scrape-volume-drop", "ct-extraction-yield-drop",
             "ct-stale-listings", "ct-cooldown-backlog", "ct-block-events-spike",
+            "ct-pack-verification-refused",
         }
         assert expected <= all_uids, f"Missing rule UIDs: {expected - all_uids}"
+
+    def _rule(self, uid):
+        doc = yaml.safe_load((self._ALERTING_DIR / "rules.yml").read_text())
+        for group in doc["groups"]:
+            for rule in group["rules"]:
+                if rule["uid"] == uid:
+                    return rule
+        raise AssertionError(f"rule {uid} not found")
+
+    def test_pack_verification_refused_watches_the_worker(self):
+        """Scheduled pack runs log under service="pack-worker", not "archiver".
+
+        Only pack-worker sets ARCHIVER_ALLOW_PACK_JOBS, so an archiver-scoped
+        query would be permanently silent for every scheduled run.
+        """
+        rule = self._rule("ct-pack-verification-refused")
+        expr = rule["data"][0]["model"]["expr"]
+        assert "pack-worker" in expr
+        assert '|= "REFUSED"' in expr
+
+    def test_pack_verification_refused_alerts_on_any_occurrence(self):
+        """"Should be zero; alert on any" -- not a spike threshold."""
+        rule = self._rule("ct-pack-verification-refused")
+        assert rule["for"] == "0s"
+        condition = rule["data"][-1]["model"]["conditions"][0]["evaluator"]
+        assert condition["type"] == "gt"
+        assert condition["params"] == [0]

@@ -25,6 +25,29 @@ setting is what is holding, and it would revert if the container restarted.
 
 Everything else in this plan is still outstanding.
 
+### Inherited scope: Plan 131 Stage 5 Step 6 (2026-08-17)
+
+[Plan 131](plan_131_packed_cold_storage.md)'s Stage 5 specified its own inode
+alerts — its Step 6, called there "the highest-value item in the stage," on a
+plan whose premise is that bytes improved while the inode clock did not slow.
+**That work is now this plan's Stage 3**, for two reasons:
+
+- It is the same two rules in the same file. Two plans editing
+  `rules.yml`'s `infra-and-data-health` group is how you get divergent
+  thresholds and a merge conflict.
+- **It cannot work without Stage 1.** Plan 131's spec assumed "node-exporter is
+  already scraped and already exports what is needed." It does not export
+  `/mnt/data` at all, so an inode rule written there would have evaluated `/` —
+  9% used — while the volume both plans exist to protect sits at 61% and
+  invisible. The prerequisite lives here, so the alert should too.
+
+Plan 131 keeps its verification-failure alert, which is pack integrity rather
+than disk capacity. This plan does not inherit that.
+
+**Consequence for sequencing:** Plan 131's closeout gate reads "measured, and
+alertable." The inode half of that is now satisfied by this plan's Stage 3, so
+Plan 135 Stage 1 + Stage 3 should land before Plan 131 is called complete.
+
 **Verification note:** BusyBox `wget` inside the Prometheus container reported
 `/ready` as 503; `curl` from the host reported 200 with body `ready`. The host
 `curl` is the trustworthy reading — Loki's port is published, so prefer it over
@@ -403,7 +426,14 @@ In [rules.yml](grafana/provisioning/alerting/rules.yml), group
   Stage 1 alone silently widens what those alerts cover.
 - **`ct-inode-warning`** (>80%) and **`ct-inode-critical`** (>90%) on
   `(1 - node_filesystem_files_free / node_filesystem_files) * 100`, mirroring the
-  existing disk rules' shape and `for:` durations.
+  existing disk rules' shape and `for:` durations. Match the same
+  `fstype!="tmpfs",mountpoint!~"/boot.*"` selectors the byte rules use, so the
+  two families cover the same filesystems. **This is also
+  [Plan 131](plan_131_packed_cold_storage.md)'s Stage 5 Step 6** — see
+  [inherited scope](#inherited-scope-plan-131-stage-5-step-6-2026-08-17).
+  `tests/test_observability_config.py` already validates this file; confirm it
+  covers the new rules rather than assuming, and check the rendered expression
+  returns data against the live Prometheus before calling it done.
 - **`ct-inode-exhaustion-forecast`** — `predict_linear(node_filesystem_files_free{mountpoint="/mnt/data"}[6h], 7*24*3600) < 0`,
   `for: 1h`. Fires when the current rate would exhaust inodes within a week.
   This is the rule that catches a runaway backfill while there is still time.

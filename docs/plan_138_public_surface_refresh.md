@@ -22,7 +22,10 @@ evergreen prose. Move the landing page's CSS and JavaScript into local static
 assets, make every interaction keyboard-accessible, replace the 41.7 MB eager
 video with a bounded preview, and serve public SEO and security metadata. Finally,
 take database work out of the request path by refreshing a last-known-good public
-stats snapshot in the background.
+stats snapshot in the background. Add a same-origin, dynamically loaded "Recent
+work" section whose build-generated JSON comes from the scored roadmap and recent
+completion tables in `docs/PLANS.md`, so the public page follows source control
+without making GitHub or Markdown parsing a production dependency.
 
 ---
 
@@ -73,6 +76,8 @@ bare domain sees a login screen before seeing what the project is.
 6. Keep the narrative available when DuckDB or Postgres is locked or unavailable.
 7. Reduce the public page's initial transfer and eliminate uncontrolled third-party
    runtime dependencies.
+8. Show the next planned work and recently completed work from a source-controlled,
+   CI-validated snapshot rather than another hand-maintained block of page copy.
 
 ## Non-goals
 
@@ -83,6 +88,8 @@ bare domain sees a login screen before seeing what the project is.
   must not claim the fixes have shipped.
 - Redesigning the Streamlit dashboard.
 - Introducing a JavaScript framework or frontend build system.
+- Calling the GitHub API, cloning the repository, or parsing Markdown on a public
+  HTTP request.
 - Publishing secrets, production infrastructure identifiers, private metrics, or
   operational endpoints that are not already intentionally public.
 
@@ -123,6 +130,24 @@ Avoid the phrases "without manual intervention," "every failure alerts," and
 "every service exposes `/ready`." The narrower, true claim is that long-running
 worker services participate in deploy draining, while functional liveness remains
 a separately measured concern.
+
+### 4. Recent and planned work
+
+The public feed is a projection of the roadmap, not a second roadmap:
+
+- "Planned next" comes from the ordered rows in `docs/PLANS.md`'s **Default
+  build order** table. Publish only the first four executable rows.
+- "Recently completed" comes from the newest-first **Completed** table in the
+  same file. Publish only the first four rows.
+- Titles, short public summaries, priority, effort, state, and source links may
+  be shown. Internal hostnames, incident payloads, approval records, production
+  object keys, and other operational detail must not be copied into the feed.
+- A plan is not presented as complete until its completion row exists. A merged
+  implementation with an outstanding production gate remains "verification" or
+  "closeout," not "completed."
+
+The plan document remains the detailed source. The landing page is a small,
+current window into it.
 
 ---
 
@@ -200,9 +225,11 @@ Keep the current visual restraint and "why" storytelling, but use this sequence:
 4. Production architecture cards.
 5. Platform-evolution callout that clearly labels Iceberg work as a migration
    track.
-6. Four or five decision stories, including packed cold storage and the
+6. "Recent work" with separate "Planned next" and "Recently completed" lists,
+   loaded progressively from the source-controlled public roadmap snapshot.
+7. Four or five decision stories, including packed cold storage and the
    liveness lesson.
-7. Testing/evidence section and CTA.
+8. Testing/evidence section and CTA.
 
 Replace "Cloudflare bypass" and "anti-detection" marketing language with precise,
 neutral language about browser-assisted session bootstrap, TLS-compatible HTTP
@@ -219,6 +246,49 @@ must agree on ownership, production status, and route access.
 **Gate 1:** a reviewer can answer "what runs in production?", "what is
 experimental?", "where does history live?", and "what requires authentication?"
 without reconciling contradictory statements.
+
+### 1d. Public roadmap projection contract
+
+Keep `docs/PLANS.md` as the human-edited source of truth. Add
+`scripts/build_public_roadmap.py` to parse only two explicitly named Markdown
+tables: **Default build order** and **Completed**. Do not implement a general
+Markdown crawler and do not infer status from prose in every plan file.
+
+The generator writes deterministic `ops/static_ops/project-updates.json` with a
+small versioned schema:
+
+```json
+{
+  "schema_version": 1,
+  "as_of": "2026-08-17",
+  "planned": [
+    {
+      "plan": "136",
+      "title": "Solver recycle and real liveness",
+      "order": 1,
+      "priority": 98,
+      "effort": "M",
+      "state": "planned",
+      "summary": "Add truthful solver outcomes and a drain-aware recycle.",
+      "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plan_136_solver_recycle_and_liveness.md"
+    }
+  ],
+  "completed": []
+}
+```
+
+The real output contains at most four planned and four completed items. Use the
+roadmap's `as of` date instead of wall-clock generation time so unchanged input
+produces byte-identical output. Map the ordered table's **Next executable slice**
+column to the public `summary` field. Normalize plan identifiers to strings because
+the archive contains identifiers such as `V029` and `14.11`.
+
+The script supports `--check`: regenerate in memory, compare with the committed
+JSON, and exit non-zero on drift. CI runs that mode and also validates unique
+build order, score range 0-100, the `XS|S|M|L|XL` effort vocabulary,
+newest-first completion dates, local plan-link existence,
+and the public schema. This makes a roadmap edit fail visibly when its public
+projection was not refreshed.
 
 ## Stage 2 — Make the landing page discoverable
 
@@ -303,9 +373,38 @@ Replace that path with a small `ops` public-stats component:
 The public page may show a subtle "temporarily unavailable" state for a missing
 metric, but missing analytics must never make the page fail.
 
+### Project updates snapshot and dynamic loading
+
+The work feed is dynamic in the browser but static and source-controlled at the
+service boundary:
+
+1. Run `python scripts/build_public_roadmap.py` whenever the roadmap changes.
+   Commit the deterministic `ops/static_ops/project-updates.json`; the existing
+   ops image build already copies it into the image.
+2. Add semantic "Planned next" and "Recently completed" containers to
+   `info.html`, with a plain link to the GitHub roadmap as the no-JavaScript and
+   fetch-failure fallback.
+3. `info.js` fetches `/static_ops/project-updates.json` after the narrative is
+   usable, validates `schema_version`, and renders with DOM APIs and
+   `textContent` only. Do not inject feed values through `innerHTML`.
+4. Sort planned items by `order` and completed items by date even though the
+   generator already emits them correctly. Cap both lists again client-side so
+   a malformed snapshot cannot create an unbounded page.
+5. On a timeout, non-2xx response, invalid schema, or empty feed, keep the
+   fallback visible and log at most one concise console warning. The rest of the
+   page remains unchanged.
+6. Serve this non-fingerprinted JSON with short caching plus revalidation (for
+   example `public, max-age=300, must-revalidate` and ETag), not the one-year
+   immutable policy used by fingerprinted CSS, JavaScript, and media.
+
+There is no background application refresher for project updates and no GitHub
+token. New roadmap content becomes public with the next normal image deploy.
+Visitors requesting `cartracker.info/info` receive the planned permanent redirect
+to `/` and see the same dynamically loaded section there.
+
 **Gate 4:** `/` performs no database connection, remains responsive during a dbt
-write lock and Postgres outage, and clearly distinguishes stale cached stats from
-fresh ones.
+write lock and Postgres outage, clearly distinguishes stale cached stats from
+fresh ones, and loads recent work without a database or upstream network call.
 
 ## Stage 5 — Regression coverage
 
@@ -314,6 +413,10 @@ Add tests for:
 - public stats aggregation, formatting, last-known-good behavior, concurrency,
   and failure isolation;
 - landing-template rendering with full, partial, stale, and empty stats;
+- public-roadmap generation, deterministic `--check`, schema validation, score
+  and effort constraints, ordering, item caps, and broken local plan links;
+- project-updates progressive enhancement with valid, unavailable, malformed,
+  empty, and unsupported-schema JSON;
 - semantic controls, required metadata, canonical URL, media fallback, and the
   absence of the known stale phrases;
 - Caddy route ordering and access requirements;
@@ -326,6 +429,7 @@ CI verification should include:
 ```text
 GET /                 -> 200, no OAuth redirect
 GET /info             -> 308 -> /
+GET /static_ops/project-updates.json -> 200 application/json
 GET /robots.txt       -> 200 text/plain
 GET /sitemap.xml      -> 200 application/xml
 GET /dashboard        -> OAuth redirect when unauthenticated
@@ -353,11 +457,13 @@ Deploy `ops` and Caddy together because the root route depends on both.
 1. Build the new ops image and validate its health internally.
 2. Confirm the public-stats background refresh has either a fresh snapshot or a
    valid empty state.
-3. Apply the Caddy route change.
-4. Run the unauthenticated route matrix from an external client.
-5. Sign in as `viewer`, `observer`, and `admin` and verify existing boundaries.
-6. Confirm dashboards, request-access email links, static media, and social cards.
-7. Watch Caddy and ops errors, response latency, OAuth redirects, and public-stats
+3. Confirm the project-updates JSON matches the roadmap, has the expected cache
+   policy, and renders both lists without blocking the page.
+4. Apply the Caddy route change.
+5. Run the unauthenticated route matrix from an external client.
+6. Sign in as `viewer`, `observer`, and `admin` and verify existing boundaries.
+7. Confirm dashboards, request-access email links, static media, and social cards.
+8. Watch Caddy and ops errors, response latency, OAuth redirects, and public-stats
    age for at least one analytics refresh cycle.
 
 Rollback is the previous Caddyfile plus previous ops image. No database migration
@@ -378,21 +484,26 @@ both rollout and rollback.
 | `ops/templates/info.html` | Correct copy and semantic markup |
 | `ops/static_ops/info.css` | Extracted page styles |
 | `ops/static_ops/info.js` | Accessible progressive enhancement |
+| `ops/static_ops/project-updates.json` | Deterministic public projection of planned and completed work |
 | `ops/static_ops/*` | Local vendor assets, poster, optimized video, favicon/social image |
+| `scripts/build_public_roadmap.py` | Parse the two roadmap tables, validate them, and generate/check the JSON snapshot |
 | `dashboard/app.py` | Canonical portfolio and dashboard links |
 | `ops/email.py` | Canonical destinations where needed |
 | `tests/ops/routers/test_info.py` | Stats and template behavior |
 | `tests/test_observability_config.py` or focused Caddy test | Public/protected route contract and headers |
-| `docs/PLANS.md` | Plan status |
+| `docs/PLANS.md` | Ordered/scored plan source plus newest-first public completion summaries |
+| `.github/workflows/ci.yml` | Reject stale or invalid project-updates snapshots |
 
 ## Recommended PR sequence
 
-1. **PR A — Truth pass:** README and landing copy, accurate architecture, current
-   versus experimental, no routing change.
+1. **PR A — Truth and roadmap pass:** README and landing copy, accurate
+   architecture, current versus experimental, scored roadmap, deterministic
+   public projection, and CI drift check; no routing change.
 2. **PR B — Public root:** Caddy route contract, canonical metadata, robots,
    sitemap, link updates, and route tests.
-3. **PR C — Frontend quality:** semantic interactions, extracted/local assets,
-   optimized media, CSP, caching, and accessibility evidence.
+3. **PR C — Frontend quality:** semantic interactions, dynamically loaded work
+   feed, extracted/local assets, optimized media, CSP, caching, and accessibility
+   evidence.
 4. **PR D — Stats reliability:** background snapshot, freshness semantics,
    metrics, and failure tests.
 
@@ -410,6 +521,8 @@ Plan 138 is complete only when:
 - production and experimental architecture are visibly separated;
 - public requests do not connect to DuckDB or Postgres;
 - the page remains useful with no stats available;
+- planned and recently completed work load from a deterministic, CI-validated
+  source-control snapshot, with a useful no-JavaScript/failure fallback;
 - the demo is bounded, lazy, accessible, and cached;
 - interactive content works with keyboard and screen reader semantics;
 - scoped public security headers and local assets are in production;
