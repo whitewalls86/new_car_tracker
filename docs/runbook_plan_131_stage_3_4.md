@@ -313,10 +313,20 @@ listing costs 12 minutes each time.
 > on. A **manual CLI run is stopped by this too** — that is the same flag, read
 > from the same table.
 >
-> `scripts/redeploy.sh` sends `/deploy/complete` on exit but does not send
-> `/deploy/start`. If a pack or prune is running, call
-> `curl -sf -X POST http://localhost:8060/deploy/start` by hand immediately
-> before `bash scripts/redeploy.sh ...`; the script's exit trap releases it.
+> **Every production deploy declares intent before the build starts.** This is
+> broader than pack/prune: it stops new DAG work at the common sensor while the
+> operator waits for in-flight queues and service work to drain before Flyway,
+> image replacement, or container recreation. `scripts/redeploy.sh` sends
+> `/deploy/complete` on exit but does not send `/deploy/start`, so call
+> `curl -sf -X POST http://localhost:8060/deploy/start` by hand, require
+> `/deploy/status` to report `intent: pending` and `number_running: 0`, and
+> confirm the affected services are ready/idle before running the script. If
+> start/status fails or omits the running count, do not deploy. The script's
+> exit trap releases intent even when the deploy fails.
+>
+> Keep the window short: the current Airflow deploy-intent sensor times out
+> after 600 seconds, so a DAG run waiting through a longer deploy can fail. That
+> is a sensor defect to fix separately, not a reason to skip deploy intent.
 
 **Resume is free and safe.** The surviving-object listing is the checkpoint —
 an object that is gone is skipped with no request, each object is deleted at
