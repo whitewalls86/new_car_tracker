@@ -82,6 +82,55 @@ groups:
                     type: gt
                     params: [10]
 
+      # Plan 131 Stage 5: pack verification failures must be zero. The deleter
+      # logs REFUSED at ERROR and deletes nothing when a pack disagrees with its
+      # sidecar or with the source object, so any occurrence is a real defect in
+      # the read path Stage 4's safety rests on -- hence gt 0 and for: 0s rather
+      # than the spike thresholds the other two log rules use.
+      #
+      # Both services: scheduled runs land on pack-worker (only it sets
+      # ARCHIVER_ALLOW_PACK_JOBS), but the archiver still serves manual runs when
+      # that flag is enabled for one.
+      - uid: ct-pack-verification-refused
+        title: Pack Verification REFUSED
+        condition: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 0s
+        annotations:
+          summary: "Pack verification refused an object on {{ $labels.service }}"
+          description: "delete_packed_source_html refused to delete a source object because its pack did not verify. Nothing was deleted. Read failures[] in the run summary, and pause the pack_bronze_html DAG before any further pruning. Run sheet: docs/runbook_plan_131_stage_3_4.md"
+        data:
+          - refId: A
+            datasourceUid: cartracker-loki
+            relativeTimeRange:
+              from: 1200
+              to: 0
+            model:
+              expr: 'sum by (service) (count_over_time({service=~"archiver|pack-worker"} |= "REFUSED" [10m]))'
+              queryType: range
+          - refId: B
+            datasourceUid: "__expr__"
+            relativeTimeRange:
+              from: 1200
+              to: 0
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+          - refId: C
+            datasourceUid: "__expr__"
+            relativeTimeRange:
+              from: 1200
+              to: 0
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+
   - orgId: 1
     name: infra-and-data-health
     folder: Cartracker

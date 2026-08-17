@@ -1,8 +1,11 @@
-# Run Sheet: Plan 131 Stages 3-4 — Pack Read Path, Then Source Deletion
+# Run Sheet: Plan 131 Stages 3-5 — Pack Read Path, Source Deletion, Then The Schedule
 
 Operational companion to [Plan 131](plan_131_packed_cold_storage.md). Follow it
 in order. **Stage 3 is deployed and verified before Stage 4 deletes anything** —
-that ordering is the entire safety argument, not a preference.
+that ordering is the entire safety argument, not a preference. Sections 1-7 are
+the manual procedure and remain how a backlog month gets done;
+[section 8](#8-stage-5--the-lifecycle-dag) covers the DAG that now runs the
+steady-state month on a schedule.
 
 > **The bucket is un-versioned** (verified 2026-08-10). A delete is immediate
 > and there is no undo. What makes that acceptable is that the bytes are
@@ -377,6 +380,85 @@ sidecar's write time.
 - [Plan 132](plan_132_unrecorded_artifact_recovery.md)'s reparse of the 42,276
   unrecorded April captures reads through the pack path once sources are gone.
   That is unblocked by Stage 3, not by anything in Stage 4.
-- Stage 5 (lifecycle DAG + metrics) is not built. Until it is, packing and
-  pruning are manual and deliberate, which is the right posture for the first
-  months.
+
+---
+
+## 8. Stage 5 — the lifecycle DAG
+
+Built 2026-08-17. `pack_bronze_html` runs **`0 6 3 * *`** (day 3, 06:00 UTC) and
+does pack → prune → verify against the oldest eligible closed month, on the
+`pack-worker` service. Everything above still works by hand and is still how a
+backlog month gets done.
+
+**The archiver no longer accepts pack jobs.** `ARCHIVER_ALLOW_PACK_JOBS` is set
+only on `pack-worker`; `cartracker-archiver` returns **409** for
+`/pack/bronze/*`. The `docker exec cartracker-archiver` commands earlier in this
+sheet target the CLI directly, which is unaffected — but any `curl` at the
+archiver's pack endpoints must now go to the worker.
+
+### Trigger a specific month
+
+The schedule takes one month per run, so July and the rest of the backlog stay
+manual. Trigger with explicit params rather than waiting:
+
+```bash
+# Airflow UI: DAGs -> pack_bronze_html -> Trigger DAG w/ config
+{"artifact_type": "detail_page", "apply": true, "max_buckets": 1,
+ "max_packs": 0, "prune": true, "prune_max_objects": 0, "prune_max_packs": 0}
+```
+
+`apply: false` is the dry run — it packs and prunes nothing and returns the
+summaries it would have produced.
+
+### Pause it
+
+Two levers, in order of bluntness:
+
+| want | do |
+|---|---|
+| Stop a run in flight, cleanly | `curl -X POST http://localhost:8060/deploy/start` — both processors stop at their next boundary and return `stopped_for_deploy` |
+| Let it resume | `curl -X POST http://localhost:8060/deploy/complete` |
+| Stop a deploy from pausing long jobs | `curl -X POST http://localhost:8060/deploy/start -H 'Content-Type: application/json' -d '{"pause_long_jobs": false}'` |
+| Stop it for good | Pause the DAG in the Airflow UI |
+
+The stop is **cooperative, not a kill**. The packer finishes the pack it is
+writing, stores the sidecar, and skips the tail flush; the deleter stops at a
+pack boundary having deleted only verified objects. Everything completed so far
+is already durable, so there is nothing to clean up.
+
+A paused run is an ordinary task retry — `retries=6` at 15 minutes gives 90
+minutes for a deploy to land. It does **not** page. Exhausting the retries does.
+
+> **A forgotten deploy intent keeps jobs paused.** `long_jobs_paused()` has no
+> staleness clause on purpose: the DAG exhausts its retries and pages someone,
+> rather than a ten-hour job papering over it. If the pack task fails with
+> `deploy intent remained pending through all retries`, check
+> `GET /deploy/status` first.
+
+### Do not hand-run a month the schedule might also take
+
+The single-flight guard is **in-process on the worker**. A `docker exec` CLI run
+is invisible to it and it to the CLI. Two packers on one month overwrite each
+other's packs, which the sidecar/pack disagreement check then refuses to delete
+from — wasted work and a blocked pack, not lost data, but avoid it. Day 3 of the
+month is the window to stay clear of.
+
+### Back it out
+
+| situation | do this |
+|---|---|
+| The DAG is misbehaving, nothing packed yet | Pause the DAG in the Airflow UI. Nothing else is required — it holds no state. |
+| A prune inside a DAG run refused objects | `ct-pack-verification-refused` fires on the first one. Nothing was lost — it refused rather than deleted. Read `failures[]` from the task's XCom `result`, and pause the DAG before pruning again. |
+| The canary reports failures | Stop pruning — pause the DAG. The pack read path is the thing Stage 4's safety rests on. Investigate before any further deletion. |
+| A run died mid-way | Let the retry run, or re-trigger. Both jobs resume idempotently. |
+| The worker itself is the problem | `docker compose stop pack-worker`. The `pack_worker_up` health sensor then holds the DAG at the gate instead of failing tasks. |
+
+### What it does not do yet
+
+- **No scheduled run has completed.** The first is 2026-09-03. Until then the
+  measured numbers in [Plan 131](plan_131_packed_cold_storage.md) come from
+  manual runs.
+- **No inode alert.** That moved to
+  [Plan 135](plan_135_storage_observability.md), which must first fix
+  node-exporter — it has never reported `/mnt/data` at all. `watch -n 300 'df -i
+  /mnt/data'` is still the only inode signal.
