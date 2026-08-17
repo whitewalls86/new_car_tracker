@@ -55,6 +55,14 @@ _ALLOW_SYNC_SNAPSHOT_COHORT = (
     os.environ.get("ARCHIVER_ALLOW_SYNC_SNAPSHOT_COHORT", "false").lower() == "true"
 )
 
+# Plan 131 Stage 5 D4: month-scale pack/prune work has its own long-running
+# service. Keeping the same endpoints on the regular archiver process would
+# leave two live entry points and let a long job starve flush/cleanup/compact.
+# Tests and deliberate manual use can override this on a process explicitly.
+_ALLOW_PACK_JOBS = (
+    os.environ.get("ARCHIVER_ALLOW_PACK_JOBS", "false").lower() == "true"
+)
+
 @app.post("/cleanup/parquet")
 def run_cleanup_parquet(payload: dict = Body(...)) -> Dict[str, Any]:
     with active_job():
@@ -213,6 +221,21 @@ def _verify_failure_reason(summary: Dict[str, Any]) -> Optional[str]:
     return None
 
 
+def _require_pack_worker() -> None:
+    """Refuse month-scale mutation jobs on the regular archiver service."""
+    if _ALLOW_PACK_JOBS:
+        return
+    raise HTTPException(
+        status_code=409,
+        detail=(
+            "Pack and prune jobs are disabled on the production archiver API. "
+            "Run them on pack-worker at http://pack-worker:8001; a month-scale "
+            "run starves flush/cleanup/compact here. Set "
+            "ARCHIVER_ALLOW_PACK_JOBS=true to override for tests or manual use."
+        ),
+    )
+
+
 @app.post("/pack/bronze/run")
 def trigger_pack_bronze_html(payload: dict = Body(default={})) -> Dict[str, Any]:
     """Pack cold bronze HTML into indexed packs (Plan 131 Stage 2).
@@ -227,6 +250,7 @@ def trigger_pack_bronze_html(payload: dict = Body(default={})) -> Dict[str, Any]
     Returns **409** while another pack run is in flight (D3a), which
     ``sensors.post_json`` turns into a graceful skip.
     """
+    _require_pack_worker()
     with active_job(), _single_flight_or_409("pack_bronze"):
         payload = payload or {}
         try:
@@ -281,6 +305,7 @@ def trigger_prune_packed_source_html(payload: dict = Body(default={})) -> Dict[s
     Returns **409** while another prune run is in flight (D3a). Packing is a
     separate key, so a pack and a prune may run at once.
     """
+    _require_pack_worker()
     with active_job(), _single_flight_or_409("pack_prune"):
         payload = payload or {}
         if "year" not in payload or "month" not in payload:
