@@ -56,6 +56,7 @@ stable substrate.
 | [133](plan_133_pack_read_path_hardening.md) | Pack read path hardening | Draft — two non-blocking defects found verifying 131 Stage 3; do before 132 Stage 2 |
 | [136](plan_136_solver_recycle_and_liveness.md) | Solver recycle + real liveness detection | Draft — written after the 2026-08-14 8h trawl outage no alert caught |
 | [137](plan_137_legacy_bronze_parquet_disposition.md) | Legacy bronze Parquet recovery and disposition | Draft — read-only inventory complete; no deletion authorized |
+| [138](plan_138_public_surface_refresh.md) | README and public portfolio surface refresh | Draft — audit complete; implementation not started |
 
 ---
 
@@ -112,6 +113,11 @@ that substrate is stable, Plan 112 resumes policy backtesting and Plan 113
 deploys only an approved, pinned policy config into ops claim logic. Plans 114,
 121, and 119 can follow in whichever order is most useful: raw HTML retention
 research, staging environment, and governance/catalog expansion.
+
+**Plan 138 is independent public-surface work.** It should land before another
+major platform milestone adds more documentation drift. Its copy must describe
+Plan 125 as a proven migration track, not as the current production serving path,
+and it does not block or change any lakehouse, storage, or liveness plan.
 
 ---
 
