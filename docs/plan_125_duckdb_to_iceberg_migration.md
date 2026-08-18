@@ -1327,28 +1327,38 @@ decision 3 — whose mechanism is proven correct either way.
 Move consumers off `analytics.duckdb` one by one.
 
 This gate needs to be treated as an application and observability migration,
-not just a SQL-reader swap. The current DuckDB file is read by:
+not just a SQL-reader swap. At the time this gate was written, the current
+DuckDB file was read by:
 
 - Streamlit dashboard pages through `dashboard/db.py::run_duckdb_query`.
 - Dashboard SQL files under `dashboard/sql/`.
-- Public `/info` stats through `ops/routers/info.py`.
-- Custom Prometheus gauges through `ops/metrics/duckdb_gauges.py`.
+- Public `/info` statistics in `ops`.
+- Custom Prometheus gauges in `ops`.
 - Grafana panels and alerts that consume those custom gauges.
 - Plan 112 backtest scripts and local rehearsal/preflight scripts.
+
+[Plan 143](plan_143_analytics_serving_snapshot.md) is now queued before this
+gate. It removes the two `ops` reads and replaces them with one versioned
+snapshot produced from the current DuckDB marts plus direct `dbt_runner`
+metrics. Gate D must refresh the inventory after Plan 143 lands; the expected
+entry shape is recorded below so the migration does not rebuild that boundary.
 
 The target is not "DuckDB is forbidden"; the target is "DuckDB is no longer
 the authoritative build artifact."
 
 ### D1: Reader Inventory
 
-Build a concrete inventory before changing code:
+Build a concrete inventory before changing code. The table includes the
+expected post-Plan-143 serving shape rather than treating today's `ops` readers
+as architecture to preserve:
 
 | Consumer | Current dependency | Notes |
 |---|---|---|
 | `dashboard/db.py` | `DUCKDB_PATH`, read-only DuckDB connection | Central Streamlit reader used by dashboard pages. |
 | `dashboard/sql/*.sql` | DuckDB SQL over mart/int tables | Uses marts such as `mart_deal_scores`, `mart_vehicle_snapshot`, `mart_scrape_volume`, `mart_block_rate`, `mart_detail_batch_outcomes`, `mart_price_freshness_trend`, `mart_cooldown_cohorts`, `mart_inventory_coverage`, and `int_latest_observation`. |
-| `ops/routers/info.py` | direct DuckDB reads | Public portfolio stats from `mart_vehicle_snapshot` and `mart_scrape_volume`; failures are currently soft. |
-| `ops/metrics/duckdb_gauges.py` | direct DuckDB reads | Populates Prometheus gauges from mart tables. |
+| Plan 143 serving snapshot | Saved SQL over the current DuckDB marts; atomically persisted versioned extract | Feeds the public presentation cache and stable Prometheus values. Gate D replaces only its producer adapter. |
+| `ops/routers/info.py` | Plan 143 presentation cache | Renders public portfolio stats without a request-time database or upstream call; failures remain soft. |
+| `dbt_runner` Prometheus exporter | In-memory values loaded from the Plan 143 snapshot | Owns the seven stable gauges and freshness signal directly; Prometheus no longer obtains them through `ops`. |
 | `grafana/dashboards/pipeline_health.json` | Prometheus gauge names | Depends on custom metrics such as `cartracker_observation_count_last_hour`, `cartracker_artifact_count_last_hour`, `cartracker_block_events_last_hour`, `cartracker_extraction_yield_last_day`, `cartracker_stale_listings_pct`, `cartracker_cooldown_backlog`, and `cartracker_cooldown_permanent`. |
 | `grafana/provisioning/alerting/rules.yml` | Prometheus gauge names | Some alerts depend on the custom DuckDB-derived metrics. |
 | Loki/Promtail | logs, not analytics tables | Not a reader to migrate, but mandatory for cutover verification. |
@@ -1423,8 +1433,8 @@ Port the user-facing readers first in a compatibility layer:
 - Keep existing dashboard SQL files stable where possible; if SQL dialect must
   diverge, split by backend with a naming convention rather than inline
   conditionals.
-- Migrate `/info` stats in `ops/routers/info.py` to the same serving source or
-  an equivalent lightweight reader.
+- Keep `/info` on the Plan 143 serving snapshot; migrate the snapshot producer,
+  not the page, to the selected Iceberg-era source.
 - Keep the current soft-failure posture for `/info`: missing analytics should
   omit stats, not break the public page.
 
@@ -1440,9 +1450,16 @@ Validation:
 The custom Prometheus gauges are part of the reader migration because Grafana
 pipeline health panels and alerts depend on them.
 
-Current producer:
+Current producer after the prerequisite [Plan 143](plan_143_analytics_serving_snapshot.md):
 
-- `ops/metrics/duckdb_gauges.py`
+- `dbt_runner` loads the atomically persisted serving snapshot into in-memory
+  Prometheus gauges and exposes `/metrics` directly.
+
+Plan 143 pulls this boundary forward without pretending to complete Gate D. Its
+producer queries the current DuckDB marts after a build; Gate D replaces that
+producer adapter with an Iceberg-backed reader or serving extract while
+retaining the snapshot schema, Prometheus names, public presentation cache, and
+failure contracts. `ops` has no analytics connection or metrics-proxy role.
 
 Current derived metrics:
 
@@ -1456,8 +1473,8 @@ Current derived metrics:
 
 Required work:
 
-1. Rename the module or add a parallel implementation so the code no longer
-   describes itself as DuckDB-specific once the source changes.
+1. Keep the versioned serving-snapshot contract introduced by Plan 143; replace
+   only its current DuckDB producer adapter once the source changes.
 2. Keep metric names stable for the first migration so Grafana dashboards and
    alert rules do not all churn at once.
 3. Add a health metric for the analytics reader itself, for example:
@@ -1472,12 +1489,12 @@ Required work:
 
 Acceptance checks:
 
-- `curl /metrics` on ops contains all existing custom metric names.
+- `curl /metrics` on `dbt_runner` contains all existing custom metric names.
 - Grafana `pipeline_health.json` panels still populate.
 - Grafana alerting rules referencing the custom gauges evaluate without
   `NoData`/query errors.
-- A forced reader failure produces a visible ops log and increments/sets a
-  failure signal without crashing the service.
+- A forced reader failure produces a visible `dbt_runner` log and
+  increments/sets a failure signal without crashing the service.
 
 ### D5: Loki/Promtail Cutover Verification
 
@@ -1487,7 +1504,8 @@ the migration is operationally boring.
 During each reader cutover:
 
 - Check dashboard container logs for backend/query errors.
-- Check ops logs for reader update failures from the metrics/info path.
+- Check `dbt_runner` logs for serving-snapshot update failures and `ops` logs
+  for presentation-cache schema/read failures.
 - Check dbt/lakehouse-worker logs for failed Iceberg refreshes.
 - Confirm no new recurring `Conflicting lock` style DuckDB messages remain
   once DuckDB stops being canonical.
@@ -1558,8 +1576,9 @@ Integration tests:
 - Existing seeded fixture phases for incremental scenarios.
 - Parity comparison between DuckDB and Iceberg for the migration chain.
 - Dashboard reader smoke using the selected Gate D backend.
-- Ops metrics/info reader smoke proving the custom Prometheus gauges still
-  populate from the selected backend.
+- Plan 143 serving-snapshot smoke proving the custom Prometheus gauges still
+  populate at `dbt_runner` and `/info` still soft-fails from its presentation
+  cache.
 
 VM tests:
 

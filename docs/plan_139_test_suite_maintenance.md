@@ -276,7 +276,7 @@ deliberate and good design, but it means DAG wiring is unmeasured.
 | File | Cover | Note |
 |---|---:|---|
 | `archiver/processors/lake_source_audit.py` | 21% | |
-| **`ops/metrics/duckdb_gauges.py`** | **25%** | **see below — belongs to Plan 136** |
+| **`ops/metrics/duckdb_gauges.py`** | **25%** | **see below — ultimately transferred to Plan 143** |
 | `archiver/processors/lake_snapshot_cohort.py` | 44% | largest single gap, 183 statements |
 | `archiver/processors/lake_snapshot_selectors.py` | 53% | |
 | `scraper/app.py` | 65% | already Plan 103's P2 (recorded there as 69%) |
@@ -299,11 +299,12 @@ assertions like *"on a lock conflict, the gauge keeps its last value"* — pinni
 in place the exact behavior Plan 136 Stage 1 exists to delete. The tests would be
 written and then deleted within the same build order.
 
-**Decision: this step transfers to Plan 136 Stage 1 and is removed from Plan 139.**
-The tests belong with the change, encoding the new NaN convention rather than the
-old silent-stale one. Plan 139 keeps the *observation* — that the module behind
-the `cartracker_*` gauges sits at 25% — as the argument for why Stage 1 needs
-tests, and hands over the finding.
+**Decision: this step first transferred to Plan 136 Stage 1 and is removed from
+Plan 139.** Pre-PR architectural review then moved that whole stage to
+[Plan 143](plan_143_analytics_serving_snapshot.md). The tests still belong with
+the behavior change, encoding the new NaN/freshness convention rather than the
+old silent-stale one; Plan 143 now owns both the replacement producer and its
+coverage.
 
 This also matters for prioritizing Plan 139 at all, because step 2 was the only
 item in it with a dated dependency. Once it moves, nothing in this plan blocks
@@ -467,8 +468,9 @@ pip-install dbt locally to iterate on it; extend
    or `oneoff` (marked, non-gating, still run on a schedule) — with no third
    category of "nobody looked."
 5. The coverage gate question is answered in writing, in either direction.
-6. `ops/metrics/duckdb_gauges.py` has tests — **written under Plan 136 Stage 1,
-   asserting the NaN convention**, and this plan records that it happened there.
+6. The replacement analytics metric producer has tests — **written under Plan
+   143, asserting the NaN and freshness conventions** — and this plan records
+   that the original 25% gap was closed with the redesign.
 
 ## Risks
 
@@ -491,9 +493,9 @@ pip-install dbt locally to iterate on it; extend
 
 ## Out of scope
 
-- **`ops/metrics/duckdb_gauges.py` coverage.** Transferred to
-  [Plan 136](plan_136_solver_recycle_and_liveness.md) Stage 1, for the reason
-  argued above. Listed here so the transfer is a decision on the record and not a
+- **`ops/metrics/duckdb_gauges.py` coverage.** Transferred through Plan 136 Stage
+  1 to [Plan 143](plan_143_analytics_serving_snapshot.md), for the reason argued
+  above. Listed here so the transfer is a decision on the record and not a
   dropped item.
 - **`ops/info.py` and `scraper/app.py` coverage.** Owned by
   [Plan 103](plan_103_test_coverage.md), folded into

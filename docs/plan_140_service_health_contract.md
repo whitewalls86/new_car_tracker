@@ -2,13 +2,15 @@
 
 ## Status
 
-**STAGE 1 IMPLEMENTED FOR EVERY PROBEABLE SERVICE; STAGE 3 BUILT 2026-08-18.**
-The implementation adds eighteen healthchecks, taking coverage from 7
-of 31 services to 25 of 31. The six remaining services are the five deliberate
-one-shot/profile exemptions plus `oauth2-proxy`, whose current distroless image
-cannot execute a probe. The healthchecks have not been deployed or soaked;
-Stage 2's metric and alerts have not started. Stage 3's fail-loud CI contract is
-built and collected by the existing unit-test job.
+**STAGE 3 VERIFIED; STAGE 1 DEPLOYED AND IN 24-HOUR SOAK SINCE 2026-08-18.**
+[PR #216](https://github.com/whitewalls86/new_car_tracker/pull/216) merged the
+implementation as `821a6a6`, adding eighteen healthchecks and taking configured
+coverage from 7 of 31 services to 25 of 31. The six remaining services are the
+five deliberate one-shot/profile exemptions plus `oauth2-proxy`, whose current
+distroless image cannot execute a probe. The immediate production gate passed:
+all 25 configured runtime checks were healthy with zero failing streaks. Stage
+1 remains open until the 24-hour soak is clean. Stage 2's metric and alerts have
+not started. Stage 3's fail-loud CI contract is complete and verified.
 
 This plan exists because the previous two were each correct and each too narrow.
 [Plan 135](plan_135_storage_observability.md) made two disks visible.
@@ -169,7 +171,7 @@ point.
 
 ## Stages
 
-### Stage 1 — Healthchecks everywhere — IMPLEMENTED, DEPLOY/SOAK PENDING
+### Stage 1 — Healthchecks everywhere — DEPLOYED 2026-08-18; SOAK PENDING
 
 Add `healthcheck:` to every in-scope service. Cheapest first, since the app tier
 is nearly free:
@@ -207,6 +209,28 @@ silently disappearing. Swapping the authenticated front door to
 status for every in-scope service, and no service flips unhealthy on a normal
 cycle. Watch for false positives during `start_period` on the slow starters.
 
+#### Production deployment and immediate verification — 2026-08-18
+
+The operator declared deploy intent through the admin UI and waited for the
+system to drain before recreating containers. The terminal transcript's earlier
+`intent: none` reading preceded that admin action; it is not evidence that the
+deploy-intent step was skipped. Intent was released only after the health and
+smoke gates passed, after which the status returned to `intent: none` and normal
+work resumed.
+
+| Gate | Production evidence |
+|---|---|
+| Revision | `master` fast-forwarded from `8b2254b` to PR #216's merge commit `821a6a6` |
+| Targeted apply | `docker compose --profile trawl up -d --no-deps ...` recreated all 18 intended services: 17 default-profile services plus the active `redis-trawl` profile service |
+| Startup behavior | `loki` and `pgadmin` briefly reported `health: starting` inside their startup periods, then became healthy; no service became unhealthy |
+| Runtime contract | All 25 services with configured checks reported `health=healthy` and `failing_streak=0`, including active `trawl` and `redis-trawl` |
+| Expected no-health state | `flyway` and `airflow-init` were completed one-shots; running `oauth2-proxy` remained the documented distroless-image exception. Profile-gated one-shots `dbt`, `dbt_test`, and `snapshot-worker` were not created |
+| Smoke checks | `http://localhost:8060/health` returned `{"ok":true}`; `https://cartracker.info/` succeeded; all four long-running Airflow services remained healthy |
+| Compose warnings | Existing named volumes were reused and reported as not created by Compose; the warnings were non-blocking and no volume was replaced |
+
+The immediate gate is therefore green. Keep Stage 1 open until the same audit
+remains clean after 24 hours; only then begin Stage 2's metric and alert rollout.
+
 ### Stage 2 — The metric and the alert
 
 Emit `cartracker_container_health` with the three states above, through the
@@ -229,7 +253,7 @@ Follow the both-directions validation Plan 131 used for
 the expression stays quiet on healthy data, then prove it fires — with a
 deliberately stopped non-critical container, not by breaking something real.
 
-### Stage 3 — CI asserts coverage — BUILT 2026-08-18
+### Stage 3 — CI asserts coverage — COMPLETE AND VERIFIED 2026-08-18
 
 Extend `tests/test_observability_config.py`:
 
@@ -251,6 +275,12 @@ long-running profile services in scope; rejects cross-container HTTP probes;
 and prevents Python slim images from invoking an HTTP client they do not ship.
 `TestAirflowConnectionBudget` remains the connection-budget invariant. The
 existing CI unit-test command collects both classes through `pytest tests/`.
+
+PR #216 passed Docker builds for all services, Ruff, the unit-test job, and the
+dbt build-and-test job. The focused Stage 3 and connection-budget selection
+passed all 10 tests, the full local unit suite passed 2,235 tests, and the
+calculated Airflow worst-case remains 85 connections against Postgres's limit
+of 100. Stage 3 requires no production soak and is closed.
 
 ### Stage 4 — Retire DAG sensors as the health signal
 
@@ -301,6 +331,7 @@ next DAG run fails.
 - **Whole-host maintenance orchestration.** Plan 142 owns the separate
   maintenance state, drain, package/reboot procedure, and explicit resume. This
   plan supplies its mandatory health gate.
-- **Metrics freshness** — Plan 136 Stage 1.
+- **Analytics metrics freshness and serving ownership** —
+  [Plan 143](plan_143_analytics_serving_snapshot.md).
 - Replacing Docker healthchecks with an orchestrator's. That is Plan 88
   (Kubernetes), and it is not close.

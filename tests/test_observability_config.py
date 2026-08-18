@@ -25,7 +25,16 @@ class TestPrometheusConfig:
         path = _REPO_ROOT / "prometheus" / "prometheus.yml"
         doc = yaml.safe_load(path.read_text())
         job_names = {job["job_name"] for job in doc["scrape_configs"]}
-        expected = {"airflow", "postgres", "minio", "minio_bucket", "ops", "processing", "node"}
+        expected = {
+            "airflow",
+            "postgres",
+            "minio",
+            "minio_bucket",
+            "ops",
+            "dbt_runner",
+            "processing",
+            "node",
+        }
         assert expected == job_names, f"Unexpected jobs: {job_names ^ expected}"
 
 
@@ -269,6 +278,64 @@ class TestDockerComposeTrawlMemoryGuardrails:
         service = self._services()["redis-trawl"]
         assert service["mem_limit"] == "512m"
         assert service["memswap_limit"] == "512m"
+
+
+class TestAnalyticsSnapshotContract:
+    """Plan 143 producer, mount, and scrape ownership."""
+
+    @staticmethod
+    def _services():
+        path = _REPO_ROOT / "docker-compose.yml"
+        return yaml.safe_load(path.read_text())["services"]
+
+    def test_snapshot_has_one_writer_and_read_only_ops_consumer(self):
+        services = self._services()
+        assert "analytics_snapshot:/data/analytics_snapshot" in services["dbt_runner"][
+            "volumes"
+        ]
+        assert "analytics_snapshot:/data/analytics_snapshot:ro" in services["ops"][
+            "volumes"
+        ]
+        assert "analytics_db:/data/analytics:ro" not in services["ops"]["volumes"]
+
+    def test_ops_has_no_analytics_reader_or_duckdb_path(self):
+        env = self._services()["ops"]["environment"]
+        assert "ANALYTICS_READER_URL" not in env
+        assert "DUCKDB_PATH" not in env
+        assert env["ANALYTICS_SNAPSHOT_PATH"].endswith("analytics_snapshot.json")
+
+    def test_dbt_runner_is_the_direct_prometheus_target(self):
+        path = _REPO_ROOT / "prometheus" / "prometheus.yml"
+        jobs = {job["job_name"]: job for job in yaml.safe_load(path.read_text())["scrape_configs"]}
+        assert jobs["dbt_runner"]["static_configs"][0]["targets"] == ["dbt_runner:8080"]
+
+    def test_stable_metric_names_match_grafana_consumers(self):
+        from dbt_runner.analytics_snapshot import METRIC_NAMES
+
+        dashboard = (_REPO_ROOT / "grafana" / "dashboards" / "pipeline_health.json").read_text()
+        rules = (_REPO_ROOT / "grafana" / "provisioning" / "alerting" / "rules.yml").read_text()
+        for metric_name in METRIC_NAMES:
+            assert metric_name in dashboard
+        assert "cartracker_metrics_last_success_timestamp_seconds" in rules
+
+    def test_rejected_proxy_and_embedded_sql_are_absent(self):
+        runner_source = (_REPO_ROOT / "dbt_runner" / "app.py").read_text()
+        runner_python = "\n".join(
+            path.read_text() for path in (_REPO_ROOT / "dbt_runner").glob("*.py")
+        )
+        ops_source = (_REPO_ROOT / "ops" / "app.py").read_text()
+        assert '"/analytics/metrics"' not in runner_source
+        assert "ANALYTICS_READER_URL" not in ops_source
+        assert "analytics_gauges" not in ops_source
+        assert not re.search(r"\bSELECT\b.+\bFROM\b", runner_python, flags=re.IGNORECASE)
+
+    def test_raw_s3_and_modeled_analytics_helpers_stay_separate(self):
+        modeled = (_REPO_ROOT / "shared" / "analytics_connection.py").read_text()
+        raw_s3 = (_REPO_ROOT / "shared" / "duckdb_s3.py").read_text()
+        assert "MINIO" not in modeled
+        assert "read_only=True" in modeled
+        assert "analytics.duckdb" not in raw_s3
+        assert "s3_endpoint" in raw_s3
 
 
 class TestAirflowConnectionBudget:
@@ -826,6 +893,7 @@ class TestGrafanaAlertingProvisioning:
             "ct-log-error-spike", "ct-403-log-spike",
             "ct-pipeline-failures", "ct-service-down",
             "ct-scrape-volume-drop", "ct-extraction-yield-drop",
+            "ct-metrics-freshness",
             "ct-stale-listings", "ct-cooldown-backlog", "ct-block-events-spike",
             "ct-pack-verification-refused",
             "ct-disk-space-warning", "ct-disk-space-critical",
@@ -841,6 +909,17 @@ class TestGrafanaAlertingProvisioning:
                 if rule["uid"] == uid:
                     return rule
         raise AssertionError(f"rule {uid} not found")
+
+    def test_metrics_freshness_alert_uses_the_plan_143_contract(self):
+        rule = self._rule("ct-metrics-freshness")
+        assert rule["noDataState"] == "Alerting"
+        assert rule["execErrState"] == "Alerting"
+        assert rule["for"] == "0s"
+        assert rule["data"][0]["model"]["expr"] == (
+            "time() - cartracker_metrics_last_success_timestamp_seconds"
+        )
+        condition = rule["data"][-1]["model"]["conditions"][0]["evaluator"]
+        assert condition == {"type": "gt", "params": [900]}
 
     def test_pack_verification_refused_watches_the_worker(self):
         """Scheduled pack runs log under service="pack-worker", not "archiver".

@@ -373,19 +373,19 @@
                     <div class="label">Make/model pairs tracked</div>
                 </div>
                 {% endif %}
-                {% if stats.last_pipeline_run_iso %}
+                {% if stats.analytics_data_through_iso %}
                 <div class="stat-card">
                     <div class="num" style="font-size:1.1rem; padding-top:0.55rem;">
-                        <time id="last-run-time" datetime="{{ stats.last_pipeline_run_iso }}">{{ stats.last_pipeline_run_iso }}</time>
+                        <time id="analytics-data-through" datetime="{{ stats.analytics_data_through_iso }}">{{ stats.analytics_data_through_iso }}</time>
                     </div>
-                    <div class="label">Last pipeline run</div>
+                    <div class="label">Analytics data through{% if stats_snapshot.stale %} (stale){% endif %}</div>
                 </div>
                 {% endif %}
             </div>
         </section>
         <script>
             (function () {
-                var el = document.getElementById('last-run-time');
+                var el = document.getElementById('analytics-data-through');
                 if (!el) return;
                 var d = new Date(el.getAttribute('datetime'));
                 if (isNaN(d)) return;

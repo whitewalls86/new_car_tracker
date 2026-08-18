@@ -3,7 +3,6 @@ Pipeline Ops — admin UI and deploy coordination for cartracker.
 """
 import os
 import threading
-import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -13,7 +12,7 @@ from prometheus_fastapi_instrumentator import Instrumentator
 
 from shared.logging_setup import configure_logging
 
-from .metrics.duckdb_gauges import update_duckdb_metrics
+from .public_stats import public_stats_cache
 from .routers.admin import router as admin_router
 from .routers.auth import router as auth_router
 from .routers.deploy import router as deploy_router
@@ -26,18 +25,22 @@ from .routers.users import router as users_router
 
 configure_logging()
 
-def _duckdb_metrics_loop() -> None:
-    update_duckdb_metrics()
-    while True:
-        time.sleep(60)
-        update_duckdb_metrics()
+def _public_stats_cache_loop(stop_event: threading.Event) -> None:
+    public_stats_cache.refresh()
+    while not stop_event.wait(60):
+        public_stats_cache.refresh()
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    t = threading.Thread(target=_duckdb_metrics_loop, daemon=True)
+    stop_event = threading.Event()
+    t = threading.Thread(target=_public_stats_cache_loop, args=(stop_event,), daemon=True)
     t.start()
-    yield
+    try:
+        yield
+    finally:
+        stop_event.set()
+        t.join(timeout=1)
 
 
 app = FastAPI(lifespan=lifespan)
