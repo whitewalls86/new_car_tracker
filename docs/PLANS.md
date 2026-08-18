@@ -19,16 +19,24 @@ transition analytics endpoint rather than the future platform target.
 **Now:** Finish Plan 135 and the small verification-only closeouts already in
 flight. Then take Plan 136 through observable liveness and a drain-aware
 scheduled recycle before granting the automatic circuit breaker restart
-authority. The next data-integrity chain is Plan 133 -> Plan 132. Plan 138 should
-land before the next major platform milestone, after which Plan 125 resumes at
-its remaining Gate C production measurement and Gate D reader migration -- not
-at the already-proven early gates.
+authority, and continue straight into Plan 140, which generalizes 136's
+container-health work across all 26 services and makes a coverage gap fail CI
+rather than production. The next data-integrity chain is Plan 133 -> Plan 132.
+Plan 138 should land before the next major platform milestone, after which Plan
+125 resumes at its remaining Gate C production measurement and Gate D reader
+migration -- not at the already-proven early gates.
+
+**Two incidents in four days (2026-08-14 solver, 2026-08-18 Airflow apiserver)
+were each found by a human noticing downstream damage, not by an alert.** That
+is why observability work occupies the top of this order. Plan 136 covers the two
+components that actually failed; Plan 140 covers the other twenty-four before
+they do.
 
 Plan 112 remains intentionally paused until Plan 125 supplies stable
 Iceberg-native inputs. Plans 114, 115, and 128 have completed their intended
-work and no longer belong in the executable queue. Plans 120 and 124 are built
-but still owe production verification. Plans 129 and 131 are production systems
-under rollout/closeout rather than new builds.
+work and no longer belong in the executable queue. Plans 124 and 131 closed out
+2026-08-18. Plan 120 is built but still owes production verification. Plan 129
+is a production system under rollout rather than a new build.
 
 ---
 
@@ -62,10 +70,8 @@ observation window is written separately and does not inflate coding effort.
 
 | Order | Plan | Remaining work | Priority | Effort | Exit / dependency |
 |---:|---|---|---:|---|---|
-| 0.1 | [135](plan_135_storage_observability.md) | Finish both-disk capacity/inode visibility, alerts, bounded logs, disk-breakdown snapshots, and the runbook | 100 | S remaining | All seven success criteria pass; then move to completed |
-| 0.2 | [124](plan_124_trawl_memory_guardrails.md) | Verify the deployed limits with `docker inspect`, `docker stats`, and a normal scrape cycle | 97 | XS | No new OOM evidence; update the plan status |
-| 0.3 | [131](plan_131_packed_cold_storage.md) | Verify the recurring lifecycle DAG and close Stage 5 documentation | 94 | S | Lifecycle is single-flight, deploy-aware, measured, and alertable |
-| 0.4 | [120](plan_120_ci_lake_snapshot_delivery.md) | Complete the remaining VM/Gate F verification | 82 | S | Required before Plan 125 relies on the snapshot path as a release gate |
+| 0.1 | [135](plan_135_storage_observability.md) | **Stages 1-4 live (criteria 1-5 met).** Remaining: fix the Stage 4 daily/weekly tier defect, then Stage 5 (bounded logs) and Stage 6 (runbook) — see the [follow-up prompt](claude_prompt_plan_135_stage_4_followup.md) | 100 | S remaining | Criteria 6 and 7 pass; then move to completed |
+| 0.2 | [120](plan_120_ci_lake_snapshot_delivery.md) | Complete the remaining VM/Gate F verification | 82 | S | Required before Plan 125 relies on the snapshot path as a release gate |
 
 ## Default build order
 
@@ -74,31 +80,53 @@ because it is smaller while a higher row has an executable next step.
 
 | Order | Plan | Title | Next executable slice | Priority | Effort | Depends on / safe stopping point |
 |---:|---|---|---|---:|---|---|
-| 1 | [136](plan_136_solver_recycle_and_liveness.md) | Solver recycle and real liveness | Stages 1-2 metrics/freshness and solver counters, then Stage 3 drain-aware weekly recycle | 98 | M | Plan 135 monitoring conventions; soak counters before Stage 4 auto-restart |
-| 2 | [134](plan_134_archiver_endpoint_failure_contract.md) | Archiver endpoint failure contract | Add warning-only failure predicates and begin the one-week observation window | 88 | S | One-week soak before enforcement; pause if real failures need repair |
-| 3 | [133](plan_133_pack_read_path_hardening.md) | Pack read-path hardening | Pack-aware existence check and month-sized sidecar-cache fix | 92 | S | Re-run April/May read-path verification; unlocks Plan 132 Stage 2 |
-| 4 | [132](plan_132_unrecorded_artifact_recovery.md) | Recover unrecorded bronze artifacts | Run Stage 0 gates, build the manifest, then reparse a bounded cohort | 91 | L | Plan 133 before Stage 2; no destructive action in the audit stages |
-| 5 | [138](plan_138_public_surface_refresh.md) | Public surface refresh | Truth pass, public-root contract, accessible assets, public stats and project-updates snapshots | 84 | L | Independent; land before the next major platform milestone |
-| 6 | [125](plan_125_duckdb_to_iceberg_migration.md) | DuckDB-to-Iceberg analytics migration | Gate C production runtime measurement, then Gate D reader inventory/dual-run | 81 | XL | Plan 120 closeout; preserve Plan 136 freshness semantics during reader migration |
-| 7 | [112](plan_112_refresh_policy_backtesting.md) | Adaptive-refresh backtesting | Resume policy backtest/model gates on pinned Iceberg snapshots | 76 | L | Plan 125 stable Iceberg-native inputs |
-| 8 | [113](plan_113_production_adaptive_refresh.md) | Production adaptive refresh | Promote one reviewed, pinned policy into ops claim logic | 74 | M | Approved Plan 112 result; no live model dependency |
-| 9 | [137](plan_137_legacy_bronze_parquet_disposition.md) | Legacy bronze Parquet disposition | Codify the read-only baseline and row-complete disposition manifest | 72 | XL | Reuse Plan 132 provenance/backfill safety; deletion remains separately approved |
-| 10 | [121](plan_121_staging_environment.md) | Staging environment | Stand up the smallest fixture-backed deployed environment | 63 | L | Prefer after Plan 125 reader shape settles unless needed earlier for risky rollout |
-| 11 | [119](plan_119_lakehouse_governance.md) | Lakehouse governance | Add measured catalog controls and auditability | 58 | L | Stable Plan 125 catalog and reader contracts |
-| 12 | [126](plan_126_basic_event_streaming.md) | Basic event streaming | Prove transport, replay, and one low-risk consumer | 49 | XL | Plans 125 and 112/113 clarify stable event semantics |
-| 13 | [127](plan_127_streaming_adaptive_scrape_control.md) | Streaming adaptive scrape control | Add closed-loop control behind batch-parity and rollback gates | 42 | XL | Plan 126 plus approved Plan 112/113 behavior |
+| 1 | [136](plan_136_solver_recycle_and_liveness.md) | Solver recycle and real liveness | Stage 0 apiserver pool + container health + `dag_id` guard, then Stages 1-2 metrics/freshness and solver counters, then Stage 3 drain-aware weekly recycle | 98 | M | Plan 135 monitoring conventions; soak counters before Stage 4 auto-restart |
+| 2 | [140](plan_140_service_health_contract.md) | Service health contract | Healthchecks on the 20 services lacking them, then the container-health metric, then CI coverage assertions | 87 | M + soak | Plan 136 Stage 0b is its first slice; soak Stage 1 before alerting on it |
+| 3 | [134](plan_134_archiver_endpoint_failure_contract.md) | Archiver endpoint failure contract | Add warning-only failure predicates and begin the one-week observation window | 88 | S | One-week soak before enforcement; pause if real failures need repair |
+| 4 | [133](plan_133_pack_read_path_hardening.md) | Pack read-path hardening | Pack-aware existence check and month-sized sidecar-cache fix | 92 | S | Re-run April/May read-path verification; unlocks Plan 132 Stage 2 |
+| 5 | [132](plan_132_unrecorded_artifact_recovery.md) | Recover unrecorded bronze artifacts | Run Stage 0 gates, build the manifest, then reparse a bounded cohort | 91 | L | Plan 133 before Stage 2; no destructive action in the audit stages |
+| 6 | [138](plan_138_public_surface_refresh.md) | Public surface refresh | Truth pass, public-root contract, accessible assets, public stats and project-updates snapshots | 84 | L | Independent; land before the next major platform milestone |
+| 7 | [125](plan_125_duckdb_to_iceberg_migration.md) | DuckDB-to-Iceberg analytics migration | Gate C production runtime measurement, then Gate D reader inventory/dual-run | 81 | XL | Plan 120 closeout; preserve Plan 136 freshness semantics during reader migration |
+| 8 | [112](plan_112_refresh_policy_backtesting.md) | Adaptive-refresh backtesting | Resume policy backtest/model gates on pinned Iceberg snapshots | 76 | L | Plan 125 stable Iceberg-native inputs |
+| 9 | [113](plan_113_production_adaptive_refresh.md) | Production adaptive refresh | Promote one reviewed, pinned policy into ops claim logic | 74 | M | Approved Plan 112 result; no live model dependency |
+| 10 | [137](plan_137_legacy_bronze_parquet_disposition.md) | Legacy bronze Parquet disposition | Codify the read-only baseline and row-complete disposition manifest | 72 | XL | Reuse Plan 132 provenance/backfill safety; deletion remains separately approved |
+| 11 | [121](plan_121_staging_environment.md) | Staging environment | Stand up the smallest fixture-backed deployed environment | 63 | L | Prefer after Plan 125 reader shape settles unless needed earlier for risky rollout |
+| 12 | [119](plan_119_lakehouse_governance.md) | Lakehouse governance | Add measured catalog controls and auditability | 58 | L | Stable Plan 125 catalog and reader contracts |
+| 13 | [126](plan_126_basic_event_streaming.md) | Basic event streaming | Prove transport, replay, and one low-risk consumer | 49 | XL | Plans 125 and 112/113 clarify stable event semantics |
+| 14 | [127](plan_127_streaming_adaptive_scrape_control.md) | Streaming adaptive scrape control | Add closed-loop control behind batch-parity and rollback gates | 42 | XL | Plan 126 plus approved Plan 112/113 behavior |
 
 Plan [139](plan_139_test_suite_maintenance.md) (test suite maintenance) is
-deliberately unranked here: it is a skeleton of measurements, and only step 2 —
-covering `ops/metrics/duckdb_gauges.py` at 25% — has a real dependency, since
-Plan 136 Stage 1 builds its staleness convention on that module. Pull that step
-forward with Plan 136; the rest is opportunistic.
+**split rather than ranked as one row.** Its Stages A and B — put a coverage
+number in CI, then cache pip and drop the `dbt` job's `needs: unit-tests` — are
+two lines of YAML plus a dev dependency, and measurement on 2026-08-18 puts them
+at roughly **40% of CI wall-clock** (critical path 333s, of which 103s is uncached
+`pip install` and ~78s is waiting on a job that need not block). That payoff
+compounds across every plan above them, so **do A+B early, alongside Plans 136 and
+140**, which touch the same CI configuration. Stages C (profile the 92s
+`tests/integration/dbt/` step, 28% of the path) and D (intent markers, the
+coverage-gate decision, xdist) score 60 and 52 and belong near order 11-12.
+
+The step that previously looked urgent — covering `ops/metrics/duckdb_gauges.py`
+at 25% — **has moved into Plan 136 Stage 1.** Plan 136 does not depend on that
+module, it rewrites it: Stage 1a sets the gauges to `NaN` on refresh failure.
+Tests written against today's silent-stale behavior would encode exactly what
+Stage 1 deletes, so they belong with the change.
 
 Plan 136 Stage 4 is deliberately not part of the first slice: it grants restart
 authority and should start only after Stage 2's outcome counters have established
 a trustworthy baseline. Plan 134's observation window may run while Plans 133 or
 136 proceed, but the endpoint-by-endpoint 500 rollout returns to this order when
 the evidence is ready.
+
+**Plan 140 sits at order 2 despite scoring 87 against Plan 134's 88.** The scores
+are close, so the build order decides, and it decides on switching cost:
+Plan 136 Stage 0b builds a container-health metric, and Plan 140 Stage 2
+generalizes that same metric across all 26 services. They touch one set of files
+and one mental model. Splitting them to gain one point of priority score means
+paying the context switch twice and shipping a health metric that covers 6 of 26
+services in between — which is the state that produced two incidents in four
+days. Plan 140 also cannot start before 136 Stage 0, so adjacency is close to
+free.
 
 ## Operational monitoring and completed implementation awaiting closeout
 
@@ -108,7 +136,7 @@ the evidence is ready.
 | [115](plan_115_detail_unenriched_circuit_breaker.md) | Production bugfix implemented | Record deployment/verification and move to completed |
 | [128](plan_128_false_block_detection.md) | Phases 1-4 implemented; no historical repair chosen | Record final verification and move to completed |
 | [129](plan_129_zstd_dictionary_compression.md) | Dictionary v1 in production; backfill/lifecycle monitoring | Watch metrics; no new design work unless the run deviates |
-| [131](plan_131_packed_cold_storage.md) | April-June packed and pruned; Stage 5 recurring lifecycle in closeout | Complete order 0.3 above |
+| [131](plan_131_packed_cold_storage.md) | **Complete** — April-July packed and pruned, Stage 5 lifecycle DAG running on schedule | Monitor only; no new design work |
 
 ## Paused or blocked
 
@@ -128,14 +156,14 @@ the evidence is ready.
 | [119](plan_119_lakehouse_governance.md) | Lakehouse governance + catalog expansion | Draft |
 | [120](plan_120_ci_lake_snapshot_delivery.md) | CI + local lake snapshot delivery | Built through Gate F - VM verification pending |
 | [121](plan_121_staging_environment.md) | Staging environment | Draft |
-| [124](plan_124_trawl_memory_guardrails.md) | Trawl browser solver memory guardrails | Implemented - VM verification pending |
+| [124](plan_124_trawl_memory_guardrails.md) | Trawl browser solver memory guardrails | **Complete** - verified in production 2026-08-18; zero host-wide OOM since deployment |
 | [125](plan_125_duckdb_to_iceberg_migration.md) | DuckDB to Iceberg analytics migration | Gates 0.5, 0, A, and B complete; Gate C measurement next |
 | [126](plan_126_basic_event_streaming.md) | Basic event streaming foundation | Draft / future |
 | [127](plan_127_streaming_adaptive_scrape_control.md) | Streaming adaptive scrape control | Draft / future |
 | [128](plan_128_false_block_detection.md) | Cloudflare challenge pages swallowed as successful detail scrapes | Implemented through Phase 4 - closeout record pending |
 | [129](plan_129_zstd_dictionary_compression.md) | Trained zstd dictionary compression for bronze HTML | In production — dict v1 live, backfill running |
 | [130](plan_130_parser_input_projection.md) | Parser-input projection (truncating raw HTML) | Draft — blocked on 129 + taxonomy gap |
-| [131](plan_131_packed_cold_storage.md) | Packed cold storage for bronze HTML | In production — **April-June packed and pruned, verified 2026-08-17**: 2.70M objects → 222, 447.5 GiB raw → 7.01 GiB, June at 82.8% physical; July not packed; Stage 3 deployed, Stage 4 run ([run sheet](runbook_plan_131_stage_3_4.md)); Stage 5 in progress |
+| [131](plan_131_packed_cold_storage.md) | Packed cold storage for bronze HTML | **Complete 2026-08-18** — April-July packed and pruned: 3.61M objects → 288, 0 refused; Stage 5 lifecycle DAG green on its first scheduled run |
 | [132](plan_132_unrecorded_artifact_recovery.md) | Recovering unrecorded bronze artifacts | Draft — Stage 0 gate not run |
 | [133](plan_133_pack_read_path_hardening.md) | Pack read path hardening | Draft — two non-blocking defects found verifying 131 Stage 3; do before 132 Stage 2 |
 | [134](plan_134_archiver_endpoint_failure_contract.md) | Archiver endpoint failure contract | Draft — measurement-first rollout not started |
@@ -143,7 +171,8 @@ the evidence is ready.
 | [136](plan_136_solver_recycle_and_liveness.md) | Solver recycle + real liveness detection | Draft — written after the 2026-08-14 8h trawl outage no alert caught |
 | [137](plan_137_legacy_bronze_parquet_disposition.md) | Legacy bronze Parquet recovery and disposition | Draft — read-only inventory complete; no deletion authorized |
 | [138](plan_138_public_surface_refresh.md) | README and public portfolio surface refresh | Draft — audit complete; implementation not started |
-| [139](plan_139_test_suite_maintenance.md) | Test suite construction and maintenance | Skeleton — measured 2026-08-17, decisions not yet made |
+| [139](plan_139_test_suite_maintenance.md) | Test suite construction and maintenance | Draft — measured 2026-08-17, CI path re-measured 2026-08-18; split into Stages A/B (pull forward) and C/D (opportunistic); `duckdb_gauges` coverage transferred to Plan 136 Stage 1 |
+| [140](plan_140_service_health_contract.md) | Service health contract | Draft — written 2026-08-18 after a second undetected-component incident; 6 of 26 services have a healthcheck |
 
 ---
 

@@ -23,7 +23,10 @@ understood: see [April packed in full](#april-packed-in-full--measured-2026-08-1
 members, 100% verified, 0 refused, **2,702,453 objects -> 222** (12,173x), and
 **447.5 GiB of raw HTML now occupies 7.01 GiB**. June measured **2,217
 B/member** — below the projection this plan retracted on April — and **82.8%
-physical**. July is a complete month and is **not packed yet**. See
+physical**. **July was packed and pruned in full on 2026-08-18** — 909,654
+objects to 66, a 13,783x collapse, 0 refused, 0 surviving sources, at 2,397
+packed B/member against May's 2,410, and **81.6% physical**. See
+[July packed and pruned in full](#july-packed-and-pruned-in-full--measured-2026-08-18),
 [May and June packed in full](#may-and-june-packed-in-full--measured-2026-08-17)
 and [the full compression cascade](#the-whole-compression-cascade-on-one-set-of-bytes--measured-2026-08-14).
 
@@ -58,17 +61,31 @@ single-flight, deploy-intent pause/resume, the isolated pack worker, the
 recurring read-path verifier endpoint, and the lifecycle DAG are all built and
 merged. The DAG runs `0 6 3 * *` against `pack-worker` — pack, then prune, then
 a bounded read-path canary — and holds no packing logic of its own. See
-[Stage 5 as built](#stage-5-as-built). **It is in production testing and has not
-yet completed a scheduled run**; the first falls on 2026-09-03, and the measured
-numbers this plan asks for are recorded there once it has.
+[Stage 5 as built](#stage-5-as-built).
 
-**Inode alerting moved to [Plan 135](plan_135_storage_observability.md).** It was
-Stage 5's Step 6, it is Plan 135's Stage 3, and it cannot work here on its own:
-node-exporter has never reported `/mnt/data` at all, so an inode rule written
-today would evaluate `/` — 9% used — while the volume this plan exists to protect
-sits at 61% and invisible. Plan 135 Stage 1 is the prerequisite, and one plan
-owning those rules beats two plans editing the same file. What stays here is the
+**Its first scheduled run completed 2026-08-18 02:31:32, all six tasks green in
+11 seconds.** `catchup=False` scheduled the most recent complete interval
+(`scheduled__2026-08-03T06:00:00`) rather than waiting for 2026-09-03. With July
+already drained the pack task found no closed-and-settled bucket, prune and
+verify correctly no-op'd in ~0.3s each, and `notify` was skipped — **the
+nothing-to-do path exercised end to end without paging anyone**, which is the
+path a monthly job spends almost all of its life on. All four Stage 5 gates are
+now met.
+
+**Inode alerting moved to [Plan 135](plan_135_storage_observability.md), and has
+since shipped there.** It was Stage 5's Step 6, it is Plan 135's Stage 3, and it
+could not work here on its own: node-exporter had never reported `/mnt/data` at
+all, so an inode rule written in this plan would have evaluated `/` — 9% used —
+while the volume both plans exist to protect sat at 61% and invisible. Plan 135
+Stage 1 was the prerequisite, and one plan owning those rules beat two plans
+editing the same file. **Both landed 2026-08-17** (PR #204): `/mnt/data` now
+reports, and the byte and inode rules cover both volumes. What stays here is the
 verification-failure alert, which is pack integrity rather than disk capacity.
+
+That 61% is now **21%** — packing removed roughly 4.05M inodes, about two per
+packed object, and July is still draining. Read the inode figures elsewhere in
+this document as measurements of the date attached to them, not of today; the
+motivating pressure is what this plan set out to relieve, and it did.
 
 Stage 4 is the only step that removes data. Two of
 its three would-be gates have now been settled and **neither is a gate**: the
@@ -1044,9 +1061,11 @@ into the same volume the delta was measured on. Treat 6.79 GiB as a floor.
 #### Corpus scale on complete months — measured 2026-08-17
 
 Replaces [the superseded projection](#corpus-scale--projected-2026-08-14-superseded).
-Everything here is measured, on the three months that are packed and pruned.
-July is a complete calendar month but is **not packed**, so it is not in this
-table.
+Everything here is measured, on the three months packed and pruned as of
+2026-08-17. July was completed a day later and is reported separately in
+[July packed and pruned in full](#july-packed-and-pruned-in-full--measured-2026-08-18);
+its 2,397 B/member sits between May and June, so it does not move these
+conclusions.
 
 | | April-June, measured |
 |---|---|
@@ -1070,10 +1089,12 @@ lost the shared window.
 assumed **~2.4 GiB per packed month**. Measured: 2.03, 2.58, 2.40 — mean **2.34
 GiB**. The assumption holds.
 
-It also predicted ~102 GiB free after the whole April-July cycle. The volume
-reads **114 GiB free today with July neither packed nor pruned**, so the estimate
-was conservative by at least 12 GiB, and July's prune should return roughly
-another 14 GiB physical against ~2.4 GiB of new packs. The ~36-month
+It also predicted ~102 GiB free after the whole April-July cycle. **With July
+now packed and pruned the volume reads 123 GiB free** (64 of 196 GiB used, 34%;
+inodes 2.10M of 13.1M, 17%), so the estimate was conservative by **~21 GiB**.
+The accompanying prediction — *"July's prune should return roughly another 14
+GiB physical against ~2.4 GiB of new packs"* — came in close: July's packs total
+**2.10 GiB** including sidecars, against ~2.4 GiB projected. The ~36-month
 full-retention runway is a floor, not a midpoint.
 
 ### WARC, checked as the plan required
@@ -1746,6 +1767,198 @@ DAG that has to infer failure from a 200 is a DAG that grows logic.
   must not stop a ten-hour job; a *forgotten* deploy intent keeps jobs paused
   until the retries exhaust and someone is paged. Both are the designed outcome.
 
+### D3b validated in production, 2026-08-18
+
+The deploy-intent pause had never been exercised against a live long job. It was
+on 2026-08-18, deliberately, using a real deploy (Plan 135 Stage 4) against a
+real multi-hour July prune rather than a synthetic test.
+
+| | |
+|---|---|
+| Job | `delete_packed_source_html`, July `detail_page`, `apply`, started 23:50 UTC |
+| Stopped at | **`pack-00014` boundary**, 01:10:19 UTC |
+| Durable at stop | **15 packs, 482,000 deletions** |
+| Log | `stopping for a deploy after 482000 deletion(s); resume is a re-run` |
+| Task state | `up_for_retry` — not failed |
+| Auto-resume | **confirmed** — retry re-entered and continued once intent cleared |
+| Collateral DAG failures | **none** |
+
+Every part of the design held: it stopped at a boundary it already had, nothing
+in flight was lost, the completed work stayed durable, and the retry resumed it
+without anyone re-issuing the job.
+
+**The operational constraint the test exposed.** Every DAG opens with
+`deploy_intent_sensor()`, whose `poke()` returns True only when
+`intent = 'none'`, at **`timeout=600`**. So a deploy-intent window longer than
+**10 minutes** fails the first task of every scheduled DAG — and with
+`orphan_checker` and `results_processing` on `*/5`, that is a burst of failures
+and pages. The window here stayed short because the sequence put the slow work
+outside it:
+
+1. `docker compose build` **before** declaring intent — it touches nothing running
+2. declare intent
+3. wait for the pack boundary (bounded by one pack, ~5 min at July's sizes)
+4. `docker compose up -d`
+5. release intent immediately, and confirm `intent: none`
+
+Verified afterwards: the most recent failed runs for `orphan_checker`,
+`results_processing`, `scrape_detail_pages` and `scrape_listings` were all from
+**July**, and the scheduler logged **zero** `check_deploy_intent` timeouts.
+**Build before intent, not during it** is the rule worth carrying.
+
+**One diagnostic caution.** `airflow dags list-runs pack_bronze_html` returned an
+empty table while a manual run was live and visible in the UI. Do not conclude
+from that CLI output alone that a DAG has no active run — check the UI or the
+metadata DB before deciding a job is unmanaged.
+
+### July packed and pruned in full — measured 2026-08-18
+
+**909,654 objects → 66. A 13,783× collapse, 100% verified, 0 refused, and zero
+surviving source objects.** Counted from the packs and sidecars themselves
+rather than from run logs, which had rotated.
+
+| | |
+|---|---|
+| Members | **909,654** |
+| Packs / sidecars | 33 + 33 = **66 objects** |
+| Pack bytes | 2,180,803,517 (**2.03 GiB**) + 68.4 MiB sidecars |
+| Source bytes freed | 3,233,609,390 (**3.01 GiB**) |
+| **Packed bytes / member** | **2,397** |
+| Surviving source objects | **0** |
+| Inodes freed (final run) | ~957,945 estimated, **814,483 measured** |
+
+**July packed like May, and that had never been verified.** This plan projected
+June and July from May's shape while explicitly flagging the assumption —
+*"whether June and July pack like May or like April"* was named as one of two
+things that would move the runway estimate. July's **2,397 packed bytes per
+member** against May's **2,410** settles it at under 1% apart. April remains the
+outlier, for the null-metadata reasons already recorded.
+
+#### Physical saving: 81.6%, measured
+
+The number this plan exists for, and it is **measured rather than derived** —
+`/mnt/data` used bytes across the prune window, from Prometheus:
+
+| | |
+|---|---|
+| 23:45, prune starts at 23:50 | **84.96 GiB** |
+| 02:30, run complete | **73.57 GiB** |
+| **Physical freed** | **11.39 GiB** |
+| July packs (written earlier, already inside the baseline) | **2.10 GiB** |
+| **Physical saving** | **81.6%** |
+
+That lands inside the **79-81%** band Stage 0 projected and next to June's
+82.8%, on a month packed by the scheduled path rather than by hand.
+
+**The logical/physical gap is this plan's entire thesis in one line.** July's
+sources occupied **11.39 GiB physical against ~6.4 GiB apparent — a 1.78x floor
+tax** that packing removes outright. Measured against apparent bytes alone the
+win reads ~67%; measured against the disk it is 81.6%. A plan that optimised the
+logical number would have stopped a third short.
+
+Two honesty notes. The **11.39 GiB is measured end to end**; the apparent-bytes
+total is *extrapolated* from the final run's 3,233,609,390 bytes over 427,654
+objects, because attempt 1's byte tally had rotated out of the worker log — so
+treat the 1.78x and the ~67% as approximate and the 81.6% as real. And the
+scraper kept writing new August artifacts into the same window, which **adds**
+bytes, so 11.39 GiB is a **floor** on what July's sources occupied and 81.6% is
+conservative.
+
+> **This measurement was only possible because
+> [Plan 135](plan_135_storage_observability.md) Stage 1 shipped the day before.**
+> Until node-exporter got `--path.rootfs`, `/mnt/data` had no Prometheus series
+> at all, and the sources are now deleted — the window to measure them closed
+> permanently at 02:30. One plan's first day of visibility paid for another
+> plan's headline result.
+
+### The prune, across two attempts — counters are per attempt
+
+A resumed run starts its own counter at zero, so reading the live log
+understates the month. A dry run preceded both, as the run sheet requires.
+
+| | dry run | attempt 1 | attempt 2 |
+|---|---|---|---|
+| Window | 21:52:08 → 23:26:59 | 23:50 → 01:10:19 | 01:25:20 → 02:30:07 |
+| Outcome | deleted nothing | **stopped for deploy** at `pack-00014` | **run complete** |
+| Deleted | 0 | **482,000** | **427,654** |
+
+482,000 + 427,654 = **909,654**, which matches the member count derived
+independently from the sidecars. The two arithmetic paths agree exactly.
+
+Final run summary: `deleted=427654 verified=427654 refused=0 already_gone=0`,
+by terminal status `{'complete': 424286, 'no_event_row': 1465, 'skip': 1903}`.
+The 1,465 `no_event_row` deletions are the population
+[Plan 132](plan_132_unrecorded_artifact_recovery.md) exists to recover, deleted
+from their sources and still readable through the packs — which is the branch
+the sequencing constraint asked to be a distinct, reported outcome rather than a
+silent fall-through.
+
+**`already_gone=0` is the checkpoint design proving itself.** Attempt 2 re-walked
+from `pack-00000`, yet encountered *not one* object attempt 1 had already
+deleted — because the surviving-object listing **is** the checkpoint, and drained
+packs contribute nothing to it. No double work, no state file. What the resume
+genuinely re-pays is the listing itself: **427,654 objects in 655s (~11 min)**,
+matching the ~12 minutes recorded for April. That is the fixed cost the design
+accepted, measured for the first time on a full-size month.
+
+### Read-path latency, measured post-delete
+
+The canary sampled **165 members across all 33 packs, 0 failed**, with every
+source object already gone:
+
+| | p50 | p95 |
+|---|---:|---:|
+| Object path | — | — |
+| Pack, cold | 307.99 ms | 515.25 ms |
+| Pack, warm | 11.66 ms | 48.95 ms |
+
+**The object row is empty because July has no source objects left**, which is
+itself the completeness check. Cold cost is the sidecar scan, not decompression,
+consistent with the Stage 3 measurements.
+
+### The apiserver outage, and what it proved about the shape — 2026-08-18
+
+Unplanned, and more informative than the deliberate D3b test. At **01:31** the
+Airflow apiserver wedged: its SQLAlchemy pool exhausted
+(`QueuePool limit of size 5 overflow 10 reached`), leaving it accepting TCP and
+answering nothing. It was restarted at **01:45:55**.
+
+Seven scheduled DAG runs died in that window — `orphan_checker` ×3,
+`results_processing` ×3, `scrape_detail_pages` — all `upstream_failed` at their
+sensors, plus a `scrape_listings` run. **The prune did not notice.** It had
+started at 01:25:20, ran straight through the outage *and* the restart, and was
+still deleting afterwards.
+
+That is Stage 5's architecture paying off in a way nothing planned for:
+
+- **The DAG holds no logic**, so there was nothing in Airflow to lose. The task
+  is one blocking HTTP call.
+- **The work lives in `pack-worker`**, a container the outage never touched.
+- **The endpoint is a sync `def`**, so FastAPI runs it in a threadpool, and a
+  threadpool handler is not cancelled when its client goes away. Even had the
+  task process died, the prune would have run to completion.
+
+The decision that made this true was made for testability — *"the DAG holds
+sensors, one HTTP call per task, and the result predicates. It holds no logic
+and shells out to nothing."* Surviving a control-plane outage was not the
+argument for it, and is the better one.
+
+**The sharp edge this exposes, which did not fire.** Had the task instance
+died, its retry would have POSTed again while the original run was still going
+and hit the D3a single-flight guard — **409**, surfaced as `JsonPostError`, a
+failed retry. At `retries=6` × 15 min that is 90 minutes of runway; a month-scale
+prune outliving it would exhaust the retries, fail the DAG and page, **while the
+work completed normally in the worker.** A spurious failure, not a real one.
+Confirm from the worker's summary and `df -i` before treating such a page as
+data loss.
+
+**Not this plan's defect, but this plan's traffic.** The pool is Airflow's stock
+`5 + 10` and was never tuned, while `AIRFLOW__CORE__EXECUTION_API_SERVER_URL`
+routes every task's state through that apiserver. It held for four weeks and
+wedged the day after two DAGs were added — `pack_bronze_html` among them. Sizing
+belongs to whoever owns the Airflow deployment, but Stage 5 added load to the
+component that broke.
+
 ### Where the numbers come from
 
 Stage 5 asks for objects packed, packs written, bytes/inodes reclaimed,
@@ -1924,8 +2137,9 @@ afterwards. Look first this time.
 | `B` and `D` reported explicitly | Stage 0d |
 | Scraper write path changed | None — deferred compression is rejected, see Design |
 | Lifecycle is single-flight | **Met** — per-job lock, 409 on the second caller |
-| Lifecycle is deploy-aware | **Met** — sensor on the DAG, cooperative boundary checks in both processors, fails open |
-| Lifecycle is measured | Run summaries + the canary's p50/p95, every run; **first scheduled run 2026-09-03** |
+| Lifecycle is deploy-aware | **Met** — validated in production 2026-08-18: stopped at a pack boundary with 482,000 deletions durable, retried, resumed |
+| Lifecycle survives a control-plane outage | **Met, unplanned** — ran through a 15-min Airflow apiserver wedge and its restart, 2026-08-18 |
+| Lifecycle is measured | **Met** — first scheduled run 2026-08-18 completed green; run summaries + canary p50/p95 recorded for July |
 | Lifecycle is alertable | **Met** — `ct-pack-verification-refused` fires on any occurrence; inode alerting is [Plan 135](plan_135_storage_observability.md) Stage 3 |
 
 ---

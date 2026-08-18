@@ -691,6 +691,52 @@ flush/cleanup/compact. `DISK_USAGE_TEXTFILE_DIR` being unset on the regular
 archiver *is* the refusal — without the mounts every measurement fails and an
 empty `.prom` would read as "the disks are empty".
 
+#### Stage 4's first production run (2026-08-18) — works, with one defect
+
+Deployed 01:10 UTC, first run 01:15:28 → 01:23:04. **The whole chain works**:
+`.prom` written atomically → `node_textfile_scrape_error 0` and
+`node_textfile_mtime_seconds` present → `cartracker_path_bytes` queryable in
+Prometheus. Success criterion 5 is met for the root disk and the daily volumes;
+the MinIO volume shows as never-measured until the first weekly walk, which is
+the carry-forward behaving correctly rather than a gap.
+
+**The run took 7m36s, and one volume was 87% of it.** Per-target timings, from
+the `measured_at` deltas:
+
+| Target | Time | Share |
+|---|---:|---:|
+| **`cartracker_airflow_logs`** | **397.0s** | **87%** |
+| `/var/lib/containerd` | 46.5s | 10% |
+| `/usr` | 10.6s | 2% |
+| `cartracker_loki_data` | 1.1s | <1% |
+| the other six targets combined | ~0.2s | ~0% |
+| **Total** | **456s** | |
+
+**The defect: `cartracker_airflow_logs` is in the daily tier and should not be.**
+It was classified by *size* — 2.9 GiB, obviously small — when `du` cost scales
+with **inodes**, and this plan's own measurements already recorded it at ~1.2M
+inodes, roughly twice the entire root filesystem's 558k. Moving it to the
+weekly/carry-forward tier alongside MinIO takes the daily walk from **456s to
+~59s**. That also means the gating flag is no longer MinIO-specific and should
+be renamed `include_minio` → `include_slow`.
+
+The rule the tier split should encode, which the first cut got wrong:
+**membership is decided by inode count, not by volume size.**
+
+**A second finding, and it is the plan's own thesis turning up somewhere nobody
+was looking.** The walk measured `airflow_logs` at **6.33 GiB** against the
+**2.9 GiB** recorded on 2026-08-14. That is almost certainly not growth — it is
+the same data measured two ways. At ~1.2M files, block rounding alone floors it
+at ~4.9 GiB (1.2M × 4 KiB), so 2.9 GiB apparent → 6.33 GiB physical is exactly
+the expected shape. **The Airflow logs volume carries the same small-file tax as
+MinIO's bronze bucket.**
+
+Two consequences. It retroactively justifies `--block-size=1` over `-b`: with
+apparent size this panel would have read 2.9 GiB and under-reported the disk by
+more than half. And it sharpens **Stage 5d**, which currently estimates ~2.9 GiB
+reclaimed — the real figure is **~6.3 GiB and ~1.2M inodes**, which makes it the
+largest single inode win available on `/mnt/data` outside MinIO itself.
+
 ### Stage 5 — Give each stream one job
 
 Applying the buffer/store split above. Note that Stream A (app file logs →
