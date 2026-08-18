@@ -567,6 +567,20 @@ services:
     environment:
       <<: *airflow-common-env
       AIRFLOW__API__BASE_URL: "https://cartracker.info/airflow"
+      # Plan 136 Stage 0a: the apiserver wedged on 2026-08-18 with Airflow's
+      # stock QueuePool of 5 + 10. AIRFLOW__CORE__EXECUTION_API_SERVER_URL
+      # routes every task's state through here, so task concurrency consumes
+      # apiserver pool connections directly -- and every authenticated request
+      # takes a session for the token-revocation lookup, so a starved pool
+      # takes the healthcheck down with it.
+      #
+      # Set here rather than on *airflow-common-env: that anchor is shared by
+      # four long-running services, so raising it there multiplies by four
+      # against Postgres's max_connections=100. Apiserver-only is 40 here plus
+      # the stock 15 each for scheduler, dag-processor and triggerer -- 85
+      # worst case. test_observability_config.py guards that budget.
+      AIRFLOW__DATABASE__SQL_ALCHEMY_POOL_SIZE: '20'
+      AIRFLOW__DATABASE__SQL_ALCHEMY_MAX_OVERFLOW: '20'
     healthcheck:
       test: ["CMD", "curl", "--fail", "http://localhost:8080/api/v2/monitor/health"]
       interval: 30s

@@ -270,6 +270,90 @@ class TestDockerComposeTrawlMemoryGuardrails:
         assert service["memswap_limit"] == "512m"
 
 
+class TestAirflowConnectionBudget:
+    """Plan 136 Stage 0a: the apiserver wedged on an exhausted SQLAlchemy pool.
+
+    Raising the pool is two lines; the reason it needs a test is the *budget*.
+    ``x-airflow-common-env`` is a YAML anchor shared by every Airflow service,
+    so the natural place to put a pool setting multiplies it by four against a
+    fixed ``max_connections``. The apiserver-only placement is the whole fix,
+    and nothing about the compose file makes that obvious to the next edit.
+    """
+
+    # Airflow's stock SQLAlchemy pool, which is what the apiserver was running
+    # when it wedged. Every service that does not override these gets them.
+    _DEFAULT_POOL_SIZE = 5
+    _DEFAULT_MAX_OVERFLOW = 10
+
+    # airflow-init is excluded from the worst case because it cannot overlap
+    # with the services below: they each gate on it with
+    # `condition: service_completed_successfully`, so it has exited before any
+    # of them opens a connection.
+    _LONG_RUNNING = {
+        "airflow-apiserver", "airflow-scheduler",
+        "airflow-dag-processor", "airflow-triggerer",
+    }
+
+    @staticmethod
+    def _services():
+        path = _REPO_ROOT / "docker-compose.yml"
+        return yaml.safe_load(path.read_text())["services"]
+
+    @classmethod
+    def _max_connections(cls) -> int:
+        """Read Postgres's own ceiling rather than hardcoding it, so lowering
+        it in the compose file fails this test instead of production."""
+        command = cls._services()["postgres"]["command"]
+        setting = next(
+            part for part in command.split()
+            if part.startswith("max_connections=")
+        )
+        return int(setting.split("=", 1)[1])
+
+    @classmethod
+    def _worst_case(cls, service: dict) -> int:
+        env = service["environment"]
+        return (
+            int(env.get("AIRFLOW__DATABASE__SQL_ALCHEMY_POOL_SIZE", cls._DEFAULT_POOL_SIZE))
+            + int(env.get("AIRFLOW__DATABASE__SQL_ALCHEMY_MAX_OVERFLOW", cls._DEFAULT_MAX_OVERFLOW))
+        )
+
+    def test_apiserver_pool_is_sized_above_the_stock_default(self):
+        env = self._services()["airflow-apiserver"]["environment"]
+        assert int(env["AIRFLOW__DATABASE__SQL_ALCHEMY_POOL_SIZE"]) > self._DEFAULT_POOL_SIZE
+        assert int(env["AIRFLOW__DATABASE__SQL_ALCHEMY_MAX_OVERFLOW"]) > self._DEFAULT_MAX_OVERFLOW
+
+    def test_pool_settings_are_not_on_the_shared_anchor(self):
+        """The anchor reaches four long-running services at once. A pool set
+        there is the version of this fix that trades an apiserver outage for a
+        Postgres-side one."""
+        services = self._services()
+        for name in self._LONG_RUNNING - {"airflow-apiserver"}:
+            env = services[name]["environment"]
+            assert "AIRFLOW__DATABASE__SQL_ALCHEMY_POOL_SIZE" not in env, (
+                f"{name} inherited a pool size; it was set on the shared anchor"
+            )
+            assert "AIRFLOW__DATABASE__SQL_ALCHEMY_MAX_OVERFLOW" not in env
+
+    def test_every_airflow_service_is_accounted_for(self):
+        """If a fifth long-running Airflow service is added, the budget below
+        silently stops covering it. Fail here instead."""
+        services = self._services()
+        airflow_services = {
+            name for name, service in services.items()
+            if service.get("image") == "cartracker-airflow"
+        }
+        assert airflow_services == self._LONG_RUNNING | {"airflow-init"}
+
+    def test_airflow_worst_case_stays_within_max_connections(self):
+        services = self._services()
+        total = sum(self._worst_case(services[name]) for name in self._LONG_RUNNING)
+        assert total < self._max_connections(), (
+            f"Airflow's worst-case pool total is {total} against "
+            f"max_connections={self._max_connections()}"
+        )
+
+
 class TestNodeExporterFilesystemVisibility:
     """Plan 135 Stage 1: without --path.rootfs, node-exporter reads the host
     mount table, sees /dev/sdb at /mnt/data, then statfs()es it inside its own
@@ -592,6 +676,13 @@ class TestGrafanaAlertingProvisioning:
         condition = rule["data"][-1]["model"]["conditions"][0]["evaluator"]
         assert condition["type"] == "gt"
         assert condition["params"] == [0]
+
+    def test_pipeline_failures_cannot_match_a_label_less_series(self):
+        """Plan 136 Stage 0c. The summary renders {{ $labels.dag_id }}, so a
+        series without that label produced a second instance reading
+        "DAG [no value] failed" beside the real one."""
+        rule = self._rule("ct-pipeline-failures")
+        assert 'dag_id!=""' in rule["data"][0]["model"]["expr"]
 
     def test_inode_rules_cover_the_same_filesystems_as_the_byte_rules(self):
         """Plan 135 Stage 3. If the two families drift apart, one disk gets

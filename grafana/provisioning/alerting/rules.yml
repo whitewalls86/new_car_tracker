@@ -153,7 +153,12 @@ groups:
               from: 600
               to: 0
             model:
-              expr: 'increase(airflow_dagrun_duration_failed_count[10m])'
+              # Plan 136 Stage 0c: statsd-exporter also carries a series with
+              # no dag_id label, which matched this expression and rendered as
+              # a second instance reading "DAG [no value] failed". One failure
+              # must produce one alert, or triage starts by chasing a DAG that
+              # does not exist.
+              expr: 'increase(airflow_dagrun_duration_failed_count{dag_id!=""}[10m])'
           - refId: B
             datasourceUid: "__expr__"
             relativeTimeRange:
