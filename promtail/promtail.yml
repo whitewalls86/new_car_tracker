@@ -3,7 +3,8 @@ server:
   grpc_listen_port: 0
 
 positions:
-  filename: /tmp/positions.yaml
+  # Survive Promtail recreation so retained Docker stdout is not replayed.
+  filename: /positions/positions.yaml
 
 clients:
   - url: http://loki:3100/loki/api/v1/push
@@ -29,6 +30,18 @@ scrape_configs:
         replacement: '$1'
     pipeline_stages:
       - docker: {}
+      # Airflow's control-plane containers emit high-volume framework INFO
+      # chatter. DAG and application logs are collected separately, so retain
+      # warnings/errors here without flooding the all-services dashboard.
+      - match:
+          selector: '{service=~"airflow-(apiserver|scheduler|dag-processor)"}'
+          stages:
+            - drop:
+                expression: '.*\[info\s*\].*'
+                drop_counter_reason: airflow_control_plane_info
+            - drop:
+                expression: '.*"GET /(api/v2/monitor/)?health HTTP/1\.1" 200.*'
+                drop_counter_reason: airflow_health_access
       - labels:
           stream:
 

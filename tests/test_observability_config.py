@@ -99,6 +99,30 @@ class TestPrometheusAndLokiConfig:
         mounts = compose["services"]["promtail"]["volumes"]
         assert "/var/run/docker.sock:/var/run/docker.sock:ro" in mounts
         assert "/var/lib/docker/containers:/var/lib/docker/containers:ro" in mounts
+        assert "promtail_positions:/positions" in mounts
+
+        promtail = yaml.safe_load(
+            (_REPO_ROOT / "promtail" / "promtail.yml").read_text()
+        )
+        assert promtail["positions"]["filename"] == "/positions/positions.yaml"
+
+    def test_airflow_container_info_noise_is_dropped_at_ingestion(self):
+        promtail = yaml.safe_load(
+            (_REPO_ROOT / "promtail" / "promtail.yml").read_text()
+        )
+        job = next(
+            item for item in promtail["scrape_configs"]
+            if item["job_name"] == "docker-operations"
+        )
+        match = next(stage["match"] for stage in job["pipeline_stages"] if "match" in stage)
+        assert match["selector"] == (
+            '{service=~"airflow-(apiserver|scheduler|dag-processor)"}'
+        )
+        drops = [stage["drop"] for stage in match["stages"]]
+        assert {drop["drop_counter_reason"] for drop in drops} == {
+            "airflow_control_plane_info",
+            "airflow_health_access",
+        }
 
     def test_docker_29_compatible_promtail_and_nonempty_stream_labels(self):
         compose = yaml.safe_load((_REPO_ROOT / "docker-compose.yml").read_text())
