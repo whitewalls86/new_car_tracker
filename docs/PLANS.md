@@ -16,8 +16,8 @@ operational state. MinIO stores bronze HTML and analytical history. dbt
 currently runs on DuckDB against MinIO silver, but DuckDB is now considered a
 transition analytics endpoint rather than the future platform target.
 
-**Now:** Plan 135 is complete. Finish the small verification-only closeouts
-already in flight. Spend the hour on Plan 139 Stages A+B first, so the CI path every plan
+**Now:** Plan 120's final Gate F production verification is complete. Spend the
+hour on Plan 139 Stages A+B first, so the CI path every plan
 below pays stops costing 333s. Then take Plan 136 through observable liveness and
 a drain-aware scheduled recycle before granting the automatic circuit breaker
 restart authority, and continue straight into Plan 140, which generalizes 136's
@@ -71,9 +71,8 @@ observation window is written separately and does not inflate coding effort.
 
 ## Current closeout -- finish before opening another large build
 
-| Order | Plan | Remaining work | Priority | Effort | Exit / dependency |
-|---:|---|---|---:|---|---|
-| 0.1 | [120](plan_120_ci_lake_snapshot_delivery.md) | Complete the remaining VM/Gate F verification | 82 | S | Required before Plan 125 relies on the snapshot path as a release gate |
+No open closeouts. Plan 120's authenticated production download and checksum
+round trip was verified on 2026-08-18.
 
 ## Default build order
 
@@ -159,7 +158,7 @@ free.
 | [114](plan_114_sectioned_html_artifact_audit.md) | Sectioned HTML artifact audit | Complete - sectioned storage rejected on measured results |
 | [115](plan_115_detail_unenriched_circuit_breaker.md) | Detail unenriched circuit breaker | Implemented - closeout record pending |
 | [119](plan_119_lakehouse_governance.md) | Lakehouse governance + catalog expansion | Draft |
-| [120](plan_120_ci_lake_snapshot_delivery.md) | CI + local lake snapshot delivery | Built through Gate F - VM verification pending |
+| [120](plan_120_ci_lake_snapshot_delivery.md) | CI + local lake snapshot delivery | **Complete 2026-08-18** — Gate F production download and checksum round trip verified |
 | [121](plan_121_staging_environment.md) | Staging environment | Draft |
 | [124](plan_124_trawl_memory_guardrails.md) | Trawl browser solver memory guardrails | **Complete** - verified in production 2026-08-18; zero host-wide OOM since deployment |
 | [125](plan_125_duckdb_to_iceberg_migration.md) | DuckDB to Iceberg analytics migration | Gates 0.5, 0, A, and B complete; Gate C measurement next |

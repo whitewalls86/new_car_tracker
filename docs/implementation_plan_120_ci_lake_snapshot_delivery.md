@@ -1207,8 +1207,10 @@ Gate names for the next commits:
    consume this archive/manifest contract via the existing
    `scripts/download_lake_snapshot.py`/`scripts/seed_lake_snapshot.py`
    scripts rather than inventing a second packaging format.
-7. **Gate F - ops download API:** complete when authenticated latest/manifest/
-   download routes can serve an existing snapshot archive.
+7. **Gate F - ops download API:** complete and production-verified
+   (2026-08-18). Authenticated latest/manifest/download routes served
+   `adaptive-refresh-2026-07-15-181719`; the 665,711-byte archive matched its
+   published SHA-256 and completed the downloader round trip.
 8. **Gate G - end-to-end smoke:** complete when the VM can generate an `edge`
    snapshot and a local/CI-like environment can download, verify, seed, and run
    a small dbt/Spark smoke test.
