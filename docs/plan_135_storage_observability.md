@@ -25,12 +25,77 @@ setting is what is holding, and it would revert if the container restarted.
 
 Everything else in this plan is still outstanding.
 
-### Stages 1-3 built 2026-08-17 — not yet deployed
+### Stages 1-3 shipped and validated in production 2026-08-17
 
-The node-exporter fix, the three inode rules and the five dashboard panels are
-committed. **None of it is live**: the fix needs a node-exporter restart and the
-rules/panels need a `cartracker-grafana` restart, both of which are production
-changes awaiting confirmation. Until then `/mnt/data` remains invisible.
+Merged as PR #204 (`d3a82e7`). Success criteria 1-4 are met; criterion 3's
+fire test is recorded below.
+
+**`docker restart` is not enough for node-exporter, and this is the opposite of
+the Grafana rule.** Grafana needs `docker restart` because only the *contents*
+of a bind-mounted file changed and compose sees no config drift. node-exporter
+changed its `command:` — a service *config* change — and `docker restart`
+reuses the existing container's config, so the flags were silently unchanged.
+The container came back "Up About a minute" looking healthy while
+`docker inspect --format '{{json .Args}}'` still showed the old three flags.
+**It needs `docker compose up -d node-exporter`**, which recreates it.
+
+That half-deployed state is worth naming, because it is the exact trap this
+plan warned about arriving by a route the plan did not anticipate: Grafana had
+loaded all three inode rules and they were live, green, and evaluating `/` at
+8.56% with no `/mnt/data` series in existence. Alerts that look healthy
+forever. Always check `.Args`, not container uptime.
+
+| Check | Result |
+|---|---|
+| `node_filesystem_device_error{mountpoint="/mnt/data"}` | **0** |
+| `node_filesystem_size_bytes{mountpoint="/mnt/data"}` | 2.10241560576e+11 |
+| `node_filesystem_files{mountpoint="/mnt/data"}` | 13,107,200 |
+| **`mountpoint="/"` label** | **intact, no `/rootfs` prefix** — both disk alerts still match |
+| `ramfs` credentials mount | **no series** — the exclusion worked |
+| Byte + inode alert expressions | resolve to exactly `/` and `/mnt/data`, nothing else |
+| Forecast on `/mnt/data` | **+9,067,736** (was empty pre-fix) |
+| All 4 capacity rules | `health: ok`, **2 instances each** |
+
+**One number that looks wrong and is not.** The byte expression reads
+`/mnt/data` at 43.4% while `df` reports 41%. `size - avail` includes ext4's 5%
+reserved blocks; `df`'s Use% excludes them. Same for `/`: 63.8% against 64%.
+Expected, and worth not re-investigating.
+
+### The inode alert, fired on purpose
+
+Criterion 3 asks for a demonstrated fire, by lowering a threshold rather than
+filling a disk. Done twice with a temporary rule (`>5%` instead of `>80%`,
+`for: 0s`, in its own `plan-135-fire-test` group so it could not disturb
+`infra-and-data-health`), created and deleted through the provisioning API:
+
+| | |
+|---|---|
+| State reached | **`firing`** |
+| Instances | **2 — `/` and `/mnt/data`, both `Alerting`** |
+| The negative direction | the real rule at `>80%` stays `Normal` on the same data |
+| Cleanup | rule deleted (204), 15 provisioned rules remain, no `plan-135-fire-test` group |
+
+The `/mnt/data` instance is the whole point: before Stage 1 that instance could
+not have existed.
+
+**The first attempt proved something else by accident.** The rule fired at
+22:27:50 and was deleted at 22:28:07 — but the notification policy's
+`group_wait` is **30s**, so dispatch was not due until 22:28:20. Deleting the
+rule 13 seconds early resolved the alert and cancelled the pending
+notification. Nothing was broken; the test was simply faster than the
+notifier. **A fire test has to outlive `group_wait` or it proves only half the
+path.** The re-run held 75s past firing.
+
+The Telegram leg was then proven directly rather than inferred from silence:
+`POST /api/alertmanager/grafana/config/api/v1/receivers/test` returned
+`status: ok` with a `notified_at` timestamp, and **delivery to the handset was
+confirmed by the recipient**. Successful notifier sends are logged at debug, so
+an empty `docker logs | grep -i telegram` is not evidence of a failed delivery
+— do not read it as one.
+
+So the full chain is proven end to end: node-exporter exports the volume →
+Prometheus stores it → the rule evaluates it → the threshold trips → the
+notification policy dispatches → Telegram delivers.
 
 ### Re-measured on the VM, 2026-08-17
 
@@ -586,6 +651,46 @@ The derived metric worth alerting on later is
 — the true MinIO amplification factor, with non-MinIO volumes excluded.
 Today that number is ~1.35.
 
+#### Stage 4 as built (2026-08-17)
+
+Four decisions the stage spec left open, settled with reasons.
+
+**One `.prom` file, not two.** The obvious shape is a cheap daily file plus an
+expensive weekly one, which makes carry-forward free — node-exporter keeps
+serving the weekly file untouched. It does not work: splitting a metric family
+across two files makes node-exporter rewrite the HELP text to name both files
+and then reject the second as inconsistent
+([node_exporter#1885](https://github.com/prometheus/node_exporter/issues/1885)).
+So the previous file is parsed as the input to the next one, exactly as the
+stage spec said.
+
+**Every series either gets a fresh measurement or keeps its previous value
+*with its previous timestamp*.** A skipped weekly walk and a failed walk are
+deliberately indistinguishable in the gauge, and
+`cartracker_disk_usage_measured_timestamp_seconds` is the only thing that
+separates either from a live reading. This is per-series rather than per-run
+because carry-forward means two series in one file can legitimately have been
+measured a week apart — it is not a competing convention to Plan 136's
+`cartracker_metrics_last_success_timestamp_seconds`, and should fold into it if
+that turns out to subsume it. The `Measurement Age` panel charts it.
+
+**`du -s -x --block-size=1`, not `-b`.** `--block-size=1` reports allocated
+blocks; `-b` reports apparent size. The per-object floor this plan exists to
+expose is *invisible* in apparent size, so `-b` would have produced a panel
+that confirms the wrong number. `-x` stops at the filesystem boundary so a
+nested bind mount cannot be counted into a total it does not belong to.
+
+**Per-path read-only mounts on pack-worker, not `/:/rootfs:ro`.** node-exporter
+already binds the host root, so there was precedent for the convenient version.
+pack-worker holds DB and MinIO credentials, and the watchlist is fixed *by
+design* — adding a path should be a deliberate edit to `docker-compose.yml`,
+not a side effect of editing a list in Python. It gets exactly the five
+directories it measures. The job lives on pack-worker for the same reason
+Plan 131 D4 put packing there: a 20-minute walk must not starve
+flush/cleanup/compact. `DISK_USAGE_TEXTFILE_DIR` being unset on the regular
+archiver *is* the refusal — without the mounts every measurement fails and an
+empty `.prom` would read as "the disks are empty".
+
 ### Stage 5 — Give each stream one job
 
 Applying the buffer/store split above. Note that Stream A (app file logs →
@@ -757,14 +862,15 @@ be reached for.
 
 ## Success Criteria
 
-1. `node_filesystem_device_error{mountpoint="/mnt/data"}` is `0` and both bytes
-   and inode series are present for `/dev/sdb`.
-2. The Infrastructure dashboard shows filesystem %, inode %, and the
-   logical-vs-physical divergence for both volumes.
-3. Inode alerts exist and have been shown to fire (test by lowering the
-   threshold temporarily, not by filling the disk).
-4. The originating question — "why 61 vs 97?" — is answerable from the
-   dashboard without SSH.
+1. ✅ **Met 2026-08-17.** `node_filesystem_device_error{mountpoint="/mnt/data"}`
+   is `0` and both bytes and inode series are present for `/dev/sdb`.
+2. ✅ **Met 2026-08-17.** The Infrastructure dashboard shows filesystem %,
+   inode %, and the logical-vs-physical divergence for both volumes.
+3. ✅ **Met 2026-08-17.** Inode alerts exist and have been shown to fire
+   (threshold lowered temporarily; Telegram delivery confirmed).
+4. ✅ **Met 2026-08-17.** The originating question — "why 61 vs 97?" — is
+   answerable from the dashboard without SSH: the logical-vs-physical panel
+   shows the divergence and the amplification panel quantifies it.
 5. "What is filling `/`?" and "what is filling `/mnt/data`?" are each answerable
    from one panel, without SSH.
 6. No log source grows without bound: Docker json-file capped, Loki retention

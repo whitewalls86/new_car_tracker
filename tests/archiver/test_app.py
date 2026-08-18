@@ -1076,3 +1076,83 @@ class TestReady:
         assert resp.status_code == 503
         assert resp.json()["detail"]["ready"] is False
         assert "reason" in resp.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# POST /disk-usage/run  (Plan 135 Stage 4)
+# ---------------------------------------------------------------------------
+
+class TestDiskUsageEndpoint:
+    def test_refused_without_the_host_mounts(self, mock_archiver_client, mocker):
+        """The regular archiver cannot see the disks. Without this guard it
+        would measure nothing, write an empty .prom, and return 200 -- which
+        reads as "the disks are empty" rather than as a misconfiguration."""
+        import archiver.app as archiver_app
+        from shared.job_counter import is_idle
+
+        mocker.patch.object(archiver_app, "_disk_usage_textfile_dir", return_value=None)
+        processor = mocker.patch.object(archiver_app, "_run_disk_usage")
+
+        resp = mock_archiver_client.post("/disk-usage/run", json={})
+
+        assert resp.status_code == 409
+        detail = resp.json()["detail"]
+        assert "pack-worker" in detail
+        assert "http://pack-worker:8001" in detail
+        assert "DISK_USAGE_TEXTFILE_DIR" in detail
+        processor.assert_not_called()
+        assert is_idle(), "the guard must run before active_job()"
+
+    def test_daily_run_defaults_to_skipping_minio(self, mock_archiver_client, mocker):
+        """The expensive walk must be opt-in: defaulting it on would put a
+        20-minute disk thrash on every daily run."""
+        import archiver.app as archiver_app
+
+        mocker.patch.object(
+            archiver_app, "_disk_usage_textfile_dir", return_value="/textfile"
+        )
+        processor = mocker.patch.object(
+            archiver_app, "_run_disk_usage",
+            return_value={"failed": 0, "measured": 10, "unpublished": []},
+        )
+
+        resp = mock_archiver_client.post("/disk-usage/run", json={})
+
+        assert resp.status_code == 200
+        processor.assert_called_once_with(include_minio=False)
+
+    def test_weekly_run_passes_the_flag_through(self, mock_archiver_client, mocker):
+        import archiver.app as archiver_app
+
+        mocker.patch.object(
+            archiver_app, "_disk_usage_textfile_dir", return_value="/textfile"
+        )
+        processor = mocker.patch.object(
+            archiver_app, "_run_disk_usage",
+            return_value={"failed": 0, "measured": 11, "unpublished": []},
+        )
+
+        resp = mock_archiver_client.post("/disk-usage/run", json={"include_minio": True})
+
+        assert resp.status_code == 200
+        processor.assert_called_once_with(include_minio=True)
+
+    def test_failed_measurement_is_a_500_not_a_quiet_200(
+        self, mock_archiver_client, mocker
+    ):
+        """Carried-forward values look identical to fresh ones in the gauge, so
+        the run is the only place a failure can surface."""
+        import archiver.app as archiver_app
+
+        mocker.patch.object(
+            archiver_app, "_disk_usage_textfile_dir", return_value="/textfile"
+        )
+        mocker.patch.object(
+            archiver_app, "_run_disk_usage",
+            return_value={"failed": 2, "measured": 8, "unpublished": ["/usr", "/tmp"]},
+        )
+
+        resp = mock_archiver_client.post("/disk-usage/run", json={})
+
+        assert resp.status_code == 500
+        assert resp.json()["detail"]["unpublished"] == ["/usr", "/tmp"]

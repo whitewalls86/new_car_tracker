@@ -14,6 +14,8 @@ from archiver.processors.compact_silver import compact_silver as _compact_silver
 from archiver.processors.delete_packed_source_html import (
     delete_packed_source_html as _delete_packed_source_html,
 )
+from archiver.processors.disk_usage import run_disk_usage as _run_disk_usage
+from archiver.processors.disk_usage import textfile_dir as _disk_usage_textfile_dir
 from archiver.processors.export_ci_lake_snapshot import (
     SnapshotRequest,
     SnapshotRequestError,
@@ -378,6 +380,51 @@ def trigger_flush_staging() -> Dict[str, Any]:
     """Flush all staging event tables to MinIO Parquet (Airflow DAG trigger)."""
     with active_job():
         return _flush_staging_events()
+
+
+def _require_disk_usage_host_mounts() -> None:
+    """Refuse the disk walk on a service that cannot see the disks.
+
+    Only pack-worker carries the read-only host mounts and the writable
+    textfile volume. Without them every measurement fails and the job would
+    still cheerfully write a .prom with nothing in it -- which reads as
+    "the disks are empty" rather than as an error.
+    """
+    if _disk_usage_textfile_dir():
+        return
+    raise HTTPException(
+        status_code=409,
+        detail=(
+            "Disk usage measurement is not configured on this service. It runs "
+            "on pack-worker at http://pack-worker:8001, which carries the "
+            "read-only host mounts and the node-exporter textfile volume. Set "
+            "DISK_USAGE_TEXTFILE_DIR to enable it elsewhere."
+        ),
+    )
+
+
+@app.post("/disk-usage/run")
+def trigger_disk_usage(payload: dict = Body(default={})) -> Dict[str, Any]:
+    """Measure the disk watchlist and publish it via node-exporter (Plan 135 Stage 4).
+
+    ``include_minio: true`` adds the ~4M-inode MinIO volume, which takes 20+
+    minutes and belongs on the weekly run only. Everything else is walked on
+    every call and the MinIO value is carried forward in between.
+
+    Returns **500** when a scheduled measurement failed, so a silently empty
+    band on the dashboard cannot pass as a successful run.
+    """
+    _require_disk_usage_host_mounts()
+    with active_job():
+        payload = payload or {}
+        result = _run_disk_usage(include_minio=bool(payload.get("include_minio", False)))
+        if result["failed"]:
+            logger.error(
+                "disk_usage: %d watchlist target(s) could not be measured: %s",
+                result["failed"], result["unpublished"],
+            )
+            raise HTTPException(status_code=500, detail=result)
+        return result
 
 
 @app.post("/snapshots/adaptive-refresh/run")

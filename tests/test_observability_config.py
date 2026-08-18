@@ -203,6 +203,68 @@ class TestNodeExporterFilesystemVisibility:
         assert "run/credentials/.+" in exclude
 
 
+class TestDiskWatchlistWiring:
+    """Plan 135 Stage 4: pack-worker measures, node-exporter publishes.
+
+    The wiring is the fragile part -- every mistake here fails silently. A
+    read-only textfile mount on the writer, a missing collector flag, or the
+    env var on the wrong service all produce a healthy-looking stack with no
+    metrics.
+    """
+
+    @staticmethod
+    def _services():
+        path = _REPO_ROOT / "docker-compose.yml"
+        doc = yaml.safe_load(path.read_text())
+        return doc["services"]
+
+    @staticmethod
+    def _volumes():
+        path = _REPO_ROOT / "docker-compose.yml"
+        return yaml.safe_load(path.read_text())["volumes"]
+
+    def test_node_exporter_reads_the_textfile_directory(self):
+        node_exporter = self._services()["node-exporter"]
+        assert "--collector.textfile.directory=/textfile" in node_exporter["command"]
+        assert "node_textfile:/textfile:ro" in node_exporter["volumes"]
+
+    def test_pack_worker_can_write_the_textfile_directory(self):
+        """Same volume, and this side must NOT be :ro."""
+        assert "node_textfile:/textfile" in self._services()["pack-worker"]["volumes"]
+
+    def test_textfile_volume_is_declared(self):
+        assert "node_textfile" in self._volumes()
+
+    def test_pack_worker_mounts_every_watched_root_path_read_only(self):
+        from archiver.processors.disk_usage import DEFAULT_ROOT_PREFIX, ROOT_PATHS
+
+        volumes = self._services()["pack-worker"]["volumes"]
+        for path in ROOT_PATHS:
+            assert f"{path}:{DEFAULT_ROOT_PREFIX}{path}:ro" in volumes, (
+                f"{path} is on the watchlist but not mounted"
+            )
+
+    def test_pack_worker_mounts_the_docker_volume_root_read_only(self):
+        from archiver.processors.disk_usage import DEFAULT_VOLUME_PREFIX
+
+        volumes = self._services()["pack-worker"]["volumes"]
+        assert f"/mnt/data/docker-volumes:{DEFAULT_VOLUME_PREFIX}:ro" in volumes
+
+    def test_the_job_is_enabled_on_pack_worker_only(self):
+        """Its absence on archiver is the 409 -- see _require_disk_usage_host_mounts."""
+        services = self._services()
+        assert services["pack-worker"]["environment"]["DISK_USAGE_TEXTFILE_DIR"] == "/textfile"
+        assert "DISK_USAGE_TEXTFILE_DIR" not in services["archiver"]["environment"]
+
+    def test_host_mounts_are_not_granted_to_the_regular_archiver(self):
+        """pack-worker gets the host paths because it needs them; archiver
+        holds the same credentials and does not."""
+        assert not [
+            volume for volume in self._services()["archiver"]["volumes"]
+            if volume.startswith("/")
+        ]
+
+
 class TestCaddySnapshotDownloadRoute:
     """Plan 120 Gate F: script-token snapshot downloads must reach ops
     directly instead of being intercepted by the browser OAuth /admin* block."""
@@ -305,6 +367,50 @@ class TestGrafanaDashboards:
         ]
         assert any("minio_bucket_usage_object_total" in e for e in exprs)
         assert not any("minio_bucket_objects_size_distribution" in e for e in exprs)
+
+    def test_infrastructure_answers_what_is_filling_each_disk(self):
+        """Plan 135 Stage 4, success criterion 5: one panel per disk."""
+        exprs = [
+            t["expr"]
+            for p in self._infrastructure_panels() for t in p.get("targets", [])
+        ]
+        assert any("cartracker_path_bytes" in e for e in exprs), "no root-disk panel"
+        assert any("cartracker_volume_bytes" in e for e in exprs), "no /mnt/data panel"
+
+    def test_disk_breakdown_panels_are_stacked(self):
+        """The question is always "which band grew", which unstacked lines
+        cannot answer and which a stacked total also reconciles against df."""
+        for metric in ("cartracker_path_bytes", "cartracker_volume_bytes"):
+            panel = next(
+                p for p in self._infrastructure_panels()
+                if any(metric in t["expr"] for t in p.get("targets", []))
+                and p["type"] == "timeseries"
+            )
+            stacking = panel["fieldConfig"]["defaults"]["custom"]["stacking"]
+            assert stacking["mode"] == "normal"
+
+    def test_measurement_age_is_charted(self):
+        """The MinIO volume is walked weekly and carried forward in between, so
+        a frozen band is only distinguishable from a flat one by its age."""
+        exprs = [
+            t["expr"]
+            for p in self._infrastructure_panels() for t in p.get("targets", [])
+        ]
+        assert any(
+            "cartracker_disk_usage_measured_timestamp_seconds" in e for e in exprs
+        )
+
+    def test_watchlist_metric_names_match_the_processor(self):
+        """The dashboard and the writer must not drift apart silently."""
+        from archiver.processors import disk_usage
+
+        exprs = " ".join(
+            t["expr"]
+            for p in self._infrastructure_panels() for t in p.get("targets", [])
+        )
+        for metric in (disk_usage.PATH_METRIC, disk_usage.VOLUME_METRIC,
+                       disk_usage.MEASURED_AT_METRIC):
+            assert metric in exprs, f"{metric} is written but never charted"
 
     def test_minio_logical_panel_is_not_titled_as_disk_usage(self):
         """"MinIO Storage Used" is what made a payload-bytes gauge read as a df

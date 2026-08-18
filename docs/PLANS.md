@@ -88,6 +88,12 @@ because it is smaller while a higher row has an executable next step.
 | 12 | [126](plan_126_basic_event_streaming.md) | Basic event streaming | Prove transport, replay, and one low-risk consumer | 49 | XL | Plans 125 and 112/113 clarify stable event semantics |
 | 13 | [127](plan_127_streaming_adaptive_scrape_control.md) | Streaming adaptive scrape control | Add closed-loop control behind batch-parity and rollback gates | 42 | XL | Plan 126 plus approved Plan 112/113 behavior |
 
+Plan [139](plan_139_test_suite_maintenance.md) (test suite maintenance) is
+deliberately unranked here: it is a skeleton of measurements, and only step 2 —
+covering `ops/metrics/duckdb_gauges.py` at 25% — has a real dependency, since
+Plan 136 Stage 1 builds its staleness convention on that module. Pull that step
+forward with Plan 136; the rest is opportunistic.
+
 Plan 136 Stage 4 is deliberately not part of the first slice: it grants restart
 authority and should start only after Stage 2's outcome counters have established
 a trustworthy baseline. Plan 134's observation window may run while Plans 133 or
@@ -137,6 +143,7 @@ the evidence is ready.
 | [136](plan_136_solver_recycle_and_liveness.md) | Solver recycle + real liveness detection | Draft — written after the 2026-08-14 8h trawl outage no alert caught |
 | [137](plan_137_legacy_bronze_parquet_disposition.md) | Legacy bronze Parquet recovery and disposition | Draft — read-only inventory complete; no deletion authorized |
 | [138](plan_138_public_surface_refresh.md) | README and public portfolio surface refresh | Draft — audit complete; implementation not started |
+| [139](plan_139_test_suite_maintenance.md) | Test suite construction and maintenance | Skeleton — measured 2026-08-17, decisions not yet made |
 
 ---
 
