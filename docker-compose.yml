@@ -475,6 +475,8 @@ services:
     image: quay.io/oauth2-proxy/oauth2-proxy:latest
     container_name: cartracker-oauth2-proxy
     restart: unless-stopped
+    labels:
+      promtail.enable: "true"
     command: --config=/etc/oauth2-proxy/oauth2-proxy.cfg --reverse-proxy=true
     volumes:
       - ./oauth2-proxy/oauth2-proxy.cfg:/etc/oauth2-proxy/oauth2-proxy.cfg:ro
@@ -558,6 +560,8 @@ services:
     <<: *airflow-common
     command: api-server --proxy-headers
     container_name: cartracker-airflow-apiserver
+    labels:
+      promtail.enable: "true"
     ports:
       - "8080:8080"
     environment:
@@ -579,6 +583,8 @@ services:
     <<: *airflow-common
     command: scheduler
     container_name: cartracker-airflow-scheduler
+    labels:
+      promtail.enable: "true"
     healthcheck:
       test: ["CMD", "curl", "--fail", "http://localhost:8974/health"]
       interval: 30s
@@ -595,6 +601,8 @@ services:
     <<: *airflow-common
     command: dag-processor
     container_name: cartracker-airflow-dag-processor
+    labels:
+      promtail.enable: "true"
     healthcheck:
       test: ["CMD-SHELL", 'airflow jobs check --job-type DagProcessorJob --hostname "$${HOSTNAME}"']
       interval: 30s

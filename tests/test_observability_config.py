@@ -6,7 +6,6 @@ to catch syntax errors before they cause silent startup failures in production c
 No external services required.
 """
 import json
-import re
 from pathlib import Path
 
 import yaml
@@ -74,16 +73,20 @@ class TestPrometheusAndLokiConfig:
             job for job in doc["scrape_configs"]
             if job["job_name"] == "docker-operations"
         )
-        keep = next(rule for rule in job["relabel_configs"] if rule.get("action") == "keep")
-        regex = keep["regex"]
-        for name in (
+        filters = job["docker_sd_configs"][0]["filters"]
+        assert filters == [{"name": "label", "values": ["promtail.enable=true"]}]
+
+        compose = yaml.safe_load((_REPO_ROOT / "docker-compose.yml").read_text())
+        selected = {
+            name for name, service in compose["services"].items()
+            if service.get("labels", {}).get("promtail.enable") == "true"
+        }
+        assert selected == {
             "oauth2-proxy",
             "airflow-dag-processor",
             "airflow-scheduler",
             "airflow-apiserver",
-        ):
-            assert re.fullmatch(regex, f"/cartracker-{name}")
-        assert "loki" not in regex
+        }
 
     def test_stage_5_retention_is_single_90_day_policy(self):
         loki = yaml.safe_load((_REPO_ROOT / "loki" / "loki.yml").read_text())
