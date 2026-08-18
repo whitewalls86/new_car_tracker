@@ -1,10 +1,12 @@
 """Plan 135 Stage 4: publish what is filling each disk.
 
-Runs daily and walks the root disk plus the small Docker volumes, which is
-cheap. The MinIO volume is ~4M inodes and a ``du`` over it has run 20+ minutes
-without finishing, so it is walked once a week, off-peak, and carried forward
-in between. See ``archiver/processors/disk_usage.py`` for why that carry-forward
-lives in the .prom file rather than in a second file.
+Runs daily and walks the root disk plus the low-inode Docker volumes, which is
+cheap. The high-inode volumes -- MinIO bronze (~4M inodes) and Airflow task
+logs (~1.2M) -- cost minutes to tens of minutes, because ``du``'s cost scales
+with inodes rather than bytes. They are walked once a week, off-peak, and
+carried forward in between. See ``archiver/processors/disk_usage.py`` for the
+tier criterion, and for why that carry-forward lives in the .prom file rather
+than in a second file.
 """
 
 import logging
@@ -14,7 +16,7 @@ PACK_WORKER_URL = "http://pack-worker:8001"
 
 # Sunday. The walk contends with live scraping, so it wants the quietest day at
 # the quietest hour rather than whichever day the DAG happened to be created.
-MINIO_WALK_WEEKDAY = 6
+SLOW_WALK_WEEKDAY = 6
 
 # The walk itself has run 20+ minutes; the timeout is deliberately far above
 # that so a slow week reports a number instead of a failure.
@@ -23,9 +25,9 @@ _LONG_JOB_TIMEOUT_SECONDS = 7_200
 logger = logging.getLogger(__name__)
 
 
-def should_include_minio(logical_date) -> bool:
-    """Whether this run walks the expensive MinIO volume."""
-    return logical_date.weekday() == MINIO_WALK_WEEKDAY
+def should_include_slow(logical_date) -> bool:
+    """Whether this run walks the expensive high-inode volumes."""
+    return logical_date.weekday() == SLOW_WALK_WEEKDAY
 
 
 def check_disk_usage_result(result: Dict[str, Any]) -> None:
@@ -47,7 +49,8 @@ def check_disk_usage_result(result: Dict[str, Any]) -> None:
     carried = result.get("carried_forward") or 0
     if carried:
         logger.info(
-            "disk_usage: %d series carried forward (MinIO walks weekly), %d measured",
+            "disk_usage: %d series carried forward (high-inode volumes walk "
+            "weekly), %d measured",
             carried, result["measured"],
         )
 
@@ -55,13 +58,13 @@ def check_disk_usage_result(result: Dict[str, Any]) -> None:
 def _run_disk_usage(**context):
     from sensors import post_json
 
-    include_minio = should_include_minio(context["logical_date"])
+    include_slow = should_include_slow(context["logical_date"])
     logger.info(
-        "disk_usage: walking the watchlist (include_minio=%s)", include_minio
+        "disk_usage: walking the watchlist (include_slow=%s)", include_slow
     )
     result = post_json(
         f"{PACK_WORKER_URL}/disk-usage/run",
-        payload={"include_minio": include_minio},
+        payload={"include_slow": include_slow},
         timeout=_LONG_JOB_TIMEOUT_SECONDS,
     )
     check_disk_usage_result(result)

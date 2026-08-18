@@ -486,9 +486,14 @@ Concretely:
 
 | Slice | Score | Effort | Placement |
 |---|---:|---|---|
-| **A + B** (coverage visible, CI path recovered) | 70 | XS | **Pull forward — alongside Plan 136/140** |
-| C (profile the 92s step) | 60 | S | Order ~11, after Plan 137 |
-| D (markers, gate decision, xdist) | 52 | S | Order ~12, or opportunistic filler |
+| **A + B** (coverage visible, CI path recovered) | 70 | XS | **Order 1** — ahead of Plan 136/140 |
+| C (profile the 92s step) | 60 | S | Order 13, after Plan 121 |
+| D (markers, gate decision, xdist) | 52 | S | Order 15, or opportunistic filler |
+
+Adopted in [PLANS.md](PLANS.md) 2026-08-17 as three separate rows in the default
+build order. That is the point of the split: a slice that is not a row is not
+covered by the "do not start a lower row while a higher one has an executable
+next step" rule, and A+B spent its first week invisible to exactly that rule.
 
 The adjacency argument that PLANS.md already makes for Plan 140 versus Plan 134
 applies here too: **Plan 140 Stage 3 edits CI test configuration, and Stage A+B

@@ -407,9 +407,10 @@ def _require_disk_usage_host_mounts() -> None:
 def trigger_disk_usage(payload: dict = Body(default={})) -> Dict[str, Any]:
     """Measure the disk watchlist and publish it via node-exporter (Plan 135 Stage 4).
 
-    ``include_minio: true`` adds the ~4M-inode MinIO volume, which takes 20+
-    minutes and belongs on the weekly run only. Everything else is walked on
-    every call and the MinIO value is carried forward in between.
+    ``include_slow: true`` adds the high-inode volumes (MinIO bronze, Airflow
+    task logs), which between them take 20+ minutes and belong on the weekly
+    run only. Everything else is walked on every call and the slow-tier values
+    are carried forward in between.
 
     Returns **500** when a scheduled measurement failed, so a silently empty
     band on the dashboard cannot pass as a successful run.
@@ -417,7 +418,7 @@ def trigger_disk_usage(payload: dict = Body(default={})) -> Dict[str, Any]:
     _require_disk_usage_host_mounts()
     with active_job():
         payload = payload or {}
-        result = _run_disk_usage(include_minio=bool(payload.get("include_minio", False)))
+        result = _run_disk_usage(include_slow=bool(payload.get("include_slow", False)))
         if result["failed"]:
             logger.error(
                 "disk_usage: %d watchlist target(s) could not be measured: %s",

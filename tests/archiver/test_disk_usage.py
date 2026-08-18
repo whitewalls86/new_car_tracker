@@ -11,6 +11,36 @@ import pytest
 from archiver.processors import disk_usage
 
 
+class TestWalkTiers:
+    """The tier criterion, which is the assumption that failed in production.
+
+    ``cartracker_airflow_logs`` was daily because 6.3 GiB reads as small. It
+    holds ~1.2M inodes -- twice the whole root filesystem -- and ``du``'s cost
+    is O(inodes), so it took 397s of a 456s walk. These tests exist so the next
+    person to add a volume cannot classify it on size again without failing.
+    """
+
+    def test_airflow_logs_is_in_the_slow_tier(self):
+        """The regression pin. Small on disk, enormous in inodes."""
+        assert "cartracker_airflow_logs" in disk_usage.HIGH_INODE_VOLUMES
+        assert "cartracker_airflow_logs" not in disk_usage.DAILY_VOLUMES
+
+    def test_tier_membership_is_decided_by_inodes(self):
+        """A volume may only be promoted to the slow tier on a recorded inode
+        measurement. Without this, "it looks big" is enough again."""
+        for volume in disk_usage.HIGH_INODE_VOLUMES:
+            assert volume in disk_usage.MEASURED_INODES, (
+                f"{volume} is walked weekly but no inode count justifies it; "
+                "measure it with `find <path> | wc -l` and record the number"
+            )
+            assert disk_usage.MEASURED_INODES[volume] >= 1_000_000
+
+    def test_the_tiers_are_disjoint(self):
+        """A volume in both would be walked twice on the weekly run and
+        double-counted in the stacked panel."""
+        assert not set(disk_usage.DAILY_VOLUMES) & set(disk_usage.HIGH_INODE_VOLUMES)
+
+
 class TestMeasurePath:
     def test_reports_physical_bytes(self, tmp_path, monkeypatch):
         calls = {}
@@ -159,54 +189,58 @@ class TestRunDiskUsage:
         with pytest.raises(RuntimeError, match="pack-worker"):
             disk_usage.run_disk_usage()
 
-    def test_daily_run_skips_the_minio_volume(self, tmp_path, measured):
-        result = disk_usage.run_disk_usage(include_minio=False, directory=str(tmp_path))
+    def test_daily_run_skips_every_high_inode_volume(self, tmp_path, measured):
+        result = disk_usage.run_disk_usage(include_slow=False, directory=str(tmp_path))
         published = disk_usage.parse_previous(
             (tmp_path / disk_usage.TEXTFILE_NAME).read_text()
         )
-        assert (disk_usage.VOLUME_METRIC, "cartracker_parquet_data") not in published
+        for volume in disk_usage.HIGH_INODE_VOLUMES:
+            assert (disk_usage.VOLUME_METRIC, volume) not in published
         assert result["measured"] == len(disk_usage.ROOT_PATHS) + len(disk_usage.DAILY_VOLUMES)
 
-    def test_weekly_run_includes_the_minio_volume(self, tmp_path, measured):
-        result = disk_usage.run_disk_usage(include_minio=True, directory=str(tmp_path))
+    def test_weekly_run_includes_every_high_inode_volume(self, tmp_path, measured):
+        result = disk_usage.run_disk_usage(include_slow=True, directory=str(tmp_path))
         published = disk_usage.parse_previous(
             (tmp_path / disk_usage.TEXTFILE_NAME).read_text()
         )
-        assert (disk_usage.VOLUME_METRIC, "cartracker_parquet_data") in published
+        for volume in disk_usage.HIGH_INODE_VOLUMES:
+            assert (disk_usage.VOLUME_METRIC, volume) in published
         assert result["carried_forward"] == 0
 
-    def test_minio_value_carries_forward_between_weekly_walks(self, tmp_path, measured):
+    def test_slow_tier_values_carry_forward_between_weekly_walks(self, tmp_path, measured):
         """The point of the single-file design. Splitting this across two .prom
         files makes node-exporter reject one of them (node_exporter#1885)."""
-        disk_usage.run_disk_usage(include_minio=True, directory=str(tmp_path))
+        disk_usage.run_disk_usage(include_slow=True, directory=str(tmp_path))
         weekly = disk_usage.parse_previous(
             (tmp_path / disk_usage.TEXTFILE_NAME).read_text()
         )
 
-        result = disk_usage.run_disk_usage(include_minio=False, directory=str(tmp_path))
+        result = disk_usage.run_disk_usage(include_slow=False, directory=str(tmp_path))
         daily = disk_usage.parse_previous(
             (tmp_path / disk_usage.TEXTFILE_NAME).read_text()
         )
 
-        key = (disk_usage.VOLUME_METRIC, "cartracker_parquet_data")
-        assert daily[key] == weekly[key]
-        assert result["carried_forward"] == 1
+        for volume in disk_usage.HIGH_INODE_VOLUMES:
+            key = (disk_usage.VOLUME_METRIC, volume)
+            assert daily[key] == weekly[key]
+        assert result["carried_forward"] == len(disk_usage.HIGH_INODE_VOLUMES)
 
     def test_carried_value_keeps_its_original_timestamp(self, tmp_path, measured):
         """A carried value with a refreshed timestamp is a gauge that has gone
         stale in silence -- the exact failure this metric exists to expose."""
-        disk_usage.run_disk_usage(include_minio=True, directory=str(tmp_path))
+        disk_usage.run_disk_usage(include_slow=True, directory=str(tmp_path))
         first = disk_usage.parse_previous(
             (tmp_path / disk_usage.TEXTFILE_NAME).read_text()
         )
-        disk_usage.run_disk_usage(include_minio=False, directory=str(tmp_path))
+        disk_usage.run_disk_usage(include_slow=False, directory=str(tmp_path))
         second = disk_usage.parse_previous(
             (tmp_path / disk_usage.TEXTFILE_NAME).read_text()
         )
 
-        minio = (disk_usage.MEASURED_AT_METRIC, "cartracker_parquet_data")
         root = (disk_usage.MEASURED_AT_METRIC, "/usr")
-        assert second[minio] == first[minio], "MinIO timestamp must not move"
+        for volume in disk_usage.HIGH_INODE_VOLUMES:
+            carried = (disk_usage.MEASURED_AT_METRIC, volume)
+            assert second[carried] == first[carried], f"{volume} timestamp must not move"
         assert second[root] >= first[root], "freshly walked paths do move"
 
     def test_a_failed_measurement_carries_the_old_value_and_is_reported(
@@ -216,17 +250,17 @@ class TestRunDiskUsage:
             disk_usage, "measure_path",
             lambda path, timeout=None: {"bytes": 500, "error": None},
         )
-        disk_usage.run_disk_usage(include_minio=True, directory=str(tmp_path))
+        disk_usage.run_disk_usage(include_slow=True, directory=str(tmp_path))
 
         monkeypatch.setattr(
             disk_usage, "measure_path",
             lambda path, timeout=None: {"bytes": None, "error": "du blew up"},
         )
-        result = disk_usage.run_disk_usage(include_minio=True, directory=str(tmp_path))
+        result = disk_usage.run_disk_usage(include_slow=True, directory=str(tmp_path))
 
         assert result["failed"] == len(disk_usage.ROOT_PATHS) + len(
             disk_usage.DAILY_VOLUMES
-        ) + len(disk_usage.WEEKLY_VOLUMES)
+        ) + len(disk_usage.HIGH_INODE_VOLUMES)
         published = disk_usage.parse_previous(
             (tmp_path / disk_usage.TEXTFILE_NAME).read_text()
         )
@@ -240,12 +274,12 @@ class TestRunDiskUsage:
             disk_usage, "measure_path",
             lambda path, timeout=None: {"bytes": None, "error": "not mounted"},
         )
-        result = disk_usage.run_disk_usage(include_minio=True, directory=str(tmp_path))
+        result = disk_usage.run_disk_usage(include_slow=True, directory=str(tmp_path))
         assert result["measured"] == 0
         assert sorted(result["unpublished"]) == sorted(
             list(disk_usage.ROOT_PATHS)
             + list(disk_usage.DAILY_VOLUMES)
-            + list(disk_usage.WEEKLY_VOLUMES)
+            + list(disk_usage.HIGH_INODE_VOLUMES)
         )
         text = (tmp_path / disk_usage.TEXTFILE_NAME).read_text()
         assert disk_usage.parse_previous(text) == {}
@@ -257,7 +291,7 @@ class TestRunDiskUsage:
             lambda path, timeout=None: (seen.append(path), {"bytes": 1, "error": None})[1],
         )
         disk_usage.run_disk_usage(
-            include_minio=True, directory=str(tmp_path),
+            include_slow=True, directory=str(tmp_path),
             root_prefix="/measure/root", volume_prefix="/measure/volumes",
         )
         assert "/measure/root/usr" in seen

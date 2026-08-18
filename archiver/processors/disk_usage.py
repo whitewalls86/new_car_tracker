@@ -9,9 +9,12 @@ Two things about the cost, because the naive version of this job is a
 twenty-minute disk thrash that competes with live scraping:
 
 * The root disk is cheap (~558k inodes) and is walked on every run.
-* ``/mnt/data`` is not. Only ``cartracker_parquet_data`` (MinIO) is expensive
-  -- a ``du -sb`` over it once ran 20+ minutes without completing. It is
-  walked weekly, off-peak, and **carried forward** in between.
+* ``/mnt/data`` is not. The expensive volumes are walked weekly, off-peak, and
+  **carried forward** in between.
+
+**Walk cost is O(inodes), not O(bytes)** -- see ``HIGH_INODE_VOLUMES``. That
+distinction is not a detail; classifying a volume by its size on disk is the
+assumption that failed on the first production run.
 
 Carry-forward is why this writes one file rather than a cheap-daily file plus
 an expensive-weekly file. Splitting a metric family across two ``.prom`` files
@@ -56,17 +59,35 @@ ROOT_PATHS: Tuple[str, ...] = (
     "/var/lib/snapd",
 )
 
-# /mnt/data, small and fast. Measured every run.
+# /mnt/data, few enough inodes to walk on every run.
 DAILY_VOLUMES: Tuple[str, ...] = (
     "cartracker_loki_data",
     "cartracker_analytics_db",
-    "cartracker_airflow_logs",
     "cartracker_pgdata",
     "cartracker_prometheus_data",
 )
 
-# /mnt/data, ~4M inodes. Measured weekly, carried forward in between.
-WEEKLY_VOLUMES: Tuple[str, ...] = ("cartracker_parquet_data",)
+# Inode counts that put a volume in the slow tier, and where the number came
+# from. A volume may only be promoted here on a measurement recorded in this
+# dict -- see ``test_tier_membership_is_decided_by_inodes``.
+#
+# ``cartracker_airflow_logs`` is why this dict exists. It was originally daily,
+# classified on size: 6.3 GiB is obviously small. But it holds ~1.2M inodes,
+# roughly twice the entire root filesystem, and on the first production run it
+# was **397s of a 456s walk -- 87%**. Size said cheap; inodes said the opposite,
+# and inodes were right.
+MEASURED_INODES = {
+    "cartracker_parquet_data": 4_000_000,   # MinIO bronze; du has run 20+ min
+    "cartracker_airflow_logs": 1_200_000,   # 6.3 GiB, 397s of a 456s walk
+}
+
+# /mnt/data, too many inodes for the daily walk. Measured weekly, carried
+# forward in between. Plan 135 Stage 5d prunes Airflow task logs to 30 days,
+# after which ``cartracker_airflow_logs`` can legitimately move back to daily.
+HIGH_INODE_VOLUMES: Tuple[str, ...] = (
+    "cartracker_parquet_data",
+    "cartracker_airflow_logs",
+)
 
 DEFAULT_ROOT_PREFIX = "/measure/root"
 DEFAULT_VOLUME_PREFIX = "/measure/volumes"
@@ -223,7 +244,7 @@ def write_textfile(directory: str, text: str) -> str:
     return destination
 
 
-def _watchlist(root_prefix: str, volume_prefix: str, include_minio: bool):
+def _watchlist(root_prefix: str, volume_prefix: str, include_slow: bool):
     """[(metric, target, absolute_path, fresh)] for this run."""
     targets = [
         (PATH_METRIC, path, f"{root_prefix}{path}", True)
@@ -236,14 +257,14 @@ def _watchlist(root_prefix: str, volume_prefix: str, include_minio: bool):
         for volume in DAILY_VOLUMES
     ]
     targets += [
-        (VOLUME_METRIC, volume, f"{volume_prefix}/{volume}", include_minio)
-        for volume in WEEKLY_VOLUMES
+        (VOLUME_METRIC, volume, f"{volume_prefix}/{volume}", include_slow)
+        for volume in HIGH_INODE_VOLUMES
     ]
     return targets
 
 
 def run_disk_usage(
-    include_minio: bool = False,
+    include_slow: bool = False,
     directory: Optional[str] = None,
     root_prefix: Optional[str] = None,
     volume_prefix: Optional[str] = None,
@@ -251,8 +272,9 @@ def run_disk_usage(
 ) -> Dict[str, Any]:
     """Walk the watchlist and publish it (POST /disk-usage/run).
 
-    Pass ``include_minio=True`` on the weekly run only. Everything else is
-    walked every time.
+    Pass ``include_slow=True`` on the weekly run only: it adds the
+    ``HIGH_INODE_VOLUMES``, which between them have run 20+ minutes.
+    Everything else is walked every time.
     """
     directory = directory or textfile_dir()
     if not directory:
@@ -268,7 +290,7 @@ def run_disk_usage(
     previous = read_previous(directory)
     readings: List[Dict[str, Any]] = []
 
-    for metric, target, path, fresh in _watchlist(root_prefix, volume_prefix, include_minio):
+    for metric, target, path, fresh in _watchlist(root_prefix, volume_prefix, include_slow):
         carried = {
             "metric": metric,
             "target": target,
@@ -305,7 +327,7 @@ def run_disk_usage(
     failed = [r for r in readings if r["error"] and r["error"] != "not scheduled this run"]
     lost = [r for r in readings if r["bytes"] is None]
     return {
-        "include_minio": include_minio,
+        "include_slow": include_slow,
         "textfile": written,
         "measured": fresh_count,
         "carried_forward": len(readings) - fresh_count,

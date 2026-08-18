@@ -17,9 +17,10 @@ currently runs on DuckDB against MinIO silver, but DuckDB is now considered a
 transition analytics endpoint rather than the future platform target.
 
 **Now:** Finish Plan 135 and the small verification-only closeouts already in
-flight. Then take Plan 136 through observable liveness and a drain-aware
-scheduled recycle before granting the automatic circuit breaker restart
-authority, and continue straight into Plan 140, which generalizes 136's
+flight. Spend the hour on Plan 139 Stages A+B first, so the CI path every plan
+below pays stops costing 333s. Then take Plan 136 through observable liveness and
+a drain-aware scheduled recycle before granting the automatic circuit breaker
+restart authority, and continue straight into Plan 140, which generalizes 136's
 container-health work across all 26 services and makes a coverage gap fail CI
 rather than production. The next data-integrity chain is Plan 133 -> Plan 132.
 Plan 138 should land before the next major platform milestone, after which Plan
@@ -80,37 +81,38 @@ because it is smaller while a higher row has an executable next step.
 
 | Order | Plan | Title | Next executable slice | Priority | Effort | Depends on / safe stopping point |
 |---:|---|---|---|---:|---|---|
-| 1 | [136](plan_136_solver_recycle_and_liveness.md) | Solver recycle and real liveness | Stage 0 apiserver pool + container health + `dag_id` guard, then Stages 1-2 metrics/freshness and solver counters, then Stage 3 drain-aware weekly recycle | 98 | M | Plan 135 monitoring conventions; soak counters before Stage 4 auto-restart |
-| 2 | [140](plan_140_service_health_contract.md) | Service health contract | Healthchecks on the 20 services lacking them, then the container-health metric, then CI coverage assertions | 87 | M + soak | Plan 136 Stage 0b is its first slice; soak Stage 1 before alerting on it |
-| 3 | [134](plan_134_archiver_endpoint_failure_contract.md) | Archiver endpoint failure contract | Add warning-only failure predicates and begin the one-week observation window | 88 | S | One-week soak before enforcement; pause if real failures need repair |
-| 4 | [133](plan_133_pack_read_path_hardening.md) | Pack read-path hardening | Pack-aware existence check and month-sized sidecar-cache fix | 92 | S | Re-run April/May read-path verification; unlocks Plan 132 Stage 2 |
-| 5 | [132](plan_132_unrecorded_artifact_recovery.md) | Recover unrecorded bronze artifacts | Run Stage 0 gates, build the manifest, then reparse a bounded cohort | 91 | L | Plan 133 before Stage 2; no destructive action in the audit stages |
-| 6 | [138](plan_138_public_surface_refresh.md) | Public surface refresh | Truth pass, public-root contract, accessible assets, public stats and project-updates snapshots | 84 | L | Independent; land before the next major platform milestone |
-| 7 | [125](plan_125_duckdb_to_iceberg_migration.md) | DuckDB-to-Iceberg analytics migration | Gate C production runtime measurement, then Gate D reader inventory/dual-run | 81 | XL | Plan 120 closeout; preserve Plan 136 freshness semantics during reader migration |
-| 8 | [112](plan_112_refresh_policy_backtesting.md) | Adaptive-refresh backtesting | Resume policy backtest/model gates on pinned Iceberg snapshots | 76 | L | Plan 125 stable Iceberg-native inputs |
-| 9 | [113](plan_113_production_adaptive_refresh.md) | Production adaptive refresh | Promote one reviewed, pinned policy into ops claim logic | 74 | M | Approved Plan 112 result; no live model dependency |
-| 10 | [137](plan_137_legacy_bronze_parquet_disposition.md) | Legacy bronze Parquet disposition | Codify the read-only baseline and row-complete disposition manifest | 72 | XL | Reuse Plan 132 provenance/backfill safety; deletion remains separately approved |
-| 11 | [121](plan_121_staging_environment.md) | Staging environment | Stand up the smallest fixture-backed deployed environment | 63 | L | Prefer after Plan 125 reader shape settles unless needed earlier for risky rollout |
-| 12 | [119](plan_119_lakehouse_governance.md) | Lakehouse governance | Add measured catalog controls and auditability | 58 | L | Stable Plan 125 catalog and reader contracts |
-| 13 | [126](plan_126_basic_event_streaming.md) | Basic event streaming | Prove transport, replay, and one low-risk consumer | 49 | XL | Plans 125 and 112/113 clarify stable event semantics |
-| 14 | [127](plan_127_streaming_adaptive_scrape_control.md) | Streaming adaptive scrape control | Add closed-loop control behind batch-parity and rollback gates | 42 | XL | Plan 126 plus approved Plan 112/113 behavior |
+| 1 | [139](plan_139_test_suite_maintenance.md) **A+B** | Coverage visible, CI path recovered | Add `pytest-cov` and report coverage; cache pip on all three `setup-python` steps; change the `dbt` job's `needs: unit-tests` to `needs: lint` | 70 | XS | None. Ranked above its score because every row below pays the current 333s CI path on every PR |
+| 2 | [136](plan_136_solver_recycle_and_liveness.md) | Solver recycle and real liveness | Stage 0 apiserver pool + container health + `dag_id` guard, then Stages 1-2 metrics/freshness and solver counters, then Stage 3 drain-aware weekly recycle | 98 | M | Plan 135 monitoring conventions; soak counters before Stage 4 auto-restart |
+| 3 | [140](plan_140_service_health_contract.md) | Service health contract | Healthchecks on the 20 services lacking them, then the container-health metric, then CI coverage assertions | 87 | M + soak | Plan 136 Stage 0b is its first slice; soak Stage 1 before alerting on it |
+| 4 | [134](plan_134_archiver_endpoint_failure_contract.md) | Archiver endpoint failure contract | Add warning-only failure predicates and begin the one-week observation window | 88 | S | One-week soak before enforcement; pause if real failures need repair |
+| 5 | [133](plan_133_pack_read_path_hardening.md) | Pack read-path hardening | Pack-aware existence check and month-sized sidecar-cache fix | 92 | S | Re-run April/May read-path verification; unlocks Plan 132 Stage 2 |
+| 6 | [132](plan_132_unrecorded_artifact_recovery.md) | Recover unrecorded bronze artifacts | Run Stage 0 gates, build the manifest, then reparse a bounded cohort | 91 | L | Plan 133 before Stage 2; no destructive action in the audit stages |
+| 7 | [138](plan_138_public_surface_refresh.md) | Public surface refresh | Truth pass, public-root contract, accessible assets, public stats and project-updates snapshots | 84 | L | Independent; land before the next major platform milestone |
+| 8 | [125](plan_125_duckdb_to_iceberg_migration.md) | DuckDB-to-Iceberg analytics migration | Gate C production runtime measurement, then Gate D reader inventory/dual-run | 81 | XL | Plan 120 closeout; preserve Plan 136 freshness semantics during reader migration |
+| 9 | [112](plan_112_refresh_policy_backtesting.md) | Adaptive-refresh backtesting | Resume policy backtest/model gates on pinned Iceberg snapshots | 76 | L | Plan 125 stable Iceberg-native inputs |
+| 10 | [113](plan_113_production_adaptive_refresh.md) | Production adaptive refresh | Promote one reviewed, pinned policy into ops claim logic | 74 | M | Approved Plan 112 result; no live model dependency |
+| 11 | [137](plan_137_legacy_bronze_parquet_disposition.md) | Legacy bronze Parquet disposition | Codify the read-only baseline and row-complete disposition manifest | 72 | XL | Reuse Plan 132 provenance/backfill safety; deletion remains separately approved |
+| 12 | [121](plan_121_staging_environment.md) | Staging environment | Stand up the smallest fixture-backed deployed environment | 63 | L | Prefer after Plan 125 reader shape settles unless needed earlier for risky rollout |
+| 13 | [139](plan_139_test_suite_maintenance.md) **C** | Profile the 92s `tests/integration/dbt/` step | Run it with `--durations=20` in CI and record the per-test breakdown before proposing any change | 60 | S | Measurement only; CI-only work — do not pip-install dbt locally |
+| 14 | [119](plan_119_lakehouse_governance.md) | Lakehouse governance | Add measured catalog controls and auditability | 58 | L | Stable Plan 125 catalog and reader contracts |
+| 15 | [139](plan_139_test_suite_maintenance.md) **D** | Intent markers and the coverage-gate decision | Move `report_dbt_run_results.py` into `dbt_runner/`, add the `oneoff` marker per test class, decide the gate and the `airflow/dags`+`dashboard` exclusion in writing | 52 | S | Several weeks of Stage A coverage data; opportunistic filler |
+| 16 | [126](plan_126_basic_event_streaming.md) | Basic event streaming | Prove transport, replay, and one low-risk consumer | 49 | XL | Plans 125 and 112/113 clarify stable event semantics |
+| 17 | [127](plan_127_streaming_adaptive_scrape_control.md) | Streaming adaptive scrape control | Add closed-loop control behind batch-parity and rollback gates | 42 | XL | Plan 126 plus approved Plan 112/113 behavior |
 
-Plan [139](plan_139_test_suite_maintenance.md) (test suite maintenance) is
-**split rather than ranked as one row.** Its Stages A and B — put a coverage
-number in CI, then cache pip and drop the `dbt` job's `needs: unit-tests` — are
-two lines of YAML plus a dev dependency, and measurement on 2026-08-18 puts them
-at roughly **40% of CI wall-clock** (critical path 333s, of which 103s is uncached
-`pip install` and ~78s is waiting on a job that need not block). That payoff
-compounds across every plan above them, so **do A+B early, alongside Plans 136 and
-140**, which touch the same CI configuration. Stages C (profile the 92s
-`tests/integration/dbt/` step, 28% of the path) and D (intent markers, the
-coverage-gate decision, xdist) score 60 and 52 and belong near order 11-12.
+**Plan [139](plan_139_test_suite_maintenance.md) occupies three rows rather than
+one**, because scoring it as a single plan (62) hides that its first two stages
+are two lines of YAML and a dev dependency. Measurement on 2026-08-18 puts A+B at
+roughly **40% of CI wall-clock** — critical path 333s, of which 103s is uncached
+`pip install` and ~78s is waiting on a job that need not block. Every row beneath
+it pays that path on every pull request, which is why an XS slice scoring 70 sits
+above plans scoring 98. Stages C and D have no such argument and take their turn
+by score.
 
 The step that previously looked urgent — covering `ops/metrics/duckdb_gauges.py`
-at 25% — **has moved into Plan 136 Stage 1.** Plan 136 does not depend on that
-module, it rewrites it: Stage 1a sets the gauges to `NaN` on refresh failure.
-Tests written against today's silent-stale behavior would encode exactly what
-Stage 1 deletes, so they belong with the change.
+at 25% — **has moved into Plan 136 Stage 1**, and so appears in no Plan 139 row.
+Plan 136 does not depend on that module, it rewrites it: Stage 1a sets the gauges
+to `NaN` on refresh failure. Tests written against today's silent-stale behavior
+would encode exactly what Stage 1 deletes, so they belong with the change.
 
 Plan 136 Stage 4 is deliberately not part of the first slice: it grants restart
 authority and should start only after Stage 2's outcome counters have established
@@ -118,7 +120,7 @@ a trustworthy baseline. Plan 134's observation window may run while Plans 133 or
 136 proceed, but the endpoint-by-endpoint 500 rollout returns to this order when
 the evidence is ready.
 
-**Plan 140 sits at order 2 despite scoring 87 against Plan 134's 88.** The scores
+**Plan 140 sits at order 3 despite scoring 87 against Plan 134's 88.** The scores
 are close, so the build order decides, and it decides on switching cost:
 Plan 136 Stage 0b builds a container-health metric, and Plan 140 Stage 2
 generalizes that same metric across all 26 services. They touch one set of files

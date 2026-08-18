@@ -723,6 +723,15 @@ be renamed `include_minio` → `include_slow`.
 The rule the tier split should encode, which the first cut got wrong:
 **membership is decided by inode count, not by volume size.**
 
+> **Fixed 2026-08-17.** `cartracker_airflow_logs` moved to the slow tier;
+> `WEEKLY_VOLUMES` → `HIGH_INODE_VOLUMES`, `include_minio` → `include_slow`
+> through the processor, the `/disk-usage/run` endpoint, the `disk_usage` DAG and
+> the tests. The criterion is now executable rather than commentary: a
+> `MEASURED_INODES` dict records the count that justifies each slow-tier volume,
+> and `test_tier_membership_is_decided_by_inodes` fails if a volume is promoted
+> without one. Expected daily walk 456s → ~59s, **to be confirmed on the next
+> scheduled run** — the fix is not verified in production yet.
+
 **A second finding, and it is the plan's own thesis turning up somewhere nobody
 was looking.** The walk measured `airflow_logs` at **6.33 GiB** against the
 **2.9 GiB** recorded on 2026-08-14. That is almost certainly not growth — it is
