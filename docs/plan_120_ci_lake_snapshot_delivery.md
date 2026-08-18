@@ -97,7 +97,12 @@ archive+manifest publish, and the alias file is always written before
 pointing at a snapshot with no alias. See
 [Packaging and upload (Gate E)](#packaging-and-upload-gate-e) below.
 
-**Gate F (ops download API) is now implemented** (not yet VM-verified).
+**Gate F (ops download API) is implemented and production-verified.** On
+2026-08-18, the authenticated latest/manifest/download round trip served
+`adaptive-refresh-2026-07-15-181719` (665,711 bytes); the downloaded archive
+matched the published SHA-256, and the downloader resolved the same snapshot.
+The verification also found and fixed the direct-script import path used by the
+documented `python scripts/...` downloader and seeder commands.
 `ops/routers/snapshots.py` adds three read-only routes under
 `/admin/snapshots/adaptive-refresh/` — see
 [Ops download API (Gate F)](#ops-download-api-gate-f) below for the exact
@@ -121,9 +126,9 @@ tracking, use the Step 1-11 checklist in
 | Manifest/package/upload | Done (Gate E) | `lake_snapshot_archive.py` packages the materialized Gate D export into `snapshot.tar.zst`, uploads it and a full `archive_manifest.json` to `snapshot_archives/fingerprints/{export_fingerprint}/`, and promotes `latest.json`/`aliases/{snapshot_id}.json` only after a successful publish. A non-dry-run `export_ci_lake_snapshot()` call now always runs packaging as the last step (for both a freshly materialized export and an export-cache hit), keyed by the same `export_fingerprint`. `reuse_archive_cache`/`refresh_archive_cache` mirror the Gate D flag contract; a checksum conflict at the same fingerprint (which should not normally happen, since packaging is a pure function of the materialized data) is refused rather than silently overwritten unless `refresh_archive_cache` is set. |
 | Archiver endpoint | Control-plane only (Gate C.5) | Internal endpoint is wired and wrapped with `active_job()`. Cheap `audit_sources` calls remain allowed regardless of dry_run. `build_cohort=True` or any non-dry-run request is rejected with `409` unless `ARCHIVER_ALLOW_SYNC_SNAPSHOT_COHORT=true`; production-sized work (which now includes Gate E packaging, since it runs as part of the same non-dry-run flow) must go through `snapshot-worker`. |
 | Airflow DAG | Structurally done, worker target TBD | Manual DAG exists and passes params/defaults. It should trigger the isolated snapshot worker once Steps 4-6 are worker-safe — the DAG currently still posts to the archiver control-plane route, which will 409 if it requests `build_cohort=True` (or non-dry-run) without the override flag. |
-| Ops download API | Done (Gate F, VM verification pending) | `ops/routers/snapshots.py` implements latest/manifest/download routes with bearer-token auth; see [Ops download API (Gate F)](#ops-download-api-gate-f). |
-| Download/seed scripts | Mostly done | Offline/local mode exists and verifies checksums. API mode is exercised against the real ops router in `tests/scripts/test_download_lake_snapshot.py`; still needs a VM pilot run. |
-| CI pilot | Not started | Needs a VM-verified live archive + ops download route round trip first. |
+| Ops download API | Done and production-verified (Gate F) | `ops/routers/snapshots.py` implements latest/manifest/download routes with bearer-token auth; see [Ops download API (Gate F)](#ops-download-api-gate-f). |
+| Download/seed scripts | Done | Offline/local mode verifies checksums; API mode is covered against the real ops router and completed a production pilot. Direct `python scripts/...` invocation is verified. |
+| CI pilot | Downstream handoff | The live archive contract is verified; CI consumption belongs to Plan 112 Gate A4. |
 
 Current cross-plan handoff: Plan 112 Gate A4 (`Local Integration Harness`)
 should consume the VM-verified Gate E output rather than inventing its own
@@ -1036,8 +1041,8 @@ against the real `ops` FastAPI app (via `fastapi.testclient.TestClient`,
 MinIO calls mocked) to prove the route shapes match the downloader's
 expectations on the wire, not just in a hand-rolled mock transport.
 
-**VM verification (not yet run).** Once a real Gate E archive exists on the
-VM:
+**Production verification (completed 2026-08-18).** The following runbook was
+executed against the real Gate E archive:
 
 ```bash
 # 1. Latest pointer
@@ -1063,9 +1068,10 @@ python scripts/seed_lake_snapshot.py \
   --manifest-path .cache/lake_snapshots/<snapshot_id>/manifest.json
 ```
 
-Expected result: step 1's `snapshot_id` matches step 4's resolved snapshot;
-step 3's downloaded bytes sha256-match step 2's manifest `archive.sha256`;
-step 4 exits 0 and prints the destination archive path.
+Observed result: step 1 and step 4 both resolved
+`adaptive-refresh-2026-07-15-181719`; the 665,711 downloaded bytes matched the
+manifest's `archive.sha256`; step 4 exited 0 and printed the destination archive
+path. The focused ops-router/downloader suite passed (51 tests).
 
 ---
 
