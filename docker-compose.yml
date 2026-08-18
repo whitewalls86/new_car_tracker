@@ -133,7 +133,7 @@ services:
       - "8060:8060"
     volumes:
       - ops_logs:/usr/app/logs
-      - analytics_db:/data/analytics:ro
+      - analytics_snapshot:/data/analytics_snapshot:ro
     environment:
       PGHOST: postgres
       PGPORT: 5432
@@ -144,13 +144,10 @@ services:
       TELEGRAM_API: ${TELEGRAM_API}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
       DBT_RUNNER_URL: http://dbt_runner:8080
-      # Engine-neutral Plan 136 boundary. Plan 125 Gate D can point this at an
-      # Iceberg reader/extract service without changing Prometheus or Grafana.
-      ANALYTICS_READER_URL: ${ANALYTICS_READER_URL:-http://dbt_runner:8080}
+      ANALYTICS_SNAPSHOT_PATH: /data/analytics_snapshot/analytics_snapshot.json
       DBT_DOCS_URL: http://localhost:8081/dbt-docs/
       SCRAPER_URL: http://scraper:8000
       RESEND_API_KEY: ${RESEND_API_KEY:-}
-      DUCKDB_PATH: /data/analytics/analytics.duckdb
       MINIO_ENDPOINT: http://minio:9000
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-cartracker}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
@@ -334,6 +331,7 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
       MINIO_BUCKET: bronze
       DUCKDB_PATH: /data/analytics/analytics.duckdb
+      ANALYTICS_SNAPSHOT_PATH: /data/analytics_snapshot/analytics_snapshot.json
     # Plan 123 Phase 0: hard containment boundary above the 8GB DuckDB
     # memory_limit (dbt/profiles.yml) but well below the ~23.4GB host total,
     # so a runaway build is killed inside the container instead of triggering
@@ -357,6 +355,7 @@ services:
       - ./target:/usr/app/target
       - dbt_runner_logs:/usr/app/logs
       - analytics_db:/data/analytics
+      - analytics_snapshot:/data/analytics_snapshot
 
 
 
@@ -983,6 +982,8 @@ volumes:
   dbt_runner_logs:
 
   analytics_db:
+
+  analytics_snapshot:
 
   ops_logs:
 

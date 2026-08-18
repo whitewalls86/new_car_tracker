@@ -253,9 +253,9 @@ groups:
                     type: lt
                     params: [100]
 
-      # Plan 136 Stage 1: the data gauges are NaN when their refresh is partial
-      # or unavailable. This independent timestamp makes the producer failure
-      # alertable instead of letting the last good values look current.
+      # Plan 143: dbt_runner exports NaN when the serving snapshot refresh is
+      # failed or unavailable. This independent timestamp makes producer
+      # failure alertable instead of letting last-good values look current.
       - uid: ct-metrics-freshness
         title: Metrics Refresh Stale
         condition: C
@@ -264,7 +264,7 @@ groups:
         for: 0s
         annotations:
           summary: "dbt-backed metrics have not refreshed successfully for 15 minutes"
-          description: "The ops metrics reader is unavailable or at least one DuckDB mart query failed. Check dbt_runner health/build state and ops logs before trusting the dbt-backed gauges."
+          description: "The dbt_runner serving snapshot is unavailable or a required mart query failed. Check dbt_runner health, build output, and snapshot publication before trusting the analytics gauges."
         data:
           - refId: A
             datasourceUid: cartracker-prometheus

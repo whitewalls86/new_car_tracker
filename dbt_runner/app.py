@@ -12,9 +12,12 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List
 
-from fastapi import Body, FastAPI, HTTPException
+from fastapi import Body, FastAPI, HTTPException, Response
 from fastapi.staticfiles import StaticFiles
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
+from dbt_runner.analytics_snapshot import AnalyticsSnapshotManager
+from dbt_runner.metrics import REGISTRY, publish_snapshot
 from shared.job_counter import active_job, is_idle
 from shared.logging_setup import configure_logging
 
@@ -32,61 +35,9 @@ DUCKDB_MEMORY_LIMIT = "8GB"
 # shells/container runtimes that report it as a plain exit status.
 _OOM_RETURNCODES = (-9, 137)
 
-# DuckDB supports either one read/write process or multiple read-only processes,
-# not a writer in dbt plus a reader in ops. Keep ownership in this service and
-# serialize the short metrics read with dbt commands that can open the database.
-_duckdb_lock = threading.Lock()
-
-_DUCKDB_PATH = os.environ.get("DUCKDB_PATH", "/data/analytics/analytics.duckdb")
-_ANALYTICS_BACKEND = "duckdb"
-
-_DUCKDB_METRIC_QUERIES = (
-    (
-        ("cartracker_observation_count_last_hour", 0),
-        ("cartracker_artifact_count_last_hour", 1),
-        "SELECT COALESCE(observation_count, 0), COALESCE(artifact_count, 0) "
-        "FROM main.mart_scrape_volume ORDER BY hour DESC LIMIT 1",
-    ),
-    (
-        ("cartracker_block_events_last_hour", 0),
-        "SELECT COALESCE(total_block_events, 0) FROM main.mart_block_rate "
-        "ORDER BY hour DESC LIMIT 1",
-    ),
-    (
-        ("cartracker_extraction_yield_last_day", 0),
-        "SELECT COALESCE(extraction_yield, 0) FROM main.mart_detail_batch_outcomes "
-        "ORDER BY obs_date DESC LIMIT 1",
-    ),
-    (
-        ("cartracker_stale_listings_pct", 0),
-        """
-        SELECT COALESCE(
-            ROUND(
-                100.0 * SUM(stale_gt_14d) / NULLIF(
-                    SUM(stale_gt_14d + fresh_lt_1d + fresh_1_3d +
-                        fresh_4_7d + fresh_8_14d), 0
-                ), 2
-            ), 0
-        ) FROM main.mart_price_freshness_trend
-        """,
-    ),
-    (
-        ("cartracker_cooldown_backlog", 0),
-        "SELECT COALESCE(SUM(listing_count), 0) FROM main.mart_cooldown_cohorts "
-        "WHERE attempt_bucket IN ('1', '2', '3-4')",
-    ),
-    (
-        ("cartracker_cooldown_permanent", 0),
-        "SELECT COALESCE(SUM(listing_count), 0) FROM main.mart_cooldown_cohorts "
-        "WHERE attempt_bucket IN ('5-10', '11+')",
-    ),
-)
-
-_ANALYTICS_METRIC_NAMES = {
-    metric_name
-    for query in _DUCKDB_METRIC_QUERIES
-    for metric_name, _index in query[:-1]
-}
+_build_lock = threading.Lock()
+snapshot_manager = AnalyticsSnapshotManager()
+publish_snapshot(snapshot_manager.get_snapshot())
 
 
 def _likely_oom(returncode: int) -> bool:
@@ -125,54 +76,6 @@ def _cap(s: str, limit: int = 20000) -> str:
     return s if len(s) <= limit else s[-limit:]
 
 
-def _read_duckdb_metrics() -> Dict[str, Any]:
-    """Read every dbt-backed gauge while preserving per-query failures.
-
-    A partial result is useful: ops can publish successful gauges while setting
-    only the affected gauges to NaN. ``ok`` is true only when every expected
-    metric was refreshed, which is the condition for advancing the freshness
-    timestamp.
-    """
-    values = {name: None for name in _ANALYTICS_METRIC_NAMES}
-    errors: Dict[str, str] = {}
-
-    try:
-        import duckdb
-
-        con = duckdb.connect(_DUCKDB_PATH, read_only=True)
-    except Exception as exc:
-        errors["connection"] = str(exc)
-        return {
-            "ok": False,
-            "backend": _ANALYTICS_BACKEND,
-            "values": values,
-            "errors": errors,
-        }
-
-    try:
-        for query in _DUCKDB_METRIC_QUERIES:
-            targets = query[:-1]
-            sql = query[-1]
-            try:
-                row = con.execute(sql).fetchone()
-                if row is None:
-                    raise RuntimeError("query returned no rows")
-                for metric_name, index in targets:
-                    values[metric_name] = row[index]
-            except Exception as exc:
-                for metric_name, _index in targets:
-                    errors[metric_name] = str(exc)
-    finally:
-        con.close()
-
-    return {
-        "ok": not errors,
-        "backend": _ANALYTICS_BACKEND,
-        "values": values,
-        "errors": errors,
-    }
-
-
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -189,24 +92,9 @@ def ready() -> Dict[str, Any]:
     raise HTTPException(status_code=503, detail={"ready": False, "reason": "jobs in flight"})
 
 
-@app.get("/analytics/metrics")
-def analytics_metrics() -> Dict[str, Any]:
-    """Return metric values through an engine-neutral endpoint contract."""
-    if not _duckdb_lock.acquire(blocking=False):
-        raise HTTPException(
-            status_code=503,
-            detail={"ok": False, "reason": "duckdb_busy"},
-        )
-    try:
-        if not is_idle():
-            raise HTTPException(
-                status_code=503,
-                detail={"ok": False, "reason": "jobs_in_flight"},
-            )
-        with active_job():
-            return _read_duckdb_metrics()
-    finally:
-        _duckdb_lock.release()
+@app.get("/metrics")
+def metrics() -> Response:
+    return Response(generate_latest(REGISTRY), media_type=CONTENT_TYPE_LATEST)
 
 
 @app.get("/dbt/docs/status")
@@ -262,7 +150,7 @@ def dbt_build(payload: Dict[str, Any] = Body(default={})) -> Dict[str, Any]:
     Returns 409 if a build is already in progress.
     Returns 500 if dbt exits non-zero.
     """
-    if not _duckdb_lock.acquire(blocking=False):
+    if not _build_lock.acquire(blocking=False):
         raise HTTPException(
             status_code=409,
             detail={"error": "dbt_build_in_progress", "message": "A dbt build is already running."},
@@ -318,6 +206,7 @@ def dbt_build(payload: Dict[str, Any] = Body(default={})) -> Dict[str, Any]:
 
             result = {
                 "ok": proc.returncode == 0,
+                "dbt_ok": proc.returncode == 0,
                 "returncode": proc.returncode,
                 "likely_oom": likely_oom,
                 "invocation_id": invocation_id,
@@ -333,6 +222,11 @@ def dbt_build(payload: Dict[str, Any] = Body(default={})) -> Dict[str, Any]:
                 "model_timings": _model_timings_from_run_results(),
                 "stdout": _cap(proc.stdout),
                 "stderr": _cap(proc.stderr),
+                "analytics_snapshot": {
+                    "ok": False,
+                    "status": "not_attempted",
+                    "reason": "dbt_failed" if proc.returncode != 0 else "pending",
+                },
             }
 
             logger.info(
@@ -347,9 +241,21 @@ def dbt_build(payload: Dict[str, Any] = Body(default={})) -> Dict[str, Any]:
                 )
                 raise HTTPException(status_code=500, detail=result)
 
+            snapshot_result = snapshot_manager.refresh()
+            result["analytics_snapshot"] = snapshot_result
+            publish_snapshot(snapshot_manager.get_snapshot())
+            if not snapshot_result["ok"]:
+                result["ok"] = False
+                logger.error(
+                    "analytics snapshot publication failed invocation=%s: %s",
+                    invocation_id,
+                    snapshot_result.get("error", "unknown error"),
+                )
+                raise HTTPException(status_code=500, detail=result)
+
             return result
     finally:
-        _duckdb_lock.release()
+        _build_lock.release()
 
 
 # ---------------------------------------------------------------------------

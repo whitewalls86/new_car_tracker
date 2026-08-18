@@ -17,7 +17,7 @@ FEATURE_DAILY = "feature_daily"
 BACKTEST = "backtest"
 
 # Every dashboard/API-facing model that Plan 123 Phase 1 requires to stay on
-# the hourly cadence (see dashboard/queries.py, ops/metrics/analytics_gauges.py,
+# the hourly cadence (see dashboard/queries.py, dbt_runner/sql/analytics_metrics_snapshot.sql,
 # ops/routers/info.py, and dashboard/sql/deals_table.sql for the underlying
 # dependency evidence).
 EXPECTED_HOURLY_CORE = {

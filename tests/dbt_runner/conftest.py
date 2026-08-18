@@ -21,4 +21,14 @@ def mock_dbt_build_happy_path(mocker):
     mocker.patch("dbt_runner.app.is_idle", return_value=True)
     return {
         "subprocess_run": mocker.patch("subprocess.run"),
+        "snapshot_refresh": mocker.patch(
+            "dbt_runner.app.snapshot_manager.refresh",
+            return_value={
+                "ok": True,
+                "status": "ok",
+                "attempted_at": "2026-08-18T18:00:00Z",
+                "last_success_at": "2026-08-18T18:00:00Z",
+                "duration_seconds": 0.1,
+            },
+        ),
     }
