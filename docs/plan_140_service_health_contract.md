@@ -277,6 +277,9 @@ next DAG run fails.
 - **Automatic restart on unhealthy.** Plan 136 Stage 4 owns restart authority
   and the argument for who may call it. This plan produces the signal; it does
   not act on it.
+- **Whole-host maintenance orchestration.** Plan 142 owns the separate
+  maintenance state, drain, package/reboot procedure, and explicit resume. This
+  plan supplies its mandatory health gate.
 - **Metrics freshness** — Plan 136 Stage 1.
 - Replacing Docker healthchecks with an orchestrator's. That is Plan 88
   (Kubernetes), and it is not close.
