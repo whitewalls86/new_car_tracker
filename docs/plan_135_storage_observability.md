@@ -5,7 +5,13 @@
 **COMPLETE 2026-08-18.** Both filesystems are visible by bytes and inodes, the
 capacity alerts and notification route were fire-tested, the per-path watchlist
 is live, every local log sink is bounded, Loki retains 90 days, Airflow task
-logs retain 30 days, and the maintenance runbook is checked in.
+logs retain 30 days, and the maintenance runbook is checked in. `df /` is back
+to **51%** from 79%.
+
+One criterion is not fully closed and needs no work to close it: the per-path
+panel cannot yet answer "what is filling `/mnt/data`?", because
+`cartracker_parquet_data` publishes on the first Sunday slow-tier walk,
+**2026-08-23**. See criterion 5.
 
 The Stage 5 rollout exposed follow-up work in log parsing, labels, dashboard
 semantics, and privacy policy. That work is intentionally routed to
@@ -965,11 +971,28 @@ be reached for.
 4. ✅ **Met 2026-08-17.** The originating question — "why 61 vs 97?" — is
    answerable from the dashboard without SSH: the logical-vs-physical panel
    shows the divergence and the amplification panel quantifies it.
-5. "What is filling `/`?" and "what is filling `/mnt/data`?" are each answerable
-   from one panel, without SSH.
-6. No log source grows without bound: Docker json-file capped, Loki retention
-   set, Airflow logs pruned, journald capped.
-7. `/` is back under 60% and the monthly check is documented in a runbook.
+5. ⏳ **Met for `/`; `/mnt/data` completes on the first Sunday slow-tier walk.**
+   "What is filling `/`?" and "what is filling `/mnt/data`?" are each answerable
+   from one panel, without SSH. The root disk publishes all five watched paths.
+   On `/mnt/data` the four daily volumes publish, but `cartracker_parquet_data`
+   — MinIO bronze, ~4M inodes, and the majority of that volume's 59 GiB — has
+   never completed a walk and emits **no series at all**, so the panel cannot
+   yet answer the question for the disk this plan was written about. The slow
+   tier runs Sundays at 04:00 (`SLOW_WALK_WEEKDAY = 6`), so the first walk after
+   the 2026-08-18 tier fix lands **2026-08-23**. Carry-forward is working as
+   designed — `failed` is correctly `0`, because a not-yet-scheduled target is
+   not a failure — which is also why the DAG stays green while the series is
+   absent.
+6. ✅ **Met 2026-08-18.** Verified on the host: `/etc/docker/daemon.json` caps
+   json-file at `50m` × 3; Loki runs a compactor with `retention_period: 90d`;
+   journald is capped by `/etc/systemd/journald.conf.d/plan135-storage.conf`
+   (`SystemMaxUse=500M`, 464 MiB actual); and `prune_task_logs` deletes closed
+   run directories older than `RETENTION_DAYS = 30`. The Airflow prune is
+   scheduled Sundays at 04:17 and has not had its first run yet.
+7. ✅ **Met 2026-08-18.** `df /` reads **51%** (25 of 49 GiB), against 79% at
+   the start of this plan and the 60% target. The monthly check is
+   [runbook_storage_maintenance.md](runbook_storage_maintenance.md) §1, written
+   to be done from the dashboard without SSH.
 
 ## Risks
 
