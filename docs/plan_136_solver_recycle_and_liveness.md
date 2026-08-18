@@ -470,6 +470,24 @@ subsumes the other — the solver incident had a **healthy** container producing
 statsd-exporter reported normally. Both incidents needed the signal the other
 stage provides.
 
+## Relationship to Plan 141
+
+[Plan 141](plan_141_structured_log_ingestion_contract.md) owns log parsing,
+severity/source labels, dashboard selectors, and ingestion-volume acceptance.
+It does not block this plan's Prometheus-based liveness, freshness, or solver
+outcome work. Keep these boundaries explicit:
+
+- Revalidate `ct-403-log-spike` against Plan 141's fixtures and deployed labels
+  because it is this plan's Loki-dependent alert.
+- Warning-only observations added here must query an explicit service and level;
+  absence from a dashboard is not evidence that no warning occurred.
+- The Airflow HMAC-key-length warning observed during the Plan 135 closeout is a
+  configuration defect, not a line for Plan 141 to suppress. Resolve or route it
+  with Stage 0's other Airflow configuration work.
+- Container health, metric freshness, solver efficacy, and restart authority
+  remain here (and in Plan 140 where generalized); Plan 141 must not recreate
+  them from logs.
+
 ## Files
 
 | File | Change | Stage |
