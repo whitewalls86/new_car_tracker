@@ -2,12 +2,13 @@
 
 ## Status
 
-**Stages 0-4 implemented locally 2026-08-18; CI dbt-artifact verification,
-deployment, and the 24-hour Stage 5 soak remain pending.** Implementation is in
-commits `bbd9b23` and `2cfdb73`. The first commit establishes the shared
-connection and saved-SQL boundary; the second publishes the atomic snapshot,
-exports metrics directly from `dbt_runner`, and makes `ops` a snapshot-only
-presentation consumer.
+**Stages 0-4, CI dbt-artifact verification, and the initial Stage 5 production
+deployment checks completed 2026-08-18. The 24-hour soak is in progress, with
+the final check scheduled for 2026-08-19 at 15:00 CDT (20:00 UTC).** PR #217
+merged as `e5d3a46`. Implementation is in commits `bbd9b23` and `2cfdb73`:
+the first establishes the shared connection and saved-SQL boundary; the second
+publishes the atomic snapshot, exports metrics directly from `dbt_runner`, and
+makes `ops` a snapshot-only presentation consumer.
 
 This plan was written during pre-PR review of the unshipped Plan 136 Stage 1
 implementation. That first implementation proved the immediate lock can be
@@ -17,8 +18,9 @@ and a second `ops` DuckDB collector planned for the public page.
 
 Priority **94 (critical)**. Effort **M plus a 24-hour production soak**.
 
-No Plan 143 runtime change is deployed. Commit `584f100` remains prototype
-evidence, not an accepted serving design and must not be promoted as-is.
+The Plan 143 runtime change was deployed 2026-08-18 through the existing admin
+deploy-intent/drain procedure. Commit `584f100` remains prototype evidence, not
+the deployed serving design and not a rollback target.
 
 This plan is the sole owner of work transferred from:
 
@@ -286,10 +288,28 @@ lock the analytics file.
 remains responsive during a dbt write lock and Postgres outage, and labels
 staleness honestly.
 
-### Stage 5 — Deploy, prove the lock is gone, and soak — NOT STARTED
+### Stage 5 — Deploy, prove the lock is gone, and soak — DEPLOYED; SOAK IN PROGRESS
 
 Deploy `dbt_runner`, `ops`, and Prometheus configuration as one compatibility
 change. Use the existing admin deploy-intent/drain procedure.
+
+Deployment and initial verification completed 2026-08-18:
+
+- PR #217 merged as `e5d3a46`; CI passed, including the exact saved SQL against
+  its dbt-built DuckDB artifact.
+- Deploy intent was declared and allowed to drain before the affected images
+  and monitoring configuration were recreated.
+- A normal scheduled-equivalent analytics build published the first valid
+  schema-version-1 snapshot. Its refresh timestamp and mart-derived
+  `data_through` remained distinct.
+- Prometheus reported `dbt_runner` up with all eight stable metric names, while
+  an instant query showed no current analytics series owned by `ops`.
+- Anonymous `/info` returned 200 from the snapshot-backed presentation cache,
+  and the initial log review found no recurring `Conflicting lock` warning.
+- Pipeline Health temporarily displayed both the retired `ops` history and the
+  current `dbt_runner` series because its stat panels reduce the default 24-hour
+  range with `lastNotNull`. This is retained Prometheus history, not two live
+  publishers, and should age out by the final soak check.
 
 1. Before deployment, record the current gauge values, scrape targets, latest
    dbt build, `/info` fields, and recent `Conflicting lock` log count.
@@ -307,6 +327,12 @@ change. Use the existing admin deploy-intent/drain procedure.
 7. Soak for 24 hours across ordinary scrape, processing, flush, and dbt cadences.
    Confirm the freshness timestamp advances only with valid publications and
    the 900-second alert stays quiet while healthy.
+
+Steps 1-6 passed their initial production checks. Step 7 remains open until the
+scheduled **2026-08-19 15:00 CDT (20:00 UTC)** check records a normal snapshot
+replacement during Prometheus scrapes, a green freshness alert, responsive
+`/info`, no recurring lock conflict, and the expected expiry of the historical
+duplicate dashboard series.
 
 **Gate 5:** the 24-hour evidence contains at least one successful snapshot
 replacement during normal metric scrapes, no cross-process gauge/info lock
