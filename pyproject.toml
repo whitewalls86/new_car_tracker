@@ -22,3 +22,16 @@ asyncio_mode = "auto"
 markers = [
     "integration: tests that require a real Postgres database",
 ]
+
+[tool.coverage.run]
+source = [
+    "archiver",
+    "dbt_runner",
+    "ops",
+    "processing",
+    "scraper",
+    "shared",
+]
+
+[tool.coverage.report]
+show_missing = true

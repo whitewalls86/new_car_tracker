@@ -42,10 +42,11 @@ jobs:
             -r ops/requirements.txt \
             -r dashboard/requirements.txt \
             -r dbt_runner/requirements.txt
-      - run: pytest tests/ -v -m "not integration"
+      - run: pytest tests/ -v -m "not integration" --cov --cov-report=term-missing
         env:
           PYTHONPATH: ${{ github.workspace }}
           LOG_PATH: /tmp/app.log
+          COVERAGE_CORE: sysmon
 
   docker-build:
     name: Docker build (all services)
@@ -57,7 +58,7 @@ jobs:
   dbt:
     name: dbt build + test
     runs-on: ubuntu-latest
-    needs: unit-tests
+    needs: lint
     services:
       postgres:
         image: postgres:16
@@ -372,4 +373,3 @@ jobs:
           DUCKDB_PATH: /tmp/ci_dbt_runner_test.duckdb
           POSTGRES_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
           LOG_PATH: /tmp/dbt_runner_test.log
-
