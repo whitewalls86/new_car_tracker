@@ -759,8 +759,17 @@ The rule the tier split should encode, which the first cut got wrong:
 > the tests. The criterion is now executable rather than commentary: a
 > `MEASURED_INODES` dict records the count that justifies each slow-tier volume,
 > and `test_tier_membership_is_decided_by_inodes` fails if a volume is promoted
-> without one. Expected daily walk 456s → ~59s, **to be confirmed on the next
-> scheduled run** — the fix is not verified in production yet.
+> without one.
+>
+> **Verified in production 2026-08-18 03:26 UTC: the daily walk is 55.5s**,
+> against a 456s baseline and a ~59s prediction. `measured: 9`,
+> `carried_forward: 2`, `failed: 0`. Deployed by rebuilding the shared
+> `cartracker-archiver` tag and recreating both `archiver` and `pack-worker`;
+> confirmed by asking the container what it loaded, not by uptime.
+>
+> Removing `airflow_logs` from the daily tier also moved the bottleneck:
+> `/var/lib/containerd` is now 45.2s of the 55.5s. That is image layers, which
+> this plan holds Out of Scope, and it does not change Stage 5.
 
 **A second finding, and it is the plan's own thesis turning up somewhere nobody
 was looking.** The walk measured `airflow_logs` at **6.33 GiB** against the

@@ -2,13 +2,17 @@
 
 ## Status
 
-**STAGES A+B IMPLEMENTED — awaiting merge of PR #213.** Surfaced 2026-08-17 during Plan 135
-Stage 4 development, when the unit suite's wall-clock time prompted the question
-"are we missing a mock somewhere?" The answer was no. Re-measured 2026-08-18
-against **real CI job timings**, which overturned the original draft's central
-assumption and moved one of its steps into another plan.
+**STAGES A+B COMPLETE 2026-08-18** — merged as PR #213 (`4fa6c7d`). Surfaced
+2026-08-17 during Plan 135 Stage 4 development, when the unit suite's
+wall-clock time prompted the question "are we missing a mock somewhere?" The
+answer was no. Re-measured 2026-08-18 against **real CI job timings**, which
+overturned the original draft's central assumption and moved one of its steps
+into another plan.
 
-Stages C and D remain queued at their lower build-order positions.
+Coverage now reports on every CI run at an 88% baseline with no gate, and the
+critical path is a stable ~260s against the 333s/345s/278s baseline. Both A+B
+have left the build order. Stages C and D remain queued at their lower
+build-order positions.
 
 ## What was actually measured
 
@@ -395,6 +399,14 @@ cache, the shared dependency install remained 29-32s (33s before), since
 environment. That saving is too small to clear the baseline's runner variance.
 Per Stage B's verification rule, all three `cache: pip` additions were reverted;
 the successful `needs: lint` change remains.
+
+Checked against the stage specs after the merge: `pytest-cov` is in
+[requirements-dev.txt](../requirements-dev.txt); `[tool.coverage.run]` names the
+six service packages and `[tool.coverage.report]` sets `show_missing`;
+[ci.yml](../.github/workflows/ci.yml) runs `--cov --cov-report=term-missing`
+with **no `--cov-fail-under` anywhere in the repo**, as Stage A required; the
+`dbt` job reads `needs: lint`; and no `cache: pip` remains. Every A+B item is
+either delivered or deliberately reverted under the stage's own rule.
 
 ### Stage C — Understand the 92s step (S, measurement first)
 
