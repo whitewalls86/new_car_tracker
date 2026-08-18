@@ -18,9 +18,11 @@ transition analytics endpoint rather than the future platform target.
 
 **Now:** Plan 120's final Gate F production verification is complete, and Plan
 139 Stages A+B have taken the CI path every plan below pays from 333s to a
-stable ~260s, with coverage now reported on every run. Plan 136 Stage 0a and 0c
-shipped on 2026-08-18 — the apiserver pool is sized against a tested connection
-budget and the DAG-failure alert no longer emits a label-less twin. Plan 140
+stable ~260s, with coverage now reported on every run. Plan 136 Stage 0 shipped
+and was **verified against production** on 2026-08-18 — Airflow itself reports
+the 20+20 pool, the shared anchor did not leak it to the other three services,
+and `ct-pipeline-failures` now renders exactly two named instances where it
+previously rendered a third reading `DAG [no value] failed`. Plan 140
 takes the lead from there: give every service a healthcheck, then build the
 container-health metric **once**, covering all of them, and make a coverage gap
 fail CI rather than production. Plan 136 then resumes at Stage 1 for truthful
@@ -98,8 +100,8 @@ because it is smaller while a higher row has an executable next step.
 
 | Order | Plan | Title | Next executable slice | Priority | Effort | Depends on / safe stopping point |
 |---:|---|---|---|---:|---|---|
-| 1 | [140](plan_140_service_health_contract.md) | Service health contract | Healthchecks on the 24 services lacking them, then the container-health metric (absorbing Plan 136 Stage 0b), then CI coverage assertions | 87 | M + soak | Plan 136 Stage 0a/0c landed 2026-08-18; soak Stage 1 before alerting on it |
-| 2 | [136](plan_136_solver_recycle_and_liveness.md) | Solver recycle and real liveness | Stages 1-2 metrics/freshness and solver counters, then Stage 3 drain-aware weekly recycle | 98 | M | Stage 0a/0c done; 0b moved into Plan 140 Stage 2; soak counters before Stage 4 auto-restart |
+| 1 | [140](plan_140_service_health_contract.md) | Service health contract | Deploy and soak the 18 new healthchecks, then build the container-health metric and alerts; keep the explicit `oauth2-proxy` image exception loud (Stage 3 CI coverage is built) | 87 | M + soak | Plan 136 Stage 0 verified in production 2026-08-18 — nothing left blocking; soak Stage 1 before alerting on it |
+| 2 | [136](plan_136_solver_recycle_and_liveness.md) | Solver recycle and real liveness | Stages 1-2 metrics/freshness and solver counters, then Stage 3 drain-aware weekly recycle | 98 | M | Stage 0 verified; 0b moved into Plan 140 Stage 2; soak counters before Stage 4 auto-restart |
 | 3 | [142](plan_142_planned_host_maintenance.md) | Planned host maintenance and production quiescence | Freeze the successful Ubuntu-update window as fixtures, then build separate maintenance intent, truthful drain status, and the checked-in host procedure | 86 | M + first observed window | Reuse Plan 136 drain semantics; final resume gate requires soaked Plan 140 health coverage |
 | 4 | [141](plan_141_structured_log_ingestion_contract.md) | Structured log ingestion and dashboard contract | Freeze production-derived fixtures and baseline, then align parsing, labels, filters, and dashboard selectors | 85 | S + 24h soak | Does not block Plan 136; should precede Plan 134's warning-log observation window |
 | 5 | [134](plan_134_archiver_endpoint_failure_contract.md) | Archiver endpoint failure contract | Add warning-only failure predicates and begin the one-week observation window | 88 | S | Plan 141 first; one-week soak before enforcement; pause if real failures need repair |
@@ -205,11 +207,11 @@ host package or reboot authority.
 | [133](plan_133_pack_read_path_hardening.md) | Pack read path hardening | Draft — two non-blocking defects found verifying 131 Stage 3; do before 132 Stage 2 |
 | [134](plan_134_archiver_endpoint_failure_contract.md) | Archiver endpoint failure contract | Draft — measurement-first rollout not started |
 | [135](plan_135_storage_observability.md) | Storage observability | **Complete 2026-08-18** — both disks visible, alerts proven, all log stores bounded, runbook live, `df /` 79% → 51%; criterion 5's MinIO half publishes on the first Sunday slow-tier walk (2026-08-23) |
-| [136](plan_136_solver_recycle_and_liveness.md) | Solver recycle + real liveness detection | **Stage 0a/0c shipped 2026-08-18** — apiserver pool sized against a tested connection budget, `ct-pipeline-failures` de-duplicated; 0b reassigned to Plan 140 Stage 2; Stages 1-4 not started |
+| [136](plan_136_solver_recycle_and_liveness.md) | Solver recycle + real liveness detection | **Stage 0 complete and verified in production 2026-08-18** (PR #214) — Airflow parses the 20+20 pool, no anchor leak, 14 of 100 connections; `ct-pipeline-failures` now renders exactly 2 named instances and no `[no value]` twin. 0b reassigned to Plan 140 Stage 2; Stages 1-4 not started |
 | [137](plan_137_legacy_bronze_parquet_disposition.md) | Legacy bronze Parquet recovery and disposition | Draft — read-only inventory complete; no deletion authorized |
 | [138](plan_138_public_surface_refresh.md) | README and public portfolio surface refresh | Draft — audit complete; implementation not started |
 | [139](plan_139_test_suite_maintenance.md) | Test suite construction and maintenance | **Stages A+B complete 2026-08-18** (PR #213) — coverage reported at 88%, CI path 333s → ~260s; Stages C/D remain queued as opportunistic filler; `duckdb_gauges` coverage transferred to Plan 136 Stage 1 |
-| [140](plan_140_service_health_contract.md) | Service health contract | Draft — written 2026-08-18 after a second undetected-component incident; 7 of 31 services have a healthcheck. Now leads the build order and owns the container-health metric outright (Plan 136 Stage 0b folded in) |
+| [140](plan_140_service_health_contract.md) | Service health contract | **Stage 1 implemented for every probeable service and Stage 3 built 2026-08-18** — 25 of 31 services now have healthchecks; five are deliberate one-shot/profile exemptions and distroless `oauth2-proxy` is an explicit unresolved hole. Deploy/soak and Stage 2 remain |
 | [141](plan_141_structured_log_ingestion_contract.md) | Structured log ingestion and dashboard contract | Draft — routed from Plan 135 closeout; parsing, labels, privacy policy, dashboards, and capacity soak not started |
 | [142](plan_142_planned_host_maintenance.md) | Planned host maintenance and production quiescence | Draft — separate maintenance intent, truthful drain, checked-in apt/reboot procedure, and Plan 140-gated resume not started |
 

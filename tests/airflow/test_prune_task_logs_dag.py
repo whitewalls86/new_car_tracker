@@ -32,22 +32,29 @@ def test_prunes_old_run_trees_and_keeps_recent_ones(tmp_path):
     assert recent.exists()
 
 
-def test_ignores_non_airflow_layout_and_symlinked_run(tmp_path):
+def test_ignores_non_airflow_layout_and_symlinked_run(tmp_path, mocker):
     now = datetime(2026, 8, 17, tzinfo=timezone.utc)
     unrelated = tmp_path / "scheduler" / "latest.log"
     unrelated.parent.mkdir()
     unrelated.write_text("keep")
-    outside = tmp_path.parent / "outside-task-logs"
-    outside.mkdir(exist_ok=True)
     link = tmp_path / "dag_id=linked" / "run_id=linked"
-    link.parent.mkdir()
-    link.symlink_to(outside, target_is_directory=True)
+    link.mkdir(parents=True)
+
+    # Creating a real symlink requires elevated privileges on Windows. The
+    # behavior owned here is our refusal to traverse a run directory that the
+    # filesystem classifies as a symlink, not pathlib's OS integration.
+    real_is_symlink = Path.is_symlink
+
+    def _is_symlink(path):
+        return path == link or real_is_symlink(path)
+
+    mocker.patch.object(Path, "is_symlink", autospec=True, side_effect=_is_symlink)
 
     result = prune_task_logs(log_root=tmp_path, now=now)
 
     assert result == {"examined": 0, "deleted": 0}
     assert unrelated.exists()
-    assert outside.exists()
+    assert link.exists()
 
 
 def test_rejects_nonpositive_retention(tmp_path):

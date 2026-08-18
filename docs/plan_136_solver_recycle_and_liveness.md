@@ -2,8 +2,14 @@
 
 ## Status
 
-PLANNED. Written 2026-08-15 after an 8-hour detail-scraping outage that no
-alert caught. Nothing in this plan has been applied. The only production action
+**Stage 0 complete and verified in production 2026-08-18** (PR #214, merge
+`8b2254b`) — see [Stage 0 production verification](#stage-0-production-verification-2026-08-18).
+0a and 0c are deployed and proven; 0b was reassigned to
+[Plan 140](plan_140_service_health_contract.md) Stage 2 rather than built here.
+Stages 1-4 are not started.
+
+Written 2026-08-15 after an 8-hour detail-scraping outage that no
+alert caught. The only production action
 taken during the incident was `docker restart cartracker-trawl`, which resolved
 it.
 
@@ -288,6 +294,96 @@ streak after 0a; the pool settings appear in `.Config.Env` (not merely in the
 compose file); a deliberately stopped non-critical container produces a `0` and
 an alert; and `ct-pipeline-failures` emits exactly one instance per failed DAG.
 
+### Stage 0 production verification, 2026-08-18
+
+Deployed as PR #214 (merge `8b2254b`). **0b is not part of this** — see
+[Stage 0b's reassignment](#0b-was-reassigned-to-plan-140) below.
+
+**The two fixes needed opposite deploy commands**, which is worth recording
+because getting it backwards produces a healthy-looking container running the
+old config — the trap Plan 135 Stage 1 hit with node-exporter:
+
+| Change | Command | Why |
+|---|---|---|
+| 0a | `docker compose up -d --no-deps airflow-apiserver` | `environment:` is service *config*; `docker restart` reuses the existing container's config |
+| 0c | `docker restart cartracker-grafana` | `./grafana/provisioning` is a bind mount, so the file was already inside the container. Compose sees no drift and `up -d` is a no-op; Grafana only re-reads provisioning at startup |
+
+#### 0a
+
+| Check | Result |
+|---|---|
+| Env in the **running** container | `SQL_ALCHEMY_POOL_SIZE=20`, `SQL_ALCHEMY_MAX_OVERFLOW=20` |
+| Container was recreated, not restarted | `Created: 2026-08-18T15:39:38Z` — fresh |
+| **Airflow actually parsed it** | `airflow config get-value database sql_alchemy_pool_size` → `20`; `..._max_overflow` → `20` |
+| Anchor did not leak | `0` pool vars on scheduler, dag-processor, triggerer |
+| Health | `Status: healthy`, `FailingStreak: 0` |
+| `pg_stat_activity` | **14 of 100** — `airflow_user` 7, `cartracker` 2, `metrics_user` 1, 4 unnamed |
+
+The `get-value` row is the one that matters. The env var being present and
+Airflow honouring it are different claims, and only the second is the fix.
+
+**This corrects the headroom warning written when 0a was authored.** That note
+estimated non-Airflow consumers at ~17 (from a 27-total reading with Airflow at
+~10) and concluded worst case was ~102 against `max_connections=100`. Measured:
+non-Airflow is **7**, so worst case is **92**. The correction is real but should
+not be over-read — the box was four minutes past a recreate and quiet, while the
+27-total reading was taken under load. Treat 92 as the optimistic end.
+
+#### 0c
+
+Validated in **both directions**, because this change had a failure mode worse
+than the defect it fixes: a guard matching nothing would silence the alert
+permanently, and a silent alert beats a duplicated one on ugliness while losing
+badly on consequence.
+
+The defect was real. Three series exist and exactly one carries no `dag_id`:
+
+```
+airflow_dagrun_duration_failed_count{job="airflow"}                2   <- no dag_id
+airflow_dagrun_duration_failed_count{dag_id="orphan_checker"}      1
+airflow_dagrun_duration_failed_count{dag_id="results_processing"}  1
+```
+
+Counts: **3 unguarded, 2 guarded, 1 label-less.** The label-less series reads
+`2`, exactly the sum of the other two — so it is an unmapped statsd aggregate
+rather than an unknown DAG, which also explains why it tracked real failures
+closely enough to look plausible during triage.
+
+The guarded selector still matches 2, so the alert can still fire. Confirmed
+end-to-end against Grafana's own rule store and instance set, not the file:
+
+```
+dag_id="orphan_checker"      -> "DAG orphan_checker failed"      Normal
+dag_id="results_processing"  -> "DAG results_processing failed"  Normal
+totals: {normal: 2}
+```
+
+Two named instances; the `DAG [no value] failed` instance is gone. Both carry
+`activeAt: 2026-08-18T01:56:00Z` — these are the apiserver incident's own DAG
+failures.
+
+#### What this does not settle
+
+**Open question 4 (undersized vs leaking) is untouched by this result**, because
+a clean verification is consistent with both — raising the pool fixes sizing and
+only delays a leak. New baseline: `airflow_user` at **7**, roughly two minutes
+after the recreate, against the **10** recorded shortly after the 01:45 restart.
+That needs sampling across several days, not a single reading.
+
+### 0b was reassigned to Plan 140
+
+Not deferred — **rebuilt elsewhere**. Checked against the compose file before
+writing any of it: Docker reports no health status at all for a container
+without a healthcheck, and only **7 of 31** services have one. The metric this
+stage described would have been blank for the other 24, and a service with no
+healthcheck would have been indistinguishable from a healthy one.
+
+[Plan 140](plan_140_service_health_contract.md) Stage 2 builds the same metric
+with a third state (`-1` for "no healthcheck configured") *after* its Stage 1
+adds the missing healthchecks, so it covers everything the day it ships. The
+socket-path decision this stage raised — `docker-socket-proxy` versus a direct
+mount — travels with it, and Stage 4 below still owns the restart verb.
+
 ---
 
 ## Stage 1 — Make gauge staleness impossible to miss
@@ -451,11 +547,16 @@ less authority than Plan 108 proposed.
 
 ## Sequencing
 
-**Stage 0 goes first and is separable from the rest of the plan.** 0a is a
-two-line config change fixing a live production defect; 0c is a one-line
-expression fix. Neither depends on anything else here. 0b is the one piece that
-should watch its ordering: if Stage 4's `docker-socket-proxy` is close, read
-container health through it rather than adding a second socket path.
+**Stage 0 went first and was separable from the rest of the plan** — 0a a
+config change fixing a live production defect, 0c a one-line expression fix,
+neither depending on anything else here. Both shipped and were verified on
+2026-08-18. 0b's ordering caveat resolved differently than written: rather than
+waiting on Stage 4's `docker-socket-proxy`, the whole step moved to Plan 140,
+which takes the socket-path decision with it.
+
+**Plan 140 now runs before Stages 1-4.** It was previously reasoned as adjacent
+on switching cost; with 0b folded into it, it is simply the next slice of the
+same work, and Stage 0a/0c were the only parts it was waiting on.
 
 Stages 1 and 2 are worth doing regardless — they are the difference between
 finding out in 15 minutes and finding out in 8 hours. **Stage 3 is the highest
@@ -463,12 +564,18 @@ value-per-effort item in the plan** and could ship on its own. Stage 4 is the
 only one that requires new authority in the stack and should not start until
 Stage 2's counters have run long enough to trust the breaker's input signal.
 
-Note that Stage 0b and Stage 2 attack the same failure from opposite ends. 0b
-asks *"is the container healthy?"*; Stage 2 asks *"is work succeeding?"* Neither
-subsumes the other — the solver incident had a **healthy** container producing
-0% success, and the apiserver incident had an **unhealthy** container while
-statsd-exporter reported normally. Both incidents needed the signal the other
-stage provides.
+Note that container health and Stage 2 attack the same failure from opposite
+ends. Health asks *"is the container healthy?"*; Stage 2 asks *"is work
+succeeding?"* Neither subsumes the other — the solver incident had a **healthy**
+container producing 0% success, and the apiserver incident had an **unhealthy**
+container while statsd-exporter reported normally. Both incidents needed the
+signal the other provides.
+
+**That argument survived 0b moving to Plan 140 and is the reason Stage 2 is not
+optional afterwards.** Plan 140 makes the liveness floor uniform; it cannot make
+`trawl` tell the truth, because `trawl`'s healthcheck returned `status:ok` for
+all eight hours. Finishing Plan 140 and reading health coverage as done is the
+specific mistake this note exists to prevent.
 
 ## Relationship to Plan 141
 
@@ -490,12 +597,14 @@ outcome work. Keep these boundaries explicit:
 
 ## Files
 
+Stage 0 rows are marked **done**; the container-health producer moved to
+[Plan 140](plan_140_service_health_contract.md) Stage 2 and is listed there.
+
 | File | Change | Stage |
 |---|---|---|
-| `docker-compose.yml` | Apiserver-only `SQL_ALCHEMY_POOL_SIZE` / `MAX_OVERFLOW` | 0a |
-| `tests/test_observability_config.py` | Pool settings present; Airflow worst-case connection sum < `max_connections` | 0a |
-| container-health producer (textfile `.prom`) | `cartracker_container_health{container=...}` | 0b |
-| `grafana/provisioning/alerting/rules.yml` | Container-health alert; `dag_id != ""` guard on `ct-pipeline-failures` | 0b, 0c |
+| `docker-compose.yml` | Apiserver-only `SQL_ALCHEMY_POOL_SIZE` / `MAX_OVERFLOW` | 0a — **done** |
+| `tests/test_observability_config.py` | `TestAirflowConnectionBudget`: pool settings present, not on the shared anchor, exact set equality on the Airflow services, worst-case sum < `max_connections` read from the postgres `command:` | 0a — **done** |
+| `grafana/provisioning/alerting/rules.yml` | `dag_id != ""` guard on `ct-pipeline-failures` | 0c — **done** |
 | `ops/metrics/duckdb_gauges.py` | NaN on failure; freshness gauge; S3 connection to dodge the dbt lock | 1 |
 | `scraper/` (metrics module) | Solver + detail-fetch outcome counters; circuit breaker | 2, 4 |
 | `prometheus/prometheus.yml` | Scrape the `scraper` target | 2 |
@@ -527,6 +636,13 @@ outcome work. Keep these boundaries explicit:
    monotonic growth between restarts means leak, a plateau means sizing. Baseline
    was **10** shortly after the 01:45 restart, against a 15-connection ceiling
    before it.
+
+   **Still open after 0a shipped.** Second datapoint: **7**, roughly two minutes
+   after the 15:39 recreate on 2026-08-18, now against a 40-connection ceiling.
+   Two post-restart readings say nothing about the trend — the question is the
+   slope *between* restarts, and 0a raising the ceiling means a leak now has more
+   room to hide before it wedges anything. That is the cost of the fix and the
+   reason this stays open rather than closing on a green deploy.
 5. **Which containers belong in the 0b health alert?** Alerting on every
    container invites noise from short-lived and profile-gated services
    (`snapshot-worker`, `flyway`, `airflow-init`). An allowlist of long-running
