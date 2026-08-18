@@ -62,7 +62,7 @@ observation window is written separately and does not inflate coding effort.
 
 | Order | Plan | Remaining work | Priority | Effort | Exit / dependency |
 |---:|---|---|---:|---|---|
-| 0.1 | [135](plan_135_storage_observability.md) | Finish both-disk capacity/inode visibility, alerts, bounded logs, disk-breakdown snapshots, and the runbook | 100 | S remaining | All seven success criteria pass; then move to completed |
+| 0.1 | [135](plan_135_storage_observability.md) | **Stages 1-4 live (criteria 1-5 met).** Remaining: fix the Stage 4 daily/weekly tier defect, then Stage 5 (bounded logs) and Stage 6 (runbook) — see the [follow-up prompt](claude_prompt_plan_135_stage_4_followup.md) | 100 | S remaining | Criteria 6 and 7 pass; then move to completed |
 | 0.2 | [124](plan_124_trawl_memory_guardrails.md) | Verify the deployed limits with `docker inspect`, `docker stats`, and a normal scrape cycle | 97 | XS | No new OOM evidence; update the plan status |
 | 0.3 | [131](plan_131_packed_cold_storage.md) | Verify the recurring lifecycle DAG and close Stage 5 documentation | 94 | S | Lifecycle is single-flight, deploy-aware, measured, and alertable |
 | 0.4 | [120](plan_120_ci_lake_snapshot_delivery.md) | Complete the remaining VM/Gate F verification | 82 | S | Required before Plan 125 relies on the snapshot path as a release gate |
