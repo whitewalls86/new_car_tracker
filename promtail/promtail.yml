@@ -10,6 +10,26 @@ clients:
 
 scrape_configs:
 
+  # Container stdout is normally only a bounded Docker transport buffer. Keep
+  # the auth audit trail and Airflow control-plane logs in Loki, while excluding
+  # Loki itself (which would create a feedback loop) and low-value containers.
+  - job_name: docker-operations
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 30s
+    relabel_configs:
+      - source_labels: ['__meta_docker_container_name']
+        regex: '/cartracker-(oauth2-proxy|airflow-(dag-processor|scheduler|apiserver))'
+        action: keep
+      - source_labels: ['__meta_docker_container_name']
+        regex: '/cartracker-(.+)'
+        target_label: service
+        replacement: '$1'
+    pipeline_stages:
+      - docker: {}
+      - labels:
+          stream:
+
   - job_name: ops
     static_configs:
       - targets:

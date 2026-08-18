@@ -22,6 +22,17 @@ common:
     kvstore:
       store: inmemory
 
+# Loki is the durable store; the files Promtail tails and Docker's json logs are
+# bounded transport buffers. Keep one generous retention policy here rather
+# than attempting to age data independently at every producer.
+compactor:
+  working_directory: /loki/compactor
+  retention_enabled: true
+  delete_request_store: filesystem
+
+limits_config:
+  retention_period: 90d
+
 schema_config:
   configs:
     - from: 2024-01-01

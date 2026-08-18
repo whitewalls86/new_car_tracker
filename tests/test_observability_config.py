@@ -6,6 +6,7 @@ to catch syntax errors before they cause silent startup failures in production c
 No external services required.
 """
 import json
+import re
 from pathlib import Path
 
 import yaml
@@ -44,7 +45,7 @@ class TestPrometheusAndLokiConfig:
         assert "server" in doc
         assert "clients" in doc
         assert "scrape_configs" in doc
-        assert len(doc["scrape_configs"]) == 6
+        assert len(doc["scrape_configs"]) == 7
 
     def test_promtail_all_services_present(self):
         path = _REPO_ROOT / "promtail" / "promtail.yml"
@@ -52,7 +53,7 @@ class TestPrometheusAndLokiConfig:
         job_names = {job["job_name"] for job in doc["scrape_configs"]}
         expected = {
             "ops", "scraper", "processing", "dbt_runner", "archiver",
-            "pack-worker",
+            "pack-worker", "docker-operations",
         }
         assert expected == job_names, f"Unexpected promtail jobs: {job_names ^ expected}"
 
@@ -65,6 +66,36 @@ class TestPrometheusAndLokiConfig:
         labels = job["static_configs"][0]["labels"]
         assert labels["service"] == "pack-worker"
         assert labels["__path__"] == "/logs/pack-worker/app.log*"
+
+    def test_container_stdout_selection_is_explicit_and_excludes_loki(self):
+        path = _REPO_ROOT / "promtail" / "promtail.yml"
+        doc = yaml.safe_load(path.read_text())
+        job = next(
+            job for job in doc["scrape_configs"]
+            if job["job_name"] == "docker-operations"
+        )
+        keep = next(rule for rule in job["relabel_configs"] if rule.get("action") == "keep")
+        regex = keep["regex"]
+        for name in (
+            "oauth2-proxy",
+            "airflow-dag-processor",
+            "airflow-scheduler",
+            "airflow-apiserver",
+        ):
+            assert re.fullmatch(regex, f"/cartracker-{name}")
+        assert "loki" not in regex
+
+    def test_stage_5_retention_is_single_90_day_policy(self):
+        loki = yaml.safe_load((_REPO_ROOT / "loki" / "loki.yml").read_text())
+        assert loki["compactor"]["retention_enabled"] is True
+        assert loki["compactor"]["delete_request_store"] == "filesystem"
+        assert loki["limits_config"]["retention_period"] == "90d"
+
+    def test_promtail_container_discovery_mounts_are_read_only(self):
+        compose = yaml.safe_load((_REPO_ROOT / "docker-compose.yml").read_text())
+        mounts = compose["services"]["promtail"]["volumes"]
+        assert "/var/run/docker.sock:/var/run/docker.sock:ro" in mounts
+        assert "/var/lib/docker/containers:/var/lib/docker/containers:ro" in mounts
 
 
 class TestGrafanaProvisioning:
