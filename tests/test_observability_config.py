@@ -97,6 +97,20 @@ class TestPrometheusAndLokiConfig:
         assert "/var/run/docker.sock:/var/run/docker.sock:ro" in mounts
         assert "/var/lib/docker/containers:/var/lib/docker/containers:ro" in mounts
 
+    def test_docker_29_compatible_promtail_and_nonempty_stream_labels(self):
+        compose = yaml.safe_load((_REPO_ROOT / "docker-compose.yml").read_text())
+        assert compose["services"]["promtail"]["image"] == "grafana/promtail:3.5.8"
+
+        promtail = yaml.safe_load((_REPO_ROOT / "promtail" / "promtail.yml").read_text())
+        job = next(
+            item for item in promtail["scrape_configs"]
+            if item["job_name"] == "docker-operations"
+        )
+        assert {
+            "target_label": "job",
+            "replacement": "docker-operations",
+        } in job["relabel_configs"]
+
 
 class TestGrafanaProvisioning:
     def test_prometheus_datasource_yml_parses(self):
