@@ -57,6 +57,7 @@ jobs:
         env:
           PYTHONPATH: ${{ github.workspace }}
           LOG_PATH: /tmp/app.log
+          COVERAGE_CORE: sysmon
 
   docker-build:
     name: Docker build (all services)
