@@ -2,11 +2,13 @@
 
 ## Status
 
-**Stage 0 complete and verified in production 2026-08-18** (PR #214, merge
-`8b2254b`) — see [Stage 0 production verification](#stage-0-production-verification-2026-08-18).
+**Stage 0 complete and verified in production 2026-08-18; Stage 1 built
+2026-08-18, deploy/verification pending.** Stage 0 shipped as PR #214, merge
+`8b2254b`; see
+[Stage 0 production verification](#stage-0-production-verification-2026-08-18).
 0a and 0c are deployed and proven; 0b was reassigned to
 [Plan 140](plan_140_service_health_contract.md) Stage 2 rather than built here.
-Stages 1-4 are not started.
+Stages 2-4 are not started.
 
 Written 2026-08-15 after an 8-hour detail-scraping outage that no
 alert caught. The only production action
@@ -176,7 +178,8 @@ The alert **stayed silent for the entire outage and began firing at 05:51 —
 forty minutes into the healthy recovery.** It is not merely insensitive; it is
 anti-correlated with the thing it monitors.
 
-Root cause is in [ops/metrics/duckdb_gauges.py:55-61](ops/metrics/duckdb_gauges.py#L55-L61):
+Root cause was in the pre-Stage 1 implementation of
+`ops/metrics/analytics_gauges.py` (then named `duckdb_gauges.py`):
 
 ```sql
 SELECT observation_count, artifact_count
@@ -191,7 +194,7 @@ metric being used as a liveness alarm, and it cannot do that job.
 
 ### D2 — Gauges silently retain stale values
 
-[ops/metrics/duckdb_gauges.py:128-132](ops/metrics/duckdb_gauges.py#L128-L132):
+The same pre-Stage 1 module ended with:
 
 ```python
 except Exception as e:
@@ -386,7 +389,7 @@ mount — travels with it, and Stage 4 below still owns the restart verb.
 
 ---
 
-## Stage 1 — Make gauge staleness impossible to miss
+## Stage 1 — Make gauge staleness impossible to miss — BUILT 2026-08-18
 
 Smallest change, unblocks verification of everything else.
 
@@ -407,8 +410,20 @@ reads MinIO parquet directly with a fresh S3-configured connection *specifically
 to avoid dbt's write lock*. Apply the same approach to the gauges rather than
 contending on `analytics.duckdb`.
 
+> **Implementation correction:** the draft's S3 mechanism is not semantically
+> available to these gauges. The maintenance query reads a raw Parquet source;
+> the seven gauges read dbt-materialized mart tables that exist only inside
+> `analytics.duckdb`. A fresh S3 connection cannot see those tables, and
+> rebuilding the marts from raw Parquet every minute would duplicate dbt logic
+> and create a large recurring scan. The built solution keeps DuckDB ownership
+> in `dbt_runner`: its guarded `GET /analytics/metrics` serializes the short read with
+> dbt builds, while `ops` consumes the snapshot over the existing internal HTTP
+> path. A build in progress is an explicit 503 rather than a cross-process file
+> lock conflict.
+
 **1d. Cover the module while rewriting it.**
-[ops/metrics/duckdb_gauges.py](ops/metrics/duckdb_gauges.py) sits at **25%
+[ops/metrics/analytics_gauges.py](../ops/metrics/analytics_gauges.py) replaces a
+module that sat at **25%
 coverage** — 132 lines of seven nested `try/except` blocks, each silently
 swallowing a failure, with no dedicated test file. Measured in
 [Plan 139](plan_139_test_suite_maintenance.md), which explicitly **hands this
@@ -418,8 +433,20 @@ precisely what 1a deletes. Write them here instead, asserting the NaN convention
 and the freshness timestamp — one test per swallowed exception path, since each
 one is a gauge that can go stale independently.
 
-> Verify: with a dbt build running, `/metrics` returns NaN for affected gauges
-> and a stale `last_success_timestamp`, and the freshness alert fires.
+As built, each failed mart query returns only its affected values as unknown;
+`ops` publishes those gauges as NaN while preserving successful values. A
+transport, busy, or connection failure makes all seven data gauges NaN. The new
+`cartracker_metrics_last_success_timestamp_seconds` advances only after a fully
+successful refresh, and `ct-metrics-freshness` alerts once it is more than 900
+seconds old. The reader and build share a non-blocking lock, closing the race
+between an idle check and opening DuckDB.
+
+> Verify: during a dbt build, `GET /analytics/metrics` returns 503 and the next ops
+> refresh publishes NaN without advancing the last-success timestamp. A normal
+> build shorter than 15 minutes must not alert; a deliberately held-busy or
+> injected query failure must make `ct-metrics-freshness` fire after 900
+> seconds. After the reader recovers, all seven gauges become numeric and the
+> timestamp advances.
 
 ## Stage 2 — A liveness signal that does not pass through dbt
 
@@ -605,10 +632,14 @@ Stage 0 rows are marked **done**; the container-health producer moved to
 | `docker-compose.yml` | Apiserver-only `SQL_ALCHEMY_POOL_SIZE` / `MAX_OVERFLOW` | 0a — **done** |
 | `tests/test_observability_config.py` | `TestAirflowConnectionBudget`: pool settings present, not on the shared anchor, exact set equality on the Airflow services, worst-case sum < `max_connections` read from the postgres `command:` | 0a — **done** |
 | `grafana/provisioning/alerting/rules.yml` | `dag_id != ""` guard on `ct-pipeline-failures` | 0c — **done** |
-| `ops/metrics/duckdb_gauges.py` | NaN on failure; freshness gauge; S3 connection to dodge the dbt lock | 1 |
+| `dbt_runner/app.py` | Serialized engine-neutral `/analytics/metrics` endpoint; current DuckDB adapter; per-query partial results; shared non-blocking lock with dbt builds | 1 — **built** |
+| `ops/metrics/analytics_gauges.py` | Consume `ANALYTICS_READER_URL`; NaN on failed/unknown values; advance freshness only on complete success | 1 — **built** |
+| `tests/dbt_runner/test_metrics.py` | Complete, partial, connection-failure, busy-reader, and lock-release contracts | 1 — **built** |
+| `tests/ops/test_analytics_gauges.py` | Complete, partial, transport-failure, and invalid-response gauge behavior; exact producer/consumer metric-name contract | 1 — **built** |
 | `scraper/` (metrics module) | Solver + detail-fetch outcome counters; circuit breaker | 2, 4 |
 | `prometheus/prometheus.yml` | Scrape the `scraper` target | 2 |
-| `grafana/provisioning/alerting/rules.yml` | Fix `ct-scrape-volume-drop`; add solver-success and metrics-freshness alerts | 1, 2 |
+| `grafana/provisioning/alerting/rules.yml` | Add `ct-metrics-freshness` | 1 — **built** |
+| `grafana/provisioning/alerting/rules.yml` | Fix `ct-scrape-volume-drop`; add solver-success alert | 2 |
 | `docker-compose.yml` | `docker-socket-proxy` sidecar; `RECYCLABLE_SERVICES` for ops | 4 |
 | `ops/routers/maintenance.py` | `POST /maintenance/recycle/{service}`, allowlisted | 3, 4 |
 | `airflow/dags/` | Weekly drain-aware recycle DAG | 3 |

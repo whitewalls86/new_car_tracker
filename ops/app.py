@@ -13,7 +13,7 @@ from prometheus_fastapi_instrumentator import Instrumentator
 
 from shared.logging_setup import configure_logging
 
-from .metrics.duckdb_gauges import update_duckdb_metrics
+from .metrics.analytics_gauges import update_analytics_metrics
 from .routers.admin import router as admin_router
 from .routers.auth import router as auth_router
 from .routers.deploy import router as deploy_router
@@ -26,16 +26,16 @@ from .routers.users import router as users_router
 
 configure_logging()
 
-def _duckdb_metrics_loop() -> None:
-    update_duckdb_metrics()
+def _analytics_metrics_loop() -> None:
+    update_analytics_metrics()
     while True:
         time.sleep(60)
-        update_duckdb_metrics()
+        update_analytics_metrics()
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    t = threading.Thread(target=_duckdb_metrics_loop, daemon=True)
+    t = threading.Thread(target=_analytics_metrics_loop, daemon=True)
     t.start()
     yield
 

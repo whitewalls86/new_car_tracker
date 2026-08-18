@@ -6,6 +6,7 @@ import os
 import re
 import shlex
 import subprocess
+import threading
 import time
 import uuid
 from datetime import datetime, timezone
@@ -30,6 +31,62 @@ DUCKDB_MEMORY_LIMIT = "8GB"
 # Linux SIGKILL exit codes: -9 from a direct signal, 137 (128+9) from some
 # shells/container runtimes that report it as a plain exit status.
 _OOM_RETURNCODES = (-9, 137)
+
+# DuckDB supports either one read/write process or multiple read-only processes,
+# not a writer in dbt plus a reader in ops. Keep ownership in this service and
+# serialize the short metrics read with dbt commands that can open the database.
+_duckdb_lock = threading.Lock()
+
+_DUCKDB_PATH = os.environ.get("DUCKDB_PATH", "/data/analytics/analytics.duckdb")
+_ANALYTICS_BACKEND = "duckdb"
+
+_DUCKDB_METRIC_QUERIES = (
+    (
+        ("cartracker_observation_count_last_hour", 0),
+        ("cartracker_artifact_count_last_hour", 1),
+        "SELECT COALESCE(observation_count, 0), COALESCE(artifact_count, 0) "
+        "FROM main.mart_scrape_volume ORDER BY hour DESC LIMIT 1",
+    ),
+    (
+        ("cartracker_block_events_last_hour", 0),
+        "SELECT COALESCE(total_block_events, 0) FROM main.mart_block_rate "
+        "ORDER BY hour DESC LIMIT 1",
+    ),
+    (
+        ("cartracker_extraction_yield_last_day", 0),
+        "SELECT COALESCE(extraction_yield, 0) FROM main.mart_detail_batch_outcomes "
+        "ORDER BY obs_date DESC LIMIT 1",
+    ),
+    (
+        ("cartracker_stale_listings_pct", 0),
+        """
+        SELECT COALESCE(
+            ROUND(
+                100.0 * SUM(stale_gt_14d) / NULLIF(
+                    SUM(stale_gt_14d + fresh_lt_1d + fresh_1_3d +
+                        fresh_4_7d + fresh_8_14d), 0
+                ), 2
+            ), 0
+        ) FROM main.mart_price_freshness_trend
+        """,
+    ),
+    (
+        ("cartracker_cooldown_backlog", 0),
+        "SELECT COALESCE(SUM(listing_count), 0) FROM main.mart_cooldown_cohorts "
+        "WHERE attempt_bucket IN ('1', '2', '3-4')",
+    ),
+    (
+        ("cartracker_cooldown_permanent", 0),
+        "SELECT COALESCE(SUM(listing_count), 0) FROM main.mart_cooldown_cohorts "
+        "WHERE attempt_bucket IN ('5-10', '11+')",
+    ),
+)
+
+_ANALYTICS_METRIC_NAMES = {
+    metric_name
+    for query in _DUCKDB_METRIC_QUERIES
+    for metric_name, _index in query[:-1]
+}
 
 
 def _likely_oom(returncode: int) -> bool:
@@ -68,6 +125,54 @@ def _cap(s: str, limit: int = 20000) -> str:
     return s if len(s) <= limit else s[-limit:]
 
 
+def _read_duckdb_metrics() -> Dict[str, Any]:
+    """Read every dbt-backed gauge while preserving per-query failures.
+
+    A partial result is useful: ops can publish successful gauges while setting
+    only the affected gauges to NaN. ``ok`` is true only when every expected
+    metric was refreshed, which is the condition for advancing the freshness
+    timestamp.
+    """
+    values = {name: None for name in _ANALYTICS_METRIC_NAMES}
+    errors: Dict[str, str] = {}
+
+    try:
+        import duckdb
+
+        con = duckdb.connect(_DUCKDB_PATH, read_only=True)
+    except Exception as exc:
+        errors["connection"] = str(exc)
+        return {
+            "ok": False,
+            "backend": _ANALYTICS_BACKEND,
+            "values": values,
+            "errors": errors,
+        }
+
+    try:
+        for query in _DUCKDB_METRIC_QUERIES:
+            targets = query[:-1]
+            sql = query[-1]
+            try:
+                row = con.execute(sql).fetchone()
+                if row is None:
+                    raise RuntimeError("query returned no rows")
+                for metric_name, index in targets:
+                    values[metric_name] = row[index]
+            except Exception as exc:
+                for metric_name, _index in targets:
+                    errors[metric_name] = str(exc)
+    finally:
+        con.close()
+
+    return {
+        "ok": not errors,
+        "backend": _ANALYTICS_BACKEND,
+        "values": values,
+        "errors": errors,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -82,6 +187,26 @@ def ready() -> Dict[str, Any]:
     if is_idle():
         return {"ready": True}
     raise HTTPException(status_code=503, detail={"ready": False, "reason": "jobs in flight"})
+
+
+@app.get("/analytics/metrics")
+def analytics_metrics() -> Dict[str, Any]:
+    """Return metric values through an engine-neutral endpoint contract."""
+    if not _duckdb_lock.acquire(blocking=False):
+        raise HTTPException(
+            status_code=503,
+            detail={"ok": False, "reason": "duckdb_busy"},
+        )
+    try:
+        if not is_idle():
+            raise HTTPException(
+                status_code=503,
+                detail={"ok": False, "reason": "jobs_in_flight"},
+            )
+        with active_job():
+            return _read_duckdb_metrics()
+    finally:
+        _duckdb_lock.release()
 
 
 @app.get("/dbt/docs/status")
@@ -137,83 +262,94 @@ def dbt_build(payload: Dict[str, Any] = Body(default={})) -> Dict[str, Any]:
     Returns 409 if a build is already in progress.
     Returns 500 if dbt exits non-zero.
     """
-    if not is_idle():
+    if not _duckdb_lock.acquire(blocking=False):
         raise HTTPException(
             status_code=409,
             detail={"error": "dbt_build_in_progress", "message": "A dbt build is already running."},
         )
-
-    with active_job():
-
-        full_refresh: bool = bool(payload.get("full_refresh", False))
-        fail_fast: bool = bool(payload.get("fail_fast", True))
-
-        select = payload.get("select")
-        exclude = payload.get("exclude")
-
-        if isinstance(select, str):
-            select = [select]
-        if isinstance(exclude, str):
-            exclude = [exclude]
-
-        if select:
-            _validate_tokens(select, "select")
-        if exclude:
-            _validate_tokens(exclude, "exclude")
-
-        cmd: List[str] = ["dbt", "build", "--target", "duckdb"]
-        if fail_fast:
-            cmd.append("--fail-fast")
-        if full_refresh:
-            cmd.append("--full-refresh")
-        if select:
-            cmd += ["--select", *select]
-        if exclude:
-            cmd += ["--exclude", *exclude]
-
-        invocation_id = str(uuid.uuid4())
-        started_at = datetime.now(timezone.utc).isoformat()
-        cmd_str = " ".join(shlex.quote(x) for x in cmd)
-        logger.info("dbt build invocation=%s starting: %s", invocation_id, cmd_str)
-
-        start = time.monotonic()
-        proc = subprocess.run(cmd, capture_output=True, text=True)
-        duration_seconds = round(time.monotonic() - start, 2)
-        ended_at = datetime.now(timezone.utc).isoformat()
-        likely_oom = _likely_oom(proc.returncode)
-
-        result = {
-            "ok": proc.returncode == 0,
-            "returncode": proc.returncode,
-            "likely_oom": likely_oom,
-            "invocation_id": invocation_id,
-            "started_at": started_at,
-            "ended_at": ended_at,
-            "duration_seconds": duration_seconds,
-            "select": select or "all",
-            "exclude": exclude or [],
-            "full_refresh": full_refresh,
-            "cmd": cmd_str,
-            "duckdb_threads": DUCKDB_THREADS,
-            "duckdb_memory_limit": DUCKDB_MEMORY_LIMIT,
-            "model_timings": _model_timings_from_run_results(),
-            "stdout": _cap(proc.stdout),
-            "stderr": _cap(proc.stderr),
-        }
-
-        logger.info(
-            "dbt build invocation=%s rc=%d duration=%.2fs full_refresh=%s likely_oom=%s",
-            invocation_id, proc.returncode, duration_seconds, full_refresh, likely_oom,
-        )
-
-        if proc.returncode != 0:
-            logger.error(
-                "dbt build failed invocation=%s (rc=%d)\nstdout: %s\nstderr: %s",
-                invocation_id, proc.returncode, proc.stdout, proc.stderr,
+    try:
+        if not is_idle():
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "dbt_build_in_progress",
+                    "message": "A dbt build is already running.",
+                },
             )
-            raise HTTPException(status_code=500, detail=result)
 
-        return result
+        with active_job():
+
+            full_refresh: bool = bool(payload.get("full_refresh", False))
+            fail_fast: bool = bool(payload.get("fail_fast", True))
+
+            select = payload.get("select")
+            exclude = payload.get("exclude")
+
+            if isinstance(select, str):
+                select = [select]
+            if isinstance(exclude, str):
+                exclude = [exclude]
+
+            if select:
+                _validate_tokens(select, "select")
+            if exclude:
+                _validate_tokens(exclude, "exclude")
+
+            cmd: List[str] = ["dbt", "build", "--target", "duckdb"]
+            if fail_fast:
+                cmd.append("--fail-fast")
+            if full_refresh:
+                cmd.append("--full-refresh")
+            if select:
+                cmd += ["--select", *select]
+            if exclude:
+                cmd += ["--exclude", *exclude]
+
+            invocation_id = str(uuid.uuid4())
+            started_at = datetime.now(timezone.utc).isoformat()
+            cmd_str = " ".join(shlex.quote(x) for x in cmd)
+            logger.info("dbt build invocation=%s starting: %s", invocation_id, cmd_str)
+
+            start = time.monotonic()
+            proc = subprocess.run(cmd, capture_output=True, text=True)
+            duration_seconds = round(time.monotonic() - start, 2)
+            ended_at = datetime.now(timezone.utc).isoformat()
+            likely_oom = _likely_oom(proc.returncode)
+
+            result = {
+                "ok": proc.returncode == 0,
+                "returncode": proc.returncode,
+                "likely_oom": likely_oom,
+                "invocation_id": invocation_id,
+                "started_at": started_at,
+                "ended_at": ended_at,
+                "duration_seconds": duration_seconds,
+                "select": select or "all",
+                "exclude": exclude or [],
+                "full_refresh": full_refresh,
+                "cmd": cmd_str,
+                "duckdb_threads": DUCKDB_THREADS,
+                "duckdb_memory_limit": DUCKDB_MEMORY_LIMIT,
+                "model_timings": _model_timings_from_run_results(),
+                "stdout": _cap(proc.stdout),
+                "stderr": _cap(proc.stderr),
+            }
+
+            logger.info(
+                "dbt build invocation=%s rc=%d duration=%.2fs full_refresh=%s likely_oom=%s",
+                invocation_id, proc.returncode, duration_seconds, full_refresh, likely_oom,
+            )
+
+            if proc.returncode != 0:
+                logger.error(
+                    "dbt build failed invocation=%s (rc=%d)\nstdout: %s\nstderr: %s",
+                    invocation_id, proc.returncode, proc.stdout, proc.stderr,
+                )
+                raise HTTPException(status_code=500, detail=result)
+
+            return result
+    finally:
+        _duckdb_lock.release()
 
 
 # ---------------------------------------------------------------------------

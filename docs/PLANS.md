@@ -105,7 +105,7 @@ because it is smaller while a higher row has an executable next step.
 | Order | Plan | Title | Next executable slice | Priority | Effort | Depends on / safe stopping point |
 |---:|---|---|---|---:|---|---|
 | 1 | [140](plan_140_service_health_contract.md) | Service health contract | Finish the 24-hour Stage 1 soak, then build the container-health metric and alerts; keep the explicit `oauth2-proxy` image exception loud (Stage 3 is verified) | 87 | M + soak | Stage 1 immediate production gate passed 2026-08-18: 25 of 25 configured runtime checks healthy with zero failing streaks; soak before alerting on them |
-| 2 | [136](plan_136_solver_recycle_and_liveness.md) | Solver recycle and real liveness | Stages 1-2 metrics/freshness and solver counters, then Stage 3 drain-aware weekly recycle | 98 | M | Stage 0 verified; 0b moved into Plan 140 Stage 2; soak counters before Stage 4 auto-restart |
+| 2 | [136](plan_136_solver_recycle_and_liveness.md) | Solver recycle and real liveness | Deploy and verify built Stage 1 gauge freshness, then add Stage 2 solver counters and Stage 3 drain-aware weekly recycle | 98 | M | Stage 0 verified; Stage 1 built 2026-08-18; 0b moved into Plan 140 Stage 2; soak counters before Stage 4 auto-restart |
 | 3 | [142](plan_142_planned_host_maintenance.md) | Planned host maintenance and production quiescence | Freeze the successful Ubuntu-update window as fixtures, then build separate maintenance intent, truthful drain status, and the checked-in host procedure | 86 | M + first observed window | Reuse Plan 136 drain semantics; final resume gate requires soaked Plan 140 health coverage |
 | 4 | [141](plan_141_structured_log_ingestion_contract.md) | Structured log ingestion and dashboard contract | Freeze production-derived fixtures and baseline, then align parsing, labels, filters, and dashboard selectors | 85 | S + 24h soak | Does not block Plan 136; should precede Plan 134's warning-log observation window |
 | 5 | [134](plan_134_archiver_endpoint_failure_contract.md) | Archiver endpoint failure contract | Add warning-only failure predicates and begin the one-week observation window | 88 | S | Plan 141 first; one-week soak before enforcement; pause if real failures need repair |
@@ -132,7 +132,8 @@ at 88% with no gate. Only the scheduling edge earned it — the pip-cache
 hypothesis was wrong and was reverted under Stage B's own verification rule.
 Stages C and D never had that argument and take their turn by score.
 
-The step that previously looked urgent — covering `ops/metrics/duckdb_gauges.py`
+The step that previously looked urgent — covering the module now named
+`ops/metrics/analytics_gauges.py`
 at 25% — **has moved into Plan 136 Stage 1**, and so appears in no Plan 139 row.
 Plan 136 does not depend on that module, it rewrites it: Stage 1a sets the gauges
 to `NaN` on refresh failure. Tests written against today's silent-stale behavior
@@ -211,10 +212,10 @@ host package or reboot authority.
 | [133](plan_133_pack_read_path_hardening.md) | Pack read path hardening | Draft — two non-blocking defects found verifying 131 Stage 3; do before 132 Stage 2 |
 | [134](plan_134_archiver_endpoint_failure_contract.md) | Archiver endpoint failure contract | Draft — measurement-first rollout not started |
 | [135](plan_135_storage_observability.md) | Storage observability | **Complete 2026-08-18** — both disks visible, alerts proven, all log stores bounded, runbook live, `df /` 79% → 51%; criterion 5's MinIO half publishes on the first Sunday slow-tier walk (2026-08-23) |
-| [136](plan_136_solver_recycle_and_liveness.md) | Solver recycle + real liveness detection | **Stage 0 complete and verified in production 2026-08-18** (PR #214) — Airflow parses the 20+20 pool, no anchor leak, 14 of 100 connections; `ct-pipeline-failures` now renders exactly 2 named instances and no `[no value]` twin. 0b reassigned to Plan 140 Stage 2; Stages 1-4 not started |
+| [136](plan_136_solver_recycle_and_liveness.md) | Solver recycle + real liveness detection | **Stage 0 verified in production; Stage 1 built 2026-08-18, deploy/verification pending** — an engine-neutral analytics-reader boundary serializes the current DuckDB adapter, unavailable or failed values become NaN, and the 900-second freshness contract is alertable. Plan 125 can replace only the adapter at Iceberg cutover. 0b is Plan 140 Stage 2; Stages 2-4 not started |
 | [137](plan_137_legacy_bronze_parquet_disposition.md) | Legacy bronze Parquet recovery and disposition | Draft — read-only inventory complete; no deletion authorized |
 | [138](plan_138_public_surface_refresh.md) | README and public portfolio surface refresh | Draft — audit complete; implementation not started |
-| [139](plan_139_test_suite_maintenance.md) | Test suite construction and maintenance | **Stages A+B complete 2026-08-18** (PR #213) — coverage reported at 88%, CI path 333s → ~260s; Stages C/D remain queued as opportunistic filler; `duckdb_gauges` coverage transferred to Plan 136 Stage 1 |
+| [139](plan_139_test_suite_maintenance.md) | Test suite construction and maintenance | **Stages A+B complete 2026-08-18** (PR #213) — coverage reported at 88%, CI path 333s → ~260s; Stages C/D remain queued as opportunistic filler; the module now named `analytics_gauges` received its coverage in Plan 136 Stage 1 |
 | [140](plan_140_service_health_contract.md) | Service health contract | **Stage 3 verified; Stage 1 deployed 2026-08-18 and in 24-hour soak** (PR #216, merge `821a6a6`) — deploy intent was declared through the admin UI and the system drained before recreation; all 25 configured runtime checks were healthy with zero failing streaks, including active `trawl` and `redis-trawl`. Stage 2 has not started |
 | [141](plan_141_structured_log_ingestion_contract.md) | Structured log ingestion and dashboard contract | Draft — routed from Plan 135 closeout; parsing, labels, privacy policy, dashboards, and capacity soak not started |
 | [142](plan_142_planned_host_maintenance.md) | Planned host maintenance and production quiescence | Draft — separate maintenance intent, truthful drain, checked-in apt/reboot procedure, and Plan 140-gated resume not started |

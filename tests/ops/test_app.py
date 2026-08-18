@@ -26,6 +26,7 @@ def test_metrics_endpoint_contains_custom_duckdb_metrics(mock_client):
     assert "cartracker_stale_listings_pct" in response.text
     assert "cartracker_cooldown_backlog" in response.text
     assert "cartracker_cooldown_permanent" in response.text
+    assert "cartracker_metrics_last_success_timestamp_seconds" in response.text
 
 
 def test_get_admin(mock_client):

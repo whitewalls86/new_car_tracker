@@ -253,6 +253,48 @@ groups:
                     type: lt
                     params: [100]
 
+      # Plan 136 Stage 1: the data gauges are NaN when their refresh is partial
+      # or unavailable. This independent timestamp makes the producer failure
+      # alertable instead of letting the last good values look current.
+      - uid: ct-metrics-freshness
+        title: Metrics Refresh Stale
+        condition: C
+        noDataState: Alerting
+        execErrState: Alerting
+        for: 0s
+        annotations:
+          summary: "dbt-backed metrics have not refreshed successfully for 15 minutes"
+          description: "The ops metrics reader is unavailable or at least one DuckDB mart query failed. Check dbt_runner health/build state and ops logs before trusting the dbt-backed gauges."
+        data:
+          - refId: A
+            datasourceUid: cartracker-prometheus
+            relativeTimeRange:
+              from: 1800
+              to: 0
+            model:
+              expr: 'time() - cartracker_metrics_last_success_timestamp_seconds'
+          - refId: B
+            datasourceUid: "__expr__"
+            relativeTimeRange:
+              from: 1800
+              to: 0
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+          - refId: C
+            datasourceUid: "__expr__"
+            relativeTimeRange:
+              from: 1800
+              to: 0
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [900]
+
       - uid: ct-extraction-yield-drop
         title: VIN Extraction Yield Drop
         condition: C

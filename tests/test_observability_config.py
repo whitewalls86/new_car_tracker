@@ -271,6 +271,21 @@ class TestDockerComposeTrawlMemoryGuardrails:
         assert service["memswap_limit"] == "512m"
 
 
+class TestAnalyticsReaderContract:
+    """Plan 136 Stage 1 / Plan 125 Gate D engine-neutral reader seam."""
+
+    @staticmethod
+    def _services():
+        path = _REPO_ROOT / "docker-compose.yml"
+        return yaml.safe_load(path.read_text())["services"]
+
+    def test_ops_reader_url_is_independent_of_the_current_backend(self):
+        env = self._services()["ops"]["environment"]
+        assert env["ANALYTICS_READER_URL"] == (
+            "${ANALYTICS_READER_URL:-http://dbt_runner:8080}"
+        )
+
+
 class TestAirflowConnectionBudget:
     """Plan 136 Stage 0a: the apiserver wedged on an exhausted SQLAlchemy pool.
 
@@ -826,6 +841,7 @@ class TestGrafanaAlertingProvisioning:
             "ct-log-error-spike", "ct-403-log-spike",
             "ct-pipeline-failures", "ct-service-down",
             "ct-scrape-volume-drop", "ct-extraction-yield-drop",
+            "ct-metrics-freshness",
             "ct-stale-listings", "ct-cooldown-backlog", "ct-block-events-spike",
             "ct-pack-verification-refused",
             "ct-disk-space-warning", "ct-disk-space-critical",
@@ -841,6 +857,17 @@ class TestGrafanaAlertingProvisioning:
                 if rule["uid"] == uid:
                     return rule
         raise AssertionError(f"rule {uid} not found")
+
+    def test_metrics_freshness_alert_uses_the_stage_1_contract(self):
+        rule = self._rule("ct-metrics-freshness")
+        assert rule["noDataState"] == "Alerting"
+        assert rule["execErrState"] == "Alerting"
+        assert rule["for"] == "0s"
+        assert rule["data"][0]["model"]["expr"] == (
+            "time() - cartracker_metrics_last_success_timestamp_seconds"
+        )
+        condition = rule["data"][-1]["model"]["conditions"][0]["evaluator"]
+        assert condition == {"type": "gt", "params": [900]}
 
     def test_pack_verification_refused_watches_the_worker(self):
         """Scheduled pack runs log under service="pack-worker", not "archiver".

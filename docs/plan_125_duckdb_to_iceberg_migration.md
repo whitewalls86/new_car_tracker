@@ -1332,7 +1332,7 @@ not just a SQL-reader swap. The current DuckDB file is read by:
 - Streamlit dashboard pages through `dashboard/db.py::run_duckdb_query`.
 - Dashboard SQL files under `dashboard/sql/`.
 - Public `/info` stats through `ops/routers/info.py`.
-- Custom Prometheus gauges through `ops/metrics/duckdb_gauges.py`.
+- Custom Prometheus gauges through `ops/metrics/analytics_gauges.py`.
 - Grafana panels and alerts that consume those custom gauges.
 - Plan 112 backtest scripts and local rehearsal/preflight scripts.
 
@@ -1348,7 +1348,7 @@ Build a concrete inventory before changing code:
 | `dashboard/db.py` | `DUCKDB_PATH`, read-only DuckDB connection | Central Streamlit reader used by dashboard pages. |
 | `dashboard/sql/*.sql` | DuckDB SQL over mart/int tables | Uses marts such as `mart_deal_scores`, `mart_vehicle_snapshot`, `mart_scrape_volume`, `mart_block_rate`, `mart_detail_batch_outcomes`, `mart_price_freshness_trend`, `mart_cooldown_cohorts`, `mart_inventory_coverage`, and `int_latest_observation`. |
 | `ops/routers/info.py` | direct DuckDB reads | Public portfolio stats from `mart_vehicle_snapshot` and `mart_scrape_volume`; failures are currently soft. |
-| `ops/metrics/duckdb_gauges.py` | direct DuckDB reads | Populates Prometheus gauges from mart tables. |
+| `ops/metrics/analytics_gauges.py` | engine-neutral internal HTTP reader contract; current adapter lives in `dbt_runner` and reads DuckDB | Populates stable Prometheus gauges from mart tables. Plan 136 Stage 1 removed direct cross-process file reads before this gate. |
 | `grafana/dashboards/pipeline_health.json` | Prometheus gauge names | Depends on custom metrics such as `cartracker_observation_count_last_hour`, `cartracker_artifact_count_last_hour`, `cartracker_block_events_last_hour`, `cartracker_extraction_yield_last_day`, `cartracker_stale_listings_pct`, `cartracker_cooldown_backlog`, and `cartracker_cooldown_permanent`. |
 | `grafana/provisioning/alerting/rules.yml` | Prometheus gauge names | Some alerts depend on the custom DuckDB-derived metrics. |
 | Loki/Promtail | logs, not analytics tables | Not a reader to migrate, but mandatory for cutover verification. |
@@ -1442,7 +1442,15 @@ pipeline health panels and alerts depend on them.
 
 Current producer:
 
-- `ops/metrics/duckdb_gauges.py`
+- `ops/metrics/analytics_gauges.py`
+
+Plan 136 Stage 1 pulled this boundary forward: `ops` now consumes
+`GET /analytics/metrics` through `ANALYTICS_READER_URL` and has no knowledge of
+the serving engine. The current `dbt_runner` adapter reads
+`analytics.duckdb`; Gate D replaces that adapter with an Iceberg-backed reader
+or serving extract while retaining the endpoint response and Prometheus
+contracts. The DuckDB-only build lock is transitional and should disappear
+when no process writes the reader's local file.
 
 Current derived metrics:
 
@@ -1456,8 +1464,8 @@ Current derived metrics:
 
 Required work:
 
-1. Rename the module or add a parallel implementation so the code no longer
-   describes itself as DuckDB-specific once the source changes.
+1. Keep the engine-neutral module and endpoint introduced by Plan 136; replace
+   only the current DuckDB adapter once the source changes.
 2. Keep metric names stable for the first migration so Grafana dashboards and
    alert rules do not all churn at once.
 3. Add a health metric for the analytics reader itself, for example:
