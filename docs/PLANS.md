@@ -34,10 +34,9 @@ they do.
 
 Plan 112 remains intentionally paused until Plan 125 supplies stable
 Iceberg-native inputs. Plans 114, 115, and 128 have completed their intended
-work and no longer belong in the executable queue. Plan 124 closed out
-2026-08-18. Plan 120 is built but still owes production verification. Plans
-129 and 131 are production systems under rollout/closeout rather than new
-builds.
+work and no longer belong in the executable queue. Plans 124 and 131 closed out
+2026-08-18. Plan 120 is built but still owes production verification. Plan 129
+is a production system under rollout rather than a new build.
 
 ---
 
@@ -72,8 +71,7 @@ observation window is written separately and does not inflate coding effort.
 | Order | Plan | Remaining work | Priority | Effort | Exit / dependency |
 |---:|---|---|---:|---|---|
 | 0.1 | [135](plan_135_storage_observability.md) | **Stages 1-4 live (criteria 1-5 met).** Remaining: fix the Stage 4 daily/weekly tier defect, then Stage 5 (bounded logs) and Stage 6 (runbook) — see the [follow-up prompt](claude_prompt_plan_135_stage_4_followup.md) | 100 | S remaining | Criteria 6 and 7 pass; then move to completed |
-| 0.2 | [131](plan_131_packed_cold_storage.md) | Verify the recurring lifecycle DAG and close Stage 5 documentation | 94 | S | Lifecycle is single-flight, deploy-aware, measured, and alertable |
-| 0.3 | [120](plan_120_ci_lake_snapshot_delivery.md) | Complete the remaining VM/Gate F verification | 82 | S | Required before Plan 125 relies on the snapshot path as a release gate |
+| 0.2 | [120](plan_120_ci_lake_snapshot_delivery.md) | Complete the remaining VM/Gate F verification | 82 | S | Required before Plan 125 relies on the snapshot path as a release gate |
 
 ## Default build order
 
@@ -138,7 +136,7 @@ free.
 | [115](plan_115_detail_unenriched_circuit_breaker.md) | Production bugfix implemented | Record deployment/verification and move to completed |
 | [128](plan_128_false_block_detection.md) | Phases 1-4 implemented; no historical repair chosen | Record final verification and move to completed |
 | [129](plan_129_zstd_dictionary_compression.md) | Dictionary v1 in production; backfill/lifecycle monitoring | Watch metrics; no new design work unless the run deviates |
-| [131](plan_131_packed_cold_storage.md) | April-June packed and pruned; Stage 5 recurring lifecycle in closeout | Complete order 0.2 above |
+| [131](plan_131_packed_cold_storage.md) | **Complete** — April-July packed and pruned, Stage 5 lifecycle DAG running on schedule | Monitor only; no new design work |
 
 ## Paused or blocked
 
@@ -165,7 +163,7 @@ free.
 | [128](plan_128_false_block_detection.md) | Cloudflare challenge pages swallowed as successful detail scrapes | Implemented through Phase 4 - closeout record pending |
 | [129](plan_129_zstd_dictionary_compression.md) | Trained zstd dictionary compression for bronze HTML | In production — dict v1 live, backfill running |
 | [130](plan_130_parser_input_projection.md) | Parser-input projection (truncating raw HTML) | Draft — blocked on 129 + taxonomy gap |
-| [131](plan_131_packed_cold_storage.md) | Packed cold storage for bronze HTML | In production — **April-June packed and pruned, verified 2026-08-17**: 2.70M objects → 222, 447.5 GiB raw → 7.01 GiB, June at 82.8% physical; July not packed; Stage 3 deployed, Stage 4 run ([run sheet](runbook_plan_131_stage_3_4.md)); Stage 5 in progress |
+| [131](plan_131_packed_cold_storage.md) | Packed cold storage for bronze HTML | **Complete 2026-08-18** — April-July packed and pruned: 3.61M objects → 288, 0 refused; Stage 5 lifecycle DAG green on its first scheduled run |
 | [132](plan_132_unrecorded_artifact_recovery.md) | Recovering unrecorded bronze artifacts | Draft — Stage 0 gate not run |
 | [133](plan_133_pack_read_path_hardening.md) | Pack read path hardening | Draft — two non-blocking defects found verifying 131 Stage 3; do before 132 Stage 2 |
 | [134](plan_134_archiver_endpoint_failure_contract.md) | Archiver endpoint failure contract | Draft — measurement-first rollout not started |
