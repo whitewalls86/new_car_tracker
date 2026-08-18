@@ -6,7 +6,6 @@ to catch syntax errors before they cause silent startup failures in production c
 No external services required.
 """
 import json
-import re
 from pathlib import Path
 
 import yaml
@@ -74,16 +73,20 @@ class TestPrometheusAndLokiConfig:
             job for job in doc["scrape_configs"]
             if job["job_name"] == "docker-operations"
         )
-        keep = next(rule for rule in job["relabel_configs"] if rule.get("action") == "keep")
-        regex = keep["regex"]
-        for name in (
+        filters = job["docker_sd_configs"][0]["filters"]
+        assert filters == [{"name": "label", "values": ["promtail.enable=true"]}]
+
+        compose = yaml.safe_load((_REPO_ROOT / "docker-compose.yml").read_text())
+        selected = {
+            name for name, service in compose["services"].items()
+            if service.get("labels", {}).get("promtail.enable") == "true"
+        }
+        assert selected == {
             "oauth2-proxy",
             "airflow-dag-processor",
             "airflow-scheduler",
             "airflow-apiserver",
-        ):
-            assert re.fullmatch(regex, f"/cartracker-{name}")
-        assert "loki" not in regex
+        }
 
     def test_stage_5_retention_is_single_90_day_policy(self):
         loki = yaml.safe_load((_REPO_ROOT / "loki" / "loki.yml").read_text())
@@ -96,6 +99,56 @@ class TestPrometheusAndLokiConfig:
         mounts = compose["services"]["promtail"]["volumes"]
         assert "/var/run/docker.sock:/var/run/docker.sock:ro" in mounts
         assert "/var/lib/docker/containers:/var/lib/docker/containers:ro" in mounts
+        assert "promtail_positions:/positions" in mounts
+
+        promtail = yaml.safe_load(
+            (_REPO_ROOT / "promtail" / "promtail.yml").read_text()
+        )
+        assert promtail["positions"]["filename"] == "/positions/positions.yaml"
+
+    def test_airflow_container_stdout_keeps_only_actionable_lines(self):
+        promtail = yaml.safe_load(
+            (_REPO_ROOT / "promtail" / "promtail.yml").read_text()
+        )
+        job = next(
+            item for item in promtail["scrape_configs"]
+            if item["job_name"] == "docker-operations"
+        )
+        match = next(
+            stage["match"]
+            for stage in job["pipeline_stages"]
+            if stage.get("match", {}).get("drop_counter_reason")
+            == "airflow_non_actionable_control_plane"
+        )
+        assert match == {
+            "selector": (
+                '{service=~"airflow-(apiserver|scheduler|dag-processor)"} '
+                '!~ "(?i)(warn|error|critical|exception|traceback)"'
+            ),
+            "action": "drop",
+            "drop_counter_reason": "airflow_non_actionable_control_plane",
+        }
+
+    def test_successful_oauth_auth_subrequest_noise_is_dropped(self):
+        promtail = yaml.safe_load(
+            (_REPO_ROOT / "promtail" / "promtail.yml").read_text()
+        )
+        job = next(
+            item for item in promtail["scrape_configs"]
+            if item["job_name"] == "docker-operations"
+        )
+        matches = [stage["match"] for stage in job["pipeline_stages"] if "match" in stage]
+        oauth_match = next(
+            match for match in matches if match["selector"] == '{service="oauth2-proxy"}'
+        )
+        assert oauth_match["stages"] == [
+            {
+                "drop": {
+                    "expression": '.*"/oauth2/auth[^"]*" HTTP/1\\.1 "[^"]*" 202 .*',
+                    "drop_counter_reason": "oauth2_successful_auth_subrequest",
+                }
+            }
+        ]
 
     def test_docker_29_compatible_promtail_and_nonempty_stream_labels(self):
         compose = yaml.safe_load((_REPO_ROOT / "docker-compose.yml").read_text())

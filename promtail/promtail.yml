@@ -3,7 +3,8 @@ server:
   grpc_listen_port: 0
 
 positions:
-  filename: /tmp/positions.yaml
+  # Survive Promtail recreation so retained Docker stdout is not replayed.
+  filename: /positions/positions.yaml
 
 clients:
   - url: http://loki:3100/loki/api/v1/push
@@ -17,18 +18,35 @@ scrape_configs:
     docker_sd_configs:
       - host: unix:///var/run/docker.sock
         refresh_interval: 30s
+        filters:
+          - name: label
+            values: ['promtail.enable=true']
     relabel_configs:
       - target_label: job
         replacement: docker-operations
-      - source_labels: ['__meta_docker_container_name']
-        regex: '/cartracker-(oauth2-proxy|airflow-(dag-processor|scheduler|apiserver))'
-        action: keep
       - source_labels: ['__meta_docker_container_name']
         regex: '/cartracker-(.+)'
         target_label: service
         replacement: '$1'
     pipeline_stages:
       - docker: {}
+      # Airflow's control-plane containers emit high-volume framework chatter,
+      # including multiline INFO tables whose continuation lines have no level.
+      # DAG and application logs are collected separately, so this stdout path
+      # retains only lines carrying an actionable failure signal.
+      - match:
+          selector: '{service=~"airflow-(apiserver|scheduler|dag-processor)"} !~ "(?i)(warn|error|critical|exception|traceback)"'
+          action: drop
+          drop_counter_reason: airflow_non_actionable_control_plane
+      # Grafana performs this successful auth subrequest for nearly every
+      # datasource request. Keep OAuth failures and interactive flows, but do
+      # not store a redundant, PII-bearing success line for every query.
+      - match:
+          selector: '{service="oauth2-proxy"}'
+          stages:
+            - drop:
+                expression: '.*"/oauth2/auth[^"]*" HTTP/1\.1 "[^"]*" 202 .*'
+                drop_counter_reason: oauth2_successful_auth_subrequest
       - labels:
           stream:
 
