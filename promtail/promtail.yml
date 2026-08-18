@@ -30,18 +30,14 @@ scrape_configs:
         replacement: '$1'
     pipeline_stages:
       - docker: {}
-      # Airflow's control-plane containers emit high-volume framework INFO
-      # chatter. DAG and application logs are collected separately, so retain
-      # warnings/errors here without flooding the all-services dashboard.
+      # Airflow's control-plane containers emit high-volume framework chatter,
+      # including multiline INFO tables whose continuation lines have no level.
+      # DAG and application logs are collected separately, so this stdout path
+      # retains only lines carrying an actionable failure signal.
       - match:
-          selector: '{service=~"airflow-(apiserver|scheduler|dag-processor)"}'
-          stages:
-            - drop:
-                expression: '.*\[info\s*\].*'
-                drop_counter_reason: airflow_control_plane_info
-            - drop:
-                expression: '.*"GET /(api/v2/monitor/)?health HTTP/1\.1" 200.*'
-                drop_counter_reason: airflow_health_access
+          selector: '{service=~"airflow-(apiserver|scheduler|dag-processor)"} !~ "(?i)(warn|error|critical|exception|traceback)"'
+          action: drop
+          drop_counter_reason: airflow_non_actionable_control_plane
       # Grafana performs this successful auth subrequest for nearly every
       # datasource request. Keep OAuth failures and interactive flows, but do
       # not store a redundant, PII-bearing success line for every query.

@@ -106,7 +106,7 @@ class TestPrometheusAndLokiConfig:
         )
         assert promtail["positions"]["filename"] == "/positions/positions.yaml"
 
-    def test_airflow_container_info_noise_is_dropped_at_ingestion(self):
+    def test_airflow_container_stdout_keeps_only_actionable_lines(self):
         promtail = yaml.safe_load(
             (_REPO_ROOT / "promtail" / "promtail.yml").read_text()
         )
@@ -114,14 +114,19 @@ class TestPrometheusAndLokiConfig:
             item for item in promtail["scrape_configs"]
             if item["job_name"] == "docker-operations"
         )
-        match = next(stage["match"] for stage in job["pipeline_stages"] if "match" in stage)
-        assert match["selector"] == (
-            '{service=~"airflow-(apiserver|scheduler|dag-processor)"}'
+        match = next(
+            stage["match"]
+            for stage in job["pipeline_stages"]
+            if stage.get("match", {}).get("drop_counter_reason")
+            == "airflow_non_actionable_control_plane"
         )
-        drops = [stage["drop"] for stage in match["stages"]]
-        assert {drop["drop_counter_reason"] for drop in drops} == {
-            "airflow_control_plane_info",
-            "airflow_health_access",
+        assert match == {
+            "selector": (
+                '{service=~"airflow-(apiserver|scheduler|dag-processor)"} '
+                '!~ "(?i)(warn|error|critical|exception|traceback)"'
+            ),
+            "action": "drop",
+            "drop_counter_reason": "airflow_non_actionable_control_plane",
         }
 
     def test_successful_oauth_auth_subrequest_noise_is_dropped(self):
