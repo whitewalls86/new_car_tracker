@@ -134,7 +134,7 @@
       "targets": [
         {
           "datasource": "Prometheus",
-          "expr": "cartracker_observation_count_last_hour",
+          "expr": "cartracker_observation_count_last_hour{job=\"dbt_runner\"}",
           "legendFormat": "Observations"
         }
       ],
@@ -149,7 +149,7 @@
       "targets": [
         {
           "datasource": "Prometheus",
-          "expr": "cartracker_artifact_count_last_hour",
+          "expr": "cartracker_artifact_count_last_hour{job=\"dbt_runner\"}",
           "legendFormat": "Artifacts"
         }
       ],
@@ -164,7 +164,7 @@
       "targets": [
         {
           "datasource": "Prometheus",
-          "expr": "cartracker_block_events_last_hour",
+          "expr": "cartracker_block_events_last_hour{job=\"dbt_runner\"}",
           "legendFormat": "Block Events"
         }
       ],
@@ -179,7 +179,7 @@
       "targets": [
         {
           "datasource": "Prometheus",
-          "expr": "cartracker_extraction_yield_last_day",
+          "expr": "cartracker_extraction_yield_last_day{job=\"dbt_runner\"}",
           "legendFormat": "Yield %"
         }
       ],
@@ -194,7 +194,7 @@
       "targets": [
         {
           "datasource": "Prometheus",
-          "expr": "cartracker_stale_listings_pct",
+          "expr": "cartracker_stale_listings_pct{job=\"dbt_runner\"}",
           "legendFormat": "Stale %"
         }
       ],
@@ -209,7 +209,7 @@
       "targets": [
         {
           "datasource": "Prometheus",
-          "expr": "cartracker_cooldown_backlog",
+          "expr": "cartracker_cooldown_backlog{job=\"dbt_runner\"}",
           "legendFormat": "In queue"
         }
       ],
@@ -224,7 +224,7 @@
       "targets": [
         {
           "datasource": "Prometheus",
-          "expr": "cartracker_cooldown_permanent",
+          "expr": "cartracker_cooldown_permanent{job=\"dbt_runner\"}",
           "legendFormat": "Blocked"
         }
       ],
