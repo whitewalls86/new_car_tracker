@@ -93,20 +93,19 @@ observation window is written separately and does not inflate coding effort.
 
 Plan 120's authenticated production download and checksum round trip was
 verified on 2026-08-18. What remains here is **verification, not work**: no code
-is owed on these rows. Plan 140's soak gate lands first; both Plan 135 gates
-land on the following Sunday because they ride weekly schedules.
+is owed on these rows. Plan 140's soak gate lands first. Plan 143's merged
+acceptance correction needs a Grafana recreation and a fresh 24-hour soak; both
+Plan 135 gates land on the following Sunday because they ride weekly schedules.
 
 | Plan | Check | Lands | What it proves |
 |---|---|---|---|
 | [140](plan_140_service_health_contract.md) Stage 1 | Repeat the full runtime health audit after the 24-hour soak | 2026-08-19 at approximately 17:00 UTC (12:00 CDT) | That all 25 configured checks remain healthy with zero failing streaks through normal production cycles, including active `trawl` and `redis-trawl`; only the documented one-shot/profile and distroless-image exceptions may lack health state. Thirty minutes established startup health but does not replace this false-positive soak |
+| [143](plan_143_analytics_serving_snapshot.md) Stage 5 | Deploy merged PR #218's `job="dbt_runner"` selectors and 4,500-second freshness threshold, then repeat the 24-hour acceptance soak | Status checkpoint at 2026-08-19 15:00 CDT (20:00 UTC); closeout 24 hours after the Grafana recreation | That every analytics panel renders one producer-owned series, the cadence-aware freshness alert stays green across normal hourly publications, snapshots replace normally during Prometheus scrapes, `/info` remains responsive, and no recurring DuckDB lock conflict returns |
 | [135](plan_135_storage_observability.md) criterion 5 | `cartracker_parquet_data` publishes a real series | 2026-08-23, `disk_usage` slow-tier walk at 04:00 UTC | That the per-path panel can answer *"what is filling `/mnt/data`?"* -- the question this plan was written about. The MinIO volume is the majority of that disk's 59 GiB and has still never completed a walk, so the panel is currently silent on the bulk of it. Carry-forward is behaving as designed and `failed` is correctly 0 |
 | [135](plan_135_storage_observability.md) Stage 5 | `prune_task_logs` completes its first scheduled run | 2026-08-23, `17 4 * * 0` | That Airflow's 30-day task-log retention is **enforced** rather than merely configured. The run reports run directories examined and deleted; `cartracker_airflow_logs` was 1.2M inodes and 87% of a 456s walk, so this is also what lets that volume move back to the daily tier |
 
-None blocks implementation work. Record Plan 140's result in
-[plan_140_service_health_contract.md](plan_140_service_health_contract.md) and
-the other two in
-[plan_135_storage_observability.md](plan_135_storage_observability.md), then
-remove each row from the operational table once it is green.
+None blocks implementation work. Record each result in its plan document, then
+remove its row from this closeout table once it is green.
 
 ## Default build order
 
@@ -120,7 +119,7 @@ because it is smaller while a higher row has an executable next step.
 | 3 | [142](plan_142_planned_host_maintenance.md) | Planned host maintenance and production quiescence | Freeze the successful Ubuntu-update window as fixtures, then build separate maintenance intent, truthful drain status, and the checked-in host procedure | 86 | M + first observed window | Reuse Plan 136 drain semantics; final resume gate requires soaked Plan 140 health coverage |
 | 4 | [141](plan_141_structured_log_ingestion_contract.md) | Structured log ingestion and dashboard contract | Freeze production-derived fixtures and baseline, then align parsing, labels, filters, and dashboard selectors | 85 | S + 24h soak | Does not block Plan 136; should precede Plan 134's warning-log observation window |
 | 5 | [134](plan_134_archiver_endpoint_failure_contract.md) | Archiver endpoint failure contract | Add warning-only failure predicates and begin the one-week observation window | 88 | S | Plan 141 first; one-week soak before enforcement; pause if real failures need repair |
-| 6 | [133](plan_133_pack_read_path_hardening.md) | Pack read-path hardening | Pack-aware existence check and month-sized sidecar-cache fix | 92 | S | Re-run April/May read-path verification; unlocks Plan 132 Stage 2 |
+| 6 | [133](plan_133_pack_read_path_hardening.md) | Pack read-path hardening | Merge and deploy the fix, then re-run April-July read-path verification | 92 | S | Production verification unlocks Plan 132 Stage 2 |
 | 7 | [132](plan_132_unrecorded_artifact_recovery.md) | Recover unrecorded bronze artifacts | Run Stage 0 gates, build the manifest, then reparse a bounded cohort | 91 | L | Plan 133 before Stage 2; no destructive action in the audit stages |
 | 8 | [138](plan_138_public_surface_refresh.md) | Public surface refresh | Truth pass, public-root contract, accessible assets, Plan 143 stats presentation, and project-updates snapshot | 84 | L | Plan 143 supplies the stats contract; land before the next major platform milestone |
 | 9 | [125](plan_125_duckdb_to_iceberg_migration.md) | DuckDB-to-Iceberg analytics migration | Gate C production runtime measurement, then Gate D reader inventory/dual-run | 81 | XL | Plan 120 closeout; swap Plan 143's producer adapter while preserving its snapshot and metric contracts |
@@ -199,7 +198,6 @@ host package or reboot authority.
 | [129](plan_129_zstd_dictionary_compression.md) | Dictionary v1 in production; backfill/lifecycle monitoring | Watch metrics; no new design work unless the run deviates |
 | [131](plan_131_packed_cold_storage.md) | **Complete** — April-July packed and pruned, Stage 5 lifecycle DAG running on schedule | Monitor only; no new design work |
 | [135](plan_135_storage_observability.md) | **Complete 2026-08-18** — both disks visible, alerts proven, all log stores bounded, maintenance runbook live | Monitor scheduled storage and task-log maintenance; parsing/dashboard follow-up is Plan 141 |
-| [143](plan_143_analytics_serving_snapshot.md) | **Deployed 2026-08-18; acceptance correction pending** — the soak exposed unscoped Grafana analytics consumers and a 900-second alert threshold against an hourly publisher | Deploy the `job="dbt_runner"` selectors and 4,500-second threshold, then restart the 24-hour Gate 5 soak. At **2026-08-19 15:00 CDT (20:00 UTC)** record status; close only after a full corrected window with one series per panel, a green freshness alert, normal snapshot replacement, responsive `/info`, and no recurring lock conflict |
 
 ## Paused or blocked
 
@@ -228,7 +226,7 @@ host package or reboot authority.
 | [130](plan_130_parser_input_projection.md) | Parser-input projection (truncating raw HTML) | Draft — blocked on 129 + taxonomy gap |
 | [131](plan_131_packed_cold_storage.md) | Packed cold storage for bronze HTML | **Complete 2026-08-18** — April-July packed and pruned: 3.61M objects → 288, 0 refused; Stage 5 lifecycle DAG green on its first scheduled run |
 | [132](plan_132_unrecorded_artifact_recovery.md) | Recovering unrecorded bronze artifacts | Draft — Stage 0 gate not run |
-| [133](plan_133_pack_read_path_hardening.md) | Pack read path hardening | Draft — two non-blocking defects found verifying 131 Stage 3; do before 132 Stage 2 |
+| [133](plan_133_pack_read_path_hardening.md) | Pack read path hardening | Implementation complete — pre-deploy 144-pack canary passed; post-deploy April-July verification remains before 132 Stage 2 |
 | [134](plan_134_archiver_endpoint_failure_contract.md) | Archiver endpoint failure contract | Draft — measurement-first rollout not started |
 | [135](plan_135_storage_observability.md) | Storage observability | **Complete 2026-08-18** — both disks visible, alerts proven, all log stores bounded, runbook live, `df /` 79% → 51%; criterion 5's MinIO half publishes on the first Sunday slow-tier walk (2026-08-23) |
 | [136](plan_136_solver_recycle_and_liveness.md) | Solver recycle + real liveness detection | **Stage 0 verified in production; Stage 1 transferred to Plan 143 before deployment** — prototype commit `584f100` established the fail-loud contract but not the accepted serving design. 0b is Plan 140 Stage 2; Stages 2-4 not started |

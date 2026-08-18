@@ -19,7 +19,7 @@ from ops.queries import (
 from shared.db import db_cursor
 from shared.duckdb_s3 import get_duckdb_s3_connection
 from shared.job_counter import active_job
-from shared.minio import BUCKET, object_exists
+from shared.minio import BUCKET, artifact_exists
 
 logger = logging.getLogger("pipeline_ops")
 router = APIRouter(prefix="/maintenance")
@@ -58,14 +58,15 @@ def expire_orphan_detail_claims() -> Dict[str, Any]:
 
 def _reap_stuck_processing() -> Dict[str, Any]:
     """Reset artifacts stranded in 'processing': re-queue (retry) when the MinIO
-    object still exists, else abandon (skip) to avoid an infinite retry loop."""
+    artifact is still readable loose or packed, else abandon (skip) to avoid
+    an infinite retry loop."""
     with db_cursor(error_context="reap: select stuck", dict_cursor=True) as cur:
         cur.execute(SELECT_STUCK_PROCESSING_ARTIFACTS)
         rows = [dict(r) for r in cur.fetchall()]
 
     retried = skipped = 0
     for r in rows:
-        new_status = "retry" if object_exists(r["minio_path"]) else "skip"
+        new_status = "retry" if artifact_exists(r["minio_path"]) else "skip"
         with db_cursor(error_context=f"reap: mark {new_status}") as cur:
             cur.execute(MARK_ARTIFACT_STATUS, {
                 "status": new_status, "artifact_id": r["artifact_id"],

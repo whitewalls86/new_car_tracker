@@ -2,10 +2,11 @@
 
 ## Status
 
-**Draft — not started, and deliberately not urgent.** Two defects found on
-2026-08-14 while verifying [Plan 131](plan_131_packed_cold_storage.md) Stage 3
-in production. Both are real, neither blocks Plan 131 Stage 4, and both become
-blocking for [Plan 132](plan_132_unrecorded_artifact_recovery.md)'s reparse.
+**Implementation complete — pre-deployment real-pack canary passed; post-deploy
+verification pending.** Two defects found on 2026-08-14 while verifying
+[Plan 131](plan_131_packed_cold_storage.md) Stage 3 in production. Both are
+real, neither blocked Plan 131 Stage 4, and both become blocking for
+[Plan 132](plan_132_unrecorded_artifact_recovery.md)'s reparse.
 
 They are recorded here rather than fixed inline because Stage 3 was verified
 against real April and May packs — **365 members, 0 failures** — and changing
@@ -78,13 +79,14 @@ of either option is one line.
 
 ---
 
-## Defect 2 — the sidecar index cache thrashes on a sequential scan
+## Defect 2 — the sidecar index cache thrashed on a sequential scan
 
-`PACK_INDEX_CACHE_PACKS` defaults to **4**. A packed month holds **32 sidecars
-(April) to 41 (May)**, and the resolver scans upward from `pack-00000`. One
-scan therefore evicts exactly the low-numbered entries the next scan will need
-first, ending with the highest four resident — so the next lookup re-fetches
-from the start. Textbook LRU-versus-sequential-scan behaviour.
+Before this plan, `PACK_INDEX_CACHE_PACKS` defaulted to **4**. A packed month
+holds **32 sidecars (April) to 41 (May)**, and the resolver scans upward from
+`pack-00000`. One scan therefore evicted exactly the low-numbered entries the
+next scan needed first, ending with the highest four resident — so the next
+lookup re-fetched from the start. Textbook LRU-versus-sequential-scan
+behaviour.
 
 Measured in production 2026-08-14 (`archiver/processors/verify_pack_read_path.py`, cold
 reads drop every cache by design):
@@ -115,8 +117,10 @@ scan.
   2026-08-14: 1.30 ms to parse and 1.69 MB in Arrow, against 1.69 ms and
   3.78 MB for every column. Only the one matching row needs the rest, and it is
   already fetched from the sidecar that matched.
-- **Then raise `PACK_INDEX_CACHE_PACKS` to hold a whole month** (~40). With
-  column pruning that is ~68 MB resident instead of ~150 MB.
+- **Then raise `PACK_INDEX_CACHE_PACKS` to hold a whole month.** The default is
+  now 48, covering April-May-June-July's 32, 41, 38, and 33 sidecars with
+  headroom. With column pruning that is ~81 MB at the configured limit instead
+  of ~181 MB for every column.
 
 A month-level "which pack holds this key" manifest would remove the scan
 entirely, but it is a new artifact written by the packer and is out of scope
@@ -131,9 +135,32 @@ which is the first thing that both re-enqueues a pruned month (defect 1) and
 reads packed artifacts in bulk (defect 2). Plan 132's Stage 0 gate has not run,
 so there is time.
 
-**Re-run `archiver/processors/verify_pack_read_path.py` for April and May afterwards.**
-Stage 3's gate was established against the current read path; any change to it
-re-opens that gate and the same script closes it again.
+**Re-run `archiver/processors/verify_pack_read_path.py` for April, May, June,
+and July afterwards.** All four months are packed and pruned now. Stage 3's gate
+was established against the prior read path; changing it re-opens that gate and
+the same script closes it again.
+
+---
+
+## Pre-deployment verification — 2026-08-18
+
+The changed `shared/minio.py` was bind-mounted read-only into disposable
+`archiver` containers on the production host. The running checkout, images,
+and services were not changed. One member from every current pack was checked
+through both the packed read path and `artifact_exists`:
+
+| Month | Sidecars / packs | Packed reads verified | `artifact_exists` true | Failures |
+|---|---:|---:|---:|---:|
+| April | 32 | 32 | 32 | 0 |
+| May | 41 | 41 | 41 | 0 |
+| June | 38 | 38 | 38 | 0 |
+| July | 33 | 33 | 33 | 0 |
+| **Total** | **144** | **144** | **144** | **0** |
+
+All 144 sampled loose source objects were already deleted, so every positive
+result exercised the pack-aware branch. This is a deploy-safety canary, not the
+post-deploy closeout gate; re-run the verifier against all four months after
+the production services use the merged code.
 
 ---
 
@@ -152,7 +179,7 @@ re-opens that gate and the same script closes it again.
 |--------|------|
 | A stranded artifact whose source was pruned | `retry`, never `skip` |
 | Cold read p50 after a month-sized scan | no worse than a single sidecar fetch |
-| `verify_pack_read_path` after the change | 0 failures, April and May |
+| `verify_pack_read_path` after the change | 0 failures, April-May-June-July |
 | Consumers interrogating `html/` outside a pack-aware path | Zero — existence checks included this time |
 
 ## Out of Scope
