@@ -135,3 +135,124 @@ cancels its own notification, and the alert reads as broken when it is working.
   pruning bronze HTML, the largest inode lever on `/mnt/data`.
 - [runbook_solver_oom_and_recycle.md](runbook_solver_oom_and_recycle.md) —
   `trawl` OOM evidence and recycling.
+
+---
+
+## 7. Stage 5 log-retention rollout
+
+This is a scheduled production change, not part of the routine monthly check.
+It combines Docker's bounded stdout buffer with Promtail ingestion so the
+`oauth2-proxy` audit trail is never made disposable before it has a durable
+copy. It also enables Loki's 90-day retention, which irreversibly deletes older
+data on compaction.
+
+### Preflight and explicit decisions
+
+Before the window:
+
+1. Confirm Loki data older than 90 days is expendable.
+2. Confirm losing the existing Docker stdout backlog is acceptable. Rotation
+   is not retroactive; old files must be truncated separately.
+3. Build any changed images before declaring deploy intent. The Stage 5 files
+   are bind-mounted or host configuration and normally need no image build.
+4. Record `df -h /`, `df -h /mnt/data`, `df -i /mnt/data`,
+   `journalctl --disk-usage`, and `du -sb /var/lib/docker/containers`.
+
+Stage 5's 2026-08-17 preflight found `/` 65%, `/mnt/data` 34%, data-volume
+inodes 17%, Docker stdout 5.44 GB, and journald 1.8 GB. The four stdout streams
+selected for Loki were also the four largest: Airflow DAG processor 2.22 GB,
+`oauth2-proxy` 1.65 GB, Airflow scheduler 752 MB, and Airflow API server 299 MB.
+
+### Apply the Docker buffer and recreate containers
+
+Create `/etc/docker/daemon.json` as:
+
+```json
+{
+  "log-driver": "json-file",
+  "log-opts": {"max-size": "50m", "max-file": "3"}
+}
+```
+
+Validate before restarting:
+
+```bash
+sudo dockerd --validate --config-file=/etc/docker/daemon.json
+```
+
+Then, inside the planned outage window:
+
+```bash
+curl -sf -X POST http://localhost:8060/deploy/start
+sudo systemctl restart docker
+cd /opt/cartracker
+docker compose up -d --force-recreate
+curl -sf -X POST http://localhost:8060/deploy/complete
+```
+
+The forced recreation is essential: daemon defaults apply only to newly
+created containers. A daemon restart alone leaves existing containers' old
+unbounded logging configuration in place.
+
+Verify every running container loaded the cap, not merely that it restarted:
+
+```bash
+docker inspect $(docker ps -q) \
+  --format '{{.Name}} {{.HostConfig.LogConfig.Type}} {{json .HostConfig.LogConfig.Config}}'
+```
+
+Every line should show `json-file`, `max-size: 50m`, and `max-file: 3`.
+
+### Verify durable ingestion before truncating stdout
+
+Promtail must show no discovery, permission, or parse errors. Query Loki for
+fresh entries from all four selected services:
+
+```bash
+docker logs --since 10m cartracker-promtail
+curl -sG http://localhost:3100/loki/api/v1/query \
+  --data-urlencode 'query=sum by (service) (count_over_time({service=~"oauth2-proxy|airflow-(dag-processor|scheduler|apiserver)"}[10m]))'
+```
+
+Do not truncate until `oauth2-proxy` and the Airflow control-plane streams have
+appeared in Loki. Once verified, truncate the current files in place — never
+remove them:
+
+```bash
+for id in $(docker ps -q); do
+  path=$(docker inspect --format '{{.LogPath}}' "$id")
+  sudo truncate -s 0 "$path"
+done
+```
+
+### Apply the remaining caps
+
+Loki retention is loaded only after Loki restarts. Verify readiness and the
+effective configuration after recreation:
+
+```bash
+curl -sf http://localhost:3100/ready
+curl -sf http://localhost:3100/config | grep -A3 -E 'retention_(enabled|period)'
+```
+
+The `prune_task_logs` DAG deletes only `dag_id=*/run_id=*` trees whose newest
+log file is older than 30 days. Unpause it and trigger its first run manually;
+inspect the task result before relying on the weekly schedule:
+
+```bash
+docker exec cartracker-airflow-apiserver airflow dags unpause prune_task_logs
+docker exec cartracker-airflow-apiserver airflow dags trigger prune_task_logs
+```
+
+Finally cap and vacuum journald:
+
+```bash
+sudo mkdir -p /etc/systemd/journald.conf.d
+printf '[Journal]\nSystemMaxUse=500M\n' | \
+  sudo tee /etc/systemd/journald.conf.d/plan135-storage.conf
+sudo systemctl restart systemd-journald
+sudo journalctl --vacuum-size=500M
+```
+
+Re-run the preflight measurements and record the reclaimed bytes/inodes in
+[Plan 135](plan_135_storage_observability.md).

@@ -25,6 +25,33 @@ setting is what is holding, and it would revert if the container restarted.
 
 Everything else in this plan is still outstanding.
 
+### Stage 5 production preflight, 2026-08-17
+
+Stage 5 is implemented on branch `plan-135-stage-5` but is **not yet applied**.
+The host changes remain gated on explicit approval of the outage, deletion of
+Loki data older than 90 days, and truncation of the existing stdout backlog.
+
+| Measure | Current |
+|---|---|
+| `df /` | **65%** (32 of 49 GiB) |
+| `df /mnt/data` | **34%** (64 of 196 GiB) |
+| `df -i /mnt/data` | **17%** (2,101,844 used) |
+| `/var/lib/docker/containers` | **5,437,650,070 bytes**, `json-file`, uncapped |
+| journald | **1.8 GiB**, uncapped |
+| `/etc/docker/daemon.json` | absent |
+| Airflow | 3.2.0; task-log layout confirmed as `dag_id=*/run_id=*` |
+
+The stdout selection in 5c is validated by current data, not only the old plan
+estimate: DAG processor 2.22 GB, `oauth2-proxy` 1.65 GB, scheduler 752 MB, and
+API server 299 MB are the four largest container logs. Together they are 91%
+of the entire 5.44 GB tree, and they are exactly the four streams the Promtail
+job retains. Loki remains explicitly excluded.
+
+A read-only full Airflow log walk was stopped after several minutes to avoid
+needlessly contending with production I/O. The slow walk itself reconfirmed the
+inode-cost diagnosis; the first cleanup DAG run will report run directories
+examined and deleted while doing the useful work once.
+
 ### Stages 1-3 shipped and validated in production 2026-08-17
 
 Merged as PR #204 (`d3a82e7`). Success criteria 1-4 are met; criterion 3's
