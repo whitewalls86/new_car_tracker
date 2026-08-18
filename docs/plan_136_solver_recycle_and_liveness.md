@@ -311,6 +311,17 @@ reads MinIO parquet directly with a fresh S3-configured connection *specifically
 to avoid dbt's write lock*. Apply the same approach to the gauges rather than
 contending on `analytics.duckdb`.
 
+**1d. Cover the module while rewriting it.**
+[ops/metrics/duckdb_gauges.py](ops/metrics/duckdb_gauges.py) sits at **25%
+coverage** — 132 lines of seven nested `try/except` blocks, each silently
+swallowing a failure, with no dedicated test file. Measured in
+[Plan 139](plan_139_test_suite_maintenance.md), which explicitly **hands this
+step over rather than doing it first**: tests written against today's behavior
+would assert "the gauge keeps its last value on a lock conflict," which is
+precisely what 1a deletes. Write them here instead, asserting the NaN convention
+and the freshness timestamp — one test per swallowed exception path, since each
+one is a gauge that can go stale independently.
+
 > Verify: with a dbt build running, `/metrics` returns NaN for affected gauges
 > and a stale `last_success_timestamp`, and the freshness alert fires.
 

@@ -98,10 +98,21 @@ because it is smaller while a higher row has an executable next step.
 | 14 | [127](plan_127_streaming_adaptive_scrape_control.md) | Streaming adaptive scrape control | Add closed-loop control behind batch-parity and rollback gates | 42 | XL | Plan 126 plus approved Plan 112/113 behavior |
 
 Plan [139](plan_139_test_suite_maintenance.md) (test suite maintenance) is
-deliberately unranked here: it is a skeleton of measurements, and only step 2 —
-covering `ops/metrics/duckdb_gauges.py` at 25% — has a real dependency, since
-Plan 136 Stage 1 builds its staleness convention on that module. Pull that step
-forward with Plan 136; the rest is opportunistic.
+**split rather than ranked as one row.** Its Stages A and B — put a coverage
+number in CI, then cache pip and drop the `dbt` job's `needs: unit-tests` — are
+two lines of YAML plus a dev dependency, and measurement on 2026-08-18 puts them
+at roughly **40% of CI wall-clock** (critical path 333s, of which 103s is uncached
+`pip install` and ~78s is waiting on a job that need not block). That payoff
+compounds across every plan above them, so **do A+B early, alongside Plans 136 and
+140**, which touch the same CI configuration. Stages C (profile the 92s
+`tests/integration/dbt/` step, 28% of the path) and D (intent markers, the
+coverage-gate decision, xdist) score 60 and 52 and belong near order 11-12.
+
+The step that previously looked urgent — covering `ops/metrics/duckdb_gauges.py`
+at 25% — **has moved into Plan 136 Stage 1.** Plan 136 does not depend on that
+module, it rewrites it: Stage 1a sets the gauges to `NaN` on refresh failure.
+Tests written against today's silent-stale behavior would encode exactly what
+Stage 1 deletes, so they belong with the change.
 
 Plan 136 Stage 4 is deliberately not part of the first slice: it grants restart
 authority and should start only after Stage 2's outcome counters have established
@@ -162,7 +173,7 @@ free.
 | [136](plan_136_solver_recycle_and_liveness.md) | Solver recycle + real liveness detection | Draft — written after the 2026-08-14 8h trawl outage no alert caught |
 | [137](plan_137_legacy_bronze_parquet_disposition.md) | Legacy bronze Parquet recovery and disposition | Draft — read-only inventory complete; no deletion authorized |
 | [138](plan_138_public_surface_refresh.md) | README and public portfolio surface refresh | Draft — audit complete; implementation not started |
-| [139](plan_139_test_suite_maintenance.md) | Test suite construction and maintenance | Skeleton — measured 2026-08-17, decisions not yet made |
+| [139](plan_139_test_suite_maintenance.md) | Test suite construction and maintenance | Draft — measured 2026-08-17, CI path re-measured 2026-08-18; split into Stages A/B (pull forward) and C/D (opportunistic); `duckdb_gauges` coverage transferred to Plan 136 Stage 1 |
 | [140](plan_140_service_health_contract.md) | Service health contract | Draft — written 2026-08-18 after a second undetected-component incident; 6 of 26 services have a healthcheck |
 
 ---
