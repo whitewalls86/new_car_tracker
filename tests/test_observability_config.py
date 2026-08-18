@@ -6,6 +6,7 @@ to catch syntax errors before they cause silent startup failures in production c
 No external services required.
 """
 import json
+import re
 from pathlib import Path
 
 import yaml
@@ -352,6 +353,189 @@ class TestAirflowConnectionBudget:
             f"Airflow's worst-case pool total is {total} against "
             f"max_connections={self._max_connections()}"
         )
+
+
+class TestServiceHealthCoverage:
+    """Plan 140 Stage 3: coverage is asserted, not enumerated.
+
+    Every monitoring gap in this system's history has the same shape --
+    *nobody added X to the list*. ``/mnt/data`` was never added to
+    node-exporter. Airflow was never added to ``ct-service-down``. Each was
+    fixed by appending to a list, which set up the next one. On 2026-08-18 the
+    measurement was 31 services and 7 healthchecks, and Docker reports no
+    health status *at all* for a container without one -- so an unwatched
+    service and a healthy service looked identical.
+
+    Hence a **deny**-list. Every service is in scope by default, and a new one
+    fails this file until someone either gives it a healthcheck or writes down
+    why it cannot have one. An allowlist would reproduce the defect exactly:
+    a service added later would be silently unwatched, which is the entire
+    class of gap this exists to close.
+
+    Airflow's connection budget is the other Plan 140 Stage 3 coverage
+    invariant; it already lives in ``TestAirflowConnectionBudget`` above.
+    """
+
+    # Exempt services, and why. Every entry needs a written reason, because a
+    # deny-list that grows without justification is an allowlist in disguise.
+    _DENY_LIST = {
+        "flyway":
+            "Runs the migrations to completion and exits. Its contract is "
+            "`condition: service_completed_successfully`, and a health status "
+            "on a container that is supposed to be gone is meaningless.",
+        "airflow-init":
+            "Same shape: a one-shot DB migrate / user-create that all four "
+            "long-running Airflow services gate on with "
+            "service_completed_successfully before they open a connection.",
+        "dbt":
+            "Profile-gated tools image. Never started by `docker compose up`; "
+            "invoked as a one-shot `docker compose run`.",
+        "dbt_test":
+            "Profile-gated tools image, same as `dbt`.",
+        "snapshot-worker":
+            "Profile-gated one-shot `docker compose run` target for CI lake "
+            "snapshot generation (Plan 120 Gate C.5). No ports, no restart "
+            "policy, never serves traffic.",
+        "oauth2-proxy":
+            "The only entry here that is a real hole rather than a contract "
+            "that does not apply. quay.io/oauth2-proxy/oauth2-proxy:latest is "
+            "distroless -- verified 2026-08-18 that `docker exec "
+            "cartracker-oauth2-proxy sh` fails with exec: \"sh\": executable "
+            "file not found in $PATH. No shell, no curl, no wget, no busybox, "
+            "so no `healthcheck:` can be expressed against this image at all. "
+            "A `latest-alpine` tag exists and serves /ping on 4180, but "
+            "swapping the image that fronts every authenticated route is its "
+            "own change with its own blast radius. See "
+            "docs/plan_140_service_health_contract.md.",
+    }
+
+    # Profile-gated, but long-running once up -- so the profile flag does not
+    # get to decide scope. The 2026-08-14 solver outage is why this is spelled
+    # out rather than inferred from `profiles:`.
+    _PROFILE_GATED_IN_SCOPE = {"trawl", "redis-trawl"}
+
+    @staticmethod
+    def _compose() -> dict:
+        return yaml.safe_load((_REPO_ROOT / "docker-compose.yml").read_text())
+
+    @classmethod
+    def _services(cls) -> dict:
+        return cls._compose()["services"]
+
+    @classmethod
+    def _default_profile_services(cls) -> set:
+        return {
+            name for name, spec in cls._services().items()
+            if not spec.get("profiles")
+        }
+
+    @staticmethod
+    def _has_enabled_healthcheck(service: dict) -> bool:
+        """A present-but-disabled or empty block still produces no status."""
+        healthcheck = service.get("healthcheck")
+        return (
+            isinstance(healthcheck, dict)
+            and healthcheck.get("disable") is not True
+            and bool(healthcheck.get("test"))
+        )
+
+    def test_every_default_profile_service_has_a_healthcheck(self):
+        """The rule the whole plan reduces to. A service added to
+        docker-compose.yml without health coverage fails here, not in
+        production four days after it silently stops working."""
+        missing = {
+            name for name in self._default_profile_services()
+            if not self._has_enabled_healthcheck(self._services()[name])
+        } - set(self._DENY_LIST)
+        assert not missing, (
+            f"{sorted(missing)} have no enabled healthcheck with a test and "
+            "no deny-list entry. Add a working `healthcheck:` block, or add "
+            "the service to _DENY_LIST with a written reason."
+        )
+
+    def test_long_running_profile_gated_services_are_in_scope_too(self):
+        """`profiles:` means "not started by default", not "not worth
+        watching". trawl was healthy and useless for eight hours."""
+        for name in self._PROFILE_GATED_IN_SCOPE:
+            service = self._services()[name]
+            assert service.get("profiles"), f"{name} is no longer profile-gated"
+            assert self._has_enabled_healthcheck(service), (
+                f"{name} is profile-gated but long-running when up, so the "
+                "profile flag does not exempt it from an enabled healthcheck"
+            )
+
+    def test_every_deny_list_entry_carries_a_reason(self):
+        for name, reason in self._DENY_LIST.items():
+            assert reason and len(reason) > 40, (
+                f"{name}'s deny-list reason is missing or too thin to be an "
+                "actual justification"
+            )
+
+    def test_deny_list_entries_all_name_real_services(self):
+        """A renamed or deleted service leaves a stale exemption behind, which
+        then silently covers for whatever takes its name next."""
+        stale = set(self._DENY_LIST) - set(self._services())
+        assert not stale, f"deny-list names services that do not exist: {sorted(stale)}"
+
+    def test_probes_never_reach_across_to_another_container(self):
+        """Shallow by construction: process liveness, never dependency health.
+
+        A probe that curls another service turns one Postgres blip into a fan
+        of unhealthy containers, and a cascading healthcheck is a worse signal
+        than none. Every HTTP probe must therefore target its own loopback.
+        """
+        for name, service in self._services().items():
+            for token in service.get("healthcheck", {}).get("test", []):
+                for url in re.findall(r"https?://([^/'\"\s]+)", token):
+                    host = url.rsplit(":", 1)[0] if ":" in url else url
+                    assert host in ("localhost", "127.0.0.1"), (
+                        f"{name}'s healthcheck probes {host}; healthchecks "
+                        "must not depend on another container"
+                    )
+
+    @classmethod
+    def _dockerfile(cls, service: dict):
+        build = service.get("build")
+        if not isinstance(build, dict):
+            return None
+        path = _REPO_ROOT / build["context"] / build["dockerfile"]
+        return path.read_text() if path.exists() else None
+
+    def test_images_without_an_http_client_do_not_probe_with_one(self):
+        """The failure mode Plan 135 recorded and Plan 140 nearly repeated.
+
+        Plan 140 drafted `curl --fail` for every service. A sweep of the
+        running production containers on 2026-08-18 found that ops, scraper,
+        processing, archiver, pack-worker, dbt_runner and dashboard have
+        *neither* curl nor wget -- they are python:*-slim, which ships no HTTP
+        client, and no Dockerfile here apt-installs one. Such a probe fails
+        because the tool is missing, which manufactures a false unhealthy:
+        strictly worse than no healthcheck at all.
+
+        So the rule is mechanical rather than remembered. A python-base image
+        that installs no client must probe with `python -c urllib`.
+        """
+        for name, service in self._services().items():
+            dockerfile = self._dockerfile(service)
+            if not dockerfile:
+                continue
+            base = next(
+                line.split()[1] for line in dockerfile.splitlines()
+                if line.strip().upper().startswith("FROM ")
+            )
+            installs_client = any(
+                tool in line
+                for line in dockerfile.splitlines() if "apt-get" in line
+                for tool in ("curl", "wget")
+            )
+            if not base.startswith("python:") or installs_client:
+                continue
+            test = service.get("healthcheck", {}).get("test", [])
+            assert not ({"curl", "wget"} & set(test)), (
+                f"{name} builds from {base}, which ships no curl and no wget, "
+                f"but its healthcheck invokes one: {test}. Use "
+                "`python -c \"import urllib.request; ...\"` instead."
+            )
 
 
 class TestNodeExporterFilesystemVisibility:

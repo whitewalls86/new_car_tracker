@@ -2,9 +2,13 @@
 
 ## Status
 
-DRAFT, written 2026-08-18 after the second incident in four days where **no
-alert caught the failing component** and a human found it by noticing damage
-downstream. Nothing applied.
+**STAGE 1 IMPLEMENTED FOR EVERY PROBEABLE SERVICE; STAGE 3 BUILT 2026-08-18.**
+The implementation adds eighteen healthchecks, taking coverage from 7
+of 31 services to 25 of 31. The six remaining services are the five deliberate
+one-shot/profile exemptions plus `oauth2-proxy`, whose current distroless image
+cannot execute a probe. The healthchecks have not been deployed or soaked;
+Stage 2's metric and alerts have not started. Stage 3's fail-loud CI contract is
+built and collected by the existing unit-test job.
 
 This plan exists because the previous two were each correct and each too narrow.
 [Plan 135](plan_135_storage_observability.md) made two disks visible.
@@ -139,6 +143,7 @@ justified deny-list carries the genuinely transient ones:
 | `flyway` | Runs to completion and exits; `service_completed_successfully` is its contract |
 | `airflow-init` | Same |
 | profile-gated (`dbt`, `dbt_test`, `snapshot-worker`) | Not running under `docker compose up` |
+| `oauth2-proxy` | Real unresolved hole: the current distroless image has no shell or HTTP client with which Docker can execute `/ping`; changing to the Alpine variant is a separate front-door image change |
 
 `trawl` and `redis-trawl` are profile-gated but **long-running when up**, so they
 are in scope. The 2026-08-14 outage is the reason to be explicit about that
@@ -164,7 +169,7 @@ point.
 
 ## Stages
 
-### Stage 1 — Healthchecks everywhere
+### Stage 1 — Healthchecks everywhere — IMPLEMENTED, DEPLOY/SOAK PENDING
 
 Add `healthcheck:` to every in-scope service. Cheapest first, since the app tier
 is nearly free:
@@ -184,10 +189,19 @@ is nearly free:
 - **Infra** (`grafana`, `loki`, `prometheus`, `caddy`, `oauth2-proxy`,
   exporters) — well-known endpoints.
 
-> Use `curl --fail` consistently, and **verify the image actually has `curl`**.
-> Plan 135 recorded BusyBox `wget` inside the Prometheus container reporting 503
-> where host `curl` reported 200. A healthcheck that fails because the tool is
-> missing is worse than none — it manufactures a false unhealthy.
+> The implementation corrected the draft's `curl --fail` default after checking
+> the running images. The Python slim services have neither curl nor wget and
+> use `urllib`; BusyBox-bearing images use `wget`; curl-bearing images use curl.
+> Promtail has only bash and uses `/dev/tcp`. A healthcheck that fails because
+> its probe tool is missing is worse than none — it manufactures a false
+> unhealthy.
+
+As built, all 25 probeable long-running services have an enabled healthcheck.
+The one unresolved long-running service is `oauth2-proxy`: its distroless image
+has no shell, curl, wget, or busybox, so Docker cannot express a probe against
+its `/ping` endpoint. It remains explicit in the Stage 3 deny-list rather than
+silently disappearing. Swapping the authenticated front door to
+`latest-alpine` needs a separate deploy decision and verification.
 
 **Verify:** `docker inspect --format '{{.State.Health.Status}}'` returns a real
 status for every in-scope service, and no service flips unhealthy on a normal
@@ -215,7 +229,7 @@ Follow the both-directions validation Plan 131 used for
 the expression stays quiet on healthy data, then prove it fires — with a
 deliberately stopped non-critical container, not by breaking something real.
 
-### Stage 3 — CI asserts coverage
+### Stage 3 — CI asserts coverage — BUILT 2026-08-18
 
 Extend `tests/test_observability_config.py`:
 
@@ -230,6 +244,13 @@ different inclusion policy and tests it separately.
 
 This is the stage that makes the rest durable. Without it Stages 1-2 are one
 more enumeration with a longer list.
+
+As built, `TestServiceHealthCoverage` rejects a missing, empty, or disabled
+healthcheck; requires reasons for every live deny-list entry; keeps the two
+long-running profile services in scope; rejects cross-container HTTP probes;
+and prevents Python slim images from invoking an HTTP client they do not ship.
+`TestAirflowConnectionBudget` remains the connection-budget invariant. The
+existing CI unit-test command collects both classes through `pytest tests/`.
 
 ### Stage 4 — Retire DAG sensors as the health signal
 
