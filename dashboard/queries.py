@@ -12,11 +12,13 @@ Usage:
 """
 from pathlib import Path
 
+from shared.query_loader import load_query
+
 _SQL_DIR = Path(__file__).parent / "sql"
 
 
 def _load(filename: str) -> str:
-    return (_SQL_DIR / filename).read_text()
+    return load_query(_SQL_DIR, Path(filename).stem)
 
 
 # app.py
