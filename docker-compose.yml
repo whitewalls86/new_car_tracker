@@ -728,7 +728,9 @@ services:
       - cartracker-net
 
   promtail:
-    image: grafana/promtail:2.9.8
+    # 3.5.8 uses a Docker API compatible with Docker Engine 29. Ubuntu Jammy's
+    # 29.1 package rejects Promtail 2.9.8's API 1.42 discovery client.
+    image: grafana/promtail:3.5.8
     container_name: cartracker-promtail
     restart: unless-stopped
     command: --config.file=/etc/promtail/promtail.yml
