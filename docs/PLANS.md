@@ -34,9 +34,10 @@ they do.
 
 Plan 112 remains intentionally paused until Plan 125 supplies stable
 Iceberg-native inputs. Plans 114, 115, and 128 have completed their intended
-work and no longer belong in the executable queue. Plans 120 and 124 are built
-but still owe production verification. Plans 129 and 131 are production systems
-under rollout/closeout rather than new builds.
+work and no longer belong in the executable queue. Plan 124 closed out
+2026-08-18. Plan 120 is built but still owes production verification. Plans
+129 and 131 are production systems under rollout/closeout rather than new
+builds.
 
 ---
 
@@ -71,9 +72,8 @@ observation window is written separately and does not inflate coding effort.
 | Order | Plan | Remaining work | Priority | Effort | Exit / dependency |
 |---:|---|---|---:|---|---|
 | 0.1 | [135](plan_135_storage_observability.md) | **Stages 1-4 live (criteria 1-5 met).** Remaining: fix the Stage 4 daily/weekly tier defect, then Stage 5 (bounded logs) and Stage 6 (runbook) — see the [follow-up prompt](claude_prompt_plan_135_stage_4_followup.md) | 100 | S remaining | Criteria 6 and 7 pass; then move to completed |
-| 0.2 | [124](plan_124_trawl_memory_guardrails.md) | Verify the deployed limits with `docker inspect`, `docker stats`, and a normal scrape cycle | 97 | XS | No new OOM evidence; update the plan status |
-| 0.3 | [131](plan_131_packed_cold_storage.md) | Verify the recurring lifecycle DAG and close Stage 5 documentation | 94 | S | Lifecycle is single-flight, deploy-aware, measured, and alertable |
-| 0.4 | [120](plan_120_ci_lake_snapshot_delivery.md) | Complete the remaining VM/Gate F verification | 82 | S | Required before Plan 125 relies on the snapshot path as a release gate |
+| 0.2 | [131](plan_131_packed_cold_storage.md) | Verify the recurring lifecycle DAG and close Stage 5 documentation | 94 | S | Lifecycle is single-flight, deploy-aware, measured, and alertable |
+| 0.3 | [120](plan_120_ci_lake_snapshot_delivery.md) | Complete the remaining VM/Gate F verification | 82 | S | Required before Plan 125 relies on the snapshot path as a release gate |
 
 ## Default build order
 
@@ -127,7 +127,7 @@ free.
 | [115](plan_115_detail_unenriched_circuit_breaker.md) | Production bugfix implemented | Record deployment/verification and move to completed |
 | [128](plan_128_false_block_detection.md) | Phases 1-4 implemented; no historical repair chosen | Record final verification and move to completed |
 | [129](plan_129_zstd_dictionary_compression.md) | Dictionary v1 in production; backfill/lifecycle monitoring | Watch metrics; no new design work unless the run deviates |
-| [131](plan_131_packed_cold_storage.md) | April-June packed and pruned; Stage 5 recurring lifecycle in closeout | Complete order 0.3 above |
+| [131](plan_131_packed_cold_storage.md) | April-June packed and pruned; Stage 5 recurring lifecycle in closeout | Complete order 0.2 above |
 
 ## Paused or blocked
 
@@ -147,7 +147,7 @@ free.
 | [119](plan_119_lakehouse_governance.md) | Lakehouse governance + catalog expansion | Draft |
 | [120](plan_120_ci_lake_snapshot_delivery.md) | CI + local lake snapshot delivery | Built through Gate F - VM verification pending |
 | [121](plan_121_staging_environment.md) | Staging environment | Draft |
-| [124](plan_124_trawl_memory_guardrails.md) | Trawl browser solver memory guardrails | Implemented - VM verification pending |
+| [124](plan_124_trawl_memory_guardrails.md) | Trawl browser solver memory guardrails | **Complete** - verified in production 2026-08-18; zero host-wide OOM since deployment |
 | [125](plan_125_duckdb_to_iceberg_migration.md) | DuckDB to Iceberg analytics migration | Gates 0.5, 0, A, and B complete; Gate C measurement next |
 | [126](plan_126_basic_event_streaming.md) | Basic event streaming foundation | Draft / future |
 | [127](plan_127_streaming_adaptive_scrape_control.md) | Streaming adaptive scrape control | Draft / future |

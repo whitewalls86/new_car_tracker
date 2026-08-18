@@ -366,6 +366,20 @@ This is a judgment call, not a measured optimum — Stage 2's counters will show
 whether solve rate degrades gradually (tighten it) or falls off a cliff
 (leave it).
 
+> **The "22 days of uptime" framing needs revisiting before the interval is
+> chosen.** [Plan 124](plan_124_trawl_memory_guardrails.md)'s 2026-08-18
+> verification found `camoufox-bin` is OOM-killed inside the container roughly
+> **every 1.5–4 days** — 12 times in a month, at a consistent ~3.2–3.5 GB. The
+> browser processes are therefore *already* being recycled involuntarily, far
+> more often than weekly. Whatever rots over 22 days cannot be browser process
+> age; it has to be container-level state that survives a `camoufox-bin`
+> restart. A weekly `docker restart` clears different state than these kills do,
+> and the interval should be chosen against *that* state, not against uptime.
+>
+> Related: the 2026-08-14 outage contains one of those kills, at 04:28 on Aug 15
+> — **7.5 hours after** the solve rate hit 0%, and at a lower rss than usual.
+> Symptom, not cause.
+
 ## Stage 4 — Automatic restart
 
 ### Why the obvious approach does not work
