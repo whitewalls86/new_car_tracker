@@ -6,6 +6,11 @@
 after comparing the live `https://cartracker.info/info` page and `README.md`
 against `master` at `6f6a2ba`.
 
+The analytics acquisition and database-removal portion of Stage 4 moved to
+[Plan 143](plan_143_analytics_serving_snapshot.md) on 2026-08-18 before either
+plan deployed it. This plan owns presentation of that snapshot, not its
+production or storage connection.
+
 This plan covers the repository README and the unauthenticated portfolio surface.
 It does not change dashboard behavior, authorization roles, or the production data
 architecture.
@@ -21,8 +26,8 @@ actual HOT-state plus staging-event write pattern, and avoid brittle counts in
 evergreen prose. Move the landing page's CSS and JavaScript into local static
 assets, make every interaction keyboard-accessible, replace the 41.7 MB eager
 video with a bounded preview, and serve public SEO and security metadata. Finally,
-take database work out of the request path by refreshing a last-known-good public
-stats snapshot in the background. Add a same-origin, dynamically loaded "Recent
+take database work out of the request path by rendering the last-known-good
+serving snapshot produced by Plan 143. Add a same-origin, dynamically loaded "Recent
 work" section whose build-generated JSON comes from the scored roadmap and recent
 completion tables in `docs/PLANS.md`, so the public page follows source control
 without making GitHub or Markdown parsing a production dependency.
@@ -84,8 +89,8 @@ bare domain sees a login screen before seeing what the project is.
 - Making the dashboard, admin UI, Airflow, Grafana, MinIO, or pgAdmin public.
 - Changing the Google OAuth2 or DB-backed authorization model.
 - Completing Plan 125's DuckDB-to-Iceberg production migration.
-- Implementing Plan 136's liveness fixes; this plan may describe that lesson but
-  must not claim the fixes have shipped.
+- Implementing Plan 136's solver-liveness fixes or Plan 143's analytics serving
+  boundary; this plan may describe those lessons but must not claim they shipped.
 - Redesigning the Streamlit dashboard.
 - Introducing a JavaScript framework or frontend build system.
 - Calling the GitHub API, cloning the repository, or parsing Markdown on a public
@@ -349,29 +354,25 @@ OAuth routes; scope the header block to the public handlers.
 users do not receive autoplay, no third-party request is required to render the
 page, and the initial page view does not download the full demo.
 
-## Stage 4 — Remove databases from the request path
+## Stage 4 — Present the Plan 143 snapshot without request-time dependencies
 
-The current handler opens DuckDB independently for four stats and may repeat the
-retry delay for each connection. It also derives "last pipeline run" from
-completed queue rows that the hourly cleanup removes.
+The current handler opens DuckDB independently for four stats and derives "last
+pipeline run" from completed queue rows that hourly cleanup removes. Plan 143
+owns removing both reads, producing the versioned serving snapshot, replacing
+that field with mart-derived `analytics_data_through_iso`, and loading an
+immutable presentation cache inside `ops`.
 
-Replace that path with a small `ops` public-stats component:
+This plan owns only the public presentation contract:
 
-1. Refresh a thread-safe snapshot in the background every 60 seconds from the
-   existing ops lifespan.
-2. Use one read-only DuckDB connection per refresh and consolidate related
-   aggregates into as few queries as practical.
-3. Preserve last-known-good values per field when one source fails, along with
-   `refreshed_at` and `data_through` timestamps.
-4. Derive `data_through` from the latest mart/scrape-volume hour, not from the
-   transient artifact queue, and label it "Analytics data through."
-5. Render the narrative immediately when the snapshot is empty; never sleep or
-   retry inside the HTTP request.
-6. Log refresh failure once per refresh and expose snapshot age through the
-   existing metrics surface.
-
-The public page may show a subtle "temporarily unavailable" state for a missing
-metric, but missing analytics must never make the page fail.
+1. Render full, partial, stale, and empty Plan 143 snapshots without sleeping,
+   retrying, opening a database, or calling an upstream service in the request.
+2. Label the mart-derived timestamp "Analytics data through."
+3. Show a subtle "temporarily unavailable" or stale state where appropriate;
+   missing analytics must never make the narrative fail.
+4. Keep freshness wording consistent with Plan 143's snapshot schema rather
+   than inventing a second page-only timestamp.
+5. Do not create `ops` SQL, a DuckDB connection, or another background analytics
+   collector while implementing the visual refresh.
 
 ### Project updates snapshot and dynamic loading
 
@@ -402,16 +403,17 @@ token. New roadmap content becomes public with the next normal image deploy.
 Visitors requesting `cartracker.info/info` receive the planned permanent redirect
 to `/` and see the same dynamically loaded section there.
 
-**Gate 4:** `/` performs no database connection, remains responsive during a dbt
-write lock and Postgres outage, clearly distinguishes stale cached stats from
-fresh ones, and loads recent work without a database or upstream network call.
+**Gate 4:** `/` performs no database or upstream-network call, remains responsive
+during a dbt write lock and Postgres outage, clearly distinguishes stale cached
+stats from fresh ones, and loads recent work without a runtime repository call.
 
 ## Stage 5 — Regression coverage
 
 Add tests for:
 
-- public stats aggregation, formatting, last-known-good behavior, concurrency,
-  and failure isolation;
+- Plan 143 snapshot formatting and full, partial, stale, empty, and
+  unsupported-version presentation; aggregation, persistence, concurrency, and
+  failure isolation are tested in Plan 143;
 - landing-template rendering with full, partial, stale, and empty stats;
 - public-roadmap generation, deterministic `--check`, schema validation, score
   and effort constraints, ordering, item caps, and broken local plan links;
@@ -455,7 +457,7 @@ mobile, and performance checklist is attached to the implementation PR.
 Deploy `ops` and Caddy together because the root route depends on both.
 
 1. Build the new ops image and validate its health internally.
-2. Confirm the public-stats background refresh has either a fresh snapshot or a
+2. Confirm the Plan 143 presentation cache has either a fresh snapshot or a
    valid empty state.
 3. Confirm the project-updates JSON matches the roadmap, has the expected cache
    policy, and renders both lists without blocking the page.
@@ -478,9 +480,9 @@ both rollout and rollback.
 |---|---|
 | `README.md` | Rewrite technical public entry point |
 | `Caddyfile` | Public root, redirect, robots/sitemap, scoped headers, static caching |
-| `ops/routers/info.py` | Render cached snapshot; canonical public responses |
-| `ops/public_stats.py` | New background snapshot collector and cache |
-| `ops/app.py` | Start/stop stats refresh with app lifespan |
+| `ops/routers/info.py` | Render the Plan 143 presentation cache; canonical public responses |
+| `ops/public_stats.py` | **Plan 143-owned** snapshot reader/cache; this plan changes presentation only |
+| `ops/app.py` | Preserve the Plan 143 cache lifecycle; no analytics collector added here |
 | `ops/templates/info.html` | Correct copy and semantic markup |
 | `ops/static_ops/info.css` | Extracted page styles |
 | `ops/static_ops/info.js` | Accessible progressive enhancement |
@@ -504,12 +506,12 @@ both rollout and rollback.
 3. **PR C — Frontend quality:** semantic interactions, dynamically loaded work
    feed, extracted/local assets, optimized media, CSP, caching, and accessibility
    evidence.
-4. **PR D — Stats reliability:** background snapshot, freshness semantics,
-   metrics, and failure tests.
+4. **PR D — Stats presentation:** consume the already-landed Plan 143 snapshot,
+   add stale/partial/empty UI states, and verify no request-time dependency.
 
 PR A can ship independently. PRs B and C should be reviewed together for CSP and
-asset-path compatibility. PR D may ship before or after them but must preserve the
-current soft-failure behavior throughout.
+asset-path compatibility. PR D requires Plan 143's snapshot contract and must
+preserve the current soft-failure behavior throughout.
 
 ## Completion criteria
 

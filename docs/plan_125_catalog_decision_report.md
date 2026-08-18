@@ -157,8 +157,9 @@ These are implementation rules for Plan 125 regardless of catalog choice.
   `LAKEKEEPER_CATALOG_URI` during migration. Keep Lakekeeper-specific names only
   in provisioning code.
 - **R3: Consumers read a serving layer, never the catalog directly.** Dashboard,
-  `/info`, and ops metrics use extracts, a cache, or one reader module. Do not
-  embed catalog clients/URIs in page or metric code.
+  `/info`, and metrics use extracts, a cache, or one reader module. Plan 143
+  establishes the versioned snapshot for `/info` and metrics before Gate D; do
+  not embed catalog clients/URIs in page or metric code.
 - **R4: Keep static-key `S3FileIO`; defer credential vending.** Credential
   vending is catalog-specific and belongs to Plan 119 unless a hard requirement
   appears earlier.

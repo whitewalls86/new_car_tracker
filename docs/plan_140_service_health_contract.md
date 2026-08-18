@@ -331,6 +331,7 @@ next DAG run fails.
 - **Whole-host maintenance orchestration.** Plan 142 owns the separate
   maintenance state, drain, package/reboot procedure, and explicit resume. This
   plan supplies its mandatory health gate.
-- **Metrics freshness** — Plan 136 Stage 1.
+- **Analytics metrics freshness and serving ownership** —
+  [Plan 143](plan_143_analytics_serving_snapshot.md).
 - Replacing Docker healthchecks with an orchestrator's. That is Plan 88
   (Kubernetes), and it is not close.

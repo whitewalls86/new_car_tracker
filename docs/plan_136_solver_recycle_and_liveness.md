@@ -2,13 +2,15 @@
 
 ## Status
 
-**Stage 0 complete and verified in production 2026-08-18; Stage 1 built
-2026-08-18, deploy/verification pending.** Stage 0 shipped as PR #214, merge
-`8b2254b`; see
+**Stage 0 complete and verified in production 2026-08-18; analytics gauge
+freshness transferred to Plan 143 before deployment.** Stage 0 shipped as PR
+#214, merge `8b2254b`; see
 [Stage 0 production verification](#stage-0-production-verification-2026-08-18).
 0a and 0c are deployed and proven; 0b was reassigned to
 [Plan 140](plan_140_service_health_contract.md) Stage 2 rather than built here.
-Stages 2-4 are not started.
+The unshipped Stage 1 prototype at commit `584f100` exposed the right failure
+contract but the wrong serving boundary; [Plan 143](plan_143_analytics_serving_snapshot.md)
+now owns its redesign, deployment, and soak. Stages 2-4 are not started.
 
 Written 2026-08-15 after an 8-hour detail-scraping outage that no
 alert caught. The only production action
@@ -231,7 +233,8 @@ throughput collapse.
 
 1. Detect a solver outage in **under 15 minutes**, from a signal that does not
    pass through dbt.
-2. Never let a gauge report a stale value as if it were live.
+2. Never let a gauge report a stale value as if it were live. Plan 143 owns the
+   analytics-serving implementation and freshness alert that satisfy this goal.
 3. Recycle `trawl` on a schedule so 22-day state rot cannot accumulate.
 4. Restart `trawl` automatically when it fails, without a human in the loop, and
    without pushing in-flight listings into cooldown.
@@ -389,64 +392,30 @@ mount — travels with it, and Stage 4 below still owns the restart verb.
 
 ---
 
-## Stage 1 — Make gauge staleness impossible to miss — BUILT 2026-08-18
+## Stage 1 — Analytics gauge freshness — TRANSFERRED TO PLAN 143
 
-Smallest change, unblocks verification of everything else.
+The behavioral requirements survive unchanged:
 
-**1a. Fail loudly instead of silently.** On any refresh failure, set the affected
-gauges to `float('nan')`. Prometheus records NaN, comparisons against it are
-false, and `noDataState` becomes reachable — a skipped refresh stops looking
-like a healthy reading.
+- failed or invalid analytics values become NaN rather than retaining a silent
+  stale value;
+- `cartracker_metrics_last_success_timestamp_seconds` advances only after a
+  valid publication;
+- `ct-metrics-freshness` alerts after 900 seconds and fails loudly on no data or
+  evaluation errors; and
+- the seven existing metric names remain stable for Grafana.
 
-**1b. Add a freshness gauge.** `cartracker_metrics_last_success_timestamp_seconds`,
-set to `time.time()` after a fully successful refresh. Alert on
-`time() - cartracker_metrics_last_success_timestamp_seconds > 900`. This makes
-"the metrics pipeline itself is broken" a first-class, alertable condition.
+Pre-PR review showed that implementing those rules solely inside this incident
+plan would preserve the wrong architecture. `ops` already had two independent
+DuckDB reader paths, the public page used a transient Postgres queue as a
+freshness source, SQL was being added directly to Python, and Plan 138 proposed
+a second collector. [Plan 143](plan_143_analytics_serving_snapshot.md) now owns
+the complete serving boundary: saved and integration-tested SQL, a durable
+post-build snapshot, direct `dbt_runner` Prometheus export, removal of analytics
+reads from `ops`, shared connection/query conventions, deployment, and soak.
 
-**1c. Stop the lock contention at the source.** The maintenance router already
-solved this — see the comment at
-[ops/routers/maintenance.py:27-31](ops/routers/maintenance.py#L27-L31), which
-reads MinIO parquet directly with a fresh S3-configured connection *specifically
-to avoid dbt's write lock*. Apply the same approach to the gauges rather than
-contending on `analytics.duckdb`.
-
-> **Implementation correction:** the draft's S3 mechanism is not semantically
-> available to these gauges. The maintenance query reads a raw Parquet source;
-> the seven gauges read dbt-materialized mart tables that exist only inside
-> `analytics.duckdb`. A fresh S3 connection cannot see those tables, and
-> rebuilding the marts from raw Parquet every minute would duplicate dbt logic
-> and create a large recurring scan. The built solution keeps DuckDB ownership
-> in `dbt_runner`: its guarded `GET /analytics/metrics` serializes the short read with
-> dbt builds, while `ops` consumes the snapshot over the existing internal HTTP
-> path. A build in progress is an explicit 503 rather than a cross-process file
-> lock conflict.
-
-**1d. Cover the module while rewriting it.**
-[ops/metrics/analytics_gauges.py](../ops/metrics/analytics_gauges.py) replaces a
-module that sat at **25%
-coverage** — 132 lines of seven nested `try/except` blocks, each silently
-swallowing a failure, with no dedicated test file. Measured in
-[Plan 139](plan_139_test_suite_maintenance.md), which explicitly **hands this
-step over rather than doing it first**: tests written against today's behavior
-would assert "the gauge keeps its last value on a lock conflict," which is
-precisely what 1a deletes. Write them here instead, asserting the NaN convention
-and the freshness timestamp — one test per swallowed exception path, since each
-one is a gauge that can go stale independently.
-
-As built, each failed mart query returns only its affected values as unknown;
-`ops` publishes those gauges as NaN while preserving successful values. A
-transport, busy, or connection failure makes all seven data gauges NaN. The new
-`cartracker_metrics_last_success_timestamp_seconds` advances only after a fully
-successful refresh, and `ct-metrics-freshness` alerts once it is more than 900
-seconds old. The reader and build share a non-blocking lock, closing the race
-between an idle check and opening DuckDB.
-
-> Verify: during a dbt build, `GET /analytics/metrics` returns 503 and the next ops
-> refresh publishes NaN without advancing the last-success timestamp. A normal
-> build shorter than 15 minutes must not alert; a deliberately held-busy or
-> injected query failure must make `ct-metrics-freshness` fire after 900
-> seconds. After the reader recovers, all seven gauges become numeric and the
-> timestamp advances.
+Commit `584f100` is retained as prototype evidence and tests, not as a deployable
+Stage 1. Plan 136 resumes at Stage 2 after Plan 143 establishes the freshness
+contract.
 
 ## Stage 2 — A liveness signal that does not pass through dbt
 
@@ -457,7 +426,7 @@ outcome at the moment it happens:
 - `cartracker_detail_fetch_total{outcome="ok|403|error"}`
 
 Prometheus does not currently scrape the scraper at all — add it to
-[prometheus/prometheus.yml](prometheus/prometheus.yml) alongside `ops` and
+[prometheus/prometheus.yml](../prometheus/prometheus.yml) alongside `ops` and
 `processing`.
 
 Then the alert that should have caught this:
@@ -581,12 +550,14 @@ neither depending on anything else here. Both shipped and were verified on
 waiting on Stage 4's `docker-socket-proxy`, the whole step moved to Plan 140,
 which takes the socket-path decision with it.
 
-**Plan 140 now runs before Stages 1-4.** It was previously reasoned as adjacent
-on switching cost; with 0b folded into it, it is simply the next slice of the
-same work, and Stage 0a/0c were the only parts it was waiting on.
+**Plan 140 now runs before the remaining work.** It was previously reasoned as
+adjacent on switching cost; with 0b folded into it, it is simply the next slice
+of the same work, and Stage 0a/0c were the only parts it was waiting on. Plan
+143 then establishes analytics freshness at the correct serving boundary before
+this plan resumes at Stage 2.
 
-Stages 1 and 2 are worth doing regardless — they are the difference between
-finding out in 15 minutes and finding out in 8 hours. **Stage 3 is the highest
+Plan 143 and Stage 2 are worth doing regardless — they are the difference
+between finding out in 15 minutes and finding out in 8 hours. **Stage 3 is the highest
 value-per-effort item in the plan** and could ship on its own. Stage 4 is the
 only one that requires new authority in the stack and should not start until
 Stage 2's counters have run long enough to trust the breaker's input signal.
@@ -608,8 +579,8 @@ specific mistake this note exists to prevent.
 
 [Plan 141](plan_141_structured_log_ingestion_contract.md) owns log parsing,
 severity/source labels, dashboard selectors, and ingestion-volume acceptance.
-It does not block this plan's Prometheus-based liveness, freshness, or solver
-outcome work. Keep these boundaries explicit:
+It does not block this plan's Prometheus-based solver liveness or Plan 143's
+analytics freshness work. Keep these boundaries explicit:
 
 - Revalidate `ct-403-log-spike` against Plan 141's fixtures and deployed labels
   because it is this plan's Loki-dependent alert.
@@ -618,9 +589,9 @@ outcome work. Keep these boundaries explicit:
 - The Airflow HMAC-key-length warning observed during the Plan 135 closeout is a
   configuration defect, not a line for Plan 141 to suppress. Resolve or route it
   with Stage 0's other Airflow configuration work.
-- Container health, metric freshness, solver efficacy, and restart authority
-  remain here (and in Plan 140 where generalized); Plan 141 must not recreate
-  them from logs.
+- Container health remains in Plan 140, analytics freshness in Plan 143, and
+  solver efficacy/restart authority here; Plan 141 must not recreate them from
+  logs.
 
 ## Files
 
@@ -632,13 +603,10 @@ Stage 0 rows are marked **done**; the container-health producer moved to
 | `docker-compose.yml` | Apiserver-only `SQL_ALCHEMY_POOL_SIZE` / `MAX_OVERFLOW` | 0a — **done** |
 | `tests/test_observability_config.py` | `TestAirflowConnectionBudget`: pool settings present, not on the shared anchor, exact set equality on the Airflow services, worst-case sum < `max_connections` read from the postgres `command:` | 0a — **done** |
 | `grafana/provisioning/alerting/rules.yml` | `dag_id != ""` guard on `ct-pipeline-failures` | 0c — **done** |
-| `dbt_runner/app.py` | Serialized engine-neutral `/analytics/metrics` endpoint; current DuckDB adapter; per-query partial results; shared non-blocking lock with dbt builds | 1 — **built** |
-| `ops/metrics/analytics_gauges.py` | Consume `ANALYTICS_READER_URL`; NaN on failed/unknown values; advance freshness only on complete success | 1 — **built** |
-| `tests/dbt_runner/test_metrics.py` | Complete, partial, connection-failure, busy-reader, and lock-release contracts | 1 — **built** |
-| `tests/ops/test_analytics_gauges.py` | Complete, partial, transport-failure, and invalid-response gauge behavior; exact producer/consumer metric-name contract | 1 — **built** |
+| [Plan 143](plan_143_analytics_serving_snapshot.md) file set | Saved SQL, durable post-build snapshot, direct `dbt_runner` metrics, fail-loud freshness, and removal of analytics reads from `ops` | Former Stage 1 — **transferred before deployment** |
 | `scraper/` (metrics module) | Solver + detail-fetch outcome counters; circuit breaker | 2, 4 |
 | `prometheus/prometheus.yml` | Scrape the `scraper` target | 2 |
-| `grafana/provisioning/alerting/rules.yml` | Add `ct-metrics-freshness` | 1 — **built** |
+| `grafana/provisioning/alerting/rules.yml` | Add `ct-metrics-freshness` | Former Stage 1 — **Plan 143** |
 | `grafana/provisioning/alerting/rules.yml` | Fix `ct-scrape-volume-drop`; add solver-success alert | 2 |
 | `docker-compose.yml` | `docker-socket-proxy` sidecar; `RECYCLABLE_SERVICES` for ops | 4 |
 | `ops/routers/maintenance.py` | `POST /maintenance/recycle/{service}`, allowlisted | 3, 4 |
