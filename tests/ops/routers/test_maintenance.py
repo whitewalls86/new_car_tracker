@@ -51,20 +51,21 @@ def _stuck_row(aid, path):
 
 
 class TestReapStuckProcessing:
-    def test_retry_when_object_exists(self, mock_cursor_context, mocker):
+    def test_retry_when_artifact_exists(self, mock_cursor_context, mocker):
         _, cursor = mock_cursor_context
         cursor.fetchall.return_value = [_stuck_row(1, "s3://b/a.zst")]
-        mocker.patch("ops.routers.maintenance.object_exists", return_value=True)
+        exists = mocker.patch("ops.routers.maintenance.artifact_exists", return_value=True)
 
         res = _reap_stuck_processing()
 
         assert res == {"stuck": 1, "retried": 1, "skipped": 0}
         assert _executed(cursor, MARK_ARTIFACT_STATUS)[0]["status"] == "retry"
+        exists.assert_called_once_with("s3://b/a.zst")
 
     def test_skip_when_object_missing(self, mock_cursor_context, mocker):
         _, cursor = mock_cursor_context
         cursor.fetchall.return_value = [_stuck_row(1, "s3://b/a.zst")]
-        mocker.patch("ops.routers.maintenance.object_exists", return_value=False)
+        mocker.patch("ops.routers.maintenance.artifact_exists", return_value=False)
 
         res = _reap_stuck_processing()
 
@@ -74,7 +75,7 @@ class TestReapStuckProcessing:
     def test_mixed(self, mock_cursor_context, mocker):
         _, cursor = mock_cursor_context
         cursor.fetchall.return_value = [_stuck_row(1, "s3://b/a.zst"), _stuck_row(2, "s3://b/b.zst")]
-        mocker.patch("ops.routers.maintenance.object_exists", side_effect=[True, False])
+        mocker.patch("ops.routers.maintenance.artifact_exists", side_effect=[True, False])
 
         res = _reap_stuck_processing()
 

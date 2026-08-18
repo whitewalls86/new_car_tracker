@@ -49,12 +49,12 @@ def _env_flag(name: str, default: bool) -> bool:
 #: read failure is the pack path's doing rather than the object path's.
 PACK_READ_FALLBACK = _env_flag("PACK_READ_FALLBACK", True)
 
-#: Sidecar indexes held as Arrow tables. Measured 2026-08-15 on April-shaped
-#: sidecars (17,291 rows, 1.17 MB stored): 1.7 ms to parse, 3.8 MB in Arrow,
-#: 0.04 ms per lookup. Keeping them as Arrow rather than Python objects is the
-#: whole difference — the same sidecar as a list of PackIndexEntry costs 59 ms
-#: to build and several times the memory, for a lookup that is not faster.
-PACK_INDEX_CACHE_PACKS = int(os.environ.get("PACK_INDEX_CACHE_PACKS", "4"))
+#: Sidecar ``source_key`` columns held as Arrow tables. Measured 2026-08-14 on
+#: April-shaped sidecars (17,291 rows, 1.17 MB stored): 1.3 ms to parse and
+#: 1.69 MB in Arrow, against 1.7 ms and 3.78 MB for every column. Forty-eight
+#: entries cover the largest currently packed month (May: 41) with headroom,
+#: while keeping the resident index near 81 MB instead of ~181 MB.
+PACK_INDEX_CACHE_PACKS = int(os.environ.get("PACK_INDEX_CACHE_PACKS", "48"))
 
 #: Open pack readers held, each with its own frame LRU. A reader holds up to
 #: two decompressed frames (~16 MiB each), so this is the memory knob: 1 pack
@@ -384,7 +384,7 @@ def object_exists(minio_path: str) -> bool:
 _NOT_FOUND_CODES = ("404", "NoSuchKey", "NotFound")
 
 _pack_lock = threading.Lock()
-#: index key -> Arrow table of that pack's sidecar
+#: index key -> Arrow table containing only that pack's ``source_key`` column
 _pack_index_cache: "OrderedDict[str, Any]" = OrderedDict()
 #: pack key -> (PackReader, per-reader lock). PackReader mutates a frame LRU,
 #: so concurrent reads of one pack are serialised; different packs are not.
@@ -460,28 +460,81 @@ def _list_sidecars(bucket: str, prefix: str, *, refresh: bool = False) -> tuple:
     return keys, False
 
 
-def _sidecar_table(bucket: str, sidecar_key: str):
-    """Return one sidecar as an Arrow table, from cache when possible."""
+def _sidecar_source_keys(bucket: str, sidecar_key: str):
+    """Return a sidecar's cached ``source_key`` table and any fresh bytes.
+
+    The raw bytes are returned only on a cache miss so a matching cold lookup
+    can parse its full entry without fetching the sidecar twice. Only the
+    projected key column is retained across lookups.
+    """
     import io
 
     import pyarrow.parquet as pq
+
+    from shared.packfile import PackIndexMismatchError
 
     cache_key = f"{bucket}/{sidecar_key}"
     with _pack_lock:
         table = _pack_index_cache.get(cache_key)
         if table is not None:
             _pack_index_cache.move_to_end(cache_key)
-            return table
+            return table, None
 
     client = get_boto3_client()
     body = client.get_object(Bucket=bucket, Key=sidecar_key)["Body"].read()
-    table = pq.read_table(io.BytesIO(body))
+    parquet = pq.ParquetFile(io.BytesIO(body))
+    if "source_key" not in parquet.schema_arrow.names:
+        raise PackIndexMismatchError(
+            f"{sidecar_key} has no source_key column — not a pack index"
+        )
+    table = parquet.read(columns=["source_key"])
 
     with _pack_lock:
         _pack_index_cache[cache_key] = table
         while len(_pack_index_cache) > max(1, PACK_INDEX_CACHE_PACKS):
             _pack_index_cache.popitem(last=False)
-    return table
+    return table, body
+
+
+def _sidecar_entry(bucket: str, sidecar_key: str, row: int, body: "bytes | None"):
+    """Parse one matching entry, reusing sidecar bytes from a cold key scan."""
+    import io
+
+    import pyarrow.parquet as pq
+
+    from shared.packfile import PackIndexEntry, PackIndexMismatchError
+
+    if body is None:
+        client = get_boto3_client()
+        body = client.get_object(Bucket=bucket, Key=sidecar_key)["Body"].read()
+
+    columns = (
+        "artifact_id",
+        "listing_id",
+        "fetched_at",
+        "source_key",
+        "frame_ordinal",
+        "offset_in_frame",
+        "length",
+        "raw_sha256",
+    )
+    parquet = pq.ParquetFile(io.BytesIO(body))
+    missing = [name for name in columns if name not in parquet.schema_arrow.names]
+    if missing:
+        raise PackIndexMismatchError(
+            f"{sidecar_key} is missing column(s): {', '.join(missing)}"
+        )
+    record = parquet.read(columns=list(columns)).slice(row, 1).to_pylist()[0]
+    return PackIndexEntry(
+        source_key=record["source_key"],
+        frame_ordinal=int(record["frame_ordinal"]),
+        offset_in_frame=int(record["offset_in_frame"]),
+        length=int(record["length"]),
+        raw_sha256=record["raw_sha256"],
+        artifact_id=record.get("artifact_id"),
+        listing_id=record.get("listing_id"),
+        fetched_at=record.get("fetched_at"),
+    )
 
 
 def _find_index_entry(bucket: str, key: str):
@@ -497,7 +550,7 @@ def _find_index_entry(bucket: str, key: str):
     """
     import pyarrow.compute as pc
 
-    from shared.packfile import PackIndexEntry, PackIndexMismatchError, index_key
+    from shared.packfile import index_key
 
     prefix = pack_lookup_prefix(key)
     if prefix is None:
@@ -508,25 +561,11 @@ def _find_index_entry(bucket: str, key: str):
             if sidecar_key in skip:
                 continue
             skip.add(sidecar_key)
-            table = _sidecar_table(bucket, sidecar_key)
-            if "source_key" not in table.schema.names:
-                raise PackIndexMismatchError(
-                    f"{sidecar_key} has no source_key column — not a pack index"
-                )
+            table, body = _sidecar_source_keys(bucket, sidecar_key)
             row = pc.index(table.column("source_key"), key).as_py()
             if row is None or row < 0:
                 continue
-            record = table.take([row]).to_pylist()[0]
-            entry = PackIndexEntry(
-                source_key=record["source_key"],
-                frame_ordinal=int(record["frame_ordinal"]),
-                offset_in_frame=int(record["offset_in_frame"]),
-                length=int(record["length"]),
-                raw_sha256=record["raw_sha256"],
-                artifact_id=record.get("artifact_id"),
-                listing_id=record.get("listing_id"),
-                fetched_at=record.get("fetched_at"),
-            )
+            entry = _sidecar_entry(bucket, sidecar_key, row, body)
             pack = sidecar_key[: -len(".idx.parquet")] + ".zpack"
             # index_key() is the inverse and is the definition of the pairing;
             # checking it here keeps the two together if either ever changes.
@@ -545,6 +584,20 @@ def _find_index_entry(bucket: str, key: str):
         fresh, _ = _list_sidecars(bucket, prefix, refresh=True)
         found = search(fresh, searched)
     return found
+
+
+def artifact_exists(minio_path: str) -> bool:
+    """Return whether an HTML artifact is available loose or from a pack.
+
+    Unlike :func:`object_exists`, this answers the logical read-path question:
+    a source object pruned after packing still exists as an artifact. Non-404
+    object-store and malformed-index errors propagate rather than being
+    mistaken for absence.
+    """
+    if object_exists(minio_path):
+        return True
+    bucket, key = _split_s3_path(minio_path)
+    return _find_index_entry(bucket, key) is not None
 
 
 def _pack_reader(bucket: str, pack_key: str, index_rows: int):

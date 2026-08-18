@@ -318,6 +318,29 @@ class TestPackFallback:
 
 
 # ---------------------------------------------------------------------------
+# Logical existence follows the same loose-or-packed boundary as reads
+# ---------------------------------------------------------------------------
+
+class TestArtifactExists:
+    def test_loose_object_exists_without_searching_packs(self, store):
+        keys = _write_sources(store, 1)
+
+        assert minio.artifact_exists(keys[0]) is True
+        assert store.calls["list"] == 0
+        assert store.calls["get_index"] == 0
+
+    def test_pruned_source_exists_through_its_pack(self, store):
+        keys = _write_sources(store, 2)
+        _pack_sources(store, keys)
+
+        assert minio.object_exists(keys[0]) is False
+        assert minio.artifact_exists(keys[0]) is True
+
+    def test_missing_loose_and_packed_artifact_does_not_exist(self, store):
+        assert minio.artifact_exists(_source_key(99)) is False
+
+
+# ---------------------------------------------------------------------------
 # Absent from both places
 # ---------------------------------------------------------------------------
 
@@ -429,7 +452,7 @@ class TestIndexAndPackMustAgree:
 # ---------------------------------------------------------------------------
 
 class TestCaching:
-    def test_a_second_member_of_the_same_pack_re_reads_nothing(self, store):
+    def test_a_second_member_reuses_keys_and_fetches_only_its_sidecar(self, store):
         keys = _write_sources(store, 8)
         _pack_sources(store, keys)
 
@@ -438,7 +461,7 @@ class TestCaching:
         minio.read_html(keys[1])
 
         assert store.calls["list"] == 0
-        assert store.calls["get_index"] == 0
+        assert store.calls["get_index"] == 1
         assert store.calls["head_object"] == 0
 
     def test_clearing_the_caches_makes_the_next_read_cold_again(self, store):
@@ -462,3 +485,31 @@ class TestCaching:
         minio.read_html(keys[2])   # loads both sidecars, keeps one
         minio.read_html(keys[0])
         assert len(minio._pack_index_cache) == 1
+
+    def test_month_sized_scan_stays_resident_as_source_keys_only(self, store, monkeypatch):
+        pack_count = 5
+        monkeypatch.setattr(minio, "PACK_INDEX_CACHE_PACKS", pack_count)
+        keys = [_source_key(i) for i in range(pack_count)]
+        for seq, key in enumerate(keys):
+            _pack_sources(store, [key], seq=seq)
+
+        minio.read_html(keys[-1])
+
+        assert len(minio._pack_index_cache) == pack_count
+        assert all(
+            table.schema.names == ["source_key"]
+            for table in minio._pack_index_cache.values()
+        )
+
+        store.calls.clear()
+        minio.read_html(keys[0])
+
+        # The month-wide key scan is warm. Only the one matching sidecar is
+        # fetched for the remaining entry fields; no LRU restart occurs.
+        assert store.calls["list"] == 0
+        assert store.calls["get_index"] == 1
+        assert len(minio._pack_index_cache) == pack_count
+
+    def test_default_cache_covers_every_current_packed_month(self):
+        # April-May-June-July have 32, 41, 38 and 33 sidecars respectively.
+        assert minio.PACK_INDEX_CACHE_PACKS >= 41
