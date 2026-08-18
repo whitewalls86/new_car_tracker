@@ -2,16 +2,23 @@
 
 ## Status
 
-DRAFT, written 2026-08-18 during pre-PR review of the unshipped Plan 136
-Stage 1 implementation. The first implementation proved the immediate lock can
-be serialized, but review found that it would preserve three architectural
+**Stages 0-4 implemented locally 2026-08-18; CI dbt-artifact verification,
+deployment, and the 24-hour Stage 5 soak remain pending.** Implementation is in
+commits `bbd9b23` and `2cfdb73`. The first commit establishes the shared
+connection and saved-SQL boundary; the second publishes the atomic snapshot,
+exports metrics directly from `dbt_runner`, and makes `ops` a snapshot-only
+presentation consumer.
+
+This plan was written during pre-PR review of the unshipped Plan 136 Stage 1
+implementation. That first implementation proved the immediate lock can be
+serialized, but review found that it would preserve three architectural
 problems: analytics SQL embedded in Python, `ops` acting as a Prometheus proxy,
 and a second `ops` DuckDB collector planned for the public page.
 
 Priority **94 (critical)**. Effort **M plus a 24-hour production soak**.
 
-No Plan 143 runtime change is deployed. Commit `584f100` is prototype evidence,
-not an accepted serving design and must not be promoted as-is.
+No Plan 143 runtime change is deployed. Commit `584f100` remains prototype
+evidence, not an accepted serving design and must not be promoted as-is.
 
 This plan is the sole owner of work transferred from:
 
@@ -195,7 +202,7 @@ make/model, and throughput values retain their presentation semantics.
 
 ## Stages
 
-### Stage 0 — Freeze the contract and retire the rejected prototype
+### Stage 0 — Freeze the contract and retire the rejected prototype — BUILT 2026-08-18
 
 1. Record the exact current metric names, Grafana consumers, public-stat keys,
    SQL dependencies, Compose mounts, and Prometheus jobs.
@@ -209,7 +216,7 @@ make/model, and throughput values retain their presentation semantics.
 **Gate 0:** the inventory maps every removed behavior to its replacement and no
 consumer depends on the rejected internal endpoint.
 
-### Stage 1 — Consolidate query loading and analytics connections
+### Stage 1 — Consolidate query loading and analytics connections — BUILT 2026-08-18
 
 1. Add the narrow shared analytics connection factory with unit tests for path,
    read-only mode, explicit overrides, and error propagation.
@@ -225,7 +232,7 @@ consumer depends on the rejected internal endpoint.
 **Gate 1:** dashboard SQL smoke tests remain green, snapshot SQL executes on the
 real build artifact, and Python contains no snapshot aggregation SQL literals.
 
-### Stage 2 — Publish a durable post-build snapshot
+### Stage 2 — Publish a durable post-build snapshot — BUILT 2026-08-18
 
 1. After the dbt subprocess exits and releases its file handle, execute the
    saved queries through the shared analytics connection.
@@ -243,7 +250,7 @@ real build artifact, and Python contains no snapshot aggregation SQL literals.
 never a partial file; a failed build or failed publication cannot corrupt the
 last good snapshot.
 
-### Stage 3 — Export analytics metrics at their producer
+### Stage 3 — Export analytics metrics at their producer — BUILT 2026-08-18
 
 1. Register the seven stable data gauges and freshness/refresh-health metrics
    in `dbt_runner`.
@@ -260,7 +267,7 @@ last good snapshot.
 exports none of them, and repeated scrapes during a dbt build do not touch or
 lock the analytics file.
 
-### Stage 4 — Make `/info` a snapshot consumer, not a database reader
+### Stage 4 — Make `/info` a snapshot consumer, not a database reader — BUILT 2026-08-18
 
 1. Replace the four DuckDB queries in `ops/routers/info.py` with a small
    thread-safe presentation cache loaded from the versioned serving snapshot.
@@ -279,7 +286,7 @@ lock the analytics file.
 remains responsive during a dbt write lock and Postgres outage, and labels
 staleness honestly.
 
-### Stage 5 — Deploy, prove the lock is gone, and soak
+### Stage 5 — Deploy, prove the lock is gone, and soak — NOT STARTED
 
 Deploy `dbt_runner`, `ops`, and Prometheus configuration as one compatibility
 change. Use the existing admin deploy-intent/drain procedure.
