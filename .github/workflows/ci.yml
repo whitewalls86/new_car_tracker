@@ -16,8 +16,6 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-          cache: pip
-          cache-dependency-path: requirements-dev.txt
       - run: pip install ruff
       - run: ruff check .
 
@@ -30,15 +28,6 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-          cache: pip
-          cache-dependency-path: |
-            requirements-dev.txt
-            scraper/requirements.txt
-            archiver/requirements.txt
-            processing/requirements.txt
-            ops/requirements.txt
-            dashboard/requirements.txt
-            dbt_runner/requirements.txt
       - name: Install dependencies
         # No airflow/requirements.txt here: Airflow is a separate service image
         # in prod (airflow/Dockerfile) and no non-integration test imports it —
@@ -137,15 +126,6 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-          cache: pip
-          cache-dependency-path: |
-            requirements-dev.txt
-            scraper/requirements.txt
-            archiver/requirements.txt
-            processing/requirements.txt
-            ops/requirements.txt
-            dashboard/requirements.txt
-            dbt_runner/requirements.txt
 
       - name: Install dependencies
         # No airflow/requirements.txt here: Airflow is a separate service image

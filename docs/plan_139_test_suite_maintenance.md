@@ -2,13 +2,13 @@
 
 ## Status
 
-**DRAFT — measured, scoped, and sequenced.** Surfaced 2026-08-17 during Plan 135
+**STAGES A+B IMPLEMENTED — awaiting merge of PR #213.** Surfaced 2026-08-17 during Plan 135
 Stage 4 development, when the unit suite's wall-clock time prompted the question
 "are we missing a mock somewhere?" The answer was no. Re-measured 2026-08-18
 against **real CI job timings**, which overturned the original draft's central
 assumption and moved one of its steps into another plan.
 
-Nothing applied.
+Stages C and D remain queued at their lower build-order positions.
 
 ## What was actually measured
 
@@ -364,6 +364,37 @@ step.
 alongside them with downstream integration noise. If that turns out to cost more
 debugging attention than the 65s is worth, restore the edge — it is a one-line
 revert with no migration.
+
+#### Stages A+B implementation evidence (2026-08-18, PR #213)
+
+The first CI coverage report measured **88%: 6,835 statements, 841 missed** over
+the six configured service packages. This agrees with the hand-computed 88%; the
+four-statement difference (6,834/845 by hand) is measurement-environment noise,
+not a material baseline change. The selected CI suite was 2,224 passed and 399
+deselected.
+
+The default Coverage.py core initially increased the pytest step from 22s to
+43.17s. Setting `COVERAGE_CORE=sysmon` on Python 3.13 reduced it to 22.82s on the
+next run and about 20s on the following run, satisfying the under-3s overhead
+criterion without changing the 88% result.
+
+Three consecutive post-change critical paths, measured from workflow creation
+through completion of the `dbt` job, were:
+
+| Run | Critical path | `dbt` job | Note |
+|---|---:|---:|---|
+| 32103672753 | 307s | 292s | requirements changed; cold dependency key; default coverage core |
+| 32104051715 attempt 1 | 261s | 245s | warm distributions; `sysmon` coverage |
+| 32104051715 attempt 2 | 260s | 243s | warm distributions; `sysmon` coverage |
+
+Against the 333s/345s/278s baseline, the scheduling-edge change removed the
+unit-job wait and produced a stable warm path around 260s. The expected 200-230s
+was not reached because the pip-cache hypothesis was wrong: even on a restored
+cache, the shared dependency install remained 29-32s (33s before), since
+`setup-python` caches downloaded distributions rather than the installed
+environment. That saving is too small to clear the baseline's runner variance.
+Per Stage B's verification rule, all three `cache: pip` additions were reverted;
+the successful `needs: lint` change remains.
 
 ### Stage C — Understand the 92s step (S, measurement first)
 
