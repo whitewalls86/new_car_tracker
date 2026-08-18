@@ -22,10 +22,11 @@ stable ~260s, with coverage now reported on every run. Plan 136 Stage 0 shipped
 and was **verified against production** on 2026-08-18 — Airflow itself reports
 the 20+20 pool, the shared anchor did not leak it to the other three services,
 and `ct-pipeline-failures` now renders exactly two named instances where it
-previously rendered a third reading `DAG [no value] failed`. Plan 140
-takes the lead from there: give every service a healthcheck, then build the
-container-health metric **once**, covering all of them, and make a coverage gap
-fail CI rather than production. Plan 136 then resumes at Stage 1 for truthful
+previously rendered a third reading `DAG [no value] failed`. Plan 140 Stage 3 is
+verified, and Stage 1 was deployed on 2026-08-18 with all 25 configured runtime
+checks healthy and at zero failing streaks; its 24-hour soak is now the only
+open Stage 1 gate. After that, build the container-health metric **once**,
+covering all services. Plan 136 then resumes at Stage 1 for truthful
 gauge freshness and Stage 2's solver-outcome counters, which is the layer no
 healthcheck can supply — the solver was healthy for all eight hours. Only after
 those counters have a baseline does Stage 4 get restart authority. Plan 142 then
@@ -80,18 +81,21 @@ observation window is written separately and does not inflate coding effort.
 ## Current closeout -- finish before opening another large build
 
 Plan 120's authenticated production download and checksum round trip was
-verified on 2026-08-18. What remains is **verification, not work**: no code is
-owed on either row, and both land on the same Sunday because both ride a weekly
-schedule.
+verified on 2026-08-18. What remains here is **verification, not work**: no code
+is owed on these rows. Plan 140's soak gate lands first; both Plan 135 gates
+land on the following Sunday because they ride weekly schedules.
 
 | Plan | Check | Lands | What it proves |
 |---|---|---|---|
+| [140](plan_140_service_health_contract.md) Stage 1 | Repeat the full runtime health audit after the 24-hour soak | 2026-08-19 at approximately 17:00 UTC (12:00 CDT) | That all 25 configured checks remain healthy with zero failing streaks through normal production cycles, including active `trawl` and `redis-trawl`; only the documented one-shot/profile and distroless-image exceptions may lack health state. Thirty minutes established startup health but does not replace this false-positive soak |
 | [135](plan_135_storage_observability.md) criterion 5 | `cartracker_parquet_data` publishes a real series | 2026-08-23, `disk_usage` slow-tier walk at 04:00 UTC | That the per-path panel can answer *"what is filling `/mnt/data`?"* -- the question this plan was written about. The MinIO volume is the majority of that disk's 59 GiB and has still never completed a walk, so the panel is currently silent on the bulk of it. Carry-forward is behaving as designed and `failed` is correctly 0 |
 | [135](plan_135_storage_observability.md) Stage 5 | `prune_task_logs` completes its first scheduled run | 2026-08-23, `17 4 * * 0` | That Airflow's 30-day task-log retention is **enforced** rather than merely configured. The run reports run directories examined and deleted; `cartracker_airflow_logs` was 1.2M inodes and 87% of a 456s walk, so this is also what lets that volume move back to the daily tier |
 
-Neither blocks Plan 136 or Plan 140. Record both results in
-[plan_135_storage_observability.md](plan_135_storage_observability.md), and move
-its row out of the operational table once they are green.
+None blocks implementation work. Record Plan 140's result in
+[plan_140_service_health_contract.md](plan_140_service_health_contract.md) and
+the other two in
+[plan_135_storage_observability.md](plan_135_storage_observability.md), then
+remove each row from the operational table once it is green.
 
 ## Default build order
 
@@ -100,7 +104,7 @@ because it is smaller while a higher row has an executable next step.
 
 | Order | Plan | Title | Next executable slice | Priority | Effort | Depends on / safe stopping point |
 |---:|---|---|---|---:|---|---|
-| 1 | [140](plan_140_service_health_contract.md) | Service health contract | Deploy and soak the 18 new healthchecks, then build the container-health metric and alerts; keep the explicit `oauth2-proxy` image exception loud (Stage 3 CI coverage is built) | 87 | M + soak | Plan 136 Stage 0 verified in production 2026-08-18 — nothing left blocking; soak Stage 1 before alerting on it |
+| 1 | [140](plan_140_service_health_contract.md) | Service health contract | Finish the 24-hour Stage 1 soak, then build the container-health metric and alerts; keep the explicit `oauth2-proxy` image exception loud (Stage 3 is verified) | 87 | M + soak | Stage 1 immediate production gate passed 2026-08-18: 25 of 25 configured runtime checks healthy with zero failing streaks; soak before alerting on them |
 | 2 | [136](plan_136_solver_recycle_and_liveness.md) | Solver recycle and real liveness | Stages 1-2 metrics/freshness and solver counters, then Stage 3 drain-aware weekly recycle | 98 | M | Stage 0 verified; 0b moved into Plan 140 Stage 2; soak counters before Stage 4 auto-restart |
 | 3 | [142](plan_142_planned_host_maintenance.md) | Planned host maintenance and production quiescence | Freeze the successful Ubuntu-update window as fixtures, then build separate maintenance intent, truthful drain status, and the checked-in host procedure | 86 | M + first observed window | Reuse Plan 136 drain semantics; final resume gate requires soaked Plan 140 health coverage |
 | 4 | [141](plan_141_structured_log_ingestion_contract.md) | Structured log ingestion and dashboard contract | Freeze production-derived fixtures and baseline, then align parsing, labels, filters, and dashboard selectors | 85 | S + 24h soak | Does not block Plan 136; should precede Plan 134's warning-log observation window |
@@ -153,9 +157,9 @@ caught the apiserver incident and missed the solver incident."
 
 So 0b is not sequenced before 140; it **is** 140 Stage 2, and it is strictly
 better there: three states rather than two, with `-1` making "no healthcheck
-configured" loud instead of absent. Stage 1 adds the healthchecks first, so the
-metric covers everything the day it ships. Plan 136's Stage 0a and 0c landed on
-2026-08-18 and were the only parts 140 was waiting on.
+configured" loud instead of absent. Stage 1 deployed the healthchecks first,
+so the metric will cover everything the day it ships. Plan 136's Stage 0a and
+0c landed on 2026-08-18 and were the only parts 140 was waiting on.
 
 **Plan 142 follows Plan 136 despite scoring 86 against Plan 141's 85.** This is
 dependency order, not an emergency ranking. Plan 140 must first make the resume
@@ -211,7 +215,7 @@ host package or reboot authority.
 | [137](plan_137_legacy_bronze_parquet_disposition.md) | Legacy bronze Parquet recovery and disposition | Draft — read-only inventory complete; no deletion authorized |
 | [138](plan_138_public_surface_refresh.md) | README and public portfolio surface refresh | Draft — audit complete; implementation not started |
 | [139](plan_139_test_suite_maintenance.md) | Test suite construction and maintenance | **Stages A+B complete 2026-08-18** (PR #213) — coverage reported at 88%, CI path 333s → ~260s; Stages C/D remain queued as opportunistic filler; `duckdb_gauges` coverage transferred to Plan 136 Stage 1 |
-| [140](plan_140_service_health_contract.md) | Service health contract | **Stage 1 implemented for every probeable service and Stage 3 built 2026-08-18** — 25 of 31 services now have healthchecks; five are deliberate one-shot/profile exemptions and distroless `oauth2-proxy` is an explicit unresolved hole. Deploy/soak and Stage 2 remain |
+| [140](plan_140_service_health_contract.md) | Service health contract | **Stage 3 verified; Stage 1 deployed 2026-08-18 and in 24-hour soak** (PR #216, merge `821a6a6`) — deploy intent was declared through the admin UI and the system drained before recreation; all 25 configured runtime checks were healthy with zero failing streaks, including active `trawl` and `redis-trawl`. Stage 2 has not started |
 | [141](plan_141_structured_log_ingestion_contract.md) | Structured log ingestion and dashboard contract | Draft — routed from Plan 135 closeout; parsing, labels, privacy policy, dashboards, and capacity soak not started |
 | [142](plan_142_planned_host_maintenance.md) | Planned host maintenance and production quiescence | Draft — separate maintenance intent, truthful drain, checked-in apt/reboot procedure, and Plan 140-gated resume not started |
 
