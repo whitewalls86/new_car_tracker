@@ -265,7 +265,7 @@
     {
       "id": 16,
       "title": "/mnt/data by Docker Volume",
-      "description": "cartracker_parquet_data is MinIO and is walked weekly, not daily -- its line is a step, and cartracker_disk_usage_measured_timestamp_seconds says when it was last actually walked. Every other volume here is measured on every run.",
+      "description": "cartracker_parquet_data (MinIO, ~4M inodes) and cartracker_airflow_logs (~1.2M) are walked weekly, not daily -- their lines are steps, and cartracker_disk_usage_measured_timestamp_seconds says when each was last actually walked. Tier membership follows inode count, not size on disk: du costs O(inodes). Every other volume here is measured on every run.",
       "type": "timeseries",
       "gridPos": { "h": 9, "w": 12, "x": 12, "y": 49 },
       "targets": [

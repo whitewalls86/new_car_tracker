@@ -1119,7 +1119,7 @@ class TestDiskUsageEndpoint:
         resp = mock_archiver_client.post("/disk-usage/run", json={})
 
         assert resp.status_code == 200
-        processor.assert_called_once_with(include_minio=False)
+        processor.assert_called_once_with(include_slow=False)
 
     def test_weekly_run_passes_the_flag_through(self, mock_archiver_client, mocker):
         import archiver.app as archiver_app
@@ -1132,10 +1132,10 @@ class TestDiskUsageEndpoint:
             return_value={"failed": 0, "measured": 11, "unpublished": []},
         )
 
-        resp = mock_archiver_client.post("/disk-usage/run", json={"include_minio": True})
+        resp = mock_archiver_client.post("/disk-usage/run", json={"include_slow": True})
 
         assert resp.status_code == 200
-        processor.assert_called_once_with(include_minio=True)
+        processor.assert_called_once_with(include_slow=True)
 
     def test_failed_measurement_is_a_500_not_a_quiet_200(
         self, mock_archiver_client, mocker
