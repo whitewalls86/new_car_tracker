@@ -42,6 +42,15 @@ scrape_configs:
             - drop:
                 expression: '.*"GET /(api/v2/monitor/)?health HTTP/1\.1" 200.*'
                 drop_counter_reason: airflow_health_access
+      # Grafana performs this successful auth subrequest for nearly every
+      # datasource request. Keep OAuth failures and interactive flows, but do
+      # not store a redundant, PII-bearing success line for every query.
+      - match:
+          selector: '{service="oauth2-proxy"}'
+          stages:
+            - drop:
+                expression: '.*"/oauth2/auth[^"]*" HTTP/1\.1 "[^"]*" 202 .*'
+                drop_counter_reason: oauth2_successful_auth_subrequest
       - labels:
           stream:
 

@@ -124,6 +124,27 @@ class TestPrometheusAndLokiConfig:
             "airflow_health_access",
         }
 
+    def test_successful_oauth_auth_subrequest_noise_is_dropped(self):
+        promtail = yaml.safe_load(
+            (_REPO_ROOT / "promtail" / "promtail.yml").read_text()
+        )
+        job = next(
+            item for item in promtail["scrape_configs"]
+            if item["job_name"] == "docker-operations"
+        )
+        matches = [stage["match"] for stage in job["pipeline_stages"] if "match" in stage]
+        oauth_match = next(
+            match for match in matches if match["selector"] == '{service="oauth2-proxy"}'
+        )
+        assert oauth_match["stages"] == [
+            {
+                "drop": {
+                    "expression": '.*"/oauth2/auth[^"]*" HTTP/1\\.1 "[^"]*" 202 .*',
+                    "drop_counter_reason": "oauth2_successful_auth_subrequest",
+                }
+            }
+        ]
+
     def test_docker_29_compatible_promtail_and_nonempty_stream_labels(self):
         compose = yaml.safe_load((_REPO_ROOT / "docker-compose.yml").read_text())
         assert compose["services"]["promtail"]["image"] == "grafana/promtail:3.5.8"
