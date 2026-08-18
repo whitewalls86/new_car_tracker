@@ -20,16 +20,36 @@ Taken from `docker-compose.yml`, 2026-08-18:
 |---|---:|---|
 | **With** a healthcheck | **6** | `postgres`, `minio`, `airflow-apiserver`, `airflow-scheduler`, `airflow-dag-processor`, `airflow-triggerer` |
 | **Without** | **20** | `ops`, `scraper`, `processing`, `archiver`, `pack-worker`, `caddy`, `grafana`, `loki`, `promtail`, `prometheus`, `oauth2-proxy`, `dashboard`, `dbt_runner`, `pgadmin`, `node-exporter`, `postgres-exporter`, `statsd-exporter`, `flaresolverr`, `flyway`, `airflow-init` |
-| Profile-gated | 5 | `trawl`, `redis-trawl`, `dbt`, `dbt_test`, `snapshot-worker` |
+| Profile-gated, **with** a healthcheck | 1 | `trawl` |
+| Profile-gated, without | 4 | `redis-trawl`, `dbt`, `dbt_test`, `snapshot-worker` |
+
+Thirty-one services, seven healthchecks.
 
 **Docker reports no health status at all for a container without a
 healthcheck** — not "unhealthy", not "unknown", nothing. So a container-health
-metric built today would be blank for 20 of 26 services.
+metric built today would be blank for 20 of 26 default-profile services.
 
 Concretely: Plan 136's Stage 0b, as drafted, **would have caught the apiserver
-incident and missed the solver incident.** `airflow-apiserver` has a healthcheck;
-`trawl` does not. That asymmetry is invisible in the metric — a service with no
-healthcheck and a service that is fine look identical.
+incident and missed the solver incident** — and the two halves of that sentence
+fail for *different* reasons, which is the whole argument of this plan.
+
+It would have caught the apiserver because `airflow-apiserver` has a healthcheck
+that correctly went red. It would have missed the solver **not** because `trawl`
+lacks a healthcheck — it has one, `curl -sf localhost:8191/health` — but because
+that healthcheck **returned `status:ok` for all eight hours** while the solve
+rate sat at 0%, and the container showed `(healthy)` throughout
+([Plan 136](plan_136_solver_recycle_and_liveness.md), Stage 4).
+
+So the metric fails two ways at once, and Stage 1 only fixes the first:
+
+- **Twenty services have no signal**, and a missing signal is invisible — a
+  service with no healthcheck and a healthy service look identical. That is a
+  coverage defect, and the `-1` state below is its fix.
+- **`trawl` has a signal that lies.** No amount of coverage repairs that. It is
+  an efficacy defect and it belongs to Plan 136 Stage 2.
+
+Reading the first defect as the whole problem is the trap this plan is most
+likely to fall into, because Stage 1 feels like completion.
 
 ### The signal already exists and is already collected
 
@@ -153,10 +173,14 @@ is nearly free:
   already exists; wire it. Match the existing Airflow blocks' shape
   (`interval: 30s`, `timeout: 10s`, `retries: 5`, `start_period: 30s`) so there
   is one convention rather than six.
-- **`trawl`** — the 2026-08-14 outage's service, and the hardest case: it was
-  *healthy and useless*. A liveness check here is necessary and **explicitly not
-  sufficient**; efficacy is Plan 136 Stage 2's job and this stage must not be
-  read as covering it.
+- **`trawl`** — **nothing to add; it already has one.** That is precisely why it
+  is the hardest case rather than the easiest: it was *healthy and useless* for
+  eight hours, with `curl -sf localhost:8191/health` reporting `status:ok` the
+  entire time. Its liveness check is present, correct, and **explicitly not
+  sufficient**. Efficacy is Plan 136 Stage 2's job, and no edit in this stage
+  should be read as covering it. Resist the urge to deepen this probe into a
+  real solve — Plan 136 Stage 4 prices that at 30-90s per interval against
+  cars.com and rejects it.
 - **Infra** (`grafana`, `loki`, `prometheus`, `caddy`, `oauth2-proxy`,
   exporters) — well-known endpoints.
 
