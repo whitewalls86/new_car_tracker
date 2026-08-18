@@ -2,11 +2,19 @@
 
 ## Status
 
-PLANNED, with **Stage 5b-bis partially applied 2026-08-14**. Written after a
-question about why the MinIO storage gauge reads ~61 GiB while `df /mnt/data`
-reads ~97 GiB. Answering that question surfaced a defect: **`/mnt/data` has
-never been monitored at all.** The plan starts with that bug, then adds the
-panels and alerts that would have made it visible.
+**COMPLETE 2026-08-18.** Both filesystems are visible by bytes and inodes, the
+capacity alerts and notification route were fire-tested, the per-path watchlist
+is live, every local log sink is bounded, Loki retains 90 days, Airflow task
+logs retain 30 days, and the maintenance runbook is checked in.
+
+The Stage 5 rollout exposed follow-up work in log parsing, labels, dashboard
+semantics, and privacy policy. That work is intentionally routed to
+[Plan 141](plan_141_structured_log_ingestion_contract.md); it does not reopen
+this storage-retention plan.
+
+This plan was written after a question about why the MinIO storage gauge read
+~61 GiB while `df /mnt/data` read ~97 GiB. Answering that question surfaced a
+defect: **`/mnt/data` had never been monitored at all.**
 
 ### Applied 2026-08-14 (Stage 5b-bis)
 
@@ -18,18 +26,13 @@ panels and alerts that would have made it visible.
 | `df /` | **79% → 63%** (11 GiB → 19 GiB free) |
 | Loki health after | `/ready` 200; ingestion verified live end-to-end (promtail sent +368 = distributor received +368 over 40s) |
 
-`log_level: warn` was also added to [loki/loki.yml](loki/loki.yml) so the change
-survives a restart, but that is **not yet deployed** — it reaches production via
-commit/push/pull and takes effect at Loki's next restart. Until then the runtime
-setting is what is holding, and it would revert if the container restarted.
-
-Everything else in this plan is still outstanding.
+`log_level: warn` is now deployed in [loki/loki.yml](../loki/loki.yml) and has
+survived the Stage 5 restart.
 
 ### Stage 5 production preflight, 2026-08-17
 
-Stage 5 is implemented on branch `plan-135-stage-5` but is **not yet applied**.
-The host changes remain gated on explicit approval of the outage, deletion of
-Loki data older than 90 days, and truncation of the existing stdout backlog.
+This table records the preflight baseline. Stage 5 was applied and verified on
+2026-08-18 after explicit approval of the outage and retention decisions.
 
 | Measure | Current |
 |---|---|

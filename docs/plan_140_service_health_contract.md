@@ -90,9 +90,9 @@ appending to a list, which sets up the next one.
 The fix is not a longer list. It is **making an incomplete list fail loudly**,
 at build time, on the machine of whoever shortened it.
 
-**This repo already does exactly that, in one place.**
-`tests/test_observability_config.py` asserts promtail and Prometheus job
-coverage with *exact set equality*:
+**This repo already does something similar, in one place.**
+`tests/test_observability_config.py` asserts Promtail and Prometheus job sets
+with *exact set equality*:
 
 ```python
 job_names = {job["job_name"] for job in doc["scrape_configs"]}
@@ -100,9 +100,10 @@ expected = {"ops", "scraper", "processing", "dbt_runner", "archiver", "pack-work
 assert expected == job_names, f"Unexpected promtail jobs: {job_names ^ expected}"
 ```
 
-Add a service without a log job and this test fails. Add a log job without
-updating the test and it also fails. That is the correct shape and it already
-works — it is simply applied to one concern out of four.
+That detects drift inside a declared set, but it is not a universal service
+coverage rule: not every service should be ingested into Loki. Plan 141 owns the
+logging source-policy registry. This plan applies the same fail-loud principle
+only to health coverage.
 
 ### Deny-list, never allowlist
 
@@ -195,12 +196,13 @@ deliberately stopped non-critical container, not by breaking something real.
 Extend `tests/test_observability_config.py`:
 
 1. Every default-profile service not on the deny-list **has a healthcheck**.
-2. Every such service **appears in the promtail job set** (generalizing the
-   existing exact-set test beyond the six app services).
-3. The deny-list itself carries a reason string per entry.
-4. Airflow's worst-case SQLAlchemy connection budget stays under Postgres
+2. The deny-list itself carries a reason string per entry.
+3. Airflow's worst-case SQLAlchemy connection budget stays under Postgres
    `max_connections` (from [Plan 136](plan_136_solver_recycle_and_liveness.md)
    Stage 0a — it belongs with the other coverage invariants).
+
+Logging coverage is deliberately absent from this list. Plan 141 defines its
+different inclusion policy and tests it separately.
 
 This is the stage that makes the rest durable. Without it Stages 1-2 are one
 more enumeration with a longer list.
@@ -222,8 +224,7 @@ next DAG run fails.
 1. Every in-scope service reports a real Docker health status.
 2. `cartracker_container_health` covers all of them, with `-1` distinguishing
    unconfigured from healthy.
-3. Adding a service to `docker-compose.yml` without a healthcheck or a log job
-   **fails CI**.
+3. Adding a service to `docker-compose.yml` without a healthcheck **fails CI**.
 4. A deliberately stopped non-critical container pages within 5 minutes, from
    the container-health alert and not from a downstream DAG failure.
 5. The deny-list has a written reason for every entry.
