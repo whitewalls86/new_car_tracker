@@ -30,10 +30,13 @@ covering all services. Plan 143 shipped through PR #217 (merge `e5d3a46`) on
 2026-08-18: its saved-SQL, post-build snapshot now makes `dbt_runner` the
 direct metrics owner, while `ops` renders `/info` without opening DuckDB or
 using the transient artifact queue as freshness. Initial production checks
-passed; only the 24-hour soak check at 2026-08-19 15:00 CDT (20:00 UTC)
-remains, so Plan 143 has left the executable build order. Plan 136 now resumes
-at Stage 2's solver-outcome counters, which is the layer no healthcheck can
-supply — the
+passed, but the soak exposed unscoped Grafana consumers and a 900-second
+freshness threshold against the hourly publisher. Plan 143 remains outside the
+executable build order while the narrow correction lands; its corrected
+Grafana deployment starts a fresh 24-hour soak. The 2026-08-19 15:00 CDT
+(20:00 UTC) check is now a status checkpoint rather than an automatic closeout.
+Plan 136 now resumes at Stage 2's solver-outcome counters, which is the layer no
+healthcheck can supply — the
 solver was healthy for all eight hours. Only after those counters have a
 baseline does Stage 4 get restart authority. Plan 142 then
 turns the same drain and health primitives into a safe, explicit whole-host
@@ -196,7 +199,7 @@ host package or reboot authority.
 | [129](plan_129_zstd_dictionary_compression.md) | Dictionary v1 in production; backfill/lifecycle monitoring | Watch metrics; no new design work unless the run deviates |
 | [131](plan_131_packed_cold_storage.md) | **Complete** — April-July packed and pruned, Stage 5 lifecycle DAG running on schedule | Monitor only; no new design work |
 | [135](plan_135_storage_observability.md) | **Complete 2026-08-18** — both disks visible, alerts proven, all log stores bounded, maintenance runbook live | Monitor scheduled storage and task-log maintenance; parsing/dashboard follow-up is Plan 141 |
-| [143](plan_143_analytics_serving_snapshot.md) | **Deployed 2026-08-18** — PR #217, merge `e5d3a46`; initial snapshot, direct scrape ownership, anonymous `/info`, and lock checks passed | Complete the 24-hour Gate 5 check at **2026-08-19 15:00 CDT (20:00 UTC)**; confirm a normal snapshot replacement, green freshness alert, no recurring lock conflict, responsive `/info`, and that the retired `ops` gauge history has aged out of the default 24-hour dashboard range |
+| [143](plan_143_analytics_serving_snapshot.md) | **Deployed 2026-08-18; acceptance correction pending** — the soak exposed unscoped Grafana analytics consumers and a 900-second alert threshold against an hourly publisher | Deploy the `job="dbt_runner"` selectors and 4,500-second threshold, then restart the 24-hour Gate 5 soak. At **2026-08-19 15:00 CDT (20:00 UTC)** record status; close only after a full corrected window with one series per panel, a green freshness alert, normal snapshot replacement, responsive `/info`, and no recurring lock conflict |
 
 ## Paused or blocked
 
@@ -235,7 +238,7 @@ host package or reboot authority.
 | [140](plan_140_service_health_contract.md) | Service health contract | **Stage 3 verified; Stage 1 deployed 2026-08-18 and in 24-hour soak** (PR #216, merge `821a6a6`) — deploy intent was declared through the admin UI and the system drained before recreation; all 25 configured runtime checks were healthy with zero failing streaks, including active `trawl` and `redis-trawl`. Stage 2 has not started |
 | [141](plan_141_structured_log_ingestion_contract.md) | Structured log ingestion and dashboard contract | Draft — routed from Plan 135 closeout; parsing, labels, privacy policy, dashboards, and capacity soak not started |
 | [142](plan_142_planned_host_maintenance.md) | Planned host maintenance and production quiescence | Draft — separate maintenance intent, truthful drain, checked-in apt/reboot procedure, and Plan 140-gated resume not started |
-| [143](plan_143_analytics_serving_snapshot.md) | Analytics serving snapshot and reader consolidation | **Deployed 2026-08-18; Stage 5 24-hour soak in progress** — PR #217, merge `e5d3a46`; CI and initial production verification passed; final check is 2026-08-19 15:00 CDT (20:00 UTC) |
+| [143](plan_143_analytics_serving_snapshot.md) | Analytics serving snapshot and reader consolidation | **Deployed 2026-08-18; Stage 5 acceptance correction pending** — PR #217, merge `e5d3a46`; producer and snapshot checks passed, but Grafana ownership/cadence defects reset the soak. Status check: 2026-08-19 15:00 CDT (20:00 UTC) |
 
 ---
 

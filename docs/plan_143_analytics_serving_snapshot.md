@@ -3,12 +3,17 @@
 ## Status
 
 **Stages 0-4, CI dbt-artifact verification, and the initial Stage 5 production
-deployment checks completed 2026-08-18. The 24-hour soak is in progress, with
-the final check scheduled for 2026-08-19 at 15:00 CDT (20:00 UTC).** PR #217
-merged as `e5d3a46`. Implementation is in commits `bbd9b23` and `2cfdb73`:
-the first establishes the shared connection and saved-SQL boundary; the second
-publishes the atomic snapshot, exports metrics directly from `dbt_runner`, and
-makes `ops` a snapshot-only presentation consumer.
+deployment completed 2026-08-18. The acceptance soak then exposed two Grafana
+consumer-contract defects: analytics queries did not select the new
+`job="dbt_runner"` owner, and the freshness alert enforced a 900-second limit
+against an hourly publisher. The corrective Grafana configuration is pending
+deployment; its deployment starts a fresh 24-hour soak. The 2026-08-19 15:00
+CDT (20:00 UTC) check remains a status checkpoint, not an automatic closeout.**
+PR #217 merged as `e5d3a46`.
+Implementation is in commits `bbd9b23` and `2cfdb73`: the first establishes the
+shared connection and saved-SQL boundary; the second publishes the atomic
+snapshot, exports metrics directly from `dbt_runner`, and makes `ops` a
+snapshot-only presentation consumer.
 
 This plan was written during pre-PR review of the unshipped Plan 136 Stage 1
 implementation. That first implementation proved the immediate lock can be
@@ -260,8 +265,9 @@ last good snapshot.
    read memory and never open DuckDB.
 3. Add a direct Prometheus scrape job for `dbt_runner`.
 4. Remove the analytics gauge module and refresh thread from `ops`.
-5. Keep `ct-metrics-freshness` at 900 seconds, fail loudly on no data or query
-   errors, and preserve existing Grafana metric names.
+5. Make `ct-metrics-freshness` cadence-aware: alert after one hourly publication
+   cadence plus 15 minutes of scheduler/flush/build grace (4,500 seconds), fail
+   loudly on no data or query errors, and select `job="dbt_runner"` explicitly.
 6. Add producer tests for complete, partial/invalid, failed, restart-loaded, and
    stale snapshots plus configuration tests for the scrape target and alert.
 
@@ -288,7 +294,7 @@ lock the analytics file.
 remains responsive during a dbt write lock and Postgres outage, and labels
 staleness honestly.
 
-### Stage 5 — Deploy, prove the lock is gone, and soak — DEPLOYED; SOAK IN PROGRESS
+### Stage 5 — Deploy, prove the lock is gone, and soak — ACCEPTANCE CORRECTION PENDING
 
 Deploy `dbt_runner`, `ops`, and Prometheus configuration as one compatibility
 change. Use the existing admin deploy-intent/drain procedure.
@@ -306,10 +312,17 @@ Deployment and initial verification completed 2026-08-18:
   an instant query showed no current analytics series owned by `ops`.
 - Anonymous `/info` returned 200 from the snapshot-backed presentation cache,
   and the initial log review found no recurring `Conflicting lock` warning.
-- Pipeline Health temporarily displayed both the retired `ops` history and the
-  current `dbt_runner` series because its stat panels reduce the default 24-hour
-  range with `lastNotNull`. This is retained Prometheus history, not two live
-  publishers, and should age out by the final soak check.
+- Pipeline Health displayed both the retired `ops` history and current
+  `dbt_runner` series because its stat panels queried only metric names and
+  reduced the default 24-hour range with `lastNotNull`. Prometheus had only one
+  current publisher, but the consumers still violated the new ownership
+  contract; every migrated panel and alert must select `job="dbt_runner"`.
+- `ct-metrics-freshness` fired during a healthy hourly interval. The deployed
+  900-second threshold was inherited from the rejected minute-refresh prototype
+  and could not stay quiet when snapshots publish only after the hourly DAG.
+  The corrected threshold is 4,500 seconds: one cadence plus 15 minutes of
+  grace. The configuration test had encoded 900 exactly and is corrected with
+  the rule.
 
 1. Before deployment, record the current gauge values, scrape targets, latest
    dbt build, `/info` fields, and recent `Conflicting lock` log count.
@@ -326,13 +339,16 @@ Deployment and initial verification completed 2026-08-18:
    must be no recurring DuckDB lock warning from `ops` or `dbt_runner`.
 7. Soak for 24 hours across ordinary scrape, processing, flush, and dbt cadences.
    Confirm the freshness timestamp advances only with valid publications and
-   the 900-second alert stays quiet while healthy.
+   the 4,500-second cadence-aware alert stays quiet while healthy.
 
-Steps 1-6 passed their initial production checks. Step 7 remains open until the
-scheduled **2026-08-19 15:00 CDT (20:00 UTC)** check records a normal snapshot
-replacement during Prometheus scrapes, a green freshness alert, responsive
-`/info`, no recurring lock conflict, and the expected expiry of the historical
-duplicate dashboard series.
+Steps 1-6 passed their initial production checks. Step 7 did not: the soak
+correctly exposed the consumer-selector and cadence-threshold defects above.
+After the corrected Grafana configuration is deployed, restart the 24-hour
+window and record a normal snapshot replacement during Prometheus scrapes, a
+green freshness alert, one rendered series per analytics panel, responsive
+`/info`, and no recurring lock conflict. The scheduled **2026-08-19 15:00 CDT
+(20:00 UTC)** check records progress and closes Gate 5 only if the corrected
+configuration has accumulated a full 24 hours of evidence.
 
 **Gate 5:** the 24-hour evidence contains at least one successful snapshot
 replacement during normal metric scrapes, no cross-process gauge/info lock
@@ -421,8 +437,9 @@ Plan 143 is complete only when:
   `analytics_data_through_iso`;
 - public requests remain immediate and useful for full, partial, stale, and
   empty snapshot states;
-- the 900-second freshness alert evaluates correctly without changing existing
-  dashboard metric names;
+- the 4,500-second freshness alert matches the hourly publication cadence and
+  every Grafana analytics consumer selects `job="dbt_runner"` without changing
+  existing metric names;
 - unit, integration SQL, compose/configuration, and image-build checks pass;
 - production shows at least one normal dbt publication during a 24-hour soak
   with no recurring gauge/info DuckDB lock conflict; and

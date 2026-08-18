@@ -312,11 +312,43 @@ class TestAnalyticsSnapshotContract:
     def test_stable_metric_names_match_grafana_consumers(self):
         from dbt_runner.analytics_snapshot import METRIC_NAMES
 
-        dashboard = (_REPO_ROOT / "grafana" / "dashboards" / "pipeline_health.json").read_text()
-        rules = (_REPO_ROOT / "grafana" / "provisioning" / "alerting" / "rules.yml").read_text()
-        for metric_name in METRIC_NAMES:
-            assert metric_name in dashboard
-        assert "cartracker_metrics_last_success_timestamp_seconds" in rules
+        dashboard = json.loads(
+            (
+                _REPO_ROOT / "grafana" / "dashboards" / "pipeline_health.json"
+            ).read_text()
+        )
+        dashboard_expressions = {
+            target["expr"]
+            for panel in dashboard["panels"]
+            for target in panel.get("targets", [])
+        }
+        assert {
+            f'{metric_name}{{job="dbt_runner"}}' for metric_name in METRIC_NAMES
+        } <= dashboard_expressions
+
+        rules = yaml.safe_load(
+            (
+                _REPO_ROOT
+                / "grafana"
+                / "provisioning"
+                / "alerting"
+                / "rules.yml"
+            ).read_text()
+        )
+        stable_names = set(METRIC_NAMES) | {
+            "cartracker_metrics_last_success_timestamp_seconds"
+        }
+        alert_expressions = [
+            data["model"]["expr"]
+            for group in rules["groups"]
+            for rule in group["rules"]
+            for data in rule["data"]
+            if "expr" in data.get("model", {})
+            and any(name in data["model"]["expr"] for name in stable_names)
+        ]
+        assert alert_expressions
+        assert all('{job="dbt_runner"}' in expr for expr in alert_expressions)
+        assert all("cartracker_cooldown_backlog_high" not in expr for expr in alert_expressions)
 
     def test_rejected_proxy_and_embedded_sql_are_absent(self):
         runner_source = (_REPO_ROOT / "dbt_runner" / "app.py").read_text()
@@ -916,10 +948,15 @@ class TestGrafanaAlertingProvisioning:
         assert rule["execErrState"] == "Alerting"
         assert rule["for"] == "0s"
         assert rule["data"][0]["model"]["expr"] == (
-            "time() - cartracker_metrics_last_success_timestamp_seconds"
+            'time() - cartracker_metrics_last_success_timestamp_seconds'
+            '{job="dbt_runner"}'
         )
         condition = rule["data"][-1]["model"]["conditions"][0]["evaluator"]
-        assert condition == {"type": "gt", "params": [900]}
+        assert condition == {"type": "gt", "params": [60 * 60 + 15 * 60]}
+        hourly_dag = (
+            _REPO_ROOT / "airflow" / "dags" / "hourly_analytics_refresh.py"
+        ).read_text()
+        assert 'schedule="0 * * * *"' in hourly_dag
 
     def test_pack_verification_refused_watches_the_worker(self):
         """Scheduled pack runs log under service="pack-worker", not "archiver".

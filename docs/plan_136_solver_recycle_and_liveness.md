@@ -400,8 +400,9 @@ The behavioral requirements survive unchanged:
   stale value;
 - `cartracker_metrics_last_success_timestamp_seconds` advances only after a
   valid publication;
-- `ct-metrics-freshness` alerts after 900 seconds and fails loudly on no data or
-  evaluation errors; and
+- `ct-metrics-freshness` alerts after one hourly publication cadence plus 15
+  minutes of grace (4,500 seconds) and fails loudly on no data or evaluation
+  errors; and
 - the seven existing metric names remain stable for Grafana.
 
 Pre-PR review showed that implementing those rules solely inside this incident

@@ -230,7 +230,7 @@ groups:
               from: 600
               to: 0
             model:
-              expr: 'cartracker_observation_count_last_hour'
+              expr: 'cartracker_observation_count_last_hour{job="dbt_runner"}'
           - refId: B
             datasourceUid: "__expr__"
             relativeTimeRange:
@@ -256,6 +256,9 @@ groups:
       # Plan 143: dbt_runner exports NaN when the serving snapshot refresh is
       # failed or unavailable. This independent timestamp makes producer
       # failure alertable instead of letting last-good values look current.
+      # The producer runs hourly, so the threshold is one cadence plus 15
+      # minutes of flush/build/scheduler grace, not 15 minutes after every
+      # successful publication.
       - uid: ct-metrics-freshness
         title: Metrics Refresh Stale
         condition: C
@@ -263,8 +266,8 @@ groups:
         execErrState: Alerting
         for: 0s
         annotations:
-          summary: "dbt-backed metrics have not refreshed successfully for 15 minutes"
-          description: "The dbt_runner serving snapshot is unavailable or a required mart query failed. Check dbt_runner health, build output, and snapshot publication before trusting the analytics gauges."
+          summary: "dbt-backed metrics missed the hourly refresh plus 15 minutes of grace"
+          description: "The dbt_runner serving snapshot has not refreshed successfully for 75 minutes, or the freshness series is unavailable. Check dbt_runner health, the hourly analytics DAG, build output, and snapshot publication before trusting the analytics gauges."
         data:
           - refId: A
             datasourceUid: cartracker-prometheus
@@ -272,7 +275,7 @@ groups:
               from: 1800
               to: 0
             model:
-              expr: 'time() - cartracker_metrics_last_success_timestamp_seconds'
+              expr: 'time() - cartracker_metrics_last_success_timestamp_seconds{job="dbt_runner"}'
           - refId: B
             datasourceUid: "__expr__"
             relativeTimeRange:
@@ -293,7 +296,7 @@ groups:
               conditions:
                 - evaluator:
                     type: gt
-                    params: [900]
+                    params: [4500]
 
       - uid: ct-extraction-yield-drop
         title: VIN Extraction Yield Drop
@@ -308,7 +311,7 @@ groups:
               from: 600
               to: 0
             model:
-              expr: 'cartracker_extraction_yield_last_day'
+              expr: 'cartracker_extraction_yield_last_day{job="dbt_runner"}'
           - refId: B
             datasourceUid: "__expr__"
             relativeTimeRange:
@@ -344,7 +347,7 @@ groups:
               from: 600
               to: 0
             model:
-              expr: 'cartracker_stale_listings_pct'
+              expr: 'cartracker_stale_listings_pct{job="dbt_runner"}'
           - refId: B
             datasourceUid: "__expr__"
             relativeTimeRange:
@@ -380,7 +383,7 @@ groups:
               from: 600
               to: 0
             model:
-              expr: 'cartracker_cooldown_backlog_high'
+              expr: 'cartracker_cooldown_backlog{job="dbt_runner"}'
           - refId: B
             datasourceUid: "__expr__"
             relativeTimeRange:
@@ -615,7 +618,7 @@ groups:
               from: 600
               to: 0
             model:
-              expr: 'cartracker_block_events_last_hour'
+              expr: 'cartracker_block_events_last_hour{job="dbt_runner"}'
           - refId: B
             datasourceUid: "__expr__"
             relativeTimeRange:
