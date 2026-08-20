@@ -43,8 +43,15 @@ adds D4 and D5 and a new [Stage 0](#stage-0--the-apiserver-fixes-and-container-h
 Still nothing applied; the only action taken was
 `docker restart cartracker-airflow-apiserver`.
 
-Two incidents now share one root cause: **the health of a component is not a
-signal this system collects.** Both were found by noticing damage downstream.
+**Extended again 2026-08-20** with [D6](#d6--a-recreated-exporter-silently-orphans-every-long-lived-statsd-sender):
+the Airflow scheduler had been sending its metrics to a dead UDP address for two
+days, so seven of eight DAG panels were empty and `ct-pipeline-failures` was
+blind. Found by a human looking at a dashboard. Again nothing alerted, and this
+time **the thing that died was the detection mechanism itself.**
+
+Three findings now share one root cause: **the health of a component is not a
+signal this system collects.** Every one was found by noticing damage
+downstream — never by an alert.
 
 ## The incident
 
@@ -246,6 +253,130 @@ giving up, which throttled the error rate below every tripwire:
 A solver that fails fast would have tripped the 403 alert in minutes. A solver
 that fails slowly is invisible. Thresholds tuned to burst failures do not detect
 throughput collapse.
+
+---
+
+## D6 — A recreated exporter silently orphans every long-lived statsd sender
+
+**Found 2026-08-20 by a human noticing empty dashboard panels. Confirmed and
+fixed the same day; the detection gap is not fixed.**
+
+Third instance of this plan's thesis, and the first one where *the detection
+mechanism itself* was what died.
+
+| | |
+|---|---|
+| Started | 2026-08-18 17:03:06 UTC |
+| Detected | 2026-08-20 ~21:05, **by a human looking at the Pipeline Health dashboard** |
+| Duration | **~2 days 4 hours** |
+| Resolved | 21:11:53 UTC, `docker restart cartracker-airflow-scheduler` |
+| Cost | No data lost. Two days with no DAG-level monitoring and a **blind failure alert** |
+
+### What broke
+
+Seven of the eight Airflow panels on Pipeline Health returned nothing, and so
+did **`ct-pipeline-failures`** — the alert that detected the apiserver incident
+in this very plan. Its `noDataState` is `OK`, so a dead input rendered as a quiet
+green rule rather than as a problem.
+
+Only `airflow_ti_successes` survived, and that survivor is the whole diagnosis.
+
+### The mechanism
+
+`statsd-exporter` was recreated at 17:03:06 on 2026-08-18 — **the Plan 140 Stage
+1 deploy**, which gave it a `healthcheck:` block and therefore a new container
+and a new IP. The last sample of every scheduler-emitted metric is 17:07.
+
+The Python statsd client resolves its destination **once, when it is
+constructed**, and then `sendto()`s the cached address. The scheduler had been
+running since 04:58 that morning and never restarted, so from 17:03 it addressed
+UDP packets to an IP nothing was listening on. **UDP fails silently** — no
+exception, no log line, no error metric.
+
+That is exactly why `airflow_ti_successes` lived: task metrics come from
+short-lived LocalExecutor task processes, which construct a fresh client and
+resolve DNS every run. Long-lived process, dead metrics; short-lived processes,
+working metrics. Split by process lifetime, not by metric.
+
+Evidence, in the order it settled the question:
+
+| Observation | Rules out |
+|---|---|
+| Last sample 17:07 vs exporter recreated 17:03:06 | Coincidence |
+| Exporter healthy, `statsd_exporter_udp_packets_total` = 67,099 | A dead or deaf exporter |
+| Zero live `airflow_scheduler_*`/`dagrun_*`/`pool_*`; task metrics live | Airflow not emitting at all |
+| Scheduler `restarts=0`, running since before the recreate | A scheduler crash |
+| `gethostbyname` in the scheduler container returns the *correct* new IP | Broken DNS |
+| Its UDP sockets are unconnected (`rem_address 0.0.0.0:0`) | A connected socket that would have errored |
+| **Restart alone restored them in 80s, no config change** | Everything else |
+
+### Why this belongs here and not in Plan 140
+
+Plan 140 Stage 1 *caused* it, but Plan 140 could not have caught it and neither
+could anything else in the stack:
+
+- `cartracker_container_health` reports statsd-exporter **healthy**, and it is.
+  The container is fine; the pipe into it is dead. This is D4's "healthy metrics
+  sidecar in front of a dead thing" with the layers inverted.
+- `up{job="airflow"}` is **1** throughout, because that job scrapes the
+  exporter, not the scheduler.
+- D2 said a gauge can retain a stale value and look live. This is the sharper
+  version: the series **vanish**, and `noDataState: OK` turns absence into
+  silence. Absence is not the safe direction for a metric that should always be
+  present.
+
+**The generalisation is the important part.** Any long-lived process holding a
+cached peer address loses it when the peer is recreated, and a deploy that
+recreates containers is the normal case, not an exotic one. Anything that talks
+UDP or holds a long-lived resolved address is exposed. The failure is silent by
+construction.
+
+### What is fixed and what is not
+
+Fixed by the restart, confirmed: `airflow_pool_open_slots` and
+`airflow_scheduler_heartbeat` returned within 80 seconds, and
+`airflow_dagrun_duration_success{dag_id="..."}` at the next DAG completion
+(21:15). Panels 4, 5 and 8 and `ct-pipeline-failures`'s input are live again.
+
+Not fixed, and owed:
+
+1. **`ct-pipeline-failures` must treat NoData as a failure.** For a metric that
+   should always be present, `noDataState: OK` is the defect. Plan 143 already
+   set this precedent with `ct-metrics-freshness`.
+2. **A staleness signal for the Airflow scrape**, since `up` cannot see this.
+3. **A deploy-time check for the class**, not this instance: recreating a
+   service can orphan long-lived senders. `promtail` and `postgres-exporter` are
+   worth auditing for the same exposure.
+
+Items 1-3 are the reason this is a defect and not just an incident log: the
+restart fixes today, and nothing yet would catch the next one.
+
+### Two older defects this investigation uncovered, which the restart did not fix
+
+Chasing D6 answered "why is the dashboard empty?" only partly. Three of the
+eight Airflow panels were broken *before* 2026-08-18 and by unrelated causes.
+Recording them here so they are not misfiled as D6 fallout:
+
+| Panel | Queries | Reality | Cause |
+|---|---|---|---|
+| 3. Scheduler Tasks Running | `airflow_scheduler_tasks_running` | only `..._executable` and `..._starving` exist; **no data in 30 days** | Airflow 3 metric rename |
+| 6. DAG Scheduling Delay | `airflow_dagrun_schedule_delay` | Airflow emits `airflow.dagrun.first_task_scheduling_delay.<dag_id>` | Airflow 3 metric rename — **and `grafana/statsd_mapping.yml` still maps the old `airflow.dagrun.schedule_delay.*`**, so it arrives unmapped as `airflow_dagrun_<dag_id>_first_task_scheduling_delay` with the dag_id welded into the name |
+| 2, 7. Task Failures / Success Rate | `airflow_ti_failures` | absent until a task actually fails | Structural: a counter that has never fired has no series |
+
+Panel 6 therefore needs **two** edits, a mapping entry and a panel expression,
+and fixing only one leaves it blank. Panels 2 and 7 should render `0` rather
+than "No data" when nothing has failed — the same defect Plan 140 fixed for its
+health tiles, and pinned there by
+`test_health_tiles_read_zero_rather_than_no_data`. A failures panel that reads
+"No data" when healthy is indistinguishable from one whose metric has died,
+which is precisely how D6 hid for two days.
+
+**The general lesson is that nothing tested these panels against the metrics
+that actually exist.** Two are querying names Airflow stopped emitting at the
+3.x migration and nobody noticed, because an empty panel and a healthy system
+look identical. That is a dashboard-contract problem and belongs with
+[Plan 141](plan_141_structured_log_ingestion_contract.md), which owns dashboard
+selectors — with the caveat that these are Prometheus selectors, not Loki ones.
 
 ## Goal
 
