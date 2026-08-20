@@ -43,10 +43,18 @@ the unscoped Grafana consumers and the 900-second threshold that the first soak
 exposed. The corrected soak recorded 24 hourly publications, no failed publish,
 a 3,580.9s worst-case freshness gap against the 4,500s threshold, zero DuckDB
 lock conflicts, and `/info` at 0.157s.
-**Plan 136 leads the build order, and its Stage 2 was implemented on
-2026-08-20** — the solver-outcome counters, which are the layer no healthcheck
-can supply, because the solver was healthy for all eight hours. It is built and
-awaiting deploy. Two corrections came out of building it. The alert expression
+**Plan 136 Stage 2 deployed to production on 2026-08-20** (PR #223, merge
+`50bba68`) — the solver-outcome counters, which are the layer no healthcheck can
+supply, because the solver was healthy for all eight hours. Prometheus now
+scrapes the scraper at all, which it never did before; all six outcome series
+published at `0` before any traffic, both new alert expressions returned exactly
+one series each, and `ct-container-unhealthy` stayed Normal across all 28
+instances through three container recreates — an unplanned live test of Plan
+140's `== bool` fix. The 21:00 build then closed D1's partial-hour defect for
+real — `data_through` reads 20:00 rather than 21:00, and the hourly observation
+count is 8,133 where the unfixed query would have published about one minute of
+data against a threshold of 100. **Its 24-hour soak runs to 2026-08-21 ~20:42
+UTC.** Two corrections came out of building it. The alert expression
 the plan specified was the same filtering-comparison shape that false-paged Plan
 140 six minutes after its deploy, so both new rules are written as `bool`
 products. And one rule cannot cover both solver failure modes: a *refusing*
@@ -61,7 +69,10 @@ a manufactured drop under a threshold of 100, and the likely reason that alert
 fired forty minutes into the healthy recovery.
 **Stage 3 was deliberately left for a second change**: its recycle interval is
 chosen from what these counters show, and it needs a `POST` verb on the socket
-proxy that Plan 140 left read-only. Only after the counters have a baseline does
+proxy that Plan 140 left read-only. **That is what takes Plan 136 out of the
+executable rows for now** — its next slice is an observation window, not code,
+so the top of the build order moves down to the rows that can be worked today.
+Only after the counters have a baseline does
 Stage 4 get restart authority. It inherits the
 `docker-socket-proxy` Plan 140 Stage 2 introduced, so that authority is a
 single added verb on an existing grant rather than a second socket path. Plan 142 then
@@ -123,18 +134,62 @@ Plan 120's authenticated production download and checksum round trip was
 verified on 2026-08-18. **Plan 140 Stage 1 and Plan 143 Stage 5 both closed
 green on 2026-08-20** and have left this table; their evidence is recorded in
 their plan documents. Plan 140 Stage 2 replaces them, having deployed the same
-day. What remains here is **verification, not work**: no code is owed on these
-rows. The two Plan 135 gates ride weekly schedules and land on the same Sunday;
-the Plan 140 row lands first.
+day. **Plan 136 Stage 2 deployed on 2026-08-20** and adds the two rows below it.
+Its D1 half already closed green at the 21:00 build the same evening. What
+remains here is **verification, not work**: no code is owed on these rows. Two
+Plan 135 gates ride weekly schedules and land on the same Sunday; the two
+24-hour soaks land within two hours of each other on 2026-08-21.
+
+This table is now the reason the build order's top row is not workable today —
+see [What to work while these soak](#what-to-work-while-these-soak) below.
 
 | Plan | Check | Lands | What it proves |
 |---|---|---|---|
-| [140](plan_140_service_health_contract.md) Stage 2 | `cartracker_container_health` produces **zero false pages** across a 24-hour window, and `ct-container-unhealthy` stays inactive with all 28 instances `Normal` | 2026-08-21, 24h from the 19:04 UTC correction | That twenty-eight new alert instances are trustworthy. This soak is not a formality: the **first deployed expression false-paged within six minutes**, because a filtering comparison drops a recovered container's series and `reduce: last` then keeps the dead value alive for the rest of its 600s window -- `flaresolverr` stayed firing for eleven minutes after recovering. `== bool` fixed that, and a full day is what proves nothing else of that shape is left. Expect exactly one standing alert: `oauth2-proxy` at `-1`, on the daily coverage cadence, which is the designed behaviour and not a false page |
+| [136](plan_136_solver_recycle_and_liveness.md) Stage 2 | `ct-solver-not-solving` and `ct-detail-fetch-failing` stay inactive across 24 hours, and the counters show a solve-rate **shape** | 2026-08-21, 24h from the 20:42 UTC deploy | Two things, and the second is what unblocks work. First that the `bool`-product form is quiet -- both rules returned exactly one series at 0 on their first evaluation, which is the property the filtering form lacks. Second that the counters answer open question 2: whether the solve rate decays gradually or falls off a cliff is what chooses Stage 3's recycle interval, and the plan says not to pick one before reading it. The **D1 half of this row closed green at the 21:00 build** and has moved into the plan document: `data_through` 20:00 rather than 21:00, 8,133 observations for a complete hour, snapshot published in 0.130s. First live counters at 21:02 read 457 detail fetches against 1 solver bootstrap -- a 457:1 ratio that confirms the solver counter is legitimately low-volume when healthy, and retroactively justifies splitting one rule into two |
+| [140](plan_140_service_health_contract.md) Stage 2 | `cartracker_container_health` produces **zero false pages** across a 24-hour window, and `ct-container-unhealthy` stays inactive with all 28 instances `Normal` | 2026-08-21, 24h from the 19:04 UTC correction | That twenty-eight new alert instances are trustworthy. This soak is not a formality: the **first deployed expression false-paged within six minutes**, because a filtering comparison drops a recovered container's series and `reduce: last` then keeps the dead value alive for the rest of its 600s window -- `flaresolverr` stayed firing for eleven minutes after recovering. `== bool` fixed that, and a full day is what proves nothing else of that shape is left. Expect exactly one standing alert: `oauth2-proxy` at `-1`, on the daily coverage cadence, which is the designed behaviour and not a false page. **Partial evidence already in:** the Plan 136 Stage 2 deploy recreated `scraper`, `processing` and `dbt_runner` at 20:42 UTC and all 28 instances stayed `Normal` — an unplanned live rerun of the exact scenario that produced the false page, since it was a container restart that triggered it |
 | [135](plan_135_storage_observability.md) criterion 5 | `cartracker_parquet_data` publishes a real series | 2026-08-23, `disk_usage` slow-tier walk at 04:00 UTC | That the per-path panel can answer *"what is filling `/mnt/data`?"* -- the question this plan was written about. The MinIO volume is the majority of that disk's 59 GiB and has still never completed a walk, so the panel is currently silent on the bulk of it. Confirmed still 0 series on 2026-08-20, exactly as designed before the first walk |
 | [135](plan_135_storage_observability.md) Stage 5 | `prune_task_logs` completes its first scheduled run | 2026-08-23, `17 4 * * 0` | That Airflow's 30-day task-log retention is **enforced** rather than merely configured. The run reports run directories examined and deleted; `cartracker_airflow_logs` was 1.2M inodes and 87% of a 456s walk, so this is also what lets that volume move back to the daily tier |
 
 None blocks implementation work. Record each result in its plan document, then
 remove its row from this closeout table once it is green.
+
+### What to work while these soak
+
+**Recommended: [Plan 144](plan_144_deploy_script_hardening.md), then Plan 142
+Stage 0 once the soaks close.**
+
+This deviates from the build order's own rule — Plan 142 sits higher and its
+Stage 0 *is* executable, being documentation and inventory that needs neither
+Plan 136 Stage 3 nor the Plan 140 soak. The deviation is argued, not assumed:
+
+1. **Plan 144 is XS and this section is bounded by two soaks landing on
+   2026-08-21.** Plan 142 is M *plus a first observed maintenance window*.
+   Starting it now means opening a large build against the closeout table's
+   own instruction, and stopping it mid-flight tomorrow to read soak results.
+2. **Plan 142 Stage 2 consumes `redeploy.sh` rather than forking it**, which
+   the build-order row already says. Hardening it first is dependency order,
+   not queue-jumping.
+3. **It gained a fourth piece of evidence today, from the Plan 136 Stage 2
+   deploy — and the sharpest kind: the script was not used.** That deploy was
+   driven by hand, because `redeploy.sh` would have run `docker compose up -d`
+   without `--no-deps` across `scraper processing dbt_runner`, and would have
+   reported "Done." after `sleep 10` with no idea whether anything was healthy.
+   A deploy tool that the operator routes around on a real deploy is the
+   argument for fixing it.
+4. **The single-file bind-mount trap is now reproduced twice.** Plan 140 found
+   it on 2026-08-20 (`prometheus.yml` mounted as a *file*, so `git pull` lands
+   the new content on a new inode while the container keeps reading the old
+   one, and SIGHUP logs a successful reload of the stale config). The Plan 136
+   deploy hit it again hours later — host `519823`, container `519700` — and it
+   was caught only because the earlier finding said to look. That belongs in
+   the deploy script or its documented procedure, not in an operator's memory.
+
+Plan 141 remains the other genuinely unblocked row and is the right pick if a
+larger slice is wanted instead; its live `ct-403-log-spike` false positive is
+still the best fixture source available. Note it fires *diurnally* — the
+2026-08-20 20:47 UTC rule dump had it inactive, with the reported noise falling
+between 03:00 and 08:00 UTC — so capture fixtures across that window rather
+than concluding from a single quiet reading that the defect went away.
 
 ## Default build order
 
@@ -143,10 +198,10 @@ because it is smaller while a higher row has an executable next step.
 
 | Order | Plan | Title | Next executable slice | Priority | Effort | Depends on / safe stopping point |
 |---:|---|---|---|---:|---|---|
-| 1 | [136](plan_136_solver_recycle_and_liveness.md) | Solver recycle and real liveness | **Stage 2 implemented 2026-08-20** — deploy it, then read a week of outcome rates before choosing Stage 3's recycle interval | 98 | M | Stage 0 verified; analytics freshness moved to Plan 143; 0b moved into Plan 140 Stage 2; soak counters before Stage 4 auto-restart |
+| 1 | [136](plan_136_solver_recycle_and_liveness.md) | Solver recycle and real liveness | **Stage 2 deployed 2026-08-20 (PR #223).** Next slice is an *observation window, not code*: read the outcome rates for a week, then choose Stage 3's recycle interval | 98 | M | Stage 0 verified; analytics freshness moved to Plan 143; 0b moved into Plan 140 Stage 2. **Not workable today** — Stage 3 needs both the counter baseline and a `POST` verb on the socket proxy; soak counters before Stage 4 auto-restart |
 | 2 | [142](plan_142_planned_host_maintenance.md) | Planned host maintenance and production quiescence | Freeze the successful Ubuntu-update window as fixtures, then build separate maintenance intent, truthful drain status, and the checked-in host procedure | 86 | M + first observed window | Reuse Plan 136 drain semantics; final resume gate requires soaked Plan 140 health coverage |
 | 3 | [141](plan_141_structured_log_ingestion_contract.md) | Structured log ingestion and dashboard contract | Freeze production-derived fixtures and baseline, then align parsing, labels, filters, and dashboard selectors; fix `ct-403-log-spike` as the first case | 85 | S + 24h soak | Does not block Plan 136; should precede Plan 134's warning-log observation window. Has a live false-positive to work from: see below |
-| 4 | [144](plan_144_deploy_script_hardening.md) | Deploy script hardening | Add `--no-deps`, replace `sleep 10` with health polling, document the intent-release trap | 78 | XS | **Unblocked by Plan 140 Stage 1** — the TODO could not be actioned when only 7 of 31 services had a healthcheck. Plan 142 should consume this script rather than fork it |
+| 4 | [144](plan_144_deploy_script_hardening.md) | Deploy script hardening | Add `--no-deps`, replace `sleep 10` with health polling, document the intent-release trap **and the single-file bind-mount inode trap** | 78 | XS | **Unblocked by Plan 140 Stage 1** — the TODO could not be actioned when only 7 of 31 services had a healthcheck. Plan 142 should consume this script rather than fork it. **Recommended as the slice to work while the two soaks run** — see [What to work while these soak](#what-to-work-while-these-soak) |
 | 5 | [140](plan_140_service_health_contract.md) **Stage 4** | Retire DAG sensors as the health signal | Demote `http_health_sensor` from notifier to gate, now that a stopped container pages on its own | 70 | XS | **Gated on the Stage 2 soak**, which is in the closeout table above. Stages 1-3 are deployed and verified. The `flaresolverr` fire test already showed the alert going Pending inside a minute, far ahead of any DAG run, so this is a demotion decision rather than new signal work � do not remove the sensors, they remain load-bearing for DAG correctness |
 | 6 | [134](plan_134_archiver_endpoint_failure_contract.md) | Archiver endpoint failure contract | Add warning-only failure predicates and begin the one-week observation window | 88 | S | Plan 141 first; one-week soak before enforcement; pause if real failures need repair |
 | 7 | [132](plan_132_unrecorded_artifact_recovery.md) | Recover unrecorded bronze artifacts | Run Stage 0 gates, build the manifest, then reparse a bounded cohort | 91 | L | **Unblocked 2026-08-20** — Plan 133 deployed and verified. No destructive action in the audit stages. Stage 2's reparse is also where defect 2's cache fix gets its first real measurement |
@@ -288,7 +343,7 @@ being trained to ignore the scraper's alert channel, which is the channel the
 | [133](plan_133_pack_read_path_hardening.md) | Pack read path hardening | **Complete 2026-08-20** — PR #219 (`5066bc1`) deployed to `ops`, `archiver`, `pack-worker`, and `processing`; post-deploy verification read 720 artifacts through the pack path across April-July with 0 failures. Unblocks Plan 132 Stage 2 |
 | [134](plan_134_archiver_endpoint_failure_contract.md) | Archiver endpoint failure contract | Draft — measurement-first rollout not started |
 | [135](plan_135_storage_observability.md) | Storage observability | **Complete 2026-08-18** — both disks visible, alerts proven, all log stores bounded, runbook live, `df /` 79% → 51%; criterion 5's MinIO half publishes on the first Sunday slow-tier walk (2026-08-23) |
-| [136](plan_136_solver_recycle_and_liveness.md) | Solver recycle + real liveness detection | **Stage 0 verified in production; Stage 2 implemented 2026-08-20, not yet deployed; Stage 1 transferred to Plan 143 before deployment** — prototype commit `584f100` established the fail-loud contract but not the accepted serving design. 0b shipped as Plan 140 Stage 2 on 2026-08-20, which also leaves Stage 4 a `docker-socket-proxy` to extend rather than a socket path to open. Stage 2 adds two scraper-owned outcome counters, a `scraper` Prometheus job, `ct-solver-not-solving` + `ct-detail-fetch-failing`, and fixes D1's remaining partial-hour defect in the Plan 143 snapshot SQL; Stages 3-4 not started |
+| [136](plan_136_solver_recycle_and_liveness.md) | Solver recycle + real liveness detection | **Stages 0 and 2 deployed and verified in production (2026-08-18, 2026-08-20); Stage 1 transferred to Plan 143 before deployment** — prototype commit `584f100` established the fail-loud contract but not the accepted serving design. 0b shipped as Plan 140 Stage 2 on 2026-08-20, which also leaves Stage 4 a `docker-socket-proxy` to extend rather than a socket path to open. Stage 2 (PR #223, merge `50bba68`) adds two scraper-owned outcome counters, the `scraper` Prometheus job that never existed, `ct-solver-not-solving` + `ct-detail-fetch-failing` in `bool`-product form, and fixes D1's remaining partial-hour defect in the Plan 143 snapshot SQL. **24h soak to 2026-08-21 ~20:42 UTC; the D1 snapshot check lands at the 21:00 build.** Stages 3-4 not started |
 | [137](plan_137_legacy_bronze_parquet_disposition.md) | Legacy bronze Parquet recovery and disposition | Draft — read-only inventory complete; no deletion authorized |
 | [138](plan_138_public_surface_refresh.md) | README and public portfolio surface refresh | Draft — audit complete; analytics acquisition/database removal transferred to Plan 143, while public presentation remains here |
 | [139](plan_139_test_suite_maintenance.md) | Test suite construction and maintenance | **Stages A+B complete 2026-08-18** (PR #213) — coverage reported at 88%, CI path 333s → ~260s; Stages C/D remain queued as opportunistic filler; analytics producer coverage transferred through Plan 136 to Plan 143 |

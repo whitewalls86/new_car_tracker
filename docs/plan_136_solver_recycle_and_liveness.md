@@ -2,8 +2,9 @@
 
 ## Status
 
-**Stage 0 complete and verified in production 2026-08-18. Stage 2 implemented
-2026-08-20, not yet deployed. Stages 3 and 4 not started.**
+**Stage 0 complete and verified in production 2026-08-18. Stage 2 deployed to
+production 2026-08-20 (PR #223, merge `50bba68`) and in its 24-hour soak until
+2026-08-21 ~20:42 UTC. Stages 3 and 4 not started.**
 
 Stage 0 shipped as PR #214, merge `8b2254b`; see
 [Stage 0 production verification](#stage-0-production-verification-2026-08-18).
@@ -13,7 +14,9 @@ The unshipped Stage 1 prototype at commit `584f100` exposed the right failure
 contract but the wrong serving boundary; [Plan 143](plan_143_analytics_serving_snapshot.md)
 now owns its redesign, deployment, and soak.
 
-[Stage 2](#stage-2--a-liveness-signal-that-does-not-pass-through-dbt) is built:
+[Stage 2](#stage-2--a-liveness-signal-that-does-not-pass-through-dbt) is
+deployed; see its
+[production deployment record](#production-deployment--2026-08-20). It ships:
 two scraper-owned outcome counters, a `scraper` Prometheus job,
 `ct-solver-not-solving` and `ct-detail-fetch-failing`, and D1's remaining
 partial-hour defect fixed at its source. Two things changed from the plan as
@@ -541,12 +544,89 @@ could is what cost eight hours.
 
 > Verify: replay the incident by pointing the scraper at a deliberately broken
 > solver URL in staging; alert fires within 15 min.
->
-> **Deploy verification owed:** `up{job="scraper"}` is 1 and all six outcome
-> series are present *before* trusting either alert. Plan 140's deploy showed a
-> single-file bind mount pins an inode, so `git pull` + SIGHUP can reload the
-> *old* Prometheus config while logging success — check the running config, not
-> the repo.
+
+### Production deployment — 2026-08-20
+
+Deployed to `50bba68` (PR #223) at 20:42 UTC. Deploy intent was declared first
+with zero in-flight executions and released afterwards — unlike Plan 140 Stage
+2's deploy, which correctly skipped it, because this one rebuilds `scraper`,
+`processing` and `dbt_runner` and therefore touches the scrape and processing
+paths.
+
+| Check | Result |
+|---|---|
+| Prometheus reading the **new** config | `job_name: scraper` present in the running file |
+| Scrape targets | **10** of 10 up, including the new `scraper` |
+| Six outcome series | all present at `0`, `job="scraper"`, **before any traffic** |
+| `ct-solver-not-solving` expression | 1 series, value 0 |
+| `ct-detail-fetch-failing` expression | 1 series, value 0 |
+| Rules provisioned | 20 (18 + 2), both new ones `health: ok`, inactive |
+| `ct-container-unhealthy` | 28 of 28 `Normal` through three container recreates |
+
+The last row is Plan 140's soak evidence arriving early and by accident. The
+false page it corrected was *triggered by a container restart*, and this deploy
+restarted three; all 28 instances stayed Normal. That is the `== bool` fix
+tested against the exact scenario that broke the filtering form.
+
+**The single-file bind-mount trap reproduced exactly**, hours after Plan 140
+first documented it, and was caught only because that finding said to look:
+
+```
+host:      519823
+container: 519700   <- still the pre-pull inode
+```
+
+`docker restart cartracker-prometheus` re-resolved it to `519823`. A SIGHUP
+would have logged a successful reload of a config with no `scraper` job in it.
+This is now twice in one day and belongs in the deploy procedure rather than in
+an operator's memory — routed to
+[Plan 144](plan_144_deploy_script_hardening.md).
+
+#### D1's partial-hour fix, verified at the 21:00 build — green
+
+The one part the deploy could not check on the spot, because it needed a
+scheduled `hourly_analytics_refresh` to run.
+
+| Check | Result |
+|---|---|
+| Snapshot published | `cartracker_analytics_snapshot_refresh_success` = **1**, in 0.130s |
+| `last_success_at` | 21:01:23 UTC — the 21:00 build |
+| `data_through` | **2026-08-20T20:00:00Z** — the last *complete* hour, not 21:00 |
+| `cartracker_observation_count_last_hour` | **8,133** |
+
+The old behaviour is visible in the gap between those last two rows. At 21:01
+the unfixed query would have selected the 21:00 bucket — about one minute of
+data — and published it as an hourly total against a threshold of 100. It now
+publishes 8,133 for a genuinely complete hour, and `/info` names the hour the
+count actually describes.
+
+#### First live counter readings, 21:02 UTC
+
+Twenty minutes after deploy, one `scrape_detail_pages` cycle in:
+
+```
+cartracker_solver_requests_total{outcome="ok"}         1
+cartracker_solver_requests_total{outcome="challenge"}  0
+cartracker_solver_requests_total{outcome="error"}      0
+cartracker_detail_fetch_total{outcome="ok"}          457
+cartracker_detail_fetch_total{outcome="403"}           0
+cartracker_detail_fetch_total{outcome="error"}         1
+```
+
+**This is the measurement that retroactively justifies the two-rule split.** One
+solver bootstrap against 457 detail fetches — a 457:1 ratio, and a healthy solver
+rate of roughly 3/hour against the ~2.4/hour predicted from the 25-minute
+`_CF_SESSION_TTL`. The plan's original single rule guarded on
+`rate(solver_total[15m]) > 0`, which on this evidence is **false for most of a
+healthy hour**. It would have been a blind alert for long stretches, and the
+reason is a caching constant, not anything the incident write-up recorded.
+
+It also sizes both guards against reality: healthy non-`ok` solver volume is 0,
+well under `> bool 5`; and 457 fetches per cycle sits far above
+`ct-detail-fetch-failing`'s `> bool 20`.
+
+**Soak:** 24 hours to 2026-08-21 ~20:42 UTC — that both new rules stay inactive,
+and that the counters show enough shape to answer open question 2.
 
 ## Stage 3 — Scheduled recycle
 
