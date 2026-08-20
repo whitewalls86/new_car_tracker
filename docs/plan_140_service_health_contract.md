@@ -447,6 +447,27 @@ receiver — it is visible, not suppressed — but a missing healthcheck needs a
 compose edit, not a 3 a.m. response, and training an operator to ignore the
 scraper's alert channel is how the 2026-08-14 outage stayed invisible.
 
+##### The dashboard, which the draft omitted
+
+The stage as drafted produced a metric and two alerts and nothing that renders
+either. That is a gap, not a detail: an alert-only signal is one nobody looks
+at until it pages, and it gives an operator responding to
+`ct-container-unhealthy` nowhere to land.
+
+A **Service Health** row now opens the Infrastructure dashboard — *above* the
+storage panels, because "is the fleet up?" is the first question it should
+answer, not the ninth. Three stat tiles (healthy / unhealthy / no healthcheck)
+and a `state-timeline` keyed on `{{container}}`, with `-1` mapped to an orange
+"no healthcheck" band rather than to a gap in the chart. The tiles use
+`or vector(0)`, since `count()` over an empty match returns no series and
+Grafana draws that as "No data" — at a glance indistinguishable from a broken
+exporter, which is this plan's own failure mode reappearing in the UI.
+
+Verified by provisioning the real `grafana/grafana:11.6.1` image against this
+repo's provisioning directory: 23 panels loaded, `state-timeline` accepted, the
+value mappings survived the round trip, all 18 alert rules provisioned, and the
+`severity=coverage` route resolved to a `1d` repeat beside the parent's `4h`.
+
 ##### Known limitation, recorded rather than discovered later
 
 A service whose container is **removed or fully stopped** leaves the metric

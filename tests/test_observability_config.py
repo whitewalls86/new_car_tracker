@@ -976,6 +976,54 @@ class TestGrafanaDashboards:
                        disk_usage.MEASURED_AT_METRIC):
             assert metric in exprs, f"{metric} is written but never charted"
 
+    def test_service_health_is_visible_without_waiting_for_an_alert(self):
+        """Plan 140 Stage 2. A metric nothing renders is a metric nobody looks
+        at until it pages, and "is the fleet up?" is the first question this
+        dashboard should answer -- so the row sits above the storage panels
+        rather than below eight of them."""
+        panels = self._infrastructure_panels()
+        row = next(p for p in panels if p["type"] == "row" and p["title"] == "Service Health")
+        assert row["gridPos"]["y"] == 0, "Service Health was pushed below the fold"
+        health_panels = [
+            p for p in panels
+            if any("cartracker_container_health" in t.get("expr", "")
+                   for t in p.get("targets", []))
+        ]
+        assert len(health_panels) == 4, "expected three stat tiles and one timeline"
+
+    def test_all_three_health_states_are_rendered_distinctly(self):
+        """The `-1` state is the whole reason this metric has three values. A
+        panel that charted only healthy-vs-unhealthy would put the coverage gap
+        back where it started: invisible."""
+        panels = self._infrastructure_panels()
+        timeline = next(p for p in panels if p["type"] == "state-timeline")
+        mappings = timeline["fieldConfig"]["defaults"]["mappings"][0]["options"]
+        assert {"1", "0", "-1"} == set(mappings)
+        assert mappings["1"]["color"] == "green"
+        assert mappings["0"]["color"] == "red"
+        assert mappings["-1"]["color"] == "orange"
+        assert mappings["-1"]["text"] == "no healthcheck"
+
+        tiles = {
+            p["title"]: p["targets"][0]["expr"]
+            for p in panels if p["type"] == "stat"
+        }
+        assert "== 0" in tiles["Unhealthy Containers"]
+        assert "== -1" in tiles["No Healthcheck Configured"]
+        assert "== 1" in tiles["Healthy Containers"]
+
+    def test_health_tiles_read_zero_rather_than_no_data(self):
+        """`count()` over an empty match returns no series, which Grafana draws
+        as "No data" -- indistinguishable at a glance from a broken exporter.
+        `or vector(0)` makes a quiet fleet read as an explicit zero."""
+        for panel in self._infrastructure_panels():
+            if panel["type"] != "stat":
+                continue
+            expr = panel["targets"][0]["expr"]
+            if "cartracker_container_health" not in expr:
+                continue
+            assert "or vector(0)" in expr, f"{panel['title']} can render No data"
+
     def test_minio_logical_panel_is_not_titled_as_disk_usage(self):
         """"MinIO Storage Used" is what made a payload-bytes gauge read as a df
         reading, which is the misreading this whole plan started from."""
