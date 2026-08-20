@@ -1,5 +1,5 @@
 """Unit tests for processors/scrape_detail.py"""
-from unittest.mock import MagicMock, mock_open
+from unittest.mock import MagicMock, mock_open, patch
 
 import pytest
 from prometheus_client import REGISTRY
@@ -293,18 +293,22 @@ class TestDetailFetchOutcomeCounter:
         assert after["ok"] == before["ok"] + 1
         assert after["error"] == before["error"]
 
-    def test_a_dummy_scrape_is_not_counted(self, mocker):
+    def test_a_dummy_scrape_is_not_counted(self):
         """scrape_detail_dummy writes a canned page and never touches the
-        network. Counting it would put synthetic successes into the signal."""
-        self._patch_dummy_io(mocker)
-        before = self._counts()
-        scrape_detail_dummy(run_id=RUN_ID, payload={"listing_id": LISTING_ID})
-        assert self._counts() == before
+        network. Counting it would put synthetic successes into the signal.
 
-    @staticmethod
-    def _patch_dummy_io(mocker):
-        mocker.patch("os.makedirs")
-        mocker.patch("builtins.open", mock_open())
+        Both readings are taken OUTSIDE the `builtins.open` patch on purpose.
+        prometheus_client registers a ProcessCollector on the default registry,
+        and REGISTRY.collect() -- which get_sample_value walks -- opens
+        /proc/<pid>/stat in binary mode. Under a mock_open that read returns a
+        str and raises `TypeError: must be str or None, not bytes`. It fails on
+        Linux only: Windows has no /proc, so the collector returns early and CI
+        is the only place that sees it.
+        """
+        before = self._counts()
+        with patch("os.makedirs"), patch("builtins.open", mock_open()):
+            scrape_detail_dummy(run_id=RUN_ID, payload={"listing_id": LISTING_ID})
+        assert self._counts() == before
 
 
 class TestScrapeDetailDummy:
