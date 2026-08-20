@@ -3,7 +3,7 @@
 Each plan has its own file in `docs/`. This file is the index only. For system
 design patterns, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
-## Current State (as of 2026-08-18)
+## Current State (as of 2026-08-20)
 
 Site is live at https://cartracker.info. All major pre-lakehouse foundations
 are complete: auth, data migration, CI/CD, integration testing, MinIO artifact
@@ -23,18 +23,23 @@ and was **verified against production** on 2026-08-18 — Airflow itself reports
 the 20+20 pool, the shared anchor did not leak it to the other three services,
 and `ct-pipeline-failures` now renders exactly two named instances where it
 previously rendered a third reading `DAG [no value] failed`. Plan 140 Stage 3 is
-verified, and Stage 1 was deployed on 2026-08-18 with all 25 configured runtime
-checks healthy and at zero failing streaks; its 24-hour soak is now the only
-open Stage 1 gate. After that, build the container-health metric **once**,
-covering all services. Plan 143 shipped through PR #217 (merge `e5d3a46`) on
-2026-08-18: its saved-SQL, post-build snapshot now makes `dbt_runner` the
-direct metrics owner, while `ops` renders `/info` without opening DuckDB or
-using the transient artifact queue as freshness. Initial production checks
-passed, but the soak exposed unscoped Grafana consumers and a 900-second
-freshness threshold against the hourly publisher. Plan 143 remains outside the
-executable build order while the narrow correction lands; its corrected
-Grafana deployment starts a fresh 24-hour soak. The 2026-08-19 15:00 CDT
-(20:00 UTC) check is now a status checkpoint rather than an automatic closeout.
+verified, and **Stage 1's 24-hour soak closed clean on 2026-08-20**: 25 of 25
+configured runtime checks healthy at zero failing streaks after 46 hours, with
+zero false pages from the eighteen new checks. Plan 140 now proceeds to Stage 2 —
+build the container-health metric **once**, covering all services, scoped to the
+default project's running services so the four sibling-project containers the
+soak found do not page forever. Stage 2 was **amended on 2026-08-20** to a
+dedicated exporter computing at scrape time rather than the node-exporter
+textfile collector: container health is a 10ms API call, not Plan 135's
+456-second disk walk, and computing it at scrape time deletes the staleness
+problem instead of managing it. **Plan 143 is complete as of 2026-08-20.** PR #217 (merge
+`e5d3a46`) shipped the saved-SQL, post-build snapshot that makes `dbt_runner` the
+direct metrics owner while `ops` renders `/info` without opening DuckDB or using
+the transient artifact queue as freshness; PR #218 (merge `a3cdd59`) corrected
+the unscoped Grafana consumers and the 900-second threshold that the first soak
+exposed. The corrected soak recorded 24 hourly publications, no failed publish,
+a 3,580.9s worst-case freshness gap against the 4,500s threshold, zero DuckDB
+lock conflicts, and `/info` at 0.157s.
 Plan 136 now resumes at Stage 2's solver-outcome counters, which is the layer no
 healthcheck can supply — the
 solver was healthy for all eight hours. Only after those counters have a
@@ -42,7 +47,9 @@ baseline does Stage 4 get restart authority. Plan 142 then
 turns the same drain and health primitives into a safe, explicit whole-host
 maintenance workflow. Plan 141 then makes the newly bounded log pipeline and
 its dashboards share one tested schema before Plan 134 begins its warning-log
-observation window. The next data-integrity chain is Plan 133 -> Plan 132.
+observation window. **Plan 133 deployed and verified on 2026-08-20** — 720
+artifacts read through the pack path across April-July with 0 failures — so the
+next data-integrity step is Plan 132, now unblocked.
 Plan 138 should land before the next major platform milestone, consuming rather
 than recreating Plan 143's public-stats cache. Plan 125 then resumes at its
 remaining Gate C production measurement and Gate D reader migration -- not at
@@ -58,7 +65,7 @@ they do.
 Plan 112 remains intentionally paused until Plan 125 supplies stable
 Iceberg-native inputs. Plans 114, 115, and 128 have completed their intended
 work and no longer belong in the executable queue. Plans 124 and 131 closed out
-2026-08-18. Plan 120 is built but still owes production verification. Plan 129
+2026-08-18, as did Plan 120's final Gate F production verification. Plan 129
 is a production system under rollout rather than a new build.
 
 ---
@@ -92,16 +99,15 @@ observation window is written separately and does not inflate coding effort.
 ## Current closeout -- finish before opening another large build
 
 Plan 120's authenticated production download and checksum round trip was
-verified on 2026-08-18. What remains here is **verification, not work**: no code
-is owed on these rows. Plan 140's soak gate lands first. Plan 143's merged
-acceptance correction needs a Grafana recreation and a fresh 24-hour soak; both
-Plan 135 gates land on the following Sunday because they ride weekly schedules.
+verified on 2026-08-18. **Plan 140 Stage 1 and Plan 143 Stage 5 both closed
+green on 2026-08-20** and have left this table; their evidence is recorded in
+their plan documents. What remains here is **verification, not work**: no code
+is owed on these rows. Both Plan 135 gates ride weekly schedules and land on the
+same Sunday.
 
 | Plan | Check | Lands | What it proves |
 |---|---|---|---|
-| [140](plan_140_service_health_contract.md) Stage 1 | Repeat the full runtime health audit after the 24-hour soak | 2026-08-19 at approximately 17:00 UTC (12:00 CDT) | That all 25 configured checks remain healthy with zero failing streaks through normal production cycles, including active `trawl` and `redis-trawl`; only the documented one-shot/profile and distroless-image exceptions may lack health state. Thirty minutes established startup health but does not replace this false-positive soak |
-| [143](plan_143_analytics_serving_snapshot.md) Stage 5 | Deploy merged PR #218's `job="dbt_runner"` selectors and 4,500-second freshness threshold, then repeat the 24-hour acceptance soak | Status checkpoint at 2026-08-19 15:00 CDT (20:00 UTC); closeout 24 hours after the Grafana recreation | That every analytics panel renders one producer-owned series, the cadence-aware freshness alert stays green across normal hourly publications, snapshots replace normally during Prometheus scrapes, `/info` remains responsive, and no recurring DuckDB lock conflict returns |
-| [135](plan_135_storage_observability.md) criterion 5 | `cartracker_parquet_data` publishes a real series | 2026-08-23, `disk_usage` slow-tier walk at 04:00 UTC | That the per-path panel can answer *"what is filling `/mnt/data`?"* -- the question this plan was written about. The MinIO volume is the majority of that disk's 59 GiB and has still never completed a walk, so the panel is currently silent on the bulk of it. Carry-forward is behaving as designed and `failed` is correctly 0 |
+| [135](plan_135_storage_observability.md) criterion 5 | `cartracker_parquet_data` publishes a real series | 2026-08-23, `disk_usage` slow-tier walk at 04:00 UTC | That the per-path panel can answer *"what is filling `/mnt/data`?"* -- the question this plan was written about. The MinIO volume is the majority of that disk's 59 GiB and has still never completed a walk, so the panel is currently silent on the bulk of it. Confirmed still 0 series on 2026-08-20, exactly as designed before the first walk |
 | [135](plan_135_storage_observability.md) Stage 5 | `prune_task_logs` completes its first scheduled run | 2026-08-23, `17 4 * * 0` | That Airflow's 30-day task-log retention is **enforced** rather than merely configured. The run reports run directories examined and deleted; `cartracker_airflow_logs` was 1.2M inodes and 87% of a 456s walk, so this is also what lets that volume move back to the daily tier |
 
 None blocks implementation work. Record each result in its plan document, then
@@ -114,24 +120,25 @@ because it is smaller while a higher row has an executable next step.
 
 | Order | Plan | Title | Next executable slice | Priority | Effort | Depends on / safe stopping point |
 |---:|---|---|---|---:|---|---|
-| 1 | [140](plan_140_service_health_contract.md) | Service health contract | Finish the 24-hour Stage 1 soak, then build the container-health metric and alerts; keep the explicit `oauth2-proxy` image exception loud (Stage 3 is verified) | 87 | M + soak | Stage 1 immediate production gate passed 2026-08-18: 25 of 25 configured runtime checks healthy with zero failing streaks; soak before alerting on them |
+| 1 | [140](plan_140_service_health_contract.md) | Service health contract | Build the Stage 2 container-health metric and alerts, scoped to running compose-managed services; keep the explicit `oauth2-proxy` image exception loud (Stages 1 and 3 are verified) | 87 | M | Stage 1 soak closed clean 2026-08-20 at 46 hours: 25 of 25 checks healthy, zero failing streaks, zero false pages. The soak found four stopped containers from two deliberately-down sibling compose projects reporting a stale `unhealthy` — Stage 2 must scope to the default project's running services, not `docker ps -a` |
 | 2 | [136](plan_136_solver_recycle_and_liveness.md) | Solver recycle and real liveness | Add Stage 2 solver counters and corrected alerts, then Stage 3 drain-aware weekly recycle | 98 | M | Stage 0 verified; analytics freshness moved to Plan 143; 0b moved into Plan 140 Stage 2; soak counters before Stage 4 auto-restart |
 | 3 | [142](plan_142_planned_host_maintenance.md) | Planned host maintenance and production quiescence | Freeze the successful Ubuntu-update window as fixtures, then build separate maintenance intent, truthful drain status, and the checked-in host procedure | 86 | M + first observed window | Reuse Plan 136 drain semantics; final resume gate requires soaked Plan 140 health coverage |
-| 4 | [141](plan_141_structured_log_ingestion_contract.md) | Structured log ingestion and dashboard contract | Freeze production-derived fixtures and baseline, then align parsing, labels, filters, and dashboard selectors | 85 | S + 24h soak | Does not block Plan 136; should precede Plan 134's warning-log observation window |
-| 5 | [134](plan_134_archiver_endpoint_failure_contract.md) | Archiver endpoint failure contract | Add warning-only failure predicates and begin the one-week observation window | 88 | S | Plan 141 first; one-week soak before enforcement; pause if real failures need repair |
-| 6 | [133](plan_133_pack_read_path_hardening.md) | Pack read-path hardening | Merge and deploy the fix, then re-run April-July read-path verification | 92 | S | Production verification unlocks Plan 132 Stage 2 |
-| 7 | [132](plan_132_unrecorded_artifact_recovery.md) | Recover unrecorded bronze artifacts | Run Stage 0 gates, build the manifest, then reparse a bounded cohort | 91 | L | Plan 133 before Stage 2; no destructive action in the audit stages |
+| 4 | [141](plan_141_structured_log_ingestion_contract.md) | Structured log ingestion and dashboard contract | Freeze production-derived fixtures and baseline, then align parsing, labels, filters, and dashboard selectors; fix `ct-403-log-spike` as the first case | 85 | S + 24h soak | Does not block Plan 136; should precede Plan 134's warning-log observation window. Has a live false-positive to work from: see below |
+| 5 | [144](plan_144_deploy_script_hardening.md) | Deploy script hardening | Add `--no-deps`, replace `sleep 10` with health polling, document the intent-release trap | 78 | XS | **Unblocked by Plan 140 Stage 1** — the TODO could not be actioned when only 7 of 31 services had a healthcheck. Plan 142 should consume this script rather than fork it |
+| 6 | [134](plan_134_archiver_endpoint_failure_contract.md) | Archiver endpoint failure contract | Add warning-only failure predicates and begin the one-week observation window | 88 | S | Plan 141 first; one-week soak before enforcement; pause if real failures need repair |
+| 7 | [132](plan_132_unrecorded_artifact_recovery.md) | Recover unrecorded bronze artifacts | Run Stage 0 gates, build the manifest, then reparse a bounded cohort | 91 | L | **Unblocked 2026-08-20** — Plan 133 deployed and verified. No destructive action in the audit stages. Stage 2's reparse is also where defect 2's cache fix gets its first real measurement |
 | 8 | [138](plan_138_public_surface_refresh.md) | Public surface refresh | Truth pass, public-root contract, accessible assets, Plan 143 stats presentation, and project-updates snapshot | 84 | L | Plan 143 supplies the stats contract; land before the next major platform milestone |
 | 9 | [125](plan_125_duckdb_to_iceberg_migration.md) | DuckDB-to-Iceberg analytics migration | Gate C production runtime measurement, then Gate D reader inventory/dual-run | 81 | XL | Plan 120 closeout; swap Plan 143's producer adapter while preserving its snapshot and metric contracts |
 | 10 | [112](plan_112_refresh_policy_backtesting.md) | Adaptive-refresh backtesting | Resume policy backtest/model gates on pinned Iceberg snapshots | 76 | L | Plan 125 stable Iceberg-native inputs |
 | 11 | [113](plan_113_production_adaptive_refresh.md) | Production adaptive refresh | Promote one reviewed, pinned policy into ops claim logic | 74 | M | Approved Plan 112 result; no live model dependency |
 | 12 | [137](plan_137_legacy_bronze_parquet_disposition.md) | Legacy bronze Parquet disposition | Codify the read-only baseline and row-complete disposition manifest | 72 | XL | Reuse Plan 132 provenance/backfill safety; deletion remains separately approved |
-| 13 | [121](plan_121_staging_environment.md) | Staging environment | Stand up the smallest fixture-backed deployed environment | 63 | L | Prefer after Plan 125 reader shape settles unless needed earlier for risky rollout |
-| 14 | [139](plan_139_test_suite_maintenance.md) **C** | Profile the 92s `tests/integration/dbt/` step | Run it with `--durations=20` in CI and record the per-test breakdown before proposing any change | 60 | S | Measurement only; CI-only work — do not pip-install dbt locally |
-| 15 | [119](plan_119_lakehouse_governance.md) | Lakehouse governance | Add measured catalog controls and auditability | 58 | L | Stable Plan 125 catalog and reader contracts |
-| 16 | [139](plan_139_test_suite_maintenance.md) **D** | Intent markers and the coverage-gate decision | Move `report_dbt_run_results.py` into `dbt_runner/`, add the `oneoff` marker per test class, decide the gate and the `airflow/dags`+`dashboard` exclusion in writing | 52 | S | Several weeks of Stage A coverage data; opportunistic filler |
-| 17 | [126](plan_126_basic_event_streaming.md) | Basic event streaming | Prove transport, replay, and one low-risk consumer | 49 | XL | Plans 125 and 112/113 clarify stable event semantics |
-| 18 | [127](plan_127_streaming_adaptive_scrape_control.md) | Streaming adaptive scrape control | Add closed-loop control behind batch-parity and rollback gates | 42 | XL | Plan 126 plus approved Plan 112/113 behavior |
+| 13 | [69](plan_69_terraform.md) | Terraform IaC | `terraform import` the existing VM/network/firewall until `plan` shows no diff against production | 66 | M | **Moved out of the backlog 2026-08-20** — its trigger is "a second environment is approved", and Plan 121 is that environment. Must land before 121, not after |
+| 14 | [121](plan_121_staging_environment.md) | Staging environment | Stand up the smallest fixture-backed deployed environment, provisioned from Plan 69's modules | 63 | L | Plan 69 first, so staging and prod come from one module set instead of two hand-built hosts. Prefer after Plan 125 reader shape settles unless needed earlier for risky rollout |
+| 15 | [139](plan_139_test_suite_maintenance.md) **C** | Profile the 92s `tests/integration/dbt/` step | Run it with `--durations=20` in CI and record the per-test breakdown before proposing any change | 60 | S | Measurement only; CI-only work — do not pip-install dbt locally |
+| 16 | [119](plan_119_lakehouse_governance.md) | Lakehouse governance | Add measured catalog controls and auditability | 58 | L | Stable Plan 125 catalog and reader contracts |
+| 17 | [139](plan_139_test_suite_maintenance.md) **D** | Intent markers and the coverage-gate decision | Move `report_dbt_run_results.py` into `dbt_runner/`, add the `oneoff` marker per test class, decide the gate and the `airflow/dags`+`dashboard` exclusion in writing | 52 | S | Several weeks of Stage A coverage data; opportunistic filler |
+| 18 | [126](plan_126_basic_event_streaming.md) | Basic event streaming | Prove transport, replay, and one low-risk consumer | 49 | XL | Plans 125 and 112/113 clarify stable event semantics |
+| 19 | [127](plan_127_streaming_adaptive_scrape_control.md) | Streaming adaptive scrape control | Add closed-loop control behind batch-parity and rollback gates | 42 | XL | Plan 126 plus approved Plan 112/113 behavior |
 
 **Plan [139](plan_139_test_suite_maintenance.md) occupies two rows rather than
 one**, because scoring it as a single plan (62) hid that its first two stages
@@ -150,8 +157,8 @@ written against the old silent-stale behavior would encode exactly what Plan
 
 Plan 136 Stage 4 is deliberately not part of the first slice: it grants restart
 authority and should start only after Stage 2's outcome counters have established
-a trustworthy baseline. Plan 134's observation window may run while Plans 133 or
-136 proceed, but the endpoint-by-endpoint 500 rollout returns to this order when
+a trustworthy baseline. Plan 134's observation window may run while Plan 136
+proceeds, but the endpoint-by-endpoint 500 rollout returns to this order when
 the evidence is ready.
 
 **Plan 140 now leads despite scoring 87 against Plan 136's 98**, because the
@@ -172,12 +179,12 @@ so the metric will cover everything the day it ships. Plan 136's Stage 0a and
 0c landed on 2026-08-18 and were the only parts 140 was waiting on.
 
 **Plan 143 left the executable order after its 2026-08-18 production
-deployment.** It preceded Plan 136's remaining Stage 2 despite scoring 94
-against 98 because shipping the gauge work locally inside Plan 136 would have
-created a serving boundary Plans 125 and 138 would both replace. Its 24-hour
-verification now belongs to the operational watch list rather than blocking the
-next build; Plan 136 returns to scraper-owned solver telemetry without carrying
-analytics-serving code.
+deployment and completed on 2026-08-20.** It preceded Plan 136's remaining Stage
+2 despite scoring 94 against 98 because shipping the gauge work locally inside
+Plan 136 would have created a serving boundary Plans 125 and 138 would both
+replace. Plan 136 returns to scraper-owned solver telemetry without carrying
+analytics-serving code, and Plans 125 Gate D and 138 now have a stable serving
+contract to consume rather than rebuild.
 
 **Plan 142 follows Plan 136 despite scoring 86 against Plan 141's 85.** This is
 dependency order, not an emergency ranking. Plan 140 must first make the resume
@@ -187,6 +194,25 @@ production safety work with a fully observed first-window failure record, so it
 belongs ahead of dashboard-contract cleanup. It remains below Plan 136 because
 there is no current unpatched emergency and no application endpoint should gain
 host package or reboot authority.
+
+**Plan 141 now has a live false positive to build its fixtures from.** The
+2026-08-20 watch-item check found `ct-403-log-spike` firing — the only rule not
+inactive — and notifying repeatedly between 03:00 and 08:00 UTC. Its expression
+is `count_over_time({service="scraper"} |= "403" [5m]) > 10`, a bare substring
+match against the whole JSON log line. It matches UUIDs and sha256 prefixes
+containing the digits `403` (`...ded709847403`, `a1fd40307748`), so Loki returns
+roughly 341 matching lines per hour drawn from ordinary INFO `write_html` and
+`scrape_detail_fetch` traffic. Actual 403 responses over the same period: **23
+in 12 hours**, against a healthy pipeline at 99.6% extraction yield and 2 block
+events per hour.
+
+This is precisely the defect Plan 141 exists to fix, and it argues for that
+plan's parsing work over its dashboard work: the logs are **already** structured
+JSON carrying a `level` field, so the alert should parse and match a real status
+field rather than grepping the raw line. It is also a reminder that alert noise
+is not only annoying — an operator who learns to ignore `ct-403-log-spike` is
+being trained to ignore the scraper's alert channel, which is the channel the
+2026-08-14 solver outage needed.
 
 ## Operational watch list and completed implementation awaiting closeout
 
@@ -226,17 +252,19 @@ host package or reboot authority.
 | [130](plan_130_parser_input_projection.md) | Parser-input projection (truncating raw HTML) | Draft — blocked on 129 + taxonomy gap |
 | [131](plan_131_packed_cold_storage.md) | Packed cold storage for bronze HTML | **Complete 2026-08-18** — April-July packed and pruned: 3.61M objects → 288, 0 refused; Stage 5 lifecycle DAG green on its first scheduled run |
 | [132](plan_132_unrecorded_artifact_recovery.md) | Recovering unrecorded bronze artifacts | Draft — Stage 0 gate not run |
-| [133](plan_133_pack_read_path_hardening.md) | Pack read path hardening | Implementation complete — pre-deploy 144-pack canary passed; post-deploy April-July verification remains before 132 Stage 2 |
+| [133](plan_133_pack_read_path_hardening.md) | Pack read path hardening | **Complete 2026-08-20** — PR #219 (`5066bc1`) deployed to `ops`, `archiver`, `pack-worker`, and `processing`; post-deploy verification read 720 artifacts through the pack path across April-July with 0 failures. Unblocks Plan 132 Stage 2 |
 | [134](plan_134_archiver_endpoint_failure_contract.md) | Archiver endpoint failure contract | Draft — measurement-first rollout not started |
 | [135](plan_135_storage_observability.md) | Storage observability | **Complete 2026-08-18** — both disks visible, alerts proven, all log stores bounded, runbook live, `df /` 79% → 51%; criterion 5's MinIO half publishes on the first Sunday slow-tier walk (2026-08-23) |
 | [136](plan_136_solver_recycle_and_liveness.md) | Solver recycle + real liveness detection | **Stage 0 verified in production; Stage 1 transferred to Plan 143 before deployment** — prototype commit `584f100` established the fail-loud contract but not the accepted serving design. 0b is Plan 140 Stage 2; Stages 2-4 not started |
 | [137](plan_137_legacy_bronze_parquet_disposition.md) | Legacy bronze Parquet recovery and disposition | Draft — read-only inventory complete; no deletion authorized |
 | [138](plan_138_public_surface_refresh.md) | README and public portfolio surface refresh | Draft — audit complete; analytics acquisition/database removal transferred to Plan 143, while public presentation remains here |
 | [139](plan_139_test_suite_maintenance.md) | Test suite construction and maintenance | **Stages A+B complete 2026-08-18** (PR #213) — coverage reported at 88%, CI path 333s → ~260s; Stages C/D remain queued as opportunistic filler; analytics producer coverage transferred through Plan 136 to Plan 143 |
-| [140](plan_140_service_health_contract.md) | Service health contract | **Stage 3 verified; Stage 1 deployed 2026-08-18 and in 24-hour soak** (PR #216, merge `821a6a6`) — deploy intent was declared through the admin UI and the system drained before recreation; all 25 configured runtime checks were healthy with zero failing streaks, including active `trawl` and `redis-trawl`. Stage 2 has not started |
+| [140](plan_140_service_health_contract.md) | Service health contract | **Stages 1 and 3 complete; Stage 1 soak verified 2026-08-20** (PR #216, merge `821a6a6`) — 25 of 25 configured runtime checks healthy with zero failing streaks at 46 hours, including active `trawl` and `redis-trawl`, and zero false pages from the eighteen new checks. Stage 2 is next; amended 2026-08-20 to a dedicated scrape-time exporter behind `docker-socket-proxy`, scoped to the default project's running services |
 | [141](plan_141_structured_log_ingestion_contract.md) | Structured log ingestion and dashboard contract | Draft — routed from Plan 135 closeout; parsing, labels, privacy policy, dashboards, and capacity soak not started |
 | [142](plan_142_planned_host_maintenance.md) | Planned host maintenance and production quiescence | Draft — separate maintenance intent, truthful drain, checked-in apt/reboot procedure, and Plan 140-gated resume not started |
-| [143](plan_143_analytics_serving_snapshot.md) | Analytics serving snapshot and reader consolidation | **Deployed 2026-08-18; Stage 5 acceptance correction pending** — PR #217, merge `e5d3a46`; producer and snapshot checks passed, but Grafana ownership/cadence defects reset the soak. Status check: 2026-08-19 15:00 CDT (20:00 UTC) |
+| [143](plan_143_analytics_serving_snapshot.md) | Analytics serving snapshot and reader consolidation | **Complete 2026-08-20** — PR #217 (`e5d3a46`) deployed the serving boundary; PR #218 (`a3cdd59`) corrected the Grafana ownership/cadence defects the first soak exposed. Corrected soak clean: 24 hourly publications, zero failed publishes, 3,580.9s worst-case freshness against a 4,500s threshold, zero lock conflicts, `/info` at 0.157s |
+| [144](plan_144_deploy_script_hardening.md) | Deploy script hardening | Draft — `--no-deps`, health polling instead of `sleep 10`, and the intent-release trap documented. Unblocked by Plan 140 Stage 1; the `# TODO Plan 76` comment in `scripts/redeploy.sh` points at a plan completed 2026-03-30 |
+| [69](plan_69_terraform.md) | Terraform IaC | Draft — **moved from backlog to build-order row 13 on 2026-08-20** as a stated prerequisite of Plan 121. First slice is `terraform import` until `plan` shows no diff against production |
 
 ---
 
@@ -246,11 +274,10 @@ host package or reboot authority.
 |---:|---|---|---|---|
 | 55 | M | [66](plan_66_sql_injection.md) | SQL injection audit | Pull forward after any new public mutation surface or auth-boundary change |
 | 52 | S | [122](plan_122_runtime_scraper_fetch_config.md) | Runtime scraper fetch configuration | Plan 136 telemetry shows timeout or solver tuning needs runtime control |
-| 40 | L | [79](plan_79_multi_instance.md) | Multi-instance detail scraping | IP flagging or single-host throughput becomes the measured constraint |
+| 40 | L | [79](plan_79_multi_instance.md) | Multi-instance detail scraping | IP flagging or single-host throughput becomes the measured constraint. **This is also the plan that would create genuine multi-host need**, and therefore the honest trigger for Plan 88 |
 | 38 | M | [94](plan_94_api_docs.md) | API documentation hub | Public or partner API consumption makes consolidated docs useful |
-| 32 | L | [69](plan_69_terraform.md) | Terraform IaC | Manual provisioning stops being stable or a second environment is approved |
 | 30 | M | [108](plan_108_deploy_trigger_endpoint.md) | Deploy trigger endpoint | Re-scope after Plan 136's narrower restart-authority design is proven |
-| 25 | XL | **88** | Kubernetes | Multi-host scheduling/availability needs exceed Compose, not merely service count |
+| 25 | XL | **88** | Kubernetes | Multi-host scheduling/availability needs exceed Compose, not merely service count. See the control-plane note below before re-scoring this |
 
 ---
 
@@ -265,10 +292,13 @@ those health and drain primitives for deliberate
 whole-host maintenance without granting application code reboot authority. Plan
 141 then makes log parsing and dashboard semantics a tested contract. Plan 134
 starts its warning-only observation window after 141 because
-enforcement depends on a week of trustworthy evidence. Plan 133 is a small,
-explicit prerequisite for Plan 132's packed
-artifact reparse; Plan 132 should prove the recovery path before Plan 137 reuses
-the same provenance and backfill safety at much larger scale. Most Plan 138 work
+enforcement depends on a week of trustworthy evidence. Plan 133 was that small,
+explicit prerequisite for Plan 132's packed artifact reparse and closed on
+2026-08-20; Plan 132 should prove the recovery path before Plan 137 reuses
+the same provenance and backfill safety at much larger scale. Plan 132 Stage 2
+also carries a measurement Plan 133 could not make: the verifier drops caches by
+design, so the `PACK_INDEX_CACHE_PACKS` 4-to-48 change is proven safe but not
+yet proven effective, and a month-sized sequential reparse is where that shows. Most Plan 138 work
 is independent, but its stats presentation consumes Plan 143; it belongs before
 the next major platform milestone so the public surface and its source-controlled
 work feed start from an accurate baseline.
@@ -283,7 +313,55 @@ stable analytics substrate and Plans 112/113 clarify refresh-policy promotion.
 
 **Plan 79 whenever needed** - IP flagging is not currently active.
 Prerequisites all exist. Provision Oracle Cloud VMs and fan out the DAG when
-needed.
+needed. Note that Plan 79 is also the plan that creates real multi-host need,
+which makes it the honest precondition for Plan 88 below.
+
+**The accumulating control-plane cost, and why Plan 88 still scores 25**
+(recorded 2026-08-20, after the question was raised directly). Several queued
+plans are, in effect, hand-built orchestration:
+
+| Plan | What it builds | Kubernetes equivalent |
+|---|---|---|
+| [142](plan_142_planned_host_maintenance.md) | Maintenance intent, drain, quiescence | `kubectl drain` / cordon |
+| [136](plan_136_solver_recycle_and_liveness.md) Stage 4 | Restart authority for an unhealthy service | Liveness probe + `restartPolicy` |
+| [140](plan_140_service_health_contract.md) Stage 2 | Container health as a metric | `kube-state-metrics` |
+| [108](plan_108_deploy_trigger_endpoint.md) | Deploy trigger endpoint | Updating a Deployment's image tag |
+| [144](plan_144_deploy_script_hardening.md) | Readiness-gated deploys | Rolling update with readiness probes |
+
+Priced together that is genuinely comparable to a single-node k3s migration, so
+**the honest reading is that 25 understates it** — and nobody was summing those
+rows. Four arguments still keep it there:
+
+1. **It would not have caught either 2026-08 incident.** The solver was a
+   *healthy* container reporting `status:ok` at a 0% solve rate for eight hours;
+   a Kubernetes liveness probe tells exactly the same lie, because it is the same
+   probe. The apiserver failure it would have restarted — but Plan 136 Stage 4
+   buys that specific win at S/M rather than XL.
+2. **Every real win in this system has come from domain observability, not
+   infrastructure** — solve-rate counters, extraction yield, pack-verification
+   refusal, snapshot freshness. An orchestrator supplies none of them, and Plan
+   136 Stage 2 remains the highest-value unbuilt work on this list.
+3. **One node gives reconciliation without scheduling.** The service count is not
+   the argument it appears to be: of 31 services there are 10 `build:` entries,
+   three of which are one-shot/profile-gated and one of which shares another's
+   image. Roughly six long-running first-party services sit behind ~20 vendor
+   containers. Kubernetes does not reduce that count; it re-expresses it as
+   Deployments, Services, PVCs, and ConfigMaps — typically 3-5x the YAML, plus a
+   control plane on a box already running everything in 23 GB.
+4. **It stalls the data-integrity chain.** Plans 132 and 137 are about not losing
+   data, and an XL migration puts them behind it.
+
+**The decision rule, so this stops being re-argued from feeling:** revisit Plan
+88 when a second host actually exists — which Plan 79 is what creates. A
+single-node migration is also the weakest version of the skills case for it,
+since it teaches manifest syntax rather than the multi-node scheduling, ingress,
+RBAC, and resource-budgeting work the technology is actually for.
+
+**Plan 69 is the counter-example and moved accordingly.** Terraform was pulled
+out of this backlog on 2026-08-20 into build-order row 13, because its trigger
+("a second environment is approved") fires the moment Plan 121 starts, and
+because it is the case where a marketable skill and a real engineering need
+point the same direction. Plan 88 is not yet that case; Plan 69 is.
 
 **Plans 114/129/130/131 bronze storage sequence** - Plan 114 measured sectioned
 dedup and rejected it (-223%; MinIO's ~8 KB/object floor). Plan 129 shipped the
@@ -340,6 +418,8 @@ alongside the default build-order table.
 
 | Plan | Completed | Public summary |
 |---|---|---|
+| [143](plan_143_analytics_serving_snapshot.md) | 2026-08-20 | Moved analytics metrics and the public statistics page onto a versioned snapshot published by the service that builds the data, removing recurring database reads from the public request path. |
+| [133](plan_133_pack_read_path_hardening.md) | 2026-08-20 | Closed two gaps in how archived HTML is read back after compaction, so recovery jobs retry stranded work instead of abandoning it. |
 | [114](plan_114_sectioned_html_artifact_audit.md) | 2026-08-10 | Measured sectioned HTML storage on production data, rejected it on storage economics, and identified dictionary compression and packing as the better reversible path. |
 | [128](plan_128_false_block_detection.md) | 2026-07-20 | Fixed challenge-page misclassification, preserved cooldown state, reconciled cleanup behavior, and closed the historical-repair decision. |
 | [111](plan_111_adaptive_detail_refresh.md) | 2026-07-06 | Built listing-state fingerprints, state runs, volatility features, and initial adaptive-refresh priority outputs. |

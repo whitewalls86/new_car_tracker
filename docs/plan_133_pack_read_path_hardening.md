@@ -2,8 +2,11 @@
 
 ## Status
 
-**Implementation complete — pre-deployment real-pack canary passed; post-deploy
-verification pending.** Two defects found on 2026-08-14 while verifying
+**COMPLETE — deployed and verified in production 2026-08-20.** Merged as PR #219
+(`5066bc1`); both defects are fixed, and the post-deploy gate re-ran across all
+four packed months with **720 artifacts verified and 0 failures**. This unblocks
+[Plan 132](plan_132_unrecorded_artifact_recovery.md) Stage 2. Two defects found
+on 2026-08-14 while verifying
 [Plan 131](plan_131_packed_cold_storage.md) Stage 3 in production. Both are
 real, neither blocked Plan 131 Stage 4, and both become blocking for
 [Plan 132](plan_132_unrecorded_artifact_recovery.md)'s reparse.
@@ -164,6 +167,77 @@ the production services use the merged code.
 
 ---
 
+## Production deployment and post-deploy verification — 2026-08-20
+
+Deployed through the existing deploy-intent/drain procedure. Intent was declared
+with `pause_long_jobs: true` — Plan 131's pack and prune jobs use the read path
+this plan changes, so they had to stop at a safe boundary rather than mid-pack.
+The system was already quiet (0 in-flight, no running DAGs) and drained on the
+first poll.
+
+**Scope: four services**, chosen by tracing callers rather than rebuilding
+everything that bakes `shared/`:
+
+| Service | Reason |
+|---|---|
+| `ops` | `maintenance.py::_reap_stuck_processing` calls `artifact_exists` — defect 1 |
+| `archiver` | `pack_bronze_html.py` reads through `read_html`; also hosts the verifier |
+| `pack-worker` | Shares the `cartracker-archiver` image; needs recreation to pick up the rebuild |
+| `processing` | `batch.py::_read_html` is defect 2's hot path |
+
+`scraper` only writes (`write_html`), and `dashboard`/`dbt_runner` never read
+bronze, so they were left to pick up `shared/` on their next deploy.
+
+| Gate | Evidence |
+|---|---|
+| Revision | Production already at `5066bc1`; `git pull` was a no-op, confirming the code was **pulled but never built** |
+| Loaded code | All four containers were asked directly: `artifact_exists` imports, `PACK_INDEX_CACHE_PACKS=48`, pack fallback present. The reaper calls `artifact_exists` and no longer calls bare `object_exists` |
+| Dependency side effect | `redeploy.sh` omits `--no-deps`, so `flyway` re-ran. It validated 43 migrations, found schema at `042` with none pending, and exited 0. `postgres` and `minio` were left running |
+| Fleet health | All four services healthy with `failing_streak=0` and `RestartCount=0`; every running healthchecked container healthy; 0 ERROR lines in 20 minutes |
+| Reaper on new code | `POST /maintenance/reap-stuck-processing` returned 200 on the 5-minute `orphan_checker` cycle |
+| Work resumed | `scrape_detail_pages` succeeded at 15:45-15:46 at its normal 400 fetches per 15-minute cycle; queue 1600 complete, 0 pending |
+
+### The closeout gate — `verify_pack_read_path`, all four months
+
+| Month | Sidecars | Sampled | Verified | Failed | Sources already deleted |
+|---|---:|---:|---:|---:|---:|
+| April | 32 | 160 | 160 | **0** | 160 |
+| May | 41 | 205 | 205 | **0** | 205 |
+| June | 38 | 190 | 190 | **0** | 190 |
+| July | 33 | 165 | 165 | **0** | 165 |
+| **Total** | **144** | **720** | **720** | **0** | **720** |
+
+Every sampled loose source object was already deleted, so all 720 reads
+exercised the pack-aware branch rather than falling through to an object.
+
+### Latency, and what it does and does not prove
+
+| Month | cold p50 before | cold p50 after | cold p95 before | cold p95 after |
+|---|---:|---:|---:|---:|
+| April | 206.65 ms | **174.42 ms** | 361.93 ms | **302.43 ms** |
+| May | 296.34 ms | **256.31 ms** | 673.92 ms | **447.90 ms** |
+| June | — | 279.61 ms | — | 442.60 ms |
+| July | — | 230.80 ms | — | 393.58 ms |
+
+June and July have no pre-change baseline; they were packed after the 2026-08-14
+measurement.
+
+**This improvement is the column-pruned sidecar parse, not the cache-size
+change.** The verifier drops every cache before each cold read by design, so
+`pack_cold` measures the no-cache path — where the only change is parsing one
+`source_key` column instead of all of them. Raising `PACK_INDEX_CACHE_PACKS`
+from 4 to 48 is invisible to this measurement, because the verifier never lets
+the cache survive.
+
+The cache change is therefore **verified as safe here, not verified as
+effective**. Its payoff is a sequential scan over a whole month, which is
+[Plan 132](plan_132_unrecorded_artifact_recovery.md) Stage 2's reparse workload.
+That reparse is where the ~3-hour index-scanning estimate should be re-measured,
+and it is the correct place to confirm defect 2 is actually fixed rather than
+merely un-regressed.
+
+---
+
 ## Files Changed
 
 | File | Change | Defect |
@@ -175,12 +249,12 @@ the production services use the merged code.
 
 ## Success Criteria
 
-| Metric | Gate |
-|--------|------|
-| A stranded artifact whose source was pruned | `retry`, never `skip` |
-| Cold read p50 after a month-sized scan | no worse than a single sidecar fetch |
-| `verify_pack_read_path` after the change | 0 failures, April-May-June-July |
-| Consumers interrogating `html/` outside a pack-aware path | Zero — existence checks included this time |
+| Metric | Gate | Result |
+|--------|------|--------|
+| A stranded artifact whose source was pruned | `retry`, never `skip` | **Met** — reaper calls `artifact_exists` in production; bare `object_exists` no longer reachable from it |
+| Cold read p50 after a month-sized scan | no worse than a single sidecar fetch | **Not measured by this gate** — the verifier drops caches by design. Re-measure during Plan 132 Stage 2's reparse |
+| `verify_pack_read_path` after the change | 0 failures, April-May-June-July | **Met** — 720 sampled, 720 verified, 0 failed |
+| Consumers interrogating `html/` outside a pack-aware path | Zero — existence checks included this time | **Met** — caller trace before deploy found `read_html`/`artifact_exists` only in `ops`, `archiver`, `processing`, plus read-only audit scripts |
 
 ## Out of Scope
 

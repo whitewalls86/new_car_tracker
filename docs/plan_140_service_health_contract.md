@@ -2,15 +2,16 @@
 
 ## Status
 
-**STAGE 3 VERIFIED; STAGE 1 DEPLOYED AND IN 24-HOUR SOAK SINCE 2026-08-18.**
+**STAGES 1 AND 3 COMPLETE AND VERIFIED; STAGE 2 IS THE NEXT EXECUTABLE SLICE.**
 [PR #216](https://github.com/whitewalls86/new_car_tracker/pull/216) merged the
 implementation as `821a6a6`, adding eighteen healthchecks and taking configured
 coverage from 7 of 31 services to 25 of 31. The six remaining services are the
 five deliberate one-shot/profile exemptions plus `oauth2-proxy`, whose current
 distroless image cannot execute a probe. The immediate production gate passed:
-all 25 configured runtime checks were healthy with zero failing streaks. Stage
-1 remains open until the 24-hour soak is clean. Stage 2's metric and alerts have
-not started. Stage 3's fail-loud CI contract is complete and verified.
+all 25 configured runtime checks were healthy with zero failing streaks. **The
+24-hour soak closed clean on 2026-08-20** — see the soak record below. Stage 3's
+fail-loud CI contract is complete and verified. Stage 2's metric and alerts have
+not started, and the soak surfaced a scoping hazard they must handle.
 
 This plan exists because the previous two were each correct and each too narrow.
 [Plan 135](plan_135_storage_observability.md) made two disks visible.
@@ -171,7 +172,7 @@ point.
 
 ## Stages
 
-### Stage 1 — Healthchecks everywhere — DEPLOYED 2026-08-18; SOAK PENDING
+### Stage 1 — Healthchecks everywhere — COMPLETE; SOAK VERIFIED 2026-08-20
 
 Add `healthcheck:` to every in-scope service. Cheapest first, since the app tier
 is nearly free:
@@ -231,22 +232,161 @@ work resumed.
 The immediate gate is therefore green. Keep Stage 1 open until the same audit
 remains clean after 24 hours; only then begin Stage 2's metric and alert rollout.
 
+#### 24-hour soak record — verified 2026-08-20
+
+The audit was repeated at 2026-08-20 15:14 UTC, approximately 46 hours after the
+17:03 UTC recreation and well past the 24-hour gate.
+
+| Gate | Soak evidence |
+|---|---|
+| Runtime contract | All **25** services with configured checks reported `health=healthy` with `failing_streak=0`, including active `trawl` and `redis-trawl` |
+| False positives | No service flipped unhealthy at any point in the window; the `loki` and `pgadmin` `health: starting` readings were confined to their original startup periods |
+| Expected no-health state | Running `oauth2-proxy` remained the documented distroless exception; `flyway` and `airflow-init` remained completed one-shots |
+
+Stage 1 is closed. The twenty new healthchecks did not produce a single false
+page in 46 hours, which was the risk this soak existed to price.
+
+#### What the soak found that Stage 2 must handle
+
+The audit enumerated containers rather than compose services, and that surfaced
+a defect Stage 2 would otherwise have shipped:
+
+| Container | State | Compose project | In `docker-compose.yml`? |
+|---|---|---|---|
+| `cartracker-lakekeeper` | exited 0, reports `unhealthy` | `cartracker-lakehouse` | **No** |
+| `cartracker-lakekeeper-postgres` | exited 0, reports `unhealthy` | `cartracker-lakehouse` | **No** |
+| `cartracker-mlflow` | exited 137, reports `unhealthy` | `cartracker-mlflow` | **No** |
+| `cartracker-lakekeeper-migrate` | exited 0, no health | `cartracker-lakehouse` | **No** |
+
+**These are not orphans from deleted services.** They belong to two separate,
+still-present compose projects — `docker-compose.lakehouse.yml` and
+`docker-compose.mlflow.yml` — supporting
+[Plan 125](plan_125_duckdb_to_iceberg_migration.md) and
+[Plan 112](plan_112_refresh_policy_backtesting.md). All three long-running ones
+stopped at the 2026-08-18 04:22 UTC host restart and did not come back, because
+they carry no restart policy and are not part of the default project. Docker
+still holds their last health state, and three report `unhealthy` permanently.
+
+**A Stage 2 collector that walks `docker ps -a` would therefore publish four
+permanent `0`s and page forever**, for services no one intends to be running.
+This is the same failure shape the plan is built against, inverted: not a missing
+signal, but a signal for something that should not be enumerated at all.
+
+The distinction matters for how Stage 2 scopes itself. "Compose-managed" is not
+a tight enough filter — these *are* compose-managed. The collector must scope to
+**the running services of the default `cartracker` project**, and the `-1`
+unconfigured state must apply only to services `docker-compose.yml` itself
+declares. A sibling project that is deliberately down must be invisible to this
+metric, not reported as broken.
+
+That also sets the rule for the reverse case: if the lakehouse or MLflow stack
+is ever brought up as part of normal production, it needs its own health
+coverage decision rather than inheriting one by accident.
+
+##### Resolved 2026-08-20 — containers removed, state preserved
+
+Both sibling projects were taken down cleanly, which removed the four stale
+health states at their source:
+
+```bash
+docker compose -f docker-compose.lakehouse.yml -p cartracker-lakehouse down
+docker compose -f docker-compose.mlflow.yml   -p cartracker-mlflow    down
+```
+
+**Neither command was given `-v`, and neither should be.** The projects' state
+lives in named volumes rather than in the containers, and both survived intact:
+`cartracker-lakehouse_lakekeeper_pgdata` at 67 MB — the Iceberg catalog Plan 125
+Gate D depends on — and `cartracker-mlflow_mlflow_store` at 228 KB, holding Plan
+112's tracking runs. `cartracker-net` is declared `external: true` in both files,
+so Compose left the shared network alone; it still carries 26 containers.
+
+Reversing this is `up -d` with the same `-f`/`-p` pair when Iceberg or
+backtesting work resumes. Neither compose file has a top-level `name:` key, so
+**the `-p` flag is required** — omitting it creates a differently-named project
+that will not find the existing volumes.
+
+The host now reports zero unhealthy containers, so Stage 2 can be built and
+validated against a clean baseline. The scoping requirement above still stands
+on its own: it must not be satisfied by this cleanup having happened, because
+the next `up` of either project would reintroduce exactly the same condition.
+
 ### Stage 2 — The metric and the alert
 
-Emit `cartracker_container_health` with the three states above, through the
-node-exporter textfile collector [Plan 135](plan_135_storage_observability.md)
-Stage 4 already built and proved. That is a second producer into working
-plumbing rather than a new exporter.
+Emit `cartracker_container_health` with the three states above.
 
-Needs read-only Docker socket access. **Plan 136 Stage 4 proposes a
-`docker-socket-proxy` for restart authority — if it has landed, read through it.
-Do not add a second socket path.**
+#### Amended 2026-08-20: a dedicated exporter, not the textfile collector
 
-Alerts:
+This stage originally specified node-exporter's textfile collector, on the
+reasoning that [Plan 135](plan_135_storage_observability.md) Stage 4 had already
+built and proved that plumbing, so this would be "a second producer into working
+plumbing rather than a new exporter."
+
+**That reasoning does not survive comparing the two producers' cost profiles.**
+Plan 135 needs the textfile collector because a `du -s -x` walk of the watchlist
+took 456 seconds — work that cannot happen inside a scrape handler, so it must
+be done ahead of time and left in a file. Reading container health is a single
+Docker API call in the low tens of milliseconds. It is the opposite case: cheap
+enough to generate *at scrape time*.
+
+Generating at scrape time removes work rather than adding it:
+
+| Concern | Textfile collector | Dedicated `/metrics` |
+|---|---|---|
+| Staleness | Needs a companion timestamp metric, a staleness alert, and carry-forward reasoning | **Structurally impossible** — the value is computed when Prometheus asks |
+| Liveness of the collector itself | Nothing watches it; a dead writer reads as a healthy fleet | `up{job="container-health"}` |
+| Socket grant lands on | A service that also holds Postgres and MinIO credentials | A container with no other credentials |
+| Shared volume and atomic writes | Required | Not needed |
+
+This follows [Plan 143](plan_143_analytics_serving_snapshot.md)'s pattern — the
+service that owns the data exposes `/metrics` and Prometheus scrapes it directly
+— rather than Plan 135's. Add a `container-health` scrape job to
+`prometheus/prometheus.yml`.
+
+The staleness problem this deletes is not hypothetical. It is precisely what
+Plan 143 spent a full 24-hour soak correcting, and Plan 136 D2 before it.
+
+#### Scope: the default project's running services
+
+Scope the collector to **the running services of the default `cartracker`
+compose project**, for the reason the Stage 1 soak record documents above.
+
+Note that "compose-managed" is *not* a sufficient filter — the four containers
+that soak found were compose-managed, just by a different project. Key on the
+`com.docker.compose.project` label.
+
+#### Socket access: `docker-socket-proxy`, and why `:ro` is not enough
+
+**Do not mount `/var/run/docker.sock` with `:ro` and call it read-only.** That
+flag makes the socket *file* read-only; it does nothing to the Docker API
+reachable through it. Any client that can connect can issue
+`POST /containers/{id}/restart`, `kill`, or create a privileged container.
+
+`docker-socket-proxy` with `CONTAINERS=1` and `POST=0` is the only option that
+actually enforces read-only access, and it gives
+[Plan 136](plan_136_solver_recycle_and_liveness.md) Stage 4 a narrow, explicit
+place to later grant exactly one verb. **Do not add a second socket path** when
+that stage lands.
+
+`promtail` already carries a `/var/run/docker.sock:...:ro` mount
+(`docker-compose.yml:951`) for log-discovery metadata, which is the same
+full-API grant. That is pre-existing and out of scope for this stage, but it
+should not be read as a precedent that settles this decision.
+
+#### Alerts
 
 - `ct-container-unhealthy` — any `0` for 5m.
 - `ct-container-health-unconfigured` — any `-1`. Not an incident; a **coverage**
   alert, routed accordingly. It should read as "this plan regressed."
+
+No staleness alert is needed, because the exporter cannot serve a stale value.
+Its liveness is `up{job="container-health"}`.
+
+**That last point requires fixing `ct-service-down` first.** It currently selects
+`up{job=~"ops|processing"}` — an allowlist covering two of eight scrape jobs,
+which is the same defect this plan exists to close, sitting in the alert file.
+Until it covers every job, "the exporter's liveness is `up`" is an aspiration
+rather than a fact. Widen it, and add a coverage test in the same style as
+`TestServiceHealthCoverage`.
 
 Follow the both-directions validation Plan 131 used for
 `ct-pack-verification-refused`: prove the selector matches live series, prove
