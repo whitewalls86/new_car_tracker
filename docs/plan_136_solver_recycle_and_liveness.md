@@ -2,8 +2,9 @@
 
 ## Status
 
-**Stage 0 complete and verified in production 2026-08-18. Stage 2 implemented
-2026-08-20, not yet deployed. Stages 3 and 4 not started.**
+**Stage 0 complete and verified in production 2026-08-18. Stage 2 deployed to
+production 2026-08-20 (PR #223, merge `50bba68`) and in its 24-hour soak until
+2026-08-21 ~20:42 UTC. Stages 3 and 4 not started.**
 
 Stage 0 shipped as PR #214, merge `8b2254b`; see
 [Stage 0 production verification](#stage-0-production-verification-2026-08-18).
@@ -13,7 +14,9 @@ The unshipped Stage 1 prototype at commit `584f100` exposed the right failure
 contract but the wrong serving boundary; [Plan 143](plan_143_analytics_serving_snapshot.md)
 now owns its redesign, deployment, and soak.
 
-[Stage 2](#stage-2--a-liveness-signal-that-does-not-pass-through-dbt) is built:
+[Stage 2](#stage-2--a-liveness-signal-that-does-not-pass-through-dbt) is
+deployed; see its
+[production deployment record](#production-deployment--2026-08-20). It ships:
 two scraper-owned outcome counters, a `scraper` Prometheus job,
 `ct-solver-not-solving` and `ct-detail-fetch-failing`, and D1's remaining
 partial-hour defect fixed at its source. Two things changed from the plan as
@@ -40,8 +43,15 @@ adds D4 and D5 and a new [Stage 0](#stage-0--the-apiserver-fixes-and-container-h
 Still nothing applied; the only action taken was
 `docker restart cartracker-airflow-apiserver`.
 
-Two incidents now share one root cause: **the health of a component is not a
-signal this system collects.** Both were found by noticing damage downstream.
+**Extended again 2026-08-20** with [D6](#d6--a-recreated-exporter-silently-orphans-every-long-lived-statsd-sender):
+the Airflow scheduler had been sending its metrics to a dead UDP address for two
+days, so seven of eight DAG panels were empty and `ct-pipeline-failures` was
+blind. Found by a human looking at a dashboard. Again nothing alerted, and this
+time **the thing that died was the detection mechanism itself.**
+
+Three findings now share one root cause: **the health of a component is not a
+signal this system collects.** Every one was found by noticing damage
+downstream — never by an alert.
 
 ## The incident
 
@@ -243,6 +253,130 @@ giving up, which throttled the error rate below every tripwire:
 A solver that fails fast would have tripped the 403 alert in minutes. A solver
 that fails slowly is invisible. Thresholds tuned to burst failures do not detect
 throughput collapse.
+
+---
+
+## D6 — A recreated exporter silently orphans every long-lived statsd sender
+
+**Found 2026-08-20 by a human noticing empty dashboard panels. Confirmed and
+fixed the same day; the detection gap is not fixed.**
+
+Third instance of this plan's thesis, and the first one where *the detection
+mechanism itself* was what died.
+
+| | |
+|---|---|
+| Started | 2026-08-18 17:03:06 UTC |
+| Detected | 2026-08-20 ~21:05, **by a human looking at the Pipeline Health dashboard** |
+| Duration | **~2 days 4 hours** |
+| Resolved | 21:11:53 UTC, `docker restart cartracker-airflow-scheduler` |
+| Cost | No data lost. Two days with no DAG-level monitoring and a **blind failure alert** |
+
+### What broke
+
+Seven of the eight Airflow panels on Pipeline Health returned nothing, and so
+did **`ct-pipeline-failures`** — the alert that detected the apiserver incident
+in this very plan. Its `noDataState` is `OK`, so a dead input rendered as a quiet
+green rule rather than as a problem.
+
+Only `airflow_ti_successes` survived, and that survivor is the whole diagnosis.
+
+### The mechanism
+
+`statsd-exporter` was recreated at 17:03:06 on 2026-08-18 — **the Plan 140 Stage
+1 deploy**, which gave it a `healthcheck:` block and therefore a new container
+and a new IP. The last sample of every scheduler-emitted metric is 17:07.
+
+The Python statsd client resolves its destination **once, when it is
+constructed**, and then `sendto()`s the cached address. The scheduler had been
+running since 04:58 that morning and never restarted, so from 17:03 it addressed
+UDP packets to an IP nothing was listening on. **UDP fails silently** — no
+exception, no log line, no error metric.
+
+That is exactly why `airflow_ti_successes` lived: task metrics come from
+short-lived LocalExecutor task processes, which construct a fresh client and
+resolve DNS every run. Long-lived process, dead metrics; short-lived processes,
+working metrics. Split by process lifetime, not by metric.
+
+Evidence, in the order it settled the question:
+
+| Observation | Rules out |
+|---|---|
+| Last sample 17:07 vs exporter recreated 17:03:06 | Coincidence |
+| Exporter healthy, `statsd_exporter_udp_packets_total` = 67,099 | A dead or deaf exporter |
+| Zero live `airflow_scheduler_*`/`dagrun_*`/`pool_*`; task metrics live | Airflow not emitting at all |
+| Scheduler `restarts=0`, running since before the recreate | A scheduler crash |
+| `gethostbyname` in the scheduler container returns the *correct* new IP | Broken DNS |
+| Its UDP sockets are unconnected (`rem_address 0.0.0.0:0`) | A connected socket that would have errored |
+| **Restart alone restored them in 80s, no config change** | Everything else |
+
+### Why this belongs here and not in Plan 140
+
+Plan 140 Stage 1 *caused* it, but Plan 140 could not have caught it and neither
+could anything else in the stack:
+
+- `cartracker_container_health` reports statsd-exporter **healthy**, and it is.
+  The container is fine; the pipe into it is dead. This is D4's "healthy metrics
+  sidecar in front of a dead thing" with the layers inverted.
+- `up{job="airflow"}` is **1** throughout, because that job scrapes the
+  exporter, not the scheduler.
+- D2 said a gauge can retain a stale value and look live. This is the sharper
+  version: the series **vanish**, and `noDataState: OK` turns absence into
+  silence. Absence is not the safe direction for a metric that should always be
+  present.
+
+**The generalisation is the important part.** Any long-lived process holding a
+cached peer address loses it when the peer is recreated, and a deploy that
+recreates containers is the normal case, not an exotic one. Anything that talks
+UDP or holds a long-lived resolved address is exposed. The failure is silent by
+construction.
+
+### What is fixed and what is not
+
+Fixed by the restart, confirmed: `airflow_pool_open_slots` and
+`airflow_scheduler_heartbeat` returned within 80 seconds, and
+`airflow_dagrun_duration_success{dag_id="..."}` at the next DAG completion
+(21:15). Panels 4, 5 and 8 and `ct-pipeline-failures`'s input are live again.
+
+Not fixed, and owed:
+
+1. **`ct-pipeline-failures` must treat NoData as a failure.** For a metric that
+   should always be present, `noDataState: OK` is the defect. Plan 143 already
+   set this precedent with `ct-metrics-freshness`.
+2. **A staleness signal for the Airflow scrape**, since `up` cannot see this.
+3. **A deploy-time check for the class**, not this instance: recreating a
+   service can orphan long-lived senders. `promtail` and `postgres-exporter` are
+   worth auditing for the same exposure.
+
+Items 1-3 are the reason this is a defect and not just an incident log: the
+restart fixes today, and nothing yet would catch the next one.
+
+### Two older defects this investigation uncovered, which the restart did not fix
+
+Chasing D6 answered "why is the dashboard empty?" only partly. Three of the
+eight Airflow panels were broken *before* 2026-08-18 and by unrelated causes.
+Recording them here so they are not misfiled as D6 fallout:
+
+| Panel | Queries | Reality | Cause |
+|---|---|---|---|
+| 3. Scheduler Tasks Running | `airflow_scheduler_tasks_running` | only `..._executable` and `..._starving` exist; **no data in 30 days** | Airflow 3 metric rename |
+| 6. DAG Scheduling Delay | `airflow_dagrun_schedule_delay` | Airflow emits `airflow.dagrun.first_task_scheduling_delay.<dag_id>` | Airflow 3 metric rename — **and `grafana/statsd_mapping.yml` still maps the old `airflow.dagrun.schedule_delay.*`**, so it arrives unmapped as `airflow_dagrun_<dag_id>_first_task_scheduling_delay` with the dag_id welded into the name |
+| 2, 7. Task Failures / Success Rate | `airflow_ti_failures` | absent until a task actually fails | Structural: a counter that has never fired has no series |
+
+Panel 6 therefore needs **two** edits, a mapping entry and a panel expression,
+and fixing only one leaves it blank. Panels 2 and 7 should render `0` rather
+than "No data" when nothing has failed — the same defect Plan 140 fixed for its
+health tiles, and pinned there by
+`test_health_tiles_read_zero_rather_than_no_data`. A failures panel that reads
+"No data" when healthy is indistinguishable from one whose metric has died,
+which is precisely how D6 hid for two days.
+
+**The general lesson is that nothing tested these panels against the metrics
+that actually exist.** Two are querying names Airflow stopped emitting at the
+3.x migration and nobody noticed, because an empty panel and a healthy system
+look identical. That is a dashboard-contract problem and belongs with
+[Plan 141](plan_141_structured_log_ingestion_contract.md), which owns dashboard
+selectors — with the caveat that these are Prometheus selectors, not Loki ones.
 
 ## Goal
 
@@ -541,12 +675,89 @@ could is what cost eight hours.
 
 > Verify: replay the incident by pointing the scraper at a deliberately broken
 > solver URL in staging; alert fires within 15 min.
->
-> **Deploy verification owed:** `up{job="scraper"}` is 1 and all six outcome
-> series are present *before* trusting either alert. Plan 140's deploy showed a
-> single-file bind mount pins an inode, so `git pull` + SIGHUP can reload the
-> *old* Prometheus config while logging success — check the running config, not
-> the repo.
+
+### Production deployment — 2026-08-20
+
+Deployed to `50bba68` (PR #223) at 20:42 UTC. Deploy intent was declared first
+with zero in-flight executions and released afterwards — unlike Plan 140 Stage
+2's deploy, which correctly skipped it, because this one rebuilds `scraper`,
+`processing` and `dbt_runner` and therefore touches the scrape and processing
+paths.
+
+| Check | Result |
+|---|---|
+| Prometheus reading the **new** config | `job_name: scraper` present in the running file |
+| Scrape targets | **10** of 10 up, including the new `scraper` |
+| Six outcome series | all present at `0`, `job="scraper"`, **before any traffic** |
+| `ct-solver-not-solving` expression | 1 series, value 0 |
+| `ct-detail-fetch-failing` expression | 1 series, value 0 |
+| Rules provisioned | 20 (18 + 2), both new ones `health: ok`, inactive |
+| `ct-container-unhealthy` | 28 of 28 `Normal` through three container recreates |
+
+The last row is Plan 140's soak evidence arriving early and by accident. The
+false page it corrected was *triggered by a container restart*, and this deploy
+restarted three; all 28 instances stayed Normal. That is the `== bool` fix
+tested against the exact scenario that broke the filtering form.
+
+**The single-file bind-mount trap reproduced exactly**, hours after Plan 140
+first documented it, and was caught only because that finding said to look:
+
+```
+host:      519823
+container: 519700   <- still the pre-pull inode
+```
+
+`docker restart cartracker-prometheus` re-resolved it to `519823`. A SIGHUP
+would have logged a successful reload of a config with no `scraper` job in it.
+This is now twice in one day and belongs in the deploy procedure rather than in
+an operator's memory — routed to
+[Plan 144](plan_144_deploy_script_hardening.md).
+
+#### D1's partial-hour fix, verified at the 21:00 build — green
+
+The one part the deploy could not check on the spot, because it needed a
+scheduled `hourly_analytics_refresh` to run.
+
+| Check | Result |
+|---|---|
+| Snapshot published | `cartracker_analytics_snapshot_refresh_success` = **1**, in 0.130s |
+| `last_success_at` | 21:01:23 UTC — the 21:00 build |
+| `data_through` | **2026-08-20T20:00:00Z** — the last *complete* hour, not 21:00 |
+| `cartracker_observation_count_last_hour` | **8,133** |
+
+The old behaviour is visible in the gap between those last two rows. At 21:01
+the unfixed query would have selected the 21:00 bucket — about one minute of
+data — and published it as an hourly total against a threshold of 100. It now
+publishes 8,133 for a genuinely complete hour, and `/info` names the hour the
+count actually describes.
+
+#### First live counter readings, 21:02 UTC
+
+Twenty minutes after deploy, one `scrape_detail_pages` cycle in:
+
+```
+cartracker_solver_requests_total{outcome="ok"}         1
+cartracker_solver_requests_total{outcome="challenge"}  0
+cartracker_solver_requests_total{outcome="error"}      0
+cartracker_detail_fetch_total{outcome="ok"}          457
+cartracker_detail_fetch_total{outcome="403"}           0
+cartracker_detail_fetch_total{outcome="error"}         1
+```
+
+**This is the measurement that retroactively justifies the two-rule split.** One
+solver bootstrap against 457 detail fetches — a 457:1 ratio, and a healthy solver
+rate of roughly 3/hour against the ~2.4/hour predicted from the 25-minute
+`_CF_SESSION_TTL`. The plan's original single rule guarded on
+`rate(solver_total[15m]) > 0`, which on this evidence is **false for most of a
+healthy hour**. It would have been a blind alert for long stretches, and the
+reason is a caching constant, not anything the incident write-up recorded.
+
+It also sizes both guards against reality: healthy non-`ok` solver volume is 0,
+well under `> bool 5`; and 457 fetches per cycle sits far above
+`ct-detail-fetch-failing`'s `> bool 20`.
+
+**Soak:** 24 hours to 2026-08-21 ~20:42 UTC — that both new rules stay inactive,
+and that the counters show enough shape to answer open question 2.
 
 ## Stage 3 — Scheduled recycle
 

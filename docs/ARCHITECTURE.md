@@ -147,8 +147,22 @@ is_idle()      # returns True when counter == 0
 1. Set deploy_intent → Airflow sensors block new DAG runs from starting
 2. Poll GET /ready on each draining service until all return {"ready": true}
 3. docker compose up -d --no-deps <service>
-4. Set deploy_intent back to 'none' → sensors unblock, work resumes
+4. Poll docker inspect health until every recreated service is healthy
+5. Set deploy_intent back to 'none' → sensors unblock, work resumes
 ```
+
+`scripts/redeploy.sh` runs steps 3-5. Step 4 replaced a `sleep 10` in Plan 144;
+its timeout is derived from the slowest healthcheck in `docker-compose.yml` and
+checked in CI. Step 5 is conditional: intent is released after a failed *build*,
+because nothing was recreated, and **held** after a failed recreation, because a
+half-deployed fleet should not have work resuming against it.
+
+A change to a **bind-mounted config file** is not this flow. Compose sees no
+service-config drift and does nothing, and for the six services that mount a
+single *file* rather than a directory a `SIGHUP` reload silently reloads the old
+inode. Use `scripts/redeploy.sh --config <service>`, which restarts and then
+verifies the container is reading the file that is on disk. See
+[Plan 144](plan_144_deploy_script_hardening.md).
 
 ---
 

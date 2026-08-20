@@ -2,10 +2,25 @@
 
 ## Status
 
-**Draft — not started.** Priority **78 (high)**. Effort **XS** (hours to 1 day).
+**Implemented 2026-08-20, not yet deployed.** Priority **78 (high)**. Effort
+**XS** (hours to 1 day).
 
 Small, concrete, and unblocked as of 2026-08-18. Every defect below was observed
-during the Plan 133 production deploy on 2026-08-20.
+during a real production deploy on 2026-08-20 — defects 1-3 during Plan 133's,
+defect 4 during Plan 140 Stage 2's, defect 5 during Plan 140 Stage 1's, two days
+after the fact.
+
+What landed:
+
+| File | What it is |
+|---|---|
+| `scripts/redeploy.sh` | `--no-deps`, a real health gate, a split intent-release rule, and a `--config` mode for bind-mounted config files |
+| `healthcheck-exemptions.txt` | The Plan 140 deny-list, moved out of the test file so the deploy poller and `TestServiceHealthCoverage` read one list |
+| `deploy-followers.txt` | Services whose peers cache their address, and what to restart after recreating them |
+| `tests/test_deploy_script.py` | The invariants none of the above can check at runtime |
+
+**Verification against production is still owed** — see
+[Verification](#verification). Nothing here has run on the VM.
 
 ## Why this exists now
 
@@ -30,7 +45,11 @@ services have one. The blocker cleared on 2026-08-18 and nothing noticed.
 "Service Health Gate," and it never owned this TODO. A comment pointing at a plan
 that finished five months ago is worse than no comment: it reads as tracked work.
 
-## The three defects
+## The defects
+
+They were three when this was drafted. Two more arrived from production before
+a line was written, and both are the same shape as each other: **a deploy action
+with an invisible side effect on a service the operator did not name.**
 
 ### 1. `docker compose up -d` without `--no-deps`
 
@@ -124,6 +143,40 @@ directories. Note that Grafana's *alerting* provisioning is read only at
 startup, while its dashboard provider re-reads every 30s — so "restart Grafana"
 is required for rules and optional for dashboards.
 
+### 5. A recreate silently orphans peers that cached the old address
+
+Found 2026-08-20 by a human noticing empty dashboard panels, and owed to this
+plan by [Plan 136](plan_136_solver_recycle_and_liveness.md) D6 item 3: *"a
+deploy-time check for the class, not this instance."*
+
+The Plan 140 Stage 1 deploy recreated `statsd-exporter` on 2026-08-18 at
+17:03:06, which gave it a new IP. Airflow's Python StatsD client resolves its
+destination **once, at construction**, then `sendto()`s the cached address. The
+scheduler had been up since 04:58 with `restarts=0`, so for **two days and four
+hours** it addressed UDP packets at an IP nothing was listening on. UDP fails
+silently: no exception, no log line, no error metric. Seven of eight Pipeline
+Health panels went blank and `ct-pipeline-failures` had no input at all, which
+`noDataState: OK` rendered as a quiet green rule.
+
+`airflow_ti_successes` survived and is the diagnosis: task metrics come from
+short-lived LocalExecutor processes that resolve DNS fresh each run. **The split
+is by process lifetime, not by metric** — so that metric looking healthy is not
+evidence of anything.
+
+Nothing in the stack could see it. The exporter was healthy and *is* healthy;
+`up{job="airflow"}` was 1 throughout, because that job scrapes the exporter
+rather than the scheduler. This is defect 4 with the transport swapped: an
+action that reports success while doing something other than what the operator
+believed.
+
+**`promtail` and `postgres-exporter` were audited and are not exposed.** The
+hazard is connectionless transport, not exporters. `promtail` pushes to `loki`
+over HTTP and `postgres-exporter` dials `postgres` over TCP; both see a
+connection error when the peer is recreated, re-resolve, and recover, and both
+surface the failure while it lasts. Every Prometheus scrape target is the same:
+`up` goes to 0. `statsd-exporter` is the fleet's only UDP receiver, and `up`
+cannot see a dead UDP pipe by construction.
+
 ## Out of scope
 
 - **Replacing the deploy mechanism.** [Plan 88](PLANS.md) (Kubernetes) is the
@@ -135,6 +188,115 @@ is required for rules and optional for dashboards.
   consume this script rather than fork it.
 - **A deploy trigger endpoint.** That is [Plan 108](plan_108_deploy_trigger_endpoint.md),
   which is backlogged pending Plan 136's narrower restart-authority design.
+- **Airflow's orphaned metrics.** Plan 136 owns that and already fixed it with a
+  restart. Defect 5 here is only the deploy-time warning for the *class*.
+- **Pipeline Health dashboard rot.** Panels 3 and 6 query metric names Airflow
+  stopped emitting at the 3.x migration, and `grafana/statsd_mapping.yml` still
+  maps `airflow.dagrun.schedule_delay.*`. That is Plan 141's dashboard contract.
+
+## Decisions
+
+Each defect asked for a judgement, not just a patch. These are the five, and
+they are also written into `scripts/redeploy.sh`'s header, where an operator
+reading the script at 2am will actually find them.
+
+### Dependencies are checked, never recreated — and the check is not a gate
+
+`--no-deps` is added. The remaining question was whether the script should
+*verify* dependency health in its place. It does, but only on failure: a health
+timeout prints `docker compose ps`, so the operator sees the fleet state at the
+moment the deploy broke.
+
+It is deliberately **not** a pre-flight gate, for two reasons. Healthchecks in
+this system are shallow by contract — `test_probes_never_reach_across_to_another_container`
+forbids a probe from touching another container — so a target reporting healthy
+proves nothing about its dependencies, and a gate would be claiming a guarantee
+it cannot make. And refusing to deploy while an unrelated service is unhealthy
+blocks shipping the fix during the incident that needs it.
+
+### The health timeout is derived from the compose file, not chosen
+
+Docker can take `start_period + retries * (interval + timeout)` to settle a
+container's health. Across `docker-compose.yml` the worst case is
+`30 + 5 * (30 + 10)` = **230s**, from the Plan 140 Stage 1 convention that
+twenty-four services share. The default is **300s**, and
+`DEPLOY_HEALTH_TIMEOUT` overrides it.
+
+The 70s of headroom is not the interesting part. The interesting part is that
+`test_the_health_timeout_covers_the_slowest_healthcheck` recomputes the worst
+case from `docker-compose.yml` on every CI run, so raising a `start_period` past
+the deploy timeout fails CI instead of manufacturing a deploy failure months
+later. The number stops being a guess the moment it is checked against its
+source.
+
+### Intent is released on a failed build and **held** after a failed mutation
+
+The old `trap _on_exit EXIT` was right about build failures and silent about
+everything else. The two cases are now split on one variable, `MUTATED`:
+
+- **Nothing was recreated** — bad arguments, a failed build, a missing
+  exemptions file: **release**. No container changed, so blocking DAGs serves no
+  purpose, and a Telegram alert fires.
+- **A container was recreated or restarted and something then failed**:
+  **hold**. `up -d` failing halfway leaves a mixed fleet, and resuming work
+  against one is worse than a stalled pipeline.
+
+Held intent is loud, not stuck. `deploy_intent_sensor` polls for 600s and then
+fails the DAG run, which pages — the escalation `shared/deploy_intent.py`
+deliberately designs for ("an intent nobody cleared is a real problem and not
+one a long job should paper over by starting anyway"). It also does not wedge
+the *next* deploy: `/deploy/start` steals a lock older than `STALE_LOCK_MINUTES`
+= 30. The Telegram alert names the phase and says which way intent went.
+
+### The single-file bind mount goes in all three places, and each does one job
+
+Defect 4 asked whether the fix belonged in the script, in a procedure, or in a
+test. It belongs in all three, because they answer different questions, and
+picking only one leaves a hole:
+
+| Where | What it does | Why not the others |
+|---|---|---|
+| `redeploy.sh --config` | Restarts the service and then **verifies** by comparing host and container inode | A procedure cannot verify; a test cannot deploy |
+| The script header + this doc | Records why a restart and not a `SIGHUP` reload | The script alone does not explain why the obvious thing is wrong |
+| `TestSingleFileBindMounts` | Fails when a **seventh** single-file mount appears | Neither of the others fires until someone already deployed it wrong |
+
+The test cannot forbid single-file mounts — six exist (`prometheus.yml`,
+`promtail.yml`, `loki.yml`, `statsd_mapping.yml`, `Caddyfile`,
+`oauth2-proxy.cfg`) and all six are reasonable; the plan's original list of four
+missed the last two. What it can do is make adding a seventh deliberate, which
+moves the trap out of an operator's memory and into CI. That is the whole point:
+the Plan 136 Stage 2 deploy caught this a second time *only because the earlier
+finding said to look*.
+
+Verification is by inode rather than by content, because the container is
+reading an unlinked file whose content may well be identical to some past
+version. `stat -c %i` on both sides answers "is this the file that is on disk
+now?" directly. Where the image has no usable `stat` — `oauth2-proxy` is
+distroless — the script reports `UNVERIFIED` and says so in its closing line
+rather than passing quietly.
+
+### A recreate warns about cached-address peers; it does not restart them
+
+`deploy-followers.txt` names services whose peers resolve them once and cache
+the result, and the script prints the entry verbatim after a recreate.
+
+It does not restart them. Bouncing the Airflow scheduler as a side effect of
+deploying `statsd-exporter` is precisely the blast-radius defect `--no-deps`
+exists to stop, and the follower may need its own drain. A deploy tool whose
+effects exceed its argument list is the thing this plan is fixing, so the script
+warns — loudly, with the exact command — and the operator acts.
+
+The registry is prose, not a machine-readable follower list, because its only
+consumer is a human reading a terminal. It is checked all the same:
+`TestCachedPeerAddressRegistry` asserts that every named service exists, that
+`statsd-exporter` is registered with a `docker restart` command, and that all
+four long-lived Airflow processes are named — not just the scheduler, which is
+merely the one that was noticed.
+
+`--config` deliberately does not consult this file. `docker compose restart`
+reuses the container and its address, so no peer is orphaned; a test pins that
+reasoning to the code, so if config mode ever starts recreating, the warning has
+to move with it.
 
 ## Success criteria
 
@@ -146,11 +308,43 @@ is required for rules and optional for dashboards.
 | Deny-list exemptions | Read from one shared source, not a second hand-maintained copy |
 | The stale TODO | Gone, with the intent-release behaviour documented in its place |
 | A bind-mounted config change | Applied and **verified loaded**, not merely reloaded; single-file mounts restart rather than reload |
+| Recreating a cached-address peer | Names the senders that must be restarted, and does not restart them itself |
 
 ## Verification
 
-Deploy one low-risk service (`pgadmin` is the obvious candidate — it is not on
-any critical path and it was one of the two services observed exceeding the
-10-second window). Confirm the script waits for real health rather than a fixed
-sleep, that no dependency is recreated, and that a deliberately failed build
-still releases intent and alerts.
+### Done — every path rehearsed against a stubbed Docker
+
+The script's own branches were exercised on 2026-08-20 with `docker` and `curl`
+stubbed on `PATH`, because the interesting paths are the failing ones and none
+of them should first run on production:
+
+| Path | Result |
+|---|---|
+| Happy path, one service slow to go healthy | Waited 13s for it, then `Done.`; intent released |
+| Health timeout | Failed at the deadline, dumped `docker compose ps` and the healthcheck log, **held** intent, alerted |
+| Container `exited` | Failed immediately rather than waiting out the timeout |
+| Failed build | **Released** intent and alerted — the deliberate other half of the rule |
+| Exempt service in the list | `flyway` skipped as exempt, not waited on |
+| Unexempt service with no health status | Warned and continued; not treated as unhealthy |
+| `--config`, inodes match | `OK ... inode N matches the file on disk` |
+| `--config`, container reading a deleted inode | `STALE`, non-zero exit, intent held |
+| `--config`, no usable `stat` in the image | `UNVERIFIED`, reported in the closing line, exit 0 |
+| Recreating `statsd-exporter` | Printed the follow-up note with the four containers to restart |
+
+The three load-bearing assertions were also mutation-checked: removing
+`--no-deps`, restoring `sleep 10`, and raising a `start_period` to 600s each
+fail the suite.
+
+### Owed — one low-risk production deploy
+
+Not started; nothing here has run on the VM. `pgadmin` is the candidate: it is
+on no critical path, and it was one of the two services observed still
+`starting` past the old ten-second mark. Confirm that it waits for real health,
+that no dependency is recreated, and that intent is released. Then
+`--config prometheus`, which is the mount that produced defect 4 twice.
+
+Both must wait for the Plan 136 Stage 2 and Plan 140 Stage 2 soaks to close
+(2026-08-21, ~20:42 and ~19:04 UTC). A deploy during either window disturbs the
+evidence they exist to collect — Plan 140 Stage 2's soak is specifically
+counting container-health alert instances, and recreating containers is what
+produced its first false page.
