@@ -966,6 +966,68 @@ services:
     networks:
       - cartracker-net
 
+  # ── Plan 140 Stage 2: container health as a metric ───────────────────────────
+  #
+  # `- /var/run/docker.sock:/var/run/docker.sock:ro` is NOT read-only access.
+  # The `:ro` flag makes the socket *file* read-only and does nothing to the
+  # Docker API reachable through it: any client that can connect can
+  # POST /containers/{id}/restart, kill, or create a privileged container.
+  # POST=0 below is what actually enforces read-only, and CONTAINERS=1 is the
+  # only section granted. Plan 136 Stage 4 gets exactly one verb here when it
+  # needs restart authority -- it must not add a second socket path.
+  #
+  # promtail already carries the same full-API grant (line 951) for
+  # log-discovery metadata. That is pre-existing and out of scope; it is not a
+  # precedent that settles this.
+  docker-socket-proxy:
+    image: tecnativa/docker-socket-proxy:0.3.0
+    container_name: cartracker-docker-socket-proxy
+    restart: unless-stopped
+    environment:
+      CONTAINERS: 1
+      POST: 0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    # Alpine/haproxy base -- busybox wget is present (verified 2026-08-20).
+    # /_ping is granted by the proxy's own defaults, so this probes the proxy
+    # rather than reaching through it to the daemon.
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:2375/_ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    # Deliberately NOT on cartracker-net. Every one of the ~26 containers on
+    # that network would otherwise be able to enumerate the fleet; only the
+    # exporter needs to.
+    networks:
+      - docker-socket
+
+  container-health:
+    build:
+      context: .
+      dockerfile: container_health/Dockerfile
+    image: cartracker-container-health
+    container_name: cartracker-container-health
+    restart: unless-stopped
+    environment:
+      DOCKER_API_URL: http://docker-socket-proxy:2375
+      # Set explicitly rather than inferred from the deploy directory name, so
+      # renaming that directory is a deliberate edit here. A mismatch is loud:
+      # the collector refuses to publish an empty fleet and /metrics 500s.
+      COMPOSE_PROJECT: cartracker
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9110/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    depends_on:
+      - docker-socket-proxy
+    networks:
+      - cartracker-net
+      - docker-socket
+
 volumes:
   cartracker_pgdata:
     external: true
@@ -1013,3 +1075,9 @@ volumes:
 networks:
   cartracker-net:
     external: true
+
+  # Plan 140 Stage 2: a two-member network carrying nothing but the read-only
+  # Docker API. `internal: true` gives it no gateway, so the proxy is
+  # unreachable from anything except container-health.
+  docker-socket:
+    internal: true

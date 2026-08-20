@@ -181,12 +181,27 @@ groups:
                     type: gt
                     params: [0]
 
+      # Plan 140 Stage 2: this selected up{job=~"ops|processing"} -- an
+      # allowlist covering two of eight scrape jobs, which is the same
+      # never-added-to-the-list defect Plan 140 exists to close, sitting in the
+      # alert file. airflow, postgres, minio, minio_bucket, dbt_runner and node
+      # were all unwatched at the target level.
+      #
+      # It must stay complete for a second reason now: container-health computes
+      # at scrape time and therefore has no freshness metric of its own. `up` is
+      # its entire liveness contract, so an allowlist here would leave the
+      # fleet-health exporter unwatched.
+      # test_service_down_covers_every_scrape_job asserts this job set equals
+      # prometheus.yml's, by exact set equality.
       - uid: ct-service-down
         title: Service Down
         condition: C
         noDataState: Alerting
         execErrState: Alerting
         for: 2m
+        annotations:
+          summary: "Prometheus target {{ $labels.job }} is down"
+          description: "A scrape target has been unreachable for 2 minutes. Check the container and its logs before assuming the metric itself is broken."
         data:
           - refId: A
             datasourceUid: cartracker-prometheus
@@ -194,7 +209,7 @@ groups:
               from: 600
               to: 0
             model:
-              expr: 'up{job=~"ops|processing"}'
+              expr: 'up{job=~"airflow|container-health|dbt_runner|minio|minio_bucket|node|ops|postgres|processing"}'
           - refId: B
             datasourceUid: "__expr__"
             relativeTimeRange:
@@ -216,6 +231,114 @@ groups:
                 - evaluator:
                     type: lt
                     params: [1]
+
+      # Plan 140 Stage 2. Two rules, never one, over the same three-state
+      # metric: 1 healthy, 0 unhealthy, -1 no healthcheck configured. A single
+      # `< 1` rule would merge them and re-hide the coverage gap inside the
+      # incident channel, which is the whole point of spending a third state on
+      # it. `count by (container)` keeps one alert instance per container and
+      # drops job/instance so the summary renders a service name.
+      #
+      # `starting` maps to 0 by design -- "not yet known to be healthy" is not
+      # healthy. Docker leaves that state within
+      # start_period + retries * (interval + timeout), a 230s worst case across
+      # this compose file, so the 5m `for` is what keeps a slow start quiet.
+      # test_unhealthy_alert_outlasts_the_slowest_healthcheck_start pins it.
+      #
+      # There is deliberately no staleness rule. container-health computes in
+      # its scrape handler and cannot serve a stale value; its liveness is
+      # ct-service-down above. A freshness metric appearing here would mean the
+      # design drifted back toward a cached file.
+      - uid: ct-container-unhealthy
+        title: Container Unhealthy
+        condition: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 5m
+        annotations:
+          summary: "Container {{ $labels.container }} is unhealthy"
+          description: "Docker has reported this container unhealthy, restarting, or paused for 5 minutes. Read its recorded probe output with `docker inspect` and look at State.Health.Log. This is a liveness signal only -- a healthy container can still be doing nothing useful, which is exactly what the 2026-08-14 solver outage was."
+        data:
+          - refId: A
+            datasourceUid: cartracker-prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: 'count by (container) (cartracker_container_health{job="container-health"} == 0)'
+          - refId: B
+            datasourceUid: "__expr__"
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+          - refId: C
+            datasourceUid: "__expr__"
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+
+      # Not an incident -- a coverage alert. It reads as "Plan 140 regressed":
+      # a service is running with no healthcheck at all, so Docker publishes no
+      # health status for it and an unwatched service looks exactly like a
+      # healthy one. Routed to the severity=coverage policy (24h repeat) rather
+      # than the 4h incident cadence.
+      #
+      # It is expected to be noisy the first time it fires, and suppressing it
+      # inverts the plan. `oauth2-proxy` is the one known standing exception --
+      # its distroless image cannot execute any probe -- and it is exempt in
+      # TestServiceHealthCoverage's deny-list, not here, because silencing it in
+      # the alert would silence the next one too.
+      - uid: ct-container-health-unconfigured
+        title: Container Health Unconfigured
+        condition: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 5m
+        labels:
+          severity: coverage
+        annotations:
+          summary: "Container {{ $labels.container }} has no healthcheck configured"
+          description: "This service is running with no healthcheck, so Docker reports no health status for it and it is indistinguishable from a healthy service. Add a `healthcheck:` block in docker-compose.yml, or add a deny-list entry with a written reason in tests/test_observability_config.py. See docs/plan_140_service_health_contract.md."
+        data:
+          - refId: A
+            datasourceUid: cartracker-prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: 'count by (container) (cartracker_container_health{job="container-health"} == -1)'
+          - refId: B
+            datasourceUid: "__expr__"
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+          - refId: C
+            datasourceUid: "__expr__"
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
 
       - uid: ct-scrape-volume-drop
         title: Scrape Volume Drop

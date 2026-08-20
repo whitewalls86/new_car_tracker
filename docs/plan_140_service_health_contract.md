@@ -2,7 +2,9 @@
 
 ## Status
 
-**STAGES 1 AND 3 COMPLETE AND VERIFIED; STAGE 2 IS THE NEXT EXECUTABLE SLICE.**
+**STAGES 1 AND 3 COMPLETE AND VERIFIED. STAGE 2 IS IMPLEMENTED AND VALIDATED
+AGAINST A REAL DOCKER DAEMON; ITS PRODUCTION DEPLOY AND SOAK ARE OWED** — see
+"As built" under Stage 2.
 [PR #216](https://github.com/whitewalls86/new_car_tracker/pull/216) merged the
 implementation as `821a6a6`, adding eighteen healthchecks and taking configured
 coverage from 7 of 31 services to 25 of 31. The six remaining services are the
@@ -10,8 +12,8 @@ five deliberate one-shot/profile exemptions plus `oauth2-proxy`, whose current
 distroless image cannot execute a probe. The immediate production gate passed:
 all 25 configured runtime checks were healthy with zero failing streaks. **The
 24-hour soak closed clean on 2026-08-20** — see the soak record below. Stage 3's
-fail-loud CI contract is complete and verified. Stage 2's metric and alerts have
-not started, and the soak surfaced a scoping hazard they must handle.
+fail-loud CI contract is complete and verified. Stage 2's metric and alerts are
+built, and they handle the scoping hazard that soak surfaced.
 
 This plan exists because the previous two were each correct and each too narrow.
 [Plan 135](plan_135_storage_observability.md) made two disks visible.
@@ -392,6 +394,95 @@ Follow the both-directions validation Plan 131 used for
 `ct-pack-verification-refused`: prove the selector matches live series, prove
 the expression stays quiet on healthy data, then prove it fires — with a
 deliberately stopped non-critical container, not by breaking something real.
+
+#### As built — implemented 2026-08-20, production deploy pending
+
+`container_health/` is a dedicated service of four small modules:
+`collector.py` holds the pure state mapping and the scoping rule,
+`docker_api.py` holds the read client, and `app.py` serves `/health` and
+`/metrics`. It imports nothing from `shared/`, mounts no volume, and its
+`Dockerfile` copies only its own package rather than the repo — the container
+holding the Docker grant should carry as little else as possible.
+
+| Decision | As built |
+|---|---|
+| Mechanism | `prometheus_client` custom collector; the Docker read happens inside the `/metrics` handler. No file, no timestamp metric, no staleness alert |
+| Socket | `tecnativa/docker-socket-proxy:0.3.0` with `CONTAINERS=1`, `POST=0`, on a two-member `internal: true` network the other ~26 containers cannot reach |
+| Scope | `com.docker.compose.project=cartracker`, applied server-side as an optimisation and re-applied in the unit-tested collector as the authoritative rule |
+| Credentials | `DOCKER_API_URL` and `COMPOSE_PROJECT`, and a test asserting that is the whole environment |
+| Port | 9110, scraped as job `container-health` |
+
+Four details the draft did not anticipate:
+
+- **`starting` is a fourth Docker state and it maps to `0`.** "Not yet known
+  to be healthy" is not healthy, and a fourth metric value would re-open the
+  ambiguity `-1` exists to close. It is safe because the state is *bounded* —
+  Docker leaves it within `start_period + retries × (interval + timeout)`,
+  a 230s worst case across this compose file, against the alert's 300s `for`.
+  That is not a comment but an assertion:
+  `test_unhealthy_alert_outlasts_the_slowest_healthcheck_start` recomputes the
+  worst case from the compose file, so widening a `start_period` past the
+  alert's `for` fails CI instead of paging on the next deploy.
+- **`restarting` and `paused` are enumerated, and map to `0`.** The draft's
+  "running services" would have made a crash-looping container *vanish* from
+  the metric, which is the same disappearing-signal defect in a new place.
+- **`docker compose run` one-shots carry the project label.** A running
+  `dbt`, `dbt_test`, or `snapshot-worker` invocation would otherwise publish
+  `-1` and page the coverage alert for its duration. Excluded by
+  `com.docker.compose.oneoff`.
+- **An empty result refuses rather than publishes.** This exporter is itself a
+  member of the fleet, so zero matching containers means the project label
+  stopped matching — a renamed deploy directory, a `COMPOSE_PROJECT_NAME`
+  change. Publishing nothing would read as a healthy system. It raises, so
+  `/metrics` returns 500 and `up{job="container-health"}` goes to 0.
+
+**`ct-service-down` was widened from two jobs to all nine** and given
+`test_service_down_covers_every_scrape_job`, which asserts its job set equals
+`prometheus.yml`'s by exact set equality. `airflow`, `postgres`, `minio`,
+`minio_bucket`, `dbt_runner` and `node` had no target-level alert at all.
+
+`ct-container-health-unconfigured` carries `severity: coverage` and a nested
+notification route repeating daily instead of the 4h incident cadence. Same
+receiver — it is visible, not suppressed — but a missing healthcheck needs a
+compose edit, not a 3 a.m. response, and training an operator to ignore the
+scraper's alert channel is how the 2026-08-14 outage stayed invisible.
+
+##### Known limitation, recorded rather than discovered later
+
+A service whose container is **removed or fully stopped** leaves the metric
+entirely rather than reporting `0`. `restart: unless-stopped` means the
+realistic failure is a crash loop, which is covered above as `restarting`, and
+the six scraped services are covered by the widened `ct-service-down`. But
+`caddy`, `grafana`, `loki` and `promtail` going away cleanly would be silent
+here. Closing that needs an expected-service set, which means either parsing
+`docker-compose.yml` at runtime — profiles, deny-list and all, duplicated in
+two places — or Stage 4's DAG-sensor work. It is deliberately not in this
+stage.
+
+##### Local validation, 2026-08-20 — against a real daemon, before production
+
+Run against a purpose-built fixture fleet on a Docker 29.1.3 host rather than
+mocked, because the whole metric is a claim about what Docker actually reports:
+
+| Check | Result |
+|---|---|
+| Three states render together | `healthy-one` 1, `unhealthy-one` 0, `no-check` -1 |
+| Sibling projects invisible | Four separate live and stopped projects — including three `Exited` containers with exactly the stale-`unhealthy` shape the Stage 1 soak found — produced no series |
+| `POST` is genuinely refused | `POST /containers/{id}/restart` through the proxy returned **403 Forbidden** |
+| Probe tools exist in the images | `wget /_ping` in the Alpine-based proxy and `python -c urllib` in the exporter both exited 0 — the false-unhealthy trap Stage 1 recorded |
+| Empty fleet refuses | A deliberately wrong `COMPOSE_PROJECT` returned **500**, not an empty page of metrics |
+| Exporter liveness is real | With the proxy stopped, `/metrics` 500'd while `/health` still returned `{"ok":true}` — the shallow probe stays shallow and `up` is what carries the signal |
+| Scrape cost | ~20ms for the fixture fleet; the production Docker read measured **~120ms for 26 containers**, list plus per-container inspect |
+
+That last figure corrects this plan's "low tens of milliseconds" estimate by an
+order of magnitude, and does not change the conclusion: 120ms inside a 15s
+scrape is 0.8% duty, against the 456 seconds that forced Plan 135 to use a
+file. The per-container inspect is deliberate — `Health` only appears in the
+list endpoint at API v1.52 (Docker 29), and measurement showed the single
+richer call costs the same ~120ms, so version-robustness here is free.
+
+**Still owed:** production deploy, the fires-and-stays-quiet halves of the
+validation above against live series, and the soak.
 
 ### Stage 3 — CI asserts coverage — COMPLETE AND VERIFIED 2026-08-18
 

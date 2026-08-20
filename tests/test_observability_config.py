@@ -34,6 +34,7 @@ class TestPrometheusConfig:
             "dbt_runner",
             "processing",
             "node",
+            "container-health",
         }
         assert expected == job_names, f"Unexpected jobs: {job_names ^ expected}"
 
@@ -637,6 +638,104 @@ class TestServiceHealthCoverage:
             )
 
 
+class TestContainerHealthExporterWiring:
+    """Plan 140 Stage 2: where the Docker grant lands, and what it sits next to.
+
+    The obvious host for this was `pack-worker` -- it already carries the
+    writable node_textfile mount from Plan 135. It is wrong on four counts: it
+    is a batch worker for bronze packing and this is unrelated work; it holds
+    Postgres and MinIO credentials a health reader has no business near; it
+    would report on its own health, so a wedged pack-worker would read as a
+    healthy fleet; and every Plan 131/132 change would redeploy the monitoring.
+    """
+
+    _SOCKET = "/var/run/docker.sock"
+
+    @classmethod
+    def _services(cls) -> dict:
+        return yaml.safe_load((_REPO_ROOT / "docker-compose.yml").read_text())["services"]
+
+    @classmethod
+    def _compose(cls) -> dict:
+        return yaml.safe_load((_REPO_ROOT / "docker-compose.yml").read_text())
+
+    def test_the_exporter_is_its_own_service(self):
+        exporter = self._services()["container-health"]
+        assert exporter["build"]["dockerfile"] == "container_health/Dockerfile"
+        assert exporter["restart"] == "unless-stopped"
+
+    def test_prometheus_scrapes_the_exporter_directly(self):
+        """Plan 143's pattern, not Plan 135's: the service that owns the data
+        exposes /metrics and Prometheus scrapes it, so the value is computed
+        when Prometheus asks and cannot be stale."""
+        doc = yaml.safe_load((_REPO_ROOT / "prometheus" / "prometheus.yml").read_text())
+        job = next(j for j in doc["scrape_configs"] if j["job_name"] == "container-health")
+        assert job["static_configs"][0]["targets"] == ["container-health:9110"]
+        command = " ".join(
+            (_REPO_ROOT / "container_health" / "Dockerfile").read_text().split()
+        )
+        assert "9110" in command, "exporter port drifted from the scrape target"
+
+    def test_the_exporter_holds_no_other_credentials(self):
+        """The point of a dedicated service. A health reader has no business
+        near the Postgres, MinIO or Telegram secrets pack-worker carries."""
+        environment = self._services()["container-health"].get("environment", {})
+        assert set(environment) == {"DOCKER_API_URL", "COMPOSE_PROJECT"}
+
+    def test_the_project_scope_is_set_explicitly(self):
+        """Compose otherwise derives the project name from the deploy directory,
+        so renaming that directory would silently empty this metric. Set here,
+        a mismatch instead raises and takes up{job="container-health"} to 0."""
+        environment = self._services()["container-health"]["environment"]
+        assert environment["COMPOSE_PROJECT"] == "cartracker"
+
+    def test_the_exporter_never_touches_the_socket_itself(self):
+        exporter = self._services()["container-health"]
+        assert not any(
+            self._SOCKET in str(volume) for volume in exporter.get("volumes", [])
+        )
+        assert exporter["environment"]["DOCKER_API_URL"].startswith(
+            "http://docker-socket-proxy:"
+        )
+
+    def test_the_proxy_enforces_read_only_by_method_not_by_ro(self):
+        """`:ro` makes the socket *file* read-only and does nothing to the API
+        behind it: any client that can connect can POST a restart, a kill, or a
+        privileged container. POST=0 is the part that actually enforces it, and
+        CONTAINERS=1 is the only section granted."""
+        proxy = self._services()["docker-socket-proxy"]
+        assert str(proxy["environment"]["POST"]) == "0"
+        assert str(proxy["environment"]["CONTAINERS"]) == "1"
+
+    def test_the_proxy_is_not_reachable_from_the_shared_network(self):
+        """Otherwise all ~26 containers on cartracker-net could enumerate the
+        fleet. Only the exporter needs to."""
+        compose = self._compose()
+        proxy = compose["services"]["docker-socket-proxy"]
+        assert proxy["networks"] == ["docker-socket"]
+        assert compose["networks"]["docker-socket"]["internal"] is True
+        assert set(compose["services"]["container-health"]["networks"]) == {
+            "cartracker-net", "docker-socket"
+        }
+
+    def test_socket_access_stays_confined_to_the_proxy(self):
+        """Plan 136 Stage 4 grants exactly one verb through this proxy when it
+        needs restart authority. It must not add a second socket path.
+
+        promtail's mount is pre-existing -- Plan 135 Stage 5 uses it for
+        log-discovery metadata -- and is deliberately grandfathered rather than
+        treated as a precedent that settles the decision.
+        """
+        holders = {
+            name for name, service in self._services().items()
+            if any(self._SOCKET in str(volume) for volume in service.get("volumes", []))
+        }
+        assert holders == {"docker-socket-proxy", "promtail"}, (
+            f"unexpected Docker socket mount: {sorted(holders)}. Read health "
+            "through docker-socket-proxy instead of opening a second path."
+        )
+
+
 class TestNodeExporterFilesystemVisibility:
     """Plan 135 Stage 1: without --path.rootfs, node-exporter reads the host
     mount table, sees /dev/sdb at /mnt/data, then statfs()es it inside its own
@@ -931,6 +1030,7 @@ class TestGrafanaAlertingProvisioning:
             "ct-disk-space-warning", "ct-disk-space-critical",
             "ct-inode-warning", "ct-inode-critical",
             "ct-inode-exhaustion-forecast",
+            "ct-container-unhealthy", "ct-container-health-unconfigured",
         }
         assert expected <= all_uids, f"Missing rule UIDs: {expected - all_uids}"
 
@@ -1027,3 +1127,132 @@ class TestGrafanaAlertingProvisioning:
         evaluator = rule["data"][-1]["model"]["conditions"][0]["evaluator"]
         assert evaluator["type"] == "lt"
         assert evaluator["params"] == [0]
+
+    # ── Plan 140 Stage 2 ──────────────────────────────────────────────────────
+
+    def test_service_down_covers_every_scrape_job(self):
+        """The test that stops this row re-rotting.
+
+        ct-service-down selected up{job=~"ops|processing"} -- two of eight
+        scrape jobs -- so airflow, postgres, minio, minio_bucket, dbt_runner and
+        node were unwatched at the target level. That is the same
+        never-added-to-the-list defect Plan 140 exists to close, sitting in the
+        alert file. Exact set equality, in the style this module already uses
+        for the Promtail job set, because the next added scrape target must fail
+        here rather than be silently unwatched.
+
+        It is load-bearing for a second reason now: container-health computes at
+        scrape time and has no freshness metric, so `up` is its entire liveness
+        contract.
+        """
+        prometheus = yaml.safe_load(
+            (_REPO_ROOT / "prometheus" / "prometheus.yml").read_text()
+        )
+        scrape_jobs = {job["job_name"] for job in prometheus["scrape_configs"]}
+        expr = self._rule("ct-service-down")["data"][0]["model"]["expr"]
+        selected = set(re.search(r'up\{job=~"([^"]+)"\}', expr).group(1).split("|"))
+        assert selected == scrape_jobs, (
+            "ct-service-down's job set drifted from prometheus.yml: "
+            f"{sorted(selected ^ scrape_jobs)}"
+        )
+
+    def test_container_health_rules_cannot_be_silently_merged(self):
+        """Two states, two rules. A single `< 1` threshold would look correct
+        and would fold "no healthcheck configured" back into the incident
+        channel -- undoing the entire reason -1 exists as a third state."""
+        unhealthy = self._rule("ct-container-unhealthy")["data"][0]["model"]["expr"]
+        unconfigured = self._rule(
+            "ct-container-health-unconfigured"
+        )["data"][0]["model"]["expr"]
+        assert "cartracker_container_health" in unhealthy
+        assert "cartracker_container_health" in unconfigured
+        assert "== 0" in unhealthy and "== -1" not in unhealthy
+        assert "== -1" in unconfigured and "== 0" not in unconfigured
+
+    def test_container_health_rules_read_the_exporters_own_job(self):
+        for uid in ("ct-container-unhealthy", "ct-container-health-unconfigured"):
+            expr = self._rule(uid)["data"][0]["model"]["expr"]
+            assert 'job="container-health"' in expr
+
+    def test_unhealthy_alert_outlasts_the_slowest_healthcheck_start(self):
+        """`starting` is published as 0, so the `for` duration is the only
+        thing standing between a slow-starting container and a false page.
+
+        Docker leaves `starting` within start_period + retries * (interval +
+        timeout). Worst case across this compose file is 230s against a 300s
+        `for`. Widening a start_period past that would page on every deploy,
+        and this is where that gets caught.
+        """
+        def seconds(value, default):
+            if value is None:
+                return default
+            text = str(value)
+            units = {"s": 1, "m": 60, "h": 3600}
+            if text[-1] in units:
+                return int(text[:-1]) * units[text[-1]]
+            return int(text)
+
+        services = yaml.safe_load(
+            (_REPO_ROOT / "docker-compose.yml").read_text()
+        )["services"]
+        worst = {}
+        for name, service in services.items():
+            check = service.get("healthcheck")
+            if not isinstance(check, dict) or not check.get("test"):
+                continue
+            worst[name] = (
+                seconds(check.get("start_period"), 0)
+                + int(check.get("retries", 3))
+                * (seconds(check.get("interval"), 30) + seconds(check.get("timeout"), 30))
+            )
+
+        alert_for = seconds(self._rule("ct-container-unhealthy")["for"], 0)
+        slowest = max(worst, key=worst.get)
+        assert worst[slowest] < alert_for, (
+            f"{slowest} can sit in Docker's `starting` state for "
+            f"{worst[slowest]}s, past ct-container-unhealthy's {alert_for}s "
+            "`for`, so a normal restart would page"
+        )
+
+    def test_container_health_has_no_freshness_metric_or_staleness_rule(self):
+        """The amended design in one assertion.
+
+        Plan 135's textfile collector needed a companion timestamp metric and a
+        staleness alert because a 456-second disk walk cannot happen inside a
+        scrape handler. This exporter computes when Prometheus asks, so a stale
+        value is structurally impossible. A freshness rule appearing here would
+        mean the design drifted back to a cached .prom file, which is what
+        Plan 143 spent a 24-hour soak correcting and Plan 136 D2 named first.
+        """
+        doc = yaml.safe_load((self._ALERTING_DIR / "rules.yml").read_text())
+        for group in doc["groups"]:
+            for rule in group["rules"]:
+                for query in rule["data"]:
+                    expr = query["model"].get("expr", "")
+                    assert not ("container_health" in expr and "timestamp" in expr), (
+                        f"{rule['uid']} pairs container health with a freshness "
+                        "timestamp; the exporter has no cached value to go stale"
+                    )
+
+    def test_unconfigured_coverage_alert_is_routed_off_the_incident_cadence(self):
+        """"Not an incident; a coverage alert, routed accordingly."
+
+        A missing healthcheck needs a compose edit, not a 3 a.m. response.
+        Repeating it on the 4h incident cadence is how an operator learns to
+        ignore the channel -- which is the channel the 2026-08-14 solver outage
+        needed. Same receiver, daily repeat.
+        """
+        rule = self._rule("ct-container-health-unconfigured")
+        assert rule.get("labels", {}).get("severity") == "coverage"
+        assert "severity" not in self._rule("ct-container-unhealthy").get("labels", {})
+
+        policies = yaml.safe_load(
+            (self._ALERTING_DIR / "notification_policies.yml").read_text()
+        )["policies"]
+        routes = policies[0]["routes"]
+        coverage = [
+            route for route in routes
+            if ["severity", "=", "coverage"] in route["object_matchers"]
+        ]
+        assert len(coverage) == 1, "no route matches severity=coverage"
+        assert coverage[0]["repeat_interval"] != policies[0]["repeat_interval"]
