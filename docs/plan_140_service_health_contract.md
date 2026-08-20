@@ -312,26 +312,81 @@ the next `up` of either project would reintroduce exactly the same condition.
 
 ### Stage 2 — The metric and the alert
 
-Emit `cartracker_container_health` with the three states above, through the
-node-exporter textfile collector [Plan 135](plan_135_storage_observability.md)
-Stage 4 already built and proved. That is a second producer into working
-plumbing rather than a new exporter.
+Emit `cartracker_container_health` with the three states above.
+
+#### Amended 2026-08-20: a dedicated exporter, not the textfile collector
+
+This stage originally specified node-exporter's textfile collector, on the
+reasoning that [Plan 135](plan_135_storage_observability.md) Stage 4 had already
+built and proved that plumbing, so this would be "a second producer into working
+plumbing rather than a new exporter."
+
+**That reasoning does not survive comparing the two producers' cost profiles.**
+Plan 135 needs the textfile collector because a `du -s -x` walk of the watchlist
+took 456 seconds — work that cannot happen inside a scrape handler, so it must
+be done ahead of time and left in a file. Reading container health is a single
+Docker API call in the low tens of milliseconds. It is the opposite case: cheap
+enough to generate *at scrape time*.
+
+Generating at scrape time removes work rather than adding it:
+
+| Concern | Textfile collector | Dedicated `/metrics` |
+|---|---|---|
+| Staleness | Needs a companion timestamp metric, a staleness alert, and carry-forward reasoning | **Structurally impossible** — the value is computed when Prometheus asks |
+| Liveness of the collector itself | Nothing watches it; a dead writer reads as a healthy fleet | `up{job="container-health"}` |
+| Socket grant lands on | A service that also holds Postgres and MinIO credentials | A container with no other credentials |
+| Shared volume and atomic writes | Required | Not needed |
+
+This follows [Plan 143](plan_143_analytics_serving_snapshot.md)'s pattern — the
+service that owns the data exposes `/metrics` and Prometheus scrapes it directly
+— rather than Plan 135's. Add a `container-health` scrape job to
+`prometheus/prometheus.yml`.
+
+The staleness problem this deletes is not hypothetical. It is precisely what
+Plan 143 spent a full 24-hour soak correcting, and Plan 136 D2 before it.
+
+#### Scope: the default project's running services
 
 Scope the collector to **the running services of the default `cartracker`
-compose project**, for the reason the Stage 1 soak record documents above: four
-containers from two deliberately-down sibling projects still carry a stale
-`unhealthy` state, and enumerating `docker ps -a` would page on them
-permanently.
+compose project**, for the reason the Stage 1 soak record documents above.
 
-Needs read-only Docker socket access. **Plan 136 Stage 4 proposes a
-`docker-socket-proxy` for restart authority — if it has landed, read through it.
-Do not add a second socket path.**
+Note that "compose-managed" is *not* a sufficient filter — the four containers
+that soak found were compose-managed, just by a different project. Key on the
+`com.docker.compose.project` label.
 
-Alerts:
+#### Socket access: `docker-socket-proxy`, and why `:ro` is not enough
+
+**Do not mount `/var/run/docker.sock` with `:ro` and call it read-only.** That
+flag makes the socket *file* read-only; it does nothing to the Docker API
+reachable through it. Any client that can connect can issue
+`POST /containers/{id}/restart`, `kill`, or create a privileged container.
+
+`docker-socket-proxy` with `CONTAINERS=1` and `POST=0` is the only option that
+actually enforces read-only access, and it gives
+[Plan 136](plan_136_solver_recycle_and_liveness.md) Stage 4 a narrow, explicit
+place to later grant exactly one verb. **Do not add a second socket path** when
+that stage lands.
+
+`promtail` already carries a `/var/run/docker.sock:...:ro` mount
+(`docker-compose.yml:951`) for log-discovery metadata, which is the same
+full-API grant. That is pre-existing and out of scope for this stage, but it
+should not be read as a precedent that settles this decision.
+
+#### Alerts
 
 - `ct-container-unhealthy` — any `0` for 5m.
 - `ct-container-health-unconfigured` — any `-1`. Not an incident; a **coverage**
   alert, routed accordingly. It should read as "this plan regressed."
+
+No staleness alert is needed, because the exporter cannot serve a stale value.
+Its liveness is `up{job="container-health"}`.
+
+**That last point requires fixing `ct-service-down` first.** It currently selects
+`up{job=~"ops|processing"}` — an allowlist covering two of eight scrape jobs,
+which is the same defect this plan exists to close, sitting in the alert file.
+Until it covers every job, "the exporter's liveness is `up`" is an aspiration
+rather than a fact. Widen it, and add a coverage test in the same style as
+`TestServiceHealthCoverage`.
 
 Follow the both-directions validation Plan 131 used for
 `ct-pack-verification-refused`: prove the selector matches live series, prove

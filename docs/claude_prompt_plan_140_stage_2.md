@@ -37,44 +37,44 @@ cartracker_container_health{container="caddy"}  -1   # NO HEALTHCHECK CONFIGURED
 Three states, not two. Collapsing `-1` into "absent" is how a monitoring gap
 disguises itself as a healthy system. It is ugly on a graph on purpose.
 
-Emit it through node-exporter's textfile collector. The plumbing already exists
-and is proven: `node_textfile` is mounted writable on `pack-worker` and `:ro` on
-`node-exporter`, which runs with `--collector.textfile.directory=/textfile`.
-Follow `archiver/processors/disk_usage.py` for the file conventions — atomic
-write via `tempfile.NamedTemporaryFile` in the same directory then `os.replace`,
-and explicit `# HELP` / `# TYPE` lines.
-
-Write a **separate `.prom` file** from `cartracker_disk_usage.prom`. The
-node_exporter#1885 hazard the disk-usage module documents is about splitting a
-single metric *family* across files; two different families in two files is
-fine and is the cleaner separation here.
+Serve it from a **small dedicated exporter service** that computes the values in
+its `/metrics` handler, and add a `container-health` scrape job to
+`prometheus/prometheus.yml`.
 
 ---
 
 ## Three decisions to make deliberately, with recommendations
 
-### 1. Who writes it, and how often — **not an Airflow DAG**
+### 1. Mechanism — a dedicated exporter, **not** the textfile collector
 
-`disk_usage` is triggered by a daily DAG hitting `POST /disk-usage/run`, and
-copying that pattern here is the obvious move and the wrong one.
+The plan doc originally specified node-exporter's textfile collector, and was
+**amended on 2026-08-20**. Read the "Amended" subsection under Stage 2 before
+you start; the short version is below.
 
-**A container-health metric must not depend on Airflow, because one of the two
-incidents this plan exists for was Airflow dying.** On 2026-08-18 the
-`airflow-apiserver` connection pool failed. A health metric published by an
-Airflow DAG goes stale exactly when it is most needed, and — per Plan 143's
-finding about silent staleness — a stale gauge scrapes as a live one.
+Plan 135 uses the textfile collector because a `du -s -x` walk took 456 seconds.
+That cannot happen inside a scrape handler, so it must run ahead of time and
+leave a file. Container health is one Docker API call in the low tens of
+milliseconds — the opposite case, and cheap enough to compute when Prometheus
+asks.
 
-Recommendation: a **background refresh loop inside `pack-worker`**, on a ~30s
-period. It already carries the writable `node_textfile` mount and
-`DISK_USAGE_TEXTFILE_DIR`, it is long-running, and it has no Airflow dependency.
-`scraper/app.py:106` has the `lifespan` pattern to follow; there is no
-`threading.Thread` precedent in these services, so prefer `lifespan` with an
-asyncio task over inventing one.
+Computing at scrape time deletes work rather than adding it:
 
-Gate it on an env var so only `pack-worker` runs it, the way
-`ARCHIVER_ALLOW_PACK_JOBS` gates the pack jobs — `archiver` and `pack-worker`
-share the `cartracker-archiver` image, and two writers racing on one `.prom`
-file is a defect even with atomic replace.
+- **Staleness becomes structurally impossible.** No `.prom` file, no
+  carry-forward, no companion timestamp metric, no staleness alert. A whole
+  category of defect — the one Plan 143 spent a 24-hour soak correcting and
+  Plan 136 D2 named before it — simply cannot occur.
+- **The exporter's own liveness is `up{job="container-health"}`**, free.
+- **The socket grant lands on a container with no other credentials.**
+
+Do **not** bundle this into `pack-worker`. It was the obvious host — it already
+carries the writable `node_textfile` mount — and it is wrong on four counts: it
+is a batch worker for bronze packing and this is unrelated work; it holds
+Postgres and MinIO credentials that a health reader has no business near; it
+would report on its own health, so a wedged pack-worker reads as a healthy
+fleet; and every Plan 131/132 change would redeploy your monitoring.
+
+`scraper/app.py:106` has the `lifespan` pattern if you need app scaffolding;
+there is no `threading.Thread` precedent in these services, so do not invent one.
 
 ### 2. Socket access — **use `docker-socket-proxy`, and know why `:ro` is not enough**
 
@@ -128,17 +128,22 @@ condition.
 
 ---
 
-## Staleness is mandatory, not a nice-to-have
+## Fix `ct-service-down` in this session
 
-If the refresh loop dies, the `.prom` file keeps its last contents and
-node-exporter keeps serving them. Every container then reads healthy forever.
-That is the exact failure Plan 143 spent a full soak correcting, and Plan 136 D2
-before it.
+The scrape-time design leans on `up{job="container-health"}` as the exporter's
+liveness signal. That only works if something alerts on `up`.
 
-Publish a companion timestamp — follow
-`cartracker_disk_usage_measured_timestamp_seconds` in
-`archiver/processors/disk_usage.py:51` — and alert on it. A health metric that
-cannot go stale-loud is not finished.
+`ct-service-down` currently selects `up{job=~"ops|processing"}` — **an allowlist
+covering two of eight scrape jobs.** That is the same defect this entire plan
+exists to close, sitting in `grafana/provisioning/alerting/rules.yml:197`, and
+it means `airflow`, `postgres`, `minio`, `minio_bucket`, `dbt_runner`, and `node`
+are all currently unwatched at the target level.
+
+Widen it to cover every job in `prometheus/prometheus.yml`, and add a coverage
+test asserting the alert's job set equals the scrape config's job set — the
+exact-set-equality style `tests/test_observability_config.py` already uses for
+the Promtail job set. Without that test this row rots again the next time
+someone adds a scrape target.
 
 ---
 
@@ -149,11 +154,11 @@ Add to `grafana/provisioning/alerting/rules.yml`:
 - **`ct-container-unhealthy`** — any `0` for 5m. A real incident.
 - **`ct-container-health-unconfigured`** — any `-1`. **Not** an incident; a
   *coverage* alert, routed accordingly. It should read as "this plan regressed."
-- **A staleness rule** on the timestamp above, following Plan 143's cadence-aware
-  shape: `noDataState` and `execErrState` must fail loudly, and the threshold
-  should be a small multiple of the refresh period, not a round number someone
-  liked. Plan 143's soak found a 900s threshold against an hourly publisher;
-  do not repeat that class of mistake in the other direction.
+
+There is deliberately **no staleness rule**. The exporter computes at scrape
+time, so it cannot serve a stale value; its liveness is the widened
+`ct-service-down` above. If you find yourself adding a freshness metric here,
+stop — it means the design drifted back toward a cached file.
 
 Validate **in both directions**, the way Plan 131 did for
 `ct-pack-verification-refused` (`rules.yml:94`):
@@ -177,17 +182,18 @@ assertions (`test_metrics_freshness_alert_uses_the_plan_143_contract` at :945 an
 `test_pack_verification_refused_alerts_on_any_occurrence` at :972 are the
 patterns to copy):
 
-- the three new UIDs exist and parse;
+- the two new UIDs exist and parse;
 - the unhealthy rule selects `0` and the unconfigured rule selects `-1`, so a
   future edit cannot silently merge them;
-- the scrape/collector wiring is asserted the way the Plan 135 textfile
-  contract is;
+- the `container-health` scrape job exists in `prometheus/prometheus.yml`;
+- **`ct-service-down`'s job set equals the scrape config's job set**, by exact
+  set equality — this is the test that stops the allowlist from re-rotting;
 - **a test pinning the scoping rule** — the assumption most likely to be
   loosened later by someone "simplifying" the collector. Pin that the project
   label is required, not that the current four sibling containers are absent.
 
-Unit-test the renderer against a fixture containing all three states plus a
-sibling-project container that must not appear.
+Unit-test the metric renderer against a fixture containing all three states plus
+a sibling-project container that must not appear.
 
 ---
 
@@ -216,8 +222,11 @@ Declare deploy intent through the admin UI and let the system drain first, but
 ## Decisions already made — do not relitigate
 
 - **Three states, with `-1` explicit.** Absence is the failure mode being fixed.
-- **Textfile collector, not cAdvisor.** cAdvisor is heavier and its health
-  semantics are less direct than `.State.Health.Status` (Plan 136, "0b").
+- **A dedicated exporter computing at scrape time**, amended 2026-08-20. The
+  textfile collector is right for a 456-second disk walk and wrong for a 10ms
+  API call; see the Stage 2 "Amended" subsection for the full argument.
+- **Not cAdvisor.** Heavier, and its health semantics are less direct than
+  `.State.Health.Status` (Plan 136, "0b").
 - **Deny-list, never allowlist.** `TestServiceHealthCoverage` already encodes
   this and every entry carries a written reason.
 - **`oauth2-proxy` stays the documented exception.** Its distroless image has no
@@ -236,11 +245,18 @@ Declare deploy intent through the admin UI and let the system drain first, but
 
 - Publishing the metric from an Airflow DAG, so it goes blind exactly when
   Airflow is the thing that broke.
+- Bundling the collector into `pack-worker` because it already has the textfile
+  mount. That is how a bronze-packing batch worker ends up owning fleet health
+  and reporting on itself.
+- Writing a `.prom` file anyway, then discovering you need a staleness metric
+  and a staleness alert to make it safe. That is the design you were amended
+  away from.
 - Mounting `docker.sock` with `:ro` and describing it as read-only in a comment
   or commit message.
 - Enumerating `docker ps -a`, or scoping to "compose-managed" and believing that
   excludes the sibling projects.
-- Shipping without a staleness signal, so a dead writer reads as a healthy fleet.
+- Leaving `ct-service-down` as an allowlist while depending on `up` for the
+  exporter's liveness.
 - Treating the 2026-08-20 orphan cleanup as having solved the scoping problem.
 - Suppressing `-1` because it is noisy. It is noisy **by design**; suppressing it
   inverts the plan.
