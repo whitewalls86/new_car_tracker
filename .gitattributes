@@ -1,1 +1,6 @@
 *.sh text eol=lf
+
+# Read by a bash `while read` loop in scripts/redeploy.sh, so a CRLF checkout
+# would attach a stray \r to the last field of every entry.
+healthcheck-exemptions.txt text eol=lf
+deploy-followers.txt text eol=lf

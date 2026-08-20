@@ -1,0 +1,37 @@
+# Services whose *peers* need a follow-up restart after they are recreated.
+#
+# Plan 136 D6, found 2026-08-20. Recreating a container gives it a new IP. A
+# long-lived process that resolved the old address once and cached it goes on
+# addressing the dead one. Over a connectionless transport that failure is
+# silent by construction: no exception, no log line, no error metric, and the
+# container on both ends stays healthy.
+#
+# scripts/redeploy.sh prints the matching entry after a recreate and does NOT
+# restart the peers itself. Restarting a service the operator did not name is
+# the exact defect `--no-deps` exists to stop; a deploy tool that quietly
+# bounces the Airflow scheduler has a blast radius larger than its argument
+# list. So this warns, loudly and specifically, and the operator acts.
+#
+# `redeploy.sh --config` does not consult this file. `docker compose restart`
+# keeps the container and therefore its address, so no peer is orphaned.
+#
+# Format is healthcheck-exemptions.txt's, and the same parser reads both:
+# '#' in column 0 comments, an empty line separates entries, an indented line
+# continues the previous one. The whole entry is printed verbatim to the
+# operator, so write it as something worth reading at 2am.
+
+statsd-exporter Airflow's StatsD client resolves this host once, when it is
+    constructed, then sendto()s the cached address. Recreated 2026-08-18
+    17:03:06 by the Plan 140 Stage 1 healthcheck deploy; the scheduler had
+    been up since 04:58 and sent UDP into the void for two days and four
+    hours. Seven of eight Pipeline Health panels went blank and
+    ct-pipeline-failures had no input, rendering green on noDataState: OK. A
+    human found it on a dashboard. Restart the four long-lived senders:
+        docker restart cartracker-airflow-scheduler \
+                       cartracker-airflow-dag-processor \
+                       cartracker-airflow-triggerer \
+                       cartracker-airflow-apiserver
+    airflow_ti_successes will look fine either way -- LocalExecutor task
+    processes are short-lived and re-resolve every run -- so it is not
+    evidence. Check airflow_scheduler_heartbeat, which returned within 80s.
+    See docs/plan_136_solver_recycle_and_liveness.md section D6.

@@ -11,6 +11,8 @@ from pathlib import Path
 
 import yaml
 
+from tests.test_deploy_script import load_health_exemptions
+
 _REPO_ROOT = Path(__file__).parent.parent
 
 
@@ -479,36 +481,12 @@ class TestServiceHealthCoverage:
 
     # Exempt services, and why. Every entry needs a written reason, because a
     # deny-list that grows without justification is an allowlist in disguise.
-    _DENY_LIST = {
-        "flyway":
-            "Runs the migrations to completion and exits. Its contract is "
-            "`condition: service_completed_successfully`, and a health status "
-            "on a container that is supposed to be gone is meaningless.",
-        "airflow-init":
-            "Same shape: a one-shot DB migrate / user-create that all four "
-            "long-running Airflow services gate on with "
-            "service_completed_successfully before they open a connection.",
-        "dbt":
-            "Profile-gated tools image. Never started by `docker compose up`; "
-            "invoked as a one-shot `docker compose run`.",
-        "dbt_test":
-            "Profile-gated tools image, same as `dbt`.",
-        "snapshot-worker":
-            "Profile-gated one-shot `docker compose run` target for CI lake "
-            "snapshot generation (Plan 120 Gate C.5). No ports, no restart "
-            "policy, never serves traffic.",
-        "oauth2-proxy":
-            "The only entry here that is a real hole rather than a contract "
-            "that does not apply. quay.io/oauth2-proxy/oauth2-proxy:latest is "
-            "distroless -- verified 2026-08-18 that `docker exec "
-            "cartracker-oauth2-proxy sh` fails with exec: \"sh\": executable "
-            "file not found in $PATH. No shell, no curl, no wget, no busybox, "
-            "so no `healthcheck:` can be expressed against this image at all. "
-            "A `latest-alpine` tag exists and serves /ping on 4180, but "
-            "swapping the image that fronts every authenticated route is its "
-            "own change with its own blast radius. See "
-            "docs/plan_140_service_health_contract.md.",
-    }
+    #
+    # Plan 144 moved the list itself into ``healthcheck-exemptions.txt``.
+    # ``scripts/redeploy.sh`` needs the same list at deploy time, to tell
+    # "exempt by contract" from "not healthy" while it waits for health, and a
+    # second copy of a deny-list is how the first one goes stale.
+    _DENY_LIST = load_health_exemptions()
 
     # Profile-gated, but long-running once up -- so the profile flag does not
     # get to decide scope. The 2026-08-14 solver outage is why this is spelled
