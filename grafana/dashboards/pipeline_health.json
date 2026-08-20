@@ -230,6 +230,36 @@
       ],
       "options": { "colorMode": "background", "reduceOptions": { "calcs": ["lastNotNull"] } },
       "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "unit": "short", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 500 }, { "color": "red", "value": 2000 }] } } }
+    },
+    {
+      "id": 16,
+      "title": "Solver Outcomes (rate)",
+      "description": "Plan 136 Stage 2. Scraper-owned, so it does not pass through dbt. `challenge` is the one to watch: it means the solver reported status=ok and handed back an interstitial, which is what `trawl` did for eight hours on 2026-08-14 while its own healthcheck stayed green. Healthy volume is low by design -- CF credentials cache for 25 minutes, so a working system bootstraps roughly 2.4 times an hour. A sustained rise in total volume is itself a failure signature: the error path never caches, so a refusing solver gets re-asked on every fetch.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 28 },
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "sum by (outcome) (rate(cartracker_solver_requests_total{job=\"scraper\"}[15m]))",
+          "legendFormat": "{{outcome}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "reqps", "min": 0 } }
+    },
+    {
+      "id": 17,
+      "title": "Detail Fetch Outcomes (rate)",
+      "description": "Plan 136 Stage 2. The fast half of the liveness signal: `scrape_detail_pages` runs */15 with a batch of 100, so this is dense enough to show a throughput collapse within one batch. This is also the panel that answers open question 2 -- whether the solver's success rate decays gradually or falls off a cliff -- which is what chooses Stage 3's recycle interval. Read it before picking one.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 28 },
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "sum by (outcome) (rate(cartracker_detail_fetch_total{job=\"scraper\"}[15m]))",
+          "legendFormat": "{{outcome}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "reqps", "min": 0 } }
     }
   ]
 }

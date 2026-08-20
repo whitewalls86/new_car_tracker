@@ -540,6 +540,34 @@ The pause also exercised the `paused → 0` path this stage added beyond the
 draft, and confirmed the known limitation below: a *stopped* container would
 have left the metric instead of reporting `0`.
 
+##### Corrected and re-verified — 2026-08-20 19:04 UTC
+
+The `== bool` fix deployed at `0d07ed9`. Note that `grafana/provisioning` is a
+*directory* mount, so it was immune to the inode trap above — the container
+already saw the new file; the restart was needed only because Grafana reads
+alerting provisioning at startup.
+
+| Rule | State after the fix |
+|---|---|
+| `ct-container-unhealthy` | **inactive**, with all 28 containers explicitly `Normal` |
+| `ct-container-health-unconfigured` | `oauth2-proxy` `Pending`, the other 27 `Normal` |
+
+`flaresolverr` cleared the moment the rule reloaded, having been healthy since
+18:46:30 while the old expression held it firing for eleven minutes past
+recovery.
+
+The corrected form is a better signal than the original intent, not merely a
+bug fix: every container now carries an explicit per-evaluation state instead of
+appearing only while broken. "All 28 evaluated, one pending" is readable
+directly, where the filtering form required inferring health from absence —
+which is the same inference this entire plan exists to stop making.
+
+**`oauth2-proxy` will now page once per day** on the coverage cadence until it
+has a healthcheck. That is the designed behaviour, not a defect to tune away:
+it is a real, unresolved coverage hole, and the plan's stated risk is the
+temptation to suppress `-1` rather than close it. Closing it means swapping the
+front door to `latest-alpine`, which remains a separate deploy decision.
+
 ##### Known limitation, recorded rather than discovered later
 
 A service whose container is **removed or fully stopped** leaves the metric

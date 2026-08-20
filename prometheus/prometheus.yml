@@ -36,6 +36,16 @@ scrape_configs:
     static_configs:
       - targets: ['processing:8070']
 
+  # Plan 136 Stage 2. The scraper was not scraped at all, which is why the
+  # 2026-08-14 solver outage had to be detected through a dbt mart: the only
+  # component that knew every fetch outcome at the moment it happened was
+  # publishing none of them. Counters here are process-local and reset on
+  # restart; every alert over them uses rate(), which handles resets.
+  - job_name: scraper
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['scraper:8000']
+
   - job_name: node
     static_configs:
       - targets: ['node-exporter:9100']

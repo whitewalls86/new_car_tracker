@@ -6,6 +6,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from bs4 import BeautifulSoup
 
+from shared.challenge import CHALLENGE_TITLE_RE
+
 _UUID_RE = re.compile(
     r"[0-9a-fA-F]{8}-"
     r"[0-9a-fA-F]{4}-"
@@ -15,10 +17,6 @@ _UUID_RE = re.compile(
 )
 
 _UNLISTED_TEXT_RE = re.compile(r"\bno longer available\b|\bno longer listed\b", re.IGNORECASE)
-
-_CHALLENGE_TITLE_RE = re.compile(
-    r"just a moment|attention required|checking your browser", re.IGNORECASE
-)
 
 
 def _digits_to_int(val: Any) -> Optional[int]:
@@ -94,13 +92,17 @@ def _detect_challenge(soup: BeautifulSoup, html: str) -> bool:
     Note: do NOT key on `cdn-cgi/challenge-platform` — Cloudflare injects that
     script reference into *every* cars.com page, including valid detail pages,
     so it is not a discriminator.
+
+    The marker set itself lives in `shared.challenge` because the scraper's
+    solver-outcome counter classifies the same interstitial without the data
+    blob to gate on (Plan 136 Stage 2).
     """
     activity = _extract_script_json_by_id(soup, "initial-activity-data")
     if activity:
         return False
     title_el = soup.find("title")
     title = title_el.get_text() if title_el else ""
-    return bool(_CHALLENGE_TITLE_RE.search(title))
+    return bool(CHALLENGE_TITLE_RE.search(title))
 
 
 def _extract_listing_id_from_url(url: Optional[str]) -> Optional[str]:

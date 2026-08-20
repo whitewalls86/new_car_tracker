@@ -2,15 +2,30 @@
 
 ## Status
 
-**Stage 0 complete and verified in production 2026-08-18; analytics gauge
-freshness transferred to Plan 143 before deployment.** Stage 0 shipped as PR
-#214, merge `8b2254b`; see
+**Stage 0 complete and verified in production 2026-08-18. Stage 2 implemented
+2026-08-20, not yet deployed. Stages 3 and 4 not started.**
+
+Stage 0 shipped as PR #214, merge `8b2254b`; see
 [Stage 0 production verification](#stage-0-production-verification-2026-08-18).
 0a and 0c are deployed and proven; 0b was reassigned to
 [Plan 140](plan_140_service_health_contract.md) Stage 2 rather than built here.
 The unshipped Stage 1 prototype at commit `584f100` exposed the right failure
 contract but the wrong serving boundary; [Plan 143](plan_143_analytics_serving_snapshot.md)
-now owns its redesign, deployment, and soak. Stages 2-4 are not started.
+now owns its redesign, deployment, and soak.
+
+[Stage 2](#stage-2--a-liveness-signal-that-does-not-pass-through-dbt) is built:
+two scraper-owned outcome counters, a `scraper` Prometheus job,
+`ct-solver-not-solving` and `ct-detail-fetch-failing`, and D1's remaining
+partial-hour defect fixed at its source. Two things changed from the plan as
+written — the specified alert expression was the filtering-comparison shape that
+false-paged Plan 140, and one rule cannot cover both solver failure shapes
+because they move the solver counter in opposite directions. Both are written up
+in that section.
+
+**Stage 3 was deliberately not built alongside it.** Its recycle interval is
+chosen from what these counters show (open question 2), and it needs
+`POST /containers/*/restart` on the socket proxy Plan 140 left at `POST: 0` —
+an authority expansion that deserves its own change.
 
 Written 2026-08-15 after an 8-hour detail-scraping outage that no
 alert caught. The only production action
@@ -420,30 +435,118 @@ contract.
 
 ## Stage 2 — A liveness signal that does not pass through dbt
 
+**Implemented 2026-08-20. Not yet deployed.**
+
 Add a **solver outcome counter owned by the scraper**, which already knows every
 outcome at the moment it happens:
 
 - `cartracker_solver_requests_total{outcome="ok|challenge|error"}`
 - `cartracker_detail_fetch_total{outcome="ok|403|error"}`
 
-Prometheus does not currently scrape the scraper at all — add it to
+Prometheus did not scrape the scraper at all; it is now a job in
 [prometheus/prometheus.yml](../prometheus/prometheus.yml) alongside `ops` and
-`processing`.
+`processing`, and `scraper` was added to `ct-service-down`'s job set in the same
+change — that rule's set is asserted equal to `prometheus.yml`'s, so the counters
+being scraped and the scraper's own liveness being watched are one edit.
 
-Then the alert that should have caught this:
+### The alert as specified would have false-paged
+
+The expression this stage was written with is the exact shape Plan 140 shipped
+and corrected five days earlier:
 
 ```promql
 rate(cartracker_solver_requests_total{outcome="ok"}[15m]) == 0
   and rate(cartracker_solver_requests_total[15m]) > 0
 ```
 
-Read: *we are asking trawl for things and none of them are succeeding.* True
-within 15 minutes of 21:00 on the night in question, and immune to both D1 and
-D3 — it needs no dbt, and it is a ratio, so a slow failure trips it exactly as
-readily as a fast one.
+`== 0` and `and` are both *filtering* operators. The moment the solver recovers,
+the expression returns **no series at all**, and Grafana's `reduce: last` over
+the 600s `relativeTimeRange` then keeps the last bad value alive for the rest of
+that window — which is how `flaresolverr` stayed firing for eleven minutes after
+recovering on 2026-08-20. Both rules below are written as a product of `bool`
+comparisons instead, so exactly one series exists at every evaluation and it
+reads 0 on the first evaluation after recovery.
+`test_solver_alerts_cannot_drop_a_recovered_series` pins it.
+
+### Two rules, because the solver fails in two shapes
+
+This is the correction that changed the design, and it came from reading
+`_CF_SESSION_TTL` rather than from the incident write-up. The two shapes have
+**opposite** signatures on the solver counter:
+
+| | Refusing (2026-08-14) | Lying |
+|---|---|---|
+| What happens | `/v1` returns 500; `get_cf_credentials` raises before assigning `_cf_credentials_expires_at` | `status: ok`, real `cf_clearance` cookies, interstitial behind them |
+| Credentials cached? | **No** — every fetch re-bootstraps | Yes, the full 25 minutes |
+| Solver request volume | Spikes to fetch rate | Unmoved at the healthy ~2.4/hour |
+| Counter that sees it | `cartracker_solver_requests_total` | `cartracker_detail_fetch_total` |
+
+So a single rule over the solver counter cannot cover both, and the plan's
+original 15-minute window was sized against an assumption that does not hold:
+a *healthy* system bootstraps roughly 2.4 times an hour, so
+`rate(solver_total[15m]) > 0` is legitimately false most of the time. It happens
+to work for the refusing shape only because that shape drives the rate up.
+
+- **`ct-solver-not-solving`** — zero `ok` and more than five non-`ok` solver
+  attempts in 15m, `for: 5m`. Fast: six failed bootstraps accumulate inside one
+  batch, so this trips within minutes of the first failing run, comfortably
+  under the plan's 15-minute goal. The failure side is `outcome!="ok"`, not
+  `outcome="error"`, so `challenge` counts toward it.
+- **`ct-detail-fetch-failing`** — zero `ok` among more than twenty detail
+  fetches in 20m, `for: 5m`. Shape-independent, and the only one that sees a
+  lying solver. The 20m window is chosen against the `*/15` schedule so it always
+  spans a whole cycle: detail traffic is bursty (~100 fetches in about two
+  minutes, then idle), and a window shorter than the schedule would keep falling
+  into zero-traffic stretches where the volume guard reads 0 and resets the
+  `for` — quieter, not faster. `test_the_detail_window_spans_a_whole_scrape_cycle`
+  reads the schedule out of the DAG and enforces it.
+
+Both guards are volume thresholds rather than `> 0`, because "nothing succeeded"
+is trivially true of an idle scraper and one transient error in a quiet window
+should not page.
+
+### Why the counter classifies the page rather than trusting the solver
+
+`challenge` is the outcome that makes the lying shape nameable instead of merely
+absent, and it cannot come from the solver's own report: `trawl` returned
+`status: ok` from its API and `status:ok` from its healthcheck for all eight
+hours. `_solver_outcome` therefore reads the returned page's title. The marker
+set moved to [shared/challenge.py](../shared/challenge.py) so `processing`'s
+block classifier and this counter cannot drift; `processing` keeps its
+`initial-activity-data` safety gate, which does not apply here because the
+bootstrap URL is the homepage and carries no such blob.
+
+Credentials are still cached on a `challenge`, exactly as before. Refusing to
+cache an interstitial would re-bootstrap on every request and hammer the solver
+hardest at the moment it is already failing — that is a behaviour decision for
+Stage 4's circuit breaker, not for telemetry.
+
+### D1's remaining half, fixed here
+
+Plan 143 fixed the half of D1 where a DuckDB lock conflict left every gauge
+silently retaining its last value. The other half was still live and is the
+likely mechanism behind `ct-scrape-volume-drop` firing at 05:51, forty minutes
+into a healthy recovery: `analytics_metrics_snapshot.sql` selected `MAX(hour)`
+from a mart bucketed on `date_trunc('hour', fetched_at)`, and the build runs at
+`0 * * * *`. That is the hour *currently in progress*, holding whatever few
+minutes of data had flushed — published as an hourly total, against a threshold
+of 100. The gauge's own description already read "the most recent **complete**
+scrape hour"; the SQL now excludes the in-progress hour, and `data_through`
+moves with it so the freshness field names the hour the counts describe.
+
+The rule keeps its place as a **data-quality** signal and its annotation now says
+so, pointing at the two rules above for liveness. It sits downstream of the whole
+pipeline and cannot answer "is scraping working now" — reading it as though it
+could is what cost eight hours.
 
 > Verify: replay the incident by pointing the scraper at a deliberately broken
 > solver URL in staging; alert fires within 15 min.
+>
+> **Deploy verification owed:** `up{job="scraper"}` is 1 and all six outcome
+> series are present *before* trusting either alert. Plan 140's deploy showed a
+> single-file bind mount pins an inode, so `git pull` + SIGHUP can reload the
+> *old* Prometheus config while logging success — check the running config, not
+> the repo.
 
 ## Stage 3 — Scheduled recycle
 
@@ -605,10 +708,17 @@ Stage 0 rows are marked **done**; the container-health producer moved to
 | `tests/test_observability_config.py` | `TestAirflowConnectionBudget`: pool settings present, not on the shared anchor, exact set equality on the Airflow services, worst-case sum < `max_connections` read from the postgres `command:` | 0a — **done** |
 | `grafana/provisioning/alerting/rules.yml` | `dag_id != ""` guard on `ct-pipeline-failures` | 0c — **done** |
 | [Plan 143](plan_143_analytics_serving_snapshot.md) file set | Saved SQL, durable post-build snapshot, direct `dbt_runner` metrics, fail-loud freshness, and removal of analytics reads from `ops` | Former Stage 1 — **transferred before deployment** |
-| `scraper/` (metrics module) | Solver + detail-fetch outcome counters; circuit breaker | 2, 4 |
-| `prometheus/prometheus.yml` | Scrape the `scraper` target | 2 |
+| `scraper/metrics.py` | Solver + detail-fetch outcome counters, all label children pre-initialized | 2 — **done** |
+| `shared/challenge.py` | Interstitial marker set + title reader, shared with `processing` so the two classifiers cannot drift | 2 — **done** |
+| `scraper/processors/cf_session.py` | `_solver_outcome` classifier; count every bootstrap outcome, including the raising paths | 2 — **done** |
+| `scraper/processors/scrape_detail.py` | Count one outcome per `_fetch_url` call, on both the solver and fallback paths | 2 — **done** |
+| `scraper/app.py`, `scraper/requirements.txt` | Expose `/metrics` via `Instrumentator`, as `ops` and `processing` do | 2 — **done** |
+| `prometheus/prometheus.yml` | Scrape the `scraper` target | 2 — **done** |
 | `grafana/provisioning/alerting/rules.yml` | Add `ct-metrics-freshness` | Former Stage 1 — **Plan 143** |
-| `grafana/provisioning/alerting/rules.yml` | Fix `ct-scrape-volume-drop`; add solver-success alert | 2 |
+| `grafana/provisioning/alerting/rules.yml` | `ct-solver-not-solving` + `ct-detail-fetch-failing`; `scraper` added to `ct-service-down`; `ct-scrape-volume-drop` re-annotated as data-quality | 2 — **done** |
+| `dbt_runner/sql/analytics_metrics_snapshot.sql` | Exclude the in-progress hour, so the "last complete hour" gauge is one (D1) | 2 — **done** |
+| `grafana/dashboards/pipeline_health.json` | Solver and detail outcome-rate panels — the read that answers open question 2 | 2 — **done** |
+| `scraper/` (metrics module) | Circuit breaker | 4 |
 | `docker-compose.yml` | `docker-socket-proxy` sidecar; `RECYCLABLE_SERVICES` for ops | 4 |
 | `ops/routers/maintenance.py` | `POST /maintenance/recycle/{service}`, allowlisted | 3, 4 |
 | `airflow/dags/` | Weekly drain-aware recycle DAG | 3 |
@@ -623,7 +733,11 @@ Stage 0 rows are marked **done**; the container-health producer moved to
    confirming, because if that is right then D2 also *suppresses* alerts rather
    than merely staling them.
 2. **Does trawl's solve rate decay gradually or fall off a cliff?** Determines
-   whether weekly recycling is conservative or lucky. Stage 2 answers it.
+   whether weekly recycling is conservative or lucky. Stage 2 answers it — the
+   two outcome-rate panels on the Pipeline Health dashboard are the read, and
+   **Stage 3's interval should not be chosen before there is a baseline in
+   them.** That is the reason Stage 3 was not built alongside Stage 2 despite
+   the build order pairing them.
 3. **Should the vestigial `cartracker-flaresolverr` container be removed, and
    `FLARESOLVERR_URL` renamed to `SOLVER_URL`?** Low effort; it cost real time
    during this incident.

@@ -6,7 +6,11 @@ from contextlib import asynccontextmanager
 from typing import Any, Dict, List
 
 from fastapi import Body, FastAPI, HTTPException
+from prometheus_fastapi_instrumentator import Instrumentator
 
+# Imported for its registration side effect: the Plan 136 Stage 2 outcome
+# counters must exist on the default registry before the first /metrics scrape.
+import scraper.metrics  # noqa: F401
 from db import close_pool, get_pool
 from scraper.processors.scrape_detail import (
     DEFAULT_DETAIL_MAX_WORKERS,
@@ -112,6 +116,13 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+# Plan 136 Stage 2: Prometheus did not scrape the scraper at all, so every
+# signal for "is scraping working" sat downstream of dbt. Same call as ops and
+# processing. scraper.metrics is imported at the top of this module for its
+# registration side effect, so all six outcome series are on the default
+# registry before the first scrape rather than appearing on the first fetch.
+Instrumentator().instrument(app).expose(app)
 
 
 @app.post("/scrape_results")

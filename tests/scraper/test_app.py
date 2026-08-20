@@ -42,6 +42,30 @@ class TestHealth:
 
 
 # ---------------------------------------------------------------------------
+# GET /metrics  (Plan 136 Stage 2)
+# ---------------------------------------------------------------------------
+class TestMetricsEndpoint:
+    """Prometheus did not scrape the scraper at all before this stage, so every
+    signal for "is scraping working" sat downstream of dbt -- which is how the
+    2026-08-14 outage ran for eight hours."""
+
+    def test_metrics_is_served(self, mock_scraper_client):
+        resp = mock_scraper_client.get("/metrics")
+        assert resp.status_code == 200
+
+    def test_both_outcome_counters_are_exposed_before_any_traffic(
+        self, mock_scraper_client
+    ):
+        """Exposed from process start, not from first fetch. An alert asking
+        whether the ok count is zero cannot evaluate against a missing series."""
+        body = mock_scraper_client.get("/metrics").text
+        for outcome in ("ok", "challenge", "error"):
+            assert f'cartracker_solver_requests_total{{outcome="{outcome}"}}' in body
+        for outcome in ("ok", "403", "error"):
+            assert f'cartracker_detail_fetch_total{{outcome="{outcome}"}}' in body
+
+
+# ---------------------------------------------------------------------------
 # POST /scrape_results
 # ---------------------------------------------------------------------------
 class TestPostScrapeResults:
