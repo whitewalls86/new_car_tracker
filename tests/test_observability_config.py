@@ -35,6 +35,7 @@ class TestPrometheusConfig:
             "processing",
             "node",
             "container-health",
+            "scraper",
         }
         assert expected == job_names, f"Unexpected jobs: {job_names ^ expected}"
 
@@ -976,6 +977,39 @@ class TestGrafanaDashboards:
                        disk_usage.MEASURED_AT_METRIC):
             assert metric in exprs, f"{metric} is written but never charted"
 
+    def _pipeline_panels(self):
+        path = _REPO_ROOT / "grafana" / "dashboards" / "pipeline_health.json"
+        return json.loads(path.read_text())["panels"]
+
+    def test_solver_outcomes_are_chartable_not_only_alertable(self):
+        """Plan 136 Stage 2, and not decoration.
+
+        Open question 2 -- does the solve rate decay gradually or fall off a
+        cliff? -- is what chooses Stage 3's recycle interval, and the only way to
+        read it is the outcome split over time. Without these panels the
+        interval gets picked by guess, which is what the plan says not to do.
+
+        Pinned against the label sets the scraper actually publishes, so
+        renaming an outcome fails here rather than silently emptying a panel.
+        """
+        from scraper.metrics import DETAIL_FETCH_OUTCOMES, SOLVER_OUTCOMES
+
+        exprs = " ".join(
+            t["expr"]
+            for p in self._pipeline_panels() for t in p.get("targets", [])
+        )
+        assert "cartracker_solver_requests_total" in exprs
+        assert "cartracker_detail_fetch_total" in exprs
+        assert SOLVER_OUTCOMES and DETAIL_FETCH_OUTCOMES
+        assert exprs.count("sum by (outcome)") == 2, (
+            "both counters should be split by outcome; a total alone cannot "
+            "distinguish a refusing solver from a lying one"
+        )
+
+    def test_pipeline_panel_ids_are_unique(self):
+        ids = [p["id"] for p in self._pipeline_panels()]
+        assert len(ids) == len(set(ids))
+
     def test_service_health_is_visible_without_waiting_for_an_alert(self):
         """Plan 140 Stage 2. A metric nothing renders is a metric nobody looks
         at until it pages, and "is the fleet up?" is the first question this
@@ -1079,6 +1113,7 @@ class TestGrafanaAlertingProvisioning:
             "ct-inode-warning", "ct-inode-critical",
             "ct-inode-exhaustion-forecast",
             "ct-container-unhealthy", "ct-container-health-unconfigured",
+            "ct-solver-not-solving", "ct-detail-fetch-failing",
         }
         assert expected <= all_uids, f"Missing rule UIDs: {expected - all_uids}"
 
@@ -1334,3 +1369,139 @@ class TestGrafanaAlertingProvisioning:
         ]
         assert len(coverage) == 1, "no route matches severity=coverage"
         assert coverage[0]["repeat_interval"] != policies[0]["repeat_interval"]
+
+    # ── Plan 136 Stage 2 ──────────────────────────────────────────────────────
+
+    _SOLVER_RULES = ("ct-solver-not-solving", "ct-detail-fetch-failing")
+
+    def test_solver_alerts_cannot_drop_a_recovered_series(self):
+        """Plan 140's `== bool` lesson, applied before it can bite again.
+
+        Plan 136 specified this alert as
+        `rate(...{outcome="ok"}[15m]) == 0 and rate(...[15m]) > 0`. Both `== 0`
+        and `and` are *filtering* operators: the moment the solver recovers, the
+        expression returns no series at all, and `reduce: last` over the 600s
+        relativeTimeRange keeps the last bad value alive for the rest of that
+        window. That is exactly the shape that false-paged ct-container-unhealthy
+        on 2026-08-20, where flaresolverr stayed firing for eleven minutes after
+        recovering.
+
+        Written as a product of `bool` comparisons, both expressions yield
+        exactly one series that reads 0 on the first evaluation after recovery.
+        """
+        for uid in self._SOLVER_RULES:
+            expr = self._rule(uid)["data"][0]["model"]["expr"]
+            assert " and " not in expr, (
+                f"{uid} uses `and`, which drops the series when the guard stops "
+                "matching; the last bad value then haunts the reduce window"
+            )
+            assert re.search(r"==\s*bool\s+0", expr), (
+                f"{uid} must test the ok count with `== bool 0`, not a filtering "
+                "`== 0`"
+            )
+            assert expr.count("bool") == 2, (
+                f"{uid} should be a product of two bool comparisons, so both the "
+                "failure test and the traffic guard keep their series"
+            )
+
+    def test_solver_alerts_stay_quiet_when_nothing_is_being_scraped(self):
+        """The guard that keeps an idle scraper off the incident channel.
+
+        `scrape_detail_pages` is `*/15`, so there are long stretches with no
+        traffic at all, and "nothing succeeded" is trivially true then. Each rule
+        multiplies by a volume guard, and the thresholds are the operating
+        thresholds -- not >0, which one transient error in a quiet window would
+        satisfy.
+        """
+        thresholds = {
+            "ct-solver-not-solving": 5,
+            "ct-detail-fetch-failing": 20,
+        }
+        for uid, minimum in thresholds.items():
+            expr = self._rule(uid)["data"][0]["model"]["expr"]
+            assert re.search(rf">\s*bool\s+{minimum}\b", expr), (
+                f"{uid} lost its volume guard of >{minimum}; without it an idle "
+                "scraper reads as a failing one"
+            )
+
+    def test_solver_alerts_read_the_scrapers_own_job(self):
+        for uid in self._SOLVER_RULES:
+            expr = self._rule(uid)["data"][0]["model"]["expr"]
+            assert 'job="scraper"' in expr
+
+    def test_the_detail_window_spans_a_whole_scrape_cycle(self):
+        """Detail traffic is bursty -- ~100 fetches in about two minutes, then
+        idle until the next `*/15` run. A rate window shorter than the schedule
+        would keep falling into zero-traffic stretches where the volume guard
+        reads 0 and resets the `for`, making the rule quieter rather than
+        faster."""
+        dag = (_REPO_ROOT / "airflow" / "dags" / "scrape_detail_pages.py").read_text()
+        minutes = int(re.search(r'schedule="\*/(\d+) \* \* \* \*"', dag).group(1))
+        expr = self._rule("ct-detail-fetch-failing")["data"][0]["model"]["expr"]
+        windows = {int(w) for w in re.findall(r"\[(\d+)m\]", expr)}
+        assert windows, "no rate window found"
+        assert min(windows) > minutes, (
+            f"ct-detail-fetch-failing's window {min(windows)}m does not span the "
+            f"{minutes}m detail schedule, so it can evaluate against no traffic"
+        )
+
+    def test_the_two_solver_rules_watch_different_metrics(self):
+        """They are not a fast and a slow copy of one signal.
+
+        A refusing solver raises before caching, so it is re-asked on every fetch
+        and solver volume spikes -- ct-solver-not-solving sees that in minutes.
+        A *lying* solver caches normally for the 25-minute TTL and its request
+        volume never moves; only the 403s on detail fetches show it. Collapsing
+        these into one rule loses one of the two modes.
+        """
+        exprs = {
+            uid: self._rule(uid)["data"][0]["model"]["expr"]
+            for uid in self._SOLVER_RULES
+        }
+        assert "cartracker_solver_requests_total" in exprs["ct-solver-not-solving"]
+        assert "cartracker_detail_fetch_total" in exprs["ct-detail-fetch-failing"]
+        assert "cartracker_detail_fetch_total" not in exprs["ct-solver-not-solving"]
+
+    def test_the_solver_rule_counts_challenges_as_failures(self):
+        """A solver returning interstitials behind `status: ok` is failing. If
+        this selected only `outcome="error"`, the exact 2026-08-14 shape --
+        cookies returned, challenge page behind them -- would not reach the
+        guard."""
+        expr = self._rule("ct-solver-not-solving")["data"][0]["model"]["expr"]
+        assert 'outcome!="ok"' in expr, (
+            "the failure side must be everything that is not ok, so `challenge` "
+            "counts toward it"
+        )
+
+    def test_scrape_volume_drop_is_labelled_as_data_quality_not_liveness(self):
+        """D1's durable half. This rule reads a dbt mart and lags the entire
+        pipeline; it stayed silent through the 8-hour outage and then fired 40
+        minutes into the healthy recovery. It keeps its place as a data-quality
+        signal, but an operator reading it as liveness is the mistake that cost
+        eight hours, so the annotation has to say so.
+        """
+        rule = self._rule("ct-scrape-volume-drop")
+        description = rule["annotations"]["description"]
+        assert "not a liveness" in description
+        for uid in self._SOLVER_RULES:
+            assert uid in description, (
+                "the description should point at the rules that do answer "
+                "liveness"
+            )
+
+    def test_the_volume_snapshot_reads_a_complete_hour(self):
+        """The other half of D1, and the reason that rule fired at 05:51.
+
+        mart_scrape_volume buckets on date_trunc('hour', fetched_at) and the
+        build runs at `0 * * * *`, so an unfiltered MAX(hour) is the hour
+        currently in progress -- a few minutes of data published as an hourly
+        total, under a threshold of 100. The gauge's own description already
+        said "most recent complete scrape hour"; this makes that true.
+        """
+        sql = (
+            _REPO_ROOT / "dbt_runner" / "sql" / "analytics_metrics_snapshot.sql"
+        ).read_text()
+        assert re.search(
+            r"hour\s*<\s*CAST\(date_trunc\('hour',\s*now\(\)\s*AT TIME ZONE 'UTC'\)",
+            sql,
+        ), "the snapshot no longer excludes the in-progress hour"

@@ -1,6 +1,29 @@
+-- Plan 136 Stage 2 (defect D1, second half).
+--
+-- This was MAX(hour), with no completeness filter, and the gauge it feeds is
+-- documented as "the most recent COMPLETE scrape hour". It was not.
+-- mart_scrape_volume buckets on date_trunc('hour', fetched_at) and
+-- hourly_analytics_refresh builds at `0 * * * *`, so MAX(hour) is the bucket
+-- for the hour currently in progress, holding whatever few minutes of data
+-- results_processing had flushed by then. Published as an hourly total, that
+-- is a manufactured drop, every hour -- and ct-scrape-volume-drop's threshold
+-- is 100 observations. It is the most likely mechanism behind that alert
+-- firing at 05:51 on 2026-08-15, forty minutes into a healthy recovery.
+--
+-- `now() AT TIME ZONE 'UTC'` rather than a bare `now()`: `hour` is a naive
+-- TIMESTAMP holding UTC, and comparing it against a TIMESTAMPTZ would make the
+-- boundary depend on the container's local timezone.
+--
+-- data_through moves with it deliberately. It is the freshness field on the
+-- public /info page, and it should name the hour the counts actually describe;
+-- letting the two disagree would trade a wrong number for a confusing pair.
+-- Snapshot freshness is not this field -- that is
+-- cartracker_metrics_last_success_timestamp_seconds (Plan 143), which is
+-- unaffected.
 WITH latest_scrape_hour AS (
     SELECT MAX(hour) AS data_through
     FROM main.mart_scrape_volume
+    WHERE hour < CAST(date_trunc('hour', now() AT TIME ZONE 'UTC') AS TIMESTAMP)
 ),
 latest_scrape_volume AS (
     SELECT

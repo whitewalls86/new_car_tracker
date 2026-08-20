@@ -43,11 +43,27 @@ the unscoped Grafana consumers and the 900-second threshold that the first soak
 exposed. The corrected soak recorded 24 hourly publications, no failed publish,
 a 3,580.9s worst-case freshness gap against the 4,500s threshold, zero DuckDB
 lock conflicts, and `/info` at 0.157s.
-**Plan 136 now leads the build order**, resuming at Stage 2's solver-outcome
-counters, which is the layer no healthcheck can supply — the
-solver was healthy for all eight hours. Only after those counters have a
-baseline does Stage 4 get restart authority. It also inherits the
-`docker-socket-proxy` Plan 140 Stage 2 introduced, so its restart authority is a
+**Plan 136 leads the build order, and its Stage 2 was implemented on
+2026-08-20** — the solver-outcome counters, which are the layer no healthcheck
+can supply, because the solver was healthy for all eight hours. It is built and
+awaiting deploy. Two corrections came out of building it. The alert expression
+the plan specified was the same filtering-comparison shape that false-paged Plan
+140 six minutes after its deploy, so both new rules are written as `bool`
+products. And one rule cannot cover both solver failure modes: a *refusing*
+solver never caches credentials and so drives solver request volume **up**,
+while a *lying* solver caches normally for 25 minutes and moves that counter not
+at all — only its 403s on detail fetches show it. Hence
+`ct-solver-not-solving` (fast, solver counter) and `ct-detail-fetch-failing`
+(shape-independent, fetch counter). Stage 2 also closed D1's remaining half:
+the Plan 143 snapshot selected `MAX(hour)` from an hourly mart while the build
+runs at `0 * * * *`, so it published the in-progress hour as an hourly total —
+a manufactured drop under a threshold of 100, and the likely reason that alert
+fired forty minutes into the healthy recovery.
+**Stage 3 was deliberately left for a second change**: its recycle interval is
+chosen from what these counters show, and it needs a `POST` verb on the socket
+proxy that Plan 140 left read-only. Only after the counters have a baseline does
+Stage 4 get restart authority. It inherits the
+`docker-socket-proxy` Plan 140 Stage 2 introduced, so that authority is a
 single added verb on an existing grant rather than a second socket path. Plan 142 then
 turns the same drain and health primitives into a safe, explicit whole-host
 maintenance workflow. Plan 141 then makes the newly bounded log pipeline and
@@ -127,7 +143,7 @@ because it is smaller while a higher row has an executable next step.
 
 | Order | Plan | Title | Next executable slice | Priority | Effort | Depends on / safe stopping point |
 |---:|---|---|---|---:|---|---|
-| 1 | [136](plan_136_solver_recycle_and_liveness.md) | Solver recycle and real liveness | Add Stage 2 solver counters and corrected alerts, then Stage 3 drain-aware weekly recycle | 98 | M | Stage 0 verified; analytics freshness moved to Plan 143; 0b moved into Plan 140 Stage 2; soak counters before Stage 4 auto-restart |
+| 1 | [136](plan_136_solver_recycle_and_liveness.md) | Solver recycle and real liveness | **Stage 2 implemented 2026-08-20** — deploy it, then read a week of outcome rates before choosing Stage 3's recycle interval | 98 | M | Stage 0 verified; analytics freshness moved to Plan 143; 0b moved into Plan 140 Stage 2; soak counters before Stage 4 auto-restart |
 | 2 | [142](plan_142_planned_host_maintenance.md) | Planned host maintenance and production quiescence | Freeze the successful Ubuntu-update window as fixtures, then build separate maintenance intent, truthful drain status, and the checked-in host procedure | 86 | M + first observed window | Reuse Plan 136 drain semantics; final resume gate requires soaked Plan 140 health coverage |
 | 3 | [141](plan_141_structured_log_ingestion_contract.md) | Structured log ingestion and dashboard contract | Freeze production-derived fixtures and baseline, then align parsing, labels, filters, and dashboard selectors; fix `ct-403-log-spike` as the first case | 85 | S + 24h soak | Does not block Plan 136; should precede Plan 134's warning-log observation window. Has a live false-positive to work from: see below |
 | 4 | [144](plan_144_deploy_script_hardening.md) | Deploy script hardening | Add `--no-deps`, replace `sleep 10` with health polling, document the intent-release trap | 78 | XS | **Unblocked by Plan 140 Stage 1** — the TODO could not be actioned when only 7 of 31 services had a healthcheck. Plan 142 should consume this script rather than fork it |
@@ -272,7 +288,7 @@ being trained to ignore the scraper's alert channel, which is the channel the
 | [133](plan_133_pack_read_path_hardening.md) | Pack read path hardening | **Complete 2026-08-20** — PR #219 (`5066bc1`) deployed to `ops`, `archiver`, `pack-worker`, and `processing`; post-deploy verification read 720 artifacts through the pack path across April-July with 0 failures. Unblocks Plan 132 Stage 2 |
 | [134](plan_134_archiver_endpoint_failure_contract.md) | Archiver endpoint failure contract | Draft — measurement-first rollout not started |
 | [135](plan_135_storage_observability.md) | Storage observability | **Complete 2026-08-18** — both disks visible, alerts proven, all log stores bounded, runbook live, `df /` 79% → 51%; criterion 5's MinIO half publishes on the first Sunday slow-tier walk (2026-08-23) |
-| [136](plan_136_solver_recycle_and_liveness.md) | Solver recycle + real liveness detection | **Stage 0 verified in production; Stage 1 transferred to Plan 143 before deployment** — prototype commit `584f100` established the fail-loud contract but not the accepted serving design. 0b shipped as Plan 140 Stage 2 on 2026-08-20, which also leaves Stage 4 a `docker-socket-proxy` to extend rather than a socket path to open; Stages 2-4 not started |
+| [136](plan_136_solver_recycle_and_liveness.md) | Solver recycle + real liveness detection | **Stage 0 verified in production; Stage 2 implemented 2026-08-20, not yet deployed; Stage 1 transferred to Plan 143 before deployment** — prototype commit `584f100` established the fail-loud contract but not the accepted serving design. 0b shipped as Plan 140 Stage 2 on 2026-08-20, which also leaves Stage 4 a `docker-socket-proxy` to extend rather than a socket path to open. Stage 2 adds two scraper-owned outcome counters, a `scraper` Prometheus job, `ct-solver-not-solving` + `ct-detail-fetch-failing`, and fixes D1's remaining partial-hour defect in the Plan 143 snapshot SQL; Stages 3-4 not started |
 | [137](plan_137_legacy_bronze_parquet_disposition.md) | Legacy bronze Parquet recovery and disposition | Draft — read-only inventory complete; no deletion authorized |
 | [138](plan_138_public_surface_refresh.md) | README and public portfolio surface refresh | Draft — audit complete; analytics acquisition/database removal transferred to Plan 143, while public presentation remains here |
 | [139](plan_139_test_suite_maintenance.md) | Test suite construction and maintenance | **Stages A+B complete 2026-08-18** (PR #213) — coverage reported at 88%, CI path 333s → ~260s; Stages C/D remain queued as opportunistic filler; analytics producer coverage transferred through Plan 136 to Plan 143 |

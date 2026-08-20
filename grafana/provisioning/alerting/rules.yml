@@ -209,7 +209,7 @@ groups:
               from: 600
               to: 0
             model:
-              expr: 'up{job=~"airflow|container-health|dbt_runner|minio|minio_bucket|node|ops|postgres|processing"}'
+              expr: 'up{job=~"airflow|container-health|dbt_runner|minio|minio_bucket|node|ops|postgres|processing|scraper"}'
           - refId: B
             datasourceUid: "__expr__"
             relativeTimeRange:
@@ -355,12 +355,156 @@ groups:
                     type: gt
                     params: [0]
 
+      # Plan 136 Stage 2. Two rules over scraper-owned counters, and they are
+      # deliberately not one rule with a shorter window, because the two
+      # failure modes this plan was written about have opposite signatures.
+      #
+      # The 2026-08-14 solver outage was the *refusing* mode: /v1 returned HTTP
+      # 500, get_cf_credentials raised before ever assigning
+      # _cf_credentials_expires_at, and so every single fetch re-bootstrapped.
+      # Solver request volume goes UP during that failure, which is what makes
+      # ct-solver-not-solving fast -- a couple of minutes of one batch is
+      # already six failed bootstraps.
+      #
+      # The *lying* mode is the opposite: the solver returns status=ok with
+      # real cf_clearance cookies and an interstitial behind them. Credentials
+      # cache normally for the full 25-minute _CF_SESSION_TTL, solver volume
+      # stays at its healthy ~2.4/hour, and ct-solver-not-solving's `> bool 5`
+      # guard is never reached. Only the detail fetches show it, as 403s at
+      # full batch rate. That is ct-detail-fetch-failing's job.
+      #
+      # Neither subsumes the other and neither should be "simplified" into the
+      # other. The same is true one layer out: a healthy container can produce
+      # 0% success (this incident), so Plan 140's cartracker_container_health
+      # does not cover either of these.
+      #
+      # Both are written as `== bool` / `> bool` products, never as filtering
+      # comparisons. See the ct-container-unhealthy comment above: a filtered
+      # comparison drops its series on recovery and `reduce: last` over the
+      # 600s relativeTimeRange then keeps the dead value alive for the rest of
+      # the window. That shape false-paged on 2026-08-20 within six minutes.
+      # These expressions sum over pre-initialized counter children, so exactly
+      # one series exists at all times and it reads 0 the instant work
+      # recovers. test_solver_alerts_cannot_drop_a_recovered_series pins it.
+      #
+      # Scraper liveness itself is NOT these rules -- if the process is down
+      # the counters vanish and both go NoData. `scraper` was added to
+      # ct-service-down's job set in the same change for exactly that reason.
+      - uid: ct-solver-not-solving
+        title: Solver Not Solving
+        condition: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 5m
+        annotations:
+          summary: "The Cloudflare solver has not succeeded once in 15 minutes"
+          description: "We are asking the solver for credentials and none of the attempts are succeeding — `outcome=error` means it is refusing or unreachable, `outcome=challenge` means it claimed success and handed back an interstitial. The 2026-08-14 outage ran 8 hours in this state with the container reporting healthy the whole time, because `trawl`'s own healthcheck only probes pool liveness. A plain `docker restart cartracker-trawl` resolved it. Check the solver's outcome split on the Pipeline Health dashboard before restarting, and note the container is `trawl`, not the vestigial `flaresolverr`."
+        data:
+          - refId: A
+            datasourceUid: cartracker-prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: '(sum(increase(cartracker_solver_requests_total{job="scraper",outcome="ok"}[15m])) == bool 0) * (sum(increase(cartracker_solver_requests_total{job="scraper",outcome!="ok"}[15m])) > bool 5)'
+          - refId: B
+            datasourceUid: "__expr__"
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+          - refId: C
+            datasourceUid: "__expr__"
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+
+      # The window is 20m against a `*/15` DAG, so it always spans at least one
+      # whole batch whatever the phase. Detail traffic is bursty -- ~100 fetches
+      # in roughly two minutes, then idle -- and a window shorter than the
+      # schedule would keep falling to zero traffic between batches, where the
+      # `> bool 20` guard reads 0 and resets the 5m `for`. That would make the
+      # rule quieter, not faster.
+      #
+      # The guard is what keeps a skipped or failed DAG run from paging here:
+      # no fetches means no evidence, and a scraper that has stopped fetching
+      # entirely is ct-service-down's and the DAG sensors' signal, not this one.
+      - uid: ct-detail-fetch-failing
+        title: Detail Fetches All Failing
+        condition: C
+        noDataState: OK
+        execErrState: Alerting
+        for: 5m
+        annotations:
+          summary: "Every detail fetch in the last 20 minutes failed"
+          description: "At least 21 detail-page fetches were attempted and not one returned HTTP 200. This is shape-independent — it catches a solver that lies as readily as one that refuses, which is why it exists alongside ct-solver-not-solving. Every hour in this state costs an hour of detail coverage and pushes the affected listings into a 12-96h exponential cooldown, so check `cartracker_detail_fetch_total` by outcome first: all-403 points at the solver, mixed `error` points at the fetch path or the site."
+        data:
+          - refId: A
+            datasourceUid: cartracker-prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: '(sum(increase(cartracker_detail_fetch_total{job="scraper",outcome="ok"}[20m])) == bool 0) * (sum(increase(cartracker_detail_fetch_total{job="scraper"}[20m])) > bool 20)'
+          - refId: B
+            datasourceUid: "__expr__"
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+          - refId: C
+            datasourceUid: "__expr__"
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+
+      # Plan 136 D1, corrected in two passes. Plan 143 fixed the half where a
+      # DuckDB lock conflict left every gauge silently retaining its last value;
+      # this rule now reads a fail-loud snapshot with its own freshness alert.
+      #
+      # What Stage 2 corrects is the other half: this is a **data-quality**
+      # alert and must not be read as liveness. It sits downstream of scrape ->
+      # processing -> silver flush -> dbt build -> DuckDB, so it cannot answer
+      # "is scraping working now" -- during the 2026-08-14 outage it stayed
+      # silent for eight hours and then fired at 05:51, forty minutes into the
+      # healthy recovery. ct-solver-not-solving and ct-detail-fetch-failing
+      # above are the liveness signals; this one answers "did the observations
+      # that were scraped actually land".
+      #
+      # The partial-hour defect that made it fire during a recovery is fixed in
+      # dbt_runner/sql/analytics_metrics_snapshot.sql, not here: the snapshot
+      # selected MAX(hour) from a mart bucketed on date_trunc('hour',
+      # fetched_at), so the hourly build read a bucket holding a few minutes of
+      # data and published it as an hourly total.
       - uid: ct-scrape-volume-drop
         title: Scrape Volume Drop
         condition: C
         noDataState: OK
         execErrState: Alerting
         for: 30m
+        annotations:
+          summary: "Hourly observation count has dropped below 100"
+          description: "The last complete hour produced fewer than 100 observations. This is a data-quality signal, not a liveness one — it is downstream of the dbt build and lags the whole pipeline, so do not wait on it to tell you scraping has stopped. Check ct-solver-not-solving and ct-detail-fetch-failing first; if those are Normal, the scrape worked and the loss is in processing, the silver flush, or the build."
         data:
           - refId: A
             datasourceUid: cartracker-prometheus
