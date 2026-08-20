@@ -236,14 +236,29 @@ groups:
       # metric: 1 healthy, 0 unhealthy, -1 no healthcheck configured. A single
       # `< 1` rule would merge them and re-hide the coverage gap inside the
       # incident channel, which is the whole point of spending a third state on
-      # it. `count by (container)` keeps one alert instance per container and
-      # drops job/instance so the summary renders a service name.
+      # it. The `container` label survives the comparison, so each alert
+      # instance still names one service.
       #
       # `starting` maps to 0 by design -- "not yet known to be healthy" is not
       # healthy. Docker leaves that state within
       # start_period + retries * (interval + timeout), a 230s worst case across
       # this compose file, so the 5m `for` is what keeps a slow start quiet.
       # test_unhealthy_alert_outlasts_the_slowest_healthcheck_start pins it.
+      #
+      # `== bool 0`, NOT `count by (container) (... == 0)`. The filtering form
+      # was deployed on 2026-08-20 and produced a false page within six minutes.
+      # A filtered comparison *drops* the series when a container is healthy,
+      # and `reduce: last` over a 600s relativeTimeRange then keeps the last
+      # value it saw alive for the rest of that window. Grafana's own restart
+      # put `container="grafana"` at 0 for a single 15s sample at 18:38:15; the
+      # ghost series satisfied the 5m `for` and the rule was Alerting at 18:44
+      # for a container that had been healthy for six minutes.
+      #
+      # `== bool` returns 1-or-0 for *every* series and drops none, so a
+      # recovered container reads 0 on the very next evaluation. Note this is
+      # not a defect the other rules in this file share: they select continuous
+      # gauges that always have a current sample, where `last` really is the
+      # latest value. It only bites an expression whose series come and go.
       #
       # There is deliberately no staleness rule. container-health computes in
       # its scrape handler and cannot serve a stale value; its liveness is
@@ -265,7 +280,7 @@ groups:
               from: 600
               to: 0
             model:
-              expr: 'count by (container) (cartracker_container_health{job="container-health"} == 0)'
+              expr: 'cartracker_container_health{job="container-health"} == bool 0'
           - refId: B
             datasourceUid: "__expr__"
             relativeTimeRange:
@@ -317,7 +332,7 @@ groups:
               from: 600
               to: 0
             model:
-              expr: 'count by (container) (cartracker_container_health{job="container-health"} == -1)'
+              expr: 'cartracker_container_health{job="container-health"} == bool -1'
           - refId: B
             datasourceUid: "__expr__"
             relativeTimeRange:

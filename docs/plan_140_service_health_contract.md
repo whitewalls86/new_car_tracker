@@ -468,6 +468,78 @@ repo's provisioning directory: 23 panels loaded, `state-timeline` accepted, the
 value mappings survived the round trip, all 18 alert rules provisioned, and the
 `severity=coverage` route resolved to a `1d` repeat beside the parent's `4h`.
 
+##### Production deployment and the defect it exposed — 2026-08-20
+
+Deployed to `0a9fba9`. `docker compose up -d --no-deps docker-socket-proxy
+container-health` created only the two new containers and one network — a
+`--dry-run` confirmed nothing existing would be recreated, which is why this
+deploy did **not** declare deploy intent: nothing in the scrape, processing or
+dbt path was touched, and draining 597 in-flight artifacts would have bought
+nothing.
+
+The metric came up correct on the first read: 28 services, 27 at `1`, and
+exactly one `-1` — `oauth2-proxy`, the documented distroless exception. All
+nine scrape targets `up`. `flyway` and `airflow-init` correctly absent as
+exited one-shots, and no sibling-project container appeared.
+
+**Two things went wrong, and both are worth more than the deploy itself.**
+
+**1. A single-file bind mount is pinned to an inode, so `git pull` orphans it.**
+`prometheus.yml` is mounted as a *file*, not a directory. `git pull` replaces
+the file rather than editing in place, so the new content landed on a new inode
+while the container kept reading the old one. `docker kill -s HUP` reloaded
+happily and logged *"Completed loading of configuration file"* — against the
+pre-pull config, with no `container-health` job in it. The reload was truthful
+about what it did and silent about what it read.
+
+```bash
+stat -c %i prometheus/prometheus.yml                                   # 519700
+docker exec cartracker-prometheus stat -c %i /etc/prometheus/prometheus.yml  # 519794
+```
+
+`docker restart` fixes it — Docker re-resolves bind mounts at container start —
+and a recreate is not needed. This affects every single-file mount delivered by
+git: `prometheus.yml`, `promtail.yml`, `loki.yml`, `statsd_mapping.yml`.
+Directory mounts (`grafana/provisioning`, `grafana/dashboards`) are immune.
+**This belongs in [Plan 144](plan_144_deploy_script_hardening.md)**, whose whole
+subject is a deploy script that cannot tell you whether it worked.
+
+**2. The alert expression manufactured a false page in six minutes.** The rules
+shipped as `count by (container) (cartracker_container_health == 0)`. A
+*filtering* comparison drops the series when a container is healthy, and
+Grafana's `reduce: last` over the 600s `relativeTimeRange` then keeps the last
+value it saw alive for the rest of that window.
+
+Restarting Grafana to load its own provisioning put `container="grafana"` at `0`
+for **one 15-second sample** at 18:38:15 — correct behaviour, that is the
+`starting` state working as designed. The ghost series then satisfied the 5m
+`for`, and at 18:44 the rule was Alerting for a container healthy since 18:38:30
+and reporting `1` in Prometheus the whole time.
+
+Uncorrected, that pages on **every deploy, for every container restarted** —
+precisely the "twenty new ways to page falsely" this plan lists as its top risk,
+and the same stale-value-read-as-live shape as Plan 136 D2. The fix is
+`== bool 0`, which returns 1-or-0 for every series and drops none, so a
+recovered container reads `0` on the next evaluation.
+
+It is worth being precise about why the other rules in this file do not share
+the bug: they select *continuous* gauges that always carry a current sample,
+where `last` genuinely is the latest value. Only an expression whose series come
+and go is exposed, which is why the guard belongs on the expression rather than
+on the shared `reduce`/`relativeTimeRange` shape.
+
+| Validation | Result |
+|---|---|
+| Selector matches live series | 28 |
+| Stays quiet on healthy data | `ct-container-unhealthy` matched nothing |
+| Coverage alert fires correctly | `ct-container-health-unconfigured` → `oauth2-proxy`, routed on the `1d` coverage cadence |
+| `ct-service-down` covers all nine | All nine jobs matched, none down |
+| Fires on a real fault | `docker pause cartracker-flaresolverr` (vestigial; the live path is `trawl`) → metric `0` within 25s, Prometheus ingested it, alert Pending at 18:44:00. Unpaused 18:46:30 |
+
+The pause also exercised the `paused → 0` path this stage added beyond the
+draft, and confirmed the known limitation below: a *stopped* container would
+have left the metric instead of reporting `0`.
+
 ##### Known limitation, recorded rather than discovered later
 
 A service whose container is **removed or fully stopped** leaves the metric
