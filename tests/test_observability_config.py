@@ -1214,8 +1214,38 @@ class TestGrafanaAlertingProvisioning:
         )["data"][0]["model"]["expr"]
         assert "cartracker_container_health" in unhealthy
         assert "cartracker_container_health" in unconfigured
-        assert "== 0" in unhealthy and "== -1" not in unhealthy
-        assert "== -1" in unconfigured and "== 0" not in unconfigured
+        assert "== bool 0" in unhealthy and "== bool -1" not in unhealthy
+        assert "== bool -1" in unconfigured and "== bool 0" not in unconfigured
+
+    def test_container_health_rules_cannot_drop_a_recovered_series(self):
+        """The false page this stage shipped on 2026-08-20 and corrected.
+
+        The rules first used `count by (container) (metric == 0)`. A *filtering*
+        comparison drops the series entirely when a container is healthy, and
+        Grafana's `reduce: last` over a 600s relativeTimeRange then keeps the
+        last value it saw alive for the rest of that window. Grafana's own
+        restart put container="grafana" at 0 for a single 15-second sample at
+        18:38:15; the ghost series satisfied the 5m `for` and the rule was
+        Alerting at 18:44 for a container healthy since 18:38:30. Left alone,
+        that pages on every deploy, for every container restarted.
+
+        `== bool` returns 1-or-0 for every series and drops none, so a recovered
+        container reads 0 on the next evaluation. The `reduce: last` +
+        `relativeTimeRange` shape is inherited from every other rule in the
+        file, so the guard belongs on the expression.
+        """
+        for uid in ("ct-container-unhealthy", "ct-container-health-unconfigured"):
+            query = self._rule(uid)["data"][0]
+            expr = query["model"]["expr"]
+            assert "bool" in expr, (
+                f"{uid} uses a filtering comparison, so a healthy container's "
+                "series vanishes and its last value haunts the "
+                f"{query['relativeTimeRange']['from']}s reduce window"
+            )
+            assert not expr.startswith("count"), (
+                f"{uid} aggregates away the per-container series; use the "
+                "bool comparison so every container reports every evaluation"
+            )
 
     def test_container_health_rules_read_the_exporters_own_job(self):
         for uid in ("ct-container-unhealthy", "ct-container-health-unconfigured"):

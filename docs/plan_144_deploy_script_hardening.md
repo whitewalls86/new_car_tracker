@@ -84,6 +84,46 @@ halfway leaves a mixed fleet with intent released and work resuming.
 Decide the behaviour deliberately, write it down, and distinguish the two cases:
 build failure (safe to release) from recreation failure (not obviously safe).
 
+### 4. The script cannot deploy a config-only change at all
+
+Found during [Plan 140](plan_140_service_health_contract.md) Stage 2's
+production deploy, 2026-08-20. `redeploy.sh` only knows `build` + `up -d`, and
+neither applies a change to a **bind-mounted config file** — Compose sees no
+service-config drift and correctly does nothing.
+
+Worse than "does nothing": several services mount a **single file** rather than
+a directory — `prometheus/prometheus.yml`, `promtail/promtail.yml`,
+`loki/loki.yml`, `grafana/statsd_mapping.yml`. A single-file bind mount pins the
+**inode**, and `git pull` replaces the file instead of editing it in place. The
+container therefore keeps reading the old, now-unlinked file. A config *reload*
+does not help and is actively misleading:
+
+```
+docker kill -s HUP cartracker-prometheus
+# → level=INFO msg="Completed loading of configuration file"   ...the OLD one
+```
+
+Diagnose in two lines; different inodes mean the container is reading a deleted
+file:
+
+```bash
+stat -c %i prometheus/prometheus.yml
+docker exec cartracker-prometheus stat -c %i /etc/prometheus/prometheus.yml
+```
+
+**`docker restart` is the fix** — Docker re-resolves bind mounts at container
+start, so a restart picks up the new inode and a recreate is unnecessary.
+Directory mounts (`grafana/provisioning`, `grafana/dashboards`) are immune,
+because names resolve per access.
+
+This is the same class as defects 1-3: the script reports success from an action
+that did not do what the operator believed. It should grow a config-deploy path
+that restarts the affected services and then **verifies the loaded config**,
+rather than leaving the operator to know which mounts are files and which are
+directories. Note that Grafana's *alerting* provisioning is read only at
+startup, while its dashboard provider re-reads every 30s — so "restart Grafana"
+is required for rules and optional for dashboards.
+
 ## Out of scope
 
 - **Replacing the deploy mechanism.** [Plan 88](PLANS.md) (Kubernetes) is the
@@ -105,6 +145,7 @@ build failure (safe to release) from recreation failure (not obviously safe).
 | Deploy timeout | Fails loudly and alerts; never reports "Done." on an unhealthy fleet |
 | Deny-list exemptions | Read from one shared source, not a second hand-maintained copy |
 | The stale TODO | Gone, with the intent-release behaviour documented in its place |
+| A bind-mounted config change | Applied and **verified loaded**, not merely reloaded; single-file mounts restart rather than reload |
 
 ## Verification
 
