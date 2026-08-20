@@ -251,27 +251,64 @@ page in 46 hours, which was the risk this soak existed to price.
 The audit enumerated containers rather than compose services, and that surfaced
 a defect Stage 2 would otherwise have shipped:
 
-| Container | State | In `docker-compose.yml`? |
-|---|---|---|
-| `cartracker-lakekeeper` | exited, reports `unhealthy` | **No** |
-| `cartracker-lakekeeper-postgres` | exited, reports `unhealthy` | **No** |
-| `cartracker-mlflow` | exited (137), reports `unhealthy` | **No** |
-| `cartracker-lakekeeper-migrate` | exited 5 weeks ago, no health | **No** |
+| Container | State | Compose project | In `docker-compose.yml`? |
+|---|---|---|---|
+| `cartracker-lakekeeper` | exited 0, reports `unhealthy` | `cartracker-lakehouse` | **No** |
+| `cartracker-lakekeeper-postgres` | exited 0, reports `unhealthy` | `cartracker-lakehouse` | **No** |
+| `cartracker-mlflow` | exited 137, reports `unhealthy` | `cartracker-mlflow` | **No** |
+| `cartracker-lakekeeper-migrate` | exited 0, no health | `cartracker-lakehouse` | **No** |
 
-These are orphans from earlier [Plan 112](plan_112_refresh_policy_backtesting.md)
-and [Plan 125](plan_125_duckdb_to_iceberg_migration.md) experiments whose
-services no longer exist in the compose file. Docker still holds their last
-health state, and three of them report `unhealthy` permanently.
+**These are not orphans from deleted services.** They belong to two separate,
+still-present compose projects — `docker-compose.lakehouse.yml` and
+`docker-compose.mlflow.yml` — supporting
+[Plan 125](plan_125_duckdb_to_iceberg_migration.md) and
+[Plan 112](plan_112_refresh_policy_backtesting.md). All three long-running ones
+stopped at the 2026-08-18 04:22 UTC host restart and did not come back, because
+they carry no restart policy and are not part of the default project. Docker
+still holds their last health state, and three report `unhealthy` permanently.
 
 **A Stage 2 collector that walks `docker ps -a` would therefore publish four
-permanent `0`s and page forever**, for services that are not part of the system.
+permanent `0`s and page forever**, for services no one intends to be running.
 This is the same failure shape the plan is built against, inverted: not a missing
 signal, but a signal for something that should not be enumerated at all.
 
-Stage 2 must scope its collector to **running, compose-managed** services, and
-the `-1` unconfigured state must apply only to services the compose file
-actually declares. Removing the orphan containers is worth doing regardless, but
-the collector must not depend on that cleanup having happened.
+The distinction matters for how Stage 2 scopes itself. "Compose-managed" is not
+a tight enough filter — these *are* compose-managed. The collector must scope to
+**the running services of the default `cartracker` project**, and the `-1`
+unconfigured state must apply only to services `docker-compose.yml` itself
+declares. A sibling project that is deliberately down must be invisible to this
+metric, not reported as broken.
+
+That also sets the rule for the reverse case: if the lakehouse or MLflow stack
+is ever brought up as part of normal production, it needs its own health
+coverage decision rather than inheriting one by accident.
+
+##### Resolved 2026-08-20 — containers removed, state preserved
+
+Both sibling projects were taken down cleanly, which removed the four stale
+health states at their source:
+
+```bash
+docker compose -f docker-compose.lakehouse.yml -p cartracker-lakehouse down
+docker compose -f docker-compose.mlflow.yml   -p cartracker-mlflow    down
+```
+
+**Neither command was given `-v`, and neither should be.** The projects' state
+lives in named volumes rather than in the containers, and both survived intact:
+`cartracker-lakehouse_lakekeeper_pgdata` at 67 MB — the Iceberg catalog Plan 125
+Gate D depends on — and `cartracker-mlflow_mlflow_store` at 228 KB, holding Plan
+112's tracking runs. `cartracker-net` is declared `external: true` in both files,
+so Compose left the shared network alone; it still carries 26 containers.
+
+Reversing this is `up -d` with the same `-f`/`-p` pair when Iceberg or
+backtesting work resumes. Neither compose file has a top-level `name:` key, so
+**the `-p` flag is required** — omitting it creates a differently-named project
+that will not find the existing volumes.
+
+The host now reports zero unhealthy containers, so Stage 2 can be built and
+validated against a clean baseline. The scoping requirement above still stands
+on its own: it must not be satisfied by this cleanup having happened, because
+the next `up` of either project would reintroduce exactly the same condition.
 
 ### Stage 2 — The metric and the alert
 
@@ -280,10 +317,11 @@ node-exporter textfile collector [Plan 135](plan_135_storage_observability.md)
 Stage 4 already built and proved. That is a second producer into working
 plumbing rather than a new exporter.
 
-Scope the collector to **running, compose-managed services**, for the reason the
-Stage 1 soak record documents above: four orphan containers from removed
-services still carry a stale `unhealthy` state, and enumerating `docker ps -a`
-would page on them permanently.
+Scope the collector to **the running services of the default `cartracker`
+compose project**, for the reason the Stage 1 soak record documents above: four
+containers from two deliberately-down sibling projects still carry a stale
+`unhealthy` state, and enumerating `docker ps -a` would page on them
+permanently.
 
 Needs read-only Docker socket access. **Plan 136 Stage 4 proposes a
 `docker-socket-proxy` for restart authority — if it has landed, read through it.

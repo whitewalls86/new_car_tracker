@@ -61,7 +61,7 @@ they do.
 Plan 112 remains intentionally paused until Plan 125 supplies stable
 Iceberg-native inputs. Plans 114, 115, and 128 have completed their intended
 work and no longer belong in the executable queue. Plans 124 and 131 closed out
-2026-08-18. Plan 120 is built but still owes production verification. Plan 129
+2026-08-18, as did Plan 120's final Gate F production verification. Plan 129
 is a production system under rollout rather than a new build.
 
 ---
@@ -116,7 +116,7 @@ because it is smaller while a higher row has an executable next step.
 
 | Order | Plan | Title | Next executable slice | Priority | Effort | Depends on / safe stopping point |
 |---:|---|---|---|---:|---|---|
-| 1 | [140](plan_140_service_health_contract.md) | Service health contract | Build the Stage 2 container-health metric and alerts, scoped to running compose-managed services; keep the explicit `oauth2-proxy` image exception loud (Stages 1 and 3 are verified) | 87 | M | Stage 1 soak closed clean 2026-08-20 at 46 hours: 25 of 25 checks healthy, zero failing streaks, zero false pages. The soak found four orphan containers from removed services that report a stale `unhealthy` — Stage 2 must not enumerate `docker ps -a` |
+| 1 | [140](plan_140_service_health_contract.md) | Service health contract | Build the Stage 2 container-health metric and alerts, scoped to running compose-managed services; keep the explicit `oauth2-proxy` image exception loud (Stages 1 and 3 are verified) | 87 | M | Stage 1 soak closed clean 2026-08-20 at 46 hours: 25 of 25 checks healthy, zero failing streaks, zero false pages. The soak found four stopped containers from two deliberately-down sibling compose projects reporting a stale `unhealthy` — Stage 2 must scope to the default project's running services, not `docker ps -a` |
 | 2 | [136](plan_136_solver_recycle_and_liveness.md) | Solver recycle and real liveness | Add Stage 2 solver counters and corrected alerts, then Stage 3 drain-aware weekly recycle | 98 | M | Stage 0 verified; analytics freshness moved to Plan 143; 0b moved into Plan 140 Stage 2; soak counters before Stage 4 auto-restart |
 | 3 | [142](plan_142_planned_host_maintenance.md) | Planned host maintenance and production quiescence | Freeze the successful Ubuntu-update window as fixtures, then build separate maintenance intent, truthful drain status, and the checked-in host procedure | 86 | M + first observed window | Reuse Plan 136 drain semantics; final resume gate requires soaked Plan 140 health coverage |
 | 4 | [141](plan_141_structured_log_ingestion_contract.md) | Structured log ingestion and dashboard contract | Freeze production-derived fixtures and baseline, then align parsing, labels, filters, and dashboard selectors; fix `ct-403-log-spike` as the first case | 85 | S + 24h soak | Does not block Plan 136; should precede Plan 134's warning-log observation window. Has a live false-positive to work from: see below |
