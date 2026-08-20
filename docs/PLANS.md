@@ -23,18 +23,19 @@ and was **verified against production** on 2026-08-18 — Airflow itself reports
 the 20+20 pool, the shared anchor did not leak it to the other three services,
 and `ct-pipeline-failures` now renders exactly two named instances where it
 previously rendered a third reading `DAG [no value] failed`. Plan 140 Stage 3 is
-verified, and Stage 1 was deployed on 2026-08-18 with all 25 configured runtime
-checks healthy and at zero failing streaks; its 24-hour soak is now the only
-open Stage 1 gate. After that, build the container-health metric **once**,
-covering all services. Plan 143 shipped through PR #217 (merge `e5d3a46`) on
-2026-08-18: its saved-SQL, post-build snapshot now makes `dbt_runner` the
-direct metrics owner, while `ops` renders `/info` without opening DuckDB or
-using the transient artifact queue as freshness. Initial production checks
-passed, but the soak exposed unscoped Grafana consumers and a 900-second
-freshness threshold against the hourly publisher. Plan 143 remains outside the
-executable build order while the narrow correction lands; its corrected
-Grafana deployment starts a fresh 24-hour soak. The 2026-08-19 15:00 CDT
-(20:00 UTC) check is now a status checkpoint rather than an automatic closeout.
+verified, and **Stage 1's 24-hour soak closed clean on 2026-08-20**: 25 of 25
+configured runtime checks healthy at zero failing streaks after 46 hours, with
+zero false pages from the eighteen new checks. Plan 140 now proceeds to Stage 2 —
+build the container-health metric **once**, covering all services, scoped to
+running compose-managed services so the four orphan containers the soak found do
+not page forever. **Plan 143 is complete as of 2026-08-20.** PR #217 (merge
+`e5d3a46`) shipped the saved-SQL, post-build snapshot that makes `dbt_runner` the
+direct metrics owner while `ops` renders `/info` without opening DuckDB or using
+the transient artifact queue as freshness; PR #218 (merge `a3cdd59`) corrected
+the unscoped Grafana consumers and the 900-second threshold that the first soak
+exposed. The corrected soak recorded 24 hourly publications, no failed publish,
+a 3,580.9s worst-case freshness gap against the 4,500s threshold, zero DuckDB
+lock conflicts, and `/info` at 0.157s.
 Plan 136 now resumes at Stage 2's solver-outcome counters, which is the layer no
 healthcheck can supply — the
 solver was healthy for all eight hours. Only after those counters have a
@@ -92,16 +93,15 @@ observation window is written separately and does not inflate coding effort.
 ## Current closeout -- finish before opening another large build
 
 Plan 120's authenticated production download and checksum round trip was
-verified on 2026-08-18. What remains here is **verification, not work**: no code
-is owed on these rows. Plan 140's soak gate lands first. Plan 143's merged
-acceptance correction needs a Grafana recreation and a fresh 24-hour soak; both
-Plan 135 gates land on the following Sunday because they ride weekly schedules.
+verified on 2026-08-18. **Plan 140 Stage 1 and Plan 143 Stage 5 both closed
+green on 2026-08-20** and have left this table; their evidence is recorded in
+their plan documents. What remains here is **verification, not work**: no code
+is owed on these rows. Both Plan 135 gates ride weekly schedules and land on the
+same Sunday.
 
 | Plan | Check | Lands | What it proves |
 |---|---|---|---|
-| [140](plan_140_service_health_contract.md) Stage 1 | Repeat the full runtime health audit after the 24-hour soak | 2026-08-19 at approximately 17:00 UTC (12:00 CDT) | That all 25 configured checks remain healthy with zero failing streaks through normal production cycles, including active `trawl` and `redis-trawl`; only the documented one-shot/profile and distroless-image exceptions may lack health state. Thirty minutes established startup health but does not replace this false-positive soak |
-| [143](plan_143_analytics_serving_snapshot.md) Stage 5 | Deploy merged PR #218's `job="dbt_runner"` selectors and 4,500-second freshness threshold, then repeat the 24-hour acceptance soak | Status checkpoint at 2026-08-19 15:00 CDT (20:00 UTC); closeout 24 hours after the Grafana recreation | That every analytics panel renders one producer-owned series, the cadence-aware freshness alert stays green across normal hourly publications, snapshots replace normally during Prometheus scrapes, `/info` remains responsive, and no recurring DuckDB lock conflict returns |
-| [135](plan_135_storage_observability.md) criterion 5 | `cartracker_parquet_data` publishes a real series | 2026-08-23, `disk_usage` slow-tier walk at 04:00 UTC | That the per-path panel can answer *"what is filling `/mnt/data`?"* -- the question this plan was written about. The MinIO volume is the majority of that disk's 59 GiB and has still never completed a walk, so the panel is currently silent on the bulk of it. Carry-forward is behaving as designed and `failed` is correctly 0 |
+| [135](plan_135_storage_observability.md) criterion 5 | `cartracker_parquet_data` publishes a real series | 2026-08-23, `disk_usage` slow-tier walk at 04:00 UTC | That the per-path panel can answer *"what is filling `/mnt/data`?"* -- the question this plan was written about. The MinIO volume is the majority of that disk's 59 GiB and has still never completed a walk, so the panel is currently silent on the bulk of it. Confirmed still 0 series on 2026-08-20, exactly as designed before the first walk |
 | [135](plan_135_storage_observability.md) Stage 5 | `prune_task_logs` completes its first scheduled run | 2026-08-23, `17 4 * * 0` | That Airflow's 30-day task-log retention is **enforced** rather than merely configured. The run reports run directories examined and deleted; `cartracker_airflow_logs` was 1.2M inodes and 87% of a 456s walk, so this is also what lets that volume move back to the daily tier |
 
 None blocks implementation work. Record each result in its plan document, then
@@ -114,10 +114,10 @@ because it is smaller while a higher row has an executable next step.
 
 | Order | Plan | Title | Next executable slice | Priority | Effort | Depends on / safe stopping point |
 |---:|---|---|---|---:|---|---|
-| 1 | [140](plan_140_service_health_contract.md) | Service health contract | Finish the 24-hour Stage 1 soak, then build the container-health metric and alerts; keep the explicit `oauth2-proxy` image exception loud (Stage 3 is verified) | 87 | M + soak | Stage 1 immediate production gate passed 2026-08-18: 25 of 25 configured runtime checks healthy with zero failing streaks; soak before alerting on them |
+| 1 | [140](plan_140_service_health_contract.md) | Service health contract | Build the Stage 2 container-health metric and alerts, scoped to running compose-managed services; keep the explicit `oauth2-proxy` image exception loud (Stages 1 and 3 are verified) | 87 | M | Stage 1 soak closed clean 2026-08-20 at 46 hours: 25 of 25 checks healthy, zero failing streaks, zero false pages. The soak found four orphan containers from removed services that report a stale `unhealthy` — Stage 2 must not enumerate `docker ps -a` |
 | 2 | [136](plan_136_solver_recycle_and_liveness.md) | Solver recycle and real liveness | Add Stage 2 solver counters and corrected alerts, then Stage 3 drain-aware weekly recycle | 98 | M | Stage 0 verified; analytics freshness moved to Plan 143; 0b moved into Plan 140 Stage 2; soak counters before Stage 4 auto-restart |
 | 3 | [142](plan_142_planned_host_maintenance.md) | Planned host maintenance and production quiescence | Freeze the successful Ubuntu-update window as fixtures, then build separate maintenance intent, truthful drain status, and the checked-in host procedure | 86 | M + first observed window | Reuse Plan 136 drain semantics; final resume gate requires soaked Plan 140 health coverage |
-| 4 | [141](plan_141_structured_log_ingestion_contract.md) | Structured log ingestion and dashboard contract | Freeze production-derived fixtures and baseline, then align parsing, labels, filters, and dashboard selectors | 85 | S + 24h soak | Does not block Plan 136; should precede Plan 134's warning-log observation window |
+| 4 | [141](plan_141_structured_log_ingestion_contract.md) | Structured log ingestion and dashboard contract | Freeze production-derived fixtures and baseline, then align parsing, labels, filters, and dashboard selectors; fix `ct-403-log-spike` as the first case | 85 | S + 24h soak | Does not block Plan 136; should precede Plan 134's warning-log observation window. Has a live false-positive to work from: see below |
 | 5 | [134](plan_134_archiver_endpoint_failure_contract.md) | Archiver endpoint failure contract | Add warning-only failure predicates and begin the one-week observation window | 88 | S | Plan 141 first; one-week soak before enforcement; pause if real failures need repair |
 | 6 | [133](plan_133_pack_read_path_hardening.md) | Pack read-path hardening | Merge and deploy the fix, then re-run April-July read-path verification | 92 | S | Production verification unlocks Plan 132 Stage 2 |
 | 7 | [132](plan_132_unrecorded_artifact_recovery.md) | Recover unrecorded bronze artifacts | Run Stage 0 gates, build the manifest, then reparse a bounded cohort | 91 | L | Plan 133 before Stage 2; no destructive action in the audit stages |
@@ -172,12 +172,12 @@ so the metric will cover everything the day it ships. Plan 136's Stage 0a and
 0c landed on 2026-08-18 and were the only parts 140 was waiting on.
 
 **Plan 143 left the executable order after its 2026-08-18 production
-deployment.** It preceded Plan 136's remaining Stage 2 despite scoring 94
-against 98 because shipping the gauge work locally inside Plan 136 would have
-created a serving boundary Plans 125 and 138 would both replace. Its 24-hour
-verification now belongs to the operational watch list rather than blocking the
-next build; Plan 136 returns to scraper-owned solver telemetry without carrying
-analytics-serving code.
+deployment and completed on 2026-08-20.** It preceded Plan 136's remaining Stage
+2 despite scoring 94 against 98 because shipping the gauge work locally inside
+Plan 136 would have created a serving boundary Plans 125 and 138 would both
+replace. Plan 136 returns to scraper-owned solver telemetry without carrying
+analytics-serving code, and Plans 125 Gate D and 138 now have a stable serving
+contract to consume rather than rebuild.
 
 **Plan 142 follows Plan 136 despite scoring 86 against Plan 141's 85.** This is
 dependency order, not an emergency ranking. Plan 140 must first make the resume
@@ -187,6 +187,25 @@ production safety work with a fully observed first-window failure record, so it
 belongs ahead of dashboard-contract cleanup. It remains below Plan 136 because
 there is no current unpatched emergency and no application endpoint should gain
 host package or reboot authority.
+
+**Plan 141 now has a live false positive to build its fixtures from.** The
+2026-08-20 watch-item check found `ct-403-log-spike` firing — the only rule not
+inactive — and notifying repeatedly between 03:00 and 08:00 UTC. Its expression
+is `count_over_time({service="scraper"} |= "403" [5m]) > 10`, a bare substring
+match against the whole JSON log line. It matches UUIDs and sha256 prefixes
+containing the digits `403` (`...ded709847403`, `a1fd40307748`), so Loki returns
+roughly 341 matching lines per hour drawn from ordinary INFO `write_html` and
+`scrape_detail_fetch` traffic. Actual 403 responses over the same period: **23
+in 12 hours**, against a healthy pipeline at 99.6% extraction yield and 2 block
+events per hour.
+
+This is precisely the defect Plan 141 exists to fix, and it argues for that
+plan's parsing work over its dashboard work: the logs are **already** structured
+JSON carrying a `level` field, so the alert should parse and match a real status
+field rather than grepping the raw line. It is also a reminder that alert noise
+is not only annoying — an operator who learns to ignore `ct-403-log-spike` is
+being trained to ignore the scraper's alert channel, which is the channel the
+2026-08-14 solver outage needed.
 
 ## Operational watch list and completed implementation awaiting closeout
 
@@ -233,10 +252,10 @@ host package or reboot authority.
 | [137](plan_137_legacy_bronze_parquet_disposition.md) | Legacy bronze Parquet recovery and disposition | Draft — read-only inventory complete; no deletion authorized |
 | [138](plan_138_public_surface_refresh.md) | README and public portfolio surface refresh | Draft — audit complete; analytics acquisition/database removal transferred to Plan 143, while public presentation remains here |
 | [139](plan_139_test_suite_maintenance.md) | Test suite construction and maintenance | **Stages A+B complete 2026-08-18** (PR #213) — coverage reported at 88%, CI path 333s → ~260s; Stages C/D remain queued as opportunistic filler; analytics producer coverage transferred through Plan 136 to Plan 143 |
-| [140](plan_140_service_health_contract.md) | Service health contract | **Stage 3 verified; Stage 1 deployed 2026-08-18 and in 24-hour soak** (PR #216, merge `821a6a6`) — deploy intent was declared through the admin UI and the system drained before recreation; all 25 configured runtime checks were healthy with zero failing streaks, including active `trawl` and `redis-trawl`. Stage 2 has not started |
+| [140](plan_140_service_health_contract.md) | Service health contract | **Stages 1 and 3 complete; Stage 1 soak verified 2026-08-20** (PR #216, merge `821a6a6`) — 25 of 25 configured runtime checks healthy with zero failing streaks at 46 hours, including active `trawl` and `redis-trawl`, and zero false pages from the eighteen new checks. Stage 2 is next and must scope its collector to running compose-managed services |
 | [141](plan_141_structured_log_ingestion_contract.md) | Structured log ingestion and dashboard contract | Draft — routed from Plan 135 closeout; parsing, labels, privacy policy, dashboards, and capacity soak not started |
 | [142](plan_142_planned_host_maintenance.md) | Planned host maintenance and production quiescence | Draft — separate maintenance intent, truthful drain, checked-in apt/reboot procedure, and Plan 140-gated resume not started |
-| [143](plan_143_analytics_serving_snapshot.md) | Analytics serving snapshot and reader consolidation | **Deployed 2026-08-18; Stage 5 acceptance correction pending** — PR #217, merge `e5d3a46`; producer and snapshot checks passed, but Grafana ownership/cadence defects reset the soak. Status check: 2026-08-19 15:00 CDT (20:00 UTC) |
+| [143](plan_143_analytics_serving_snapshot.md) | Analytics serving snapshot and reader consolidation | **Complete 2026-08-20** — PR #217 (`e5d3a46`) deployed the serving boundary; PR #218 (`a3cdd59`) corrected the Grafana ownership/cadence defects the first soak exposed. Corrected soak clean: 24 hourly publications, zero failed publishes, 3,580.9s worst-case freshness against a 4,500s threshold, zero lock conflicts, `/info` at 0.157s |
 
 ---
 
@@ -340,6 +359,7 @@ alongside the default build-order table.
 
 | Plan | Completed | Public summary |
 |---|---|---|
+| [143](plan_143_analytics_serving_snapshot.md) | 2026-08-20 | Moved analytics metrics and the public statistics page onto a versioned snapshot published by the service that builds the data, removing recurring database reads from the public request path. |
 | [114](plan_114_sectioned_html_artifact_audit.md) | 2026-08-10 | Measured sectioned HTML storage on production data, rejected it on storage economics, and identified dictionary compression and packing as the better reversible path. |
 | [128](plan_128_false_block_detection.md) | 2026-07-20 | Fixed challenge-page misclassification, preserved cooldown state, reconciled cleanup behavior, and closed the historical-repair decision. |
 | [111](plan_111_adaptive_detail_refresh.md) | 2026-07-06 | Built listing-state fingerprints, state runs, volatility features, and initial adaptive-refresh priority outputs. |

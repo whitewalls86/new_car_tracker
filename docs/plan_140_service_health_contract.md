@@ -2,15 +2,16 @@
 
 ## Status
 
-**STAGE 3 VERIFIED; STAGE 1 DEPLOYED AND IN 24-HOUR SOAK SINCE 2026-08-18.**
+**STAGES 1 AND 3 COMPLETE AND VERIFIED; STAGE 2 IS THE NEXT EXECUTABLE SLICE.**
 [PR #216](https://github.com/whitewalls86/new_car_tracker/pull/216) merged the
 implementation as `821a6a6`, adding eighteen healthchecks and taking configured
 coverage from 7 of 31 services to 25 of 31. The six remaining services are the
 five deliberate one-shot/profile exemptions plus `oauth2-proxy`, whose current
 distroless image cannot execute a probe. The immediate production gate passed:
-all 25 configured runtime checks were healthy with zero failing streaks. Stage
-1 remains open until the 24-hour soak is clean. Stage 2's metric and alerts have
-not started. Stage 3's fail-loud CI contract is complete and verified.
+all 25 configured runtime checks were healthy with zero failing streaks. **The
+24-hour soak closed clean on 2026-08-20** — see the soak record below. Stage 3's
+fail-loud CI contract is complete and verified. Stage 2's metric and alerts have
+not started, and the soak surfaced a scoping hazard they must handle.
 
 This plan exists because the previous two were each correct and each too narrow.
 [Plan 135](plan_135_storage_observability.md) made two disks visible.
@@ -171,7 +172,7 @@ point.
 
 ## Stages
 
-### Stage 1 — Healthchecks everywhere — DEPLOYED 2026-08-18; SOAK PENDING
+### Stage 1 — Healthchecks everywhere — COMPLETE; SOAK VERIFIED 2026-08-20
 
 Add `healthcheck:` to every in-scope service. Cheapest first, since the app tier
 is nearly free:
@@ -231,12 +232,58 @@ work resumed.
 The immediate gate is therefore green. Keep Stage 1 open until the same audit
 remains clean after 24 hours; only then begin Stage 2's metric and alert rollout.
 
+#### 24-hour soak record — verified 2026-08-20
+
+The audit was repeated at 2026-08-20 15:14 UTC, approximately 46 hours after the
+17:03 UTC recreation and well past the 24-hour gate.
+
+| Gate | Soak evidence |
+|---|---|
+| Runtime contract | All **25** services with configured checks reported `health=healthy` with `failing_streak=0`, including active `trawl` and `redis-trawl` |
+| False positives | No service flipped unhealthy at any point in the window; the `loki` and `pgadmin` `health: starting` readings were confined to their original startup periods |
+| Expected no-health state | Running `oauth2-proxy` remained the documented distroless exception; `flyway` and `airflow-init` remained completed one-shots |
+
+Stage 1 is closed. The twenty new healthchecks did not produce a single false
+page in 46 hours, which was the risk this soak existed to price.
+
+#### What the soak found that Stage 2 must handle
+
+The audit enumerated containers rather than compose services, and that surfaced
+a defect Stage 2 would otherwise have shipped:
+
+| Container | State | In `docker-compose.yml`? |
+|---|---|---|
+| `cartracker-lakekeeper` | exited, reports `unhealthy` | **No** |
+| `cartracker-lakekeeper-postgres` | exited, reports `unhealthy` | **No** |
+| `cartracker-mlflow` | exited (137), reports `unhealthy` | **No** |
+| `cartracker-lakekeeper-migrate` | exited 5 weeks ago, no health | **No** |
+
+These are orphans from earlier [Plan 112](plan_112_refresh_policy_backtesting.md)
+and [Plan 125](plan_125_duckdb_to_iceberg_migration.md) experiments whose
+services no longer exist in the compose file. Docker still holds their last
+health state, and three of them report `unhealthy` permanently.
+
+**A Stage 2 collector that walks `docker ps -a` would therefore publish four
+permanent `0`s and page forever**, for services that are not part of the system.
+This is the same failure shape the plan is built against, inverted: not a missing
+signal, but a signal for something that should not be enumerated at all.
+
+Stage 2 must scope its collector to **running, compose-managed** services, and
+the `-1` unconfigured state must apply only to services the compose file
+actually declares. Removing the orphan containers is worth doing regardless, but
+the collector must not depend on that cleanup having happened.
+
 ### Stage 2 — The metric and the alert
 
 Emit `cartracker_container_health` with the three states above, through the
 node-exporter textfile collector [Plan 135](plan_135_storage_observability.md)
 Stage 4 already built and proved. That is a second producer into working
 plumbing rather than a new exporter.
+
+Scope the collector to **running, compose-managed services**, for the reason the
+Stage 1 soak record documents above: four orphan containers from removed
+services still carry a stale `unhealthy` state, and enumerating `docker ps -a`
+would page on them permanently.
 
 Needs read-only Docker socket access. **Plan 136 Stage 4 proposes a
 `docker-socket-proxy` for restart authority — if it has landed, read through it.

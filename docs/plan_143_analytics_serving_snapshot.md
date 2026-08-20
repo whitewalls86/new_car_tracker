@@ -2,14 +2,14 @@
 
 ## Status
 
-**Stages 0-4, CI dbt-artifact verification, and the initial Stage 5 production
-deployment completed 2026-08-18. The acceptance soak then exposed two Grafana
-consumer-contract defects: analytics queries did not select the new
-`job="dbt_runner"` owner, and the freshness alert enforced a 900-second limit
-against an hourly publisher. The corrective Grafana configuration is pending
-deployment; its deployment starts a fresh 24-hour soak. The 2026-08-19 15:00
-CDT (20:00 UTC) check remains a status checkpoint, not an automatic closeout.**
-PR #217 merged as `e5d3a46`.
+**COMPLETE — verified in production 2026-08-20.** Stages 0-4, CI dbt-artifact
+verification, and the initial Stage 5 production deployment completed
+2026-08-18. The first acceptance soak exposed two Grafana consumer-contract
+defects: analytics queries did not select the new `job="dbt_runner"` owner, and
+the freshness alert enforced a 900-second limit against an hourly publisher.
+PR #218 corrected both, the Grafana recreation at 2026-08-18 19:38:59 UTC
+restarted the window, and **the corrected 24-hour soak closed clean** — see the
+Stage 5 soak record. PR #217 merged as `e5d3a46`; PR #218 as `a3cdd59`.
 Implementation is in commits `bbd9b23` and `2cfdb73`: the first establishes the
 shared connection and saved-SQL boundary; the second publishes the atomic
 snapshot, exports metrics directly from `dbt_runner`, and makes `ops` a
@@ -294,7 +294,7 @@ lock the analytics file.
 remains responsive during a dbt write lock and Postgres outage, and labels
 staleness honestly.
 
-### Stage 5 — Deploy, prove the lock is gone, and soak — ACCEPTANCE CORRECTION PENDING
+### Stage 5 — Deploy, prove the lock is gone, and soak — COMPLETE 2026-08-20
 
 Deploy `dbt_runner`, `ops`, and Prometheus configuration as one compatibility
 change. Use the existing admin deploy-intent/drain procedure.
@@ -343,16 +343,43 @@ Deployment and initial verification completed 2026-08-18:
 
 Steps 1-6 passed their initial production checks. Step 7 did not: the soak
 correctly exposed the consumer-selector and cadence-threshold defects above.
-After the corrected Grafana configuration is deployed, restart the 24-hour
-window and record a normal snapshot replacement during Prometheus scrapes, a
-green freshness alert, one rendered series per analytics panel, responsive
-`/info`, and no recurring lock conflict. The scheduled **2026-08-19 15:00 CDT
-(20:00 UTC)** check records progress and closes Gate 5 only if the corrected
-configuration has accumulated a full 24 hours of evidence.
+PR #218 corrected both, and the Grafana recreation at **2026-08-18 19:38:59
+UTC** restarted the 24-hour window.
 
-**Gate 5:** the 24-hour evidence contains at least one successful snapshot
-replacement during normal metric scrapes, no cross-process gauge/info lock
+#### Corrected 24-hour soak record — verified 2026-08-20
+
+Measured at 2026-08-20 15:14 UTC, approximately 43 hours into the restarted
+window.
+
+| Gate 5 requirement | Production evidence |
+|---|---|
+| Corrected configuration is actually deployed | The VM's `rules.yml` carries `params: [4500]`, and **zero** unscoped analytics selectors remain in any provisioned dashboard |
+| Producer owns every series | All ten metric names resolve with `job="dbt_runner"`; a `{__name__=~"cartracker_.*", job="ops"}` query returns **no series** |
+| Snapshots replace normally during scrapes | `changes(cartracker_metrics_last_success_timestamp_seconds[24h])` = **24** — exactly one publication per hour |
+| No failed publication | `min_over_time(cartracker_analytics_snapshot_refresh_success[24h])` = **1** |
+| Cadence-aware alert stays quiet while healthy | `max_over_time` of the freshness expression over 24h = **3,580.9s** against the 4,500s threshold. `ct-metrics-freshness` is `inactive`, `health=ok` |
+| No recurring lock conflict | **0** `Conflicting lock` occurrences in `ops` and `dbt_runner` logs over 48 hours |
+| Public page responsive | Anonymous `/info` returned HTTP 200 in **0.157s**, rendering "Analytics data through" `2026-08-20T14:00:00Z` |
+| Snapshot integrity | `schema_version: 1`, mode `0600`, replaced at 15:01 with `data_through` distinct from its refresh time |
+
+The corrected rule did fire once more, from 19:40 to 19:55 UTC on 2026-08-18,
+covering the publication gap the deployment itself created; it resolved on the
+next hourly build and has been silent since. That is the alert behaving
+correctly — a genuine gap in publication — not a residual false positive.
+
+**Gate 5 is met.** The 24-hour evidence contains 24 successful snapshot
+replacements during normal metric scrapes, no cross-process gauge/info lock
 conflict, a responsive public page, and green alert evaluation.
+
+#### Recorded margin
+
+The observed worst-case gap of 3,580.9s leaves **919 seconds — 15.3 minutes —
+of headroom** under the 4,500s threshold. One skipped hourly build therefore
+pages. That is the intended contract, since a missed build is a real publication
+gap, but the margin is thinner than "one cadence plus 15 minutes of grace"
+suggests: essentially all of the grace is consumed by ordinary build duration
+and scrape jitter. If the hourly dbt build lengthens materially, revisit the
+threshold rather than letting it become a flapping alert.
 
 ## Rollback
 
