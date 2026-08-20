@@ -9,10 +9,156 @@
   "time": { "from": "now-3h", "to": "now" },
   "panels": [
     {
+      "id": 19,
+      "title": "Service Health",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "panels": []
+    },
+    {
+      "id": 20,
+      "title": "Unhealthy Containers",
+      "description": "Docker reports these unhealthy, restarting, or paused. Liveness only -- a healthy container can still be doing nothing useful, which is exactly what the 2026-08-14 solver outage was. Pages via ct-container-unhealthy after 5m.",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 8, "x": 0, "y": 1 },
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "count(cartracker_container_health{job=\"container-health\"} == 0) or vector(0)",
+          "legendFormat": "",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        }
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      }
+    },
+    {
+      "id": 21,
+      "title": "No Healthcheck Configured",
+      "description": "Running services Docker publishes no health status for at all, so they are indistinguishable from healthy ones. Not an incident -- a coverage regression, routed on a daily rather than 4h cadence. oauth2-proxy is the one known standing exception: its distroless image has no shell, curl, wget or busybox, so no probe can be expressed against it. See docs/plan_140_service_health_contract.md.",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 8, "x": 8, "y": 1 },
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "count(cartracker_container_health{job=\"container-health\"} == -1) or vector(0)",
+          "legendFormat": "",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 1 }
+            ]
+          }
+        }
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      }
+    },
+    {
+      "id": 22,
+      "title": "Healthy Containers",
+      "description": "Services of the default cartracker compose project reporting healthy. The sibling lakehouse and mlflow compose projects are deliberately out of scope -- they are stopped on purpose and would otherwise report a permanent stale unhealthy.",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 1 },
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "count(cartracker_container_health{job=\"container-health\"} == 1) or vector(0)",
+          "legendFormat": "",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          }
+        }
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      }
+    },
+    {
+      "id": 23,
+      "title": "Container Health by Service",
+      "description": "Three states, never two: green healthy, red unhealthy, orange no healthcheck configured. A missing signal is the failure mode this metric exists to close, so 'no healthcheck' is a colour rather than a gap in the chart. Values are computed when Prometheus scrapes, so nothing here can be stale. Docker's `starting` state reads as unhealthy by design and clears within ~230s worst case, which is why the alert waits 5m.",
+      "type": "state-timeline",
+      "gridPos": { "h": 13, "w": 24, "x": 0, "y": 5 },
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "cartracker_container_health{job=\"container-health\"}",
+          "legendFormat": "{{container}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "text", "value": null }]
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "1": { "text": "healthy", "color": "green", "index": 0 },
+                "0": { "text": "unhealthy", "color": "red", "index": 1 },
+                "-1": { "text": "no healthcheck", "color": "orange", "index": 2 }
+              }
+            }
+          ]
+        }
+      },
+      "options": {
+        "showValue": "never",
+        "mergeValues": true,
+        "rowHeight": 0.9,
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }
+      }
+    },
+    {
       "id": 1,
       "title": "Host CPU Utilization",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 18 },
       "targets": [
         {
           "datasource": "Prometheus",
@@ -26,7 +172,7 @@
       "id": 2,
       "title": "Host Memory Used",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 18 },
       "targets": [
         {
           "datasource": "Prometheus",
@@ -40,7 +186,7 @@
       "id": 3,
       "title": "Disk I/O (bytes/sec)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 26 },
       "targets": [
         {
           "datasource": "Prometheus",
@@ -59,7 +205,7 @@
       "id": 4,
       "title": "Postgres Active Connections by State",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 26 },
       "targets": [
         {
           "datasource": "Prometheus",
@@ -73,7 +219,7 @@
       "id": 5,
       "title": "Postgres Transaction Rate (commits/sec)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 34 },
       "targets": [
         {
           "datasource": "Prometheus",
@@ -88,7 +234,7 @@
       "title": "MinIO Logical Object Bytes",
       "description": "Sum of object payload sizes in the bucket. This is NOT disk usage -- it excludes the per-object storage floor and every non-MinIO volume sharing /mnt/data. Compare against the physical panel below.",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 34 },
       "targets": [
         {
           "datasource": "Prometheus",
@@ -102,7 +248,7 @@
       "id": 7,
       "title": "MinIO Request Rate (by API type)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 42 },
       "targets": [
         {
           "datasource": "Prometheus",
@@ -116,7 +262,7 @@
       "id": 8,
       "title": "MinIO Error Rate",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 42 },
       "targets": [
         {
           "datasource": "Prometheus",
@@ -131,7 +277,7 @@
       "title": "Filesystem Used %",
       "description": "Both volumes. Selector matches ct-disk-space-warning / ct-disk-space-critical exactly, so what you see here is what those alerts evaluate.",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 32 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 50 },
       "targets": [
         {
           "datasource": "Prometheus",
@@ -160,7 +306,7 @@
       "title": "Inode Used %",
       "description": "Inodes bind before bytes when the bucket is full of small objects -- each MinIO object costs 2. Exhaustion presents as ENOSPC with free space still on the disk. Selector matches ct-inode-warning / ct-inode-critical.",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 32 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 50 },
       "targets": [
         {
           "datasource": "Prometheus",
@@ -189,7 +335,7 @@
       "title": "MinIO Logical vs Mount Physical",
       "description": "The divergence is the point. Logical counts object payloads; physical is everything actually consumed on /mnt/data, which includes MinIO's per-object floor plus Postgres, Loki, Prometheus and the Airflow logs.",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 40 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 58 },
       "targets": [
         {
           "datasource": "Prometheus",
@@ -209,7 +355,7 @@
       "title": "Storage Amplification Ratio",
       "description": "Mount physical / MinIO logical. This is a mount-level ratio, so it folds in the non-MinIO volumes (~15 GiB) and reads high; the trend is what matters. Stage 4's per-volume metric will give the MinIO-only figure.",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 40 },
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 58 },
       "targets": [
         {
           "datasource": "Prometheus",
@@ -224,7 +370,7 @@
       "title": "Mean Object Size",
       "description": "Denominator is minio_bucket_usage_object_total, chosen deliberately: it is the exact sum of MinIO's mutually-exclusive size buckets. Do not substitute sum(minio_bucket_objects_size_distribution) -- that series carries two overlapping bucket schemes and double-counts the 1 KB - 1 MB range. Falling mean = rising per-object tax; this is the leading indicator for whether Plan 131's packing is earning its keep.",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 40 },
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 58 },
       "targets": [
         {
           "datasource": "Prometheus",
@@ -239,7 +385,7 @@
       "title": "What's Filling The Disks",
       "type": "row",
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 48 },
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 66 },
       "panels": []
     },
     {
@@ -247,7 +393,7 @@
       "title": "Root Disk by Path",
       "description": "Fixed watchlist, measured daily by the disk_usage DAG. Stacked because the question is always 'which band grew'. The total should reconcile roughly with the / line on Filesystem Used % -- roughly, because the watchlist covers most of the disk, not all of it.",
       "type": "timeseries",
-      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 49 },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 67 },
       "targets": [
         {
           "datasource": "Prometheus",
@@ -267,7 +413,7 @@
       "title": "/mnt/data by Docker Volume",
       "description": "cartracker_parquet_data (MinIO, ~4M inodes) and cartracker_airflow_logs (~1.2M) are walked weekly, not daily -- their lines are steps, and cartracker_disk_usage_measured_timestamp_seconds says when each was last actually walked. Tier membership follows inode count, not size on disk: du costs O(inodes). Every other volume here is measured on every run.",
       "type": "timeseries",
-      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 49 },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 67 },
       "targets": [
         {
           "datasource": "Prometheus",
@@ -287,7 +433,7 @@
       "title": "Biggest Consumers (current)",
       "description": "Both disks in one table, largest first. This is the panel that answers 'what is filling this disk' without an SSH session.",
       "type": "table",
-      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 58 },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 76 },
       "targets": [
         {
           "datasource": "Prometheus",
@@ -304,7 +450,7 @@
       "title": "Measurement Age",
       "description": "How long ago each series was actually walked. The MinIO volume should sit under 7 days; everything else under 1. A line climbing without resetting means the disk_usage DAG has stopped running and the gauges above are frozen at their last value.",
       "type": "timeseries",
-      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 58 },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 76 },
       "targets": [
         {
           "datasource": "Prometheus",

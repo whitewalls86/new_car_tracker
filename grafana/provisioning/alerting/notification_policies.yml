@@ -7,3 +7,15 @@ policies:
     group_wait: 30s
     group_interval: 5m
     repeat_interval: 4h
+    routes:
+      # Plan 140 Stage 2: coverage regressions are real but not incidents. A
+      # service running without a healthcheck needs a compose edit, not a
+      # 3 a.m. response, and repeating it every 4 hours alongside genuine
+      # pages is how an operator learns to ignore the channel that the next
+      # outage needs. Same receiver, daily cadence.
+      - receiver: telegram
+        object_matchers:
+          - ['severity', '=', 'coverage']
+        group_wait: 30s
+        group_interval: 30m
+        repeat_interval: 24h
