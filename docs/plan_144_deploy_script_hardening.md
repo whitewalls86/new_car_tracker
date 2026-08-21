@@ -2,8 +2,8 @@
 
 ## Status
 
-**Implemented 2026-08-20, not yet deployed.** Priority **78 (high)**. Effort
-**XS** (hours to 1 day).
+**Complete — deployed and verified in production 2026-08-21** (PRs #224,
+#225). Priority **78 (high)**. Effort **XS** (hours to 1 day).
 
 Small, concrete, and unblocked as of 2026-08-18. Every defect below was observed
 during a real production deploy on 2026-08-20 — defects 1-3 during Plan 133's,
@@ -19,9 +19,9 @@ What landed:
 | `deploy-followers.txt` | Services whose peers cache their address, and what to restart after recreating them |
 | `tests/test_deploy_script.py` | The invariants none of the above can check at runtime |
 
-**Verification against production is still owed** — see
-[Verification](#verification). The code is on the VM at `1b66213` and its
-assumptions were checked there read-only, but no deploy has run.
+Verified in production on 2026-08-21 at `dd9e207` — see
+[Verification](#verification). Both deploy modes ran against the live fleet,
+and the health gate observed a real `starting` → `healthy` transition.
 
 ## Why this exists now
 
@@ -444,16 +444,52 @@ telemetry. The fix is
 after the soaks close; the scheduler is excluded because restarting it again is
 pointless churn.
 
-### Owed — one low-risk production deploy
+### Done — production verification, 2026-08-21
 
-Not started; nothing here has run on the VM. `pgadmin` is the candidate: it is
-on no critical path, and it was one of the two services observed still
-`starting` past the old ten-second mark. Confirm that it waits for real health,
-that no dependency is recreated, and that intent is released. Then
-`--restart prometheus`, which is the mount that produced defect 4 twice.
+Run at `dd9e207` with the soaks called early and their results already
+documented. Deploy intent was declared before each run and released by the
+script, so the release path was exercised rather than being a no-op POST
+against unset intent.
 
-Both must wait for the Plan 136 Stage 2 and Plan 140 Stage 2 soaks to close
-(2026-08-21, ~20:42 and ~19:04 UTC). A deploy during either window disturbs the
-evidence they exist to collect — Plan 140 Stage 2's soak is specifically
-counting container-health alert instances, and recreating containers is what
-produced its first false page.
+**`redeploy.sh pgadmin`** — intent `none` → `pending` at 17:08:52 → `none`.
+
+| Criterion | Evidence |
+|---|---|
+| No dependency recreated | `postgres` container id `51859d2c…` identical before and after; `flyway` never started |
+| Intent released | `pending` → `none` |
+| Defect 6 detector | Fired: `pgadmin` container id `ba437653…` identical before and after |
+
+**It did not verify the health gate, and `pgadmin` never could.** Compose
+reported `Container cartracker-pgadmin Running`: no image change and no config
+drift, so nothing was recreated, `pgadmin` never left `healthy`, and the gate
+returned in 0s. The candidate was nominated for having been observed still
+`starting` past the old ten-second mark — a property the *default* mode cannot
+reach, because it only recreates when something changed. Defect 6's detector is
+what made that visible instead of it reading as a successful deploy.
+
+**`redeploy.sh --restart prometheus`** — the run that actually bit:
+
+```
+Restarting in place: prometheus
+ Container cartracker-prometheus  Restarting
+ Container cartracker-prometheus  Started
+Waiting up to 300s for health: prometheus
+  [1s] prometheus=starting
+  All pollable services healthy after 6s.
+Verifying bind-mounted config files...
+  OK prometheus:/etc/prometheus/prometheus.yml — inode 519823 matches the file on disk.
+Done — restarted, containers healthy, mounts verified current.
+```
+
+| Criterion | Evidence |
+|---|---|
+| Health gate observes a real transition | `starting` at 1s, `healthy` at 6s — the gate saw the state change rather than sleeping through it |
+| Restart preserves the container | Container id `8a066d11…` unchanged; `StartedAt` moved 2026-08-20T20:42:35Z → 2026-08-21T17:11:32Z. This is why restart mode owes no follower warning |
+| Inode verification | `519823` on both sides, against the mount that produced defect 4 twice |
+| Intent released | `pending` → `none` |
+| Prometheus healthy and scraping | `count(up==1)` = 10 immediately after |
+
+The six-second recovery is the sharpest number here. The old `sleep 10` would
+have waited four seconds too long *and* would have been wrong in the other
+direction for anything slower — it never observed the transition at all. What
+replaced it is not a better-tuned constant; it is a different kind of answer.
