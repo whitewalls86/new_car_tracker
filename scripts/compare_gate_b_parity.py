@@ -662,7 +662,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print(
             f"No DuckDB build at {args.duckdb_path}. Build the same chain on the "
             "duckdb target with the SAME --vars as_of_at first -- see "
-            "docs/plan_125_duckdb_to_iceberg_migration.md."
+            "docs/plans/plan_125_duckdb_to_iceberg_migration.md."
         )
         return 2
 

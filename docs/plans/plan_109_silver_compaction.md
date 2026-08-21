@@ -288,7 +288,7 @@ Add `compact_silver` to the existing `DAG_SPECS` list with `schedule="10 4 * * *
 
 ## dbt Source Compatibility
 
-The dbt silver source reads `silver/observations/**/*.parquet` ([dbt/models/sources.yml line 17](../dbt/models/sources.yml)). After compaction, a partition contains only `compacted-<date>.parquet`, which this glob correctly finds. No dbt config change is needed.
+The dbt silver source reads `silver/observations/**/*.parquet` ([dbt/models/sources.yml line 17](../../dbt/models/sources.yml)). After compaction, a partition contains only `compacted-<date>.parquet`, which this glob correctly finds. No dbt config change is needed.
 
 The integration test `test_no_double_count_during_compaction` (above) is the guard against a regression here — if the `.tmp` staging ever leaks into the glob, this test fails.
 

@@ -276,7 +276,7 @@ class TestCachedPeerAddressRegistry:
         assert entry, (
             "statsd-exporter is not in deploy-followers.txt. Recreating it "
             "orphans Airflow's long-lived StatsD senders silently; see "
-            "docs/plan_136_solver_recycle_and_liveness.md section D6."
+            "docs/plans/plan_136_solver_recycle_and_liveness.md section D6."
         )
         assert "docker restart" in entry, (
             "the entry does not tell the operator what to run; a warning "
@@ -388,7 +388,7 @@ class TestSingleFileBindMounts:
             "the file on a new inode, so the container keeps reading the old one "
             "and a SIGHUP reload reports success against stale config. Deploy "
             "these with `redeploy.sh --config <service>`, and add them to "
-            "_KNOWN with a reason. See docs/plan_144_deploy_script_hardening.md."
+            "_KNOWN with a reason. See docs/plans/plan_144_deploy_script_hardening.md."
         )
 
     def test_no_documented_mount_has_quietly_become_a_directory(self):

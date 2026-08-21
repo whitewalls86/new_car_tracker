@@ -62,18 +62,18 @@ current behavior.
 
 ### 1. Processing has no Cloudflare challenge-page guard (primary)
 
-`parse_cars_detail_page_html_v1` ([parse_detail_page.py:281-299](../processing/processors/parse_detail_page.py#L281-L299))
+`parse_cars_detail_page_html_v1` ([parse_detail_page.py:281-299](../../processing/processors/parse_detail_page.py#L281-L299))
 looks only for `_detect_unlisted` markers and the `initial-activity-data` JSON
 blob. A challenge page has neither, so it falls through to
 `listing_state = 'active'` with every field `None`. `_process_detail_page`
-([batch.py:161-176](../processing/routers/batch.py#L161-L176)) then calls
+([batch.py:161-176](../../processing/routers/batch.py#L161-L176)) then calls
 `write_detail_active`, which:
 
 - upserts `ops.price_observations` via `upsert_price_observation.sql`: COALESCE
   preserves the stale `customer_id`, but **refreshes `last_seen_at` and
   `last_detail_scraped_at`** to the fetch time;
 - marks the artifact **`complete`**;
-- runs `CLEAR_BLOCKED_COOLDOWN` ([detail_writer.py:270](../processing/writers/detail_writer.py#L270)),
+- runs `CLEAR_BLOCKED_COOLDOWN` ([detail_writer.py:270](../../processing/writers/detail_writer.py#L270)),
   deleting the cooldown row the scraper wrote seconds earlier.
 
 There is no detection of `Just a moment...` / `Attention Required` / CF markers
@@ -83,7 +83,7 @@ anywhere in the parse or write path.
 
 Even for legitimate clears, the delete writes no lifecycle event, so
 `mart_cooldown_cohorts` (state = `arg_max(num_of_attempts, event_at)` over the
-event log, [mart_cooldown_cohorts.sql:13](../dbt/models/marts/mart_cooldown_cohorts.sql#L13))
+event log, [mart_cooldown_cohorts.sql:13](../../dbt/models/marts/mart_cooldown_cohorts.sql#L13))
 never drops a resolved listing. The `'cleared'` value already exists in the
 `event_type` CHECK constraint — it is simply never written. This is what makes
 the gauges grow monotonically. (Volume of spurious clears drops sharply once #1
@@ -141,7 +141,7 @@ When detected, `_process_detail_page` must:
 
 Seam choice: implement in processing (it has the parser and is authoritative).
 Alternative considered — have the scraper not enqueue 403 challenge artifacts as
-`detail_page` work at all ([scrape_detail.py:206-231](../scraper/processors/scrape_detail.py#L206-L231));
+`detail_page` work at all ([scrape_detail.py:206-231](../../scraper/processors/scrape_detail.py#L206-L231));
 noted but not chosen, since keeping the artifact for audit is useful and the
 processing guard is needed regardless.
 

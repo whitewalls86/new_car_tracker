@@ -2,8 +2,8 @@
 
 You are working in the `cartracker-scraper` repo. Branch off `master`.
 
-Read `docs/plan_131_packed_cold_storage.md` first, then
-`docs/plan_132_unrecorded_artifact_recovery.md`. They are the source of truth
+Read `docs/plans/plan_131_packed_cold_storage.md` first, then
+`docs/plans/plan_132_unrecorded_artifact_recovery.md`. They are the source of truth
 and record every decision below with the measurements behind it.
 
 ## Where this stands
@@ -48,7 +48,7 @@ both places. Landing them together forfeits that and there is no reason to.
 **42,276 April captures were never recorded downstream** — no
 `artifacts_queue_events` row, no silver observation. They are recoverable only
 by reparsing their HTML, which is [Plan
-132](plan_132_unrecorded_artifact_recovery.md).
+132](../plans/plan_132_unrecorded_artifact_recovery.md).
 
 Two consequences that are requirements, not suggestions:
 

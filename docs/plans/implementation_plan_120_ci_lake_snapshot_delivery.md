@@ -485,7 +485,7 @@ Initial selectors:
 | `cooldown_bucket_5_10` | Latest attempts between 5 and 10. |
 | `cooldown_bucket_11_plus` | Latest attempts >= 11. |
 | `fresh_recent_listing` | Recent active listing. |
-| `stale_listing` | Listing whose most recent observation as of `window_end` is 30-60 days old (bounded lookback, not wall-clock `now()`; boundary row exempted from the export time window — see `docs/plan_120_ci_lake_snapshot_delivery.md`). |
+| `stale_listing` | Listing whose most recent observation as of `window_end` is 30-60 days old (bounded lookback, not wall-clock `now()`; boundary row exempted from the export time window — see `docs/plans/plan_120_ci_lake_snapshot_delivery.md`). |
 
 Minimum coverage defaults:
 
@@ -1142,7 +1142,7 @@ Pinning:
 ## Implementation Sequence
 
 Use this section as the source of truth for commit gates. The shorter
-`docs/plan_120_ci_lake_snapshot_delivery.md` uses phase labels for product
+`docs/plans/plan_120_ci_lake_snapshot_delivery.md` uses phase labels for product
 areas, but implementation tracking should use these numbered steps.
 
 Current status as of 2026-07-15 (Gate E implemented and VM-verified):

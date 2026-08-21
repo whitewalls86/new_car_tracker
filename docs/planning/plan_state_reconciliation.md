@@ -4,7 +4,7 @@
 against its own document, its git history, and production evidence. This is the
 input to Stage 1's backfill and Stage 2's table collapse; it is a **record of
 one reconciliation**, not a surface that gets maintained. Nothing links to it
-for status. [`PLANS.md`](PLANS.md) and [`completed_plans.md`](completed_plans.md)
+for status. [`PLANS.md`](../PLANS.md) and [`completed_plans.md`](completed_plans.md)
 do that.
 
 Reproduce it with:

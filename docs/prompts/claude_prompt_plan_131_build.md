@@ -9,7 +9,7 @@ are not: the Stage 0d grouping decision and this prompt. They live on
 PR rather than land on their own. `master`'s copy of the plan doc still says
 grouping is undecided; the branch's copy is correct.
 
-Read `docs/plan_131_packed_cold_storage.md` first. It is the source of truth and
+Read `docs/plans/plan_131_packed_cold_storage.md` first. It is the source of truth and
 it records every decision below along with the measurements behind them.
 
 ## Why this plan exists

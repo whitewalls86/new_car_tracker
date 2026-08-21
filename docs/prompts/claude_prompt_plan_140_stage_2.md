@@ -2,11 +2,11 @@
 
 You are working in the `cartracker-scraper` repo. Branch off `master`.
 
-Read `docs/plan_140_service_health_contract.md` first — it is the source of
+Read `docs/plans/plan_140_service_health_contract.md` first — it is the source of
 truth. The sections that matter most are **"Unconfigured must be loud"**,
 **"Stage 1 — Healthchecks everywhere"** including its 2026-08-20 soak record and
 the sibling-project finding, and **"Stage 2 — The metric and the alert"**. Then
-read `docs/plan_135_storage_observability.md`, "Stage 4 as built" — this stage is
+read `docs/plans/plan_135_storage_observability.md`, "Stage 4 as built" — this stage is
 a second producer into that exact plumbing, not a new exporter.
 
 ## Where this stands
@@ -171,7 +171,7 @@ Validate **in both directions**, the way Plan 131 did for
 
 When fire-testing, hold the condition past `group_wait` (30s) or the alert
 cancels its own notification. That is recorded in
-`docs/runbook_storage_maintenance.md` and was learned the hard way.
+`docs/runbooks/runbook_storage_maintenance.md` and was learned the hard way.
 
 ---
 

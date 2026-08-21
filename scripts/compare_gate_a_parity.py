@@ -263,7 +263,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if not os.path.exists(args.duckdb_path):
         print(
             f"No DuckDB build at {args.duckdb_path}. Build the same chain on the "
-            "duckdb target first -- see docs/plan_125_duckdb_to_iceberg_migration.md "
+            "duckdb target first -- see docs/plans/plan_125_duckdb_to_iceberg_migration.md "
             "(Gate A local validation)."
         )
         return 2

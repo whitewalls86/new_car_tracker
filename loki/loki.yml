@@ -7,7 +7,7 @@ server:
   # handover bookkeeping (8.6 GB accumulated, 2 errors per 2M lines). Raise it
   # temporarily for troubleshooting with POST /log_level?log_level=debug — that
   # takes effect without a restart and reverts to this value when the container
-  # restarts. See docs/plan_135_storage_observability.md.
+  # restarts. See docs/plans/plan_135_storage_observability.md.
   log_level: warn
 
 common:

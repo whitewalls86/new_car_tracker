@@ -1,6 +1,6 @@
 # Runbook: Storage Maintenance
 
-Operational companion to [Plan 135](plan_135_storage_observability.md). Covers
+Operational companion to [Plan 135](../plans/plan_135_storage_observability.md). Covers
 the monthly disk check, the safe reclaims when something grew, the deploy
 sequence for the services that produce these metrics, and the three commands
 that can destroy this host.
@@ -255,4 +255,4 @@ sudo journalctl --vacuum-size=500M
 ```
 
 Re-run the preflight measurements and record the reclaimed bytes/inodes in
-[Plan 135](plan_135_storage_observability.md).
+[Plan 135](../plans/plan_135_storage_observability.md).

@@ -275,7 +275,7 @@ small versioned schema:
       "effort": "M",
       "state": "planned",
       "summary": "Add truthful solver outcomes and a drain-aware recycle.",
-      "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plan_136_solver_recycle_and_liveness.md"
+      "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_136_solver_recycle_and_liveness.md"
     }
   ],
   "completed": []
@@ -530,5 +530,5 @@ Plan 138 is complete only when:
 - scoped public security headers and local assets are in production;
 - automated tests and the external route matrix pass;
 - a mobile Lighthouse report and screenshots are recorded in the closing PR;
-- `docs/PLANS.md` and `docs/completed_plans.md` record the final deployment date
+- `docs/PLANS.md` and `docs/planning/completed_plans.md` record the final deployment date
   and measured before/after results.

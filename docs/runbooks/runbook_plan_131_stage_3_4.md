@@ -1,6 +1,6 @@
 # Run Sheet: Plan 131 Stages 3-5 — Pack Read Path, Source Deletion, Then The Schedule
 
-Operational companion to [Plan 131](plan_131_packed_cold_storage.md). Follow it
+Operational companion to [Plan 131](../plans/plan_131_packed_cold_storage.md). Follow it
 in order. **Stage 3 is deployed and verified before Stage 4 deletes anything** —
 that ordering is the entire safety argument, not a preference. Sections 1-7 are
 the manual procedure and remain how a backlog month gets done;
@@ -375,9 +375,9 @@ sidecar's write time.
 ## Afterwards
 
 - Record the measured latency p50/p95 and the actual inodes freed in
-  [Plan 131](plan_131_packed_cold_storage.md). Both are success criteria, and
+  [Plan 131](../plans/plan_131_packed_cold_storage.md). Both are success criteria, and
   the plan has been wrong three times and corrected by measurement every time.
-- [Plan 132](plan_132_unrecorded_artifact_recovery.md)'s reparse of the 42,276
+- [Plan 132](../plans/plan_132_unrecorded_artifact_recovery.md)'s reparse of the 42,276
   unrecorded April captures reads through the pack path once sources are gone.
   That is unblocked by Stage 3, not by anything in Stage 4.
 
@@ -463,7 +463,7 @@ curl -sS -X POST http://localhost:3100/loki/api/v1/push \
 
 **Mark every synthetic line.** Loki has no retention yet, so each one is
 permanent and will surface in any future `REFUSED` search. See
-[Plan 131](plan_131_packed_cold_storage.md#the-alert-validated-in-production--2026-08-17).
+[Plan 131](../plans/plan_131_packed_cold_storage.md#the-alert-validated-in-production--2026-08-17).
 
 ### Do not hand-run a month the schedule might also take
 
@@ -486,9 +486,9 @@ month is the window to stay clear of.
 ### What it does not do yet
 
 - **No scheduled run has completed.** The first is 2026-09-03. Until then the
-  measured numbers in [Plan 131](plan_131_packed_cold_storage.md) come from
+  measured numbers in [Plan 131](../plans/plan_131_packed_cold_storage.md) come from
   manual runs.
 - **No inode alert.** That moved to
-  [Plan 135](plan_135_storage_observability.md), which must first fix
+  [Plan 135](../plans/plan_135_storage_observability.md), which must first fix
   node-exporter — it has never reported `/mnt/data` at all. `watch -n 300 'df -i
   /mnt/data'` is still the only inode signal.

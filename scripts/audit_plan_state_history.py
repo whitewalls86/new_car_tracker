@@ -52,6 +52,11 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 INDEX = "docs/PLANS.md"
+# Plan 146 Stage 3 moved the plan documents into ``docs/plans/``. The index and
+# the archive keep their own homes: ``PLANS.md`` at the ``docs/`` root, the
+# archive under ``docs/planning/``.
+PLANS_DIR = "docs/plans"
+ARCHIVE = "docs/planning/completed_plans.md"
 
 # Section heading -> canonical state. Headings were renamed repeatedly over the
 # history; the canonical set is Plan 146's four states plus ``superseded``,
@@ -88,7 +93,10 @@ IGNORED_HEADING_PREFIXES = (
     "plan ",  # per-plan detail sections in early revisions
 )
 
-PLAN_LINK = re.compile(r"\[(\d+)\]\((?:implementation_)?plan_\d+[^)]*\.md\)")
+PLAN_LINK = re.compile(
+    # ``plans/`` is optional: revisions of the index older than Stage 3 link to
+    # the flat path, and this sweep reads every revision.
+    r"\[(\d+)\]\((?:plans/)?(?:implementation_)?plan_\d+[^)]*\.md\)")
 BARE_PLAN = re.compile(r"^\*{0,2}(\d{1,3})\*{0,2}$")
 
 
@@ -192,7 +200,7 @@ def build_timelines() -> dict[int, list[dict]]:
 
 def plan_files() -> dict[int, list[str]]:
     files: dict[int, list[str]] = defaultdict(list)
-    for path in sorted((REPO_ROOT / "docs").glob("*plan_*.md")):
+    for path in sorted((REPO_ROOT / PLANS_DIR).glob("*plan_*.md")):
         match = re.search(r"plan_(\d+)_", path.name)
         if match:
             files[int(match.group(1))].append(path.name)
@@ -200,8 +208,25 @@ def plan_files() -> dict[int, list[str]]:
 
 
 def file_dates(name: str) -> tuple[str | None, str | None]:
-    out = _git("log", "--follow", "--date=short", "--format=%ad", "--", f"docs/{name}")
-    dates = [d for d in out.splitlines() if d.strip()]
+    """(created, last touched) for a plan document, ignoring pure renames.
+
+    Stage 3 moved all 79 documents in one commit. Counting that commit as a
+    touch would date every plan to the day of the move and quietly destroy the
+    only signal ``inferred`` guesses have. ``--numstat`` reports ``0 0`` for a
+    rename that changed no content, which is exactly the commit to skip.
+    """
+    out = _git("log", "--follow", "--date=short", "--format=%x00%ad",
+               "--numstat", "--", f"{PLANS_DIR}/{name}")
+    dates: list[str] = []
+    pending: str | None = None
+    for line in out.splitlines():
+        if line.startswith("\x00"):
+            pending = line[1:].strip()
+        elif line.strip() and pending is not None:
+            added, deleted, _ = line.split("\t", 2)
+            if added != "0" or deleted != "0":
+                dates.append(pending)
+            pending = None
     if not dates:
         return None, None
     return dates[-1], dates[0]  # created, last touched
@@ -213,7 +238,7 @@ CLAIMED_DATE = re.compile(
 
 def claimed_completion(name: str) -> str | None:
     """A completion date the plan document itself asserts, if any."""
-    text = (REPO_ROOT / "docs" / name).read_text(encoding="utf-8")
+    text = (REPO_ROOT / PLANS_DIR / name).read_text(encoding="utf-8")
     match = CLAIMED_DATE.search(text)
     return match.group(1) if match else None
 
@@ -229,7 +254,7 @@ def recorded_dates() -> dict[int, tuple[str, str]]:
     sweep gets to overwrite -- it is the thing git corroborates.
     """
     found: dict[int, tuple[str, str]] = {}
-    for relative in ("docs/completed_plans.md", INDEX):
+    for relative in (ARCHIVE, INDEX):
         path = REPO_ROOT / relative
         if not path.exists():
             continue
@@ -313,7 +338,7 @@ def archived_numbers() -> set[int]:
     segment only.
     """
     numbers: set[int] = set()
-    for line in (REPO_ROOT / "docs/completed_plans.md").read_text(
+    for line in (REPO_ROOT / ARCHIVE).read_text(
             encoding="utf-8").splitlines():
         if not line.startswith("|"):
             continue
@@ -385,7 +410,8 @@ def coverage() -> dict:
     }
 
 
-DELETED_DOC = re.compile(r"^docs/(?:implementation_)?plan_(\d+)[^/]*\.md$")
+DELETED_DOC = re.compile(
+    r"^docs/(?:plans/)?(?:implementation_)?plan_(\d+)[^/]*\.md$")
 
 
 def deleted_documents() -> list[dict]:
@@ -396,7 +422,13 @@ def deleted_documents() -> list[dict]:
     disappears from every surface at once, which is the least recoverable
     version of this plan's defect.
     """
-    present = {f"docs/{p.name}" for p in (REPO_ROOT / "docs").glob("*plan_*.md")}
+    # Deletions recorded before Stage 3 name the flat path, deletions after it
+    # name ``docs/plans/``; a document that still exists must match neither.
+    present = {
+        prefix + p.name
+        for p in (REPO_ROOT / PLANS_DIR).glob("*plan_*.md")
+        for prefix in ("docs/", f"{PLANS_DIR}/")
+    }
     out = _git("log", "--diff-filter=D", "--date=short",
                "--format=%x00%H %ad %s", "--name-only", "--", "docs/")
     gone: dict[str, dict] = {}

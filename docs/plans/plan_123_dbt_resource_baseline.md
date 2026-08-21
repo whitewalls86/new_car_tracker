@@ -1,7 +1,7 @@
 # Plan 123 Resource Baseline Report
 
 This is the report artifact referenced by "Resource Baseline Report" in
-`docs/plan_123_dbt_incrementalization_and_resource_governance.md`, and the
+`docs/plans/plan_123_dbt_incrementalization_and_resource_governance.md`, and the
 evidence base Phase 5 must use before deciding whether to incrementalize any
 more models. It is a template plus an operator checklist until real numbers
 are collected on the VM.

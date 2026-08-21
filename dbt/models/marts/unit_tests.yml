@@ -2,7 +2,7 @@
 # the reason documented at the top of models/intermediate/unit_tests.yml: dbt
 # builds a dict fixture by introspecting the mocked input's relation, and the
 # staging models are `ephemeral` on the spark target, which never materializes
-# one. See docs/plan_125_portability_audit.md § F16.
+# one. See docs/plans/plan_125_portability_audit.md § F16.
 #
 # Note for mart_vehicle_snapshot / mart_detail_batch_outcomes / mart_deal_scores:
 # these are still F8-blocked (postgres_scan) and so cannot build on spark at all

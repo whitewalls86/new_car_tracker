@@ -1,7 +1,7 @@
 # Runbook: Solver OOM Evidence and Recycling
 
-Operational companion to [Plan 124](plan_124_trawl_memory_guardrails.md) and
-[Plan 136](plan_136_solver_recycle_and_liveness.md). Covers the browser solver
+Operational companion to [Plan 124](../plans/plan_124_trawl_memory_guardrails.md) and
+[Plan 136](../plans/plan_136_solver_recycle_and_liveness.md). Covers the browser solver
 `cartracker-trawl` — checking for OOM evidence, and restarting it without
 rebooting the VM.
 
@@ -108,7 +108,7 @@ the drain is manual.
 ## 6. What this runbook does not cover
 
 - **Why** the solve rate collapses. Stage rot after long uptime is the working
-  theory; [Plan 136](plan_136_solver_recycle_and_liveness.md) Stage 2 adds the
+  theory; [Plan 136](../plans/plan_136_solver_recycle_and_liveness.md) Stage 2 adds the
   outcome counters that would answer it.
 - Automatic restart. Plan 136 Stage 4 owns restart authority.
 

@@ -1,6 +1,6 @@
 # Plans decision log
 
-Narrative that [PLANS.md](PLANS.md) used to carry inline. That file says at the
+Narrative that [PLANS.md](../PLANS.md) used to carry inline. That file says at the
 top that it is *the index only*, and by 2026-08-21 more than half of it was
 prose -- which costs on every fresh read, because the sequencing essay is
 consulted rarely and the dated records go stale by design.
@@ -12,7 +12,7 @@ each plan's own document; this is the reasoning and the point-in-time records.
 
 ### Soak results, 2026-08-21
 
-**[Plan 140](plan_140_service_health_contract.md) Stage 2 — green, and the
+**[Plan 140](../plans/plan_140_service_health_contract.md) Stage 2 — green, and the
 strong kind of green.** `ct-container-unhealthy` produced **zero state-change
 annotations** across 21h 28m in which Grafana logged 51 transitions overall; it
 reads `inactive` with 28 of 28 instances `Normal`. The exporter never missed a
@@ -24,7 +24,7 @@ the whole contract. The documented removed-container limitation also reproduced
 live and harmlessly: one evaluation out of 5,154 saw 27 series rather than 28,
 because `dbt_runner` left the metric while being recreated.
 
-**[Plan 136](plan_136_solver_recycle_and_liveness.md) Stage 2 — half green,
+**[Plan 136](../plans/plan_136_solver_recycle_and_liveness.md) Stage 2 — half green,
 half inconclusive, and the inconclusive half is the one that mattered for
 sequencing.** Both rules held across 1,189 evaluations with zero annotations,
 and the volume guard earned its place: in 14 checkpoints overnight the
@@ -45,7 +45,7 @@ measured in weeks, not the deploy it was waiting on.
 
 ### What to work now the soaks have closed
 
-**[Plan 144](plan_144_deploy_script_hardening.md) was deployed 2026-08-21 and
+**[Plan 144](../plans/plan_144_deploy_script_hardening.md) was deployed 2026-08-21 and
 is complete.** It ran *through* the hardened script rather than around it, which
 was the point. `--restart prometheus` observed a real `starting` → `healthy`
 transition in 6 seconds and verified inode 519823 on both sides of the mount
@@ -87,7 +87,7 @@ The argument, kept as the record:
    was caught only because the earlier finding said to look. That belongs in
    the deploy script or its documented procedure, not in an operator's memory.
 
-**[Plan 145](plan_145_april_cutover_reconciliation.md) Stage 0 is the other
+**[Plan 145](../plans/plan_145_april_cutover_reconciliation.md) Stage 0 is the other
 thing worth doing right now, and it is the cheapest row on this page.** It is
 measurement only — no writes, no deploy, no container touched — and its five
 gates decide whether the plan is an L or an XL before any code is written.
@@ -173,11 +173,11 @@ plans are, in effect, hand-built orchestration:
 
 | Plan | What it builds | Kubernetes equivalent |
 |---|---|---|
-| [142](plan_142_planned_host_maintenance.md) | Maintenance intent, drain, quiescence | `kubectl drain` / cordon |
-| [136](plan_136_solver_recycle_and_liveness.md) Stage 4 | Restart authority for an unhealthy service | Liveness probe + `restartPolicy` |
-| [140](plan_140_service_health_contract.md) Stage 2 | Container health as a metric — **delivered 2026-08-20** | `kube-state-metrics` |
-| [108](plan_108_deploy_trigger_endpoint.md) | Deploy trigger endpoint | Updating a Deployment's image tag |
-| [144](plan_144_deploy_script_hardening.md) | Readiness-gated deploys | Rolling update with readiness probes |
+| [142](../plans/plan_142_planned_host_maintenance.md) | Maintenance intent, drain, quiescence | `kubectl drain` / cordon |
+| [136](../plans/plan_136_solver_recycle_and_liveness.md) Stage 4 | Restart authority for an unhealthy service | Liveness probe + `restartPolicy` |
+| [140](../plans/plan_140_service_health_contract.md) Stage 2 | Container health as a metric — **delivered 2026-08-20** | `kube-state-metrics` |
+| [108](../plans/plan_108_deploy_trigger_endpoint.md) | Deploy trigger endpoint | Updating a Deployment's image tag |
+| [144](../plans/plan_144_deploy_script_hardening.md) | Readiness-gated deploys | Rolling update with readiness probes |
 
 Priced together that is genuinely comparable to a single-node k3s migration, so
 **the honest reading is that 25 understates it** — and nobody was summing those
@@ -343,7 +343,7 @@ its dashboards share one tested schema before Plan 134 begins its warning-log
 observation window. **Plan 133 deployed and verified on 2026-08-20** — 720
 artifacts read through the pack path across April-July with 0 failures — so the
 next data-integrity step is unblocked. **That step is now
-[Plan 145](plan_145_april_cutover_reconciliation.md), which superseded Plan 132
+[Plan 145](../plans/plan_145_april_cutover_reconciliation.md), which superseded Plan 132
 on 2026-08-21.** Verifying Plan 132 against production found its own numbers
 intact but its surroundings changed — Plan 131's prune had already completed its
 Stage 4, and its proposed reparse would have corrupted live pricing state — and
@@ -396,8 +396,8 @@ than claiming a full day.
 ### Soak results, 2026-08-21
 
 Both closed; the evidence lives where this file's own instruction says to put
-it -- [Plan 140](plan_140_service_health_contract.md) Stage 2 and
-[Plan 136](plan_136_solver_recycle_and_liveness.md) Stage 2 -- with the full
+it -- [Plan 140](../plans/plan_140_service_health_contract.md) Stage 2 and
+[Plan 136](../plans/plan_136_solver_recycle_and_liveness.md) Stage 2 -- with the full
 narrative in [plans_decision_log.md](plans_decision_log.md).
 
 **Plan 140 Stage 2: green.** `ct-container-unhealthy` logged zero state
@@ -425,7 +425,7 @@ table -- or restates blockers that are now columns in the table itself.
 > and sha256 prefixes -- is accurate and now lives in Plan 141's build-order
 > row.
 
-**Plan [139](plan_139_test_suite_maintenance.md) occupies two rows rather than
+**Plan [139](../plans/plan_139_test_suite_maintenance.md) occupies two rows rather than
 one**, because scoring it as a single plan (62) hid that its first two stages
 were two lines of YAML and a dev dependency. That argument paid off: **Stages
 A+B shipped 2026-08-18** (PR #213) and left the build order. The critical path
@@ -565,7 +565,7 @@ better name.
 **The index's own "Completed" table** duplicated `completed_plans.md` and
 disagreed with it: Plans 143, 133, 128 and 115 were in the index and absent from
 the archive. The archive is now the only completion record.
-[Plan 138](plan_138_public_surface_refresh.md)'s project-updates snapshot was
+[Plan 138](../plans/plan_138_public_surface_refresh.md)'s project-updates snapshot was
 the one consumer of the index's copy and now reads the archive instead.
 
 ### Two decisions Plan 146's own document did not settle
@@ -583,3 +583,74 @@ plan, and the index used to give it a section of its own — a sixth status
 surface by another name. A backlog row with a real exit condition ("archived
 when its arc lands") keeps the invariant intact without a special case. The
 orientation it provided survives as three lines under Current State.
+
+---
+
+### `docs/` gets a hierarchy, 2026-08-21
+
+Plan 146 Stage 3. Ninety-eight files and zero directories became five
+directories: `plans/` (79 documents, flat), `planning/` (this file, the
+archive, the reconciliation report), `runbooks/`, `prompts/`, `reference/`.
+[ARCHITECTURE.md](../ARCHITECTURE.md) and [PLANS.md](../PLANS.md) stay at the
+`docs/` root — they are the two entry points, and every external reference to
+them still resolves.
+
+**Directories encode kind, not state.** `plans/` is flat on purpose. An
+`active/` and `completed/` split would move a file on every completion, break
+every inbound link, and put the same fact in two places — the path and the
+index — which is the defect this plan exists to remove. A plan document keeps
+one path forever; PLANS.md and the archive say what state it is in.
+
+The rename was one commit with no content edits, so the 163 relative links
+rewritten in the next commit could be reviewed separately. All 98 moves are
+recorded as renames, so `git log --follow` still reaches the whole history.
+
+**Four references were already broken before the move.** None is a regression;
+each was decided rather than silently patched:
+
+- [plan_105](../plans/plan_105_vm_migration.md) linked to
+  `scripts/provision_oracle_vm.py`, which no commit on any ref has ever
+  contained, and to a `reference_server_ssh.md` under a `.claude/` memory
+  directory outside the repo on a machine that no longer exists. Both are now
+  backticked prose. Neither names a file this repo can resolve, so neither
+  should look like a link — and Stage 4's test reads markdown links, not prose.
+- [plan_135](../plans/plan_135_storage_observability.md) had nine links written
+  repo-root-relative (`docker-compose.yml`, `loki/loki.yml`) from a file in
+  `docs/`, so they had never resolved. They point at real files and are now
+  correct: `../../docker-compose.yml`.
+- `docker-compose.yml:175` cited `docs/plan_128_challenge_pages.md`; the file
+  has always been `plan_128_false_block_detection.md`. Corrected to the new
+  path.
+
+Files that plans *propose* and nobody has written — `docs/governance_inventory.md`,
+`docs/table_registration_standard.md`, `docs/dbt_spark_adapter_decision.md`,
+`docs/staging_environment_decision.md`, `docs/runbook_lakehouse.md` — were left
+exactly as they are. Every one appears as a backticked filename in a
+deliverables list, never as a markdown link, which is what makes Stage 4's
+dangling-link test safe to write: it follows markdown link syntax only, so a
+backticked filename in prose cannot fail it.
+
+`docs/prompts/claude_prompt_plan_146_stage_3.md` is the one file whose `docs/`
+paths were **not** rewritten. It describes the flat layout as it stood when the
+stage began, and rewriting it would make it claim that Stage 1 edited
+`docs/planning/completed_plans.md` — a file that did not exist that day.
+
+**Two changes to `scripts/audit_plan_state_history.py`.** Its output is the
+evidence base for Stage 1's backfill, so it was re-run in all three modes and
+diffed against the pre-move tree; the only differences are the ones below.
+
+- The sweep collected plan documents with `docs/*plan_*.md`, which also matched
+  `claude_prompt_plan_135_*.md` and `runbook_plan_131_*.md`. Sorted, a prompt
+  file came first, so the tool had been reading *prompts* for Plans 120, 131,
+  135, 140 and 146 when it wanted their plan documents. Globbing `docs/plans/`
+  fixes it, and those five plans now resolve `corroborated` from their own
+  documents instead of guessing from a prompt's mtime. The hierarchy made a
+  distinction the flat directory could not express.
+- `file_dates` skips commits that only renamed a file. Without that, the move
+  would date all 79 documents to 2026-08-21 and destroy the only signal an
+  `inferred` guess has.
+
+`--coverage` still reports 3 never-used numbers (44, 85, 104) and 0 unrecorded.
+Stage 3's prompt expected 4 unrecorded (5, 52, 55, 56); that was Stage 0's
+number, and Stage 2 recorded all four in the superseded table. The pre-move
+tree reports 0 as well, so nothing about the move changed it.

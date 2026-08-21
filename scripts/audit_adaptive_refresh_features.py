@@ -1,6 +1,6 @@
 """Read-only audit of Plan 112 adaptive-refresh feature model outputs.
 
-Gate 0 preflight (docs/plan_112_refresh_policy_backtesting.md): checks row counts, key uniqueness,
+Gate 0 preflight (docs/plans/plan_112_refresh_policy_backtesting.md): checks row counts, key uniqueness,
 null rates, freshness, and grain sanity for the dbt-materialized intermediate
 models that will feed backtest replay and MLflow experiments. Does not
 require Spark, Iceberg, or MLflow — DuckDB only.
@@ -105,7 +105,7 @@ TABLE_SPECS: list[TableSpec] = [
 ]
 
 # mart_detail_refresh_priority does not exist yet — see
-# docs/plan_112_refresh_policy_backtesting.md for what currently replaces it.
+# docs/plans/plan_112_refresh_policy_backtesting.md for what currently replaces it.
 NOT_YET_BUILT = ["mart_detail_refresh_priority"]
 
 
@@ -260,7 +260,7 @@ def format_markdown(results: list[dict[str, Any]]) -> str:
     if NOT_YET_BUILT:
         lines.append("## Not yet built")
         for name in NOT_YET_BUILT:
-            lines.append(f"- {name} — see docs/plan_112_refresh_policy_backtesting.md")
+            lines.append(f"- {name} — see docs/plans/plan_112_refresh_policy_backtesting.md")
         lines.append("")
     return "\n".join(lines)
 

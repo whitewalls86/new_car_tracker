@@ -2,8 +2,8 @@
 
 **Status:** Draft  
 **Branch:** feature/storage-refresh-implementation-plans  
-**Plan doc:** [docs/plan_110_html_storage_optimization.md](plan_110_html_storage_optimization.md)  
-**Roadmap:** [docs/plan_117_storage_and_adaptive_refresh_roadmap.md](plan_117_storage_and_adaptive_refresh_roadmap.md)
+**Plan doc:** [docs/plans/plan_110_html_storage_optimization.md](plan_110_html_storage_optimization.md)  
+**Roadmap:** [docs/plans/plan_117_storage_and_adaptive_refresh_roadmap.md](plan_117_storage_and_adaptive_refresh_roadmap.md)
 
 ---
 
@@ -71,7 +71,7 @@ Established from reading source code before drafting:
 - File naming: `part-{uuid}-0.parquet` (pre-compaction) or `compacted-YYYY-MM-DD.parquet`
   (post Plan 109)
 - dbt source glob: `silver/observations/**/*.parquet` with `hive_partitioning=true`
-  ([dbt/models/sources.yml:17](../dbt/models/sources.yml))
+  ([dbt/models/sources.yml:17](../../dbt/models/sources.yml))
 
 ### Ops Event Tables
 
@@ -136,7 +136,7 @@ No code changes. Produces a living checklist that each subsequent phase marks of
    ```
 
 5. Record all current dbt source external_location globs from
-   [dbt/models/sources.yml](../dbt/models/sources.yml) — these are the read contracts
+   [dbt/models/sources.yml](../../dbt/models/sources.yml) — these are the read contracts
    that must remain valid until Phase 6 switches them.
 
 ### Deliverable

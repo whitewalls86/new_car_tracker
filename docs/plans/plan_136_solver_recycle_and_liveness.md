@@ -608,7 +608,7 @@ outcome at the moment it happens:
 - `cartracker_detail_fetch_total{outcome="ok|403|error"}`
 
 Prometheus did not scrape the scraper at all; it is now a job in
-[prometheus/prometheus.yml](../prometheus/prometheus.yml) alongside `ops` and
+[prometheus/prometheus.yml](../../prometheus/prometheus.yml) alongside `ops` and
 `processing`, and `scraper` was added to `ct-service-down`'s job set in the same
 change — that rule's set is asserted equal to `prometheus.yml`'s, so the counters
 being scraped and the scraper's own liveness being watched are one edit.
@@ -675,7 +675,7 @@ should not page.
 absent, and it cannot come from the solver's own report: `trawl` returned
 `status: ok` from its API and `status:ok` from its healthcheck for all eight
 hours. `_solver_outcome` therefore reads the returned page's title. The marker
-set moved to [shared/challenge.py](../shared/challenge.py) so `processing`'s
+set moved to [shared/challenge.py](../../shared/challenge.py) so `processing`'s
 block classifier and this counter cannot drift; `processing` keeps its
 `initial-activity-data` safety gate, which does not apply here because the
 bootstrap URL is the homepage and carries no such blob.

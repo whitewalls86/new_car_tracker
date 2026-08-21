@@ -32,7 +32,7 @@ defect: **`/mnt/data` had never been monitored at all.**
 | `df /` | **79% → 63%** (11 GiB → 19 GiB free) |
 | Loki health after | `/ready` 200; ingestion verified live end-to-end (promtail sent +368 = distributor received +368 over 40s) |
 
-`log_level: warn` is now deployed in [loki/loki.yml](../loki/loki.yml) and has
+`log_level: warn` is now deployed in [loki/loki.yml](../../loki/loki.yml) and has
 survived the Stage 5 restart.
 
 ### Stage 5 production preflight, 2026-08-17
@@ -359,7 +359,7 @@ node_filesystem_device_error{device="/dev/sdb",fstype="ext4",
   mountpoint="/mnt/data",device_error="no such file or directory"} 1
 ```
 
-In [docker-compose.yml:599-613](docker-compose.yml#L599-L613), node-exporter
+In [docker-compose.yml:599-613](../../docker-compose.yml#L599-L613), node-exporter
 bind-mounts the host root at `/rootfs` but never passes `--path.rootfs=/rootfs`.
 So it reads the *host* mount table via `--path.procfs=/host/proc` (and correctly
 sees `/dev/sdb` at `/mnt/data`), then tries to `statfs("/mnt/data")` inside its
@@ -369,7 +369,7 @@ The consequences:
 
 - **Both disk alerts are pointed at the wrong disk.** `ct-disk-space-warning`
   and `ct-disk-space-critical` in
-  [rules.yml:310-380](grafana/provisioning/alerting/rules.yml#L310-L380) match
+  [rules.yml:310-380](../../grafana/provisioning/alerting/rules.yml#L310-L380) match
   `node_filesystem_avail_bytes{fstype!="tmpfs",mountpoint!~"/boot.*"}`, which
   resolves to `/` alone. The 196 GB data volume — the one that filled to
   99–100% during Plan 129's backfill and again during Plan 114's audit — has
@@ -411,7 +411,7 @@ usable tool on this host, which is part of why this went unnoticed.
 
 **Docker's own container logs are the single largest reclaimable item on the
 box — 12.31 GiB across 31 files, with no rotation configured anywhere.** There
-is no `logging:` block in [docker-compose.yml](docker-compose.yml), no
+is no `logging:` block in [docker-compose.yml](../../docker-compose.yml), no
 `/etc/docker/daemon.json`, and no journald cap. The default `json-file` driver
 grows without bound.
 
@@ -459,7 +459,7 @@ It is tempting to describe this system as storing every log twice and to reach
 for "prune one, archive the other". Measurement says otherwise. There are two
 *separate* streams with almost no overlap, and they have opposite problems.
 
-**Stream A — application file logs → Loki.** [promtail.yml](promtail/promtail.yml)
+**Stream A — application file logs → Loki.** [promtail.yml](../../promtail/promtail.yml)
 scrapes `app.log*` from five volumes (`ops`, `scraper`, `processing`,
 `dbt_runner`, `archiver`). It does **not** mount `/var/lib/docker/containers`.
 
@@ -548,7 +548,7 @@ when a backfill starts.
 
 ### Stage 1 — Make `/mnt/data` visible (the actual bug)
 
-Add the missing flag in [docker-compose.yml](docker-compose.yml#L608):
+Add the missing flag in [docker-compose.yml](../../docker-compose.yml#L608):
 
 ```yaml
     command:
@@ -575,7 +575,7 @@ is applied.
 
 ### Stage 2 — Dashboard panels
 
-Add to [infrastructure.json](grafana/dashboards/infrastructure.json), which
+Add to [infrastructure.json](../../grafana/dashboards/infrastructure.json), which
 currently ends at panel id 8:
 
 1. **Filesystem Used %** — `(1 - node_filesystem_avail_bytes / node_filesystem_size_bytes)`,
@@ -597,7 +597,7 @@ Bytes`**. The current title is what made the number look like a disk reading.
 
 ### Stage 3 — Alerts
 
-In [rules.yml](grafana/provisioning/alerting/rules.yml), group
+In [rules.yml](../../grafana/provisioning/alerting/rules.yml), group
 `infra-and-data-health`:
 
 - **Scope the two existing disk alerts.** After Stage 1 they will start matching
@@ -817,10 +817,10 @@ Consider whether `cartracker-loki` needs stdout capture at all — 8.02 GiB of t
 12.31 is Loki logging about logging, while Promtail ships container logs *into*
 Loki. Reducing Loki's own log level is likely a bigger win than rotating it.
 
-**5b. Set the one retention knob — Loki.** [loki/loki.yml](loki/loki.yml) has no
+**5b. Set the one retention knob — Loki.** [loki/loki.yml](../../loki/loki.yml) has no
 compactor and no retention period, so chunks are kept forever. Prometheus
 already does this correctly (`--storage.tsdb.retention.time=30d` at
-[docker-compose.yml:625](docker-compose.yml#L625)); Loki needs the same:
+[docker-compose.yml:625](../../docker-compose.yml#L625)); Loki needs the same:
 
 ```yaml
 compactor:
@@ -853,7 +853,7 @@ container:
 volume, and both errors were `context canceled` / `EOF` from one query-scheduler
 blip on 2026-08-13 — arguably not actionable either.
 
-Set `server: log_level: warn` in [loki/loki.yml](loki/loki.yml).
+Set `server: log_level: warn` in [loki/loki.yml](../../loki/loki.yml).
 
 **This is safe specifically because the level is a runtime dial, not a permanent
 setting.** Verified on the running instance (Loki 2.9.8):
@@ -928,7 +928,7 @@ inodes on `/mnt/data`, against a Loki store that grows to ~6 GiB and then stops.
 ### Stage 6 — The maintenance runbook
 
 The point of this plan is that filesystem maintenance becomes a short, dull,
-scheduled task. Write `docs/runbook_storage_maintenance.md` covering:
+scheduled task. Write `docs/runbooks/runbook_storage_maintenance.md` covering:
 
 **Monthly, from the dashboard (no SSH):** check both disks' used %, check inode
 % on `/mnt/data`, check the "What's Filling The Disks" panel for a band that
@@ -991,7 +991,7 @@ be reached for.
    scheduled Sundays at 04:17 and has not had its first run yet.
 7. ✅ **Met 2026-08-18.** `df /` reads **51%** (25 of 49 GiB), against 79% at
    the start of this plan and the 60% target. The monthly check is
-   [runbook_storage_maintenance.md](runbook_storage_maintenance.md) §1, written
+   [runbook_storage_maintenance.md](../runbooks/runbook_storage_maintenance.md) §1, written
    to be done from the dashboard without SSH.
 
 ## Risks

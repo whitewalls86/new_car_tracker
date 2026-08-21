@@ -19,7 +19,7 @@ The persistent state is contained entirely on a single 200 GB OCI block volume (
 
 ## Pre-conditions
 
-- New A1.Flex VM provisioned via [scripts/provision_oracle_vm.py](../scripts/provision_oracle_vm.py)
+- New A1.Flex VM provisioned via `scripts/provision_oracle_vm.py`
 - New VM in the same VCN/subnet as the old VM (`vcn-20260408-1353` / `subnet-20260408-1353`)
 - Block volume `/dev/sdb` on old VM is healthy and currently mounted at `/mnt/data`
 - `/var/lib/docker/volumes` on old VM is a symlink to `/mnt/data/docker-volumes` (verified)
@@ -219,7 +219,7 @@ Hold validation at least 30 min before declaring success.
 ## Phase 8 — Cleanup (after 24-48h stable)
 
 - Terminate old VM (preserve its boot volume snapshot for 1 week as rollback insurance)
-- Update [reference_server_ssh.md](../../../.claude/projects/c--Users-mille-PycharmProjects-cartracker-scraper/memory/reference_server_ssh.md) memory with new IP if not using a reserved IP
+- Update `reference_server_ssh.md` memory with new IP if not using a reserved IP
 - Mark Plan 105 complete in MEMORY.md
 
 ---
@@ -244,7 +244,7 @@ After Phase 7 validation passes and writes resume on the new VM, rollback gets r
 - **Boot volume on new VM is 50 GB** (matches old). Tight but adequate; expand later if needed.
 - **Reserved IP requires the VNIC to be in a public subnet** — already true for both VMs.
 - **TLS cert reissue** is handled automatically by Caddy via Let's Encrypt. No manual cert work.
-- **`flyway` service has `platform: linux/amd64` pinned** in [docker-compose.yml](../docker-compose.yml) — runs under qemu emulation. Slow but functional. Already proven on the existing A2 VM, so no behavior change.
+- **`flyway` service has `platform: linux/amd64` pinned** in [docker-compose.yml](../../docker-compose.yml) — runs under qemu emulation. Slow but functional. Already proven on the existing A2 VM, so no behavior change.
 - **Scraper runs may fail mid-flight** during Phase 1 freeze. The deploy_intent mechanism stops new submissions but doesn't kill in-flight runs. Wait for `number_running = 0` before Phase 2.
 
 ---

@@ -99,7 +99,7 @@ groups:
         for: 0s
         annotations:
           summary: "Pack verification refused an object on {{ $labels.service }}"
-          description: "delete_packed_source_html refused to delete a source object because its pack did not verify. Nothing was deleted. Read failures[] in the run summary, and pause the pack_bronze_html DAG before any further pruning. Run sheet: docs/runbook_plan_131_stage_3_4.md"
+          description: "delete_packed_source_html refused to delete a source object because its pack did not verify. Nothing was deleted. Read failures[] in the run summary, and pause the pack_bronze_html DAG before any further pruning. Run sheet: docs/runbooks/runbook_plan_131_stage_3_4.md"
         data:
           - refId: A
             datasourceUid: cartracker-loki
@@ -324,7 +324,7 @@ groups:
           severity: coverage
         annotations:
           summary: "Container {{ $labels.container }} has no healthcheck configured"
-          description: "This service is running with no healthcheck, so Docker reports no health status for it and it is indistinguishable from a healthy service. Add a `healthcheck:` block in docker-compose.yml, or add a deny-list entry with a written reason in tests/test_observability_config.py. See docs/plan_140_service_health_contract.md."
+          description: "This service is running with no healthcheck, so Docker reports no health status for it and it is indistinguishable from a healthy service. Add a `healthcheck:` block in docker-compose.yml, or add a deny-list entry with a written reason in tests/test_observability_config.py. See docs/plans/plan_140_service_health_contract.md."
         data:
           - refId: A
             datasourceUid: cartracker-prometheus

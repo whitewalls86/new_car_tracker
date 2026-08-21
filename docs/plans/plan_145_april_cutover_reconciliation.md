@@ -317,17 +317,17 @@ next reader does not inherit "everything is packed" the way this plan inherited
 Reusing `POST /process/batch` to replay April — Plan 132's stated design, and
 the natural approach for Plan 137's recovery too — **corrupts live state**:
 
-- [`upsert_price_observation.sql`](../processing/sql/upsert_price_observation.sql)
+- [`upsert_price_observation.sql`](../../processing/sql/upsert_price_observation.sql)
   has no `fetched_at` guard. `price`, `make`, `model`, `last_seen_at` and
   `last_artifact_id` are unconditionally `EXCLUDED`, so an April observation
   overwrites a still-active listing's current price.
 - `last_detail_scraped_at` is `COALESCE(EXCLUDED, existing)` — "a non-NULL
   incoming value always wins", so April overwrites today.
-- [`V040__detail_scrape_circuit_breaker.sql`](../db/migrations/V040__detail_scrape_circuit_breaker.sql)
+- [`V040__detail_scrape_circuit_breaker.sql`](../../db/migrations/V040__detail_scrape_circuit_breaker.sql)
   computes `is_price_stale` and the detail-refresh predicate from exactly those
   columns and orders the claim queue by `last_seen_at ASC`. Backdating
   re-enqueues recovered listings at the front of the live scrape queue.
-- [`detail_writer.py`](../processing/writers/detail_writer.py) DELETEs the
+- [`detail_writer.py`](../../processing/writers/detail_writer.py) DELETEs the
   `price_observations` row at any other `listing_id` holding the same VIN, and
   `_clear_cooldown` wipes live `blocked_cooldown` state.
 

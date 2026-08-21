@@ -2,10 +2,10 @@
 
 You are working in the `cartracker-scraper` repo. Branch off `master`.
 
-Read `docs/plan_135_storage_observability.md` first — it is the source of truth.
+Read `docs/plans/plan_135_storage_observability.md` first — it is the source of truth.
 The sections that matter most for this session are **"Stage 4's first production
 run (2026-08-18)"** and **"Stage 4 as built"**. Also read **"D3b validated in
-production"** in `docs/plan_131_packed_cold_storage.md`, which records how to
+production"** in `docs/plans/plan_131_packed_cold_storage.md`, which records how to
 deploy against a running long job without causing collateral DAG failures.
 
 ## Where this stands
@@ -77,7 +77,7 @@ docker inspect cartracker-node-exporter --format '{{json .Args}}'
 `docker restart` does not apply a compose `command:` change (it reuses the
 existing container's config) while `docker compose up -d` does not pick up a
 changed *bind-mounted file* (compose sees no config drift). They are exact
-opposites. See `docs/plan_135_storage_observability.md`, "Stages 1-3 shipped and
+opposites. See `docs/plans/plan_135_storage_observability.md`, "Stages 1-3 shipped and
 validated".
 
 ## Task 3 — Stage 5, the disruptive one
@@ -112,7 +112,7 @@ the current value before sizing 5a rather than quoting the doc.
 
 ## Task 4 — Stage 6, the runbook
 
-`docs/runbook_storage_maintenance.md`. Contents are specified in the plan doc.
+`docs/runbooks/runbook_storage_maintenance.md`. Contents are specified in the plan doc.
 Fold in, because they were all learned the hard way and currently live only in
 plan docs:
 
@@ -160,7 +160,7 @@ plan docs:
 
 ## Related, not in scope
 
-`docs/plan_139_test_suite_maintenance.md` is a skeleton from the same evening.
+`docs/plans/plan_139_test_suite_maintenance.md` is a skeleton from the same evening.
 Its one time-sensitive item is `ops/metrics/duckdb_gauges.py` at **25%
 coverage** — Plan 136 Stage 1 builds its staleness convention on that module.
 Cover it before Plan 136 starts, not as part of this session.

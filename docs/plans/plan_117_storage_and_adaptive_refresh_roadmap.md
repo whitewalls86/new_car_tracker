@@ -166,7 +166,7 @@ Required checks:
 
 Decision output:
 
-- `docs/plan_112_refresh_policy_backtesting.md`
+- `docs/plans/plan_112_refresh_policy_backtesting.md`
 - selected table/catalog path
 - rejected alternatives
 - exact spike commands

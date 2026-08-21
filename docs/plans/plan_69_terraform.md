@@ -22,9 +22,9 @@ is both the correct engineering order and the only version of this work with a
 demonstrable result.
 
 There is a second, explicitly acknowledged reason. This is a portfolio project —
-see `docs/LINKEDIN_CASE_STUDY.md` and [Plan 138](plan_138_public_surface_refresh.md)
+see `docs/reference/LINKEDIN_CASE_STUDY.md` and [Plan 138](plan_138_public_surface_refresh.md)
 — and Terraform is high-demand, low-cost, and genuinely additive here. Unlike a
-single-node Kubernetes migration (see [Plan 88's](PLANS.md) backlog row), it
+single-node Kubernetes migration (see [Plan 88's](../PLANS.md) backlog row), it
 solves a real problem at the same time as it builds a marketable skill, so the
 two motivations do not conflict. Recording that openly is better than
 discovering it later in a commit message.

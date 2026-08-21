@@ -121,8 +121,8 @@ also silently re-open the exact failure mode
 
 Root cause is the known gap already recorded in `processing/html_sections.py`:
 
-- `spark-notification.unlisted-notification` ([parse_detail_page.py:61](../processing/processors/parse_detail_page.py#L61)) is **not anchored** — it lands in filler and is discarded.
-- `<title>` ([parse_detail_page.py:101](../processing/processors/parse_detail_page.py#L101)), read for challenge detection when the activity JSON is absent, is **not anchored** either.
+- `spark-notification.unlisted-notification` ([parse_detail_page.py:61](../../processing/processors/parse_detail_page.py#L61)) is **not anchored** — it lands in filler and is discarded.
+- `<title>` ([parse_detail_page.py:101](../../processing/processors/parse_detail_page.py#L101)), read for challenge detection when the activity JSON is absent, is **not anchored** either.
 - A challenge page has **no anchors at all**, so its projection is zero bytes.
 
 **Fix before anything else:** add both as anchors in `_anchor_name` and to

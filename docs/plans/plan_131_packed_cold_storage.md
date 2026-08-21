@@ -54,7 +54,7 @@ byte-identically from its pack afterwards**. See
 time, and three mandatory checks per member before anything is removed — see
 [Stage 4 as built](#stage-4-as-built). It must not run until Stage 3 is
 deployed and the read path verified against real April packs; the
-[run sheet](runbook_plan_131_stage_3_4.md) is the order of operations.
+[run sheet](../runbooks/runbook_plan_131_stage_3_4.md) is the order of operations.
 
 **Stage 5 BUILT (2026-08-17).** Cap semantics, endpoint failure contracts,
 single-flight, deploy-intent pause/resume, the isolated pack worker, the
@@ -1495,7 +1495,7 @@ or amended.**
 
 Built 2026-08-14. **Never run.** Dry-run by default, and its first apply run is
 gated on Stage 3 being deployed and verified — see the
-[run sheet](runbook_plan_131_stage_3_4.md).
+[run sheet](../runbooks/runbook_plan_131_stage_3_4.md).
 
 ### Three checks per member, none optional
 
@@ -1984,9 +1984,9 @@ Inventing a second staleness pattern here first would be the wrong order.
 
 The Stage 5 prompt specified the verification alert as `{service="archiver"}`.
 That would never fire. `ARCHIVER_ALLOW_PACK_JOBS` is set only on `pack-worker`
-([docker-compose.yml](../docker-compose.yml)), and the archiver returns **409**
+([docker-compose.yml](../../docker-compose.yml)), and the archiver returns **409**
 for pack endpoints, so every scheduled run logs under `service="pack-worker"`
-([promtail.yml](../promtail/promtail.yml)). The spec predates Step 4 creating the
+([promtail.yml](../../promtail/promtail.yml)). The spec predates Step 4 creating the
 worker.
 
 `ct-pack-verification-refused` matches `{service=~"archiver|pack-worker"}` —
@@ -2102,7 +2102,7 @@ afterwards. Look first this time.
 | `archiver/processors/delete_packed_source_html.py` | Stage 4, dry-run default, hard cap, per-artifact verification; then `max_objects <= 0` = no cap and a deploy-intent boundary check | 4, 5 | **done**, April-June pruned |
 | `archiver/app.py` | `POST /pack/bronze/prune` | 4 | **done** |
 | `tests/archiver/test_delete_packed_source_html.py` | New — 26 tests over an in-memory store; uncapped drain and deploy-intent stop | 4, 5 | **done** |
-| `docs/runbook_plan_131_stage_3_4.md` | Deploy + verification + prune run sheet; then the Stage 5 close | 3-5 | **done** |
+| `docs/runbooks/runbook_plan_131_stage_3_4.md` | Deploy + verification + prune run sheet; then the Stage 5 close | 3-5 | **done** |
 | `shared/job_counter.py` | Named, per-job single-flight lock (D3a) | 5 | **done** |
 | `db/migrations/V042__deploy_intent_pause_long_jobs.sql` | New — `pause_long_jobs` column + `scraper_user` grant | 5 | **done** |
 | `shared/deploy_intent.py` | New — `long_jobs_paused()`, fails open (D3b) | 5 | **done** |

@@ -12,7 +12,7 @@
       `docker stats`.
 - [x] **Zero host-wide OOM events since deployment** — see the amended criterion
       below, which the original wording got wrong.
-- [x] Runbook written: [runbook_solver_oom_and_recycle.md](runbook_solver_oom_and_recycle.md).
+- [x] Runbook written: [runbook_solver_oom_and_recycle.md](../runbooks/runbook_solver_oom_and_recycle.md).
 
 ### Verified in production, 2026-08-18
 

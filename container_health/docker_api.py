@@ -5,7 +5,7 @@ with `:ro` makes the socket *file* read-only and does nothing to the API behind
 it -- any client that can connect can `POST /containers/{id}/restart`, `kill`,
 or create a privileged container. `docker-socket-proxy` with `CONTAINERS=1` and
 `POST=0` is what actually enforces read-only, so this client only ever needs to
-speak plain HTTP to it. See docs/plan_140_service_health_contract.md, Stage 2.
+speak plain HTTP to it. See docs/plans/plan_140_service_health_contract.md, Stage 2.
 """
 from __future__ import annotations
 

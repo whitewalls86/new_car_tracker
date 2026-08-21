@@ -2,8 +2,8 @@
 
 You are working in the `cartracker-scraper` repo. Branch off `master`.
 
-Read `docs/plan_131_packed_cold_storage.md` (especially **Stage 5** and **Stage
-4 as built**) and `docs/runbook_plan_131_stage_3_4.md` first. They are the
+Read `docs/plans/plan_131_packed_cold_storage.md` (especially **Stage 5** and **Stage
+4 as built**) and `docs/runbooks/runbook_plan_131_stage_3_4.md` first. They are the
 source of truth and record every decision below with the measurements behind
 it.
 
@@ -537,10 +537,10 @@ Three things this move has to get right:
     that prove the verifier refuses to call differing bytes identical, which is
     what authorizes Stage 4's deletions, so **nothing in them is rewritten as
     part of a move.**
-  - `docs/runbook_plan_131_stage_3_4.md` lines 90 and 135 —
+  - `docs/runbooks/runbook_plan_131_stage_3_4.md` lines 90 and 135 —
     `python -m scripts.verify_pack_read_path` →
     `python -m archiver.processors.verify_pack_read_path`.
-  - `docs/plan_133_pack_read_path_hardening.md` references it twice, once as a
+  - `docs/plans/plan_133_pack_read_path_hardening.md` references it twice, once as a
     **success-criteria gate**. A stale path there is a broken gate.
 
 **`scripts/estimate_pack_savings.py` stays a script** — Stage 0, offline, run
@@ -577,7 +577,7 @@ against a packed month, and `python -m archiver.processors.verify_pack_read_path
 | `archiver/processors/verify_pack_read_path.py` | **Moved** from `scripts/` — function + endpoint + CLI | 7b |
 | `scripts/verify_pack_read_path.py` | Deleted (moved) | 7b |
 | `tests/archiver/test_verify_pack_read_path.py` | **Moved** from `tests/scripts/` | 7b |
-| `docs/plan_133_pack_read_path_hardening.md` | Invocation path in its success-criteria gate | 7b |
+| `docs/plans/plan_133_pack_read_path_hardening.md` | Invocation path in its success-criteria gate | 7b |
 | `airflow/dags/pack_bronze_html.py` | New — lifecycle DAG | 5 |
 | `grafana/provisioning/alerting/rules.yml` | Inode warning/critical; `REFUSED` Loki alert | 6, 7 |
 | `grafana/dashboards/infrastructure.json` | Inode panel; bronze object-count panel | 6, 7 |
@@ -588,8 +588,8 @@ against a packed month, and `python -m archiver.processors.verify_pack_read_path
 | `tests/airflow/test_pack_bronze_html_dag.py` | New — result-check predicates (D5) | 5 |
 | `tests/integration/airflow/test_dag_integrity.py` | Register the DAG in `DAG_SPECS` | 5 |
 | `tests/test_observability_config.py` | Covers the new rules automatically — confirm it does | 6 |
-| `docs/plan_131_packed_cold_storage.md` | Stage 5 status + measured results | 8 |
-| `docs/runbook_plan_131_stage_3_4.md` | Replace the "Stage 5 not built" close | 8 |
+| `docs/plans/plan_131_packed_cold_storage.md` | Stage 5 status + measured results | 8 |
+| `docs/runbooks/runbook_plan_131_stage_3_4.md` | Replace the "Stage 5 not built" close | 8 |
 
 ## What would make this stage wrong
 

@@ -92,4 +92,4 @@ been read. Check them during step 1 rather than assuming either way.
 ## Out of scope
 
 The two Plan 131 endpoints. Already done — see D5 in
-[`docs/claude_prompt_plan_131_stage_5.md`](claude_prompt_plan_131_stage_5.md).
+[`docs/prompts/claude_prompt_plan_131_stage_5.md`](../prompts/claude_prompt_plan_131_stage_5.md).

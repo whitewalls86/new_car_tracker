@@ -24,7 +24,7 @@
 -- schema file), so merge replaces that row rather than a multi-row set. The one
 -- behavioural gap is that merge cannot remove a vin whose events all disappear;
 -- the price event stream is append-only, so that case does not arise. See
--- docs/plan_125_portability_audit.md § "Incremental strategy decision".
+-- docs/plans/plan_125_portability_audit.md § "Incremental strategy decision".
 --
 -- Plan 125 Gate B: that migration path is now taken -- 'merge' on the spark
 -- target. merge is safe here only because `vin` is genuinely row-unique, which

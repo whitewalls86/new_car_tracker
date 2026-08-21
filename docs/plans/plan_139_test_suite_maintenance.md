@@ -402,9 +402,9 @@ Per Stage B's verification rule, all three `cache: pip` additions were reverted;
 the successful `needs: lint` change remains.
 
 Checked against the stage specs after the merge: `pytest-cov` is in
-[requirements-dev.txt](../requirements-dev.txt); `[tool.coverage.run]` names the
+[requirements-dev.txt](../../requirements-dev.txt); `[tool.coverage.run]` names the
 six service packages and `[tool.coverage.report]` sets `show_missing`;
-[ci.yml](../.github/workflows/ci.yml) runs `--cov --cov-report=term-missing`
+[ci.yml](../../.github/workflows/ci.yml) runs `--cov --cov-report=term-missing`
 with **no `--cov-fail-under` anywhere in the repo**, as Stage A required; the
 `dbt` job reads `needs: lint`; and no `cache: pip` remains. Every A+B item is
 either delivered or deliberately reverted under the stage's own rule.
@@ -535,7 +535,7 @@ Concretely:
 | C (profile the 92s step) | 60 | S | Order 13, after Plan 121 |
 | D (markers, gate decision, xdist) | 52 | S | Order 15, or opportunistic filler |
 
-Adopted in [PLANS.md](PLANS.md) 2026-08-17 as three separate rows in the default
+Adopted in [PLANS.md](../PLANS.md) 2026-08-17 as three separate rows in the default
 build order. That is the point of the split: a slice that is not a row is not
 covered by the "do not start a lower row while a higher one has an executable
 next step" rule, and A+B spent its first week invisible to exactly that rule.

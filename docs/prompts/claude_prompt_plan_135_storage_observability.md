@@ -2,9 +2,9 @@
 
 You are working in the `cartracker-scraper` repo. Branch off `master`.
 
-Read `docs/plan_135_storage_observability.md` first — it is the source of truth
+Read `docs/plans/plan_135_storage_observability.md` first — it is the source of truth
 and records every measurement behind the decisions below. Also read the
-**Stage 5 as built** section of `docs/plan_131_packed_cold_storage.md`, which
+**Stage 5 as built** section of `docs/plans/plan_131_packed_cold_storage.md`, which
 explains what this plan inherited from Plan 131 and why.
 
 ## Where this stands
@@ -31,8 +31,8 @@ two other plans are waiting on it:
 bronze bucket — **has never been monitored at all.**
 
 `node-exporter` bind-mounts the host root at `/rootfs`
-([docker-compose.yml:639](../docker-compose.yml#L639)) but never passes
-`--path.rootfs=/rootfs` ([lines 640-643](../docker-compose.yml#L640-L643)). It
+([docker-compose.yml:639](../../docker-compose.yml#L639)) but never passes
+`--path.rootfs=/rootfs` ([lines 640-643](../../docker-compose.yml#L640-L643)). It
 reads the host mount table via `--path.procfs`, correctly sees `/dev/sdb` at
 `/mnt/data`, then tries to `statfs("/mnt/data")` inside its own namespace where
 `/mnt` does not exist. It emits `node_filesystem_device_error` and no series.
@@ -40,7 +40,7 @@ reads the host mount table via `--path.procfs`, correctly sees `/dev/sdb` at
 Consequences:
 
 - Both existing disk alerts —
-  [`ct-disk-space-warning`](../grafana/provisioning/alerting/rules.yml) (uid at
+  [`ct-disk-space-warning`](../../grafana/provisioning/alerting/rules.yml) (uid at
   line 359) and `ct-disk-space-critical` (line 395) — match
   `node_filesystem_avail_bytes{fstype!="tmpfs",mountpoint!~"/boot.*"}`, which
   resolves to `/` alone. The volume that filled to 99-100% **twice** has never
@@ -107,7 +107,7 @@ Build in this order. Stage 1 and 3 ship together; the rest can be separate PRs.
 
 ### Step 1 — Fix node-exporter (Stage 1)
 
-Add one flag to [docker-compose.yml:640-643](../docker-compose.yml#L640-L643):
+Add one flag to [docker-compose.yml:640-643](../../docker-compose.yml#L640-L643):
 
 ```yaml
     command:
@@ -135,7 +135,7 @@ Restarting node-exporter is a production change. **Ask before applying it.**
 
 ### Step 2 — Inode alerts (Stage 3), same PR as Step 1
 
-In [rules.yml](../grafana/provisioning/alerting/rules.yml), group
+In [rules.yml](../../grafana/provisioning/alerting/rules.yml), group
 `infra-and-data-health` (starts line 135):
 
 - **`ct-inode-warning`** (>80%) and **`ct-inode-critical`** (>90%) on
@@ -164,7 +164,7 @@ volumes. If per-volume thresholds are wanted, split the rules.
 
 ### Step 3 — Dashboard panels (Stage 2)
 
-[infrastructure.json](../grafana/dashboards/infrastructure.json) currently ends
+[infrastructure.json](../../grafana/dashboards/infrastructure.json) currently ends
 at panel id 8. Add:
 
 1. **Filesystem Used %** — `(1 - node_filesystem_avail_bytes / node_filesystem_size_bytes)`,
@@ -235,7 +235,7 @@ Sub-steps 5a-5e are specified in the plan doc. Three hazards:
 
 ### Step 6 — The maintenance runbook (Stage 6)
 
-`docs/runbook_storage_maintenance.md`. The plan doc specifies the contents.
+`docs/runbooks/runbook_storage_maintenance.md`. The plan doc specifies the contents.
 The point is that filesystem maintenance becomes a short, dull, scheduled task
 done from a dashboard rather than an SSH session.
 
@@ -243,7 +243,7 @@ done from a dashboard rather than an SSH session.
 
 ## Deploying and verifying — specifics learned the hard way
 
-**Grafana is not port-published.** [docker-compose.yml:660-681](../docker-compose.yml#L660-L681)
+**Grafana is not port-published.** [docker-compose.yml:660-681](../../docker-compose.yml#L660-L681)
 has no `ports:` block; it is reachable only via Caddy at
 `https://cartracker.info/grafana`. So:
 

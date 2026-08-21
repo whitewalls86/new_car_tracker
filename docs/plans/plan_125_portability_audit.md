@@ -48,7 +48,7 @@ recurring dialect enforcement, that is a better-scoped follow-up (see
 
 - **Execution target is DuckDB, not Postgres.** `dbt_runner/app.py:164` hardcodes
   `dbt build --target duckdb`. The `dev`/`prod`/`ci` targets in
-  [dbt/profiles.yml](../dbt/profiles.yml) are Postgres and are not what production
+  [dbt/profiles.yml](../../dbt/profiles.yml) are Postgres and are not what production
   runs. Anyone reading `target: prod` at the top of that file will draw the wrong
   conclusion — worth noting because the Postgres targets look like a portability
   asset and are not one. CI's dbt materialization path also uses
@@ -56,7 +56,7 @@ recurring dialect enforcement, that is a better-scoped follow-up (see
   because DuckDB's `postgres_scan(...)` models need a live source database, not
   because CI uses the Postgres dbt target.
 - **Sources are file globs and live Postgres reads**, declared via
-  `meta.external_location` in [dbt/models/sources.yml](../dbt/models/sources.yml)
+  `meta.external_location` in [dbt/models/sources.yml](../../dbt/models/sources.yml)
   and registered by `register_upstream_external_models()` (dbt_project.yml
   `on-run-start`). Silver/ops sources are `read_parquet(...)` over MinIO;
   `public.search_configs` and `ops.tracked_models` are `postgres_scan(...)` against
@@ -67,7 +67,7 @@ recurring dialect enforcement, that is a better-scoped follow-up (see
   (`ops/metrics/duckdb_gauges.py:129` special-cases `Conflicting lock`, and
   `ops/routers/info.py:29` retries connects three times).
 - **Cadence is tag-driven.** `hourly_core` (17 models) and `feature_daily`/
-  `backtest` (5 models) per [dbt/selectors.yml](../dbt/selectors.yml); Airflow
+  `backtest` (5 models) per [dbt/selectors.yml](../../dbt/selectors.yml); Airflow
   passes `tag:<cadence>` tokens directly.
 
 ## Model Inventory
@@ -78,11 +78,11 @@ recurring dialect enforcement, that is a better-scoped follow-up (see
 
 | Model | Mat. | Tags | Upstream | Incremental | Grain / key tests | Consumers | Difficulty |
 |---|---|---|---|---|---|---|---|
-| [stg_observations](../dbt/models/staging/stg_observations.sql) | view | `hourly_core` | source `silver.observations` | — | passthrough + `vin17`; no unique test | everything downstream | **Medium** |
-| [stg_price_events](../dbt/models/staging/stg_price_events.sql) | view | `hourly_core` | source `ops_events.price_observation_events` | — | `event_id` unique/not_null | int_price_history, volatility | **Low** |
-| [stg_blocked_cooldown_events](../dbt/models/staging/stg_blocked_cooldown_events.sql) | view | `hourly_core` | source `ops_events.blocked_cooldown_events` | — | `event_id` unique/not_null | mart_block_rate, mart_cooldown_cohorts | **Low** |
-| [stg_dealers](../dbt/models/staging/stg_dealers.sql) | table | `hourly_core` | `int_latest_observation` | — | `customer_id` unique/not_null | mart_deal_scores | **Medium** |
-| [stg_search_configs](../dbt/models/staging/stg_search_configs.sql) | view | `hourly_core` | source `public.search_configs` (`postgres_scan`) | — | none | int_active_make_models | **High** |
+| [stg_observations](../../dbt/models/staging/stg_observations.sql) | view | `hourly_core` | source `silver.observations` | — | passthrough + `vin17`; no unique test | everything downstream | **Medium** |
+| [stg_price_events](../../dbt/models/staging/stg_price_events.sql) | view | `hourly_core` | source `ops_events.price_observation_events` | — | `event_id` unique/not_null | int_price_history, volatility | **Low** |
+| [stg_blocked_cooldown_events](../../dbt/models/staging/stg_blocked_cooldown_events.sql) | view | `hourly_core` | source `ops_events.blocked_cooldown_events` | — | `event_id` unique/not_null | mart_block_rate, mart_cooldown_cohorts | **Low** |
+| [stg_dealers](../../dbt/models/staging/stg_dealers.sql) | table | `hourly_core` | `int_latest_observation` | — | `customer_id` unique/not_null | mart_deal_scores | **Medium** |
+| [stg_search_configs](../../dbt/models/staging/stg_search_configs.sql) | view | `hourly_core` | source `public.search_configs` (`postgres_scan`) | — | none | int_active_make_models | **High** |
 
 Note the layering wrinkle: `stg_dealers` refs an *intermediate* model
 (`int_latest_observation`), so the staging layer is not a clean source-only tier.
@@ -93,28 +93,28 @@ rest of staging.
 
 | Model | Mat. | Tags | Upstream | Incremental | Grain / key tests | Consumers | Difficulty |
 |---|---|---|---|---|---|---|---|
-| [int_listing_observation_fingerprints](../dbt/models/intermediate/int_listing_observation_fingerprints.sql) | incremental | `feature_daily`,`backtest` | stg_observations | `delete+insert`, key `observation_id`; fetched_at lookback 3d | `observation_id` unique | int_listing_observation_runs | **Medium** |
-| [int_listing_state_fingerprints](../dbt/models/intermediate/int_listing_state_fingerprints.sql) | incremental | `feature_daily`,`backtest` | stg_observations | `delete+insert`, key `artifact_id`; fetched_at lookback 3d | `artifact_id` unique | int_listing_state_runs | **Medium** |
-| [int_listing_observation_runs](../dbt/models/intermediate/int_listing_observation_runs.sql) | incremental | `feature_daily`,`backtest` | int_listing_observation_fingerprints | `delete+insert`, key `listing_id` **as entity-replacement key** (multi-row per key); lookback 3d | multiple runs per listing_id — deliberately no unique test | int_listing_volatility_features | **High** |
-| [int_listing_state_runs](../dbt/models/intermediate/int_listing_state_runs.sql) | incremental | `feature_daily`,`backtest` | int_listing_state_fingerprints | `delete+insert`, key `vin17` **as entity-replacement key**; lookback 3d | multiple runs per vin17 — no unique test | int_listing_volatility_features | **High** |
-| [int_price_history](../dbt/models/intermediate/int_price_history.sql) | incremental | `hourly_core` | stg_price_events | `delete+insert`, key `vin` (affected-VIN full reread); lookback 3d | `vin` unique/not_null | mart_vehicle_snapshot, int_benchmarks | **High** |
-| [int_latest_observation](../dbt/models/intermediate/int_latest_observation.sql) | incremental | `hourly_core` | stg_observations | `delete+insert`, key `vin17` (affected-VIN full rerank); lookback 3d | `vin17` unique/not_null | mart_vehicle_snapshot, stg_dealers, mart_inventory_coverage, dashboard | **High** |
-| [int_listing_volatility_features](../dbt/models/intermediate/int_listing_volatility_features.sql) | table | `feature_daily`,`backtest` | int_listing_state_runs, int_listing_observation_runs, int_price_history, int_benchmarks, stg_observations, stg_price_events | full rebuild | `vin17` unique | Plan 112 backtests / MLflow | **High** |
-| [int_benchmarks](../dbt/models/intermediate/int_benchmarks.sql) | table | `hourly_core` | int_latest_observation, int_price_history | full rebuild | make/model grain | mart_deal_scores, volatility | **Medium** |
-| [int_active_make_models](../dbt/models/intermediate/int_active_make_models.sql) | table | `hourly_core` | source `ops.tracked_models` (`postgres_scan`), stg_search_configs | full rebuild | make/model not_null | mart_vehicle_snapshot (inner join — acts as a filter) | **High** |
+| [int_listing_observation_fingerprints](../../dbt/models/intermediate/int_listing_observation_fingerprints.sql) | incremental | `feature_daily`,`backtest` | stg_observations | `delete+insert`, key `observation_id`; fetched_at lookback 3d | `observation_id` unique | int_listing_observation_runs | **Medium** |
+| [int_listing_state_fingerprints](../../dbt/models/intermediate/int_listing_state_fingerprints.sql) | incremental | `feature_daily`,`backtest` | stg_observations | `delete+insert`, key `artifact_id`; fetched_at lookback 3d | `artifact_id` unique | int_listing_state_runs | **Medium** |
+| [int_listing_observation_runs](../../dbt/models/intermediate/int_listing_observation_runs.sql) | incremental | `feature_daily`,`backtest` | int_listing_observation_fingerprints | `delete+insert`, key `listing_id` **as entity-replacement key** (multi-row per key); lookback 3d | multiple runs per listing_id — deliberately no unique test | int_listing_volatility_features | **High** |
+| [int_listing_state_runs](../../dbt/models/intermediate/int_listing_state_runs.sql) | incremental | `feature_daily`,`backtest` | int_listing_state_fingerprints | `delete+insert`, key `vin17` **as entity-replacement key**; lookback 3d | multiple runs per vin17 — no unique test | int_listing_volatility_features | **High** |
+| [int_price_history](../../dbt/models/intermediate/int_price_history.sql) | incremental | `hourly_core` | stg_price_events | `delete+insert`, key `vin` (affected-VIN full reread); lookback 3d | `vin` unique/not_null | mart_vehicle_snapshot, int_benchmarks | **High** |
+| [int_latest_observation](../../dbt/models/intermediate/int_latest_observation.sql) | incremental | `hourly_core` | stg_observations | `delete+insert`, key `vin17` (affected-VIN full rerank); lookback 3d | `vin17` unique/not_null | mart_vehicle_snapshot, stg_dealers, mart_inventory_coverage, dashboard | **High** |
+| [int_listing_volatility_features](../../dbt/models/intermediate/int_listing_volatility_features.sql) | table | `feature_daily`,`backtest` | int_listing_state_runs, int_listing_observation_runs, int_price_history, int_benchmarks, stg_observations, stg_price_events | full rebuild | `vin17` unique | Plan 112 backtests / MLflow | **High** |
+| [int_benchmarks](../../dbt/models/intermediate/int_benchmarks.sql) | table | `hourly_core` | int_latest_observation, int_price_history | full rebuild | make/model grain | mart_deal_scores, volatility | **Medium** |
+| [int_active_make_models](../../dbt/models/intermediate/int_active_make_models.sql) | table | `hourly_core` | source `ops.tracked_models` (`postgres_scan`), stg_search_configs | full rebuild | make/model not_null | mart_vehicle_snapshot (inner join — acts as a filter) | **High** |
 
 ### Marts (8)
 
 | Model | Mat. | Tags | Upstream | Incremental | Grain / key tests | Consumers | Difficulty |
 |---|---|---|---|---|---|---|---|
-| [mart_vehicle_snapshot](../dbt/models/marts/mart_vehicle_snapshot.sql) | table | `hourly_core` | int_latest_observation, int_price_history, int_active_make_models, stg_observations | full rebuild | `vin` unique | `/info`, dashboard `mart_freshness`, mart_deal_scores, mart_price_freshness_trend | **High** |
-| [mart_deal_scores](../dbt/models/marts/mart_deal_scores.sql) | table | `hourly_core` | mart_vehicle_snapshot, int_benchmarks, stg_dealers | full rebuild | `current_price` tests; vin not unique-tested | **15 of 25 dashboard SQL files** | **Medium** |
-| [mart_scrape_volume](../dbt/models/marts/mart_scrape_volume.sql) | incremental | `hourly_core` | stg_observations | `delete+insert`, key `scrape_volume_key` (md5 surrogate for (hour, source)); 72h window replacement | `scrape_volume_key` unique | Prometheus gauges, `/info`, dashboard | **Medium** |
-| [mart_block_rate](../dbt/models/marts/mart_block_rate.sql) | table | `hourly_core` | stg_blocked_cooldown_events | full rebuild | `hour` unique/not_null | Prometheus gauge, dashboard | **Low** |
-| [mart_cooldown_cohorts](../dbt/models/marts/mart_cooldown_cohorts.sql) | table | `hourly_core` | stg_blocked_cooldown_events | full rebuild | `attempt_bucket` unique/not_null | 2 Prometheus gauges, dashboard | **Low** |
-| [mart_detail_batch_outcomes](../dbt/models/marts/mart_detail_batch_outcomes.sql) | table | `hourly_core` | stg_observations | full rebuild | `obs_date` unique/not_null | Prometheus gauge, dashboard | **Low** |
-| [mart_inventory_coverage](../dbt/models/marts/mart_inventory_coverage.sql) | table | `hourly_core` | int_latest_observation | full rebuild | make/model grain | dashboard | **Low** |
-| [mart_price_freshness_trend](../dbt/models/marts/mart_price_freshness_trend.sql) | table | `hourly_core` | mart_vehicle_snapshot | full rebuild | make/model grain | Prometheus gauge, dashboard | **Medium** |
+| [mart_vehicle_snapshot](../../dbt/models/marts/mart_vehicle_snapshot.sql) | table | `hourly_core` | int_latest_observation, int_price_history, int_active_make_models, stg_observations | full rebuild | `vin` unique | `/info`, dashboard `mart_freshness`, mart_deal_scores, mart_price_freshness_trend | **High** |
+| [mart_deal_scores](../../dbt/models/marts/mart_deal_scores.sql) | table | `hourly_core` | mart_vehicle_snapshot, int_benchmarks, stg_dealers | full rebuild | `current_price` tests; vin not unique-tested | **15 of 25 dashboard SQL files** | **Medium** |
+| [mart_scrape_volume](../../dbt/models/marts/mart_scrape_volume.sql) | incremental | `hourly_core` | stg_observations | `delete+insert`, key `scrape_volume_key` (md5 surrogate for (hour, source)); 72h window replacement | `scrape_volume_key` unique | Prometheus gauges, `/info`, dashboard | **Medium** |
+| [mart_block_rate](../../dbt/models/marts/mart_block_rate.sql) | table | `hourly_core` | stg_blocked_cooldown_events | full rebuild | `hour` unique/not_null | Prometheus gauge, dashboard | **Low** |
+| [mart_cooldown_cohorts](../../dbt/models/marts/mart_cooldown_cohorts.sql) | table | `hourly_core` | stg_blocked_cooldown_events | full rebuild | `attempt_bucket` unique/not_null | 2 Prometheus gauges, dashboard | **Low** |
+| [mart_detail_batch_outcomes](../../dbt/models/marts/mart_detail_batch_outcomes.sql) | table | `hourly_core` | stg_observations | full rebuild | `obs_date` unique/not_null | Prometheus gauge, dashboard | **Low** |
+| [mart_inventory_coverage](../../dbt/models/marts/mart_inventory_coverage.sql) | table | `hourly_core` | int_latest_observation | full rebuild | make/model grain | dashboard | **Low** |
+| [mart_price_freshness_trend](../../dbt/models/marts/mart_price_freshness_trend.sql) | table | `hourly_core` | mart_vehicle_snapshot | full rebuild | make/model grain | Prometheus gauge, dashboard | **Medium** |
 
 ## DuckDB-Specific Findings
 
@@ -362,7 +362,7 @@ exposes `price_vs_make_model_median` raw: DuckDB `double 0.9602222222222222` vs
 Spark `decimal(21,11) 0.96022222222` — different value *and* different column type.
 
 Both are now adapter-dispatched macros (`cast_to_string`, `cast_to_numeric`) in
-[dbt/macros/dialect.sql](../dbt/macros/dialect.sql).
+[dbt/macros/dialect.sql](../../dbt/macros/dialect.sql).
 
 **Bounded claim on `cast_to_string`:** every column the Gate B fingerprints cast
 is integer-family (`price`/`mileage`/`msrp` integer; `model_year`/`page_number`/
@@ -854,7 +854,7 @@ measurement showing the rebuild is too slow.
 **Measured 2026-07-16 against both real engines** (DuckDB 1.5.4 in `dbt/Dockerfile`;
 Spark 3.5.3 in `lakehouse/Dockerfile`, session timezone pinned UTC), before any
 Gate B model was ported. Implemented as adapter-dispatched macros in
-[dbt/macros/dialect.sql](../dbt/macros/dialect.sql).
+[dbt/macros/dialect.sql](../../dbt/macros/dialect.sql).
 
 The headline: **three of the "mechanical" translations in F4/F5/F12 are wrong**,
 and the one flagged as highest-blast-radius (md5/fingerprint) is **exactly

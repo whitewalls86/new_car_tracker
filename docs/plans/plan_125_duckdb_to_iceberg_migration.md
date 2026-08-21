@@ -30,7 +30,7 @@ surface.
 
 > **Catalog governance decision (read first):** before implementation, settle
 > whether to keep Lakekeeper or spike an alternate governed catalog now. See
-> [docs/plan_125_catalog_decision_report.md](plan_125_catalog_decision_report.md)
+> [docs/plans/plan_125_catalog_decision_report.md](plan_125_catalog_decision_report.md)
 > and **Gate 0.5** below. The current recommendation is to keep Lakekeeper and
 > apply the report's catalog-neutral guardrails (R1-R7).
 
@@ -107,7 +107,7 @@ wiring dbt/Spark writers, readers, ops metrics, and MLflow provenance to a
 catalog shape we intend to leave.
 
 See the full analysis in
-[docs/plan_125_catalog_decision_report.md](plan_125_catalog_decision_report.md).
+[docs/plans/plan_125_catalog_decision_report.md](plan_125_catalog_decision_report.md).
 
 Decision:
 
@@ -216,7 +216,7 @@ provisioning module. No consumer script changes.
 Audit the current dbt project for DuckDB-specific assumptions.
 
 **Status: implemented.** Full findings:
-[docs/plan_125_portability_audit.md](plan_125_portability_audit.md) — a
+[docs/plans/plan_125_portability_audit.md](plan_125_portability_audit.md) — a
 human-readable audit doc, not a script; the checks were one-time reads that
 would not pay for a maintained tool.
 
@@ -1152,7 +1152,7 @@ changes to the archiver or compaction**. The plan is to co-mingle the
 `add_files` sync with the existing compaction cadence rather than adding a
 faster separate sync: Plan 112's backtest reproducibility is keyed by Iceberg
 snapshot ID per dbt run, not real-time freshness (confirmed against
-[docs/plan_112_refresh_policy_backtesting.md](plan_112_refresh_policy_backtesting.md)),
+[docs/plans/plan_112_refresh_policy_backtesting.md](plan_112_refresh_policy_backtesting.md)),
 so the 2-day watermark is granularity enough.
 
 This looked blocked at first, and the failure mode is worth recording because

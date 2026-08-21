@@ -61,7 +61,7 @@ time in the fix itself.
 docker compose up -d "$@"
 ```
 
-[ARCHITECTURE.md](ARCHITECTURE.md) documents the deployment flow as
+[ARCHITECTURE.md](../ARCHITECTURE.md) documents the deployment flow as
 `docker compose up -d --no-deps <service>`. The script omits it, so Compose walks
 the dependency graph.
 
@@ -206,7 +206,7 @@ compared after; unchanged services are named, with a pointer to `--restart`.
 
 ## Out of scope
 
-- **Replacing the deploy mechanism.** [Plan 88](PLANS.md) (Kubernetes) is the
+- **Replacing the deploy mechanism.** [Plan 88](../PLANS.md) (Kubernetes) is the
   plan that would make this script unnecessary, and its trigger has not fired.
   This plan makes the current mechanism honest; it does not defend it forever.
 - **Deploy intent semantics.** The `/deploy/start` and `/deploy/complete`

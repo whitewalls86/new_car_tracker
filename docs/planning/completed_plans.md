@@ -5,9 +5,9 @@ this table and a plan document disagree, the plan document wins and this table
 is the bug.
 
 A row arrives here when a plan's last gate closes, and it never leaves. Nothing
-else asserts completion: [`PLANS.md`](PLANS.md) is the index of *active* work
+else asserts completion: [`PLANS.md`](../PLANS.md) is the index of *active* work
 and links here rather than keeping its own copy, which is the duplication
-[Plan 146](plan_146_planning_system.md) removed.
+[Plan 146](../plans/plan_146_planning_system.md) removed.
 
 **Dates carry their provenance where they were reconstructed.** Plan 146
 Stage 1 walked 134 revisions of `PLANS.md` to recover dates that were never
@@ -65,7 +65,7 @@ entirely; nothing can be backfilled for them and they stay as they are.
 | 72 | **Parquet archival layer (MinIO)** — `archiver/` FastAPI service with pyarrow + s3fs; HTML → hive-partitioned Parquet (zstd, ~5-8x compression) before disk deletion; 28-day MinIO retention; DuckDB queryable via S3 API; `Cleanup Artifacts` workflow updated (archive node added, retention tightened to 48h/7d); new `Cleanup Parquet` workflow; storage footprint ~86GB vs prior ~300GB | 2026-04-08 |
 | 62 + 63 | **CI/CD + Flyway schema migrations** — `.github/workflows/ci.yml` with lint/pytest/docker-build/dbt jobs; `pyproject.toml` with ruff + pytest config; `db/migrations/` Flyway files (V001 from schema_new.sql + seeds); `dbt/profiles.yml` ci target; green badge on PRs; schema versioning + rollback capability | 2026-04-08 |
 | 61 | **Python unit tests** — 184 tests, 70% scraper coverage; pytest suite across `tests/scraper/`, `tests/dbt_runner/`, `tests/ops/`; merged PR #48 | 2026-04-07 |
-| 80 | **403 cooldown** — `blocked_cooldown` raw table, `stg_blocked_cooldown` dbt model (exponential backoff logic), `ops_detail_scrape_queue` joined + filtered, `after_403` dbt intent, Job Poller V2 upsert/delete wired; see [plan_80_403_cooldown.md](plan_80_403_cooldown.md) | 2026-04-07 |
+| 80 | **403 cooldown** — `blocked_cooldown` raw table, `stg_blocked_cooldown` dbt model (exponential backoff logic), `ops_detail_scrape_queue` joined + filtered, `after_403` dbt intent, Job Poller V2 upsert/delete wired; see [plan_80_403_cooldown.md](../plans/plan_80_403_cooldown.md) | 2026-04-07 |
 | 78 | **FlareSolverr + impersonation matching** — FlareSolverr container added for SRP 403 bypass; automatic curl_cffi impersonation matching in `scrape_detail.py`; persistent browser context for SRP scraping; Chrome 146 impersonation | 2026-04-07 |
 | 74 | **dbt logic flaw — new search configs** — traced full DAG; Kia Sportage PHEV now reaches mart tables | 2026-03-30 |
 | 60+75 | **Safe redeploy + admin migration to ops** — `deploy_intent` + `n8n_executions` tables, Check Deploy Intent + Update n8n Runs Table sub-workflows, `Deploy Allowed?` gate in all 7 workflows, `ops` container with all admin UI (searches, runs, dbt, logs, deploy panel), `redeploy.sh`, scraper stripped of all UI concerns | 2026-03-30 |

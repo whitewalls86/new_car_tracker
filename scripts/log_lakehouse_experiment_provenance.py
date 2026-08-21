@@ -38,7 +38,7 @@ Examples:
   python -m scripts.log_lakehouse_experiment_provenance ... \\
       --tracking-uri http://localhost:15000
 
-See docs/plan_112_refresh_policy_backtesting.md ("Gate B provenance smoke") for the full flow.
+See docs/plans/plan_112_refresh_policy_backtesting.md ("Gate B provenance smoke") for the full flow.
 """
 from __future__ import annotations
 

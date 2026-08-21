@@ -11,7 +11,7 @@
   DuckDB is the incumbent spec: each spark__ implementation below reproduces
   what DuckDB *actually does*, which in three cases is NOT the obvious Spark
   translation. Every claim here was measured against both engines at Gate B --
-  see docs/plan_125_portability_audit.md § "Gate B dialect measurements". Do not
+  see docs/plans/plan_125_portability_audit.md § "Gate B dialect measurements". Do not
   "simplify" these back to the obvious spelling; the obvious spelling is wrong.
 #}
 
