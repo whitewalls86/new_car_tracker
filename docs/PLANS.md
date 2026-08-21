@@ -26,17 +26,26 @@ see the closeout table below.
 
 **This section describes the system, not what happened to it.** For what shipped
 when, see each plan's own document and the
-[decision log](plans_decision_log.md). For what to pick up next, see the
-[workability audit](#workability-audit----2026-08-21).
+[decision log](plans_decision_log.md). For what to pick up next, read the
+**Workable?** and **Blocked by** columns of the
+[default build order](#default-build-order).
 
 
 ---
 
-## Coordinating Roadmap
+## Coordinating roadmap -- lakehouse and adaptive refresh only
 
-| Plan | Title | Status |
-|------|-------|--------|
-| [117](plan_117_storage_and_adaptive_refresh_roadmap.md) | Open lakehouse + adaptive refresh roadmap | Draft |
+[Plan 117](plan_117_storage_and_adaptive_refresh_roadmap.md) (Draft) is the
+umbrella for **one arc**, not for this page. It sets the north star for moving
+analytical history off loose Parquet + DuckDB and onto Iceberg with a catalog
+layer, and for making adaptive-refresh experiments reproducible on top of it --
+Plans 125, 112, 113, 119, 126 and 127, plus the completed work it grew out of
+(110, 111, 120, 123).
+
+It coordinates **nothing** about scraping, observability, deploys, storage
+economics or the public surface, which is most of the current build order. Read
+it when working the Iceberg arc; it is not the project roadmap and does not
+decide the order of anything outside that arc.
 
 ---
 
@@ -60,23 +69,10 @@ observation window is written separately and does not inflate coding effort.
 
 ## Current closeout -- finish before opening another large build
 
-Plan 120's authenticated production download and checksum round trip was
-verified on 2026-08-18. **Plan 140 Stage 1 and Plan 143 Stage 5 closed green on
-2026-08-20; Plan 140 Stage 2 and Plan 136 Stage 2 closed on 2026-08-21** and
-have all left this table. Their evidence is recorded in their plan documents.
-What remains here is **verification, not work**: no code is owed on these rows.
-Two of the three are Plan 135's, ride weekly schedules, and land on the same
-Sunday. The third is Plan 136 Stage 3's decay window, which is measured in
-weeks rather than days and is why the build order's top row has no executable
-step until September.
-
-**The two 24-hour soaks were read at 2026-08-21 16:35 UTC and called early** —
-21h 28m of 24h for Plan 140, 19h 50m for Plan 136. That was a decision, not an
-oversight, and it is defensible for one of them and irrelevant for the other:
-Plan 140's rule had zero state transitions in Grafana's history and nothing was
-trending, while Plan 136's unanswered half could not have been answered by four
-more hours (see below). Both plan documents state the elapsed window rather
-than claiming a full day.
+Gates that are **verification, not work**: no code is owed on any row here. Two
+are Plan 135's, ride weekly schedules, and land on the same Sunday. The third is
+Plan 136 Stage 3's decay window, measured in weeks rather than days, and is why
+the build order's top row has no executable step until September.
 
 | Plan | Check | Lands | What it proves |
 |---|---|---|---|
@@ -85,108 +81,35 @@ than claiming a full day.
 | [135](plan_135_storage_observability.md) Stage 5 | `prune_task_logs` completes its first scheduled run | 2026-08-23, `17 4 * * 0` | That Airflow's 30-day task-log retention is **enforced** rather than merely configured. The run reports run directories examined and deleted; `cartracker_airflow_logs` was 1.2M inodes and 87% of a 456s walk, so this is also what lets that volume move back to the daily tier |
 
 None blocks implementation work. Record each result in its plan document, then
-remove its row from this closeout table once it is green.
-
-### Soak results, 2026-08-21
-
-Both closed; the evidence lives where this file's own instruction says to put
-it -- [Plan 140](plan_140_service_health_contract.md) Stage 2 and
-[Plan 136](plan_136_solver_recycle_and_liveness.md) Stage 2 -- with the full
-narrative in [plans_decision_log.md](plans_decision_log.md).
-
-**Plan 140 Stage 2: green.** `ct-container-unhealthy` logged zero state
-transitions in a window where Grafana recorded 51, 28 of 28 instances `Normal`.
-
-**Plan 136 Stage 2: splits.** Alert half green across 1,189 evaluations. Open
-question 2 unanswered and unanswerable in a day -- see the Stage 3 row in the
-closeout table above.
-
-## Workability audit -- 2026-08-21
-
-Every row below was checked against its stated blocker rather than its score.
-Three blockers had gone stale, and the table's **top row has no executable step
-until early September** -- which matters because the build order's own rule is
-"do not start a lower row merely because it is smaller while a higher row has
-an executable next step." That rule is vacuous while row 1 is un-startable, so
-it is written down here instead of rediscovered each time.
-
-### Workable today
-
-| Row | Plan | Slice | Note |
-|---:|---|---|---|
-| 2 | 142 | Stage 0 -- freeze the Ubuntu-update window as fixtures | **The recommendation.** Documentation and inventory; its Plan 140 health-coverage gate closed 2026-08-21, and Plan 144 hardened the script Stage 2 consumes |
-| 3 | 141 | Freeze log fixtures, fix `ct-403-log-spike` | The soak sharpened the target: 49 of 51 annotations, and the mechanism is an unanchored `\|= "403"` catching INFO lines from `shared.minio`. A parsing defect with a live reproduction |
-| 4 | 140 **Stage 4** | Demote `http_health_sensor` to a gate | **XS, and its blocker is gone.** Was gated on the Stage 2 soak, which closed green |
-| 6 | 145 | Stage 0d/0e, then the one backfill write path | 0a/0b/0c closed 2026-08-21. 0d is a genuine blocker *inside* the plan, not on it |
-| 7 | 138 | Public surface refresh | Plan 143 completed 2026-08-20, so its stats contract is available |
-| 11 | 69 | `terraform import` until `plan` shows no diff | Must land before row 12 |
-| 13 | 139 **C** | Profile the dbt step with `--durations=20` | Measurement only, CI-only |
-| -- | 136 | The `POST` verb on the socket proxy | Separable from the blocked observation window; see below |
-
-### Blocked, with the actual blocker
-
-| Row | Plan | Blocked on | Clears |
-|---:|---|---|---|
-| 1 | 136 **Stage 3** | A decay signal. `trawl` had 3d 13h uptime on 2026-08-21; the 2026-08-14 outage followed **22 days**, so a day-long window contains no decay to read | **~2026-09-09** |
-| 5 | 134 | Plan 141 (row 3) landing first, then a one-week observation window | Row 3 + 7d |
-| 8 | 125 | Gate C's two VM-scale failures still need local reproduction | Work, not waiting |
-| 9, 10 | 112, 113 | Plan 125 Iceberg-native inputs, then an approved 112 result | Chained behind row 8 |
-| 12 | 121 | Plan 69 (row 11) | Row 11 |
-| 14 | 119 | Stable Plan 125 catalog/reader contracts | Row 8 |
-| 15 | 139 **D** | "Several weeks" of Stage A coverage data; Stages A+B shipped 2026-08-18 | ~2026-09 |
-| 16, 17 | 126, 127 | Plans 125 and 112/113 | Chained behind row 8 |
-| -- | 130 | Plan 129's reversible options being exhausted | No trigger yet |
-
-**Row 8 is the only blocked row whose blocker is work rather than time**, which
-makes Plan 125 the row to pick if the calendar-bound ones are unappealing.
-
-### Not work -- stale rows, now removed
-
-Three watch-list rows asked for closeout that had **already happened**: 114, 115
-and 128 were sitting in the watch list saying "record and move to completed"
-while all three were already in the Completed table (2026-08-10, 2026-07-01,
-2026-07-20). Removed 2026-08-21. Plan 115 is the cautionary one -- its own
-document never got a status line and its only "deployed" string is inside a
-list of *proposed* alerts, so the plan reads unfinished. The evidence is in the
-schema: `V040__detail_scrape_circuit_breaker.sql`, applied 2026-07-01,
-`success = true`. **Check the migration, not the prose.**
-
-### Unmerged work not represented anywhere on this page
-
-| Branch | Commits | Last commit |
-|---|---:|---|
-| `feature/plan-125-portability-audit` | 17 | 2026-07-21 |
-| `plan-131-packed-cold-storage` | 1 | 2026-08-13 |
-
-The Plan 125 branch is a month old and is Gate C work -- the same Gate C that
-row 8 names as its next slice, so **whoever picks up row 8 should start there
-rather than from master**. The Plan 131 commit records the stale-image run and
-listing-rate variance against a plan the watch list already calls Complete.
+remove its row once it is green -- and record it **only** there. This section
+had grown a paragraph of history for every row that left it, which is how a
+three-row table came to need twenty lines of preamble describing gates that had
+already closed.
 
 ## Default build order
 
 This is the default single-maintainer sequence. Do not start a lower row merely
 because it is smaller while a higher row has an executable next step.
 
-| Order | Plan | Title | Next executable slice | Priority | Effort | Depends on / safe stopping point |
-|---:|---|---|---|---:|---|---|
-| 1 | [136](plan_136_solver_recycle_and_liveness.md) | Solver recycle and real liveness | **Stage 2 deployed 2026-08-20 (PR #223); its soak closed 2026-08-21 with the alert half green and open question 2 unanswered.** Next slice is still an *observation window, not code* — but a longer one than planned: the 24h baseline is flat and healthy, so the recycle interval has nothing to be chosen from until the rate bends or `trawl` nears the 22-day uptime that preceded the incident | 98 | M | Stage 0 verified; analytics freshness moved to Plan 143; 0b moved into Plan 140 Stage 2. **Not workable until ~2026-09-09** — `trawl` had 3d 13h uptime at 2026-08-21 17:37 UTC and the outage that motivated Stage 3 followed **22 days**, so the decay this stage exists to measure cannot appear before early September. The `POST` verb on the socket proxy is separable and *is* workable now |
-| 2 | [142](plan_142_planned_host_maintenance.md) | Planned host maintenance and production quiescence | Freeze the successful Ubuntu-update window as fixtures, then build separate maintenance intent, truthful drain status, and the checked-in host procedure | 86 | M + first observed window | Reuse Plan 136 drain semantics. **Fully unblocked 2026-08-21** — the resume gate's requirement of soaked Plan 140 health coverage is now satisfied, and Plan 144 hardened the deploy script this plan's Stage 2 consumes |
-| 3 | [141](plan_141_structured_log_ingestion_contract.md) | Structured log ingestion and dashboard contract | Freeze production-derived fixtures and baseline, then align parsing, labels, filters, and dashboard selectors; fix `ct-403-log-spike` as the first case | 85 | S + 24h soak | Does not block Plan 136; should precede Plan 134's warning-log observation window. Has a live false-positive to work from: see below |
-| 4 | [140](plan_140_service_health_contract.md) **Stage 4** | Retire DAG sensors as the health signal | Demote `http_health_sensor` from notifier to gate, now that a stopped container pages on its own | 70 | XS | **Unblocked 2026-08-21** — the Stage 2 soak closed green and left the closeout table, which was this row's only gate. Stages 1-3 are deployed and verified. The `flaresolverr` fire test already showed the alert going Pending inside a minute, far ahead of any DAG run, so this is a demotion decision rather than new signal work � do not remove the sensors, they remain load-bearing for DAG correctness |
-| 5 | [134](plan_134_archiver_endpoint_failure_contract.md) | Archiver endpoint failure contract | Add warning-only failure predicates and begin the one-week observation window | 88 | S | Plan 141 first; one-week soak before enforcement; pause if real failures need repair |
-| 6 | [145](plan_145_april_cutover_reconciliation.md) | Deleting the April cutover backlog without losing data | Close Stage 0d (backdated-write safety, a blocker) and 0e, then build the one backfill write path | 84 | S | **Supersedes Plans 132 and 137.** Unblocked — Plan 133 deployed and verified. Gates 0a/0b/0c closed 2026-08-21. Goal is deletion of 1,299 legacy objects (13.79 GiB); recovery is loss minimisation, not the finish line. Stage 2 is also where `PACK_INDEX_CACHE_PACKS=48` gets its first effectiveness measurement |
-| 7 | [138](plan_138_public_surface_refresh.md) | Public surface refresh | Truth pass, public-root contract, accessible assets, Plan 143 stats presentation, and project-updates snapshot | 84 | L | Plan 143 supplies the stats contract; land before the next major platform milestone |
-| 8 | [125](plan_125_duckdb_to_iceberg_migration.md) | DuckDB-to-Iceberg analytics migration | Gate C production runtime measurement, then Gate D reader inventory/dual-run | 81 | XL | Plan 120 closeout; swap Plan 143's producer adapter while preserving its snapshot and metric contracts. **Start from `feature/plan-125-portability-audit`, not `master`** — 17 unmerged commits (last 2026-07-21) carry the replay and scale harnesses and the local reproduction of the VM OOM. See the note at the top of the plan document |
-| 9 | [112](plan_112_refresh_policy_backtesting.md) | Adaptive-refresh backtesting | Resume policy backtest/model gates on pinned Iceberg snapshots | 76 | L | Plan 125 stable Iceberg-native inputs |
-| 10 | [113](plan_113_production_adaptive_refresh.md) | Production adaptive refresh | Promote one reviewed, pinned policy into ops claim logic | 74 | M | Approved Plan 112 result; no live model dependency |
-| 11 | [69](plan_69_terraform.md) | Terraform IaC | `terraform import` the existing VM/network/firewall until `plan` shows no diff against production | 66 | M | **Moved out of the backlog 2026-08-20** — its trigger is "a second environment is approved", and Plan 121 is that environment. Must land before 121, not after |
-| 12 | [121](plan_121_staging_environment.md) | Staging environment | Stand up the smallest fixture-backed deployed environment, provisioned from Plan 69's modules | 63 | L | Plan 69 first, so staging and prod come from one module set instead of two hand-built hosts. Prefer after Plan 125 reader shape settles unless needed earlier for risky rollout |
-| 13 | [139](plan_139_test_suite_maintenance.md) **C** | Profile the 92s `tests/integration/dbt/` step | Run it with `--durations=20` in CI and record the per-test breakdown before proposing any change | 60 | S | Measurement only; CI-only work — do not pip-install dbt locally |
-| 14 | [119](plan_119_lakehouse_governance.md) | Lakehouse governance | Add measured catalog controls and auditability | 58 | L | Stable Plan 125 catalog and reader contracts |
-| 15 | [139](plan_139_test_suite_maintenance.md) **D** | Intent markers and the coverage-gate decision | Move `report_dbt_run_results.py` into `dbt_runner/`, add the `oneoff` marker per test class, decide the gate and the `airflow/dags`+`dashboard` exclusion in writing | 52 | S | Several weeks of Stage A coverage data; opportunistic filler |
-| 16 | [126](plan_126_basic_event_streaming.md) | Basic event streaming | Prove transport, replay, and one low-risk consumer | 49 | XL | Plans 125 and 112/113 clarify stable event semantics |
-| 17 | [127](plan_127_streaming_adaptive_scrape_control.md) | Streaming adaptive scrape control | Add closed-loop control behind batch-parity and rollback gates | 42 | XL | Plan 126 plus approved Plan 112/113 behavior |
+| Order | Plan | Title | Next executable slice | Workable? | Blocked by | Priority | Effort | Depends on / safe stopping point |
+|---:|---|---|---|---|---|---|---|---|
+| 1 | [136](plan_136_solver_recycle_and_liveness.md) | Solver recycle and real liveness | **Stage 2 deployed 2026-08-20 (PR #223); its soak closed 2026-08-21 with the alert half green and open question 2 unanswered.** Next slice is still an *observation window, not code* — but a longer one than planned: the 24h baseline is flat and healthy, so the recycle interval has nothing to be chosen from until the rate bends or `trawl` nears the 22-day uptime that preceded the incident | **N** | `trawl` decay window [~2026-09-09] | 98 | M | Stage 0 verified; analytics freshness moved to Plan 143; 0b moved into Plan 140 Stage 2. **Not workable until ~2026-09-09** — `trawl` had 3d 13h uptime at 2026-08-21 17:37 UTC and the outage that motivated Stage 3 followed **22 days**, so the decay this stage exists to measure cannot appear before early September. The `POST` verb on the socket proxy is separable and *is* workable now |
+| 2 | [142](plan_142_planned_host_maintenance.md) | Planned host maintenance and production quiescence | Freeze the successful Ubuntu-update window as fixtures, then build separate maintenance intent, truthful drain status, and the checked-in host procedure | **Y** | -- | 86 | M + first observed window | Reuse Plan 136 drain semantics. **Fully unblocked 2026-08-21** — the resume gate's requirement of soaked Plan 140 health coverage is now satisfied, and Plan 144 hardened the deploy script this plan's Stage 2 consumes |
+| 3 | [141](plan_141_structured_log_ingestion_contract.md) | Structured log ingestion and dashboard contract | Freeze production-derived fixtures and baseline, then align parsing, labels, filters, and dashboard selectors; fix `ct-403-log-spike` as the first case | **Y** | -- | 85 | S + 24h soak | Does not block Plan 136; should precede Plan 134's warning-log observation window. Has a live false-positive to work from: `ct-403-log-spike` produced **49 of the 51** alert annotations over the Plan 140 soak window, and the mechanism is an unanchored `\|= "403"` catching INFO lines from `shared.minio`. It is **not** diurnal — an earlier note said so from too small a sample |
+| 4 | [140](plan_140_service_health_contract.md) **Stage 4** | Retire DAG sensors as the health signal | Demote `http_health_sensor` from notifier to gate, now that a stopped container pages on its own | **Y** | -- | 70 | XS | **Unblocked 2026-08-21** — the Stage 2 soak closed green and left the closeout table, which was this row's only gate. Stages 1-3 are deployed and verified. The `flaresolverr` fire test already showed the alert going Pending inside a minute, far ahead of any DAG run, so this is a demotion decision rather than new signal work � do not remove the sensors, they remain load-bearing for DAG correctness |
+| 5 | [134](plan_134_archiver_endpoint_failure_contract.md) | Archiver endpoint failure contract | Add warning-only failure predicates and begin the one-week observation window | **N** | 141 [Row 3], then a 7d window | 88 | S | Plan 141 first; one-week soak before enforcement; pause if real failures need repair |
+| 6 | [145](plan_145_april_cutover_reconciliation.md) | Deleting the April cutover backlog without losing data | Close Stage 0d (backdated-write safety, a blocker) and 0e, then build the one backfill write path | **Y** | -- | 84 | S | **Supersedes Plans 132 and 137.** Unblocked — Plan 133 deployed and verified. Gates 0a/0b/0c closed 2026-08-21. Goal is deletion of 1,299 legacy objects (13.79 GiB); recovery is loss minimisation, not the finish line. Stage 2 is also where `PACK_INDEX_CACHE_PACKS=48` gets its first effectiveness measurement |
+| 7 | [138](plan_138_public_surface_refresh.md) | Public surface refresh | Truth pass, public-root contract, accessible assets, Plan 143 stats presentation, and project-updates snapshot | **Y** | -- | 84 | L | Plan 143 supplies the stats contract; land before the next major platform milestone |
+| 8 | [125](plan_125_duckdb_to_iceberg_migration.md) | DuckDB-to-Iceberg analytics migration | Gate C production runtime measurement, then Gate D reader inventory/dual-run | **Y** | -- | 81 | XL | Plan 120 closeout; swap Plan 143's producer adapter while preserving its snapshot and metric contracts. **Start from `feature/plan-125-portability-audit`, not `master`** — 17 unmerged commits (last 2026-07-21) carry the replay and scale harnesses and the local reproduction of the VM OOM. See the note at the top of the plan document |
+| 9 | [112](plan_112_refresh_policy_backtesting.md) | Adaptive-refresh backtesting | Resume policy backtest/model gates on pinned Iceberg snapshots | **N** | 125 Gate D [Row 8] | 76 | L | Plan 125 stable Iceberg-native inputs |
+| 10 | [113](plan_113_production_adaptive_refresh.md) | Production adaptive refresh | Promote one reviewed, pinned policy into ops claim logic | **N** | 112 [Row 9] | 74 | M | Approved Plan 112 result; no live model dependency |
+| 11 | [69](plan_69_terraform.md) | Terraform IaC | `terraform import` the existing VM/network/firewall until `plan` shows no diff against production | **Y** | -- | 66 | M | **Moved out of the backlog 2026-08-20** — its trigger is "a second environment is approved", and Plan 121 is that environment. Must land before 121, not after |
+| 12 | [121](plan_121_staging_environment.md) | Staging environment | Stand up the smallest fixture-backed deployed environment, provisioned from Plan 69's modules | **N** | 69 [Row 11] | 63 | L | Plan 69 first, so staging and prod come from one module set instead of two hand-built hosts. Prefer after Plan 125 reader shape settles unless needed earlier for risky rollout |
+| 13 | [139](plan_139_test_suite_maintenance.md) **C** | Profile the 92s `tests/integration/dbt/` step | Run it with `--durations=20` in CI and record the per-test breakdown before proposing any change | **Y** | -- | 60 | S | Measurement only; CI-only work — do not pip-install dbt locally |
+| 14 | [119](plan_119_lakehouse_governance.md) | Lakehouse governance | Add measured catalog controls and auditability | **N** | 125 [Row 8] | 58 | L | Stable Plan 125 catalog and reader contracts |
+| 15 | [139](plan_139_test_suite_maintenance.md) **D** | Intent markers and the coverage-gate decision | Move `report_dbt_run_results.py` into `dbt_runner/`, add the `oneoff` marker per test class, decide the gate and the `airflow/dags`+`dashboard` exclusion in writing | **N** | 139 Stage A coverage data [~2026-09] | 52 | S | Several weeks of Stage A coverage data; opportunistic filler |
+| 16 | [126](plan_126_basic_event_streaming.md) | Basic event streaming | Prove transport, replay, and one low-risk consumer | **N** | 125 [Row 8], 112/113 [Rows 9-10] | 49 | XL | Plans 125 and 112/113 clarify stable event semantics |
+| 17 | [127](plan_127_streaming_adaptive_scrape_control.md) | Streaming adaptive scrape control | Add closed-loop control behind batch-parity and rollback gates | **N** | 126 [Row 16] | 42 | XL | Plan 126 plus approved Plan 112/113 behavior |
 
 **Plan [139](plan_139_test_suite_maintenance.md) occupies two rows rather than
 one**, because scoring it as a single plan (62) hid that its first two stages
@@ -285,7 +208,7 @@ of that kind.
 | Plan | State | Attention required |
 |---|---|---|
 | [129](plan_129_zstd_dictionary_compression.md) | Dictionary v1 in production; backfill/lifecycle monitoring | Watch metrics; no new design work unless the run deviates |
-| [131](plan_131_packed_cold_storage.md) | **Complete** — April-July packed and pruned, Stage 5 lifecycle DAG running on schedule | Monitor only; no new design work |
+| [131](plan_131_packed_cold_storage.md) | **Complete** — April-July packed and pruned, Stage 5 lifecycle DAG running on schedule | Monitor only; no new design work. One unmerged commit sits on `plan-131-packed-cold-storage` (2026-08-13) recording the stale-image run and listing-rate variance |
 | [135](plan_135_storage_observability.md) | **Complete 2026-08-18** — both disks visible, alerts proven, all log stores bounded, maintenance runbook live | Monitor scheduled storage and task-log maintenance; parsing/dashboard follow-up is Plan 141 |
 
 ## Paused or blocked

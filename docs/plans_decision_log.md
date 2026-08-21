@@ -362,3 +362,47 @@ Iceberg-native inputs. Plans 114, 115, and 128 have completed their intended
 work and no longer belong in the executable queue. Plans 124 and 131 closed out
 2026-08-18, as did Plan 120's final Gate F production verification. Plan 129
 is a production system under rollout rather than a new build.
+
+---
+
+## Closeout-table history, to 2026-08-21
+
+Preamble that accumulated in PLANS.md's closeout section, one paragraph
+per gate that closed and left the table. It includes the decision to call
+the two 24-hour soaks early, which is worth keeping and was not recorded
+anywhere else.
+
+### The preamble as it stood
+
+Plan 120's authenticated production download and checksum round trip was
+verified on 2026-08-18. **Plan 140 Stage 1 and Plan 143 Stage 5 closed green on
+2026-08-20; Plan 140 Stage 2 and Plan 136 Stage 2 closed on 2026-08-21** and
+have all left this table. Their evidence is recorded in their plan documents.
+What remains here is **verification, not work**: no code is owed on these rows.
+Two of the three are Plan 135's, ride weekly schedules, and land on the same
+Sunday. The third is Plan 136 Stage 3's decay window, which is measured in
+weeks rather than days and is why the build order's top row has no executable
+step until September.
+
+**The two 24-hour soaks were read at 2026-08-21 16:35 UTC and called early** —
+21h 28m of 24h for Plan 140, 19h 50m for Plan 136. That was a decision, not an
+oversight, and it is defensible for one of them and irrelevant for the other:
+Plan 140's rule had zero state transitions in Grafana's history and nothing was
+trending, while Plan 136's unanswered half could not have been answered by four
+more hours (see below). Both plan documents state the elapsed window rather
+than claiming a full day.
+
+
+### Soak results, 2026-08-21
+
+Both closed; the evidence lives where this file's own instruction says to put
+it -- [Plan 140](plan_140_service_health_contract.md) Stage 2 and
+[Plan 136](plan_136_solver_recycle_and_liveness.md) Stage 2 -- with the full
+narrative in [plans_decision_log.md](plans_decision_log.md).
+
+**Plan 140 Stage 2: green.** `ct-container-unhealthy` logged zero state
+transitions in a window where Grafana recorded 51, 28 of 28 instances `Normal`.
+
+**Plan 136 Stage 2: splits.** Alert half green across 1,189 evaluations. Open
+question 2 unanswered and unanswerable in a day -- see the Stage 3 row in the
+closeout table above.
