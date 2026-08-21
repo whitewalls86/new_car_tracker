@@ -2,7 +2,13 @@
 
 ## Status
 
-**Draft — not started.** Priority **74 (medium)**. Effort **M** (1-2 weeks).
+**Draft — not started.** Priority **92 (critical-adjacent)**, and the
+**maintainer's #1 priority as of 2026-08-21**. Effort **M** (1-2 weeks).
+
+It holds row 1 over Plan 136's score of 98 because 136 has no executable step
+until ~2026-09-09 and this does — which is the build order's own rule working
+as designed rather than an exception to it. The score reflects dependency
+leverage: every other plan's status is tracked by the thing this fixes.
 
 Effort was S before Stage 1 was added; a history sweep across 1,041 commits
 with a three-tier provenance rule is not a day's work.
@@ -128,7 +134,7 @@ is complete and free.
 5. **Cross-references key on plan numbers, never row ordinals.** Demonstrated
    while adding this plan: inserting one row at position 4 shifted fifteen rows
    and silently invalidated six `Blocked by` cells that said things like
-   `[Row 8]`. Plan numbers are stable; positions are not. Stage 3's test should
+   `[Row 8]`. Plan numbers are stable; positions are not. Stage 4's test should
    reject a reference that names a position.
 
 ## Stages
@@ -193,7 +199,45 @@ inventory. Move `PLANS.md`'s "Completed" table into `completed_plans.md` and
 leave a link. Retire the watch list, routing its rows to closeout or archive
 per Stage 0. Add `Lands` and `Gate` columns to closeout.
 
-### Stage 3 — Make the invariant a test
+### Stage 3 — Give `docs/` a hierarchy
+
+`docs/` is **98 files and zero directories**. Seventy-eight are plan documents;
+the rest are seven `claude_prompt_*` session prompts, three runbooks,
+`ARCHITECTURE.md`, an SVG, and one-offs like a March code review and a pipeline
+health report. It is the same defect as the tables: things accreted and nothing
+said where they go.
+
+Proposed layout:
+
+```
+docs/
+  ARCHITECTURE.md
+  PLANS.md              index
+  plans/                all 78 plan documents, flat
+  planning/             completed_plans.md, decision_log.md
+  runbooks/
+  prompts/              claude_prompt_*
+  reference/            case study, code review, health report, debug bundle, assets
+```
+
+**Directories encode *kind*, not *state*.** The tempting split is
+`plans/active/` and `plans/completed/`, and it is wrong: state changes, so
+every completion would move a file, break every inbound link, and put the same
+fact in two places — the path and the index — which is the defect this plan
+exists to fix. Plan documents keep one stable path forever; `PLANS.md` and the
+archive say what state they are in. This is rule 5 again: key on something that
+does not move.
+
+The cost is one large rename that breaks every relative link in the repo. That
+is mechanical, `git mv` preserves history, and Stage 4's test should assert
+that no markdown link in `docs/` is dangling — a check worth having
+permanently, since it would have caught the `see below` that dangled for a day
+after a section moved on 2026-08-21.
+
+Do this **after** Stage 2. Collapsing tables while paths are moving means every
+conflict is two problems at once.
+
+### Stage 4 — Make the invariant a test
 
 `tests/test_planning_docs.py`, in the shape this repo already uses for
 `TestServiceHealthCoverage` — a deny-list-free structural assertion:
@@ -204,13 +248,14 @@ per Stage 0. Add `Lands` and `Gate` columns to closeout.
 - every backlog row has a trigger
 - every build-order row's `Blocked by` names a real row or a date
 - `PLANS.md` is under its stated line budget
+- no markdown link anywhere in `docs/` is dangling
 
 This is the stage that matters. Rules 1-5 above are conventions, and this
 project's own history is that conventions without a failing test decay — that
 is why `TestServiceHealthCoverage` exists, and it is the same argument here.
 A CI failure is what makes a leak impossible rather than merely discouraged.
 
-### Stage 4 — A skill for the edits
+### Stage 5 — A skill for the edits
 
 Once the structure is fixed and tested, the routine operations are small and
 repetitive: move a plan between states, add a closeout row, archive a completed
@@ -219,7 +264,7 @@ and is exactly the kind of thing done inconsistently by hand.
 
 A `plans` skill should perform those transitions and nothing else. It writes
 **state, never prose** — it will not author a plan, summarise a result, or
-decide an order. Its correctness is defined by Stage 3's test passing after
+decide an order. Its correctness is defined by Stage 4's test passing after
 every operation it performs.
 
 Sequencing note: the skill comes **last on purpose.** A skill that automates a
@@ -234,12 +279,13 @@ structure still being argued about encodes the argument.
 | Table hygiene | Every row carries a date or trigger that would remove it |
 | Enforcement | The invariant is a CI test, not a convention |
 | `PLANS.md` size | Under its stated budget, and the budget is in the file |
-| Skill | Every transition it performs leaves Stage 3's test green |
+| `docs/` layout | Every file is in a directory named for its kind; no directory names a state |
+| Skill | Every transition it performs leaves Stage 4's test green |
 | Backfill | Every filled-in date is labelled observed, corroborated or inferred |
 
 ## Verification
 
-Stage 3's test is the verification — it either passes against the real docs or
+Stage 4's test is the verification — it either passes against the real docs or
 names the row that breaks it.
 
 One human check the test cannot make: hand someone the index cold and ask
