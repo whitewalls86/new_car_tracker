@@ -14,20 +14,22 @@ What landed:
 
 | File | What it is |
 |---|---|
-| `scripts/redeploy.sh` | `--no-deps`, a real health gate, a split intent-release rule, and a `--config` mode for bind-mounted config files |
+| `scripts/redeploy.sh` | `--no-deps`, a real health gate, a split intent-release rule, a `--restart` mode for changes Compose cannot see, and a no-op report when a recreate recreated nothing |
 | `healthcheck-exemptions.txt` | The Plan 140 deny-list, moved out of the test file so the deploy poller and `TestServiceHealthCoverage` read one list |
 | `deploy-followers.txt` | Services whose peers cache their address, and what to restart after recreating them |
 | `tests/test_deploy_script.py` | The invariants none of the above can check at runtime |
 
 **Verification against production is still owed** — see
-[Verification](#verification). Nothing here has run on the VM.
+[Verification](#verification). The code is on the VM at `1b66213` and its
+assumptions were checked there read-only, but no deploy has run.
 
 ## Why this exists now
 
 `scripts/redeploy.sh` is the deploy path for every service in this system. It
-works, and it has three defects that were tolerable while nobody looked closely
-and are not tolerable now that [Plan 142](plan_142_planned_host_maintenance.md)
-intends to build a whole-host maintenance procedure on top of it.
+works, and it had three defects — six by the time anyone finished looking —
+that were tolerable while nobody looked closely and are not tolerable now that
+[Plan 142](plan_142_planned_host_maintenance.md) intends to build a whole-host
+maintenance procedure on top of it.
 
 The trigger is that **[Plan 140](plan_140_service_health_contract.md) Stage 1
 made the main fix possible.** The script carries this comment:
@@ -49,7 +51,9 @@ that finished five months ago is worse than no comment: it reads as tracked work
 
 They were three when this was drafted. Two more arrived from production before
 a line was written, and both are the same shape as each other: **a deploy action
-with an invisible side effect on a service the operator did not name.**
+with an invisible side effect on a service the operator did not name.** A sixth
+arrived hours after the first five shipped, and is the same shape again — this
+time in the fix itself.
 
 ### 1. `docker compose up -d` without `--no-deps`
 
@@ -177,6 +181,29 @@ surface the failure while it lasts. Every Prometheus scrape target is the same:
 `up` goes to 0. `statsd-exporter` is the fleet's only UDP receiver, and `up`
 cannot see a dead UDP pipe by construction.
 
+### 6. A recreate that recreated nothing reported success
+
+Found 2026-08-20, hours after defects 1-5 shipped, while looking for the right
+way to restart the Airflow processes from defect 5. Dry-run against production:
+
+```
+$ docker compose up -d --no-deps --dry-run \
+      airflow-dag-processor airflow-triggerer airflow-apiserver
+DRY-RUN MODE -  Container cartracker-airflow-apiserver      Running
+DRY-RUN MODE -  Container cartracker-airflow-dag-processor  Running
+DRY-RUN MODE -  Container cartracker-airflow-triggerer      Running
+```
+
+No image change and no service-config drift, so `up -d` leaves the containers
+running and exits 0. That is correct Compose behaviour and it is
+indistinguishable, in the script's output, from a deploy that worked: the
+default path would have built three ARM64 images, changed nothing, and printed
+*"Done — every pollable service reported healthy."*
+
+**This is defect 4's shape inside the fix for defect 4** — success reported for
+an action that did nothing. Container ids are now sampled before `up -d` and
+compared after; unchanged services are named, with a pointer to `--restart`.
+
 ## Out of scope
 
 - **Replacing the deploy mechanism.** [Plan 88](PLANS.md) (Kubernetes) is the
@@ -256,7 +283,7 @@ picking only one leaves a hole:
 
 | Where | What it does | Why not the others |
 |---|---|---|
-| `redeploy.sh --config` | Restarts the service and then **verifies** by comparing host and container inode | A procedure cannot verify; a test cannot deploy |
+| `redeploy.sh --restart` | Restarts the service and then **verifies** by comparing host and container inode | A procedure cannot verify; a test cannot deploy |
 | The script header + this doc | Records why a restart and not a `SIGHUP` reload | The script alone does not explain why the obvious thing is wrong |
 | `TestSingleFileBindMounts` | Fails when a **seventh** single-file mount appears | Neither of the others fires until someone already deployed it wrong |
 
@@ -293,7 +320,26 @@ consumer is a human reading a terminal. It is checked all the same:
 four long-lived Airflow processes are named — not just the scheduler, which is
 merely the one that was noticed.
 
-`--config` deliberately does not consult this file. `docker compose restart`
+### The mode is named for its mechanism, not for its first use case
+
+It shipped as `--config`, named after the bind-mounted config file that
+motivated it. The second use case arrived the same day and is not a config
+change: three Airflow processes holding a dead `statsd-exporter` address need
+their *process* restarted, with the image and service config untouched.
+
+The mechanism is restart-and-verify, so the mode is `--restart`. `--config`
+remains an accepted spelling, because "deploy this config change" is still the
+most common reason to reach for it and reads better at the call site than the
+mechanism does. One mode, two honest names; a test asserts both are accepted.
+
+The general rule, now in the script's usage text: **pick the mode by what has to
+change.** New code is the default path. A process that must restart while its
+image and config stay put is `--restart`. There are exactly two known reasons
+for the latter, and they are defects 4 and 5.
+
+### `--restart` deliberately does not consult the follower registry
+
+`docker compose restart`
 reuses the container and its address, so no peer is orphaned; a test pins that
 reasoning to the code, so if config mode ever starts recreating, the warning has
 to move with it.
@@ -309,6 +355,7 @@ to move with it.
 | The stale TODO | Gone, with the intent-release behaviour documented in its place |
 | A bind-mounted config change | Applied and **verified loaded**, not merely reloaded; single-file mounts restart rather than reload |
 | Recreating a cached-address peer | Names the senders that must be restarted, and does not restart them itself |
+| A recreate Compose declined to make | Reported as a no-op, never as a successful deploy |
 
 ## Verification
 
@@ -326,14 +373,76 @@ of them should first run on production:
 | Failed build | **Released** intent and alerted — the deliberate other half of the rule |
 | Exempt service in the list | `flyway` skipped as exempt, not waited on |
 | Unexempt service with no health status | Warned and continued; not treated as unhealthy |
-| `--config`, inodes match | `OK ... inode N matches the file on disk` |
-| `--config`, container reading a deleted inode | `STALE`, non-zero exit, intent held |
-| `--config`, no usable `stat` in the image | `UNVERIFIED`, reported in the closing line, exit 0 |
+| `--restart`, inodes match | `OK ... inode N matches the file on disk` |
+| `--restart`, container reading a deleted inode | `STALE`, non-zero exit, intent held |
+| `--restart`, no usable `stat` in the image | `UNVERIFIED`, reported in the closing line, exit 0 |
 | Recreating `statsd-exporter` | Printed the follow-up note with the four containers to restart |
 
 The three load-bearing assertions were also mutation-checked: removing
 `--no-deps`, restoring `sleep 10`, and raising a `start_period` to 600s each
 fail the suite.
+
+### Done — read-only production sweep, 2026-08-20
+
+Run after merging PR #224 and pulling to `1b66213` on the VM. The pull was
+inert: the incoming set was docs, tests, `scripts/` and two new root data files,
+with no `airflow/dags`, no `docker-compose.yml` and no bind-mounted config, so
+no running container reads any of it. Nothing was restarted or deployed.
+
+| Assumption | Result |
+|---|---|
+| `docker compose ps -q <svc>` resolves a container | Works on Compose 2.40.3, including the profile-gated `trawl` and `redis-trawl` **without** `--profile` — a concern raised during review and now closed |
+| The health format string returns `<status> <health>` | Correct across all 28 running services |
+| Exempt services report no health | `oauth2-proxy` → `none`; `flyway` and `airflow-init` have no container at all. All three are exempt, and exemption is checked *before* container resolution, so none reaches the "no container after deploy" error |
+| The exemptions parser | Yields exactly the six expected names under the VM's bash 5.1.16 |
+| `bash -n scripts/redeploy.sh` | Parses |
+| Inode verification on all six single-file mounts | `prometheus`, `loki`, `promtail`, `statsd-exporter`, `caddy` all `OK`; `oauth2-proxy` `UNVERIFIED`, as designed |
+| Deploy intent | `none` — nothing stuck |
+
+`prometheus` reads inode **519823 on both sides**. That is the *host* inode from
+the Plan 136 Stage 2 finding, where the container was pinned at 519700 — so that
+drift has since been cleared by a restart, confirming the mechanism from both
+directions.
+
+### The sweep also found defect 5 live, and the D6 fix incomplete
+
+Container start times against `statsd-exporter`'s recreate at 2026-08-18
+17:03:06:
+
+| Container | Started | Predates the recreate |
+|---|---|---|
+| `airflow-scheduler` | 2026-08-20 21:11:53 | no — restarted by D6 |
+| `airflow-apiserver` | 2026-08-18 15:39:41 | **yes** |
+| `airflow-dag-processor` | 2026-08-18 04:58:36 | **yes** |
+| `airflow-triggerer` | 2026-08-18 04:24:33 | **yes** |
+
+An empty query result could mean "renamed at the Airflow 3.x migration" rather
+than "sender orphaned" — the trap the Pipeline Health panel rot sits in — so
+each metric was point-queried *before* the recreate as a known-good control:
+
+| Metric | Before 17:03:06 | Now |
+|---|---|---|
+| `airflow_dag_processing_processes` | 3,416,623 | **empty** |
+| `airflow_triggers_running` | present (0) | **absent** — empty vector, not 0 |
+| `airflow_scheduler_heartbeat` | 1,539,610 | 1,252 — **live again** after its restart |
+
+They were being ingested and stopped, so this is not a naming change.
+`airflow-dag-processor` and `airflow-triggerer` have been sending UDP into the
+void for over two days and still are; `airflow-apiserver` matches by start time
+though no metric isolates it. `up{job="airflow"}` reads **1** throughout.
+
+This validates the registry rather than contradicting it: `deploy-followers.txt`
+already names all four on the reasoning that the scheduler was merely the one
+that was noticed, and now that has production evidence.
+
+**Not urgent, and deliberately not fixed here.** No alert rule references any of
+the dead metrics — the only Airflow metric in `rules.yml` is
+`airflow_dagrun_duration_failed_count`, feeding `ct-pipeline-failures`, emitted
+by the scheduler, which is already restored. What is missing is dashboard
+telemetry. The fix is
+`redeploy.sh --restart airflow-dag-processor airflow-triggerer airflow-apiserver`
+after the soaks close; the scheduler is excluded because restarting it again is
+pointless churn.
 
 ### Owed — one low-risk production deploy
 
@@ -341,7 +450,7 @@ Not started; nothing here has run on the VM. `pgadmin` is the candidate: it is
 on no critical path, and it was one of the two services observed still
 `starting` past the old ten-second mark. Confirm that it waits for real health,
 that no dependency is recreated, and that intent is released. Then
-`--config prometheus`, which is the mount that produced defect 4 twice.
+`--restart prometheus`, which is the mount that produced defect 4 twice.
 
 Both must wait for the Plan 136 Stage 2 and Plan 140 Stage 2 soaks to close
 (2026-08-21, ~20:42 and ~19:04 UTC). A deploy during either window disturbs the

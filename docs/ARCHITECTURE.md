@@ -157,12 +157,22 @@ checked in CI. Step 5 is conditional: intent is released after a failed *build*,
 because nothing was recreated, and **held** after a failed recreation, because a
 half-deployed fleet should not have work resuming against it.
 
-A change to a **bind-mounted config file** is not this flow. Compose sees no
-service-config drift and does nothing, and for the six services that mount a
-single *file* rather than a directory a `SIGHUP` reload silently reloads the old
-inode. Use `scripts/redeploy.sh --config <service>`, which restarts and then
-verifies the container is reading the file that is on disk. See
-[Plan 144](plan_144_deploy_script_hardening.md).
+**This flow only applies when the image changed.** `up -d` on a service Compose
+sees no drift for leaves the container running and exits 0, so steps 3-5 do
+nothing at all; the script detects that and says so rather than reporting a
+deploy. Two cases need a restart instead of a recreate, and both use
+`scripts/redeploy.sh --restart <service>` (spelled `--config` as well):
+
+- **A bind-mounted config file changed.** For the six services that mount a
+  single *file* rather than a directory, `git pull` lands the new content on a
+  new inode and a `SIGHUP` reload silently reloads the old one. The restart path
+  verifies the container is reading the file that is on disk.
+- **A peer's address changed under a long-lived process.** Recreating a
+  container gives it a new IP, and anything holding a cached resolved address —
+  Airflow's StatsD client, over UDP — keeps addressing the dead one, silently.
+  `deploy-followers.txt` names these and the deploy warns.
+
+See [Plan 144](plan_144_deploy_script_hardening.md).
 
 ---
 

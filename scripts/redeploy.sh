@@ -4,9 +4,17 @@
 #
 # Usage:
 #   bash scripts/redeploy.sh <service> [service ...]
-#   bash scripts/redeploy.sh --config <service> [service ...]
+#   bash scripts/redeploy.sh --restart <service> [service ...]   (--config: same)
 #
 # Run from the compose project directory (/opt/cartracker on the production VM).
+#
+# Pick the mode by what has to change:
+#
+#   default    New code. Builds the image and recreates the container. Does
+#              nothing at all when Compose sees no drift, and says so.
+#   --restart  The *process* has to restart, but its image and service config
+#              have not changed. Two known reasons: a bind-mounted config file
+#              (decision 4) and a cached peer address (decision 5).
 #
 # ---------------------------------------------------------------------------
 # Plan 144 — the four decisions this script encodes. Each replaced a defect
@@ -52,7 +60,7 @@
 #    Either way a Telegram alert fires on failure, naming the phase and
 #    whether intent was released or held.
 #
-# 4. `--config` for bind-mounted config files. Six services mount a single
+# 4. `--restart` for bind-mounted config files. Six services mount a single
 #    *file* rather than a directory (prometheus.yml, promtail.yml, loki.yml,
 #    statsd_mapping.yml, Caddyfile, oauth2-proxy.cfg). A single-file bind
 #    mount pins the inode; `git pull` replaces the file rather than editing it
@@ -74,11 +82,19 @@
 #    note and does not act on it: bouncing a service the operator did not name
 #    is the same defect `--no-deps` exists to stop.
 #
-#    Only recreates are exposed. `--config` restarts keep the container and
+#    Only recreates are exposed. `--restart` keeps the container and
 #    its address, and TCP peers (`promtail`→`loki`, `postgres-exporter`→
 #    `postgres`, every Prometheus scrape) see a connection error, re-resolve
 #    and recover — which is why they are not in that file. UDP is the whole
 #    hazard, and `up` cannot see it: it was 1 for the entire two days.
+#
+# 6. A recreate that recreated nothing says so. Found 2026-08-20, immediately
+#    after the above shipped, while looking for the right way to restart the
+#    three Airflow processes still holding the dead `statsd-exporter` address.
+#    `up -d --no-deps` on an unchanged service leaves the container running and
+#    exits 0 — correct, and indistinguishable from a real deploy in the output.
+#    That is defect 4's shape again: success reported for an action that did
+#    nothing. Container ids are sampled before `up -d` and compared after.
 # ---------------------------------------------------------------------------
 
 set -e
@@ -98,8 +114,9 @@ HEALTH_POLL_INTERVAL="${DEPLOY_HEALTH_POLL_INTERVAL:-5}"
 MODE="recreate"
 PHASE="startup"
 MUTATED=0          # 1 once a container has been recreated or restarted
-UNVERIFIED=0       # single-file mounts --config could not check (no stat in image)
+UNVERIFIED=0       # single-file mounts --restart could not check (no stat in image)
 SERVICES=""
+declare -A BEFORE_ID   # service -> container id, sampled before `up -d`
 
 _on_exit() {
     local exit_code=$?
@@ -129,12 +146,16 @@ _on_exit() {
 trap _on_exit EXIT
 
 _usage() {
-    echo "Usage: $0 [--config] <service> [service ...]"
-    echo "  (default)  build the images, recreate the containers, wait for health"
-    echo "  --config   restart for a bind-mounted config change, wait for health,"
-    echo "             then verify the containers read the current files"
+    echo "Usage: $0 [--restart] <service> [service ...]"
+    echo "  (default)  new code: build the images, recreate the containers, wait"
+    echo "             for health. Does nothing when Compose sees no drift."
+    echo "  --restart  same image and config, but the process must restart: a"
+    echo "             bind-mounted config file, or a cached peer address."
+    echo "             Waits for health, then verifies the files it reads."
+    echo "             (--config is an accepted spelling of the same mode.)"
     echo "Example: $0 scraper dbt_runner"
-    echo "Example: $0 --config prometheus"
+    echo "Example: $0 --restart prometheus"
+    echo "Example: $0 --restart airflow-dag-processor airflow-triggerer"
 }
 
 # --- exemptions -------------------------------------------------------------
@@ -199,6 +220,34 @@ _print_follower_notes() {
     echo "rather than restarting a service you did not name:"
     echo
     printf '%s' "$all"
+}
+
+# --- did the recreate actually recreate anything? ---------------------------
+
+# `up -d` is a no-op when Compose sees no drift: same image, same service
+# config, container left running. That is the right behaviour and the wrong
+# report — the old script would print "Done." and the operator would believe a
+# restart had happened. Proved by dry-run against production on 2026-08-20
+# while looking for somewhere to re-resolve a peer address; all three services
+# came back "Running" and nothing would have changed.
+_warn_if_unchanged() {
+    local svc cid
+    local unchanged=()
+
+    for svc in "$@"; do
+        cid="$(_container_id "$svc")"
+        if [ -n "${BEFORE_ID[$svc]}" ] && [ "${BEFORE_ID[$svc]}" = "$cid" ]; then
+            unchanged+=("$svc")
+        fi
+    done
+    [ ${#unchanged[@]} -eq 0 ] && return 0
+
+    echo
+    echo "NOTE: ${unchanged[*]} kept the same container. Compose found no change to"
+    echo "      apply, so nothing was recreated and no new code is running. If you"
+    echo "      expected new code, the build produced no new image. To re-resolve a"
+    echo "      peer address or pick up a bind-mounted file, use --restart."
+    echo
 }
 
 # --- health gate ------------------------------------------------------------
@@ -346,10 +395,16 @@ _verify_config_mounts() {
 
 # --- main -------------------------------------------------------------------
 
-if [ "$1" = "--config" ]; then
-    MODE="config"
-    shift
-fi
+case "$1" in
+    --restart|--config)
+        # One mode, two honest names. The mechanism is restart-and-verify;
+        # `--config` is kept because deploying a bind-mounted config file is
+        # the most common reason to reach for it, and it reads better at the
+        # call site than the mechanism does.
+        MODE="restart"
+        shift
+        ;;
+esac
 
 if [ $# -eq 0 ]; then
     _usage
@@ -365,10 +420,10 @@ if [ ! -f "$EXEMPT_FILE" ]; then
 fi
 EXEMPT="$(_exempt_services | tr '\n' ' ')"
 
-if [ "$MODE" = "config" ]; then
+if [ "$MODE" = "restart" ]; then
     PHASE="restart"
     MUTATED=1
-    echo "Restarting for a config change: $SERVICES"
+    echo "Restarting in place: $SERVICES"
     docker compose restart "$@"
 
     PHASE="health"
@@ -380,10 +435,10 @@ if [ "$MODE" = "config" ]; then
 
     PHASE="done"
     if [ "$UNVERIFIED" -gt 0 ]; then
-        echo "Done — config applied and containers healthy, but ${UNVERIFIED} mount(s)"
-        echo "       could not be verified; check them by hand (see above)."
+        echo "Done — restarted and healthy, but ${UNVERIFIED} mount(s) could not"
+        echo "       be verified; check them by hand (see above)."
     else
-        echo "Done — config applied, containers healthy, mounts verified current."
+        echo "Done — restarted, containers healthy, mounts verified current."
     fi
 else
     PHASE="build"
@@ -392,8 +447,12 @@ else
 
     PHASE="recreate"
     MUTATED=1
+    for svc in "$@"; do
+        BEFORE_ID[$svc]="$(_container_id "$svc")"
+    done
     echo "Recreating (no dependencies): $SERVICES"
     docker compose up -d --no-deps "$@"
+    _warn_if_unchanged "$@"
 
     PHASE="health"
     _wait_for_health "$@"

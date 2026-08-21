@@ -203,6 +203,36 @@ class TestRedeployScriptContract:
             "DEPLOY_HEALTH_TIMEOUT's default, or lower the start_period."
         )
 
+    def test_both_spellings_of_the_restart_mode_are_accepted(self):
+        """The mode is restart-and-verify. It shipped named `--config` after
+        the one use case that motivated it, and the second use case -- a
+        process holding a cached peer address -- is not a config change. Both
+        spellings select the same mode so the call site can read honestly."""
+        text = self._text()
+        assert re.search(r"^\s*--restart\|--config\)", text, re.MULTILINE), (
+            "the restart mode no longer accepts both spellings; `--config` is "
+            "referenced by docs/ARCHITECTURE.md and the Plan 144 write-up"
+        )
+
+    def test_a_recreate_that_recreated_nothing_says_so(self):
+        """`up -d` on an unchanged service leaves the container running and
+        exits 0. Correct, and indistinguishable from a real deploy in the
+        output -- which is the defect this whole plan is about. Proved by
+        dry-run against production on 2026-08-20."""
+        text = self._text()
+        assert "BEFORE_ID" in text, (
+            "redeploy.sh no longer samples container ids before `up -d`, so it "
+            "cannot tell a real recreate from a no-op"
+        )
+        code = "\n".join(
+            line for line in text.splitlines() if not line.lstrip().startswith("#")
+        )
+        sample = code.index("BEFORE_ID[$svc]=")
+        assert sample < code.index("docker compose up -d"), (
+            "container ids are sampled after `up -d`, which compares the new "
+            "state against itself and can never report a no-op"
+        )
+
     def test_intent_release_distinguishes_build_from_recreation_failure(self):
         """Defect 3. The old EXIT trap released intent on every exit path,
         which is right after a failed build and not obviously right after a
@@ -286,15 +316,15 @@ class TestCachedPeerAddressRegistry:
             "operator acts"
         )
 
-    def test_config_mode_does_not_warn_because_restart_keeps_the_address(self):
+    def test_restart_mode_does_not_warn_because_restart_keeps_the_address(self):
         """`docker compose restart` reuses the container, so its IP is
-        unchanged and no peer is orphaned. If config mode ever starts
+        unchanged and no peer is orphaned. If restart mode ever starts
         recreating, this warning has to move with it."""
         text = _SCRIPT.read_text(encoding="utf-8")
-        config_block = text.split('if [ "$MODE" = "config" ]; then', 1)[1].split("else", 1)[0]
-        assert "_print_follower_notes" not in config_block
-        assert "docker compose restart" in config_block, (
-            "config mode no longer restarts; if it recreates, it changes the "
+        block = text.split('if [ "$MODE" = "restart" ]; then', 1)[1].split("else", 1)[0]
+        assert "_print_follower_notes" not in block
+        assert "docker compose restart" in block, (
+            "restart mode no longer restarts; if it recreates, it changes the "
             "container address and owes the follower warning"
         )
 
@@ -373,13 +403,13 @@ class TestSingleFileBindMounts:
     def test_every_known_mount_says_why(self, source):
         assert len(self._KNOWN[source]) > 20
 
-    def test_the_script_offers_a_config_deploy_path(self):
+    def test_the_script_offers_a_restart_deploy_path(self):
         text = _SCRIPT.read_text(encoding="utf-8")
-        assert "--config" in text, (
-            "redeploy.sh has no config-deploy path, so a bind-mounted config "
-            "change has no way to reach production except by hand"
+        assert "--restart" in text, (
+            "redeploy.sh has no restart path, so a bind-mounted config change "
+            "has no way to reach production except by hand"
         )
         assert "stat -c %i" in text, (
-            "the config path no longer verifies the loaded file by inode; a "
+            "the restart path no longer verifies the loaded file by inode; a "
             "restart that silently did not take would report success"
         )
