@@ -510,3 +510,76 @@ field rather than grepping the raw line. It is also a reminder that alert noise
 is not only annoying — an operator who learns to ignore `ct-403-log-spike` is
 being trained to ignore the scraper's alert channel, which is the channel the
 2026-08-14 solver outage needed.
+
+---
+
+## Plan 146 — what left `PLANS.md`, 2026-08-21
+
+Stage 2 collapsed the index from 232 lines and eight status-bearing sections to
+169 lines and five tables. Everything below was evicted **from the index**, not
+deleted: it is reasoning and point-in-time record, which is what this file is
+for. Status for every plan named here lives in `PLANS.md` or the archive.
+
+### Why observability sat at the top of the build order
+
+Two incidents in four days — 2026-08-14 solver, 2026-08-18 Airflow apiserver —
+were each found by a human noticing downstream damage, not by an alert. Plan 136
+covered the two components that actually failed; Plan 140 covered the other
+twenty-four before they did. Plan 140 is complete through Stage 3, Plan 144
+hardened the deploy path that touches all of them, and Plan 136 Stage 3 waits on
+a decay signal.
+
+This paragraph lived under "Current State" and is exactly the kind of thing rule
+3 evicts: it describes *what happened to the system*, while that section is
+supposed to describe *the system*.
+
+### The `== bool` inheritance, carried forward for Plan 136
+
+Plan 140's six-minute false page — an alert expression that fired on a recovered
+container — was fixed by writing the rule as a bool product. Plan 136's
+solver-outcome alerts have the same appear-and-disappear shape, which is why
+both are written that way. Worth keeping in front of whoever picks up Stage 3;
+it is not a status fact, so it does not belong in a table.
+
+### The three surfaces that did not survive, and why
+
+**The "Operational watch list"** had no dates and no exit criteria, so rows
+could not leave. Three of its six rows had been asking for closeout that had
+already happened — for weeks, in Plan 115's case. Its surviving idea splits
+cleanly: a plan whose behaviour needs watching is either *in closeout* (a
+specific thing to observe, by a date) or *archived* (and monitoring is then an
+operational concern, not a plan). Plan 129 went to closeout; Plans 131 and 135
+resolved to archive and closeout respectively.
+
+**The "Plan inventory"** covered 30 of 72 plan files and nothing said which 42
+were missing, so its silence was indistinguishable from a plan not existing.
+Stage 0 measured the real cost of that: **24 plan documents were in no status
+table at all**, and nine plans had no document *and* no archive row. `ls docs/`
+is complete and free; a partial list is worse than no list.
+
+**The "Paused or blocked" table** duplicated the build order's `Blocked by`
+column and held a row — Plan 114's follow-on — whose parent plan was complete.
+It folded into the backlog, whose `Trigger` column is the same idea under a
+better name.
+
+**The index's own "Completed" table** duplicated `completed_plans.md` and
+disagreed with it: Plans 143, 133, 128 and 115 were in the index and absent from
+the archive. The archive is now the only completion record.
+[Plan 138](plan_138_public_surface_refresh.md)'s project-updates snapshot was
+the one consumer of the index's copy and now reads the archive instead.
+
+### Two decisions Plan 146's own document did not settle
+
+**Superseded is a fifth table, not a fourth state.** The plan specifies four
+states — backlog, build order, closeout, archive — and does not say where a
+superseded plan goes. Folding them into `completed_plans.md` was rejected:
+that file is the record of what was *finished*, and fourteen plans that were
+replaced rather than delivered would make it claim work that never happened.
+So the invariant is "exactly one of five tables", and Stage 4's test asserts it
+that way.
+
+**Plan 117 sits in the backlog.** It is an umbrella rather than a buildable
+plan, and the index used to give it a section of its own — a sixth status
+surface by another name. A backlog row with a real exit condition ("archived
+when its arc lands") keeps the invariant intact without a special case. The
+orientation it provided survives as three lines under Current State.

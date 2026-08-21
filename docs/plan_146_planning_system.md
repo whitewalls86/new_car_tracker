@@ -63,7 +63,7 @@ diagnosis, and every fix below follows from it.
   This plan changes the index and the rules, not the content it points at.
 - **Deciding what to build next.** The build order's ordering is Plan 117's and
   the maintainer's; this plan only changes how it is recorded.
-- **A tool that writes plans.** The skill in Stage 3 edits *state* — moving a
+- **A tool that writes plans.** The skill in Stage 5 edits *state* — moving a
   plan between tables, archiving it — and never authors prose.
 
 ## The design
@@ -270,6 +270,35 @@ every operation it performs.
 Sequencing note: the skill comes **last on purpose.** A skill that automates a
 structure still being argued about encodes the argument.
 
+### Stage 6 — A skill for the weekly summary
+
+The counterpart to Stage 5. Stage 5's skill writes state and never prose;
+this one writes prose and never state, and the two must not be merged --
+a tool that both summarises work *and* moves rows between tables can move a row
+because its own summary said so, which is a self-confirming record.
+
+A `plan-week` skill reads the last week of commits, maps each one to the plan
+it belongs to, opens those plan documents for the *why*, and writes a summary
+of what actually happened. Commits say what changed; plan documents say what it
+was for. A summary from either alone is a changelog or a wish list.
+
+**The mapping problem is the whole difficulty, and Stage 1 already measured
+it.** Conventional prefixes (`docs(plan-146)`) cover 11 commits of 1,041, and
+subject-line mentions cover 298. So the skill needs the same layered attribution
+`audit_plan_state_history.py` uses -- subject, then branch name, then the plan
+documents touched by the diff -- and must **say which commits it could not
+attribute** rather than dropping them. An unattributed commit is the summary's
+version of a table row with no exit condition: invisible, and therefore
+permanent.
+
+Output is a dated entry appended to the decision log, not a new surface. It
+records what shipped, what moved between states, and what is still owed --
+and, like every other row this plan touches, distinguishes what it observed
+from what it guessed.
+
+Sequencing: after Stage 5, because it reads the structure Stages 2-4 settle,
+and because the state transitions it reports are the ones Stage 5 performs.
+
 ## Success criteria
 
 | Metric | Gate |
@@ -281,6 +310,7 @@ structure still being argued about encodes the argument.
 | `PLANS.md` size | Under its stated budget, and the budget is in the file |
 | `docs/` layout | Every file is in a directory named for its kind; no directory names a state |
 | Skill | Every transition it performs leaves Stage 4's test green |
+| Weekly summary | Every commit in the window is attributed to a plan or explicitly listed as unattributed |
 | Backfill | Every filled-in date is labelled observed, corroborated or inferred |
 
 ## Verification
