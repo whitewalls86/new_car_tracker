@@ -81,7 +81,15 @@ maintenance workflow. Plan 141 then makes the newly bounded log pipeline and
 its dashboards share one tested schema before Plan 134 begins its warning-log
 observation window. **Plan 133 deployed and verified on 2026-08-20** — 720
 artifacts read through the pack path across April-July with 0 failures — so the
-next data-integrity step is Plan 132, now unblocked.
+next data-integrity step is unblocked. **That step is now
+[Plan 145](plan_145_april_cutover_reconciliation.md), which superseded Plan 132
+on 2026-08-21.** Verifying Plan 132 against production found its own numbers
+intact but its surroundings changed — Plan 131's prune had already completed its
+Stage 4, and its proposed reparse would have corrupted live pricing state — and
+then found a third population behind it: ~224,600 successful April captures that
+exist only in the legacy Parquet, with no silver observation. Plan 145 replaces
+three plans' worth of separate recovery machinery with one ledger and one
+backfill write path.
 Plan 138 should land before the next major platform milestone, consuming rather
 than recreating Plan 143's public-stats cache. Plan 125 then resumes at its
 remaining Gate C production measurement and Gate D reader migration -- not at
@@ -185,6 +193,13 @@ Plan 136 Stage 3 nor the Plan 140 soak. The deviation is argued, not assumed:
    was caught only because the earlier finding said to look. That belongs in
    the deploy script or its documented procedure, not in an operator's memory.
 
+**[Plan 145](plan_145_april_cutover_reconciliation.md) Stage 0 is the other
+thing worth doing right now, and it is the cheapest row on this page.** It is
+measurement only — no writes, no deploy, no container touched — so it cannot
+interact with either soak, and its five gates decide whether the plan is an
+L or an XL before any code is written. Gate 0a in particular decides whether
+the ~224,600 legacy gap is real or a join artifact.
+
 Plan 141 remains the other genuinely unblocked row and is the right pick if a
 larger slice is wanted instead; its live `ct-403-log-spike` false positive is
 still the best fixture source available. Note it fires *diurnally* — the
@@ -205,12 +220,11 @@ because it is smaller while a higher row has an executable next step.
 | 4 | [144](plan_144_deploy_script_hardening.md) | Deploy script hardening | **Code complete 2026-08-20.** Next slice is one low-risk production deploy (`pgadmin`, then `--restart prometheus`) — **after both soaks close**, since recreating containers is what produced Plan 140 Stage 2's first false page | 78 | XS | **Unblocked by Plan 140 Stage 1** — the TODO could not be actioned when only 7 of 31 services had a healthcheck. Plan 142 should consume this script rather than fork it. Absorbed Plan 136 D6 item 3 (the deploy-time check for orphaned cached addresses) |
 | 5 | [140](plan_140_service_health_contract.md) **Stage 4** | Retire DAG sensors as the health signal | Demote `http_health_sensor` from notifier to gate, now that a stopped container pages on its own | 70 | XS | **Gated on the Stage 2 soak**, which is in the closeout table above. Stages 1-3 are deployed and verified. The `flaresolverr` fire test already showed the alert going Pending inside a minute, far ahead of any DAG run, so this is a demotion decision rather than new signal work � do not remove the sensors, they remain load-bearing for DAG correctness |
 | 6 | [134](plan_134_archiver_endpoint_failure_contract.md) | Archiver endpoint failure contract | Add warning-only failure predicates and begin the one-week observation window | 88 | S | Plan 141 first; one-week soak before enforcement; pause if real failures need repair |
-| 7 | [132](plan_132_unrecorded_artifact_recovery.md) | Recover unrecorded bronze artifacts | Run Stage 0 gates, build the manifest, then reparse a bounded cohort | 91 | L | **Unblocked 2026-08-20** — Plan 133 deployed and verified. No destructive action in the audit stages. Stage 2's reparse is also where defect 2's cache fix gets its first real measurement |
+| 7 | [145](plan_145_april_cutover_reconciliation.md) | Deleting the April cutover backlog without losing data | Close Stage 0d (backdated-write safety, a blocker) and 0e, then build the one backfill write path | 84 | S | **Supersedes Plans 132 and 137.** Unblocked — Plan 133 deployed and verified. Gates 0a/0b/0c closed 2026-08-21. Goal is deletion of 1,299 legacy objects (13.79 GiB); recovery is loss minimisation, not the finish line. Stage 2 is also where `PACK_INDEX_CACHE_PACKS=48` gets its first effectiveness measurement |
 | 8 | [138](plan_138_public_surface_refresh.md) | Public surface refresh | Truth pass, public-root contract, accessible assets, Plan 143 stats presentation, and project-updates snapshot | 84 | L | Plan 143 supplies the stats contract; land before the next major platform milestone |
 | 9 | [125](plan_125_duckdb_to_iceberg_migration.md) | DuckDB-to-Iceberg analytics migration | Gate C production runtime measurement, then Gate D reader inventory/dual-run | 81 | XL | Plan 120 closeout; swap Plan 143's producer adapter while preserving its snapshot and metric contracts |
 | 10 | [112](plan_112_refresh_policy_backtesting.md) | Adaptive-refresh backtesting | Resume policy backtest/model gates on pinned Iceberg snapshots | 76 | L | Plan 125 stable Iceberg-native inputs |
 | 11 | [113](plan_113_production_adaptive_refresh.md) | Production adaptive refresh | Promote one reviewed, pinned policy into ops claim logic | 74 | M | Approved Plan 112 result; no live model dependency |
-| 12 | [137](plan_137_legacy_bronze_parquet_disposition.md) | Legacy bronze Parquet disposition | Codify the read-only baseline and row-complete disposition manifest | 72 | XL | Reuse Plan 132 provenance/backfill safety; deletion remains separately approved |
 | 13 | [69](plan_69_terraform.md) | Terraform IaC | `terraform import` the existing VM/network/firewall until `plan` shows no diff against production | 66 | M | **Moved out of the backlog 2026-08-20** — its trigger is "a second environment is approved", and Plan 121 is that environment. Must land before 121, not after |
 | 14 | [121](plan_121_staging_environment.md) | Staging environment | Stand up the smallest fixture-backed deployed environment, provisioned from Plan 69's modules | 63 | L | Plan 69 first, so staging and prod come from one module set instead of two hand-built hosts. Prefer after Plan 125 reader shape settles unless needed earlier for risky rollout |
 | 15 | [139](plan_139_test_suite_maintenance.md) **C** | Profile the 92s `tests/integration/dbt/` step | Run it with `--durations=20` in CI and record the per-test breakdown before proposing any change | 60 | S | Measurement only; CI-only work — do not pip-install dbt locally |
@@ -340,18 +354,19 @@ being trained to ignore the scraper's alert channel, which is the channel the
 | [129](plan_129_zstd_dictionary_compression.md) | Trained zstd dictionary compression for bronze HTML | In production — dict v1 live, backfill running |
 | [130](plan_130_parser_input_projection.md) | Parser-input projection (truncating raw HTML) | Draft — blocked on 129 + taxonomy gap |
 | [131](plan_131_packed_cold_storage.md) | Packed cold storage for bronze HTML | **Complete 2026-08-18** — April-July packed and pruned: 3.61M objects → 288, 0 refused; Stage 5 lifecycle DAG green on its first scheduled run |
-| [132](plan_132_unrecorded_artifact_recovery.md) | Recovering unrecorded bronze artifacts | Draft — Stage 0 gate not run |
-| [133](plan_133_pack_read_path_hardening.md) | Pack read path hardening | **Complete 2026-08-20** — PR #219 (`5066bc1`) deployed to `ops`, `archiver`, `pack-worker`, and `processing`; post-deploy verification read 720 artifacts through the pack path across April-July with 0 failures. Unblocks Plan 132 Stage 2 |
+| [132](plan_132_unrecorded_artifact_recovery.md) | Recovering unrecorded bronze artifacts | **Superseded 2026-08-21 by [Plan 145](plan_145_april_cutover_reconciliation.md)** — its Stage 4 was completed by Plan 131's prune, its Stage 0c is a known failure rather than an open question, and its 36,241 orphans are one of three populations from the same April cutover |
+| [133](plan_133_pack_read_path_hardening.md) | Pack read path hardening | **Complete 2026-08-20** — PR #219 (`5066bc1`) deployed to `ops`, `archiver`, `pack-worker`, and `processing`; post-deploy verification read 720 artifacts through the pack path across April-July with 0 failures. Unblocks [Plan 145](plan_145_april_cutover_reconciliation.md) Stage 2 |
 | [134](plan_134_archiver_endpoint_failure_contract.md) | Archiver endpoint failure contract | Draft — measurement-first rollout not started |
 | [135](plan_135_storage_observability.md) | Storage observability | **Complete 2026-08-18** — both disks visible, alerts proven, all log stores bounded, runbook live, `df /` 79% → 51%; criterion 5's MinIO half publishes on the first Sunday slow-tier walk (2026-08-23) |
 | [136](plan_136_solver_recycle_and_liveness.md) | Solver recycle + real liveness detection | **Stages 0 and 2 deployed and verified in production (2026-08-18, 2026-08-20); Stage 1 transferred to Plan 143 before deployment** — prototype commit `584f100` established the fail-loud contract but not the accepted serving design. 0b shipped as Plan 140 Stage 2 on 2026-08-20, which also leaves Stage 4 a `docker-socket-proxy` to extend rather than a socket path to open. Stage 2 (PR #223, merge `50bba68`) adds two scraper-owned outcome counters, the `scraper` Prometheus job that never existed, `ct-solver-not-solving` + `ct-detail-fetch-failing` in `bool`-product form, and fixes D1's remaining partial-hour defect in the Plan 143 snapshot SQL. **24h soak to 2026-08-21 ~20:42 UTC; the D1 snapshot check lands at the 21:00 build.** Stages 3-4 not started |
-| [137](plan_137_legacy_bronze_parquet_disposition.md) | Legacy bronze Parquet recovery and disposition | Draft — read-only inventory complete; no deletion authorized |
+| [137](plan_137_legacy_bronze_parquet_disposition.md) | Legacy bronze Parquet disposition | **Superseded 2026-08-21 by [Plan 145](plan_145_april_cutover_reconciliation.md)** — splitting deletion into its own plan is what left it unscheduled; deletion is now Plan 145's stated goal with approval as a gate. Its read-only census carries forward as an input, but its April 20-27 dual-write window is **disproved** — the damage runs 2026-04-11 to 04-21 — so its whole-file safety classes must be re-derived before any deletion manifest is trusted |
 | [138](plan_138_public_surface_refresh.md) | README and public portfolio surface refresh | Draft — audit complete; analytics acquisition/database removal transferred to Plan 143, while public presentation remains here |
 | [139](plan_139_test_suite_maintenance.md) | Test suite construction and maintenance | **Stages A+B complete 2026-08-18** (PR #213) — coverage reported at 88%, CI path 333s → ~260s; Stages C/D remain queued as opportunistic filler; analytics producer coverage transferred through Plan 136 to Plan 143 |
 | [140](plan_140_service_health_contract.md) | Service health contract | **Stages 1, 2 and 3 deployed and verified in production 2026-08-20** (PRs #216, #221, #222) — `cartracker_container_health` publishes three states for all 28 running services from a dedicated scrape-time exporter behind `docker-socket-proxy`, `ct-service-down` covers all 9 scrape jobs under an exact-set-equality test, and a Service Health row opens the Infrastructure dashboard. The deploy found two defects worth more than itself: a single-file bind mount pins an inode, so `git pull` + SIGHUP reloaded the *old* Prometheus config while logging success (routed to Plan 144); and the first alert expression false-paged in six minutes on a recovered container, fixed with `== bool`. **24h soak is the only open gate**; Stage 4 is gated behind it |
 | [141](plan_141_structured_log_ingestion_contract.md) | Structured log ingestion and dashboard contract | Draft — routed from Plan 135 closeout; parsing, labels, privacy policy, dashboards, and capacity soak not started |
 | [142](plan_142_planned_host_maintenance.md) | Planned host maintenance and production quiescence | Draft — separate maintenance intent, truthful drain, checked-in apt/reboot procedure, and Plan 140-gated resume not started |
 | [143](plan_143_analytics_serving_snapshot.md) | Analytics serving snapshot and reader consolidation | **Complete 2026-08-20** — PR #217 (`e5d3a46`) deployed the serving boundary; PR #218 (`a3cdd59`) corrected the Grafana ownership/cadence defects the first soak exposed. Corrected soak clean: 24 hourly publications, zero failed publishes, 3,580.9s worst-case freshness against a 4,500s threshold, zero lock conflicts, `/info` at 0.157s |
+| [145](plan_145_april_cutover_reconciliation.md) | Deleting the April cutover backlog without losing data | **Draft 2026-08-21 — gates 0a/0b/0c closed, 0d/0e open.** Supersedes Plans 132 and 137. Goal is deleting 1,299 legacy Parquet objects (13.79 GiB); recovery is loss minimisation. Verified against production: April holds 0 surviving `.html.zst` objects, the 42,276-orphan predicate reproduces exactly from 32 sidecars, and orphans read back byte-identically through the pack path. ~224,000 legacy captures have no observation — real, not a join artifact (73.4% match at 5s, flat to 600s) — but **no listing was lost**: 100.0% appear in silver, only 138 never do. Incident window is 2026-04-11 to 04-21, peaking on the 21st, which **disproves Plan 137's April 20-27 boundary**. **Gate 0f collapsed the plan from L to S**: only 270 of 355,845 unmatched captures sit inside an observed price change, so bulk recovery is dropped and Stage 3 recovers ~11,600 rows rather than ~224,000. Also established that `artifact_id` does not survive the cutover and must never be used as a cross-system join key, and surfaced a separate `detail/active` null-price parser gap (96,909 April rows) routed out of scope |
 | [144](plan_144_deploy_script_hardening.md) | Deploy script hardening | **Implemented 2026-08-20; one low-risk production deploy still owed.** `--no-deps`, a health gate whose timeout is derived from the slowest healthcheck in `docker-compose.yml` and checked in CI, an intent-release rule that splits build failure (release) from partial recreation (hold), a `--restart` path that restarts single-file bind mounts and verifies the loaded inode, and a warning for peers that cached a recreated service's address. The deny-list moved to `healthcheck-exemptions.txt` so the poller and `TestServiceHealthCoverage` read one list. Grew from three defects to five: Plan 140 Stage 2 added the inode trap, Plan 136 D6 added the cached-address trap |
 | [69](plan_69_terraform.md) | Terraform IaC | Draft — **moved from backlog to build-order row 13 on 2026-08-20** as a stated prerequisite of Plan 121. First slice is `terraform import` until `plan` shows no diff against production |
 
@@ -383,9 +398,16 @@ whole-host maintenance without granting application code reboot authority. Plan
 141 then makes log parsing and dashboard semantics a tested contract. Plan 134
 starts its warning-only observation window after 141 because
 enforcement depends on a week of trustworthy evidence. Plan 133 was that small,
-explicit prerequisite for Plan 132's packed artifact reparse and closed on
-2026-08-20; Plan 132 should prove the recovery path before Plan 137 reuses
-the same provenance and backfill safety at much larger scale. Plan 132 Stage 2
+explicit prerequisite for the packed artifact reparse and closed on 2026-08-20.
+**That reparse now belongs to Plan 145, which superseded Plans 132 and 137 on
+2026-08-21**, after verifying Plan 132's assumptions against production and
+finding that its 36,241 orphans are one of three populations left by the same
+April cutover — the largest being ~224,000 successful legacy captures with no
+observation. **Plan 145 states deletion as its goal rather than deferring it**,
+because splitting disposition into its own document is precisely what left Plan
+137 unscheduled, and because Plan 102 already demonstrated the failure mode:
+removing the only lifecycle rule bronze had and replacing it with nothing is the
+origin of the inode problem Plan 131 exists to solve. Plan 145 Stage 2
 also carries a measurement Plan 133 could not make: the verifier drops caches by
 design, so the `PACK_INDEX_CACHE_PACKS` 4-to-48 change is proven safe but not
 yet proven effective, and a month-sized sequential reparse is where that shows. Most Plan 138 work
