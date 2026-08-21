@@ -406,3 +406,107 @@ transitions in a window where Grafana recorded 51, 28 of 28 instances `Normal`.
 **Plan 136 Stage 2: splits.** Alert half green across 1,189 evaluations. Open
 question 2 unanswered and unanswerable in a day -- see the Stage 3 row in the
 closeout table above.
+
+---
+
+## Build-order commentary, to 2026-08-21
+
+Eighty-six lines of prose that sat directly under the build-order table. Nearly
+all of it argues an ordering that has since been settled by delivery -- Plan 140
+led Plan 136 and shipped, Plan 143 completed, Plan 139 Stages A+B left the
+table -- or restates blockers that are now columns in the table itself.
+
+> **One block below is wrong and is kept only as a record.** The Plan 141
+> paragraph says `ct-403-log-spike` notifies "between 03:00 and 08:00 UTC".
+> The Plan 140 soak's alert history disproved that on 2026-08-21: the rule
+> produced 49 of the 51 annotations on the whole instance, firing at 00:21 and
+> 16:21 as well, and flapping through the afternoon. It is **not diurnal**. The
+> mechanism it describes -- a bare substring match catching `403` inside UUIDs
+> and sha256 prefixes -- is accurate and now lives in Plan 141's build-order
+> row.
+
+**Plan [139](plan_139_test_suite_maintenance.md) occupies two rows rather than
+one**, because scoring it as a single plan (62) hid that its first two stages
+were two lines of YAML and a dev dependency. That argument paid off: **Stages
+A+B shipped 2026-08-18** (PR #213) and left the build order. The critical path
+is now a stable ~260s against a 333s baseline, and coverage reports on every run
+at 88% with no gate. Only the scheduling edge earned it — the pip-cache
+hypothesis was wrong and was reverted under Stage B's own verification rule.
+Stages C and D never had that argument and take their turn by score.
+
+The step that previously looked urgent — covering the 25%-covered analytics
+gauge module — first moved into Plan 136 Stage 1 and now belongs to **Plan 143**
+with the full producer redesign. It therefore appears in no Plan 139 row. Tests
+written against the old silent-stale behavior would encode exactly what Plan
+143 deletes, so they belong with the replacement producer and snapshot contract.
+
+Plan 136 Stage 4 is deliberately not part of the first slice: it grants restart
+authority and should start only after Stage 2's outcome counters have established
+a trustworthy baseline. Plan 134's observation window may run while Plan 136
+proceeds, but the endpoint-by-endpoint 500 rollout returns to this order when
+the evidence is ready.
+
+**Plan 140 led despite scoring 87 against Plan 136's 98, and that argument is
+now settled by delivery.** Plan 136's Stage 0b was to build a container-health
+metric and Plan 140 Stage 2 to generalize it — one set of files, one mental
+model — but reading 140 against the compose file settled it more sharply:
+**Docker reports no health status at all for a container without a
+healthcheck**, and only 7 of 31 services had one. A metric built at Stage 0b
+would have been blank for the other 24, and a service with no healthcheck would
+have been indistinguishable from a healthy one — 140's own words, that it
+"would have caught the apiserver incident and missed the solver incident."
+
+So 0b was never sequenced before 140; it **was** 140 Stage 2, and it landed
+strictly better there: three states rather than two, with `-1` making "no
+healthcheck configured" loud instead of absent. Stage 1's healthchecks shipped
+first, so the metric covered 27 of 28 services on the day it deployed, and the
+one it does not cover is *visible* rather than missing.
+
+**Plan 136 holds the top row on score but is not workable**: Plan 140's soak
+closed green on 2026-08-21, leaving only 140's gated Stage 4 outstanding there,
+while 136's own Stage 3 now waits on a decay signal its healthy soak did not
+contain. It also inherits `docker-socket-proxy` — Stage 2
+deliberately introduced the shape Plan 136 Stage 4 extends, so restart authority
+becomes one added verb on an existing read-only grant rather than a second
+socket path. Two smaller inheritances are worth naming because they were paid
+for by 140's deploy rather than assumed: `ct-service-down` now actually covers
+every scrape job, so any new exporter's liveness is watched by default; and the
+`== bool` lesson applies directly to Plan 136's own solver-outcome alerts, which
+are exactly the appear-and-disappear shape that false-paged here.
+
+**Plan 143 left the executable order after its 2026-08-18 production
+deployment and completed on 2026-08-20.** It preceded Plan 136's remaining Stage
+2 despite scoring 94 against 98 because shipping the gauge work locally inside
+Plan 136 would have created a serving boundary Plans 125 and 138 would both
+replace. Plan 136 returns to scraper-owned solver telemetry without carrying
+analytics-serving code, and Plans 125 Gate D and 138 now have a stable serving
+contract to consume rather than rebuild.
+
+**Plan 142 follows Plan 136 despite scoring 86 against Plan 141's 85.** This is
+dependency order, not an emergency ranking. Plan 140 has now supplied the
+resume gate — `cartracker_container_health` is the signal 142 resumes against,
+and its soak closed green on 2026-08-21 — and Plan 136 Stage 3 establishes the
+drain-aware safe-boundary pattern Plan 142 should reuse. Once those exist, host maintenance is recurring
+production safety work with a fully observed first-window failure record, so it
+belongs ahead of dashboard-contract cleanup. It remains below Plan 136 because
+there is no current unpatched emergency and no application endpoint should gain
+host package or reboot authority.
+
+**Plan 141 now has a live false positive to build its fixtures from.** The
+2026-08-20 watch-item check found `ct-403-log-spike` firing — the only rule not
+inactive — and notifying repeatedly between 03:00 and 08:00 UTC. Its expression
+is `count_over_time({service="scraper"} |= "403" [5m]) > 10`, a bare substring
+match against the whole JSON log line. It matches UUIDs and sha256 prefixes
+containing the digits `403` (`...ded709847403`, `a1fd40307748`), so Loki returns
+roughly 341 matching lines per hour drawn from ordinary INFO `write_html` and
+`scrape_detail_fetch` traffic. Actual 403 responses over the same period: **23
+in 12 hours**, against a healthy pipeline at 99.6% extraction yield and 2 block
+events per hour.
+
+This is precisely the defect Plan 141 exists to fix, and it argues for that
+plan's parsing work over its dashboard work: the logs are **already** structured
+JSON carrying a `level` field, so the alert should parse and match a real status
+field rather than grepping the raw line. It is also a reminder that alert noise
+is not only annoying — an operator who learns to ignore `ct-403-log-spike` is
+being trained to ignore the scraper's alert channel, which is the channel the
+2026-08-14 solver outage needed.
