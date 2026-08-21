@@ -654,3 +654,54 @@ diffed against the pre-move tree; the only differences are the ones below.
 Stage 3's prompt expected 4 unrecorded (5, 52, 55, 56); that was Stage 0's
 number, and Stage 2 recorded all four in the superseded table. The pre-move
 tree reports 0 as well, so nothing about the move changed it.
+
+---
+
+### The invariant becomes a test, 2026-08-21
+
+Plan 146 Stage 4. `tests/test_planning_docs.py` — 18 assertions, 0.11s, no
+deny-list. All seven rules held on the first run, so this stage froze a
+structure that was already correct rather than fixing data: no edit to
+`PLANS.md` or the archive was needed to make it pass.
+
+**Coverage keys on the plan number a document declares, not on its filename.**
+79 documents resolve to 73 numbers — Plan 125 has three documents, Plans 110,
+120 and 123 two each — so several documents legitimately share one row. The
+converse is deliberately *not* asserted: 61 table rows have no document, nearly
+all of them archive rows for plans finished before plan documents existed, and
+demanding a document for each would turn the record working into a test
+failure.
+
+`plan_v018_schema_migration.md` declares no number and contributes none. The
+exclusion is by **form** — an identifier that is not a decimal integer — never
+by filename, because a list of exempt filenames is the deny-list this test
+exists to avoid. A separate assertion checks that every document's name parses
+at all, so a file the parser cannot read fails loudly instead of vanishing from
+coverage.
+
+**Three archive `Plan` cell forms, and a fourth that yields nothing.** 22 of 108
+rows are not a plain integer. `62 + 63` parses as both plans, `14.1` as a
+sub-plan of 14, and `V029` / `Silver flush` as identifiers that name no plan.
+The fourth form is recognised only by *starting with a letter*, so `62 & 63`
+raises rather than silently counting as zero plans — silent dropping is how the
+old "Plan inventory" covered 30 of 72 documents and said nothing about the rest.
+
+**One parser bug the documents found.** Build-order row 4 quotes the LogQL
+fragment `\|= "403"`. Splitting cells on every `|` shifts that row one column
+left, which is exactly the class of misread this file is meant to prevent, so
+cells split on unescaped pipes only.
+
+**The dangling-link check follows link syntax, not filenames**, as Stage 3
+promised. Fenced blocks and code spans are stripped first, so the five
+documents that plans *propose* and nobody has written — `governance_inventory.md`
+and the rest — stay invisible to it, and so do the three references Stage 3
+broke by decision. 394 links resolve; a companion assertion fails if that count
+collapses, because a link checker that has stopped matching passes forever.
+
+Every one of the seven was broken deliberately in the working tree and confirmed
+to name its offender — the plan number, the row, or the file and target — then
+reverted. A structural assertion nobody has watched fail is not yet working.
+
+Stage 4's line-budget assertion reads the budget out of `PLANS.md` rather than
+holding its own copy. The number is an editorial decision and belongs where the
+editor is looking; the test only enforces what the document already says.
