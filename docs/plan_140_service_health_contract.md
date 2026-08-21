@@ -2,9 +2,9 @@
 
 ## Status
 
-**STAGES 1 AND 3 COMPLETE AND VERIFIED. STAGE 2 IS IMPLEMENTED AND VALIDATED
-AGAINST A REAL DOCKER DAEMON; ITS PRODUCTION DEPLOY AND SOAK ARE OWED** — see
-"As built" under Stage 2.
+**STAGES 1, 2 AND 3 COMPLETE AND VERIFIED. STAGE 2'S 24-HOUR SOAK CLOSED CLEAN
+ON 2026-08-21** — see [the Stage 2 soak record](#24-hour-soak-record--closed-clean-2026-08-21).
+Only Stage 4, the sensor demotion, remains.
 [PR #216](https://github.com/whitewalls86/new_car_tracker/pull/216) merged the
 implementation as `821a6a6`, adding eighteen healthchecks and taking configured
 coverage from 7 of 31 services to 25 of 31. The six remaining services are the
@@ -602,8 +602,50 @@ file. The per-container inspect is deliberate — `Health` only appears in the
 list endpoint at API v1.52 (Docker 29), and measurement showed the single
 richer call costs the same ~120ms, so version-robustness here is free.
 
-**Still owed:** production deploy, the fires-and-stays-quiet halves of the
-validation above against live series, and the soak.
+##### 24-hour soak record — closed clean 2026-08-21
+
+Read at 16:35 UTC, **21h 28m** into the window that began with the `== bool`
+correction at 2026-08-20 19:04 UTC. Called early by decision; the remaining
+2h 30m is noted rather than waited out, and nothing below is trending toward a
+change. Evidence is Grafana's own alert state-change history, not only a
+reconstruction from Prometheus.
+
+| Gate | Soak evidence |
+|---|---|
+| `ct-container-unhealthy` stays inactive | **Zero state-change annotations across the entire window.** Grafana recorded 51 alert transitions in 21h 28m and not one belongs to this rule. It reads `inactive`, 28 of 28 instances `Normal`, at the 16:33 evaluation |
+| Zero false pages | **Zero.** The rule never reached `Pending`, let alone `Alerting` |
+| Coverage stayed whole | 28 series at every one of 5,154 fifteen-second evaluations but one — see the limitation row below |
+| The exporter itself never faltered | `min(up{job="container-health"})` = **1** over the window; no failed scrape |
+| `oauth2-proxy` behaves as designed | `ct-container-health-unconfigured` went `Alerting` once at 19:08 and has held one instance since (`activeAt` 2026-08-20T19:08:00), the other 27 `Normal` |
+
+**Three containers read `0`, and that is the result rather than a blemish on
+it.** Each was a single 15-second sample:
+
+| Container | When | Samples at `0` |
+|---|---|---|
+| `scraper` | 08-20 20:42:45 | 1 (~15s) |
+| `processing` | 08-20 20:42:45 | 1 (~15s) |
+| `airflow-scheduler` | 08-20 21:12:15 | 1 (~15s) |
+
+The first two are the Plan 136 Stage 2 deploy recreating those containers. A
+starting container reporting `0` for one scrape is the metric being *correct*,
+and `for: 5m` is 20 samples wide — a 20× margin over the longest excursion the
+window produced. This is the distinction the soak existed to prove: the metric
+moves when Docker moves, and the alert does not.
+
+The pre-correction `flaresolverr` and `grafana` `0` readings (08-20 18:38–18:47)
+sit **before** the 19:04 baseline and are the original false-page incident
+already recorded above, not soak findings.
+
+**The known limitation reproduced live, exactly as written.** At 08-20 20:42:45
+the series count read **27, not 28**, for one evaluation: `dbt_runner` left the
+metric entirely while being recreated rather than reporting `0` (5,259 samples
+against 5,260 for `scraper` and `processing`). That is the removed-or-stopped
+gap documented in the section above, observed once, lasting 15 seconds, and
+caused by a deploy. It cost nothing here and it is still real — closing it
+remains Stage 4's expected-service set.
+
+**Still owed:** nothing for this stage. Stage 4 is separate.
 
 ### Stage 3 — CI asserts coverage — COMPLETE AND VERIFIED 2026-08-18
 
