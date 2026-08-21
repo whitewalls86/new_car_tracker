@@ -344,18 +344,42 @@ Fixed by the restart, confirmed: `airflow_pool_open_slots` and
 `airflow_dagrun_duration_success{dag_id="..."}` at the next DAG completion
 (21:15). Panels 4, 5 and 8 and `ct-pipeline-failures`'s input are live again.
 
-Not fixed, and owed:
+**The restart was incomplete, and the gap held for another day.** Only the
+scheduler was restarted. `airflow-dag-processor` (up since 04:58:36),
+`airflow-triggerer` (04:24:33) and `airflow-apiserver` (15:39:41) all predate
+the 17:03:06 exporter recreate and kept sending into the void until
+**2026-08-21 17:21**, when Plan 144's read-only sweep found them by comparing
+container start times against the exporter's.
+
+Their metrics were absent, not renamed: point-querying before the recreate as a
+known-good control returned `airflow_dag_processing_processes` = 3,416,623 and
+a present `airflow_triggers_running`, both of which had since gone to an empty
+vector. After
+`redeploy.sh --restart airflow-dag-processor airflow-triggerer airflow-apiserver`
+they read 18 and 0 respectively — a series again rather than nothing.
+
+Recorded in [Plan 144](plan_144_deploy_script_hardening.md); the lesson is that
+"restart the senders" is a *set* operation, and the set is every long-lived
+process inheriting `STATSD_HOST` from `x-airflow-common`, not the one whose
+panel someone happened to be looking at.
+
+Still owed:
 
 1. **`ct-pipeline-failures` must treat NoData as a failure.** For a metric that
    should always be present, `noDataState: OK` is the defect. Plan 143 already
    set this precedent with `ct-metrics-freshness`.
 2. **A staleness signal for the Airflow scrape**, since `up` cannot see this.
-3. **A deploy-time check for the class**, not this instance: recreating a
-   service can orphan long-lived senders. `promtail` and `postgres-exporter` are
-   worth auditing for the same exposure.
+   It read 1 throughout both the original outage and the extra day.
 
-Items 1-3 are the reason this is a defect and not just an incident log: the
-restart fixes today, and nothing yet would catch the next one.
+Item 3 — *a deploy-time check for the class* — **is done.** Plan 144 absorbed
+it: `deploy-followers.txt` names the services whose peers cache their address,
+and a recreate prints the entry with the exact restart command rather than
+leaving it to an operator's memory. `promtail` and `postgres-exporter` were
+audited and are not exposed: both talk TCP, so a recreated peer produces a
+visible connection error and they re-resolve. UDP is the whole hazard.
+
+Items 1-2 are why this is a defect and not just an incident log: the restart
+fixes today, and nothing yet would catch the next one *silently going*.
 
 ### Two older defects this investigation uncovered, which the restart did not fix
 

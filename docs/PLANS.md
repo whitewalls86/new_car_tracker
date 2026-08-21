@@ -283,6 +283,64 @@ identifier merely *contains* "403" is counted as a 403 response. That is Plan
 should capture all three label sets across a full day rather than one overnight
 window.
 
+## Workability audit -- 2026-08-21
+
+Every row below was checked against its stated blocker rather than its score.
+Three blockers had gone stale, and the table's **top row has no executable step
+until early September** -- which matters because the build order's own rule is
+"do not start a lower row merely because it is smaller while a higher row has
+an executable next step." That rule is vacuous while row 1 is un-startable, so
+it is written down here instead of rediscovered each time.
+
+### Workable today
+
+| Row | Plan | Slice | Note |
+|---:|---|---|---|
+| 2 | 142 | Stage 0 -- freeze the Ubuntu-update window as fixtures | **The recommendation.** Documentation and inventory; its Plan 140 health-coverage gate closed 2026-08-21, and Plan 144 hardened the script Stage 2 consumes |
+| 3 | 141 | Freeze log fixtures, fix `ct-403-log-spike` | The soak sharpened the target: 49 of 51 annotations, and the mechanism is an unanchored `\|= "403"` catching INFO lines from `shared.minio`. A parsing defect with a live reproduction |
+| 4 | 140 **Stage 4** | Demote `http_health_sensor` to a gate | **XS, and its blocker is gone.** Was gated on the Stage 2 soak, which closed green |
+| 6 | 145 | Stage 0d/0e, then the one backfill write path | 0a/0b/0c closed 2026-08-21. 0d is a genuine blocker *inside* the plan, not on it |
+| 7 | 138 | Public surface refresh | Plan 143 completed 2026-08-20, so its stats contract is available |
+| 11 | 69 | `terraform import` until `plan` shows no diff | Must land before row 12 |
+| 13 | 139 **C** | Profile the dbt step with `--durations=20` | Measurement only, CI-only |
+| -- | 136 | The `POST` verb on the socket proxy | Separable from the blocked observation window; see below |
+
+### Blocked, with the actual blocker
+
+| Row | Plan | Blocked on | Clears |
+|---:|---|---|---|
+| 1 | 136 **Stage 3** | A decay signal. `trawl` had 3d 13h uptime on 2026-08-21; the 2026-08-14 outage followed **22 days**, so a day-long window contains no decay to read | **~2026-09-09** |
+| 5 | 134 | Plan 141 (row 3) landing first, then a one-week observation window | Row 3 + 7d |
+| 8 | 125 | Gate C's two VM-scale failures still need local reproduction | Work, not waiting |
+| 9, 10 | 112, 113 | Plan 125 Iceberg-native inputs, then an approved 112 result | Chained behind row 8 |
+| 12 | 121 | Plan 69 (row 11) | Row 11 |
+| 14 | 119 | Stable Plan 125 catalog/reader contracts | Row 8 |
+| 15 | 139 **D** | "Several weeks" of Stage A coverage data; Stages A+B shipped 2026-08-18 | ~2026-09 |
+| 16, 17 | 126, 127 | Plans 125 and 112/113 | Chained behind row 8 |
+| -- | 130 | Plan 129's reversible options being exhausted | No trigger yet |
+
+**Row 8 is the only blocked row whose blocker is work rather than time**, which
+makes Plan 125 the row to pick if the calendar-bound ones are unappealing.
+
+### Not work -- bookkeeping owed
+
+Three watch-list rows say "record and move to completed" and have said so for a
+while: **114** (audit complete, storage rejected), **115** (bugfix deployed),
+**128** (phases 1-4 implemented). None needs design or code. They inflate the
+watch list and make it read as active surface.
+
+### Unmerged work not represented anywhere on this page
+
+| Branch | Commits | Last commit |
+|---|---:|---|
+| `feature/plan-125-portability-audit` | 17 | 2026-07-21 |
+| `plan-131-packed-cold-storage` | 1 | 2026-08-13 |
+
+The Plan 125 branch is a month old and is Gate C work -- the same Gate C that
+row 8 names as its next slice, so **whoever picks up row 8 should start there
+rather than from master**. The Plan 131 commit records the stale-image run and
+listing-rate variance against a plan the watch list already calls Complete.
+
 ## Default build order
 
 This is the default single-maintainer sequence. Do not start a lower row merely
@@ -290,10 +348,10 @@ because it is smaller while a higher row has an executable next step.
 
 | Order | Plan | Title | Next executable slice | Priority | Effort | Depends on / safe stopping point |
 |---:|---|---|---|---:|---|---|
-| 1 | [136](plan_136_solver_recycle_and_liveness.md) | Solver recycle and real liveness | **Stage 2 deployed 2026-08-20 (PR #223); its soak closed 2026-08-21 with the alert half green and open question 2 unanswered.** Next slice is still an *observation window, not code* — but a longer one than planned: the 24h baseline is flat and healthy, so the recycle interval has nothing to be chosen from until the rate bends or `trawl` nears the 22-day uptime that preceded the incident | 98 | M | Stage 0 verified; analytics freshness moved to Plan 143; 0b moved into Plan 140 Stage 2. **Still not workable** — Stage 3 needs a decay signal the healthy window did not contain, plus a `POST` verb on the socket proxy |
-| 2 | [142](plan_142_planned_host_maintenance.md) | Planned host maintenance and production quiescence | Freeze the successful Ubuntu-update window as fixtures, then build separate maintenance intent, truthful drain status, and the checked-in host procedure | 86 | M + first observed window | Reuse Plan 136 drain semantics; final resume gate requires soaked Plan 140 health coverage |
+| 1 | [136](plan_136_solver_recycle_and_liveness.md) | Solver recycle and real liveness | **Stage 2 deployed 2026-08-20 (PR #223); its soak closed 2026-08-21 with the alert half green and open question 2 unanswered.** Next slice is still an *observation window, not code* — but a longer one than planned: the 24h baseline is flat and healthy, so the recycle interval has nothing to be chosen from until the rate bends or `trawl` nears the 22-day uptime that preceded the incident | 98 | M | Stage 0 verified; analytics freshness moved to Plan 143; 0b moved into Plan 140 Stage 2. **Not workable until ~2026-09-09** — `trawl` had 3d 13h uptime at 2026-08-21 17:37 UTC and the outage that motivated Stage 3 followed **22 days**, so the decay this stage exists to measure cannot appear before early September. The `POST` verb on the socket proxy is separable and *is* workable now |
+| 2 | [142](plan_142_planned_host_maintenance.md) | Planned host maintenance and production quiescence | Freeze the successful Ubuntu-update window as fixtures, then build separate maintenance intent, truthful drain status, and the checked-in host procedure | 86 | M + first observed window | Reuse Plan 136 drain semantics. **Fully unblocked 2026-08-21** — the resume gate's requirement of soaked Plan 140 health coverage is now satisfied, and Plan 144 hardened the deploy script this plan's Stage 2 consumes |
 | 3 | [141](plan_141_structured_log_ingestion_contract.md) | Structured log ingestion and dashboard contract | Freeze production-derived fixtures and baseline, then align parsing, labels, filters, and dashboard selectors; fix `ct-403-log-spike` as the first case | 85 | S + 24h soak | Does not block Plan 136; should precede Plan 134's warning-log observation window. Has a live false-positive to work from: see below |
-| 4 | [140](plan_140_service_health_contract.md) **Stage 4** | Retire DAG sensors as the health signal | Demote `http_health_sensor` from notifier to gate, now that a stopped container pages on its own | 70 | XS | **Gated on the Stage 2 soak**, which is in the closeout table above. Stages 1-3 are deployed and verified. The `flaresolverr` fire test already showed the alert going Pending inside a minute, far ahead of any DAG run, so this is a demotion decision rather than new signal work � do not remove the sensors, they remain load-bearing for DAG correctness |
+| 4 | [140](plan_140_service_health_contract.md) **Stage 4** | Retire DAG sensors as the health signal | Demote `http_health_sensor` from notifier to gate, now that a stopped container pages on its own | 70 | XS | **Unblocked 2026-08-21** — the Stage 2 soak closed green and left the closeout table, which was this row's only gate. Stages 1-3 are deployed and verified. The `flaresolverr` fire test already showed the alert going Pending inside a minute, far ahead of any DAG run, so this is a demotion decision rather than new signal work � do not remove the sensors, they remain load-bearing for DAG correctness |
 | 5 | [134](plan_134_archiver_endpoint_failure_contract.md) | Archiver endpoint failure contract | Add warning-only failure predicates and begin the one-week observation window | 88 | S | Plan 141 first; one-week soak before enforcement; pause if real failures need repair |
 | 6 | [145](plan_145_april_cutover_reconciliation.md) | Deleting the April cutover backlog without losing data | Close Stage 0d (backdated-write safety, a blocker) and 0e, then build the one backfill write path | 84 | S | **Supersedes Plans 132 and 137.** Unblocked — Plan 133 deployed and verified. Gates 0a/0b/0c closed 2026-08-21. Goal is deletion of 1,299 legacy objects (13.79 GiB); recovery is loss minimisation, not the finish line. Stage 2 is also where `PACK_INDEX_CACHE_PACKS=48` gets its first effectiveness measurement |
 | 7 | [138](plan_138_public_surface_refresh.md) | Public surface refresh | Truth pass, public-root contract, accessible assets, Plan 143 stats presentation, and project-updates snapshot | 84 | L | Plan 143 supplies the stats contract; land before the next major platform milestone |

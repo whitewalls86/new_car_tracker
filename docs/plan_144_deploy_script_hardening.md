@@ -492,3 +492,39 @@ The six-second recovery is the sharpest number here. The old `sleep 10` would
 have waited four seconds too long *and* would have been wrong in the other
 direction for anything slower — it never observed the transition at all. What
 replaced it is not a better-tuned constant; it is a different kind of answer.
+
+**`redeploy.sh --restart airflow-dag-processor airflow-triggerer airflow-apiserver`**
+— defect 5's own fix, run through the tool that exists because of it.
+
+These three had been holding the dead `statsd-exporter` address since
+2026-08-18 17:03:06. The D6 restart caught only the scheduler, so they ran
+orphaned for another day; the read-only sweep found them by comparing container
+start times against the exporter's.
+
+```
+ Container cartracker-airflow-dag-processor  Restarting
+ Container cartracker-airflow-triggerer      Restarting
+ Container cartracker-airflow-apiserver      Restarting
+Waiting up to 300s for health: airflow-dag-processor airflow-triggerer airflow-apiserver
+  [2s] airflow-dag-processor=starting airflow-triggerer=starting airflow-apiserver=starting
+  [14s] airflow-dag-processor=starting airflow-apiserver=starting
+  All pollable services healthy after 19s.
+  No single-file bind mounts on these services; nothing to verify.
+```
+
+| Metric | Before | After |
+|---|---|---|
+| `airflow_dag_processing_processes` | empty vector | **18** |
+| `airflow_triggers_running` | absent | **0** — a series again, rather than nothing |
+| `airflow_scheduler_heartbeat` | 1,252 | 14,395 (already live) |
+
+`StartedAt` moved to 17:21:14-15 with all three container ids unchanged, and
+intent went `pending` → `none`. The `[14s]` line is the part worth keeping: the
+gate watched `triggerer` reach healthy while the other two were still starting,
+and held until all three arrived. A fixed sleep either returns early on the
+slowest or wastes the difference on the fastest; this is neither.
+
+Note what did *not* happen: no follower warning. Restart mode does not consult
+`deploy-followers.txt`, because restarting a *sender* orphans nobody — the
+address that moved was the exporter's, and it was not touched. The registry is
+for the other direction.
