@@ -2,7 +2,10 @@
 
 ## Status
 
-**Draft — not started.** Priority **74 (medium)**. Effort **S** (2-4 days).
+**Draft — not started.** Priority **74 (medium)**. Effort **M** (1-2 weeks).
+
+Effort was S before Stage 1 was added; a history sweep across 1,041 commits
+with a three-tier provenance rule is not a day's work.
 
 This plan is about the planning documents themselves. It exists because the
 2026-08-21 Plan 144 closeout could not answer *"is Plan 135 done?"* from the
@@ -125,7 +128,7 @@ is complete and free.
 5. **Cross-references key on plan numbers, never row ordinals.** Demonstrated
    while adding this plan: inserting one row at position 4 shifted fifteen rows
    and silently invalidated six `Blocked by` cells that said things like
-   `[Row 8]`. Plan numbers are stable; positions are not. Stage 2's test should
+   `[Row 8]`. Plan numbers are stable; positions are not. Stage 3's test should
    reject a reference that names a position.
 
 ## Stages
@@ -138,17 +141,59 @@ plan → true state → where the evidence is. **Plans 129, 131, 135, 130 and 11
 are the known disputes**; the sweep may find more, because nothing has ever
 checked.
 
-Do not skip to Stage 1. Restructuring on top of contradictory data preserves
-the contradictions in a tidier shape.
+Do not skip ahead. Restructuring on top of contradictory data preserves the
+contradictions in a tidier shape, and backfilling on top of them propagates
+them into the archive, where they become much harder to notice.
 
-### Stage 1 — Collapse to four tables
+### Stage 1 — Backfill the record from git *(mechanical)*
+
+Stage 0 settles what is *contradictory*. This settles what is *absent* — the
+completion dates, entry dates and archive rows that were never written down.
+The history is richer than expected, measured 2026-08-21:
+
+| Signal | Measurement |
+|---|---|
+| Commits | 1,041, of which **298 name a plan** and 221 are PR merges |
+| Per-plan dates | Every `docs/plan_NNN_*.md` yields a creation date and a last-touched date |
+| **State timeline** | Walking `PLANS.md`'s own history and recording which `##` section each plan sits in at each revision reconstructs its **transitions** |
+
+That last row is the useful one. Plan 135 — the plan declared complete in prose
+and recorded in neither completion record — resolves cleanly: git puts it in
+`Current closeout` at `b76fb44` (2026-08-17) and `8267e5c` (2026-08-18), which
+corroborates the 2026-08-18 date the prose asserts. The record was lost; the
+evidence was not.
+
+**Method.** For each revision of `PLANS.md`, parse section membership per plan
+number. Emit a per-plan timeline of `(date, state)` transitions. A plan's
+completion date is the commit where it entered Completed or the archive.
+Reconcile that against the plan document's own claimed dates, and write the
+missing archive rows.
+
+**The one rule this stage must not break: mark derived facts as derived.**
+Three tiers, and they must stay visually distinct in the output:
+
+1. **Observed** — a dated transition in `PLANS.md`'s history. A fact.
+2. **Corroborated** — a date the plan document claims *and* git supports, as
+   with Plan 135. A fact with two sources.
+3. **Inferred** — no transition was ever recorded, so the plan's last-touched
+   date is used as a proxy. **This is a guess**, and writing it unmarked would
+   manufacture history, which is a worse defect than the missing record it
+   replaces.
+
+Known limits, so the sweep is not mistaken for completeness. Conventional
+commit prefixes (`docs(plan-146)`) appear in only 11 commits and are recent, so
+message parsing is not a reliable signal — file history is. And the archive's
+oldest entries (Plans 0-7) predate plan documents entirely, so nothing can be
+backfilled for them; they stay as they are.
+
+### Stage 2 — Collapse to four tables
 
 Fold "Paused or blocked" into Backlog with a `Trigger` column. Delete the Plan
 inventory. Move `PLANS.md`'s "Completed" table into `completed_plans.md` and
 leave a link. Retire the watch list, routing its rows to closeout or archive
 per Stage 0. Add `Lands` and `Gate` columns to closeout.
 
-### Stage 2 — Make the invariant a test
+### Stage 3 — Make the invariant a test
 
 `tests/test_planning_docs.py`, in the shape this repo already uses for
 `TestServiceHealthCoverage` — a deny-list-free structural assertion:
@@ -160,12 +205,12 @@ per Stage 0. Add `Lands` and `Gate` columns to closeout.
 - every build-order row's `Blocked by` names a real row or a date
 - `PLANS.md` is under its stated line budget
 
-This is the stage that matters. Rules 1-4 above are conventions, and this
+This is the stage that matters. Rules 1-5 above are conventions, and this
 project's own history is that conventions without a failing test decay — that
 is why `TestServiceHealthCoverage` exists, and it is the same argument here.
 A CI failure is what makes a leak impossible rather than merely discouraged.
 
-### Stage 3 — A skill for the edits
+### Stage 4 — A skill for the edits
 
 Once the structure is fixed and tested, the routine operations are small and
 repetitive: move a plan between states, add a closeout row, archive a completed
@@ -174,7 +219,7 @@ and is exactly the kind of thing done inconsistently by hand.
 
 A `plans` skill should perform those transitions and nothing else. It writes
 **state, never prose** — it will not author a plan, summarise a result, or
-decide an order. Its correctness is defined by Stage 2's test passing after
+decide an order. Its correctness is defined by Stage 3's test passing after
 every operation it performs.
 
 Sequencing note: the skill comes **last on purpose.** A skill that automates a
@@ -189,11 +234,12 @@ structure still being argued about encodes the argument.
 | Table hygiene | Every row carries a date or trigger that would remove it |
 | Enforcement | The invariant is a CI test, not a convention |
 | `PLANS.md` size | Under its stated budget, and the budget is in the file |
-| Skill | Every transition it performs leaves Stage 2's test green |
+| Skill | Every transition it performs leaves Stage 3's test green |
+| Backfill | Every filled-in date is labelled observed, corroborated or inferred |
 
 ## Verification
 
-Stage 2's test is the verification — it either passes against the real docs or
+Stage 3's test is the verification — it either passes against the real docs or
 names the row that breaks it.
 
 One human check the test cannot make: hand someone the index cold and ask
