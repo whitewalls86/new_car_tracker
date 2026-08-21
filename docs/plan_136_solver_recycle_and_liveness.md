@@ -3,8 +3,14 @@
 ## Status
 
 **Stage 0 complete and verified in production 2026-08-18. Stage 2 deployed to
-production 2026-08-20 (PR #223, merge `50bba68`) and in its 24-hour soak until
-2026-08-21 ~20:42 UTC. Stages 3 and 4 not started.**
+production 2026-08-20 (PR #223, merge `50bba68`); its 24-hour soak closed on
+2026-08-21 — the alert half green, the shape half inconclusive by construction.
+Stages 3 and 4 not started.**
+
+The soak proved both new rules quiet and the counters healthy, but it **did not
+answer open question 2**: a healthy window contains no solver decay to read, so
+Stage 3's recycle interval still has nothing to be chosen from. See
+[the soak record](#24-hour-soak-record--2026-08-21).
 
 Stage 0 shipped as PR #214, merge `8b2254b`; see
 [Stage 0 production verification](#stage-0-production-verification-2026-08-18).
@@ -338,18 +344,42 @@ Fixed by the restart, confirmed: `airflow_pool_open_slots` and
 `airflow_dagrun_duration_success{dag_id="..."}` at the next DAG completion
 (21:15). Panels 4, 5 and 8 and `ct-pipeline-failures`'s input are live again.
 
-Not fixed, and owed:
+**The restart was incomplete, and the gap held for another day.** Only the
+scheduler was restarted. `airflow-dag-processor` (up since 04:58:36),
+`airflow-triggerer` (04:24:33) and `airflow-apiserver` (15:39:41) all predate
+the 17:03:06 exporter recreate and kept sending into the void until
+**2026-08-21 17:21**, when Plan 144's read-only sweep found them by comparing
+container start times against the exporter's.
+
+Their metrics were absent, not renamed: point-querying before the recreate as a
+known-good control returned `airflow_dag_processing_processes` = 3,416,623 and
+a present `airflow_triggers_running`, both of which had since gone to an empty
+vector. After
+`redeploy.sh --restart airflow-dag-processor airflow-triggerer airflow-apiserver`
+they read 18 and 0 respectively — a series again rather than nothing.
+
+Recorded in [Plan 144](plan_144_deploy_script_hardening.md); the lesson is that
+"restart the senders" is a *set* operation, and the set is every long-lived
+process inheriting `STATSD_HOST` from `x-airflow-common`, not the one whose
+panel someone happened to be looking at.
+
+Still owed:
 
 1. **`ct-pipeline-failures` must treat NoData as a failure.** For a metric that
    should always be present, `noDataState: OK` is the defect. Plan 143 already
    set this precedent with `ct-metrics-freshness`.
 2. **A staleness signal for the Airflow scrape**, since `up` cannot see this.
-3. **A deploy-time check for the class**, not this instance: recreating a
-   service can orphan long-lived senders. `promtail` and `postgres-exporter` are
-   worth auditing for the same exposure.
+   It read 1 throughout both the original outage and the extra day.
 
-Items 1-3 are the reason this is a defect and not just an incident log: the
-restart fixes today, and nothing yet would catch the next one.
+Item 3 — *a deploy-time check for the class* — **is done.** Plan 144 absorbed
+it: `deploy-followers.txt` names the services whose peers cache their address,
+and a recreate prints the entry with the exact restart command rather than
+leaving it to an operator's memory. `promtail` and `postgres-exporter` were
+audited and are not exposed: both talk TCP, so a recreated peer produces a
+visible connection error and they re-resolve. UDP is the whole hazard.
+
+Items 1-2 are why this is a defect and not just an incident log: the restart
+fixes today, and nothing yet would catch the next one *silently going*.
 
 ### Two older defects this investigation uncovered, which the restart did not fix
 
@@ -756,8 +786,66 @@ It also sizes both guards against reality: healthy non-`ok` solver volume is 0,
 well under `> bool 5`; and 457 fetches per cycle sits far above
 `ct-detail-fetch-failing`'s `> bool 20`.
 
-**Soak:** 24 hours to 2026-08-21 ~20:42 UTC — that both new rules stay inactive,
-and that the counters show enough shape to answer open question 2.
+#### 24-hour soak record — 2026-08-21
+
+Read at 16:35 UTC, **19h 50m** into the 24 hours from the 20:42 deploy. Called
+early by decision. The alert half is settled and the remaining 4h 10m cannot
+change it; the shape half is not settled, and as argued below a further four
+hours would not have settled it either.
+
+##### The alert half — green
+
+| Gate | Evidence |
+|---|---|
+| `ct-solver-not-solving` inactive | **1,189 range evaluations, never non-zero.** Grafana logged zero state-change annotations for it |
+| `ct-detail-fetch-failing` inactive | **1,189 range evaluations, never non-zero.** Zero annotations |
+| Exactly one series each | Both held a single series at every evaluation — the property the filtering form lacks, now observed across a full day rather than at one deploy-time reading |
+| Counters healthy throughout | Solver 48 `ok`, **0 `challenge`, 0 `error`**; detail 20,312 `ok`, 66 `403`, 4 `error` |
+| Scrape targets | 10 of 10 up |
+
+**The volume guard was exercised for real, not merely asserted.** In 14 of the
+238 five-minute checkpoints the 20-minute `ok` count was genuinely **0** — the
+overnight trough, 04:09–04:59 and 05:39–05:44 UTC. Every one of those windows
+also had a *total* detail volume of 0, so `> bool 20` held the rule quiet.
+**Zero windows cleared both conditions.** This is precisely the failure mode the
+plan predicted when it rejected `> 0` in favour of a volume threshold: "nothing
+succeeded" was trivially true of an idle scraper for the better part of an hour
+last night, and a `> 0` guard would have paged on it.
+
+The solver rate also came in where the caching constant said it would:
+
+| Window | `ok` solves/hour |
+|---|---|
+| last 21h | 2.29 |
+| last 10h | 2.40 |
+| last 5h | 2.20 |
+| last 1h | 3.01 |
+
+Against ~2.4/hour predicted from the 25-minute `_CF_SESSION_TTL`. The 21:02
+deploy-day reading of one bootstrap per 457 fetches was not a fluke of one
+cycle.
+
+##### The shape half — inconclusive, and not for want of waiting
+
+Open question 2 asks whether the solve rate **decays gradually or falls off a
+cliff**, because that choice sets Stage 3's recycle interval. The soak cannot
+answer it:
+
+- `trawl` has been up since 2026-08-18 04:28 UTC with **0 restarts** — about
+  3.5 days.
+- The 2026-08-14 outage followed **22 days** of uptime.
+- Across the whole window the rate is flat (2.2–3.0/hour, no trend) and
+  `challenge` and `error` are **0 at every hour**.
+
+A 24-hour window taken 3.5 days into a cycle whose known failure horizon is
+three weeks contains no decay signal to read. That is a property of the
+question, not a defect in the counters — the counters are working, and their
+flatness is the healthy baseline this plan wanted. **What it means is that
+Stage 3 must not pick a recycle interval yet.** The honest next step is an
+observation window measured in weeks, either until the rate visibly bends or
+until `trawl` approaches the 22-day mark that preceded the incident. Picking an
+interval now would be guessing with extra steps, which is the thing the plan
+explicitly told itself not to do.
 
 ## Stage 3 — Scheduled recycle
 

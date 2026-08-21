@@ -1,5 +1,22 @@
 # Plan 125: DuckDB to Iceberg Analytics Migration
 
+> **Gate C work in progress lives on a branch, not on `master`.**
+> `feature/plan-125-portability-audit` carries **17 commits** (last 2026-07-21)
+> that are not merged: the instrumented replay harness
+> (`scripts/gate_c_shadow_replay.py`), the scale harness
+> (`scripts/lakehouse_scale_harness.py`), their tests, and ~1,200 lines of
+> findings appended to this document — about 4,700 lines in total.
+>
+> That branch is where the first VM-scale shadow build's two failures were
+> chased: the OOM was **reproduced locally and characterised as a sizing
+> problem**, and the "skew is bounded" claim was scope-corrected. Anyone
+> picking up Gate C should start from that branch. Starting from `master`
+> means re-deriving a month of measurement that has already been done.
+>
+> Recorded 2026-08-21 during the Plan 144 build-order audit, because nothing
+> on `PLANS.md` pointed at it.
+
+
 ## Status
 
 **Draft.** This plan is the next major lakehouse step after the paused Plan
