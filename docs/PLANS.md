@@ -16,109 +16,19 @@ operational state. MinIO stores bronze HTML and analytical history. dbt
 currently runs on DuckDB against MinIO silver, but DuckDB is now considered a
 transition analytics endpoint rather than the future platform target.
 
-**Now:** Plan 120's final Gate F production verification is complete, and Plan
-139 Stages A+B have taken the CI path every plan below pays from 333s to a
-stable ~260s, with coverage now reported on every run. Plan 136 Stage 0 shipped
-and was **verified against production** on 2026-08-18 — Airflow itself reports
-the 20+20 pool, the shared anchor did not leak it to the other three services,
-and `ct-pipeline-failures` now renders exactly two named instances where it
-previously rendered a third reading `DAG [no value] failed`. Plan 140 Stage 3 is
-verified, Stage 1's 24-hour soak closed clean, and **Stage 2 deployed to
-production on 2026-08-20** (PRs #221 and #222). `cartracker_container_health`
-now publishes three states for all 28 running services — 27 healthy and one
-`-1` for `oauth2-proxy`, the documented distroless exception — from a dedicated
-exporter computing at scrape time behind `docker-socket-proxy`, and
-`ct-service-down` went from covering two of eight scrape jobs to all nine under
-an exact-set-equality test. A Service Health row opens the Infrastructure
-dashboard. **Its soak closed green on 2026-08-21 and Plan 140 is now complete
-through Stage 3.** The soak existed because the first deployed expression
-produced a false page in six minutes: a filtering comparison dropped the series
-when a container recovered, and Grafana's `reduce: last` kept the dead value
-alive for the rest of its 600s window. `== bool` fixed it, and the soak proved
-it — `ct-container-unhealthy` logged **zero state transitions** in a window
-where Grafana recorded 51, with 28 of 28 instances `Normal`. Three containers
-read `0` for exactly one 15-second sample each during deploys, against a
-`for: 5m` twenty samples wide, which is the metric tracking Docker correctly
-while the alert stays quiet. **Plan 143 is complete as of 2026-08-20.** PR #217 (merge
-`e5d3a46`) shipped the saved-SQL, post-build snapshot that makes `dbt_runner` the
-direct metrics owner while `ops` renders `/info` without opening DuckDB or using
-the transient artifact queue as freshness; PR #218 (merge `a3cdd59`) corrected
-the unscoped Grafana consumers and the 900-second threshold that the first soak
-exposed. The corrected soak recorded 24 hourly publications, no failed publish,
-a 3,580.9s worst-case freshness gap against the 4,500s threshold, zero DuckDB
-lock conflicts, and `/info` at 0.157s.
-**Plan 136 Stage 2 deployed to production on 2026-08-20** (PR #223, merge
-`50bba68`) — the solver-outcome counters, which are the layer no healthcheck can
-supply, because the solver was healthy for all eight hours. Prometheus now
-scrapes the scraper at all, which it never did before; all six outcome series
-published at `0` before any traffic, both new alert expressions returned exactly
-one series each, and `ct-container-unhealthy` stayed Normal across all 28
-instances through three container recreates — an unplanned live test of Plan
-140's `== bool` fix. The 21:00 build then closed D1's partial-hour defect for
-real — `data_through` reads 20:00 rather than 21:00, and the hourly observation
-count is 8,133 where the unfixed query would have published about one minute of
-data against a threshold of 100. **Its soak closed on 2026-08-21 split: both
-rules held across 1,189 evaluations with zero state transitions, and the volume
-guard was vindicated by real overnight data — 14 checkpoints where the 20-minute
-`ok` count was genuinely 0 and `> bool 20` correctly kept the rule silent where
-the rejected `> 0` form would have paged. But open question 2 went unanswered,
-because a healthy 24 hours taken 3.5 days into a cycle whose known failure
-horizon is 22 days contains no solver decay to read. Stage 3 still cannot choose
-its recycle interval, and now needs an observation window measured in weeks.**
-Two corrections came out of building it. The alert expression
-the plan specified was the same filtering-comparison shape that false-paged Plan
-140 six minutes after its deploy, so both new rules are written as `bool`
-products. And one rule cannot cover both solver failure modes: a *refusing*
-solver never caches credentials and so drives solver request volume **up**,
-while a *lying* solver caches normally for 25 minutes and moves that counter not
-at all — only its 403s on detail fetches show it. Hence
-`ct-solver-not-solving` (fast, solver counter) and `ct-detail-fetch-failing`
-(shape-independent, fetch counter). Stage 2 also closed D1's remaining half:
-the Plan 143 snapshot selected `MAX(hour)` from an hourly mart while the build
-runs at `0 * * * *`, so it published the in-progress hour as an hourly total —
-a manufactured drop under a threshold of 100, and the likely reason that alert
-fired forty minutes into the healthy recovery.
-**Stage 3 was deliberately left for a second change**: its recycle interval is
-chosen from what these counters show, and it needs a `POST` verb on the socket
-proxy that Plan 140 left read-only. **That is what takes Plan 136 out of the
-executable rows** — its next slice is an observation window, not code, so the
-top of the build order moves down to the rows that can be worked. The soak
-lengthened that window rather than ending it: the counters now have a *baseline*
-but not a *shape*, and the interval needs the shape.
-Only after that does Stage 4 get restart authority. It inherits the
-`docker-socket-proxy` Plan 140 Stage 2 introduced, so that authority is a
-single added verb on an existing grant rather than a second socket path. Plan 142 then
-turns the same drain and health primitives into a safe, explicit whole-host
-maintenance workflow. Plan 141 then makes the newly bounded log pipeline and
-its dashboards share one tested schema before Plan 134 begins its warning-log
-observation window. **Plan 133 deployed and verified on 2026-08-20** — 720
-artifacts read through the pack path across April-July with 0 failures — so the
-next data-integrity step is unblocked. **That step is now
-[Plan 145](plan_145_april_cutover_reconciliation.md), which superseded Plan 132
-on 2026-08-21.** Verifying Plan 132 against production found its own numbers
-intact but its surroundings changed — Plan 131's prune had already completed its
-Stage 4, and its proposed reparse would have corrupted live pricing state — and
-then found a third population behind it: ~224,600 successful April captures that
-exist only in the legacy Parquet, with no silver observation. Plan 145 replaces
-three plans' worth of separate recovery machinery with one ledger and one
-backfill write path.
-Plan 138 should land before the next major platform milestone, consuming rather
-than recreating Plan 143's public-stats cache. Plan 125 then resumes at its
-remaining Gate C production measurement and Gate D reader migration -- not at
-the already-proven early gates; Gate D swaps Plan 143's producer adapter rather
-than rebuilding its page and metric contracts.
-
-**Two incidents in four days (2026-08-14 solver, 2026-08-18 Airflow apiserver)
-were each found by a human noticing downstream damage, not by an alert.** That
-is why observability work occupies the top of this order. Plan 136 covers the two
+**Why observability sits at the top of the build order.** Two incidents in four
+days -- 2026-08-14 solver, 2026-08-18 Airflow apiserver -- were each found by a
+human noticing downstream damage, not by an alert. Plan 136 covers the two
 components that actually failed; Plan 140 covers the other twenty-four before
-they do.
+they do. Plan 140 is complete through Stage 3, Plan 144 hardened the deploy path
+that touches all of them, and Plan 136 Stage 3 is waiting on a decay signal --
+see the closeout table below.
 
-Plan 112 remains intentionally paused until Plan 125 supplies stable
-Iceberg-native inputs. Plans 114, 115, and 128 have completed their intended
-work and no longer belong in the executable queue. Plans 124 and 131 closed out
-2026-08-18, as did Plan 120's final Gate F production verification. Plan 129
-is a production system under rollout rather than a new build.
+**This section describes the system, not what happened to it.** For what shipped
+when, see each plan's own document and the
+[decision log](plans_decision_log.md). For what to pick up next, see the
+[workability audit](#workability-audit----2026-08-21).
+
 
 ---
 
