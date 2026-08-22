@@ -1,6 +1,6 @@
 ---
 name: plans
-description: Perform a state transition in this repo's planning index — move a plan between the backlog, build order, closeout and superseded tables in docs/PLANS.md, add a closeout row, archive a completed plan into docs/planning/completed_plans.md, or transcribe a soak result the user supplies. Use when the user asks to move, promote, start, close out, archive, supersede, or otherwise re-file a plan's state. This skill writes state and never prose: it does not author a title, gate, trigger or summary, does not choose a priority or a build-order position, and does not decide that a gate has closed.
+description: Perform a state transition in this repo's planning index — move a plan between the backlog, build order, closeout and superseded tables in docs/PLANS.md, add a closeout row, archive a completed plan into docs/planning/completed_plans.md, or transcribe a soak result the user supplies. Use when the user asks to move, promote, start, close out, archive, supersede, or otherwise re-file a plan's state. This skill writes state and never prose: every title, gate, trigger, date and description arrives from outside it — supplied by the user, or reasoned out and approved before this skill runs — and it does not author one mid-transition, choose a priority or a build-order position, or decide that a gate has closed.
 ---
 
 # Moving a plan between states
@@ -17,16 +17,40 @@ You place values. You do not compose them.
 
 | You do | The user does |
 |---|---|
-| find the row, remove it, write it into the destination's columns | supply the title, gate, trigger, `Lands` date, description, superseding plan |
+| find the row, remove it, write it into the destination's columns | supply — or approve, before this skill runs — the title, gate, trigger, `Lands` date, description, superseding plan |
 | renumber `Order` after an insert at a named position | name the position |
 | update the archive's row count in the index | decide the gate has closed |
-| report what has no status marker, or what does not add up | write every sentence that ends up in a file |
+| record where each authored value came from | approve every sentence that ends up in a file |
+| report what has no status marker, or what does not add up | reject a proposal on its evidence |
 
-If an operation needs a sentence you would have to write, **stop and ask for
-it.** Do not draft one for approval either — an approved draft is still your
-sentence, and Plan 146 Stage 6 exists precisely so that summarising work and
-moving rows stay in different hands. A tool that does both can move a row
-because its own summary said so.
+If an operation needs a sentence you do not have, **stop and ask for it.** You
+never derive one mid-transition — not from the plan document, not from the
+commits, not from what the last row said.
+
+**A value may reach you two ways, and you record which.** Either the user
+supplied it directly, or it was reasoned out and proposed *in the open session
+before this skill was invoked* and the user approved it. Both are explicit
+values arriving from outside; neither is you writing a sentence while moving a
+row.
+
+That distinction is the whole of it, and it is narrower than it looks. What
+Plan 146 Stage 6 separates is **one tool doing both** — a thing that summarises
+work and moves rows can move a row because its own summary said so, and the
+record then confirms itself. Reasoning that happens in front of the user, gets
+argued with, and is approved before any file is touched is not that. The
+approval is a real decision point with the evidence on screen.
+
+So it stays out of this skill. **Do not propose a gate, a trigger or a
+description from inside an operation** — that is the shape the rule forbids,
+because a proposal made mid-write is one the user reads as a formality. If you
+find yourself needing a value you were not given, stop, leave the files alone,
+and do the reasoning outside.
+
+A proposal that arrives here should carry **where each value came from** — the
+plan document section, the commit, the measurement. A gate you can trace is one
+the user can reject on the evidence; a plausible sentence is one they can only
+rubber-stamp. In your report, say of every authored value whether it was
+supplied verbatim or approved from a proposal, and name the source.
 
 Never emit a provenance label — `*(observed)*`, `*(corroborated)*`,
 `*(inferred)*`. Those mark dates Stage 1 reconstructed from git history. A date
@@ -40,7 +64,7 @@ applying a provenance label to it devalues every genuine one.
 | `docs/PLANS.md` | closeout, build order, backlog, superseded — four tables, one index |
 | `docs/planning/completed_plans.md` | the archive. Newest first, **prepend-only**, one row per plan |
 | `docs/plans/plan_NNN_*.md` | the plan's own document, and the authority when it and the index disagree |
-| `tests/test_planning_docs.py` | what "correct" means. 27 assertions, ~0.1s |
+| `tests/test_planning_docs.py` | what "correct" means. 33 assertions, ~0.2s |
 | `docs/planning/plans_decision_log.md` | narrative. You do not write here; the user may |
 
 ## Splice, never reflow
@@ -185,11 +209,17 @@ merging them in would make the archive claim work that never happened.
 The plan lists this as an operation and forbids what it requires: a soak result
 is a summary, and this skill does not summarise.
 
-**What it does instead: the user writes the sentence, you move the row.** Ask
-for the result verbatim, transcribe it exactly, and perform the state change
-that follows — usually closeout → archive. If the user has not given you the
-text, stop and ask. Do not read logs, dashboards or metrics and write up what
-you found; that is Stage 6's `plan-week` skill and it is separate on purpose.
+**What it does instead: the sentence arrives, you move the row.** Transcribe
+it exactly and perform the state change that follows — usually closeout →
+archive. If you have not been given the text, stop and ask.
+
+A soak result is the case where the two-ways rule is most easily abused, so it
+is narrowest here. **Never read logs, dashboards or metrics and write up what
+you found** — that is Stage 6's `plan-week` skill and it is separate on
+purpose. A soak result approved from a proposal must have been reasoned from
+evidence the user could see, and the row records which run it came from. "The
+soak passed" with no run behind it is the sentence this operation exists to
+refuse, whoever typed it.
 
 You also do not decide the gate has closed. The user says it has.
 
@@ -253,8 +283,10 @@ is prose. Do not add it.
 
 - **decide an order.** Insert where told; never choose a priority, an effort,
   or a build-order position.
-- **author or summarise.** Titles, gates, triggers, descriptions and soak
-  results come from the user.
+- **author or summarise mid-transition.** Titles, gates, triggers,
+  descriptions and soak results arrive from outside — supplied by the user, or
+  approved by them before this skill runs. Needing one you do not have is a
+  stop, never a draft.
 - **edit plan document content** beyond the status marker above.
 - **grow a list of special cases.** If a plan seems to need an exception, the
   structure is wrong. That is the argument `tests/test_planning_docs.py` is

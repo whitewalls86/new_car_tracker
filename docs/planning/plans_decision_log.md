@@ -1087,3 +1087,64 @@ to a real commit, because a commit that exists keeps existing.
 108 rows, `--coverage` still reports 3 never-used numbers (44, 85, 104) and 0
 unrecorded. Stage 6 touched no table, no plan document and no archive row —
 `git status` after the first real run showed only `docs/recaps/2026-08-16.md`.
+
+---
+
+### Where an authored value may come from, 2026-08-21
+
+Maintainer's decision, taken after Stage 6 landed. It refines the Stage 5
+boundary above rather than reversing it, and **the plan document needs no
+correction**: `plan_146_planning_system.md` says the `plans` skill *"will not
+author a plan, summarise a result, or decide an order"*, and that is still
+exactly true.
+
+The question was whether the skill should carry sensible defaults for the
+values it refuses to invent — a gate, a trigger, a `Lands` date, an archive
+description. The answer is no, and the reason is the one Stage 5 measured:
+Plan 123 sat in closeout from 2026-07-10 for six weeks because its row had a
+date and nothing that could close it. A defaulted gate is that row with more
+words.
+
+**What changed is where an approved value is allowed to come from.** Stage 5
+wrote *"Do not draft one for approval either — an approved draft is still your
+sentence"*, which forbade the workflow the maintainer actually wants: the
+reasoning happens **in the open session, before the skill is invoked**, the
+proposal is argued with, and only an approved value is passed in.
+
+That is not the shape Stage 6 separates. The hazard there is **one tool doing
+both** — a thing that summarises work and moves rows can move a row because its
+own summary said so, and the record then confirms itself. A proposal made in
+front of the maintainer, with its evidence on screen, that they can reject
+before any file is touched, is a decision point rather than a self-confirming
+one. A proposal made *mid-write*, inside an operation that is already editing
+files, is the forbidden shape — it reads as a formality, and the skill still
+refuses it explicitly.
+
+Two things keep the distinction from eroding into a rubber stamp:
+
+- **A proposal carries where each value came from** — the plan document
+  section, the commit, the measurement. A gate that can be traced is one that
+  can be rejected on its evidence; a merely plausible sentence can only be
+  waved through.
+- **The skill records which way each value arrived**, supplied verbatim or
+  approved from a proposal, and names the source in its report.
+
+The soak-result operation stays narrowest, because it is where this is easiest
+to abuse. Reading logs or dashboards and writing up what you found is still
+forbidden outright — that is `plan-week`'s job and the separation is the point.
+*"The soak passed"* with no run behind it is the sentence that operation exists
+to refuse, whoever typed it.
+
+**Exercised immediately, on Plan 146 itself.** Build order row 1 → closeout,
+`Lands` **2026-09-14**, with a gate that names four consecutive weeks recapped
+on the habit rather than in a backfill, plus one real archive performed on a
+plan other than 146. Both criteria were reasoned out in session, proposed
+against three alternatives, and approved before the skill ran. Closeout rather
+than archive because no code is owed but the habit is unobserved: the `plans`
+skill has performed one real transition and two reverted rehearsals, and
+`plan-week` has recapped one real week and two near-empty backfills. Archiving
+now would assert a habit nobody has watched.
+
+The diff was one row leaving the build order, one row arriving in closeout, 17
+renumbered `Order` cells and one status marker — nothing reflowed, and
+`PLANS.md` unchanged at 169 lines.
