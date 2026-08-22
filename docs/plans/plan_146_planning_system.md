@@ -291,10 +291,21 @@ attribute** rather than dropping them. An unattributed commit is the summary's
 version of a table row with no exit condition: invisible, and therefore
 permanent.
 
-Output is a dated entry appended to the decision log, not a new surface. It
-records what shipped, what moved between states, and what is still owed --
-and, like every other row this plan touches, distinguishes what it observed
-from what it guessed.
+Output is **one file per week in `docs/recaps/`**, named for the window's end
+date. A week runs **Monday to Sunday** and the skill recaps only the **last
+complete week**: a run on Friday 2026-08-21 writes `docs/recaps/2026-08-16.md`
+and leaves the intervening days for the next run. Each recap records what
+shipped, what moved between states, what is still owed, **what it could not
+attribute**, and how many commits fall after its window — and, like every other
+row this plan touches, distinguishes what it observed from what it guessed.
+
+**This supersedes an earlier decision to append to the decision log**, set
+2026-08-21 after Stage 5. The log holds decisions; recaps hold events, and one
+week described in two places is exactly the duplication this plan removes.
+`recaps/` encodes kind rather than state, so it follows Stage 3's rule. The
+deferral is the point of the shape: a run mid-week leaves days unrecapped on
+purpose, and naming the file for the window's end makes that visible on the
+filesystem instead of only in prose.
 
 Sequencing: after Stage 5, because it reads the structure Stages 2-4 settle,
 and because the state transitions it reports are the ones Stage 5 performs.

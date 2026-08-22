@@ -857,3 +857,53 @@ have three columns and `|---|---|---|` therefore appears twice in `PLANS.md`.
 None of the Stage 4 measurements moved: `PLANS.md` is 169 lines of its 250
 budget, the archive holds 108 rows, and `--coverage` still reports 3 never-used
 numbers (44, 85, 104) and 0 unrecorded.
+
+---
+
+### Recaps get their own directory, and weeks run Monday to Sunday, 2026-08-21
+
+Maintainer's decision, taken while Stage 6's prompt was being written and
+recorded here because it **overrides the plan document as written**.
+`plan_146_planning_system.md` has been corrected to match; it is the authority
+and this entry is the reasoning behind the change, not a second copy of it.
+
+**Stage 6's output moves out of this file.** The plan said the weekly summary
+would be *"a dated entry appended to the decision log, not a new surface."* It
+now goes to **`docs/recaps/`, one file per week**, named for the window's end
+date.
+
+The original reasoning was sound — a new surface is what Plan 146 spent four
+stages deleting — but it applied the rule to the wrong axis. What this plan
+forbids is **two surfaces asserting the same fact**, and a recap and a decision
+are not the same fact. The log answers *why a choice was made*; a recap answers
+*what happened that week*. Merging them means this file accretes an event
+stream on top of its argument, which is how `PLANS.md` reached 683 lines: a
+paragraph of history per departed row, none of it wrong, none of it removable.
+So recaps go to `recaps/` **only** — no pointer entry here, because a pointer
+would be the duplication under a shorter name.
+
+`recaps/` encodes kind rather than state, so Stage 3's directory rule holds, and
+Stage 4's dangling-link check covers the new directory for free the moment it
+exists.
+
+**One file per week rather than one growing log.** The alternative — a single
+appended file — is the shape `PLANS.md` had before Stage 2, a surface with no
+eviction rule. A week is a natural closed unit: it ends, nothing amends it, and
+the filenames sort.
+
+**Weeks run Monday to Sunday, and only complete weeks are recapped.** Run the
+skill on Friday 2026-08-21 and it recaps Monday 2026-08-10 through Sunday
+2026-08-16, leaving five days for the next run.
+
+That deferral is deliberate and it is also the shape's one hazard, which is why
+it is written down here. Measured on 2026-08-21: **55 commits inside the
+window, 114 after it.** The tail is twice the window. A recap that ignores 114
+commits without saying so is indistinguishable from one that lost them, which
+is the same defect as an unattributed commit one level up — so the recap states
+its window and its deferred count, and the file is named for the window's end
+so the gap shows on the filesystem rather than only in prose.
+
+The second hazard is a missed week. One file per week plus last-complete-week
+only means a fortnight's silence leaves a hole nothing announces, so the skill
+reads `docs/recaps/` before writing and either fills each missing week in turn
+or names them and stops.
