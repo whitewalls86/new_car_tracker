@@ -95,53 +95,87 @@ instead.
 
 ## The sharp edge that decides this stage
 
-**The plan prescribes an attribution method that measurement shows does not
-work, and credits a tool that does not implement it.**
+**Read the history. Do not fingerprint it.**
 
-The plan says the skill needs *"the same layered attribution
-`audit_plan_state_history.py` uses — subject, then branch name, then the plan
-documents touched by the diff."* Two problems, both checkable:
+The plan frames attribution as *"the whole difficulty"* and prescribes a layered
+string heuristic: *"the same layered attribution `audit_plan_state_history.py`
+uses — subject, then branch name, then the plan documents touched by the
+diff."* Every part of that is wrong, and the measurements say so.
 
-**1. The script does not do this.** `mentioned_numbers()` reads commit
-*subjects* only. `ever_mentioned()` reads subjects, bodies, every revision of
-the index and the current contents of `docs/` — but it answers *"was this plan
-number ever real?"*, which is a different question from *"which plan does this
-commit belong to?"*. There is no layered attributor in the repo to reuse. You
-are building it, not borrowing it.
+**The script has no layered attributor to reuse.** `mentioned_numbers()` reads
+commit *subjects* only. `ever_mentioned()` reads subjects, bodies, index history
+and the contents of `docs/` — but it answers *"was this plan number ever
+real?"*, which is a different question from *"what happened this week?"*.
 
-**2. The diff layer contributes nothing.** Measured over the last 30 days:
+**The diff layer contributes nothing.** Over the last 30 days, 170 commits:
 
-| Layer | Commits it attributes | Running total of 170 |
+| Layer | Attributes | Running total |
 |---|---:|---:|
 | commit subject names a plan | 146 | 146 |
 | commit **body** names a plan | +6 | 152 |
-| **containing branch** names a plan | +18 | **170** |
+| containing branch names a plan | +18 | 170 |
 | plan documents touched by the diff | **+0** | 170 |
 
-**Zero.** Work commits touch code, not plan documents — `2cfdb73` changed 24
-files and not one was under `docs/plans/`. The layer the plan names third is
-the layer that finds nothing, and the layer it names second is the one that
-closes the gap to zero.
+Zero. Work commits touch code, not plan documents — `2cfdb73` changed 24 files
+and not one was under `docs/plans/`.
 
-Re-derive it before you trust it:
+**And the branch layer evaporates.** All 18 commits it rescues are also on
+`master`; `git branch --contains` finds them only because their plan-named
+branches still exist among this repo's 76 refs. Delete those branches — which
+merging is supposed to do — and the layer returns nothing. The same window
+recapped today yields 0 unattributed and in three months yields 18.
+
+### So read the commits instead, and here is what that costs
+
+Measured on the real window, 2026-08-10 to 08-16, 42 non-merge commits:
+
+| What you read | Tokens | Verdict |
+|---|---:|---|
+| subjects only | **~0.9k** | what the heuristic sees. Too thin to write from |
+| subjects + `--stat` | ~3.5k | adds every file touched and its +/- |
+| subjects + **bodies** | ~15.5k | adds the author's own rationale |
+| **subjects + bodies + `--stat`** | **~19k** | **this is the tier to build on** |
+| full patches | ~262k | 300x, and ~106k of it is markdown |
+| full patches, code only | ~162k | still does not fit a busy week |
+
+**~19k tokens for a week is nothing, and it is genuinely reading the history
+rather than pattern-matching metadata.** It carries the author's stated
+rationale and the shape of every change. Full patches are ~262k for a quiet
+week and roughly double for a busy one — that is the thing that does not scale,
+and note that 106k of it is markdown, which is this plan's own documents being
+re-read at enormous cost.
+
+### The reframe that follows
+
+**Attribution is for linking to the *why*, not for knowing what happened.** The
+plan treats a plan number as a prerequisite for recapping a commit. It is not.
+`fix(tests): read counters outside the builtins.open patch` needs no plan
+number to be recapped accurately — the subject and its `--stat` say what it
+did. A plan number buys one specific thing: the right to open
+`docs/plans/plan_NNN_*.md` and say *why the work mattered*.
+
+So:
+
+- **Read subjects, bodies and `--stat` for the whole window.** That is the
+  source of record, it is durable, and it does not care whether a branch still
+  exists.
+- **Attribute where the text says so** — 86% of subjects do it unaided, and
+  bodies add more. Take the branch name as a *hint* if it is there, but never
+  depend on it, and never treat its absence as a failure.
+- **Escalate to a full diff only for a specific commit you genuinely cannot
+  read**, and treat it as an escalation with a cost. In this window the two
+  subject-unattributed commits cost **~15.5k tokens** between them, so
+  "just pull the diff for the unclear ones" is not automatically cheap.
+- **A commit with no plan is recapped anyway**, under what it actually did. It
+  is listed as unattributed because the link to a *why* is missing — not
+  because the work is.
+
+Re-derive any of this before you trust it:
 
 ```bash
-git log --all --since='30 days ago' --pretty='%H%x01%s' | wc -l
-git log --all --since='30 days ago' --pretty=%s | grep -icE '\bplan[ _-]?[0-9]{1,3}\b'
+git log --all --since='2026-08-10 00:00:00' --until='2026-08-16 23:59:59' \
+        --no-merges --pretty='%h %ad %s%n%b' --date=short --stat | wc -c
 ```
-
-### And the layer that works has a shelf life
-
-All 18 commits the branch layer rescues **are also on `master`**. `git branch
---contains` finds them only because their plan-named branches still exist among
-this repo's 76 refs. Delete those branches — which merging is supposed to do —
-and `--contains` returns `master` alone and the layer returns nothing.
-
-So the same window recapped today yields **0 unattributed** and recapped in
-three months yields **18**. That is not a bug you can fix; branch names are not
-durable history. It is a property you must design around, and the honest
-design is that **a recap records its attribution at the time it was written**
-and is never silently regenerated. Decide this in writing.
 
 ## The other edges, measured
 
@@ -159,6 +193,13 @@ the other 42.
 
 So the unattributed list is a **required section**, present even when empty,
 and it names shas and subjects rather than a count.
+
+Read it together with the reframe above: **unattributed does not mean
+unreported.** A commit with no plan number is still recapped under what it did.
+What the list records is that the link to a *why* is missing — a reader who
+wants the rationale for that change has nowhere to go, and that is worth
+knowing. A recap that omitted the work entirely would be a different and worse
+thing.
 
 ### 2. Merges double-count, and the lifetime figure understates the present
 
