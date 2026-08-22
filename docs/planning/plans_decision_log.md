@@ -907,3 +907,183 @@ The second hazard is a missed week. One file per week plus last-complete-week
 only means a fortnight's silence leaves a hole nothing announces, so the skill
 reads `docs/recaps/` before writing and either fills each missing week in turn
 or names them and stops.
+
+---
+
+### A skill for the recap, and reading the history instead of fingerprinting it, 2026-08-21
+
+Plan 146 Stage 6, the last stage. `.claude/skills/plan-week/SKILL.md` writes
+`docs/recaps/YYYY-MM-DD.md` and nothing else; `tests/test_planning_docs.py`
+grew from 27 assertions to 33. The first real recap,
+[2026-08-16](../recaps/2026-08-16.md), covers 55 commits.
+
+The plan document specified this stage's shape and the entry above settled its
+output. What follows is the two questions neither answered — how a commit gets
+attributed, and what happens when a recap already exists — plus one assertion
+deliberately not written.
+
+#### The plan's attribution design is wrong, and measurement says so
+
+`plan_146_planning_system.md` calls the mapping problem *"the whole
+difficulty"* and prescribes *"the same layered attribution
+`audit_plan_state_history.py` uses — subject, then branch name, then the plan
+documents touched by the diff."* Every clause of that failed a measurement.
+
+**There is no layered attributor in that script to reuse.**
+`mentioned_numbers()` reads subjects only. `ever_mentioned()` reads subjects,
+bodies, index history and the contents of `docs/` — but it answers *"was this
+plan number ever real?"*, which is a different question from *"what happened
+this week?"*.
+
+**The diff layer contributes nothing.** Over the 30 days to 2026-08-21, 170
+commits: subjects attribute 146, bodies add 6, the containing branch adds 18,
+and plan documents touched by the diff add **zero**. Work commits touch code,
+not plan documents — `2cbb7c3` changed 24 files and none was under
+`docs/plans/`.
+
+**And the branch layer evaporates.** All 18 commits it rescues are also on
+`master`; `git branch --contains` finds them only because their plan-named
+branches are still among this repo's 80 refs. Deleting a branch is what merging
+is supposed to do, so the same window recapped today yields 0 unattributed and
+in three months yields 18. A signal that decays on tidying up is not a signal.
+
+The plan's own figure — *"conventional prefixes cover 11 commits of 1,041, and
+subject-line mentions cover 298"* — is a **lifetime** number, measured before
+the convention took hold. Over the last 30 days subjects alone reach **146 of
+170, 86%**, and inside the recapped week **40 of 42 non-merge commits, 95%**.
+Building to the 29% figure would build for a repo that no longer exists.
+
+#### So the skill reads the commits, and the cost was measured before choosing
+
+On the real window, 2026-08-10 to 08-16, 42 non-merge commits:
+
+| What is read | Tokens |
+|---|---:|
+| subjects only | ~0.9k |
+| subjects + `--stat` | ~3.5k |
+| subjects + bodies | ~15.5k |
+| **subjects + bodies + `--stat`** | **~19k** |
+| full patches | ~262k |
+| full patches, code only | ~162k |
+
+The chosen tier is the fourth. It carries the author's stated rationale and the
+shape of every change, it is genuinely reading the history rather than
+pattern-matching metadata, and unlike a branch name it does not evaporate. Full
+patches are 300x for a quiet week and about **106k of that is markdown** —
+this plan's own documents being re-read at enormous cost.
+
+#### The reframe: attribution links to the *why*, it does not decide what happened
+
+This is the part that was backwards. **A plan number is not a prerequisite for
+recapping a commit.** `Make two CLI path assertions platform-independent` needs
+none; its subject and `--stat` say what it did. A plan number buys exactly one
+thing — the right to open `docs/plans/plan_NNN_*.md` and say why the work
+mattered.
+
+So the rule is two lines long: **the subject, then the body, and stop.** A
+branch name is a hint that may confirm a reading and never a dependency, and
+its absence is not a failure. An unattributed commit is recapped anyway, under
+what it did, and *also* named in a required section — what is missing is the
+link to a why, not the work.
+
+Both of the recapped week's unattributed commits argue for the rule. `820c944`
+says in its own body *"Unrelated to Plan 131"*, which is an answer rather than a
+gap. `a80b123` — `emergency commit to try and free space` — has no body at all,
+and the next commit `9f078c6` records the notes for it by sha. That is real
+evidence and the recap quotes it, but it does not attribute the commit: one
+commit's testimony about another is how a list of special cases starts.
+
+#### Merges are counted and named, never recapped
+
+Thirteen of the window's 55 commits are merges, 232 of the repo's 1,082. A
+merge and the commits it brings in are the same work counted twice — and
+`Merge pull request #192 from user/plan-131-stage-3` attributes perfectly by
+subject, which makes merges simultaneously the easiest thing to attribute and
+the most misleading thing to count.
+
+Decided: **the work sections cover non-merge commits; a `## Merges` section
+names every merge with its sha and PR** so the denominator still reconciles to
+55. The tempting stronger claim — that a merge only ever brings in-window work
+— was checked and is false: the window's thirteen merges bring 43 commits, the
+42 in-window non-merges plus `8cab72a` from 2026-08-08, which `788bb33` carried
+in from the previous week.
+
+#### The window is pinned to one clock, and stated in the file
+
+`git log --since/--until` reads author dates in local time and `--date=short`
+renders them the same way, which is the clock `audit_plan_state_history.py`
+already uses. Following it keeps every date across these documents comparable.
+A commit at 23:40 on a Sunday lands wherever that clock puts it. This is a
+choice rather than a law, so each recap states its window in full — `2026-08-10
+00:00:00 to 2026-08-16 23:59:59, local author time` — and nobody has to
+re-derive it from a boundary commit.
+
+#### A fact about the window comes from the window; a fact about today carries today's date
+
+The obvious way to write *"what moved between states"* is to read `PLANS.md`.
+That is wrong by five days: today's index says where a plan **ended up**. The
+skill diffs `state_map()` across the index revisions inside the window instead
+— the reuse of Stage 0's parser that this stage actually needed. Eight index
+revisions in the recapped week, and the diff is the finding: **five plans
+entered the index and none left**, in a week that shipped Plan 114's
+conclusion, Plan 129's production rollout and four of Plan 131's five stages.
+Every state change in the window was an arrival.
+
+The same rule caught the sharpest thing in the recap. Plans 134 and 135 got
+documents that week — in `5de59bc` and `cf30421` — and appear in no state
+change at all, because neither was filed. A plan document in no table is
+precisely the defect Plan 146 exists to fix, found by a recap on its first run.
+Both have since been filed, which is a fact about 2026-08-21 and is written in
+the recap with that date attached.
+
+#### Regeneration, and what happens after a silent fortnight
+
+**A recap is never regenerated.** It is a dated record of what was knowable on
+the day it was written, and rewriting it against a later repo replaces a record
+with a reconstruction — one that always looks better, because it knows how
+things turned out. A wrong recap is corrected by appending a dated
+`## Correction` section; the original paragraphs stay.
+
+**Missing weeks: write the oldest, name the rest, stop.** The entry above left
+this open between filling every gap in one run and naming them and stopping.
+Neither, quite. One run writes one recap, always the oldest missing week, and
+reports what is still owed. That is a cost rule with teeth — a week is ~19k
+tokens, so "catch up on the last quarter" is a quarter of a million tokens
+spent without being asked — and working from the far end means the gap always
+shrinks and the filenames show how much is left. An empty `docs/recaps/` is not
+a backlog: the first run simply recaps the last complete week.
+
+#### The assertion deliberately not written
+
+Six new assertions, each watched failing against a mutation of the real recap
+before being trusted: a file named for the window's start rather than its end,
+the `Unattributed commits` section deleted, the `**Window:**` field removed, an
+`*(inferred)*` borrowed from the archive, every recap deleted, and one sha
+digit changed. The dangling-link check needed no extension — it walks all of
+`docs/`, so it covered `docs/recaps/` the moment the directory existed, and it
+is what catches a recap linking to a plan document at the flat pre-Stage-3 path
+that the window's own commits show in their `--stat`.
+
+**What is not asserted is "every commit in a recap's window appears in that
+recap"** — the check most worth wanting, and one that cannot be a permanent
+test. A window's commit set is only well-defined at the moment the recap is
+written. Measured on 2026-08-21: **30 commits sit on refs that are not on
+`master`, 17 of them authored on 2026-07-21 on a Plan 125 branch that has been
+unmerged for a month.** Merging it drops seventeen commits into an
+already-recapped week, and a recap that was exactly right when written would
+start failing for work its author could not have seen. Silencing that would
+mean editing the recap to match — falsifying the record to protect the test.
+
+So the reconciliation lives in the skill and runs at write time, against the
+history the author actually read, which is the only moment the denominator
+holds still. It ran on the first recap and came out exact: 55 of 55, with
+`8cab72a` the single sha named and outside the window, explained in the text.
+What the test file keeps is the durable half — every sha a recap names resolves
+to a real commit, because a commit that exists keeps existing.
+
+#### Measurements
+
+`PLANS.md` is unchanged at 169 lines of its 250 budget, the archive still holds
+108 rows, `--coverage` still reports 3 never-used numbers (44, 85, 104) and 0
+unrecorded. Stage 6 touched no table, no plan document and no archive row —
+`git status` after the first real run showed only `docs/recaps/2026-08-16.md`.

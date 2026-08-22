@@ -32,6 +32,7 @@ would change when a plan completes.
 from __future__ import annotations
 
 import re
+import subprocess
 from dataclasses import dataclass
 from datetime import date
 from functools import lru_cache
@@ -892,4 +893,207 @@ class TestTheIndexCountsTheArchiveCorrectly:
             f"{INDEX} says the archive holds {stated} rows; {ARCHIVE} holds "
             f"{actual}. Archiving a plan is two edits, and this is the second "
             f"one. Fix the index, not this test."
+        )
+
+
+RECAPS_DIR = "docs/recaps"
+
+# Deliberately raw-text, not ``_prose_only``. A recap cites commits as
+# ``a80b123`` -- inside code spans, which ``_prose_only`` strips -- so scanning
+# prose only would find nothing and pass forever.
+_SHORT_SHA = re.compile(r"\b[0-9a-f]{7}\b")
+_RECAP_NAME = re.compile(r"^(\d{4})-(\d{2})-(\d{2})\.md$")
+
+_REQUIRED_RECAP_SECTIONS = (
+    "What shipped",
+    "What moved between states",
+    "What is still owed",
+    "Unattributed commits",
+    "Merges",
+    "Deferred to the next recap",
+)
+_REQUIRED_RECAP_FIELDS = ("**Window:**", "**Recapped:**", "**Commits in window:**")
+
+
+@lru_cache(maxsize=None)
+def recap_files() -> tuple[Path, ...]:
+    directory = REPO_ROOT / RECAPS_DIR
+    return tuple(sorted(directory.glob("*.md"))) if directory.is_dir() else ()
+
+
+def _headings(text: str) -> set[str]:
+    return {
+        line[3:].strip()
+        for line in text.splitlines()
+        if line.startswith("## ")
+    }
+
+
+class TestWeeklyRecaps:
+    """Plan 146 Stage 6's output, held to its shape rather than its content.
+
+    A recap is a **generated artifact**, which makes this a different kind of
+    test from everything above it: the rest of this file asserts properties of
+    the repo, and these assert properties of something a skill wrote. Nothing
+    here says a recap is accurate or complete -- no test can, because a recap's
+    job is judgement. What it can hold is the structure that makes a missing
+    judgement visible: an ``Unattributed commits`` section that is present even
+    when empty, and a window and a deferred count that are stated rather than
+    implied.
+
+    The dangling-link check above already covers ``docs/recaps/`` for free,
+    since ``markdown_files()`` walks all of ``docs/``. That is what catches the
+    likeliest real defect -- a recap linking to a plan document at the flat
+    pre-Stage-3 path a commit's own ``--stat`` shows.
+
+    **The assertion deliberately not written here** is "every commit in a
+    recap's window appears in that recap". It is the check worth wanting, and
+    it cannot be a permanent test, because the window's commit set is only
+    well-defined at the moment the recap is written. Measured on 2026-08-21:
+    **30 commits sit on refs that are not on master, 17 of them authored a
+    month earlier on an unmerged Plan 125 branch.** Merge that branch and every
+    one of those commits enters an already-recapped week, so a recap that was
+    exactly right when written would start failing for something its author
+    could not have seen. The reconciliation therefore runs in
+    ``.claude/skills/plan-week/SKILL.md`` at write time, against the history
+    the author actually read, which is the only moment the denominator holds
+    still.
+    """
+
+    def test_every_recap_is_named_for_the_sunday_that_ends_its_window(self):
+        misnamed: list[str] = []
+        for path in recap_files():
+            match = _RECAP_NAME.match(path.name)
+            if match is None:
+                misnamed.append(f"{path.name}: not YYYY-MM-DD.md")
+                continue
+            day = date(*(int(part) for part in match.groups()))
+            if day.weekday() != 6:
+                misnamed.append(f"{path.name}: a {day.strftime('%A')}, not a Sunday")
+        assert not misnamed, (
+            "recap filenames must be the Sunday that ends the window:\n  "
+            + "\n  ".join(misnamed)
+            + "\nA week runs Monday to Sunday and the file is named for the "
+            "window's end, so the deferred days show on the filesystem rather "
+            "than only in prose."
+        )
+
+    def test_every_recap_carries_its_required_sections(self):
+        missing: list[str] = []
+        for path in recap_files():
+            present = _headings(_read(str(path.relative_to(REPO_ROOT))))
+            for section in _REQUIRED_RECAP_SECTIONS:
+                if section not in present:
+                    missing.append(f"{path.name} -> ## {section}")
+        assert not missing, (
+            "recaps are missing required sections:\n  "
+            + "\n  ".join(missing)
+            + "\nEvery one of them is present even when empty. A section that "
+            "says 'nothing this week' is a fact; a missing section is silence "
+            "you cannot tell apart from an oversight -- which is how the old "
+            "'Plan inventory' covered 30 of 72 documents and said nothing "
+            "about the other 42."
+        )
+
+    def test_every_recap_states_its_window_run_date_and_commit_count(self):
+        missing: list[str] = []
+        for path in recap_files():
+            text = _read(str(path.relative_to(REPO_ROOT)))
+            for field in _REQUIRED_RECAP_FIELDS:
+                if field not in text:
+                    missing.append(f"{path.name} -> {field}")
+        assert not missing, (
+            "recaps are missing their header fields:\n  "
+            + "\n  ".join(missing)
+            + "\nA recap that does not state its window cannot be checked "
+            "against one, and a recap that does not state when it was written "
+            "cannot be read as the dated record it is."
+        )
+
+    def test_no_recap_borrows_the_archives_provenance_labels(self):
+        borrowed: list[str] = []
+        for path in recap_files():
+            text = _read(str(path.relative_to(REPO_ROOT)))
+            for label in ("*(observed)*", "*(corroborated)*", "*(inferred)*"):
+                if label in text:
+                    borrowed.append(f"{path.name} -> {label}")
+        assert not borrowed, (
+            "recaps must not use the archive's provenance labels:\n  "
+            + "\n  ".join(borrowed)
+            + f"\nThose three words mean something specific in {ARCHIVE} -- how "
+            "Stage 1 recovered a completion date it was never told. Reusing "
+            "them as generic hedging makes 25 backfilled rows look like "
+            "hedging too. Mark uncertainty in the recap's own words."
+        )
+
+    def test_the_recap_scan_actually_reads_recaps(self):
+        """A scan that matches nothing passes forever.
+
+        This also fails loudly if ``docs/recaps/`` is ever emptied, which is
+        the same argument the census companion assertion makes: losing the
+        record should be a decision somebody takes, not a side effect.
+        """
+        found = sum(
+            len(_SHORT_SHA.findall(_read(str(path.relative_to(REPO_ROOT)))))
+            for path in recap_files()
+        )
+        assert found > 0, (
+            f"{RECAPS_DIR} holds {len(recap_files())} file(s) and no commit "
+            f"sha was found in any of them. Either the recaps are gone or a "
+            f"recap has stopped citing the commits it describes, and the "
+            f"assertion below is proving nothing."
+        )
+
+    def test_every_sha_a_recap_names_is_a_real_commit(self):
+        """Catches a fabricated or mistyped sha, which reads as evidence.
+
+        Unlike the window reconciliation this file does not attempt, this one
+        is stable over time: a commit that exists keeps existing. It needs git
+        to answer, so it skips on a clone that cannot see the history --
+        including CI, where ``actions/checkout@v4`` clones at depth 1. Its
+        value is local, in the run the ``plan-week`` skill makes immediately
+        after writing a recap.
+        """
+        try:
+            shallow = subprocess.run(
+                ["git", "rev-parse", "--is-shallow-repository"],
+                cwd=REPO_ROOT, capture_output=True, text=True, timeout=30,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:  # pragma: no cover
+            pytest.skip(f"git is unavailable: {exc}")
+        if shallow.returncode != 0:
+            pytest.skip("not a git checkout")
+        if shallow.stdout.strip() == "true":
+            pytest.skip("shallow clone: the window's commits are not present")
+
+        cited: dict[str, str] = {}
+        for path in recap_files():
+            relative = str(path.relative_to(REPO_ROOT))
+            for sha in _SHORT_SHA.findall(_read(relative)):
+                cited.setdefault(sha, relative)
+
+        # One ``--batch-check`` rather than one process per sha. At 52 recaps a
+        # year citing ~55 commits each that is the difference between one
+        # subprocess and nearly three thousand.
+        resolved = subprocess.run(
+            ["git", "cat-file", "--batch-check"],
+            cwd=REPO_ROOT, capture_output=True, text=True, timeout=60,
+            input="\n".join(sorted(cited)) + "\n",
+        )
+        lines = resolved.stdout.splitlines()
+        assert len(lines) == len(cited), (
+            f"git cat-file answered for {len(lines)} of {len(cited)} shas "
+            f"(exit {resolved.returncode}): {resolved.stderr.strip()!r}. A "
+            f"short answer would let this assertion pass without checking."
+        )
+        unknown = [
+            f"{cited[sha]} -> {sha}"
+            for sha, line in zip(sorted(cited), resolved.stdout.splitlines())
+            if " commit " not in line
+        ]
+        assert not unknown, (
+            "recaps name shas that are not commits in this repo:\n  "
+            + "\n  ".join(unknown)
+            + "\nA sha in a recap is the evidence for the sentence around it. "
+            "One that resolves to nothing is a citation to nowhere."
         )
