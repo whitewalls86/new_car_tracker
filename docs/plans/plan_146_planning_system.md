@@ -2,7 +2,7 @@
 
 ## Status
 
-**Draft — not started.** Priority **92 (critical-adjacent)**, and the
+**Build order.** Priority **92 (critical-adjacent)**, and the
 **maintainer's #1 priority as of 2026-08-21**. Effort **M** (1-2 weeks).
 
 It holds row 1 over Plan 136's score of 98 because 136 has no executable step

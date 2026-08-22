@@ -598,3 +598,298 @@ class TestParserAgreesWithTheDocuments:
             f"{live} live rows -- completed plans are going missing rather "
             f"than being archived."
         )
+
+
+# ===========================================================================
+# Plan 146 Stage 5.
+#
+# Everything above was written against a structure edited by hand. Stage 5 adds
+# a tool that edits it, and a tool makes *systematic* mistakes -- in whichever
+# direction the test happens not to look. Seven mutations were applied to the
+# working tree before the skill existed and **all eighteen assertions above
+# passed on every one of them**:
+#
+#   A  a superseded row's ``Superseded by`` emptied
+#   B  archive rows reordered, breaking newest-first
+#   C  ``Order`` values duplicated and jumped to 99
+#   D  an archive ``Date`` set to ``sometime in August``
+#   E  ``[112](plans/plan_113_...)`` -- link text and target disagree
+#   F  the ``**88**`` backlog row deleted outright
+#   G  one backlog row duplicated within the backlog
+#
+# A-F are closed below. **G is not, and deliberately.** A duplicate row inside
+# one table is caught by nothing here because ``plan_numbers`` returns a set and
+# Plan 139 legitimately holds two build-order rows; the rule that would reject
+# G -- one row per plan per table -- is false by design. G's defence is the
+# skill's own: it splices a row list rather than appending text, so inserting a
+# plan that already has a row is a bug rather than an omission.
+# ===========================================================================
+
+RECONCILIATION = "docs/planning/plan_state_reconciliation.md"
+
+
+class TestSupersededRowExitConditions:
+    """``Superseded by`` is the superseded table's exit condition.
+
+    It is terminal, so nothing removes these rows -- but the column is what
+    makes the row *readable*, and an empty one leaves a plan that was replaced
+    with no record of what replaced it. That is the same defect as a backlog
+    row with no trigger, one state further along.
+    """
+
+    def test_every_superseded_row_names_what_superseded_it(self):
+        missing = [
+            row["Plan"] for row in rows(SUPERSEDED)
+            if not TestRowExitConditions._is_substantive(row["Superseded by"])
+        ]
+        assert not missing, (
+            f"superseded rows naming nothing that superseded them: {missing}. "
+            f"A plan replaced by nothing in particular is a plan nobody can "
+            f"tell was replaced rather than abandoned."
+        )
+
+
+# The archive's ``Date`` column: ``2026-08-21``, or ``2026-01`` for Plan 4,
+# whose n8n retention workflow predates any day-level record. A trailing
+# provenance label -- ``*(observed)*``, ``*(corroborated)*``, ``*(inferred)*``
+# -- may follow and carries no digits that could be mistaken for the date.
+_ARCHIVE_DATE = re.compile(r"\b(\d{4})-(\d{2})(?:-(\d{2}))?\b")
+
+
+def archive_date(cell: str) -> date | None:
+    """The date one archive ``Date`` cell records, or ``None`` if it has none.
+
+    A month-only cell resolves to its first day. That is a *sort* key, not a
+    claim about when the work landed, and it is only ever compared against
+    other rows in the same table.
+    """
+    match = _ARCHIVE_DATE.search(cell)
+    if not match:
+        return None
+    year, month, day = match.group(1), match.group(2), match.group(3)
+    try:
+        return date(int(year), int(month), int(day or 1))
+    except ValueError:
+        return None
+
+
+class TestArchiveOrdering:
+    """The archive is prepend-only and newest first, and nothing said so.
+
+    Both halves are what an automated writer gets wrong first. Appending is
+    where a naive writer puts a new row -- it is what ``>>`` does -- and the
+    archive's own header says the opposite. And a date it cannot parse is a
+    date that sorts nowhere, so the order check has to stand on a date check or
+    it silently stops comparing.
+    """
+
+    def test_every_archive_row_has_a_parsable_date(self):
+        broken = {
+            row["Plan"]: row["Date"] for row in rows(ARCHIVE_TABLE)
+            if archive_date(row["Date"]) is None
+        }
+        assert not broken, (
+            f"archive rows whose Date does not parse: {broken}. The archive is "
+            f"ordered by this column; a cell that is not a date sorts nowhere "
+            f"and the ordering check below stops seeing it."
+        )
+
+    def test_the_archive_is_newest_first(self):
+        dated = [
+            (row["Plan"], archive_date(row["Date"]))
+            for row in rows(ARCHIVE_TABLE)
+            if archive_date(row["Date"]) is not None
+        ]
+        inversions = [
+            f"{earlier[0]} ({earlier[1]}) sits above {later[0]} ({later[1]})"
+            for earlier, later in zip(dated, dated[1:])
+            if earlier[1] < later[1]
+        ]
+        assert not inversions, (
+            "the archive is newest-first and these rows are not:\n  "
+            + "\n  ".join(inversions)
+            + f"\nA new row is *prepended*, immediately after the header "
+            f"separator in {ARCHIVE}. Appending is what a writer does by "
+            f"default and it is wrong here."
+        )
+
+
+class TestBuildOrderNumbering:
+    """``Order`` is 1..N, once each.
+
+    The one column in the index that *is* a position, and therefore the one
+    place Plan 146's "key on numbers, never ordinals" rule does not apply --
+    which is exactly why it needs checking. Renumbering after an insert is the
+    first thing an automated editor reaches for and the easiest to get wrong:
+    a duplicated 3 makes two rows claim one position, and a jump to 99 leaves
+    a gap that reads as a deleted row.
+    """
+
+    def test_the_build_order_is_numbered_one_to_n_without_gaps(self):
+        found = [row["Order"].strip() for row in rows(BUILD_ORDER)]
+        expected = [str(position) for position in range(1, len(found) + 1)]
+        assert found == expected, (
+            f"the build order's Order column reads {found} against the "
+            f"{expected} that {len(found)} rows should number. Duplicates make "
+            f"two rows claim one position; gaps read as a row somebody deleted."
+        )
+
+
+class TestPlanLinksNameTheirOwnPlan:
+    """A ``Plan`` cell's link text and its target agree on the number.
+
+    ``[112](plans/plan_113_production_adaptive_refresh.md)`` is well-formed
+    markdown, resolves to a real file, parses as Plan 112, and is wrong. The
+    dangling-link check cannot see it because nothing dangles, and coverage
+    cannot see it because Plan 112 has a document of its own -- so the row
+    reads as Plan 112 and points the reader at Plan 113.
+    """
+
+    _LINKED_PLAN = re.compile(r"^\[(?P<shown>\d+)\]\((?P<target>[^)]*)\)")
+    _TARGET_PLAN = re.compile(r"(?:^|/)(?:implementation_)?plan_(\d+)_")
+
+    def test_every_linked_plan_cell_points_at_that_plans_document(self):
+        disagreements = []
+        for table in TABLES:
+            if table is ARCHIVE_TABLE:
+                continue  # its Plan column is a bare identifier, never a link
+            for row in rows(table):
+                link = self._LINKED_PLAN.match(row["Plan"])
+                if not link:
+                    continue  # ``**88**`` -- a plan with no document to link to
+                target = self._TARGET_PLAN.search(link.group("target"))
+                if target is None or int(target.group(1)) != int(
+                    link.group("shown")
+                ):
+                    disagreements.append(f"{table.name}: {row['Plan']}")
+        assert not disagreements, (
+            f"Plan cells whose link text and target name different plans: "
+            f"{disagreements}. The row is filed under the number it shows and "
+            f"sends the reader to the other one."
+        )
+
+
+# ---------------------------------------------------------------------------
+# The census, and mutation F.
+#
+# Six index rows name a plan that has **no document**: 88, 87, 5, 52, 55 and
+# 56. Coverage above keys on plan documents, so a documentless row has nothing
+# whatsoever asserting it exists -- delete it and every assertion in this file
+# still passes. That is not hypothetical: it is precisely how Plans 5, 52, 55
+# and 56 were lost, and Stage 0 recovered them from the index's git history.
+#
+# The obvious fix is to assert the *count* of documentless rows. That is a
+# number in a test file, which is a deny-list wearing a different hat: the way
+# to silence it is to edit the number, and whoever deletes the row is exactly
+# the person who will.
+#
+# So the check keys on an external census instead.
+# ``plan_state_reconciliation.md`` is Stage 0's deliverable -- every plan number
+# this repository has ever named, settled against its document, its git history
+# and production evidence. It says of itself that it is "a record of one
+# reconciliation, not a surface that gets maintained", which is the property
+# that matters here: **it does not grow when a plan is added**, so it is not a
+# list anybody has a routine reason to touch. Silencing this assertion means
+# falsifying a dated evidence record, which is a different act from deleting a
+# number from a list.
+#
+# If that record is ever deleted, this fails loudly rather than passing
+# vacuously -- see ``test_the_census_reads_the_reconciliation_record``. Losing
+# the only defence the documentless rows have should be a decision somebody
+# makes, not a side effect.
+# ---------------------------------------------------------------------------
+
+# First cells of the reconciliation's tables, which is where its plan numbers
+# live. Three forms, and everything else contributes nothing:
+_CENSUS_BOLD = re.compile(r"^\*\*(\d+)\*\*$")             # **65**
+_CENSUS_TITLED = re.compile(r"^(\d+)\s+\S")               # 81 data migration
+_CENSUS_LIST = re.compile(r"^\d+(?:\s*,\s*\d+)*$")        # 66, 122, 79, 94, 108, 88
+
+# Deliberately *not* "any number in the document". Its summary table reads
+# "Numbers never used at all | 3 (44, 85, 104)" -- three numbers that name no
+# plan and belong to no table, and a census that swept the prose would demand
+# rows for them. Keying on first cells keeps the census to what the tables
+# resolve rather than what the narrative mentions.
+
+
+@lru_cache(maxsize=None)
+def census_plan_numbers() -> frozenset[int]:
+    """Every plan number Stage 0's reconciliation settled into a state."""
+    found: set[int] = set()
+    for line in _read(RECONCILIATION).splitlines():
+        if not line.strip().startswith("|"):
+            continue
+        cell = _cells(line)[0]
+        bold = _CENSUS_BOLD.match(cell)
+        titled = _CENSUS_TITLED.match(cell)
+        if bold:
+            found.add(int(bold.group(1)))
+        elif titled:
+            found.add(int(titled.group(1)))
+        elif _CENSUS_LIST.match(cell):
+            found.update(int(number) for number in re.findall(r"\d+", cell))
+    return frozenset(found)
+
+
+class TestNoRowVanishesSilently:
+    """Mutation F: every plan Stage 0 settled is still claimed by a table."""
+
+    def test_the_census_reads_the_reconciliation_record(self):
+        """A census that reads nothing passes forever, and this one guards the
+        rows with no other guard at all."""
+        assert (REPO_ROOT / RECONCILIATION).exists(), (
+            f"{RECONCILIATION} is gone. It is the only thing asserting that "
+            f"the six index rows with no plan document -- 88, 87, 5, 52, 55, "
+            f"56 -- still exist. Deleting it removes their only defence, which "
+            f"is a decision to make on purpose rather than in passing."
+        )
+        found = census_plan_numbers()
+        assert len(found) > 50, (
+            f"the census resolved only {len(found)} plan numbers out of "
+            f"{RECONCILIATION}. Its table shape has changed and the check "
+            f"below is no longer looking at anything."
+        )
+
+    def test_every_reconciled_plan_is_still_claimed_by_a_table(self):
+        claimed = frozenset().union(*(plan_numbers(table) for table in TABLES))
+        vanished = sorted(census_plan_numbers() - claimed)
+        assert not vanished, (
+            f"plans {vanished} were settled into a state by Plan 146 Stage 0 "
+            f"and are now in none of the five tables. A row that disappears "
+            f"rather than moving is the leak this whole plan exists to close: "
+            f"Stage 1's sweep found 33 of them across 16 separate days. If a "
+            f"row was removed on purpose, it belongs in the archive or the "
+            f"superseded table, not nowhere."
+        )
+
+
+class TestTheIndexCountsTheArchiveCorrectly:
+    """``PLANS.md``'s "108 rows, newest first" is the index's only hard-coded
+    count, it is maintained by hand, and nothing checked it.
+
+    That matters more once a tool writes the archive than it did while a human
+    did: archiving is two files, and the second one is a number in a sentence
+    that nothing reads. The count goes stale the moment the skill succeeds, and
+    a stale count is the index quietly disagreeing with the record it points at.
+
+    This is not a number in a test. It is one document being held to what it
+    says about another, the same shape as the line budget above.
+    """
+
+    _STATED = re.compile(r"(\d+) rows, newest first")
+
+    def test_the_index_states_the_archives_row_count(self):
+        assert self._STATED.search(_read(INDEX)), (
+            f"{INDEX} no longer states how many rows {ARCHIVE} holds. The "
+            f"claim is what makes it checkable; deleting it is fine, but do it "
+            f"on purpose and delete this assertion with it."
+        )
+
+    def test_the_stated_count_matches_the_archive(self):
+        stated = int(self._STATED.search(_read(INDEX)).group(1))
+        actual = len(rows(ARCHIVE_TABLE))
+        assert stated == actual, (
+            f"{INDEX} says the archive holds {stated} rows; {ARCHIVE} holds "
+            f"{actual}. Archiving a plan is two edits, and this is the second "
+            f"one. Fix the index, not this test."
+        )

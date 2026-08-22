@@ -705,3 +705,155 @@ reverted. A structural assertion nobody has watched fail is not yet working.
 Stage 4's line-budget assertion reads the budget out of `PLANS.md` rather than
 holding its own copy. The number is an editorial decision and belongs where the
 editor is looking; the test only enforces what the document already says.
+
+---
+
+### A skill for the edits, 2026-08-21
+
+Plan 146 Stage 5. `.claude/skills/plans/SKILL.md` — the first skill in this
+repo — performs the four routine state transitions and nothing else. Two
+questions the plan left open are answered below, and `tests/test_planning_docs.py`
+grew from 18 assertions to 27.
+
+**The measured reason.** Stage 1 reconstructed 122 state transitions across 35
+days and **92 of them are a row disappearing** rather than moving. Strip the two
+bulk events — 45 archive rows in one 2026-04-07 revision, 14 when Stage 2
+removed the index's duplicate Completed table — and **33 rows still vanished,
+one and two at a time, across 16 separate days.** No single accident produces
+that shape; it is what editing by hand sixteen times looks like.
+
+**Stage 4's test is necessary and not sufficient, and measuring that came
+first.** Seven mutations were applied to the working tree and the full file run
+against each: a superseded row's `Superseded by` emptied, the archive reordered,
+`Order` duplicated and jumped to 99, an archive date set to `sometime in
+August`, a `Plan` cell whose link text and target name different plans, the
+`**88**` backlog row deleted outright, and a backlog row duplicated. **All
+eighteen assertions passed on all seven.** A skill written against that test
+would have had a green run that meant nothing.
+
+#### The editing rule, which is the whole design
+
+**Splice, never reflow.** Every edit is anchored on the exact text of one line,
+made with a tool whose match must be exact and unique or the call fails. The
+skill never holds a whole table and never rewrites one.
+
+That is deliberate in preference to the obvious alternative — read the rows,
+mutate the list, re-render the table. Re-rendering passes every untouched row
+through the writer, so any one of them can come out changed or missing; a
+dropped row would be one token away. Anchored edits mean an untouched row is
+never written at all, so losing one takes a bug rather than an omission. It
+also keeps the diff reviewable, which is the property that lets the *next*
+change be read: an archive rehearsal below touched two files and changed
+exactly four lines.
+
+Six of the seven mutations are now also caught by the test. **The seventh, G, is
+not, and that is recorded rather than fixed.** A duplicate row inside one table
+is invisible to a coverage check that works on sets, and the rule that would
+reject it — one row per plan per table — is false by design, because Plan 139
+legitimately holds build-order rows for Stage C and Stage D. G's only defence is
+the splice rule.
+
+#### Mutation F, and why the count was the wrong instrument
+
+**F is the dangerous one.** Six index rows name a plan with no document — 88,
+87, 5, 52, 55, 56. Coverage keys on plan documents, so a documentless row has
+nothing whatsoever asserting it exists. That is not hypothetical: it is exactly
+how Plans 5, 52, 55 and 56 were lost, and Stage 0 recovered them from the
+index's git history.
+
+The obvious check is to assert the *count* of documentless rows. It was
+rejected. A count is a number in a test file, and the way to silence it is to
+edit the number — which is the deny-list failure mode this test file exists to
+avoid, and whoever deletes a row is precisely the person who will.
+
+So the check keys on an **external census**:
+[plan_state_reconciliation.md](plan_state_reconciliation.md), Stage 0's
+deliverable, which settled every plan number this repo has ever named against
+its document, its git history and production evidence. Its own header says it is
+"a record of one reconciliation, not a surface that gets maintained", and that
+is the property that makes it usable here — **it does not grow when a plan is
+added**, so nobody has a routine reason to touch it. Silencing the assertion
+means falsifying a dated evidence record, which is a different act from
+deleting a number from a list.
+
+The census reads **first cells of the reconciliation's tables only**, in three
+forms: `**65**`, `81 data migration`, and `66, 122, 79, 94, 108, 88`. Sweeping
+the prose instead would pick up "Numbers never used at all | 3 (44, 85, 104)"
+and demand table rows for three numbers that name no plan. A companion
+assertion fails loudly if the record is ever deleted, because losing the only
+defence those six rows have should be a decision somebody makes rather than a
+side effect.
+
+#### The archive's row count is now checked
+
+`PLANS.md` claims the archive holds a specific number of rows. It was the
+index's only hard-coded count, maintained by hand, and nothing read it. That
+mattered less while a human archived plans than it does now that a tool does:
+archiving is two files, and the second is a number in a sentence. It is now
+held against the archive's real length — one document checked against another,
+the same shape as the line budget, not a number owned by the test.
+
+#### Does the skill touch plan documents? Yes — the status marker, nothing else
+
+It has to. `PLANS.md` states that when the index and a plan document disagree,
+**the plan document wins**. Move a row and leave the document asserting the old
+state and you have not merely created a contradiction, you have made the
+*authority* the wrong one — worse than the defect Plan 146 was written to fix.
+The index was in exactly that position when this stage began: it recorded
+Plan 146 as build-order row 1 with Stages 0-4 done, while
+[plan_146](../plans/plan_146_planning_system.md) opened with **"Draft — not
+started."**
+
+Status is written three ways across 79 documents and often not at all: a
+`## Status` section (25), a `**Status:**` line near the top (37), neither (17).
+The skill replaces **the leading state phrase only**, with a state word the
+index already uses or with text the user supplies verbatim; every other line
+stays byte-identical.
+
+**It never creates a status marker in a document that has none.** Seventeen
+documents have never carried one, and inventing structure for them is
+authoring. Where there is no marker the skill reports the fact and changes
+nothing — the gap stays visible instead of being filled with a guess.
+
+#### "Record a soak result" contradicts "never prose". The user writes the sentence
+
+The plan lists recording a soak result as an operation and forbids what it
+requires two paragraphs later: *"it will not author a plan, summarise a result,
+or decide an order."* A soak result is a summary.
+
+Resolved by splitting the operation at the seam. **The user writes the sentence;
+the skill moves the row and updates the count.** The skill transcribes verbatim,
+reads no logs or dashboards, and does not decide that a gate has closed. If the
+text has not been supplied it stops and asks — and it does not draft one for
+approval either, because an approved draft is still the skill's sentence.
+
+That is the same seam Stage 6 sits on. A tool that both summarises work and
+moves rows between tables can move a row because its own summary said so, which
+is a self-confirming record.
+
+#### Exercised on the real files
+
+One real transition: Plan 146's own stale status, `**Draft — not started.**` →
+`**Build order.**` — a single-line diff that put the index back in agreement
+with its authority. The state word carries no row position, since Plan 146's own
+rule 5 is that cross-references key on plan numbers and never on ordinals.
+
+Two rehearsals, both reverted:
+
+- **The documentless row, mutation F's own row.** `**88**` was moved from the
+  backlog into the superseded table and back. `PLANS.md` finished
+  **byte-identical to `HEAD`** — the row survived intact, with its trigger and
+  its bare-bold `Plan` cell unchanged, and the test was green at both ends.
+- **The three-edit archive path**, rehearsed on Plan 135. Stopped deliberately
+  after step two: the half-finished state was caught twice, by the pre-existing
+  duplicate-table assertion and by the new count check. Completed, the whole
+  operation changed **four lines across two files** and nothing reflowed.
+
+The skill's `Plan` cell examples came out of that. The archive's `Plan` column
+is a **bare number**, `| 135 |`, not the index's link or bold form — and a
+separator line is not a unique anchor, because closeout and superseded both
+have three columns and `|---|---|---|` therefore appears twice in `PLANS.md`.
+
+None of the Stage 4 measurements moved: `PLANS.md` is 169 lines of its 250
+budget, the archive holds 108 rows, and `--coverage` still reports 3 never-used
+numbers (44, 85, 104) and 0 unrecorded.
