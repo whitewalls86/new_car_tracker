@@ -1,9 +1,9 @@
 """Read-only audit of Plan 112 adaptive-refresh feature model outputs.
 
-Gate 0 preflight (docs/plans/plan_112_refresh_policy_backtesting.md): checks row counts, key uniqueness,
-null rates, freshness, and grain sanity for the dbt-materialized intermediate
-models that will feed backtest replay and MLflow experiments. Does not
-require Spark, Iceberg, or MLflow — DuckDB only.
+Gate 0 preflight (docs/plans/plan_112_refresh_policy_backtesting.md): checks
+row counts, key uniqueness, null rates, freshness, and grain sanity for the
+dbt-materialized intermediate models that will feed backtest replay and MLflow
+experiments. Does not require Spark, Iceberg, or MLflow — DuckDB only.
 
 Usage:
   python scripts/audit_adaptive_refresh_features.py
