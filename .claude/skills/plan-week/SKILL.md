@@ -85,6 +85,40 @@ from the far end and the filenames show exactly how much is left. If
 `docs/recaps/` is empty there is no backlog to catch up on — the target is
 simply the last complete week.
 
+**The user may override this**, and often will: "recap the last three weeks" is
+a decision about cost that is theirs to make. Measure each window first and say
+what it will cost, then do them oldest-first.
+
+### A backfilled recap says that it is one
+
+A recap written weeks after its window is still a dated record — of what was
+knowable on **the day it was written**, which is the `**Recapped:**` field, not
+the day the window closed. Two things follow, and neither is optional:
+
+- **Say so in the opening**, with the gap in days. A reader comparing a recap
+  written on the Monday after its window with one backfilled nineteen days
+  later should not have to subtract two dates to spot the difference.
+- **`## Deferred to the next recap` needs a second sentence.** The count is
+  still "commits after this window's end", which for a backfilled recap sweeps
+  up weeks that are now recapped and are not deferred at all. Give the raw
+  count and the command, then name which of the following weeks are already
+  covered and which are genuinely still uncovered. Left alone the number is
+  true and reads as alarming.
+
+**An empty week gets a recap too, and it is worth more than it looks.** The
+week of 2026-07-27 held zero commits. Without a file, nobody can tell "nothing
+happened" apart from "nobody recapped it" — and a long gap between two bursts
+of work reads as an abandoned or blocked effort when it may be neither. Write
+every required section, say nothing happened, and name the commits either side
+of the silence so its shape is visible.
+
+**Git cannot say why a week was quiet, so ask.** The seventeen-day gap around
+that week was a vacation, which is not a thing any command reports. If the user
+tells you, write it down and attribute it to them and the date they said it.
+Do not guess a reason from the shape of the history — an unexplained gap is
+better than a wrong explanation, and "no reason is recorded" is itself a
+publishable sentence.
+
 ## Reading the history
 
 **Read the commits. Do not fingerprint them.** Subjects alone are ~0.9k tokens
