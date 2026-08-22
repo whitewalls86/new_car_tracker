@@ -172,7 +172,7 @@ services:
     environment:
       LOG_LEVEL: info
     # Vestigial: the live scrape path is `trawl`, not this container
-    # (docs/plan_128_challenge_pages.md). It is in scope anyway -- exempting a
+    # (docs/plans/plan_128_false_block_detection.md). It is in scope anyway -- exempting a
     # service because it is believed unused is the exact reasoning that
     # produces the gaps this plan exists to close. Removing it is a separate
     # decision, and the probe is six lines.
@@ -586,7 +586,7 @@ services:
   # It does serve /ping on 4180. A `latest-alpine` tag exists and would make
   # this probeable, but that is an image swap on the service fronting every
   # authenticated route, and it does not belong in a change that also touches
-  # eighteen other services. See docs/plan_140_service_health_contract.md.
+  # eighteen other services. See docs/plans/plan_140_service_health_contract.md.
   oauth2-proxy:
     image: quay.io/oauth2-proxy/oauth2-proxy:latest
     container_name: cartracker-oauth2-proxy
@@ -836,7 +836,7 @@ services:
       # /dev/sdb at /mnt/data, then statfs()es it inside its own namespace where
       # /mnt does not exist -- so the 196 GB data volume emitted
       # node_filesystem_device_error and no capacity series at all.
-      # See docs/plan_135_storage_observability.md.
+      # See docs/plans/plan_135_storage_observability.md.
       - '--path.rootfs=/rootfs'
       # run/credentials/* is a ramfs mount whose statfs reports zero blocks and
       # zero inodes. It is not tmpfs, so the disk/inode alert selectors do not

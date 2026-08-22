@@ -51,4 +51,4 @@ oauth2-proxy The only entry here that is a real hole rather than a contract
     `healthcheck:` can be expressed against this image at all. A
     `latest-alpine` tag exists and serves /ping on 4180, but swapping the
     image that fronts every authenticated route is its own change with its
-    own blast radius. See docs/plan_140_service_health_contract.md.
+    own blast radius. See docs/plans/plan_140_service_health_contract.md.

@@ -34,4 +34,4 @@ statsd-exporter Airflow's StatsD client resolves this host once, when it is
     airflow_ti_successes will look fine either way -- LocalExecutor task
     processes are short-lived and re-resolve every run -- so it is not
     evidence. Check airflow_scheduler_heartbeat, which returned within 80s.
-    See docs/plan_136_solver_recycle_and_liveness.md section D6.
+    See docs/plans/plan_136_solver_recycle_and_liveness.md section D6.

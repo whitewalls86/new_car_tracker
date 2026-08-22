@@ -172,7 +172,7 @@ deploy. Two cases need a restart instead of a recreate, and both use
   Airflow's StatsD client, over UDP — keeps addressing the dead one, silently.
   `deploy-followers.txt` names these and the deploy warns.
 
-See [Plan 144](plan_144_deploy_script_hardening.md).
+See [Plan 144](plans/plan_144_deploy_script_hardening.md).
 
 ---
 

@@ -7,7 +7,7 @@ Given a closed cohort (VINs, listing_ids, and explicit artifact row keys from
 source tables and writes a filtered, dbt-compatible fixture dataset to a
 fingerprint-addressed MinIO prefix.
 
-Filter semantics (see docs/plan_120_ci_lake_snapshot_delivery.md and the
+Filter semantics (see docs/plans/plan_120_ci_lake_snapshot_delivery.md and the
 Gate D design notes): `artifact_id` is never used as a blanket
 `artifact_id IN (...)` filter against an entity table — a single artifact_id
 (e.g. an SRP/carousel page) can legitimately span many rows for different,

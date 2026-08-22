@@ -195,7 +195,7 @@ def spark_conf_for_dbt_session() -> dict:
     against the Iceberg REST catalog.
 
     Composed from the two read/write mechanisms above, plus the two settings
-    that fail SILENTLY if omitted (docs/plan_125_portability_audit.md, "Two
+    that fail SILENTLY if omitted (docs/plans/plan_125_portability_audit.md, "Two
     config details that will bite Gate A"):
 
       * spark.sql.defaultCatalog -- dbt-spark relations are two-part

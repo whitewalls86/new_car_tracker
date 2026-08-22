@@ -52,7 +52,7 @@
     {
       "id": 21,
       "title": "No Healthcheck Configured",
-      "description": "Running services Docker publishes no health status for at all, so they are indistinguishable from healthy ones. Not an incident -- a coverage regression, routed on a daily rather than 4h cadence. oauth2-proxy is the one known standing exception: its distroless image has no shell, curl, wget or busybox, so no probe can be expressed against it. See docs/plan_140_service_health_contract.md.",
+      "description": "Running services Docker publishes no health status for at all, so they are indistinguishable from healthy ones. Not an incident -- a coverage regression, routed on a daily rather than 4h cadence. oauth2-proxy is the one known standing exception: its distroless image has no shell, curl, wget or busybox, so no probe can be expressed against it. See docs/plans/plan_140_service_health_contract.md.",
       "type": "stat",
       "gridPos": { "h": 4, "w": 8, "x": 8, "y": 1 },
       "targets": [
