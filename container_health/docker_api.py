@@ -60,3 +60,22 @@ class DockerApi:
         })
         summaries = self._get("/containers/json", {"all": "true", "filters": filters})
         return [self._get(f"/containers/{summary['Id']}/json") for summary in summaries]
+
+    def container_stats(self, container_id: str) -> Dict[str, Any]:
+        """One container's live resource sample (Plan 136 Stage 3a).
+
+        Still a GET under `/containers`, so this needs nothing the read grant
+        does not already hold -- no new proxy section, no new environment
+        variable, no second socket path.
+
+        `one-shot=true` is load-bearing and not an optimisation of taste. The
+        daemon otherwise collects two samples a second apart so it can compute
+        CPU deltas, which would put a full second of sleep per capped container
+        into a handler that runs on a 15s scrape interval. One-shot returns
+        immediately, zeroes `precpu_stats`, and leaves `memory_stats` -- the
+        only section this exporter reads -- fully populated.
+        """
+        return self._get(
+            f"/containers/{container_id}/stats",
+            {"stream": "false", "one-shot": "true"},
+        )
