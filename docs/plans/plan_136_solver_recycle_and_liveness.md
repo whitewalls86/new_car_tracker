@@ -5,15 +5,26 @@
 **Stage 0 complete and verified in production 2026-08-18. Stage 2 deployed to
 production 2026-08-20 (PR #223, merge `50bba68`); its 24-hour soak closed on
 2026-08-21 — the alert half green, the shape half inconclusive by construction.
-Stages 3 and 4 not started.**
+Stage 3 redesigned 2026-08-23 and not yet built; Stage 4 not started.**
 
 The soak proved both new rules quiet and the counters healthy, but it **did not
 answer open question 2**: a healthy window contains no solver decay to read, so
 at the time Stage 3's recycle interval had nothing to be chosen from. See
 [the soak record](#24-hour-soak-record--2026-08-21). **[D7](#d7--the-involuntary-recycle-stopped-and-the-leak-stopped-being-harmless)
 (2026-08-22) changed that** — the rate bent at four days, and the involuntary
-OOM recycle Stage 3 was sized against has stopped firing, so the interval is now
-re-derived against memory headroom rather than the 22-day uptime figure.
+OOM recycle Stage 3 was sized against has stopped firing.
+
+**[D8](#d8--what-the-recycle-setting-counts-and-why-the-socket-cannot-lend-one-verb)
+(2026-08-23) then settled the question D7 left open and took two shortcuts off
+the table.** `BROWSER_RECYCLE_AFTER_CONTEXTS` counts Tier 3/4 temporary contexts
+only, so it is blind to the persistent context where the leak lives; the
+existing `docker-socket-proxy` cannot lend a single `POST` verb, because
+`ALLOW_RESTARTS` narrows nothing once `CONTAINERS=1` is set; and nothing in the
+stack publishes the memory headroom D7 says to size against. [Stage
+3](#stage-3--scheduled-recycle) is now four slices — a memory series, an
+experiment that may end the stage outright, a narrow second proxy instance, and
+a threshold-gated recycle holding an Airflow pool — replacing the weekly
+`docker restart` and its hand-built drain protocol.
 
 Stage 0 shipped as PR #214, merge `8b2254b`; see
 [Stage 0 production verification](#stage-0-production-verification-2026-08-18).
@@ -520,6 +531,124 @@ mechanism it is **unambiguously a cliff**: flat 2.2-3.0/hour through 17:00, then
 bucket. That is one datapoint on the *memory* clock. It says nothing about the
 22-day state-rot clock, which remains unobserved since 2026-08-14.
 
+## D8 — What the recycle setting counts, and why the socket cannot lend one verb
+
+**Found 2026-08-23 while sizing Stage 3, by reading the solver image's own
+source rather than by watching production.** Three findings. The first two
+invalidate specific sentences written elsewhere in this plan, and the third is
+the reason Stage 3 could not have been sized on the day D7 unblocked it.
+
+### `BROWSER_RECYCLE_AFTER_CONTEXTS` counts the path that does not leak
+
+D7 left this as the question to settle before an interval is chosen: is the
+setting ineffective, or does it count something other than what its name
+implies? It is the second, and upstream says so in the config file it ships:
+
+> Rolling-replace a browser after this many **Tier 3/4 temporary contexts**.
+> Every creation counts regardless of outcome; 0 disables periodic replacement.
+>
+> — `/app/apps/api/src/config.ts`, `ghcr.io/germondai/trawl@sha256:86b1fdf2…`
+
+The counter has exactly two call sites, `tiers/3.ts` and `tiers/4.ts`, both
+passing `onCreated: handle.noteTemporaryContext` into `newFreshContext`. Which
+tier serves a request decides whether anything is counted at all:
+
+| Tier | What it is | Browser | Counts toward recycle |
+|---|---|---|---|
+| 1 | plain HTTP fetch | none acquired | no |
+| 2 | cached Redis session replayed into the **persistent** context | pooled | **no** |
+| 3 | fresh temporary context, solves the challenge | pooled | yes |
+| 4 | tier 3 through a residential proxy | pooled | yes |
+
+The persistent context tier 2 reuses is exactly where the leak accumulates, and
+the pool says so on purpose — `release()` keeps it alive because "CF cookies
+(`cf_clearance`, `__cf_bm`) and browser cache accumulate, making subsequent
+challenges faster." **The setting counts the path that is rebuilt anyway and
+ignores the one that grows.**
+
+Our traffic makes that worse rather than better. `get_cf_credentials` reaches
+`/v1` only on a 25-minute cache miss, D7 measured 2.2–3.0 solves/hour, and each
+of those is split again by whether `trawl`'s own Redis session (TTL 3600s) is
+warm. `pickEntry` is domain-sticky, so one pool entry absorbs every cars.com
+request — which is why D7 found **one** browser at 3.18 GB rather than two at
+1.6.
+
+Stated precisely, because the useful version is narrower than "it is broken":
+the setting cannot bound the leak *as a function of leaked memory*, because it
+is driven by a counter uncorrelated with the leaking path. A rolling
+replacement does rebuild the whole browser, persistent context included, so
+when it fires it clears the leak as a side effect. It simply has no reason to
+fire when traffic is served from cache. That is what makes
+[3b](#3b--ask-the-in-container-recycle-first) an experiment worth running and
+not a fix worth assuming.
+
+**There is a free read that settles it empirically.** `GET /stats` on `trawl`
+exposes `restarts`, the sum of `restartCount` across pool entries, incremented
+by both rolling replacements and health-driven restarts. `restarts == 0` across
+a boot is standalone proof that nothing recycled, with no log archaeology.
+
+### The socket proxy cannot lend one verb
+
+[PLANS.md](../PLANS.md) records the `POST` verb as separable, "as one added verb
+on the existing `docker-socket-proxy` grant rather than a second socket path."
+The proxy's own config refuses that shape. Its rules are evaluated in order:
+
+```
+http-request deny unless METH_GET || { env(POST) -m bool }
+http-request allow if { path ... /containers/[id]/((stop)|(restart)|(kill)) } { env(ALLOW_RESTARTS) -m bool }
+...
+http-request allow if { path ... ^(/v[\d\.]+)?/containers } { env(CONTAINERS) -m bool }
+http-request deny
+```
+
+`ALLOW_RESTARTS` narrows nothing once `CONTAINERS=1` is set; the broader rule
+below it allows the request anyway. So:
+
+| Grant | What it permits | Verdict |
+|---|---|---|
+| `CONTAINERS=1`, `POST=0` | every GET under `/containers` | today's exporter |
+| `CONTAINERS=1`, `POST=1` | **every POST under `/containers`, including `/containers/create`** | a privileged container with `/` mounted — root on the host |
+| `CONTAINERS=0`, `POST=1`, `ALLOW_RESTARTS=1` | `stop`, `restart`, `kill` on a container, and nothing else | what Stage 3 needs |
+
+The read grant and the restart grant are mutually exclusive **within one
+instance**. The exporter needs `CONTAINERS=1` for its GETs; adding restart
+authority to that instance grants container creation, which is the exact
+authority Plan 140 rejected `docker.sock` over.
+
+The resolution is a second **proxy instance**, not a second socket path — the
+distinction the existing warning was drawing. A `docker-socket-proxy-restart`
+sidecar with `CONTAINERS=0, POST=1, ALLOW_RESTARTS=1`, on its own `internal`
+network with `ops` as the only other member, still holds the socket behind a
+proxy and still hands out exactly one capability. Nothing new can reach the
+daemon; a second, strictly narrower door reaches a different part of it.
+
+`test_socket_access_stays_confined_to_the_proxy` asserts the socket holders are
+`{docker-socket-proxy, promtail}` and must be updated to name both proxies with
+their distinct grants. That is the assertion doing its job, not an obstacle to
+route around.
+
+### There is no memory series, and the number in the runbook is a sawtooth midpoint
+
+D7 says the interval should be re-derived "against memory headroom rather than
+the 22-day uptime figure." Nothing publishes that headroom. `node-exporter` is
+host-level and `container-health` publishes health alone, so D7's own
+measurements came from a human running `docker stats` during an incident.
+
+The one number written down is worse than absent, because it reads as a
+baseline: [the runbook](../runbooks/runbook_solver_oom_and_recycle.md) records
+steady state at "around **70%** of the 4 GB cap" with a kill likely above ~85%.
+That figure was measured while `CONSTRAINT_MEMCG` kills fired every 1.5–4 days.
+**It is the midpoint of a sawtooth D7 established has stopped.** Against a
+monotonic climb it describes nothing, and the two points actually in evidence —
+an old cycling average and 3.18 GB at the moment of the wedge — do not
+distinguish a curve that plateaus at 2.8 GB from one that climbs steadily to
+3.2 and thrashes.
+
+That distinction decides whether a 3 GB threshold gives three days of warning or
+fifteen minutes, and both ways of being wrong are silent: too high never fires,
+too low recycles every fifteen minutes. Hence
+[3a](#3a--a-memory-series-to-size-against) before anything is gated on memory.
+
 ## Goal
 
 1. Detect a solver outage in **under 15 minutes**, from a signal that does not
@@ -963,32 +1092,175 @@ explicitly told itself not to do.
 
 ## Stage 3 — Scheduled recycle
 
-A weekly `trawl` restart, which on this evidence would have prevented the
-outage outright.
+Restart `trawl` before its memory reaches the band where the pool wedges, in a
+window where no scrape can be harmed by it.
 
-**The gotcha that makes this non-trivial:** a naive restart mid-batch fails
-every in-flight request, and the scraper's 403 handler pushes each of those
-listings into a 12-hour cooldown. A careless recycle inflicts a small version of
-the very outage it prevents.
+**The gotcha that makes this non-trivial** survives every revision: a naive
+restart mid-batch fails every in-flight request, and the scraper's 403 handler
+pushes each of those listings into a 12-hour cooldown. A careless recycle
+inflicts a small version of the very outage it prevents.
 
-So the recycle must be **drain-aware**:
+What has *not* survived is almost everything else. D7 removed the 22-day clock
+this stage was sized against; D8 removed the cheap in-container alternative it
+hoped for and the one-verb socket grant it assumed. The
+[original reasoning is kept below](#superseded-reasoning-kept-for-the-record)
+rather than deleted, because the way it was wrong is the useful part.
 
-1. Pause claiming (the `scrape_detail_pages` DAG has `max_active_runs=1`, so
-   waiting for the current run to finish is sufficient).
-2. Confirm no active job via the scraper's existing
-   `/scrape_results/jobs/completed`.
-3. Restart `trawl`; wait for `/health` to report both browsers warm (~4s
-   observed).
-4. Resume.
+Four slices. Each one is shippable on its own, and each produces the input the
+next one needs.
 
-Cadence: weekly. Uptime at failure was 22 days, so weekly carries a 3× margin.
-This is a judgment call, not a measured optimum — Stage 2's counters will show
-whether solve rate degrades gradually (tighten it) or falls off a cliff
-(leave it).
+### 3a — A memory series to size against
+
+Publish `cartracker_container_memory_bytes` and
+`cartracker_container_memory_limit_bytes` from the existing `container-health`
+exporter, read from `GET /containers/{id}/stats?stream=false&one-shot=true`.
+
+**This adds no authority.** That path is a GET under `/containers`, already
+inside the `CONTAINERS=1` grant Plan 140 deployed, and needs no new
+credential — the exporter's environment stays `{DOCKER_API_URL,
+COMPOSE_PROJECT}` and `test_the_exporter_holds_no_other_credentials` stays green
+without being edited. `one-shot=true` is load-bearing: without it the daemon
+collects two samples a second apart to compute CPU deltas, and this exporter
+computes at scrape time against a 15s interval.
+
+Sample only the three services that declare a `mem_limit` — `trawl` (4 GB),
+`redis-trawl` (512 MB), `dbt_runner` (12 GB) — rather than the whole fleet, so
+the scrape stays cheap and every series has a limit to be read against. That
+third one is a bonus: Plan 123's peak-RSS-against-the-8-GB-budget verification
+has been open and unmeasured since 2026-07-10 for want of exactly this metric.
+
+> **Verify:** both series appear for all three containers with plausible values
+> against `docker stats`; the exporter's scrape duration stays well inside 15s;
+> and after ~48 hours the `trawl` series shows a *shape* — plateau or climb —
+> which is the read D7 asked for and D8 says nobody has.
+
+### 3b — Ask the in-container recycle first
+
+Set `TRAWL_BROWSER_RECYCLE_AFTER_CONTEXTS=1` and soak for 48 hours against 3a's
+series. A rolling replacement rebuilds the whole browser, persistent context
+included, so if tier 3/4 fires often enough this clears the leak with **no new
+authority, no new DAG, and a one-line compose change** — and per D8 the only
+reason it is not already happening is that the counter rarely reaches 8.
+
+Read the result three ways: 3a's memory series should sawtooth well below 3 GB;
+`GET /stats` `restarts` should climb from its current value; and the Stage 2
+solver outcome counters should be unchanged, since a recycle that clears memory
+by degrading the solve rate is not a fix.
+
+Know the cost before running it. A rolling replacement launches a replacement
+browser while the retired one is still serving, so the container briefly holds
+three browsers against the 4 GB cap; the pool-wide lock bounds that to one
+extra. And every replacement is a fresh `camoufox` launch, a path the pool's own
+code is visibly scarred by — a 90-second `launchWithin` bound, abandoned-launch
+accounting, and comments about launches that hang indefinitely and strand a pool
+entry. Raising the recycle rate raises exposure to that path proportionally.
+
+**If 3b passes, Stage 3 is finished here** and 3c/3d are not built. That is the
+outcome to hope for, and the reason this slice runs before the one that needs
+new authority in the stack.
+
+### 3c — Restart authority: a second proxy instance, not a second verb
+
+Per [D8](#the-socket-proxy-cannot-lend-one-verb), the existing proxy cannot
+carry this. Add `docker-socket-proxy-restart` with `CONTAINERS=0, POST=1,
+ALLOW_RESTARTS=1`, on its own `internal: true` network whose only other member
+is `ops`. The socket stays behind a proxy; the new door is strictly narrower
+than the existing one, not wider.
+
+`POST /maintenance/recycle/{service}` on `ops`, with an allowlist of exactly
+`["trawl"]`, is the single audited path to a restart — 3d's schedule and Stage
+4's circuit breaker both call it. Guard the handler with
+`single_flight("solver_recycle")` from `shared/job_counter`, which refuses
+rather than waits, so a retried HTTP call after a dropped connection returns 409
+instead of stacking a second restart onto a container that is already
+restarting.
+
+**`restart`, not recreate.** Both the 2026-08-14 and 2026-08-22 outages cleared
+with a plain `docker restart` and no image pull. A true recreate would need
+`POST /containers/create`, which is precisely the root-equivalent verb this
+grant excludes — so restart-only is not a compromise forced by the proxy, it is
+sufficient on the evidence.
+
+> **Verify:** the endpoint restarts `trawl` and returns only after `/health`
+> reports both browsers warm; a non-allowlisted service is refused without
+> reaching the proxy; a second concurrent call returns 409; and the restart
+> proxy refuses `GET /containers/json` and `POST /containers/create` while the
+> read proxy refuses the restart.
+
+### 3d — The recycle itself: an Airflow pool, not a drain protocol
+
+A `recycle_solver` DAG on `*/15` with one task, which restarts `trawl` when
+memory says to and does nothing otherwise.
+
+**The exclusive window comes from an Airflow pool, which is global across
+DAGs** — so the two scrape DAGs keep their own schedules, guards, timeouts and
+`max_active_runs=1`, and nothing is merged:
+
+| Task | Pool | Slots |
+|---|---|---|
+| `scrape_detail_pages.scrape_detail` | `solver` | 1 |
+| `scrape_listings.run_scrapes` | `solver` | 1 |
+| `recycle_solver.recycle` | `solver` | **2** |
+
+The scheduler will not start the recycle until both slots are free, and will not
+start either scrape while the recycle holds both. That is mutual exclusion
+declared once, rather than a drain protocol built by hand — and it is why the
+recycle does not need to live inside `scrape_detail_pages` as a first or last
+task, where the window would only ever be approximated.
+
+The gate is memory, not time: recycle when `trawl`'s 3a series crosses a
+fraction of its limit, with the threshold read off the curve 3a produces rather
+than guessed now. Memory is self-scaling in the way a fixed interval is not — a
+slower leak fires it less often, a faster one more — which is the correction D7
+made to the weekly cadence, applied properly.
+
+Two guards on the gate, both in this plan's own idiom:
+
+- **Absent reading means do not recycle *and* alert.** D2 in this plan is
+  precisely about a gauge whose stale value was read as truth; a memory gate
+  that silently stops firing because its input vanished is the same defect
+  wearing a different hat.
+- **Alert when the recycle has not fired in N hours.** Airflow does not reserve
+  pool slots, so a two-slot task runs only when both happen to be free at once.
+  With detail firing every 15 minutes for a few minutes and listings doing real
+  work roughly every 4 hours, both-free is the common case — but the failure
+  mode of a starved gate is silence, which is the same failure mode
+  `BROWSER_RECYCLE_AFTER_CONTEXTS` has been in for four days without anyone
+  noticing.
+
+Keep the scraper's `active_jobs == 0` check inside the task as well. It costs
+one call to an endpoint that already exists, and it covers anything driving the
+scraper from outside Airflow, which the pool cannot see.
+
+> **Verify:** with the threshold temporarily lowered, the recycle fires once,
+> restarts `trawl`, and both scrape DAGs queue behind it rather than failing;
+> no `blocked_cooldown` rows are written across the window; the memory series
+> drops and resumes climbing; and with the threshold restored the gate goes
+> quiet without the "has not fired" alert firing spuriously.
+
+### What is deliberately not built
+
+- **No pause/resume drain protocol.** The pool is the drain. The earlier design
+  — pause claiming, poll `/scrape_results/jobs/completed`, restart, resume —
+  was building by hand what the scheduler already enforces.
+- **No unified scrape DAG.** Merging the two would put a detail batch behind a
+  listings run that can hold its slot for up to its 2-hour timeout, stalling
+  15-minute detail scraping for the duration of every ~4-hourly SRP crawl. The
+  pool delivers the exclusivity without the serialization.
+- **No recreate, and no host `systemd` timer.** The first needs an authority
+  this plan refuses; the second lives outside git and violates the
+  commit/push/pull deployment rule.
+
+### Superseded reasoning, kept for the record
+
+> Cadence: weekly. Uptime at failure was 22 days, so weekly carries a 3×
+> margin. This is a judgment call, not a measured optimum — Stage 2's counters
+> will show whether solve rate degrades gradually (tighten it) or falls off a
+> cliff (leave it).
 
 > **Superseded in part by [D7](#d7--the-involuntary-recycle-stopped-and-the-leak-stopped-being-harmless)
-> (2026-08-22): the involuntary recycle this blockquote rests on has stopped —
-> zero `CONSTRAINT_MEMCG` kills in 4.5 days against 3 in the prior 18. Its
+> (2026-08-22): the involuntary recycle this rests on has stopped — zero
+> `CONSTRAINT_MEMCG` kills in 4.5 days against 3 in the prior 18. Its
 > conclusion (uptime is the wrong axis) still holds and is now sharper; its
 > premise (the browsers are being recycled for free) does not. A weekly cadence
 > would not have prevented the 08-22 outage, which arrived on day 4.**
@@ -1006,6 +1278,14 @@ whether solve rate degrades gradually (tighten it) or falls off a cliff
 > Related: the 2026-08-14 outage contains one of those kills, at 04:28 on Aug 15
 > — **7.5 hours after** the solve rate hit 0%, and at a lower rss than usual.
 > Symptom, not cause.
+
+> **Superseded again by [D8](#d8--what-the-recycle-setting-counts-and-why-the-socket-cannot-lend-one-verb)
+> (2026-08-23).** The blockquote above closes on "the interval should be chosen
+> against container-level state, not uptime." Both halves are now answerable and
+> neither is an interval: the state that matters is a browser's persistent
+> context, and the axis that matters is its memory footprint, which 3a makes
+> directly observable. Choosing *any* fixed interval was the wrong move; the
+> gate is a threshold.
 
 ## Stage 4 — Automatic restart
 
@@ -1042,22 +1322,23 @@ notices the solver has stopped working entirely.
 
 ### Mechanism: who is allowed to call `docker restart`
 
-Nothing in the stack can restart a container today; `/var/run/docker.sock` is
-not mounted anywhere. Plan 108 specified mounting it into `ops` but was never
-implemented.
+**[3c](#3c--restart-authority-a-second-proxy-instance-not-a-second-verb) owns
+this now** — Stage 4 consumes the endpoint it builds rather than specifying its
+own. The options table is kept because the rejected rows are still the reasons,
+and one of the verdicts has changed.
 
 | Option | Verdict |
 |---|---|
 | Host `systemd` timer | Simplest for Stage 3, useless for Stage 4 (no app signal), and lives outside git — violates the commit/push/pull deployment rule |
 | Mount `docker.sock` into `ops` (Plan 108) | Full Docker API access ≈ root on the host, granted to an internet-facing service. Too much authority for one restart |
-| **`docker-socket-proxy`, scoped to `POST /containers/*/restart`** | **Recommended.** A tiny sidecar holds the socket; `ops` gets a URL that can do exactly one verb. Restart capability without root-equivalence |
+| One `docker-socket-proxy`, scoped to `POST /containers/*/restart` | ~~Recommended~~ — **impossible as written.** [D8](#the-socket-proxy-cannot-lend-one-verb): `ALLOW_RESTARTS` narrows nothing once `CONTAINERS=1` is set, so granting `POST` to the exporter's instance grants `POST /containers/create` — root on the host, the authority Plan 140 rejected `docker.sock` over |
+| **A second `docker-socket-proxy` instance, `CONTAINERS=0, POST=1, ALLOW_RESTARTS=1`** | **Recommended.** Strictly narrower than the grant already deployed: `stop`, `restart`, `kill`, and nothing else. Still a proxy holding the socket, so this is a second *door*, not a second socket path |
 | Airflow `DockerOperator` | Airflow is `LocalExecutor`, so this means the socket in the scheduler — same authority problem, plus it makes Stage 4 depend on the scheduler being healthy |
 
-Recommended shape: `docker-socket-proxy` sidecar → `POST /maintenance/recycle/{service}`
-on `ops`, with an allowlist of exactly `["trawl"]`. Stage 3's scheduled recycle
-and Stage 4's circuit breaker both call that one endpoint, so there is a single
-audited path to a restart. It also lays the groundwork Plan 108 wanted, with far
-less authority than Plan 108 proposed.
+Both Stage 3's threshold recycle and Stage 4's circuit breaker call the one
+`POST /maintenance/recycle/{service}` endpoint, so there is a single audited
+path to a restart. It also lays the groundwork Plan 108 wanted, with far less
+authority than Plan 108 proposed.
 
 > Verify: with a deliberately broken solver in staging, the breaker trips within
 > ~10 min, exactly one recycle is issued, an alert is sent, no `blocked_cooldown`
@@ -1081,10 +1362,16 @@ of the same work, and Stage 0a/0c were the only parts it was waiting on. Plan
 this plan resumes at Stage 2.
 
 Plan 143 and Stage 2 are worth doing regardless — they are the difference
-between finding out in 15 minutes and finding out in 8 hours. **Stage 3 is the highest
-value-per-effort item in the plan** and could ship on its own. Stage 4 is the
-only one that requires new authority in the stack and should not start until
-Stage 2's counters have run long enough to trust the breaker's input signal.
+between finding out in 15 minutes and finding out in 8 hours. **Stage 3 is the
+highest value-per-effort item in the plan** and could ship on its own.
+
+**Within Stage 3 the order is not arbitrary.** 3a comes first because every
+later slice reads its series — 3b's pass/fail, 3d's gate, and the threshold
+itself. 3b comes before 3c because it may end the stage without new authority
+at all, and building the proxy first would bias that read. 3c is the only slice
+that expands what the stack is allowed to do, and Stage 4 now inherits it rather
+than specifying its own; Stage 4 should still not start until Stage 2's counters
+have run long enough to trust the breaker's input signal.
 
 Note that container health and Stage 2 attack the same failure from opposite
 ends. Health asks *"is the container healthy?"*; Stage 2 asks *"is work
@@ -1138,11 +1425,16 @@ Stage 0 rows are marked **done**; the container-health producer moved to
 | `grafana/provisioning/alerting/rules.yml` | `ct-solver-not-solving` + `ct-detail-fetch-failing`; `scraper` added to `ct-service-down`; `ct-scrape-volume-drop` re-annotated as data-quality | 2 — **done** |
 | `dbt_runner/sql/analytics_metrics_snapshot.sql` | Exclude the in-progress hour, so the "last complete hour" gauge is one (D1) | 2 — **done** |
 | `grafana/dashboards/pipeline_health.json` | Solver and detail outcome-rate panels — the read that answers open question 2 | 2 — **done** |
+| `container_health/docker_api.py`, `collector.py`, `app.py` | Per-container memory + limit from `/containers/{id}/stats?stream=false&one-shot=true`, scoped to the three `mem_limit` services | 3a |
+| `docker-compose.yml` | `TRAWL_BROWSER_RECYCLE_AFTER_CONTEXTS=1` | 3b — experiment, revert if it fails |
+| `docker-compose.yml` | `docker-socket-proxy-restart` (`CONTAINERS=0, POST=1, ALLOW_RESTARTS=1`) on its own internal network; `RECYCLABLE_SERVICES` for ops | 3c |
+| `tests/test_observability_config.py` | `test_socket_access_stays_confined_to_the_proxy` updated to name both proxies and assert their distinct grants | 3c |
+| `ops/routers/maintenance.py` | `POST /maintenance/recycle/{service}`, allowlisted, `single_flight`-guarded | 3c |
+| `tests/ops/routers/test_maintenance.py` | Recycle endpoint: happy path, non-allowlisted service, concurrent call → 409, proxy unreachable | 3c |
+| `airflow/dags/recycle_solver.py` | `*/15` threshold-gated recycle, `pool="solver", pool_slots=2` | 3d |
+| `airflow/dags/scrape_detail_pages.py`, `scrape_listings.py` | `pool="solver", pool_slots=1` on the two solver-consuming tasks | 3d |
+| `grafana/provisioning/alerting/rules.yml` | Memory-gate staleness, and recycle-has-not-fired-in-N-hours | 3d |
 | `scraper/` (metrics module) | Circuit breaker | 4 |
-| `docker-compose.yml` | `docker-socket-proxy` sidecar; `RECYCLABLE_SERVICES` for ops | 4 |
-| `ops/routers/maintenance.py` | `POST /maintenance/recycle/{service}`, allowlisted | 3, 4 |
-| `airflow/dags/` | Weekly drain-aware recycle DAG | 3 |
-| `tests/ops/routers/test_maintenance.py` | Recycle endpoint: happy path, non-allowlisted service, proxy unreachable | 3, 4 |
 
 ## Open questions
 
@@ -1166,6 +1458,13 @@ Stage 0 rows are marked **done**; the container-health producer moved to
    is still unobserved since 2026-08-14. The practical consequence is that
    "weekly is conservative" is now known to be **false** for at least one
    failure mode.
+
+   **Closed as a blocker 2026-08-23 by [D8](#d8--what-the-recycle-setting-counts-and-why-the-socket-cannot-lend-one-verb).**
+   The question was load-bearing only because Stage 3 needed an interval, and
+   [3d](#3d--the-recycle-itself-an-airflow-pool-not-a-drain-protocol) no longer
+   chooses one — the gate is a memory threshold. The decay shape stays
+   interesting and stays unobserved on the 22-day clock; it no longer blocks
+   anything.
 3. **Should the vestigial `cartracker-flaresolverr` container be removed, and
    `FLARESOLVERR_URL` renamed to `SOLVER_URL`?** Low effort; it cost real time
    during this incident.
@@ -1185,9 +1484,38 @@ Stage 0 rows are marked **done**; the container-health producer moved to
    slope *between* restarts, and 0a raising the ceiling means a leak now has more
    room to hide before it wedges anything. That is the cost of the fix and the
    reason this stays open rather than closing on a green deploy.
+
 5. **Which containers belong in the 0b health alert?** Alerting on every
    container invites noise from short-lived and profile-gated services
    (`snapshot-worker`, `flyway`, `airflow-init`). An allowlist of long-running
    services is probably right, but it has the failure mode that a service added
    later is silently unwatched — which is exactly the class of gap D4 is about.
    Prefer a deny-list of known-transient containers if it can be kept short.
+
+6. **What is the actual shape of `trawl`'s memory curve, and therefore the
+   threshold?** [3a](#3a--a-memory-series-to-size-against) exists to answer
+   this and nothing in Stage 3 can be gated on memory until it has. The two
+   points on record — the runbook's "around 70%" and D7's 3.18 GB at the wedge
+   — do not separate a plateau from a monotonic climb, and per
+   [D8](#there-is-no-memory-series-and-the-number-in-the-runbook-is-a-sawtooth-midpoint)
+   the first of those is a sawtooth midpoint measured under a kill that has
+   stopped firing. **Do not carry the 70% figure into a threshold.**
+
+7. **Did the Aug 18 reboot onto kernel `6.8.0-1058-oracle` stop the
+   `CONSTRAINT_MEMCG` kills, or is the clean window coincidence?** Raised in
+   [D7](#the-finding-that-matters-the-oom-killer-did-not-fire) and still
+   unsettled — one missed kill against a ~5-6 day historical interval is
+   suggestive, not proof. The next kill, or a second clean 4-day window, settles
+   it. It should not block Stage 3 either way: if the kills resume, the leak
+   goes back to being contained for free and the threshold recycle simply stops
+   firing, which is the correct behaviour rather than a wasted build.
+
+8. **Will the two-slot pool starve?** Airflow does not reserve slots, so
+   `recycle_solver` runs only when both `solver` slots are free at once. The
+   arithmetic says this is the common case — detail runs a few minutes out of
+   every fifteen, listings does real work about every four hours — but
+   arithmetic is not observation, and the failure mode is silence. The
+   "has not fired in N hours" alert in
+   [3d](#3d--the-recycle-itself-an-airflow-pool-not-a-drain-protocol) exists to
+   convert that into a page; if it fires repeatedly, the answer is a priority
+   weight or a dedicated window, not a wider pool.
