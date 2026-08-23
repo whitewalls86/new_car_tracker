@@ -16,15 +16,19 @@ OOM recycle Stage 3 was sized against has stopped firing.
 
 **[D8](#d8--what-the-recycle-setting-counts-and-why-the-socket-cannot-lend-one-verb)
 (2026-08-23) then settled the question D7 left open and took two shortcuts off
-the table.** `BROWSER_RECYCLE_AFTER_CONTEXTS` counts Tier 3/4 temporary contexts
-only, so it is blind to the persistent context where the leak lives; the
-existing `docker-socket-proxy` cannot lend a single `POST` verb, because
-`ALLOW_RESTARTS` narrows nothing once `CONTAINERS=1` is set; and nothing in the
-stack publishes the memory headroom D7 says to size against. [Stage
-3](#stage-3--scheduled-recycle) is now four slices — a memory series, an
-experiment that may end the stage outright, a narrow second proxy instance, and
-a threshold-gated recycle holding an Airflow pool — replacing the weekly
-`docker restart` and its hand-built drain protocol.
+the table.** Production runs a **2026-07-06** image while the compose file is
+written for one six weeks newer: `BROWSER_RECYCLE_AFTER_CONTEXTS` and
+`BROWSER_CONTENT_PROCESSES` are set on the container and read by nothing, and
+the running pool has **no periodic recycling of any kind**. The existing
+`docker-socket-proxy` cannot lend a single `POST` verb, because `ALLOW_RESTARTS`
+narrows nothing once `CONTAINERS=1` is set. And nothing in the stack publishes
+the memory headroom D7 says to size against.
+
+[Stage 3](#stage-3--scheduled-recycle) is now four slices — a memory series, a
+pinned image upgrade that may end the stage outright, a narrow second proxy
+instance, and a threshold-gated recycle holding an Airflow pool — replacing the
+weekly `docker restart` and its hand-built drain protocol. **3a is built** and
+deploys with two Infrastructure dashboard panels; 3b onward are not started.
 
 Stage 0 shipped as PR #214, merge `8b2254b`; see
 [Stage 0 production verification](#stage-0-production-verification-2026-08-18).
@@ -534,15 +538,68 @@ bucket. That is one datapoint on the *memory* clock. It says nothing about the
 ## D8 — What the recycle setting counts, and why the socket cannot lend one verb
 
 **Found 2026-08-23 while sizing Stage 3, by reading the solver image's own
-source rather than by watching production.** Three findings. The first two
-invalidate specific sentences written elsewhere in this plan, and the third is
-the reason Stage 3 could not have been sized on the day D7 unblocked it.
+source rather than by watching production.** Four findings now. Two invalidate
+sentences written elsewhere in this plan, one is the reason Stage 3 could not
+have been sized on the day D7 unblocked it, and the first was found by checking
+the others against the running container instead of against `:latest`.
 
-### `BROWSER_RECYCLE_AFTER_CONTEXTS` counts the path that does not leak
+### The image in production is not the image the compose file is written for
+
+`TRAWL_IMAGE` defaults to `ghcr.io/germondai/trawl:latest`, but a tag is
+resolved at pull time and `restart: unless-stopped` never pulls. The container
+running on 2026-08-23 was created from an image built **2026-07-06**
+(`sha256:d4d7beb2…`). `:latest` that same day resolved to a build from
+**2026-08-21** (`sha256:86b1fdf2…`) — six weeks apart, and the browser pool grew
+from 249 lines to roughly 750 between them.
+
+So the compose file has been configured against a solver we do not run. Of the
+five environment variables set on `trawl`, the running image reads three:
+
+| Set in `docker-compose.yml` | Read by the running image |
+|---|---|
+| `BROWSER_POOL_SIZE=2` | yes |
+| `BROWSER_ACQUIRE_TIMEOUT_MS=30000` | yes |
+| `SESSION_TTL_SECONDS=3600` | yes |
+| `BROWSER_RECYCLE_AFTER_CONTEXTS=8` | **no — the variable does not exist in it** |
+| `BROWSER_CONTENT_PROCESSES=2` | **no — same** |
+
+Enumerated from the image itself (`grep -rhoE "process\.env\.[A-Z_]+"` over
+`/app`), not inferred. The second inert variable matters on its own: it is the
+knob that caps Firefox content processes per browser, a memory-relevant
+setting we believed was holding at 2 and which has never been read.
+
+**And the July pool has no periodic recycling of any kind.** Its only restart
+path fires when `browser.isConnected()` returns false — "disconnected,
+restarting". There is no rolling replacement, no temporary-context counter, no
+stall detection. A browser and its persistent context are created at startup
+and live until the process dies. Nothing in the running image could ever have
+bounded memory growth, which is why the `CONSTRAINT_MEMCG` kill was
+load-bearing and why removing it produced D7 directly.
+
+Two production reads on 2026-08-23 19:07 UTC confirm it, ~25 hours after the
+D7 restart: `GET /stats` reports `restarts: 0`, and `trawl`'s logs contain no
+pool restart line at all. Memory was **1.315 GiB** against a 727 MiB
+post-restart baseline — roughly **590 MiB/day**, which reaches D7's 3.18 GB
+wedge point at about **4.3 days** and matches the 4-day failure almost exactly.
+
+> **The lesson is the method, not the tag.** These findings were first read
+> from `:latest` and were wrong about production for that reason. Read the
+> digest the container is actually running (`docker inspect --format
+> '{{.Image}}'`) before concluding anything about behaviour, and pin
+> `TRAWL_IMAGE` to a digest so the compose file and the running code cannot
+> drift again.
+
+### What the recycle setting will do once we are current — prospective
+
+**This subsection describes the 2026-08-21 build, not production.** It was
+written before the drift above was found, and it is kept because
+[3b](#3b--get-current-on-a-pinned-digest) moves us onto exactly this build, at
+which point it becomes live.
 
 D7 left this as the question to settle before an interval is chosen: is the
 setting ineffective, or does it count something other than what its name
-implies? It is the second, and upstream says so in the config file it ships:
+implies? In the newer build it is the second, and upstream says so in the
+config file it ships:
 
 > Rolling-replace a browser after this many **Tier 3/4 temporary contexts**.
 > Every creation counts regardless of outcome; 0 disables periodic replacement.
@@ -582,10 +639,12 @@ fire when traffic is served from cache. That is what makes
 [3b](#3b--ask-the-in-container-recycle-first) an experiment worth running and
 not a fix worth assuming.
 
-**There is a free read that settles it empirically.** `GET /stats` on `trawl`
-exposes `restarts`, the sum of `restartCount` across pool entries, incremented
-by both rolling replacements and health-driven restarts. `restarts == 0` across
-a boot is standalone proof that nothing recycled, with no log archaeology.
+**There is a free read that settles it empirically, on either build.**
+`GET /stats` on `trawl` exposes `restarts`, the sum of `restartCount` across
+pool entries. On the current image only a disconnect increments it; on the
+newer one, rolling replacements do too. Either way `restarts == 0` across a
+boot is standalone proof that nothing recycled, with no log archaeology — and
+it read 0 at 25 hours on 2026-08-23.
 
 ### The socket proxy cannot lend one verb
 
@@ -1134,30 +1193,52 @@ has been open and unmeasured since 2026-07-10 for want of exactly this metric.
 > and after ~48 hours the `trawl` series shows a *shape* — plateau or climb —
 > which is the read D7 asked for and D8 says nobody has.
 
-### 3b — Ask the in-container recycle first
+### 3b — Get current, on a pinned digest
 
-Set `TRAWL_BROWSER_RECYCLE_AFTER_CONTEXTS=1` and soak for 48 hours against 3a's
-series. A rolling replacement rebuilds the whole browser, persistent context
-included, so if tier 3/4 fires often enough this clears the leak with **no new
-authority, no new DAG, and a one-line compose change** — and per D8 the only
-reason it is not already happening is that the counter rarely reaches 8.
+Move `trawl` from the 2026-07-06 build to a current one, pinned by digest
+rather than by `:latest`, and soak for 48 hours against 3a's series.
 
-Read the result three ways: 3a's memory series should sawtooth well below 3 GB;
-`GET /stats` `restarts` should climb from its current value; and the Stage 2
-solver outcome counters should be unchanged, since a recycle that clears memory
-by degrading the solve rate is not a fix.
+This replaces the original 3b — "set `TRAWL_BROWSER_RECYCLE_AFTER_CONTEXTS=1`
+and watch" — which
+[D8](#the-image-in-production-is-not-the-image-the-compose-file-is-written-for)
+showed would do exactly nothing: the variable is not read by the image we run.
 
-Know the cost before running it. A rolling replacement launches a replacement
-browser while the retired one is still serving, so the container briefly holds
-three browsers against the 4 GB cap; the pool-wide lock bounds that to one
-extra. And every replacement is a fresh `camoufox` launch, a path the pool's own
-code is visibly scarred by — a 90-second `launchWithin` bound, abandoned-launch
-accounting, and comments about launches that hang indefinitely and strand a pool
-entry. Raising the recycle rate raises exposure to that path proportionally.
+The newer build reads like scar tissue from our own failure. Against a pool
+whose only recovery path is "browser disconnected, restarting", it adds rolling
+replacement, a stall detector that reclaims a checkout wedged past its budget,
+bounded close and launch timeouts for a Camoufox that hangs on either, and
+abandoned-launch accounting so a browser that cannot start stops having
+attempts piled on it. D7's failure — both browsers in `D` state, every acquire
+blowing past its timeout, the healthcheck timing out behind them — is close to
+a description of what those additions exist to survive.
 
-**If 3b passes, Stage 3 is finished here** and 3c/3d are not built. That is the
-outcome to hope for, and the reason this slice runs before the one that needs
-new authority in the stack.
+**Pin the digest.** `:latest` is how a six-week drift went unnoticed, and an
+unpinned tag on the component that must not break means the next `docker
+compose up` is an unreviewed upgrade. `TRAWL_IMAGE` takes a
+`ghcr.io/germondai/trawl@sha256:…` reference, and moving it becomes a commit
+someone can see.
+
+Read the result three ways: 3a's memory series should stop climbing
+monotonically, `GET /stats` `restarts` should leave 0, and the Stage 2 solver
+outcome counters should be unchanged — a build that clears memory by degrading
+the solve rate is not a fix. `BROWSER_CONTENT_PROCESSES=2` also becomes live
+for the first time, so some of any improvement is that variable finally being
+read; the two are not separable in one soak and do not need to be.
+
+Know the risks before running it, because this is a bigger change than the
+config flag it replaces. Six weeks of upstream change lands at once on the one
+component whose failure takes detail scraping down, the two known failure
+shapes both live here, and Stage 2's counters are the only instrument that
+would catch a regression — which is an argument for doing this *after* 3a is
+deployed and has a baseline, not before. Rollback is repinning the old digest,
+which is why the pin matters more than the upgrade.
+
+**If 3b holds, Stage 3 may be finished here** and 3c/3d are not built. That is
+the outcome to hope for, and the reason this slice runs before the one that
+needs new authority in the stack. If the newer pool merely slows the climb
+rather than bounding it, the recycle counter becomes the fallback the
+[prospective section of D8](#what-the-recycle-setting-will-do-once-we-are-current--prospective)
+describes, and 3c/3d proceed as written.
 
 ### 3c — Restart authority: a second proxy instance, not a second verb
 
@@ -1425,8 +1506,12 @@ Stage 0 rows are marked **done**; the container-health producer moved to
 | `grafana/provisioning/alerting/rules.yml` | `ct-solver-not-solving` + `ct-detail-fetch-failing`; `scraper` added to `ct-service-down`; `ct-scrape-volume-drop` re-annotated as data-quality | 2 — **done** |
 | `dbt_runner/sql/analytics_metrics_snapshot.sql` | Exclude the in-progress hour, so the "last complete hour" gauge is one (D1) | 2 — **done** |
 | `grafana/dashboards/pipeline_health.json` | Solver and detail outcome-rate panels — the read that answers open question 2 | 2 — **done** |
-| `container_health/docker_api.py`, `collector.py`, `app.py` | Per-container memory + limit from `/containers/{id}/stats?stream=false&one-shot=true`, scoped to the three `mem_limit` services | 3a |
-| `docker-compose.yml` | `TRAWL_BROWSER_RECYCLE_AFTER_CONTEXTS=1` | 3b — experiment, revert if it fails |
+| `container_health/docker_api.py` | `container_stats()` — a GET already inside the deployed grant | 3a — **done** |
+| `container_health/collector.py` | `memory_capped()` / `memory_usage()` and two gauge families; membership derived from `HostConfig.Memory`, never listed | 3a — **done** |
+| `tests/test_container_health_collector.py` | Scoping, the `docker stats` arithmetic against a production sample, and the asymmetry that a stats failure must not blind the health metric | 3a — **done** |
+| `grafana/dashboards/infrastructure.json` | "Container Memory Headroom" and "Solver Memory Against Its Cap", under the container-health block | 3a — **done** |
+| `tests/test_observability_config.py` | Both series charted; no panel overlaps after the gridPos shift | 3a — **done** |
+| `docker-compose.yml` | `TRAWL_IMAGE` pinned to a current `@sha256:` digest; drop the two inert env vars | 3b — revert by repinning the old digest |
 | `docker-compose.yml` | `docker-socket-proxy-restart` (`CONTAINERS=0, POST=1, ALLOW_RESTARTS=1`) on its own internal network; `RECYCLABLE_SERVICES` for ops | 3c |
 | `tests/test_observability_config.py` | `test_socket_access_stays_confined_to_the_proxy` updated to name both proxies and assert their distinct grants | 3c |
 | `ops/routers/maintenance.py` | `POST /maintenance/recycle/{service}`, allowlisted, `single_flight`-guarded | 3c |
