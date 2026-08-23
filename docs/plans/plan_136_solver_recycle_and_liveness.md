@@ -9,8 +9,11 @@ Stages 3 and 4 not started.**
 
 The soak proved both new rules quiet and the counters healthy, but it **did not
 answer open question 2**: a healthy window contains no solver decay to read, so
-Stage 3's recycle interval still has nothing to be chosen from. See
-[the soak record](#24-hour-soak-record--2026-08-21).
+at the time Stage 3's recycle interval had nothing to be chosen from. See
+[the soak record](#24-hour-soak-record--2026-08-21). **[D7](#d7--the-involuntary-recycle-stopped-and-the-leak-stopped-being-harmless)
+(2026-08-22) changed that** — the rate bent at four days, and the involuntary
+OOM recycle Stage 3 was sized against has stopped firing, so the interval is now
+re-derived against memory headroom rather than the 22-day uptime figure.
 
 Stage 0 shipped as PR #214, merge `8b2254b`; see
 [Stage 0 production verification](#stage-0-production-verification-2026-08-18).
@@ -58,6 +61,17 @@ time **the thing that died was the detection mechanism itself.**
 Three findings now share one root cause: **the health of a component is not a
 signal this system collects.** Every one was found by noticing damage
 downstream — never by an alert.
+
+**Extended a fourth time 2026-08-22 with [D7](#d7--the-involuntary-recycle-stopped-and-the-leak-stopped-being-harmless),
+which breaks that streak in the right direction.** A second `trawl` outage was
+caught by `ct-solver-not-solving` about 30 minutes in, not by a human hours
+later — Stage 2 working as designed, and **Goal 1 met in production**. But it
+failed at **4 days** of uptime, not 22, by **memory exhaustion** rather than
+state rot, and with an **unhealthy** container rather than a healthy one. The
+load-bearing finding is that the `CONSTRAINT_MEMCG` kill Stage 3 assumes is
+recycling the browsers every 1.5-4 days **has not fired once in 4.5 days**. The
+involuntary recycle this plan was designed around is gone, which changes what
+Stage 3 must be sized against.
 
 ## The incident
 
@@ -408,13 +422,113 @@ look identical. That is a dashboard-contract problem and belongs with
 [Plan 141](plan_141_structured_log_ingestion_contract.md), which owns dashboard
 selectors — with the caveat that these are Prometheus selectors, not Loki ones.
 
+## D7 — The involuntary recycle stopped, and the leak stopped being harmless
+
+**Found 2026-08-22 by `ct-solver-not-solving` — the first of this plan's
+findings that an alert caught rather than a human noticing damage downstream.
+Stage 2's counters worked exactly as designed.**
+
+| | |
+|---|---|
+| Started | 2026-08-22 ~17:17 UTC |
+| Detected | 2026-08-22 ~17:47, **by `ct-solver-not-solving`**, ~30 min in |
+| Resolved | 2026-08-22 17:52:56 UTC, `docker restart cartracker-trawl` |
+| Duration | ~35 minutes |
+| Cost | One partial batch degraded to `curl_cffi` fallback; detail fetches held ~98.9% `ok` (796 vs 9 403s) across the window |
+
+Detection is the headline. The 2026-08-14 outage ran 8h 12m before a human
+noticed; this one was on a screen in about half an hour, from a signal that does
+not pass through dbt. **Goal 1 is met in production.**
+
+### A third failure shape, distinct from both known ones
+
+The plan has documented two solver shapes: *refusing* (`outcome=error`) and
+*lying* (`outcome=challenge`, status ok behind an interstitial). This was the
+refusing shape — 100% `error`, **0** `challenge` — but reached by a mechanism
+neither shape describes, and with the opposite container signal:
+
+| | 2026-08-14 | 2026-08-22 |
+|---|---|---|
+| Container status | **healthy** for all 8h | **unhealthy**, failing streak 53 |
+| Uptime at failure | 22 days | **4 days** |
+| Mechanism | container-level state rot; `/v1` 500s | **memory exhaustion**; 429 + 135s read timeouts |
+| Solve rate before | degraded to 0% | flat 2.2-3.0/hour through 17:00, then cliff |
+
+Pool browser PID 23, alive since the Aug 18 boot, held **3.18 GB RSS** against
+the 4 GB `mem_limit`; the container sat at **99.57%**. Both pool parents and the
+`bun` API were in `D` state on page reclaim. `BROWSER_POOL_SIZE` is 2, so with
+both browsers wedged every acquire blew past `BROWSER_ACQUIRE_TIMEOUT_MS` —
+which is why the scraper saw 429s and 135s read timeouts, and why the 10s
+healthcheck timed out. One cause, every symptom. The restart took memory to
+727 MiB with the pool at 2/2 and solves resuming within ~20 seconds.
+
+### The finding that matters: the OOM killer did not fire
+
+Stage 3's design blockquote rests on a premise that is **no longer true**. It
+argues that `camoufox-bin` is OOM-killed every 1.5-4 days, that the browsers are
+therefore *already* being recycled involuntarily far more often than weekly, and
+that Stage 3's interval should be chosen against whatever container-level state
+survives those kills.
+
+That involuntary recycle has stopped:
+
+| Boot | Window | `CONSTRAINT_MEMCG` kills |
+|---|---|---|
+| previous | 2026-07-31 - 2026-08-18 (~18 days) | **3** (Aug 05, 11, 15) |
+| current | 2026-08-18 04:22 - 2026-08-22 (4.5 days) | **0** |
+
+The journal covers the whole current boot, so the zero is real and not a
+retention artifact. The browser reached 3.18 GB — squarely inside the
+~3.2-3.5 GB band that used to get it killed — and **was not killed**. It
+thrashed at the cgroup ceiling instead.
+
+**This inverts the guardrail's role.** Plan 124's cap was doing the containing
+it was built to do, and the kill it used to produce was, in effect, a free
+recycle that kept the leak harmless. Without the kill, the same leak stops being
+"expected background noise" (the runbook's words) and becomes an outage that
+only a manual restart clears.
+
+Whether the Aug 18 reboot onto kernel `6.8.0-1058-oracle` caused this or it is
+coincidence is **not established** — one missed kill against a ~5-6 day
+historical interval is suggestive, not proof. The next kill, or a second clean
+4-day window, settles it. That question should not block acting on the rest.
+
+### What this does to Stage 3
+
+Two things, both material:
+
+1. **There are two failure clocks, not one.** A ~22-day container-state clock
+   and a ~4-day memory clock. The weekly cadence in Stage 3 was sized against
+   the 22-day figure with "3x margin" — **it would not have prevented this
+   outage**, which arrived on day 4.
+2. **The interval can no longer be chosen against uptime alone.** The
+   blockquote was already right that uptime is the wrong axis; this sharpens it.
+   Memory headroom is a directly observable input, and unlike 22-day state rot
+   it does not require weeks of waiting to read.
+
+Separately, `BROWSER_RECYCLE_AFTER_CONTEXTS=8` plainly did not recycle PID 23
+across four days. Whether that setting is ineffective, or counts something other
+than what its name implies, is worth establishing before an interval is chosen —
+if in-container recycling can be made to work, it is cheaper than a scheduled
+`docker restart` and needs no new socket authority.
+
+### Partial answer to open question 2
+
+OQ2 asks whether the solve rate decays gradually or falls off a cliff. On this
+mechanism it is **unambiguously a cliff**: flat 2.2-3.0/hour through 17:00, then
+100% `error` from 17:17, with no intermediate degradation in any five-minute
+bucket. That is one datapoint on the *memory* clock. It says nothing about the
+22-day state-rot clock, which remains unobserved since 2026-08-14.
+
 ## Goal
 
 1. Detect a solver outage in **under 15 minutes**, from a signal that does not
    pass through dbt.
 2. Never let a gauge report a stale value as if it were live. Plan 143 owns the
    analytics-serving implementation and freshness alert that satisfy this goal.
-3. Recycle `trawl` on a schedule so 22-day state rot cannot accumulate.
+3. Recycle `trawl` on a schedule so neither 22-day state rot nor the ~4-day
+   memory leak of [D7](#d7--the-involuntary-recycle-stopped-and-the-leak-stopped-being-harmless)
+   can accumulate.
 4. Restart `trawl` automatically when it fails, without a human in the loop, and
    without pushing in-flight listings into cooldown.
 5. **Never let a container sit unhealthy unnoticed.** A failing healthcheck must
@@ -872,6 +986,13 @@ This is a judgment call, not a measured optimum — Stage 2's counters will show
 whether solve rate degrades gradually (tighten it) or falls off a cliff
 (leave it).
 
+> **Superseded in part by [D7](#d7--the-involuntary-recycle-stopped-and-the-leak-stopped-being-harmless)
+> (2026-08-22): the involuntary recycle this blockquote rests on has stopped —
+> zero `CONSTRAINT_MEMCG` kills in 4.5 days against 3 in the prior 18. Its
+> conclusion (uptime is the wrong axis) still holds and is now sharper; its
+> premise (the browsers are being recycled for free) does not. A weekly cadence
+> would not have prevented the 08-22 outage, which arrived on day 4.**
+>
 > **The "22 days of uptime" framing needs revisiting before the interval is
 > chosen.** [Plan 124](plan_124_trawl_memory_guardrails.md)'s 2026-08-18
 > verification found `camoufox-bin` is OOM-killed inside the container roughly
@@ -1037,6 +1158,14 @@ Stage 0 rows are marked **done**; the container-health producer moved to
    **Stage 3's interval should not be chosen before there is a baseline in
    them.** That is the reason Stage 3 was not built alongside Stage 2 despite
    the build order pairing them.
+
+   **Partially answered 2026-08-22 by [D7](#d7--the-involuntary-recycle-stopped-and-the-leak-stopped-being-harmless).**
+   On the *memory* clock it is a **cliff**, not a decay — flat 2.2-3.0/hour,
+   then 100% `error` from one bucket to the next. That is one datapoint on a
+   mechanism the question was not originally about; the 22-day state-rot clock
+   is still unobserved since 2026-08-14. The practical consequence is that
+   "weekly is conservative" is now known to be **false** for at least one
+   failure mode.
 3. **Should the vestigial `cartracker-flaresolverr` container be removed, and
    `FLARESOLVERR_URL` renamed to `SOLVER_URL`?** Low effort; it cost real time
    during this incident.
