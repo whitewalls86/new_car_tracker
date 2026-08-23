@@ -43,10 +43,16 @@ sudo journalctl -k --no-pager | grep -E 'Killed process' | tail -10
 | `CONSTRAINT_MEMCG` | Hit the **container's** limit. Blast radius contained — Plan 124's guardrail working as designed. | Routine |
 | `CONSTRAINT_NONE` | **Host-wide** OOM. The kernel was out of memory system-wide and picked a victim. | Serious |
 
-A `CONSTRAINT_MEMCG` kill of `camoufox-bin` is **expected background noise** on
-this host — it has happened roughly every 1.5–4 days since the limits were
-deployed, at ~3.2–3.5 GB anon-rss. It is a browser memory leak being contained,
-not an incident.
+A `CONSTRAINT_MEMCG` kill of `camoufox-bin` **used to be expected background
+noise** on this host — roughly every 1.5–4 days, at ~3.2–3.5 GB anon-rss.
+
+> **That stopped on 2026-08-18 and the absence is now the warning sign.** Zero
+> kills in the 5.6 days to 2026-08-23, against 3 in the prior 18. The kill was
+> in effect a free recycle, and the image in production has no periodic
+> recycling of its own — so without it the leak climbs until the pool wedges,
+> which is what happened on 2026-08-22 at 4 days. See
+> [Plan 136 D7 and D8](../plans/plan_136_solver_recycle_and_liveness.md#d7--the-involuntary-recycle-stopped-and-the-leak-stopped-being-harmless).
+> A kill appearing again is good news, not bad.
 
 `CONSTRAINT_NONE` has not occurred since 2026-07-12. If one appears, the
 guardrail has been removed or something outside the solver is the problem —
@@ -73,9 +79,16 @@ docker stats cartracker-trawl cartracker-redis-trawl --no-stream \
   --format 'table {{.Name}}\t{{.MemUsage}}\t{{.MemPerc}}\t{{.PIDs}}'
 ```
 
-Steady state sits around **70%** of the 4 GB cap with ~200 of 512 PIDs. Climbing
-past ~85% means an OOM kill is likely within hours — harmless, but expect a
-brief solve-rate dip while the browser pool recovers.
+> **The old "steady state ~70%" figure was the midpoint of a sawtooth that no
+> longer exists.** It was measured while the OOM killer was recycling the
+> browser every few days. Against the monotonic climb seen since 2026-08-18 it
+> describes nothing: measured growth is ~590 MiB/day from a ~727 MiB
+> post-restart baseline, reaching the ~3.2 GB wedge band at about 4 days.
+
+Read the curve, not a single number — the **Container Memory Headroom** and
+**Solver Memory Against Its Cap** panels on the Infrastructure dashboard chart
+it continuously (Plan 136 Stage 3a). Past ~75% of the cap, a restart is due;
+past ~85%, expect a wedge within hours. ~200 of 512 PIDs is normal.
 
 ## 5. Restart the solver
 

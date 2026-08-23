@@ -19,7 +19,7 @@ against 26 containers in production.
 """
 from __future__ import annotations
 
-from typing import Dict, Iterable, Iterator, Mapping
+from typing import Dict, Iterable, Iterator, Mapping, Optional, Tuple
 
 from prometheus_client.core import GaugeMetricFamily
 
@@ -33,6 +33,17 @@ METRIC_DOC = (
 HEALTHY = 1
 UNHEALTHY = 0
 UNCONFIGURED = -1
+
+MEMORY_METRIC_NAME = "cartracker_container_memory_bytes"
+MEMORY_METRIC_DOC = (
+    "Resident memory of each memory-capped container, excluding reclaimable "
+    "page cache -- the same figure `docker stats` prints"
+)
+MEMORY_LIMIT_METRIC_NAME = "cartracker_container_memory_limit_bytes"
+MEMORY_LIMIT_METRIC_DOC = (
+    "The container's configured memory limit, from its own inspect payload "
+    "rather than from the compose file"
+)
 
 PROJECT_LABEL = "com.docker.compose.project"
 SERVICE_LABEL = "com.docker.compose.service"
@@ -104,6 +115,61 @@ def health_values(inspections: Iterable[Mapping], project: str) -> Dict[str, int
     return dict(sorted(values.items()))
 
 
+def memory_capped(
+    inspections: Iterable[Mapping], project: str
+) -> Dict[str, Tuple[str, int]]:
+    """Service -> (container id, limit) for containers that declare a cap.
+
+    Membership is read from each container's own `HostConfig.Memory` rather
+    than from a list of service names kept here. That matters more than it
+    looks: a hardcoded allowlist has the failure mode this plan's open question
+    5 describes, where a service capped later is silently unmeasured. Derived
+    from the inspect payload, a new `mem_limit` in the compose file starts
+    publishing on the next scrape with no change to this file.
+
+    Containers without a cap are skipped deliberately. An unbounded number has
+    no headroom to be read against, and Plan 136 Stage 3d gates on the fraction
+    of a limit -- a series with no limit could not feed it.
+    """
+    capped = {}
+    for inspection in inspections:
+        labels = (inspection.get("Config") or {}).get("Labels") or {}
+        if labels.get(PROJECT_LABEL) != project:
+            continue
+        if labels.get(ONEOFF_LABEL) == "True":
+            continue
+        limit = ((inspection.get("HostConfig") or {}).get("Memory")) or 0
+        if limit <= 0:
+            continue
+        capped[labels[SERVICE_LABEL]] = (inspection["Id"], limit)
+    return dict(sorted(capped.items()))
+
+
+def memory_usage(stats: Mapping) -> Optional[int]:
+    """The number `docker stats` prints, not the raw cgroup total.
+
+    `memory_stats.usage` includes reclaimable page cache, which on a container
+    that reads files makes the figure both larger than the process footprint
+    and unrelated to how close it is to being killed. Docker's own CLI
+    subtracts the inactive file cache, and every number this plan reasons about
+    -- the runbook's percentages, D7's 3.18 GB -- came from that CLI. Publishing
+    the raw value would silently disagree with all of them.
+
+    cgroup v2 spells it `inactive_file` and v1 `total_inactive_file`; the host
+    runs v2, and v1 is accepted so the metric does not quietly change meaning
+    if that ever moves.
+    """
+    memory = stats.get("memory_stats") or {}
+    usage = memory.get("usage")
+    if usage is None:
+        return None
+    detail = memory.get("stats") or {}
+    inactive = detail.get("inactive_file")
+    if inactive is None:
+        inactive = detail.get("total_inactive_file") or 0
+    return max(usage - inactive, 0)
+
+
 class ContainerHealthCollector:
     """Computes on every scrape. There is no cached value to go stale."""
 
@@ -117,3 +183,38 @@ class ContainerHealthCollector:
         for service, value in health_values(inspections, self._project).items():
             family.add_metric([service], value)
         yield family
+        yield from self._memory(inspections)
+
+    def _memory(self, inspections) -> Iterator[GaugeMetricFamily]:
+        """Plan 136 Stage 3a. One extra GET per capped container, three today.
+
+        A per-container stats read is allowed to fail soft where the fleet
+        inspect above is not, and the asymmetry is deliberate. The inspect is
+        the health metric's only input, so its failure must take
+        `up{job="container-health"}` to 0. A single stats call failing should
+        not: it would blind the health signal to repair a memory one.
+
+        The cost of failing soft is a missing sample, and Stage 3d is built
+        knowing that -- its gate treats an absent reading as "do not recycle
+        **and** alert", never as permission to proceed. Absence is the signal,
+        so it does not need to be an exception here as well.
+        """
+        used = GaugeMetricFamily(
+            MEMORY_METRIC_NAME, MEMORY_METRIC_DOC, labels=["container"]
+        )
+        limits = GaugeMetricFamily(
+            MEMORY_LIMIT_METRIC_NAME, MEMORY_LIMIT_METRIC_DOC, labels=["container"]
+        )
+        for service, (container_id, limit) in memory_capped(
+            inspections, self._project
+        ).items():
+            limits.add_metric([service], limit)
+            try:
+                stats = self._api.container_stats(container_id)
+            except (OSError, ValueError):
+                continue
+            value = memory_usage(stats)
+            if value is not None:
+                used.add_metric([service], value)
+        yield used
+        yield limits

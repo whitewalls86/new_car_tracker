@@ -155,10 +155,82 @@
       }
     },
     {
+      "id": 24,
+      "title": "Container Memory Headroom",
+      "description": "Plan 136 Stage 3a. Fraction of each capped container's own memory limit in use, excluding reclaimable page cache -- the figure `docker stats` prints, not the raw cgroup total. Only containers declaring a `mem_limit` appear, because a fraction needs a denominator; membership is read from each container's HostConfig, so a service capped later starts charting with no edit to the exporter. This is the series Stage 3d's recycle gate reads, and D7 is why it exists: on 2026-08-22 `trawl` climbed to 99.57% of its 4 GiB cap and wedged, and nothing in this system was recording it.",
+      "type": "timeseries",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 18 },
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "cartracker_container_memory_bytes{job=\"container-health\"} / on(container) cartracker_container_memory_limit_bytes{job=\"container-health\"}",
+          "legendFormat": "{{container}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "custom": { "fillOpacity": 5, "lineWidth": 2 },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 0.75 },
+              { "color": "red", "value": 0.85 }
+            ]
+          }
+        }
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }
+      }
+    },
+    {
+      "id": 25,
+      "title": "Solver Memory Against Its Cap",
+      "description": "`trawl` alone, in bytes, against the 4 GiB limit it is actually running with. The absolute view sits next to the fraction because every number this plan reasons about is absolute: 727 MiB after the 2026-08-22 restart, 3.18 GB when both browsers wedged, ~590 MiB/day measured between them. A straight climb between restarts is the expected shape until Stage 3b lands -- the image in production has no periodic recycling of any kind, and the OOM kills that used to provide one stopped on 2026-08-18.",
+      "type": "timeseries",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 18 },
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "cartracker_container_memory_bytes{job=\"container-health\", container=\"trawl\"}",
+          "legendFormat": "in use"
+        },
+        {
+          "datasource": "Prometheus",
+          "expr": "cartracker_container_memory_limit_bytes{job=\"container-health\", container=\"trawl\"}",
+          "legendFormat": "limit"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "min": 0,
+          "custom": { "fillOpacity": 5, "lineWidth": 2 }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "limit" },
+            "properties": [
+              { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } },
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } },
+              { "id": "custom.fillOpacity", "value": 0 }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }
+      }
+    },
+    {
       "id": 1,
       "title": "Host CPU Utilization",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 18 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 27 },
       "targets": [
         {
           "datasource": "Prometheus",
@@ -172,7 +244,7 @@
       "id": 2,
       "title": "Host Memory Used",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 18 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 27 },
       "targets": [
         {
           "datasource": "Prometheus",
@@ -186,7 +258,7 @@
       "id": 3,
       "title": "Disk I/O (bytes/sec)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 26 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 35 },
       "targets": [
         {
           "datasource": "Prometheus",
@@ -205,7 +277,7 @@
       "id": 4,
       "title": "Postgres Active Connections by State",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 26 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 35 },
       "targets": [
         {
           "datasource": "Prometheus",
@@ -219,7 +291,7 @@
       "id": 5,
       "title": "Postgres Transaction Rate (commits/sec)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 34 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 43 },
       "targets": [
         {
           "datasource": "Prometheus",
@@ -234,7 +306,7 @@
       "title": "MinIO Logical Object Bytes",
       "description": "Sum of object payload sizes in the bucket. This is NOT disk usage -- it excludes the per-object storage floor and every non-MinIO volume sharing /mnt/data. Compare against the physical panel below.",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 34 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 43 },
       "targets": [
         {
           "datasource": "Prometheus",
@@ -248,7 +320,7 @@
       "id": 7,
       "title": "MinIO Request Rate (by API type)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 42 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 51 },
       "targets": [
         {
           "datasource": "Prometheus",
@@ -262,7 +334,7 @@
       "id": 8,
       "title": "MinIO Error Rate",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 42 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 51 },
       "targets": [
         {
           "datasource": "Prometheus",
@@ -277,7 +349,7 @@
       "title": "Filesystem Used %",
       "description": "Both volumes. Selector matches ct-disk-space-warning / ct-disk-space-critical exactly, so what you see here is what those alerts evaluate.",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 50 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 59 },
       "targets": [
         {
           "datasource": "Prometheus",
@@ -306,7 +378,7 @@
       "title": "Inode Used %",
       "description": "Inodes bind before bytes when the bucket is full of small objects -- each MinIO object costs 2. Exhaustion presents as ENOSPC with free space still on the disk. Selector matches ct-inode-warning / ct-inode-critical.",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 50 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 59 },
       "targets": [
         {
           "datasource": "Prometheus",
@@ -335,7 +407,7 @@
       "title": "MinIO Logical vs Mount Physical",
       "description": "The divergence is the point. Logical counts object payloads; physical is everything actually consumed on /mnt/data, which includes MinIO's per-object floor plus Postgres, Loki, Prometheus and the Airflow logs.",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 58 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 67 },
       "targets": [
         {
           "datasource": "Prometheus",
@@ -355,7 +427,7 @@
       "title": "Storage Amplification Ratio",
       "description": "Mount physical / MinIO logical. This is a mount-level ratio, so it folds in the non-MinIO volumes (~15 GiB) and reads high; the trend is what matters. Stage 4's per-volume metric will give the MinIO-only figure.",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 58 },
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 67 },
       "targets": [
         {
           "datasource": "Prometheus",
@@ -370,7 +442,7 @@
       "title": "Mean Object Size",
       "description": "Denominator is minio_bucket_usage_object_total, chosen deliberately: it is the exact sum of MinIO's mutually-exclusive size buckets. Do not substitute sum(minio_bucket_objects_size_distribution) -- that series carries two overlapping bucket schemes and double-counts the 1 KB - 1 MB range. Falling mean = rising per-object tax; this is the leading indicator for whether Plan 131's packing is earning its keep.",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 58 },
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 67 },
       "targets": [
         {
           "datasource": "Prometheus",
@@ -385,7 +457,7 @@
       "title": "What's Filling The Disks",
       "type": "row",
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 66 },
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 75 },
       "panels": []
     },
     {
@@ -393,7 +465,7 @@
       "title": "Root Disk by Path",
       "description": "Fixed watchlist, measured daily by the disk_usage DAG. Stacked because the question is always 'which band grew'. The total should reconcile roughly with the / line on Filesystem Used % -- roughly, because the watchlist covers most of the disk, not all of it.",
       "type": "timeseries",
-      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 67 },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 76 },
       "targets": [
         {
           "datasource": "Prometheus",
@@ -413,7 +485,7 @@
       "title": "/mnt/data by Docker Volume",
       "description": "cartracker_parquet_data (MinIO, ~4M inodes) and cartracker_airflow_logs (~1.2M) are walked weekly, not daily -- their lines are steps, and cartracker_disk_usage_measured_timestamp_seconds says when each was last actually walked. Tier membership follows inode count, not size on disk: du costs O(inodes). Every other volume here is measured on every run.",
       "type": "timeseries",
-      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 67 },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 76 },
       "targets": [
         {
           "datasource": "Prometheus",
@@ -433,7 +505,7 @@
       "title": "Biggest Consumers (current)",
       "description": "Both disks in one table, largest first. This is the panel that answers 'what is filling this disk' without an SSH session.",
       "type": "table",
-      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 76 },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 85 },
       "targets": [
         {
           "datasource": "Prometheus",
@@ -450,7 +522,7 @@
       "title": "Measurement Age",
       "description": "How long ago each series was actually walked. The MinIO volume should sit under 7 days; everything else under 1. A line climbing without resetting means the disk_usage DAG has stopped running and the gauges above are frozen at their last value.",
       "type": "timeseries",
-      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 76 },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 85 },
       "targets": [
         {
           "datasource": "Prometheus",

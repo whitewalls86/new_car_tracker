@@ -7,23 +7,39 @@ production.
 import pytest
 
 from container_health.collector import (
+    MEMORY_LIMIT_METRIC_NAME,
+    MEMORY_METRIC_NAME,
     METRIC_NAME,
     ContainerHealthCollector,
     NoContainersFound,
     health_value,
     health_values,
+    memory_capped,
+    memory_usage,
 )
 
 PROJECT = "cartracker"
 
 
-def container(service, *, project=PROJECT, status="running", health="healthy", oneoff=None):
+def container(
+    service,
+    *,
+    project=PROJECT,
+    status="running",
+    health="healthy",
+    oneoff=None,
+    mem_limit=0,
+):
     """One inspect payload, shaped like the Docker API's actual response.
 
     `health=None` reproduces the case that motivates the whole three-state
     design: Docker omits State.Health entirely for a container with no
     healthcheck -- verified against cartracker-oauth2-proxy on 2026-08-20,
     whose State keys stop at Status/Running/Paused/Restarting/Dead.
+
+    `mem_limit=0` is Docker's own spelling of "uncapped", not a placeholder --
+    `HostConfig.Memory` is 0 for every container without a `mem_limit`, which
+    is why Plan 136 Stage 3a can read membership straight off the payload.
     """
     labels = {
         "com.docker.compose.project": project,
@@ -34,7 +50,26 @@ def container(service, *, project=PROJECT, status="running", health="healthy", o
     state = {"Status": status}
     if health is not None:
         state["Health"] = {"Status": health, "FailingStreak": 0}
-    return {"Config": {"Labels": labels}, "State": state}
+    return {
+        "Id": f"id-{service}",
+        "Config": {"Labels": labels},
+        "State": state,
+        "HostConfig": {"Memory": mem_limit},
+    }
+
+
+GIB = 1024 ** 3
+
+
+def stats(usage, *, inactive=0, key="inactive_file", limit=4 * GIB):
+    """A one-shot stats payload, trimmed to the section this exporter reads."""
+    return {
+        "memory_stats": {
+            "usage": usage,
+            "limit": limit,
+            "stats": {key: inactive},
+        }
+    }
 
 
 class TestHealthValue:
@@ -124,22 +159,106 @@ class TestScoping:
             health_values([], PROJECT)
 
 
+class TestMemoryScoping:
+    """Plan 136 Stage 3a. Membership is derived, never listed."""
+
+    def test_only_capped_containers_are_measured(self):
+        capped = memory_capped(
+            [
+                container("trawl", mem_limit=4 * GIB),
+                container("scraper"),
+                container("ops"),
+            ],
+            PROJECT,
+        )
+        assert capped == {"trawl": ("id-trawl", 4 * GIB)}
+
+    def test_a_service_capped_later_needs_no_change_here(self):
+        """The failure mode open question 5 describes, avoided by construction:
+        a hardcoded service list would leave this container unmeasured until
+        someone remembered to edit it."""
+        assert "redis-trawl" in memory_capped(
+            [container("redis-trawl", mem_limit=512 * 1024 ** 2)], PROJECT
+        )
+
+    def test_the_limit_comes_from_the_container_not_the_compose_file(self):
+        """A `mem_limit` edited in compose but never applied -- the service was
+        not recreated -- must read as the limit actually in force, or the
+        headroom fraction Stage 3d gates on is computed against fiction."""
+        capped = memory_capped([container("trawl", mem_limit=2 * GIB)], PROJECT)
+        assert capped["trawl"][1] == 2 * GIB
+
+    def test_a_sibling_project_is_not_measured(self):
+        assert memory_capped(
+            [container("mlflow", project="cartracker-mlflow", mem_limit=GIB)],
+            PROJECT,
+        ) == {}
+
+    def test_oneoff_runs_are_not_measured(self):
+        assert memory_capped(
+            [container("dbt", oneoff="True", mem_limit=12 * GIB)], PROJECT
+        ) == {}
+
+    def test_an_uncapped_fleet_is_empty_not_an_error(self):
+        """Unlike health, no memory series is a legitimate state -- it means
+        nothing declares a cap. Raising here would 500 /metrics and take the
+        health metric down with it."""
+        assert memory_capped([container("ops"), container("caddy")], PROJECT) == {}
+
+
+class TestMemoryUsage:
+    def test_reclaimable_page_cache_is_excluded(self):
+        """Verified against production 2026-08-23: usage 1583955968 minus
+        inactive_file 171794432 is 1346.7 MiB, which is what `docker stats`
+        printed for cartracker-trawl in the same second."""
+        assert memory_usage(stats(1583955968, inactive=171794432)) == 1412161536
+
+    def test_cgroup_v1_spelling_is_accepted(self):
+        """The host runs v2. v1 is handled so the metric cannot quietly change
+        meaning by a factor of the page cache if that ever moves."""
+        assert memory_usage(
+            stats(1000, inactive=400, key="total_inactive_file")
+        ) == 600
+
+    def test_a_payload_without_usage_is_absent_not_zero(self):
+        """A restarting container returns an empty memory_stats. Publishing 0
+        would read as an empty container with full headroom -- the most
+        dangerous possible lie for a gauge Stage 3d gates a restart on."""
+        assert memory_usage({"memory_stats": {}}) is None
+        assert memory_usage({}) is None
+
+    def test_usage_never_goes_negative(self):
+        assert memory_usage(stats(100, inactive=500)) == 0
+
+
 class TestCollector:
     class _Api:
-        def __init__(self, inspections):
+        def __init__(self, inspections, stats_by_id=None, stats_error=None):
             self.inspections = inspections
             self.calls = []
+            self.stats_calls = []
+            self.stats_by_id = stats_by_id or {}
+            self.stats_error = stats_error
 
         def inspect_project_containers(self, project):
             self.calls.append(project)
             return self.inspections
 
+        def container_stats(self, container_id):
+            self.stats_calls.append(container_id)
+            if self.stats_error is not None:
+                raise self.stats_error
+            return self.stats_by_id[container_id]
+
     def _samples(self, inspections):
+        """The health family specifically. Stage 3a added two memory families
+        alongside it, so this selects by name rather than assuming a lone one."""
         api = self._Api(inspections)
-        families = list(ContainerHealthCollector(api, PROJECT).collect())
-        assert len(families) == 1
-        assert families[0].name == METRIC_NAME
-        return {s.labels["container"]: s.value for s in families[0].samples}, api
+        families = {f.name: f for f in ContainerHealthCollector(api, PROJECT).collect()}
+        assert METRIC_NAME in families
+        return {
+            s.labels["container"]: s.value for s in families[METRIC_NAME].samples
+        }, api
 
     def test_collect_emits_one_labelled_sample_per_service(self):
         samples, api = self._samples([
@@ -162,6 +281,73 @@ class TestCollector:
 
     def test_a_docker_failure_propagates_instead_of_serving_a_healthy_fleet(self):
         """/metrics must 500 so `up` goes to 0 and ct-service-down fires."""
+        class _Broken:
+            def inspect_project_containers(self, project):
+                raise OSError("connection refused")
+
+        with pytest.raises(OSError):
+            list(ContainerHealthCollector(_Broken(), PROJECT).collect())
+
+
+class TestMemoryCollector:
+    """Plan 136 Stage 3a: the series D7 asked for and nothing published."""
+
+    def _families(self, api):
+        return {f.name: f for f in ContainerHealthCollector(api, PROJECT).collect()}
+
+    def test_usage_and_limit_are_published_per_capped_container(self):
+        api = TestCollector._Api(
+            [container("trawl", mem_limit=4 * GIB), container("ops")],
+            stats_by_id={"id-trawl": stats(2 * GIB, inactive=GIB)},
+        )
+        families = self._families(api)
+        used = {s.labels["container"]: s.value for s in families[MEMORY_METRIC_NAME].samples}
+        limit = {
+            s.labels["container"]: s.value
+            for s in families[MEMORY_LIMIT_METRIC_NAME].samples
+        }
+        assert used == {"trawl": float(GIB)}
+        assert limit == {"trawl": float(4 * GIB)}
+
+    def test_only_capped_containers_cost_a_stats_call(self):
+        """One extra round trip per capped container, three in production. An
+        exporter that stat-ed all 26 on a 15s interval would be a different
+        proposition entirely."""
+        api = TestCollector._Api(
+            [container("trawl", mem_limit=4 * GIB)] + [container(f"svc{i}") for i in range(9)],
+            stats_by_id={"id-trawl": stats(GIB)},
+        )
+        self._families(api)
+        assert api.stats_calls == ["id-trawl"]
+
+    def test_health_still_publishes_when_a_stats_read_fails(self):
+        """The asymmetry that matters. A memory read failing must not blind the
+        health signal -- that would trade the metric this exporter exists for
+        against the one Plan 136 added later."""
+        api = TestCollector._Api(
+            [container("trawl", mem_limit=4 * GIB)],
+            stats_error=OSError("connection refused"),
+        )
+        families = self._families(api)
+        assert [s.value for s in families[METRIC_NAME].samples] == [1.0]
+        assert families[MEMORY_METRIC_NAME].samples == []
+
+    def test_a_failed_stats_read_omits_the_sample_rather_than_zeroing_it(self):
+        """Absence is the signal Stage 3d's gate treats as "do not recycle and
+        alert". A 0 would instead read as maximum headroom and green-light a
+        restart on no information."""
+        api = TestCollector._Api(
+            [container("trawl", mem_limit=4 * GIB)],
+            stats_error=OSError("boom"),
+        )
+        families = self._families(api)
+        assert families[MEMORY_METRIC_NAME].samples == []
+        limits = [s.labels["container"] for s in families[MEMORY_LIMIT_METRIC_NAME].samples]
+        assert limits == ["trawl"], "the limit is known from inspect and stays published"
+
+    def test_a_fleet_inspect_failure_still_takes_the_whole_endpoint_down(self):
+        """Unchanged from Plan 140: /metrics must 500 so up goes to 0. Stage 3a
+        must not have softened this by adding a second, failure-tolerant read."""
         class _Broken:
             def inspect_project_containers(self, project):
                 raise OSError("connection refused")

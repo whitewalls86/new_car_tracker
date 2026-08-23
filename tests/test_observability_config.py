@@ -878,6 +878,35 @@ class TestGrafanaDashboards:
         ids = [p["id"] for p in self._infrastructure_panels()]
         assert len(ids) == len(set(ids)), f"duplicate panel ids: {ids}"
 
+    def test_infrastructure_charts_container_memory_headroom(self):
+        """Plan 136 Stage 3a. D7's finding was that `trawl` climbed to 99.57%
+        of its cap and wedged with nothing recording it; a metric nobody can
+        see is barely better than one nobody collects."""
+        exprs = " ".join(
+            t["expr"]
+            for panel in self._infrastructure_panels()
+            for t in panel.get("targets", [])
+        )
+        assert "cartracker_container_memory_bytes" in exprs
+        assert "cartracker_container_memory_limit_bytes" in exprs, (
+            "the limit must be charted alongside usage -- a byte count with no "
+            "denominator cannot answer how close to wedging the solver is"
+        )
+
+    def test_infrastructure_panels_do_not_overlap(self):
+        """Inserting a panel means shifting every gridPos below it. Grafana
+        silently reflows overlapping panels, so a mistake here is invisible in
+        review and obvious only on the deployed dashboard."""
+        occupied = set()
+        for panel in self._infrastructure_panels():
+            pos = panel["gridPos"]
+            for x in range(pos["x"], pos["x"] + pos["w"]):
+                for y in range(pos["y"], pos["y"] + pos["h"]):
+                    assert (x, y) not in occupied, (
+                        f"{panel['title']!r} overlaps another panel at {(x, y)}"
+                    )
+                    occupied.add((x, y))
+
     def test_infrastructure_charts_both_capacity_and_inodes(self):
         """Plan 135 Stage 2. Neither existed before; inode % is the panel that
         would have shown 61% while the byte panel looked fine."""
