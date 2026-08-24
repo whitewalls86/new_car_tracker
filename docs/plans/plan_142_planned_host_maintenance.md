@@ -275,6 +275,9 @@ Documentation and tests only:
    directions, so a fix without the deletion fails CI rather than leaving the
    registry claiming a defect that no longer exists.
 
+   **Built 2026-08-24**, both halves in one commit — see
+   [items 6 and 7](#items-6-and-7-built-2026-08-24--and-only-one-of-them-is-a-commit).
+
 Items 6 and 7 both ride item 3's Airflow window: it is the only production
 touch Stage 0 makes, and neither change justifies a window of its own.
 
@@ -435,6 +438,54 @@ The endpoints are idempotent janitorial SQL, so the expected blast radius is
 load rather than corruption, and measuring it *is* the acceptance criterion
 "resuming does not unleash an unbounded duplicate backlog". Pre-empting it with
 `max_active_runs=1` would measure a system already fixed.
+
+#### Items 6 and 7 built, 2026-08-24 — and only one of them is a commit
+
+The two riders split cleanly by where their state lives, and that difference is
+the whole reason they are handled differently.
+
+**Item 7 is a commit.** `restart: unless-stopped` is on `caddy` in
+[docker-compose.yml](../../docker-compose.yml), and `caddy`'s `restart-gap`
+entry is deleted from
+[maintenance-running-set.txt](../../maintenance-running-set.txt) in the same
+commit — `test_caddy_restart_gap_is_recorded_while_it_exists` was written to
+hold in both directions precisely so the deletion could not be forgotten, and it
+now asserts the entry is gone. The `restart-gap` class itself stays defined
+though it is empty: `caddy` was its only member, and a class that disappears
+when it empties takes its reasoning with it, leaving the next policy-less
+service nowhere to be classified.
+
+Deploying it is [runbook §10.1](../runbooks/runbook_host_maintenance.md). It is
+`docker compose up -d caddy`, never `restart`, and the check is
+`docker inspect --format '{{.HostConfig.RestartPolicy.Name}}' caddy` rather than
+container uptime.
+
+**Item 6 is not a commit, and cannot be.** `AIRFLOW_JWT_SECRET` lives only in
+the VM's `.env`, so what ships here is the procedure —
+[runbook §10.2](../runbooks/runbook_host_maintenance.md) — with the generation
+command, the `up -d` on the four Airflow services (not `restart`: the value
+arrives through the environment, which a restarted container keeps), the three
+verifications, and the abort. Nothing in git can assert the live key is 64
+bytes; the `InsecureKeyLengthWarning` disappearing from the apiserver log is the
+only evidence, and the runbook makes it the first check rather than an
+afterthought.
+
+##### A gap found while building item 6, and deliberately not fixed here
+
+`.env.example` documents **none of the seven Airflow variables**
+`docker-compose.yml` requires — `AIRFLOW_JWT_SECRET`, `AIRFLOW_FERNET_KEY`,
+`AIRFLOW_DB_PASSWORD`, `AIRFLOW_APP_DB_PASSWORD`, `AIRFLOW_UID`,
+`_AIRFLOW_WWW_USER_USERNAME`, `_AIRFLOW_WWW_USER_PASSWORD` (12 of the 42
+variables Compose interpolates are missing in total). A fresh provision from
+that template does not get a short JWT secret; it gets an **empty** one, which
+is worse than the defect item 6 exists to fix.
+
+Adding only `AIRFLOW_JWT_SECRET` was the tempting move and is the wrong one — it
+would make the file look complete while six siblings stayed missing. This is a
+provisioning concern rather than a rotation one, it is pre-existing, and it
+wants either a full pass over the template or a test asserting every
+interpolated variable is documented. Recorded here, owed to neither item 6 nor
+this stage.
 
 #### Item 4 decided, 2026-08-23 — package classes and what automation may touch
 

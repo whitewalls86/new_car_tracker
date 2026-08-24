@@ -606,6 +606,14 @@ services:
   caddy:
     image: caddy:latest
     container_name: caddy
+    # Plan 142 Stage 0 item 7. Without this caddy's effective policy is `no`,
+    # so an unplanned reboot leaves :80/:443 down until someone runs `up -d` by
+    # hand -- and a stopped container leaves the Plan 140 health metric rather
+    # than reading unhealthy, so nothing reports that it happened. Applying a
+    # change to this key needs `docker compose up -d caddy`, which recreates
+    # the container; `docker compose restart` reuses the old config and would
+    # leave the policy silently unapplied.
+    restart: unless-stopped
     ports:
       - "80:80"
       - "443:443"

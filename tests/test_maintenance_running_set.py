@@ -11,8 +11,13 @@ brings that condition straight back.
 These tests check ``maintenance-running-set.txt`` against the Compose sources so
 the classification cannot drift from the files it describes. They assert the
 registry is complete and honest; they do not assert that the defects it records
-have been fixed. ``caddy``'s missing restart policy is the live example -- it is
-documented here and owed to Stage 2.
+have been fixed.
+
+``caddy``'s missing restart policy used to be the live example of that
+distinction. It was fixed on 2026-08-24 by Plan 142 Stage 0 item 7, and
+``test_caddy_restart_gap_is_recorded_while_it_exists`` -- written to hold in
+both directions -- is what now asserts the entry was deleted rather than left
+behind to teach operators to discount the registry.
 """
 from pathlib import Path
 
