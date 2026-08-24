@@ -35,6 +35,7 @@ try:
     from datetime import datetime
 
     from airflow.providers.standard.operators.python import PythonOperator
+    from pools import MAINTENANCE_POOL
     from sensors import deploy_intent_sensor, http_health_sensor
 
     from airflow import DAG
@@ -49,7 +50,11 @@ try:
     ):
         ready = deploy_intent_sensor()
         processing_up = http_health_sensor("processing", PROCESSING_URL)
-        process = PythonOperator(task_id="process_batch", python_callable=_process_batch)
+        process = PythonOperator(
+            task_id="process_batch",
+            python_callable=_process_batch,
+            pool=MAINTENANCE_POOL,
+        )
 
         ready >> processing_up >> process
 

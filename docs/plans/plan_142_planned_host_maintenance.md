@@ -36,9 +36,23 @@ but only through live investigation and manual coordination:
   Compose projects and were intentionally stopped for Plan 125. A generic
   `docker compose down` cannot distinguish “forgotten” from “deliberately
   paused.”
-- The Docker package upgrade raised the daemon's minimum API version and broke
+- ~~The Docker package upgrade raised the daemon's minimum API version and broke
   Promtail 2.9.8 discovery. The host update therefore changed an application
-  compatibility boundary even though no application code caused it.
+  compatibility boundary even though no application code caused it.~~
+  **Disproved 2026-08-23 by `/var/log/apt/history.log` — there was no Docker
+  upgrade, in this window or ever.** `docker.io` was installed once, already at
+  29.1.3, on 2026-05-19 20:20 by a hand-run
+  `apt-get install -y docker.io docker-compose-v2 git` during the Plan 105 VM
+  build. None of the 98 `unattended-upgrade` transactions on this host has ever
+  touched it. The daemon's minimum API version has therefore been 1.44 since the
+  host existed, and the Promtail 2.9.8 incompatibility was **latent from day
+  one**. What changed in the window was Plan 135 Stage 5 making Promtail do
+  Docker service discovery for the first time — an *application* change
+  revealing a pre-existing boundary, which is the exact opposite of the reading
+  above. The corrected lesson is that a maintenance window surfaces latent
+  incompatibilities because it is the first time in months that everything is
+  recreated at once, and that argues for the same post-restore verification
+  rather than for pre-install package review.
 - Recovery required checking the running kernel, `/` and `/mnt/data` mounts,
   Docker configuration, selected services, Loki/Promtail ingestion, and the
   intentionally stopped Plan 125 services before work could safely resume.
@@ -191,13 +205,450 @@ Documentation and tests only:
 2. Inventory every current Compose project and profile from source and define
    the expected default running set plus justified stopped/exempt entries.
 3. Prototype the Airflow maintenance gate and measure what scheduled runs do
-   during a one-hour pause: queue, reschedule, coalesce, or backfill.
+   during a one-hour pause: queue, reschedule, coalesce, or backfill. Three
+   mechanisms, not two — **an Airflow pool is the third and the one to beat**:
+
+   | Mechanism | The cost to weigh |
+   |---|---|
+   | Dedicated sensor / state gate | A sensor occupies a worker slot for the length of the pause, and it is the shape whose 600-second failure this plan exists to avoid |
+   | DAG pause/unpause with a manifest | Requires recording the prior pause state and restoring it. A maintenance run that dies halfway leaves DAGs paused with **no record of which were already paused** — the worst failure mode on this list, because it is silent and the fleet looks fine |
+   | **Pool: every mutating task takes 1 slot, the maintenance hold takes all** | Pooled tasks **queue rather than fail**, which satisfies the acceptance contract directly. No manifest exists to lose: a hold task that dies releases its slots and normal scheduling resumes on its own. Measure what the queued backlog does on release |
+
+   **A pool gates, it does not count.** It cannot distinguish durable pending
+   backlog from a running claim, which is the distinction the drain contract
+   turns on, and it is blind to work this scheduler did not start — `ops` HTTP
+   endpoints and long-running pack/prune sections among them. It replaces one
+   mechanism inside the contract, never the contract. Prototype it against the
+   named counts, not instead of them.
 4. Define package classes: security updates, ordinary updates, Docker/container
    runtime, kernel, and packages requiring service restart.
 5. Choose the host checkpoint directory and permissions; it contains phase and
    revision metadata only, never secrets.
+6. Rotate `AIRFLOW_JWT_SECRET` to 64 random bytes during the Airflow restart
+   item 3 already budgets. **Inherited 2026-08-23** from Plans 141 and 136,
+   which both routed it to Plan 136 Stage 0 *after* that stage closed on
+   2026-08-18; it was owned by nobody until this line existed.
+   `AIRFLOW__API_AUTH__JWT_SECRET` ([docker-compose.yml](../../docker-compose.yml),
+   `x-airflow-common`) is 35 bytes, under the 64 RFC 7518 §3.2 recommends for
+   HMAC-SHA512, so PyJWT emits `InsecureKeyLengthWarning` on every apiserver
+   start — 11 times since 2026-08-21, in the exact stream Plan 141 is trying to
+   make worth reading. `AIRFLOW__CORE__FERNET_KEY` is 44 bytes and is not
+   involved.
+
+   **Hygiene, not a vulnerability, and the difference was measured rather than
+   assumed.** Sampled on the apiserver 2026-08-23 without printing the value:
+   35 characters, 25 distinct, mixed case and digits, ~4.5 bits of Shannon
+   entropy per character. That is a generated string, not a passphrase, so the
+   key material is far past brute force — the RFC's rule compares key length to
+   hash output and says nothing about a break. It rides this window because
+   rotation invalidates in-flight worker tokens, not because it is urgent. It
+   is also a fair first exercise of what this plan is building: a low-risk
+   change that wants exactly the drain-and-restart discipline Stage 1 defines.
+7. Give `caddy` a `restart: unless-stopped` policy, in the same window.
+   **Moved here from Stage 2 on 2026-08-23**, because Stage 2 is weeks away and
+   the gap is live: an unplanned reboot takes the public site down and, per
+   finding 2 below, publishes no signal that it did.
+
+   Two mechanics this must not get wrong, both already learned on this host:
+
+   - It is a **service config change, so it needs `docker compose up -d caddy`,
+     which recreates the container.** `docker compose restart` reuses the
+     existing container's config and would leave the policy silently unapplied
+     — the exact trap Plan 135 hit on `node-exporter`, where the container came
+     back looking healthy with the old flags still in place.
+   - **Verify the policy, not the uptime.** `docker inspect --format
+     '{{.HostConfig.RestartPolicy.Name}}' caddy` must return `unless-stopped`.
+     Plan 135's rule was "always check `.Args`, not container uptime"; this is
+     the same rule against a different field.
+
+   Recreating `caddy` briefly drops `:80`/`:443`, so it is user-visible for a
+   few seconds and belongs in a window rather than in a quiet moment. Its TLS
+   material lives in the `caddy_data` volume and is unaffected. Nothing
+   resolves `caddy` by name — it is the ingress, not an upstream — so
+   [deploy-followers.txt](../../deploy-followers.txt) has no entry to honour
+   here; the caching hazard runs the other way, from `caddy` to its upstreams,
+   and those are not being recreated.
+
+   When it lands, **delete `caddy`'s `restart-gap` entry from
+   [`maintenance-running-set.txt`](../../maintenance-running-set.txt) in the
+   same commit.** `tests/test_maintenance_running_set.py` asserts both
+   directions, so a fix without the deletion fails CI rather than leaving the
+   registry claiming a defect that no longer exists.
+
+Items 6 and 7 both ride item 3's Airflow window: it is the only production
+touch Stage 0 makes, and neither change justifies a window of its own.
+
+#### Item 3 Phase A built, 2026-08-23 — the pool assignment, shipped inert
+
+**The pool wins, and the prototype splits in two.** A pool is a task attribute,
+so prototyping it means putting `pool=` on tasks in DAG code — and that change
+is *inert while the pool has free slots*. Behaviour is identical until someone
+shrinks it. So:
+
+- **Phase A (done, no window):** create the pool generously sized, add `pool=`
+  to the mutating tasks, deploy as a normal change, soak a day. Nothing changes.
+- **Phase B (the window):** shrink to 0, observe, release, measure the drain.
+
+Phase A is not throwaway — it is how Stage 1 would ship this anyway. Abort is
+`git revert`; there is no production state to unwind.
+
+[`airflow/dags/pools.py`](../../airflow/dags/pools.py) holds the constant and
+the reasoning; [runbook §9](../runbooks/runbook_host_maintenance.md) holds the
+operator commands and the preflight checks;
+`tests/airflow/test_maintenance_pool.py` holds the contract.
+
+Five tasks are pooled — `results_processing.process_batch`, `orphan_checker`'s
+three janitorial endpoints, and `scrape_detail_pages.claim_batch`. Sensors are
+not: a `reschedule`-mode sensor must not hold a slot while it waits, which is
+the failure this mechanism exists to avoid.
+
+**The held set is three DAGs, not two.** `ops.ops_detail_scrape_queue` (view,
+`V040__detail_scrape_circuit_breaker`) keys on `last_detail_scraped_at`, which
+only the processing service writes (`processing/writers/detail_writer.py:194`),
+while `POST /scrape/claims/release` deletes the claim. Holding processing alone
+therefore leaves the detail scraper re-claiming the same ~100 listings every 15
+minutes — up to four redundant passes an hour against cars.com, through the
+solver Plan 136 is nursing. `last_detail_scraped_at` **is** the circuit breaker;
+holding its only writer without holding its producer disables it. Plan 147 fixes
+that ownership; until it lands the two are held together, which is also more
+faithful to "no new mutating task starts". `scrape_listings` stays running —
+it advances a rotation and never reads processed state, so it cannot loop.
+
+##### Question 1 answered: two pools, and the reason is mechanical
+
+Stage 1 currently promises one pool shared with Plan 136 Stage 3d. **That
+promise cannot be kept, and not as a matter of taste.** In Airflow a task's
+`pool` is a single scalar string — a task belongs to exactly one pool — so one
+shared pool works only if the two held sets are identical or disjoint.
+
+They are neither in intent: Plan 142 holds all mutating work, Plan 136 holds
+solver-consuming work, a subset. But **by task they are disjoint**, and that is
+the part worth noticing:
+
+| Plan | Tasks it holds |
+|---|---|
+| 142 `maintenance` | `results_processing.process_batch`, `orphan_checker.{expire_orphan_detail_claims,reap_stuck_processing,evict_delisted_cooldowns}`, `scrape_detail_pages.claim_batch` |
+| 136 `solver` | `scrape_detail_pages.scrape_detail`, `scrape_listings.run_scrapes`, `recycle_solver.recycle` |
+
+The DAGs overlap; the tasks do not. The gate points differ because the *reasons*
+differ — 142 gates the claim so no listing is ever claimed, 136 gates the fetch
+because that is what touches the solver. Sizing settles it too: 136's pool is
+exactly 2 slots so a 2-slot recycle achieves mutual exclusion, while 142's is 16
+so the assignment stays inert. One pool cannot be both 2 and 16.
+
+**So: two pools, and the rule Stage 1 should carry instead is that a
+maintenance hold is a multi-pool operation** — hold every gating pool, not one.
+That generalises: if 142 ever needs `scrape_listings.run_scrapes` held, it
+cannot take the task from `solver`, but it can set `solver` to 0 alongside
+`maintenance`. A list of pools expresses any number of scopes; one pool
+expresses one.
+
+##### Question 2 answered: `pools set 0`, and the hold must not be declarative
+
+Item 3's own table praises the pool because "a hold task that dies releases its
+slots and normal scheduling resumes on its own." **That is right for Plan 136
+and backwards for Plan 142**, whose first design principle is that maintenance
+never auto-releases — not on a lease expiry, a dropped shell, an `EXIT` trap or
+a reboot. So the hold is `airflow pools set maintenance 0`: a row in the Airflow
+metadata DB that survives all of those. The cost is that it survives forgetting
+too, which is the direction this plan chooses to fail in, and which is why a
+"pool held longer than N minutes" alert is owed by Stage 1 item 5.
+
+Two things were verified against `apache-airflow-core` 3.2.0 rather than
+assumed, because the acceptance contract turns on them:
+
+1. **A pool-starved task queues rather than failing.** It stays in `SCHEDULED` —
+   the scheduler sees `open_slots <= 0` and skips it
+   (`scheduler_job_runner.py:703`) — so it never reaches `QUEUED`, never gets a
+   `queued_dttm`, and is therefore invisible to `_get_tis_stuck_in_queued`, the
+   only thing that fails a task for waiting, at `[scheduler]
+   task_queued_timeout` = 600s (`scheduler_job_runner.py:2472`). "An hour-long
+   pause creates no failed DAG solely because of the pause" is satisfied by
+   construction. The deploy-intent sensor's identical 600s budget is what failed
+   two `check_deploy_intent` tasks in the August window.
+2. **A missing pool is silent.** The scheduler logs `Tasks using non-existent
+   pool 'maintenance' will not be scheduled` (`scheduler_job_runner.py:693`) and
+   skips — no failure, no alert, the five tasks simply stop. Hence the deploy
+   ordering rule (**create the pool before the code lands**) and a new preflight
+   line in [runbook §2](../runbooks/runbook_host_maintenance.md).
+
+**And the pool is deliberately not created from git.** `airflow pools set` is an
+upsert, so a declarative create in `airflow-init` — the obvious way to keep it
+out of an operator's hands — would reset the slot count on every
+`docker compose up -d`. The slot count *is* the hold state, and a maintenance
+window recreates the stack, so that would silently release the hold mid-window.
+This is design principle 1 defeated by a convenience. `tests/airflow/
+test_maintenance_pool.py::TestTheHoldIsNotDeclarative` asserts Compose never
+sets a pool. The price is item 2 above: the pool lives only in the metadata DB,
+so a rebuilt DB loses it silently. Preflight is the mitigation until Stage 1 can
+alert on it.
+
+##### The pool exists, and the ordering rule was honoured
+
+Created on production **2026-08-24 UTC, before the DAG code merged**, which is
+the one-way ordering rule item 2 above establishes. Verified read-only from
+`airflow pools list`:
+
+    pool         | slots | description               | include_deferred
+    =============+=======+===========================+=================
+    default_pool | 128   | Default pool              | False
+    maintenance  | 16    | Plan 142 maintenance gate | False
+
+`include_deferred: False` is the default and is correct here — every pooled
+task is a plain `PythonOperator` and none of them defer. It is worth knowing
+the value only because Stage 1 adding a deferrable operator would make it a
+decision rather than a default.
+
+##### The Phase A soak gate
+
+Phase A ships inert, which is the point and also the difficulty: an inert
+change produces no signal that it worked, only the absence of signals that it
+broke. So the gate is stated as things that must **not** happen, over at least
+24 hours of ordinary operation after the merge lands on the VM.
+
+Steady state is **28 pooled DAG runs an hour** — `results_processing` at `*/5`
+(12), `orphan_checker` at `*/5` (12), `scrape_detail_pages` at `*/15` (4) —
+against a peak concurrent demand of 5 slots out of 16.
+
+| Check | Passing | What a failure would mean |
+|---|---|---|
+| DAG success rate for the three DAGs | Unchanged from the pre-merge day | The assignment is not inert after all |
+| Scheduler log for `non-existent pool` | Absent | The pool was lost; all five tasks are silently unscheduled |
+| `airflow pools list` | 16 slots, `used` at 0 or briefly low | Slots leaking, or an unreleased hold |
+| Any pooled task sitting in `SCHEDULED` past its next schedule | None | The pool is binding when it should not be |
+
+The soak has one honest weakness worth naming rather than discovering later:
+**it cannot exercise the mechanism it is soaking.** Nothing here proves the
+hold works — only that assigning the pool cost nothing. Phase B is the first
+time `pools set 0` is ever run against production, and the acceptance contract
+is measured there, not here.
+
+##### What Phase B still owes
+
+Phase A measures nothing; the hold has not been exercised. Outstanding:
+the queued-backlog behaviour on release, whether `orphan_checker` — which has
+**no `max_active_runs`**, so it defaults to 16 — fires a thundering herd of up
+to 12 queued runs at the three `ops` endpoints, and confirmation that the
+re-scrape storm did not happen (detail artifacts during the hold ≈ 0,
+`last_detail_scraped_at` advancing exactly once after release, not four times).
+The endpoints are idempotent janitorial SQL, so the expected blast radius is
+load rather than corruption, and measuring it *is* the acceptance criterion
+"resuming does not unleash an unbounded duplicate backlog". Pre-empting it with
+`max_active_runs=1` would measure a system already fixed.
+
+#### Item 4 decided, 2026-08-23 — package classes and what automation may touch
+
+Read from `/var/log/apt/history.log` on 2026-08-23 (read-only), not inferred.
+**98 of the 107 transactions in the host's whole history are
+`/usr/bin/unattended-upgrade`.** Automation is not an edge case here; it is how
+this host is almost always patched.
+
+`Allowed-Origins` in `/etc/apt/apt.conf.d/50unattended-upgrades` is base +
+`-security` + the two ESM pockets. **`-updates` is not included**, which is why
+15 packages were still listed upgradable *after* the August window's automatic
+run finished: `cloud-init`, `netplan.io`, `fwupd`, `qemu-user-static` and
+friends are `-updates`-only and no automation will ever apply them.
+
+| Class | Who applies it today | Forces | Why it is its own class |
+|---|---|---|---|
+| **Security** (`-security`, ESM) | unattended-upgrades, automatically | Usually nothing | The routine case. The August window's own run was 8 transactions of exactly this: `tzdata`, `ncurses-base`, `libpam-runtime`, `systemd`, `dnsmasq-base`, `perl`, `python3.10`, `distro-info-data` |
+| **Ordinary** (`-updates`) | **Nobody, until an operator does** | A reviewed manual `apt-get upgrade` | These accumulate silently and indefinitely. This is the class a monthly window exists to drain, and the reason "no updates required" is rarely the true answer |
+| **Container runtime** (`docker.io`, `containerd`, `runc`) | unattended-upgrades *could* — see below | Compatibility review, then a deliberate apply | A daemon upgrade restarts containers. Held from 2026-08-23 |
+| **Kernel** (`linux-*-oracle`) | unattended-upgrades, automatically | A reboot, operator-timed | Installs **inert**: the new kernel sits in `/boot` and changes nothing until a reboot the operator chooses. Two (`1050`, `1054`) had queued this way before the window and harmed nothing |
+| **Restart-required** | — | Recreating named services | Needs the running-set manifest to know which |
+
+**Decision: hold `docker.io` only. Kernel and security updates stay
+automatic.** Kernel installs are inert until an operator-controlled reboot, so
+automation there buys security with no runtime risk, and holding it would also
+destroy `reboot-required` as a signal.
+
+**The justification is prospective, and this is worth stating plainly because
+the original one was wrong.** The case for holding Docker was "automation
+already broke you once." It did not: as the corrected bullet in
+[the evidence section](#the-production-evidence) records, `docker.io` has never
+been upgraded on this host. The case that survives is forward-looking and still
+real — `docker.io` 29.1.3 is published in `jammy-security/universe` as well as
+`jammy-updates/universe`, and `jammy-security` **is** an allowed origin, so the
+next Docker security update would be applied automatically, restarting the
+daemon and every container under it, at whatever hour the timer fires. That is
+worth preventing. It is a smaller claim than the one it replaces, and if the
+maintainer would rather not carry the hold on that basis alone, reversing it is
+`sudo apt-mark unhold docker.io` and a line in this table.
+
+The cost is explicit: a held package receives no automatic security fixes.
+`apt-mark showhold` therefore becomes a **preflight line item** — an unreviewed
+hold is how a package silently rots — and draining the held class is part of
+what a window is for.
+
+**Ordering fix, from item 1.** Do not restore the apt timers until after the
+resume gate. The August window restored them in the same command that refreshed
+and simulated, and `unattended-upgrades` started three minutes later, inside the
+window. Stage 2's script owns this ordering; it is not a matter of remembering.
+
+#### Item 5 decided, 2026-08-23 — the host checkpoint directory
+
+**`/var/lib/cartracker/maintenance/`**, root-owned, `0755` on the directory and
+`0644` on files.
+
+On the **root filesystem, deliberately** — not `/mnt/data`. "`/mnt/data` did not
+come back" is one of the failures this file exists to help diagnose, and a
+checkpoint stored behind the mount you are diagnosing is worthless. `/` was at
+65% of 49 GB before the August window and the file is bytes.
+
+`0644` so it is readable from a console session without `sudo`, which is
+friction in exactly the moment there is none to spare.
+
+**Append-only, one line per phase transition**, so an interrupted window leaves
+a trail rather than a single overwritten "current" value. Each line carries
+phase, UTC timestamp, git revision, running kernel, and the running-set
+manifest's path.
+
+**Never secrets.** Stronger than the usual version of that rule here, because
+this file is designed to be read under pressure and screenshotted into a chat.
+Stage 2's tests assert the writer emits only the five fields above.
+
+Postgres remains authoritative for maintenance state whenever it is up. This
+file is a breadcrumb for the window in which it is deliberately down, and the
+two must never be reconciled in the direction of the file.
 
 No production maintenance mode is declared in this stage.
+
+#### Item 1 done, 2026-08-23 — the window was recovered verbatim
+
+[`docs/runbooks/runbook_host_maintenance.md`](../runbooks/runbook_host_maintenance.md).
+It was going to be a reconstruction with the command sequence marked as gaps;
+it is instead the real thing. The window was driven from **Codex**, not Claude
+Code, which is why the Claude transcripts have a three-day hole across it
+(2026-08-15 06:34 → 2026-08-18 11:46) and no `apt`, `dpkg` or `systemctl`
+anywhere in them. The session survives at
+`~/.codex/sessions/2026/08/17/`, thread *"Complete plan 135 stage 5"*, opening
+with "I've just merged stages 4 & 6 of plan 135. I know it relies on some VM
+runs."
+
+Recovered: 189 shell invocations with timestamps and output — full preflight,
+the stuck-`apt-daily` diagnosis, the controlled transaction, the reboot, host
+validation, restore, and stack verification. Downtime was **~3 minutes**
+(reboot 04:21:54, boot 04:22:27, `up -d` 04:23:19, verified 04:24:53), inside a
+~27-minute window.
+
+**Three things the record adds that the evidence section above did not have:**
+
+1. **The apt index was 68 days stale** (last refreshed 2026-06-11), so the
+   preflight `apt list --upgradable` was computed against a June catalogue and
+   was not the transaction that ran. The runbook makes reading `APT_LIST_AGE`
+   before trusting `UPGRADABLE` an explicit step.
+2. **Restoring the apt timers is what started `unattended-upgrades` mid-window**
+   — the evidence section says this happened, and the transcript shows *why*:
+   stop-refresh-simulate-restore was issued as one command, so the timers came
+   back three minutes before the reboot. The fix is ordering: restore them after
+   the resume gate, not before. `apt-mark showhold` was empty, so nothing
+   protected Docker or the kernel from that run.
+3. **The profile-gated restore failure is observed, not theoretical.** After
+   `docker compose up -d --force-recreate`, `trawl` and `redis-trawl` were still
+   down; they came back only from a second, explicitly-named command. This
+   upgrades their `profile-running` entries in
+   [`maintenance-running-set.txt`](../../maintenance-running-set.txt) from
+   reconstructed to **observed in this window**, and it is the same failure the
+   registry was written to prevent.
+
+**One correction owed to this plan's evidence section**, which says the Docker
+upgrade broke Promtail and implies it happened here. The transcript does not
+establish when `docker.io` reached 29.1.3: it was absent from the stale
+preflight list, and by 04:25 Installed already equalled Candidate. Either it
+upgraded in the window and the review missed it, or it moved silently on an
+ordinary day and was found by luck. Both argue for holding Docker; the second
+is worse, and settling it needs `/var/log/apt/history.log`. Recorded in the
+runbook's §8 rather than resolved.
+
+Kernel `6.8.0-1049-oracle` → `6.8.0-1058-oracle`, with `reboot-required`
+already pending for `1050` and `1054` before the window opened.
+
+**Item 1 is complete against its own spec** — timeline, commands, failure
+modes, intended-stopped services and recovery evidence are all present from the
+primary record. Two things first written up as gaps were settled on re-reading
+rather than left open: the pre-window disk baseline exists (`/` at 65%,
+04:06:23), and console access provably was *not* verified — every mention of the
+Oracle console in that session is this plan's own text being drafted at the end
+of the window, which is a finding about the window rather than a hole in the
+record.
+
+Two items genuinely remain on the host, neither required by item 1. The package
+transaction detail (`/var/log/apt/history.log`) is enrichment. **When
+`docker.io` reached 29.1.3 is not** — it decides whether Docker gets an
+`apt-mark hold`, so it is an input to item 4 and should be read before that
+decision is made.
+
+One new finding, unrelated to maintenance and unowned: `netplan generate`
+warns that `/run/netplan/enp0s6.yaml` is "too open" and "should NOT be
+accessible by others". It validates, so it blocked nothing, and it appears in no
+plan.
+
+#### Item 2 done, 2026-08-23 — and it found two things
+
+The inventory landed as [`maintenance-running-set.txt`](../../maintenance-running-set.txt),
+in `healthcheck-exemptions.txt`'s format and read by that file's parser, with
+`tests/test_maintenance_running_set.py` checking it against the Compose
+sources. **It records exceptions only**: the 28-service restore set is derived
+from `docker-compose.yml`, so a new service is expected running by default and
+has to be named to be anything else. A second hand-maintained copy of the
+service list is how the first one goes stale, which is the argument Plan 144
+already made for the two sibling registries.
+
+Six classes, and the two that are *not* exclusions carry the plan's whole
+point: `profile-running` (restored, but only if the profile flag is passed) and
+`restart-gap` (expected running, does not restore itself). `oneshot` is a third
+distinction that matters — `flyway` and `airflow-init` **do** run under `up -d`
+as `service_completed_successfully` dependencies; a resume gate that waits for
+them to be *running* waits forever.
+
+**Finding 1 — `caddy` does not come back after a reboot.** It serves `:80` and
+`:443` for cartracker.info and declares no `restart:` key
+([docker-compose.yml](../../docker-compose.yml), `caddy`), so its effective
+policy is `no`. It is the only long-running default-project service with this
+gap. Planned maintenance is unaffected, because Stage 3 restores from the
+manifest rather than from restart policies — but an *unplanned* reboot leaves
+the public site down until someone runs `up -d` by hand.
+
+**And nothing reports it**, which is the half that makes this worth pulling
+forward. A stopped container does not read as unhealthy; it leaves the metric
+altogether. `DockerApi.inspect_project_containers`
+([container_health/docker_api.py](../../container_health/docker_api.py)) filters
+`status` to `running`, `restarting`, `paused` — deliberately, so one-shots do
+not publish a meaningless health state — and `health_values` raises only when
+the fleet is *entirely* empty. One absent service is therefore silent by
+construction. This plan already named the failure without having an instance of
+it: the Stage 3 stack gate demands "neither unhealthy nor unconfigured services
+hidden as absence." This is what that sentence looks like in production.
+
+The one-line fix was **moved to Stage 0 item 7 on 2026-08-23** rather than left
+to Stage 2. Until it lands the test asserts the registry keeps saying so.
+
+**Finding 2 — Plan 140 is structurally blind to the auxiliary projects, so
+this plan cannot delegate that check.** Success criterion 5 and the Stage 3
+stack gate both require "intentionally stopped auxiliary services still
+stopped". Plan 140's metric cannot answer it: `health_values` in
+[container_health/collector.py](../../container_health/collector.py) filters on
+`com.docker.compose.project` and drops everything that is not `cartracker`.
+That filter is correct and must not be relaxed — its docstring records why,
+from the Plan 140 Stage 1 soak, which found four stale `unhealthy` containers
+(`cartracker-lakekeeper`, `-lakekeeper-migrate`, `-lakekeeper-postgres`,
+`cartracker-mlflow`) that a "has a compose label" filter would not have
+excluded. The consequence for this plan is precise: **the auxiliary-still-
+stopped gate is Plan 142's own check against this manifest**, not a Plan 140
+health reading, and Stage 3 must implement it separately. The same docstring
+supplies the fixture the plan asked for — "`up -d` on either sibling project
+brings the condition straight back" is the observed proof that restoring
+everything Compose can find is wrong.
+
+**Still open on item 2.** `COMPOSE_PROFILES` appears nowhere in the repository,
+so which profiles production actually has enabled is unrecorded in source. The
+two `profile-running` entries are reconstructed from checked-in evidence —
+`_PROFILE_GATED_IN_SCOPE = {"trawl", "redis-trawl"}` in
+`tests/test_observability_config.py`, whose comment cites the 2026-08-14 solver
+outage, plus Plan 136 Stage 3a deploying against a running production `trawl`
+on 2026-08-23 — and are marked in the file as reconstructed rather than
+observed. Confirming them against the live host is a read-only check owed
+before Stage 2 builds the restore step on top of them.
 
 ### Stage 1 — Add maintenance intent and truthful drain status
 
@@ -208,6 +659,14 @@ No production maintenance mode is declared in this stage.
    backlog as running work in the maintenance UI/API.
 3. Add the maintenance-aware DAG gate selected in Stage 0. A maintenance pause
    reschedules or pauses safely without the deploy sensor's 600-second failure.
+   Stage 0 selected the pool and Phase A already shipped `maintenance`; what
+   remains here is the release/hold API around it and the stale-hold alert.
+   **Corrected 2026-08-23:** this item used to say the `solver` pool Plan 136
+   Stage 3d expects would be named and sized here so the two plans share one
+   pool. They cannot — a task has exactly one pool, and the two plans want
+   different gate points at different sizes. Two pools, and a maintenance hold
+   sets *every* gating pool to 0. See
+   [item 3 Phase A](#item-3-phase-a-built-2026-08-23--the-pool-assignment-shipped-inert).
 4. Add `request`, `mark-drained`, `mark-offline`, `begin-validation`, `cancel`,
    and explicit `complete` operations with legal-transition tests.
 5. Add stale-maintenance metrics/alerts. Stale means “needs a human,” never
@@ -352,12 +811,42 @@ soaked and its coverage is trustworthy.
 
 ### Plan 136 — drain and authority patterns
 
-Plan 136 owns solver efficacy, drain-aware `trawl` recycling, and narrowly
-allowlisted Docker restart authority through a socket proxy. Reuse its safe
-boundary and claim-count semantics. Do not extend its application endpoint into
-host package or reboot authority: Plan 142 remains an SSH/console operator
-procedure. Plan 136 remains ahead in build order because its production failure
-signals are more urgent and its Stage 3 informs this plan's drain design.
+Plan 136 owns solver efficacy, threshold-gated `trawl` recycling, and narrowly
+allowlisted Docker restart authority through a socket proxy. Reuse its
+claim-count semantics: its recycle keeps `active_jobs == 0` as a precondition,
+and the named counts below remain the authority on whether work is actually in
+flight. Do not extend its application endpoint into host package or reboot
+authority: Plan 142 remains an SSH/console operator procedure.
+
+**Two things changed on 2026-08-23 and this plan inherits both.**
+
+Plan 136's Stage 3 no longer specifies a drain protocol. The pause-claiming,
+poll-for-idle, restart, resume sequence this plan expected to reuse was
+replaced by an **Airflow pool**, which is global across DAGs: every
+solver-consuming task takes one slot and the recycle takes them all, so the
+scheduler enforces mutual exclusion instead of an application protocol doing
+it. That is a better fit for this plan's gate than what it replaced — see
+[Stage 0](#stage-0--turn-the-successful-window-into-fixtures-and-decisions),
+where it is now the third option to prototype.
+
+And the restart authority is **two** proxy instances, not one grant with an
+added verb. `ALLOW_RESTARTS` narrows nothing once `CONTAINERS=1` is set, so the
+read grant and the restart grant cannot share an instance; the restart proxy
+runs `CONTAINERS=0, POST=1, ALLOW_RESTARTS=1`. This strengthens the non-goal
+above rather than complicating it: that proxy can issue `stop`, `restart` and
+`kill` and **structurally nothing else**, so it cannot be widened into reboot
+authority by editing an allowlist. If this plan ever needs host-level
+authority, it needs a different mechanism, which is the intended answer.
+
+**Sequencing reversed 2026-08-23.** Plan 136 was ahead on the strength of its
+production failure signals; those shipped (Stages 0 and 2, and 3a), and Plan
+136 is now blocked on a memory-baseline soak until 2026-08-25 while this plan
+is workable. So Plan 142 goes first and **establishes** the pool gate; Plan
+136's Stage 3d inherits the *mechanism*, not the pool itself — Phase A of item 3
+found that a task belongs to exactly one pool, so `solver` has to be its own,
+sized 2 for mutual exclusion against `maintenance`'s 16. What 136 inherits is
+the pattern and the verified scheduler behaviour; what 142 owes in return is
+that its hold sets both pools to 0.
 
 ### Plans 135 and 141 — storage and logging checks
 

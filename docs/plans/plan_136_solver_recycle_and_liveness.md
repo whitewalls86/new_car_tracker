@@ -5,7 +5,8 @@
 **Stage 0 complete and verified in production 2026-08-18. Stage 2 deployed to
 production 2026-08-20 (PR #223, merge `50bba68`); its 24-hour soak closed on
 2026-08-21 — the alert half green, the shape half inconclusive by construction.
-Stage 3 redesigned 2026-08-23 and not yet built; Stage 4 not started.**
+Stage 3 redesigned 2026-08-23; Stage 3a deployed to production and publishing;
+Stage 3b blocked until the memory baseline is read; Stage 4 not started.**
 
 The soak proved both new rules quiet and the counters healthy, but it **did not
 answer open question 2**: a healthy window contains no solver decay to read, so
@@ -1479,8 +1480,12 @@ analytics freshness work. Keep these boundaries explicit:
 - Warning-only observations added here must query an explicit service and level;
   absence from a dashboard is not evidence that no warning occurred.
 - The Airflow HMAC-key-length warning observed during the Plan 135 closeout is a
-  configuration defect, not a line for Plan 141 to suppress. Resolve or route it
-  with Stage 0's other Airflow configuration work.
+  configuration defect, not a line for Plan 141 to suppress. **It moved to
+  [Plan 142](plan_142_planned_host_maintenance.md) Stage 0 on 2026-08-23.** This
+  bullet routed it to *this plan's* Stage 0, which completed 2026-08-18, so the
+  pointer dangled from that day. Plan 142 already restarts Airflow for its gate
+  prototype, and rotating the secret invalidates in-flight worker tokens, so it
+  wants a planned window rather than an opportunistic one.
 - Container health remains in Plan 140, analytics freshness in Plan 143, and
   solver efficacy/restart authority here; Plan 141 must not recreate them from
   logs.

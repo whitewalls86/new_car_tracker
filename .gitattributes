@@ -4,3 +4,4 @@
 # would attach a stray \r to the last field of every entry.
 healthcheck-exemptions.txt text eol=lf
 deploy-followers.txt text eol=lf
+maintenance-running-set.txt text eol=lf
