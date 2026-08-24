@@ -230,6 +230,39 @@ Documentation and tests only:
    rotation invalidates in-flight worker tokens, not because it is urgent. It
    is also a fair first exercise of what this plan is building: a low-risk
    change that wants exactly the drain-and-restart discipline Stage 1 defines.
+7. Give `caddy` a `restart: unless-stopped` policy, in the same window.
+   **Moved here from Stage 2 on 2026-08-23**, because Stage 2 is weeks away and
+   the gap is live: an unplanned reboot takes the public site down and, per
+   finding 2 below, publishes no signal that it did.
+
+   Two mechanics this must not get wrong, both already learned on this host:
+
+   - It is a **service config change, so it needs `docker compose up -d caddy`,
+     which recreates the container.** `docker compose restart` reuses the
+     existing container's config and would leave the policy silently unapplied
+     — the exact trap Plan 135 hit on `node-exporter`, where the container came
+     back looking healthy with the old flags still in place.
+   - **Verify the policy, not the uptime.** `docker inspect --format
+     '{{.HostConfig.RestartPolicy.Name}}' caddy` must return `unless-stopped`.
+     Plan 135's rule was "always check `.Args`, not container uptime"; this is
+     the same rule against a different field.
+
+   Recreating `caddy` briefly drops `:80`/`:443`, so it is user-visible for a
+   few seconds and belongs in a window rather than in a quiet moment. Its TLS
+   material lives in the `caddy_data` volume and is unaffected. Nothing
+   resolves `caddy` by name — it is the ingress, not an upstream — so
+   [deploy-followers.txt](../../deploy-followers.txt) has no entry to honour
+   here; the caching hazard runs the other way, from `caddy` to its upstreams,
+   and those are not being recreated.
+
+   When it lands, **delete `caddy`'s `restart-gap` entry from
+   [`maintenance-running-set.txt`](../../maintenance-running-set.txt) in the
+   same commit.** `tests/test_maintenance_running_set.py` asserts both
+   directions, so a fix without the deletion fails CI rather than leaving the
+   registry claiming a defect that no longer exists.
+
+Items 6 and 7 both ride item 3's Airflow window: it is the only production
+touch Stage 0 makes, and neither change justifies a window of its own.
 
 No production maintenance mode is declared in this stage.
 
@@ -257,9 +290,21 @@ them to be *running* waits forever.
 policy is `no`. It is the only long-running default-project service with this
 gap. Planned maintenance is unaffected, because Stage 3 restores from the
 manifest rather than from restart policies — but an *unplanned* reboot leaves
-the public site down until someone runs `up -d` by hand, and nothing pages for
-it. The one-line fix belongs to Stage 2; Stage 0 only records it, and the test
-asserts the registry keeps saying so for as long as the gap exists.
+the public site down until someone runs `up -d` by hand.
+
+**And nothing reports it**, which is the half that makes this worth pulling
+forward. A stopped container does not read as unhealthy; it leaves the metric
+altogether. `DockerApi.inspect_project_containers`
+([container_health/docker_api.py](../../container_health/docker_api.py)) filters
+`status` to `running`, `restarting`, `paused` — deliberately, so one-shots do
+not publish a meaningless health state — and `health_values` raises only when
+the fleet is *entirely* empty. One absent service is therefore silent by
+construction. This plan already named the failure without having an instance of
+it: the Stage 3 stack gate demands "neither unhealthy nor unconfigured services
+hidden as absence." This is what that sentence looks like in production.
+
+The one-line fix was **moved to Stage 0 item 7 on 2026-08-23** rather than left
+to Stage 2. Until it lands the test asserts the registry keeps saying so.
 
 **Finding 2 — Plan 140 is structurally blind to the auxiliary projects, so
 this plan cannot delegate that check.** Success criterion 5 and the Stage 3

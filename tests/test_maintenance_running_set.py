@@ -182,13 +182,28 @@ class TestKnownFindingsStayRecorded:
     is fixed, which is a registry edit in the same commit as the fix."""
 
     def test_caddy_restart_gap_is_recorded_while_it_exists(self):
+        """Both directions, so the entry can neither vanish early nor go stale.
+
+        Plan 142 Stage 0 item 7 fixes this in the same window as the HMAC
+        rotation. The fix is a one-line compose change *plus* deleting the
+        registry entry, and this test is what makes the second half
+        non-optional: a registry that still reports a defect after it is fixed
+        teaches operators to discount the registry.
+        """
         spec = _services("docker-compose.yml")["caddy"]
+        registered = load_registry().get("caddy")
         if spec.get("restart") in (None, "no"):
-            klass, _ = load_registry()["caddy"]
-            assert klass == "restart-gap", (
+            assert registered and registered[0] == "restart-gap", (
                 "caddy still has no restart policy but is no longer classed "
                 "restart-gap. The public site does not come back on its own "
-                "after a reboot and the registry has stopped saying so."
+                "after a reboot, and a stopped container leaves the health "
+                "metric rather than reading unhealthy, so nothing reports it."
+            )
+        else:
+            assert registered is None, (
+                "caddy now declares a restart policy, so its restart-gap entry "
+                "is stale and must be deleted in the same commit as the fix "
+                "(Plan 142 Stage 0 item 7)."
             )
 
     def test_the_four_soak_containers_are_all_aux_paused(self):
