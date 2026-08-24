@@ -83,7 +83,6 @@ the row, and record it *only* there.
 
 | Plan | Lands | Gate — what removes this row |
 |---|---|---|
-| [135](plans/plan_135_storage_observability.md) | **2026-08-23** | Two gates on the same Sunday. Criterion 5: `cartracker_parquet_data` publishes a real series from the 04:00 UTC `disk_usage` slow-tier walk, so the per-path panel can answer *"what is filling `/mnt/data`?"* — confirmed still 0 series on 2026-08-20, exactly as designed before the first walk. Stage 5: `prune_task_logs` completes its first scheduled run (`17 4 * * 0`), proving Airflow's 30-day task-log retention is enforced rather than merely configured |
 | [129](plans/plan_129_zstd_dictionary_compression.md) | **2026-09-01** *(review date set by Plan 146; the gate has no scheduled run)* | Dictionary v1 is live and the Stage 4 backfill is running. Row leaves when the backfill reports zero remaining level-3 objects and no metric deviation. Reversible throughout — no data is discarded and every artifact stays independently decompressable |
 | [123](plans/plan_123_dbt_incrementalization_and_resource_governance.md) | **2026-09-01** *(review date set by Plan 146; the gate has no scheduled run)* | Phases 0-2 built and deployed 2026-07-09/10; every remaining item is production verification — peak RSS against the 8 GB DuckDB budget, the hourly DAG's runtime drop once it stops executing the full 200-resource graph, and the `AirflowFailException` OOM short-circuit firing. **Open and unrecorded since 2026-07-10**, which is why this table has a `Lands` column at all |
 | [146](plans/plan_146_planning_system.md) | **2026-09-14** | `docs/recaps/` holds a file for every complete week from 2026-08-17 to 2026-09-13 with no gap — four weeks recapped on the habit, not backfilled — and the `plans` skill has performed at least one archive on a plan other than 146, leaving `PLANS.md`, the archive and its stated row count in agreement. A missing week means the catch-up rule failed, and the gap shows on the filesystem |
@@ -161,7 +160,7 @@ work that never happened.
 
 ## Completed
 
-[**completed_plans.md**](planning/completed_plans.md) — 108 rows, newest first, one row
+[**completed_plans.md**](planning/completed_plans.md) — 109 rows, newest first, one row
 per plan. It is the only record of what is finished; this file keeps no copy.
 Dates reconstructed by Plan 146 Stage 1 are labelled *observed*, *corroborated*
 or *inferred* so a guess is never mistaken for a record.
