@@ -406,7 +406,15 @@ Both are preflight items, and both fail *silently* — no task failure, no alert
 
 ```bash
 docker exec cartracker-airflow-scheduler airflow pools list
-# expect: maintenance, 16 slots, 0 used, 16 queued -> 0
+```
+
+Verbatim, as of 2026-08-24 — anything else is a finding:
+
+```
+pool         | slots | description               | include_deferred
+=============+=======+===========================+=================
+default_pool | 128   | Default pool              | False
+maintenance  | 16    | Plan 142 maintenance gate | False
 ```
 
 1. **The pool must exist.** It lives only in the Airflow metadata DB, so a

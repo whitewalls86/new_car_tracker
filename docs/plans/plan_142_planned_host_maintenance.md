@@ -383,6 +383,46 @@ sets a pool. The price is item 2 above: the pool lives only in the metadata DB,
 so a rebuilt DB loses it silently. Preflight is the mitigation until Stage 1 can
 alert on it.
 
+##### The pool exists, and the ordering rule was honoured
+
+Created on production **2026-08-24 UTC, before the DAG code merged**, which is
+the one-way ordering rule item 2 above establishes. Verified read-only from
+`airflow pools list`:
+
+    pool         | slots | description               | include_deferred
+    =============+=======+===========================+=================
+    default_pool | 128   | Default pool              | False
+    maintenance  | 16    | Plan 142 maintenance gate | False
+
+`include_deferred: False` is the default and is correct here — every pooled
+task is a plain `PythonOperator` and none of them defer. It is worth knowing
+the value only because Stage 1 adding a deferrable operator would make it a
+decision rather than a default.
+
+##### The Phase A soak gate
+
+Phase A ships inert, which is the point and also the difficulty: an inert
+change produces no signal that it worked, only the absence of signals that it
+broke. So the gate is stated as things that must **not** happen, over at least
+24 hours of ordinary operation after the merge lands on the VM.
+
+Steady state is **28 pooled DAG runs an hour** — `results_processing` at `*/5`
+(12), `orphan_checker` at `*/5` (12), `scrape_detail_pages` at `*/15` (4) —
+against a peak concurrent demand of 5 slots out of 16.
+
+| Check | Passing | What a failure would mean |
+|---|---|---|
+| DAG success rate for the three DAGs | Unchanged from the pre-merge day | The assignment is not inert after all |
+| Scheduler log for `non-existent pool` | Absent | The pool was lost; all five tasks are silently unscheduled |
+| `airflow pools list` | 16 slots, `used` at 0 or briefly low | Slots leaking, or an unreleased hold |
+| Any pooled task sitting in `SCHEDULED` past its next schedule | None | The pool is binding when it should not be |
+
+The soak has one honest weakness worth naming rather than discovering later:
+**it cannot exercise the mechanism it is soaking.** Nothing here proves the
+hold works — only that assigning the pool cost nothing. Phase B is the first
+time `pools set 0` is ever run against production, and the acceptance contract
+is measured there, not here.
+
 ##### What Phase B still owes
 
 Phase A measures nothing; the hold has not been exercised. Outstanding:

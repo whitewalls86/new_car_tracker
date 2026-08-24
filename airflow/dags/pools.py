@@ -36,6 +36,9 @@ its slot count is only ever changed by an operator:
     docker exec cartracker-airflow-scheduler \
       airflow pools set maintenance 16 "Plan 142 maintenance gate"
 
+Done on production 2026-08-24 UTC, before this code shipped -- see the ordering
+rule at the bottom of this docstring.
+
 The cost of that choice is real and belongs in preflight: the pool lives only
 in the Airflow metadata DB. If it is missing — a rebuilt DB, a fresh
 environment — the scheduler logs `Tasks using non-existent pool 'maintenance'
@@ -52,8 +55,13 @@ lands, never after.**
 # `reschedule` mode do not, since they must not hold a slot while they wait.
 MAINTENANCE_POOL = "maintenance"
 
-# Sized far above concurrent demand so the assignment is inert: five pooled
-# tasks exist and at most four can be runnable at once (orphan_checker fans out
-# to three, results_processing and scrape_detail_pages are max_active_runs=1).
-# 16 leaves headroom for tasks Stage 1 adds without a second slot decision.
+# Sized far above concurrent demand so the assignment is inert. Steady-state
+# peak is 5 -- orphan_checker fans out to three parallel tasks, and
+# results_processing and scrape_detail_pages contribute one each under
+# max_active_runs=1. The ceiling is higher than that, though, and deliberately
+# so: orphan_checker sets no max_active_runs, so it inherits the default of 16
+# runs and could in principle want 3 slots per queued run. That is the same
+# thundering-herd risk Phase B is meant to measure on release, and it is the
+# reason this is 16 rather than 5 -- headroom bought before the measurement
+# rather than after it.
 MAINTENANCE_SLOTS = 16

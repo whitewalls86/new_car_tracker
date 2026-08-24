@@ -16,7 +16,6 @@ documented here and owed to Stage 2.
 """
 from pathlib import Path
 
-import pytest
 import yaml
 
 from tests.test_deploy_script import load_health_exemptions
