@@ -131,6 +131,17 @@ with only the Oracle Cloud console as a way back.
 August window did not record doing it. If SSH does not come back, the console
 is the only route in.
 
+Last, the Airflow maintenance gate — it fails silently in both directions, so
+it is a preflight line item rather than something you notice:
+
+```bash
+docker exec cartracker-airflow-scheduler airflow pools list
+```
+
+> **`maintenance` must be present, with 16 slots.** Missing means the five
+> mutating tasks are not being scheduled at all and nothing has said so; 0
+> slots means a previous window's hold was never released. See §9.
+
 ---
 
 ## 3. A stuck apt is the first thing you will hit
@@ -323,7 +334,120 @@ package review, which could not have caught this.
 
 ---
 
-## 9. Gaps in this record
+## 9. The maintenance pool — the gate, and how it is held
+
+**Plan 142 Stage 0 item 3, Phase A. Deployed and soaking; the hold itself
+(Phase B) has not been exercised.** This section is the operator-facing half of
+[`airflow/dags/pools.py`](../../airflow/dags/pools.py), which carries the
+reasoning.
+
+Five tasks — every one that can mutate production — sit in an Airflow pool
+called `maintenance`:
+
+| DAG | Task | Why it is the gate point |
+|---|---|---|
+| `results_processing` | `process_batch` | The only writer of `last_detail_scraped_at` |
+| `orphan_checker` | `expire_orphan_detail_claims` | Janitorial SQL against `ops` |
+| `orphan_checker` | `reap_stuck_processing` | ditto |
+| `orphan_checker` | `evict_delisted_cooldowns` | ditto |
+| `scrape_detail_pages` | **`claim_batch`**, not `scrape_detail` | Hold the claim and nothing is ever claimed. Hold the scrape and a batch is claimed, then stranded for the window |
+
+`scrape_listings` is deliberately **not** held. It advances a rotation over
+`search_configs` and never consults processed state, so it cannot loop; it only
+adds SRP artifacts to the durable pending backlog, which is the condition the
+drain contract wants to observe.
+
+`scrape_detail_pages` is held even though only `results_processing` looks like
+the mutating one, and the reason is a circuit breaker. `ops.ops_detail_scrape_queue`
+(a view, `V040__detail_scrape_circuit_breaker`) selects listings whose
+`price_observations.last_detail_scraped_at` is null or older than 7 days. That
+column is written in exactly one place — `processing/writers/detail_writer.py:194`,
+the processing service — while `POST /scrape/claims/release` **deletes** the
+claim. So holding processing alone means the scraper claims ~100 listings,
+scrapes them, releases, nothing marks them scraped, and fifteen minutes later
+it claims **the same listings again**: up to four redundant passes an hour,
+real fetches against cars.com through the solver Plan 136 is nursing. Holding
+processing without holding the detail scraper *disables the circuit breaker and
+leaves its producer running.* Plan 147 fixes the ownership properly; until it
+lands, the two are held together.
+
+### Holding and releasing
+
+```bash
+# Hold. Durable: survives scheduler restart, container recreate, host reboot.
+docker exec cartracker-airflow-scheduler \
+  airflow pools set maintenance 0 "Plan 142 window <date>"
+
+# Release. Nothing else releases it -- that is the point.
+docker exec cartracker-airflow-scheduler \
+  airflow pools set maintenance 16 "released <date>"
+```
+
+> **Why `pools set 0` and not a hold task.** Plan 142's Stage 0 item 3 table
+> praises the pool because "a hold task that dies releases its slots and normal
+> scheduling resumes on its own." That is right for Plan 136 and **backwards
+> for Plan 142**, whose first design principle is that maintenance must never
+> auto-release — not on a lease expiry, a dropped shell, an `EXIT` trap or a
+> reboot. `pools set 0` is a row in the Airflow metadata DB and stays put
+> through all of them. The cost is that it also stays put through *forgetting*,
+> which is the direction this plan chooses to fail in, and which is why a
+> "pool held for longer than N minutes" alert is owed by Stage 1.
+
+> **The pool is not created from git, deliberately.** `airflow pools set` is an
+> upsert, so a declarative create in `airflow-init` would reset the slot count
+> on every `docker compose up -d` — and the slot count *is* the hold state. A
+> maintenance window recreates the stack, so that would silently release the
+> hold mid-window. `tests/airflow/test_maintenance_pool.py` asserts Compose
+> never sets a pool.
+
+### Two things to check before trusting a quiet fleet
+
+Both are preflight items, and both fail *silently* — no task failure, no alert:
+
+```bash
+docker exec cartracker-airflow-scheduler airflow pools list
+# expect: maintenance, 16 slots, 0 used, 16 queued -> 0
+```
+
+1. **The pool must exist.** It lives only in the Airflow metadata DB, so a
+   rebuilt DB loses it. When it is missing the scheduler logs
+   `Tasks using non-existent pool 'maintenance' will not be scheduled`
+   (`scheduler_job_runner.py:693`) and all five tasks above simply stop
+   running. This is also the deploy ordering rule: **create the pool before the
+   DAG code lands, never after.**
+2. **The slot count must be 16 outside a window.** A count of 0 left behind is
+   an un-released hold wearing the same face as a healthy fleet.
+
+### What the hold does and does not do to a task
+
+Verified against `apache-airflow-core` 3.2.0, because the acceptance contract
+turns on it. A pool-starved task instance stays in `SCHEDULED`: the scheduler
+sees `open_slots <= 0`, logs "Not scheduling since there are 0 open slots", and
+skips it (`scheduler_job_runner.py:703`). It never reaches `QUEUED`, so it never
+gets a `queued_dttm`, so `_get_tis_stuck_in_queued` — the only thing that fails
+a task for waiting, at `[scheduler] task_queued_timeout` = 600s — cannot see it
+(`scheduler_job_runner.py:2472`).
+
+**That is the whole argument for this mechanism.** An hour-long pause creates no
+failed DAG. The deploy-intent sensor cannot say the same: its own 600s timeout
+failed two `check_deploy_intent` tasks in the window recorded in §1.
+
+The sensors are therefore **not** pooled. A `reschedule`-mode sensor must not
+hold a slot while it waits, and both factories in `airflow/dags/sensors.py` take
+`**kwargs`, so `pool=` would sail straight through — the test asserts no DAG
+ever passes one.
+
+### What the pool cannot do
+
+A pool gates; it does not count. It cannot distinguish durable pending backlog
+from a running claim — the distinction the drain contract turns on — and it is
+blind to work this scheduler did not start: `ops` HTTP endpoints and
+long-running pack/prune sections among them. It replaces one mechanism inside
+the drain contract, never the contract.
+
+---
+
+## 10. Gaps in this record
 
 Everything Plan 142 Stage 0 item 1 asks for is present: timeline, commands,
 failure modes, intended-stopped services, and recovery evidence — all from the
@@ -351,7 +475,7 @@ Nothing outstanding. The record is complete.
 
 ---
 
-## 10. Related
+## 11. Related
 
 - [Plan 142](../plans/plan_142_planned_host_maintenance.md) — the state machine,
   drain contract and stage plan this runbook serves.

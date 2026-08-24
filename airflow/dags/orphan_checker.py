@@ -2,6 +2,7 @@ from datetime import datetime
 
 import requests
 from airflow.providers.standard.operators.python import PythonOperator
+from pools import MAINTENANCE_POOL
 from sensors import deploy_intent_sensor, http_health_sensor
 
 from airflow import DAG
@@ -40,14 +41,17 @@ with DAG(
     expire_detail_claims = PythonOperator(
         task_id="expire_orphan_detail_claims",
         python_callable=_expire_orphan_detail_claims,
+        pool=MAINTENANCE_POOL,
     )
     reap_stuck_processing = PythonOperator(
         task_id="reap_stuck_processing",
         python_callable=_reap_stuck_processing,
+        pool=MAINTENANCE_POOL,
     )
     evict_delisted_cooldowns = PythonOperator(
         task_id="evict_delisted_cooldowns",
         python_callable=_evict_delisted_cooldowns,
+        pool=MAINTENANCE_POOL,
     )
 
     ready >> ops_up >> [

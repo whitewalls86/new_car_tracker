@@ -216,6 +216,39 @@ def test_hourly_analytics_refresh_order():
 
 
 @pytest.mark.integration
+def test_maintenance_pool_reaches_the_real_operators():
+    """Plan 142 Stage 0 item 3, Phase A.
+
+    tests/airflow/test_maintenance_pool.py owns the contract and reads the
+    source; this checks the attribute actually survives DAG parsing onto the
+    task, and that everything else stays on `default_pool` — a task that
+    silently landed in `maintenance` would stop running the moment a window
+    held it."""
+    if str(DAGS_DIR) not in sys.path:
+        sys.path.insert(0, str(DAGS_DIR))
+    from pools import MAINTENANCE_POOL  # noqa: PLC0415 -- resolved via DAGS_DIR above
+
+    expected = {
+        ("results_processing", "process_batch"),
+        ("orphan_checker", "expire_orphan_detail_claims"),
+        ("orphan_checker", "reap_stuck_processing"),
+        ("orphan_checker", "evict_delisted_cooldowns"),
+        ("scrape_detail_pages", "claim_batch"),
+    }
+
+    dagbag = _make_dagbag()
+    assert dagbag.import_errors == {}, f"Import errors found: {dagbag.import_errors}"
+
+    pooled = {
+        (dag_id, task.task_id)
+        for dag_id, dag in dagbag.dags.items()
+        for task in dag.tasks
+        if task.pool == MAINTENANCE_POOL
+    }
+    assert pooled == expected
+
+
+@pytest.mark.integration
 def test_pack_bronze_html_lifecycle_contract():
     """The monthly lifecycle stays UTC, single-run, ordered, and retryable."""
     dagbag = _make_dagbag()

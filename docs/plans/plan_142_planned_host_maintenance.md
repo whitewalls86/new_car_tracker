@@ -278,6 +278,124 @@ Documentation and tests only:
 Items 6 and 7 both ride item 3's Airflow window: it is the only production
 touch Stage 0 makes, and neither change justifies a window of its own.
 
+#### Item 3 Phase A built, 2026-08-23 — the pool assignment, shipped inert
+
+**The pool wins, and the prototype splits in two.** A pool is a task attribute,
+so prototyping it means putting `pool=` on tasks in DAG code — and that change
+is *inert while the pool has free slots*. Behaviour is identical until someone
+shrinks it. So:
+
+- **Phase A (done, no window):** create the pool generously sized, add `pool=`
+  to the mutating tasks, deploy as a normal change, soak a day. Nothing changes.
+- **Phase B (the window):** shrink to 0, observe, release, measure the drain.
+
+Phase A is not throwaway — it is how Stage 1 would ship this anyway. Abort is
+`git revert`; there is no production state to unwind.
+
+[`airflow/dags/pools.py`](../../airflow/dags/pools.py) holds the constant and
+the reasoning; [runbook §9](../runbooks/runbook_host_maintenance.md) holds the
+operator commands and the preflight checks;
+`tests/airflow/test_maintenance_pool.py` holds the contract.
+
+Five tasks are pooled — `results_processing.process_batch`, `orphan_checker`'s
+three janitorial endpoints, and `scrape_detail_pages.claim_batch`. Sensors are
+not: a `reschedule`-mode sensor must not hold a slot while it waits, which is
+the failure this mechanism exists to avoid.
+
+**The held set is three DAGs, not two.** `ops.ops_detail_scrape_queue` (view,
+`V040__detail_scrape_circuit_breaker`) keys on `last_detail_scraped_at`, which
+only the processing service writes (`processing/writers/detail_writer.py:194`),
+while `POST /scrape/claims/release` deletes the claim. Holding processing alone
+therefore leaves the detail scraper re-claiming the same ~100 listings every 15
+minutes — up to four redundant passes an hour against cars.com, through the
+solver Plan 136 is nursing. `last_detail_scraped_at` **is** the circuit breaker;
+holding its only writer without holding its producer disables it. Plan 147 fixes
+that ownership; until it lands the two are held together, which is also more
+faithful to "no new mutating task starts". `scrape_listings` stays running —
+it advances a rotation and never reads processed state, so it cannot loop.
+
+##### Question 1 answered: two pools, and the reason is mechanical
+
+Stage 1 currently promises one pool shared with Plan 136 Stage 3d. **That
+promise cannot be kept, and not as a matter of taste.** In Airflow a task's
+`pool` is a single scalar string — a task belongs to exactly one pool — so one
+shared pool works only if the two held sets are identical or disjoint.
+
+They are neither in intent: Plan 142 holds all mutating work, Plan 136 holds
+solver-consuming work, a subset. But **by task they are disjoint**, and that is
+the part worth noticing:
+
+| Plan | Tasks it holds |
+|---|---|
+| 142 `maintenance` | `results_processing.process_batch`, `orphan_checker.{expire_orphan_detail_claims,reap_stuck_processing,evict_delisted_cooldowns}`, `scrape_detail_pages.claim_batch` |
+| 136 `solver` | `scrape_detail_pages.scrape_detail`, `scrape_listings.run_scrapes`, `recycle_solver.recycle` |
+
+The DAGs overlap; the tasks do not. The gate points differ because the *reasons*
+differ — 142 gates the claim so no listing is ever claimed, 136 gates the fetch
+because that is what touches the solver. Sizing settles it too: 136's pool is
+exactly 2 slots so a 2-slot recycle achieves mutual exclusion, while 142's is 16
+so the assignment stays inert. One pool cannot be both 2 and 16.
+
+**So: two pools, and the rule Stage 1 should carry instead is that a
+maintenance hold is a multi-pool operation** — hold every gating pool, not one.
+That generalises: if 142 ever needs `scrape_listings.run_scrapes` held, it
+cannot take the task from `solver`, but it can set `solver` to 0 alongside
+`maintenance`. A list of pools expresses any number of scopes; one pool
+expresses one.
+
+##### Question 2 answered: `pools set 0`, and the hold must not be declarative
+
+Item 3's own table praises the pool because "a hold task that dies releases its
+slots and normal scheduling resumes on its own." **That is right for Plan 136
+and backwards for Plan 142**, whose first design principle is that maintenance
+never auto-releases — not on a lease expiry, a dropped shell, an `EXIT` trap or
+a reboot. So the hold is `airflow pools set maintenance 0`: a row in the Airflow
+metadata DB that survives all of those. The cost is that it survives forgetting
+too, which is the direction this plan chooses to fail in, and which is why a
+"pool held longer than N minutes" alert is owed by Stage 1 item 5.
+
+Two things were verified against `apache-airflow-core` 3.2.0 rather than
+assumed, because the acceptance contract turns on them:
+
+1. **A pool-starved task queues rather than failing.** It stays in `SCHEDULED` —
+   the scheduler sees `open_slots <= 0` and skips it
+   (`scheduler_job_runner.py:703`) — so it never reaches `QUEUED`, never gets a
+   `queued_dttm`, and is therefore invisible to `_get_tis_stuck_in_queued`, the
+   only thing that fails a task for waiting, at `[scheduler]
+   task_queued_timeout` = 600s (`scheduler_job_runner.py:2472`). "An hour-long
+   pause creates no failed DAG solely because of the pause" is satisfied by
+   construction. The deploy-intent sensor's identical 600s budget is what failed
+   two `check_deploy_intent` tasks in the August window.
+2. **A missing pool is silent.** The scheduler logs `Tasks using non-existent
+   pool 'maintenance' will not be scheduled` (`scheduler_job_runner.py:693`) and
+   skips — no failure, no alert, the five tasks simply stop. Hence the deploy
+   ordering rule (**create the pool before the code lands**) and a new preflight
+   line in [runbook §2](../runbooks/runbook_host_maintenance.md).
+
+**And the pool is deliberately not created from git.** `airflow pools set` is an
+upsert, so a declarative create in `airflow-init` — the obvious way to keep it
+out of an operator's hands — would reset the slot count on every
+`docker compose up -d`. The slot count *is* the hold state, and a maintenance
+window recreates the stack, so that would silently release the hold mid-window.
+This is design principle 1 defeated by a convenience. `tests/airflow/
+test_maintenance_pool.py::TestTheHoldIsNotDeclarative` asserts Compose never
+sets a pool. The price is item 2 above: the pool lives only in the metadata DB,
+so a rebuilt DB loses it silently. Preflight is the mitigation until Stage 1 can
+alert on it.
+
+##### What Phase B still owes
+
+Phase A measures nothing; the hold has not been exercised. Outstanding:
+the queued-backlog behaviour on release, whether `orphan_checker` — which has
+**no `max_active_runs`**, so it defaults to 16 — fires a thundering herd of up
+to 12 queued runs at the three `ops` endpoints, and confirmation that the
+re-scrape storm did not happen (detail artifacts during the hold ≈ 0,
+`last_detail_scraped_at` advancing exactly once after release, not four times).
+The endpoints are idempotent janitorial SQL, so the expected blast radius is
+load rather than corruption, and measuring it *is* the acceptance criterion
+"resuming does not unleash an unbounded duplicate backlog". Pre-empting it with
+`max_active_runs=1` would measure a system already fixed.
+
 #### Item 4 decided, 2026-08-23 — package classes and what automation may touch
 
 Read from `/var/log/apt/history.log` on 2026-08-23 (read-only), not inferred.
@@ -501,9 +619,14 @@ before Stage 2 builds the restore step on top of them.
    backlog as running work in the maintenance UI/API.
 3. Add the maintenance-aware DAG gate selected in Stage 0. A maintenance pause
    reschedules or pauses safely without the deploy sensor's 600-second failure.
-   If Stage 0 selects the pool, this is where the `solver` pool Plan 136 Stage
-   3d expects comes into existence — name it and size it here, so the two plans
-   share one pool rather than each declaring their own.
+   Stage 0 selected the pool and Phase A already shipped `maintenance`; what
+   remains here is the release/hold API around it and the stale-hold alert.
+   **Corrected 2026-08-23:** this item used to say the `solver` pool Plan 136
+   Stage 3d expects would be named and sized here so the two plans share one
+   pool. They cannot — a task has exactly one pool, and the two plans want
+   different gate points at different sizes. Two pools, and a maintenance hold
+   sets *every* gating pool to 0. See
+   [item 3 Phase A](#item-3-phase-a-built-2026-08-23--the-pool-assignment-shipped-inert).
 4. Add `request`, `mark-drained`, `mark-offline`, `begin-validation`, `cancel`,
    and explicit `complete` operations with legal-transition tests.
 5. Add stale-maintenance metrics/alerts. Stale means “needs a human,” never
@@ -679,7 +802,11 @@ authority, it needs a different mechanism, which is the intended answer.
 production failure signals; those shipped (Stages 0 and 2, and 3a), and Plan
 136 is now blocked on a memory-baseline soak until 2026-08-25 while this plan
 is workable. So Plan 142 goes first and **establishes** the pool gate; Plan
-136's Stage 3d inherits it for the narrower solver case.
+136's Stage 3d inherits the *mechanism*, not the pool itself — Phase A of item 3
+found that a task belongs to exactly one pool, so `solver` has to be its own,
+sized 2 for mutual exclusion against `maintenance`'s 16. What 136 inherits is
+the pattern and the verified scheduler behaviour; what 142 owes in return is
+that its hold sets both pools to 0.
 
 ### Plans 135 and 141 — storage and logging checks
 

@@ -149,6 +149,7 @@ try:
     from datetime import datetime
 
     from airflow.providers.standard.operators.python import PythonOperator
+    from pools import MAINTENANCE_POOL
     from sensors import deploy_intent_sensor, http_health_sensor
 
     from airflow import DAG
@@ -167,6 +168,11 @@ try:
         claim = PythonOperator(
             task_id="claim_batch",
             python_callable=_claim_batch,
+            # The gate point for this DAG, and it must be the claim rather
+            # than the scrape: hold `claim_batch` and no listing is ever
+            # claimed. Holding `scrape_detail` would let a batch be claimed
+            # and then strand it for the length of the window.
+            pool=MAINTENANCE_POOL,
         )
 
         scrape = PythonOperator(
