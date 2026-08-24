@@ -137,6 +137,16 @@ place.
 5. A mixed-path verification run executes all existing jobs with their current
    dependency order and commands unchanged.
 
+## Closeout evidence
+
+### Mixed-fileset gate met, 2026-08-24
+
+[PR #234](https://github.com/whitewalls86/new_car_tracker/pull/234) merged as
+`9b171b2` after the changed-path classifier selected full CI. Lint passed in
+11s, unit tests in 1m19s, Docker build in 1m23s, and dbt plus integration tests
+in 4m10s. `Documentation tests` was skipped. This closes the mixed-fileset half
+of the closeout gate; the docs-only half remains open.
+
 ## Rollback
 
 Revert the workflow commit. Until this plan has passed both verification PRs,
