@@ -316,6 +316,26 @@ runbook's §8 rather than resolved.
 Kernel `6.8.0-1049-oracle` → `6.8.0-1058-oracle`, with `reboot-required`
 already pending for `1050` and `1054` before the window opened.
 
+**Item 1 is complete against its own spec** — timeline, commands, failure
+modes, intended-stopped services and recovery evidence are all present from the
+primary record. Two things first written up as gaps were settled on re-reading
+rather than left open: the pre-window disk baseline exists (`/` at 65%,
+04:06:23), and console access provably was *not* verified — every mention of the
+Oracle console in that session is this plan's own text being drafted at the end
+of the window, which is a finding about the window rather than a hole in the
+record.
+
+Two items genuinely remain on the host, neither required by item 1. The package
+transaction detail (`/var/log/apt/history.log`) is enrichment. **When
+`docker.io` reached 29.1.3 is not** — it decides whether Docker gets an
+`apt-mark hold`, so it is an input to item 4 and should be read before that
+decision is made.
+
+One new finding, unrelated to maintenance and unowned: `netplan generate`
+warns that `/run/netplan/enp0s6.yaml` is "too open" and "should NOT be
+accessible by others". It validates, so it blocked nothing, and it appears in no
+plan.
+
 #### Item 2 done, 2026-08-23 — and it found two things
 
 The inventory landed as [`maintenance-running-set.txt`](../../maintenance-running-set.txt),

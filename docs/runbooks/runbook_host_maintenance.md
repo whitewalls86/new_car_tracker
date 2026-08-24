@@ -46,14 +46,31 @@ investigation that made it safe, ran from 03:59 to roughly 04:26 UTC.
 
 ### Before and after
 
-| | Before | After |
+| | Before (04:06) | After (04:23) |
 |---|---|---|
 | OS | Ubuntu 22.04.5 LTS | unchanged |
 | Kernel | `6.8.0-1049-oracle` | `6.8.0-1058-oracle` |
 | Docker | 29.1.3 | 29.1.3 |
-| `/` | — | 49% (24 of 49 GB) |
-| `/mnt/data` | — | 34% bytes (64 of 196 GB), 17% inodes |
+| `/` | 65% (32 of 49 GB) | **49%** (24 of 49 GB) |
+| `/mnt/data` | 34% (64 of 196 GB), 17% inodes | unchanged |
+| Git revision | `f62cd00` | unchanged |
 | Containers | — | 26 up |
+
+`/` fell 16 points because the Plan 135 Stage 5 log work ran in the same window,
+not because of the package transaction.
+
+Two preflight details worth keeping, both required by the plan's own preflight
+list and both easy to lose: the `/mnt/data` mount UUID is
+`e20a83a2-dd74-47d3-9208-1d2243d68236`, and `findmnt --verify` returns three
+warnings on this host in normal operation — including `cannot detect on-disk
+filesystem type`. Knowing they are the baseline is what stops someone treating
+them as a symptom mid-window.
+
+**A finding nobody has recorded:** `netplan generate` warned that
+`/run/netplan/enp0s6.yaml` has permissions "too open" and "should NOT be
+accessible by others". It validated successfully, so it did not block the
+window, and it appears in no plan or issue. It is unrelated to maintenance and
+belongs to whoever owns host hygiene.
 
 **The apt index was 68 days stale** — last updated 2026-06-11, measured
 2026-08-18. A `reboot-required` was already pending for two earlier kernels
@@ -286,17 +303,26 @@ yet.
 
 ## 9. Gaps in this record
 
-Recovered in full: the command sequence, timings, preflight and post-reboot
-state, the apt-daily and unattended-upgrades incidents, and the restore.
+Everything Plan 142 Stage 0 item 1 asks for is present: timeline, commands,
+failure modes, intended-stopped services, and recovery evidence — all from the
+primary record rather than reconstructed.
 
-Still missing, and only obtainable from the host:
+**Settled, and recorded above rather than outstanding:**
 
-| Gap | Where it lives |
-|---|---|
-| The exact package transaction — what installed, in what order | `/var/log/apt/history.log`, `/var/log/dpkg.log` |
-| When `docker.io` reached 29.1.3 (§8) | `/var/log/apt/history.log` |
-| Whether Oracle Cloud console access was verified before the reboot | nowhere — probably not done |
-| `/` usage *before* the window | nowhere; only the after value was captured |
+- **Console access was not verified before the reboot.** Every mention of the
+  Oracle Cloud console in that session is Plan 142's own text being *drafted*,
+  at the end of the same window. The plan's preflight requires the check
+  precisely because this window skipped it.
+- **The pre-window disk baseline exists** — `/` at 65%, captured at 04:06:23.
+
+**Genuinely still on the host.** Neither is required by item 1; the first is
+enrichment, and the second is a question this recovery raised rather than one it
+was asked to answer:
+
+| Open | Where it lives | Why it matters |
+|---|---|---|
+| The exact package transaction — what installed, in what order | `/var/log/apt/history.log`, `/var/log/dpkg.log` | Completes the record; nothing depends on it |
+| When `docker.io` reached 29.1.3 (§8) | `/var/log/apt/history.log` | **Decides whether Docker should be held**, which is a Stage 0 item 4 decision |
 
 ---
 
