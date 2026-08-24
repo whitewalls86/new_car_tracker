@@ -82,8 +82,11 @@ snapshot-worker on-demand Profile-gated (`snapshot-worker`) one-shot
     C.5. No ports, no restart policy, never serves traffic.
 
 trawl profile-running Profile-gated (`trawl`) but long-running once up, so the
-    `profiles:` key must NOT decide restore scope. Reconstructed from source,
-    not from the host: tests/test_observability_config.py holds
+    `profiles:` key must NOT decide restore scope. OBSERVED in the 2026-08-18
+    window: after `docker compose up -d --force-recreate`, trawl and redis-trawl
+    were still down, and came back only from a second command naming them
+    explicitly. See docs/runbooks/runbook_host_maintenance.md section 7.
+    Corroborated in source: tests/test_observability_config.py holds
     `_PROFILE_GATED_IN_SCOPE = {"trawl", "redis-trawl"}` with the note that
     "the 2026-08-14 solver outage is why this is spelled out rather than
     inferred from `profiles:`", and Plan 136 Stage 3a deployed against a

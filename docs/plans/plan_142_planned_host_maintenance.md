@@ -266,6 +266,56 @@ touch Stage 0 makes, and neither change justifies a window of its own.
 
 No production maintenance mode is declared in this stage.
 
+#### Item 1 done, 2026-08-23 — the window was recovered verbatim
+
+[`docs/runbooks/runbook_host_maintenance.md`](../runbooks/runbook_host_maintenance.md).
+It was going to be a reconstruction with the command sequence marked as gaps;
+it is instead the real thing. The window was driven from **Codex**, not Claude
+Code, which is why the Claude transcripts have a three-day hole across it
+(2026-08-15 06:34 → 2026-08-18 11:46) and no `apt`, `dpkg` or `systemctl`
+anywhere in them. The session survives at
+`~/.codex/sessions/2026/08/17/`, thread *"Complete plan 135 stage 5"*, opening
+with "I've just merged stages 4 & 6 of plan 135. I know it relies on some VM
+runs."
+
+Recovered: 189 shell invocations with timestamps and output — full preflight,
+the stuck-`apt-daily` diagnosis, the controlled transaction, the reboot, host
+validation, restore, and stack verification. Downtime was **~3 minutes**
+(reboot 04:21:54, boot 04:22:27, `up -d` 04:23:19, verified 04:24:53), inside a
+~27-minute window.
+
+**Three things the record adds that the evidence section above did not have:**
+
+1. **The apt index was 68 days stale** (last refreshed 2026-06-11), so the
+   preflight `apt list --upgradable` was computed against a June catalogue and
+   was not the transaction that ran. The runbook makes reading `APT_LIST_AGE`
+   before trusting `UPGRADABLE` an explicit step.
+2. **Restoring the apt timers is what started `unattended-upgrades` mid-window**
+   — the evidence section says this happened, and the transcript shows *why*:
+   stop-refresh-simulate-restore was issued as one command, so the timers came
+   back three minutes before the reboot. The fix is ordering: restore them after
+   the resume gate, not before. `apt-mark showhold` was empty, so nothing
+   protected Docker or the kernel from that run.
+3. **The profile-gated restore failure is observed, not theoretical.** After
+   `docker compose up -d --force-recreate`, `trawl` and `redis-trawl` were still
+   down; they came back only from a second, explicitly-named command. This
+   upgrades their `profile-running` entries in
+   [`maintenance-running-set.txt`](../../maintenance-running-set.txt) from
+   reconstructed to **observed in this window**, and it is the same failure the
+   registry was written to prevent.
+
+**One correction owed to this plan's evidence section**, which says the Docker
+upgrade broke Promtail and implies it happened here. The transcript does not
+establish when `docker.io` reached 29.1.3: it was absent from the stale
+preflight list, and by 04:25 Installed already equalled Candidate. Either it
+upgraded in the window and the review missed it, or it moved silently on an
+ordinary day and was found by luck. Both argue for holding Docker; the second
+is worse, and settling it needs `/var/log/apt/history.log`. Recorded in the
+runbook's §8 rather than resolved.
+
+Kernel `6.8.0-1049-oracle` → `6.8.0-1058-oracle`, with `reboot-required`
+already pending for `1050` and `1054` before the window opened.
+
 #### Item 2 done, 2026-08-23 — and it found two things
 
 The inventory landed as [`maintenance-running-set.txt`](../../maintenance-running-set.txt),
