@@ -2,7 +2,7 @@
 
 ## Status
 
-BUILD ORDER, written 2026-08-23 after a documentation-only Plan 135 closeout ran the
+CLOSEOUT, written 2026-08-23 after a documentation-only Plan 135 closeout ran the
 same unit, Docker-build, dbt, and integration jobs as an application change.
 
 Proposed priority **68 (medium)**. Effort **XS**.
