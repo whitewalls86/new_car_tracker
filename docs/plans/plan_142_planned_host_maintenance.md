@@ -36,9 +36,23 @@ but only through live investigation and manual coordination:
   Compose projects and were intentionally stopped for Plan 125. A generic
   `docker compose down` cannot distinguish “forgotten” from “deliberately
   paused.”
-- The Docker package upgrade raised the daemon's minimum API version and broke
+- ~~The Docker package upgrade raised the daemon's minimum API version and broke
   Promtail 2.9.8 discovery. The host update therefore changed an application
-  compatibility boundary even though no application code caused it.
+  compatibility boundary even though no application code caused it.~~
+  **Disproved 2026-08-23 by `/var/log/apt/history.log` — there was no Docker
+  upgrade, in this window or ever.** `docker.io` was installed once, already at
+  29.1.3, on 2026-05-19 20:20 by a hand-run
+  `apt-get install -y docker.io docker-compose-v2 git` during the Plan 105 VM
+  build. None of the 98 `unattended-upgrade` transactions on this host has ever
+  touched it. The daemon's minimum API version has therefore been 1.44 since the
+  host existed, and the Promtail 2.9.8 incompatibility was **latent from day
+  one**. What changed in the window was Plan 135 Stage 5 making Promtail do
+  Docker service discovery for the first time — an *application* change
+  revealing a pre-existing boundary, which is the exact opposite of the reading
+  above. The corrected lesson is that a maintenance window surfaces latent
+  incompatibilities because it is the first time in months that everything is
+  recreated at once, and that argues for the same post-restore verification
+  rather than for pre-install package review.
 - Recovery required checking the running kernel, `/` and `/mnt/data` mounts,
   Docker configuration, selected services, Loki/Promtail ingestion, and the
   intentionally stopped Plan 125 services before work could safely resume.
@@ -263,6 +277,81 @@ Documentation and tests only:
 
 Items 6 and 7 both ride item 3's Airflow window: it is the only production
 touch Stage 0 makes, and neither change justifies a window of its own.
+
+#### Item 4 decided, 2026-08-23 — package classes and what automation may touch
+
+Read from `/var/log/apt/history.log` on 2026-08-23 (read-only), not inferred.
+**98 of the 107 transactions in the host's whole history are
+`/usr/bin/unattended-upgrade`.** Automation is not an edge case here; it is how
+this host is almost always patched.
+
+`Allowed-Origins` in `/etc/apt/apt.conf.d/50unattended-upgrades` is base +
+`-security` + the two ESM pockets. **`-updates` is not included**, which is why
+15 packages were still listed upgradable *after* the August window's automatic
+run finished: `cloud-init`, `netplan.io`, `fwupd`, `qemu-user-static` and
+friends are `-updates`-only and no automation will ever apply them.
+
+| Class | Who applies it today | Forces | Why it is its own class |
+|---|---|---|---|
+| **Security** (`-security`, ESM) | unattended-upgrades, automatically | Usually nothing | The routine case. The August window's own run was 8 transactions of exactly this: `tzdata`, `ncurses-base`, `libpam-runtime`, `systemd`, `dnsmasq-base`, `perl`, `python3.10`, `distro-info-data` |
+| **Ordinary** (`-updates`) | **Nobody, until an operator does** | A reviewed manual `apt-get upgrade` | These accumulate silently and indefinitely. This is the class a monthly window exists to drain, and the reason "no updates required" is rarely the true answer |
+| **Container runtime** (`docker.io`, `containerd`, `runc`) | unattended-upgrades *could* — see below | Compatibility review, then a deliberate apply | A daemon upgrade restarts containers. Held from 2026-08-23 |
+| **Kernel** (`linux-*-oracle`) | unattended-upgrades, automatically | A reboot, operator-timed | Installs **inert**: the new kernel sits in `/boot` and changes nothing until a reboot the operator chooses. Two (`1050`, `1054`) had queued this way before the window and harmed nothing |
+| **Restart-required** | — | Recreating named services | Needs the running-set manifest to know which |
+
+**Decision: hold `docker.io` only. Kernel and security updates stay
+automatic.** Kernel installs are inert until an operator-controlled reboot, so
+automation there buys security with no runtime risk, and holding it would also
+destroy `reboot-required` as a signal.
+
+**The justification is prospective, and this is worth stating plainly because
+the original one was wrong.** The case for holding Docker was "automation
+already broke you once." It did not: as the corrected bullet in
+[the evidence section](#the-production-evidence) records, `docker.io` has never
+been upgraded on this host. The case that survives is forward-looking and still
+real — `docker.io` 29.1.3 is published in `jammy-security/universe` as well as
+`jammy-updates/universe`, and `jammy-security` **is** an allowed origin, so the
+next Docker security update would be applied automatically, restarting the
+daemon and every container under it, at whatever hour the timer fires. That is
+worth preventing. It is a smaller claim than the one it replaces, and if the
+maintainer would rather not carry the hold on that basis alone, reversing it is
+`sudo apt-mark unhold docker.io` and a line in this table.
+
+The cost is explicit: a held package receives no automatic security fixes.
+`apt-mark showhold` therefore becomes a **preflight line item** — an unreviewed
+hold is how a package silently rots — and draining the held class is part of
+what a window is for.
+
+**Ordering fix, from item 1.** Do not restore the apt timers until after the
+resume gate. The August window restored them in the same command that refreshed
+and simulated, and `unattended-upgrades` started three minutes later, inside the
+window. Stage 2's script owns this ordering; it is not a matter of remembering.
+
+#### Item 5 decided, 2026-08-23 — the host checkpoint directory
+
+**`/var/lib/cartracker/maintenance/`**, root-owned, `0755` on the directory and
+`0644` on files.
+
+On the **root filesystem, deliberately** — not `/mnt/data`. "`/mnt/data` did not
+come back" is one of the failures this file exists to help diagnose, and a
+checkpoint stored behind the mount you are diagnosing is worthless. `/` was at
+65% of 49 GB before the August window and the file is bytes.
+
+`0644` so it is readable from a console session without `sudo`, which is
+friction in exactly the moment there is none to spare.
+
+**Append-only, one line per phase transition**, so an interrupted window leaves
+a trail rather than a single overwritten "current" value. Each line carries
+phase, UTC timestamp, git revision, running kernel, and the running-set
+manifest's path.
+
+**Never secrets.** Stronger than the usual version of that rule here, because
+this file is designed to be read under pressure and screenshotted into a chat.
+Stage 2's tests assert the writer emits only the five fields above.
+
+Postgres remains authoritative for maintenance state whenever it is up. This
+file is a breadcrumb for the window in which it is deliberately down, and the
+two must never be reconciled in the direction of the file.
 
 No production maintenance mode is declared in this stage.
 

@@ -97,6 +97,10 @@ ssh -i ssh-key-2026-04-08.key ubuntu@147.224.199.86 '
 '
 ```
 
+> **`HELD` should list `docker.io` and nothing else.** An empty list means the
+> hold was lost; anything extra means a package is silently receiving no
+> security updates. Both are findings, not noise.
+
 > **Read `APT_LIST_AGE` before you trust `UPGRADABLE`.** On 2026-08-18 the index
 > was 68 days old, so the upgradable list at preflight was computed against a
 > June catalogue and was not the transaction that actually ran. Refresh first,
@@ -183,10 +187,18 @@ watched the wrong thing (the PID, then the service's `ActiveState`, then both).
 
 **The fix for next time: do not restore the timers until the window is over.**
 Restore them after the reboot and the resume gate, as an explicit final step.
-Plan 142 Stage 2 should encode that ordering, and Stage 0 item 4 should decide
-whether Docker and kernel packages get `apt-mark hold` so automation can never
-touch the two classes that carry compatibility risk. `apt-mark showhold` was
-**empty** on 2026-08-18 — nothing was held.
+Plan 142 Stage 2 encodes that ordering; it is not a matter of remembering.
+
+`apt-mark showhold` was **empty** on 2026-08-18 — nothing was held. Plan 142
+Stage 0 item 4 decided on 2026-08-23 to hold **`docker.io` only**: a daemon
+upgrade restarts every container, and `docker.io` is published in
+`jammy-security/universe`, which *is* an allowed origin for unattended-upgrades.
+Kernel and security updates stay automatic — a kernel installs inert and takes
+effect only on a reboot you choose.
+
+Because a held package gets no automatic security fixes, **`apt-mark showhold`
+is a preflight line item** (§2) and draining the held class is part of what a
+window is for.
 
 ---
 
@@ -278,26 +290,36 @@ everything else — so it is a separate check against the manifest.
 
 ---
 
-## 8. What this window changed about the application
+## 8. The Promtail break was not caused by a Docker upgrade
 
-The Docker daemon's minimum API version broke Promtail 2.9.8's container
-discovery. The fix shipped as PR #209 (`b94cfd6`, branch
-`plan-135-stage-5-docker29`). A host package update changed an application
-compatibility boundary with no application change involved.
+Promtail 2.9.8's container discovery failed against the Docker daemon's minimum
+API version. The fix shipped as PR #209 (`b94cfd6`, branch
+`plan-135-stage-5-docker29`).
 
-**One thing the transcript does not settle:** whether `docker.io` reached 29.1.3
-*during* this window's unattended run or in an earlier automatic one. The
-preflight `apt list --upgradable` did not name it — but that list was computed
-against the 68-day-stale index, so its silence proves nothing. By 04:25
-`docker.io` showed Installed = Candidate = 29.1.3, i.e. nothing left to upgrade.
+**It is tempting to read that as "a host update broke an application." It was
+not.** `/var/log/apt/history.log`, read 2026-08-23, settles it:
 
-Both readings argue for the same mitigation, which is why it is worth stating
-rather than guessing: if it upgraded in the window, the review step missed it;
-if it upgraded weeks earlier, then a compatibility boundary moved silently on an
-ordinary Tuesday and was found only because someone happened to look. The second
-is the worse story, and it is the one `apt-mark hold` on Docker would prevent.
-Resolving it needs `/var/log/apt/history.log` on the host, which no one has read
-yet.
+```
+Start-Date: 2026-05-19  20:20:00
+Commandline: apt-get install -y docker.io docker-compose-v2 git
+Requested-By: ubuntu (1001)
+Install: ... docker.io:arm64 (29.1.3-0ubuntu3~22.04.2) ...
+```
+
+`docker.io` was **installed once, already at 29.1.3**, by hand during the Plan
+105 VM build. It has never been upgraded, and none of the 98
+`unattended-upgrade` transactions in this host's history has touched it. The
+daemon's minimum API version has been 1.44 since the host existed.
+
+So the incompatibility was **latent from day one**. What changed in the window
+was Plan 135 Stage 5 pointing Promtail at Docker service discovery for the first
+time. An application change revealed a pre-existing boundary.
+
+The lesson worth carrying is different from the one this looked like: **a
+maintenance window surfaces latent incompatibilities precisely because it is the
+first time in months that everything is recreated at once.** That argues for
+thorough post-restore verification — §7's checks — rather than for pre-install
+package review, which could not have caught this.
 
 ---
 
@@ -319,10 +341,13 @@ primary record rather than reconstructed.
 enrichment, and the second is a question this recovery raised rather than one it
 was asked to answer:
 
-| Open | Where it lives | Why it matters |
-|---|---|---|
-| The exact package transaction — what installed, in what order | `/var/log/apt/history.log`, `/var/log/dpkg.log` | Completes the record; nothing depends on it |
-| When `docker.io` reached 29.1.3 (§8) | `/var/log/apt/history.log` | **Decides whether Docker should be held**, which is a Stage 0 item 4 decision |
+Both were read on 2026-08-23 and are now closed. The window's automatic
+transaction was eight `unattended-upgrade` runs between 04:05:27 and 04:06:37
+(`tzdata`, `ncurses-base`, `libpam-runtime`, `systemd` and five siblings,
+`dnsmasq-base`, `perl`, `python3.10`, `distro-info-data`) — and `docker.io` was
+not among them, or among anything else, ever (§8).
+
+Nothing outstanding. The record is complete.
 
 ---
 
