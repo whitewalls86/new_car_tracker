@@ -2,7 +2,7 @@
 
 ## Status
 
-CLOSEOUT, written 2026-08-23 after a documentation-only Plan 135 closeout ran the
+COMPLETE, written 2026-08-23 after a documentation-only Plan 135 closeout ran the
 same unit, Docker-build, dbt, and integration jobs as an application change.
 
 Proposed priority **68 (medium)**. Effort **XS**.
@@ -146,6 +146,13 @@ place.
 11s, unit tests in 1m19s, Docker build in 1m23s, and dbt plus integration tests
 in 4m10s. `Documentation tests` was skipped. This closes the mixed-fileset half
 of the closeout gate; the docs-only half remains open.
+
+### Docs-only gate met, 2026-08-23
+
+[PR #235](https://github.com/whitewalls86/new_car_tracker/pull/235) changed only
+this plan document. The changed-path classifier passed in 4s, documentation
+tests passed in 12s, and Lint, Unit, Docker, and dbt/integration were all
+skipped. Together with PR #234, this closes the closeout gate.
 
 ## Rollback
 
