@@ -233,6 +233,61 @@ Documentation and tests only:
 
 No production maintenance mode is declared in this stage.
 
+#### Item 2 done, 2026-08-23 — and it found two things
+
+The inventory landed as [`maintenance-running-set.txt`](../../maintenance-running-set.txt),
+in `healthcheck-exemptions.txt`'s format and read by that file's parser, with
+`tests/test_maintenance_running_set.py` checking it against the Compose
+sources. **It records exceptions only**: the 28-service restore set is derived
+from `docker-compose.yml`, so a new service is expected running by default and
+has to be named to be anything else. A second hand-maintained copy of the
+service list is how the first one goes stale, which is the argument Plan 144
+already made for the two sibling registries.
+
+Six classes, and the two that are *not* exclusions carry the plan's whole
+point: `profile-running` (restored, but only if the profile flag is passed) and
+`restart-gap` (expected running, does not restore itself). `oneshot` is a third
+distinction that matters — `flyway` and `airflow-init` **do** run under `up -d`
+as `service_completed_successfully` dependencies; a resume gate that waits for
+them to be *running* waits forever.
+
+**Finding 1 — `caddy` does not come back after a reboot.** It serves `:80` and
+`:443` for cartracker.info and declares no `restart:` key
+([docker-compose.yml](../../docker-compose.yml), `caddy`), so its effective
+policy is `no`. It is the only long-running default-project service with this
+gap. Planned maintenance is unaffected, because Stage 3 restores from the
+manifest rather than from restart policies — but an *unplanned* reboot leaves
+the public site down until someone runs `up -d` by hand, and nothing pages for
+it. The one-line fix belongs to Stage 2; Stage 0 only records it, and the test
+asserts the registry keeps saying so for as long as the gap exists.
+
+**Finding 2 — Plan 140 is structurally blind to the auxiliary projects, so
+this plan cannot delegate that check.** Success criterion 5 and the Stage 3
+stack gate both require "intentionally stopped auxiliary services still
+stopped". Plan 140's metric cannot answer it: `health_values` in
+[container_health/collector.py](../../container_health/collector.py) filters on
+`com.docker.compose.project` and drops everything that is not `cartracker`.
+That filter is correct and must not be relaxed — its docstring records why,
+from the Plan 140 Stage 1 soak, which found four stale `unhealthy` containers
+(`cartracker-lakekeeper`, `-lakekeeper-migrate`, `-lakekeeper-postgres`,
+`cartracker-mlflow`) that a "has a compose label" filter would not have
+excluded. The consequence for this plan is precise: **the auxiliary-still-
+stopped gate is Plan 142's own check against this manifest**, not a Plan 140
+health reading, and Stage 3 must implement it separately. The same docstring
+supplies the fixture the plan asked for — "`up -d` on either sibling project
+brings the condition straight back" is the observed proof that restoring
+everything Compose can find is wrong.
+
+**Still open on item 2.** `COMPOSE_PROFILES` appears nowhere in the repository,
+so which profiles production actually has enabled is unrecorded in source. The
+two `profile-running` entries are reconstructed from checked-in evidence —
+`_PROFILE_GATED_IN_SCOPE = {"trawl", "redis-trawl"}` in
+`tests/test_observability_config.py`, whose comment cites the 2026-08-14 solver
+outage, plus Plan 136 Stage 3a deploying against a running production `trawl`
+on 2026-08-23 — and are marked in the file as reconstructed rather than
+observed. Confirming them against the live host is a read-only check owed
+before Stage 2 builds the restore step on top of them.
+
 ### Stage 1 — Add maintenance intent and truthful drain status
 
 1. Add a maintenance state record/API distinct from deploy intent and make the
