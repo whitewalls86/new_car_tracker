@@ -477,16 +477,56 @@ the drain contract, never the contract.
 
 ---
 
-## 10. The Stage 0 window changes: caddy, then the HMAC rotation
+## 10. The Stage 0 window (Phase B), end to end
 
-Two changes that need no host reboot but do need an Airflow restart and a brief
-public blip, so they ride one window together rather than justifying two. Run
-them in this order: caddy first, because it is the shorter blip and its abort is
-cleaner, then the rotation, which wants the quiet moment before any pool hold.
+**Not yet run.** This is the approved shape of the window that closes Plan 142
+Stage 0: it deploys items 6 and 7, then holds the maintenance pool for an hour
+and measures what the queued backlog does on release. About **90 minutes, of
+which ~3 are user-visible.**
 
-Neither is a host operation. Sections 3 through 6 do not apply.
+**No host operation is involved** — no packages, no reboot. Sections 3 through 6
+do not apply. Section 2's preflight does, minus its apt and kernel lines.
 
-### 10.1 caddy's restart policy — Plan 142 Stage 0 item 7
+| Step | What | User-visible | Data risk | Abort |
+|---|---|---|---|---|
+| 10.1 | Preflight | none | none | stop; nothing has changed |
+| 10.2 | caddy restart policy (item 7) | ~10s on cartracker.info | none | revert commit, `up -d caddy` |
+| 10.3 | HMAC rotation (item 6) | Airflow UI ~1 min | none — tokens re-issued | restore `.env`, `up -d` the four |
+| 10.4 | The hold, ~60 min | none | none — backlog is durable | `pools set maintenance 16` |
+| 10.5 | Release, and measure | none | load spike on `orphan_checker` | `pools set maintenance 0` |
+| 10.6 | Restore | none | none | — |
+
+Every step reverts without touching data. **The order is deliberate:** caddy
+first because it is the shorter blip and its abort is cleanest, then the
+rotation — which wants a quiet moment, since it invalidates in-flight worker
+tokens — and only then the hold. Rotating *during* a hold would confuse two
+causes of an idle fleet.
+
+### 10.1 Preflight
+
+Read-only, and safe to run days ahead. Section 2's first two blocks, minus apt
+and kernel, plus the four things this window specifically needs as a baseline
+to compare against on the way out:
+
+```bash
+docker exec cartracker-airflow-scheduler airflow pools list
+docker inspect --format '{{.HostConfig.RestartPolicy.Name}}' caddy   # expect: no
+docker exec cartracker-postgres psql -U cartracker -d cartracker -At -F'|' -c \
+  "select state, count(*) from airflow.task_instance
+    where start_date > now() - interval '1 hour' group by 1;"
+docker exec cartracker-postgres psql -U cartracker -d cartracker -At -c \
+  "select intent from deploy_intent;"
+```
+
+> **Verify Oracle Cloud console access before you start.** The August window
+> skipped this and §11 records that it did. This window does not reboot, so the
+> console is not the lifeline it is in a host window — but the habit is the
+> point, and the cost is one browser tab.
+
+Stage 2 owns the `/var/lib/cartracker/maintenance/` checkpoint writer chosen by
+Stage 0 item 5. Until it exists, record these by hand.
+
+### 10.2 caddy's restart policy — Plan 142 Stage 0 item 7
 
 Ships in git ([docker-compose.yml](../../docker-compose.yml)), so the VM pulls
 it. **~10 seconds of user-visible downtime on cartracker.info.**
@@ -515,7 +555,7 @@ Nothing resolves `caddy` by name — it is the ingress, not an upstream — so
 
 **Abort:** revert the commit, `docker compose up -d caddy` again.
 
-### 10.2 Rotate `AIRFLOW_JWT_SECRET` — Plan 142 Stage 0 item 6
+### 10.3 Rotate `AIRFLOW_JWT_SECRET` — Plan 142 Stage 0 item 6
 
 **Not in git.** The value lives only in the VM's `/opt/cartracker/.env`, which is
 why this step is a runbook procedure rather than a commit.
@@ -561,6 +601,77 @@ The first must be **empty**. Recreating these four does not orphan anyone:
 **Abort:** restore the previous value in `.env` and `up -d` the four again. Keep
 the old value to hand until verification passes; a rotation you cannot undo is
 a rotation you should not start.
+
+### 10.4 The hold — the measurement, ~60 minutes
+
+```bash
+docker exec cartracker-airflow-scheduler \
+  airflow pools set maintenance 0 "Plan 142 Stage 0 Phase B <date>"
+```
+
+Then every ~10 minutes record: queued versus running task instances, whether any
+task has **failed**, the scheduler heartbeat, and that non-pooled DAGs still run
+normally.
+
+```bash
+docker exec cartracker-postgres psql -U cartracker -d cartracker -At -F'|' -c \
+  "select pool, state, count(*) from airflow.task_instance
+    where start_date > now() - interval '2 hours' or state in ('scheduled','queued','running')
+    group by 1,2 order by 1,2;"
+```
+
+Acceptance, straight from the plan's drain contract:
+
+- **No new mutating task starts.** The five pooled tasks queue.
+- **No task fails merely because time passed.** This is the whole point — §9
+  explains why it holds by construction, and today's sensor mechanism fails at
+  600s and did so twice in August.
+- **Unrelated DAGs are unaffected**, which is what proves the gate is scoped
+  rather than global. `scrape_listings` is deliberately still running.
+
+**Abort at any point:** `airflow pools set maintenance 16`.
+
+### 10.5 Release, and measure the backlog — the real unknown
+
+```bash
+docker exec cartracker-airflow-scheduler \
+  airflow pools set maintenance 16 "released <date>"
+```
+
+Record how the queued runs drain — roughly **28** will have accumulated per hour
+held (12 `results_processing` + 12 `orphan_checker` + 4 `scrape_detail_pages`):
+elapsed time to zero, peak concurrency, whether anything errored, and
+processing-queue depth before and after.
+
+Then confirm the re-scrape storm did **not** happen — the reason
+`scrape_detail_pages` is in the held set at all (§9):
+
+- detail artifacts produced *during* the hold should be ~0;
+- `last_detail_scraped_at` for the held listings should advance **exactly once**
+  after release, not four times.
+
+> **The risk worth naming in advance.** `orphan_checker` has **no
+> `max_active_runs`**, so it defaults to 16 — up to 12 queued runs could fire at
+> once against the three `ops` maintenance endpoints. `results_processing` is
+> safe at `max_active_runs=1`. The endpoints are idempotent janitorial SQL, so
+> the expected blast radius is **load, not corruption**.
+>
+> **Measure it rather than pre-empting it.** That thundering herd on release is
+> exactly the acceptance criterion "resuming does not unleash an unbounded
+> duplicate backlog". If it misbehaves, that is the finding, and
+> `max_active_runs=1` is the fix Stage 1 ships. Setting it beforehand would
+> measure a system already fixed.
+
+### 10.6 Restore
+
+```bash
+docker exec cartracker-airflow-scheduler airflow pools list   # 16 slots, used 0
+docker inspect --format '{{.HostConfig.RestartPolicy.Name}}' caddy   # unless-stopped
+```
+
+Confirm 28 pooled runs an hour are green again, and write the results into
+Plan 142's item 3 section — the measurements are the deliverable, and a window
+whose findings live only in a terminal has not closed.
 
 ---
 

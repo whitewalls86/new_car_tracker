@@ -426,6 +426,30 @@ hold works — only that assigning the pool cost nothing. Phase B is the first
 time `pools set 0` is ever run against production, and the acceptance contract
 is measured there, not here.
 
+##### Where Phase B picks up
+
+**The window is written down.**
+[Runbook §10](../runbooks/runbook_host_maintenance.md) is the whole approved
+sequence end to end — preflight, caddy (item 7), the HMAC rotation (item 6), the
+hold, the release and its measurements, restore — with the blast radius and
+abort for each step. It is ~90 minutes, of which ~3 are user-visible, and it
+touches no packages and no reboot.
+
+Phase B is gated on **2026-08-25**, by two things landing the same day:
+
+1. **Phase A's 24-hour soak completes at 03:47 UTC**, measured from
+   re-serialization rather than from the merge.
+2. **Plan 136's Stage 3a memory baseline is read.** Phase B's hour-long hold
+   stops detail scraping, which puts a trough in the very `trawl` memory curve
+   Stage 3b sizes its recycle threshold against. SRP scraping continues, so the
+   solver does not go idle and the perturbation is partial — but an unexplained
+   trough in a curve someone is about to read a threshold off is the "gauge
+   misread as truth" defect Plan 136's own D2 is about. Run Phase B after that
+   read, or record the hold window in Plan 136 so the trough has an owner.
+
+Item 7's commit must be **merged before the window opens**, because §10.2 starts
+with `git pull` on the VM. It is a prerequisite, not a rider.
+
 ##### What Phase B still owes
 
 Phase A measures nothing; the hold has not been exercised. Outstanding:
