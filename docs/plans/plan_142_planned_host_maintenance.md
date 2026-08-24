@@ -191,7 +191,21 @@ Documentation and tests only:
 2. Inventory every current Compose project and profile from source and define
    the expected default running set plus justified stopped/exempt entries.
 3. Prototype the Airflow maintenance gate and measure what scheduled runs do
-   during a one-hour pause: queue, reschedule, coalesce, or backfill.
+   during a one-hour pause: queue, reschedule, coalesce, or backfill. Three
+   mechanisms, not two — **an Airflow pool is the third and the one to beat**:
+
+   | Mechanism | The cost to weigh |
+   |---|---|
+   | Dedicated sensor / state gate | A sensor occupies a worker slot for the length of the pause, and it is the shape whose 600-second failure this plan exists to avoid |
+   | DAG pause/unpause with a manifest | Requires recording the prior pause state and restoring it. A maintenance run that dies halfway leaves DAGs paused with **no record of which were already paused** — the worst failure mode on this list, because it is silent and the fleet looks fine |
+   | **Pool: every mutating task takes 1 slot, the maintenance hold takes all** | Pooled tasks **queue rather than fail**, which satisfies the acceptance contract directly. No manifest exists to lose: a hold task that dies releases its slots and normal scheduling resumes on its own. Measure what the queued backlog does on release |
+
+   **A pool gates, it does not count.** It cannot distinguish durable pending
+   backlog from a running claim, which is the distinction the drain contract
+   turns on, and it is blind to work this scheduler did not start — `ops` HTTP
+   endpoints and long-running pack/prune sections among them. It replaces one
+   mechanism inside the contract, never the contract. Prototype it against the
+   named counts, not instead of them.
 4. Define package classes: security updates, ordinary updates, Docker/container
    runtime, kernel, and packages requiring service restart.
 5. Choose the host checkpoint directory and permissions; it contains phase and
@@ -208,6 +222,9 @@ No production maintenance mode is declared in this stage.
    backlog as running work in the maintenance UI/API.
 3. Add the maintenance-aware DAG gate selected in Stage 0. A maintenance pause
    reschedules or pauses safely without the deploy sensor's 600-second failure.
+   If Stage 0 selects the pool, this is where the `solver` pool Plan 136 Stage
+   3d expects comes into existence — name it and size it here, so the two plans
+   share one pool rather than each declaring their own.
 4. Add `request`, `mark-drained`, `mark-offline`, `begin-validation`, `cancel`,
    and explicit `complete` operations with legal-transition tests.
 5. Add stale-maintenance metrics/alerts. Stale means “needs a human,” never
@@ -352,12 +369,38 @@ soaked and its coverage is trustworthy.
 
 ### Plan 136 — drain and authority patterns
 
-Plan 136 owns solver efficacy, drain-aware `trawl` recycling, and narrowly
-allowlisted Docker restart authority through a socket proxy. Reuse its safe
-boundary and claim-count semantics. Do not extend its application endpoint into
-host package or reboot authority: Plan 142 remains an SSH/console operator
-procedure. Plan 136 remains ahead in build order because its production failure
-signals are more urgent and its Stage 3 informs this plan's drain design.
+Plan 136 owns solver efficacy, threshold-gated `trawl` recycling, and narrowly
+allowlisted Docker restart authority through a socket proxy. Reuse its
+claim-count semantics: its recycle keeps `active_jobs == 0` as a precondition,
+and the named counts below remain the authority on whether work is actually in
+flight. Do not extend its application endpoint into host package or reboot
+authority: Plan 142 remains an SSH/console operator procedure.
+
+**Two things changed on 2026-08-23 and this plan inherits both.**
+
+Plan 136's Stage 3 no longer specifies a drain protocol. The pause-claiming,
+poll-for-idle, restart, resume sequence this plan expected to reuse was
+replaced by an **Airflow pool**, which is global across DAGs: every
+solver-consuming task takes one slot and the recycle takes them all, so the
+scheduler enforces mutual exclusion instead of an application protocol doing
+it. That is a better fit for this plan's gate than what it replaced — see
+[Stage 0](#stage-0--turn-the-successful-window-into-fixtures-and-decisions),
+where it is now the third option to prototype.
+
+And the restart authority is **two** proxy instances, not one grant with an
+added verb. `ALLOW_RESTARTS` narrows nothing once `CONTAINERS=1` is set, so the
+read grant and the restart grant cannot share an instance; the restart proxy
+runs `CONTAINERS=0, POST=1, ALLOW_RESTARTS=1`. This strengthens the non-goal
+above rather than complicating it: that proxy can issue `stop`, `restart` and
+`kill` and **structurally nothing else**, so it cannot be widened into reboot
+authority by editing an allowlist. If this plan ever needs host-level
+authority, it needs a different mechanism, which is the intended answer.
+
+**Sequencing reversed 2026-08-23.** Plan 136 was ahead on the strength of its
+production failure signals; those shipped (Stages 0 and 2, and 3a), and Plan
+136 is now blocked on a memory-baseline soak until 2026-08-25 while this plan
+is workable. So Plan 142 goes first and **establishes** the pool gate; Plan
+136's Stage 3d inherits it for the narrower solver case.
 
 ### Plans 135 and 141 — storage and logging checks
 
