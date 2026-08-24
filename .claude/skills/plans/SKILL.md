@@ -1,6 +1,6 @@
 ---
 name: plans
-description: Perform a state transition in this repo's planning index — move a plan between the backlog, build order, closeout and superseded tables in docs/PLANS.md, add a closeout row, archive a completed plan into docs/planning/completed_plans.md, or transcribe a soak result the user supplies. Use when the user asks to move, promote, start, close out, archive, supersede, or otherwise re-file a plan's state. This skill writes state and never prose: every title, gate, trigger, date and description arrives from outside it — supplied by the user, or reasoned out and approved before this skill runs — and it does not author one mid-transition, choose a priority or a build-order position, or decide that a gate has closed.
+description: "Perform a state transition in this repo's planning index — move a plan between the backlog, build order, closeout and superseded tables in docs/PLANS.md, add a closeout row, archive a completed plan into docs/planning/completed_plans.md, or transcribe a soak result the user supplies. Use when the user asks to move, promote, start, close out, archive, supersede, or otherwise re-file a plan's state. This skill writes state and never prose: every title, gate, trigger, date and description arrives from outside it — supplied by the user, or reasoned out and approved before this skill runs — and it does not author one mid-transition, choose a priority or a build-order position, or decide that a gate has closed."
 ---
 
 # Moving a plan between states

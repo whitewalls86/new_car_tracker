@@ -44,25 +44,19 @@
 #                    Plan 125 decision, never a maintenance action.
 #   aux-foreign      Declared in a Compose file that never runs on this host.
 #   restart-gap      Expected running, but carries no `restart:` policy, so
-#                    Docker does NOT bring it back after a host reboot.
+#                    Docker does NOT bring it back after a host reboot. No
+#                    service is in this class today -- `caddy` was the only
+#                    one and Plan 142 Stage 0 item 7 fixed it on 2026-08-24.
+#                    The class stays defined because the test that classifies
+#                    every policy-less service needs somewhere to put the next
+#                    one, and because a class that disappears when it empties
+#                    takes its reasoning with it.
 #
 # COMPOSE_PROFILES appears nowhere in this repository, so which profiles
 # production actually has enabled is not recorded anywhere in source. The
 # `profile-running` entries below are reconstructed from checked-in evidence
 # (see each reason) and are marked as such. Confirming them against the live
 # host is Stage 0's remaining open item.
-
-caddy restart-gap Serves :80 and :443 for cartracker.info and has NO `restart:`
-    key at docker-compose.yml:606, so its effective policy is `no` and Docker
-    does not start it after a host reboot. It is the only long-running service
-    in the default project with this gap; `flyway`, `airflow-init`, `dbt`,
-    `dbt_test` and `snapshot-worker` also lack one, correctly, because they are
-    `oneshot` or `on-demand`. The public site therefore stays down after an
-    unplanned reboot until someone runs `up -d` by hand. Plan 142's restore
-    covers the planned case because it restores from this manifest rather than
-    from restart policies -- but the unplanned case is a live defect, and
-    fixing it is a one-line production change that belongs to Stage 2, not to
-    Stage 0's documentation-only scope.
 
 flyway oneshot Runs the Flyway migrations to completion and exits. Every
     consumer gates on `condition: service_completed_successfully`. A restore

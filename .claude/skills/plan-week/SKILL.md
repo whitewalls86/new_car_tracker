@@ -1,6 +1,6 @@
 ---
 name: plan-week
-description: Write the weekly recap of what happened in this repo — read the last complete week's commits, map each to the plan it belongs to, open those plan documents for the why, and write docs/recaps/YYYY-MM-DD.md. Use when the user asks for a weekly recap, a summary of the week, or what happened last week. This skill writes prose and never state: it does not move a row, edit any table in docs/PLANS.md or the archive, or change a plan document. It reads plan documents and writes only under docs/recaps/.
+description: "Write the weekly recap of what happened in this repo — read the last complete week's commits, map each to the plan it belongs to, open those plan documents for the why, and write docs/recaps/YYYY-MM-DD.md. Use when the user asks for a weekly recap, a summary of the week, or what happened last week. This skill writes prose and never state: it does not move a row, edit any table in docs/PLANS.md or the archive, or change a plan document. It reads plan documents and writes only under docs/recaps/."
 ---
 
 # Recapping a week
