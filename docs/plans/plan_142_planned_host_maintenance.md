@@ -210,6 +210,26 @@ Documentation and tests only:
    runtime, kernel, and packages requiring service restart.
 5. Choose the host checkpoint directory and permissions; it contains phase and
    revision metadata only, never secrets.
+6. Rotate `AIRFLOW_JWT_SECRET` to 64 random bytes during the Airflow restart
+   item 3 already budgets. **Inherited 2026-08-23** from Plans 141 and 136,
+   which both routed it to Plan 136 Stage 0 *after* that stage closed on
+   2026-08-18; it was owned by nobody until this line existed.
+   `AIRFLOW__API_AUTH__JWT_SECRET` ([docker-compose.yml](../../docker-compose.yml),
+   `x-airflow-common`) is 35 bytes, under the 64 RFC 7518 §3.2 recommends for
+   HMAC-SHA512, so PyJWT emits `InsecureKeyLengthWarning` on every apiserver
+   start — 11 times since 2026-08-21, in the exact stream Plan 141 is trying to
+   make worth reading. `AIRFLOW__CORE__FERNET_KEY` is 44 bytes and is not
+   involved.
+
+   **Hygiene, not a vulnerability, and the difference was measured rather than
+   assumed.** Sampled on the apiserver 2026-08-23 without printing the value:
+   35 characters, 25 distinct, mixed case and digits, ~4.5 bits of Shannon
+   entropy per character. That is a generated string, not a passphrase, so the
+   key material is far past brute force — the RFC's rule compares key length to
+   hash output and says nothing about a break. It rides this window because
+   rotation invalidates in-flight worker tokens, not because it is urgent. It
+   is also a fair first exercise of what this plan is building: a low-risk
+   change that wants exactly the drain-and-restart discipline Stage 1 defines.
 
 No production maintenance mode is declared in this stage.
 

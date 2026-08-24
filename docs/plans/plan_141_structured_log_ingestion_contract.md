@@ -182,9 +182,16 @@ dashboard cleanup. The intersection is narrow:
 - Plan 136 warning-only observations should name the expected `service` and
   `level` contract rather than use unconstrained text queries.
 - The short Airflow HMAC-key warning discovered during this audit is a real
-  configuration finding, not log noise. Route its remediation to Plan 136
-  Stage 0's Airflow configuration slice (or a security plan); do not suppress
-  it here.
+  configuration finding, not log noise. **Its remediation belongs to
+  [Plan 142](plan_142_planned_host_maintenance.md) Stage 0** — corrected
+  2026-08-23, because this bullet and Plan 136's twin both routed it to Plan
+  136 Stage 0, which had completed on 2026-08-18. Two plans pointing at a
+  closed stage is why it went unowned. **What this plan owns is the line, not
+  the fix:** freeze it as a Stage 0 fixture and prove in Stage 1 that it
+  reaches Error/Warning Logs with `service` and `level` set. Do not suppress
+  it, and note the shape of that temptation — a plan that both classifies
+  noise and silences its sources can satisfy criterion 3 by deleting the
+  warning instead of labelling it.
 - Plan 136's container-health producer and restart authority do not belong in
   this plan.
 
