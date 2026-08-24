@@ -5,7 +5,8 @@
 **Stage 0 complete and verified in production 2026-08-18. Stage 2 deployed to
 production 2026-08-20 (PR #223, merge `50bba68`); its 24-hour soak closed on
 2026-08-21 — the alert half green, the shape half inconclusive by construction.
-Stage 3 redesigned 2026-08-23 and not yet built; Stage 4 not started.**
+Stage 3 redesigned 2026-08-23; Stage 3a deployed to production and publishing;
+Stage 3b blocked until the memory baseline is read; Stage 4 not started.**
 
 The soak proved both new rules quiet and the counters healthy, but it **did not
 answer open question 2**: a healthy window contains no solver decay to read, so
