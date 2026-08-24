@@ -62,7 +62,7 @@ jobs:
         with:
           python-version: "3.13"
       - run: pip install pytest
-      - run: pytest tests/test_planning_docs.py -q
+      - run: pytest --noconftest tests/test_planning_docs.py -q
         env:
           LOG_PATH: /tmp/app.log
 
