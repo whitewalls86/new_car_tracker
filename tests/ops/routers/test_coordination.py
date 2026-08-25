@@ -113,8 +113,7 @@ def test_cancel_refuses_unsafe_states(mock_cursor_context, source):
     assert len(cursor.execute.call_args_list) == 2
 
 
-def test_validation_and_release_routes_remain_private(mock_client):
-    assert mock_client.post("/coordination/begin-validation").status_code == 404
+def test_release_route_remains_private_until_validation_guard_exists(mock_client):
     assert mock_client.post("/coordination/complete").status_code == 404
 
 
@@ -133,6 +132,41 @@ def test_begin_drain_endpoint_maps_failures(mock_client, mocker, result, status_
     mocker.patch("ops.routers.coordination._transition", return_value=result)
 
     assert mock_client.post("/coordination/begin-drain").status_code == status_code
+
+
+@pytest.mark.parametrize(
+    ("path", "helper", "ok_phase"),
+    [
+        ("/coordination/cancel", "_cancel", "none"),
+        ("/coordination/begin-validation", "_transition", "validating"),
+    ],
+)
+def test_safe_lifecycle_endpoints(mock_client, mocker, path, helper, ok_phase):
+    operation = mocker.patch(f"ops.routers.coordination.{helper}", return_value="ok")
+
+    response = mock_client.post(path)
+
+    assert response.status_code == 200
+    assert response.json() == {"phase": ok_phase}
+    if helper == "_transition":
+        operation.assert_called_once_with("begin-validation")
+
+
+@pytest.mark.parametrize(
+    ("path", "helper", "result", "status_code"),
+    [
+        ("/coordination/cancel", "_cancel", "conflict", 409),
+        ("/coordination/cancel", "_cancel", "error", 503),
+        ("/coordination/begin-validation", "_transition", "conflict", 409),
+        ("/coordination/begin-validation", "_transition", "error", 503),
+    ],
+)
+def test_safe_lifecycle_endpoints_map_failures(
+    mock_client, mocker, path, helper, result, status_code
+):
+    mocker.patch(f"ops.routers.coordination.{helper}", return_value=result)
+
+    assert mock_client.post(path).status_code == status_code
 
 
 def test_drain_status_aggregates_authoritative_state_without_transition(mock_client, mocker):

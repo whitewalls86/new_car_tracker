@@ -262,6 +262,25 @@ def authorize_coordination() -> dict[str, Any]:
     raise HTTPException(status_code=503, detail="Authorization evidence unavailable.")
 
 
-# Validation and release routes are added only with
-# their evidence guards. Exposing an unguarded
-# draining->active endpoint would turn a state machine into false authority.
+@router.post("/cancel")
+def cancel_coordination() -> dict[str, str]:
+    result = _cancel()
+    if result == "ok":
+        return {"phase": "none"}
+    if result == "conflict":
+        raise HTTPException(status_code=409, detail="Coordination can no longer be cancelled.")
+    raise HTTPException(status_code=503, detail="Database unavailable.")
+
+
+@router.post("/begin-validation")
+def begin_coordination_validation() -> dict[str, str]:
+    result = _transition("begin-validation")
+    if result == "ok":
+        return {"phase": "validating"}
+    if result == "conflict":
+        raise HTTPException(status_code=409, detail="Coordination is not active.")
+    raise HTTPException(status_code=503, detail="Database unavailable.")
+
+
+# Release is added only with its validation evidence guard. Exposing an
+# unguarded validating->none endpoint would turn state into false authority.

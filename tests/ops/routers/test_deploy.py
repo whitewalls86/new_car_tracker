@@ -1,3 +1,4 @@
+import json
 from datetime import datetime as dt
 
 from ops.routers import deploy
@@ -111,6 +112,17 @@ def test_intent_release_success(mock_cursor_context):
     assert result is True
 
 
+def test_legacy_release_cannot_clear_active_new_style_deploy(mock_cursor_context):
+    conn, cursor = mock_cursor_context
+    cursor.fetchone.return_value = ("deploy", "active")
+
+    assert deploy._intent_release() is False
+    assert not any(
+        "UPDATE deploy_intent" in call.args[0]
+        for call in cursor.execute.call_args_list
+    )
+
+
 def test_intent_release_no_return(mock_cursor_context):
     conn, cursor = mock_cursor_context
     cursor.fetchone.side_effect = [(None, "none"), None]
@@ -144,6 +156,11 @@ def test_set_intent_success(mock_cursor_context):
     result = deploy._set_intent("test")
 
     assert result == "ok"
+    coordination_update = cursor.execute.call_args_list[-1]
+    sql, params = coordination_update.args
+    assert "generation = generation + 1" in sql
+    assert json.loads(params[0]) == list(deploy.LEGACY_DEPLOY_TARGETS)
+    assert json.loads(params[1]) == list(deploy.LEGACY_DEPLOY_SCOPE)
 
 
 def test_set_intent_no_return(mock_cursor_context, mock_router_logger_warning):

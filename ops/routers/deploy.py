@@ -2,11 +2,13 @@
 Deploy coordination API endpoints.
 """
 
+import json
 import logging
 from typing import Any, Dict
 
 from fastapi import APIRouter, Body, HTTPException
 
+from ops.coordination_contract import SERVICE_CONTRACTS, SURFACES
 from shared.db import db_cursor
 
 logger = logging.getLogger("pipeline_ops")
@@ -14,6 +16,8 @@ router = APIRouter()
 
 STALE_LOCK_MINUTES = 30
 COORDINATION_LOCK_ID = 142
+LEGACY_DEPLOY_TARGETS = tuple(sorted(SERVICE_CONTRACTS))
+LEGACY_DEPLOY_SCOPE = tuple(sorted(SURFACES - {"host"}))
 
 
 def _intent_status() -> Dict[str, Any]:
@@ -118,12 +122,16 @@ def _set_intent(caller: str, pause_long_jobs: bool = True) -> str:
                 cur.execute(
                     """UPDATE coordination_state
                           SET kind = 'deploy', phase = 'requested',
-                              targets = '["legacy_global"]'::jsonb,
-                              scope = '["host"]'::jsonb,
+                              generation = generation + 1,
+                              targets = %s::jsonb, scope = %s::jsonb,
                               requested_by = %s, reason = 'Legacy deploy facade',
                               requested_at = now(), updated_at = now()
                         WHERE id = 1""",
-                    (caller,),
+                    (
+                        json.dumps(LEGACY_DEPLOY_TARGETS),
+                        json.dumps(LEGACY_DEPLOY_SCOPE),
+                        caller,
+                    ),
                 )
                 return "ok"
             logger.warning("Intent failed to set — already locked.")
@@ -146,12 +154,14 @@ def _intent_release() -> bool:
             cur.execute("SELECT pg_advisory_xact_lock(%s)", (COORDINATION_LOCK_ID,))
             cur.execute("SELECT kind, phase FROM coordination_state WHERE id = 1")
             row = cur.fetchone()
-            if row is None or (row[1] != "none" and row[0] != "deploy"):
+            if row is None:
+                return False
+            if row[1] != "none" and (row[0] != "deploy" or row[1] != "requested"):
                 return False
             cur.execute(sql)
             if cur.fetchone() is None:
                 return False
-            if row[0] == "deploy":
+            if row == ("deploy", "requested"):
                 cur.execute(
                     """UPDATE coordination_state
                           SET kind = NULL, phase = 'none',

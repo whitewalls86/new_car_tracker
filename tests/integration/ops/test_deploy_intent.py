@@ -65,14 +65,24 @@ def test_deploy_start_sets_intent(api_client, verify_cur):
     assert row["requested_by"] == "Deploy Declared"
 
     verify_cur.execute(
-        "SELECT kind, phase, targets, scope FROM coordination_state WHERE id=1"
+        "SELECT kind, phase, generation, targets, scope "
+        "FROM coordination_state WHERE id=1"
     )
     coordination = verify_cur.fetchone()
-    assert coordination == {
-        "kind": "deploy",
-        "phase": "requested",
-        "targets": ["legacy_global"],
-        "scope": ["host"],
+    assert coordination["kind"] == "deploy"
+    assert coordination["phase"] == "requested"
+    assert coordination["generation"] >= 1
+    assert set(coordination["targets"])
+    assert set(coordination["scope"]) == {
+        "airflow_control",
+        "analytics",
+        "archive",
+        "database",
+        "detail_fetch",
+        "ingress",
+        "listing_fetch",
+        "observability",
+        "processing",
     }
 
 

@@ -201,6 +201,10 @@ MUTATION_ROUTES = {
         "coordination-state transition without admitting persistent work.",
         "database",
     ),
+    "ops/routers/coordination.py:POST:/cancel": _short(_ATOMIC_STATE, "database"),
+    "ops/routers/coordination.py:POST:/begin-validation": _short(
+        _ATOMIC_STATE, "database"
+    ),
     # Admin routes either delegate to a tracked long job or perform bounded
     # metadata/coordination transactions.
     "ops/routers/admin.py:POST:/dbt/trigger": _tracked("delegated", "dbt_runner_jobs", "analytics"),
