@@ -19,7 +19,7 @@ against 26 containers in production.
 """
 from __future__ import annotations
 
-from typing import Dict, Iterable, Iterator, Mapping, Optional, Tuple
+from typing import Any, Dict, Iterable, Iterator, Mapping, Optional, Tuple
 
 from prometheus_client.core import GaugeMetricFamily
 
@@ -62,6 +62,26 @@ class NoContainersFound(RuntimeError):
     is the failure mode this whole plan exists to close, so it raises instead:
     /metrics returns 500 and `up{job="container-health"}` goes to 0.
     """
+
+
+def oneoff_processes(inspections: Iterable[Mapping], project: str) -> list[dict[str, Any]]:
+    """Return running Compose one-offs as drain evidence, never expected services."""
+    processes = []
+    for inspection in inspections:
+        labels = (inspection.get("Config") or {}).get("Labels") or {}
+        if labels.get(PROJECT_LABEL) != project or labels.get(ONEOFF_LABEL) != "True":
+            continue
+        state = inspection.get("State") or {}
+        if state.get("Status") not in {"running", "restarting", "paused"}:
+            continue
+        processes.append(
+            {
+                "service": labels.get(SERVICE_LABEL),
+                "container_id": inspection.get("Id"),
+                "started_at": state.get("StartedAt"),
+            }
+        )
+    return sorted(processes, key=lambda item: (item["service"] or "", item["container_id"] or ""))
 
 
 def health_value(inspection: Mapping) -> int:

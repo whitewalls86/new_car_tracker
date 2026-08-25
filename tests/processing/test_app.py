@@ -29,16 +29,29 @@ class TestMetrics:
 
 class TestReady:
     def test_ready_when_idle(self, mock_processing_client, mocker):
-        mocker.patch("processing.app.is_idle", return_value=True)
+        mocker.patch(
+            "processing.app.job_snapshot",
+            return_value={"active_jobs": 0, "oldest_started_at": None},
+        )
         resp = mock_processing_client.get("/ready")
         assert resp.status_code == 200
         body = resp.json()
         assert body["ready"] is True
+        assert body["active_jobs"] == 0
+        assert body["oldest_started_at"] is None
         assert "reason" not in body
 
     def test_not_ready_when_batch_running(self, mock_processing_client, mocker):
-        mocker.patch("processing.app.is_idle", return_value=False)
+        mocker.patch(
+            "processing.app.job_snapshot",
+            return_value={
+                "active_jobs": 2,
+                "oldest_started_at": "2026-08-25T01:00:00+00:00",
+            },
+        )
         resp = mock_processing_client.get("/ready")
         assert resp.status_code == 503
         assert resp.json()["detail"]["ready"] is False
+        assert resp.json()["detail"]["active_jobs"] == 2
+        assert resp.json()["detail"]["oldest_started_at"] == "2026-08-25T01:00:00+00:00"
         assert resp.json()["detail"]["reason"] == "batch in progress"

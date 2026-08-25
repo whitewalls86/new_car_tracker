@@ -1,25 +1,40 @@
 import threading
 from contextlib import contextmanager
+from datetime import datetime, timezone
 
 _lock = threading.Lock()
 _count = 0
+_active_started_at: dict[object, datetime] = {}
 
 
 @contextmanager
 def active_job():
     global _count
+    token = object()
     with _lock:
         _count += 1
+        _active_started_at[token] = datetime.now(timezone.utc)
     try:
         yield
     finally:
         with _lock:
             _count -= 1
+            _active_started_at.pop(token, None)
 
 
 def is_idle() -> bool:
     with _lock:
         return _count == 0
+
+
+def job_snapshot() -> dict[str, int | str | None]:
+    """Return truthful in-process drain evidence with an oldest-start marker."""
+    with _lock:
+        oldest = min(_active_started_at.values(), default=None)
+        return {
+            "active_jobs": _count,
+            "oldest_started_at": oldest.isoformat() if oldest else None,
+        }
 
 
 class JobInFlight(RuntimeError):

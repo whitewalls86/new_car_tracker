@@ -162,7 +162,7 @@ try:
         max_active_runs=1,
         tags=["scrape", "plan71"],
     ):
-        ready = deploy_intent_sensor()
+        ready = deploy_intent_sensor("scrape_detail_pages")
         scraper_up = http_health_sensor("scraper", SCRAPER_URL)
 
         claim = PythonOperator(

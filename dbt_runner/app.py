@@ -18,7 +18,7 @@ from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from dbt_runner.analytics_snapshot import AnalyticsSnapshotManager
 from dbt_runner.metrics import REGISTRY, publish_snapshot
-from shared.job_counter import active_job, is_idle
+from shared.job_counter import active_job, is_idle, job_snapshot
 from shared.logging_setup import configure_logging
 
 configure_logging()
@@ -87,9 +87,11 @@ def health() -> Dict[str, Any]:
 
 @app.get("/ready")
 def ready() -> Dict[str, Any]:
-    if is_idle():
-        return {"ready": True}
-    raise HTTPException(status_code=503, detail={"ready": False, "reason": "jobs in flight"})
+    evidence = job_snapshot()
+    result = {"ready": evidence["active_jobs"] == 0, **evidence}
+    if result["ready"]:
+        return result
+    raise HTTPException(status_code=503, detail={**result, "reason": "jobs in flight"})
 
 
 @app.get("/metrics")
@@ -107,33 +109,34 @@ def get_docs_status() -> Dict[str, Any]:
 @app.post("/dbt/docs/generate")
 def dbt_docs_generate() -> Dict[str, Any]:
     """Run dbt deps + dbt docs generate and return ok/stdout/stderr."""
-    deps = subprocess.run(["dbt", "deps"], capture_output=True, text=True)
-    if deps.returncode != 0:
-        logger.error("dbt deps failed (rc=%d): %s", deps.returncode, deps.stderr)
-        raise HTTPException(status_code=500, detail={
-            "ok": False,
-            "returncode": deps.returncode,
-            "stdout": _cap(deps.stdout),
-            "stderr": _cap(deps.stderr),
-        })
+    with active_job():
+        deps = subprocess.run(["dbt", "deps"], capture_output=True, text=True)
+        if deps.returncode != 0:
+            logger.error("dbt deps failed (rc=%d): %s", deps.returncode, deps.stderr)
+            raise HTTPException(status_code=500, detail={
+                "ok": False,
+                "returncode": deps.returncode,
+                "stdout": _cap(deps.stdout),
+                "stderr": _cap(deps.stderr),
+            })
 
-    proc = subprocess.run(["dbt", "docs", "generate"], capture_output=True, text=True)
-    ok = proc.returncode == 0
-    if not ok:
-        logger.error("dbt docs generate failed (rc=%d): %s", proc.returncode, proc.stderr)
-        raise HTTPException(status_code=500, detail={
-            "ok": False,
-            "returncode": proc.returncode,
+        proc = subprocess.run(["dbt", "docs", "generate"], capture_output=True, text=True)
+        ok = proc.returncode == 0
+        if not ok:
+            logger.error("dbt docs generate failed (rc=%d): %s", proc.returncode, proc.stderr)
+            raise HTTPException(status_code=500, detail={
+                "ok": False,
+                "returncode": proc.returncode,
+                "stdout": _cap(deps.stdout + proc.stdout),
+                "stderr": _cap(proc.stderr),
+            })
+
+        return {
+            "ok": True,
+            "returncode": 0,
             "stdout": _cap(deps.stdout + proc.stdout),
-            "stderr": _cap(proc.stderr),
-        })
-
-    return {
-        "ok": True,
-        "returncode": 0,
-        "stdout": _cap(deps.stdout + proc.stdout),
-        "stderr": "",
-    }
+            "stderr": "",
+        }
 
 
 @app.post("/dbt/build")

@@ -22,7 +22,7 @@ with DAG(
     catchup=False,
     tags=["maintenance"],
 ):
-    ready = deploy_intent_sensor()
+    ready = deploy_intent_sensor("compact_silver")
     archiver_up = http_health_sensor("archiver", ARCHIVER_URL)
     compact = PythonOperator(task_id="compact_silver", python_callable=_run_compact)
 

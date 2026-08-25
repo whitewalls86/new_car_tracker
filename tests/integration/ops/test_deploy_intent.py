@@ -3,9 +3,9 @@ Layer 3 — deploy_intent state machine integration tests.
 
 Covers GET /deploy/status, POST /deploy/start, POST /deploy/complete.
 
-The deploy_intent table has exactly one row (id=1).  An autouse function-scoped
-fixture resets it to intent='none' before and after every test, giving each test
-a clean slate without relying on ordering.
+Both compatibility tables have exactly one row (id=1). An autouse
+function-scoped fixture resets them before and after every test, giving each
+test a clean slate without relying on ordering.
 """
 import uuid
 
@@ -14,16 +14,22 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def reset_deploy_intent(verify_cur):
-    """Reset deploy_intent to 'none' before and after every test in this module."""
+    """Reset both sides of the dual-signal compatibility contract."""
+    reset_coordination = (
+        "UPDATE coordination_state SET kind=NULL, phase='none', "
+        "targets='[]'::jsonb, scope='[]'::jsonb WHERE id=1"
+    )
     verify_cur.execute(
         "UPDATE deploy_intent SET intent='none', requested_at=NULL, "
         "requested_by=NULL, pause_long_jobs=true WHERE id=1"
     )
+    verify_cur.execute(reset_coordination)
     yield
     verify_cur.execute(
         "UPDATE deploy_intent SET intent='none', requested_at=NULL, "
         "requested_by=NULL, pause_long_jobs=true WHERE id=1"
     )
+    verify_cur.execute(reset_coordination)
 
 
 # ---------------------------------------------------------------------------
@@ -57,6 +63,27 @@ def test_deploy_start_sets_intent(api_client, verify_cur):
     row = verify_cur.fetchone()
     assert row["intent"] == "pending"
     assert row["requested_by"] == "Deploy Declared"
+
+    verify_cur.execute(
+        "SELECT kind, phase, generation, targets, scope "
+        "FROM coordination_state WHERE id=1"
+    )
+    coordination = verify_cur.fetchone()
+    assert coordination["kind"] == "deploy"
+    assert coordination["phase"] == "requested"
+    assert coordination["generation"] >= 1
+    assert set(coordination["targets"])
+    assert set(coordination["scope"]) == {
+        "airflow_control",
+        "analytics",
+        "archive",
+        "database",
+        "detail_fetch",
+        "ingress",
+        "listing_fetch",
+        "observability",
+        "processing",
+    }
 
 
 @pytest.mark.integration

@@ -1,10 +1,11 @@
 """Unit tests for shared.job_counter."""
+import datetime
 import threading
 
 import pytest
 
 import shared.job_counter as jc
-from shared.job_counter import JobInFlight, active_job, is_idle, single_flight
+from shared.job_counter import JobInFlight, active_job, is_idle, job_snapshot, single_flight
 
 
 @pytest.fixture(autouse=True)
@@ -12,10 +13,12 @@ def reset_counter():
     """Reset the global counter and in-flight set before every test."""
     with jc._lock:
         jc._count = 0
+        jc._active_started_at.clear()
     jc._in_flight.clear()
     yield
     with jc._lock:
         jc._count = 0
+        jc._active_started_at.clear()
     jc._in_flight.clear()
 
 
@@ -64,6 +67,24 @@ class TestActiveJob:
         except RuntimeError:
             pass
         assert is_idle() is True
+
+    def test_snapshot_reports_count_and_oldest_start(self, mocker):
+        first = datetime.datetime(2026, 8, 25, 1, 0, tzinfo=datetime.timezone.utc)
+        second = datetime.datetime(2026, 8, 25, 1, 1, tzinfo=datetime.timezone.utc)
+        mocker.patch(
+            "shared.job_counter.datetime",
+            **{"now.side_effect": [first, second]},
+        )
+
+        with active_job():
+            with active_job():
+                assert job_snapshot() == {
+                    "active_jobs": 2,
+                    "oldest_started_at": first.isoformat(),
+                }
+
+    def test_idle_snapshot_has_no_oldest_start(self):
+        assert job_snapshot() == {"active_jobs": 0, "oldest_started_at": None}
 
 
 class TestThreadSafety:

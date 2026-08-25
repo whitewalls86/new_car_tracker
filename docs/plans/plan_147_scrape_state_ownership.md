@@ -174,7 +174,7 @@ Schema lives in Postgres and changes go through **Flyway**: versioned SQL in
 [`db/migrations/`](../../db/migrations/), applied by the one-shot `flyway`
 container that every other service gates on with
 `service_completed_successfully`. Highest applied version is `V042`, so this is
-**`V043__scrape_state_ownership.sql`**.
+**`Vn+1__scrape_state_ownership.sql`**.
 
 **Expand/contract, not a rename in place.** Flyway here is forward-only, there
 is no down-migration, and there is no staging environment to rehearse against
@@ -185,7 +185,7 @@ fails its writes until it is recreated. Reverting the code would then leave a
 renamed column and no way back short of a hand-written migration. Both risks
 disappear if the old column simply keeps existing for one release.
 
-`V043` therefore:
+`Vn+1` therefore:
 
 1. Adds `last_detail_fetched_at timestamptz` — null, meaning "never fetched",
    which is correct: the queue admits on the other two predicates exactly as it
@@ -205,7 +205,7 @@ are inert and harm nothing.
 ### Stage 4 — Contract
 
 Once Stage 3 has verified the new columns in production, a second migration
-(`V044`) drops `last_detail_scraped_at` and the dual write. Deliberately a
+(`Vn+2`) drops `last_detail_scraped_at` and the dual write. Deliberately a
 separate deploy: it is the only irreversible step, and it should not share a
 window with the change that proves the replacement works.
 

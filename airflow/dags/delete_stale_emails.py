@@ -17,7 +17,7 @@ with DAG(
     catchup=False,
     tags=["maintenance"],
 ):
-    ready = deploy_intent_sensor()
+    ready = deploy_intent_sensor("delete_stale_emails")
 
     cleanup = SQLExecuteQueryOperator(
         task_id="delete_stale_emails",

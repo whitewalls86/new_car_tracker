@@ -3,6 +3,7 @@ import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from typing import Any, Dict, List
 
 from fastapi import Body, FastAPI, HTTPException
@@ -20,6 +21,7 @@ from scraper.processors.scrape_detail import (
     scrape_detail_fetch,
 )
 from scraper.processors.scrape_results import scrape_results
+from shared.job_counter import active_job, job_snapshot
 from shared.logging_setup import configure_logging
 
 configure_logging()
@@ -144,6 +146,7 @@ def run_scrape_results(
             "run_id": run_id,
             "search_key": search_key,
             "scope": scope,
+            "job_type": "listing_fetch",
             "status": "queued",
             "artifacts": [],
             "artifact_count": 0,
@@ -151,6 +154,7 @@ def run_scrape_results(
             "attempt": payload.get("attempt", 1),
             "error": None,
             "started_at": None,
+            "queued_at": datetime.now(timezone.utc).isoformat(),
         }
     _executor.submit(_run_scrape_job, job_id, run_id, search_key, scope, payload)
     return {"job_id": job_id, "status": "queued"}
@@ -189,19 +193,20 @@ def list_all_jobs() -> List[Dict[str, Any]]:
 
 @app.post("/scrape_detail")
 def scrape_detail(run_id: str, payload: dict = Body(...)) -> Dict[str, Any]:
-    mode = (payload or {}).get("mode") or "fetch"
+    with active_job():
+        mode = (payload or {}).get("mode") or "fetch"
 
-    if mode == "dummy":
-        return scrape_detail_dummy(run_id=run_id, payload=payload)
+        if mode == "dummy":
+            return scrape_detail_dummy(run_id=run_id, payload=payload)
 
-    if mode == "fetch":
-        return scrape_detail_fetch(run_id=run_id, payload=payload)
+        if mode == "fetch":
+            return scrape_detail_fetch(run_id=run_id, payload=payload)
 
-    return {
-        "error": f"unsupported mode: {mode}",
-        "artifacts": [],
-        "meta": {"mode": mode},
-    }
+        return {
+            "error": f"unsupported mode: {mode}",
+            "artifacts": [],
+            "meta": {"mode": mode},
+        }
 
 
 @app.post("/scrape_detail/batch")
@@ -246,6 +251,7 @@ def scrape_detail_batch_endpoint(
             "artifact_count": 0,
             "error": None,
             "started_at": None,
+            "queued_at": datetime.now(timezone.utc).isoformat(),
         }
     _executor.submit(
         _run_detail_batch_job, job_id, run_id, batch_id, listings, max_workers, timeout_s
@@ -271,9 +277,41 @@ def ready():
     """
     with _jobs_lock:
         active = [j for j in _jobs.values() if j["status"] in ("queued", "running")]
-    if active:
+        by_surface = {"detail_fetch": 0, "listing_fetch": 0}
+        oldest_by_surface = {"detail_fetch": None, "listing_fetch": None}
+        for job in active:
+            surface = (
+                "detail_fetch"
+                if job.get("job_type") == "detail_batch"
+                else "listing_fetch"
+            )
+            by_surface[surface] += 1
+            observed_at = job.get("started_at") or job.get("queued_at")
+            if observed_at and (
+                oldest_by_surface[surface] is None
+                or observed_at < oldest_by_surface[surface]
+            ):
+                oldest_by_surface[surface] = observed_at
+    synchronous = job_snapshot()
+    by_surface["detail_fetch"] += synchronous["active_jobs"]
+    if synchronous["oldest_started_at"] and (
+        oldest_by_surface["detail_fetch"] is None
+        or synchronous["oldest_started_at"] < oldest_by_surface["detail_fetch"]
+    ):
+        oldest_by_surface["detail_fetch"] = synchronous["oldest_started_at"]
+    active_count = len(active) + synchronous["active_jobs"]
+    result = {
+        "ready": active_count == 0,
+        "active_jobs": active_count,
+        "oldest_started_at": min(
+            (value for value in oldest_by_surface.values() if value), default=None
+        ),
+        "active_by_surface": by_surface,
+        "oldest_by_surface": oldest_by_surface,
+    }
+    if active_count:
         raise HTTPException(
             status_code=503,
-            detail={"ready": False, "active_jobs": len(active)},
+            detail=result,
         )
-    return {"ready": True, "active_jobs": 0}
+    return result

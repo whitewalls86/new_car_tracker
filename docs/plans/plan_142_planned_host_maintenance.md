@@ -1,4 +1,4 @@
-# Plan 142: Planned Host Maintenance and Production Quiescence
+# Plan 142: Scoped Operational Coordination and Host Maintenance
 
 ## Status
 
@@ -6,6 +6,12 @@ DRAFT, written 2026-08-18 after the first deliberate whole-host maintenance
 window exposed that the repository has a deploy procedure and a storage
 runbook, but no durable procedure for pausing production, updating Ubuntu,
 rebooting the VM, proving the host and stack healthy, and safely resuming work.
+
+**Reframed 2026-08-25:** Stage 1 now replaces deploy intent with one scoped
+operational-coordination contract rather than adding a second state machine.
+A deploy is a short maintenance window over selected operational surfaces; a
+host window selects the whole host and additionally permits an offline phase.
+The existing `/deploy/*` API remains as a compatibility facade during rollout.
 
 Priority **86 (high)**. Effort **M plus the first observed maintenance window**.
 
@@ -61,7 +67,12 @@ The outage was successful, but the procedure lived in the conversation. The
 next maintenance window should be an execution of checked-in policy rather than
 a reconstruction of it.
 
-## Why deploy intent is not maintenance intent
+## D9 — Deploy and maintenance are one coordination problem, 2026-08-25
+
+The first Stage 1 implementation started from the plan's original instruction:
+create `maintenance_state` beside `deploy_intent` and make the two mutually
+exclusive. Before that code was committed, the drain design reproduced the
+reason the existing deploy sensor failed.
 
 Deploy intent protects a short service replacement:
 
@@ -71,7 +82,7 @@ Deploy intent protects a short service replacement:
 - an exit trap releasing intent is usually safer than leaving it stuck;
 - a targeted `docker compose up -d SERVICE` is the normal mutation.
 
-Host maintenance has the opposite properties:
+Host maintenance adds stronger properties:
 
 - package work and reboot duration are variable;
 - Postgres, Airflow, ops, and the intent API are deliberately offline;
@@ -81,22 +92,48 @@ Host maintenance has the opposite properties:
   host;
 - rollback may require the Oracle Cloud console or an older kernel/package.
 
-Maintenance therefore needs a separate durable state and a separate operator
-workflow. It may reuse deploy-intent primitives, but it must not be implemented
-as “deploy intent with a larger timeout.”
+Those differences require different scopes and release gates, **not two intent
+systems**. Both operations need to stop admitting affected work, drain work
+already admitted, mutate a bounded target, validate it, and release explicitly.
+The old global sensor instead blocks every DAG, times out at 600 seconds, and
+counts durable pending artifacts as running work. Building a second mechanism
+would preserve those defects for every ordinary deploy.
+
+Stage 1 therefore builds one coordination record with:
+
+- `kind`: `deploy`, `service_maintenance`, or `host_maintenance`;
+- `scope`: named operational surfaces and the checked-in service targets that
+  selected them;
+- `phase`: `none`, `requested`, `draining`, `active`, `validating`;
+- requester, reason, timestamps, expected work, manifest/checkpoint location,
+  and operator notes.
+
+`active` means “the requested mutation is authorized.” Only
+`host_maintenance` may take Postgres/the host offline. The host checkpoint is
+still required while Postgres is unavailable, and Postgres is authoritative
+again when it returns.
+
+The existing `/deploy/start`, `/deploy/status`, and `/deploy/complete` routes
+remain during migration, translating their callers into scoped coordination
+operations. DAGs and cooperative long jobs move to the new contract before the
+legacy table or sensor is removed. There is no flag day on the production gate.
 
 ## Goals
 
-1. Stop new production work without turning an expected pause into failed DAGs.
-2. Drain active work using counts that distinguish queued backlog from work that
+1. Replace deploy intent and host-maintenance intent with one durable, scoped
+   coordination contract and a compatibility path for existing callers.
+2. Stop only affected new production work without turning an expected pause
+   into failed DAGs.
+3. Drain active work using counts that distinguish queued backlog from work that
    is actually mutating state.
-3. Preserve the intended running/stopped state across a whole-stack stop and
+4. Preserve the intended running/stopped state across a whole-stack stop and
    host reboot, including profile-gated and auxiliary Compose projects.
-4. Make Ubuntu package updates and reboot a normal, reviewable operation.
-5. Refuse to resume until the host and Plan 140 service-health contract pass.
-6. Keep maintenance active after any ambiguous failure; release is always an
+5. Make targeted service work and Ubuntu package/reboot work normal,
+   reviewable operations using the same safety contract.
+6. Refuse to resume an affected surface until its scoped health gates pass.
+7. Keep coordination active after any ambiguous failure; release is always an
    explicit operator action.
-7. Capture enough before/after evidence to diagnose or roll back the change.
+8. Capture enough before/after evidence to diagnose or roll back the change.
 
 ## Non-goals
 
@@ -104,7 +141,8 @@ as “deploy intent with a larger timeout.”
   intentionally user-visible.
 - Automatic package installation or unattended reboot.
 - Giving an application container unrestricted host or Docker authority.
-- Replacing targeted deploy intent or `scripts/redeploy.sh`.
+- Replacing `scripts/redeploy.sh`; it becomes a client of the coordination API
+  and keeps owning build/recreate/restart mechanics.
 - Defining service healthchecks. Plan 140 owns them.
 - Solver-only recycling and its automatic restart authority. Plan 136 owns it.
 - Provisioning a second host or orchestrator. Plans 69 and 88 cover those
@@ -148,29 +186,62 @@ window. Recovery compares against that manifest; it does not blindly start
 every Compose file found on disk. Plan 125's MLflow/Lakekeeper pause is the
 first required fixture for this behavior.
 
-## Maintenance state machine
+### Scope is an operational surface, not merely a container name
+
+The operator names services or `host`; a checked-in registry expands those
+targets into surfaces and known followers/dependencies. Initial surfaces are
+`detail_fetch`, `processing`, `archive`, `analytics`, `airflow_control`,
+`observability`, `ingress`, `database`, and `host`. Recreating Grafana need not
+pause scraping; replacing Postgres selects every Postgres-dependent surface.
+The registry also carries observed indirect effects such as a recreated
+`statsd-exporter` requiring Airflow processes that cached its address to
+restart. Scope expansion is printed and reviewed before intent is requested.
+
+Each mutating DAG entry point declares the surfaces into which it admits work.
+A rescheduling gate blocks only when those declarations intersect the active
+scope. It has no short timeout: stale coordination alerts independently, so a
+planned pause never manufactures a failed DAG merely because time passed.
+
+The service and surface identifiers are stable enough for other checked-in
+contracts to reference. In particular, [Plan 139](plan_139_test_suite_maintenance.md)
+may map changed paths and CI test/image groups onto them. CI selection remains
+a separate graph with separate fail-closed evidence: this production registry
+must not acquire path globs, test names, or skip policy, and it never proves by
+itself that a CI job is safe to omit.
+
+Service identity also carries an explicit execution lifecycle: continuously
+expected service, profile-gated continuous service, initialization job, or
+one-shot workload. This is descriptive safety policy, not launch machinery.
+In particular, `pack-worker` remains continuous because that is how production
+runs today, while `snapshot-worker` is one-shot. A stopped continuous service
+and an absent idle one-shot workload are different states and cannot share a
+health or drain interpretation. [Plan 152](plan_152_scheduled_worker_lifecycle.md)
+owns changing pack and disk measurement to one-shot execution; when it lands,
+Plan 142 changes the lifecycle declaration and evidence adapter without
+changing the coordination state machine or operational surfaces.
+
+## Coordination state machine
 
 The exact schema is decided in Stage 1, but the externally visible states are:
 
 | State | Meaning | Allowed transition |
 |---|---|---|
 | `none` | Normal scheduling and claims | `requested` |
-| `requested` | New work is gated; existing work may drain | `drained`, `none` (cancel) |
-| `drained` | Authoritative active-work counts are zero | `offline`, `none` |
-| `offline` | Stack stop/reboot is authorized and expected | `validating` |
-| `validating` | Host and services are back, work remains paused | `none` only after all release gates pass |
+| `requested` | Intent is durable; its scope is fixed | `draining`, `none` (cancel) |
+| `draining` | New in-scope work is gated; admitted work drains | `active`, `none` (cancel) |
+| `active` | Scoped mutation is authorized; host kind may be offline | `validating`, `none` only for an unchanged/aborted target |
+| `validating` | Target is back, but its surfaces remain gated | `none` only after scoped release gates pass |
 
-Deploy and maintenance intent are mutually exclusive. Starting either while the
-other is active returns a conflict with the existing state; no stale-lock
-takeover silently converts one kind into the other.
+There is one active coordination row, so deploy and maintenance cannot race or
+coexist. No stale-lock takeover silently converts one kind into another.
 
-The maintenance record includes requester, reason, requested/start timestamps,
+The coordination record includes requester, reason, requested/start timestamps,
 phase timestamps, expected work, running-set manifest location, and operator
 notes. A stale-state alert pages an operator but does not release the state.
 
 ## The drain contract
 
-`number_running` is replaced for maintenance purposes by named counts:
+`number_running` is replaced by named counts filtered to the active scope:
 
 - artifacts with `status='processing'`;
 - detail claims with `status='running'`;
@@ -182,11 +253,26 @@ notes. A stale-state alert pages an operator but does not release the state.
 Pending artifacts are durable backlog and **do not block a stop**. Each count
 has its own oldest-start timestamp so one stuck claim is identifiable.
 
-During `requested`, new DAG work reaches a maintenance-aware rescheduling gate
-that does not fail after ten minutes. Stage 1 must decide from an Airflow 3
-prototype whether this is best implemented as a dedicated sensor/state gate or
-as explicit DAG pause/unpause with a manifest of the prior pause state. The
-acceptance contract is fixed regardless of mechanism:
+The **admission set** and **drain set** are different and both are checked in.
+For `scrape_detail_pages`, `claim_batch` is the admission gate, while an already
+admitted `scrape_detail`, its external scraper batch, `release_claims`, running
+detail claims, and artifacts already in `processing` belong to the drain set.
+Holding processing must never make a durable pending artifact block forever.
+An unreadable count, missing gate, or unreachable external job registry is
+`unknown`, never zero.
+
+Trawl does not contribute a separate Redis drain count. Its Redis state is a
+session cache, not admitted job backlog, and its scrape request is synchronous
+inside the scraper detail job already counted above. Treating cached sessions
+as running work would manufacture the same pending-versus-active error this
+plan removes. Compose one-shot work is counted separately from live container
+state through the existing read-only container-health boundary.
+
+During `draining`, new in-scope DAG work reaches a coordination-aware
+rescheduling gate that does not fail after ten minutes. Stage 0's pool remains
+useful evidence for a whole-fleet hold and Plan 136's exclusive recycle, but a
+task has only one pool and may touch several surfaces; it cannot express the
+new scoped contract alone. The acceptance contract is:
 
 - no new mutating task starts;
 - already-running work reaches a safe boundary;
@@ -761,40 +847,58 @@ on 2026-08-23 — and are marked in the file as reconstructed rather than
 observed. Confirming them against the live host is a read-only check owed
 before Stage 2 builds the restore step on top of them.
 
-### Stage 1 — Add maintenance intent and truthful drain status
+### Stage 1 — Replace deploy intent with scoped coordination and truthful drain
 
-1. Add a maintenance state record/API distinct from deploy intent and make the
-   two modes mutually exclusive.
-2. Replace the ambiguous aggregate with named active-work counts. Preserve the
-   existing deploy endpoint for compatibility, but stop presenting pending
-   backlog as running work in the maintenance UI/API.
-3. Add the maintenance-aware DAG gate selected in Stage 0. A maintenance pause
-   reschedules or pauses safely without the deploy sensor's 600-second failure.
-   Stage 0 selected the pool and Phase A already shipped `maintenance`; what
-   remains here is the release/hold API around it and the stale-hold alert.
-   **Corrected 2026-08-23:** this item used to say the `solver` pool Plan 136
-   Stage 3d expects would be named and sized here so the two plans share one
-   pool. They cannot — a task has exactly one pool, and the two plans want
-   different gate points at different sizes. Two pools, and a maintenance hold
-   sets *every* gating pool to 0. See
-   [item 3 Phase A](#item-3-phase-a-built-2026-08-23--the-pool-assignment-shipped-inert).
-4. Add `request`, `mark-drained`, `mark-offline`, `begin-validation`, `cancel`,
-   and explicit `complete` operations with legal-transition tests.
-5. Add stale-maintenance metrics/alerts. Stale means “needs a human,” never
-   “safe to resume.”
+1. Add the single coordination record/API with kind, immutable expanded scope,
+   phase, evidence fields, and legal transitions. Only host maintenance may
+   enter an offline interval.
+2. Keep `/deploy/*` as a compatibility facade and dual-signal legacy consumers
+   until every DAG, long job, admin page, and deploy script reads the new
+   contract. Remove the old table/sensor only in a later contract slice.
+3. Add a checked-in service-to-surface registry, dependency/follower expansion,
+   explicit execution lifecycle, and per-DAG admission declarations. Reject
+   unknown targets, surfaces, or lifecycle classes. Lifecycle describes current
+   production behavior; it does not anticipate Plan 152's migration.
+4. Replace the 600-second global deploy sensor with an indefinite rescheduling
+   gate that blocks only intersecting scopes. A stale-state alert, not a DAG
+   timeout, notifies the operator.
+5. Replace the ambiguous aggregate with named, scoped active-work counts and
+   oldest-start timestamps. Encode admission and drain sets separately; pending
+   durable backlog never blocks, and unknown evidence fails closed.
+6. Permit `draining -> active` only after the gate is observed effective and
+   every scoped drain count is zero on a confirming read. Add explicit cancel,
+   begin-validation, and complete operations with legal-transition tests.
+7. Add stale-coordination and gate-health metrics/alerts. Stale means “needs a
+   human,” never “safe to resume.”
 
-Verify in a non-outage dry run: request maintenance, prove new work is gated,
-let current work drain, cancel, and prove normal schedules resume without failed
-or duplicated mutations.
+Verify first with a targeted deploy whose scope does not include `trawl`, then
+with a non-outage whole-production dry run: prove unaffected surfaces continue,
+affected admission stops, admitted work drains, durable backlog remains allowed,
+and release produces neither failed nor duplicated mutations.
+
+**Review decision, 2026-08-25:** the targeted path is now executable through
+the scoped `/deploy/*` compatibility facade and `redeploy.sh`; the runbook owns
+the walkthrough and abort. The whole-production dry run is explicitly gated on
+Stage 3's validation guard. No temporary force-complete exists: reaching
+`validating` without release evidence must remain fail-closed.
 
 ### Stage 2 — Build the checked-in host procedure
+
+**First slice built 2026-08-25:**
+[`scripts/host_maintenance.py`](../../scripts/host_maintenance.py) provides the
+safe online lifecycle through `begin-validation` and the append-only host
+checkpoint. Transition commands are replay-safe across the split outcome where
+Postgres advances but the local checkpoint write fails. It exposes no stop,
+package, reboot, restore, or complete command yet; those require the remaining
+Stage 2 mechanics and Stage 3's release evidence respectively.
 
 Add an operator-run script, proposed as `scripts/host_maintenance.sh`, with
 idempotent subcommands rather than one irreversible monolith:
 
 ```text
-preflight -> request -> wait-drained -> stop -> update -> reboot
-          -> validate-host -> start -> validate-stack -> complete
+preflight -> request -> drain -> wait-active -> stop -> update -> reboot
+          -> start -> begin-validation -> validate-host -> validate-stack
+          -> complete
 ```
 
 The script prints and checkpoints every phase. It never stores credentials and
@@ -897,11 +1001,13 @@ volume prune`, or automatically releasing maintenance intent.
 
 ## Tests and CI invariants
 
-1. Maintenance and deploy intent cannot coexist.
+1. Only one coordination operation exists; kind and immutable expanded scope
+   determine its legal phases and release gates.
 2. Every state transition accepts only its legal predecessor and is idempotent
    where operator retry is expected.
 3. Pending backlog does not block drain; processing/running claims do.
-4. A long maintenance pause does not fail DAGs merely because time passes.
+4. A long coordination window does not fail DAGs merely because time passes,
+   and unaffected surfaces continue running.
 5. The running-set manifest round-trips default, profile-gated, auxiliary, and
    intentionally stopped services.
 6. Script dry-run tests assert phase ordering and prove no failure path calls
@@ -982,10 +1088,11 @@ or network path.
 
 ## Success criteria
 
-1. A separate maintenance state survives stack stop and reboot and never
-   releases itself.
-2. New mutating DAG work pauses without timeout failures; active work drains to
-   named zero counts that exclude pending backlog.
+1. One coordination state replaces deploy intent, survives stack stop/reboot
+   for host maintenance, and never releases itself after an ambiguous failure.
+2. New in-scope DAG work pauses without timeout failures while unaffected work
+   continues; admitted work drains to named zero counts that exclude pending
+   backlog.
 3. The pre-maintenance running/stopped set is captured across every Compose
    project/profile and restored exactly.
 4. Package preparation, controlled apt execution, reboot, host validation, and

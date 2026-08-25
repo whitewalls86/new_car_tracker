@@ -270,7 +270,7 @@ try:
         tags=["maintenance"],
         params=DEFAULT_PARAMS,
     ) as dag:
-        ready = deploy_intent_sensor()
+        ready = deploy_intent_sensor("pack_bronze_html")
         pack_worker_up = http_health_sensor("pack_worker", PACK_WORKER_URL)
         pack = PythonOperator(
             task_id="pack_bronze_html",

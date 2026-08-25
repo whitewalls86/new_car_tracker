@@ -43,19 +43,20 @@
 #    TestServiceHealthCoverage reads. "No healthcheck configured" means *not
 #    pollable*, never *not healthy*.
 #
-# 3. Deploy intent is released on the way out — except after a failed
-#    mutation. This is the behaviour the old EXIT trap had by accident, split
+# 3. Deploy coordination is drained and authorized before mutation, then
+#    released on the way out — except after a failed mutation.
+#    This is the behaviour the old EXIT trap had by accident, split
 #    into the two cases it was conflating:
 #
 #      - Nothing was recreated (bad arguments, a failed build): release. No
 #        container changed, so blocking DAGs serves no purpose.
 #      - A container was recreated or restarted and something then failed:
 #        HOLD. The fleet may be half-deployed, and resuming work against a
-#        mixed fleet is worse than a stalled pipeline. Held intent is not
-#        silent: `deploy_intent_sensor` times out after 600s and pages, which
-#        is the escalation `shared/deploy_intent.py` deliberately designs for
-#        ("an intent nobody cleared is a real problem"). Release it by hand
-#        with `curl -X POST $OPS_URL/deploy/complete` once the fleet is sane.
+#        mixed fleet is worse than a stalled pipeline. Held coordination is
+#        independently alertable and the indefinite Airflow gate does not turn
+#        the pause into failed DAGs. Release it by hand only after entering
+#        validation once the fleet is sane (commands printed by the failure
+#        path).
 #
 #    Either way a Telegram alert fires on failure, naming the phase and
 #    whether intent was released or held.
@@ -110,19 +111,60 @@ FOLLOWERS_FILE="$(dirname "$SCRIPT_DIR")/deploy-followers.txt"
 # See decision 2 above before changing these.
 HEALTH_TIMEOUT="${DEPLOY_HEALTH_TIMEOUT:-300}"
 HEALTH_POLL_INTERVAL="${DEPLOY_HEALTH_POLL_INTERVAL:-5}"
+DRAIN_POLL_INTERVAL="${DEPLOY_DRAIN_POLL_INTERVAL:-5}"
 
 MODE="recreate"
 PHASE="startup"
 MUTATED=0          # 1 once a container has been recreated or restarted
 UNVERIFIED=0       # single-file mounts --restart could not check (no stat in image)
 SERVICES=""
+COORDINATION_REQUESTED=0
 declare -A BEFORE_ID   # service -> container id, sampled before `up -d`
+
+_prepare_coordination() {
+    local status payload
+    PHASE="drain"
+    payload="$(python3 -c \
+        'import json,sys; print(json.dumps({"targets": sys.argv[1:]}))' "$@")"
+    echo "Requesting deploy coordination for: $SERVICES"
+    curl -sf -X POST "$OPS_URL/deploy/start" \
+        -H 'Content-Type: application/json' -d "$payload" >/dev/null
+    COORDINATION_REQUESTED=1
+    echo "Beginning scoped coordination drain..."
+    curl -sf -X POST "$OPS_URL/coordination/begin-drain" >/dev/null
+    while :; do
+        status="$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
+            "$OPS_URL/coordination/authorize")"
+        case "$status" in
+            200)
+                echo "Drain confirmed; deploy mutation authorized."
+                return 0
+                ;;
+            409)
+                echo "  In-scope work is still draining; retrying in ${DRAIN_POLL_INTERVAL}s."
+                sleep "$DRAIN_POLL_INTERVAL"
+                ;;
+            *)
+                echo "ERROR: coordination authorization returned HTTP ${status}." >&2
+                return 1
+                ;;
+        esac
+    done
+}
+
+_begin_validation() {
+    PHASE="begin-validation"
+    echo "Recording successful deploy health checks; beginning validation..."
+    curl -sf -X POST "$OPS_URL/coordination/begin-validation" >/dev/null
+}
 
 _on_exit() {
     local exit_code=$?
     local intent_state
 
-    if [ "$exit_code" -eq 0 ] || [ "$MUTATED" -eq 0 ]; then
+    if [ "$COORDINATION_REQUESTED" -eq 0 ]; then
+        intent_state="not requested"
+    elif [ "$exit_code" -eq 0 ] || [ "$MUTATED" -eq 0 ]; then
         intent_state="released"
         echo "Signalling deploy complete..."
         curl -sf -X POST "$OPS_URL/deploy/complete" \
@@ -133,6 +175,7 @@ _on_exit() {
         echo "Deploy intent HELD: failed during '${PHASE}' after containers were changed."
         echo "  The fleet may be partially deployed, so work is deliberately left paused."
         echo "  Inspect it, then release by hand:"
+        echo "    curl -X POST ${OPS_URL}/coordination/begin-validation"
         echo "    curl -X POST ${OPS_URL}/deploy/complete"
     fi
 
@@ -421,6 +464,7 @@ fi
 EXEMPT="$(_exempt_services | tr '\n' ' ')"
 
 if [ "$MODE" = "restart" ]; then
+    _prepare_coordination "$@"
     PHASE="restart"
     MUTATED=1
     echo "Restarting in place: $SERVICES"
@@ -432,6 +476,8 @@ if [ "$MODE" = "restart" ]; then
     PHASE="verify"
     echo "Verifying bind-mounted config files..."
     _verify_config_mounts "$@"
+
+    _begin_validation
 
     PHASE="done"
     if [ "$UNVERIFIED" -gt 0 ]; then
@@ -445,6 +491,7 @@ else
     echo "Building: $SERVICES"
     docker compose build "$@"
 
+    _prepare_coordination "$@"
     PHASE="recreate"
     MUTATED=1
     for svc in "$@"; do
@@ -456,6 +503,8 @@ else
 
     PHASE="health"
     _wait_for_health "$@"
+
+    _begin_validation
 
     PHASE="done"
     echo "Done — every pollable service reported healthy."

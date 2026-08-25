@@ -16,6 +16,7 @@ from container_health.collector import (
     health_values,
     memory_capped,
     memory_usage,
+    oneoff_processes,
 )
 
 PROJECT = "cartracker"
@@ -29,6 +30,7 @@ def container(
     health="healthy",
     oneoff=None,
     mem_limit=0,
+    started_at=None,
 ):
     """One inspect payload, shaped like the Docker API's actual response.
 
@@ -48,6 +50,8 @@ def container(
     if oneoff is not None:
         labels["com.docker.compose.oneoff"] = oneoff
     state = {"Status": status}
+    if started_at is not None:
+        state["StartedAt"] = started_at
     if health is not None:
         state["Health"] = {"Status": health, "FailingStreak": 0}
     return {
@@ -108,6 +112,33 @@ class TestScoping:
             PROJECT,
         )
         assert values == {"oauth2-proxy": -1, "ops": 1, "trawl": 0}
+
+    def test_live_oneoffs_are_separate_drain_evidence(self):
+        processes = oneoff_processes(
+            [
+                container("ops"),
+                container(
+                    "snapshot-worker",
+                    oneoff="True",
+                    started_at="2026-08-25T04:00:00Z",
+                ),
+                container("dbt", project="other", oneoff="True"),
+            ],
+            PROJECT,
+        )
+
+        assert processes == [
+            {
+                "service": "snapshot-worker",
+                "container_id": "id-snapshot-worker",
+                "started_at": "2026-08-25T04:00:00Z",
+            }
+        ]
+
+    def test_stopped_oneoff_is_not_active_work(self):
+        assert oneoff_processes(
+            [container("dbt", status="exited", oneoff="True")], PROJECT
+        ) == []
 
     def test_a_sibling_project_is_invisible_not_broken(self):
         """The 2026-08-20 soak finding, and the reason "compose-managed" is not

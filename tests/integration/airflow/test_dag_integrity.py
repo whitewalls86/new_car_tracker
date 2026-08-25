@@ -39,7 +39,12 @@ DAG_SPECS = {
     },
     "dbt_build.py": {
         "dag_id": "dbt_build",
-        "tasks": {"check_dbt_runner_health", "dbt_build", "notify"},
+        "tasks": {
+            "check_deploy_intent",
+            "check_dbt_runner_health",
+            "dbt_build",
+            "notify",
+        },
     },
     "flush_silver_observations.py": {
         "dag_id": "flush_silver_observations",
@@ -121,6 +126,10 @@ DAG_SPECS = {
             "verify_pack_read_path",
             "notify",
         },
+    },
+    "prune_task_logs.py": {
+        "dag_id": "prune_task_logs",
+        "tasks": {"check_deploy_intent", "prune_task_logs"},
     },
 }
 

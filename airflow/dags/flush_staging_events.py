@@ -19,7 +19,7 @@ with DAG(
     catchup=False,
     tags=["maintenance"],
 ):
-    ready = deploy_intent_sensor()
+    ready = deploy_intent_sensor("flush_staging_events")
     archiver_up = http_health_sensor("archiver", ARCHIVER_URL)
     flush = PythonOperator(task_id="flush_staging_events", python_callable=_run_flush)
 

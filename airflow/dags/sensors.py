@@ -3,10 +3,10 @@ Shared sensors for cartracker DAGs.
 
 Two primitives:
 
-  deploy_intent_sensor()
-      Blocks until deploy_intent.intent = 'none'. Implicitly validates that
-      Postgres is reachable — a passing check means the DB is up and no
-      deployment is imminent. All DAGs should start with this.
+  deploy_intent_sensor(dag_id)
+      Blocks while either the legacy deploy flag is set or scoped coordination
+      intersects the DAG's checked-in admission surfaces. Database uncertainty
+      fails closed and reschedules rather than manufacturing a failed DAG.
 
   http_health_sensor(service_name, health_url)
       Blocks until the given /health endpoint returns HTTP 200. Use one per
@@ -20,18 +20,20 @@ Usage in a DAG:
     from sensors import deploy_intent_sensor, http_health_sensor
 
     with DAG(...):
-        intent   = deploy_intent_sensor()
+        intent   = deploy_intent_sensor("example_dag")
         archiver = http_health_sensor("archiver", "http://archiver:8001")
         work     = SomeOperator(...)
 
         intent >> archiver >> work
 """
 import logging
+from datetime import timedelta
 from typing import Any, Dict
 
 import requests
 from airflow.providers.postgres.hooks.postgres import PostgresHook
 from airflow.sdk.bases.sensor import BaseSensorOperator
+from coordination_contract import admission_surfaces
 
 logger = logging.getLogger(__name__)
 
@@ -45,10 +47,43 @@ class JsonPostError(requests.HTTPError):
 
 
 class _DeployIntentSensor(BaseSensorOperator):
+    def __init__(self, dag_id: str, **kwargs):
+        super().__init__(**kwargs)
+        self.coordination_dag_id = dag_id
+        self.admission_surfaces = tuple(sorted(admission_surfaces(dag_id)))
+
     def poke(self, context) -> bool:
         hook = PostgresHook(postgres_conn_id="cartracker_db")
-        row = hook.get_first("SELECT intent FROM deploy_intent LIMIT 1")
-        return row is not None and row[0] == "none"
+        row = hook.get_first(
+            """SELECT di.intent, cs.phase,
+                      cs.scope ? 'host' OR cs.scope ?| %s::text[] AS intersects,
+                      cs.generation
+                 FROM deploy_intent di
+                 CROSS JOIN coordination_state cs
+                WHERE di.id = 1 AND cs.id = 1""",
+            parameters=(list(self.admission_surfaces),),
+        )
+        if row is None or row[0] != "none":
+            return False
+        # Request fixes the immutable scope and is the admission boundary. Do
+        # not admit another run merely because the operator has not yet asked
+        # for the first drain read.
+        blocked = row[1] in {"requested", "draining", "active", "validating"} and row[2]
+        if blocked:
+            dag_run = context.get("dag_run")
+            run_id = getattr(dag_run, "run_id", None) or context.get("run_id")
+            if not run_id:
+                return False
+            hook.run(
+                """INSERT INTO coordination_gate_observations
+                           (generation, dag_id, run_id, observed_at)
+                    VALUES (%s, %s, %s, now())
+                    ON CONFLICT (generation, dag_id, run_id)
+                    DO UPDATE SET observed_at = EXCLUDED.observed_at""",
+                parameters=(row[3], self.coordination_dag_id, run_id),
+            )
+            return False
+        return True
 
 
 class _ServiceHealthSensor(BaseSensorOperator):
@@ -65,16 +100,23 @@ class _ServiceHealthSensor(BaseSensorOperator):
             return False
 
 
-def deploy_intent_sensor(**kwargs) -> _DeployIntentSensor:
+def deploy_intent_sensor(dag_id: str, **kwargs) -> _DeployIntentSensor:
     """
-    Polls deploy_intent every 60s for up to 5 minutes.
-    Use as the first task in every DAG.
+    Poll both coordination contracts every 60 seconds without an operational
+    timeout. Use as the first task in every mutating DAG.
+
+    ``timedelta.max`` is Airflow 3.2's supported practical no-timeout value;
+    BaseSensorOperator does not accept ``None``. ``silent_fail`` turns a failed
+    database read into another false poke, preserving fail-closed admission
+    without turning a planned Postgres outage into a failed DAG.
     """
     return _DeployIntentSensor(
+        dag_id=dag_id,
         task_id="check_deploy_intent",
         mode="reschedule",
         poke_interval=60,
-        timeout=600,
+        timeout=timedelta.max,
+        silent_fail=True,
         **kwargs,
     )
 

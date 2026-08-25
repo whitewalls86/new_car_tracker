@@ -4,11 +4,14 @@ Operational companion to [Plan 142](../plans/plan_142_planned_host_maintenance.m
 Covers pausing production, updating Ubuntu, rebooting the single production VM,
 proving the host and stack healthy, and resuming work.
 
-**This is Stage 0 output: a worked example, not yet a procedure.** The whole
-sequence below is what was actually run on 2026-08-18, recovered verbatim from
-the session transcript. Stage 2 turns it into `scripts/host_maintenance.sh`
-with idempotent subcommands; until then this is the record you read before you
-start, and the thing you copy commands out of.
+**Most of this remains Stage 0 output: a worked example, not yet an executable
+procedure.** The whole sequence below is what was actually run on 2026-08-18,
+recovered verbatim from the session transcript. Stage 2's first slice adds the
+safe coordination client in
+[`scripts/host_maintenance.py`](../../scripts/host_maintenance.py); stop,
+package, reboot, restore, validation, and completion are deliberately not yet
+commands. Until those later slices land, this remains the record you read
+before starting and the source from which reviewed commands are taken.
 
 Everything here is one host: `147.224.199.86`, Compose project `cartracker` in
 `/opt/cartracker`. The SSH key lives in the repo root and is gitignored
@@ -519,12 +522,32 @@ docker exec cartracker-postgres psql -U cartracker -d cartracker -At -c \
 ```
 
 > **Verify Oracle Cloud console access before you start.** The August window
-> skipped this and §11 records that it did. This window does not reboot, so the
+> skipped this and §12 records that it did. This window does not reboot, so the
 > console is not the lifeline it is in a host window — but the habit is the
 > point, and the cost is one browser tab.
 
-Stage 2 owns the `/var/lib/cartracker/maintenance/` checkpoint writer chosen by
-Stage 0 item 5. Until it exists, record these by hand.
+Stage 2's checkpoint writer now exists. Every successful transition appends one
+JSON line to `/var/lib/cartracker/maintenance/history.jsonl`, with only phase,
+UTC timestamp, Git revision, running kernel, and manifest location. The client
+is replay-safe: if Postgres advanced but the local append failed, rerunning the
+same command repairs the breadcrumb without repeating the transition.
+
+The currently available sequence is:
+
+```bash
+python scripts/host_maintenance.py --manifest "$MANIFEST" request \
+  --requested-by "$USER" --reason "reviewed host maintenance" \
+  --expected-work "install reviewed packages" --expected-work reboot
+python scripts/host_maintenance.py --manifest "$MANIFEST" begin-drain
+python scripts/host_maintenance.py drain-status
+python scripts/host_maintenance.py --manifest "$MANIFEST" authorize
+# reviewed stop/update/reboot/start work remains manual
+python scripts/host_maintenance.py --manifest "$MANIFEST" begin-validation
+```
+
+There is intentionally no `complete` command yet. Stage 3 must supply the host,
+stack, and intentionally-stopped-service evidence guard before release can be
+represented as authority.
 
 ### 10.2 caddy's restart policy — Plan 142 Stage 0 item 7
 
@@ -675,7 +698,54 @@ whose findings live only in a terminal has not closed.
 
 ---
 
-## 11. Gaps in this record
+## 11. Stage 1 scoped-coordination verification
+
+The targeted deploy is driven through the compatibility facade because it must
+dual-signal long-running legacy consumers during migration. `redeploy.sh` now
+owns the complete sequence: it requests the exact named services, expands their
+followers and surfaces in the API, begins draining, waits for a confirming
+authorization read, mutates, health-checks, enters validation, and releases.
+
+Choose a target whose expansion does not contain `detail_fetch`; `processing`
+is the initial fixture, so `trawl` remains unaffected:
+
+```bash
+bash scripts/redeploy.sh processing
+curl -sf http://localhost:8060/coordination/status | python3 -m json.tool
+```
+
+While the script reports that it is draining, inspect the evidence separately:
+
+```bash
+curl -sf http://localhost:8060/coordination/drain-status | python3 -m json.tool
+```
+
+Interpret every source independently:
+
+- `known` with `count: 0` is drained;
+- `known` with a positive count names real admitted work and its oldest start;
+- `unknown` is a blocker, never zero;
+- `not_applicable` means the selected scope does not require that source;
+- `drained: true` is authority only while the returned phase is `draining`.
+
+Before any container changes, interrupting or a failed build releases the
+facade coordination. After a recreate/restart begins, failure deliberately
+leaves it held. Inspect and restore the target, then explicitly enter validation
+and use the compatibility release:
+
+```bash
+curl -sf -X POST http://localhost:8060/coordination/begin-validation
+curl -sf -X POST http://localhost:8060/deploy/complete
+```
+
+The second acceptance run—the non-outage whole-production dry run—waits for
+Stage 3. There is intentionally no native `/coordination/complete` or temporary
+force-complete endpoint: a whole-scope request that reaches `validating` must
+remain held until the host, stack, and intentionally-stopped-service evidence
+guard exists. Before Stage 3, its safe rehearsal boundary is `draining`, then
+`POST /coordination/cancel`; do not authorize it.
+
+## 12. Gaps in this record
 
 Everything Plan 142 Stage 0 item 1 asks for is present: timeline, commands,
 failure modes, intended-stopped services, and recovery evidence — all from the
@@ -703,7 +773,7 @@ Nothing outstanding. The record is complete.
 
 ---
 
-## 12. Related
+## 13. Related
 
 - [Plan 142](../plans/plan_142_planned_host_maintenance.md) — the state machine,
   drain contract and stage plan this runbook serves.

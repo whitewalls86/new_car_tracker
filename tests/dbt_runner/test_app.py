@@ -83,17 +83,31 @@ def test_get_health(mock_client):
 
 
 def test_get_ready_when_idle(mock_client, mocker):
-    mocker.patch("dbt_runner.app.is_idle", return_value=True)
+    mocker.patch(
+        "dbt_runner.app.job_snapshot",
+        return_value={"active_jobs": 0, "oldest_started_at": None},
+    )
     response = mock_client.get("/ready")
     assert response.status_code == 200
-    assert response.json() == {"ready": True}
+    assert response.json() == {
+        "ready": True,
+        "active_jobs": 0,
+        "oldest_started_at": None,
+    }
 
 
 def test_get_ready_when_busy(mock_client, mocker):
-    mocker.patch("dbt_runner.app.is_idle", return_value=False)
+    mocker.patch(
+        "dbt_runner.app.job_snapshot",
+        return_value={
+            "active_jobs": 1,
+            "oldest_started_at": "2026-08-25T01:00:00+00:00",
+        },
+    )
     response = mock_client.get("/ready")
     assert response.status_code == 503
     assert response.json()["detail"]["ready"] is False
+    assert response.json()["detail"]["active_jobs"] == 1
     assert response.json()["detail"]["reason"] == "jobs in flight"
 
 
@@ -134,6 +148,24 @@ def test_dbt_docs_generate_success(mock_client, mocker):
     response = mock_client.post("/dbt/docs/generate")
     assert response.status_code == 200
     assert response.json()["ok"] is True
+
+
+def test_dbt_docs_generation_is_visible_to_drain_evidence(mock_client, mocker):
+    calls = 0
+
+    def observed_run(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        assert app.job_snapshot()["active_jobs"] == 1
+        return mocker.MagicMock(returncode=0, stdout="ok", stderr="")
+
+    mocker.patch("subprocess.run", side_effect=observed_run)
+
+    response = mock_client.post("/dbt/docs/generate")
+
+    assert response.status_code == 200
+    assert calls == 2
+    assert app.job_snapshot()["active_jobs"] == 0
 
 
 def test_dbt_docs_generate_packages_missing(mock_client, mocker):
