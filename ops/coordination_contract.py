@@ -26,7 +26,7 @@ SERVICE_LIFECYCLES = frozenset(
 @dataclass(frozen=True)
 class ServiceContract:
     surfaces: frozenset[str]
-    lifecycle: str = "continuous"
+    lifecycle: str
     compose_dependencies: frozenset[str] = frozenset()
     followers: frozenset[str] = frozenset()
     no_pause_reason: str = ""
@@ -34,7 +34,7 @@ class ServiceContract:
 
 def _c(
     *surfaces: str,
-    lifecycle: str = "continuous",
+    lifecycle: str,
     dependencies: tuple[str, ...] = (),
     followers: tuple[str, ...] = (),
     no_pause_reason: str = "",
@@ -60,6 +60,7 @@ SERVICE_CONTRACTS = {
         "archive",
         "analytics",
         "airflow_control",
+        lifecycle="continuous",
     ),
     "flyway": _c("database", lifecycle="initialization", dependencies=("postgres",)),
     "ops": _c(
@@ -68,50 +69,81 @@ SERVICE_CONTRACTS = {
         "processing",
         "archive",
         "analytics",
+        lifecycle="continuous",
         dependencies=("flyway",),
     ),
-    "flaresolverr": _c("detail_fetch"),
+    "flaresolverr": _c("detail_fetch", lifecycle="continuous"),
     "redis-trawl": _c("detail_fetch", lifecycle="profile_continuous"),
     "trawl": _c(
         "detail_fetch", lifecycle="profile_continuous", dependencies=("redis-trawl",)
     ),
-    "scraper": _c("detail_fetch", "listing_fetch", dependencies=("flaresolverr", "minio")),
+    "scraper": _c(
+        "detail_fetch",
+        "listing_fetch",
+        lifecycle="continuous",
+        dependencies=("flaresolverr", "minio"),
+    ),
     "dbt": _c("analytics", lifecycle="one_shot"),
     "dbt_test": _c("analytics", lifecycle="one_shot"),
-    "dbt_runner": _c("analytics", dependencies=("minio",)),
-    "minio": _c("detail_fetch", "listing_fetch", "processing", "archive", "analytics"),
-    "archiver": _c("archive", "analytics", dependencies=("flyway", "minio")),
-    "pack-worker": _c("archive", dependencies=("flyway", "minio")),
+    "dbt_runner": _c("analytics", lifecycle="continuous", dependencies=("minio",)),
+    "minio": _c(
+        "detail_fetch",
+        "listing_fetch",
+        "processing",
+        "archive",
+        "analytics",
+        lifecycle="continuous",
+    ),
+    "archiver": _c(
+        "archive", "analytics", lifecycle="continuous", dependencies=("flyway", "minio")
+    ),
+    "pack-worker": _c(
+        "archive", lifecycle="continuous", dependencies=("flyway", "minio")
+    ),
     "snapshot-worker": _c(
         "analytics", lifecycle="one_shot", dependencies=("flyway", "minio")
     ),
     "dashboard": _c(
+        lifecycle="continuous",
         dependencies=("flyway",),
         no_pause_reason=(
             "Read-only presentation service; losing it admits no production mutation."
         ),
     ),
     "pgadmin": _c(
+        lifecycle="continuous",
         no_pause_reason="Read-only operator UI; losing it admits no production mutation."
     ),
-    "oauth2-proxy": _c("ingress"),
+    "oauth2-proxy": _c("ingress", lifecycle="continuous"),
     "caddy": _c(
         "ingress",
+        lifecycle="continuous",
         dependencies=("airflow-apiserver", "dashboard", "grafana", "oauth2-proxy", "ops"),
     ),
-    "processing": _c("processing", dependencies=("flyway", "minio")),
+    "processing": _c(
+        "processing", lifecycle="continuous", dependencies=("flyway", "minio")
+    ),
     "airflow-init": _c(
         "database",
         "airflow_control",
         lifecycle="initialization",
         dependencies=("flyway", "postgres"),
     ),
-    "airflow-apiserver": _c("airflow_control", dependencies=("airflow-init", "postgres")),
-    "airflow-scheduler": _c("airflow_control", dependencies=("airflow-init", "postgres")),
-    "airflow-dag-processor": _c("airflow_control", dependencies=("airflow-init", "postgres")),
-    "airflow-triggerer": _c("airflow_control", dependencies=("airflow-init", "postgres")),
+    "airflow-apiserver": _c(
+        "airflow_control", lifecycle="continuous", dependencies=("airflow-init", "postgres")
+    ),
+    "airflow-scheduler": _c(
+        "airflow_control", lifecycle="continuous", dependencies=("airflow-init", "postgres")
+    ),
+    "airflow-dag-processor": _c(
+        "airflow_control", lifecycle="continuous", dependencies=("airflow-init", "postgres")
+    ),
+    "airflow-triggerer": _c(
+        "airflow_control", lifecycle="continuous", dependencies=("airflow-init", "postgres")
+    ),
     "statsd-exporter": _c(
         "observability",
+        lifecycle="continuous",
         followers=(
             "airflow-scheduler",
             "airflow-dag-processor",
@@ -119,14 +151,20 @@ SERVICE_CONTRACTS = {
             "airflow-apiserver",
         ),
     ),
-    "postgres-exporter": _c("observability", dependencies=("flyway",)),
-    "node-exporter": _c("observability"),
-    "prometheus": _c("observability"),
-    "grafana": _c("observability", dependencies=("loki", "prometheus")),
-    "loki": _c("observability"),
-    "promtail": _c("observability", dependencies=("loki",)),
-    "docker-socket-proxy": _c("observability"),
-    "container-health": _c("observability", dependencies=("docker-socket-proxy",)),
+    "postgres-exporter": _c(
+        "observability", lifecycle="continuous", dependencies=("flyway",)
+    ),
+    "node-exporter": _c("observability", lifecycle="continuous"),
+    "prometheus": _c("observability", lifecycle="continuous"),
+    "grafana": _c(
+        "observability", lifecycle="continuous", dependencies=("loki", "prometheus")
+    ),
+    "loki": _c("observability", lifecycle="continuous"),
+    "promtail": _c("observability", lifecycle="continuous", dependencies=("loki",)),
+    "docker-socket-proxy": _c("observability", lifecycle="continuous"),
+    "container-health": _c(
+        "observability", lifecycle="continuous", dependencies=("docker-socket-proxy",)
+    ),
 }
 
 
