@@ -4,11 +4,14 @@ Operational companion to [Plan 142](../plans/plan_142_planned_host_maintenance.m
 Covers pausing production, updating Ubuntu, rebooting the single production VM,
 proving the host and stack healthy, and resuming work.
 
-**This is Stage 0 output: a worked example, not yet a procedure.** The whole
-sequence below is what was actually run on 2026-08-18, recovered verbatim from
-the session transcript. Stage 2 turns it into `scripts/host_maintenance.sh`
-with idempotent subcommands; until then this is the record you read before you
-start, and the thing you copy commands out of.
+**Most of this remains Stage 0 output: a worked example, not yet an executable
+procedure.** The whole sequence below is what was actually run on 2026-08-18,
+recovered verbatim from the session transcript. Stage 2's first slice adds the
+safe coordination client in
+[`scripts/host_maintenance.py`](../../scripts/host_maintenance.py); stop,
+package, reboot, restore, validation, and completion are deliberately not yet
+commands. Until those later slices land, this remains the record you read
+before starting and the source from which reviewed commands are taken.
 
 Everything here is one host: `147.224.199.86`, Compose project `cartracker` in
 `/opt/cartracker`. The SSH key lives in the repo root and is gitignored
@@ -523,8 +526,28 @@ docker exec cartracker-postgres psql -U cartracker -d cartracker -At -c \
 > console is not the lifeline it is in a host window — but the habit is the
 > point, and the cost is one browser tab.
 
-Stage 2 owns the `/var/lib/cartracker/maintenance/` checkpoint writer chosen by
-Stage 0 item 5. Until it exists, record these by hand.
+Stage 2's checkpoint writer now exists. Every successful transition appends one
+JSON line to `/var/lib/cartracker/maintenance/history.jsonl`, with only phase,
+UTC timestamp, Git revision, running kernel, and manifest location. The client
+is replay-safe: if Postgres advanced but the local append failed, rerunning the
+same command repairs the breadcrumb without repeating the transition.
+
+The currently available sequence is:
+
+```bash
+python scripts/host_maintenance.py --manifest "$MANIFEST" request \
+  --requested-by "$USER" --reason "reviewed host maintenance" \
+  --expected-work "install reviewed packages" --expected-work reboot
+python scripts/host_maintenance.py --manifest "$MANIFEST" begin-drain
+python scripts/host_maintenance.py drain-status
+python scripts/host_maintenance.py --manifest "$MANIFEST" authorize
+# reviewed stop/update/reboot/start work remains manual
+python scripts/host_maintenance.py --manifest "$MANIFEST" begin-validation
+```
+
+There is intentionally no `complete` command yet. Stage 3 must supply the host,
+stack, and intentionally-stopped-service evidence guard before release can be
+represented as authority.
 
 ### 10.2 caddy's restart policy — Plan 142 Stage 0 item 7
 

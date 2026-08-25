@@ -878,6 +878,14 @@ and release produces neither failed nor duplicated mutations.
 
 ### Stage 2 — Build the checked-in host procedure
 
+**First slice built 2026-08-25:**
+[`scripts/host_maintenance.py`](../../scripts/host_maintenance.py) provides the
+safe online lifecycle through `begin-validation` and the append-only host
+checkpoint. Transition commands are replay-safe across the split outcome where
+Postgres advances but the local checkpoint write fails. It exposes no stop,
+package, reboot, restore, or complete command yet; those require the remaining
+Stage 2 mechanics and Stage 3's release evidence respectively.
+
 Add an operator-run script, proposed as `scripts/host_maintenance.sh`, with
 idempotent subcommands rather than one irreversible monolith:
 
