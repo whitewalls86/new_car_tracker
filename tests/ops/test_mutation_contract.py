@@ -6,7 +6,12 @@ from pathlib import Path
 import yaml
 
 from ops.coordination_contract import SURFACES
-from ops.mutation_contract import DRAIN_SOURCES, MUTATION_ROUTES, NON_HTTP_WORK
+from ops.mutation_contract import (
+    DRAIN_SOURCES,
+    MUTATION_ROUTES,
+    NON_HTTP_WORK,
+    required_drain_sources,
+)
 
 REPO_ROOT = Path(__file__).parents[2]
 ROUTE_ROOTS = ("ops", "archiver", "processing", "scraper", "dbt_runner")
@@ -102,3 +107,13 @@ def test_every_drain_source_names_a_concrete_mechanism_and_nonempty_scope():
         assert source.surfaces, name
         assert source.surfaces <= SURFACES - {"host"}, name
         assert len(source.mechanism) >= 30, name
+
+
+def test_required_sources_follow_only_mutation_contracts_in_scope():
+    processing = required_drain_sources({"processing"})
+
+    assert "processing_artifacts" in processing
+    assert "processing_jobs" in processing
+    assert "airflow_task_instances" in processing
+    assert "scraper_detail_jobs" not in processing
+    assert "archiver_jobs" not in processing

@@ -117,6 +117,40 @@ def test_only_status_route_is_exposed_before_guards_exist(mock_client):
     assert mock_client.post("/coordination/authorize").status_code == 404
 
 
+def test_begin_drain_endpoint_exposes_only_legal_transition(mock_client, mocker):
+    transition = mocker.patch("ops.routers.coordination._transition", return_value="ok")
+
+    response = mock_client.post("/coordination/begin-drain")
+
+    assert response.status_code == 200
+    assert response.json() == {"phase": "draining"}
+    transition.assert_called_once_with("begin-drain")
+
+
+@pytest.mark.parametrize(("result", "status_code"), [("conflict", 409), ("error", 503)])
+def test_begin_drain_endpoint_maps_failures(mock_client, mocker, result, status_code):
+    mocker.patch("ops.routers.coordination._transition", return_value=result)
+
+    assert mock_client.post("/coordination/begin-drain").status_code == status_code
+
+
+def test_drain_status_aggregates_authoritative_state_without_transition(mock_client, mocker):
+    state = {"phase": "draining", "scope": ["processing"]}
+    mocker.patch("ops.routers.coordination._status", return_value=state)
+    collect = mocker.patch(
+        "ops.routers.coordination.collect_drain_status",
+        return_value={"phase": "draining", "scope": ["processing"], "drained": True},
+    )
+    transition = mocker.patch("ops.routers.coordination._transition")
+
+    response = mock_client.get("/coordination/drain-status")
+
+    assert response.status_code == 200
+    assert response.json()["drained"] is True
+    collect.assert_called_once_with(state)
+    transition.assert_not_called()
+
+
 def _request_payload(**overrides):
     payload = {
         "kind": "service_maintenance",

@@ -72,6 +72,24 @@ def test_unknown_dag_fails_closed():
         admission_surfaces("future_mutating_dag")
 
 
+def test_every_dag_names_real_mutating_tasks_for_drain_evidence():
+    contract = _load_contract()
+    declared = contract["ADMISSION_SURFACES"]
+    drain_tasks = contract["DRAIN_TASKS"]
+
+    assert set(drain_tasks) == set(declared)
+    for dag_id, task_ids in drain_tasks.items():
+        assert task_ids, dag_id
+        source = (DAGS_DIR / f"{dag_id}.py").read_text()
+        literal_task_ids = {
+            node.value
+            for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.Constant) and isinstance(node.value, str)
+        }
+        assert task_ids <= literal_task_ids, f"{dag_id}: stale drain task declaration"
+        assert not any("sensor" in task_id or "notify" in task_id for task_id in task_ids)
+
+
 def test_sensor_is_scoped_dual_signal_rescheduling_and_practically_unbounded():
     source = (DAGS_DIR / "sensors.py").read_text()
     tree = ast.parse(source)

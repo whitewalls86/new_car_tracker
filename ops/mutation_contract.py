@@ -65,6 +65,10 @@ DRAIN_SOURCES = {
         "archive",
         "analytics",
     ),
+    "pack_worker_jobs": _source(
+        "shared in-process counter exposed by the pack-worker /ready endpoint",
+        "archive",
+    ),
     "processing_artifacts": _source(
         "ops.artifacts_queue status=processing plus processing transition time",
         "processing",
@@ -103,7 +107,8 @@ _DELEGATED_SHORT = (
 # enforced in tests: adding, removing, or renaming a mutation route requires a
 # reviewed execution shape and evidence decision here.
 MUTATION_ROUTES = {
-    # Archiver and pack-worker share this app and counter.
+    # Archiver and pack-worker share the app implementation but run in separate
+    # processes, so their counters are intentionally distinct evidence sources.
     "archiver/app.py:POST:/cleanup/parquet": _tracked("in_process", "archiver_jobs", "archive"),
     "archiver/app.py:POST:/cleanup/parquet/run": _tracked("in_process", "archiver_jobs", "archive"),
     "archiver/app.py:POST:/cleanup/queue": _tracked("in_process", "archiver_jobs", "archive"),
@@ -114,13 +119,17 @@ MUTATION_ROUTES = {
     "archiver/app.py:POST:/compact/silver/run": _tracked(
         "in_process", "archiver_jobs", "archive", "analytics"
     ),
-    "archiver/app.py:POST:/pack/bronze/run": _tracked("in_process", "archiver_jobs", "archive"),
-    "archiver/app.py:POST:/pack/bronze/prune": _tracked("in_process", "archiver_jobs", "archive"),
-    "archiver/app.py:POST:/pack/bronze/verify": _tracked("in_process", "archiver_jobs", "archive"),
+    "archiver/app.py:POST:/pack/bronze/run": _tracked("in_process", "pack_worker_jobs", "archive"),
+    "archiver/app.py:POST:/pack/bronze/prune": _tracked(
+        "in_process", "pack_worker_jobs", "archive"
+    ),
+    "archiver/app.py:POST:/pack/bronze/verify": _tracked(
+        "in_process", "pack_worker_jobs", "archive"
+    ),
     "archiver/app.py:POST:/flush/staging/run": _tracked(
         "in_process", "archiver_jobs", "archive", "analytics"
     ),
-    "archiver/app.py:POST:/disk-usage/run": _tracked("in_process", "archiver_jobs", "archive"),
+    "archiver/app.py:POST:/disk-usage/run": _tracked("in_process", "pack_worker_jobs", "archive"),
     "archiver/app.py:POST:/snapshots/adaptive-refresh/run": _tracked(
         "in_process", "archiver_jobs", "analytics"
     ),
@@ -177,6 +186,7 @@ MUTATION_ROUTES = {
     "ops/routers/deploy.py:POST:/deploy/start": _short(_ATOMIC_STATE, "database"),
     "ops/routers/deploy.py:POST:/deploy/complete": _short(_ATOMIC_STATE, "database"),
     "ops/routers/coordination.py:POST:/request": _short(_ATOMIC_STATE, "database"),
+    "ops/routers/coordination.py:POST:/begin-drain": _short(_ATOMIC_STATE, "database"),
     # Admin routes either delegate to a tracked long job or perform bounded
     # metadata/coordination transactions.
     "ops/routers/admin.py:POST:/dbt/trigger": _tracked("delegated", "dbt_runner_jobs", "analytics"),
@@ -242,3 +252,15 @@ NON_HTTP_WORK = {
         "required_sources": frozenset({"container_processes"}),
     },
 }
+
+
+def required_drain_sources(scope: set[str] | frozenset[str]) -> frozenset[str]:
+    """Return evidence required by mutation boundaries intersecting ``scope``."""
+    required: set[str] = set()
+    for contract in MUTATION_ROUTES.values():
+        if contract.surfaces & scope:
+            required.update(contract.drain_sources)
+    for contract in NON_HTTP_WORK.values():
+        if contract["surfaces"] & scope:
+            required.update(contract["required_sources"])
+    return frozenset(required)

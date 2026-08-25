@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from ops.coordination_contract import HOST_TARGET, expand_targets
+from ops.coordination_drain import collect_drain_status
 from shared.db import db_cursor
 from shared.job_counter import job_snapshot
 
@@ -201,6 +202,21 @@ def request_coordination(payload: CoordinationRequest) -> dict[str, Any]:
     raise HTTPException(status_code=503, detail="Database unavailable.")
 
 
-# Drain authorization, validation, and release routes are added only with
+@router.post("/begin-drain")
+def begin_coordination_drain() -> dict[str, str]:
+    result = _transition("begin-drain")
+    if result == "ok":
+        return {"phase": "draining"}
+    if result == "conflict":
+        raise HTTPException(status_code=409, detail="Coordination is not requested.")
+    raise HTTPException(status_code=503, detail="Database unavailable.")
+
+
+@router.get("/drain-status")
+def coordination_drain_status() -> dict[str, Any]:
+    return collect_drain_status(_status())
+
+
+# Authorization, validation, and release routes are added only with
 # their evidence guards. Exposing an unguarded
 # draining->active endpoint would turn a state machine into false authority.
