@@ -42,20 +42,49 @@ store, processing service, Airflow migration, Grafana, dashboard restructure,
 full decommission, storage normalization, and adaptive-refresh feature
 foundation.
 
-Plan 141 is the highest-priority buildable work. Plan 142 Stage 1 and its first
-Stage 2 operator-client slice are built on draft PR #243 with green CI, but
-further Plan 142 work waits for Plan 136 Stage 3a's memory baseline read at
-approximately 19:40 UTC on 2026-08-25.
+Plan 141 Stages 0-3 merged as PR #247, review findings fixed. Plan 142 Stage 1
+and its first Stage 2 operator-client slice merged as PR #243. Further Plan 142
+work waits for Plan 136 Stage 3a's memory baseline read at approximately
+19:40 UTC on 2026-08-25.
+
+**Production is at PR #241, last pulled 02:09 UTC on 2026-08-25.** PRs #243,
+#245, #246 and #247 are all merged and undeployed, so one deploy carries them
+together.
 
 Post-baseline deployment queue:
 
-1. Read and record Plan 136 Stage 3a's baseline.
+**Every step that restarts a container comes before every soak that starts.**
+Two observation windows open at the end of this queue and they overlap; that is
+only safe because nothing restarts underneath them. Restarting the scraper
+mid-window changes the load driving the very memory curve Stage 3b reads.
+
+1. Read and record Plan 136 Stage 3a's baseline. The series is
+   `cartracker_container_memory_bytes` in Prometheus with 30-day retention, so
+   the read survives restarts and does not have to happen before the deploy.
 2. Run and record Plan 142 Stage 0 Phase B.
-3. Merge and deploy PR #243.
+3. Deploy #243, #245, #246 and #247 in one pass. `shared/logging_setup.py`
+   changed, so this rebuilds `ops`, `scraper`, `processing`, `archiver`,
+   `pack-worker`, `dashboard` and `dbt_runner`. Promtail, Prometheus and
+   Grafana need an explicit restart for their bind-mounted config —
+   `compose up -d` will not recreate them, because their service definitions did
+   not change. `docker kill -s HUP cartracker-prometheus` reloads the new scrape
+   job without a gap in Stage 3a's series.
 4. Pin and deploy the current `trawl` digest.
-5. Start Plan 136 Stage 3b's 48-hour soak.
+5. Start both soaks, once the fleet is quiet:
+   - **Plan 136 Stage 3b** — 48 hours against 3a's memory series, on the pinned
+     digest.
+   - **Plan 141 Stage 4** — 24 hours against the log ingestion contract: no
+     Promtail parsing or replay errors, missing-`source` and expected-`level`
+     queries at zero, one representative warning per selected source proven to
+     land in the error panel, a measured bytes/day against the Stage 0
+     baseline, the Airflow severity shapes confirmed against real control-plane
+     output, and a threshold decided for putting stdout sources back into
+     `ct-log-error-spike`.
 6. Resume non-production Plan 142 Stage 2 work without introducing production
-   holds during that soak.
+   holds during those soaks.
+
+Plan 134's one-week observation window unblocks when Plan 141 Stage 4 accepts,
+but it owes code first and stays in the build order until that lands.
 
 Airflow owns scraping and maintenance. n8n is fully removed. Postgres owns hot
 operational state. MinIO stores bronze HTML and analytical history. dbt

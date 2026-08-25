@@ -1516,7 +1516,7 @@ Stage 0 rows are marked **done**; the container-health producer moved to
 | `tests/test_container_health_collector.py` | Scoping, the `docker stats` arithmetic against a production sample, and the asymmetry that a stats failure must not blind the health metric | 3a — **done** |
 | `grafana/dashboards/infrastructure.json` | "Container Memory Headroom" and "Solver Memory Against Its Cap", under the container-health block | 3a — **done** |
 | `tests/test_observability_config.py` | Both series charted; no panel overlaps after the gridPos shift | 3a — **done** |
-| `docker-compose.yml` | `TRAWL_IMAGE` pinned to a current `@sha256:` digest; drop the two inert env vars | 3b — revert by repinning the old digest |
+| `docker-compose.yml` | `TRAWL_IMAGE` pinned to a current `@sha256:` digest | 3b — revert by repinning the old digest |
 | `docker-compose.yml` | `docker-socket-proxy-restart` (`CONTAINERS=0, POST=1, ALLOW_RESTARTS=1`) on its own internal network; `RECYCLABLE_SERVICES` for ops | 3c |
 | `tests/test_observability_config.py` | `test_socket_access_stays_confined_to_the_proxy` updated to name both proxies and assert their distinct grants | 3c |
 | `ops/routers/maintenance.py` | `POST /maintenance/recycle/{service}`, allowlisted, `single_flight`-guarded | 3c |
