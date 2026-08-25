@@ -8,12 +8,25 @@ groups:
     interval: 5m
     rules:
 
+      # The service set is explicit, not `.+`, and that is load-bearing.
+      # Airflow and oauth2-proxy stdout carried no `level` label at all until
+      # Plan 141 gave them one, so `.+` silently extended a >5-in-5m threshold
+      # tuned against six application log streams to cover DAG-failure bursts
+      # and every 5xx behind the auth proxy. Those sources are visible on the
+      # logs dashboard from day one; adding them here needs a threshold chosen
+      # from their measured volume, which is Stage 4's soak output.
+      # test_error_spike_is_scoped_to_the_application_log_streams asserts this
+      # set equals APPLICATION_SERVICES, so a seventh app service fails there
+      # rather than going unwatched.
       - uid: ct-log-error-spike
-        title: Log ERROR Spike
+        title: Application Log ERROR Spike
         condition: C
         noDataState: OK
         execErrState: Alerting
         for: 5m
+        annotations:
+          summary: "{{ $labels.service }} is logging more than 5 errors per 5 minutes"
+          description: "An application service's JSON log stream exceeded 5 ERROR records in five minutes. Airflow and oauth2-proxy stdout are deliberately outside this rule until their volume is measured."
         data:
           - refId: A
             datasourceUid: cartracker-loki
@@ -21,7 +34,7 @@ groups:
               from: 600
               to: 0
             model:
-              expr: 'sum by (service) (count_over_time({service=~".+", level="ERROR"}[5m]))'
+              expr: 'sum by (service) (count_over_time({service=~"archiver|dbt_runner|ops|pack-worker|processing|scraper", level="ERROR"}[5m]))'
               queryType: range
           - refId: B
             datasourceUid: "__expr__"
@@ -45,20 +58,32 @@ groups:
                     type: gt
                     params: [5]
 
+      # Plan 141 keeps this legacy UID beside ct-detail-fetch-failing because
+      # they answer different questions. This is the fast partial-degradation
+      # signal: more than 5% of at least 25 detail fetches returned 403 in five
+      # minutes. ct-detail-fetch-failing is the sustained all-fetches-failing
+      # signal over twenty minutes at meaningful traffic.
+      #
+      # The metric outcome is authoritative. Broad log text matching previously
+      # paged on UUIDs, timestamps, byte counts, and shared.minio object keys
+      # that happened to contain "403".
       - uid: ct-403-log-spike
-        title: Scraper 403 Log Spike
+        title: Detail Fetch 403 Rate High
         condition: C
         noDataState: OK
         execErrState: Alerting
         for: 5m
+        annotations:
+          summary: "Detail fetch 403 rate above 5%"
+          description: "More than 5% of detail fetches returned exact outcome=403 with at least 25 fetches in the five-minute window. This is the partial-degradation early warning; ct-detail-fetch-failing remains the sustained 100%-failure detector."
         data:
           - refId: A
-            datasourceUid: cartracker-loki
+            datasourceUid: cartracker-prometheus
             relativeTimeRange:
               from: 600
               to: 0
             model:
-              expr: 'count_over_time({service="scraper"} |= "403" [5m])'
+              expr: '(sum(increase(cartracker_detail_fetch_total{job="scraper",outcome="403"}[5m])) / clamp_min(sum(increase(cartracker_detail_fetch_total{job="scraper"}[5m])), 1) > bool 0.05) * (sum(increase(cartracker_detail_fetch_total{job="scraper"}[5m])) >= bool 25)'
               queryType: range
           - refId: B
             datasourceUid: "__expr__"
@@ -80,7 +105,7 @@ groups:
               conditions:
                 - evaluator:
                     type: gt
-                    params: [10]
+                    params: [0]
 
       # Plan 131 Stage 5: pack verification failures must be zero. The deleter
       # logs REFUSED at ERROR and deletes nothing when a pack disagrees with its
@@ -209,7 +234,7 @@ groups:
               from: 600
               to: 0
             model:
-              expr: 'up{job=~"airflow|container-health|dbt_runner|minio|minio_bucket|node|ops|postgres|processing|scraper"}'
+              expr: 'up{job=~"airflow|container-health|dbt_runner|minio|minio_bucket|node|ops|postgres|processing|promtail|scraper"}'
           - refId: B
             datasourceUid: "__expr__"
             relativeTimeRange:

@@ -260,6 +260,44 @@
         }
       ],
       "fieldConfig": { "defaults": { "unit": "reqps", "min": 0 } }
+    },
+    {
+      "id": 18,
+      "title": "403 Cooldown Funnel (rolling 7d)",
+      "description": "How many detail scrapes entered each exponential-backoff bucket during the latest 168 hourly buckets. Derived from the durable ops_normalized/blocked_cooldown_events Parquet history. This is observability only: no alert is attached.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 36 },
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "cartracker_cooldown_entries_7d_attempt_1{job=\"dbt_runner\"}",
+          "legendFormat": "attempt 1"
+        },
+        {
+          "datasource": "Prometheus",
+          "expr": "cartracker_cooldown_entries_7d_attempt_2{job=\"dbt_runner\"}",
+          "legendFormat": "attempt 2"
+        },
+        {
+          "datasource": "Prometheus",
+          "expr": "cartracker_cooldown_entries_7d_attempt_3_4{job=\"dbt_runner\"}",
+          "legendFormat": "attempts 3-4"
+        },
+        {
+          "datasource": "Prometheus",
+          "expr": "cartracker_cooldown_entries_7d_attempt_5_10{job=\"dbt_runner\"}",
+          "legendFormat": "attempts 5-10"
+        },
+        {
+          "datasource": "Prometheus",
+          "expr": "cartracker_cooldown_entries_7d_attempt_11_plus{job=\"dbt_runner\"}",
+          "legendFormat": "attempts 11+"
+        }
+      ],
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull"] }
+      },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0 } }
     }
   ]
 }

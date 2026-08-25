@@ -26,6 +26,21 @@ _DESCRIPTIONS = {
     ),
     "cartracker_cooldown_backlog": "Listings in active cooldown with one to four attempts",
     "cartracker_cooldown_permanent": "Listings blocked after five or more attempts",
+    "cartracker_cooldown_entries_7d_attempt_1": (
+        "Cooldown transitions into attempt bucket 1 over the rolling seven-day window"
+    ),
+    "cartracker_cooldown_entries_7d_attempt_2": (
+        "Cooldown transitions into attempt bucket 2 over the rolling seven-day window"
+    ),
+    "cartracker_cooldown_entries_7d_attempt_3_4": (
+        "Cooldown transitions into attempt bucket 3-4 over the rolling seven-day window"
+    ),
+    "cartracker_cooldown_entries_7d_attempt_5_10": (
+        "Cooldown transitions into attempt bucket 5-10 over the rolling seven-day window"
+    ),
+    "cartracker_cooldown_entries_7d_attempt_11_plus": (
+        "Cooldown transitions into attempt bucket 11+ over the rolling seven-day window"
+    ),
 }
 
 REGISTRY = CollectorRegistry()

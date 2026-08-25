@@ -37,6 +37,7 @@ EXPECTED_HOURLY_CORE = {
     "mart_detail_batch_outcomes",
     "mart_inventory_coverage",
     "mart_cooldown_cohorts",
+    "mart_cooldown_event_funnel",
     "mart_price_freshness_trend",
 }
 

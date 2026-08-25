@@ -3,10 +3,54 @@
 Covers the handler wiring only (file always, stream unless disabled) — not
 log content, which is exercised by the individual modules that log.
 """
+
+import json
 import logging
 from logging.handlers import RotatingFileHandler
 
-from shared.logging_setup import configure_logging
+from shared.logging_setup import _JsonFormatter, configure_logging
+
+
+def _record():
+    return logging.LogRecord(
+        name="test.logger",
+        level=logging.WARNING,
+        pathname=__file__,
+        lineno=1,
+        msg="event %s",
+        args=("happened",),
+        exc_info=None,
+        func=None,
+        sinfo=None,
+    )
+
+
+def test_json_formatter_preserves_the_original_four_field_shape_without_extra():
+    payload = json.loads(_JsonFormatter().format(_record()))
+
+    assert list(payload) == ["ts", "level", "logger", "msg"]
+    assert payload["level"] == "WARNING"
+    assert payload["logger"] == "test.logger"
+    assert payload["msg"] == "event happened"
+
+
+def test_json_formatter_carries_only_bounded_allowlisted_scalar_extra_fields():
+    record = _record()
+    record.trace_id = "trace-123"
+    record.run_id = "run-456"
+    record.duration_ms = 17
+    record.password = "must-never-be-emitted"
+    record.request_headers = {"Authorization": "secret"}
+    record.event = "x" * 513
+
+    payload = json.loads(_JsonFormatter().format(record))
+
+    assert payload["trace_id"] == "trace-123"
+    assert payload["run_id"] == "run-456"
+    assert payload["duration_ms"] == 17
+    assert "password" not in payload
+    assert "request_headers" not in payload
+    assert "event" not in payload
 
 
 def test_configure_logging_adds_file_and_stream_handlers_by_default(tmp_path, monkeypatch):

@@ -71,6 +71,24 @@ cooldown_counts AS (
             0
         ) AS cooldown_permanent
     FROM main.mart_cooldown_cohorts
+),
+cooldown_funnel_7d AS (
+    SELECT
+        COALESCE(SUM(scrape_count) FILTER (WHERE attempt_bucket = '1'), 0)
+            AS attempt_1,
+        COALESCE(SUM(scrape_count) FILTER (WHERE attempt_bucket = '2'), 0)
+            AS attempt_2,
+        COALESCE(SUM(scrape_count) FILTER (WHERE attempt_bucket = '3-4'), 0)
+            AS attempt_3_4,
+        COALESCE(SUM(scrape_count) FILTER (WHERE attempt_bucket = '5-10'), 0)
+            AS attempt_5_10,
+        COALESCE(SUM(scrape_count) FILTER (WHERE attempt_bucket = '11+'), 0)
+            AS attempt_11_plus
+    FROM main.mart_cooldown_event_funnel
+    WHERE event_hour >= (
+        CAST(date_trunc('hour', now() AT TIME ZONE 'UTC') AS TIMESTAMP)
+        - INTERVAL '167 hours'
+    )
 )
 SELECT
     scrape.observation_count AS cartracker_observation_count_last_hour,
@@ -80,6 +98,11 @@ SELECT
     freshness.stale_listings_pct AS cartracker_stale_listings_pct,
     cooldown.cooldown_backlog AS cartracker_cooldown_backlog,
     cooldown.cooldown_permanent AS cartracker_cooldown_permanent,
+    funnel.attempt_1 AS cartracker_cooldown_entries_7d_attempt_1,
+    funnel.attempt_2 AS cartracker_cooldown_entries_7d_attempt_2,
+    funnel.attempt_3_4 AS cartracker_cooldown_entries_7d_attempt_3_4,
+    funnel.attempt_5_10 AS cartracker_cooldown_entries_7d_attempt_5_10,
+    funnel.attempt_11_plus AS cartracker_cooldown_entries_7d_attempt_11_plus,
     latest.data_through
 FROM latest_scrape_hour AS latest
 CROSS JOIN latest_scrape_volume AS scrape
@@ -87,3 +110,4 @@ LEFT JOIN latest_block_rate AS blocks ON TRUE
 LEFT JOIN latest_detail_outcome AS detail ON TRUE
 CROSS JOIN price_freshness AS freshness
 CROSS JOIN cooldown_counts AS cooldown
+CROSS JOIN cooldown_funnel_7d AS funnel

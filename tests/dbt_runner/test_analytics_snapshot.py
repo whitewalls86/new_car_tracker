@@ -69,16 +69,46 @@ def _successful_connection():
     return _Connection(metric_row, public_row)
 
 
-def test_validate_requires_every_metric_and_finite_values():
-    document = _valid_snapshot()
-    document["metrics"].pop(METRIC_NAMES[0])
-    with pytest.raises(ValueError, match="exactly"):
-        validate_snapshot(document)
-
+def test_validate_requires_finite_values_for_the_metrics_present():
     document = _valid_snapshot()
     document["metrics"][METRIC_NAMES[0]] = float("nan")
     with pytest.raises(ValueError, match="finite"):
         validate_snapshot(document)
+
+    document = _valid_snapshot()
+    document["metrics"] = []
+    with pytest.raises(ValueError, match="metrics must be an object"):
+        validate_snapshot(document)
+
+
+def test_snapshot_written_by_another_release_survives_the_deploy(tmp_path):
+    """Adding a metric must not blank the ones already being served.
+
+    The persisted file outlives the container. When exact set equality was
+    required, the first restart after a release that added a metric name read
+    its own on-disk snapshot as invalid: status fell back to not_ready, so
+    `publish_snapshot` set *every* analytics gauge to NaN and /info served an
+    empty public_stats until the next hourly refresh.
+    """
+    path = tmp_path / "snapshot.json"
+    previous_release = _valid_snapshot()
+    added_since = METRIC_NAMES[-1]
+    del previous_release["metrics"][added_since]
+    previous_release["metrics"]["cartracker_metric_removed_since"] = 7
+    path.write_text(json.dumps(previous_release), encoding="utf-8")
+
+    loaded = load_snapshot(path)
+
+    assert loaded["refresh"]["status"] == "ok"
+    assert loaded["errors"] == {}
+    assert loaded["public_stats"]
+    assert loaded["metrics"][added_since] is None
+    assert "cartracker_metric_removed_since" not in loaded["metrics"]
+    assert all(
+        loaded["metrics"][name] is not None
+        for name in METRIC_NAMES
+        if name != added_since
+    )
 
 
 def test_atomic_write_round_trips_complete_document(tmp_path):

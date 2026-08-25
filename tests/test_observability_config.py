@@ -11,9 +11,25 @@ from pathlib import Path
 
 import yaml
 
+from shared.log_ingestion_policy import (
+    AIRFLOW_LEVEL_PATTERN,
+    APPLICATION_SERVICES,
+    ERROR_PANEL_LEVELS,
+    OAUTH_ACCESS_PATTERN,
+    OAUTH_LIFECYCLE_LEVEL_PATTERN,
+    SELECTED_STDOUT_SERVICES,
+    SOURCE_POLICY,
+    IngestionRoute,
+    classify_line,
+    matches_error_dashboard,
+)
 from tests.test_deploy_script import load_health_exemptions
 
 _REPO_ROOT = Path(__file__).parent.parent
+_LOG_FIXTURE_PATH = (
+    _REPO_ROOT / "tests" / "fixtures" / "observability"
+    / "plan_141_log_contract.json"
+)
 
 
 class TestPrometheusConfig:
@@ -38,8 +54,25 @@ class TestPrometheusConfig:
             "node",
             "container-health",
             "scraper",
+            "promtail",
         }
         assert expected == job_names, f"Unexpected jobs: {job_names ^ expected}"
+
+    def test_promtail_drop_counters_are_actually_collected(self):
+        """Plan 141: the log contract is checkable only from these counters.
+
+        Every unclassified line is removed by a drop stage before Loki sees
+        it, so no Loki query can count one. `promtail_dropped_lines_total` is
+        where that count lives, and Promtail was not a scrape target at all.
+        """
+        doc = yaml.safe_load(
+            (_REPO_ROOT / "prometheus" / "prometheus.yml").read_text()
+        )
+        job = next(
+            item for item in doc["scrape_configs"]
+            if item["job_name"] == "promtail"
+        )
+        assert job["static_configs"][0]["targets"] == ["promtail:9080"]
 
 
 class TestPrometheusAndLokiConfig:
@@ -78,7 +111,8 @@ class TestPrometheusAndLokiConfig:
         )
         labels = job["static_configs"][0]["labels"]
         assert labels["service"] == "pack-worker"
-        assert labels["__path__"] == "/logs/pack-worker/app.log*"
+        assert labels["source"] == "application_file"
+        assert labels["__path__"] == "/logs/pack-worker/app.log"
 
     def test_container_stdout_selection_is_explicit_and_excludes_loki(self):
         path = _REPO_ROOT / "promtail" / "promtail.yml"
@@ -120,7 +154,7 @@ class TestPrometheusAndLokiConfig:
         )
         assert promtail["positions"]["filename"] == "/positions/positions.yaml"
 
-    def test_airflow_container_stdout_keeps_only_actionable_lines(self):
+    def test_airflow_container_stdout_parses_then_filters_severity(self):
         promtail = yaml.safe_load(
             (_REPO_ROOT / "promtail" / "promtail.yml").read_text()
         )
@@ -128,22 +162,25 @@ class TestPrometheusAndLokiConfig:
             item for item in promtail["scrape_configs"]
             if item["job_name"] == "docker-operations"
         )
-        match = next(
-            stage["match"]
-            for stage in job["pipeline_stages"]
-            if stage.get("match", {}).get("drop_counter_reason")
-            == "airflow_non_actionable_control_plane"
+        matches = [
+            stage["match"] for stage in job["pipeline_stages"]
+            if "match" in stage
+        ]
+        parser = next(
+            match for match in matches
+            if "stages" in match and "airflow-" in match["selector"]
         )
-        assert match == {
-            "selector": (
-                '{service=~"airflow-(apiserver|scheduler|dag-processor)"} '
-                '!~ "(?i)(warn|error|critical|exception|traceback)"'
-            ),
-            "action": "drop",
-            "drop_counter_reason": "airflow_non_actionable_control_plane",
-        }
+        expressions = [
+            stage["regex"]["expression"]
+            for stage in parser["stages"]
+            if "regex" in stage
+        ]
+        assert expressions == [AIRFLOW_LEVEL_PATTERN]
+        reasons = {match.get("drop_counter_reason") for match in matches}
+        assert "airflow_non_actionable_control_plane" in reasons
+        assert "airflow_unclassified_control_plane" in reasons
 
-    def test_successful_oauth_auth_subrequest_noise_is_dropped(self):
+    def test_oauth_status_and_lifecycle_parsers_match_the_contract_model(self):
         promtail = yaml.safe_load(
             (_REPO_ROOT / "promtail" / "promtail.yml").read_text()
         )
@@ -155,14 +192,38 @@ class TestPrometheusAndLokiConfig:
         oauth_match = next(
             match for match in matches if match["selector"] == '{service="oauth2-proxy"}'
         )
-        assert oauth_match["stages"] == [
-            {
-                "drop": {
-                    "expression": '.*"/oauth2/auth[^"]*" HTTP/1\\.1 "[^"]*" 202 .*',
-                    "drop_counter_reason": "oauth2_successful_auth_subrequest",
-                }
-            }
+        expressions = [
+            stage["regex"]["expression"]
+            for stage in oauth_match["stages"]
+            if "regex" in stage
         ]
+        assert expressions == [OAUTH_ACCESS_PATTERN, OAUTH_LIFECYCLE_LEVEL_PATTERN]
+        drops = [
+            nested["drop"]
+            for stage in oauth_match["stages"]
+            for nested in stage.get("match", {}).get("stages", [])
+            if "drop" in nested
+        ]
+        assert drops == [{
+            "source": "path",
+            "expression": r"^/oauth2/auth(?:\?.*)?$",
+            "drop_counter_reason": "oauth2_successful_auth_subrequest",
+        }]
+
+    def test_every_retained_job_sets_source_and_tails_only_active_app_log(self):
+        promtail = yaml.safe_load(
+            (_REPO_ROOT / "promtail" / "promtail.yml").read_text()
+        )
+        jobs = {job["job_name"]: job for job in promtail["scrape_configs"]}
+
+        docker_relabels = jobs["docker-operations"]["relabel_configs"]
+        assert {
+            "target_label": "source", "replacement": "container_stdout",
+        } in docker_relabels
+        for service in APPLICATION_SERVICES:
+            labels = jobs[service]["static_configs"][0]["labels"]
+            assert labels["source"] == "application_file"
+            assert labels["__path__"] == f"/logs/{service}/app.log"
 
     def test_docker_29_compatible_promtail_and_nonempty_stream_labels(self):
         compose = yaml.safe_load((_REPO_ROOT / "docker-compose.yml").read_text())
@@ -177,6 +238,92 @@ class TestPrometheusAndLokiConfig:
             "target_label": "job",
             "replacement": "docker-operations",
         } in job["relabel_configs"]
+
+
+class TestStructuredLogContract:
+    """Plan 141: fixtures drive parser, filter, and selector behavior."""
+
+    @staticmethod
+    def _cases():
+        return json.loads(_LOG_FIXTURE_PATH.read_text())["cases"]
+
+    def test_every_fixture_has_the_expected_label_or_explicit_drop(self):
+        for case in self._cases():
+            expected = case["expected"]
+            decision = classify_line(
+                case["service"], case["source_type"], case["line"]
+            )
+
+            assert decision.retained is expected["retained"], case["name"]
+            assert decision.labels["service"] == case["service"], case["name"]
+            assert decision.labels["source"] == case["source_type"], case["name"]
+            assert decision.labels.get("level") == expected.get("level"), case["name"]
+            assert decision.labels.get("status") == expected.get("status"), case["name"]
+            # Promtail's `labels: logger:` stage adds no label when the JSON
+            # record omits the field; the line is still shipped. Asserted here
+            # because modelling that as a drop made the corpus describe a
+            # pipeline stricter than the one in production.
+            assert decision.labels.get("logger") == expected.get("logger"), case["name"]
+            assert decision.drop_reason == expected.get("drop_reason"), case["name"]
+
+    def test_dashboard_error_selector_uses_the_same_fixtures(self):
+        for case in self._cases():
+            decision = classify_line(
+                case["service"], case["source_type"], case["line"]
+            )
+            assert (
+                matches_error_dashboard(decision)
+                is case["expected"]["error_panel"]
+            ), case["name"]
+
+    def test_old_and_new_application_shapes_parse_identically(self):
+        cases = {case["name"]: case for case in self._cases()}
+        old = cases["application_old_shape"]
+        new = cases["application_structured_new_shape"]
+
+        assert set(json.loads(old["line"])) == {"ts", "level", "logger", "msg"}
+        assert {"ts", "level", "logger", "msg"} < set(json.loads(new["line"]))
+        assert classify_line(
+            old["service"], old["source_type"], old["line"]
+        ).retained
+        assert classify_line(
+            new["service"], new["source_type"], new["line"]
+        ).retained
+
+
+class TestLogSourcePolicyCoverage:
+    """Plan 141 logging coverage, separate from health coverage below."""
+
+    @staticmethod
+    def _compose_services():
+        compose = yaml.safe_load((_REPO_ROOT / "docker-compose.yml").read_text())
+        return set(compose["services"])
+
+    def test_every_compose_service_has_exactly_one_logging_policy(self):
+        assert set(SOURCE_POLICY) == self._compose_services()
+
+    def test_every_policy_carries_a_reason_and_privacy_boundary(self):
+        for service, policy in SOURCE_POLICY.items():
+            assert len(policy.reason) > 40, (
+                f"{service} has no meaningful inclusion reason"
+            )
+            assert len(policy.privacy) > 40, (
+                f"{service} has no meaningful privacy policy"
+            )
+
+    def test_registry_routes_match_the_promtail_inclusion_set(self):
+        application = {
+            service
+            for service, policy in SOURCE_POLICY.items()
+            if policy.route is IngestionRoute.APPLICATION_FILE
+        }
+        stdout = {
+            service
+            for service, policy in SOURCE_POLICY.items()
+            if policy.route is IngestionRoute.SELECTED_STDOUT
+        }
+        assert application == APPLICATION_SERVICES
+        assert stdout == SELECTED_STDOUT_SERVICES
 
 
 class TestGrafanaProvisioning:
@@ -1086,6 +1233,58 @@ class TestGrafanaDashboards:
             "distinguish a refusing solver from a lying one"
         )
 
+    def test_cooldown_funnel_charts_all_rolling_seven_day_buckets(self):
+        panel = next(
+            panel
+            for panel in self._pipeline_panels()
+            if panel["title"] == "403 Cooldown Funnel (rolling 7d)"
+        )
+        expressions = {target["expr"] for target in panel["targets"]}
+        expected_metrics = {
+            "cartracker_cooldown_entries_7d_attempt_1",
+            "cartracker_cooldown_entries_7d_attempt_2",
+            "cartracker_cooldown_entries_7d_attempt_3_4",
+            "cartracker_cooldown_entries_7d_attempt_5_10",
+            "cartracker_cooldown_entries_7d_attempt_11_plus",
+        }
+
+        assert panel["type"] == "timeseries"
+        assert expressions == {
+            f'{metric}{{job="dbt_runner"}}' for metric in expected_metrics
+        }
+        assert "no alert" in panel["description"].lower()
+
+        rules = yaml.safe_load(
+            (_REPO_ROOT / "grafana" / "provisioning" / "alerting" / "rules.yml")
+            .read_text()
+        )
+        alert_expressions = {
+            datum["model"].get("expr", "")
+            for group in rules["groups"]
+            for rule in group["rules"]
+            for datum in rule["data"]
+        }
+        assert not any(
+            metric in expression
+            for metric in expected_metrics
+            for expression in alert_expressions
+        )
+
+    def test_cooldown_funnel_metrics_come_from_the_parquet_backed_event_mart(self):
+        model_sql = (
+            _REPO_ROOT / "dbt" / "models" / "marts"
+            / "mart_cooldown_event_funnel.sql"
+        ).read_text()
+        snapshot_sql = (
+            _REPO_ROOT / "dbt_runner" / "sql" / "analytics_metrics_snapshot.sql"
+        ).read_text()
+
+        assert "ref('stg_blocked_cooldown_events')" in model_sql
+        assert "event_type in ('blocked', 'incremented')" in model_sql
+        assert "mart_cooldown_event_funnel" in snapshot_sql
+        assert "INTERVAL '167 hours'" in snapshot_sql
+        assert snapshot_sql.count("cartracker_cooldown_entries_7d_attempt_") == 5
+
     def test_pipeline_panel_ids_are_unique(self):
         ids = [p["id"] for p in self._pipeline_panels()]
         assert len(ids) == len(set(ids))
@@ -1153,8 +1352,62 @@ class TestGrafanaDashboards:
     def test_logs_parses(self):
         doc = json.loads((self._DASHBOARD_DIR / "logs.json").read_text())
         assert doc["uid"] == "cartracker-logs"
-        assert len(doc["panels"]) == 3
-        assert all(p["datasource"]["uid"] == "cartracker-loki" for p in doc["panels"])
+        assert len(doc["panels"]) == 5
+        assert {p["title"]: p["datasource"]["uid"] for p in doc["panels"]} == {
+            "All Service Logs": "cartracker-loki",
+            "Error / Warning / Critical Logs": "cartracker-loki",
+            "Log Volume by Service / Source / Level": "cartracker-loki",
+            "Unclassified Log Lines (5m, expected 0)": "cartracker-prometheus",
+            "Promtail Drops by Reason (5m)": "cartracker-prometheus",
+        }
+        assert all(
+            target["datasource"] == panel["datasource"]
+            for panel in doc["panels"]
+            for target in panel["targets"]
+        )
+
+    def test_log_dashboard_consumes_the_structured_contract(self):
+        doc = json.loads((self._DASHBOARD_DIR / "logs.json").read_text())
+        panels = {panel["title"]: panel for panel in doc["panels"]}
+
+        errors = panels["Error / Warning / Critical Logs"]["targets"][0]["expr"]
+        level_match = re.search(r'level=~"([A-Z|]+)"', errors)
+        assert level_match is not None
+        assert set(level_match.group(1).split("|")) == ERROR_PANEL_LEVELS
+
+        volume = panels["Log Volume by Service / Source / Level"]["targets"][0]
+        assert "sum by (service, source, level)" in volume["expr"]
+        assert volume["legendFormat"] == "{{service}} / {{source}} / {{level}}"
+
+        coverage = panels["Unclassified Log Lines (5m, expected 0)"]
+        assert coverage["type"] == "stat"
+        assert coverage["fieldConfig"]["defaults"]["thresholds"]["steps"] == [
+            {"color": "green", "value": None},
+            {"color": "red", "value": 1},
+        ]
+
+    def test_the_violation_panel_reads_where_the_lines_are_actually_dropped(self):
+        """The panel it replaces could not fire for the case it was named for.
+
+        It counted `level=""` in Loki for services whose Promtail stages drop
+        `level=""` before shipping. The malformed application record it exists
+        to surface is removed upstream of Loki, so the panel read 0 and looked
+        green no matter how badly the contract drifted. The count only exists
+        in Promtail's own drop counter.
+        """
+        doc = json.loads((self._DASHBOARD_DIR / "logs.json").read_text())
+        panels = {panel["title"]: panel for panel in doc["panels"]}
+
+        expr = panels["Unclassified Log Lines (5m, expected 0)"]["targets"][0]["expr"]
+        assert "promtail_dropped_lines_total" in expr
+        assert 'reason="application_file_unclassified"' in expr
+        assert "or vector(0)" in expr, "an absent counter must read 0, not No Data"
+
+        by_reason = panels["Promtail Drops by Reason (5m)"]["targets"][0]
+        assert by_reason["expr"] == (
+            "sum by (reason) (increase(promtail_dropped_lines_total[5m]))"
+        )
+        assert by_reason["legendFormat"] == "{{reason}}"
 
 
 class TestGrafanaAlertingProvisioning:
@@ -1197,6 +1450,42 @@ class TestGrafanaAlertingProvisioning:
             "ct-coordination-stale", "ct-coordination-gate-unhealthy",
         }
         assert expected <= all_uids, f"Missing rule UIDs: {expected - all_uids}"
+
+    def test_error_spike_is_scoped_to_the_application_log_streams(self):
+        """Plan 141 gave Airflow and oauth2-proxy stdout a `level` label.
+
+        Before that they had none, so `{service=~".+", level="ERROR"}` could
+        only ever select the six application JSON streams the >5-in-5m
+        threshold was tuned against. Leaving `.+` in place would have silently
+        extended the rule to DAG-failure bursts and to every 5xx behind the
+        auth proxy -- a paging change nobody chose, arriving as a side effect
+        of a parsing change. Exact set equality, so adding a seventh
+        application service fails here instead of going unwatched.
+        """
+        expr = self._rule("ct-log-error-spike")["data"][0]["model"]["expr"]
+        selected = set(re.search(r'service=~"([^"]+)"', expr).group(1).split("|"))
+        assert selected == APPLICATION_SERVICES, (
+            "ct-log-error-spike's service set drifted from APPLICATION_SERVICES: "
+            f"{sorted(selected ^ APPLICATION_SERVICES)}"
+        )
+        assert 'level="ERROR"' in expr
+
+    def test_403_log_spike_uid_is_a_guarded_early_warning_ratio(self):
+        rule = self._rule("ct-403-log-spike")
+
+        assert rule["title"] == "Detail Fetch 403 Rate High"
+        assert rule["data"][0]["datasourceUid"] == "cartracker-prometheus"
+        assert rule["data"][0]["model"]["expr"] == (
+            '(sum(increase(cartracker_detail_fetch_total{job="scraper",outcome="403"}'
+            '[5m])) / clamp_min(sum(increase(cartracker_detail_fetch_total{job="scraper"}'
+            '[5m])), 1) > bool 0.05) * '
+            '(sum(increase(cartracker_detail_fetch_total{job="scraper"}[5m])) >= bool 25)'
+        )
+        assert rule["for"] == "5m"
+        assert rule["data"][-1]["model"]["conditions"][0]["evaluator"] == {
+            "type": "gt",
+            "params": [0],
+        }
 
     def test_coordination_alerts_page_without_auto_release_semantics(self):
         stale = self._rule("ct-coordination-stale")
