@@ -207,7 +207,16 @@ services:
       - cartracker-net
 
   trawl:
-    image: ${TRAWL_IMAGE:-ghcr.io/germondai/trawl:latest}
+    # Plan 136 Stage 3b: pinned by digest, not `:latest`. An unpinned tag on
+    # the one component whose failure takes detail scraping down makes the
+    # next `compose up` an unreviewed upgrade -- which is how a six-week
+    # drift went unnoticed. This digest is v1.4.2 (built 2026-08-21); the
+    # previous pin, for rollback, is
+    # sha256:d4d7beb21541a84664d45fd2e0320367a67185c028428aa2313fd1c0c856e60b
+    # (revision d0877c5, built 2026-07-06). It is a multi-arch index digest,
+    # so it resolves on the arm64 VM and on x86 CI alike. Moving it is a
+    # commit someone can see.
+    image: ${TRAWL_IMAGE:-ghcr.io/germondai/trawl@sha256:86b1fdf26cfeebd996eeedaeb774002434f4cf8d02e5486f8a8173373c4d6e9b}
     container_name: cartracker-trawl
     restart: unless-stopped
     profiles: ["trawl"]
