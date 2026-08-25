@@ -1,6 +1,6 @@
 # Plan 123: dbt Incrementalization and Analytics Resource Governance
 
-## Status — VM verification CLOSED 2026-08-25
+## Status — COMPLETE (2026-08-25), archived
 
 **Phases 0-2 built and deployed 2026-07-09/10. Every remaining item was
 production verification, and it stayed open and unrecorded from 2026-07-10
