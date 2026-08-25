@@ -204,15 +204,24 @@ def test_hourly_analytics_refresh_order():
         dag.task_dict["check_dbt_runner_health"].upstream_list
     )
     assert dag.task_dict["check_dbt_runner_health"] in dag.task_dict["dbt_build"].upstream_list
+    # The health sensors are deliberately absent from this list -- Plan 140
+    # Stage 4. They gate the chain above, but feeding the Telegram task meant
+    # an unreachable archiver sent "hourly analytics refresh FAILED", naming
+    # the DAG rather than the service that was down.
     for task_id in [
         "check_deploy_intent",
-        "check_archiver_health",
         "flush_silver_observations",
         "flush_staging_events",
-        "check_dbt_runner_health",
         "dbt_build",
     ]:
         assert dag.task_dict[task_id] in dag.task_dict["notify"].upstream_list
+
+    for task_id in ("check_archiver_health", "check_dbt_runner_health"):
+        assert dag.task_dict[task_id] not in dag.task_dict["notify"].upstream_list, (
+            f"{task_id} feeds the notify task again. A health failure would "
+            "send a Telegram message named after the DAG rather than the "
+            "service, which is the defect Plan 140 Stage 4 removed."
+        )
 
 
 @pytest.mark.integration
@@ -246,6 +255,49 @@ def test_maintenance_pool_reaches_the_real_operators():
         if task.pool == MAINTENANCE_POOL
     }
     assert pooled == expected
+
+
+@pytest.mark.integration
+def test_health_sensors_skip_rather_than_fail_on_the_real_operators():
+    """Plan 140 Stage 4b, on the parsed task rather than on the source.
+
+    tests/airflow/test_health_sensor_demotion.py owns the contract and reads
+    the factory with `ast`; this is what proves the keyword survives onto every
+    real sensor across every DAG. Without it a timeout raises
+    AirflowSensorTimeout, fails the run, and pages as "DAG {dag_id} failed" --
+    named after a downstream consumer rather than the service that is down.
+
+    `check_deploy_intent` is asserted the other way on purpose: a stuck deploy
+    intent is Plan 142 Stage 1's condition, and skipping it would let work
+    start mid-deploy.
+    """
+    dagbag = _make_dagbag()
+    assert not dagbag.import_errors
+
+    health_sensors = 0
+    for dag in dagbag.dags.values():
+        for task_id, task in dag.task_dict.items():
+            if task_id == "check_deploy_intent":
+                assert getattr(task, "soft_fail", False) is False, (
+                    f"{dag.dag_id}.{task_id} now skips on timeout; a stuck "
+                    "deploy intent must still stop the DAG"
+                )
+            elif task_id.startswith("check_") and task_id.endswith("_health"):
+                health_sensors += 1
+                assert task.soft_fail is True, (
+                    f"{dag.dag_id}.{task_id} fails instead of skipping on "
+                    "timeout, so a down service pages as a DAG failure again"
+                )
+                assert task.mode == "reschedule", (
+                    f"{dag.dag_id}.{task_id} left reschedule mode. Deferrable "
+                    "sensors ignore soft_fail on timeout (apache/airflow#61130)"
+                )
+
+    assert health_sensors == 16, (
+        f"found {health_sensors} health sensors across the DagBag, expected 16. "
+        "These gate DAG correctness independently of who reports the outage, "
+        "so a dropped one is work starting against an unanswering service."
+    )
 
 
 @pytest.mark.integration
