@@ -287,17 +287,45 @@ CAR-10 and CAR-11 through 2026-08-25 was made by hand — six of six. CAR-7 sat
 in `In Review` for nine hours after PR #243 merged. PRs *do* attach to issues,
 so the integration is connected; only the status automations are inert.
 
-The open hypothesis is that these automations act on *closing or contributing*
-PRs — linked by issue identifier in the branch name or a magic word in the PR
-body — and that an attachment can arrive by another route without establishing
-that relationship. None of the branches so far carried an identifier
-(`feature/plan-142-stage-1` and similar). Unproven.
+Measured 2026-08-25 on the Plan 141 branch, which carries `car-10` in its name.
+Two probes, one positive and one negative:
 
-The test is free and costs nothing to wait for: the Plan 141 branch is
-`millerandrewpreston/car-10-plan-141-freeze-fixtures-fix-ct-403-log-spike-false-positive`,
-which does carry `car-10`. If its PR moves CAR-10, linkage was the cause and
-Linear's suggested `gitBranchName` becomes the standing convention. If it does
-not, the integration is broken more deeply and that is the larger finding.
+| Probe | Result |
+|---|---|
+| PR #244 opened, with no issue identifier in its title or body | **attachment created on CAR-10** |
+| CAR-10 set to `Ready`, then a commit pushed to that branch | **no transition** — 9 reads over 3 minutes, `updatedAt` unmoved |
+
+**Branch-name linkage works.** PR #244 attached with the branch name as the only
+possible mechanism, so Linear's suggested `gitBranchName` is the convention to
+use — the older `feature/plan-NNN-*` style does not establish the relationship.
+
+**The status automations are inert, and the cause is not yet known.** Three
+explanations were eliminated rather than confirmed:
+
+- *Not the trigger configuration.* The probes ran **after** the settings above
+  were corrected, so the automations were configured correctly and still did
+  nothing.
+- *Not a missing link.* Attachments form correctly on every issue tested.
+- *Not an unconnected GitHub account.* The GitHub identity is connected to the
+  Linear profile.
+
+The PR-open trigger could not be tested this round: CAR-10 was already
+`In Progress`, which is that trigger's target, so a successful fire would have
+been indistinguishable from no fire. The merge trigger remains untested, though
+CAR-7 sitting nine hours in `In Review` after PR #243 merged is strong evidence
+against it.
+
+**Accepted as manual for now.** Status transitions are performed by hand, which
+is what the `ticket-now`, `fill-cycle` and `close-out` skills already assume —
+none of them depends on an automation firing. The cost is that a stalled issue
+is invisible until someone looks, which is how CAR-7 sat in the wrong state for
+most of a day. If this is revisited, the next unexplored surfaces are the
+GitHub App's installation permissions and whether Linear receives the PR
+webhook events at all.
+
+This does not block Stage 2. A board whose states are moved by hand still
+answers the Stage 2 measures; it only makes "state corrections" a more
+prominent one.
 
 ### Seeded issues (Cycle 1)
 
