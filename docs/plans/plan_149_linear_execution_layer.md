@@ -183,6 +183,81 @@ creates the system around itself. Create the workspace/team, create this issue
 immediately, then finish configuration through the issue so the experiment has
 an execution record from its first meaningful action.
 
+## Stage 0 evidence
+
+Recorded on **2026-08-24**, ahead of Cycle 1's 2026-08-31 start.
+
+### Workspace and team
+
+- Workspace: `cartracker` (`https://linear.app/cartracker`).
+- Team: `Cartracker` (key `CAR`), timezone America/Chicago.
+
+### Workflow
+
+`Backlog → Ready → In Progress → In Review → Soaking → Done → Canceled`.
+Soaking sits under Linear's **Started** category, not Completed — a Soaking
+issue is not finished and continues to count in cycle progress. Putting it
+under Completed would silently falsify the rollover and state-corrections
+measures.
+
+### Cycles
+
+One-week cycles beginning Monday, no cooldown, three upcoming visible.
+`cycleLockToActive` and `cycleIssueAutoAssignStarted` are both **off**, so
+moving an issue to In Progress mid-cycle does not silently add it to the
+current cycle — the "issues added after cycle start" measure would be
+unreadable otherwise. Cycle 1 runs 2026-08-31 → 2026-09-07.
+
+### GitHub integration
+
+Connected to `whitewalls86/new_car_tracker` (browser-only: OAuth + org
+authorization is not scriptable). PR-linking automations set at
+`Settings → Teams → Cartracker → Workflows & automations → Pull request and
+commit automations`:
+
+| Trigger | Set to |
+|---|---|
+| PR drafted | In Progress |
+| PR opened | In Review |
+| PR merged | Soaking |
+
+GitHub Issues Sync remains OFF (the no-two-way-sync rule).
+
+**Deviation from Decision → Workflow.** The plan describes PR-merge behavior
+conditional on whether the issue requires production evidence. Linear's PR
+automations are per-team, not per-issue, so the conditional has no home. The
+chosen tradeoff: merge → Soaking unconditionally; no-soak issues are moved to
+Done by hand. A false Done is on the forbidden-automation list; a false
+Soaking is one manual click.
+
+### Seeded issues (Cycle 1)
+
+Derived from `PLANS.md` as it stood on 2026-08-24. Filler-order judgement: the
+handoff draft suggested Plan 147 (row 9) plus Plan 139 Stage C (row 13) as the
+two fillers. Strict build-order priority sequencing kept Plan 147 (it feeds
+row 2's held set) but swapped Plan 145 (row 7) in for Plan 139 Stage C.
+
+| Issue | Plan / stage | Est. | Blocked by |
+|---|---|---:|---|
+| CAR-6 | Plan 149 Stage 0 bootstrap | — | — |
+| CAR-7 | Plan 142 Stage 1 drain contract | 2 | — |
+| CAR-8 | Plan 136 Stage 3b (baseline + pin + 48h soak) | 3 | 2026-08-25 |
+| CAR-9 | Plan 142 item 3 Phase B (maintenance-pool window) | 2 | CAR-8 |
+| CAR-10 | Plan 141 (freeze fixtures, fix ct-403-log-spike) | 3 | — |
+| CAR-11 | Plan 140 Stage 4 (demote http_health_sensor) | 1 | — |
+| CAR-12 | Plan 147 Stage 1 (V043 expand + view rebuild) | 3 | — |
+| CAR-13 | Plan 145 (close Stage 0d/0e, build backfill write path) | 3 | — |
+
+Also created and immediately canceled: CAR-1 through CAR-4 (Linear's default
+onboarding issues) and CAR-5 (a session-artifact duplicate of Issue 1 from the
+pre-restart bootstrap attempt).
+
+### Not changed by this bootstrap
+
+`docs/PLANS.md` was not edited. No plan document had its state altered by
+Linear setup. This section, and the Cycle measures table below, are the only
+edits.
+
 ## Stage 1 — Seed only the current horizon
 
 After the build-order placement of this plan is approved, derive the first
@@ -239,6 +314,20 @@ For three Monday-to-Sunday cycles:
 The first three cycles are calibration, not a velocity target. Do not use
 Linear's capacity prediction to raise commitments until three completed cycles
 exist, and do not treat issue count as comparable when issue sizes differ.
+
+## Cycle measures
+
+Filled in *after* each cycle closes, from a real read against the board plus
+the repository — not before. Rows below track the six measures defined above.
+
+| Measure | Cycle 1 (2026-08-31 → 2026-09-07) | Cycle 2 (2026-09-07 → 2026-09-14) | Cycle 3 (2026-09-14 → 2026-09-21) |
+|---|---|---|---|
+| Time to choose next work | — | — | — |
+| Issues added after cycle start | — | — | — |
+| Issue rollover | — | — | — |
+| State corrections | — | — | — |
+| Duplicate edits | — | — | — |
+| Recap effort | — | — | — |
 
 ## Stage 3 — Keep, change or remove
 
