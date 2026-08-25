@@ -2,13 +2,22 @@
 
 ## Status
 
-**STAGES 1, 2 AND 3 COMPLETE AND VERIFIED. STAGE 2'S 24-HOUR SOAK CLOSED CLEAN
-ON 2026-08-21** — see [the Stage 2 soak record](#24-hour-soak-record--closed-clean-2026-08-21).
-**Stage 4 is built as of 2026-08-25 and awaits production deploy and
-verification.** It came in as two slices rather than one keyword: demoting the
-sensors would have left a stopped `archiver` or `pack-worker` with no notifier
-at all, so Stage 4a closes the removed-or-stopped gap Stage 2 recorded before
-Stage 4b flips `soft_fail`.
+**COMPLETE (2026-08-25).** All four stages are deployed and verified in
+production, and every success criterion is met.
+
+Stages 1, 2 and 3 closed earlier; Stage 2's 24-hour soak closed clean on
+2026-08-21 — see [the Stage 2 soak record](#24-hour-soak-record--closed-clean-2026-08-21).
+**Stage 4 was deployed and verified 2026-08-25** — see
+[the Stage 4 deploy record](#production-deployment-and-verification--2026-08-25)
+and [the fire test](#the-fire-test--the-success-criterion-closed-2026-08-25).
+**All four stages are now closed and every success criterion is met.**
+
+Stage 4 came in as two slices rather than one keyword: demoting the sensors
+would have left a stopped `archiver` or `pack-worker` with no notifier at all,
+so Stage 4a closed the removed-or-stopped gap Stage 2 recorded before Stage 4b
+flipped `soft_fail`. The fire test on 2026-08-25 stopped a container and
+watched the metric publish `0` while the series count held at 28 — where before
+the stage it would have published 27 and said nothing.
 [PR #216](https://github.com/whitewalls86/new_car_tracker/pull/216) merged the
 implementation as `821a6a6`, adding eighteen healthchecks and taking configured
 coverage from 7 of 31 services to 25 of 31. The six remaining services are the
@@ -805,29 +814,114 @@ previously sent the operator straight to `docker inspect … State.Health.Log`,
 which returns nothing useful for a container that is gone; it now separates the
 two readings and names `docker ps -a` first.
 
-#### Still owed
+#### Production deployment and verification — 2026-08-25
 
-Production deploy and verification. The gate the plan asks for is unchanged:
-**a deliberately stopped non-critical container must page via
-`ct-container-unhealthy` before the next DAG run fails.** 4a makes that
-testable for the first time — the same `docker pause` used in Stage 2 exercised
-only the `paused → 0` path, and Stage 2 recorded that a *stopped* container
-would have left the metric instead. Stopping one is now the actual test.
+Deployed to `73f9d4d` through `scripts/redeploy.sh`, the Plan 144 path, rather
+than by hand. Deploy intent was declared at 02:09:29 UTC and drained
+immediately (`number_running: 0`); the script released it on success.
 
-Note the deploy touches two images (`container-health` and the Airflow DAG
-mount) plus `rules.yml`. `prometheus.yml` is unchanged, so the single-file
-bind-mount inode trap recorded above does not apply here — but `rules.yml` is
-read by Grafana at startup, so Grafana needs a restart, not just a reload.
+Only `container-health` was rebuilt and recreated. The Airflow half needed no
+container action at all: `./airflow/dags` is a **directory** bind mount, so the
+DAG changes landed with the `git pull` and the dag-processor re-serialized on
+its own. `grafana/provisioning` is likewise a directory mount, immune to the
+inode trap Stage 2 recorded, but Grafana reads alerting provisioning at startup
+and so was restarted. `prometheus.yml` was unchanged.
 
-## Success criteria
+The rebuild was mandatory rather than hygienic: `container_health/expected.py`
+is a new file, `app.py` imports it, and a cached image would have crash-looped
+on `ImportError`. The build log confirms the `COPY container_health/` layer was
+not cached.
 
-1. Every in-scope service reports a real Docker health status.
-2. `cartracker_container_health` covers all of them, with `-1` distinguishing
-   unconfigured from healthy.
-3. Adding a service to `docker-compose.yml` without a healthcheck **fails CI**.
-4. A deliberately stopped non-critical container pages within 5 minutes, from
-   the container-health alert and not from a downstream DAG failure.
-5. The deny-list has a written reason for every entry.
+| Gate | Evidence |
+|---|---|
+| Exporter loaded the new code | `EXPECTED_SERVICES` imported inside the running container: **28** |
+| Metric unchanged by the change | **28 series**, 27 at `1`, `oauth2-proxy` at `-1` — identical to the pre-deploy reading, so 4a added no series and flipped nothing |
+| Prometheus ingesting | 28 |
+| DAG re-serialization | 0 import errors; **16 of 16** health sensors carry `soft_fail=True` |
+| The deliberate exception held | `check_deploy_intent` does **not** carry it |
+| Post-deploy runs | `orphan_checker` and `results_processing` both succeeded; zero failed tasks; zero skipped sensors |
+| Health gate | `container-health` healthy in 5s, `grafana` in 6s |
+
+##### The fire test — the success criterion, closed 2026-08-25
+
+Stage 2's validation used `docker pause`, which exercised only the `paused → 0`
+path; Stage 2 recorded explicitly that a *stopped* container would have left
+the metric instead. 4a is what makes the real test possible, so it was run.
+
+| Event | UTC |
+|---|---|
+| `docker stop cartracker-flaresolverr` | 02:32:36 |
+| Docker reports `exited`; **metric reads `0`, series count holds at 28** | 02:32:41 |
+| Prometheus ingests the `0` | 02:32:45 |
+| `ct-container-unhealthy` → **Alerting**, `container=flaresolverr` | **02:38:00** |
+| `docker start`, healthy, back to `1.0`, 28 series | 02:42:22 |
+
+**The series count holding at 28 is the whole result.** Before this stage the
+exporter would have published 27 and the stopped service would have been
+invisible — no `0`, no alert, nothing. The 5m24s to Alerting is the rule's 5m
+`for` plus scrape and evaluation latency.
+
+`ct-container-health-unconfigured` stayed on `oauth2-proxy` throughout, with
+`activeAt` still 2026-08-20 19:08, so the new firing did not disturb the
+standing coverage alert.
+
+One honest limit on how far this proves the criterion's second half. The
+criterion is "pages **before** the next DAG run fails", and `flaresolverr` is
+vestigial — no DAG senses it — so no DAG run was ever going to fail here. What
+was observed is the alert arriving on its own, from the health signal, with no
+pipeline failure anywhere. For a *sensed* service the comparison is now
+structural rather than empirical: a health sensor times out at 600s and, after
+Stage 4b, **skips** rather than fails, so the DAG path can no longer produce a
+page at all. The alert at ~5m is the only notifier left, which is the outcome
+this stage was for.
+
+##### Interaction with the two open soaks — checked, not assumed
+
+The deploy landed between Plan 142's Phase A gate and Plan 136's Stage 3a read,
+so both were checked rather than hoped over.
+
+- **Plan 136 Stage 3a is intact.** `cartracker-trawl` still reports
+  `StartedAt 2026-08-22T17:52:56Z` — it was never touched, so the memory curve
+  is continuous and the 19:40 UTC baseline read is unaffected. Recreating
+  `container-health` cost a few 15-second samples of
+  `cartracker_container_memory_bytes`; the series was publishing again
+  immediately (`trawl` at 2.67 GB against its 4 GB cap). The exporter restart
+  does not reset the curve, because the curve is `trawl`'s memory, not the
+  exporter's.
+- **Plan 142's items 6 and 7 landed inertly.** The `git pull` brought 22
+  commits including `8045e7e`, whose `caddy` restart policy and Airflow JWT
+  secret are *service config* — they take effect only on `up -d` for those
+  services, and `redeploy.sh` names one service and passes `--no-deps`. Neither
+  `caddy` nor the four Airflow services was recreated, so the public site never
+  dropped and no JWT rotated. Those changes now sit on disk awaiting Phase B's
+  window, which is where they were always meant to be applied.
+
+##### Still owed
+
+Nothing for this stage. Plan 140's success criteria are all met; see the
+criteria list below.
+
+## Success criteria — all met as of 2026-08-25
+
+1. ✅ Every in-scope service reports a real Docker health status. 25 of 26
+   probeable long-running services at Stage 1; `oauth2-proxy` remains the
+   documented distroless exception, visible as `-1` rather than as absence.
+2. ✅ `cartracker_container_health` covers all of them, with `-1` distinguishing
+   unconfigured from healthy — and, since Stage 4a, `0` distinguishing
+   *stopped* from absent.
+3. ✅ Adding a service to `docker-compose.yml` without a healthcheck **fails
+   CI** (`TestServiceHealthCoverage`).
+4. ✅ A deliberately stopped non-critical container pages within 5 minutes,
+   from the container-health alert and not from a downstream DAG failure.
+   Closed by [the 2026-08-25 fire test](#the-fire-test--the-success-criterion-closed-2026-08-25):
+   `flaresolverr` stopped 02:32:36, `ct-container-unhealthy` Alerting 02:38:00,
+   no DAG failure involved. Note the limit recorded there — `flaresolverr` is
+   sensed by no DAG, so the "not from a DAG failure" half is now structural
+   rather than empirical: after Stage 4b a health sensor skips instead of
+   failing, so that path cannot page at all.
+5. ✅ The deny-list has a written reason for every entry
+   (`healthcheck-exemptions.txt`, asserted by
+   `test_every_deny_list_entry_carries_a_reason`).
 
 ## Risks
 
