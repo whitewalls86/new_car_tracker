@@ -117,6 +117,23 @@ Stage 0 is read-only in production.
    records an explicit classification policy.
 6. Keep drop reasons distinct so Promtail counters show which policy is doing
    work.
+7. Let application records carry structured fields.
+   [`shared/logging_setup.py`](../../shared/logging_setup.py) emits exactly
+   `ts`, `level`, `logger`, `msg` and formats `record.getMessage()`, so any
+   context a caller passes via `extra=` is **silently discarded**. Merge a
+   bounded set of `extra=` fields into the emitted JSON, rejecting unbounded or
+   prohibited keys at format time rather than trusting callers.
+
+   The four existing keys keep their names and values, so this is additive:
+   Promtail's `json` stages extract named keys, and nothing in the repository
+   strict-parses the four-field shape. Prove it with a fixture pair — an
+   old-shape and a new-shape record through the same stage — and change no
+   dashboard selector in this stage.
+
+   This item is here because [Plan 151](plan_151_distributed_tracing_and_runtime_topology_audit.md)
+   defers trace/log correlation to "Plan 141's stable fields," and those fields
+   cannot exist while the formatter drops them. Plan 142's coordination
+   narration is the first concrete consumer.
 
 ### Stage 2 — Make dashboards consume the contract
 
@@ -233,6 +250,8 @@ test-suite maintenance. The planned host-maintenance runbook should reuse Stage
 5. Dashboard selectors and parser behavior share fixture-backed tests.
 6. A 24-hour production soak shows zero contract violations and records a
    sustainable 90-day capacity forecast.
+7. Application records can carry bounded structured fields via `extra=`, with
+   the four existing JSON keys unchanged for records that pass none.
 
 ## Out of scope
 
