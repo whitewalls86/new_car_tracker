@@ -447,13 +447,13 @@ class TestCoordinationDrainQueries:
         row = cur.fetchone()
         assert row is not None and row["count"] >= 0
 
-    def test_airflow_task_instance_query_resolves(self, cur):
+    def test_airflow_task_instance_query_resolves(self, cur, airflow_metadata_standin):
         query = coordination_drain.task_instance_query(DEPLOY_SCOPE)
         assert query is not None, "the deploy scope must drain some task instances"
         cur.execute(*query)
         assert cur.fetchone() is not None
 
-    def test_gate_observation_query_resolves(self, cur):
+    def test_gate_observation_query_resolves(self, cur, airflow_metadata_standin):
         query = coordination_drain.gate_observation_query(DEPLOY_SCOPE, 1)
         assert query is not None, "the deploy scope must cover some admission DAGs"
         cur.execute(*query)
