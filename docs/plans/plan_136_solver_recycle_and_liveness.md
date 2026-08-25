@@ -5,8 +5,14 @@
 **Stage 0 complete and verified in production 2026-08-18. Stage 2 deployed to
 production 2026-08-20 (PR #223, merge `50bba68`); its 24-hour soak closed on
 2026-08-21 — the alert half green, the shape half inconclusive by construction.
-Stage 3 redesigned 2026-08-23; Stage 3a deployed to production and publishing;
-Stage 3b blocked until the memory baseline is read; Stage 4 not started.**
+Stage 3 redesigned 2026-08-23; Stage 3a COMPLETE — baseline read 2026-08-25,
+a monotonic +971 MiB/day climb with 15s peaks already at 86.5% of cap; Stage 3b
+CUT OVER 2026-08-25 19:50:55 to v1.4.2 on a pinned digest, 48-hour soak running,
+verdict due 2026-08-27; Stage 4 not started.**
+
+**Whether 3c/3d are built at all depends on that verdict.** This stage's own
+text says "if 3b holds, Stage 3 may be finished here" — the early reads favour
+that outcome, but twenty minutes is not the evidence that decides it.
 
 The soak proved both new rules quiet and the counters healthy, but it **did not
 answer open question 2**: a healthy window contains no solver decay to read, so
@@ -1194,6 +1200,51 @@ has been open and unmeasured since 2026-07-10 for want of exactly this metric.
 > and after ~48 hours the `trawl` series shows a *shape* — plateau or climb —
 > which is the read D7 asked for and D8 says nobody has.
 
+#### 3a baseline read — 2026-08-25 18:55 UTC — ALL THREE VERIFY CONDITIONS MET
+
+Series continuous from **2026-08-23 19:51 UTC** to the read, 46.8 hours, with no
+gap through the 02:09 deploy that recreated the exporter.
+
+| Verify condition | Result |
+|---|---|
+| Both series, three containers, plausible | `trawl` read 3,413,430,272 B against `docker stats` 3.179 GiB / 4 GiB 79.48% — exact. Limits 4 GiB / 512 MiB / 12 GiB, correct |
+| Scrape duration inside 15s | `max_over_time(scrape_duration_seconds{job="container-health"}[6h])` = **1.19s** |
+| A shape after ~48h | **A monotonic climb.** No plateau, no bend |
+
+```
+08-23 20:00   1395 MiB  34.1%
+08-24 08:00   1903 MiB  46.5%
+08-24 20:00   2392 MiB  58.4%
+08-25 08:00   2861 MiB  69.9%
+08-25 18:00   3256 MiB  79.5%
+```
+
+**+40.5 MiB/h = ~971 MiB/day.** The runbook carried ~590 MiB/day; **the real
+rate was 65% faster than the figure operators were reading.**
+
+`min_over_time[47h]` = 1370 MiB — the series never returned toward the ~727 MiB
+post-restart baseline, and there were zero kernel OOM kills. **D7 held: the
+involuntary recycle had not resumed**, and nothing was bounding the climb.
+
+**The read that mattered most was invisible at dashboard resolution.** On a
+5-minute grid the series topped out at 3275 MiB (80.0%), but `max_over_time`
+over the raw 15s samples showed the true peaks already in the wedge band:
+
+```
+hour to 14:52   3466 MiB  84.6%
+hour to 16:52   3517 MiB  85.9%
+hour to 18:52   3544 MiB  86.5%
+```
+
+The runbook's line is "past ~85%, expect a wedge within hours" — that had been
+crossed about five hours before anyone looked, and the coarse view understated
+it by ~280 MiB. `trawl` had been up 3.05 days; the 2026-08-22 wedge came at 4.
+**Read this series with `max_over_time` on the raw samples, not off a grid.**
+
+> **Bonus, as predicted:** `dbt_runner` peaked at **3.53 GiB** over the window —
+> the first peak-RSS measurement since 2026-07-10. Recorded in
+> [Plan 123](plan_123_dbt_incrementalization_and_resource_governance.md).
+
 ### 3b — Get current, on a pinned digest
 
 Move `trawl` from the 2026-07-06 build to a current one, pinned by digest
@@ -1240,6 +1291,69 @@ needs new authority in the stack. If the newer pool merely slows the climb
 rather than bounding it, the recycle counter becomes the fallback the
 [prospective section of D8](#what-the-recycle-setting-will-do-once-we-are-current--prospective)
 describes, and 3c/3d proceed as written.
+
+#### 3b cutover — 2026-08-25 19:50:55 UTC — SOAK RUNNING, VERDICT DUE 2026-08-27
+
+Production moved from the 2026-07-06 build (`org.opencontainers.image.version
+= main`, revision `d0877c5`) to **v1.4.2**, revision `7189f101`, built
+2026-08-21. Pinned as the **multi-arch index digest**
+`sha256:86b1fdf2…`, deliberately not the arm64 manifest digest, which would
+resolve on the VM and break x86 CI. Rollback pin
+`sha256:d4d7beb2…` is recorded beside it in `docker-compose.yml`.
+
+**The pin lives in `docker-compose.yml`, and production's `.env` override was
+removed.** `TRAWL_IMAGE=ghcr.io/germondai/trawl:latest` on line 32 of the VM's
+`.env` had been silently outranking the compose default, so a compose-only
+change would have pinned nothing. Backed up as `.env.bak-20260825T195008Z`.
+Moving the pin is now a commit, which was the point.
+
+Cutover in a verified quiet window — no DAG runs active, zero in-flight detail
+claims — so no in-flight request was failed and no listing entered a 12-hour
+cooldown. Memory limits survived the recreate: `Memory=4294967296
+MemorySwap=4294967296 PidsLimit=512`.
+
+**Read three ways, per this stage's own instruction:**
+
+| Read | Result |
+|---|---|
+| Memory | 82.0% → **9.25% (378 MiB)**, below even the old build's ~727 MiB post-restart baseline |
+| Pool | `restarts: 0`, `queueDepth: 0`, 199 PIDs. Zero OOM kills since cutover |
+| Solver outcomes | `cartracker_detail_fetch_total` **ok=400, 403=0, error=0** across the 20:00 batch |
+
+The solve rate is **not** degraded — the old build's last readings were 95.7%
+and 96.1%. This stage warned that "a build that clears memory by degrading the
+solve rate is not a fix"; it did not.
+
+**`/stats` gained fields it did not have before** — `stalled` and `live`
+alongside the existing keys — which is direct evidence the newer pool code is
+running, rather than merely a newer tag being present.
+
+**The shape changed, which is the actual finding:**
+
+```
+19:53–19:59   ~346–361 MiB    idle
+20:01          644.8 MiB      the 20:00 batch
+20:03          513.9 MiB      reclaimed
+20:05–20:11    ~505 MiB       flat
+```
+
+It spiked for the batch, **gave 140 MiB back, and went flat.** The old build
+never gave anything back across 46 hours. That reclaim is what rolling
+replacement and the stall detector exist to do.
+
+> **This is not yet a bounded curve, and must not be recorded as one.** Twenty
+> minutes and a single batch cannot distinguish a bounded pool from a slower
+> leak — which is the mistake D7 was written to prevent. The 48-hour soak from
+> 2026-08-25 19:50:55 decides it; the verdict belongs here on **2026-08-27**.
+> Pass condition is 3a's climb absent, `restarts` still 0, and the outcome
+> counters unchanged.
+
+`BROWSER_CONTENT_PROCESSES=2` became live for the first time on this image and
+is not separable from the upgrade in one soak, as this stage anticipated. Both
+`TRAWL_BROWSER_*` variables were deliberately **kept**: the Files table said to
+drop them as inert, but that contradicted this stage's own reasoning, and
+dropping them would have changed two things at once. The Files row was
+corrected instead.
 
 ### 3c — Restart authority: a second proxy instance, not a second verb
 
