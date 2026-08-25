@@ -614,6 +614,14 @@ count **0** in the apiserver log, scheduler heartbeat publishing (inside Plan
 
 ##### Phase B run — 2026-08-25, hold 20:14:57 → 21:14:57 — ALL CRITERIA MET
 
+> **Phase B has no observation window of its own, and never had one.** The
+> "24-hour soak from 03:47 UTC" is **Phase A's** soak — a precondition for
+> Phase B opening, struck through above and closed 2026-08-25 at ~21.5h. The
+> Linear issue tracking Phase B restated that closed precondition as an open
+> exit item, which cost real time on 2026-08-25 chasing a clock that was not
+> running. Runbook §10's window is ~90 minutes end to end; when it closes,
+> Phase B closes.
+
 The hold ran a full 60 minutes and released cleanly. **Every acceptance
 criterion passed, and the release answered the open question in a way that
 removes a fix from the plan rather than adding one.**
@@ -680,6 +688,49 @@ once per queued run. `max_active_runs=1` bounded it by construction, so the
 four-runs-re-scraping-the-same-listings failure could not occur. 16
 `price_observations` rows advanced after release; zero detail artifacts existed
 during the hold.
+
+##### The hold's signature in the trawl curve — it is not a trough
+
+Phase B was gated on Plan 136 Stage 3a precisely so the hold's effect on the
+`trawl` memory curve would have an owner rather than being read as solver
+behaviour. Measured, the effect is real but **it is not the dip that was
+anticipated**:
+
+```
+20:02    646.1 MiB     normal 15-minute detail batch spike
+20:07    504.8 MiB
+20:17    504.9 MiB   HOLD
+20:37    517.7 MiB   HOLD
+20:57    521.6 MiB   HOLD
+21:12    541.1 MiB   HOLD
+21:17    640.0 MiB     released batch
+21:27    580.9 MiB
+```
+
+**The signature is the absence of the 15-minute batch spikes, not a trough.**
+Each detail run normally drives memory to ~645 MiB and back; across the whole
+hold there is not one, just a slow drift from 505 to 541 MiB.
+
+**That drift is attributable and is not solver churn in the ambiguous sense.**
+`scrape_listings` was deliberately never in the held set, so the solver kept
+working every 30 minutes throughout. Absent spikes are the hold; the slow rise
+is listing scrapes. The two causes separate cleanly, which is what this gate
+asked for.
+
+> **Stage 3b's pinned image did more than make the dip legible — it changed
+> what the dip *is*.** On the old build, climbing +40.5 MiB/h from a 3+ GiB
+> base, an hour of paused detail scraping would have shown as a mild flattening
+> of a steep climb, and separating that from ordinary variance would have been
+> guesswork. Against a bounded ~505 MiB baseline the missing spikes are
+> unmistakable. CAR-9's blocker on Stage 3b was correct for a reason stronger
+> than the one recorded at the time.
+
+**A second mechanism, found in the same read.** `scrape_detail_pages` produced
+runs at 19:00, 19:15, 19:30, 19:45, 20:00 and 20:15 — then **nothing at 20:30,
+20:45 or 21:00** — resuming at 21:15. Only one run accumulated across the whole
+hour, because `max_active_runs=1` kept the admission-blocked 20:15 run holding
+the slot. The re-scrape storm was therefore **impossible by construction**, not
+merely avoided: there was never a queue of runs to re-scrape the same listings.
 
 > **One assumption carried, not verified.** "The endpoints are idempotent
 > janitorial SQL, so the blast radius is load rather than corruption" was
