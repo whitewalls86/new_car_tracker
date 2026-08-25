@@ -1,8 +1,8 @@
 """Plan 142 Stage 2 operator client and offline checkpoint contract."""
 
 import json
-import stat
 from argparse import Namespace
+from pathlib import Path
 
 import pytest
 
@@ -25,7 +25,9 @@ def _args(tmp_path, command, **kwargs):
 
 def test_checkpoint_is_append_only_five_field_jsonl(mocker, tmp_path):
     mocker.patch.object(host_maintenance, "_git_revision", return_value="abc123")
+    mocker.patch.object(host_maintenance, "_running_kernel", return_value="6.8.0-test")
     mocker.patch.object(host_maintenance, "_utc_now", side_effect=["t1", "t2"])
+    chmod = mocker.patch.object(Path, "chmod", autospec=True, side_effect=Path.chmod)
     path = tmp_path / "maintenance" / "history.jsonl"
 
     host_maintenance.append_checkpoint(path, "requested", "/tmp/manifest.json")
@@ -33,6 +35,7 @@ def test_checkpoint_is_append_only_five_field_jsonl(mocker, tmp_path):
 
     rows = [json.loads(line) for line in path.read_text().splitlines()]
     assert [row["phase"] for row in rows] == ["requested", "draining"]
+    assert {row["running_kernel"] for row in rows} == {"6.8.0-test"}
     assert set(rows[0]) == {
         "phase",
         "timestamp",
@@ -40,8 +43,13 @@ def test_checkpoint_is_append_only_five_field_jsonl(mocker, tmp_path):
         "running_kernel",
         "manifest_location",
     }
-    assert stat.S_IMODE(path.parent.stat().st_mode) == 0o755
-    assert stat.S_IMODE(path.stat().st_mode) == 0o644
+    # Assert the modes the client requests; only POSIX hosts store them verbatim.
+    assert chmod.call_args_list == [
+        mocker.call(path.parent, 0o755),
+        mocker.call(path, 0o644),
+        mocker.call(path.parent, 0o755),
+        mocker.call(path, 0o644),
+    ]
 
 
 @pytest.mark.parametrize("phase", ["none", "complete", "offline", "secret=value"])
@@ -51,11 +59,19 @@ def test_checkpoint_rejects_unreviewed_phases(phase, tmp_path):
 
 
 def test_checkpoint_refuses_symlink(mocker, tmp_path):
-    mocker.patch.object(host_maintenance, "_git_revision", return_value="abc123")
-    target = tmp_path / "target"
-    target.write_text("")
+    mocker.patch.object(host_maintenance, "checkpoint_record", return_value={})
     link = tmp_path / "history"
-    link.symlink_to(target)
+    link.write_text("")
+
+    # Creating a real symlink requires elevated privileges on Windows. The
+    # behavior owned here is refusing a path classified as a symlink, not
+    # pathlib's OS integration.
+    real_is_symlink = Path.is_symlink
+
+    def _is_symlink(path):
+        return path == link or real_is_symlink(path)
+
+    mocker.patch.object(Path, "is_symlink", autospec=True, side_effect=_is_symlink)
 
     with pytest.raises(host_maintenance.MaintenanceError, match="symlink"):
         host_maintenance.append_checkpoint(link, "active", "/tmp/m")

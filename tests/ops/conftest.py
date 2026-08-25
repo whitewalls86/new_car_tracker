@@ -5,7 +5,10 @@ from ops.app import app
 
 
 @pytest.fixture
-def mock_client():
+def mock_client(mock_cursor_context):
+    # The process-wide Prometheus registry includes a collector that reads
+    # coordination state at scrape time. Keep every TestClient request offline,
+    # including /metrics requests that exercise that collector.
     return TestClient(app)
 
 

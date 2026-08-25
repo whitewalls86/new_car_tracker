@@ -1,6 +1,7 @@
 """Drift tests for Plan 142 mutation boundaries and drain evidence."""
 
 import ast
+import tokenize
 from pathlib import Path
 
 import yaml
@@ -18,11 +19,17 @@ ROUTE_ROOTS = ("ops", "archiver", "processing", "scraper", "dbt_runner")
 MUTATION_METHODS = {"post", "put", "patch", "delete"}
 
 
+def _python_source(path: Path) -> str:
+    """Read source using the same encoding rules as the Python interpreter."""
+    with tokenize.open(path) as source:
+        return source.read()
+
+
 def _route_functions() -> dict[str, ast.FunctionDef | ast.AsyncFunctionDef]:
     found = {}
     for root in ROUTE_ROOTS:
         for path in (REPO_ROOT / root).rglob("*.py"):
-            tree = ast.parse(path.read_text(), filename=str(path))
+            tree = ast.parse(_python_source(path), filename=str(path))
             for node in ast.walk(tree):
                 if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     continue
@@ -82,7 +89,7 @@ def test_in_process_routes_actually_enter_the_shared_job_counter():
             continue
         function = route_functions[route]
         path = REPO_ROOT / route.split(":", 1)[0]
-        source = ast.get_source_segment(path.read_text(), function)
+        source = ast.get_source_segment(_python_source(path), function)
         assert "active_job" in source, (
             f"{route} claims in-process evidence but does not enter active_job()"
         )
@@ -97,7 +104,9 @@ def test_non_http_work_has_known_covering_sources_and_compose_targets_are_real()
         covered = frozenset().union(*(DRAIN_SOURCES[source].surfaces for source in sources))
         assert surfaces <= covered, name
 
-    services = yaml.safe_load((REPO_ROOT / "docker-compose.yml").read_text())["services"]
+    services = yaml.safe_load(
+        (REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    )["services"]
     for service in ("trawl", "snapshot-worker", "pack-worker", "dbt", "dbt_test"):
         assert service in services
 

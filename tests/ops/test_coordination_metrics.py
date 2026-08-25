@@ -13,6 +13,21 @@ def _samples(families):
     }
 
 
+def test_describe_never_queries_postgres(mocker):
+    db_cursor = mocker.patch("ops.coordination_metrics.db_cursor")
+
+    names = {family.name for family in CoordinationCollector().describe()}
+
+    assert names == {
+        "cartracker_coordination_state_readable",
+        "cartracker_coordination_gate_evidence_known",
+        "cartracker_coordination_state_info",
+        "cartracker_coordination_state_age_seconds",
+        "cartracker_coordination_gate_unobserved_runs",
+    }
+    db_cursor.assert_not_called()
+
+
 def test_active_state_exports_age_and_current_generation_gate_evidence(
     mock_cursor_context, mocker
 ):
