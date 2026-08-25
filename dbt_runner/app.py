@@ -109,33 +109,34 @@ def get_docs_status() -> Dict[str, Any]:
 @app.post("/dbt/docs/generate")
 def dbt_docs_generate() -> Dict[str, Any]:
     """Run dbt deps + dbt docs generate and return ok/stdout/stderr."""
-    deps = subprocess.run(["dbt", "deps"], capture_output=True, text=True)
-    if deps.returncode != 0:
-        logger.error("dbt deps failed (rc=%d): %s", deps.returncode, deps.stderr)
-        raise HTTPException(status_code=500, detail={
-            "ok": False,
-            "returncode": deps.returncode,
-            "stdout": _cap(deps.stdout),
-            "stderr": _cap(deps.stderr),
-        })
+    with active_job():
+        deps = subprocess.run(["dbt", "deps"], capture_output=True, text=True)
+        if deps.returncode != 0:
+            logger.error("dbt deps failed (rc=%d): %s", deps.returncode, deps.stderr)
+            raise HTTPException(status_code=500, detail={
+                "ok": False,
+                "returncode": deps.returncode,
+                "stdout": _cap(deps.stdout),
+                "stderr": _cap(deps.stderr),
+            })
 
-    proc = subprocess.run(["dbt", "docs", "generate"], capture_output=True, text=True)
-    ok = proc.returncode == 0
-    if not ok:
-        logger.error("dbt docs generate failed (rc=%d): %s", proc.returncode, proc.stderr)
-        raise HTTPException(status_code=500, detail={
-            "ok": False,
-            "returncode": proc.returncode,
+        proc = subprocess.run(["dbt", "docs", "generate"], capture_output=True, text=True)
+        ok = proc.returncode == 0
+        if not ok:
+            logger.error("dbt docs generate failed (rc=%d): %s", proc.returncode, proc.stderr)
+            raise HTTPException(status_code=500, detail={
+                "ok": False,
+                "returncode": proc.returncode,
+                "stdout": _cap(deps.stdout + proc.stdout),
+                "stderr": _cap(proc.stderr),
+            })
+
+        return {
+            "ok": True,
+            "returncode": 0,
             "stdout": _cap(deps.stdout + proc.stdout),
-            "stderr": _cap(proc.stderr),
-        })
-
-    return {
-        "ok": True,
-        "returncode": 0,
-        "stdout": _cap(deps.stdout + proc.stdout),
-        "stderr": "",
-    }
+            "stderr": "",
+        }
 
 
 @app.post("/dbt/build")

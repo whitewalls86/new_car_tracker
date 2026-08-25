@@ -260,6 +260,23 @@ class TestScrapeDetail:
         )
         mock_fetch.assert_called_once()
 
+    def test_synchronous_fetch_is_visible_to_drain_evidence(
+        self, mock_scraper_client, mocker
+    ):
+        def observed_fetch(**_kwargs):
+            assert scraper_app.job_snapshot()["active_jobs"] == 1
+            return {"error": None, "artifacts": [], "meta": {"listing_id": "x"}}
+
+        mocker.patch("scraper.app.scrape_detail_fetch", side_effect=observed_fetch)
+
+        response = mock_scraper_client.post(
+            "/scrape_detail?run_id=r1",
+            json={"listing_id": "x", "mode": "fetch"},
+        )
+
+        assert response.status_code == 200
+        assert scraper_app.job_snapshot()["active_jobs"] == 0
+
     def test_invalid_mode_returns_error(self, mock_scraper_client):
         resp = mock_scraper_client.post(
             "/scrape_detail?run_id=r1",

@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from ops.coordination_contract import HOST_TARGET, expand_targets
 from shared.db import db_cursor
+from shared.job_counter import job_snapshot
 
 router = APIRouter(prefix="/coordination")
 
@@ -179,6 +180,13 @@ def _cancel() -> str:
 @router.get("/status")
 def coordination_status() -> dict[str, Any]:
     return _status()
+
+
+@router.get("/local-drain")
+def local_drain_status() -> dict[str, Any]:
+    """Expose ops maintenance work as one named drain-evidence source."""
+    evidence = job_snapshot()
+    return {"source": "ops_jobs", "known": True, **evidence}
 
 
 @router.post("/request")

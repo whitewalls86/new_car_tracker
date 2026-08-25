@@ -150,6 +150,24 @@ def test_dbt_docs_generate_success(mock_client, mocker):
     assert response.json()["ok"] is True
 
 
+def test_dbt_docs_generation_is_visible_to_drain_evidence(mock_client, mocker):
+    calls = 0
+
+    def observed_run(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        assert app.job_snapshot()["active_jobs"] == 1
+        return mocker.MagicMock(returncode=0, stdout="ok", stderr="")
+
+    mocker.patch("subprocess.run", side_effect=observed_run)
+
+    response = mock_client.post("/dbt/docs/generate")
+
+    assert response.status_code == 200
+    assert calls == 2
+    assert app.job_snapshot()["active_jobs"] == 0
+
+
 def test_dbt_docs_generate_packages_missing(mock_client, mocker):
     mock_result = mocker.MagicMock(
         returncode=1, stdout="", stderr="error: packages not found"

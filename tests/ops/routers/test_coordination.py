@@ -36,6 +36,26 @@ def test_status_serializes_timestamps(mock_cursor_context):
     assert result["scope"] == ["processing"]
 
 
+def test_local_drain_exposes_named_ops_job_evidence(mock_client, mocker):
+    mocker.patch(
+        "ops.routers.coordination.job_snapshot",
+        return_value={
+            "active_jobs": 2,
+            "oldest_started_at": "2026-08-25T01:00:00+00:00",
+        },
+    )
+
+    response = mock_client.get("/coordination/local-drain")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "source": "ops_jobs",
+        "known": True,
+        "active_jobs": 2,
+        "oldest_started_at": "2026-08-25T01:00:00+00:00",
+    }
+
+
 @pytest.mark.parametrize(
     ("operation", "source", "target", "timestamp"),
     [

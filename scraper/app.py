@@ -21,6 +21,7 @@ from scraper.processors.scrape_detail import (
     scrape_detail_fetch,
 )
 from scraper.processors.scrape_results import scrape_results
+from shared.job_counter import active_job, job_snapshot
 from shared.logging_setup import configure_logging
 
 configure_logging()
@@ -192,19 +193,20 @@ def list_all_jobs() -> List[Dict[str, Any]]:
 
 @app.post("/scrape_detail")
 def scrape_detail(run_id: str, payload: dict = Body(...)) -> Dict[str, Any]:
-    mode = (payload or {}).get("mode") or "fetch"
+    with active_job():
+        mode = (payload or {}).get("mode") or "fetch"
 
-    if mode == "dummy":
-        return scrape_detail_dummy(run_id=run_id, payload=payload)
+        if mode == "dummy":
+            return scrape_detail_dummy(run_id=run_id, payload=payload)
 
-    if mode == "fetch":
-        return scrape_detail_fetch(run_id=run_id, payload=payload)
+        if mode == "fetch":
+            return scrape_detail_fetch(run_id=run_id, payload=payload)
 
-    return {
-        "error": f"unsupported mode: {mode}",
-        "artifacts": [],
-        "meta": {"mode": mode},
-    }
+        return {
+            "error": f"unsupported mode: {mode}",
+            "artifacts": [],
+            "meta": {"mode": mode},
+        }
 
 
 @app.post("/scrape_detail/batch")
@@ -290,16 +292,24 @@ def ready():
                 or observed_at < oldest_by_surface[surface]
             ):
                 oldest_by_surface[surface] = observed_at
+    synchronous = job_snapshot()
+    by_surface["detail_fetch"] += synchronous["active_jobs"]
+    if synchronous["oldest_started_at"] and (
+        oldest_by_surface["detail_fetch"] is None
+        or synchronous["oldest_started_at"] < oldest_by_surface["detail_fetch"]
+    ):
+        oldest_by_surface["detail_fetch"] = synchronous["oldest_started_at"]
+    active_count = len(active) + synchronous["active_jobs"]
     result = {
-        "ready": not active,
-        "active_jobs": len(active),
+        "ready": active_count == 0,
+        "active_jobs": active_count,
         "oldest_started_at": min(
             (value for value in oldest_by_surface.values() if value), default=None
         ),
         "active_by_surface": by_surface,
         "oldest_by_surface": oldest_by_surface,
     }
-    if active:
+    if active_count:
         raise HTTPException(
             status_code=503,
             detail=result,
