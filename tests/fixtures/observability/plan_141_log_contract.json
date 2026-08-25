@@ -1,0 +1,123 @@
+{
+  "captured_at": "2026-08-25T14:50:00Z",
+  "source": "Sanitized from read-only production Loki queries and bounded Docker log tails",
+  "notes": [
+    "Identifiers, addresses, users, URLs, and tokens were replaced with reserved or obvious fixture values.",
+    "Airflow ERROR and CRITICAL are shape-preserving variants of the observed production bracketed format because neither occurred in the sampled seven-day Loki window.",
+    "Traceback continuation lines are intentionally excluded; the initiating bracketed ERROR or CRITICAL record is retained."
+  ],
+  "cases": [
+    {
+      "name": "application_old_shape",
+      "service": "ops",
+      "source_type": "application_file",
+      "line": "{\"ts\": \"2026-08-25 14:30:21,335\", \"level\": \"INFO\", \"logger\": \"ops\", \"msg\": \"health check complete\"}",
+      "expected": {"retained": true, "level": "INFO", "error_panel": false}
+    },
+    {
+      "name": "application_structured_new_shape",
+      "service": "scraper",
+      "source_type": "application_file",
+      "line": "{\"ts\": \"2026-08-25 14:30:21,335\", \"level\": \"WARNING\", \"logger\": \"scraper\", \"msg\": \"detail fetch 403 listing_id=fixture-listing: blocked_cooldown updated (attempts=1)\", \"trace_id\": \"fixture-trace\", \"run_id\": \"fixture-run\"}",
+      "expected": {"retained": true, "level": "WARNING", "error_panel": true}
+    },
+    {
+      "name": "application_malformed",
+      "service": "processing",
+      "source_type": "application_file",
+      "line": "not-json production-shaped debris",
+      "expected": {"retained": false, "drop_reason": "application_file_unclassified", "error_panel": false}
+    },
+    {
+      "name": "airflow_debug",
+      "service": "airflow-dag-processor",
+      "source_type": "container_stdout",
+      "line": "2026-08-25 14:45:09.936395+00:00 [debug    ] fixture debug event [fixture.logger] loc=fixture.py:1",
+      "expected": {"retained": false, "level": "DEBUG", "drop_reason": "airflow_non_actionable_control_plane", "error_panel": false}
+    },
+    {
+      "name": "airflow_info_with_error_word",
+      "service": "airflow-scheduler",
+      "source_type": "container_stdout",
+      "line": "2026-08-25 14:45:09.936395+00:00 [info     ] # Errors 0 [fixture.stats] loc=fixture.py:2",
+      "expected": {"retained": false, "level": "INFO", "drop_reason": "airflow_non_actionable_control_plane", "error_panel": false}
+    },
+    {
+      "name": "airflow_warning",
+      "service": "airflow-scheduler",
+      "source_type": "container_stdout",
+      "line": "2026-08-25 14:01:37.387579+00:00 [warning  ] fixture deprecation warning [py.warnings] category=UserWarning",
+      "expected": {"retained": true, "level": "WARNING", "error_panel": true}
+    },
+    {
+      "name": "airflow_error",
+      "service": "airflow-apiserver",
+      "source_type": "container_stdout",
+      "line": "2026-08-25T14:01:37.387579Z [error    ] fixture request failed [airflow.api] loc=fixture.py:3",
+      "expected": {"retained": true, "level": "ERROR", "error_panel": true}
+    },
+    {
+      "name": "airflow_critical",
+      "service": "airflow-dag-processor",
+      "source_type": "container_stdout",
+      "line": "2026-08-25T14:01:37.387579Z [critical ] fixture processor stopped [airflow.processor] loc=fixture.py:4",
+      "expected": {"retained": true, "level": "CRITICAL", "error_panel": true}
+    },
+    {
+      "name": "airflow_traceback_continuation",
+      "service": "airflow-apiserver",
+      "source_type": "container_stdout",
+      "line": "Traceback (most recent call last):",
+      "expected": {"retained": false, "drop_reason": "airflow_unclassified_control_plane", "error_panel": false}
+    },
+    {
+      "name": "airflow_multiline_table_continuation",
+      "service": "airflow-scheduler",
+      "source_type": "container_stdout",
+      "line": "| dag_id | file_path | duration |",
+      "expected": {"retained": false, "drop_reason": "airflow_unclassified_control_plane", "error_panel": false}
+    },
+    {
+      "name": "oauth_successful_auth_subrequest",
+      "service": "oauth2-proxy",
+      "source_type": "container_stdout",
+      "line": "192.0.2.10 - fixture-request - [REDACTED] [2026/08/25 14:09:46] cartracker.info GET - \"/oauth2/auth?requestId=fixture\" HTTP/1.1 \"fixture-agent\" 202 0 0.000",
+      "expected": {"retained": false, "level": "INFO", "status": "202", "drop_reason": "oauth2_successful_auth_subrequest", "error_panel": false}
+    },
+    {
+      "name": "oauth_auth_failure",
+      "service": "oauth2-proxy",
+      "source_type": "container_stdout",
+      "line": "192.0.2.10 - fixture-request - [REDACTED] [2026/08/25 14:09:46] cartracker.info GET - \"/oauth2/auth\" HTTP/1.1 \"fixture-agent\" 401 13 0.001",
+      "expected": {"retained": true, "level": "WARNING", "status": "401", "error_panel": true}
+    },
+    {
+      "name": "oauth_upstream_failure",
+      "service": "oauth2-proxy",
+      "source_type": "container_stdout",
+      "line": "192.0.2.10 - fixture-request - [REDACTED] [2026/08/25 14:09:46] cartracker.info GET - \"/oauth2/callback\" HTTP/1.1 \"fixture-agent\" 502 21 0.010",
+      "expected": {"retained": true, "level": "ERROR", "status": "502", "error_panel": true}
+    },
+    {
+      "name": "oauth_interactive_redirect",
+      "service": "oauth2-proxy",
+      "source_type": "container_stdout",
+      "line": "192.0.2.10 - fixture-request - [REDACTED] [2026/08/25 14:09:46] cartracker.info GET - \"/oauth2/start\" HTTP/1.1 \"fixture-agent\" 302 0 0.001",
+      "expected": {"retained": true, "level": "INFO", "status": "302", "error_panel": false}
+    },
+    {
+      "name": "oauth_lifecycle_info",
+      "service": "oauth2-proxy",
+      "source_type": "container_stdout",
+      "line": "[2026/08/25 14:02:34] [director.go:85] Invalid redirect provided in fixture parameter",
+      "expected": {"retained": true, "level": "INFO", "error_panel": false}
+    },
+    {
+      "name": "oauth_lifecycle_warning",
+      "service": "oauth2-proxy",
+      "source_type": "container_stdout",
+      "line": "[2026/08/25 14:02:34] [cookies.go:31] Warning: request host did not match configured cookie domains",
+      "expected": {"retained": true, "level": "WARNING", "error_panel": true}
+    }
+  ]
+}

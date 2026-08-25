@@ -1,0 +1,29 @@
+version: 2
+
+models:
+  - name: mart_cooldown_event_funnel
+    description: >
+      Hourly counts of detail scrapes that entered each exponential-cooldown
+      attempt bucket. Counts blocked and incremented transitions from the
+      durable cooldown event Parquet stream and excludes cleared events.
+    config:
+      tags: ["hourly_core"]
+    columns:
+      - name: event_hour
+        data_tests:
+          - not_null
+      - name: attempt_bucket
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['1', '2', '3-4', '5-10', '11+']
+      - name: bucket_order
+        data_tests:
+          - not_null
+      - name: scrape_count
+        data_tests:
+          - not_null
+      - name: unique_listing_count
+        data_tests:
+          - not_null
