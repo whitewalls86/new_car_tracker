@@ -18,11 +18,15 @@ SURFACES = frozenset(
 )
 
 HOST_TARGET = "host"
+SERVICE_LIFECYCLES = frozenset(
+    {"continuous", "profile_continuous", "initialization", "one_shot"}
+)
 
 
 @dataclass(frozen=True)
 class ServiceContract:
     surfaces: frozenset[str]
+    lifecycle: str = "continuous"
     compose_dependencies: frozenset[str] = frozenset()
     followers: frozenset[str] = frozenset()
     no_pause_reason: str = ""
@@ -30,12 +34,14 @@ class ServiceContract:
 
 def _c(
     *surfaces: str,
+    lifecycle: str = "continuous",
     dependencies: tuple[str, ...] = (),
     followers: tuple[str, ...] = (),
     no_pause_reason: str = "",
 ) -> ServiceContract:
     return ServiceContract(
         frozenset(surfaces),
+        lifecycle,
         frozenset(dependencies),
         frozenset(followers),
         no_pause_reason,
@@ -55,7 +61,7 @@ SERVICE_CONTRACTS = {
         "analytics",
         "airflow_control",
     ),
-    "flyway": _c("database", dependencies=("postgres",)),
+    "flyway": _c("database", lifecycle="initialization", dependencies=("postgres",)),
     "ops": _c(
         "detail_fetch",
         "listing_fetch",
@@ -65,16 +71,20 @@ SERVICE_CONTRACTS = {
         dependencies=("flyway",),
     ),
     "flaresolverr": _c("detail_fetch"),
-    "redis-trawl": _c("detail_fetch"),
-    "trawl": _c("detail_fetch", dependencies=("redis-trawl",)),
+    "redis-trawl": _c("detail_fetch", lifecycle="profile_continuous"),
+    "trawl": _c(
+        "detail_fetch", lifecycle="profile_continuous", dependencies=("redis-trawl",)
+    ),
     "scraper": _c("detail_fetch", "listing_fetch", dependencies=("flaresolverr", "minio")),
-    "dbt": _c("analytics"),
-    "dbt_test": _c("analytics"),
+    "dbt": _c("analytics", lifecycle="one_shot"),
+    "dbt_test": _c("analytics", lifecycle="one_shot"),
     "dbt_runner": _c("analytics", dependencies=("minio",)),
     "minio": _c("detail_fetch", "listing_fetch", "processing", "archive", "analytics"),
     "archiver": _c("archive", "analytics", dependencies=("flyway", "minio")),
     "pack-worker": _c("archive", dependencies=("flyway", "minio")),
-    "snapshot-worker": _c("analytics", dependencies=("flyway", "minio")),
+    "snapshot-worker": _c(
+        "analytics", lifecycle="one_shot", dependencies=("flyway", "minio")
+    ),
     "dashboard": _c(
         dependencies=("flyway",),
         no_pause_reason=(
@@ -90,7 +100,12 @@ SERVICE_CONTRACTS = {
         dependencies=("airflow-apiserver", "dashboard", "grafana", "oauth2-proxy", "ops"),
     ),
     "processing": _c("processing", dependencies=("flyway", "minio")),
-    "airflow-init": _c("database", "airflow_control", dependencies=("flyway", "postgres")),
+    "airflow-init": _c(
+        "database",
+        "airflow_control",
+        lifecycle="initialization",
+        dependencies=("flyway", "postgres"),
+    ),
     "airflow-apiserver": _c("airflow_control", dependencies=("airflow-init", "postgres")),
     "airflow-scheduler": _c("airflow_control", dependencies=("airflow-init", "postgres")),
     "airflow-dag-processor": _c("airflow_control", dependencies=("airflow-init", "postgres")),

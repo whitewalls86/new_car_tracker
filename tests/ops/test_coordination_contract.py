@@ -5,7 +5,12 @@ from pathlib import Path
 import pytest
 import yaml
 
-from ops.coordination_contract import SERVICE_CONTRACTS, SURFACES, expand_targets
+from ops.coordination_contract import (
+    SERVICE_CONTRACTS,
+    SERVICE_LIFECYCLES,
+    SURFACES,
+    expand_targets,
+)
 
 REPO_ROOT = Path(__file__).parents[2]
 
@@ -47,6 +52,7 @@ def test_compose_dependency_edges_cannot_change_without_contract_review():
 def test_every_surface_is_known_and_empty_contracts_have_a_reason():
     for service, contract in SERVICE_CONTRACTS.items():
         assert contract.surfaces <= SURFACES, service
+        assert contract.lifecycle in SERVICE_LIFECYCLES, service
         if not contract.surfaces:
             assert len(contract.no_pause_reason) >= 40, (
                 f"{service} claims no production pause without a reviewable reason"
@@ -55,6 +61,15 @@ def test_every_surface_is_known_and_empty_contracts_have_a_reason():
             assert not contract.no_pause_reason, (
                 f"{service} both affects surfaces and claims no pause"
             )
+
+
+def test_service_lifecycle_describes_current_compose_behavior_not_future_intent():
+    assert SERVICE_CONTRACTS["pack-worker"].lifecycle == "continuous"
+    assert SERVICE_CONTRACTS["snapshot-worker"].lifecycle == "one_shot"
+    assert SERVICE_CONTRACTS["trawl"].lifecycle == "profile_continuous"
+    assert SERVICE_CONTRACTS["redis-trawl"].lifecycle == "profile_continuous"
+    assert SERVICE_CONTRACTS["flyway"].lifecycle == "initialization"
+    assert SERVICE_CONTRACTS["airflow-init"].lifecycle == "initialization"
 
 
 def test_cached_peer_registry_and_contract_name_the_same_targets():
