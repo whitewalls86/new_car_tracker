@@ -612,18 +612,82 @@ count **0** in the apiserver log, scheduler heartbeat publishing (inside Plan
 > may be editing. Deleted once verification passed. If you keep a local copy,
 > confirm the ignore rule covers every backup name you create, not just `.env`.
 
-##### What Phase B still owes
+##### Phase B run — 2026-08-25, hold 20:14:57 → 21:14:57 — ALL CRITERIA MET
 
-Phase A measures nothing; the hold has not been exercised. Outstanding:
-the queued-backlog behaviour on release, whether `orphan_checker` — which has
-**no `max_active_runs`**, so it defaults to 16 — fires a thundering herd of up
-to 12 queued runs at the three `ops` endpoints, and confirmation that the
-re-scrape storm did not happen (detail artifacts during the hold ≈ 0,
-`last_detail_scraped_at` advancing exactly once after release, not four times).
-The endpoints are idempotent janitorial SQL, so the expected blast radius is
-load rather than corruption, and measuring it *is* the acceptance criterion
-"resuming does not unleash an unbounded duplicate backlog". Pre-empting it with
-`max_active_runs=1` would measure a system already fixed.
+The hold ran a full 60 minutes and released cleanly. **Every acceptance
+criterion passed, and the release answered the open question in a way that
+removes a fix from the plan rather than adding one.**
+
+**The hold.** Pool set to 0 slots at 20:14:57. Pooled tasks queued rather than
+running, reaching 33 `orphan_checker` tasks and 11 live DAG runs by T+50m.
+Throughout: `default_pool` completed 42 tasks normally and `scrape_listings`
+succeeded, which is what proves the gate is **scoped rather than global**.
+
+| Criterion | Result |
+|---|---|
+| No new mutating task starts | **0 detail artifacts** produced during the hold |
+| No task fails merely because time passed | **0 failures** across the whole window |
+| Unrelated DAGs unaffected | `default_pool` 42 success; `scrape_listings` success |
+
+**The release.** Pool restored to 16 at 21:14:57.
+
+| Measure | Result |
+|---|---|
+| Drain to zero | **74.5s** — first task 21:15:03.9, last 21:16:18.4 |
+| Tasks released | 44 |
+| `orphan_checker` | **39 tasks in 10.8s**, avg 1.7s each |
+| `results_processing` / `scrape_detail_pages` | 3 tasks avg 2.2s / 2 tasks avg 1.2s |
+| **Peak concurrency** | **16** |
+| Failures | **0** |
+
+##### The thundering herd is bounded by the pool, not by `max_active_runs`
+
+**Peak concurrency was exactly 16 — the `maintenance` pool's slot count.**
+`orphan_checker` held 11+ live DAG runs and 39 queued tasks and still could not
+exceed 16 concurrent tasks, because a pool caps *tasks* regardless of how many
+runs exist.
+
+So the fix this section previously anticipated is **not required**. The earlier
+text said "if it misbehaves, `max_active_runs=1` is the fix Stage 1 ships" — it
+did not misbehave, and now we know why. **Adding `max_active_runs=1` to
+`orphan_checker` on this evidence would constrain recovery throughput for no
+safety gain**, and anyone proposing it later should be shown this measurement
+first.
+
+That is the argument for measuring before fixing, made concrete: pre-empting
+would have shipped a constraint *and* left the pool's real role uncredited.
+The honest qualifier is that the **dose** was larger than the question needed —
+a 15-minute hold accumulates a quarter of the backlog and proves the same
+mechanism. The hour came from sizing the window as a host-maintenance
+rehearsal, not from what this measurement required.
+
+##### The indefinite gate proved itself on a real run
+
+```
+scrape_detail_pages  scheduled__2026-08-25T20:15:00
+  started 20:15:01  →  ended 21:16:10   (61 minutes, state=success)
+```
+
+**A DAG run sat admission-blocked for 61 minutes and then completed
+successfully.** Under the 600-second global deploy sensor this replaces, it
+would have failed at ten minutes — twice in August, per the evidence that
+motivated Stage 1 item 4. This is that item demonstrated end to end rather than
+argued.
+
+**No re-scrape storm.** `scrape_detail_pages` fired exactly twice — the held
+20:15 run and the next scheduled 21:15 run — each advancing state once, not
+once per queued run. `max_active_runs=1` bounded it by construction, so the
+four-runs-re-scraping-the-same-listings failure could not occur. 16
+`price_observations` rows advanced after release; zero detail artifacts existed
+during the hold.
+
+> **One assumption carried, not verified.** "The endpoints are idempotent
+> janitorial SQL, so the blast radius is load rather than corruption" was
+> inherited from the runbook and relied on during the window. It was not
+> independently checked, and the clean result does not confirm it — a herd
+> capped at 16 may simply never have tested it. Anyone widening the pool or
+> removing the cap should verify idempotency first rather than reading this run
+> as evidence of it.
 
 #### Items 6 and 7 built, 2026-08-24 — and only one of them is a commit
 
