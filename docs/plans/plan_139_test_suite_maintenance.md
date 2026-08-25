@@ -456,6 +456,47 @@ pip-install dbt locally to iterate on it; extend
    path for a new dependency; it may not be worth it, and "we measured it and
    declined" is an acceptable outcome to record.
 
+### Stage E — Advisory CI impact selection before any new fast path (S, research-gated)
+
+[Plan 142](plan_142_planned_host_maintenance.md) introduces a checked-in
+service-to-operational-surface contract so a targeted deploy can gate and drain
+only affected production work. That graph is useful evidence for CI, but it is
+not itself a CI selector: production asks which live work depends on a service,
+while CI asks which tests, images and integration environments can detect a
+changed path. Shared libraries, migrations, root configuration and test-only
+code make those graphs overlap without making them identical.
+
+Build a separate path-to-CI-impact graph that references Plan 142's stable
+service/surface names rather than adding CI policy to the production registry.
+Its first release is **advisory only**:
+
+1. Classify each non-doc changed path into affected components, test groups,
+   images and integration fixtures. Unknown paths, deletes/renames, root config,
+   migrations, Compose, workflow or classifier changes select full CI.
+2. Compute reverse dependencies and the union for mixed changes; never let the
+   last matching rule win.
+3. On every ordinary full-CI PR, record what the advisory selector would have
+   run and compare that set with every actual failing job/test group.
+4. Treat any failure outside the predicted set as a classifier miss. A miss is
+   evidence against promotion, not a one-off exception to allowlist away.
+5. Keep Ruff, registry/classifier integrity tests and the stable required-check
+   aggregator universal. Keep full CI on `master` or a schedule even if PR
+   selection is later approved.
+6. Decide separately for each expensive class — Docker images and dbt/
+   integration slices first. The unit suite's test time is small enough that
+   selection may cost more complexity than it saves.
+
+Promotion from advisory output to job skipping requires a written observation
+window with zero unexplained misses and a measured wall-clock benefit larger
+than normal runner variance. Classification failure always runs full CI. This
+inherits Plan 148's safe asymmetry: a false negative costs time; a false
+positive can suppress evidence and is unacceptable.
+
+The docs-only fast path remains separate and unchanged. Its proof is stronger:
+every changed path is under `docs/`, and any mixed or ambiguous diff already
+falls back to full CI. Stage E must not weaken that simple boundary or claim its
+production registry makes application selection equally certain.
+
 ## Success criteria
 
 1. Every PR shows a coverage number in the CI log, and this doc records the
@@ -471,6 +512,9 @@ pip-install dbt locally to iterate on it; extend
 6. The replacement analytics metric producer has tests — **written under Plan
    143, asserting the NaN and freshness conventions** — and this plan records
    that the original 25% gap was closed with the redesign.
+7. Any CI impact selector remains advisory until its predicted set has been
+   compared with full CI over a written observation window with zero
+   unexplained misses; unknown classification still selects full CI.
 
 ## Risks
 
@@ -510,6 +554,10 @@ pip-install dbt locally to iterate on it; extend
   same 130 root-level tests this plan counted. Plan 139 touches `ci.yml`; Plan 140
   touches `tests/test_observability_config.py`. They are adjacent, not overlapping.
 - **Anything that makes the local suite slower to make CI tidier.**
+- **Using Plan 142's operational-surface registry directly as a CI skip
+  policy.** Plan 142 supplies stable identifiers and production dependency
+  evidence; this plan owns the distinct path/test/image graph and its promotion
+  evidence.
 
 ## Where this belongs in the build order
 

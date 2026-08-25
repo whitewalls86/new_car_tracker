@@ -202,6 +202,13 @@ A rescheduling gate blocks only when those declarations intersect the active
 scope. It has no short timeout: stale coordination alerts independently, so a
 planned pause never manufactures a failed DAG merely because time passed.
 
+The service and surface identifiers are stable enough for other checked-in
+contracts to reference. In particular, [Plan 139](plan_139_test_suite_maintenance.md)
+may map changed paths and CI test/image groups onto them. CI selection remains
+a separate graph with separate fail-closed evidence: this production registry
+must not acquire path globs, test names, or skip policy, and it never proves by
+itself that a CI job is safe to omit.
+
 ## Coordination state machine
 
 The exact schema is decided in Stage 1, but the externally visible states are:
