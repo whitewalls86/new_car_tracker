@@ -42,8 +42,9 @@ def test_malformed_input_fails_closed(data):
 def test_command_line_contract():
     completed = subprocess.run(
         [sys.executable, "scripts/ci_change_scope.py"],
-        input=b"docs/PLANS.md\0docs/plans/plan_148.md\0",
+        input="docs/PLANS.md\0docs/plans/plan_148.md\0",
         capture_output=True,
         check=True,
+        text=True,
     )
-    assert completed.stdout == b"true\n"
+    assert completed.stdout.splitlines() == ["true"]

@@ -39,6 +39,10 @@ def _git_revision() -> str:
         raise MaintenanceError("unable to read the deployed Git revision") from exc
 
 
+def _running_kernel() -> str:
+    return os.uname().release
+
+
 def checkpoint_record(phase: str, manifest: str) -> dict[str, str]:
     """Return the deliberately small, non-secret offline breadcrumb."""
     if phase not in CHECKPOINT_PHASES:
@@ -49,7 +53,7 @@ def checkpoint_record(phase: str, manifest: str) -> dict[str, str]:
         "phase": phase,
         "timestamp": _utc_now(),
         "git_revision": _git_revision(),
-        "running_kernel": os.uname().release,
+        "running_kernel": _running_kernel(),
         "manifest_location": manifest,
     }
 
