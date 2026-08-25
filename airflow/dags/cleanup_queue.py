@@ -22,7 +22,7 @@ with DAG(
     catchup=False,
     tags=["maintenance"],
 ):
-    ready = deploy_intent_sensor()
+    ready = deploy_intent_sensor("cleanup_queue")
     archiver_up = http_health_sensor("archiver", ARCHIVER_URL)
     cleanup = PythonOperator(task_id="cleanup_queue", python_callable=_run_cleanup)
 

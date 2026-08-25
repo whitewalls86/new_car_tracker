@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 import requests
 from airflow.exceptions import AirflowFailException
 from airflow.providers.standard.operators.python import PythonOperator
-from sensors import JsonPostError, http_health_sensor, post_json
+from sensors import JsonPostError, deploy_intent_sensor, http_health_sensor, post_json
 
 from airflow import DAG
 
@@ -83,6 +83,7 @@ with DAG(
     catchup=False,
     tags=["dbt"],
 ):
+    ready = deploy_intent_sensor("dbt_build")
     dbt_runner_up = http_health_sensor("dbt_runner", DBT_RUNNER_URL)
 
     build = PythonOperator(
@@ -98,4 +99,4 @@ with DAG(
         trigger_rule="one_failed",
     )
 
-    dbt_runner_up >> build >> notify
+    ready >> dbt_runner_up >> build >> notify

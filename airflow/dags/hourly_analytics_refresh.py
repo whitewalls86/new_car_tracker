@@ -109,7 +109,7 @@ with DAG(
     catchup=False,
     tags=["analytics", "dbt"],
 ):
-    ready = deploy_intent_sensor()
+    ready = deploy_intent_sensor("hourly_analytics_refresh")
     archiver_up = http_health_sensor("archiver", ARCHIVER_URL)
     dbt_runner_up = http_health_sensor("dbt_runner", DBT_RUNNER_URL)
 

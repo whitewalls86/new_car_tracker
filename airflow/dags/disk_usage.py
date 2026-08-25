@@ -86,7 +86,7 @@ try:
         max_active_runs=1,
         tags=["maintenance"],
     ) as dag:
-        ready = deploy_intent_sensor()
+        ready = deploy_intent_sensor("disk_usage")
         pack_worker_up = http_health_sensor("pack_worker", PACK_WORKER_URL)
         measure = PythonOperator(
             task_id="disk_usage",

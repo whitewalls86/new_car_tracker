@@ -48,7 +48,7 @@ try:
         max_active_runs=1,
         tags=["processing", "plan71"],
     ):
-        ready = deploy_intent_sensor()
+        ready = deploy_intent_sensor("results_processing")
         processing_up = http_health_sensor("processing", PROCESSING_URL)
         process = PythonOperator(
             task_id="process_batch",

@@ -62,6 +62,7 @@ def prune_task_logs(
 
 def _build_dag():
     from airflow.providers.standard.operators.python import PythonOperator
+    from sensors import deploy_intent_sensor
 
     from airflow import DAG
 
@@ -74,7 +75,11 @@ def _build_dag():
         max_active_runs=1,
         tags=["maintenance", "storage"],
     ) as dag:
-        PythonOperator(task_id="prune_task_logs", python_callable=prune_task_logs)
+        ready = deploy_intent_sensor("prune_task_logs")
+        prune = PythonOperator(
+            task_id="prune_task_logs", python_callable=prune_task_logs
+        )
+        ready >> prune
     return dag
 
 

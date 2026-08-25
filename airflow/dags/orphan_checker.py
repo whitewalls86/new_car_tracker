@@ -35,7 +35,7 @@ with DAG(
     catchup=False,
     tags=["maintenance"],
 ):
-    ready = deploy_intent_sensor()
+    ready = deploy_intent_sensor("orphan_checker")
     ops_up = http_health_sensor("ops", OPS_URL)
 
     expire_detail_claims = PythonOperator(
