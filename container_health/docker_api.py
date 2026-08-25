@@ -45,14 +45,14 @@ class DockerApi:
             return json.loads(response.read())
 
     def inspect_project_containers(self, project: str) -> List[Dict[str, Any]]:
-        """Inspect every non-transient container of one compose project.
+        """Inspect every live container of one Compose project.
 
         `status` is spelled out rather than left to the endpoint's default so
         that restarting and paused containers are enumerated too -- a crash
         loop should read as unhealthy, not vanish from the metric. Exited
-        containers are deliberately absent: `flyway` and `airflow-init` are
-        one-shots whose contract is `service_completed_successfully`, and a
-        health status on a container that is supposed to be gone is noise.
+        containers are deliberately absent: completed one-shots are not active
+        work. Live one-offs remain in the response for Plan 142 drain evidence;
+        the health and memory collectors exclude them by label.
         """
         filters = json.dumps({
             "status": ["running", "restarting", "paused"],

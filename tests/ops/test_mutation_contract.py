@@ -117,3 +117,9 @@ def test_required_sources_follow_only_mutation_contracts_in_scope():
     assert "airflow_task_instances" in processing
     assert "scraper_detail_jobs" not in processing
     assert "archiver_jobs" not in processing
+
+
+def test_synchronous_trawl_work_is_nested_in_scraper_evidence_not_redis_state():
+    assert "trawl_jobs" not in DRAIN_SOURCES
+    assert "trawl_worker" not in NON_HTTP_WORK
+    assert "scraper_detail_jobs" in required_drain_sources({"detail_fetch"})

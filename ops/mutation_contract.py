@@ -95,7 +95,6 @@ DRAIN_SOURCES = {
     "scraper_listing_jobs": _source(
         "scraper async registry partitioned by listing_fetch", "listing_fetch"
     ),
-    "trawl_jobs": _source("Redis queue plus active Trawl worker inspection", "detail_fetch"),
 }
 
 
@@ -251,10 +250,6 @@ NON_HTTP_WORK = {
         "required_sources": frozenset(
             {"airflow_gate_observations", "airflow_task_instances"}
         ),
-    },
-    "trawl_worker": {
-        "surfaces": frozenset({"detail_fetch"}),
-        "required_sources": frozenset({"trawl_jobs"}),
     },
     "snapshot-worker": {
         "surfaces": frozenset({"analytics"}),

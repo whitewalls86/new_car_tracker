@@ -12,7 +12,7 @@ from typing import Any, Dict
 from fastapi import FastAPI, Response
 from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, generate_latest
 
-from container_health.collector import ContainerHealthCollector
+from container_health.collector import ContainerHealthCollector, oneoff_processes
 from container_health.docker_api import DockerApi
 from container_health.expected import EXPECTED_SERVICES
 
@@ -32,6 +32,7 @@ REGISTRY.register(
 )
 
 app = FastAPI()
+DOCKER_API = DockerApi(DOCKER_API_URL)
 
 
 @app.get("/health")
@@ -49,3 +50,12 @@ def health() -> Dict[str, Any]:
 @app.get("/metrics")
 def metrics() -> Response:
     return Response(generate_latest(REGISTRY), media_type=CONTENT_TYPE_LATEST)
+
+
+@app.get("/oneoff-processes")
+def active_oneoff_processes() -> Dict[str, Any]:
+    """Expose read-only live execution evidence for Plan 142 drain aggregation."""
+    processes = oneoff_processes(
+        DOCKER_API.inspect_project_containers(COMPOSE_PROJECT), COMPOSE_PROJECT
+    )
+    return {"known": True, "active_processes": len(processes), "processes": processes}

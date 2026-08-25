@@ -261,6 +261,13 @@ Holding processing must never make a durable pending artifact block forever.
 An unreadable count, missing gate, or unreachable external job registry is
 `unknown`, never zero.
 
+Trawl does not contribute a separate Redis drain count. Its Redis state is a
+session cache, not admitted job backlog, and its scrape request is synchronous
+inside the scraper detail job already counted above. Treating cached sessions
+as running work would manufacture the same pending-versus-active error this
+plan removes. Compose one-shot work is counted separately from live container
+state through the existing read-only container-health boundary.
+
 During `draining`, new in-scope DAG work reaches a coordination-aware
 rescheduling gate that does not fail after ten minutes. Stage 0's pool remains
 useful evidence for a whole-fleet hold and Plan 136's exclusive recycle, but a

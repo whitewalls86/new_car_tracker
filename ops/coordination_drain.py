@@ -7,6 +7,7 @@ from typing import Any, Callable
 import requests
 
 from airflow.dags.coordination_contract import ADMISSION_SURFACES, DRAIN_TASKS
+from ops.coordination_contract import SERVICE_CONTRACTS
 from ops.mutation_contract import DRAIN_SOURCES, required_drain_sources
 from shared.db import db_cursor
 from shared.job_counter import job_snapshot
@@ -21,6 +22,9 @@ ACTIVE_AIRFLOW_STATES = (
     "up_for_retry",
 )
 HTTP_TIMEOUT_SECONDS = 3
+CONTAINER_HEALTH_URL = os.environ.get(
+    "CONTAINER_HEALTH_URL", "http://container-health:9110"
+)
 
 SERVICE_EVIDENCE = {
     "archiver_jobs": ("ARCHIVER_URL", "http://archiver:8001", None),
@@ -170,6 +174,34 @@ def _ops_jobs() -> dict[str, Any]:
     return _known("ops_jobs", evidence["active_jobs"], evidence["oldest_started_at"])
 
 
+def _container_processes(scope: frozenset[str]) -> dict[str, Any]:
+    """Count live Compose one-offs whose declared surfaces intersect scope."""
+    try:
+        response = requests.get(
+            f"{CONTAINER_HEALTH_URL.rstrip('/')}/oneoff-processes",
+            timeout=HTTP_TIMEOUT_SECONDS,
+        )
+        payload = response.json()
+        processes = payload["processes"]
+        if payload.get("known") is not True or not isinstance(processes, list):
+            raise ValueError("invalid one-off evidence")
+        applicable = []
+        for process in processes:
+            service = process["service"]
+            contract = SERVICE_CONTRACTS.get(service)
+            if contract is None:
+                raise ValueError("unknown one-off service")
+            if contract.surfaces & scope:
+                applicable.append(process)
+        oldest = min(
+            (process.get("started_at") for process in applicable if process.get("started_at")),
+            default=None,
+        )
+        return _known("container_processes", len(applicable), oldest)
+    except (requests.RequestException, KeyError, TypeError, ValueError):
+        return _unknown("container_processes", "container evidence unavailable or malformed")
+
+
 def _read_source(
     source: str, scope: frozenset[str], generation: int | None = None
 ) -> dict[str, Any]:
@@ -182,6 +214,8 @@ def _read_source(
         return _airflow_task_instances(scope)
     if source == "airflow_gate_observations":
         return _airflow_gate_observations(scope, generation)
+    if source == "container_processes":
+        return _container_processes(scope)
     if source in SERVICE_EVIDENCE:
         return _service_jobs(source)
     if source in readers:

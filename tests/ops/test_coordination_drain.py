@@ -72,6 +72,47 @@ def test_unreachable_service_is_unknown_not_zero(mocker):
     assert result["count"] is None
 
 
+def test_container_evidence_filters_live_oneoffs_by_declared_scope(mocker):
+    response = mocker.Mock()
+    response.json.return_value = {
+        "known": True,
+        "active_processes": 2,
+        "processes": [
+            {
+                "service": "snapshot-worker",
+                "container_id": "snapshot",
+                "started_at": "2026-08-25T01:00:00Z",
+            },
+            {
+                "service": "dbt",
+                "container_id": "dbt",
+                "started_at": "2026-08-25T02:00:00Z",
+            },
+        ],
+    }
+    mocker.patch("ops.coordination_drain.requests.get", return_value=response)
+
+    analytics = coordination_drain._container_processes(frozenset({"analytics"}))
+    archive = coordination_drain._container_processes(frozenset({"archive"}))
+
+    assert analytics["count"] == 2
+    assert analytics["oldest_started_at"] == "2026-08-25T01:00:00Z"
+    assert archive["count"] == 0
+
+
+def test_unknown_oneoff_service_fails_closed(mocker):
+    response = mocker.Mock()
+    response.json.return_value = {
+        "known": True,
+        "processes": [{"service": "future-worker", "container_id": "new"}],
+    }
+    mocker.patch("ops.coordination_drain.requests.get", return_value=response)
+
+    result = coordination_drain._container_processes(frozenset({"analytics"}))
+
+    assert result["status"] == "unknown"
+
+
 def test_database_count_serializes_oldest_timestamp(mock_cursor_context):
     _, cursor = mock_cursor_context
     cursor.fetchone.return_value = (2, datetime(2026, 8, 25, 1, tzinfo=timezone.utc))
