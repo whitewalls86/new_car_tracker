@@ -9,10 +9,11 @@ not from the PR merge -- and is due to accept 2026-08-26 ~20:00 UTC.**
 **One acceptance instrument is known-unreliable.**
 `scripts/verify_promtail_contract.py` produced a false "Promtail dropped it"
 in CI on 2026-08-25 and passed on re-run of the identical commit; see Stage 4
-below. Treat a contract failure during the soak as unproven until re-run. Written 2026-08-18 while closing Plan 135 Stage
-5. Production is stable and the storage bounds are live; this plan is a
-correctness and usability follow-up, not an incident response and not a reason
-to reopen Plan 135.
+below. Treat a contract failure during the soak as unproven until re-run.
+
+Written 2026-08-18 while closing Plan 135 Stage 5. Production is stable and the
+storage bounds are live; this plan is a correctness and usability follow-up,
+not an incident response and not a reason to reopen Plan 135.
 
 Priority **85 (high)**. Effort **S plus a 24-hour production soak**.
 
