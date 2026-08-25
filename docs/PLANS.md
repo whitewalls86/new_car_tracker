@@ -34,13 +34,28 @@ when a row is inserted; plan numbers do not.
 
 ---
 
-## Current State (as of 2026-08-21)
+## Current State (as of 2026-08-25)
 
 Site is live at https://cartracker.info. All major pre-lakehouse foundations are
 complete: auth, data migration, CI/CD, integration testing, MinIO artifact
 store, processing service, Airflow migration, Grafana, dashboard restructure,
 full decommission, storage normalization, and adaptive-refresh feature
 foundation.
+
+Plan 141 is the highest-priority buildable work. Plan 142 Stage 1 and its first
+Stage 2 operator-client slice are built on draft PR #243 with green CI, but
+further Plan 142 work waits for Plan 136 Stage 3a's memory baseline read at
+approximately 19:40 UTC on 2026-08-25.
+
+Post-baseline deployment queue:
+
+1. Read and record Plan 136 Stage 3a's baseline.
+2. Run and record Plan 142 Stage 0 Phase B.
+3. Merge and deploy PR #243.
+4. Pin and deploy the current `trawl` digest.
+5. Start Plan 136 Stage 3b's 48-hour soak.
+6. Resume non-production Plan 142 Stage 2 work without introducing production
+   holds during that soak.
 
 Airflow owns scraping and maintenance. n8n is fully removed. Postgres owns hot
 operational state. MinIO stores bronze HTML and analytical history. dbt
@@ -95,9 +110,9 @@ it is smaller while a higher row has an executable next step.
 
 | Order | Plan | Title | Next executable slice | Workable? | Blocked by | Priority | Effort | Depends on / safe stopping point |
 |---:|---|---|---|---|---|---|---|---|
-| 1 | [142](plans/plan_142_planned_host_maintenance.md) | Scoped operational coordination and host maintenance | Stage 1 — replace deploy intent with one kind/scope/phase record, preserve `/deploy/*` as a compatibility facade, then add scoped admission and drain contracts | **Y** | -- | 86 | M + first observed window | D9 (2026-08-25) unifies deploy and maintenance coordination before the new schema ships. Stage 0's pool remains deployed evidence, not the complete scoped mechanism. Production holds/dry runs and Stage 0 Phase B wait for Plan 136's baseline read (~19:40 UTC 2026-08-25); runbook §10 owns that window |
-| 2 | [136](plans/plan_136_solver_recycle_and_liveness.md) | Solver recycle and real liveness | Stage 3b — read 3a's memory baseline from 2026-08-25, then pin `TRAWL_IMAGE` to a current digest and soak 48h against it (3a deployed 2026-08-23 and publishing; production runs a 2026-07-06 image whose pool has no periodic recycling at all) | **N** | 2026-08-25 | 98 | M | Stage 0 verified; Stage 1 moved to Plan 143; 0b shipped as Plan 140 Stage 2. **Unblocked 2026-08-22 by D7** — the resume gate's "until the rate bends" half is met, and the involuntary OOM recycle Stage 3 was sized against has stopped firing. **D8 (2026-08-23) rewrote Stage 3 into four slices** — production runs a six-week-old image in which `BROWSER_RECYCLE_AFTER_CONTEXTS` and `BROWSER_CONTENT_PROCESSES` are read by nothing, and the `POST` verb is **not** separable as one added verb: `ALLOW_RESTARTS` narrows nothing once `CONTAINERS=1` is set, so it needs a second, strictly narrower proxy instance rather than a wider grant on the existing one |
-| 3 | [141](plans/plan_141_structured_log_ingestion_contract.md) | Structured log ingestion and dashboard contract | Freeze production-derived fixtures and baseline, then align parsing, labels, filters, and dashboard selectors; fix `ct-403-log-spike` as the first case | **Y** | -- | 85 | S + 24h soak | Should precede Plan 134's observation window. Has a live false positive to work from: `ct-403-log-spike` produced **49 of 51** alert annotations over the Plan 140 soak, from an unanchored `\|= "403"` catching INFO lines from `shared.minio`. It is **not** diurnal |
+| 1 | [141](plans/plan_141_structured_log_ingestion_contract.md) | Structured log ingestion and dashboard contract | Freeze production-derived fixtures and baseline, then align parsing, labels, filters, and dashboard selectors; fix `ct-403-log-spike` as the first case | **Y** | -- | 85 | S + 24h soak | Should precede Plan 134's observation window. Has a live false positive to work from: `ct-403-log-spike` produced **49 of 51** alert annotations over the Plan 140 soak, from an unanchored `\|= "403"` catching INFO lines from `shared.minio`. It is **not** diurnal |
+| 2 | [142](plans/plan_142_planned_host_maintenance.md) | Scoped operational coordination and host maintenance | After Plan 136's Stage 3a baseline read, run Stage 0 Phase B, merge/deploy PR #243, then resume Stage 2 with running-set manifest capture and read-only host preflight | **N** | Plan 136 Stage 3a baseline read (~19:40 UTC 2026-08-25) | 86 | M + first observed window | Stage 1 and the first Stage 2 operator-client slice are built on draft PR #243 with green CI. Runbook §10 owns Stage 0 Phase B; production holds after that window wait until Plan 136 Stage 3b's 48-hour soak finishes |
+| 3 | [136](plans/plan_136_solver_recycle_and_liveness.md) | Solver recycle and real liveness | Stage 3b — read 3a's memory baseline from 2026-08-25, then pin `TRAWL_IMAGE` to a current digest and soak 48h against it (3a deployed 2026-08-23 and publishing; production runs a 2026-07-06 image whose pool has no periodic recycling at all) | **N** | 2026-08-25 | 98 | M | Stage 0 verified; Stage 1 moved to Plan 143; 0b shipped as Plan 140 Stage 2. **Unblocked 2026-08-22 by D7** — the resume gate's "until the rate bends" half is met, and the involuntary OOM recycle Stage 3 was sized against has stopped firing. **D8 (2026-08-23) rewrote Stage 3 into four slices** — production runs a six-week-old image in which `BROWSER_RECYCLE_AFTER_CONTEXTS` and `BROWSER_CONTENT_PROCESSES` are read by nothing, and the `POST` verb is **not** separable as one added verb: `ALLOW_RESTARTS` narrows nothing once `CONTAINERS=1` is set, so it needs a second, strictly narrower proxy instance rather than a wider grant on the existing one |
 | 4 | [134](plans/plan_134_archiver_endpoint_failure_contract.md) | Archiver endpoint failure contract | Add warning-only failure predicates and begin the one-week observation window | **N** | Plan 141, then a 7d window | 88 | S | Plan 141 first; one-week soak before enforcement; pause if real failures need repair |
 | 5 | [145](plans/plan_145_april_cutover_reconciliation.md) | Deleting the April cutover backlog without losing data | Close Stage 0d (backdated-write safety, a blocker) and 0e, then build the one backfill write path | **Y** | -- | 84 | S | **Supersedes Plans 132 and 137.** Unblocked — Plan 133 deployed and verified; gates 0a/0b/0c closed 2026-08-21. Goal is deletion of 1,299 legacy objects (13.79 GiB); recovery is loss minimisation, not the finish line. Stage 2 is also where `PACK_INDEX_CACHE_PACKS=48` gets its first effectiveness measurement |
 | 6 | [138](plans/plan_138_public_surface_refresh.md) | Public surface refresh | Truth pass, public-root contract, accessible assets, Plan 143 stats presentation, and project-updates snapshot | **Y** | -- | 84 | L | Plan 143 supplies the stats contract; land before the next major platform milestone. **Its project-updates snapshot now reads [completed_plans.md](planning/completed_plans.md)**, since Plan 146 removed this file's duplicate Completed table |
