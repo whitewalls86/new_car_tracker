@@ -2,10 +2,13 @@
 
 ## Status
 
-**Stage F added 2026-08-25** — CI's database does not create Airflow's schema,
-so `ops` queries crossing into it cannot be executed by any test. A bug of
-exactly that shape reached production the same day and hung the first deploy
-of Plan 142's coordination gate. See Stage F.
+**Stages F and G added 2026-08-25**, both about instruments rather than
+tests. **F** — CI's database does not create Airflow's schema, so `ops` queries
+crossing into it cannot be executed by any test; a bug of exactly that shape
+reached production the same day and hung the first deploy of Plan 142's
+coordination gate. **G** — the Promtail contract checker scores an unflushed
+line as "dropped", so it can report a false contract violation during Plan 141's
+Stage 4 soak, where that is indistinguishable from a real one.
 
 **STAGES A+B COMPLETE 2026-08-18** — merged as PR #213 (`4fa6c7d`). Surfaced
 2026-08-17 during Plan 135 Stage 4 development, when the unit suite's
@@ -559,6 +562,55 @@ Scope:
 Cost is roughly one `airflow db migrate` (~30-60s) on a job that already
 installs Airflow. Weigh that against a defect class that reaches production
 silently and fails closed.
+
+### Stage G — The Promtail contract checker reports false failures (XS)
+
+**Found 2026-08-25.** `scripts/verify_promtail_contract.py` scored a retained
+line as *dropped*, failing CI on a commit that touched nothing in `promtail/`,
+the fixture corpus, or the script itself:
+
+```
+1 contract mismatch(es):
+  - airflow_warning: corpus says retained, Promtail dropped it
+```
+
+The identical commit passed on re-run, and the checker passed **10/10** locally
+against `grafana/promtail:3.5.8`. It is not a time bomb — the first hypothesis
+was wall-clock, since the fixture line is hardcoded at `14:01:37` and the
+failing run was later than a passing one, but `promtail.yml` has no
+`older_than` stage anywhere and a local run at an even later hour passed.
+
+**The mechanism is in `_run()`.** Every line for a `(service, source_type)`
+pair is piped through **one** `promtail -dry-run -stdin`, and the result is
+matched **by line text**:
+
+```python
+retained[entry.group(2).strip()] = labels
+```
+
+Any line absent from stdout is therefore scored as dropped. If Promtail exits
+before flushing, a *retained* line reads as a contract violation.
+`airflow-scheduler/container_stdout` batches four lines and exactly one went
+missing — consistent with a flush race on a loaded CI runner and not
+reproducible on a fast local machine.
+
+Scope: make absence provable rather than inferred. Either read until the
+process has genuinely finished emitting, or assert the **expected line count
+per batch** and fail the run as *inconclusive* when it does not match — never
+silently reinterpret a missing line as a policy decision.
+
+> **Why this is a test-suite problem and not a Plan 141 problem.** Plan 141
+> owns what the log contract *says*; this owns whether the instrument that
+> checks it can be believed. A checker that intermittently reports a false
+> "Promtail dropped it" during Plan 141's Stage 4 soak is **indistinguishable
+> from a real contract violation**, so the failure mode is not a flaky test
+> costing a re-run — it is evidence that cannot be trusted either way. The
+> asymmetry Stage E names applies here too: a false negative costs time, a
+> false positive suppresses or manufactures evidence.
+
+Cheap to fix and cheap to verify: the fix is a few lines, and the check on it
+is that a batch whose output is short fails loudly instead of resolving into a
+verdict about the log contract.
 
 ## Success criteria
 

@@ -300,10 +300,10 @@ exactly one went missing.
 
 **A false "Promtail dropped it" during the Stage 4 soak is indistinguishable
 from a real contract violation**, which is the failure mode this plan exists to
-eliminate. Tracked as a backlog plan rather than fixed inline, because the
-likely fix — read until EOF, or assert the expected line count per batch instead
-of treating absence as a drop — needs its own verification that it actually
-removes the flake rather than hiding it.
+eliminate. Owned by
+[Plan 139](plan_139_test_suite_maintenance.md) **Stage G** rather than fixed
+here: this plan owns what the log contract says, and that one owns whether the
+instrument checking it can be believed.
 
 #### The runbook's own 403 check reproduces this plan's founding defect
 
