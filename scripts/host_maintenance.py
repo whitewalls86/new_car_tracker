@@ -6,9 +6,11 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import logging
 import os
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -20,6 +22,17 @@ DEFAULT_CHECKPOINT = Path("/var/lib/cartracker/maintenance/history.jsonl")
 CHECKPOINT_PHASES = frozenset({"requested", "draining", "active", "validating"})
 REPO_ROOT = Path(__file__).resolve().parent.parent
 RUNNING_SET_POLICY = REPO_ROOT / "maintenance-running-set.txt"
+logger = logging.getLogger(__name__)
+CLI_LOG_FIELDS = (
+    "generation",
+    "prior_phase",
+    "phase",
+    "kind",
+    "drained",
+    "blockers",
+    "method",
+    "route",
+)
 
 # Projects that must still be rendered when they have no containers to supply
 # Compose labels.  That absence is meaningful for the two Plan 125 projects.
@@ -108,6 +121,17 @@ PREFLIGHT_COMMANDS = (
 
 class MaintenanceError(RuntimeError):
     """A fail-closed operator error suitable for printing without a traceback."""
+
+
+class CliJsonFormatter(logging.Formatter):
+    """Preserve reviewed structured fields in operator-visible CLI logs."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        payload = {"level": record.levelname, "message": record.getMessage()}
+        payload.update(
+            {field: getattr(record, field) for field in CLI_LOG_FIELDS if hasattr(record, field)}
+        )
+        return json.dumps(payload, sort_keys=True)
 
 
 def _run_command(
@@ -484,7 +508,20 @@ def api_request(
         raise MaintenanceError(
             f"coordination API returned HTTP {exc.code}: {json.dumps(detail)}"
         ) from exc
-    except (URLError, TimeoutError, json.JSONDecodeError) as exc:
+    except TimeoutError as exc:
+        logger.warning(
+            "coordination API request timed out",
+            extra={"method": method, "route": route},
+        )
+        raise MaintenanceError("coordination API unavailable or malformed") from exc
+    except URLError as exc:
+        if isinstance(exc.reason, TimeoutError):
+            logger.warning(
+                "coordination API request timed out",
+                extra={"method": method, "route": route},
+            )
+        raise MaintenanceError("coordination API unavailable or malformed") from exc
+    except json.JSONDecodeError as exc:
         raise MaintenanceError("coordination API unavailable or malformed") from exc
     if not isinstance(result, dict):
         raise MaintenanceError("coordination API returned a non-object response")
@@ -514,6 +551,42 @@ def transition(
     return result
 
 
+def wait_until_active(args: argparse.Namespace) -> dict[str, Any]:
+    """Wait without a short deadline, logging drain evidence at a bounded rate."""
+    current = api_request(args.api_url, "GET", "/coordination/status")
+    if current.get("phase") == "active":
+        if current.get("kind") != "host_maintenance":
+            raise MaintenanceError("active coordination belongs to another kind")
+        recorded_manifest = current.get("manifest_location")
+        if recorded_manifest and recorded_manifest != args.manifest:
+            raise MaintenanceError("manifest does not match the active coordination")
+        append_checkpoint(args.checkpoint, "active", args.manifest)
+        return current
+    if current.get("kind") != "host_maintenance" or current.get("phase") != "draining":
+        raise MaintenanceError("host maintenance is not draining")
+
+    next_progress_at = 0.0
+    while True:
+        evidence = api_request(args.api_url, "GET", "/coordination/drain-status")
+        now = time.monotonic()
+        if now >= next_progress_at:
+            logger.info(
+                "host maintenance drain progress",
+                extra={
+                    "generation": current.get("generation"),
+                    "prior_phase": "requested",
+                    "phase": "draining",
+                    "kind": "host_maintenance",
+                    "drained": evidence.get("drained"),
+                    "blockers": evidence.get("blockers", []),
+                },
+            )
+            next_progress_at = now + args.progress_seconds
+        if evidence.get("drained") is True:
+            return transition(args, "/coordination/authorize", "active")
+        time.sleep(args.poll_seconds)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--api-url", default=DEFAULT_API_URL)
@@ -538,6 +611,9 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("begin-drain")
     subparsers.add_parser("drain-status")
     subparsers.add_parser("authorize")
+    wait_active = subparsers.add_parser("wait-active")
+    wait_active.add_argument("--poll-seconds", type=float, default=5.0)
+    wait_active.add_argument("--progress-seconds", type=float, default=60.0)
     subparsers.add_parser("begin-validation")
     return parser
 
@@ -549,7 +625,13 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             console_access_verified=args.console_access_verified,
         )
 
-    if args.command in {"request", "begin-drain", "authorize", "begin-validation"}:
+    if args.command in {
+        "request",
+        "begin-drain",
+        "authorize",
+        "wait-active",
+        "begin-validation",
+    }:
         if not args.manifest:
             raise MaintenanceError("--manifest is required for state transitions")
 
@@ -571,6 +653,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 "manifest_location": args.manifest,
             },
         )
+    if args.command == "wait-active":
+        if args.poll_seconds <= 0 or args.progress_seconds <= 0:
+            raise MaintenanceError("wait intervals must be positive")
+        return wait_until_active(args)
     routes = {
         "begin-drain": ("/coordination/begin-drain", "draining"),
         "authorize": ("/coordination/authorize", "active"),
@@ -581,6 +667,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def main(argv: list[str] | None = None) -> int:
+    handler = logging.StreamHandler()
+    handler.setFormatter(CliJsonFormatter())
+    logging.basicConfig(level=logging.INFO, handlers=[handler])
     args = build_parser().parse_args(argv)
     try:
         result = run(args)

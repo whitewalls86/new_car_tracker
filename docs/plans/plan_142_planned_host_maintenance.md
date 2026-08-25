@@ -1277,8 +1277,10 @@ The work:
      `kind`, `phase`, `prior_phase`, and `generation`.
    - [x] Log refused legal-transition and drain-authorization attempts at
      `WARNING`.
-   - [ ] Log drain progress at a bounded interval and log client timeouts, not
-     per poll.
+   - [x] Log drain progress at a bounded interval and log client timeouts, not
+     per poll. **The `wait-active` client polls every five seconds without a
+     short overall deadline, emits progress at most once per minute by default,
+     and records request method/route when the API itself times out.**
 
 Field-carrying log records depended on Plan 141's formatter change, which now
 lets `extra=` survive into emitted JSON. The completed narration items use that

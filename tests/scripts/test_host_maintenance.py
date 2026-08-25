@@ -1,6 +1,7 @@
 """Plan 142 Stage 2 operator client and offline checkpoint contract."""
 
 import json
+import logging
 from argparse import Namespace
 from pathlib import Path
 
@@ -180,6 +181,77 @@ def test_read_commands_never_write_checkpoint(mocker, tmp_path, command, route):
     checkpoint.assert_not_called()
 
 
+def test_wait_active_logs_progress_at_bounded_interval(mocker, tmp_path, caplog):
+    caplog.set_level("INFO")
+    api = mocker.patch.object(
+        host_maintenance,
+        "api_request",
+        side_effect=[
+            {"phase": "draining", "kind": "host_maintenance", "generation": 7},
+            {"drained": False, "blockers": ["running_detail_claims"]},
+            {"drained": False, "blockers": ["running_detail_claims"]},
+            {"drained": True, "blockers": []},
+        ],
+    )
+    transition = mocker.patch.object(
+        host_maintenance,
+        "transition",
+        return_value={"phase": "active"},
+    )
+    sleep = mocker.patch.object(host_maintenance.time, "sleep")
+    mocker.patch.object(host_maintenance.time, "monotonic", side_effect=[0.0, 5.0, 10.0])
+    args = _args(tmp_path, "wait-active", poll_seconds=5.0, progress_seconds=60.0)
+
+    assert host_maintenance.run(args) == {"phase": "active"}
+
+    assert api.call_count == 4
+    assert sleep.call_args_list == [mocker.call(5.0), mocker.call(5.0)]
+    transition.assert_called_once_with(args, "/coordination/authorize", "active")
+    progress = [
+        record for record in caplog.records if record.msg == "host maintenance drain progress"
+    ]
+    assert len(progress) == 1
+    assert progress[0].generation == 7
+    assert progress[0].blockers == ["running_detail_claims"]
+
+
+def test_api_timeout_is_logged_with_request_identity(mocker, caplog):
+    mocker.patch.object(host_maintenance, "urlopen", side_effect=TimeoutError("slow"))
+
+    with pytest.raises(host_maintenance.MaintenanceError, match="unavailable"):
+        host_maintenance.api_request("http://ops", "GET", "/coordination/status")
+
+    timeout = caplog.records[-1]
+    assert timeout.levelname == "WARNING"
+    assert timeout.method == "GET"
+    assert timeout.route == "/coordination/status"
+
+
+def test_cli_formatter_preserves_reviewed_structured_fields():
+    record = logging.LogRecord(
+        "host-maintenance",
+        logging.INFO,
+        __file__,
+        1,
+        "drain progress",
+        (),
+        None,
+    )
+    record.generation = 7
+    record.phase = "draining"
+    record.blockers = ["running_detail_claims"]
+
+    rendered = json.loads(host_maintenance.CliJsonFormatter().format(record))
+
+    assert rendered == {
+        "level": "INFO",
+        "message": "drain progress",
+        "generation": 7,
+        "phase": "draining",
+        "blockers": ["running_detail_claims"],
+    }
+
+
 def test_parser_intentionally_exposes_no_complete_or_destructive_commands():
     parser = host_maintenance.build_parser()
     choices = next(action.choices for action in parser._actions if action.dest == "command")
@@ -190,6 +262,7 @@ def test_parser_intentionally_exposes_no_complete_or_destructive_commands():
         "begin-drain",
         "drain-status",
         "authorize",
+        "wait-active",
         "begin-validation",
     }
 

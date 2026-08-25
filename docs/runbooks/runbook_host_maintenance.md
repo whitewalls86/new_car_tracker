@@ -581,11 +581,16 @@ python scripts/host_maintenance.py --manifest "$MANIFEST" request \
   --requested-by "$USER" --reason "reviewed host maintenance" \
   --expected-work "install reviewed packages" --expected-work reboot
 python scripts/host_maintenance.py --manifest "$MANIFEST" begin-drain
-python scripts/host_maintenance.py drain-status
-python scripts/host_maintenance.py --manifest "$MANIFEST" authorize
+python scripts/host_maintenance.py --manifest "$MANIFEST" wait-active
 # reviewed stop/update/reboot/start work remains manual
 python scripts/host_maintenance.py --manifest "$MANIFEST" begin-validation
 ```
+
+`wait-active` polls drain evidence every five seconds but prints structured
+progress no more than once per minute. It has no short overall deadline; stale
+coordination alerts separately. An individual API request still has a ten-second
+timeout, which is logged with its method and route before the command fails
+closed. Use `drain-status` when an operator needs an immediate evidence dump.
 
 There is intentionally no `complete` command yet. Stage 3 must supply the host,
 stack, and intentionally-stopped-service evidence guard before release can be
