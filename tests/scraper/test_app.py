@@ -11,12 +11,13 @@ ARTIFACT_KEYS = {
 # ---------------------------------------------------------------------------
 # Helper: inject a pre-built job into _jobs
 # ---------------------------------------------------------------------------
-def _inject_job(job_id, status="queued", artifacts=None):
+def _inject_job(job_id, status="queued", artifacts=None, job_type="listing_fetch"):
     scraper_app._jobs[job_id] = {
         "job_id": job_id,
         "run_id": "run-0000-0000-0000-000000000001",
         "search_key": "toyota_rav4",
         "scope": "national",
+        "job_type": job_type,
         "status": status,
         "artifacts": artifacts or [],
         "artifact_count": len(artifacts or []),
@@ -24,6 +25,7 @@ def _inject_job(job_id, status="queued", artifacts=None):
         "attempt": 1,
         "error": None,
         "started_at": None,
+        "queued_at": "2026-08-25T01:00:00+00:00",
     }
 
 
@@ -185,7 +187,13 @@ class TestReady:
         scraper_app._jobs.clear()
         resp = mock_scraper_client.get("/ready")
         assert resp.status_code == 200
-        assert resp.json() == {"ready": True, "active_jobs": 0}
+        assert resp.json()["ready"] is True
+        assert resp.json()["active_jobs"] == 0
+        assert resp.json()["oldest_started_at"] is None
+        assert resp.json()["active_by_surface"] == {
+            "detail_fetch": 0,
+            "listing_fetch": 0,
+        }
 
     def test_not_ready_when_job_queued(self, mock_scraper_client):
         _inject_job("rdy1", status="queued")
@@ -198,6 +206,24 @@ class TestReady:
         _inject_job("rdy2", status="running")
         resp = mock_scraper_client.get("/ready")
         assert resp.status_code == 503
+
+    def test_ready_evidence_separates_listing_and_detail_work(self, mock_scraper_client):
+        scraper_app._jobs.clear()
+        _inject_job("listing", status="running")
+        _inject_job("detail", status="queued", job_type="detail_batch")
+
+        resp = mock_scraper_client.get("/ready")
+
+        assert resp.status_code == 503
+        detail = resp.json()["detail"]
+        assert detail["active_by_surface"] == {
+            "detail_fetch": 1,
+            "listing_fetch": 1,
+        }
+        assert detail["oldest_by_surface"] == {
+            "detail_fetch": "2026-08-25T01:00:00+00:00",
+            "listing_fetch": "2026-08-25T01:00:00+00:00",
+        }
 
     def test_ready_when_only_completed_jobs(self, mock_scraper_client):
         scraper_app._jobs.clear()

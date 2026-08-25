@@ -83,17 +83,31 @@ def test_get_health(mock_client):
 
 
 def test_get_ready_when_idle(mock_client, mocker):
-    mocker.patch("dbt_runner.app.is_idle", return_value=True)
+    mocker.patch(
+        "dbt_runner.app.job_snapshot",
+        return_value={"active_jobs": 0, "oldest_started_at": None},
+    )
     response = mock_client.get("/ready")
     assert response.status_code == 200
-    assert response.json() == {"ready": True}
+    assert response.json() == {
+        "ready": True,
+        "active_jobs": 0,
+        "oldest_started_at": None,
+    }
 
 
 def test_get_ready_when_busy(mock_client, mocker):
-    mocker.patch("dbt_runner.app.is_idle", return_value=False)
+    mocker.patch(
+        "dbt_runner.app.job_snapshot",
+        return_value={
+            "active_jobs": 1,
+            "oldest_started_at": "2026-08-25T01:00:00+00:00",
+        },
+    )
     response = mock_client.get("/ready")
     assert response.status_code == 503
     assert response.json()["detail"]["ready"] is False
+    assert response.json()["detail"]["active_jobs"] == 1
     assert response.json()["detail"]["reason"] == "jobs in flight"
 
 

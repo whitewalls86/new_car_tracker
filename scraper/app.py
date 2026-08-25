@@ -3,6 +3,7 @@ import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from typing import Any, Dict, List
 
 from fastapi import Body, FastAPI, HTTPException
@@ -144,6 +145,7 @@ def run_scrape_results(
             "run_id": run_id,
             "search_key": search_key,
             "scope": scope,
+            "job_type": "listing_fetch",
             "status": "queued",
             "artifacts": [],
             "artifact_count": 0,
@@ -151,6 +153,7 @@ def run_scrape_results(
             "attempt": payload.get("attempt", 1),
             "error": None,
             "started_at": None,
+            "queued_at": datetime.now(timezone.utc).isoformat(),
         }
     _executor.submit(_run_scrape_job, job_id, run_id, search_key, scope, payload)
     return {"job_id": job_id, "status": "queued"}
@@ -246,6 +249,7 @@ def scrape_detail_batch_endpoint(
             "artifact_count": 0,
             "error": None,
             "started_at": None,
+            "queued_at": datetime.now(timezone.utc).isoformat(),
         }
     _executor.submit(
         _run_detail_batch_job, job_id, run_id, batch_id, listings, max_workers, timeout_s
@@ -271,9 +275,33 @@ def ready():
     """
     with _jobs_lock:
         active = [j for j in _jobs.values() if j["status"] in ("queued", "running")]
+        by_surface = {"detail_fetch": 0, "listing_fetch": 0}
+        oldest_by_surface = {"detail_fetch": None, "listing_fetch": None}
+        for job in active:
+            surface = (
+                "detail_fetch"
+                if job.get("job_type") == "detail_batch"
+                else "listing_fetch"
+            )
+            by_surface[surface] += 1
+            observed_at = job.get("started_at") or job.get("queued_at")
+            if observed_at and (
+                oldest_by_surface[surface] is None
+                or observed_at < oldest_by_surface[surface]
+            ):
+                oldest_by_surface[surface] = observed_at
+    result = {
+        "ready": not active,
+        "active_jobs": len(active),
+        "oldest_started_at": min(
+            (value for value in oldest_by_surface.values() if value), default=None
+        ),
+        "active_by_surface": by_surface,
+        "oldest_by_surface": oldest_by_surface,
+    }
     if active:
         raise HTTPException(
             status_code=503,
-            detail={"ready": False, "active_jobs": len(active)},
+            detail=result,
         )
-    return {"ready": True, "active_jobs": 0}
+    return result

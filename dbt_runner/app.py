@@ -18,7 +18,7 @@ from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from dbt_runner.analytics_snapshot import AnalyticsSnapshotManager
 from dbt_runner.metrics import REGISTRY, publish_snapshot
-from shared.job_counter import active_job, is_idle
+from shared.job_counter import active_job, is_idle, job_snapshot
 from shared.logging_setup import configure_logging
 
 configure_logging()
@@ -87,9 +87,11 @@ def health() -> Dict[str, Any]:
 
 @app.get("/ready")
 def ready() -> Dict[str, Any]:
-    if is_idle():
-        return {"ready": True}
-    raise HTTPException(status_code=503, detail={"ready": False, "reason": "jobs in flight"})
+    evidence = job_snapshot()
+    result = {"ready": evidence["active_jobs"] == 0, **evidence}
+    if result["ready"]:
+        return result
+    raise HTTPException(status_code=503, detail={**result, "reason": "jobs in flight"})
 
 
 @app.get("/metrics")

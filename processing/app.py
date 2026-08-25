@@ -9,7 +9,7 @@ from prometheus_fastapi_instrumentator import Instrumentator
 
 from processing.routers.artifact import router as artifact_router
 from processing.routers.batch import router as batch_router
-from shared.job_counter import is_idle
+from shared.job_counter import job_snapshot
 from shared.logging_setup import configure_logging
 
 configure_logging()
@@ -34,6 +34,11 @@ def ready():
     Returns ready=true when no batch is currently executing.
     Airflow sensors poll this before closing a DAG run.
     """
-    if is_idle():
-        return {"ready": True}
-    raise HTTPException(status_code=503, detail={"ready": False, "reason": "batch in progress"})
+    evidence = job_snapshot()
+    result = {"ready": evidence["active_jobs"] == 0, **evidence}
+    if result["ready"]:
+        return result
+    raise HTTPException(
+        status_code=503,
+        detail={**result, "reason": "batch in progress"},
+    )

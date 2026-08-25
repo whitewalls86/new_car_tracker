@@ -31,7 +31,7 @@ from archiver.processors.pack_bronze_html import pack_bronze_html as _pack_bronz
 from archiver.processors.verify_pack_read_path import (
     verify_pack_read_path as _verify_pack_read_path,
 )
-from shared.job_counter import JobInFlight, active_job, is_idle, single_flight
+from shared.job_counter import JobInFlight, active_job, job_snapshot, single_flight
 from shared.logging_setup import configure_logging
 from shared.minio import BUCKET as _MINIO_BUCKET
 
@@ -507,6 +507,8 @@ def health():
 
 @app.get("/ready")
 def ready():
-    if is_idle():
-        return {"ready": True}
-    raise HTTPException(status_code=503, detail={"ready": False, "reason": "jobs in flight"})
+    evidence = job_snapshot()
+    result = {"ready": evidence["active_jobs"] == 0, **evidence}
+    if result["ready"]:
+        return result
+    raise HTTPException(status_code=503, detail={**result, "reason": "jobs in flight"})

@@ -267,7 +267,13 @@ class TestCompactSilverRunEndpoint:
 
     def test_ready_returns_503_while_compact_active(self, mock_archiver_client, mocker):
         """GET /ready returns 503 while active_job() counter is non-zero."""
-        mocker.patch("archiver.app.is_idle", return_value=False)
+        mocker.patch(
+            "archiver.app.job_snapshot",
+            return_value={
+                "active_jobs": 1,
+                "oldest_started_at": "2026-08-25T01:00:00+00:00",
+            },
+        )
         resp = mock_archiver_client.get("/ready")
         assert resp.status_code == 503
         assert resp.json()["detail"]["ready"] is False
@@ -1065,16 +1071,30 @@ class TestSnapshotExportRunEndpoint:
 
 class TestReady:
     def test_ready_true_when_idle(self, mock_archiver_client, mocker):
-        mocker.patch("archiver.app.is_idle", return_value=True)
+        mocker.patch(
+            "archiver.app.job_snapshot",
+            return_value={"active_jobs": 0, "oldest_started_at": None},
+        )
         resp = mock_archiver_client.get("/ready")
         assert resp.status_code == 200
-        assert resp.json() == {"ready": True}
+        assert resp.json() == {
+            "ready": True,
+            "active_jobs": 0,
+            "oldest_started_at": None,
+        }
 
     def test_ready_false_when_busy(self, mock_archiver_client, mocker):
-        mocker.patch("archiver.app.is_idle", return_value=False)
+        mocker.patch(
+            "archiver.app.job_snapshot",
+            return_value={
+                "active_jobs": 3,
+                "oldest_started_at": "2026-08-25T01:00:00+00:00",
+            },
+        )
         resp = mock_archiver_client.get("/ready")
         assert resp.status_code == 503
         assert resp.json()["detail"]["ready"] is False
+        assert resp.json()["detail"]["active_jobs"] == 3
         assert "reason" in resp.json()["detail"]
 
 
