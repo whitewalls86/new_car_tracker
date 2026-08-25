@@ -47,7 +47,7 @@
     },
     {
       "id": 2,
-      "title": "Error / Warning Logs",
+      "title": "Error / Warning / Critical Logs",
       "type": "logs",
       "gridPos": {
         "h": 12,
@@ -65,7 +65,7 @@
             "type": "loki",
             "uid": "cartracker-loki"
           },
-          "expr": "{service=~\".+\", level=~\"ERROR|WARNING\"}",
+          "expr": "{service=~\".+\", level=~\"WARNING|ERROR|CRITICAL\"}",
           "refId": "A"
         }
       ],
@@ -81,7 +81,7 @@
     },
     {
       "id": 3,
-      "title": "Log Volume by Level",
+      "title": "Log Volume by Service / Source / Level",
       "type": "timeseries",
       "gridPos": {
         "h": 8,
@@ -99,8 +99,8 @@
             "type": "loki",
             "uid": "cartracker-loki"
           },
-          "expr": "sum by (level) (count_over_time({service=~\".+\"} [5m]))",
-          "legendFormat": "{{level}}",
+          "expr": "sum by (service, source, level) (count_over_time({service=~\".+\"} [5m]))",
+          "legendFormat": "{{service}} / {{source}} / {{level}}",
           "refId": "A"
         }
       ],
@@ -121,6 +121,61 @@
           "displayMode": "list",
           "placement": "bottom"
         }
+      }
+    },
+    {
+      "id": 4,
+      "title": "Log Contract Violations (5m, expected 0)",
+      "type": "stat",
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 32
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "cartracker-loki"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "cartracker-loki"
+          },
+          "expr": "(sum(count_over_time({service=~\".+\", source=\"\"} [5m])) or vector(0)) + (sum(count_over_time({service=~\"ops|scraper|processing|dbt_runner|archiver|pack-worker|airflow-(apiserver|scheduler|dag-processor)|oauth2-proxy\", level=\"\"} [5m])) or vector(0))",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        }
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
       }
     }
   ]

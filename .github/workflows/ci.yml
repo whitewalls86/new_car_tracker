@@ -79,6 +79,21 @@ jobs:
       - run: pip install ruff
       - run: ruff check .
 
+  promtail-config:
+    name: Promtail config (real image)
+    runs-on: ubuntu-latest
+    needs: changes
+    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true')
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate with the production Promtail image
+        run: >-
+          docker run --rm
+          -v "$GITHUB_WORKSPACE/promtail/promtail.yml:/etc/promtail/config.yml:ro"
+          grafana/promtail:3.5.8
+          -config.file=/etc/promtail/config.yml
+          -check-syntax
+
   unit-tests:
     name: Unit tests (pytest)
     runs-on: ubuntu-latest

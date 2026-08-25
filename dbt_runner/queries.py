@@ -17,6 +17,11 @@ ANALYTICS_METRIC_COLUMNS = (
     "cartracker_stale_listings_pct",
     "cartracker_cooldown_backlog",
     "cartracker_cooldown_permanent",
+    "cartracker_cooldown_entries_7d_attempt_1",
+    "cartracker_cooldown_entries_7d_attempt_2",
+    "cartracker_cooldown_entries_7d_attempt_3_4",
+    "cartracker_cooldown_entries_7d_attempt_5_10",
+    "cartracker_cooldown_entries_7d_attempt_11_plus",
     "data_through",
 )
 

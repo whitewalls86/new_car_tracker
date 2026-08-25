@@ -2,9 +2,11 @@
 
 ## Status
 
-DRAFT, written 2026-08-18 while closing Plan 135 Stage 5. Production is stable
-and the storage bounds are live; this plan is a correctness and usability
-follow-up, not an incident response and not a reason to reopen Plan 135.
+**Stages 0-3 implemented locally 2026-08-25; Stage 4 deployment and 24-hour
+production soak not started.** Written 2026-08-18 while closing Plan 135 Stage
+5. Production is stable and the storage bounds are live; this plan is a
+correctness and usability follow-up, not an incident response and not a reason
+to reopen Plan 135.
 
 Priority **85 (high)**. Effort **S plus a 24-hour production soak**.
 
@@ -147,6 +149,27 @@ Stage 0 is read-only in production.
 5. Preserve All Service Logs as the broad diagnostic view, with service/source
    filters if the combined stream becomes hard to use.
 
+### Stage 2a — Show the cooldown funnel from the durable event record
+
+Added 2026-08-25 while selecting the new 403 early-warning threshold. The rate
+alert answers whether the current batch is unhealthy, but it does not show how
+many detail scrapes are progressing into deeper exponential-backoff buckets.
+That is an observability question, not another paging condition.
+
+1. Build an hourly mart from
+   `ops_normalized/blocked_cooldown_events/**/*.parquet`, reached through
+   `stg_blocked_cooldown_events`. Count each `blocked` or `incremented`
+   transition once and exclude `cleared` lifecycle events.
+2. Use the same stable attempt buckets as `mart_cooldown_cohorts`: `1`, `2`,
+   `3-4`, `5-10`, and `11+`. This measures flow through the cooldown funnel;
+   the existing cohort mart continues to measure the current backlog.
+3. Publish one rolling seven-day gauge per bucket through the durable
+   `dbt_runner` analytics snapshot. The window is the latest 168 hourly buckets,
+   so a dashboard point reads as “X scrapes landed in this bucket over the last
+   seven days.”
+4. Add a single Pipeline Health time-series view for all five gauges. Do not add
+   thresholds or an alert rule; the purpose is trend and funnel visibility.
+
 ### Stage 3 — Test behavior, not only configuration shape
 
 1. Run every Stage 0 fixture through the intended parser policy and assert the
@@ -194,8 +217,14 @@ Plan 136 remains ahead of Plan 141. Its critical signals are Prometheus
 liveness, freshness, and solver outcome counters; they must not be delayed for
 dashboard cleanup. The intersection is narrow:
 
-- Revalidate `ct-403-log-spike` after Stage 1 because it is the Plan 136 alert
-  that depends on Loki text.
+- Revalidate `ct-403-log-spike` after Stage 1. Plan 141 keeps its legacy UID but
+  removes its Loki-text dependency: it is an early-warning Prometheus ratio for
+  more than 5% exact `outcome="403"` results among at least 25 detail fetches in
+  five minutes. `ct-detail-fetch-failing` remains the separate 100%-failure
+  detector over twenty minutes.
+- The cooldown funnel is the durable downstream view of those outcomes. It is
+  built from normalized cooldown event Parquet rather than Loki text or current
+  backlog snapshots, and deliberately has no alert attached.
 - Plan 136 warning-only observations should name the expected `service` and
   `level` contract rather than use unconstrained text queries.
 - The short Airflow HMAC-key warning discovered during this audit is a real
@@ -252,12 +281,17 @@ test-suite maintenance. The planned host-maintenance runbook should reuse Stage
    sustainable 90-day capacity forecast.
 7. Application records can carry bounded structured fields via `extra=`, with
    the four existing JSON keys unchanged for records that pass none.
+8. The Pipeline Health dashboard charts rolling seven-day transition counts for
+   cooldown attempt buckets `1`, `2`, `3-4`, `5-10`, and `11+`, sourced from the
+   durable cooldown event Parquet record and used for observability only.
 
 ## Out of scope
 
 - Storage caps and deletion policy — Plan 135.
 - Container liveness and healthcheck coverage — Plan 140.
-- Solver efficacy, metrics freshness, and automatic recycle — Plan 136.
+- Broader solver efficacy, metrics freshness, and automatic recycle — Plan 136;
+  the exact 403 early-warning ratio and cooldown funnel above are the narrow
+  Plan 141 overlap.
 - Changing application business-event verbosity.
 - A wholesale migration from Promtail to Grafana Alloy. Promtail is end-of-life
   upstream, so migration deserves separate prioritization after this contract

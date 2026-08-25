@@ -28,25 +28,85 @@ scrape_configs:
         regex: '/cartracker-(.+)'
         target_label: service
         replacement: '$1'
+      - target_label: source
+        replacement: container_stdout
     pipeline_stages:
       - docker: {}
-      # Airflow's control-plane containers emit high-volume framework chatter,
-      # including multiline INFO tables whose continuation lines have no level.
-      # DAG and application logs are collected separately, so this stdout path
-      # retains only lines carrying an actionable failure signal.
+      # Airflow severity is the bracketed field immediately after its timestamp.
+      # Parse it before filtering: words in logger names and message bodies are
+      # not severity. Unparsed continuation lines, including tracebacks, are
+      # deliberately excluded instead of being retained without a level.
       - match:
-          selector: '{service=~"airflow-(apiserver|scheduler|dag-processor)"} !~ "(?i)(warn|error|critical|exception|traceback)"'
+          selector: '{service=~"airflow-(apiserver|scheduler|dag-processor)"}'
+          stages:
+            - regex:
+                expression: '^\S+(?:\s+\S+)?\s+\[(?P<level>(?i:debug|info|warning|error|critical))\s*\]'
+            - template:
+                source: level
+                template: '{{ ToUpper .Value }}'
+            - labels:
+                level:
+      - match:
+          selector: '{service=~"airflow-(apiserver|scheduler|dag-processor)", level=""}'
+          action: drop
+          drop_counter_reason: airflow_unclassified_control_plane
+      - match:
+          selector: '{service=~"airflow-(apiserver|scheduler|dag-processor)", level=~"DEBUG|INFO"}'
           action: drop
           drop_counter_reason: airflow_non_actionable_control_plane
-      # Grafana performs this successful auth subrequest for nearly every
-      # datasource request. Keep OAuth failures and interactive flows, but do
-      # not store a redundant, PII-bearing success line for every query.
+      # OAuth access records carry a numeric status but no severity. HTTP 4xx
+      # is WARNING, 5xx is ERROR, and the remaining access/lifecycle records
+      # are INFO unless the native lifecycle text begins Warning:/Error:.
       - match:
           selector: '{service="oauth2-proxy"}'
           stages:
-            - drop:
-                expression: '.*"/oauth2/auth[^"]*" HTTP/1\.1 "[^"]*" 202 .*'
-                drop_counter_reason: oauth2_successful_auth_subrequest
+            - regex:
+                expression: '^.*?\s(?P<method>[A-Z]+) - "(?P<path>[^"]+)" HTTP/[0-9.]+ "[^"]*" (?P<status>[0-9]{3}) \d+ [0-9.]+$'
+            - regex:
+                expression: '^\[[^\]]+\]\s+\[[^\]]+\]\s+(?P<oauth_level>Warning|ERROR|Error):'
+            - labels:
+                status:
+                oauth_level:
+            - template:
+                source: level
+                template: INFO
+            - match:
+                selector: '{status=~"4.."}'
+                stages:
+                  - template:
+                      source: level
+                      template: WARNING
+            - match:
+                selector: '{status=~"5.."}'
+                stages:
+                  - template:
+                      source: level
+                      template: ERROR
+            - match:
+                selector: '{oauth_level="Warning"}'
+                stages:
+                  - template:
+                      source: level
+                      template: WARNING
+            - match:
+                selector: '{oauth_level=~"ERROR|Error"}'
+                stages:
+                  - template:
+                      source: level
+                      template: ERROR
+            - labels:
+                level:
+            - labeldrop:
+                - oauth_level
+            # Grafana performs this successful auth subrequest for nearly
+            # every datasource request. Do not store its PII-bearing echo.
+            - match:
+                selector: '{status="202"}'
+                stages:
+                  - drop:
+                      source: path
+                      expression: '^/oauth2/auth(?:\?.*)?$'
+                      drop_counter_reason: oauth2_successful_auth_subrequest
       - labels:
           stream:
 
@@ -56,7 +116,8 @@ scrape_configs:
           - localhost
         labels:
           service: ops
-          __path__: /logs/ops/app.log*
+          source: application_file
+          __path__: /logs/ops/app.log
 
     pipeline_stages:
       - json:
@@ -70,6 +131,10 @@ scrape_configs:
       - timestamp:
           source: ts
           format: '2006-01-02 15:04:05,000'
+      - match:
+          selector: '{service="ops", level=""}'
+          action: drop
+          drop_counter_reason: application_file_unclassified
 
   - job_name: scraper
     static_configs:
@@ -77,7 +142,8 @@ scrape_configs:
           - localhost
         labels:
           service: scraper
-          __path__: /logs/scraper/app.log*
+          source: application_file
+          __path__: /logs/scraper/app.log
 
     pipeline_stages:
       - json:
@@ -91,6 +157,10 @@ scrape_configs:
       - timestamp:
           source: ts
           format: '2006-01-02 15:04:05,000'
+      - match:
+          selector: '{service="scraper", level=""}'
+          action: drop
+          drop_counter_reason: application_file_unclassified
 
   - job_name: processing
     static_configs:
@@ -98,7 +168,8 @@ scrape_configs:
           - localhost
         labels:
           service: processing
-          __path__: /logs/processing/app.log*
+          source: application_file
+          __path__: /logs/processing/app.log
 
     pipeline_stages:
       - json:
@@ -112,6 +183,10 @@ scrape_configs:
       - timestamp:
           source: ts
           format: '2006-01-02 15:04:05,000'
+      - match:
+          selector: '{service="processing", level=""}'
+          action: drop
+          drop_counter_reason: application_file_unclassified
 
   - job_name: dbt_runner
     static_configs:
@@ -119,7 +194,8 @@ scrape_configs:
           - localhost
         labels:
           service: dbt_runner
-          __path__: /logs/dbt_runner/app.log*
+          source: application_file
+          __path__: /logs/dbt_runner/app.log
 
     pipeline_stages:
       - json:
@@ -133,6 +209,10 @@ scrape_configs:
       - timestamp:
           source: ts
           format: '2006-01-02 15:04:05,000'
+      - match:
+          selector: '{service="dbt_runner", level=""}'
+          action: drop
+          drop_counter_reason: application_file_unclassified
 
   - job_name: archiver
     static_configs:
@@ -140,7 +220,8 @@ scrape_configs:
           - localhost
         labels:
           service: archiver
-          __path__: /logs/archiver/app.log*
+          source: application_file
+          __path__: /logs/archiver/app.log
 
     pipeline_stages:
       - json:
@@ -154,6 +235,10 @@ scrape_configs:
       - timestamp:
           source: ts
           format: '2006-01-02 15:04:05,000'
+      - match:
+          selector: '{service="archiver", level=""}'
+          action: drop
+          drop_counter_reason: application_file_unclassified
 
   - job_name: pack-worker
     static_configs:
@@ -161,7 +246,8 @@ scrape_configs:
           - localhost
         labels:
           service: pack-worker
-          __path__: /logs/pack-worker/app.log*
+          source: application_file
+          __path__: /logs/pack-worker/app.log
 
     pipeline_stages:
       - json:
@@ -175,3 +261,7 @@ scrape_configs:
       - timestamp:
           source: ts
           format: '2006-01-02 15:04:05,000'
+      - match:
+          selector: '{service="pack-worker", level=""}'
+          action: drop
+          drop_counter_reason: application_file_unclassified
