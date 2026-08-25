@@ -1194,8 +1194,27 @@ class TestGrafanaAlertingProvisioning:
             "ct-inode-exhaustion-forecast",
             "ct-container-unhealthy", "ct-container-health-unconfigured",
             "ct-solver-not-solving", "ct-detail-fetch-failing",
+            "ct-coordination-stale", "ct-coordination-gate-unhealthy",
         }
         assert expected <= all_uids, f"Missing rule UIDs: {expected - all_uids}"
+
+    def test_coordination_alerts_page_without_auto_release_semantics(self):
+        stale = self._rule("ct-coordination-stale")
+        gate = self._rule("ct-coordination-gate-unhealthy")
+
+        assert stale["noDataState"] == "Alerting"
+        assert stale["data"][0]["model"]["expr"] == (
+            'cartracker_coordination_state_age_seconds{job="ops",phase!="none"}'
+        )
+        assert stale["data"][-1]["model"]["conditions"][0]["evaluator"] == {
+            "type": "gt",
+            "params": [1800],
+        }
+        assert gate["noDataState"] == "Alerting"
+        assert gate["for"] == "10m"
+        assert "coordination_gate_evidence_known" in gate["data"][0]["model"]["expr"]
+        assert "coordination_gate_unobserved_runs" in gate["data"][0]["model"]["expr"]
+        assert "never auto-release" in gate["annotations"]["description"].lower()
 
     def _rule(self, uid):
         doc = yaml.safe_load((self._ALERTING_DIR / "rules.yml").read_text())

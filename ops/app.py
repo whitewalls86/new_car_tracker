@@ -9,10 +9,12 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.responses import RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
+from prometheus_client import REGISTRY
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from shared.logging_setup import configure_logging
 
+from .coordination_metrics import COORDINATION_COLLECTOR
 from .public_stats import public_stats_cache
 from .routers.admin import router as admin_router
 from .routers.auth import router as auth_router
@@ -47,6 +49,7 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+REGISTRY.register(COORDINATION_COLLECTOR)
 Instrumentator().instrument(app).expose(app)
 app.mount(
     "/static_ops",

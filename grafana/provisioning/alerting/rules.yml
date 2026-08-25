@@ -232,6 +232,89 @@ groups:
                     type: lt
                     params: [1]
 
+      # Plan 142 Stage 1. State age is computed directly from Postgres during
+      # each ops scrape. This pages a human; it never releases coordination.
+      - uid: ct-coordination-stale
+        title: Coordination State Stale
+        condition: C
+        noDataState: Alerting
+        execErrState: Alerting
+        for: 0s
+        annotations:
+          summary: "{{ $labels.kind }} coordination has remained {{ $labels.phase }} for over 30 minutes"
+          description: "Coordination is deliberately fail-closed. Inspect the request, drain evidence and target health; never clear it merely because this alert fired."
+        data:
+          - refId: A
+            datasourceUid: cartracker-prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: 'cartracker_coordination_state_age_seconds{job="ops",phase!="none"}'
+          - refId: B
+            datasourceUid: "__expr__"
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+          - refId: C
+            datasourceUid: "__expr__"
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [1800]
+
+      # Plan 142 Stage 1. Unknown evidence and an active DAG run that has not
+      # observed the current generation are both unsafe authorization states.
+      # Ten minutes permits ordinary admitted work to finish before paging.
+      - uid: ct-coordination-gate-unhealthy
+        title: Coordination Admission Gate Unhealthy
+        condition: C
+        noDataState: Alerting
+        execErrState: Alerting
+        for: 10m
+        annotations:
+          summary: "Coordination admission evidence is unknown or has unobserved DAG runs"
+          description: "Authorization remains blocked. Check ops database access, Airflow scheduler health, active DAG runs, and current-generation gate observations. This alert must never auto-release the window."
+        data:
+          - refId: A
+            datasourceUid: cartracker-prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: '(1 - cartracker_coordination_gate_evidence_known{job="ops"}) + clamp_max(cartracker_coordination_gate_unobserved_runs{job="ops"}, 1)'
+          - refId: B
+            datasourceUid: "__expr__"
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+          - refId: C
+            datasourceUid: "__expr__"
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+
       # Plan 140 Stage 2. Two rules, never one, over the same three-state
       # metric: 1 healthy, 0 unhealthy, -1 no healthcheck configured. A single
       # `< 1` rule would merge them and re-hide the coverage gap inside the
