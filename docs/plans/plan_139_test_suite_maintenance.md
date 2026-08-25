@@ -2,6 +2,14 @@
 
 ## Status
 
+**Stages F and G added 2026-08-25**, both about instruments rather than
+tests. **F** — CI's database does not create Airflow's schema, so `ops` queries
+crossing into it cannot be executed by any test; a bug of exactly that shape
+reached production the same day and hung the first deploy of Plan 142's
+coordination gate. **G** — the Promtail contract checker scores an unflushed
+line as "dropped", so it can report a false contract violation during Plan 141's
+Stage 4 soak, where that is indistinguishable from a real one.
+
 **STAGES A+B COMPLETE 2026-08-18** — merged as PR #213 (`4fa6c7d`). Surfaced
 2026-08-17 during Plan 135 Stage 4 development, when the unit suite's
 wall-clock time prompted the question "are we missing a mock somewhere?" The
@@ -496,6 +504,113 @@ The docs-only fast path remains separate and unchanged. Its proof is stronger:
 every changed path is under `docs/`, and any mixed or ambiguous diff already
 falls back to full CI. Stage E must not weaken that simple boundary or claim its
 production registry makes application selection equally certain.
+
+### Stage F — CI's database does not model production's schemas (S)
+
+**Found 2026-08-25, by shipping a bug no test in any layer could have caught.**
+
+`ops/coordination_drain.py` queried `task_instance` and `dag_run` unqualified,
+and `public.detail_scrape_claims` instead of `ops.detail_scrape_claims`. In
+production the ops role's `search_path` is `ops, staging, public`, so all three
+failed with `relation does not exist`. `_database_count` catches the error and
+returns `unknown`, and unknown fails closed by contract — so the first
+production deploy of the coordination gate **drained forever** rather than
+failing, with the operator seeing only "still draining".
+
+The reason it escaped is structural, not an oversight:
+
+- **`tests/ops/test_coordination_drain.py` patches `_database_count` itself**, so
+  no drain query string reaches a database anywhere in the unit suite. One test
+  even exercises `_database_count` with a literal `"SELECT evidence"` against a
+  mock cursor.
+- **`tests/integration/sql/` is the layer that exists for exactly this** — its
+  own docstring says "every query the ops service runs against Postgres is
+  executed here against a real DB with Flyway migrations applied" — but this SQL
+  never got a row in it.
+- **Even with a row, two of the three queries could not have run.** CI's
+  database is Flyway-only. Flyway creates the empty `airflow` schema, but
+  Airflow owns the tables inside it through its own migrations, and CI points
+  `AIRFLOW__DATABASE__SQL_ALCHEMY_CONN` at `sqlite:////tmp/airflow.db`. In
+  production Airflow's metadata is the **same Postgres** (`airflow.task_instance`
+  held 438,355 rows on 2026-08-25). **CI does not model that coupling at all.**
+
+The stopgap shipped with the fix is `airflow_metadata_standin` in
+`tests/integration/sql/conftest.py`: minimal `airflow.task_instance` and
+`airflow.dag_run` created inside the rolled-back test transaction. It was
+validated in both directions — 4/4 pass on the fix, 4/4 fail when the original
+unqualified SQL is reintroduced — so it does catch this bug class. **What it
+cannot catch is Airflow schema drift**: a column renamed by an Airflow upgrade
+passes against our own stand-in and breaks in production.
+
+Scope:
+
+1. Run `airflow db migrate` against the CI Postgres using the existing isolated
+   `/tmp/airflow-venv`, creating the real `airflow` schema.
+2. Move the "Run SQL smoke tests (Layer 1)" step after it — today that step runs
+   at line ~403 and the Airflow venv is not installed until ~418.
+3. Retire `airflow_metadata_standin` once the real schema is present, so the
+   tests bind to Airflow's actual columns.
+4. Audit for other cross-schema queries with the same exposure. `ops` reads
+   `airflow.*`; anything else crossing a schema CI does not create has the same
+   blind spot.
+
+> **The general rule this stage encodes:** a smoke-test layer is only as good as
+> the schemas its database actually contains. "It passed CI" means nothing about
+> a table CI never created. Prefer measuring what CI's database is missing over
+> assuming the Flyway migrations are the whole schema.
+
+Cost is roughly one `airflow db migrate` (~30-60s) on a job that already
+installs Airflow. Weigh that against a defect class that reaches production
+silently and fails closed.
+
+### Stage G — The Promtail contract checker reports false failures (XS)
+
+**Found 2026-08-25.** `scripts/verify_promtail_contract.py` scored a retained
+line as *dropped*, failing CI on a commit that touched nothing in `promtail/`,
+the fixture corpus, or the script itself:
+
+```
+1 contract mismatch(es):
+  - airflow_warning: corpus says retained, Promtail dropped it
+```
+
+The identical commit passed on re-run, and the checker passed **10/10** locally
+against `grafana/promtail:3.5.8`. It is not a time bomb — the first hypothesis
+was wall-clock, since the fixture line is hardcoded at `14:01:37` and the
+failing run was later than a passing one, but `promtail.yml` has no
+`older_than` stage anywhere and a local run at an even later hour passed.
+
+**The mechanism is in `_run()`.** Every line for a `(service, source_type)`
+pair is piped through **one** `promtail -dry-run -stdin`, and the result is
+matched **by line text**:
+
+```python
+retained[entry.group(2).strip()] = labels
+```
+
+Any line absent from stdout is therefore scored as dropped. If Promtail exits
+before flushing, a *retained* line reads as a contract violation.
+`airflow-scheduler/container_stdout` batches four lines and exactly one went
+missing — consistent with a flush race on a loaded CI runner and not
+reproducible on a fast local machine.
+
+Scope: make absence provable rather than inferred. Either read until the
+process has genuinely finished emitting, or assert the **expected line count
+per batch** and fail the run as *inconclusive* when it does not match — never
+silently reinterpret a missing line as a policy decision.
+
+> **Why this is a test-suite problem and not a Plan 141 problem.** Plan 141
+> owns what the log contract *says*; this owns whether the instrument that
+> checks it can be believed. A checker that intermittently reports a false
+> "Promtail dropped it" during Plan 141's Stage 4 soak is **indistinguishable
+> from a real contract violation**, so the failure mode is not a flaky test
+> costing a re-run — it is evidence that cannot be trusted either way. The
+> asymmetry Stage E names applies here too: a false negative costs time, a
+> false positive suppresses or manufactures evidence.
+
+Cheap to fix and cheap to verify: the fix is a few lines, and the check on it
+is that a batch whose output is short fails loudly instead of resolving into a
+verdict about the log contract.
 
 ## Success criteria
 

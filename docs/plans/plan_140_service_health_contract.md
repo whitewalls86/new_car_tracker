@@ -408,7 +408,7 @@ Follow the both-directions validation Plan 131 used for
 the expression stays quiet on healthy data, then prove it fires — with a
 deliberately stopped non-critical container, not by breaking something real.
 
-#### As built — implemented 2026-08-20, production deploy pending
+#### As built — implemented 2026-08-20, deployed 2026-08-20, soak closed 2026-08-21
 
 `container_health/` is a dedicated service of four small modules:
 `collector.py` holds the pure state mapping and the scoping rule,
@@ -689,7 +689,7 @@ passed all 10 tests, the full local unit suite passed 2,235 tests, and the
 calculated Airflow worst-case remains 85 connections against Postgres's limit
 of 100. Stage 3 requires no production soak and is closed.
 
-### Stage 4 — Retire DAG sensors as the health signal — BUILT 2026-08-25, PRODUCTION DEPLOY PENDING
+### Stage 4 — Retire DAG sensors as the health signal — DEPLOYED AND VERIFIED 2026-08-25
 
 Once Stage 2 alerts exist, `http_health_sensor` should stop being how anyone
 finds out a service is down. It stays useful as a **gate** — do not start

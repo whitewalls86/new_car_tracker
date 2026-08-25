@@ -42,46 +42,17 @@ store, processing service, Airflow migration, Grafana, dashboard restructure,
 full decommission, storage normalization, and adaptive-refresh feature
 foundation.
 
-Plan 141 Stages 0-3 merged as PR #247, review findings fixed. Plan 142 Stage 1
-and its first Stage 2 operator-client slice merged as PR #243. Further Plan 142
-work waits for Plan 136 Stage 3a's memory baseline read at approximately
-19:40 UTC on 2026-08-25.
+**Production is at `bb06054`, deployed the evening of 2026-08-25.** PRs #243,
+#245, #246, #247, #248 and #249 are all live, and `V043` is applied.
 
-**Production is at PR #241, last pulled 02:09 UTC on 2026-08-25.** PRs #243,
-#245, #246 and #247 are all merged and undeployed, so one deploy carries them
-together.
+Two soaks are running, both clocked from the deploy rather than from any merge:
 
-Post-baseline deployment queue:
+- **Plan 136 Stage 3b** — 48 hours from 19:50:55, accepts **2026-08-27**.
+- **Plan 141 Stage 4** — 24 hours from 19:52, accepts **2026-08-26**.
 
-**Every step that restarts a container comes before every soak that starts.**
-Two observation windows open at the end of this queue and they overlap; that is
-only safe because nothing restarts underneath them. Restarting the scraper
-mid-window changes the load driving the very memory curve Stage 3b reads.
-
-1. Read and record Plan 136 Stage 3a's baseline. The series is
-   `cartracker_container_memory_bytes` in Prometheus with 30-day retention, so
-   the read survives restarts and does not have to happen before the deploy.
-2. Run and record Plan 142 Stage 0 Phase B.
-3. Deploy #243, #245, #246 and #247 in one pass. `shared/logging_setup.py`
-   changed, so this rebuilds `ops`, `scraper`, `processing`, `archiver`,
-   `pack-worker`, `dashboard` and `dbt_runner`. Promtail, Prometheus and
-   Grafana need an explicit restart for their bind-mounted config —
-   `compose up -d` will not recreate them, because their service definitions did
-   not change. `docker kill -s HUP cartracker-prometheus` reloads the new scrape
-   job without a gap in Stage 3a's series.
-4. Pin and deploy the current `trawl` digest.
-5. Start both soaks, once the fleet is quiet:
-   - **Plan 136 Stage 3b** — 48 hours against 3a's memory series, on the pinned
-     digest.
-   - **Plan 141 Stage 4** — 24 hours against the log ingestion contract: no
-     Promtail parsing or replay errors, missing-`source` and expected-`level`
-     queries at zero, one representative warning per selected source proven to
-     land in the error panel, a measured bytes/day against the Stage 0
-     baseline, the Airflow severity shapes confirmed against real control-plane
-     output, and a threshold decided for putting stdout sources back into
-     `ct-log-error-spike`.
-6. Resume non-production Plan 142 Stage 2 work without introducing production
-   holds during those soaks.
+Plan 142's Phase B window ran the same evening and closed clean: Stage 0 items
+6 and 7 are done, and the maintenance-pool hold ran 20:14:57 → 21:14:57,
+draining 44 tasks in 74.5s with zero failures.
 
 Plan 134's one-week observation window unblocks when Plan 141 Stage 4 accepts,
 but it owes code first and stays in the build order until that lands.
@@ -128,7 +99,6 @@ the row, and record it *only* there.
 | Plan | Lands | Gate — what removes this row |
 |---|---|---|
 | [129](plans/plan_129_zstd_dictionary_compression.md) | **2026-09-01** *(review date set by Plan 146; the gate has no scheduled run)* | Dictionary v1 is live and the Stage 4 backfill is running. Row leaves when the backfill reports zero remaining level-3 objects and no metric deviation. Reversible throughout — no data is discarded and every artifact stays independently decompressable |
-| [123](plans/plan_123_dbt_incrementalization_and_resource_governance.md) | **2026-09-01** *(review date set by Plan 146; the gate has no scheduled run)* | Phases 0-2 built and deployed 2026-07-09/10; every remaining item is production verification — peak RSS against the 8 GB DuckDB budget, the hourly DAG's runtime drop once it stops executing the full 200-resource graph, and the `AirflowFailException` OOM short-circuit firing. **Open and unrecorded since 2026-07-10**, which is why this table has a `Lands` column at all |
 | [146](plans/plan_146_planning_system.md) | **2026-09-14** | `docs/recaps/` holds a file for every complete week from 2026-08-17 to 2026-09-13 with no gap — four weeks recapped on the habit, not backfilled — and the `plans` skill has performed at least one archive on a plan other than 146, leaving `PLANS.md`, the archive and its stated row count in agreement. A missing week means the catch-up rule failed, and the gap shows on the filesystem |
 | [149](plans/plan_149_linear_execution_layer.md) | **2026-09-15** | Stage 0 bootstrapped 2026-08-24 — workspace, team `CAR`, seven-state workflow and eight Cycle 1 issues are recorded as Stage 0 evidence. Row leaves when the Cycle measures table holds real post-cycle reads for all three cycles and the Stage 3 keep/change/remove decision is written into the plan document. Rollback is disconnecting the GitHub integration; Linear never owns repository state |
 
@@ -139,9 +109,9 @@ it is smaller while a higher row has an executable next step.
 
 | Order | Plan | Title | Next executable slice | Workable? | Blocked by | Priority | Effort | Depends on / safe stopping point |
 |---:|---|---|---|---|---|---|---|---|
-| 1 | [141](plans/plan_141_structured_log_ingestion_contract.md) | Structured log ingestion and dashboard contract | Freeze production-derived fixtures and baseline, then align parsing, labels, filters, and dashboard selectors; fix `ct-403-log-spike` as the first case | **Y** | -- | 85 | S + 24h soak | Should precede Plan 134's observation window. Has a live false positive to work from: `ct-403-log-spike` produced **49 of 51** alert annotations over the Plan 140 soak, from an unanchored `\|= "403"` catching INFO lines from `shared.minio`. It is **not** diurnal |
-| 2 | [142](plans/plan_142_planned_host_maintenance.md) | Scoped operational coordination and host maintenance | After Plan 136's Stage 3a baseline read, run Stage 0 Phase B, merge/deploy PR #243, then resume Stage 2 with running-set manifest capture and read-only host preflight | **N** | Plan 136 Stage 3a baseline read (~19:40 UTC 2026-08-25) | 86 | M + first observed window | Stage 1 and the first Stage 2 operator-client slice are built on draft PR #243 with green CI. Runbook §10 owns Stage 0 Phase B; production holds after that window wait until Plan 136 Stage 3b's 48-hour soak finishes |
-| 3 | [136](plans/plan_136_solver_recycle_and_liveness.md) | Solver recycle and real liveness | Stage 3b — read 3a's memory baseline from 2026-08-25, then pin `TRAWL_IMAGE` to a current digest and soak 48h against it (3a deployed 2026-08-23 and publishing; production runs a 2026-07-06 image whose pool has no periodic recycling at all) | **N** | 2026-08-25 | 98 | M | Stage 0 verified; Stage 1 moved to Plan 143; 0b shipped as Plan 140 Stage 2. **Unblocked 2026-08-22 by D7** — the resume gate's "until the rate bends" half is met, and the involuntary OOM recycle Stage 3 was sized against has stopped firing. **D8 (2026-08-23) rewrote Stage 3 into four slices** — production runs a six-week-old image in which `BROWSER_RECYCLE_AFTER_CONTEXTS` and `BROWSER_CONTENT_PROCESSES` are read by nothing, and the `POST` verb is **not** separable as one added verb: `ALLOW_RESTARTS` narrows nothing once `CONTAINERS=1` is set, so it needs a second, strictly narrower proxy instance rather than a wider grant on the existing one |
+| 1 | [141](plans/plan_141_structured_log_ingestion_contract.md) | Structured log ingestion and dashboard contract | Stage 4 — accept the 24h soak from 2026-08-25 19:52, then fix the contract checker's false-drop flake | **N** | Stage 4 soak to 2026-08-26 | 85 | S + 24h soak | Should precede Plan 134's observation window. Has a live false positive to work from: `ct-403-log-spike` produced **49 of 51** alert annotations over the Plan 140 soak, from an unanchored `\|= "403"` catching INFO lines from `shared.minio`. It is **not** diurnal |
+| 2 | [142](plans/plan_142_planned_host_maintenance.md) | Scoped operational coordination and host maintenance | Stage 2 — build `host_maintenance.sh`'s subcommand chain (`preflight → drain → stop → update → reboot → start → validate`), capture the running-set manifest, and finish the durable transition history | **Y** | -- | 86 | M + first observed window | **Nothing blocks building it.** Stage 1 deployed and proven end to end 2026-08-25; Stage 0 Phase B closed clean the same evening. *Executing* a host window is separate: it waits on Stage 3's validation-evidence guard, and any production hold additionally waits for Plan 136 Stage 3b's soak to close 2026-08-27 |
+| 3 | [136](plans/plan_136_solver_recycle_and_liveness.md) | Solver recycle and real liveness | Stage 3b — accept the 48h soak from 2026-08-25 19:50:55; if it holds, Stage 3 finishes here and 3c/3d are not built | **N** | 2026-08-27 | 98 | M | Stage 0 verified; Stage 1 moved to Plan 143; 0b shipped as Plan 140 Stage 2. **Unblocked 2026-08-22 by D7** — the resume gate's "until the rate bends" half is met, and the involuntary OOM recycle Stage 3 was sized against has stopped firing. **D8 (2026-08-23) rewrote Stage 3 into four slices** — production runs a six-week-old image in which `BROWSER_RECYCLE_AFTER_CONTEXTS` and `BROWSER_CONTENT_PROCESSES` are read by nothing, and the `POST` verb is **not** separable as one added verb: `ALLOW_RESTARTS` narrows nothing once `CONTAINERS=1` is set, so it needs a second, strictly narrower proxy instance rather than a wider grant on the existing one |
 | 4 | [134](plans/plan_134_archiver_endpoint_failure_contract.md) | Archiver endpoint failure contract | Add warning-only failure predicates and begin the one-week observation window | **N** | Plan 141, then a 7d window | 88 | S | Plan 141 first; one-week soak before enforcement; pause if real failures need repair |
 | 5 | [145](plans/plan_145_april_cutover_reconciliation.md) | Deleting the April cutover backlog without losing data | Close Stage 0d (backdated-write safety, a blocker) and 0e, then build the one backfill write path | **Y** | -- | 84 | S | **Supersedes Plans 132 and 137.** Unblocked — Plan 133 deployed and verified; gates 0a/0b/0c closed 2026-08-21. Goal is deletion of 1,299 legacy objects (13.79 GiB); recovery is loss minimisation, not the finish line. Stage 2 is also where `PACK_INDEX_CACHE_PACKS=48` gets its first effectiveness measurement |
 | 6 | [138](plans/plan_138_public_surface_refresh.md) | Public surface refresh | Truth pass, public-root contract, accessible assets, Plan 143 stats presentation, and project-updates snapshot | **Y** | -- | 84 | L | Plan 143 supplies the stats contract; land before the next major platform milestone. **Its project-updates snapshot now reads [completed_plans.md](planning/completed_plans.md)**, since Plan 146 removed this file's duplicate Completed table |
@@ -209,7 +179,7 @@ work that never happened.
 
 ## Completed
 
-[**completed_plans.md**](planning/completed_plans.md) — 111 rows, newest first, one row
+[**completed_plans.md**](planning/completed_plans.md) — 112 rows, newest first, one row
 per plan. It is the only record of what is finished; this file keeps no copy.
 Dates reconstructed by Plan 146 Stage 1 are labelled *observed*, *corroborated*
 or *inferred* so a guess is never mistaken for a record.

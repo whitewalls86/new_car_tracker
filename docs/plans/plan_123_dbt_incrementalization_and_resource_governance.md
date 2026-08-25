@@ -1,5 +1,73 @@
 # Plan 123: dbt Incrementalization and Analytics Resource Governance
 
+## Status — COMPLETE (2026-08-25), archived
+
+**Phases 0-2 built and deployed 2026-07-09/10. Every remaining item was
+production verification, and it stayed open and unrecorded from 2026-07-10
+until 2026-08-25** — which is the whole reason `PLANS.md`'s closeout table
+grew a `Lands` column. The measurements below close it.
+
+The instrument that was missing all along arrived as a side effect of another
+plan: [Plan 136](plan_136_solver_recycle_and_liveness.md) Stage 3a began
+publishing `cartracker_container_memory_bytes` for the three services that
+declare a `mem_limit`, and `dbt_runner` is one of them.
+
+### 1. The hourly DAG's runtime drop — CONFIRMED
+
+Phase 1's cadence split deployed 2026-07-09/10. `hourly_analytics_refresh`,
+successful runs only, by week:
+
+| Week | DAG avg | DAG p95 | `dbt_build` task avg |
+|---|---:|---:|---:|
+| 2026-07-06 *(pre-split)* | **135.1s** | 144.1s | 89.5s |
+| 2026-07-13 *(first full week after)* | **82.1s** | 92.5s | 62.8s |
+| 2026-07-20 | 87.7s | 95.3s | 67.1s |
+| 2026-07-27 | 92.0s | 101.3s | 70.9s |
+| 2026-08-03 | 90.7s | 98.0s | 69.3s |
+| 2026-08-10 | 102.0s | 137.6s | 78.9s |
+| 2026-08-17 | 93.5s | 111.2s | 71.9s |
+
+**−39% on the DAG and −30% on the dbt task at the split, sustained across six
+weeks.** Within the DAG today, `dbt_build` is 76.9s of a ~99s run; nothing else
+exceeds 12s. Airflow's `dag_run` retention starts 2026-07-02, so the 2026-07-06
+week is the earliest usable baseline — the pre-split figure cannot be pushed
+back further than that.
+
+### 2. The 8 GB DuckDB budget and 12g container limit — CONFIRMED SUFFICIENT
+
+Peak RSS over 7 days: **3.53 GiB — 44.1% of the 8 GB DuckDB budget, 29.4% of
+the 12g container cap.**
+
+This answers the open worry in Phase 0 directly. That checkbox feared "8GB may
+force spilling/slower runs"; it does not. Forced spilling would show as runtime
+degradation, and runtime instead improved and held. The 2026-07-09 incident
+measured ~12.9 GB RSS per killed process with **no** `memory_limit` configured
+at all — against that, the configured budget has better than 2× headroom.
+
+### 3. The `AirflowFailException` OOM short-circuit — NOT VERIFIABLE, now a residual risk
+
+**This item cannot be closed by observation, and holding the plan open for it
+is a deadlock.** It asks to confirm the short-circuit fires "against a real
+SIGKILL, not just the classification unit tests" — but no dbt OOM has occurred
+since the guardrails landed:
+
+- no kernel OOM kill naming a dbt process;
+- `dbt_runner` `OOMKilled=false`, `RestartCount=0`;
+- the last `dbt_build` task failure inside `hourly_analytics_refresh` was
+  2026-07-21, and the standalone `dbt_build` DAG's last was 2026-05-27.
+
+The guardrail prevents the event that would prove the guardrail. With peak RSS
+at 44% of budget, the event is unlikely to recur on its own.
+
+> **Residual risk, carried deliberately.** The OOM classification path is
+> covered by unit tests only. Its production behaviour under a real SIGKILL is
+> unproven and will stay unproven until either a genuine OOM occurs or the path
+> is exercised deliberately in a non-production environment —
+> [Plan 121](plan_121_staging_environment.md)'s staging host is the honest
+> place for that. **This is a known gap, not a verified behaviour**, and
+> anyone relying on the short-circuit during an incident should know it has
+> never fired in anger.
+
 ## Objective
 
 Make the current DuckDB-backed analytics pipeline reliable as the project grows,
@@ -135,15 +203,19 @@ out of scope for this commit per plan.
 
 Still needs VM verification per the acceptance gate above:
 
-- [ ] Deploy and run one complete production build under monitoring to
+- [x] Deploy and run one complete production build under monitoring to
       confirm no host OOM and that production APIs/MinIO stay healthy.
-- [ ] Confirm the chosen `8GB` DuckDB budget / `12g` container limit are
-      sufficient for the current ~200-resource graph (the incident measured
-      ~12.9GB RSS per killed process with no memory_limit configured at
-      all, so 8GB may force spilling/slower runs — revisit after a real
-      run's `model_timings` and `duration_seconds` are observed).
-- [ ] Confirm the `AirflowFailException` OOM short-circuit fires correctly
+      **CLOSED 2026-08-25** — six weeks of hourly runs since 2026-07-10 with
+      no host OOM; see the Status section.
+- [x] Confirm the chosen `8GB` DuckDB budget / `12g` container limit are
+      sufficient for the current ~200-resource graph.
+      **CLOSED 2026-08-25 — peak RSS 3.53 GiB, 44.1% of the budget.** The
+      feared spilling did not occur; runtime improved rather than degraded.
+- [~] Confirm the `AirflowFailException` OOM short-circuit fires correctly
       against a real SIGKILL, not just the classification unit tests.
+      **NOT VERIFIABLE 2026-08-25 — converted to a residual risk**, see the
+      Status section. No dbt OOM has occurred since the guardrails landed, so
+      the guardrail prevents the event that would prove it.
 
 ## Phase 1: Split Build Cadences
 
@@ -275,9 +347,9 @@ through as raw `--select`/`--exclude`, never `--selector`.
 
 #### Still needs VM validation
 
-- [ ] Confirm the hourly DAG's actual runtime/resource drop once only
-      `hourly_core` runs, using the Phase 0 observability fields
-      (`model_timings`, `duration_seconds`) from a real production run.
+- [x] Confirm the hourly DAG's actual runtime/resource drop once only
+      `hourly_core` runs. **CLOSED 2026-08-25 — 135.1s to 82.1s, -39% on the
+      DAG and -30% on the dbt task, sustained six weeks.** See Status.
 - [ ] Stand up a scheduled `feature_daily` build (cadence/DAG not decided in
       this phase — Phase 1 only adds the tag and a manual trigger path).
 - [ ] Confirm `full_validation` / manual `dbt_build` still completes within
