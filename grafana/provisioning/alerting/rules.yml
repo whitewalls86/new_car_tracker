@@ -262,7 +262,21 @@ groups:
       - uid: ct-coordination-stale
         title: Coordination State Stale
         condition: C
-        noDataState: Alerting
+        # `noDataState: OK`, deliberately. The query selects `phase!="none"`,
+        # so in the healthy steady state -- no deploy or maintenance window
+        # open -- it matches no series at all. With `noDataState: Alerting`
+        # and `for: 0s` this rule fired permanently from the moment it was
+        # deployed (2026-08-25 20:00 UTC, minutes after a window closed
+        # cleanly), and reported the *previous* window's labels while doing
+        # it: "deploy coordination has remained requested for over 30
+        # minutes" against a record already released to `phase=none`.
+        # Absence of a window is the healthy case, not a stale one.
+        #
+        # This does not blind us to `ops` dying: `up{job=~"...|ops|..."}`
+        # in ct-service-down covers an unreachable exporter after 2m, which
+        # is the correct owner of that failure. `execErrState` stays
+        # Alerting -- a query that errors is a real fault, not an absence.
+        noDataState: OK
         execErrState: Alerting
         for: 0s
         annotations:

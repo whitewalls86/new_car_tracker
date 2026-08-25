@@ -1491,7 +1491,13 @@ class TestGrafanaAlertingProvisioning:
         stale = self._rule("ct-coordination-stale")
         gate = self._rule("ct-coordination-gate-unhealthy")
 
-        assert stale["noDataState"] == "Alerting"
+        # No data means no coordination window is open, which is the healthy
+        # steady state -- the query selects `phase!="none"`. Alerting on it
+        # made this rule fire permanently from the minute it was deployed,
+        # carrying the released window's stale `phase=requested` labels.
+        # `execErrState` below is what keeps the "fail loud" half honest.
+        assert stale["noDataState"] == "OK"
+        assert stale["execErrState"] == "Alerting"
         assert stale["data"][0]["model"]["expr"] == (
             'cartracker_coordination_state_age_seconds{job="ops",phase!="none"}'
         )
@@ -1499,6 +1505,9 @@ class TestGrafanaAlertingProvisioning:
             "type": "gt",
             "params": [1800],
         }
+        # This one keeps `Alerting` on purpose: both its metrics publish in
+        # every phase, so their absence really does mean ops stopped
+        # reporting rather than "no window is open".
         assert gate["noDataState"] == "Alerting"
         assert gate["for"] == "10m"
         assert "coordination_gate_evidence_known" in gate["data"][0]["model"]["expr"]
