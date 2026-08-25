@@ -25,7 +25,7 @@ _TRANSITIONS = {
 }
 
 _STATUS_SQL = """
-    SELECT kind, phase, requested_by, reason, targets, scope, requested_at,
+    SELECT kind, phase, generation, requested_by, reason, targets, scope, requested_at,
            draining_at, active_at, validating_at, completed_at, expected_work,
            manifest_location, operator_notes, updated_at
       FROM coordination_state
@@ -93,7 +93,8 @@ def _request(payload: CoordinationRequest) -> tuple[str, dict[str, Any] | None]:
                 return "conflict", None
             cur.execute(
                 """UPDATE coordination_state
-                      SET kind = %s, phase = 'requested', targets = %s::jsonb,
+                      SET kind = %s, phase = 'requested', generation = generation + 1,
+                          targets = %s::jsonb,
                           scope = %s::jsonb, requested_by = %s, reason = %s,
                           requested_at = now(), draining_at = NULL,
                           active_at = NULL, validating_at = NULL,
@@ -178,6 +179,38 @@ def _cancel() -> str:
         return "error"
 
 
+def _authorize() -> tuple[str, dict[str, Any] | None]:
+    """Authorize only from a locked, current-generation confirming read."""
+    try:
+        with db_cursor(
+            error_context="Coordination-Authorize", dict_cursor=True
+        ) as cur:
+            cur.execute("SELECT pg_advisory_xact_lock(%s)", (COORDINATION_LOCK_ID,))
+            cur.execute(_STATUS_SQL)
+            row = cur.fetchone()
+            if row is None:
+                return "error", None
+            state = {key: _iso(value) for key, value in dict(row).items()}
+            if state["phase"] != "draining":
+                return "conflict", None
+
+            evidence = collect_drain_status(state)
+            if not evidence["drained"]:
+                return "blocked", evidence
+
+            cur.execute(
+                """UPDATE coordination_state
+                      SET phase = 'active', active_at = now(), updated_at = now()
+                    WHERE id = 1 AND phase = 'draining' AND generation = %s""",
+                (state["generation"],),
+            )
+            if cur.rowcount != 1:
+                return "conflict", None
+        return "ok", evidence
+    except Exception:
+        return "error", None
+
+
 @router.get("/status")
 def coordination_status() -> dict[str, Any]:
     return _status()
@@ -217,6 +250,18 @@ def coordination_drain_status() -> dict[str, Any]:
     return collect_drain_status(_status())
 
 
-# Authorization, validation, and release routes are added only with
+@router.post("/authorize")
+def authorize_coordination() -> dict[str, Any]:
+    result, evidence = _authorize()
+    if result == "ok":
+        return {"phase": "active", "drain": evidence}
+    if result == "blocked":
+        raise HTTPException(status_code=409, detail={"reason": "not_drained", **evidence})
+    if result == "conflict":
+        raise HTTPException(status_code=409, detail="Coordination is not draining.")
+    raise HTTPException(status_code=503, detail="Authorization evidence unavailable.")
+
+
+# Validation and release routes are added only with
 # their evidence guards. Exposing an unguarded
 # draining->active endpoint would turn a state machine into false authority.

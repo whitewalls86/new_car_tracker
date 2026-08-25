@@ -112,6 +112,36 @@ def _airflow_task_instances(scope: frozenset[str]) -> dict[str, Any]:
     )
 
 
+def _airflow_gate_observations(
+    scope: frozenset[str], generation: int | None
+) -> dict[str, Any]:
+    """Count active affected DAG runs that have not observed this drain."""
+    if not isinstance(generation, int) or generation < 1:
+        return _unknown("airflow_gate_observations", "coordination generation unavailable")
+    dag_ids = sorted(
+        dag_id for dag_id, surfaces in ADMISSION_SURFACES.items() if surfaces & scope
+    )
+    if not dag_ids:
+        return _known("airflow_gate_observations", 0)
+    dag_sql = ", ".join(["(%s)"] * len(dag_ids))
+    return _database_count(
+        "airflow_gate_observations",
+        f"""SELECT COUNT(*), MIN(dr.start_date)
+               FROM dag_run dr
+               JOIN (VALUES {dag_sql}) AS affected(dag_id)
+                 ON affected.dag_id = dr.dag_id
+              WHERE dr.state IN ('queued', 'running')
+                AND NOT EXISTS (
+                    SELECT 1
+                      FROM coordination_gate_observations observed
+                     WHERE observed.generation = %s
+                       AND observed.dag_id = dr.dag_id
+                       AND observed.run_id = dr.run_id
+                )""",
+        tuple(dag_ids) + (generation,),
+    )
+
+
 def _service_jobs(source: str) -> dict[str, Any]:
     env_name, default_url, surface = SERVICE_EVIDENCE[source]
     try:
@@ -140,7 +170,9 @@ def _ops_jobs() -> dict[str, Any]:
     return _known("ops_jobs", evidence["active_jobs"], evidence["oldest_started_at"])
 
 
-def _read_source(source: str, scope: frozenset[str]) -> dict[str, Any]:
+def _read_source(
+    source: str, scope: frozenset[str], generation: int | None = None
+) -> dict[str, Any]:
     readers: dict[str, Callable[[], dict[str, Any]]] = {
         "processing_artifacts": _processing_artifacts,
         "running_detail_claims": _running_detail_claims,
@@ -148,6 +180,8 @@ def _read_source(source: str, scope: frozenset[str]) -> dict[str, Any]:
     }
     if source == "airflow_task_instances":
         return _airflow_task_instances(scope)
+    if source == "airflow_gate_observations":
+        return _airflow_gate_observations(scope, generation)
     if source in SERVICE_EVIDENCE:
         return _service_jobs(source)
     if source in readers:
@@ -162,7 +196,7 @@ def collect_drain_status(state: dict[str, Any]) -> dict[str, Any]:
     evidence = []
     for source in sorted(DRAIN_SOURCES):
         if source in required:
-            evidence.append(_read_source(source, scope))
+            evidence.append(_read_source(source, scope, state.get("generation")))
         else:
             evidence.append(
                 {

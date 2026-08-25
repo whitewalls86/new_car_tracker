@@ -34,6 +34,16 @@ def _short(reason: str, *surfaces: str) -> MutationContract:
 
 
 DRAIN_SOURCES = {
+    "airflow_gate_observations": _source(
+        "active Airflow DAG runs observed blocking on the current coordination generation",
+        "detail_fetch",
+        "listing_fetch",
+        "processing",
+        "archive",
+        "analytics",
+        "airflow_control",
+        "database",
+    ),
     "airflow_task_instances": _source(
         "Airflow metadata task-instance states plus oldest start",
         "detail_fetch",
@@ -187,6 +197,11 @@ MUTATION_ROUTES = {
     "ops/routers/deploy.py:POST:/deploy/complete": _short(_ATOMIC_STATE, "database"),
     "ops/routers/coordination.py:POST:/request": _short(_ATOMIC_STATE, "database"),
     "ops/routers/coordination.py:POST:/begin-drain": _short(_ATOMIC_STATE, "database"),
+    "ops/routers/coordination.py:POST:/authorize": _short(
+        "The handler confirms scoped drain evidence and performs one bounded "
+        "coordination-state transition without admitting persistent work.",
+        "database",
+    ),
     # Admin routes either delegate to a tracked long job or perform bounded
     # metadata/coordination transactions.
     "ops/routers/admin.py:POST:/dbt/trigger": _tracked("delegated", "dbt_runner_jobs", "analytics"),
@@ -233,7 +248,9 @@ NON_HTTP_WORK = {
                 "database",
             }
         ),
-        "required_sources": frozenset({"airflow_task_instances"}),
+        "required_sources": frozenset(
+            {"airflow_gate_observations", "airflow_task_instances"}
+        ),
     },
     "trawl_worker": {
         "surfaces": frozenset({"detail_fetch"}),

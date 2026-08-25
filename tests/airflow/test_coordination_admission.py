@@ -116,3 +116,5 @@ def test_sensor_is_scoped_dual_signal_rescheduling_and_practically_unbounded():
     assert "coordination_state" in sensor_source
     assert "scope ? 'host'" in sensor_source
     assert "scope ?| %s::text[]" in sensor_source
+    assert "coordination_gate_observations" in sensor_source
+    assert "ON CONFLICT (generation, dag_id, run_id)" in sensor_source

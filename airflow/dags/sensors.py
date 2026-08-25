@@ -56,7 +56,8 @@ class _DeployIntentSensor(BaseSensorOperator):
         hook = PostgresHook(postgres_conn_id="cartracker_db")
         row = hook.get_first(
             """SELECT di.intent, cs.phase,
-                      cs.scope ? 'host' OR cs.scope ?| %s::text[] AS intersects
+                      cs.scope ? 'host' OR cs.scope ?| %s::text[] AS intersects,
+                      cs.generation
                  FROM deploy_intent di
                  CROSS JOIN coordination_state cs
                 WHERE di.id = 1 AND cs.id = 1""",
@@ -64,7 +65,22 @@ class _DeployIntentSensor(BaseSensorOperator):
         )
         if row is None or row[0] != "none":
             return False
-        return row[1] == "requested" or row[1] == "none" or not row[2]
+        blocked = row[1] in {"draining", "active", "validating"} and row[2]
+        if blocked:
+            dag_run = context.get("dag_run")
+            run_id = getattr(dag_run, "run_id", None) or context.get("run_id")
+            if not run_id:
+                return False
+            hook.run(
+                """INSERT INTO coordination_gate_observations
+                           (generation, dag_id, run_id, observed_at)
+                    VALUES (%s, %s, %s, now())
+                    ON CONFLICT (generation, dag_id, run_id)
+                    DO UPDATE SET observed_at = EXCLUDED.observed_at""",
+                parameters=(row[3], self.coordination_dag_id, run_id),
+            )
+            return False
+        return True
 
 
 class _ServiceHealthSensor(BaseSensorOperator):

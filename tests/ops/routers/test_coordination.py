@@ -113,8 +113,9 @@ def test_cancel_refuses_unsafe_states(mock_cursor_context, source):
     assert len(cursor.execute.call_args_list) == 2
 
 
-def test_only_status_route_is_exposed_before_guards_exist(mock_client):
-    assert mock_client.post("/coordination/authorize").status_code == 404
+def test_validation_and_release_routes_remain_private(mock_client):
+    assert mock_client.post("/coordination/begin-validation").status_code == 404
+    assert mock_client.post("/coordination/complete").status_code == 404
 
 
 def test_begin_drain_endpoint_exposes_only_legal_transition(mock_client, mocker):
@@ -149,6 +150,71 @@ def test_drain_status_aggregates_authoritative_state_without_transition(mock_cli
     assert response.json()["drained"] is True
     collect.assert_called_once_with(state)
     transition.assert_not_called()
+
+
+def test_authorize_uses_locked_current_generation_confirming_read(mock_cursor_context, mocker):
+    _, cursor = mock_cursor_context
+    cursor.fetchone.return_value = {
+        "kind": "service_maintenance",
+        "phase": "draining",
+        "generation": 8,
+        "scope": ["processing"],
+    }
+    cursor.rowcount = 1
+    evidence = {"drained": True, "blockers": [], "sources": []}
+    collect = mocker.patch(
+        "ops.routers.coordination.collect_drain_status", return_value=evidence
+    )
+
+    result, returned = coordination._authorize()
+
+    assert (result, returned) == ("ok", evidence)
+    collect.assert_called_once()
+    sql, params = cursor.execute.call_args_list[-1].args
+    assert "phase = 'active'" in sql
+    assert "phase = 'draining' AND generation = %s" in sql
+    assert params == (8,)
+
+
+def test_authorize_does_not_write_when_confirming_read_has_blockers(
+    mock_cursor_context, mocker
+):
+    _, cursor = mock_cursor_context
+    cursor.fetchone.return_value = {
+        "kind": "service_maintenance",
+        "phase": "draining",
+        "generation": 8,
+        "scope": ["processing"],
+    }
+    evidence = {
+        "drained": False,
+        "blockers": ["airflow_gate_observations"],
+        "sources": [],
+    }
+    mocker.patch(
+        "ops.routers.coordination.collect_drain_status", return_value=evidence
+    )
+
+    assert coordination._authorize() == ("blocked", evidence)
+    assert len(cursor.execute.call_args_list) == 2
+
+
+@pytest.mark.parametrize(
+    ("result", "status_code"),
+    [("ok", 200), ("blocked", 409), ("conflict", 409), ("error", 503)],
+)
+def test_authorize_endpoint_maps_result(mock_client, mocker, result, status_code):
+    evidence = {"drained": result == "ok", "blockers": [], "sources": []}
+    mocker.patch(
+        "ops.routers.coordination._authorize",
+        return_value=(result, evidence if result in {"ok", "blocked"} else None),
+    )
+
+    response = mock_client.post("/coordination/authorize")
+
+    assert response.status_code == status_code
+    if result == "ok":
+        assert response.json()["phase"] == "active"
 
 
 def _request_payload(**overrides):
@@ -270,3 +336,6 @@ def test_migration_has_single_row_kind_phase_and_nonempty_scope_contract():
     for kind in ("deploy", "service_maintenance", "host_maintenance"):
         assert f"'{kind}'" in sql
     assert "scope <> '[]'::jsonb" in sql
+    assert "generation bigint NOT NULL DEFAULT 0" in sql
+    assert "CREATE TABLE public.coordination_gate_observations" in sql
+    assert "PRIMARY KEY (generation, dag_id, run_id)" in sql
