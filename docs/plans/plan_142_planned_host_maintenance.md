@@ -239,6 +239,10 @@ The coordination record includes requester, reason, requested/start timestamps,
 phase timestamps, expected work, running-set manifest location, and operator
 notes. A stale-state alert pages an operator but does not release the state.
 
+That record holds the *current* window only. Its transition history is durable
+separately, in `staging.coordination_state_events` — see Stage 2's
+[durable transition history](#durable-transition-history).
+
 ## The drain contract
 
 `number_running` is replaced by named counts filtered to the active scope:
@@ -935,6 +939,73 @@ including profiles; do not start projects that were intentionally stopped.
 Before reboot, sync filesystems and record the installed kernel/package result.
 The reboot itself always requires explicit operator confirmation.
 
+#### Durable transition history
+
+Added 2026-08-25 from the Plan 141 logging health check. This stage already
+committed to append-only history and put it in two places, neither complete:
+
+| | `coordination_state` (Postgres) | `history.jsonl` (host) |
+|---|---|---|
+| Shape | single row, mutated in place | append-only |
+| Survives a host rebuild | yes | no — `/var/lib/cartracker/maintenance` is on root |
+| Queryable and joinable | yes | no |
+| Records completion | phase timestamps only | no — `none` is not in `CHECKPOINT_PHASES` |
+
+[`V043`](../../db/migrations/V043__coordination_state.sql) pins
+`coordination_state` to one row (`CHECK (id = 1)`). When `generation`
+increments, the prior window is gone. The same migration applies the opposite
+and correct reasoning one table over, for `coordination_gate_observations`:
+*"Historical rows are harmless and make the proof auditable."*
+
+The split is already known to this plan — the first Stage 2 slice is described
+as replay-safe across "the split outcome where Postgres advances but the local
+checkpoint write fails." That designs around the divergence rather than
+removing it. Two later commitments depend on removing it: **Stage 4** must
+capture planned-versus-actual phase duration and drain time-to-zero, which
+cannot be compared across windows from one overwritten row; and **CI invariant
+2** asserts legal predecessor transitions, which an event log makes checkable
+against production rather than only against unit tests.
+
+[Plan 151](plan_151_distributed_tracing_and_runtime_topology_audit.md) states
+the governing principle independently: telemetry may be lossy, control state may
+not be. Coordination state satisfies that for its present value and fails it for
+its history.
+
+The work:
+
+1. Add `staging.coordination_state_events` — append-only, `bigserial` primary
+   key, one row per transition carrying `generation`, `prior_phase`, `phase`,
+   `kind`, actor, and timestamp. Grants follow V043.
+2. Write the event in the **same transaction** as the `coordination_state`
+   update, so a mutation cannot succeed without its history row.
+3. Register it in
+   [`archiver/processors/flush_staging_events.py`](../../archiver/processors/flush_staging_events.py) —
+   one entry naming table, pk, columns, and `minio_prefix`, matching the five
+   already there. Flush is snapshot → Parquet → `DELETE WHERE pk <= max_pk`.
+4. Resolve the two records: either `history.jsonl` becomes an operator
+   convenience explicitly derived from Postgres, or it is dropped. It must stop
+   being a second source of truth, and the resolution is written down.
+5. Extend checkpoint coverage to the completion transition, which neither record
+   currently captures.
+6. Narrate transitions. The five coordination modules —
+   [`ops/routers/coordination.py`](../../ops/routers/coordination.py),
+   [`ops/mutation_contract.py`](../../ops/mutation_contract.py),
+   [`ops/coordination_drain.py`](../../ops/coordination_drain.py),
+   [`ops/coordination_metrics.py`](../../ops/coordination_metrics.py), and
+   [`scripts/host_maintenance.py`](../../scripts/host_maintenance.py) — total
+   1,110 lines and contain **zero** log calls. Log one record per transition
+   with `kind`, `phase`, `prior_phase`, and `generation` as fields, at `INFO`
+   for normal transitions and `WARNING` for refusals and timeouts. Log drain
+   progress at a bounded interval, not per poll.
+
+Field-carrying log records depend on Plan 141's formatter change, which lets
+`extra=` survive into the emitted JSON. Until that lands, transitions are
+narrated with stable messages and the fields are added after.
+
+This is expand-only. Every existing reader of `coordination_state` is
+unaffected, and the stage reverts by reverting the migration and the registry
+entry.
+
 ### Stage 3 — Make Plan 140 the resume gate
 
 Host validation occurs before application validation:
@@ -1015,6 +1086,14 @@ volume prune`, or automatically releasing maintenance intent.
 7. Plan 140 coverage is a declared dependency of the resume gate; missing
    health data fails closed.
 8. Package/reboot commands require explicit non-dry-run confirmation.
+9. Every `coordination_state` mutation writes exactly one history row in the
+   same transaction; a failed write leaves neither.
+10. Every phase transition reachable in the coordination modules has a
+    corresponding event type, so a transition cannot be added silently.
+11. `staging.coordination_state_events` flushes through the existing archiver
+    registry, not a bespoke path.
+12. A completed window is reconstructable from Postgres after its `generation`
+    has been superseded.
 
 ## Intersections and sequencing
 
