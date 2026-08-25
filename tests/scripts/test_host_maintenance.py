@@ -77,9 +77,7 @@ def test_checkpoint_refuses_symlink(mocker, tmp_path):
         host_maintenance.append_checkpoint(link, "active", "/tmp/m")
 
 
-def test_request_is_always_host_scoped_and_checkpoints_after_confirmation(
-    mocker, tmp_path
-):
+def test_request_is_always_host_scoped_and_checkpoints_after_confirmation(mocker, tmp_path):
     api = mocker.patch.object(
         host_maintenance,
         "api_request",
@@ -117,9 +115,7 @@ def test_request_is_always_host_scoped_and_checkpoints_after_confirmation(
         ("begin-validation", "/coordination/begin-validation", "validating"),
     ],
 )
-def test_mutating_commands_checkpoint_only_confirmed_phase(
-    mocker, tmp_path, command, route, phase
-):
+def test_mutating_commands_checkpoint_only_confirmed_phase(mocker, tmp_path, command, route, phase):
     api = mocker.patch.object(
         host_maintenance,
         "api_request",
@@ -186,10 +182,9 @@ def test_read_commands_never_write_checkpoint(mocker, tmp_path, command, route):
 
 def test_parser_intentionally_exposes_no_complete_or_destructive_commands():
     parser = host_maintenance.build_parser()
-    choices = next(
-        action.choices for action in parser._actions if action.dest == "command"
-    )
+    choices = next(action.choices for action in parser._actions if action.dest == "command")
     assert set(choices) == {
+        "preflight",
         "request",
         "status",
         "begin-drain",
@@ -197,3 +192,212 @@ def test_parser_intentionally_exposes_no_complete_or_destructive_commands():
         "authorize",
         "begin-validation",
     }
+
+
+def test_preflight_command_contract_is_observation_only():
+    mutation_words = {
+        "down",
+        "install",
+        "reboot",
+        "restart",
+        "stop",
+        "unmask",
+        "update",
+        "upgrade",
+    }
+
+    for _, command, _ in host_maintenance.PREFLIGHT_COMMANDS:
+        assert mutation_words.isdisjoint(command)
+
+
+def test_capture_running_set_records_compose_and_container_evidence(mocker):
+    container = {
+        "Id": "container-1",
+        "Name": "/cartracker-trawl",
+        "Image": "sha256:image-1",
+        "Config": {
+            "Image": "cartracker-trawl:latest",
+            "Labels": {
+                "com.docker.compose.project": "cartracker",
+                "com.docker.compose.service": "trawl",
+                "com.docker.compose.project.working_dir": "/opt/cartracker",
+                "com.docker.compose.project.config_files": ("/opt/cartracker/docker-compose.yml"),
+            },
+        },
+        "State": {
+            "Status": "running",
+            "Running": True,
+            "ExitCode": 0,
+            "Health": {"Status": "healthy"},
+        },
+        "HostConfig": {
+            "RestartPolicy": {"Name": "unless-stopped"},
+            "LogConfig": {
+                "Type": "json-file",
+                "Config": {"max-size": "10m", "secret-token": "do-not-store"},
+            },
+        },
+    }
+
+    def fake_run(command, **kwargs):
+        if command == ("docker", "ps", "--all", "--quiet"):
+            return {"stdout": "container-1\n", "stderr": "", "returncode": 0}
+        if command[:2] == ("docker", "inspect"):
+            return {"stdout": json.dumps([container]), "stderr": "", "returncode": 0}
+        if command[:3] == ("docker", "image", "inspect"):
+            return {
+                "stdout": json.dumps(
+                    [
+                        {
+                            "Id": "sha256:image-1",
+                            "RepoDigests": ["cartracker-trawl@sha256:digest-1"],
+                        }
+                    ]
+                ),
+                "stderr": "",
+                "returncode": 0,
+            }
+        if command[:2] == ("docker", "compose"):
+            project = command[command.index("--project-name") + 1]
+            profiles = ["trawl"] if project == "cartracker" else []
+            service = "trawl" if project == "cartracker" else "placeholder"
+            return {
+                "stdout": json.dumps({"services": {service: {"profiles": profiles}}}),
+                "stderr": "",
+                "returncode": 0,
+            }
+        raise AssertionError(command)
+
+    mocker.patch.object(host_maintenance, "_run_command", side_effect=fake_run)
+    mocker.patch.object(host_maintenance, "_git_revision", return_value="abc123")
+    mocker.patch.object(host_maintenance, "_running_kernel", return_value="6.8.0-test")
+    mocker.patch.object(host_maintenance, "_utc_now", return_value="timestamp")
+
+    manifest, rendered = host_maintenance.capture_running_set()
+
+    assert set(rendered) == {
+        "cartracker",
+        "cartracker-lakehouse",
+        "cartracker-mlflow",
+    }
+    assert manifest["git_revision"] == "abc123"
+    assert manifest["running_kernel"] == "6.8.0-test"
+    row = manifest["containers"][0]
+    assert row["name"] == "cartracker-trawl"
+    assert row["declared_profiles"] == ["trawl"]
+    assert row["policy_class"] == "profile-running"
+    assert row["image_repo_digests"] == ["cartracker-trawl@sha256:digest-1"]
+    assert row["state"] == {
+        "status": "running",
+        "running": True,
+        "exit_code": 0,
+        "health": "healthy",
+    }
+    assert row["restart_policy"] == {"Name": "unless-stopped"}
+    assert row["log_config"] == {
+        "driver": "json-file",
+        "options": {"max-size": "10m"},
+    }
+    assert "do-not-store" not in json.dumps(manifest)
+
+
+def test_capture_running_set_refuses_an_empty_host(mocker):
+    mocker.patch.object(
+        host_maintenance,
+        "_run_command",
+        return_value={"stdout": "", "stderr": "", "returncode": 0},
+    )
+
+    with pytest.raises(host_maintenance.MaintenanceError, match="no containers"):
+        host_maintenance.capture_running_set()
+
+
+def test_collect_preflight_enforces_lock_audit_and_hold_contract(mocker):
+    def fake_run(command, **kwargs):
+        stdout = "docker.io\n" if command == ("apt-mark", "showhold") else ""
+        returncode = 1 if command[:2] == ("sudo", "fuser") else 0
+        return {
+            "command": list(command),
+            "returncode": returncode,
+            "stdout": stdout,
+            "stderr": "",
+        }
+
+    mocker.patch.object(host_maintenance, "_run_command", side_effect=fake_run)
+    mocker.patch.object(host_maintenance, "_utc_now", return_value="timestamp")
+
+    result = host_maintenance.collect_preflight()
+
+    assert result["console_access_verified"] is True
+    assert set(result["observations"]) == {
+        name for name, _, _ in host_maintenance.PREFLIGHT_COMMANDS
+    }
+
+
+@pytest.mark.parametrize(
+    ("lock_returncode", "audit", "holds", "message"),
+    [
+        (0, "", "docker.io\n", "lock is held"),
+        (1, "broken package\n", "docker.io\n", "inconsistent"),
+        (1, "", "", "holds differ"),
+        (1, "", "docker.io\nlinux-image\n", "holds differ"),
+    ],
+)
+def test_collect_preflight_fails_closed_on_package_findings(
+    mocker, lock_returncode, audit, holds, message
+):
+    def fake_run(command, **kwargs):
+        stdout = ""
+        returncode = 0
+        if command[:2] == ("sudo", "fuser"):
+            returncode = lock_returncode
+        elif command == ("sudo", "dpkg", "--audit"):
+            stdout = audit
+        elif command == ("apt-mark", "showhold"):
+            stdout = holds
+        return {
+            "command": list(command),
+            "returncode": returncode,
+            "stdout": stdout,
+            "stderr": "",
+        }
+
+    mocker.patch.object(host_maintenance, "_run_command", side_effect=fake_run)
+
+    with pytest.raises(host_maintenance.MaintenanceError, match=message):
+        host_maintenance.collect_preflight()
+
+
+def test_run_preflight_writes_manifest_config_and_observations(mocker, tmp_path):
+    manifest = {"containers": [{"name": "ops"}]}
+    rendered = {
+        "cartracker": {
+            "working_directory": "/opt/cartracker",
+            "config_files": ["/opt/cartracker/docker-compose.yml"],
+            "rendered_sha256": "digest",
+            "services": {"ops": {"profiles": [], "image": "ops:latest"}},
+        }
+    }
+    mocker.patch.object(host_maintenance, "capture_running_set", return_value=(manifest, rendered))
+    mocker.patch.object(
+        host_maintenance,
+        "collect_preflight",
+        return_value={"observations": {"git_revision": {"stdout": "abc"}}},
+    )
+
+    with pytest.raises(host_maintenance.MaintenanceError, match="console"):
+        host_maintenance.run_preflight(tmp_path, console_access_verified=False)
+
+    result = host_maintenance.run_preflight(tmp_path, console_access_verified=True)
+
+    assert result == {
+        "phase": "preflight",
+        "manifest_location": str(tmp_path / "running-set.json"),
+        "containers": 1,
+        "compose_projects": ["cartracker"],
+    }
+    assert json.loads((tmp_path / "running-set.json").read_text()) == manifest
+    assert json.loads((tmp_path / "preflight.json").read_text())["observations"]
+    compose = json.loads((tmp_path / "compose" / "cartracker.json").read_text())
+    assert compose["services"] == {"ops": {"profiles": [], "image": "ops:latest"}}
+    assert "environment" not in json.dumps(compose)

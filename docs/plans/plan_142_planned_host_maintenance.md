@@ -1157,6 +1157,15 @@ Postgres advances but the local checkpoint write fails. It exposes no stop,
 package, reboot, restore, or complete command yet; those require the remaining
 Stage 2 mechanics and Stage 3's release evidence respectively.
 
+**Preflight slice built 2026-08-25:** the same client now exposes a read-only
+`preflight` command. It requires an explicit console-access attestation, fails
+closed on apt/dpkg locks, package-database inconsistency, or package-hold drift,
+and writes a non-secret evidence bundle containing the host baseline, sanitized
+Compose renders, and the actual running-set manifest. The manifest records
+Compose identity, profiles, image IDs/digests, runtime/health state, restart
+policy, and Docker log configuration without persisting interpolated environment
+variables. Stop, update, reboot, restore, and complete remain absent.
+
 Add an operator-run script, proposed as `scripts/host_maintenance.sh`, with
 idempotent subcommands rather than one irreversible monolith:
 

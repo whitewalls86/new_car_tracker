@@ -550,6 +550,25 @@ UTC timestamp, Git revision, running kernel, and manifest location. The client
 is replay-safe: if Postgres advanced but the local append failed, rerunning the
 same command repairs the breadcrumb without repeating the transition.
 
+Run the checked-in preflight after verifying Oracle Cloud console access. It is
+observation-only: it does not refresh apt, stop a service, install a package, or
+change coordination state.
+
+```bash
+EVIDENCE=/var/lib/cartracker/maintenance/$(date -u +%Y%m%dT%H%M%SZ)
+python scripts/host_maintenance.py preflight \
+  --output-dir "$EVIDENCE" --console-access-verified
+MANIFEST="$EVIDENCE/running-set.json"
+```
+
+The evidence directory contains `preflight.json`, `running-set.json`, and one
+sanitized structural Compose record per project under `compose/`. Full Compose
+renders are validated in memory but never written because interpolation may
+contain credentials. Preflight refuses an empty Docker host, an active apt/dpkg
+lock, non-empty `dpkg --audit`, or any held-package set other than the reviewed
+`docker.io` hold. A refusal is a finding to investigate, not a reason to bypass
+the check.
+
 The currently available sequence is:
 
 ```bash
