@@ -11,6 +11,31 @@ from shared.db import db_cursor
 class CoordinationCollector:
     """Read authoritative state at scrape time so stale cached health is impossible."""
 
+    def describe(self):
+        """Describe series without querying PostgreSQL during registration."""
+        yield GaugeMetricFamily(
+            "cartracker_coordination_state_readable",
+            "Whether the authoritative coordination row can be read",
+        )
+        yield GaugeMetricFamily(
+            "cartracker_coordination_gate_evidence_known",
+            "Whether current-generation Airflow admission evidence is readable",
+        )
+        yield GaugeMetricFamily(
+            "cartracker_coordination_state_info",
+            "Current coordination kind and phase",
+            labels=["kind", "phase"],
+        )
+        yield GaugeMetricFamily(
+            "cartracker_coordination_state_age_seconds",
+            "Seconds since the current coordination state last changed",
+            labels=["kind", "phase"],
+        )
+        yield GaugeMetricFamily(
+            "cartracker_coordination_gate_unobserved_runs",
+            "Active affected DAG runs that have not observed the current drain",
+        )
+
     def collect(self):
         readable = GaugeMetricFamily(
             "cartracker_coordination_state_readable",
