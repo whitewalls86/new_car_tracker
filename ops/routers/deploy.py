@@ -1,6 +1,7 @@
 """
 Deploy coordination API endpoints.
 """
+
 import logging
 from typing import Any, Dict
 
@@ -12,6 +13,7 @@ logger = logging.getLogger("pipeline_ops")
 router = APIRouter()
 
 STALE_LOCK_MINUTES = 30
+COORDINATION_LOCK_ID = 142
 
 
 def _intent_status() -> Dict[str, Any]:
@@ -45,7 +47,7 @@ def _intent_status() -> Dict[str, Any]:
     """
 
     try:
-        with db_cursor(error_context='Intent-Status') as cur:
+        with db_cursor(error_context="Intent-Status") as cur:
             cur.execute(sql)
             row = cur.fetchone()
 
@@ -101,8 +103,28 @@ def _set_intent(caller: str, pause_long_jobs: bool = True) -> str:
 
     try:
         with db_cursor(error_context="Set-Intent") as cur:
+            cur.execute("SELECT pg_advisory_xact_lock(%s)", (COORDINATION_LOCK_ID,))
+            cur.execute("SELECT kind, phase FROM coordination_state WHERE id = 1")
+            coordination_row = cur.fetchone()
+            if coordination_row is None:
+                return "error"
+            if coordination_row[1] != "none":
+                logger.warning("Deploy intent conflicts with active coordination.")
+                return "locked"
             cur.execute(sql, params)
             if cur.fetchone() is not None:
+                # Compatibility rollout: legacy sensors keep reading
+                # deploy_intent while new consumers move to this record.
+                cur.execute(
+                    """UPDATE coordination_state
+                          SET kind = 'deploy', phase = 'requested',
+                              targets = '["legacy_global"]'::jsonb,
+                              scope = '["host"]'::jsonb,
+                              requested_by = %s, reason = 'Legacy deploy facade',
+                              requested_at = now(), updated_at = now()
+                        WHERE id = 1""",
+                    (caller,),
+                )
                 return "ok"
             logger.warning("Intent failed to set — already locked.")
             return "locked"
@@ -121,8 +143,23 @@ def _intent_release() -> bool:
                    RETURNING intent;"""
     try:
         with db_cursor(error_context="Intent-Release") as cur:
+            cur.execute("SELECT pg_advisory_xact_lock(%s)", (COORDINATION_LOCK_ID,))
+            cur.execute("SELECT kind, phase FROM coordination_state WHERE id = 1")
+            row = cur.fetchone()
+            if row is None or (row[1] != "none" and row[0] != "deploy"):
+                return False
             cur.execute(sql)
-            return cur.fetchone() is not None
+            if cur.fetchone() is None:
+                return False
+            if row[0] == "deploy":
+                cur.execute(
+                    """UPDATE coordination_state
+                          SET kind = NULL, phase = 'none',
+                              targets = '[]'::jsonb, scope = '[]'::jsonb,
+                              completed_at = now(), updated_at = now()
+                        WHERE id = 1"""
+                )
+            return True
     except Exception:
         return False
 
@@ -158,4 +195,3 @@ def complete_deployment() -> bool:
         return result
     else:
         raise HTTPException(status_code=503, detail="Database unavailable.")
-    
