@@ -241,9 +241,37 @@ commit automations`:
 
 | Trigger | Set to |
 |---|---|
-| PR drafted | In Progress |
-| PR opened | In Review |
-| PR merged | Soaking |
+| On draft PR open | No action |
+| On PR or commit open | In Progress |
+| On PR review request or activity | In Review |
+| On PR ready for merge | No action |
+| On PR or commit merge | Soaking |
+
+Corrected 2026-08-25 from a table that recorded neither the real trigger names
+nor the real targets. Two things were wrong, and one of them mattered:
+
+- **Merge was set to `Done`, not `Soaking`.** That is the auto-transition this
+  plan's own deviation note forbids. It never fired, so no issue was falsely
+  completed — but had the integration been working, CAR-7 would have jumped to
+  `Done` on 2026-08-25 and skipped its soak entirely. Now set to `Soaking`.
+- **`On PR or commit open` is `In Progress`, not the `In Review` the old table
+  claimed.** Kept deliberately, against the intuition that an open PR means
+  review.
+
+  The trigger fires on **commits as well as PR opens**, and this project
+  pushes many commits before a PR exists. The issue is genuinely in progress
+  through that window, so `In Review` would claim a review gate that is not
+  open — on the first commit of a branch, days early.
+
+  The cost is that opening a PR does not move an issue to `In Review` either.
+  Since `On PR review request or activity` will rarely fire for a single
+  maintainer who does not request review from himself, **reaching `In Review`
+  is normally a manual move.** That is a real gap and may be revisited: if
+  Linear ever separates the commit and PR-open triggers, PR-open belongs on
+  `In Review`, because opening a PR *is* this project's review gate.
+
+  `On draft PR open` stays `No action` — drafts are not part of the normal
+  flow here.
 
 GitHub Issues Sync remains OFF (the no-two-way-sync rule).
 
@@ -253,6 +281,23 @@ automations are per-team, not per-issue, so the conditional has no home. The
 chosen tradeoff: merge → Soaking unconditionally; no-soak issues are moved to
 Done by hand. A false Done is on the forbidden-automation list; a false
 Soaking is one manual click.
+
+**No automation has ever fired.** Every status transition on CAR-6, CAR-7,
+CAR-10 and CAR-11 through 2026-08-25 was made by hand — six of six. CAR-7 sat
+in `In Review` for nine hours after PR #243 merged. PRs *do* attach to issues,
+so the integration is connected; only the status automations are inert.
+
+The open hypothesis is that these automations act on *closing or contributing*
+PRs — linked by issue identifier in the branch name or a magic word in the PR
+body — and that an attachment can arrive by another route without establishing
+that relationship. None of the branches so far carried an identifier
+(`feature/plan-142-stage-1` and similar). Unproven.
+
+The test is free and costs nothing to wait for: the Plan 141 branch is
+`millerandrewpreston/car-10-plan-141-freeze-fixtures-fix-ct-403-log-spike-false-positive`,
+which does carry `car-10`. If its PR moves CAR-10, linkage was the cause and
+Linear's suggested `gitBranchName` becomes the standing convention. If it does
+not, the integration is broken more deeply and that is the larger finding.
 
 ### Seeded issues (Cycle 1)
 
