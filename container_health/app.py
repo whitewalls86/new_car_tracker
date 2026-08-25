@@ -14,12 +14,22 @@ from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, generate_l
 
 from container_health.collector import ContainerHealthCollector
 from container_health.docker_api import DockerApi
+from container_health.expected import EXPECTED_SERVICES
 
 DOCKER_API_URL = os.environ.get("DOCKER_API_URL", "http://docker-socket-proxy:2375")
 COMPOSE_PROJECT = os.environ.get("COMPOSE_PROJECT", "cartracker")
 
+# Deliberately not an environment variable. The expected set is resolved from
+# Plan 142's manifest at build time and asserted in CI; reading it from the
+# environment would put a hand-maintained service list in docker-compose.yml,
+# where nothing checks it, and would break the test that asserts this container
+# holds exactly two configuration values.
 REGISTRY = CollectorRegistry()
-REGISTRY.register(ContainerHealthCollector(DockerApi(DOCKER_API_URL), COMPOSE_PROJECT))
+REGISTRY.register(
+    ContainerHealthCollector(
+        DockerApi(DOCKER_API_URL), COMPOSE_PROJECT, EXPECTED_SERVICES
+    )
+)
 
 app = FastAPI()
 

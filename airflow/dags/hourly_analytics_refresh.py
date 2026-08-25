@@ -145,5 +145,9 @@ with DAG(
 
     ready >> archiver_up >> flush_silver >> flush_staging >> dbt_runner_up >> build
     build >> reconcile_cooldowns
-    [ready, archiver_up, flush_silver, flush_staging, dbt_runner_up, build,
-     reconcile_cooldowns] >> notify
+    # Plan 140 Stage 4: the sensors are deliberately absent from this fan-in.
+    # A health failure used to send "hourly analytics refresh FAILED" — a
+    # Telegram message naming the wrong component, which is the defect Plan 140
+    # opens with. ct-container-unhealthy reports the service by name instead.
+    # The work tasks notify exactly as before.
+    [ready, flush_silver, flush_staging, build, reconcile_cooldowns] >> notify

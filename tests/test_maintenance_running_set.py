@@ -80,6 +80,41 @@ def _split(key: str) -> tuple[str, str]:
     return (project, service) if sep else (DEFAULT_PROJECT, key)
 
 
+def expected_running_services() -> set[str]:
+    """The default project's services that should be running once up.
+
+    Exceptions-only, in both directions: a service is expected running unless
+    the registry classes it out, and a ``profile-running`` entry is added back
+    in because ``profiles:`` means "not started by default", not "not expected".
+    ``restart-gap`` is deliberately *not* an exclusion -- such a service is
+    expected running and merely fails to restore itself, which is the whole
+    reason the class exists.
+
+    Plan 140 Stage 4a consumes this as the exporter's expected-service set, so
+    that a service which is stopped or removed reads 0 instead of leaving
+    ``cartracker_container_health`` entirely. Deriving it here rather than
+    restating it in ``container_health/`` is the point: Plan 142 owns the
+    manifest, Plan 140 owns making absence visible, and a second copy of the
+    list is how the first one goes stale.
+    """
+    registry = load_registry()
+    not_running = {
+        key for key, (klass, _) in registry.items()
+        if klass in NOT_EXPECTED_RUNNING
+    }
+    return {
+        name for name, spec in _services("docker-compose.yml").items()
+        if not (spec or {}).get("profiles") and name not in not_running
+    } | {
+        # Keyed by project because `minio`, `lakekeeper` and `scraper` each
+        # appear in more than one Compose file. No profile-running entry
+        # carries a prefix today, so this only guards the next one.
+        service for key, (klass, _) in registry.items()
+        if klass == "profile-running" and _split(key)[0] == DEFAULT_PROJECT
+        for service in (_split(key)[1],)
+    }
+
+
 class TestRegistryShape:
     def test_the_file_exists(self):
         assert _REGISTRY.exists(), (
@@ -154,18 +189,7 @@ class TestDefaultProjectIsFullyClassified:
 
     def test_long_running_services_are_not_silently_absent(self):
         """Every default-project service is classified or expected running."""
-        registry = load_registry()
-        not_running = {
-            key for key, (klass, _) in registry.items()
-            if klass in NOT_EXPECTED_RUNNING
-        }
-        expected_running = {
-            name for name, spec in _services("docker-compose.yml").items()
-            if not (spec or {}).get("profiles") and name not in not_running
-        } | {
-            key for key, (klass, _) in registry.items()
-            if klass == "profile-running"
-        }
+        expected_running = expected_running_services()
         assert "postgres" in expected_running
         assert "ops" in expected_running
         assert "caddy" in expected_running, (

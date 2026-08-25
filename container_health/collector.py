@@ -26,8 +26,8 @@ from prometheus_client.core import GaugeMetricFamily
 METRIC_NAME = "cartracker_container_health"
 METRIC_DOC = (
     "Docker health of each non-transient container in the default compose "
-    "project: 1 healthy, 0 unhealthy or not yet healthy, -1 no healthcheck "
-    "configured"
+    "project: 1 healthy, 0 unhealthy, not yet healthy, or expected but absent, "
+    "-1 no healthcheck configured"
 )
 
 HEALTHY = 1
@@ -86,7 +86,11 @@ def health_value(inspection: Mapping) -> int:
     return HEALTHY if health.get("Status") == "healthy" else UNHEALTHY
 
 
-def health_values(inspections: Iterable[Mapping], project: str) -> Dict[str, int]:
+def health_values(
+    inspections: Iterable[Mapping],
+    project: str,
+    expected: Iterable[str] = (),
+) -> Dict[str, int]:
     """Scope to one compose project's own long-running services.
 
     "Compose-managed" is *not* a sufficient filter. The four stale `unhealthy`
@@ -98,6 +102,24 @@ def health_values(inspections: Iterable[Mapping], project: str) -> Dict[str, int
     for services nobody intends to be running. The project label is the filter
     that works, and `up -d` on either sibling project brings the condition
     straight back, so this must not be relaxed to "has a compose label".
+
+    `expected` closes the removed-or-stopped gap Stage 2 recorded (Plan 140
+    Stage 4a). The status filter above admits only running, restarting and
+    paused containers, so a service that is stopped or gone produced no series
+    at all -- and an absent series reads as a healthy system, which is the
+    failure mode this whole plan exists to close. Anything named there and not
+    seen is published as UNHEALTHY rather than as a fourth state: 0 already
+    means "should be healthy and is not", and gone is a strict case of that.
+
+    The backfill happens *after* the empty-fleet guard, and the order is
+    load-bearing. If the project label stops matching, every expected service
+    would otherwise read 0 at once and page for the entire fleet, burying the
+    one fact that matters -- that the exporter cannot see Docker. Raising keeps
+    that a single `up{job="container-health"}` failure.
+
+    A container that is running but *not* expected still publishes its real
+    state. Drift in the other direction is a CI concern, not a runtime one, and
+    dropping it here would hide a service someone started by hand.
     """
     values = {}
     for inspection in inspections:
@@ -112,6 +134,8 @@ def health_values(inspections: Iterable[Mapping], project: str) -> Dict[str, int
             f"no running containers carry {PROJECT_LABEL}={project!r}; refusing "
             "to publish an empty fleet as a healthy one"
         )
+    for service in expected:
+        values.setdefault(service, UNHEALTHY)
     return dict(sorted(values.items()))
 
 
@@ -173,14 +197,19 @@ def memory_usage(stats: Mapping) -> Optional[int]:
 class ContainerHealthCollector:
     """Computes on every scrape. There is no cached value to go stale."""
 
-    def __init__(self, api, project: str) -> None:
+    def __init__(self, api, project: str, expected: Iterable[str] = ()) -> None:
         self._api = api
         self._project = project
+        # Frozen at construction: an expected set that could change between
+        # scrapes would make the metric's own membership a moving target.
+        self._expected = frozenset(expected)
 
     def collect(self) -> Iterator[GaugeMetricFamily]:
         inspections = self._api.inspect_project_containers(self._project)
         family = GaugeMetricFamily(METRIC_NAME, METRIC_DOC, labels=["container"])
-        for service, value in health_values(inspections, self._project).items():
+        for service, value in health_values(
+            inspections, self._project, self._expected
+        ).items():
             family.add_metric([service], value)
         yield family
         yield from self._memory(inspections)

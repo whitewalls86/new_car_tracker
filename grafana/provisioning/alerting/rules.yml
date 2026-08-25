@@ -271,8 +271,8 @@ groups:
         execErrState: Alerting
         for: 5m
         annotations:
-          summary: "Container {{ $labels.container }} is unhealthy"
-          description: "Docker has reported this container unhealthy, restarting, or paused for 5 minutes. Read its recorded probe output with `docker inspect` and look at State.Health.Log. This is a liveness signal only -- a healthy container can still be doing nothing useful, which is exactly what the 2026-08-14 solver outage was."
+          summary: "Container {{ $labels.container }} is unhealthy or absent"
+          description: "This container has read 0 for 5 minutes, which means one of two things. Docker reports it unhealthy, restarting or paused -- read its recorded probe output with `docker inspect` and look at State.Health.Log. Or the service is expected running and Docker does not report it at all: check `docker ps -a` first, because `docker inspect` on a container that is gone tells you nothing. Plan 140 Stage 4a added that second case; before it, a stopped service left the metric silently. This is a liveness signal only -- a healthy container can still be doing nothing useful, which is exactly what the 2026-08-14 solver outage was."
         data:
           - refId: A
             datasourceUid: cartracker-prometheus

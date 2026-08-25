@@ -297,7 +297,11 @@ try:
         )
 
         ready >> pack_worker_up >> pack >> prune >> verify
-        [ready, pack_worker_up, pack, prune, verify] >> notify
+        # Plan 140 Stage 4: pack_worker_up is deliberately absent from this
+        # fan-in. A health failure used to send "bronze pack lifecycle FAILED",
+        # naming the DAG rather than the service that was actually down.
+        # ct-container-unhealthy names pack-worker; the work tasks are unchanged.
+        [ready, pack, prune, verify] >> notify
 except ImportError:
     # Keep the result predicates importable in the ordinary unit-test venv.
     # The Airflow integration suite imports the real DAG and asserts it exists.

@@ -2,7 +2,7 @@
 
 ## Status
 
-**BUILD ORDER, written 2026-08-24.** Priority **72 (medium)**. Effort
+**CLOSEOUT — Stage 0 complete 2026-08-24.** Priority **72 (medium)**. Effort
 **XS plus three one-week cycles of observation**.
 
 This is a bounded workflow experiment, not a migration of the planning system.

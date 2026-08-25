@@ -617,6 +617,79 @@ class TestServiceHealthCoverage:
             )
 
 
+class TestExpectedServicesMatchTheManifest:
+    """Plan 140 Stage 4a: the one thing that keeps the resolved set honest.
+
+    ``container_health/expected.py`` holds a frozen set because the exporter
+    image copies only its own package and reads no repo file at runtime -- a
+    property Stage 2 chose deliberately for the container that holds the Docker
+    grant, and one the manifest could not satisfy anyway, since resolving it
+    needs ``docker-compose.yml`` too.
+
+    So the duplication is real and this is what makes it safe. **Plan 142 owns
+    the manifest**; Plan 140 only owns making absence visible. A service added
+    to Compose, or reclassified in ``maintenance-running-set.txt``, fails here
+    rather than going unwatched -- which is the same bargain
+    ``ct-service-down``'s job set and Promtail's job set already make above.
+
+    An earlier draft of Stage 4a restated the rule as "expected running ==
+    declares a restart policy other than ``no``" instead of consuming the
+    manifest. That is not equivalent: it silently drops the ``restart-gap``
+    class, a service that *is* expected running and merely does not restore
+    itself after a reboot. ``caddy`` was exactly that until 2026-08-24, and it
+    serves :80 and :443 for the public site.
+    """
+
+    def test_the_frozen_set_equals_the_manifest_derivation(self):
+        from container_health.expected import EXPECTED_SERVICES
+        from tests.test_maintenance_running_set import expected_running_services
+
+        derived = expected_running_services()
+        assert set(EXPECTED_SERVICES) == derived, (
+            "container_health/expected.py has drifted from "
+            "maintenance-running-set.txt:\n"
+            f"  frozen but no longer expected: {sorted(set(EXPECTED_SERVICES) - derived)}\n"
+            f"  expected but not frozen:       {sorted(derived - set(EXPECTED_SERVICES))}\n"
+            "Regenerate it -- the command is in that module's docstring. A "
+            "service missing from the frozen set is one whose disappearance "
+            "nothing reports."
+        )
+
+    def test_one_shots_are_not_expected_running(self):
+        """Named separately from the set comparison because it is the case the
+        status filter exists for. `flyway` and `airflow-init` *do* run under
+        `up -d` and then exit, on purpose -- publishing 0 for a completed
+        one-shot would page forever for a service working as designed."""
+        from container_health.expected import EXPECTED_SERVICES
+
+        for name in ("flyway", "airflow-init", "dbt", "dbt_test", "snapshot-worker"):
+            assert name not in EXPECTED_SERVICES, (
+                f"{name} runs to completion and exits; expecting it to be "
+                "running turns its correct absence into a permanent alert"
+            )
+
+    def test_the_profile_gated_solver_pair_is_expected(self):
+        """`profiles:` means "not started by default", not "not expected". A
+        plain `up -d` leaves trawl down and every detail scrape failing, which
+        is the 2026-08-14 outage; that must read as 0, not as absence."""
+        from container_health.expected import EXPECTED_SERVICES
+
+        assert {"trawl", "redis-trawl"} <= set(EXPECTED_SERVICES)
+
+    def test_the_two_sensor_only_services_are_covered(self):
+        """The services Stage 4b's demotion would otherwise have silenced.
+
+        `archiver` and `pack-worker` account for nine of the sixteen
+        `http_health_sensor` call sites and neither is a Prometheus scrape job,
+        so `ct-service-down` does not cover them. Before Stage 4a, a stopped
+        one produced no series at all, and the DAG failure the sensors raised
+        was the only notification in existence.
+        """
+        from container_health.expected import EXPECTED_SERVICES
+
+        assert {"archiver", "pack-worker"} <= set(EXPECTED_SERVICES)
+
+
 class TestContainerHealthExporterWiring:
     """Plan 140 Stage 2: where the Docker grant lands, and what it sits next to.
 
