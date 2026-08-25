@@ -8,12 +8,25 @@ groups:
     interval: 5m
     rules:
 
+      # The service set is explicit, not `.+`, and that is load-bearing.
+      # Airflow and oauth2-proxy stdout carried no `level` label at all until
+      # Plan 141 gave them one, so `.+` silently extended a >5-in-5m threshold
+      # tuned against six application log streams to cover DAG-failure bursts
+      # and every 5xx behind the auth proxy. Those sources are visible on the
+      # logs dashboard from day one; adding them here needs a threshold chosen
+      # from their measured volume, which is Stage 4's soak output.
+      # test_error_spike_is_scoped_to_the_application_log_streams asserts this
+      # set equals APPLICATION_SERVICES, so a seventh app service fails there
+      # rather than going unwatched.
       - uid: ct-log-error-spike
-        title: Log ERROR Spike
+        title: Application Log ERROR Spike
         condition: C
         noDataState: OK
         execErrState: Alerting
         for: 5m
+        annotations:
+          summary: "{{ $labels.service }} is logging more than 5 errors per 5 minutes"
+          description: "An application service's JSON log stream exceeded 5 ERROR records in five minutes. Airflow and oauth2-proxy stdout are deliberately outside this rule until their volume is measured."
         data:
           - refId: A
             datasourceUid: cartracker-loki
@@ -21,7 +34,7 @@ groups:
               from: 600
               to: 0
             model:
-              expr: 'sum by (service) (count_over_time({service=~".+", level="ERROR"}[5m]))'
+              expr: 'sum by (service) (count_over_time({service=~"archiver|dbt_runner|ops|pack-worker|processing|scraper", level="ERROR"}[5m]))'
               queryType: range
           - refId: B
             datasourceUid: "__expr__"
@@ -221,7 +234,7 @@ groups:
               from: 600
               to: 0
             model:
-              expr: 'up{job=~"airflow|container-health|dbt_runner|minio|minio_bucket|node|ops|postgres|processing|scraper"}'
+              expr: 'up{job=~"airflow|container-health|dbt_runner|minio|minio_bucket|node|ops|postgres|processing|promtail|scraper"}'
           - refId: B
             datasourceUid: "__expr__"
             relativeTimeRange:

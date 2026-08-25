@@ -93,6 +93,16 @@ jobs:
           grafana/promtail:3.5.8
           -config.file=/etc/promtail/config.yml
           -check-syntax
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install pyyaml
+      # Syntax validation proves the config loads, not that it classifies. The
+      # unit tests only ever ask the Python model. This replays the fixture
+      # corpus through the real Go pipeline, which is the only thing that
+      # catches the model drifting away from what production actually does.
+      - name: Replay the log contract fixtures through the real pipeline
+        run: python scripts/verify_promtail_contract.py
 
   unit-tests:
     name: Unit tests (pytest)

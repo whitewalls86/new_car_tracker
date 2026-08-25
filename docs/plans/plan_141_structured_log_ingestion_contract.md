@@ -10,6 +10,55 @@ to reopen Plan 135.
 
 Priority **85 (high)**. Effort **S plus a 24-hour production soak**.
 
+### Corrections applied after the PR #247 code review
+
+Five findings, all on the Stages 0-3 commit, all fixed before deploy.
+
+1. **The analytics snapshot broke at deploy.** Adding five metric names to
+   `ANALYTICS_METRIC_COLUMNS` invalidated the snapshot already on disk, because
+   `validate_snapshot` demanded exact set equality with `METRIC_NAMES`. The
+   first restart would have read its own file as unsupported, set every
+   `cartracker_*` analytics gauge to NaN and emptied `/info`'s `public_stats`
+   until the next hourly refresh. The metric set is no longer part of the schema
+   contract: a name the file omits publishes as `None`, and a name it carries
+   that this release does not know is dropped, so forward and rollback deploys
+   are symmetric. `SCHEMA_VERSION` stays 1 — the document shape did not change.
+2. **`ct-log-error-spike` widened silently.** Its `{service=~".+"}` selector was
+   tuned against six application streams that were the only ones carrying a
+   `level` label. Giving Airflow and oauth2-proxy that label would have extended
+   a >5-in-5m page to DAG-failure bursts and to every 5xx behind the auth proxy.
+   The service set is now explicit and asserted equal to `APPLICATION_SERVICES`.
+   Those stdout sources are visible on the dashboard from day one; putting them
+   in an alert needs a threshold from Stage 4's measured volume.
+3. **The contract-violation panel could not fire.** It counted `level=""` in
+   Loki for services whose Promtail stages drop `level=""` — the malformed
+   record it existed to surface never reaches Loki, so it read 0 and looked
+   green. That count exists only in `promtail_dropped_lines_total`, and Promtail
+   was not a Prometheus target at all. It is now scrape job `promtail`, inside
+   `ct-service-down`'s job set, and the panel reads the drop counter. A second
+   panel charts drops by reason, which is what success criterion 2 asks for.
+4. **The Airflow severity regex was narrower than the text filter it replaced.**
+   Requiring severity in the second or third whitespace field matched the
+   structlog shape Stage 0 sampled and nothing else; the gunicorn supervisor's
+   `[ts] [7] [CRITICAL] WORKER TIMEOUT` and the classic
+   `[ts] {file.py:123} ERROR -` both fell through to the unclassified drop,
+   where the old filter would have kept them. The pattern now takes the leftmost
+   bracketed severity within a bounded prefix, the unbracketed severity after a
+   `{file:line}` field, or a line-leading severity. Fixtures cover all three;
+   the two added shapes are upstream defaults rather than lines observed in the
+   sampled window, and the corpus records that distinction.
+5. **`classify_line` was stricter than the pipeline it models.** It dropped an
+   application record with no `logger`, which production retains, and let an
+   OAuth access status win over a lifecycle severity, which Promtail's stage
+   order gives to the lifecycle. Both are fixed, and both would have stayed
+   invisible because nothing ran the real pipeline.
+   [`scripts/verify_promtail_contract.py`](../../scripts/verify_promtail_contract.py)
+   now replays every fixture through `grafana/promtail:3.5.8` with
+   `-dry-run -stdin` and compares Go's labels against the corpus; it was
+   confirmed to fail on both original divergences before they were fixed. The
+   `promtail-config` CI job runs it, which satisfies Stage 3 item 4 by
+   execution rather than by configuration parsing.
+
 ## Why this is a separate plan
 
 Plan 135 answered the storage question: every local log sink is bounded, Loki
@@ -197,6 +246,16 @@ Deploy by recreating Promtail only unless a Compose label changes. Afterward:
 5. Routine Airflow and successful OAuth auth subrequests remain absent.
 6. Compare measured bytes/day with Stage 0 and record the projected 90-day Loki
    footprint and disk headroom.
+7. Confirm the Airflow severity shapes against real control-plane output. The
+   sampled seven-day window contained no ERROR or CRITICAL at all, so the
+   fixtures for the shapes the parser most needs to catch are upstream defaults
+   rather than observed lines. Tail each of the three containers and check that
+   nothing carrying a severity is landing in
+   `promtail_dropped_lines_total{reason="airflow_unclassified_control_plane"}`;
+   that counter is now scraped, so this is a query rather than a log read.
+8. Decide from the measured stdout volume whether Airflow and oauth2-proxy
+   belong in `ct-log-error-spike`, and at what threshold. They were deliberately
+   left out rather than inherited — see correction 2.
 
 Do not rewrite or selectively delete the misclassified historical Loki data.
 Let the 90-day retention policy age it out unless capacity evidence creates a

@@ -50,6 +50,17 @@ scrape_configs:
     static_configs:
       - targets: ['node-exporter:9100']
 
+  # Plan 141 Stage 3. Every unclassified log line is *dropped* by a Promtail
+  # pipeline stage, so it never reaches Loki and cannot be counted from log
+  # data -- the panel that was supposed to show contract drift read 0 by
+  # construction. promtail_dropped_lines_total{reason=...} is the only place
+  # that count exists, and nothing was scraping it. Port 9080 is the same one
+  # the Compose healthcheck already probes for /ready.
+  - job_name: promtail
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['promtail:9080']
+
   # Plan 140 Stage 2. Computed in the scrape handler, so there is no cached
   # file to go stale and no companion freshness metric to maintain. The
   # exporter's own liveness is up{job="container-health"}, which ct-service-down

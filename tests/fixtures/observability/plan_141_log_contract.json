@@ -4,7 +4,10 @@
   "notes": [
     "Identifiers, addresses, users, URLs, and tokens were replaced with reserved or obvious fixture values.",
     "Airflow ERROR and CRITICAL are shape-preserving variants of the observed production bracketed format because neither occurred in the sampled seven-day Loki window.",
-    "Traceback continuation lines are intentionally excluded; the initiating bracketed ERROR or CRITICAL record is retained."
+    "The gunicorn supervisor and {file.py:line} task-logger cases are upstream default formats, not lines observed in that window; they exist because those are the shapes the parser most needs to catch and the sample could not supply. Stage 4 confirms them against real output.",
+    "oauth_lifecycle_severity_wins_over_status is synthetic: it is a single line matching both oauth patterns, and it exists only to pin which of the two sets the level.",
+    "Traceback continuation lines are intentionally excluded; the initiating bracketed ERROR or CRITICAL record is retained.",
+    "Every container_stdout case here was replayed through grafana/promtail:3.5.8 with -dry-run -stdin against this repository's pipeline stages; the retained set and labels below are what Go produced."
   ],
   "cases": [
     {
@@ -12,14 +15,14 @@
       "service": "ops",
       "source_type": "application_file",
       "line": "{\"ts\": \"2026-08-25 14:30:21,335\", \"level\": \"INFO\", \"logger\": \"ops\", \"msg\": \"health check complete\"}",
-      "expected": {"retained": true, "level": "INFO", "error_panel": false}
+      "expected": {"retained": true, "level": "INFO", "error_panel": false, "logger": "ops"}
     },
     {
       "name": "application_structured_new_shape",
       "service": "scraper",
       "source_type": "application_file",
       "line": "{\"ts\": \"2026-08-25 14:30:21,335\", \"level\": \"WARNING\", \"logger\": \"scraper\", \"msg\": \"detail fetch 403 listing_id=fixture-listing: blocked_cooldown updated (attempts=1)\", \"trace_id\": \"fixture-trace\", \"run_id\": \"fixture-run\"}",
-      "expected": {"retained": true, "level": "WARNING", "error_panel": true}
+      "expected": {"retained": true, "level": "WARNING", "error_panel": true, "logger": "scraper"}
     },
     {
       "name": "application_malformed",
@@ -118,6 +121,48 @@
       "source_type": "container_stdout",
       "line": "[2026/08/25 14:02:34] [cookies.go:31] Warning: request host did not match configured cookie domains",
       "expected": {"retained": true, "level": "WARNING", "error_panel": true}
+    },
+    {
+      "name": "application_missing_logger",
+      "service": "ops",
+      "source_type": "application_file",
+      "line": "{\"ts\": \"2026-08-25 14:30:21,335\", \"level\": \"INFO\", \"msg\": \"fixture record emitted without a logger field\"}",
+      "expected": {"retained": true, "level": "INFO", "error_panel": false}
+    },
+    {
+      "name": "airflow_gunicorn_worker_timeout",
+      "service": "airflow-apiserver",
+      "source_type": "container_stdout",
+      "line": "[2026-08-25 14:07:22 +0000] [7] [CRITICAL] WORKER TIMEOUT (pid:1234)",
+      "expected": {"retained": true, "level": "CRITICAL", "error_panel": true}
+    },
+    {
+      "name": "airflow_task_logger_error",
+      "service": "airflow-scheduler",
+      "source_type": "container_stdout",
+      "line": "[2026-08-25 14:07:22,918] {taskinstance.py:1234} ERROR - fixture task failed with exception",
+      "expected": {"retained": true, "level": "ERROR", "error_panel": true}
+    },
+    {
+      "name": "airflow_task_logger_info",
+      "service": "airflow-dag-processor",
+      "source_type": "container_stdout",
+      "line": "[2026-08-25 14:07:22,918] {processor.py:12} INFO - processed fixture DAG file",
+      "expected": {"retained": false, "level": "INFO", "drop_reason": "airflow_non_actionable_control_plane", "error_panel": false}
+    },
+    {
+      "name": "airflow_traceback_frame_continuation",
+      "service": "airflow-apiserver",
+      "source_type": "container_stdout",
+      "line": "  File \"/opt/airflow/dags/fixture_dag.py\", line 5, in run",
+      "expected": {"retained": false, "drop_reason": "airflow_unclassified_control_plane", "error_panel": false}
+    },
+    {
+      "name": "oauth_lifecycle_severity_wins_over_status",
+      "service": "oauth2-proxy",
+      "source_type": "container_stdout",
+      "line": "[2026/08/25 14:02:34] [oauthproxy.go:176] Error: fixture session refresh failed GET - \"/oauth2/auth\" HTTP/1.1 \"fixture-agent\" 401 13 0.001",
+      "expected": {"retained": true, "level": "ERROR", "status": "401", "error_panel": true}
     }
   ]
 }

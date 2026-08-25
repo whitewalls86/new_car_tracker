@@ -106,10 +106,23 @@ def validate_snapshot(document: Mapping[str, Any]) -> dict[str, Any]:
         raise ValueError("refresh.duration_seconds must not be negative")
 
     raw_metrics = document.get("metrics")
-    if not isinstance(raw_metrics, Mapping) or set(raw_metrics) != set(METRIC_NAMES):
-        raise ValueError("metrics must contain exactly the required metric names")
+    if not isinstance(raw_metrics, Mapping) or not all(
+        isinstance(name, str) for name in raw_metrics
+    ):
+        raise ValueError("metrics must be an object keyed by metric name")
     metrics: dict[str, float | None] = {}
     for name in METRIC_NAMES:
+        # The metric set is deliberately not part of the schema contract. A
+        # snapshot persisted by the previous release omits every name added
+        # since, and demanding exact set equality made each such deploy load
+        # the on-disk file as invalid: status left "ok", so every analytics
+        # gauge went to NaN and /info's public_stats emptied until the next
+        # hourly refresh. Publishing an absent metric as None costs that one
+        # gauge instead. Names this release no longer knows are dropped, so a
+        # rollback is symmetric.
+        if name not in raw_metrics:
+            metrics[name] = None
+            continue
         value = raw_metrics[name]
         if value is None and status != "ok":
             metrics[name] = None

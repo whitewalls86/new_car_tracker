@@ -48,8 +48,22 @@ AIRFLOW_SERVICES: Final = frozenset(
         "airflow-dag-processor",
     }
 )
+# Three severity shapes reach the control-plane containers and all three must
+# classify, because anything unmatched is dropped as unclassified rather than
+# retained without a level:
+#   structlog (observed)  2026-08-25T14:01:37Z [error    ] msg [logger]
+#   gunicorn supervisor   [2026/08/25 14:07:22] [7] [CRITICAL] WORKER TIMEOUT
+#   classic task logger   [2026-08-25 14:07:22,918] {ti.py:1234} ERROR - msg
+# The first alternative takes the leftmost bracketed severity within a bounded
+# prefix, which covers both bracketed forms regardless of how many fields
+# precede it; the second takes the unbracketed severity after a {file:line}
+# field; the third (empty) allows a line that opens with its own severity.
+# `\b` is what keeps "Errors 0" from reading as ERROR.
 AIRFLOW_LEVEL_PATTERN: Final = (
-    r"^\S+(?:\s+\S+)?\s+\[(?P<level>(?i:debug|info|warning|error|critical))\s*\]"
+    r"^(?:.{0,80}?\[\s*"
+    r"|(?:\[[^\]]*\]\s+)?\{[^}]*\}\s+"
+    r"|)"
+    r"(?P<level>(?i:debug|info|warning|error|critical))\b"
 )
 OAUTH_ACCESS_PATTERN: Final = (
     r'^.*?\s(?P<method>[A-Z]+) - "(?P<path>[^"]+)" HTTP/[0-9.]+ '
@@ -274,11 +288,18 @@ def classify_line(service: str, source: str, line: str) -> IngestionDecision:
             record = json.loads(line)
         except (json.JSONDecodeError, TypeError):
             return IngestionDecision(False, labels, "application_file_unclassified")
+        # Promtail's app-log jobs drop on `level=""` alone. A missing `logger`
+        # simply yields no logger label there, so requiring one here modelled a
+        # stricter pipeline than production runs. The shared formatter always
+        # emits a level name from NORMALIZED_LEVELS; an unrecognised non-empty
+        # level is retained, exactly as the drop selector would.
         level = record.get("level")
-        logger = record.get("logger")
-        if level not in NORMALIZED_LEVELS or not isinstance(logger, str) or not logger:
+        if not isinstance(level, str) or not level:
             return IngestionDecision(False, labels, "application_file_unclassified")
-        labels.update(level=level, logger=logger)
+        labels["level"] = level
+        logger = record.get("logger")
+        if isinstance(logger, str) and logger:
+            labels["logger"] = logger
         return IngestionDecision(True, labels)
 
     if service in AIRFLOW_SERVICES:
@@ -292,22 +313,28 @@ def classify_line(service: str, source: str, line: str) -> IngestionDecision:
         return IngestionDecision(True, labels)
 
     if service == "oauth2-proxy":
+        # Order mirrors the Promtail stage order: INFO, then status, then the
+        # lifecycle severity, then the successful-subrequest drop. The
+        # lifecycle stages run last, so on a line matching both patterns the
+        # lifecycle severity wins -- an `elif` here inverted that.
         level = "INFO"
         access = re.search(OAUTH_ACCESS_PATTERN, line)
         lifecycle = re.search(OAUTH_LIFECYCLE_LEVEL_PATTERN, line)
-        if access is not None:
-            status = access.group("status")
+        status = access.group("status") if access is not None else None
+        if status is not None:
             labels["status"] = status
             if status.startswith("4"):
                 level = "WARNING"
             elif status.startswith("5"):
                 level = "ERROR"
-            if status == "202" and access.group("path").split("?", 1)[0] == "/oauth2/auth":
-                labels["level"] = level
-                return IngestionDecision(False, labels, "oauth2_successful_auth_subrequest")
-        elif lifecycle is not None:
+        if lifecycle is not None:
             level = "WARNING" if lifecycle.group("oauth_level") == "Warning" else "ERROR"
         labels["level"] = level
+        if (
+            status == "202"
+            and access.group("path").split("?", 1)[0] == "/oauth2/auth"
+        ):
+            return IngestionDecision(False, labels, "oauth2_successful_auth_subrequest")
         return IngestionDecision(True, labels)
 
     raise ValueError(f"{service!r} is not an intentionally retained stdout source")

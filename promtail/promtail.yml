@@ -32,15 +32,21 @@ scrape_configs:
         replacement: container_stdout
     pipeline_stages:
       - docker: {}
-      # Airflow severity is the bracketed field immediately after its timestamp.
-      # Parse it before filtering: words in logger names and message bodies are
-      # not severity. Unparsed continuation lines, including tracebacks, are
-      # deliberately excluded instead of being retained without a level.
+      # Parse severity before filtering: words in logger names and message
+      # bodies are not severity. Three shapes reach these containers and all
+      # three must classify, because an unmatched line is dropped rather than
+      # retained without a level -- structlog `<ts> [error    ]` (the shape
+      # sampled in production), the gunicorn supervisor's `[ts] [7] [CRITICAL]`,
+      # and the classic `[ts] {file.py:123} ERROR -`. Requiring severity in the
+      # second or third whitespace field matched only the first of those.
+      # Kept identical to AIRFLOW_LEVEL_PATTERN in shared/log_ingestion_policy;
+      # test_airflow_container_stdout_parses_then_filters_severity asserts it.
+      # Unparsed continuation lines, including tracebacks, stay excluded.
       - match:
           selector: '{service=~"airflow-(apiserver|scheduler|dag-processor)"}'
           stages:
             - regex:
-                expression: '^\S+(?:\s+\S+)?\s+\[(?P<level>(?i:debug|info|warning|error|critical))\s*\]'
+                expression: '^(?:.{0,80}?\[\s*|(?:\[[^\]]*\]\s+)?\{[^}]*\}\s+|)(?P<level>(?i:debug|info|warning|error|critical))\b'
             - template:
                 source: level
                 template: '{{ ToUpper .Value }}'
