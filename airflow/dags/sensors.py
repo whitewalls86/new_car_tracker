@@ -12,6 +12,9 @@ Two primitives:
       Blocks until the given /health endpoint returns HTTP 200. Use one per
       HTTP service the DAG depends on. Chain after deploy_intent_sensor.
 
+      It is a **gate, not a notifier** (Plan 140 Stage 4). On timeout it skips
+      rather than fails, so a down service no longer pages as "DAG X failed".
+
 Usage in a DAG:
 
     from sensors import deploy_intent_sensor, http_health_sensor
@@ -80,6 +83,33 @@ def http_health_sensor(service_name: str, health_url: str, **kwargs) -> _Service
     """
     Polls {health_url}/health every 15s for up to 5 minutes.
 
+    A gate, never a notifier — Plan 140 Stage 4.
+
+    `soft_fail=True` is the whole of that demotion. Until 2026-08-25 a timeout
+    here failed the task, failed the DAG run, and fired `ct-pipeline-failures`
+    as "DAG {dag_id} failed" — which is the defect Plan 140 opens with. The
+    2026-08-18 page said `DAG scrape_listings failed`; the actual fault was
+    Airflow apiserver connection exhaustion. A health signal that arrives named
+    after a downstream consumer sends triage to the wrong component, late.
+
+    It skips instead, so downstream `all_success` tasks skip and the run ends
+    successfully having done nothing. **The gate is unchanged** — no work runs
+    against a service that is not answering, and these sensors stay
+    load-bearing for DAG correctness. What is gone is only the notification.
+
+    What notifies now is `ct-container-unhealthy` on
+    `cartracker_container_health`, which reads 0 within one 15s scrape and goes
+    Pending inside a minute — far ahead of any DAG run. That the alert covers a
+    *stopped* container and not merely an unhealthy one is Stage 4a's
+    expected-service set; before it, `archiver` and `pack-worker` had no other
+    notifier and this change would have replaced a mis-named page with silence.
+
+    Airflow 3.2.0 honours `soft_fail` on timeout by raising AirflowSkipException
+    (task-sdk `bases/sensor.py`, the `execute` timeout branch). Issue #61130 —
+    deferrable sensors ignoring `soft_fail` — does not apply: these are
+    `mode="reschedule"`, and switching them to `deferrable=True` would silently
+    restore the failure this exists to remove.
+
     Args:
         service_name: Used as the task_id suffix — must be unique within the DAG.
         health_url:   Base URL of the service, e.g. "http://archiver:8001".
@@ -91,6 +121,7 @@ def http_health_sensor(service_name: str, health_url: str, **kwargs) -> _Service
         mode="reschedule",
         poke_interval=15,
         timeout=600,
+        soft_fail=True,
         **kwargs,
     )
 

@@ -159,6 +159,62 @@ class TestScoping:
             health_values([], PROJECT)
 
 
+class TestAbsentExpectedServices:
+    """Plan 140 Stage 4a: a stopped service reads 0 instead of disappearing.
+
+    `inspect_project_containers` filters to running/restarting/paused, so
+    before this the only trace of a stopped service was a series that stopped
+    existing -- and an absent series reads as a healthy system. Plan 142 Stage 0
+    item 2 found the live instance while `caddy` still had no restart policy:
+    the public site would not come back after a reboot, "and nothing reports
+    it".
+
+    Stage 4 is what made it load-bearing. Demoting `http_health_sensor` to a
+    gate removed the DAG-failure page that was the only notification a stopped
+    `archiver` or `pack-worker` produced -- neither is a Prometheus scrape job,
+    so `ct-service-down` does not cover them.
+    """
+
+    def test_an_expected_service_that_is_gone_reads_zero(self):
+        values = health_values([container("ops")], PROJECT, expected={"ops", "archiver"})
+        assert values == {"archiver": 0, "ops": 1}
+
+    def test_a_running_service_keeps_its_real_state(self):
+        """The backfill fills gaps; it never overwrites an observation. An
+        expected service sitting at -1 must keep reading -1, or `oauth2-proxy`
+        would silently move from the coverage alert to the incident one."""
+        values = health_values(
+            [container("oauth2-proxy", health=None)],
+            PROJECT,
+            expected={"oauth2-proxy"},
+        )
+        assert values == {"oauth2-proxy": -1}
+
+    def test_an_unexpected_running_service_is_still_published(self):
+        """Drift is a CI concern, not a runtime one. Dropping a service that is
+        running but unlisted would hide one someone started by hand."""
+        values = health_values([container("ops"), container("stray")], PROJECT,
+                               expected={"ops"})
+        assert values == {"ops": 1, "stray": 1}
+
+    def test_an_empty_fleet_still_refuses_instead_of_zeroing_everything(self):
+        """Order matters, and this is the test that pins it.
+
+        If the project label stops matching, backfilling first would publish a
+        0 for every expected service and page for the entire fleet at once,
+        burying the one fact that matters: the exporter cannot see Docker. The
+        guard runs first, so that stays a single up{job="container-health"}
+        failure.
+        """
+        with pytest.raises(NoContainersFound):
+            health_values([], PROJECT, expected={"ops", "archiver", "scraper"})
+
+    def test_no_expected_set_is_the_stage_2_behaviour(self):
+        """The parameter defaults to empty, so the collector degrades to what
+        Stage 2 shipped rather than to a fleet of zeroes."""
+        assert health_values([container("ops")], PROJECT) == {"ops": 1}
+
+
 class TestMemoryScoping:
     """Plan 136 Stage 3a. Membership is derived, never listed."""
 
@@ -268,6 +324,17 @@ class TestCollector:
         ])
         assert samples == {"caddy": -1.0, "ops": 1.0}
         assert api.calls == [PROJECT]
+
+    def test_the_expected_set_reaches_the_rendered_family(self):
+        """Plan 140 Stage 4a, end to end: an expected service that Docker no
+        longer reports still produces a sample, at 0."""
+        api = self._Api([container("ops")])
+        collector = ContainerHealthCollector(api, PROJECT, {"ops", "archiver"})
+        families = {f.name: f for f in collector.collect()}
+        samples = {
+            s.labels["container"]: s.value for s in families[METRIC_NAME].samples
+        }
+        assert samples == {"archiver": 0.0, "ops": 1.0}
 
     def test_collect_reads_docker_on_every_scrape(self):
         """No cached value, so no staleness. If this ever stops being true, the

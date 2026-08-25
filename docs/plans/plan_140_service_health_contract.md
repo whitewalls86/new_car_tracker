@@ -4,7 +4,11 @@
 
 **STAGES 1, 2 AND 3 COMPLETE AND VERIFIED. STAGE 2'S 24-HOUR SOAK CLOSED CLEAN
 ON 2026-08-21** — see [the Stage 2 soak record](#24-hour-soak-record--closed-clean-2026-08-21).
-Only Stage 4, the sensor demotion, remains.
+**Stage 4 is built as of 2026-08-25 and awaits production deploy and
+verification.** It came in as two slices rather than one keyword: demoting the
+sensors would have left a stopped `archiver` or `pack-worker` with no notifier
+at all, so Stage 4a closes the removed-or-stopped gap Stage 2 recorded before
+Stage 4b flips `soft_fail`.
 [PR #216](https://github.com/whitewalls86/new_car_tracker/pull/216) merged the
 implementation as `821a6a6`, adding eighteen healthchecks and taking configured
 coverage from 7 of 31 services to 25 of 31. The six remaining services are the
@@ -676,7 +680,7 @@ passed all 10 tests, the full local unit suite passed 2,235 tests, and the
 calculated Airflow worst-case remains 85 connections against Postgres's limit
 of 100. Stage 3 requires no production soak and is closed.
 
-### Stage 4 — Retire DAG sensors as the health signal
+### Stage 4 — Retire DAG sensors as the health signal — BUILT 2026-08-25, PRODUCTION DEPLOY PENDING
 
 Once Stage 2 alerts exist, `http_health_sensor` should stop being how anyone
 finds out a service is down. It stays useful as a **gate** — do not start
@@ -687,6 +691,133 @@ Judgment call, deliberately last: the sensors are load-bearing for DAG
 correctness and should not be removed, only demoted. Verify by checking that a
 deliberately stopped service pages via `ct-container-unhealthy` **before** the
 next DAG run fails.
+
+#### The stage is two slices, because the demotion alone would have created silence
+
+The draft treats this as one keyword change, and priced it XS. It is not, and
+the reason is a limitation this plan already recorded without noticing it had
+become a blocker.
+
+`ct-container-unhealthy` does not fire for a **stopped** container. Stage 2's
+known-limitation section says so directly — the status filter in
+`DockerApi.inspect_project_containers` admits only `running`, `restarting` and
+`paused`, so a service that is gone leaves the metric rather than reading `0`.
+Cross-referenced against `prometheus.yml`, that lands hardest on exactly the
+services the sensors watch most:
+
+| Service | Sensor call sites | `ct-service-down` | `ct-container-unhealthy` if **stopped** |
+|---|---:|---|---|
+| **`archiver`** | **7** | ✗ not a scrape job | ✗ series vanishes |
+| **`pack-worker`** | **2** | ✗ not a scrape job | ✗ series vanishes |
+| `scraper`, `processing`, `ops`, `dbt_runner` | 6 | ✓ | ✗ |
+
+So for `archiver` and `pack-worker` — nine of the sixteen call sites — the DAG
+failure *was* the only notification a stopped container produced. Flipping
+`soft_fail` on its own would have traded a mis-named page for no page at all,
+which is this plan's own failure mode committed by the stage meant to close it.
+
+Hence 4a before 4b. Stage 2 anticipated this and said the fix "needs an
+expected-service set… or Stage 4's DAG-sensor work."
+
+#### Stage 4a — absence becomes a reading, not a gap
+
+**The expected-service set already existed, in Plan 142.**
+[`maintenance-running-set.txt`](../../maintenance-running-set.txt) (Plan 142
+Stage 0 item 2, done 2026-08-23) records which services are expected running,
+exceptions-only, one written reason per entry, checked against the Compose
+sources by `tests/test_maintenance_running_set.py`. Plan 142 had also already
+diagnosed this exact gap in the same words: *"A stopped container does not read
+as unhealthy; it leaves the metric altogether… One absent service is therefore
+silent by construction."*
+
+The ownership boundary is what makes this a Plan 140 change against a Plan 142
+input, rather than either plan reaching into the other:
+
+- Plan 142 owns the manifest, and owns the auxiliary-project check outright —
+  its Finding 2 is explicit that Plan 140's project-scoped metric *cannot*
+  answer "are the paused sibling projects still paused."
+- Plan 140 owns making absence visible in the metric. Plan 142 Stage 3's resume
+  gate then consumes it, requiring "neither unhealthy nor unconfigured services
+  hidden as absence."
+
+**A first draft restated the rule instead of consuming the manifest, and was
+wrong.** "Expected running == declares a `restart:` policy other than `no`"
+looks equivalent, reproduces the same 28 names today, and silently drops the
+`restart-gap` class — a service that *is* expected running and merely does not
+restore itself after a reboot. `caddy` was precisely that until 2026-08-24, and
+it serves `:80` and `:443`. A derivation that is accidentally right today and
+structurally wrong is worse than the list it replaces.
+
+| Decision | As built |
+|---|---|
+| Source of truth | `expected_running_services()`, extracted from the existing inline derivation in `tests/test_maintenance_running_set.py`. No second rule, no second list |
+| Delivery | Resolved at build time into `container_health/expected.py`. The exporter image still copies only its own package and reads no repo file at runtime — and the manifest could not be read alone anyway, since resolving it needs `docker-compose.yml` |
+| Drift guard | `TestExpectedServicesMatchTheManifest` asserts exact set equality. A service added to Compose, or reclassified in the manifest, fails CI rather than going unwatched |
+| Value for an absent service | `0`. Not a fourth state — Stage 2's argument that a fourth value re-opens the ambiguity `-1` exists to close still holds, and `0` already means "should be healthy and is not" |
+| Ordering | The backfill runs **after** the `NoContainersFound` guard. Reversed, a project-label mismatch would publish `0` for all 28 services and page for the whole fleet, burying the one fact that matters |
+| Unexpected-but-running | Still published at its real value. Hiding a service someone started by hand is the same disappearing-signal defect in a new place |
+
+The set is 28 services, matching Stage 2's production reading exactly — 28
+services, 27 at `1`, one `-1`. `oauth2-proxy` is deliberately in it: the
+healthcheck deny-list answers "can this be probed", which is a different
+question from "should this be up", and conflating them would have dropped the
+one service already known to be a coverage hole.
+
+#### Stage 4b — the demotion
+
+`http_health_sensor` gains `soft_fail=True`. On timeout it now raises
+`AirflowSkipException` instead of `AirflowSensorTimeout`, so downstream
+`all_success` tasks skip, the run ends successfully having done nothing, and
+`airflow_dagrun_duration_failed_count` never increments — which is what
+`ct-pipeline-failures` selects on. The gate is untouched: no work runs against a
+service that is not answering.
+
+Verified against the real Airflow 3.2.0 source rather than assumed, because the
+parameter's behaviour has moved between versions. In `task-sdk`
+`airflow/sdk/bases/sensor.py`, the timeout branch checks `self.soft_fail` and
+raises `AirflowSkipException` **before** the `if self.reschedule` branch, and
+`run_duration()` accumulates from `ti.get_first_reschedule_date()` rather than
+resetting per poke. [Issue #61130](https://github.com/apache/airflow/issues/61130)
+— deferrable sensors ignoring `soft_fail` on timeout — does not apply, because
+these are `mode="reschedule"`. `test_the_sensor_is_not_deferrable` pins that:
+switching modes would silently restore the failure while leaving `soft_fail=True`
+in place to suggest otherwise.
+
+**Two DAGs wired a health sensor directly into a Telegram notifier**, which is
+the literal form of the defect this stage names rather than an emergent one:
+
+- `hourly_analytics_refresh.py` — `[ready, archiver_up, …, dbt_runner_up, …] >> notify`
+- `pack_bronze_html.py` — `[ready, pack_worker_up, …] >> notify`
+
+with `trigger_rule="one_failed"`. An unreachable `archiver` sent "hourly
+analytics refresh FAILED" — naming the DAG, not the service. The sensors are
+removed from both fan-ins. `soft_fail` alone would have quieted them, since a
+skipped upstream does not satisfy `one_failed`, but leaving the wiring in place
+means the next `trigger_rule` edit silently re-arms it.
+
+`deploy_intent_sensor` is deliberately **not** demoted. A stuck deploy intent is
+a different condition with a different owner — Plan 142 Stage 1 item 3 replaces
+its 600-second failure with a maintenance-aware gate — and skipping it here
+would let work start mid-deploy.
+
+`ct-container-unhealthy`'s description was rewritten for the case 4a adds. It
+previously sent the operator straight to `docker inspect … State.Health.Log`,
+which returns nothing useful for a container that is gone; it now separates the
+two readings and names `docker ps -a` first.
+
+#### Still owed
+
+Production deploy and verification. The gate the plan asks for is unchanged:
+**a deliberately stopped non-critical container must page via
+`ct-container-unhealthy` before the next DAG run fails.** 4a makes that
+testable for the first time — the same `docker pause` used in Stage 2 exercised
+only the `paused → 0` path, and Stage 2 recorded that a *stopped* container
+would have left the metric instead. Stopping one is now the actual test.
+
+Note the deploy touches two images (`container-health` and the Airflow DAG
+mount) plus `rules.yml`. `prometheus.yml` is unchanged, so the single-file
+bind-mount inode trap recorded above does not apply here — but `rules.yml` is
+read by Grafana at startup, so Grafana needs a restart, not just a reload.
 
 ## Success criteria
 
