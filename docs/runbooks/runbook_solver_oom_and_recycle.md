@@ -16,16 +16,32 @@ rebooting the VM.
 ## 1. Is the solver actually working?
 
 A healthy container is **not** evidence the solver works. On 2026-08-14 `trawl`
-ran healthy for 8 hours at a **0% solve rate**. Check outcomes, not liveness:
+ran healthy for 8 hours at a **0% solve rate**. Check outcomes, not liveness —
+and read them from the **counter**, not from a log grep:
 
 ```bash
-docker logs --since 2h cartracker-scraper 2>&1 \
-  | grep -ioE 'solved|403' | sort | uniq -c | sort -rn
+docker exec cartracker-prometheus wget -qO- \
+  'http://localhost:9090/api/v1/query?query=cartracker_detail_fetch_total' \
+  | python3 -m json.tool
 ```
 
-Healthy looks like a large `solved` count against a handful of `403`s
-(188 vs 3 on 2026-08-18). **Mostly `403` with few or no `solved` is an outage**,
-even with a green container.
+`outcome="ok"` against `outcome="403"` and `outcome="error"`. **Mostly `403`
+with few or no `ok` is an outage**, even with a green container.
+
+> **The old `grep -ioE 'solved|403'` in this section overcounted, and is
+> removed.** On 2026-08-25 it reported **12 `403`s** over a window where
+> `cartracker_detail_fetch_total` reported **`403=0`** — an unanchored `403`
+> matching lines that are not 403 responses. That is precisely the defect
+> [Plan 141](../plans/plan_141_structured_log_ingestion_contract.md) was
+> written for: `ct-403-log-spike` produced 49 of 51 alert annotations the same
+> way, catching INFO lines from `shared.minio`. The bug was fixed in the alert
+> rule and survived here. **Anywhere a bare `403` is grepped out of logs is
+> suspect.**
+
+The counters reset when `scraper` is recreated, so a small total after a deploy
+means a short window, not a quiet solver. `cartracker_solver_requests_total` is
+a *different* counter — one entry per session bootstrap, not per fetch — so a
+value of 1 against 400 fetches is normal, not a gap.
 
 ## 2. Check for OOM evidence
 
@@ -79,33 +95,66 @@ docker stats cartracker-trawl cartracker-redis-trawl --no-stream \
   --format 'table {{.Name}}\t{{.MemUsage}}\t{{.MemPerc}}\t{{.PIDs}}'
 ```
 
-> **The old "steady state ~70%" figure was the midpoint of a sawtooth that no
-> longer exists.** It was measured while the OOM killer was recycling the
-> browser every few days. Against the monotonic climb seen since 2026-08-18 it
-> describes nothing: measured growth is ~590 MiB/day from a ~727 MiB
-> post-restart baseline, reaching the ~3.2 GB wedge band at about 4 days.
+> **These thresholds describe the OLD image and are pending re-measurement.**
+> Production moved to `trawl` **v1.4.2** on 2026-08-25 19:50:55, and its early
+> behaviour is different in kind — it reclaims after a batch and plateaus,
+> where the old build only ever climbed. **Plan 136 Stage 3b's 48-hour soak
+> closes 2026-08-27 and owns the replacement numbers.** Until then, treat
+> everything below as history, not as an operating threshold.
 
-Read the curve, not a single number — the **Container Memory Headroom** and
-**Solver Memory Against Its Cap** panels on the Infrastructure dashboard chart
-it continuously (Plan 136 Stage 3a). Past ~75% of the cap, a restart is due;
-past ~85%, expect a wedge within hours. ~200 of 512 PIDs is normal.
+**On the old build (2026-07-06, revision `d0877c5`) — for historical reading
+only.** The "steady state ~70%" figure quoted before 2026-08-25 was the
+midpoint of a sawtooth that stopped existing when the OOM killer stopped
+recycling the browser. Against the monotonic climb it described nothing. The
+climb was measured on 2026-08-25 at **+40.5 MiB/h ≈ 971 MiB/day** from a
+~727 MiB post-restart baseline — **65% faster than the ~590 MiB/day this page
+used to state** — reaching the wedge band at about 4 days.
+
+**Read the curve with `max_over_time` on the raw samples, not off a grid.** On
+2026-08-25 the 5-minute view topped out at 80.0% of cap while the true 15s
+peaks were already 84–86.5%, past the "wedge within hours" line and had been
+for about five hours. A grid view understated it by ~280 MiB:
+
+```bash
+docker exec cartracker-prometheus wget -qO- \
+  'http://localhost:9090/api/v1/query?query=max_over_time(cartracker_container_memory_bytes{container="trawl"}[1h])'
+```
+
+The **Container Memory Headroom** and **Solver Memory Against Its Cap** panels
+on the Infrastructure dashboard chart it continuously (Plan 136 Stage 3a), but
+they are grid-sampled — use them to see shape, and the query above to see
+peaks. On the old build: past ~75% of cap a restart was due; past ~85%, a wedge
+within hours. ~200 of 512 PIDs is normal on both builds.
 
 ## 5. Restart the solver
 
-A plain restart resolved the 2026-08-14 outage completely, with **no image pull
-needed** — the fault was stale in-container state.
+A plain restart resolved the 2026-08-14 outage completely — the fault was stale
+in-container state.
 
 ```bash
 docker restart cartracker-trawl
 ```
+
+> **`TRAWL_IMAGE` is pinned by digest since 2026-08-25** (Plan 136 Stage 3b), so
+> "no image pull needed" is no longer a property of a restart — it is now
+> guaranteed by the pin, and a `docker compose up -d trawl` can no longer
+> silently upgrade you. The pin lives in
+> [`docker-compose.yml`](../../docker-compose.yml), **not** in `.env`; the
+> previous digest is recorded beside it for rollback. If you need to roll back,
+> change the pin and recreate — do not set `TRAWL_IMAGE` in `.env`, which is
+> what hid a six-week drift in the first place.
 
 Takes ~4s for both browsers to warm. **No VM reboot, and no `docker compose
 down`.** Then confirm recovery by outcomes, not by container status:
 
 ```bash
 sleep 60
-docker logs --since 5m cartracker-scraper 2>&1 | grep -ioE 'solved|403' | sort | uniq -c
+docker exec cartracker-prometheus wget -qO- \
+  'http://localhost:9090/api/v1/query?query=cartracker_detail_fetch_total'
 ```
+
+Recreating `scraper` resets these counters; restarting only `trawl` does not,
+so after a solver-only restart compare against the value you read before it.
 
 ### Do not restart mid-batch if avoidable
 

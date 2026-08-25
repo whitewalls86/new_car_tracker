@@ -490,6 +490,24 @@ which ~3 are user-visible.**
 **No host operation is involved** — no packages, no reboot. Sections 3 through 6
 do not apply. Section 2's preflight does, minus its apt and kernel lines.
 
+> **This section predates Plan 142 Stage 1's coordination record, which is live
+> in production as of 2026-08-25.** The two do not conflict, but know which is
+> doing what:
+>
+> - **10.2 and 10.3 mutate containers.** Drive them through
+>   `scripts/redeploy.sh` where you can, which requests coordination, drains,
+>   authorizes and releases around the change. The raw `docker compose` lines
+>   above are the fallback when a service has no build context or you are
+>   recovering.
+> - **10.4's hold is the `maintenance` Airflow pool, not coordination.** Setting
+>   the pool to 0 slots does not touch `coordination_state`, and
+>   `/coordination/status` will read `phase=none` throughout the hold. Do not
+>   read that as the gate being off.
+> - **Never leave a coordination window open across the hold.** The admission
+>   sensor blocks on `phase IN (requested, draining, active, validating)`, so an
+>   un-released deploy record would stop the very DAGs whose queuing behaviour
+>   10.4 is trying to measure, and you would misattribute the result.
+
 | Step | What | User-visible | Data risk | Abort |
 |---|---|---|---|---|
 | 10.1 | Preflight | none | none | stop; nothing has changed |
@@ -555,11 +573,30 @@ Ships in git ([docker-compose.yml](../../docker-compose.yml)), so the VM pulls
 it. **~10 seconds of user-visible downtime on cartracker.info.**
 
 ```bash
-cd /opt/cartracker && git pull
-docker compose up -d caddy
+cd /opt/cartracker
+docker compose up -d --no-deps caddy
 docker inspect --format '{{.HostConfig.RestartPolicy.Name}}' caddy
 curl -sS -o /dev/null -w "%{http_code}\n" https://cartracker.info
 ```
+
+> **Corrected 2026-08-25, both lines, after running this step.**
+>
+> **There is no `git pull` here.** `restart: unless-stopped` reached the VM's
+> checkout in **PR #232**, well before the deploy this window follows. Pulling
+> as part of 10.2 drags in whatever else has merged since and makes a
+> ten-second caddy recreate into an unbounded change. Confirm the key is
+> already in the file instead:
+> `grep -A2 'container_name: caddy' docker-compose.yml`.
+>
+> **`--no-deps` is load-bearing.** Run bare, `docker compose up -d caddy` walks
+> the dependency graph: on 2026-08-25 it printed `Container
+> cartracker-postgres Waiting` / `Healthy` and re-ran `cartracker-airflow-init-1`
+> — work nobody asked for, during a window whose whole point is a bounded
+> blast radius. This is `redeploy.sh` decision 1 restated; that script passes
+> `--no-deps` for exactly this reason.
+
+Expect `302` from the curl, not `200` — `/` redirects to the auth proxy. Any
+response at all proves caddy is serving.
 
 > **`up -d`, never `restart`.** This is a service *config* change.
 > `docker compose restart` reuses the existing container and its old config, so
@@ -592,12 +629,26 @@ window because rotation invalidates in-flight worker tokens, not because it is
 urgent.
 
 ```bash
+cd /opt/cartracker
+cp .env .env.bak-jwt-$(date -u +%Y%m%dT%H%M%SZ)
 python3 -c 'import secrets; print(secrets.token_urlsafe(64))'
 # edit /opt/cartracker/.env -> AIRFLOW_JWT_SECRET=<new value>
-cd /opt/cartracker
-docker compose up -d airflow-apiserver airflow-scheduler \
-                     airflow-dag-processor airflow-triggerer
+docker compose up -d --no-deps airflow-apiserver airflow-scheduler \
+                               airflow-dag-processor airflow-triggerer
 ```
+
+> **`--no-deps` here too**, for the reason given in 10.2 — these four declare
+> `depends_on` and a bare `up -d` re-runs `airflow-init`.
+>
+> **Back up `.env` first.** This value exists nowhere else: it is not in git,
+> and losing it mid-rotation leaves you unable to restore the previous state
+> that this section's own abort instruction depends on.
+>
+> **Run 2026-08-25.** Old key 35 bytes, new key 86. All three verifications
+> below passed: `InsecureKeyLength` count 0, scheduler heartbeat publishing,
+> no DAG import errors. If you keep a copy in a local `.env`, confirm that file
+> is gitignored and delete any `.env.bak*` you create outside the VM — a
+> backup written next to a repo is a secret in a shared worktree.
 
 `up -d` again, not `restart`: the value arrives through the environment, and a
 restarted container keeps the environment it was created with.
