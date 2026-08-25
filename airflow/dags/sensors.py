@@ -65,7 +65,10 @@ class _DeployIntentSensor(BaseSensorOperator):
         )
         if row is None or row[0] != "none":
             return False
-        blocked = row[1] in {"draining", "active", "validating"} and row[2]
+        # Request fixes the immutable scope and is the admission boundary. Do
+        # not admit another run merely because the operator has not yet asked
+        # for the first drain read.
+        blocked = row[1] in {"requested", "draining", "active", "validating"} and row[2]
         if blocked:
             dag_run = context.get("dag_run")
             run_id = getattr(dag_run, "run_id", None) or context.get("run_id")

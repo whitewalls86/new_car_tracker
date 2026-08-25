@@ -522,7 +522,7 @@ docker exec cartracker-postgres psql -U cartracker -d cartracker -At -c \
 ```
 
 > **Verify Oracle Cloud console access before you start.** The August window
-> skipped this and §11 records that it did. This window does not reboot, so the
+> skipped this and §12 records that it did. This window does not reboot, so the
 > console is not the lifeline it is in a host window — but the habit is the
 > point, and the cost is one browser tab.
 
@@ -698,7 +698,54 @@ whose findings live only in a terminal has not closed.
 
 ---
 
-## 11. Gaps in this record
+## 11. Stage 1 scoped-coordination verification
+
+The targeted deploy is driven through the compatibility facade because it must
+dual-signal long-running legacy consumers during migration. `redeploy.sh` now
+owns the complete sequence: it requests the exact named services, expands their
+followers and surfaces in the API, begins draining, waits for a confirming
+authorization read, mutates, health-checks, enters validation, and releases.
+
+Choose a target whose expansion does not contain `detail_fetch`; `processing`
+is the initial fixture, so `trawl` remains unaffected:
+
+```bash
+bash scripts/redeploy.sh processing
+curl -sf http://localhost:8060/coordination/status | python3 -m json.tool
+```
+
+While the script reports that it is draining, inspect the evidence separately:
+
+```bash
+curl -sf http://localhost:8060/coordination/drain-status | python3 -m json.tool
+```
+
+Interpret every source independently:
+
+- `known` with `count: 0` is drained;
+- `known` with a positive count names real admitted work and its oldest start;
+- `unknown` is a blocker, never zero;
+- `not_applicable` means the selected scope does not require that source;
+- `drained: true` is authority only while the returned phase is `draining`.
+
+Before any container changes, interrupting or a failed build releases the
+facade coordination. After a recreate/restart begins, failure deliberately
+leaves it held. Inspect and restore the target, then explicitly enter validation
+and use the compatibility release:
+
+```bash
+curl -sf -X POST http://localhost:8060/coordination/begin-validation
+curl -sf -X POST http://localhost:8060/deploy/complete
+```
+
+The second acceptance run—the non-outage whole-production dry run—waits for
+Stage 3. There is intentionally no native `/coordination/complete` or temporary
+force-complete endpoint: a whole-scope request that reaches `validating` must
+remain held until the host, stack, and intentionally-stopped-service evidence
+guard exists. Before Stage 3, its safe rehearsal boundary is `draining`, then
+`POST /coordination/cancel`; do not authorize it.
+
+## 12. Gaps in this record
 
 Everything Plan 142 Stage 0 item 1 asks for is present: timeline, commands,
 failure modes, intended-stopped services, and recovery evidence — all from the
@@ -726,7 +773,7 @@ Nothing outstanding. The record is complete.
 
 ---
 
-## 12. Related
+## 13. Related
 
 - [Plan 142](../plans/plan_142_planned_host_maintenance.md) — the state machine,
   drain contract and stage plan this runbook serves.

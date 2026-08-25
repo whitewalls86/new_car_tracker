@@ -1,6 +1,8 @@
 import json
 from datetime import datetime as dt
 
+import pytest
+
 from ops.routers import deploy
 
 #: The shape returned when there is no row or the read failed. pause_long_jobs
@@ -112,15 +114,21 @@ def test_intent_release_success(mock_cursor_context):
     assert result is True
 
 
-def test_legacy_release_cannot_clear_active_new_style_deploy(mock_cursor_context):
+def test_legacy_release_can_finish_facade_deploy_after_validation(mock_cursor_context):
     conn, cursor = mock_cursor_context
-    cursor.fetchone.return_value = ("deploy", "active")
+    cursor.fetchone.side_effect = [("deploy", "validating"), ("none",)]
+
+    assert deploy._intent_release() is True
+    coordination_update = cursor.execute.call_args_list[-1].args[0]
+    assert "generation = generation + 1" in coordination_update
+
+
+def test_legacy_release_cannot_clear_other_coordination_kind(mock_cursor_context):
+    conn, cursor = mock_cursor_context
+    cursor.fetchone.return_value = ("service_maintenance", "validating")
 
     assert deploy._intent_release() is False
-    assert not any(
-        "UPDATE deploy_intent" in call.args[0]
-        for call in cursor.execute.call_args_list
-    )
+    assert not any("UPDATE deploy_intent" in call.args[0] for call in cursor.execute.call_args_list)
 
 
 def test_intent_release_no_return(mock_cursor_context):
@@ -161,6 +169,30 @@ def test_set_intent_success(mock_cursor_context):
     assert "generation = generation + 1" in sql
     assert json.loads(params[0]) == list(deploy.LEGACY_DEPLOY_TARGETS)
     assert json.loads(params[1]) == list(deploy.LEGACY_DEPLOY_SCOPE)
+
+
+def test_set_intent_expands_explicit_service_targets(mock_cursor_context):
+    conn, cursor = mock_cursor_context
+    cursor.fetchone.side_effect = [(None, "none"), ("pending",)]
+
+    assert deploy._set_intent("test", targets={"statsd-exporter"}) == "ok"
+
+    _, params = cursor.execute.call_args_list[-1].args
+    assert json.loads(params[0]) == [
+        "airflow-apiserver",
+        "airflow-dag-processor",
+        "airflow-scheduler",
+        "airflow-triggerer",
+        "statsd-exporter",
+    ]
+    assert json.loads(params[1]) == ["airflow_control", "observability"]
+
+
+def test_set_intent_rejects_unknown_explicit_target_before_database(mock_cursor_context):
+    _, cursor = mock_cursor_context
+
+    assert deploy._set_intent("test", targets={"future-service"}) == "invalid"
+    cursor.execute.assert_not_called()
 
 
 def test_set_intent_no_return(mock_cursor_context, mock_router_logger_warning):
@@ -210,14 +242,14 @@ def test_deploy_start_pauses_long_jobs_by_default(mock_client, mock_set_intent):
     response = mock_client.post("/deploy/start")
 
     assert response.status_code == 200
-    assert mock_set_intent.call_args[0] == ("Deploy Declared", True)
+    assert mock_set_intent.call_args[0] == ("Deploy Declared", True, None)
 
 
 def test_deploy_start_accepts_pause_long_jobs_false(mock_client, mock_set_intent):
     response = mock_client.post("/deploy/start", json={"pause_long_jobs": False})
 
     assert response.status_code == 200
-    assert mock_set_intent.call_args[0] == ("Deploy Declared", False)
+    assert mock_set_intent.call_args[0] == ("Deploy Declared", False, None)
 
 
 def test_deploy_start_with_an_empty_body_still_pauses(mock_client, mock_set_intent):
@@ -226,7 +258,28 @@ def test_deploy_start_with_an_empty_body_still_pauses(mock_client, mock_set_inte
     response = mock_client.post("/deploy/start", json={})
 
     assert response.status_code == 200
-    assert mock_set_intent.call_args[0] == ("Deploy Declared", True)
+    assert mock_set_intent.call_args[0] == ("Deploy Declared", True, None)
+
+
+def test_deploy_start_passes_explicit_targets(mock_client, mock_set_intent):
+    response = mock_client.post("/deploy/start", json={"targets": ["processing"]})
+
+    assert response.status_code == 200
+    assert mock_set_intent.call_args[0] == (
+        "Deploy Declared",
+        True,
+        {"processing"},
+    )
+
+
+@pytest.mark.parametrize(
+    "targets", [[], ["processing", "processing"], [3], "processing"]
+)
+def test_deploy_start_rejects_malformed_targets(mock_client, mock_set_intent, targets):
+    response = mock_client.post("/deploy/start", json={"targets": targets})
+
+    assert response.status_code == 422
+    mock_set_intent.assert_not_called()
 
 
 def test_set_intent_writes_the_pause_flag(mock_cursor_context):

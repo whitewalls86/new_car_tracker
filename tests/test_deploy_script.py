@@ -246,6 +246,17 @@ class TestRedeployScriptContract:
             "the intent-release condition no longer consults MUTATED"
         )
 
+    def test_coordination_is_authorized_before_mutation_and_validated_after_health(self):
+        text = self._text()
+        assert "/coordination/begin-drain" in text
+        assert "/coordination/authorize" in text
+        assert "/coordination/begin-validation" in text
+        for mutation in ('PHASE="restart"', 'PHASE="recreate"'):
+            assert text.rindex("_prepare_coordination", 0, text.index(mutation))
+        assert text.index('_begin_validation\n\n    PHASE="done"') > text.index(
+            '_wait_for_health "$@"'
+        )
+
 
 class TestCachedPeerAddressRegistry:
     """Defect 5, Plan 136 D6: a recreate changes an address, and a long-lived

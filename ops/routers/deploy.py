@@ -8,7 +8,7 @@ from typing import Any, Dict
 
 from fastapi import APIRouter, Body, HTTPException
 
-from ops.coordination_contract import SERVICE_CONTRACTS, SURFACES
+from ops.coordination_contract import SERVICE_CONTRACTS, SURFACES, expand_targets
 from shared.db import db_cursor
 
 logger = logging.getLogger("pipeline_ops")
@@ -84,7 +84,9 @@ def _no_intent() -> Dict[str, Any]:
     }
 
 
-def _set_intent(caller: str, pause_long_jobs: bool = True) -> str:
+def _set_intent(
+    caller: str, pause_long_jobs: bool = True, targets: set[str] | None = None
+) -> str:
     """Atomically try to set intent. Returns 'ok', 'locked', or 'error'.
 
     *pause_long_jobs* asks Plan 131's pack and prune jobs to stop at their next
@@ -92,6 +94,15 @@ def _set_intent(caller: str, pause_long_jobs: bool = True) -> str:
     the safe behaviour should be the one you get by forgetting; pass false for
     a deploy that touches nothing those jobs depend on.
     """
+
+    if targets is None:
+        expanded_targets = frozenset(LEGACY_DEPLOY_TARGETS)
+        scope = frozenset(LEGACY_DEPLOY_SCOPE)
+    else:
+        try:
+            expanded_targets, scope = expand_targets(targets)
+        except ValueError:
+            return "invalid"
 
     sql = """UPDATE deploy_intent
                    SET
@@ -128,8 +139,8 @@ def _set_intent(caller: str, pause_long_jobs: bool = True) -> str:
                               requested_at = now(), updated_at = now()
                         WHERE id = 1""",
                     (
-                        json.dumps(LEGACY_DEPLOY_TARGETS),
-                        json.dumps(LEGACY_DEPLOY_SCOPE),
+                        json.dumps(sorted(expanded_targets)),
+                        json.dumps(sorted(scope)),
                         caller,
                     ),
                 )
@@ -141,7 +152,13 @@ def _set_intent(caller: str, pause_long_jobs: bool = True) -> str:
 
 
 def _intent_release() -> bool:
-    """Release the deploy intent lock."""
+    """Release only a legacy-facade deploy, from any lifecycle phase.
+
+    ``redeploy.sh`` now drives drain, authorization and validation through the
+    coordination API. Its existing health gate is the compatibility release
+    evidence until Stage 3 exposes the guarded native complete operation.
+    Other coordination kinds can never be released through this facade.
+    """
     sql = """UPDATE deploy_intent
                    SET
                        intent = 'none',
@@ -156,15 +173,16 @@ def _intent_release() -> bool:
             row = cur.fetchone()
             if row is None:
                 return False
-            if row[1] != "none" and (row[0] != "deploy" or row[1] != "requested"):
+            if row[1] != "none" and row[0] != "deploy":
                 return False
             cur.execute(sql)
             if cur.fetchone() is None:
                 return False
-            if row == ("deploy", "requested"):
+            if row[0] == "deploy":
                 cur.execute(
                     """UPDATE coordination_state
                           SET kind = NULL, phase = 'none',
+                              generation = generation + 1,
                               targets = '[]'::jsonb, scope = '[]'::jsonb,
                               completed_at = now(), updated_at = now()
                         WHERE id = 1"""
@@ -188,11 +206,22 @@ def start_deploy_intent(payload: dict = Body(default={})) -> bool:
     prune jobs to stop at their next safe boundary and resume after the deploy.
     """
     pause_long_jobs = bool((payload or {}).get("pause_long_jobs", True))
-    result = _set_intent("Deploy Declared", pause_long_jobs)
+    raw_targets = (payload or {}).get("targets")
+    if raw_targets is not None and (
+        not isinstance(raw_targets, list)
+        or not raw_targets
+        or not all(isinstance(target, str) for target in raw_targets)
+        or len(set(raw_targets)) != len(raw_targets)
+    ):
+        raise HTTPException(status_code=422, detail="Invalid deploy targets.")
+    targets = None if raw_targets is None else set(raw_targets)
+    result = _set_intent("Deploy Declared", pause_long_jobs, targets)
     if result == "ok":
         return True
     elif result == "locked":
         raise HTTPException(status_code=409, detail="Deploy intent already set.")
+    elif result == "invalid":
+        raise HTTPException(status_code=422, detail="Invalid deploy targets.")
     else:
         raise HTTPException(status_code=503, detail="Database unavailable.")
 

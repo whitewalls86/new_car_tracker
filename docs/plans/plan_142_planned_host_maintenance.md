@@ -876,6 +876,12 @@ with a non-outage whole-production dry run: prove unaffected surfaces continue,
 affected admission stops, admitted work drains, durable backlog remains allowed,
 and release produces neither failed nor duplicated mutations.
 
+**Review decision, 2026-08-25:** the targeted path is now executable through
+the scoped `/deploy/*` compatibility facade and `redeploy.sh`; the runbook owns
+the walkthrough and abort. The whole-production dry run is explicitly gated on
+Stage 3's validation guard. No temporary force-complete exists: reaching
+`validating` without release evidence must remain fail-closed.
+
 ### Stage 2 — Build the checked-in host procedure
 
 **First slice built 2026-08-25:**

@@ -101,7 +101,9 @@ def test_cancel_is_legal_before_authorization(mock_cursor_context, source):
     cursor.fetchone.return_value = (source,)
 
     assert coordination._cancel() == "ok"
-    assert "phase = 'none'" in cursor.execute.call_args_list[-1].args[0]
+    sql = cursor.execute.call_args_list[-1].args[0]
+    assert "phase = 'none'" in sql
+    assert "generation = generation + 1" in sql
 
 
 @pytest.mark.parametrize("source", ["none", "active", "validating"])

@@ -170,7 +170,8 @@ def _cancel() -> str:
                 return "conflict"
             cur.execute(
                 """UPDATE coordination_state
-                      SET kind = NULL, phase = 'none', targets = '[]'::jsonb,
+                      SET kind = NULL, phase = 'none', generation = generation + 1,
+                          targets = '[]'::jsonb,
                           scope = '[]'::jsonb, completed_at = now(), updated_at = now()
                     WHERE id = 1"""
             )
