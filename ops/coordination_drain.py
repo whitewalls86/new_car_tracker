@@ -84,16 +84,23 @@ def _processing_artifacts() -> dict[str, Any]:
     )
 
 
+# Every table below is schema-qualified deliberately. The ops role's
+# search_path is `ops, staging, public`, so `detail_scrape_claims` (schema
+# `ops`) resolved only by luck of naming and the two Airflow tables did not
+# resolve at all -- `_database_count` turns that into `unknown`, and unknown
+# fails closed, so the drain hung instead of reporting an error. The query
+# builders are module-level so tests/integration/sql can execute the real SQL.
+RUNNING_DETAIL_CLAIMS_SQL = """SELECT COUNT(*), MIN(claimed_at)
+     FROM ops.detail_scrape_claims
+    WHERE status = 'running'"""
+
+
 def _running_detail_claims() -> dict[str, Any]:
-    return _database_count(
-        "running_detail_claims",
-        """SELECT COUNT(*), MIN(claimed_at)
-             FROM public.detail_scrape_claims
-            WHERE status = 'running'""",
-    )
+    return _database_count("running_detail_claims", RUNNING_DETAIL_CLAIMS_SQL)
 
 
-def _airflow_task_instances(scope: frozenset[str]) -> dict[str, Any]:
+def task_instance_query(scope: frozenset[str]) -> tuple[str, tuple[Any, ...]] | None:
+    """The active-task-instance count, or None when nothing in scope drains."""
     task_pairs = sorted(
         (dag_id, task_id)
         for dag_id, surfaces in ADMISSION_SURFACES.items()
@@ -101,18 +108,51 @@ def _airflow_task_instances(scope: frozenset[str]) -> dict[str, Any]:
         for task_id in DRAIN_TASKS[dag_id]
     )
     if not task_pairs:
-        return _known("airflow_task_instances", 0)
+        return None
 
     pair_sql = ", ".join(["(%s, %s)"] * len(task_pairs))
     params = tuple(value for pair in task_pairs for value in pair) + ACTIVE_AIRFLOW_STATES
-    return _database_count(
-        "airflow_task_instances",
+    return (
         f"""SELECT COUNT(*), MIN(ti.start_date)
-               FROM task_instance ti
+               FROM airflow.task_instance ti
                JOIN (VALUES {pair_sql}) AS drained(dag_id, task_id)
                  ON drained.dag_id = ti.dag_id AND drained.task_id = ti.task_id
               WHERE ti.state IN ({", ".join(["%s"] * len(ACTIVE_AIRFLOW_STATES))})""",
         params,
+    )
+
+
+def _airflow_task_instances(scope: frozenset[str]) -> dict[str, Any]:
+    query = task_instance_query(scope)
+    if query is None:
+        return _known("airflow_task_instances", 0)
+    return _database_count("airflow_task_instances", *query)
+
+
+def gate_observation_query(
+    scope: frozenset[str], generation: int
+) -> tuple[str, tuple[Any, ...]] | None:
+    """Active affected DAG runs that have not observed this drain, or None."""
+    dag_ids = sorted(
+        dag_id for dag_id, surfaces in ADMISSION_SURFACES.items() if surfaces & scope
+    )
+    if not dag_ids:
+        return None
+    dag_sql = ", ".join(["(%s)"] * len(dag_ids))
+    return (
+        f"""SELECT COUNT(*), MIN(dr.start_date)
+               FROM airflow.dag_run dr
+               JOIN (VALUES {dag_sql}) AS affected(dag_id)
+                 ON affected.dag_id = dr.dag_id
+              WHERE dr.state IN ('queued', 'running')
+                AND NOT EXISTS (
+                    SELECT 1
+                      FROM public.coordination_gate_observations observed
+                     WHERE observed.generation = %s
+                       AND observed.dag_id = dr.dag_id
+                       AND observed.run_id = dr.run_id
+                )""",
+        tuple(dag_ids) + (generation,),
     )
 
 
@@ -122,28 +162,10 @@ def _airflow_gate_observations(
     """Count active affected DAG runs that have not observed this drain."""
     if not isinstance(generation, int) or generation < 1:
         return _unknown("airflow_gate_observations", "coordination generation unavailable")
-    dag_ids = sorted(
-        dag_id for dag_id, surfaces in ADMISSION_SURFACES.items() if surfaces & scope
-    )
-    if not dag_ids:
+    query = gate_observation_query(scope, generation)
+    if query is None:
         return _known("airflow_gate_observations", 0)
-    dag_sql = ", ".join(["(%s)"] * len(dag_ids))
-    return _database_count(
-        "airflow_gate_observations",
-        f"""SELECT COUNT(*), MIN(dr.start_date)
-               FROM dag_run dr
-               JOIN (VALUES {dag_sql}) AS affected(dag_id)
-                 ON affected.dag_id = dr.dag_id
-              WHERE dr.state IN ('queued', 'running')
-                AND NOT EXISTS (
-                    SELECT 1
-                      FROM coordination_gate_observations observed
-                     WHERE observed.generation = %s
-                       AND observed.dag_id = dr.dag_id
-                       AND observed.run_id = dr.run_id
-                )""",
-        tuple(dag_ids) + (generation,),
-    )
+    return _database_count("airflow_gate_observations", *query)
 
 
 def _service_jobs(source: str) -> dict[str, Any]:

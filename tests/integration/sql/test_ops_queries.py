@@ -9,7 +9,14 @@ import uuid
 
 import pytest
 
+from ops import coordination_drain
+
 pytestmark = pytest.mark.integration
+
+# The surfaces a full-fleet deploy expands to; see ops/coordination_contract.py.
+DEPLOY_SCOPE = frozenset(
+    {"analytics", "archive", "detail_fetch", "listing_fetch", "observability", "processing"}
+)
 
 
 # ============================================================================
@@ -416,3 +423,55 @@ class TestArtifactsQueueEventsSchema:
             (artifact_id,),
         )
         assert cur.fetchone()["status"] == "pending"
+
+
+# ============================================================================
+# coordination_drain.py — Plan 142 Stage 1 drain evidence queries
+# ============================================================================
+
+class TestCoordinationDrainQueries:
+    """
+    These execute against a real schema because the unit tests cannot.
+
+    `tests/ops/test_coordination_drain.py` patches `_database_count`, so every
+    drain query string is asserted without ever reaching a database. Three of
+    them shipped naming the wrong schema and the defect was invisible: the ops
+    role's search_path is `ops, staging, public`, `detail_scrape_claims` lives
+    in `ops` and the two Airflow tables live in `airflow`. `_database_count`
+    catches the resulting error and returns `unknown`, and unknown fails
+    closed, so the first production deploy drained forever instead of failing.
+    """
+
+    def test_running_detail_claims_resolves(self, cur):
+        cur.execute(coordination_drain.RUNNING_DETAIL_CLAIMS_SQL)
+        row = cur.fetchone()
+        assert row is not None and row["count"] >= 0
+
+    def test_airflow_task_instance_query_resolves(self, cur):
+        query = coordination_drain.task_instance_query(DEPLOY_SCOPE)
+        assert query is not None, "the deploy scope must drain some task instances"
+        cur.execute(*query)
+        assert cur.fetchone() is not None
+
+    def test_gate_observation_query_resolves(self, cur):
+        query = coordination_drain.gate_observation_query(DEPLOY_SCOPE, 1)
+        assert query is not None, "the deploy scope must cover some admission DAGs"
+        cur.execute(*query)
+        assert cur.fetchone() is not None
+
+    def test_every_drain_table_is_schema_qualified(self):
+        """A bare table name is only correct by accident of search_path."""
+        sql = " ".join(
+            [
+                coordination_drain.RUNNING_DETAIL_CLAIMS_SQL,
+                coordination_drain.task_instance_query(DEPLOY_SCOPE)[0],
+                coordination_drain.gate_observation_query(DEPLOY_SCOPE, 1)[0],
+            ]
+        )
+        for table in (
+            "detail_scrape_claims",
+            "task_instance",
+            "dag_run",
+            "coordination_gate_observations",
+        ):
+            assert f" {table}" not in sql, f"{table} is referenced without a schema"
