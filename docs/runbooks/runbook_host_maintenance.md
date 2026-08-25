@@ -549,6 +549,11 @@ JSON line to `/var/lib/cartracker/maintenance/history.jsonl`, with only phase,
 UTC timestamp, Git revision, running kernel, and manifest location. The client
 is replay-safe: if Postgres advanced but the local append failed, rerunning the
 same command repairs the breadcrumb without repeating the transition.
+The file is explicitly an offline operator convenience derived only after the
+Postgres-backed API confirms a phase. It is never reconciled back into Postgres
+and is not the durable transition history: V044's
+`staging.coordination_state_events` records each mutation in the same database
+transaction and the existing staging-event processor archives those rows.
 
 Run the checked-in preflight after verifying Oracle Cloud console access. It is
 observation-only: it does not refresh apt, stop a service, install a package, or

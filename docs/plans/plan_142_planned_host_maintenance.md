@@ -1166,6 +1166,14 @@ Compose identity, profiles, image IDs/digests, runtime/health state, restart
 policy, and Docker log configuration without persisting interpolated environment
 variables. Stop, update, reboot, restore, and complete remain absent.
 
+**Durable-history slice built 2026-08-25:** V044 adds the append-only
+`staging.coordination_state_events` record, every native and compatibility-
+facade state mutation writes exactly one event in the same transaction, and the
+existing staging-event archiver registry flushes it to Parquet. Normal
+transitions and refusals are narrated through Plan 141's structured-field
+contract. Bounded drain-progress narration and the completion checkpoint remain
+open below.
+
 Add an operator-run script, proposed as `scripts/host_maintenance.sh`, with
 idempotent subcommands rather than one irreversible monolith:
 
@@ -1243,34 +1251,38 @@ its history.
 
 The work:
 
-1. Add `staging.coordination_state_events` — append-only, `bigserial` primary
-   key, one row per transition carrying `generation`, `prior_phase`, `phase`,
-   `kind`, actor, and timestamp. Grants follow V043.
-2. Write the event in the **same transaction** as the `coordination_state`
-   update, so a mutation cannot succeed without its history row.
-3. Register it in
+1. [x] Add `staging.coordination_state_events` — append-only, `bigserial`
+   primary key, one row per transition carrying `generation`, `prior_phase`,
+   `phase`, `kind`, actor, and timestamp. Grants follow V043. **Built in V044;
+   actor is the coordination request's durable `requested_by` identity.**
+2. [x] Write the event in the **same transaction** as the
+   `coordination_state` update, so a mutation cannot succeed without its history
+   row. **Built for native coordination mutations and the `/deploy/*`
+   compatibility facade; tests prove a failed event insert rolls back the state
+   mutation.**
+3. [x] Register it in
    [`archiver/processors/flush_staging_events.py`](../../archiver/processors/flush_staging_events.py) —
    one entry naming table, pk, columns, and `minio_prefix`, matching the five
    already there. Flush is snapshot → Parquet → `DELETE WHERE pk <= max_pk`.
-4. Resolve the two records: either `history.jsonl` becomes an operator
-   convenience explicitly derived from Postgres, or it is dropped. It must stop
-   being a second source of truth, and the resolution is written down.
-5. Extend checkpoint coverage to the completion transition, which neither record
-   currently captures.
-6. Narrate transitions. The five coordination modules —
-   [`ops/routers/coordination.py`](../../ops/routers/coordination.py),
-   [`ops/mutation_contract.py`](../../ops/mutation_contract.py),
-   [`ops/coordination_drain.py`](../../ops/coordination_drain.py),
-   [`ops/coordination_metrics.py`](../../ops/coordination_metrics.py), and
-   [`scripts/host_maintenance.py`](../../scripts/host_maintenance.py) — total
-   1,110 lines and contain **zero** log calls. Log one record per transition
-   with `kind`, `phase`, `prior_phase`, and `generation` as fields, at `INFO`
-   for normal transitions and `WARNING` for refusals and timeouts. Log drain
-   progress at a bounded interval, not per poll.
+4. [x] Resolve the two records: `history.jsonl` remains an offline operator
+   convenience, written only after the Postgres-backed API confirms a phase. It
+   contains host-only evidence, is never reconciled into Postgres, and is not a
+   second transition-history authority. Dropping it would remove the only
+   breadcrumb readable while Postgres and `/mnt/data` are deliberately offline.
+5. [ ] Extend checkpoint coverage to the completion transition. **The Postgres
+   event schema supports it now; the local checkpoint remains blocked with the
+   `complete` command on Stage 3's validation-evidence guard.**
+6. Narrate transitions.
+   - [x] Log every normal native and compatibility-facade transition once with
+     `kind`, `phase`, `prior_phase`, and `generation`.
+   - [x] Log refused legal-transition and drain-authorization attempts at
+     `WARNING`.
+   - [ ] Log drain progress at a bounded interval and log client timeouts, not
+     per poll.
 
-Field-carrying log records depend on Plan 141's formatter change, which lets
-`extra=` survive into the emitted JSON. Until that lands, transitions are
-narrated with stable messages and the fields are added after.
+Field-carrying log records depended on Plan 141's formatter change, which now
+lets `extra=` survive into emitted JSON. The completed narration items use that
+contract rather than embedding fields into free-form messages.
 
 This is expand-only. Every existing reader of `coordination_state` is
 unaffected, and the stage reverts by reverting the migration and the registry

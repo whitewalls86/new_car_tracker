@@ -66,50 +66,92 @@ def test_local_drain_exposes_named_ops_job_evidence(mock_client, mocker):
 )
 def test_forward_transitions(mock_cursor_context, operation, source, target, timestamp):
     _, cursor = mock_cursor_context
-    cursor.fetchone.return_value = (source,)
+    cursor.fetchone.side_effect = [
+        (source, 7, "service_maintenance", "operator"),
+        (7,),
+    ]
 
     assert coordination._transition(operation) == "ok"
 
-    sql, params = cursor.execute.call_args_list[-1].args
+    sql, params = cursor.execute.call_args_list[-2].args
     assert f"{timestamp} = now()" in sql
     assert params == (target,)
+    event_sql, event_params = cursor.execute.call_args_list[-1].args
+    assert "INSERT INTO staging.coordination_state_events" in event_sql
+    assert event_params == (7, source, target, "service_maintenance", "operator")
 
 
 def test_complete_clears_kind_targets_and_scope(mock_cursor_context):
     _, cursor = mock_cursor_context
-    cursor.fetchone.return_value = ("validating",)
+    cursor.fetchone.side_effect = [
+        ("validating", 7, "host_maintenance", "operator"),
+        (7,),
+    ]
 
     assert coordination._transition("complete") == "ok"
 
-    sql = cursor.execute.call_args_list[-1].args[0]
+    sql = cursor.execute.call_args_list[-2].args[0]
     assert "kind = NULL" in sql
     assert "targets = '[]'::jsonb" in sql
     assert "scope = '[]'::jsonb" in sql
+    assert cursor.execute.call_args_list[-1].args[1] == (
+        7,
+        "validating",
+        "none",
+        "host_maintenance",
+        "operator",
+    )
 
 
-def test_illegal_transition_does_not_write(mock_cursor_context):
+def test_illegal_transition_does_not_write(mock_cursor_context, caplog):
     _, cursor = mock_cursor_context
-    cursor.fetchone.return_value = ("requested",)
+    cursor.fetchone.return_value = (
+        "requested",
+        7,
+        "service_maintenance",
+        "operator",
+    )
 
     assert coordination._transition("authorize") == "conflict"
     assert len(cursor.execute.call_args_list) == 2
+    refusal = caplog.records[-1]
+    assert refusal.levelname == "WARNING"
+    assert refusal.generation == 7
+    assert refusal.prior_phase == "requested"
+    assert refusal.phase == "active"
+    assert refusal.kind == "service_maintenance"
 
 
 @pytest.mark.parametrize("source", ["requested", "draining"])
 def test_cancel_is_legal_before_authorization(mock_cursor_context, source):
     _, cursor = mock_cursor_context
-    cursor.fetchone.return_value = (source,)
+    cursor.fetchone.side_effect = [
+        (source, 7, "service_maintenance", "operator"),
+        (8,),
+    ]
 
     assert coordination._cancel() == "ok"
-    sql = cursor.execute.call_args_list[-1].args[0]
+    sql = cursor.execute.call_args_list[-2].args[0]
     assert "phase = 'none'" in sql
     assert "generation = generation + 1" in sql
+    assert cursor.execute.call_args_list[-1].args[1] == (
+        8,
+        source,
+        "none",
+        "service_maintenance",
+        "operator",
+    )
 
 
 @pytest.mark.parametrize("source", ["none", "active", "validating"])
 def test_cancel_refuses_unsafe_states(mock_cursor_context, source):
     _, cursor = mock_cursor_context
-    cursor.fetchone.return_value = (source,)
+    cursor.fetchone.return_value = (
+        source,
+        7,
+        "service_maintenance",
+        "operator",
+    )
 
     assert coordination._cancel() == "conflict"
     assert len(cursor.execute.call_args_list) == 2
@@ -194,32 +236,37 @@ def test_authorize_uses_locked_current_generation_confirming_read(mock_cursor_co
         "kind": "service_maintenance",
         "phase": "draining",
         "generation": 8,
+        "requested_by": "operator",
         "scope": ["processing"],
     }
     cursor.rowcount = 1
     evidence = {"drained": True, "blockers": [], "sources": []}
-    collect = mocker.patch(
-        "ops.routers.coordination.collect_drain_status", return_value=evidence
-    )
+    collect = mocker.patch("ops.routers.coordination.collect_drain_status", return_value=evidence)
 
     result, returned = coordination._authorize()
 
     assert (result, returned) == ("ok", evidence)
     collect.assert_called_once()
-    sql, params = cursor.execute.call_args_list[-1].args
+    sql, params = cursor.execute.call_args_list[-2].args
     assert "phase = 'active'" in sql
     assert "phase = 'draining' AND generation = %s" in sql
     assert params == (8,)
+    assert cursor.execute.call_args_list[-1].args[1] == (
+        8,
+        "draining",
+        "active",
+        "service_maintenance",
+        "operator",
+    )
 
 
-def test_authorize_does_not_write_when_confirming_read_has_blockers(
-    mock_cursor_context, mocker
-):
+def test_authorize_does_not_write_when_confirming_read_has_blockers(mock_cursor_context, mocker):
     _, cursor = mock_cursor_context
     cursor.fetchone.return_value = {
         "kind": "service_maintenance",
         "phase": "draining",
         "generation": 8,
+        "requested_by": "operator",
         "scope": ["processing"],
     }
     evidence = {
@@ -227,9 +274,7 @@ def test_authorize_does_not_write_when_confirming_read_has_blockers(
         "blockers": ["airflow_gate_observations"],
         "sources": [],
     }
-    mocker.patch(
-        "ops.routers.coordination.collect_drain_status", return_value=evidence
-    )
+    mocker.patch("ops.routers.coordination.collect_drain_status", return_value=evidence)
 
     assert coordination._authorize() == ("blocked", evidence)
     assert len(cursor.execute.call_args_list) == 2
@@ -266,7 +311,7 @@ def _request_payload(**overrides):
 
 def test_request_writes_expanded_immutable_scope(mock_cursor_context):
     _, cursor = mock_cursor_context
-    cursor.fetchone.return_value = ("none",)
+    cursor.fetchone.side_effect = [("none",), (7,)]
     payload = coordination.CoordinationRequest(**_request_payload())
 
     result, requested = coordination._request(payload)
@@ -278,16 +323,39 @@ def test_request_writes_expanded_immutable_scope(mock_cursor_context):
         "targets": ["processing"],
         "scope": ["processing"],
     }
-    sql, params = cursor.execute.call_args_list[-1].args
+    sql, params = cursor.execute.call_args_list[-2].args
     assert "targets = %s::jsonb" in sql
     assert "scope = %s::jsonb" in sql
     assert json.loads(params[1]) == ["processing"]
     assert json.loads(params[2]) == ["processing"]
+    assert cursor.execute.call_args_list[-1].args[1] == (
+        7,
+        "none",
+        "requested",
+        "service_maintenance",
+        "operator",
+    )
+
+
+def test_event_failure_rolls_back_state_mutation(mock_cursor_context):
+    conn, cursor = mock_cursor_context
+    cursor.fetchone.side_effect = [("none",), (7,)]
+
+    def fail_event(sql, params=None):
+        if "INSERT INTO staging.coordination_state_events" in sql:
+            raise RuntimeError("history unavailable")
+
+    cursor.execute.side_effect = fail_event
+    payload = coordination.CoordinationRequest(**_request_payload())
+
+    assert coordination._request(payload) == ("error", None)
+    conn.commit.assert_not_called()
+    conn.rollback.assert_called_once()
 
 
 def test_request_refuses_active_coordination_without_writing(mock_cursor_context):
     _, cursor = mock_cursor_context
-    cursor.fetchone.return_value = ("draining",)
+    cursor.fetchone.return_value = ("draining", 7, "service_maintenance")
 
     result, requested = coordination._request(
         coordination.CoordinationRequest(**_request_payload())
@@ -318,7 +386,7 @@ def test_request_rejects_invalid_kind_or_scope_before_database(mock_cursor_conte
 
 def test_host_request_selects_every_surface(mock_cursor_context):
     _, cursor = mock_cursor_context
-    cursor.fetchone.return_value = ("none",)
+    cursor.fetchone.side_effect = [("none",), (9,)]
     payload = coordination.CoordinationRequest(
         **_request_payload(kind="host_maintenance", targets=["host"])
     )
@@ -375,3 +443,33 @@ def test_migration_has_single_row_kind_phase_and_nonempty_scope_contract():
     assert "generation bigint NOT NULL DEFAULT 0" in sql
     assert "CREATE TABLE public.coordination_gate_observations" in sql
     assert "PRIMARY KEY (generation, dag_id, run_id)" in sql
+
+
+def test_coordination_event_migration_is_append_only_and_archiver_accessible():
+    sql = Path("db/migrations/V044__coordination_state_events.sql").read_text()
+
+    assert "CREATE TABLE staging.coordination_state_events" in sql
+    assert "event_id bigserial PRIMARY KEY" in sql
+    for column in (
+        "generation",
+        "prior_phase",
+        "phase",
+        "kind",
+        "actor",
+        "event_at",
+    ):
+        assert column in sql
+    assert "UPDATE staging.coordination_state_events" not in sql
+    assert "SELECT, INSERT, DELETE ON staging.coordination_state_events" in sql
+    assert "coordination_state_events_event_id_seq" in sql
+
+
+def test_every_declared_transition_has_a_durable_event_phase():
+    sql = Path("db/migrations/V044__coordination_state_events.sql").read_text()
+
+    phases = {
+        phase for transition in coordination._TRANSITIONS.values() for phase in transition[:2]
+    }
+    phases.update({"none", "requested"})
+    for phase in phases:
+        assert f"'{phase}'" in sql

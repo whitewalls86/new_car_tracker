@@ -9,6 +9,7 @@ from typing import Any, Dict
 from fastapi import APIRouter, Body, HTTPException
 
 from ops.coordination_contract import SERVICE_CONTRACTS, SURFACES, expand_targets
+from ops.routers.coordination import log_transition, record_transition_event
 from shared.db import db_cursor
 
 logger = logging.getLogger("pipeline_ops")
@@ -84,9 +85,7 @@ def _no_intent() -> Dict[str, Any]:
     }
 
 
-def _set_intent(
-    caller: str, pause_long_jobs: bool = True, targets: set[str] | None = None
-) -> str:
+def _set_intent(caller: str, pause_long_jobs: bool = True, targets: set[str] | None = None) -> str:
     """Atomically try to set intent. Returns 'ok', 'locked', or 'error'.
 
     *pause_long_jobs* asks Plan 131's pack and prune jobs to stop at their next
@@ -119,7 +118,10 @@ def _set_intent(
     try:
         with db_cursor(error_context="Set-Intent") as cur:
             cur.execute("SELECT pg_advisory_xact_lock(%s)", (COORDINATION_LOCK_ID,))
-            cur.execute("SELECT kind, phase FROM coordination_state WHERE id = 1")
+            cur.execute(
+                """SELECT kind, phase, generation, requested_by
+                     FROM coordination_state WHERE id = 1"""
+            )
             coordination_row = cur.fetchone()
             if coordination_row is None:
                 return "error"
@@ -137,18 +139,38 @@ def _set_intent(
                               targets = %s::jsonb, scope = %s::jsonb,
                               requested_by = %s, reason = 'Legacy deploy facade',
                               requested_at = now(), updated_at = now()
-                        WHERE id = 1""",
+                        WHERE id = 1
+                    RETURNING generation""",
                     (
                         json.dumps(sorted(expanded_targets)),
                         json.dumps(sorted(scope)),
                         caller,
                     ),
                 )
-                return "ok"
-            logger.warning("Intent failed to set — already locked.")
-            return "locked"
+                changed = cur.fetchone()
+                if changed is None:
+                    return "error"
+                generation = changed[0]
+                record_transition_event(
+                    cur,
+                    generation=generation,
+                    prior_phase="none",
+                    phase="requested",
+                    kind="deploy",
+                    actor=caller,
+                )
+            else:
+                logger.warning("Intent failed to set — already locked.")
+                return "locked"
     except Exception:
         return "error"
+    log_transition(
+        generation=generation,
+        prior_phase="none",
+        phase="requested",
+        kind="deploy",
+    )
+    return "ok"
 
 
 def _intent_release() -> bool:
@@ -169,7 +191,10 @@ def _intent_release() -> bool:
     try:
         with db_cursor(error_context="Intent-Release") as cur:
             cur.execute("SELECT pg_advisory_xact_lock(%s)", (COORDINATION_LOCK_ID,))
-            cur.execute("SELECT kind, phase FROM coordination_state WHERE id = 1")
+            cur.execute(
+                """SELECT kind, phase, generation, requested_by
+                     FROM coordination_state WHERE id = 1"""
+            )
             row = cur.fetchone()
             if row is None:
                 return False
@@ -179,15 +204,37 @@ def _intent_release() -> bool:
             if cur.fetchone() is None:
                 return False
             if row[0] == "deploy":
+                prior_phase = row[1]
+                actor = row[3]
                 cur.execute(
                     """UPDATE coordination_state
                           SET kind = NULL, phase = 'none',
                               generation = generation + 1,
                               targets = '[]'::jsonb, scope = '[]'::jsonb,
                               completed_at = now(), updated_at = now()
-                        WHERE id = 1"""
+                        WHERE id = 1
+                    RETURNING generation"""
                 )
-            return True
+                changed = cur.fetchone()
+                if changed is None:
+                    return False
+                generation = changed[0]
+                record_transition_event(
+                    cur,
+                    generation=generation,
+                    prior_phase=prior_phase,
+                    phase="none",
+                    kind="deploy",
+                    actor=actor,
+                )
+        if row[0] == "deploy":
+            log_transition(
+                generation=generation,
+                prior_phase=prior_phase,
+                phase="none",
+                kind="deploy",
+            )
+        return True
     except Exception:
         return False
 
