@@ -122,6 +122,7 @@ order** — a row with no trigger is a wish, and wishes do not leave tables.
 
 | Plan | Title | Priority | Effort | Trigger |
 |---|---|---:|---|---|
+| [152](plans/plan_152_scheduled_worker_lifecycle.md) | Scheduled worker lifecycle and one-shot execution | 64 | S | Plan 142 Stage 1 lands, then schedule a production-behavior window to separate monthly packing and daily disk measurement from continuously running services |
 | [66](plans/plan_66_sql_injection.md) | SQL injection audit | 55 | M | Any new public mutation surface or auth-boundary change |
 | [122](plans/plan_122_runtime_scraper_fetch_config.md) | Runtime scraper fetch configuration | 52 | S | Plan 136 telemetry shows timeout or solver tuning needs runtime control |
 | [130](plans/plan_130_parser_input_projection.md) | Parser-input projection | 45 | L | Plan 129's reversible options are exhausted **and** the parser taxonomy gap is closed. Largest measured storage win and the only irreversible one |

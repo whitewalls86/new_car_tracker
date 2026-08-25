@@ -209,6 +209,17 @@ a separate graph with separate fail-closed evidence: this production registry
 must not acquire path globs, test names, or skip policy, and it never proves by
 itself that a CI job is safe to omit.
 
+Service identity also carries an explicit execution lifecycle: continuously
+expected service, profile-gated continuous service, initialization job, or
+one-shot workload. This is descriptive safety policy, not launch machinery.
+In particular, `pack-worker` remains continuous because that is how production
+runs today, while `snapshot-worker` is one-shot. A stopped continuous service
+and an absent idle one-shot workload are different states and cannot share a
+health or drain interpretation. [Plan 152](plan_152_scheduled_worker_lifecycle.md)
+owns changing pack and disk measurement to one-shot execution; when it lands,
+Plan 142 changes the lifecycle declaration and evidence adapter without
+changing the coordination state machine or operational surfaces.
+
 ## Coordination state machine
 
 The exact schema is decided in Stage 1, but the externally visible states are:
@@ -838,7 +849,9 @@ before Stage 2 builds the restore step on top of them.
    until every DAG, long job, admin page, and deploy script reads the new
    contract. Remove the old table/sensor only in a later contract slice.
 3. Add a checked-in service-to-surface registry, dependency/follower expansion,
-   and per-DAG admission declarations. Reject unknown targets or surfaces.
+   explicit execution lifecycle, and per-DAG admission declarations. Reject
+   unknown targets, surfaces, or lifecycle classes. Lifecycle describes current
+   production behavior; it does not anticipate Plan 152's migration.
 4. Replace the 600-second global deploy sensor with an indefinite rescheduling
    gate that blocks only intersecting scopes. A stale-state alert, not a DAG
    timeout, notifies the operator.
