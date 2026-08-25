@@ -206,7 +206,31 @@ One-week cycles beginning Monday, no cooldown, three upcoming visible.
 `cycleLockToActive` and `cycleIssueAutoAssignStarted` are both **off**, so
 moving an issue to In Progress mid-cycle does not silently add it to the
 current cycle — the "issues added after cycle start" measure would be
-unreadable otherwise. Cycle 1 runs 2026-08-31 → 2026-09-07.
+unreadable otherwise.
+
+Cycle 1 runs **2026-08-25 → 2026-08-31**, six days rather than seven.
+
+Corrected 2026-08-25 from an original 2026-08-31 → 2026-09-07. The workspace
+was bootstrapped on Monday 2026-08-24 at 20:49 UTC, and Linear generated the
+first cycle from the *following* Monday, so the week in which the board was
+actually being used fell outside every cycle. CAR-7's implementation merged as
+PR #243 on 2026-08-25 at 05:48 UTC — Cycle 1 work completed before Cycle 1
+existed.
+
+Two consequences are recorded rather than fixed:
+
+- **Monday 2026-08-24 is not in any cycle.** `cycleUpdate` refuses a start date
+  before today, so the day cannot be recovered in Linear. It is not lost from
+  the record: `docs/recaps/` is the authority for what happened and is built
+  from git, not from Linear.
+- **Cycle 1's measures undercount.** Work finished before the cycle opened, and
+  the cycle is a day short. Read Cycle 1 as calibration, not as a baseline
+  comparable to Cycles 2 and 3.
+
+Cycles 2 and 3 were shifted back one week to restore the Monday grid, so only
+the first cycle is irregular. Shortening Cycle 1's end date was rejected by
+`cycleUpdate` but accepted through the Linear UI — the two clients do not
+enforce the same constraints.
 
 ### GitHub integration
 
@@ -320,7 +344,7 @@ exist, and do not treat issue count as comparable when issue sizes differ.
 Filled in *after* each cycle closes, from a real read against the board plus
 the repository — not before. Rows below track the six measures defined above.
 
-| Measure | Cycle 1 (2026-08-31 → 2026-09-07) | Cycle 2 (2026-09-07 → 2026-09-14) | Cycle 3 (2026-09-14 → 2026-09-21) |
+| Measure | Cycle 1 (2026-08-25 → 2026-08-31, 6d) | Cycle 2 (2026-08-31 → 2026-09-07) | Cycle 3 (2026-09-07 → 2026-09-14) |
 |---|---|---|---|
 | Time to choose next work | — | — | — |
 | Issues added after cycle start | — | — | — |
