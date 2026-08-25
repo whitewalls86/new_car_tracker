@@ -2,8 +2,14 @@
 
 ## Status
 
-**Stages 0-3 implemented locally 2026-08-25; Stage 4 deployment and 24-hour
-production soak not started.** Written 2026-08-18 while closing Plan 135 Stage
+**Stages 0-3 DEPLOYED to production 2026-08-25 19:52 UTC (PR #247, in the
+combined evening deploy). Stage 4's 24-hour soak runs from that timestamp --
+not from the PR merge -- and is due to accept 2026-08-26 ~20:00 UTC.**
+
+**One acceptance instrument is known-unreliable.**
+`scripts/verify_promtail_contract.py` produced a false "Promtail dropped it"
+in CI on 2026-08-25 and passed on re-run of the identical commit; see Stage 4
+below. Treat a contract failure during the soak as unproven until re-run. Written 2026-08-18 while closing Plan 135 Stage
 5. Production is stable and the storage bounds are live; this plan is a
 correctness and usability follow-up, not an incident response and not a reason
 to reopen Plan 135.
@@ -260,6 +266,58 @@ Deploy by recreating Promtail only unless a Compose label changes. Afterward:
 Do not rewrite or selectively delete the misclassified historical Loki data.
 Let the 90-day retention policy age it out unless capacity evidence creates a
 separate, explicitly approved deletion need.
+
+#### Stage 4 deployed 2026-08-25 19:52 UTC — soak clock starts here, not at merge
+
+Stages 0-3 reached production in the 2026-08-25 evening deploy. `promtail.yml`
+was applied by `redeploy.sh --restart`, which verified inode 519901 matches the
+file on disk — **not** by `docker kill -s HUP`, which reloads the stale
+unlinked inode and logs success while doing it.
+
+> **The soak clock starts at the deploy, not at the merge.** CAR-10 was marked
+> "Soaking" when PR #247 merged, but production ran PR #241 until 19:52, so
+> that window measured code that was not running anywhere. Same error affected
+> Plan 142 Stage 1 the same evening. **A status marker is not a deploy**, and
+> this plan's acceptance runs 24 hours from 2026-08-25 19:52 UTC.
+
+#### The contract checker itself is unreliable — found 2026-08-25
+
+`scripts/verify_promtail_contract.py` **produces false contract violations**,
+which matters because it is one of this stage's acceptance instruments.
+
+Observed in CI on 2026-08-25: `airflow_warning: corpus says retained, Promtail
+dropped it`, on a commit touching nothing in `promtail/`, the fixture corpus,
+or the script. The identical commit passed on re-run, and the checker passed
+10/10 locally.
+
+The mechanism is in `_run()`: every line for a `(service, source_type)` pair is
+fed through **one** `promtail -dry-run -stdin` invocation, and the result is
+matched **by line text**, so any line missing from stdout is scored as
+*dropped*. If Promtail exits before flushing, a retained line reads as a
+contract violation. `airflow-scheduler/container_stdout` batches four lines and
+exactly one went missing.
+
+**A false "Promtail dropped it" during the Stage 4 soak is indistinguishable
+from a real contract violation**, which is the failure mode this plan exists to
+eliminate. Tracked as a backlog plan rather than fixed inline, because the
+likely fix — read until EOF, or assert the expected line count per batch instead
+of treating absence as a drop — needs its own verification that it actually
+removes the flake rather than hiding it.
+
+#### The runbook's own 403 check reproduces this plan's founding defect
+
+While reading Plan 136's solver outcomes on 2026-08-25, the runbook's
+`docker logs … | grep -ioE 'solved|403'` reported **12 `403`s** over a window
+in which the authoritative counter `cartracker_detail_fetch_total` reported
+**`403=0`**.
+
+That is `ct-403-log-spike`'s bug — an unanchored `403` match catching lines that
+are not 403 responses — surviving in the operator runbook after being fixed in
+the alert rule. **Corrected in
+[`runbook_solver_oom_and_recycle.md`](../runbooks/runbook_solver_oom_and_recycle.md)
+to read the counter.** Worth noting as evidence that this plan's scope is the
+pattern, not the single rule: anywhere a bare `403` is grepped out of logs is
+suspect.
 
 ## Intersections and sequencing
 
