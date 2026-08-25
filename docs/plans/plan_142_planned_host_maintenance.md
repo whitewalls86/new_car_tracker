@@ -576,6 +576,42 @@ Phase B is gated on **2026-08-25**, by two things landing the same day:
 Item 7's commit must be **merged before the window opens**, because §10.2 starts
 with `git pull` on the VM. It is a prerequisite, not a rider.
 
+> **Corrected 2026-08-25 when the window ran: §10.2 no longer pulls.** Item 7's
+> commit reached the VM's checkout in **PR #232**, several deploys earlier, so
+> nothing needed pulling and pulling would have dragged in everything merged
+> since. The prerequisite was real; the mechanism named for satisfying it was
+> not. Runbook §10.2 now checks the key is present in the file instead.
+
+##### Items 6 and 7 executed — 2026-08-25
+
+Both ran after the evening deploy, in the same window, item 7 first as the
+runbook prescribes.
+
+**Item 7 — caddy's restart policy.** `docker compose up -d --no-deps caddy` at
+19:58, verified by `docker inspect` reading **`unless-stopped`** where it had
+read `no`. Site served throughout (`302`, the auth-proxy redirect for `/`).
+Checked the *policy field*, never uptime — a running container proves nothing
+about what happens after a reboot.
+
+> **`--no-deps` was added to the runbook because of this run.** The bare
+> `docker compose up -d caddy` the runbook then specified walked the dependency
+> graph and re-ran `cartracker-airflow-init-1`, which is work nobody asked for
+> inside a window whose entire purpose is a bounded blast radius.
+
+**Item 6 — the HMAC rotation.** Old key **35 bytes**, new key **86**, past the
+64 that RFC 7518 §3.2 recommends for HMAC-SHA512. Four services recreated with
+`up -d --no-deps` — the value arrives through the environment, so a `restart`
+would have kept the old one. All three verifications passed: `InsecureKeyLength`
+count **0** in the apiserver log, scheduler heartbeat publishing (inside Plan
+136 D6's 80-second expectation), and no DAG import errors. `.env` backed up to
+`.env.bak-jwt-20260825T200738Z` before the edit.
+
+> **One hazard worth naming for next time.** Copying the new value into a local
+> `.env` produced a `.env.bak-jwt` holding the *old* secret, untracked **and not
+> covered by `.gitignore`** — a live secret loose in a worktree another session
+> may be editing. Deleted once verification passed. If you keep a local copy,
+> confirm the ignore rule covers every backup name you create, not just `.env`.
+
 ##### What Phase B still owes
 
 Phase A measures nothing; the hold has not been exercised. Outstanding:
@@ -885,6 +921,116 @@ the scoped `/deploy/*` compatibility facade and `redeploy.sh`; the runbook owns
 the walkthrough and abort. The whole-production dry run is explicitly gated on
 Stage 3's validation guard. No temporary force-complete exists: reaching
 `validating` without release evidence must remain fail-closed.
+
+#### Stage 1 first production run — 2026-08-25 — it hung, then it worked
+
+**Deployed 19:52 UTC.** The contract had never executed against a real database
+before that evening; the unit suite's 950 passing tests all ran against mocks.
+Its first real invocation **hung**, and two independent causes had to be removed
+before it could authorize anything.
+
+##### Defect 1 — three drain queries named the wrong schema
+
+`redeploy.sh` looped `409` every 5s and never exited. It was not waiting for
+work; it could not *observe* work. Ten of twelve sources read `unknown`, and
+unknown fails closed by design, so the loop was unreachable by construction.
+
+| Source | Query named | Table actually in |
+|---|---|---|
+| `running_detail_claims` | `public.detail_scrape_claims` | **`ops`** |
+| `airflow_task_instances` | `task_instance` unqualified | **`airflow`** |
+| `airflow_gate_observations` | `dag_run` unqualified | **`airflow`** |
+
+The ops role's `search_path` is `ops, staging, public` — `airflow` is not on it.
+`_database_count` catches the error and returns `unknown`, so the operator saw
+"In-scope work is still draining", never "your SQL is wrong". **A fail-closed
+gate that cannot distinguish busy from broken will present a defect as
+patience.** Fixed by schema-qualifying all four tables and adding SQL smoke
+tests that execute the real query strings; the structural reason no test caught
+it is [Plan 139](plan_139_test_suite_maintenance.md) **Stage F**.
+
+##### Defect 2 — the contract could not gate the deploy that installed it
+
+The other seven `unknown` sources were not a bug. `_service_jobs` reads
+`active_by_surface` from each service's `/ready`, and `_container_processes`
+reads `/oneoff-processes` — **endpoints that only exist after the deploy the
+drain is gating.** Verified live on the pre-deploy fleet: `archiver` and
+`processing` returned `{"ready": true}` with no `active_jobs`; `scraper`
+returned `active_jobs` but not the per-surface breakdown; `container-health`
+returned **404**.
+
+So fixing Defect 1 was necessary but not sufficient: **Stage 1 could not
+authorize the deploy that installs Stage 1.** The bootstrap used
+`/deploy/start` → mutate → `/deploy/complete`, skipping only `begin-drain` and
+`authorize`. That keeps the admission gate up throughout — the sensor blocks on
+`phase IN (requested, draining, active, validating)` — and forgoes only the
+drain wait, which was an acceptable trade with a verified-quiet fleet.
+
+> **This is a migration artifact, not a property of the contract.** A fresh
+> environment does not hit it: an empty host comes up from current code, every
+> service exposes its job counters from the first boot, and all twelve sources
+> read `known` immediately. [Plan 121](plan_121_staging_environment.md)'s
+> staging host is therefore **not** affected, and neither is any rebuild from
+> empty. What made tonight different is that the drain contract and the
+> endpoints it interrogates shipped in the *same release*, and that release ran
+> against a fleet still on the previous build.
+>
+> **The recurring case is narrower and worth guarding.** It returns whenever a
+> future release adds a drain source whose evidence endpoint ships in that same
+> release — the new `ops` interrogates services that do not expose it yet, every
+> such source reads `unknown`, and the deploy hangs exactly as it did here. So
+> the rule for anyone extending `DRAIN_SOURCES`: **a new source that depends on
+> a new service endpoint cannot be enabled in the release that introduces the
+> endpoint.** Ship the endpoint first, deploy it, then enable the source — or
+> accept a one-time bypass and say so in the PR.
+>
+> The bypass used tonight is the fallback when that ordering was not followed:
+> `/deploy/start` → mutate → `/deploy/complete`, which keeps the admission gate
+> up and forgoes only the drain wait. It is safe **only** when the operator has
+> confirmed the fleet is quiet by other means, as was done here.
+
+##### Defect 3 — `ct-coordination-stale` fired on the healthy steady state
+
+Shipped in the same PR and **firing within minutes of deployment**, reporting
+`Alerting (NoData)` while `coordination_state` read `phase=none, generation=6`.
+Its selector is `phase!="none"`, which matches nothing when no window is open —
+and `noDataState: Alerting` with `for: 0s` turned that absence into a page. It
+fired permanently *except* during the seconds a deploy was in flight.
+
+Grafana retains the last real series' labels for a NoData instance, so the
+notification read *"deploy coordination has remained requested for over 30
+minutes"* about a window released twelve minutes earlier. **Fixed to
+`noDataState: OK`** (PR #249). An audit of all 22 alert rules found the
+inversion isolated to this one.
+
+##### Then it worked, end to end
+
+After the fix, all twelve sources reported `known` with zero blockers — the
+first time the contract was fully observable — and the full lifecycle ran:
+
+```
+begin-drain   -> phase=draining, drained=true, blockers=[]
+authorize     -> HTTP 200, phase=active          <- the call that looped forever
+begin-validation -> phase=validating
+deploy/complete  -> phase=none, generation=4, deploy_intent=none
+```
+
+Two further confirmations followed unprompted: `redeploy.sh --restart` drove
+the same lifecycle cleanly for the Prometheus/Promtail/Grafana config restart
+and again for the Grafana alert deploy, both printing "Drain confirmed; deploy
+mutation authorized".
+
+**The drain also proved truthful under live load rather than merely at rest.**
+One read landed inside the `scheduled__2026-08-25T19:45:00` detail run and
+returned `running_detail_claims: known, count=400`; the next, after the run
+finished at 19:46:12, returned `0`. Claims are transient, so the 1,869
+`processed` rows still in `ops.detail_scrape_claims` are April residue rather
+than live state — worth knowing before anyone reads that table as current.
+
+> **Recorded against the soak-clock error made the same evening:** CAR-7 was
+> marked "Soaking" when PR #243 merged at 14:24, but production ran PR #241
+> until 19:52. **A merge is not a deploy**, and roughly five hours of that
+> window measured code running nowhere. Plan 141 hit the identical error.
 
 ### Stage 2 — Build the checked-in host procedure
 
