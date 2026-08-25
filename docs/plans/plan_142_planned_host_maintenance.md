@@ -426,6 +426,40 @@ hold works — only that assigning the pool cost nothing. Phase B is the first
 time `pools set 0` is ever run against production, and the acceptance contract
 is measured there, not here.
 
+##### Phase A soak record — closed clean 2026-08-25, called early at ~21.5h
+
+Read at 01:50 UTC, about **21.5 hours** into the 24-hour window, and closed on
+the readings rather than on the clock. The remaining ~2h15m is noted rather
+than waited out. This follows the precedent of
+[Plan 140's Stage 2 soak](plan_140_service_health_contract.md), closed the same
+way at 21h28m of 24h with the reasoning recorded.
+
+The argument for calling it: **"the assignment is inert" is a deterministic
+property, not a rare stochastic one.** If `pool=maintenance` at 16 slots
+against a peak concurrent demand of 5 were going to bind, it would have bound
+in the first hour, not the twenty-third. There is no mechanism by which hours
+22–24 reveal something hours 1–21 did not, and every gate below reads zero.
+
+| Gate | Reading |
+|---|---|
+| Success rate vs the pre-merge day | `orphan_checker` **258 success / 0 failed**, against **258 / 0** in the prior 21.5h. `results_processing` **258 / 0** against **258 / 0**. `scrape_detail_pages` **86 / 0** against **86 / 0**. Identical on all three, in both directions |
+| Scheduler log for `non-existent pool` | **0 occurrences** in 24h of logs |
+| Slots held by the `maintenance` pool | **None.** No task instance in `running`, `queued` or `scheduled` carries the pool |
+| Pooled tasks stuck in `SCHEDULED` | **None** past 15 minutes |
+| Pooled task instances observed | **1,118** through the pool during the window |
+
+602 DAG runs in 21.5 hours (258 + 258 + 86) against this section's documented
+steady state of **28 pooled DAG runs an hour** — 21.5 × 28 = 602. The observed
+load is exactly the load the gate was written for, which is the check that the
+numbers above describe a normal day rather than a quiet one.
+
+**What this does and does not unblock.** It releases the DAG re-serialization
+constraint, which is what mattered on the day: Plan 140 Stage 4 changes
+`airflow/dags/sensors.py`, every DAG imports it, and Phase A's 24 hours are
+measured from re-serialization — so pulling before this gate closed would have
+restarted the clock. It does **not** advance Phase B, which is gated on the
+later of this and Plan 136's Stage 3a read at ~19:40 UTC.
+
 ##### Where Phase B picks up
 
 **The window is written down.**
@@ -437,8 +471,10 @@ touches no packages and no reboot.
 
 Phase B is gated on **2026-08-25**, by two things landing the same day:
 
-1. **Phase A's 24-hour soak completes at 03:47 UTC**, measured from
-   re-serialization rather than from the merge.
+1. ~~**Phase A's 24-hour soak completes at 03:47 UTC**, measured from
+   re-serialization rather than from the merge.~~ **Closed 2026-08-25**, called
+   early at ~21.5h on the readings — see
+   [the Phase A soak record](#phase-a-soak-record--closed-clean-2026-08-25-called-early-at-215h).
 2. **Plan 136's Stage 3a memory baseline is read.** Phase B's hour-long hold
    stops detail scraping, which puts a trough in the very `trawl` memory curve
    Stage 3b sizes its recycle threshold against. SRP scraping continues, so the
