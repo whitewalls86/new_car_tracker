@@ -1346,6 +1346,27 @@ def run_validate_host(args: argparse.Namespace) -> dict[str, Any]:
     if not result["passed"]:
         failed = [name for name, gate in gates.items() if gate["verdict"] != "pass"]
         raise MaintenanceError(f"host validation did not pass: {', '.join(failed)}")
+    state = api_request(args.api_url, "GET", "/coordination/status")
+    if state.get("phase") != "validating" or state.get("kind") != "host_maintenance":
+        raise MaintenanceError("coordination is not validating host maintenance")
+    generation = state.get("generation")
+    if not isinstance(generation, int) or generation < 1:
+        raise MaintenanceError("coordination status has no valid generation")
+    evidence_digests = {
+        "preflight": hashlib.sha256(args.preflight.read_bytes()).hexdigest(),
+        "manifest": hashlib.sha256(Path(args.manifest).read_bytes()).hexdigest(),
+    }
+    submitted = api_request(
+        args.api_url,
+        "POST",
+        "/coordination/host-evidence",
+        {
+            "generation": generation,
+            "gates": gates,
+            "evidence_digests": evidence_digests,
+        },
+    )
+    result["submission"] = submitted
     return result
 
 

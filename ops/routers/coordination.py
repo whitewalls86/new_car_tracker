@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from ops.coordination_contract import HOST_TARGET, expand_targets
 from ops.coordination_drain import collect_drain_status
 from ops.coordination_release import collect_release_status
+from scripts.host_maintenance import HOST_VALIDATION_GATES
 from shared.db import db_cursor
 from shared.job_counter import job_snapshot
 
@@ -41,6 +42,13 @@ _EVENT_INSERT_SQL = """
     VALUES (%s, %s, %s, %s, %s)
 """
 
+_HOST_EVIDENCE_INSERT_SQL = """
+    INSERT INTO staging.coordination_release_evidence
+        (generation, actor, gate_results, evidence_digests)
+    VALUES (%s, %s, %s::jsonb, %s::jsonb)
+    RETURNING evidence_id, submitted_at
+"""
+
 
 class CoordinationRequest(BaseModel):
     kind: str
@@ -50,6 +58,80 @@ class CoordinationRequest(BaseModel):
     expected_work: list[str] = Field(default_factory=list)
     manifest_location: str | None = Field(default=None, max_length=1000)
     operator_notes: str | None = Field(default=None, max_length=4000)
+
+
+class HostEvidenceRequest(BaseModel):
+    generation: int = Field(ge=1)
+    gates: dict[str, dict[str, Any]]
+    evidence_digests: dict[str, str]
+
+
+def _validate_host_evidence(payload: HostEvidenceRequest) -> str | None:
+    """Return a refusal reason unless this is a complete host-gate bundle."""
+    expected = set(HOST_VALIDATION_GATES)
+    if set(payload.gates) != expected:
+        missing = sorted(expected - set(payload.gates))
+        extra = sorted(set(payload.gates) - expected)
+        details = []
+        if missing:
+            details.append(f"missing gates: {', '.join(missing)}")
+        if extra:
+            details.append(f"unknown gates: {', '.join(extra)}")
+        return "; ".join(details)
+    for name, result in payload.gates.items():
+        if result.get("verdict") not in {"pass", "fail", "unknown"}:
+            return f"invalid verdict for {name}"
+        if not isinstance(result.get("reason"), str) or not result["reason"]:
+            return f"missing reason for {name}"
+    if set(payload.evidence_digests) != {"preflight", "manifest"}:
+        return "evidence digests must name preflight and manifest"
+    if any(len(value) != 64 for value in payload.evidence_digests.values()):
+        return "evidence digests must be SHA-256 values"
+    return None
+
+
+def _submit_host_evidence(payload: HostEvidenceRequest) -> tuple[str, dict[str, Any] | None]:
+    """Durably record one complete validation bundle for its live generation."""
+    invalid = _validate_host_evidence(payload)
+    if invalid:
+        return "invalid", {"reason": invalid}
+    try:
+        with db_cursor(error_context="Coordination-HostEvidence", dict_cursor=True) as cur:
+            cur.execute("SELECT pg_advisory_xact_lock(%s)", (COORDINATION_LOCK_ID,))
+            cur.execute(
+                """SELECT phase, generation, kind, requested_by
+                     FROM coordination_state WHERE id = 1"""
+            )
+            row = cur.fetchone()
+            if row is None:
+                return "error", None
+            state = dict(row)
+            if state["phase"] != "validating" or state["kind"] != "host_maintenance":
+                return "conflict", {"reason": "coordination is not validating host maintenance"}
+            if state["generation"] != payload.generation:
+                return "stale", {"reason": "evidence generation is stale"}
+            cur.execute(
+                _HOST_EVIDENCE_INSERT_SQL,
+                (
+                    payload.generation,
+                    state["requested_by"],
+                    json.dumps(payload.gates, sort_keys=True),
+                    json.dumps(payload.evidence_digests, sort_keys=True),
+                ),
+            )
+            inserted = cur.fetchone()
+            if inserted is None:
+                return "error", None
+    except Exception:
+        return "error", None
+    return "ok", {
+        "evidence_id": inserted["evidence_id"],
+        "generation": payload.generation,
+        "actor": state["requested_by"],
+        "submitted_at": _iso(inserted["submitted_at"]),
+        "gates": payload.gates,
+        "evidence_digests": payload.evidence_digests,
+    }
 
 
 def _iso(value: Any) -> Any:
@@ -442,6 +524,19 @@ def coordination_drain_status() -> dict[str, Any]:
 def coordination_release_status() -> dict[str, Any]:
     """Expose the complete stack-release gate set without transitioning state."""
     return collect_release_status(_status())
+
+
+@router.post("/host-evidence")
+def submit_host_evidence(payload: HostEvidenceRequest) -> dict[str, Any]:
+    """Store host validation proof without changing coordination state."""
+    result, evidence = _submit_host_evidence(payload)
+    if result == "ok" and evidence is not None:
+        return evidence
+    if result == "invalid":
+        raise HTTPException(status_code=422, detail=evidence)
+    if result in {"conflict", "stale"}:
+        raise HTTPException(status_code=409, detail=evidence)
+    raise HTTPException(status_code=503, detail="Host evidence could not be recorded.")
 
 
 @router.post("/authorize")

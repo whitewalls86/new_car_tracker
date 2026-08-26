@@ -247,6 +247,89 @@ def test_release_status_returns_full_gate_evidence_without_transition(mock_clien
     transition.assert_not_called()
 
 
+def _host_evidence_payload(generation=7, gates=None):
+    gates = gates or {
+        name: {"verdict": "pass", "reason": "verified"}
+        for name in coordination.HOST_VALIDATION_GATES
+    }
+    return {
+        "generation": generation,
+        "gates": gates,
+        "evidence_digests": {"preflight": "a" * 64, "manifest": "b" * 64},
+    }
+
+
+def test_host_evidence_rejects_missing_gate(mock_client):
+    payload = _host_evidence_payload()
+    payload["gates"].pop(next(iter(payload["gates"])))
+
+    response = mock_client.post("/coordination/host-evidence", json=payload)
+
+    assert response.status_code == 422
+
+
+def test_host_evidence_rejects_stale_generation(mock_cursor_context):
+    _, cursor = mock_cursor_context
+    cursor.fetchone.return_value = {
+        "phase": "validating",
+        "generation": 8,
+        "kind": "host_maintenance",
+        "requested_by": "operator",
+    }
+
+    result, evidence = coordination._submit_host_evidence(
+        coordination.HostEvidenceRequest(**_host_evidence_payload())
+    )
+
+    assert result == "stale"
+    assert evidence == {"reason": "evidence generation is stale"}
+    assert all("INSERT INTO staging.coordination_release_evidence" not in call.args[0]
+               for call in cursor.execute.call_args_list)
+
+
+def test_host_evidence_is_accepted_and_returned(mock_cursor_context):
+    _, cursor = mock_cursor_context
+    cursor.fetchone.side_effect = [
+        {
+            "phase": "validating",
+            "generation": 7,
+            "kind": "host_maintenance",
+            "requested_by": "operator",
+        },
+        {"evidence_id": 4, "submitted_at": datetime(2026, 8, 26)},
+    ]
+
+    result, evidence = coordination._submit_host_evidence(
+        coordination.HostEvidenceRequest(**_host_evidence_payload())
+    )
+
+    assert result == "ok"
+    assert evidence["evidence_id"] == 4
+    assert evidence["actor"] == "operator"
+    sql, params = cursor.execute.call_args_list[-1].args
+    assert "INSERT INTO staging.coordination_release_evidence" in sql
+    assert params[0:2] == (7, "operator")
+
+
+def test_host_evidence_failed_insert_leaves_no_partial_state(mock_cursor_context):
+    _, cursor = mock_cursor_context
+    cursor.fetchone.return_value = {
+        "phase": "validating",
+        "generation": 7,
+        "kind": "host_maintenance",
+        "requested_by": "operator",
+    }
+    cursor.execute.side_effect = [None, None, RuntimeError("write failed")]
+
+    result, evidence = coordination._submit_host_evidence(
+        coordination.HostEvidenceRequest(**_host_evidence_payload())
+    )
+
+    assert (result, evidence) == ("error", None)
+    sql_calls = [call.args[0] for call in cursor.execute.call_args_list]
+    assert all("UPDATE coordination_state" not in sql for sql in sql_calls)
+
+
 def test_authorize_uses_locked_current_generation_confirming_read(mock_cursor_context, mocker):
     _, cursor = mock_cursor_context
     cursor.fetchone.return_value = {
@@ -479,6 +562,17 @@ def test_coordination_event_migration_is_append_only_and_archiver_accessible():
     assert "UPDATE staging.coordination_state_events" not in sql
     assert "SELECT, INSERT, DELETE ON staging.coordination_state_events" in sql
     assert "coordination_state_events_event_id_seq" in sql
+
+
+def test_host_evidence_migration_is_append_only_and_archiver_accessible():
+    sql = Path("db/migrations/V045__coordination_release_evidence.sql").read_text()
+
+    assert "CREATE TABLE staging.coordination_release_evidence" in sql
+    assert "evidence_id bigserial PRIMARY KEY" in sql
+    for column in ("generation", "actor", "submitted_at", "gate_results", "evidence_digests"):
+        assert column in sql
+    assert "UPDATE staging.coordination_release_evidence" not in sql
+    assert "SELECT, INSERT, DELETE ON staging.coordination_release_evidence" in sql
 
 
 def test_every_declared_transition_has_a_durable_event_phase():

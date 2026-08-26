@@ -256,6 +256,15 @@ def test_validate_host_wires_collector_bundle_and_evidence_without_checkpoint(mo
     mocker.patch.object(host_maintenance, "load_preflight_bundle", return_value=preflight)
     collector = mocker.patch.object(host_maintenance, "host_facts", return_value=facts)
     write = mocker.patch.object(host_maintenance, "_safe_json_write")
+    mocker.patch.object(Path, "read_bytes", autospec=True, return_value=b"evidence")
+    api = mocker.patch.object(
+        host_maintenance,
+        "api_request",
+        side_effect=[
+            {"phase": "validating", "kind": "host_maintenance", "generation": 7},
+            {"evidence_id": 11, "generation": 7},
+        ],
+    )
 
     result = host_maintenance.run(args)
 
@@ -263,6 +272,9 @@ def test_validate_host_wires_collector_bundle_and_evidence_without_checkpoint(mo
     collector.assert_called_once_with()
     write.assert_called_once()
     assert write.call_args.args[0] == tmp_path / "validate-host.json"
+    assert api.call_args_list[1].args[2] == "/coordination/host-evidence"
+    assert api.call_args_list[1].args[3]["generation"] == 7
+    assert result["submission"] == {"evidence_id": 11, "generation": 7}
 
 
 def test_validate_host_requires_manifest(tmp_path):

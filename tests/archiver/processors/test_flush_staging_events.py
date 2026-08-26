@@ -61,6 +61,10 @@ def _coordination_config():
     return next(c for c in _TABLE_CONFIGS if "coordination_state" in c["table"])
 
 
+def _release_evidence_config():
+    return next(c for c in _TABLE_CONFIGS if "coordination_release_evidence" in c["table"])
+
+
 # ---------------------------------------------------------------------------
 # _flush_one — empty table
 # ---------------------------------------------------------------------------
@@ -174,6 +178,15 @@ class TestFlushOneSuccess:
         ]
         assert config["minio_prefix"] == "ops_normalized/coordination_state_events"
         assert config["schema"].names == [*config["db_columns"], "year", "month"]
+
+    def test_release_evidence_uses_the_shared_flush_registry(self):
+        config = _release_evidence_config()
+
+        assert config["table"] == "staging.coordination_release_evidence"
+        assert config["pk"] == "evidence_id"
+        assert config["ts_col"] == "submitted_at"
+        assert config["json_cols"] == {"gate_results", "evidence_digests"}
+        assert config["minio_prefix"] == "ops_normalized/coordination_release_evidence"
 
     def test_commit_called_after_delete(self, mocker):
         mock_conn, _ = _make_mock_conn(max_pk=1, rows=[_make_aq_row()])
