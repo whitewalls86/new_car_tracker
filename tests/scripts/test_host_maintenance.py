@@ -25,14 +25,13 @@ def _args(tmp_path, command, **kwargs):
 
 
 def test_checkpoint_is_append_only_five_field_jsonl(mocker, tmp_path):
-    mocker.patch.object(host_maintenance, "_git_revision", return_value="abc123")
-    mocker.patch.object(host_maintenance, "_running_kernel", return_value="6.8.0-test")
     mocker.patch.object(host_maintenance, "_utc_now", side_effect=["t1", "t2"])
     chmod = mocker.patch.object(Path, "chmod", autospec=True, side_effect=Path.chmod)
     path = tmp_path / "maintenance" / "history.jsonl"
 
-    host_maintenance.append_checkpoint(path, "requested", "/tmp/manifest.json")
-    host_maintenance.append_checkpoint(path, "draining", "/tmp/manifest.json")
+    facts = {"git_revision": "abc123", "kernel": "6.8.0-test"}
+    host_maintenance.append_checkpoint(path, "requested", "/tmp/manifest.json", facts=facts)
+    host_maintenance.append_checkpoint(path, "draining", "/tmp/manifest.json", facts=facts)
 
     rows = [json.loads(line) for line in path.read_text().splitlines()]
     assert [row["phase"] for row in rows] == ["requested", "draining"]
@@ -53,21 +52,31 @@ def test_checkpoint_is_append_only_five_field_jsonl(mocker, tmp_path):
     ]
 
 
-def test_git_revision_is_resolved_from_the_script_checkout(mocker):
-    run = mocker.patch.object(
-        host_maintenance.subprocess,
-        "run",
-        return_value=Namespace(stdout="abc123\n"),
+def test_host_facts_fails_closed_when_host_data_is_unreadable(mocker):
+    mocker.patch.object(
+        host_maintenance,
+        "_run_command",
+        side_effect=host_maintenance.MaintenanceError("unable to run: uname -r"),
     )
 
-    assert host_maintenance._git_revision() == "abc123"
-    run.assert_called_once_with(
-        ["git", "rev-parse", "HEAD"],
-        cwd=host_maintenance.REPO_ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
+    with pytest.raises(host_maintenance.MaintenanceError, match="unable to run"):
+        host_maintenance.host_facts()
+
+
+def test_checkpoint_record_uses_supplied_facts(mocker):
+    mocker.patch.object(host_maintenance, "_utc_now", return_value="timestamp")
+
+    assert host_maintenance.checkpoint_record(
+        "requested",
+        "/tmp/manifest.json",
+        {"git_revision": "abc123", "kernel": "6.8.0-test"},
+    ) == {
+        "phase": "requested",
+        "timestamp": "timestamp",
+        "git_revision": "abc123",
+        "running_kernel": "6.8.0-test",
+        "manifest_location": "/tmp/manifest.json",
+    }
 
 
 @pytest.mark.parametrize("phase", ["none", "complete", "offline", "secret=value"])
@@ -439,7 +448,11 @@ def test_apply_package_plan_requires_digest_reviews_masks_and_audits(mocker, tmp
         return_value={"phase": "stopped", "manifest_location": args.manifest},
     )
     mocker.patch.object(host_maintenance, "_utc_now", return_value="timestamp")
-    mocker.patch.object(host_maintenance, "_running_kernel", return_value="6.8.0-test")
+    mocker.patch.object(
+        host_maintenance,
+        "host_facts",
+        return_value={"kernel": "6.8.0-test"},
+    )
     checkpoint = mocker.patch.object(host_maintenance, "append_checkpoint")
     calls = []
 
@@ -565,8 +578,11 @@ def test_reboot_requires_confirmation_and_checkpoints_before_command(mocker, tmp
         "latest_checkpoint",
         return_value={"phase": "updated", "manifest_location": args.manifest},
     )
-    mocker.patch.object(host_maintenance, "_boot_id", return_value="boot-before")
-    mocker.patch.object(host_maintenance, "_running_kernel", return_value="6.8.0-before")
+    mocker.patch.object(
+        host_maintenance,
+        "host_facts",
+        return_value={"boot_id": "boot-before", "kernel": "6.8.0-before"},
+    )
     events = []
     mocker.patch.object(
         host_maintenance,
@@ -598,8 +614,11 @@ def test_reboot_replay_proves_changed_boot_before_checkpointing_rebooted(mocker,
         "latest_checkpoint",
         return_value={"phase": "rebooting", "manifest_location": args.manifest},
     )
-    mocker.patch.object(host_maintenance, "_boot_id", return_value="boot-after")
-    mocker.patch.object(host_maintenance, "_running_kernel", return_value="6.8.0-after")
+    mocker.patch.object(
+        host_maintenance,
+        "host_facts",
+        return_value={"boot_id": "boot-after", "kernel": "6.8.0-after"},
+    )
     checkpoint = mocker.patch.object(host_maintenance, "append_checkpoint")
     run_command = mocker.patch.object(host_maintenance, "_run_command")
 
@@ -620,7 +639,11 @@ def test_reboot_without_confirmation_never_mutates_host(mocker, tmp_path):
         "latest_checkpoint",
         return_value={"phase": "updated", "manifest_location": args.manifest},
     )
-    mocker.patch.object(host_maintenance, "_boot_id", return_value="boot-before")
+    mocker.patch.object(
+        host_maintenance,
+        "host_facts",
+        return_value={"boot_id": "boot-before", "kernel": "6.8.0-before"},
+    )
     run_command = mocker.patch.object(host_maintenance, "_run_command")
 
     with pytest.raises(host_maintenance.MaintenanceError, match="confirm-reboot"):
@@ -688,9 +711,15 @@ def test_capture_running_set_records_compose_and_container_evidence(mocker):
         raise AssertionError(command)
 
     mocker.patch.object(host_maintenance, "_run_command", side_effect=fake_run)
-    mocker.patch.object(host_maintenance, "_git_revision", return_value="abc123")
-    mocker.patch.object(host_maintenance, "_running_kernel", return_value="6.8.0-test")
-    mocker.patch.object(host_maintenance, "_boot_id", return_value="boot-before")
+    mocker.patch.object(
+        host_maintenance,
+        "host_facts",
+        return_value={
+            "git_revision": "abc123",
+            "kernel": "6.8.0-test",
+            "boot_id": "boot-before",
+        },
+    )
     mocker.patch.object(host_maintenance, "_utc_now", return_value="timestamp")
 
     manifest, rendered = host_maintenance.capture_running_set()
@@ -723,6 +752,11 @@ def test_capture_running_set_records_compose_and_container_evidence(mocker):
 
 
 def test_capture_running_set_refuses_an_empty_host(mocker):
+    mocker.patch.object(
+        host_maintenance,
+        "host_facts",
+        return_value={"git_revision": "abc123", "kernel": "6.8.0-test", "boot_id": "boot"},
+    )
     mocker.patch.object(
         host_maintenance,
         "_run_command",

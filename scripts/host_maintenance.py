@@ -158,6 +158,34 @@ PREFLIGHT_COMMANDS = (
     ),
 )
 
+# Host facts are captured behind the command seam so gates and checkpoint
+# records consume data rather than reaching back into the host themselves.
+HOST_FACT_COMMANDS = (
+    ("git_revision", ("git", "rev-parse", "HEAD"), frozenset({0})),
+    ("kernel", ("uname", "-r"), frozenset({0})),
+    ("boot_id", ("cat", "/proc/sys/kernel/random/boot_id"), frozenset({0})),
+    ("reboot_required", ("test", "-e", "/var/run/reboot-required"), frozenset({0, 1})),
+    ("mounts", ("findmnt", "--json"), frozenset({0})),
+    ("disk_bytes", ("df", "-B1", "/", "/boot", "/mnt/data"), frozenset({0})),
+    ("disk_inodes", ("df", "-i", "/", "/boot", "/mnt/data"), frozenset({0})),
+    ("failed_units", ("systemctl", "--failed", "--no-legend"), frozenset({0})),
+    ("docker_active", ("systemctl", "is-active", "docker"), frozenset({0, 1, 3, 4})),
+    ("docker_info", ("docker", "info"), frozenset({0})),
+    ("dpkg_audit", ("sudo", "dpkg", "--audit"), frozenset({0})),
+    (
+        "apt_locks",
+        (
+            "sudo",
+            "fuser",
+            "/var/lib/dpkg/lock-frontend",
+            "/var/lib/apt/lists/lock",
+            "/var/cache/apt/archives/lock",
+        ),
+        frozenset({0, 1}),
+    ),
+    ("package_holds", ("apt-mark", "showhold"), frozenset({0})),
+)
+
 
 class MaintenanceError(RuntimeError):
     """A fail-closed operator error suitable for printing without a traceback."""
@@ -500,6 +528,7 @@ def _render_compose_projects(
 
 def capture_running_set() -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
     """Capture Compose identity and intended state before any stop is allowed."""
+    facts = host_facts()
     ids_result = _run_command(("docker", "ps", "--all", "--quiet"))
     container_ids = [line.strip() for line in ids_result["stdout"].splitlines() if line.strip()]
     if not container_ids:
@@ -576,9 +605,9 @@ def capture_running_set() -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
     manifest = {
         "schema_version": 1,
         "captured_at": _utc_now(),
-        "boot_id": _boot_id(),
-        "git_revision": _git_revision(),
-        "running_kernel": _running_kernel(),
+        "boot_id": facts["boot_id"],
+        "git_revision": facts["git_revision"],
+        "running_kernel": facts["kernel"],
         "running_set_policy": {
             "path": str(RUNNING_SET_POLICY),
             "sha256": hashlib.sha256(policy_bytes).hexdigest(),
@@ -621,6 +650,36 @@ def collect_preflight() -> dict[str, Any]:
         "schema_version": 1,
         "captured_at": _utc_now(),
         "observations": observations,
+    }
+
+
+def host_facts() -> dict[str, Any]:
+    """Capture Stage 3 host evidence as data through the command seam."""
+    observations = {
+        name: _run_command(command, allowed_returncodes=returncodes)
+        for name, command, returncodes in HOST_FACT_COMMANDS
+    }
+    boot_id = observations["boot_id"]["stdout"].strip()
+    if not boot_id:
+        raise MaintenanceError("host boot id is empty")
+    return {
+        "git_revision": observations["git_revision"]["stdout"].strip(),
+        "kernel": observations["kernel"]["stdout"].strip(),
+        "boot_id": boot_id,
+        "reboot_required": observations["reboot_required"]["returncode"] == 0,
+        "mounts": observations["mounts"],
+        "disk": {
+            "bytes": observations["disk_bytes"],
+            "inodes": observations["disk_inodes"],
+        },
+        "units": {
+            "failed": observations["failed_units"],
+            "docker": observations["docker_active"],
+        },
+        "docker": observations["docker_info"],
+        "dpkg": observations["dpkg_audit"],
+        "apt_locks": observations["apt_locks"],
+        "package_holds": observations["package_holds"],
     }
 
 
@@ -862,6 +921,7 @@ def apply_package_plan(args: argparse.Namespace) -> dict[str, Any]:
         raise MaintenanceError("package holds changed during the confirmed transaction")
 
     _run_command(("sync",))
+    facts = host_facts()
     evidence = {
         "schema_version": 1,
         "applied_at": _utc_now(),
@@ -871,7 +931,7 @@ def apply_package_plan(args: argparse.Namespace) -> dict[str, Any]:
         "apt_automation_masked": True,
         "installed_versions": installed_versions,
         "holds_after": holds_after,
-        "running_kernel": _running_kernel(),
+        "running_kernel": facts["kernel"],
     }
     _safe_json_write(evidence_path, evidence)
     append_checkpoint(args.checkpoint, "updated", args.manifest)
@@ -895,14 +955,15 @@ def run_reboot_boundary(args: argparse.Namespace) -> dict[str, Any]:
     captured_boot_id = manifest.get("boot_id")
     if not isinstance(captured_boot_id, str) or not captured_boot_id:
         raise MaintenanceError("running-set manifest has no preflight boot id")
-    current_boot_id = _boot_id()
+    facts = host_facts()
+    current_boot_id = facts["boot_id"]
 
     if current_boot_id != captured_boot_id:
         append_checkpoint(args.checkpoint, "rebooted", args.manifest)
         return {
             "phase": "rebooted",
             "boot_id_changed": True,
-            "running_kernel": _running_kernel(),
+            "running_kernel": facts["kernel"],
         }
     if checkpoint["phase"] == "rebooted":
         raise MaintenanceError("rebooted checkpoint conflicts with the current boot id")
@@ -915,7 +976,7 @@ def run_reboot_boundary(args: argparse.Namespace) -> dict[str, Any]:
     return {
         "phase": "rebooting",
         "boot_id_changed": False,
-        "running_kernel": _running_kernel(),
+        "running_kernel": facts["kernel"],
     }
 
 
@@ -940,55 +1001,41 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _git_revision() -> str:
-    try:
-        return subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            cwd=REPO_ROOT,
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout.strip()
-    except (OSError, subprocess.CalledProcessError) as exc:
-        raise MaintenanceError("unable to read the deployed Git revision") from exc
-
-
-def _running_kernel() -> str:
-    return os.uname().release
-
-
-def _boot_id() -> str:
-    try:
-        boot_id = Path("/proc/sys/kernel/random/boot_id").read_text(encoding="utf-8").strip()
-    except OSError as exc:
-        raise MaintenanceError("unable to read the host boot id") from exc
-    if not boot_id:
-        raise MaintenanceError("host boot id is empty")
-    return boot_id
-
-
-def checkpoint_record(phase: str, manifest: str) -> dict[str, str]:
+def checkpoint_record(phase: str, manifest: str, facts: dict[str, Any]) -> dict[str, str]:
     """Return the deliberately small, non-secret offline breadcrumb."""
     if phase not in CHECKPOINT_PHASES:
         raise MaintenanceError(f"unsupported checkpoint phase: {phase}")
     if not manifest.strip():
         raise MaintenanceError("manifest location must not be empty")
+    git_revision = facts.get("git_revision")
+    kernel = facts.get("kernel")
+    if not isinstance(git_revision, str) or not git_revision:
+        raise MaintenanceError("host facts are missing git_revision")
+    if not isinstance(kernel, str) or not kernel:
+        raise MaintenanceError("host facts are missing kernel")
     return {
         "phase": phase,
         "timestamp": _utc_now(),
-        "git_revision": _git_revision(),
-        "running_kernel": _running_kernel(),
+        "git_revision": git_revision,
+        "running_kernel": kernel,
         "manifest_location": manifest,
     }
 
 
-def append_checkpoint(path: Path, phase: str, manifest: str) -> dict[str, str]:
+def append_checkpoint(
+    path: Path, phase: str, manifest: str, *, facts: dict[str, Any] | None = None
+) -> dict[str, str]:
     """Append one durable transition breadcrumb with reviewed permissions."""
-    record = checkpoint_record(phase, manifest)
+    # Reject invalid callers before collecting from the host.
+    if phase not in CHECKPOINT_PHASES:
+        raise MaintenanceError(f"unsupported checkpoint phase: {phase}")
+    if not manifest.strip():
+        raise MaintenanceError("manifest location must not be empty")
     path.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
     if path.parent.is_symlink() or (path.exists() and path.is_symlink()):
         raise MaintenanceError("checkpoint path must not traverse a symlink")
     path.parent.chmod(0o755)
+    record = checkpoint_record(phase, manifest, facts if facts is not None else host_facts())
 
     flags = os.O_APPEND | os.O_CREAT | os.O_WRONLY
     if hasattr(os, "O_NOFOLLOW"):
