@@ -115,7 +115,7 @@ def test_observability_gate_fails_closed_when_evidence_is_unavailable(mocker):
 
 
 def test_observability_gate_passes_fresh_scrapes_clean_promtail_and_recent_logs(mocker):
-    mocker.patch("ops.coordination_release._prometheus_scalar", side_effect=[12, 0])
+    mocker.patch("ops.coordination_release._prometheus_scalar", side_effect=[12, 0, 1024])
     mocker.patch("ops.coordination_release._loki_has_recent_ingestion", return_value=True)
 
     assert coordination_release._observability_fresh(_state()) == {
@@ -125,13 +125,23 @@ def test_observability_gate_passes_fresh_scrapes_clean_promtail_and_recent_logs(
 
 
 def test_observability_gate_rejects_stale_scrapes_and_promtail_errors(mocker):
-    mocker.patch("ops.coordination_release._prometheus_scalar", side_effect=[61, 2])
+    mocker.patch("ops.coordination_release._prometheus_scalar", side_effect=[61, 2, 1024])
     mocker.patch("ops.coordination_release._loki_has_recent_ingestion", return_value=True)
 
     assert "scrape age" in coordination_release._observability_fresh(_state())["reason"]
 
-    mocker.patch("ops.coordination_release._prometheus_scalar", side_effect=[12, 2])
+    mocker.patch("ops.coordination_release._prometheus_scalar", side_effect=[12, 2, 1024])
     assert "Promtail client error" in coordination_release._observability_fresh(_state())["reason"]
+
+
+def test_observability_gate_rejects_promtail_replay_storm(mocker):
+    mocker.patch(
+        "ops.coordination_release._prometheus_scalar",
+        side_effect=[12, 0, coordination_release.MAX_PROMTAIL_READ_BYTES_5M + 1],
+    )
+    mocker.patch("ops.coordination_release._loki_has_recent_ingestion", return_value=True)
+
+    assert "replay storm" in coordination_release._observability_fresh(_state())["reason"]
 
 
 def test_auxiliary_gate_is_keyed_on_sibling_project(mocker):

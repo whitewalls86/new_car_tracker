@@ -866,9 +866,9 @@ python scripts/host_maintenance.py --manifest "$MANIFEST" \
    restore these units before successful `complete`.
 
 Record the `validate-host.json` result, `release-status` response, completion
-response, and restored unit states with the window evidence. A completed window
-is reconstructable from the append-only Postgres history even after a later
-generation supersedes it.
+response, and restored unit states with the window evidence. Completed-window
+reconstruction spans the current Postgres coordination records and the archived
+Parquet staging-event history; staging rows may be flushed after export.
 
 ---
 

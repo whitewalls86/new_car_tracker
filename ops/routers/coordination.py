@@ -68,6 +68,8 @@ class HostEvidenceRequest(BaseModel):
 
 class CompletionRequest(BaseModel):
     confirm_complete: bool = False
+    generation: int | None = Field(default=None, ge=1)
+    manifest_sha256: str | None = Field(default=None, min_length=64, max_length=64)
 
 
 def _validate_host_evidence(payload: HostEvidenceRequest) -> str | None:
@@ -384,6 +386,18 @@ def _complete(payload: CompletionRequest) -> tuple[str, dict[str, Any] | None]:
             if row is None:
                 return "error", None
             state = dict(row)
+            if state["phase"] == "none":
+                if payload.generation is None or payload.manifest_sha256 is None:
+                    return "conflict", {"failing_gates": ["coordination_expected"]}
+                cur.execute(
+                    """SELECT generation FROM coordination_completion_receipts
+                         WHERE generation = %s AND manifest_sha256 = %s""",
+                    (payload.generation, payload.manifest_sha256),
+                )
+                receipt = cur.fetchone()
+                if receipt is not None:
+                    return "ok", {"phase": "none", "generation": receipt["generation"]}
+                return "conflict", {"failing_gates": ["completion_receipt"]}
             if state["phase"] != "validating" or state["kind"] != "host_maintenance":
                 return "conflict", {"failing_gates": ["coordination_expected"]}
             if not payload.confirm_complete:
@@ -413,6 +427,10 @@ def _complete(payload: CompletionRequest) -> tuple[str, dict[str, Any] | None]:
             )
             if not host_evidence_passes:
                 return "conflict", {"failing_gates": list(HOST_VALIDATION_GATES)}
+            if payload.generation is None or payload.manifest_sha256 is None:
+                return "conflict", {"failing_gates": ["completion_receipt"]}
+            if state["generation"] != payload.generation:
+                return "conflict", {"failing_gates": ["completion_generation"]}
 
             cur.execute(
                 """UPDATE coordination_state
@@ -424,6 +442,12 @@ def _complete(payload: CompletionRequest) -> tuple[str, dict[str, Any] | None]:
             changed = cur.fetchone()
             if changed is None:
                 return "error", None
+            cur.execute(
+                """INSERT INTO coordination_completion_receipts
+                       (generation, manifest_sha256)
+                     VALUES (%s, %s)""",
+                (changed["generation"], payload.manifest_sha256),
+            )
             record_transition_event(
                 cur,
                 generation=changed["generation"],

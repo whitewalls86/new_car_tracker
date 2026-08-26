@@ -251,7 +251,7 @@ def test_validate_host_wires_collector_bundle_and_evidence_without_checkpoint(mo
         return_value={"phase": "validating", "manifest_location": args.manifest},
     )
     mocker.patch.object(
-        host_maintenance, "checkpoint_for_phase", return_value={"running_kernel": "6.8.0-target"}
+        host_maintenance, "checkpoint_for_phase", return_value={"kernel_target": "6.8.0-target"}
     )
     mocker.patch.object(host_maintenance, "load_preflight_bundle", return_value=preflight)
     collector = mocker.patch.object(host_maintenance, "host_facts", return_value=facts)
@@ -301,20 +301,43 @@ def test_complete_records_completion_checkpoint(mocker, tmp_path):
         host_maintenance,
         "api_request",
         side_effect=[
-            {"phase": "validating", "kind": "host_maintenance", "manifest_location": "/tmp/m"},
+            {"phase": "validating", "kind": "host_maintenance", "manifest_location": "/tmp/m", "generation": 7},
             {"phase": "none", "generation": 7},
         ],
     )
     checkpoint = mocker.patch.object(host_maintenance, "append_checkpoint")
 
+    mocker.patch.object(Path, "read_bytes", autospec=True, return_value=b"manifest")
     result = host_maintenance.run(
         _args(tmp_path, "complete", manifest="/tmp/m", confirm_complete=True)
     )
 
     assert result == {"phase": "none", "generation": 7}
     assert api.call_args_list[-1].args == (
-        "http://ops", "POST", "/coordination/complete", {"confirm_complete": True}
+        "http://ops", "POST", "/coordination/complete", {
+            "confirm_complete": True,
+            "generation": 7,
+            "manifest_sha256": host_maintenance.hashlib.sha256(b"manifest").hexdigest(),
+        }
     )
+    checkpoint.assert_called_once_with(_args(tmp_path, "complete").checkpoint, "complete", "/tmp/m")
+
+
+def test_complete_replay_repairs_checkpoint_from_receipt(mocker, tmp_path):
+    mocker.patch.object(
+        host_maintenance,
+        "api_request",
+        side_effect=[
+            {"phase": "none", "generation": 7},
+            {"phase": "none", "generation": 7},
+        ],
+    )
+    mocker.patch.object(Path, "read_bytes", autospec=True, return_value=b"manifest")
+    checkpoint = mocker.patch.object(host_maintenance, "append_checkpoint")
+
+    assert host_maintenance.run(
+        _args(tmp_path, "complete", manifest="/tmp/m", confirm_complete=True)
+    ) == {"phase": "none", "generation": 7}
     checkpoint.assert_called_once_with(_args(tmp_path, "complete").checkpoint, "complete", "/tmp/m")
 
 

@@ -270,13 +270,14 @@ def test_complete_refuses_wrong_phase(mock_cursor_context, phase):
     _, cursor = mock_cursor_context
     state = _complete_state()
     state["phase"] = phase
-    cursor.fetchone.return_value = state
+    cursor.fetchone.side_effect = [state, None] if phase == "none" else [state]
 
     result, evidence = coordination._complete(
-        coordination.CompletionRequest(confirm_complete=True)
+        coordination.CompletionRequest(confirm_complete=True, generation=7, manifest_sha256="a" * 64)
     )
 
-    assert (result, evidence) == ("conflict", {"failing_gates": ["coordination_expected"]})
+    expected_gate = "completion_receipt" if phase == "none" else "coordination_expected"
+    assert (result, evidence) == ("conflict", {"failing_gates": [expected_gate]})
 
 
 def test_complete_refuses_failing_stack_gate(mock_cursor_context, mocker):
@@ -288,7 +289,7 @@ def test_complete_refuses_failing_stack_gate(mock_cursor_context, mocker):
     )
 
     result, evidence = coordination._complete(
-        coordination.CompletionRequest(confirm_complete=True)
+        coordination.CompletionRequest(confirm_complete=True, generation=7, manifest_sha256="a" * 64)
     )
 
     assert result == "conflict"
@@ -322,15 +323,28 @@ def test_complete_succeeds_with_both_validation_halves(mock_cursor_context, mock
     )
 
     result, completed = coordination._complete(
-        coordination.CompletionRequest(confirm_complete=True)
+        coordination.CompletionRequest(confirm_complete=True, generation=7, manifest_sha256="a" * 64)
     )
 
     assert (result, completed) == ("ok", {"phase": "none", "generation": 7})
-    update_sql = cursor.execute.call_args_list[-2].args[0]
+    update_sql = cursor.execute.call_args_list[-3].args[0]
     assert "kind = NULL" in update_sql
     assert cursor.execute.call_args_list[-1].args[1] == (
         7, "validating", "none", "host_maintenance", "operator"
     )
+
+
+def test_complete_replay_confirms_matching_receipt(mock_cursor_context):
+    _, cursor = mock_cursor_context
+    state = _complete_state()
+    state["phase"] = "none"
+    cursor.fetchone.side_effect = [state, {"generation": 7}]
+
+    result, completed = coordination._complete(
+        coordination.CompletionRequest(confirm_complete=True, generation=7, manifest_sha256="a" * 64)
+    )
+
+    assert (result, completed) == ("ok", {"phase": "none", "generation": 7})
 
 
 def test_host_evidence_rejects_missing_gate(mock_client):

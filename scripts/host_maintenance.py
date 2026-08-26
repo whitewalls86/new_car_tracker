@@ -1230,6 +1230,19 @@ def apply_package_plan(args: argparse.Namespace) -> dict[str, Any]:
     if holds_after != sorted(plan.get("holds") or []):
         raise MaintenanceError("package holds changed during the confirmed transaction")
 
+    # The kernel running before reboot is deliberately not the validation target.
+    # A versioned linux-image package names the kernel that bootloader selection
+    # will start after this transaction and the explicitly confirmed reboot.
+    boot_kernel_targets = sorted(
+        name.removeprefix("linux-image-")
+        for name in installed_versions
+        if name.startswith("linux-image-")
+        and name not in {"linux-image-generic", "linux-image-generic-hwe-22.04"}
+    )
+    boot_kernel_target = boot_kernel_targets[-1] if boot_kernel_targets else None
+    if "kernel" in boundaries and not boot_kernel_target:
+        raise MaintenanceError("confirmed kernel update has no versioned installed boot target")
+
     _run_command(("sync",))
     facts = host_identity()
     evidence = {
@@ -1242,9 +1255,13 @@ def apply_package_plan(args: argparse.Namespace) -> dict[str, Any]:
         "installed_versions": installed_versions,
         "holds_after": holds_after,
         "running_kernel": facts["kernel"],
+        "boot_kernel_target": boot_kernel_target,
     }
     _safe_json_write(evidence_path, evidence)
-    append_checkpoint(args.checkpoint, "updated", args.manifest, facts=facts)
+    checkpoint_kwargs: dict[str, Any] = {"facts": facts}
+    if boot_kernel_target:
+        checkpoint_kwargs["kernel_target"] = boot_kernel_target
+    append_checkpoint(args.checkpoint, "updated", args.manifest, **checkpoint_kwargs)
     return {
         "phase": "updated",
         "package_plan_sha256": digest,
@@ -1384,7 +1401,7 @@ def run_validate_host(args: argparse.Namespace) -> dict[str, Any]:
         raise MaintenanceError("checkpoint manifest does not match --manifest")
     preflight = load_preflight_bundle(args.preflight)
     updated = checkpoint_for_phase(args.checkpoint, "updated")
-    expected_kernel = updated.get("running_kernel")
+    expected_kernel = updated.get("kernel_target")
     if not isinstance(expected_kernel, str) or not expected_kernel:
         raise MaintenanceError("updated checkpoint has no kernel target")
     facts = host_facts()
@@ -1451,7 +1468,12 @@ def checkpoint_record(phase: str, manifest: str, facts: dict[str, Any]) -> dict[
 
 
 def append_checkpoint(
-    path: Path, phase: str, manifest: str, *, facts: dict[str, Any] | None = None
+    path: Path,
+    phase: str,
+    manifest: str,
+    *,
+    facts: dict[str, Any] | None = None,
+    kernel_target: str | None = None,
 ) -> dict[str, str]:
     """Append one durable transition breadcrumb with reviewed permissions."""
     # Reject invalid callers before collecting from the host.
@@ -1464,6 +1486,10 @@ def append_checkpoint(
         raise MaintenanceError("checkpoint path must not traverse a symlink")
     path.parent.chmod(0o755)
     record = checkpoint_record(phase, manifest, facts if facts is not None else host_identity())
+    if kernel_target is not None:
+        if not kernel_target:
+            raise MaintenanceError("kernel target must not be empty")
+        record["kernel_target"] = kernel_target
 
     flags = os.O_APPEND | os.O_CREAT | os.O_WRONLY
     if hasattr(os, "O_NOFOLLOW"):
@@ -1542,6 +1568,31 @@ def transition(
     if result.get("phase") != expected_phase:
         raise MaintenanceError(f"coordination API did not confirm phase {expected_phase!r}")
     append_checkpoint(args.checkpoint, checkpoint_phase or expected_phase, args.manifest)
+    return result
+
+
+def complete_transition(args: argparse.Namespace) -> dict[str, Any]:
+    """Complete, or repair a completion checkpoint after an ambiguous response."""
+    current = api_request(args.api_url, "GET", "/coordination/status")
+    generation = current.get("generation")
+    if not isinstance(generation, int) or generation < 1:
+        raise MaintenanceError("coordination status has no valid generation")
+    payload = {
+        "confirm_complete": True,
+        "generation": generation,
+        "manifest_sha256": hashlib.sha256(Path(args.manifest).read_bytes()).hexdigest(),
+    }
+    if current.get("phase") == "validating":
+        if current.get("kind") != "host_maintenance":
+            raise MaintenanceError("validating coordination belongs to another kind")
+        if current.get("manifest_location") != args.manifest:
+            raise MaintenanceError("manifest does not match the active coordination")
+    elif current.get("phase") != "none":
+        raise MaintenanceError("host maintenance is not ready to complete")
+    result = api_request(args.api_url, "POST", "/coordination/complete", payload)
+    if result.get("phase") != "none" or result.get("generation") != generation:
+        raise MaintenanceError("coordination API did not confirm completion")
+    append_checkpoint(args.checkpoint, "complete", args.manifest)
     return result
 
 
@@ -1721,6 +1772,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     )
     if args.command == "complete" and payload is None:
         raise MaintenanceError("--confirm-complete is required")
+    if args.command == "complete":
+        return complete_transition(args)
     return transition(
         args,
         route,

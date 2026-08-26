@@ -33,6 +33,7 @@ READINESS_TARGETS = {
 AUXILIARY_PROJECTS = frozenset({"cartracker-lakehouse", "cartracker-mlflow"})
 MAX_SCRAPE_AGE_SECONDS = 60
 LOG_INGESTION_LOOKBACK_SECONDS = 600
+MAX_PROMTAIL_READ_BYTES_5M = 50 * 1024 * 1024
 
 
 def _passed(gate: str, reason: str = "") -> dict[str, str]:
@@ -156,6 +157,9 @@ def _observability_fresh(_: dict[str, Any]) -> dict[str, str]:
         promtail_errors = _prometheus_scalar(
             "sum(increase(promtail_client_request_errors_total[5m]))"
         )
+        promtail_read_bytes = _prometheus_scalar(
+            "sum(increase(promtail_read_bytes_total[5m]))"
+        )
         ingested = _loki_has_recent_ingestion()
     except (requests.RequestException, KeyError, TypeError, ValueError, IndexError, OverflowError):
         return _unknown(gate, "observability evidence unavailable or malformed")
@@ -163,6 +167,8 @@ def _observability_fresh(_: dict[str, Any]) -> dict[str, str]:
         return _failed(gate, f"Prometheus scrape age {scrape_age:.0f}s exceeds limit")
     if promtail_errors > 0:
         return _failed(gate, "Promtail client error storm detected")
+    if promtail_read_bytes > MAX_PROMTAIL_READ_BYTES_5M:
+        return _failed(gate, "Promtail replay storm detected")
     if not ingested:
         return _failed(gate, "Loki has no recent Promtail ingestion")
     return _passed(gate)
