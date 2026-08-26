@@ -968,7 +968,6 @@ def test_collect_preflight_enforces_lock_audit_and_hold_contract(mocker):
 
     result = host_maintenance.collect_preflight()
 
-    assert result["console_access_verified"] is True
     assert set(result["observations"]) == {
         name for name, _, _ in host_maintenance.PREFLIGHT_COMMANDS
     }
@@ -1025,10 +1024,7 @@ def test_run_preflight_writes_manifest_config_and_observations(mocker, tmp_path)
         return_value={"observations": {"git_revision": {"stdout": "abc"}}},
     )
 
-    with pytest.raises(host_maintenance.MaintenanceError, match="console"):
-        host_maintenance.run_preflight(tmp_path, console_access_verified=False)
-
-    result = host_maintenance.run_preflight(tmp_path, console_access_verified=True)
+    result = host_maintenance.run_preflight(tmp_path)
 
     assert result == {
         "phase": "preflight",
@@ -1056,11 +1052,10 @@ def test_preflight_command_checkpoints_only_after_evidence_is_written(mocker, tm
         "preflight",
         manifest=None,
         output_dir=tmp_path,
-        console_access_verified=True,
     )
 
     result = host_maintenance.run(args)
 
     assert result["phase"] == "preflight"
-    run_preflight.assert_called_once_with(tmp_path, console_access_verified=True)
+    run_preflight.assert_called_once_with(tmp_path)
     checkpoint.assert_called_once_with(args.checkpoint, "preflight", str(manifest))

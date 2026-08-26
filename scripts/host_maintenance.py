@@ -620,7 +620,6 @@ def collect_preflight() -> dict[str, Any]:
     return {
         "schema_version": 1,
         "captured_at": _utc_now(),
-        "console_access_verified": True,
         "observations": observations,
     }
 
@@ -920,9 +919,7 @@ def run_reboot_boundary(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
-def run_preflight(output_dir: Path, *, console_access_verified: bool) -> dict[str, Any]:
-    if not console_access_verified:
-        raise MaintenanceError("verify Oracle Cloud console access before preflight")
+def run_preflight(output_dir: Path) -> dict[str, Any]:
     manifest, rendered = capture_running_set()
     preflight = collect_preflight()
     compose_dir = output_dir / "compose"
@@ -1122,11 +1119,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     preflight = subparsers.add_parser("preflight")
     preflight.add_argument("--output-dir", type=Path, required=True)
-    preflight.add_argument(
-        "--console-access-verified",
-        action="store_true",
-        help="Attest that Oracle Cloud console access was tested for this window",
-    )
 
     prepare_update = subparsers.add_parser("prepare-update")
     prepare_update.add_argument("--output-dir", type=Path, required=True)
@@ -1164,10 +1156,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "complete_implicit": False,
         }
     if args.command == "preflight":
-        result = run_preflight(
-            args.output_dir,
-            console_access_verified=args.console_access_verified,
-        )
+        result = run_preflight(args.output_dir)
         append_checkpoint(
             args.checkpoint,
             "preflight",

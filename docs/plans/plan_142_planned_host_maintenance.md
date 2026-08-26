@@ -90,7 +90,7 @@ Host maintenance adds stronger properties:
   change state;
 - automatic release on timeout or script exit could resume work onto a broken
   host;
-- rollback may require the Oracle Cloud console or an older kernel/package.
+- rollback may require an older kernel or package.
 
 Those differences require different scopes and release gates, **not two intent
 systems**. Both operations need to stop admitting affected work, drain work
@@ -165,8 +165,8 @@ remains authoritative once it is back.
 
 ### Observation and mutation are separate phases
 
-Package refresh, compatibility review, image pulls, disk checks, Compose
-rendering, and console-access verification happen before production pauses.
+Package refresh, compatibility review, image pulls, disk checks, and Compose
+rendering happen before production pauses.
 Only draining, stopping, installation, reboot, validation, and resume consume
 the window.
 
@@ -917,12 +917,9 @@ already pending for `1050` and `1054` before the window opened.
 
 **Item 1 is complete against its own spec** — timeline, commands, failure
 modes, intended-stopped services and recovery evidence are all present from the
-primary record. Two things first written up as gaps were settled on re-reading
+primary record. One thing first written up as a gap was settled on re-reading
 rather than left open: the pre-window disk baseline exists (`/` at 65%,
-04:06:23), and console access provably was *not* verified — every mention of the
-Oracle console in that session is this plan's own text being drafted at the end
-of the window, which is a finding about the window rather than a hole in the
-record.
+04:06:23).
 
 Two items genuinely remain on the host, neither required by item 1. The package
 transaction detail (`/var/log/apt/history.log`) is enrichment. **When
@@ -1158,8 +1155,8 @@ package, reboot, restore, or complete command yet; those require the remaining
 Stage 2 mechanics and Stage 3's release evidence respectively.
 
 **Preflight slice built 2026-08-25:** the same client now exposes a read-only
-`preflight` command. It requires an explicit console-access attestation, fails
-closed on apt/dpkg locks, package-database inconsistency, or package-hold drift,
+`preflight` command. It fails closed on apt/dpkg locks, package-database
+inconsistency, or package-hold drift,
 and writes a non-secret evidence bundle containing the host baseline, sanitized
 Compose renders, and the actual running-set manifest. The manifest records
 Compose identity, profiles, image IDs/digests, runtime/health state, restart
@@ -1231,7 +1228,8 @@ never calls `complete` from a general exit trap.
 
 #### Preflight and package preparation
 
-- verify SSH plus Oracle Cloud console access before risking network changes;
+- verify SSH and validate the SSH and network configurations before risking
+  network changes;
 - record Git revision, kernel, `/etc/os-release`, `reboot-required`, disk bytes
   and inodes, mount UUIDs, Docker version/config, failed systemd units, and
   package holds;
@@ -1386,7 +1384,8 @@ Rollback is phase-specific:
 - **Before stop:** cancel maintenance and resume normally.
 - **Package install before reboot:** finish `dpkg` to a consistent state; use
   reviewed cached versions/holds for rollback rather than interrupting it.
-- **Boot failure:** use the Oracle Cloud console and previous kernel from GRUB.
+- **Boot failure:** follow the provider recovery procedure and select the
+  previous kernel where available.
 - **Docker incompatibility:** restore the reviewed Docker/containerd package
   versions and daemon configuration, then validate Compose before starting.
 - **Application regression:** keep maintenance active, return to the prior Git

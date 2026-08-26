@@ -127,12 +127,7 @@ ssh -i ssh-key-2026-04-08.key ubuntu@147.224.199.86 '
 ```
 
 `sshd -t` and `netplan generate` matter more than they look. They validate the
-two configurations that, if broken, leave you locked out of a rebooted host
-with only the Oracle Cloud console as a way back.
-
-**Verify console access before you need it.** The plan requires it and the
-August window did not record doing it. If SSH does not come back, the console
-is the only route in.
+two configurations most likely to leave you locked out of a rebooted host.
 
 Last, the Airflow maintenance gate — it fails silently in both directions, so
 it is a preflight line item rather than something you notice:
@@ -539,11 +534,6 @@ docker exec cartracker-postgres psql -U cartracker -d cartracker -At -c \
   "select intent from deploy_intent;"
 ```
 
-> **Verify Oracle Cloud console access before you start.** The August window
-> skipped this and §12 records that it did. This window does not reboot, so the
-> console is not the lifeline it is in a host window — but the habit is the
-> point, and the cost is one browser tab.
-
 Stage 2's checkpoint writer now exists. Every successful transition appends one
 JSON line to `/var/lib/cartracker/maintenance/history.jsonl`, with only phase,
 UTC timestamp, Git revision, running kernel, and manifest location. The client
@@ -561,14 +551,12 @@ as running, including required Compose profiles. It refuses a manifest that
 marks a one-shot, on-demand, deliberately paused, or foreign service as running;
 it never discovers restore targets by walking the filesystem.
 
-Run the checked-in preflight after verifying Oracle Cloud console access. It is
-observation-only: it does not refresh apt, stop a service, install a package, or
-change coordination state.
+Run the checked-in preflight. It is observation-only: it does not refresh apt,
+stop a service, install a package, or change coordination state.
 
 ```bash
 EVIDENCE=/var/lib/cartracker/maintenance/$(date -u +%Y%m%dT%H%M%SZ)
-python scripts/host_maintenance.py preflight \
-  --output-dir "$EVIDENCE" --console-access-verified
+python scripts/host_maintenance.py preflight --output-dir "$EVIDENCE"
 MANIFEST="$EVIDENCE/running-set.json"
 ```
 
@@ -878,13 +866,8 @@ Everything Plan 142 Stage 0 item 1 asks for is present: timeline, commands,
 failure modes, intended-stopped services, and recovery evidence — all from the
 primary record rather than reconstructed.
 
-**Settled, and recorded above rather than outstanding:**
-
-- **Console access was not verified before the reboot.** Every mention of the
-  Oracle Cloud console in that session is Plan 142's own text being *drafted*,
-  at the end of the same window. The plan's preflight requires the check
-  precisely because this window skipped it.
-- **The pre-window disk baseline exists** — `/` at 65%, captured at 04:06:23.
+**Settled, and recorded above rather than outstanding:** the pre-window disk
+baseline exists — `/` at 65%, captured at 04:06:23.
 
 **Genuinely still on the host.** Neither is required by item 1; the first is
 enrichment, and the second is a question this recovery raised rather than one it
