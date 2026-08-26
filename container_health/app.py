@@ -12,7 +12,12 @@ from typing import Any, Dict
 from fastapi import FastAPI, Response
 from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, generate_latest
 
-from container_health.collector import ContainerHealthCollector, oneoff_processes
+from container_health.collector import (
+    PROJECT_LABEL,
+    SERVICE_LABEL,
+    ContainerHealthCollector,
+    oneoff_processes,
+)
 from container_health.docker_api import DockerApi
 from container_health.expected import EXPECTED_SERVICES
 
@@ -59,3 +64,15 @@ def active_oneoff_processes() -> Dict[str, Any]:
         DOCKER_API.inspect_project_containers(COMPOSE_PROJECT), COMPOSE_PROJECT
     )
     return {"known": True, "active_processes": len(processes), "processes": processes}
+
+
+@app.get("/project-status/{project}")
+def project_status(project: str) -> Dict[str, Any]:
+    """Read sibling-project activity for Plan 142's auxiliary release gate."""
+    inspections = DOCKER_API.inspect_project_containers(project)
+    services = []
+    for inspection in inspections:
+        labels = (inspection.get("Config") or {}).get("Labels") or {}
+        if labels.get(PROJECT_LABEL) == project and labels.get(SERVICE_LABEL):
+            services.append(labels[SERVICE_LABEL])
+    return {"known": True, "project": project, "services": sorted(services)}

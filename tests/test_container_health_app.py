@@ -25,3 +25,26 @@ def test_oneoff_endpoint_reads_existing_docker_authority(mocker):
     assert result["active_processes"] == 1
     assert result["processes"][0]["service"] == "snapshot-worker"
     inspect.assert_called_once_with("cartracker")
+
+
+def test_project_status_reads_only_the_named_sibling_project(mocker):
+    inspection = {
+        "Config": {
+            "Labels": {
+                "com.docker.compose.project": "cartracker-lakehouse",
+                "com.docker.compose.service": "lakekeeper",
+            }
+        }
+    }
+    inspect = mocker.patch.object(
+        app.DOCKER_API, "inspect_project_containers", return_value=[inspection]
+    )
+
+    result = app.project_status("cartracker-lakehouse")
+
+    assert result == {
+        "known": True,
+        "project": "cartracker-lakehouse",
+        "services": ["lakekeeper"],
+    }
+    inspect.assert_called_once_with("cartracker-lakehouse")

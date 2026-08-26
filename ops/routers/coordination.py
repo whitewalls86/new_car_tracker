@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from ops.coordination_contract import HOST_TARGET, expand_targets
 from ops.coordination_drain import collect_drain_status
+from ops.coordination_release import collect_release_status
 from shared.db import db_cursor
 from shared.job_counter import job_snapshot
 
@@ -435,6 +436,12 @@ def begin_coordination_drain() -> dict[str, str]:
 @router.get("/drain-status")
 def coordination_drain_status() -> dict[str, Any]:
     return collect_drain_status(_status())
+
+
+@router.get("/release-status")
+def coordination_release_status() -> dict[str, Any]:
+    """Expose the complete stack-release gate set without transitioning state."""
+    return collect_release_status(_status())
 
 
 @router.post("/authorize")

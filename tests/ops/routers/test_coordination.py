@@ -230,6 +230,23 @@ def test_drain_status_aggregates_authoritative_state_without_transition(mock_cli
     transition.assert_not_called()
 
 
+def test_release_status_returns_full_gate_evidence_without_transition(mock_client, mocker):
+    state = {"phase": "validating", "kind": "host_maintenance"}
+    mocker.patch("ops.routers.coordination._status", return_value=state)
+    collect = mocker.patch(
+        "ops.routers.coordination.collect_release_status",
+        return_value={"release_ready": False, "blockers": ["container_health"], "gates": []},
+    )
+    transition = mocker.patch("ops.routers.coordination._transition")
+
+    response = mock_client.get("/coordination/release-status")
+
+    assert response.status_code == 200
+    assert response.json()["blockers"] == ["container_health"]
+    collect.assert_called_once_with(state)
+    transition.assert_not_called()
+
+
 def test_authorize_uses_locked_current_generation_confirming_read(mock_cursor_context, mocker):
     _, cursor = mock_cursor_context
     cursor.fetchone.return_value = {
