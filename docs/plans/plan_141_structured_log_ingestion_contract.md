@@ -3,8 +3,10 @@
 ## Status
 
 **Stages 0-3 DEPLOYED to production 2026-08-25 19:52 UTC (PR #247, in the
-combined evening deploy). Stage 4's 24-hour soak runs from that timestamp --
-not from the PR merge -- and is due to accept 2026-08-26 ~20:00 UTC.**
+combined evening deploy). Stage 4's production evidence was accepted on
+2026-08-26 after an 80,658-second observation window and ten controlled source
+probes. One closeout correction remains to deploy: the dashboard queried a
+nonexistent Promtail counter name.**
 
 **One acceptance instrument is known-unreliable.**
 `scripts/verify_promtail_contract.py` produced a false "Promtail dropped it"
@@ -280,6 +282,34 @@ unlinked inode and logs success while doing it.
 > that window measured code that was not running anywhere. Same error affected
 > Plan 142 Stage 1 the same evening. **A status marker is not a deploy**, and
 > this plan's acceptance runs 24 hours from 2026-08-25 19:52 UTC.
+
+#### Stage 4 closeout evidence — accepted 2026-08-26
+
+The user accepted the production observation at 18:16 UTC, after 80,658
+seconds (22h24m) from the 2026-08-25 19:52 deploy. The shortened interval is
+recorded rather than rounded up to 24 hours.
+
+| Acceptance read | Result |
+|---|---|
+| `ct-403-log-spike` | `Normal`, health `ok`, and zero alert annotations during the observation window. The old noise remained demonstrable — `shared.minio` produced 403 text matches — but could not drive the metric-only rule. The authoritative counters recorded about 36 exact 403 outcomes among 25,518 detail fetches (0.14%). |
+| Required labels | Zero retained records missing `source`; zero Airflow or oauth2-proxy records missing expected `level`. |
+| Excluded noise | Zero retained Airflow `DEBUG`/`INFO` records and zero retained successful OAuth `/oauth2/auth` 202 subrequests. |
+| Promtail health | Zero restarts and zero discovery, parsing, out-of-order, too-old, or empty-label errors after deploy. |
+| Airflow severity | The deployed parser matched 186 scheduler warnings and one DAG-processor warning in raw stdout. No generic severity-bearing line fell through the same parser as unclassified; the apiserver emitted no natural actionable severity in the window. |
+| Controlled source proof | Ten uniquely tagged warnings were produced: six application-file services, all three selected Airflow stdout services, and one OAuth 401. Loki returned each exactly once with the expected `service`, `source`, and normalized `level=WARNING`; the Error / Warning selector returned all ten. |
+| Loki line volume | 66,998,820 bytes over 80,658 seconds, or **71.77 MB/day**, down **72.1%** from Stage 0's 257.34 MB/day. The straight-line 90-day projection is **6.46 GB (6.02 GiB)** versus 23.16 GB at Stage 0. |
+| Physical capacity | Loki occupied 4,120,786,946 bytes (4.12 GB); `/mnt/data` had 132,460,101,632 bytes (132.46 GB) available. |
+| `ct-log-error-spike` scope | Keep Airflow and oauth2-proxy excluded. The retained window contained 194 Airflow warnings and 290 OAuth warnings but zero `ERROR` or `CRITICAL` records from either source. There is no observed error distribution from which to justify a paging threshold; dashboard visibility remains the correct contract. |
+
+The closeout cross-check found one correction that must deploy before the plan
+can archive. Production Promtail 3.5.8 exports
+`logentry_dropped_lines_total`, while the dashboard and its tests named the
+nonexistent `promtail_dropped_lines_total`. The panel's `or vector(0)` therefore
+turned the instrumentation error into a healthy-looking zero. Commit
+`1d96980` corrects both panels, their regression assertions, and this plan's
+counter references. Until that commit is deployed and the live dashboard query
+returns the real series, Plan 141 remains in the build order rather than the
+completed archive.
 
 #### The contract checker itself is unreliable — found 2026-08-25
 
