@@ -252,7 +252,7 @@ def test_cli_formatter_preserves_reviewed_structured_fields():
     }
 
 
-def test_parser_intentionally_exposes_no_complete_or_destructive_commands():
+def test_parser_intentionally_exposes_no_complete_command():
     parser = host_maintenance.build_parser()
     choices = next(action.choices for action in parser._actions if action.dest == "command")
     assert set(choices) == {
@@ -263,6 +263,8 @@ def test_parser_intentionally_exposes_no_complete_or_destructive_commands():
         "drain-status",
         "authorize",
         "wait-active",
+        "stop",
+        "start",
         "begin-validation",
     }
 
@@ -402,6 +404,7 @@ def _round_trip_manifest():
             {
                 "project": "cartracker",
                 "service": "ops",
+                "container_id": "container-ops",
                 "declared_profiles": [],
                 "policy_class": None,
                 "state": {"running": True},
@@ -409,6 +412,7 @@ def _round_trip_manifest():
             {
                 "project": "cartracker",
                 "service": "trawl",
+                "container_id": "container-trawl",
                 "declared_profiles": ["trawl"],
                 "policy_class": "profile-running",
                 "state": {"running": True},
@@ -416,6 +420,7 @@ def _round_trip_manifest():
             {
                 "project": "cartracker",
                 "service": "flyway",
+                "container_id": "container-flyway",
                 "declared_profiles": [],
                 "policy_class": "oneshot",
                 "state": {"running": False},
@@ -423,6 +428,7 @@ def _round_trip_manifest():
             {
                 "project": "cartracker",
                 "service": "dbt",
+                "container_id": "container-dbt",
                 "declared_profiles": ["tools"],
                 "policy_class": "on-demand",
                 "state": {"running": False},
@@ -430,6 +436,7 @@ def _round_trip_manifest():
             {
                 "project": "cartracker-mlflow",
                 "service": "mlflow",
+                "container_id": "container-mlflow",
                 "declared_profiles": [],
                 "policy_class": "aux-paused",
                 "state": {"running": False},
@@ -500,6 +507,119 @@ def test_load_running_set_manifest_rejects_symlink(mocker, tmp_path):
 
     with pytest.raises(host_maintenance.MaintenanceError, match="symlink"):
         host_maintenance.load_running_set_manifest(manifest)
+
+
+def test_latest_checkpoint_recovers_from_torn_trailing_append(tmp_path):
+    checkpoint = tmp_path / "history.jsonl"
+    checkpoint.write_text(
+        json.dumps({"phase": "active", "manifest_location": "/tmp/manifest"})
+        + "\n"
+        + '{"phase":"stopp',
+        encoding="utf-8",
+    )
+
+    assert host_maintenance.latest_checkpoint(checkpoint)["phase"] == "active"
+
+
+@pytest.mark.parametrize(
+    ("action", "prior_phase", "expected_running", "result_phase"),
+    [
+        ("stop", "active", False, "stopped"),
+        ("start", "stopped", True, "started"),
+    ],
+)
+def test_running_set_action_is_manifest_scoped_and_verified(
+    mocker, tmp_path, action, prior_phase, expected_running, result_phase
+):
+    manifest_path = tmp_path / "running-set.json"
+    manifest_path.write_text(json.dumps(_round_trip_manifest()), encoding="utf-8")
+    args = _args(tmp_path, action, manifest=str(manifest_path))
+    mocker.patch.object(
+        host_maintenance,
+        "latest_checkpoint",
+        return_value={"phase": prior_phase, "manifest_location": str(manifest_path)},
+    )
+    checkpoint = mocker.patch.object(host_maintenance, "append_checkpoint")
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        if command[:2] == ("docker", "inspect"):
+            return {
+                "stdout": json.dumps(
+                    [
+                        {"Id": "container-ops", "State": {"Running": expected_running}},
+                        {
+                            "Id": "container-trawl",
+                            "State": {"Running": expected_running},
+                        },
+                    ]
+                ),
+                "stderr": "",
+                "returncode": 0,
+            }
+        return {"stdout": "", "stderr": "", "returncode": 0}
+
+    mocker.patch.object(host_maintenance, "_run_command", side_effect=fake_run)
+
+    result = host_maintenance.run(args)
+
+    assert result == {
+        "phase": result_phase,
+        "projects": ["cartracker"],
+        "services": ["ops", "trawl"],
+    }
+    compose = calls[0]
+    assert compose[0][-3:] == (action, "ops", "trawl")
+    assert compose[1]["cwd"] == Path("/opt/cartracker")
+    assert calls[1][0] == ("docker", "inspect", "container-ops", "container-trawl")
+    checkpoint.assert_called_once_with(args.checkpoint, result_phase, str(manifest_path))
+
+
+def test_running_set_action_refuses_wrong_offline_phase(mocker, tmp_path):
+    args = _args(tmp_path, "stop")
+    mocker.patch.object(
+        host_maintenance,
+        "latest_checkpoint",
+        return_value={"phase": "draining", "manifest_location": args.manifest},
+    )
+    run_command = mocker.patch.object(host_maintenance, "_run_command")
+
+    with pytest.raises(host_maintenance.MaintenanceError, match="cannot stop"):
+        host_maintenance.run(args)
+
+    run_command.assert_not_called()
+
+
+def test_running_set_action_refuses_failed_postcondition(mocker, tmp_path):
+    manifest_path = tmp_path / "running-set.json"
+    manifest_path.write_text(json.dumps(_round_trip_manifest()), encoding="utf-8")
+    args = _args(tmp_path, "stop", manifest=str(manifest_path))
+    mocker.patch.object(
+        host_maintenance,
+        "latest_checkpoint",
+        return_value={"phase": "active", "manifest_location": str(manifest_path)},
+    )
+
+    def fake_run(command, **kwargs):
+        if command[:2] == ("docker", "inspect"):
+            return {
+                "stdout": json.dumps(
+                    [
+                        {"Id": "container-ops", "State": {"Running": True}},
+                        {"Id": "container-trawl", "State": {"Running": False}},
+                    ]
+                )
+            }
+        return {"stdout": "", "stderr": "", "returncode": 0}
+
+    mocker.patch.object(host_maintenance, "_run_command", side_effect=fake_run)
+    checkpoint = mocker.patch.object(host_maintenance, "append_checkpoint")
+
+    with pytest.raises(host_maintenance.MaintenanceError, match="verification"):
+        host_maintenance.run(args)
+
+    checkpoint.assert_not_called()
 
 
 def test_collect_preflight_enforces_lock_audit_and_hold_contract(mocker):

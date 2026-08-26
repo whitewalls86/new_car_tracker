@@ -588,7 +588,9 @@ python scripts/host_maintenance.py --manifest "$MANIFEST" request \
   --expected-work "install reviewed packages" --expected-work reboot
 python scripts/host_maintenance.py --manifest "$MANIFEST" begin-drain
 python scripts/host_maintenance.py --manifest "$MANIFEST" wait-active
-# reviewed stop/update/reboot/start work remains manual
+python scripts/host_maintenance.py --manifest "$MANIFEST" stop
+# reviewed update/reboot work remains pending in Stage 2
+python scripts/host_maintenance.py --manifest "$MANIFEST" start
 python scripts/host_maintenance.py --manifest "$MANIFEST" begin-validation
 ```
 
@@ -597,6 +599,13 @@ progress no more than once per minute. It has no short overall deadline; stale
 coordination alerts separately. An individual API request still has a ten-second
 timeout, which is logged with its method and route before the command fails
 closed. Use `drain-status` when an operator needs an immediate evidence dump.
+
+After `active`, `stop` and `start` deliberately use the last durable local
+checkpoint because Postgres and the coordination API may be offline. They run
+only the Compose commands derived from the preflight manifest, verify every
+selected container reached the requested state, and checkpoint the result.
+Rerunning either command repeats the same idempotent Compose operation; it never
+walks the host for additional projects or services.
 
 There is intentionally no `complete` command yet. Stage 3 must supply the host,
 stack, and intentionally-stopped-service evidence guard before release can be

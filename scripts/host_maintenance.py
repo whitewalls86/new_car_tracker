@@ -19,7 +19,19 @@ from urllib.request import Request, urlopen
 
 DEFAULT_API_URL = "http://localhost:5050"
 DEFAULT_CHECKPOINT = Path("/var/lib/cartracker/maintenance/history.jsonl")
-CHECKPOINT_PHASES = frozenset({"requested", "draining", "active", "validating"})
+CHECKPOINT_PHASES = frozenset(
+    {
+        "requested",
+        "draining",
+        "active",
+        "stopped",
+        "updated",
+        "rebooting",
+        "rebooted",
+        "started",
+        "validating",
+    }
+)
 REPO_ROOT = Path(__file__).resolve().parent.parent
 RUNNING_SET_POLICY = REPO_ROOT / "maintenance-running-set.txt"
 logger = logging.getLogger(__name__)
@@ -159,9 +171,7 @@ def _run_command(
         "stderr": completed.stderr,
     }
     if completed.returncode not in allowed_returncodes:
-        raise MaintenanceError(
-            f"preflight command failed ({completed.returncode}): {' '.join(command)}"
-        )
+        raise MaintenanceError(f"command failed ({completed.returncode}): {' '.join(command)}")
     return result
 
 
@@ -293,6 +303,92 @@ def build_running_set_plan(manifest: dict[str, Any]) -> list[dict[str, Any]]:
     if not plan:
         raise MaintenanceError("running-set manifest contains no running Compose services")
     return plan
+
+
+def latest_checkpoint(path: Path) -> dict[str, Any]:
+    """Read the last complete offline breadcrumb without following symlinks."""
+    if path.is_symlink():
+        raise MaintenanceError("checkpoint path must not be a symlink")
+    try:
+        lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line]
+    except OSError as exc:
+        raise MaintenanceError(f"unable to read checkpoint at {path}") from exc
+    for line in reversed(lines):
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(record, dict) and record.get("phase") in CHECKPOINT_PHASES:
+            return record
+        raise MaintenanceError("checkpoint contains an unsupported phase")
+    raise MaintenanceError(f"unable to read checkpoint at {path}")
+
+
+def _selected_container_ids(manifest: dict[str, Any], plan: list[dict[str, Any]]) -> list[str]:
+    selected = {(entry["project"], service) for entry in plan for service in entry["services"]}
+    ids = []
+    for container in manifest["containers"]:
+        if (container.get("project"), container.get("service")) not in selected:
+            continue
+        container_id = container.get("container_id")
+        if not isinstance(container_id, str) or not container_id:
+            raise MaintenanceError("selected running-set service has no container id")
+        ids.append(container_id)
+    if len(ids) != len(selected):
+        raise MaintenanceError("running-set plan does not map one-to-one to containers")
+    return ids
+
+
+def verify_running_set_state(
+    manifest: dict[str, Any], plan: list[dict[str, Any]], *, running: bool
+) -> None:
+    """Confirm every selected preflight container reached the requested state."""
+    container_ids = _selected_container_ids(manifest, plan)
+    result = _run_command(("docker", "inspect", *container_ids))
+    try:
+        inspections = json.loads(result["stdout"])
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise MaintenanceError("Docker returned malformed restore verification JSON") from exc
+    observed = {
+        item.get("Id"): bool((item.get("State") or {}).get("Running"))
+        for item in inspections
+        if isinstance(item, dict)
+    }
+    mismatched = [
+        container_id for container_id in container_ids if observed.get(container_id) is not running
+    ]
+    if mismatched:
+        target = "running" if running else "stopped"
+        raise MaintenanceError(
+            f"running-set verification did not reach {target}: {len(mismatched)} container(s)"
+        )
+
+
+def run_running_set_action(args: argparse.Namespace, action: str) -> dict[str, Any]:
+    """Replay one manifest-scoped Compose stop/start and verify its postcondition."""
+    checkpoint = latest_checkpoint(args.checkpoint)
+    allowed_phases = {
+        "stop": {"active", "stopped"},
+        "start": {"stopped", "updated", "rebooted", "started"},
+    }
+    if checkpoint["phase"] not in allowed_phases[action]:
+        raise MaintenanceError(f"cannot {action} from checkpoint phase {checkpoint['phase']!r}")
+    if checkpoint.get("manifest_location") != args.manifest:
+        raise MaintenanceError("checkpoint manifest does not match --manifest")
+    manifest = load_running_set_manifest(Path(args.manifest))
+    plan = build_running_set_plan(manifest)
+    command_key = f"{action}_command"
+    for entry in plan:
+        _run_command(tuple(entry[command_key]), cwd=Path(entry["working_directory"]))
+    running = action == "start"
+    verify_running_set_state(manifest, plan, running=running)
+    phase = "started" if running else "stopped"
+    append_checkpoint(args.checkpoint, phase, args.manifest)
+    return {
+        "phase": phase,
+        "projects": [entry["project"] for entry in plan],
+        "services": sum((entry["services"] for entry in plan), []),
+    }
 
 
 def _split_compose_paths(raw: str, working_dir: Path) -> tuple[Path, ...]:
@@ -705,6 +801,8 @@ def build_parser() -> argparse.ArgumentParser:
     wait_active = subparsers.add_parser("wait-active")
     wait_active.add_argument("--poll-seconds", type=float, default=5.0)
     wait_active.add_argument("--progress-seconds", type=float, default=60.0)
+    subparsers.add_parser("stop")
+    subparsers.add_parser("start")
     subparsers.add_parser("begin-validation")
     return parser
 
@@ -721,6 +819,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "begin-drain",
         "authorize",
         "wait-active",
+        "stop",
+        "start",
         "begin-validation",
     }:
         if not args.manifest:
@@ -748,6 +848,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         if args.poll_seconds <= 0 or args.progress_seconds <= 0:
             raise MaintenanceError("wait intervals must be positive")
         return wait_until_active(args)
+    if args.command in {"stop", "start"}:
+        return run_running_set_action(args, args.command)
     routes = {
         "begin-drain": ("/coordination/begin-drain", "draining"),
         "authorize": ("/coordination/authorize", "active"),

@@ -1173,6 +1173,13 @@ profiles, while one-shot, on-demand, deliberately paused, and foreign services
 remain excluded. Contradictory manifests fail closed. Unit coverage round-trips
 default, profile-running, one-shot, on-demand, and paused auxiliary examples.
 
+**Manifest-scoped stop/start slice built 2026-08-25:** `stop` and `start`
+consume only that derived plan, carry Compose profiles and source files, verify
+every selected container's resulting Docker state, and append `stopped` or
+`started` only after the postcondition holds. Their authority is the latest
+API-confirmed offline checkpoint, so both commands remain replayable while the
+coordination API and Postgres are deliberately offline.
+
 **Durable-history slice built 2026-08-25:** V044 adds the append-only
 `staging.coordination_state_events` record, every native and compatibility-
 facade state mutation writes exactly one event in the same transaction, and the
