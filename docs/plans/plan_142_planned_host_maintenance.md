@@ -1211,8 +1211,20 @@ phase order and prove Stage 2 has no implicit or exposed `complete` path.
 facade state mutation writes exactly one event in the same transaction, and the
 existing staging-event archiver registry flushes it to Parquet. Normal
 transitions and refusals are narrated through Plan 141's structured-field
-contract. Bounded drain-progress narration and the completion checkpoint remain
-open below.
+contract. The Stage 3 slices below complete bounded drain-progress narration
+and the completion checkpoint.
+
+**Stage 3 resume-gate slices built 2026-08-26:** `validate-host` collects one
+plain host-facts bundle, evaluates seven fail-closed host gates, writes
+`validate-host.json`, and submits a complete passing bundle for the live
+generation. The stack endpoint independently reports expected services, Plan
+140 health coverage, direct readiness, observability freshness, coordination
+state, and intentionally stopped sibling projects. `complete` re-evaluates that
+stack evidence inside its advisory-locked transaction and requires the durable
+host-evidence row plus explicit confirmation before it releases coordination and
+checkpoints `complete` locally. Only after that resume gate passes does
+`restore-apt-automation` unmask, restore, and verify the pre-window unit states
+and package holds. The operator procedure is [runbook §10.7](../runbooks/runbook_host_maintenance.md#107-stage-3-resume-gate--host-maintenance-only).
 
 **Production preflight evidence, 2026-08-26:** PR #251 commit
 `23268c70a3d8c8a65194ec6de7b9b649b03e7cce` ran from the detached isolated
@@ -1253,8 +1265,8 @@ idempotent subcommands rather than one irreversible monolith:
 
 ```text
 preflight -> request -> drain -> wait-active -> stop -> update -> reboot
-          -> start -> begin-validation -> validate-host -> validate-stack
-          -> complete
+           -> start -> begin-validation -> validate-host -> validate-stack
+           -> complete -> restore-apt-automation
 ```
 
 The script prints and checkpoints every phase. It never stores credentials and
@@ -1344,9 +1356,8 @@ The work:
    contains host-only evidence, is never reconciled into Postgres, and is not a
    second transition-history authority. Dropping it would remove the only
    breadcrumb readable while Postgres and `/mnt/data` are deliberately offline.
-5. [ ] Extend checkpoint coverage to the completion transition. **The Postgres
-   event schema supports it now; the local checkpoint remains blocked with the
-   `complete` command on Stage 3's validation-evidence guard.**
+5. [x] Extend checkpoint coverage to the completion transition. **`complete`
+   records the local breadcrumb only after the guarded API confirms the release.**
 6. Narrate transitions.
    - [x] Log every normal native and compatibility-facade transition once with
      `kind`, `phase`, `prior_phase`, and `generation`.
@@ -1443,7 +1454,7 @@ volume prune`, or automatically releasing maintenance intent.
    intentionally stopped services.
 6. Script dry-run tests assert phase ordering and prove no failure path calls
    `complete` implicitly.
-7. Plan 140 coverage is a declared dependency of the resume gate; missing
+7. [x] Plan 140 coverage is a declared dependency of the resume gate; missing
    health data fails closed.
 8. Package/reboot commands require explicit non-dry-run confirmation.
 9. Every `coordination_state` mutation writes exactly one history row in the
@@ -1452,7 +1463,7 @@ volume prune`, or automatically releasing maintenance intent.
     corresponding event type, so a transition cannot be added silently.
 11. `staging.coordination_state_events` flushes through the existing archiver
     registry, not a bespoke path.
-12. A completed window is reconstructable from Postgres after its `generation`
+12. [x] A completed window is reconstructable from Postgres after its `generation`
     has been superseded.
 
 ## Intersections and sequencing
