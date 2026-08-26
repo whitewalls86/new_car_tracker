@@ -127,12 +127,7 @@ ssh -i ssh-key-2026-04-08.key ubuntu@147.224.199.86 '
 ```
 
 `sshd -t` and `netplan generate` matter more than they look. They validate the
-two configurations that, if broken, leave you locked out of a rebooted host
-with only the Oracle Cloud console as a way back.
-
-**Verify console access before you need it.** The plan requires it and the
-August window did not record doing it. If SSH does not come back, the console
-is the only route in.
+two configurations most likely to leave you locked out of a rebooted host.
 
 Last, the Airflow maintenance gate — it fails silently in both directions, so
 it is a preflight line item rather than something you notice:
@@ -539,29 +534,98 @@ docker exec cartracker-postgres psql -U cartracker -d cartracker -At -c \
   "select intent from deploy_intent;"
 ```
 
-> **Verify Oracle Cloud console access before you start.** The August window
-> skipped this and §12 records that it did. This window does not reboot, so the
-> console is not the lifeline it is in a host window — but the habit is the
-> point, and the cost is one browser tab.
-
 Stage 2's checkpoint writer now exists. Every successful transition appends one
 JSON line to `/var/lib/cartracker/maintenance/history.jsonl`, with only phase,
 UTC timestamp, Git revision, running kernel, and manifest location. The client
 is replay-safe: if Postgres advanced but the local append failed, rerunning the
 same command repairs the breadcrumb without repeating the transition.
+The file is explicitly an offline operator convenience derived only after the
+Postgres-backed API confirms a phase. It is never reconciled back into Postgres
+and is not the durable transition history: V044's
+`staging.coordination_state_events` records each mutation in the same database
+transaction and the existing staging-event processor archives those rows.
+
+The running-set manifest is also executable restore authority, not just an
+inventory. The client derives an exact per-project plan from containers recorded
+as running, including required Compose profiles. It refuses a manifest that
+marks a one-shot, on-demand, deliberately paused, or foreign service as running;
+it never discovers restore targets by walking the filesystem.
+
+Run the checked-in preflight. It is observation-only: it does not refresh apt,
+stop a service, install a package, or change coordination state.
+
+```bash
+EVIDENCE=/var/lib/cartracker/maintenance/$(date -u +%Y%m%dT%H%M%SZ)
+python scripts/host_maintenance.py preflight --output-dir "$EVIDENCE"
+MANIFEST="$EVIDENCE/running-set.json"
+```
+
+The evidence directory contains `preflight.json`, `running-set.json`, and one
+sanitized structural Compose record per project under `compose/`. Full Compose
+renders are validated in memory but never written because interpolation may
+contain credentials. Preflight refuses an empty Docker host, an active apt/dpkg
+lock, non-empty `dpkg --audit`, or any held-package set other than the reviewed
+`docker.io` hold. A refusal is a finding to investigate, not a reason to bypass
+the check.
 
 The currently available sequence is:
 
 ```bash
+python scripts/host_maintenance.py plan
+python scripts/host_maintenance.py prepare-update \
+  --output-dir "$(dirname "$MANIFEST")" --include-held docker.io
 python scripts/host_maintenance.py --manifest "$MANIFEST" request \
   --requested-by "$USER" --reason "reviewed host maintenance" \
   --expected-work "install reviewed packages" --expected-work reboot
-python scripts/host_maintenance.py --manifest "$MANIFEST" begin-drain
-python scripts/host_maintenance.py drain-status
-python scripts/host_maintenance.py --manifest "$MANIFEST" authorize
-# reviewed stop/update/reboot/start work remains manual
+python scripts/host_maintenance.py --manifest "$MANIFEST" drain
+python scripts/host_maintenance.py --manifest "$MANIFEST" wait-active
+python scripts/host_maintenance.py --manifest "$MANIFEST" stop
+python scripts/host_maintenance.py --manifest "$MANIFEST" update \
+  --package-plan "$PACKAGE_PLAN" --confirm-plan "$PACKAGE_PLAN_SHA256" \
+  --confirm-apply --release-notes-reviewed --compatibility-reviewed
+python scripts/host_maintenance.py --manifest "$MANIFEST" reboot --confirm-reboot
+# reconnect after the VM returns, then prove the boot changed:
+python scripts/host_maintenance.py --manifest "$MANIFEST" reboot
+python scripts/host_maintenance.py --manifest "$MANIFEST" start
 python scripts/host_maintenance.py --manifest "$MANIFEST" begin-validation
 ```
+
+`plan` is a non-mutating dry run of Stage 2's canonical ordering. It ends at
+`begin-validation`: the Stage 3 evidence gates own `validate-host`,
+`validate-stack`, apt-automation restoration, and explicit `complete`. There is
+no exit trap or Stage 2 failure path that can release coordination.
+
+Record the printed package-plan SHA-256 and review every pinned version plus
+the named compatibility boundaries before entering the drain. Preparation
+refreshes indexes and downloads the exact combined transaction but installs
+nothing. `--include-held` must name the complete current hold set, so a held
+runtime package cannot silently age outside the reviewed transaction.
+
+`update` will not accept a changed plan: `--confirm-plan` must be the exact
+SHA-256 printed by preparation. The three confirmation flags attest that the
+operator intends installation and has reviewed release notes and every named
+compatibility boundary. The command records and masks apt automation, applies
+only pinned versions, rechecks locks before masking, audits dpkg, verifies the
+installed versions and hold set, syncs, and leaves automation masked for
+restoration only after the Stage 3 resume gate.
+
+The first `reboot` invocation syncs and writes `rebooting` before asking systemd
+to reboot; it does not claim success when that command returns. After reconnect,
+rerun `reboot` without the confirmation flag. The client compares the live Linux
+boot ID to the preflight manifest and writes `rebooted` only when they differ.
+
+`wait-active` polls drain evidence every five seconds but prints structured
+progress no more than once per minute. It has no short overall deadline; stale
+coordination alerts separately. An individual API request still has a ten-second
+timeout, which is logged with its method and route before the command fails
+closed. Use `drain-status` when an operator needs an immediate evidence dump.
+
+After `active`, `stop` and `start` deliberately use the last durable local
+checkpoint because Postgres and the coordination API may be offline. They run
+only the Compose commands derived from the preflight manifest, verify every
+selected container reached the requested state, and checkpoint the result.
+Rerunning either command repeats the same idempotent Compose operation; it never
+walks the host for additional projects or services.
 
 There is intentionally no `complete` command yet. Stage 3 must supply the host,
 stack, and intentionally-stopped-service evidence guard before release can be
@@ -802,13 +866,8 @@ Everything Plan 142 Stage 0 item 1 asks for is present: timeline, commands,
 failure modes, intended-stopped services, and recovery evidence — all from the
 primary record rather than reconstructed.
 
-**Settled, and recorded above rather than outstanding:**
-
-- **Console access was not verified before the reboot.** Every mention of the
-  Oracle Cloud console in that session is Plan 142's own text being *drafted*,
-  at the end of the same window. The plan's preflight requires the check
-  precisely because this window skipped it.
-- **The pre-window disk baseline exists** — `/` at 65%, captured at 04:06:23.
+**Settled, and recorded above rather than outstanding:** the pre-window disk
+baseline exists — `/` at 65%, captured at 04:06:23.
 
 **Genuinely still on the host.** Neither is required by item 1; the first is
 enrichment, and the second is a question this recovery raised rather than one it

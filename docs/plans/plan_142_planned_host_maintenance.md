@@ -90,7 +90,7 @@ Host maintenance adds stronger properties:
   change state;
 - automatic release on timeout or script exit could resume work onto a broken
   host;
-- rollback may require the Oracle Cloud console or an older kernel/package.
+- rollback may require an older kernel or package.
 
 Those differences require different scopes and release gates, **not two intent
 systems**. Both operations need to stop admitting affected work, drain work
@@ -165,8 +165,8 @@ remains authoritative once it is back.
 
 ### Observation and mutation are separate phases
 
-Package refresh, compatibility review, image pulls, disk checks, Compose
-rendering, and console-access verification happen before production pauses.
+Package refresh, compatibility review, image pulls, disk checks, and Compose
+rendering happen before production pauses.
 Only draining, stopping, installation, reboot, validation, and resume consume
 the window.
 
@@ -917,12 +917,9 @@ already pending for `1050` and `1054` before the window opened.
 
 **Item 1 is complete against its own spec** — timeline, commands, failure
 modes, intended-stopped services and recovery evidence are all present from the
-primary record. Two things first written up as gaps were settled on re-reading
+primary record. One thing first written up as a gap was settled on re-reading
 rather than left open: the pre-window disk baseline exists (`/` at 65%,
-04:06:23), and console access provably was *not* verified — every mention of the
-Oracle console in that session is this plan's own text being drafted at the end
-of the window, which is a finding about the window rather than a hole in the
-record.
+04:06:23).
 
 Two items genuinely remain on the host, neither required by item 1. The package
 transaction detail (`/var/log/apt/history.log`) is enrichment. **When
@@ -1157,6 +1154,100 @@ Postgres advances but the local checkpoint write fails. It exposes no stop,
 package, reboot, restore, or complete command yet; those require the remaining
 Stage 2 mechanics and Stage 3's release evidence respectively.
 
+**Preflight slice built 2026-08-25:** the same client now exposes a read-only
+`preflight` command. It fails closed on apt/dpkg locks, package-database
+inconsistency, or package-hold drift,
+and writes a non-secret evidence bundle containing the host baseline, sanitized
+Compose renders, and the actual running-set manifest. The manifest records
+Compose identity, profiles, image IDs/digests, runtime/health state, restart
+policy, and Docker log configuration without persisting interpolated environment
+variables. Stop, update, reboot, restore, and complete remain absent.
+
+**Running-set round-trip slice built 2026-08-25:** the client derives an exact
+per-project stop/start plan from that manifest. Only services captured as
+running are selected; profile-gated services retain their required Compose
+profiles, while one-shot, on-demand, deliberately paused, and foreign services
+remain excluded. Contradictory manifests fail closed. Unit coverage round-trips
+default, profile-running, one-shot, on-demand, and paused auxiliary examples.
+
+**Manifest-scoped stop/start slice built 2026-08-25:** `stop` and `start`
+consume only that derived plan, carry Compose profiles and source files, verify
+every selected container's resulting Docker state, and append `stopped` or
+`started` only after the postcondition holds. Their authority is the latest
+API-confirmed offline checkpoint, so both commands remain replayable while the
+coordination API and Postgres are deliberately offline.
+
+**Package-preparation slice built 2026-08-25:** `prepare-update` refreshes apt
+indexes, requires the operator to name every held package explicitly, resolves
+ordinary plus held upgrades, re-simulates the combined version-pinned
+transaction, and downloads it without installation. The resulting
+`package-plan.json` is content-addressed and calls out container-runtime,
+kernel, SSH, and network compatibility boundaries for review before `update`.
+
+**Offline package-apply slice built 2026-08-25:** `update` requires the
+`stopped` checkpoint, matching manifest, exact package-plan digest, and explicit
+apply, release-note, and compatibility-review confirmations. It records the apt
+automation enablement state, masks the timers and unattended-upgrade service,
+applies only the pinned argv, verifies installed versions and `dpkg --audit`,
+rechecks apt/dpkg locks immediately before masking, proves the reviewed hold set
+survived, syncs filesystems, writes `update-result.json`, and only then checkpoints
+`updated`. Apt automation intentionally remains masked until the Stage 3 resume
+gate has passed.
+
+**Reboot-boundary slice built 2026-08-25:** preflight records the Linux boot
+ID. `reboot` requires the `updated` checkpoint and explicit confirmation,
+syncs, checkpoints `rebooting`, and then invokes systemd. A post-boot replay
+must observe a different boot ID before it records `rebooted`; command return
+alone is never treated as reboot evidence.
+
+**Stage 2 ordering slice built 2026-08-25:** `plan` emits the canonical local
+procedure through `begin-validation` without executing commands, `drain` matches
+the plan's public command name while retaining `begin-drain` compatibility, and
+preflight now checkpoints only after its evidence bundle exists. Tests pin the
+phase order and prove Stage 2 has no implicit or exposed `complete` path.
+
+**Durable-history slice built 2026-08-25:** V044 adds the append-only
+`staging.coordination_state_events` record, every native and compatibility-
+facade state mutation writes exactly one event in the same transaction, and the
+existing staging-event archiver registry flushes it to Parquet. Normal
+transitions and refusals are narrated through Plan 141's structured-field
+contract. Bounded drain-progress narration and the completion checkpoint remain
+open below.
+
+**Production preflight evidence, 2026-08-26:** PR #251 commit
+`23268c70a3d8c8a65194ec6de7b9b649b03e7cce` ran from the detached isolated
+worktree `/opt/cartracker-stage2-preflight-251`. The active checkout remained on
+`master` at `bb06054f01a57b2e236407bf03cab9386e47959e`; its three pre-existing
+untracked files were unchanged. The accepted preflight completed at
+`2026-08-26T02:29:49.675553+00:00`, recorded kernel `6.8.0-1058-oracle`, no
+failed systemd units, and 30 running containers across `cartracker`,
+`cartracker-lakehouse`, and `cartracker-mlflow`. The append-only checkpoint
+records phase `preflight` at `2026-08-26T02:29:49.695094+00:00` and points to
+the captured manifest.
+
+The evidence bundle is
+`/var/lib/cartracker/maintenance/pr-251-preflight-20260826`: `preflight.json`
+SHA-256 `2aeab6a562fbb5ff9abcd77f15b0b7f417d5e532d8877cc9a591285c5ee9d32a` and
+`running-set.json` SHA-256
+`774d1a88a3198422b9ac799e9c07c9bf6c0028151e260e30fa4c8266672b3e1b`.
+The sanitized Compose records are
+`cartracker.json` `afe86df49e2ae07ae0b8d84aafcbfe6c85ae7fce5b839cbf34f9df443d2dac90`,
+`cartracker-lakehouse.json`
+`c33e6a185d8af5628e4985acc0078774a2892d625449925c761835136a698ee8`, and
+`cartracker-mlflow.json`
+`7857e567fa47551320d54dbd0e10641c1f5fc4b0c58d8f89917fbfdc2f6688d1`.
+
+Two refusals proved the preflight was fail-closed rather than ceremonial. The
+first exposed `_git_revision()` inheriting the SSH login directory; commit
+`23268c7` now resolves it from the script checkout and pins that behavior in a
+unit test. The second found real host drift: Plan 142 had decided to hold
+`docker.io` only, but `apt-mark showhold` was empty. Production had
+`docker.io` `29.1.3-0ubuntu3~22.04.2` with Installed equal to Candidate from
+the unattended-upgrades-eligible Ubuntu security origin. The missing policy
+was applied with `sudo apt-mark hold docker.io`, verified as the sole hold, and
+the unchanged preflight then passed. No service, container, coordination, or
+package version changed.
+
 Add an operator-run script, proposed as `scripts/host_maintenance.sh`, with
 idempotent subcommands rather than one irreversible monolith:
 
@@ -1171,7 +1262,8 @@ never calls `complete` from a general exit trap.
 
 #### Preflight and package preparation
 
-- verify SSH plus Oracle Cloud console access before risking network changes;
+- verify SSH and validate the SSH and network configurations before risking
+  network changes;
 - record Git revision, kernel, `/etc/os-release`, `reboot-required`, disk bytes
   and inodes, mount UUIDs, Docker version/config, failed systemd units, and
   package holds;
@@ -1234,34 +1326,40 @@ its history.
 
 The work:
 
-1. Add `staging.coordination_state_events` — append-only, `bigserial` primary
-   key, one row per transition carrying `generation`, `prior_phase`, `phase`,
-   `kind`, actor, and timestamp. Grants follow V043.
-2. Write the event in the **same transaction** as the `coordination_state`
-   update, so a mutation cannot succeed without its history row.
-3. Register it in
+1. [x] Add `staging.coordination_state_events` — append-only, `bigserial`
+   primary key, one row per transition carrying `generation`, `prior_phase`,
+   `phase`, `kind`, actor, and timestamp. Grants follow V043. **Built in V044;
+   actor is the coordination request's durable `requested_by` identity.**
+2. [x] Write the event in the **same transaction** as the
+   `coordination_state` update, so a mutation cannot succeed without its history
+   row. **Built for native coordination mutations and the `/deploy/*`
+   compatibility facade; tests prove a failed event insert rolls back the state
+   mutation.**
+3. [x] Register it in
    [`archiver/processors/flush_staging_events.py`](../../archiver/processors/flush_staging_events.py) —
    one entry naming table, pk, columns, and `minio_prefix`, matching the five
    already there. Flush is snapshot → Parquet → `DELETE WHERE pk <= max_pk`.
-4. Resolve the two records: either `history.jsonl` becomes an operator
-   convenience explicitly derived from Postgres, or it is dropped. It must stop
-   being a second source of truth, and the resolution is written down.
-5. Extend checkpoint coverage to the completion transition, which neither record
-   currently captures.
-6. Narrate transitions. The five coordination modules —
-   [`ops/routers/coordination.py`](../../ops/routers/coordination.py),
-   [`ops/mutation_contract.py`](../../ops/mutation_contract.py),
-   [`ops/coordination_drain.py`](../../ops/coordination_drain.py),
-   [`ops/coordination_metrics.py`](../../ops/coordination_metrics.py), and
-   [`scripts/host_maintenance.py`](../../scripts/host_maintenance.py) — total
-   1,110 lines and contain **zero** log calls. Log one record per transition
-   with `kind`, `phase`, `prior_phase`, and `generation` as fields, at `INFO`
-   for normal transitions and `WARNING` for refusals and timeouts. Log drain
-   progress at a bounded interval, not per poll.
+4. [x] Resolve the two records: `history.jsonl` remains an offline operator
+   convenience, written only after the Postgres-backed API confirms a phase. It
+   contains host-only evidence, is never reconciled into Postgres, and is not a
+   second transition-history authority. Dropping it would remove the only
+   breadcrumb readable while Postgres and `/mnt/data` are deliberately offline.
+5. [ ] Extend checkpoint coverage to the completion transition. **The Postgres
+   event schema supports it now; the local checkpoint remains blocked with the
+   `complete` command on Stage 3's validation-evidence guard.**
+6. Narrate transitions.
+   - [x] Log every normal native and compatibility-facade transition once with
+     `kind`, `phase`, `prior_phase`, and `generation`.
+   - [x] Log refused legal-transition and drain-authorization attempts at
+     `WARNING`.
+   - [x] Log drain progress at a bounded interval and log client timeouts, not
+     per poll. **The `wait-active` client polls every five seconds without a
+     short overall deadline, emits progress at most once per minute by default,
+     and records request method/route when the API itself times out.**
 
-Field-carrying log records depend on Plan 141's formatter change, which lets
-`extra=` survive into the emitted JSON. Until that lands, transitions are
-narrated with stable messages and the fields are added after.
+Field-carrying log records depended on Plan 141's formatter change, which now
+lets `extra=` survive into emitted JSON. The completed narration items use that
+contract rather than embedding fields into free-form messages.
 
 This is expand-only. Every existing reader of `coordination_state` is
 unaffected, and the stage reverts by reverting the migration and the registry
@@ -1320,7 +1418,8 @@ Rollback is phase-specific:
 - **Before stop:** cancel maintenance and resume normally.
 - **Package install before reboot:** finish `dpkg` to a consistent state; use
   reviewed cached versions/holds for rollback rather than interrupting it.
-- **Boot failure:** use the Oracle Cloud console and previous kernel from GRUB.
+- **Boot failure:** follow the provider recovery procedure and select the
+  previous kernel where available.
 - **Docker incompatibility:** restore the reviewed Docker/containerd package
   versions and daemon configuration, then validate Compose before starting.
 - **Application regression:** keep maintenance active, return to the prior Git

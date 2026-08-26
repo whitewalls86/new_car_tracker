@@ -108,24 +108,45 @@ def test_intent_release_execution_error(mock_db_sql_error, mock_logger_error):
 
 def test_intent_release_success(mock_cursor_context):
     conn, cursor = mock_cursor_context
-    cursor.fetchone.side_effect = [("deploy", "requested"), ("none",)]
+    cursor.fetchone.side_effect = [
+        ("deploy", "requested", 7, "test"),
+        ("none",),
+        (8,),
+    ]
     result = deploy._intent_release()
 
     assert result is True
+    assert "generation, requested_by" in cursor.execute.call_args_list[1].args[0]
 
 
 def test_legacy_release_can_finish_facade_deploy_after_validation(mock_cursor_context):
     conn, cursor = mock_cursor_context
-    cursor.fetchone.side_effect = [("deploy", "validating"), ("none",)]
+    cursor.fetchone.side_effect = [
+        ("deploy", "validating", 7, "test"),
+        ("none",),
+        (8,),
+    ]
 
     assert deploy._intent_release() is True
-    coordination_update = cursor.execute.call_args_list[-1].args[0]
+    coordination_update = cursor.execute.call_args_list[-2].args[0]
     assert "generation = generation + 1" in coordination_update
+    assert cursor.execute.call_args_list[-1].args[1] == (
+        8,
+        "validating",
+        "none",
+        "deploy",
+        "test",
+    )
 
 
 def test_legacy_release_cannot_clear_other_coordination_kind(mock_cursor_context):
     conn, cursor = mock_cursor_context
-    cursor.fetchone.return_value = ("service_maintenance", "validating")
+    cursor.fetchone.return_value = (
+        "service_maintenance",
+        "validating",
+        7,
+        "test",
+    )
 
     assert deploy._intent_release() is False
     assert not any("UPDATE deploy_intent" in call.args[0] for call in cursor.execute.call_args_list)
@@ -133,7 +154,7 @@ def test_legacy_release_cannot_clear_other_coordination_kind(mock_cursor_context
 
 def test_intent_release_no_return(mock_cursor_context):
     conn, cursor = mock_cursor_context
-    cursor.fetchone.side_effect = [(None, "none"), None]
+    cursor.fetchone.side_effect = [(None, "none", 0, None), None]
     result = deploy._intent_release()
 
     assert result is False
@@ -160,24 +181,46 @@ def test_set_intent_execution_error(mock_db_sql_error, mock_logger_error):
 
 def test_set_intent_success(mock_cursor_context):
     conn, cursor = mock_cursor_context
-    cursor.fetchone.side_effect = [(None, "none"), ("pending",)]
+    cursor.fetchone.side_effect = [(None, "none"), ("pending",), (7,)]
     result = deploy._set_intent("test")
 
     assert result == "ok"
-    coordination_update = cursor.execute.call_args_list[-1]
+    coordination_update = cursor.execute.call_args_list[-2]
     sql, params = coordination_update.args
     assert "generation = generation + 1" in sql
     assert json.loads(params[0]) == list(deploy.LEGACY_DEPLOY_TARGETS)
     assert json.loads(params[1]) == list(deploy.LEGACY_DEPLOY_SCOPE)
+    assert cursor.execute.call_args_list[-1].args[1] == (
+        7,
+        "none",
+        "requested",
+        "deploy",
+        "test",
+    )
+
+
+def test_set_intent_event_failure_rolls_back_both_records(mock_cursor_context):
+    conn, cursor = mock_cursor_context
+    cursor.fetchone.side_effect = [(None, "none"), ("pending",), (7,)]
+
+    def fail_event(sql, params=None):
+        if "INSERT INTO staging.coordination_state_events" in sql:
+            raise RuntimeError("history unavailable")
+
+    cursor.execute.side_effect = fail_event
+
+    assert deploy._set_intent("test") == "error"
+    conn.commit.assert_not_called()
+    conn.rollback.assert_called_once()
 
 
 def test_set_intent_expands_explicit_service_targets(mock_cursor_context):
     conn, cursor = mock_cursor_context
-    cursor.fetchone.side_effect = [(None, "none"), ("pending",)]
+    cursor.fetchone.side_effect = [(None, "none"), ("pending",), (7,)]
 
     assert deploy._set_intent("test", targets={"statsd-exporter"}) == "ok"
 
-    _, params = cursor.execute.call_args_list[-1].args
+    _, params = cursor.execute.call_args_list[-2].args
     assert json.loads(params[0]) == [
         "airflow-apiserver",
         "airflow-dag-processor",
@@ -272,9 +315,7 @@ def test_deploy_start_passes_explicit_targets(mock_client, mock_set_intent):
     )
 
 
-@pytest.mark.parametrize(
-    "targets", [[], ["processing", "processing"], [3], "processing"]
-)
+@pytest.mark.parametrize("targets", [[], ["processing", "processing"], [3], "processing"])
 def test_deploy_start_rejects_malformed_targets(mock_client, mock_set_intent, targets):
     response = mock_client.post("/deploy/start", json={"targets": targets})
 
@@ -284,7 +325,7 @@ def test_deploy_start_rejects_malformed_targets(mock_client, mock_set_intent, ta
 
 def test_set_intent_writes_the_pause_flag(mock_cursor_context):
     conn, cursor = mock_cursor_context
-    cursor.fetchone.side_effect = [(None, "none"), ("pending",)]
+    cursor.fetchone.side_effect = [(None, "none"), ("pending",), (7,)]
 
     deploy._set_intent("test", False)
 
@@ -299,7 +340,7 @@ def test_set_intent_writes_the_pause_flag(mock_cursor_context):
 
 def test_set_intent_defaults_the_pause_flag_to_true(mock_cursor_context):
     conn, cursor = mock_cursor_context
-    cursor.fetchone.side_effect = [(None, "none"), ("pending",)]
+    cursor.fetchone.side_effect = [(None, "none"), ("pending",), (7,)]
 
     deploy._set_intent("test")
 
