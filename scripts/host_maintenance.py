@@ -563,6 +563,7 @@ def capture_running_set() -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
     manifest = {
         "schema_version": 1,
         "captured_at": _utc_now(),
+        "boot_id": _boot_id(),
         "git_revision": _git_revision(),
         "running_kernel": _running_kernel(),
         "running_set_policy": {
@@ -843,6 +844,41 @@ def apply_package_plan(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def run_reboot_boundary(args: argparse.Namespace) -> dict[str, Any]:
+    """Initiate an explicitly confirmed reboot or prove it completed on replay."""
+    checkpoint = latest_checkpoint(args.checkpoint)
+    if checkpoint["phase"] not in {"updated", "rebooting", "rebooted"}:
+        raise MaintenanceError(f"cannot reboot from checkpoint phase {checkpoint['phase']!r}")
+    if checkpoint.get("manifest_location") != args.manifest:
+        raise MaintenanceError("checkpoint manifest does not match --manifest")
+    manifest = load_running_set_manifest(Path(args.manifest))
+    captured_boot_id = manifest.get("boot_id")
+    if not isinstance(captured_boot_id, str) or not captured_boot_id:
+        raise MaintenanceError("running-set manifest has no preflight boot id")
+    current_boot_id = _boot_id()
+
+    if current_boot_id != captured_boot_id:
+        append_checkpoint(args.checkpoint, "rebooted", args.manifest)
+        return {
+            "phase": "rebooted",
+            "boot_id_changed": True,
+            "running_kernel": _running_kernel(),
+        }
+    if checkpoint["phase"] == "rebooted":
+        raise MaintenanceError("rebooted checkpoint conflicts with the current boot id")
+    if not args.confirm_reboot:
+        raise MaintenanceError("--confirm-reboot is required to reboot the host")
+
+    _run_command(("sync",))
+    append_checkpoint(args.checkpoint, "rebooting", args.manifest)
+    _run_command(("sudo", "systemctl", "reboot"))
+    return {
+        "phase": "rebooting",
+        "boot_id_changed": False,
+        "running_kernel": _running_kernel(),
+    }
+
+
 def run_preflight(output_dir: Path, *, console_access_verified: bool) -> dict[str, Any]:
     if not console_access_verified:
         raise MaintenanceError("verify Oracle Cloud console access before preflight")
@@ -880,6 +916,16 @@ def _git_revision() -> str:
 
 def _running_kernel() -> str:
     return os.uname().release
+
+
+def _boot_id() -> str:
+    try:
+        boot_id = Path("/proc/sys/kernel/random/boot_id").read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        raise MaintenanceError("unable to read the host boot id") from exc
+    if not boot_id:
+        raise MaintenanceError("host boot id is empty")
+    return boot_id
 
 
 def checkpoint_record(phase: str, manifest: str) -> dict[str, str]:
@@ -1051,6 +1097,9 @@ def build_parser() -> argparse.ArgumentParser:
     update.add_argument("--release-notes-reviewed", action="store_true")
     update.add_argument("--compatibility-reviewed", action="store_true")
 
+    reboot = subparsers.add_parser("reboot")
+    reboot.add_argument("--confirm-reboot", action="store_true")
+
     subparsers.add_parser("status")
     subparsers.add_parser("begin-drain")
     subparsers.add_parser("drain-status")
@@ -1083,6 +1132,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "wait-active",
         "stop",
         "update",
+        "reboot",
         "start",
         "begin-validation",
     }:
@@ -1115,6 +1165,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         return run_running_set_action(args, args.command)
     if args.command == "update":
         return apply_package_plan(args)
+    if args.command == "reboot":
+        return run_reboot_boundary(args)
     routes = {
         "begin-drain": ("/coordination/begin-drain", "draining"),
         "authorize": ("/coordination/authorize", "active"),

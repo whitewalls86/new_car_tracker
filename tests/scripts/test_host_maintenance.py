@@ -266,6 +266,7 @@ def test_parser_intentionally_exposes_no_complete_command():
         "wait-active",
         "stop",
         "update",
+        "reboot",
         "start",
         "begin-validation",
     }
@@ -456,6 +457,88 @@ def test_apply_package_plan_refuses_missing_authority(mocker, tmp_path, override
     run_command.assert_not_called()
 
 
+def _reboot_args(tmp_path, *, confirm_reboot):
+    manifest_path = tmp_path / "running-set.json"
+    manifest_path.write_text(json.dumps(_round_trip_manifest()), encoding="utf-8")
+    return _args(
+        tmp_path,
+        "reboot",
+        manifest=str(manifest_path),
+        confirm_reboot=confirm_reboot,
+    )
+
+
+def test_reboot_requires_confirmation_and_checkpoints_before_command(mocker, tmp_path):
+    args = _reboot_args(tmp_path, confirm_reboot=True)
+    mocker.patch.object(
+        host_maintenance,
+        "latest_checkpoint",
+        return_value={"phase": "updated", "manifest_location": args.manifest},
+    )
+    mocker.patch.object(host_maintenance, "_boot_id", return_value="boot-before")
+    mocker.patch.object(host_maintenance, "_running_kernel", return_value="6.8.0-before")
+    events = []
+    mocker.patch.object(
+        host_maintenance,
+        "append_checkpoint",
+        side_effect=lambda *call_args: events.append(("checkpoint", call_args[1])),
+    )
+    mocker.patch.object(
+        host_maintenance,
+        "_run_command",
+        side_effect=lambda command, **kwargs: (
+            events.append(("command", command)) or {"stdout": "", "stderr": "", "returncode": 0}
+        ),
+    )
+
+    result = host_maintenance.run(args)
+
+    assert result["phase"] == "rebooting"
+    assert events == [
+        ("command", ("sync",)),
+        ("checkpoint", "rebooting"),
+        ("command", ("sudo", "systemctl", "reboot")),
+    ]
+
+
+def test_reboot_replay_proves_changed_boot_before_checkpointing_rebooted(mocker, tmp_path):
+    args = _reboot_args(tmp_path, confirm_reboot=False)
+    mocker.patch.object(
+        host_maintenance,
+        "latest_checkpoint",
+        return_value={"phase": "rebooting", "manifest_location": args.manifest},
+    )
+    mocker.patch.object(host_maintenance, "_boot_id", return_value="boot-after")
+    mocker.patch.object(host_maintenance, "_running_kernel", return_value="6.8.0-after")
+    checkpoint = mocker.patch.object(host_maintenance, "append_checkpoint")
+    run_command = mocker.patch.object(host_maintenance, "_run_command")
+
+    assert host_maintenance.run(args) == {
+        "phase": "rebooted",
+        "boot_id_changed": True,
+        "running_kernel": "6.8.0-after",
+    }
+
+    checkpoint.assert_called_once_with(args.checkpoint, "rebooted", args.manifest)
+    run_command.assert_not_called()
+
+
+def test_reboot_without_confirmation_never_mutates_host(mocker, tmp_path):
+    args = _reboot_args(tmp_path, confirm_reboot=False)
+    mocker.patch.object(
+        host_maintenance,
+        "latest_checkpoint",
+        return_value={"phase": "updated", "manifest_location": args.manifest},
+    )
+    mocker.patch.object(host_maintenance, "_boot_id", return_value="boot-before")
+    run_command = mocker.patch.object(host_maintenance, "_run_command")
+
+    with pytest.raises(host_maintenance.MaintenanceError, match="confirm-reboot"):
+        host_maintenance.run(args)
+
+    run_command.assert_not_called()
+
+
 def test_capture_running_set_records_compose_and_container_evidence(mocker):
     container = {
         "Id": "container-1",
@@ -517,6 +600,7 @@ def test_capture_running_set_records_compose_and_container_evidence(mocker):
     mocker.patch.object(host_maintenance, "_run_command", side_effect=fake_run)
     mocker.patch.object(host_maintenance, "_git_revision", return_value="abc123")
     mocker.patch.object(host_maintenance, "_running_kernel", return_value="6.8.0-test")
+    mocker.patch.object(host_maintenance, "_boot_id", return_value="boot-before")
     mocker.patch.object(host_maintenance, "_utc_now", return_value="timestamp")
 
     manifest, rendered = host_maintenance.capture_running_set()
@@ -527,6 +611,7 @@ def test_capture_running_set_records_compose_and_container_evidence(mocker):
         "cartracker-mlflow",
     }
     assert manifest["git_revision"] == "abc123"
+    assert manifest["boot_id"] == "boot-before"
     assert manifest["running_kernel"] == "6.8.0-test"
     row = manifest["containers"][0]
     assert row["name"] == "cartracker-trawl"
@@ -561,6 +646,7 @@ def test_capture_running_set_refuses_an_empty_host(mocker):
 def _round_trip_manifest():
     return {
         "schema_version": 1,
+        "boot_id": "boot-before",
         "compose_projects": {
             "cartracker": {
                 "working_directory": "/opt/cartracker",

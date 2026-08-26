@@ -594,7 +594,9 @@ python scripts/host_maintenance.py --manifest "$MANIFEST" stop
 python scripts/host_maintenance.py --manifest "$MANIFEST" update \
   --package-plan "$PACKAGE_PLAN" --confirm-plan "$PACKAGE_PLAN_SHA256" \
   --confirm-apply --release-notes-reviewed --compatibility-reviewed
-# reviewed reboot work remains pending in Stage 2
+python scripts/host_maintenance.py --manifest "$MANIFEST" reboot --confirm-reboot
+# reconnect after the VM returns, then prove the boot changed:
+python scripts/host_maintenance.py --manifest "$MANIFEST" reboot
 python scripts/host_maintenance.py --manifest "$MANIFEST" start
 python scripts/host_maintenance.py --manifest "$MANIFEST" begin-validation
 ```
@@ -611,6 +613,11 @@ operator intends installation and has reviewed release notes and every named
 compatibility boundary. The command records and masks apt automation, applies
 only pinned versions, audits dpkg, verifies the installed versions, syncs, and
 leaves automation masked for restoration only after the Stage 3 resume gate.
+
+The first `reboot` invocation syncs and writes `rebooting` before asking systemd
+to reboot; it does not claim success when that command returns. After reconnect,
+rerun `reboot` without the confirmation flag. The client compares the live Linux
+boot ID to the preflight manifest and writes `rebooted` only when they differ.
 
 `wait-active` polls drain evidence every five seconds but prints structured
 progress no more than once per minute. It has no short overall deadline; stale

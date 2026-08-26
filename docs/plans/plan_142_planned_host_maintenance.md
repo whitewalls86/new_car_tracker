@@ -1196,6 +1196,12 @@ syncs filesystems, writes `update-result.json`, and only then checkpoints
 `updated`. Apt automation intentionally remains masked until the Stage 3 resume
 gate has passed.
 
+**Reboot-boundary slice built 2026-08-25:** preflight records the Linux boot
+ID. `reboot` requires the `updated` checkpoint and explicit confirmation,
+syncs, checkpoints `rebooting`, and then invokes systemd. A post-boot replay
+must observe a different boot ID before it records `rebooted`; command return
+alone is never treated as reboot evidence.
+
 **Durable-history slice built 2026-08-25:** V044 adds the append-only
 `staging.coordination_state_events` record, every native and compatibility-
 facade state mutation writes exactly one event in the same transaction, and the
