@@ -301,7 +301,12 @@ def test_complete_records_completion_checkpoint(mocker, tmp_path):
         host_maintenance,
         "api_request",
         side_effect=[
-            {"phase": "validating", "kind": "host_maintenance", "manifest_location": "/tmp/m", "generation": 7},
+            {
+                "phase": "validating",
+                "kind": "host_maintenance",
+                "manifest_location": "/tmp/m",
+                "generation": 7,
+            },
             {"phase": "none", "generation": 7},
         ],
     )

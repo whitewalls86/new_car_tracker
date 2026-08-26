@@ -273,7 +273,9 @@ def test_complete_refuses_wrong_phase(mock_cursor_context, phase):
     cursor.fetchone.side_effect = [state, None] if phase == "none" else [state]
 
     result, evidence = coordination._complete(
-        coordination.CompletionRequest(confirm_complete=True, generation=7, manifest_sha256="a" * 64)
+        coordination.CompletionRequest(
+            confirm_complete=True, generation=7, manifest_sha256="a" * 64
+        )
     )
 
     expected_gate = "completion_receipt" if phase == "none" else "coordination_expected"
@@ -289,7 +291,9 @@ def test_complete_refuses_failing_stack_gate(mock_cursor_context, mocker):
     )
 
     result, evidence = coordination._complete(
-        coordination.CompletionRequest(confirm_complete=True, generation=7, manifest_sha256="a" * 64)
+        coordination.CompletionRequest(
+            confirm_complete=True, generation=7, manifest_sha256="a" * 64
+        )
     )
 
     assert result == "conflict"
@@ -323,7 +327,9 @@ def test_complete_succeeds_with_both_validation_halves(mock_cursor_context, mock
     )
 
     result, completed = coordination._complete(
-        coordination.CompletionRequest(confirm_complete=True, generation=7, manifest_sha256="a" * 64)
+        coordination.CompletionRequest(
+            confirm_complete=True, generation=7, manifest_sha256="a" * 64
+        )
     )
 
     assert (result, completed) == ("ok", {"phase": "none", "generation": 7})
@@ -341,7 +347,9 @@ def test_complete_replay_confirms_matching_receipt(mock_cursor_context):
     cursor.fetchone.side_effect = [state, {"generation": 7}]
 
     result, completed = coordination._complete(
-        coordination.CompletionRequest(confirm_complete=True, generation=7, manifest_sha256="a" * 64)
+        coordination.CompletionRequest(
+            confirm_complete=True, generation=7, manifest_sha256="a" * 64
+        )
     )
 
     assert (result, completed) == ("ok", {"phase": "none", "generation": 7})
