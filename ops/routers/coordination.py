@@ -66,6 +66,10 @@ class HostEvidenceRequest(BaseModel):
     evidence_digests: dict[str, str]
 
 
+class CompletionRequest(BaseModel):
+    confirm_complete: bool = False
+
+
 def _validate_host_evidence(payload: HostEvidenceRequest) -> str | None:
     """Return a refusal reason unless this is a complete host-gate bundle."""
     expected = set(HOST_VALIDATION_GATES)
@@ -367,6 +371,78 @@ def _transition(operation: str) -> str:
         return "error"
 
 
+def _complete(payload: CompletionRequest) -> tuple[str, dict[str, Any] | None]:
+    """Release only after fresh stack and durable host validation evidence."""
+    try:
+        with db_cursor(error_context="Coordination-Complete", dict_cursor=True) as cur:
+            cur.execute("SELECT pg_advisory_xact_lock(%s)", (COORDINATION_LOCK_ID,))
+            cur.execute(
+                """SELECT phase, generation, kind, requested_by
+                     FROM coordination_state WHERE id = 1"""
+            )
+            row = cur.fetchone()
+            if row is None:
+                return "error", None
+            state = dict(row)
+            if state["phase"] != "validating" or state["kind"] != "host_maintenance":
+                return "conflict", {"failing_gates": ["coordination_expected"]}
+            if not payload.confirm_complete:
+                return "conflict", {"failing_gates": ["operator_confirmation"]}
+
+            stack = collect_release_status(state)
+            stack_blockers = stack["blockers"]
+            if stack_blockers:
+                return "conflict", {"failing_gates": stack_blockers, "release": stack}
+
+            cur.execute(
+                """SELECT gate_results
+                     FROM staging.coordination_release_evidence
+                    WHERE generation = %s
+                    ORDER BY evidence_id DESC""",
+                (state["generation"],),
+            )
+            evidence_rows = cur.fetchall()
+            host_evidence_passes = any(
+                isinstance(row["gate_results"], dict)
+                and set(row["gate_results"]) == set(HOST_VALIDATION_GATES)
+                and all(
+                    row["gate_results"][gate].get("verdict") == "pass"
+                    for gate in HOST_VALIDATION_GATES
+                )
+                for row in evidence_rows
+            )
+            if not host_evidence_passes:
+                return "conflict", {"failing_gates": list(HOST_VALIDATION_GATES)}
+
+            cur.execute(
+                """UPDATE coordination_state
+                      SET kind = NULL, phase = 'none', targets = '[]'::jsonb,
+                          scope = '[]'::jsonb, completed_at = now(), updated_at = now()
+                    WHERE id = 1
+                RETURNING generation"""
+            )
+            changed = cur.fetchone()
+            if changed is None:
+                return "error", None
+            record_transition_event(
+                cur,
+                generation=changed["generation"],
+                prior_phase="validating",
+                phase="none",
+                kind="host_maintenance",
+                actor=state["requested_by"],
+            )
+    except Exception:
+        return "error", None
+    log_transition(
+        generation=changed["generation"],
+        prior_phase="validating",
+        phase="none",
+        kind="host_maintenance",
+    )
+    return "ok", {"phase": "none", "generation": changed["generation"]}
+
+
 def _cancel() -> str:
     """Cancel before mutation authorization; never auto-release active work."""
     try:
@@ -537,6 +613,17 @@ def submit_host_evidence(payload: HostEvidenceRequest) -> dict[str, Any]:
     if result in {"conflict", "stale"}:
         raise HTTPException(status_code=409, detail=evidence)
     raise HTTPException(status_code=503, detail="Host evidence could not be recorded.")
+
+
+@router.post("/complete")
+def complete_coordination(payload: CompletionRequest) -> dict[str, Any]:
+    """End host maintenance only when both validation evidence halves pass."""
+    result, completed = _complete(payload)
+    if result == "ok" and completed is not None:
+        return completed
+    if result == "conflict":
+        raise HTTPException(status_code=409, detail=completed)
+    raise HTTPException(status_code=503, detail="Coordination could not be completed.")
 
 
 @router.post("/authorize")

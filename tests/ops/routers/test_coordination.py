@@ -81,28 +81,6 @@ def test_forward_transitions(mock_cursor_context, operation, source, target, tim
     assert event_params == (7, source, target, "service_maintenance", "operator")
 
 
-def test_complete_clears_kind_targets_and_scope(mock_cursor_context):
-    _, cursor = mock_cursor_context
-    cursor.fetchone.side_effect = [
-        ("validating", 7, "host_maintenance", "operator"),
-        (7,),
-    ]
-
-    assert coordination._transition("complete") == "ok"
-
-    sql = cursor.execute.call_args_list[-2].args[0]
-    assert "kind = NULL" in sql
-    assert "targets = '[]'::jsonb" in sql
-    assert "scope = '[]'::jsonb" in sql
-    assert cursor.execute.call_args_list[-1].args[1] == (
-        7,
-        "validating",
-        "none",
-        "host_maintenance",
-        "operator",
-    )
-
-
 def test_illegal_transition_does_not_write(mock_cursor_context, caplog):
     _, cursor = mock_cursor_context
     cursor.fetchone.return_value = (
@@ -155,10 +133,6 @@ def test_cancel_refuses_unsafe_states(mock_cursor_context, source):
 
     assert coordination._cancel() == "conflict"
     assert len(cursor.execute.call_args_list) == 2
-
-
-def test_release_route_remains_private_until_validation_guard_exists(mock_client):
-    assert mock_client.post("/coordination/complete").status_code == 404
 
 
 def test_begin_drain_endpoint_exposes_only_legal_transition(mock_client, mocker):
@@ -257,6 +231,106 @@ def _host_evidence_payload(generation=7, gates=None):
         "gates": gates,
         "evidence_digests": {"preflight": "a" * 64, "manifest": "b" * 64},
     }
+
+
+def _complete_state():
+    return {
+        "phase": "validating",
+        "generation": 7,
+        "kind": "host_maintenance",
+        "requested_by": "operator",
+    }
+
+
+def test_complete_refuses_without_operator_confirmation(mock_cursor_context, mocker):
+    _, cursor = mock_cursor_context
+    cursor.fetchone.return_value = _complete_state()
+    release = mocker.patch("ops.routers.coordination.collect_release_status")
+
+    result, evidence = coordination._complete(coordination.CompletionRequest())
+
+    assert (result, evidence) == ("conflict", {"failing_gates": ["operator_confirmation"]})
+    release.assert_not_called()
+
+
+def test_complete_endpoint_returns_named_conflicts(mock_client, mocker):
+    mocker.patch(
+        "ops.routers.coordination._complete",
+        return_value=("conflict", {"failing_gates": ["operator_confirmation"]}),
+    )
+
+    response = mock_client.post("/coordination/complete", json={"confirm_complete": False})
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["failing_gates"] == ["operator_confirmation"]
+
+
+@pytest.mark.parametrize("phase", ["none", "requested", "draining", "active"])
+def test_complete_refuses_wrong_phase(mock_cursor_context, phase):
+    _, cursor = mock_cursor_context
+    state = _complete_state()
+    state["phase"] = phase
+    cursor.fetchone.return_value = state
+
+    result, evidence = coordination._complete(
+        coordination.CompletionRequest(confirm_complete=True)
+    )
+
+    assert (result, evidence) == ("conflict", {"failing_gates": ["coordination_expected"]})
+
+
+def test_complete_refuses_failing_stack_gate(mock_cursor_context, mocker):
+    _, cursor = mock_cursor_context
+    cursor.fetchone.return_value = _complete_state()
+    mocker.patch(
+        "ops.routers.coordination.collect_release_status",
+        return_value={"blockers": ["container_health"], "gates": []},
+    )
+
+    result, evidence = coordination._complete(
+        coordination.CompletionRequest(confirm_complete=True)
+    )
+
+    assert result == "conflict"
+    assert evidence["failing_gates"] == ["container_health"]
+
+
+def test_complete_refuses_without_passing_host_evidence(mock_cursor_context, mocker):
+    _, cursor = mock_cursor_context
+    cursor.fetchone.side_effect = [_complete_state()]
+    cursor.fetchall.return_value = []
+    mocker.patch(
+        "ops.routers.coordination.collect_release_status",
+        return_value={"blockers": [], "gates": []},
+    )
+
+    result, evidence = coordination._complete(
+        coordination.CompletionRequest(confirm_complete=True)
+    )
+
+    assert result == "conflict"
+    assert set(evidence["failing_gates"]) == set(coordination.HOST_VALIDATION_GATES)
+
+
+def test_complete_succeeds_with_both_validation_halves(mock_cursor_context, mocker):
+    _, cursor = mock_cursor_context
+    cursor.fetchone.side_effect = [_complete_state(), {"generation": 7}]
+    cursor.fetchall.return_value = [{"gate_results": _host_evidence_payload()["gates"]}]
+    mocker.patch(
+        "ops.routers.coordination.collect_release_status",
+        return_value={"blockers": [], "gates": []},
+    )
+
+    result, completed = coordination._complete(
+        coordination.CompletionRequest(confirm_complete=True)
+    )
+
+    assert (result, completed) == ("ok", {"phase": "none", "generation": 7})
+    update_sql = cursor.execute.call_args_list[-2].args[0]
+    assert "kind = NULL" in update_sql
+    assert cursor.execute.call_args_list[-1].args[1] == (
+        7, "validating", "none", "host_maintenance", "operator"
+    )
 
 
 def test_host_evidence_rejects_missing_gate(mock_client):

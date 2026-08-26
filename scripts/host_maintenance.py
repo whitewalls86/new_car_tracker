@@ -33,6 +33,7 @@ CHECKPOINT_PHASES = frozenset(
         "rebooted",
         "started",
         "validating",
+        "complete",
     }
 )
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -51,7 +52,7 @@ APT_CONTROL_UNITS = (
     "unattended-upgrades.service",
 )
 _APT_INSTALLED_RE = re.compile(r"^Inst\s+(\S+)(?:\s+\[[^]]+\])?\s+\((\S+)")
-STAGE2_PROCEDURE = (
+HOST_MAINTENANCE_PROCEDURE = (
     "preflight",
     "prepare-update",
     "request",
@@ -62,6 +63,8 @@ STAGE2_PROCEDURE = (
     "reboot",
     "start",
     "begin-validation",
+    "validate-host",
+    "complete",
 )
 HOST_DISK_FLOORS = {
     "bytes_available": 10 * 1024 * 1024 * 1024,
@@ -1471,6 +1474,7 @@ def transition(
     route: str,
     expected_phase: str,
     payload: dict[str, Any] | None = None,
+    checkpoint_phase: str | None = None,
 ) -> dict[str, Any]:
     current = api_request(args.api_url, "GET", "/coordination/status")
     if current.get("phase") == expected_phase:
@@ -1479,13 +1483,13 @@ def transition(
         recorded_manifest = current.get("manifest_location")
         if recorded_manifest and recorded_manifest != args.manifest:
             raise MaintenanceError("manifest does not match the active coordination")
-        append_checkpoint(args.checkpoint, expected_phase, args.manifest)
+        append_checkpoint(args.checkpoint, checkpoint_phase or expected_phase, args.manifest)
         return current
 
     result = api_request(args.api_url, "POST", route, payload)
     if result.get("phase") != expected_phase:
         raise MaintenanceError(f"coordination API did not confirm phase {expected_phase!r}")
-    append_checkpoint(args.checkpoint, expected_phase, args.manifest)
+    append_checkpoint(args.checkpoint, checkpoint_phase or expected_phase, args.manifest)
     return result
 
 
@@ -1570,6 +1574,8 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("stop")
     subparsers.add_parser("start")
     subparsers.add_parser("begin-validation")
+    complete = subparsers.add_parser("complete")
+    complete.add_argument("--confirm-complete", action="store_true")
     return parser
 
 
@@ -1577,7 +1583,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     if args.command == "plan":
         return {
             "phase": "dry-run",
-            "commands": list(STAGE2_PROCEDURE),
+            "commands": list(HOST_MAINTENANCE_PROCEDURE),
             "complete_implicit": False,
         }
     if args.command == "preflight":
@@ -1606,6 +1612,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "start",
         "begin-validation",
         "validate-host",
+        "complete",
     }:
         if not args.manifest:
             raise MaintenanceError("--manifest is required for state transitions")
@@ -1646,9 +1653,19 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "drain": ("/coordination/begin-drain", "draining"),
         "authorize": ("/coordination/authorize", "active"),
         "begin-validation": ("/coordination/begin-validation", "validating"),
+        "complete": ("/coordination/complete", "none"),
     }
     route, phase = routes[args.command]
-    return transition(args, route, phase)
+    payload = {"confirm_complete": True} if args.command == "complete" and args.confirm_complete else None
+    if args.command == "complete" and payload is None:
+        raise MaintenanceError("--confirm-complete is required")
+    return transition(
+        args,
+        route,
+        phase,
+        payload,
+        checkpoint_phase="complete" if args.command == "complete" else None,
+    )
 
 
 def main(argv: list[str] | None = None) -> int:

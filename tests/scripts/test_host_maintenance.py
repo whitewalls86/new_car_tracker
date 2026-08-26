@@ -290,10 +290,32 @@ def test_validate_host_requires_manifest(tmp_path):
         host_maintenance.run(args)
 
 
-@pytest.mark.parametrize("phase", ["none", "complete", "offline", "secret=value"])
+@pytest.mark.parametrize("phase", ["none", "offline", "secret=value"])
 def test_checkpoint_rejects_unreviewed_phases(phase, tmp_path):
     with pytest.raises(host_maintenance.MaintenanceError, match="unsupported"):
         host_maintenance.append_checkpoint(tmp_path / "history", phase, "/tmp/m")
+
+
+def test_complete_records_completion_checkpoint(mocker, tmp_path):
+    api = mocker.patch.object(
+        host_maintenance,
+        "api_request",
+        side_effect=[
+            {"phase": "validating", "kind": "host_maintenance", "manifest_location": "/tmp/m"},
+            {"phase": "none", "generation": 7},
+        ],
+    )
+    checkpoint = mocker.patch.object(host_maintenance, "append_checkpoint")
+
+    result = host_maintenance.run(
+        _args(tmp_path, "complete", manifest="/tmp/m", confirm_complete=True)
+    )
+
+    assert result == {"phase": "none", "generation": 7}
+    assert api.call_args_list[-1].args == (
+        "http://ops", "POST", "/coordination/complete", {"confirm_complete": True}
+    )
+    checkpoint.assert_called_once_with(_args(tmp_path, "complete").checkpoint, "complete", "/tmp/m")
 
 
 def test_checkpoint_refuses_symlink(mocker, tmp_path):
@@ -490,7 +512,7 @@ def test_cli_formatter_preserves_reviewed_structured_fields():
     }
 
 
-def test_parser_exposes_validate_host_but_no_complete_command():
+def test_parser_exposes_guarded_complete_command():
     parser = host_maintenance.build_parser()
     choices = next(action.choices for action in parser._actions if action.dest == "command")
     assert set(choices) == {
@@ -510,10 +532,11 @@ def test_parser_exposes_validate_host_but_no_complete_command():
         "start",
         "begin-validation",
         "validate-host",
+        "complete",
     }
 
 
-def test_dry_run_plan_has_canonical_order_and_never_completes(mocker, tmp_path):
+def test_dry_run_plan_has_canonical_order_through_complete(mocker, tmp_path):
     run_command = mocker.patch.object(host_maintenance, "_run_command")
 
     result = host_maintenance.run(_args(tmp_path, "plan", manifest=None))
@@ -531,10 +554,12 @@ def test_dry_run_plan_has_canonical_order_and_never_completes(mocker, tmp_path):
             "reboot",
             "start",
             "begin-validation",
+            "validate-host",
+            "complete",
         ],
         "complete_implicit": False,
     }
-    assert "complete" not in result["commands"]
+    assert result["commands"][-1] == "complete"
     run_command.assert_not_called()
 
 
