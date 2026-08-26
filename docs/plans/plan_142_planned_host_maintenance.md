@@ -1214,6 +1214,40 @@ transitions and refusals are narrated through Plan 141's structured-field
 contract. Bounded drain-progress narration and the completion checkpoint remain
 open below.
 
+**Production preflight evidence, 2026-08-26:** PR #251 commit
+`23268c70a3d8c8a65194ec6de7b9b649b03e7cce` ran from the detached isolated
+worktree `/opt/cartracker-stage2-preflight-251`. The active checkout remained on
+`master` at `bb06054f01a57b2e236407bf03cab9386e47959e`; its three pre-existing
+untracked files were unchanged. The accepted preflight completed at
+`2026-08-26T02:29:49.675553+00:00`, recorded kernel `6.8.0-1058-oracle`, no
+failed systemd units, and 30 running containers across `cartracker`,
+`cartracker-lakehouse`, and `cartracker-mlflow`. The append-only checkpoint
+records phase `preflight` at `2026-08-26T02:29:49.695094+00:00` and points to
+the captured manifest.
+
+The evidence bundle is
+`/var/lib/cartracker/maintenance/pr-251-preflight-20260826`: `preflight.json`
+SHA-256 `2aeab6a562fbb5ff9abcd77f15b0b7f417d5e532d8877cc9a591285c5ee9d32a` and
+`running-set.json` SHA-256
+`774d1a88a3198422b9ac799e9c07c9bf6c0028151e260e30fa4c8266672b3e1b`.
+The sanitized Compose records are
+`cartracker.json` `afe86df49e2ae07ae0b8d84aafcbfe6c85ae7fce5b839cbf34f9df443d2dac90`,
+`cartracker-lakehouse.json`
+`c33e6a185d8af5628e4985acc0078774a2892d625449925c761835136a698ee8`, and
+`cartracker-mlflow.json`
+`7857e567fa47551320d54dbd0e10641c1f5fc4b0c58d8f89917fbfdc2f6688d1`.
+
+Two refusals proved the preflight was fail-closed rather than ceremonial. The
+first exposed `_git_revision()` inheriting the SSH login directory; commit
+`23268c7` now resolves it from the script checkout and pins that behavior in a
+unit test. The second found real host drift: Plan 142 had decided to hold
+`docker.io` only, but `apt-mark showhold` was empty. Production had
+`docker.io` `29.1.3-0ubuntu3~22.04.2` with Installed equal to Candidate from
+the unattended-upgrades-eligible Ubuntu security origin. The missing policy
+was applied with `sudo apt-mark hold docker.io`, verified as the sole hold, and
+the unchanged preflight then passed. No service, container, coordination, or
+package version changed.
+
 Add an operator-run script, proposed as `scripts/host_maintenance.sh`, with
 idempotent subcommands rather than one irreversible monolith:
 
