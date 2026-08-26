@@ -62,7 +62,7 @@ class TestPrometheusConfig:
         """Plan 141: the log contract is checkable only from these counters.
 
         Every unclassified line is removed by a drop stage before Loki sees
-        it, so no Loki query can count one. `promtail_dropped_lines_total` is
+        it, so no Loki query can count one. `logentry_dropped_lines_total` is
         where that count lives, and Promtail was not a scrape target at all.
         """
         doc = yaml.safe_load(
@@ -1399,13 +1399,13 @@ class TestGrafanaDashboards:
         panels = {panel["title"]: panel for panel in doc["panels"]}
 
         expr = panels["Unclassified Log Lines (5m, expected 0)"]["targets"][0]["expr"]
-        assert "promtail_dropped_lines_total" in expr
+        assert "logentry_dropped_lines_total" in expr
         assert 'reason="application_file_unclassified"' in expr
         assert "or vector(0)" in expr, "an absent counter must read 0, not No Data"
 
         by_reason = panels["Promtail Drops by Reason (5m)"]["targets"][0]
         assert by_reason["expr"] == (
-            "sum by (reason) (increase(promtail_dropped_lines_total[5m]))"
+            "sum by (reason) (increase(logentry_dropped_lines_total[5m]))"
         )
         assert by_reason["legendFormat"] == "{{reason}}"
 
