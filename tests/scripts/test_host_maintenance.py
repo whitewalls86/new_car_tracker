@@ -265,6 +265,7 @@ def test_parser_intentionally_exposes_no_complete_command():
         "authorize",
         "wait-active",
         "stop",
+        "update",
         "start",
         "begin-validation",
     }
@@ -345,6 +346,114 @@ def test_prepare_package_plan_requires_exact_held_package_review(mocker, tmp_pat
 
     with pytest.raises(host_maintenance.MaintenanceError, match="every held package"):
         host_maintenance.prepare_package_plan(tmp_path, included_holds=[])
+
+
+def _write_package_plan(tmp_path):
+    plan_path = tmp_path / "package-plan.json"
+    plan = {
+        "schema_version": 1,
+        "packages": [
+            {
+                "name": "docker.io",
+                "version": "29.1",
+                "boundaries": ["container_runtime"],
+                "held": True,
+            }
+        ],
+        "compatibility_boundaries": ["container_runtime"],
+        "apply_command": [
+            "sudo",
+            "apt-get",
+            "--yes",
+            "--allow-change-held-packages",
+            "--no-remove",
+            "install",
+            "docker.io=29.1",
+        ],
+    }
+    plan_path.write_text(json.dumps(plan, indent=2) + "\n", encoding="utf-8")
+    return plan_path, host_maintenance.hashlib.sha256(plan_path.read_bytes()).hexdigest()
+
+
+def test_apply_package_plan_requires_digest_reviews_masks_and_audits(mocker, tmp_path):
+    plan_path, digest = _write_package_plan(tmp_path)
+    args = _args(
+        tmp_path,
+        "update",
+        package_plan=plan_path,
+        confirm_plan=digest,
+        confirm_apply=True,
+        release_notes_reviewed=True,
+        compatibility_reviewed=True,
+    )
+    mocker.patch.object(
+        host_maintenance,
+        "latest_checkpoint",
+        return_value={"phase": "stopped", "manifest_location": args.manifest},
+    )
+    mocker.patch.object(host_maintenance, "_utc_now", return_value="timestamp")
+    mocker.patch.object(host_maintenance, "_running_kernel", return_value="6.8.0-test")
+    checkpoint = mocker.patch.object(host_maintenance, "append_checkpoint")
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        stdout = ""
+        if command[:2] == ("systemctl", "is-enabled"):
+            stdout = "enabled\n"
+        elif command[:2] == ("dpkg-query", "--show"):
+            stdout = "docker.io\t29.1\n"
+        return {"stdout": stdout, "stderr": "", "returncode": 0}
+
+    mocker.patch.object(host_maintenance, "_run_command", side_effect=fake_run)
+
+    result = host_maintenance.run(args)
+
+    assert result["phase"] == "updated"
+    assert result["package_plan_sha256"] == digest
+    mask = ("sudo", "systemctl", "mask", "--now", *host_maintenance.APT_CONTROL_UNITS)
+    assert mask in calls
+    assert tuple(json.loads(plan_path.read_text())["apply_command"]) in calls
+    assert ("sudo", "dpkg", "--audit") in calls
+    assert calls[-1] == ("sync",)
+    evidence = json.loads((tmp_path / "update-result.json").read_text())
+    assert evidence["apt_automation_masked"] is True
+    assert set(evidence["apt_unit_states_before"].values()) == {"enabled"}
+    assert evidence["installed_versions"] == {"docker.io": "29.1"}
+    checkpoint.assert_called_once_with(args.checkpoint, "updated", args.manifest)
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"confirm_apply": False}, "confirm-apply"),
+        ({"release_notes_reviewed": False}, "release-notes-reviewed"),
+        ({"compatibility_reviewed": False}, "compatibility-reviewed"),
+        ({"confirm_plan": "0" * 64}, "SHA-256"),
+    ],
+)
+def test_apply_package_plan_refuses_missing_authority(mocker, tmp_path, overrides, message):
+    plan_path, digest = _write_package_plan(tmp_path)
+    values = {
+        "package_plan": plan_path,
+        "confirm_plan": digest,
+        "confirm_apply": True,
+        "release_notes_reviewed": True,
+        "compatibility_reviewed": True,
+    }
+    values.update(overrides)
+    args = _args(tmp_path, "update", **values)
+    mocker.patch.object(
+        host_maintenance,
+        "latest_checkpoint",
+        return_value={"phase": "stopped", "manifest_location": args.manifest},
+    )
+    run_command = mocker.patch.object(host_maintenance, "_run_command")
+
+    with pytest.raises(host_maintenance.MaintenanceError, match=message):
+        host_maintenance.run(args)
+
+    run_command.assert_not_called()
 
 
 def test_capture_running_set_records_compose_and_container_evidence(mocker):

@@ -591,7 +591,10 @@ python scripts/host_maintenance.py --manifest "$MANIFEST" request \
 python scripts/host_maintenance.py --manifest "$MANIFEST" begin-drain
 python scripts/host_maintenance.py --manifest "$MANIFEST" wait-active
 python scripts/host_maintenance.py --manifest "$MANIFEST" stop
-# reviewed update/reboot work remains pending in Stage 2
+python scripts/host_maintenance.py --manifest "$MANIFEST" update \
+  --package-plan "$PACKAGE_PLAN" --confirm-plan "$PACKAGE_PLAN_SHA256" \
+  --confirm-apply --release-notes-reviewed --compatibility-reviewed
+# reviewed reboot work remains pending in Stage 2
 python scripts/host_maintenance.py --manifest "$MANIFEST" start
 python scripts/host_maintenance.py --manifest "$MANIFEST" begin-validation
 ```
@@ -601,6 +604,13 @@ the named compatibility boundaries before entering the drain. Preparation
 refreshes indexes and downloads the exact combined transaction but installs
 nothing. `--include-held` must name the complete current hold set, so a held
 runtime package cannot silently age outside the reviewed transaction.
+
+`update` will not accept a changed plan: `--confirm-plan` must be the exact
+SHA-256 printed by preparation. The three confirmation flags attest that the
+operator intends installation and has reviewed release notes and every named
+compatibility boundary. The command records and masks apt automation, applies
+only pinned versions, audits dpkg, verifies the installed versions, syncs, and
+leaves automation masked for restoration only after the Stage 3 resume gate.
 
 `wait-active` polls drain evidence every five seconds but prints structured
 progress no more than once per minute. It has no short overall deadline; stale

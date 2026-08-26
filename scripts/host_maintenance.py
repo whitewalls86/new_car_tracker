@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import hmac
 import json
 import logging
 import os
@@ -43,6 +44,11 @@ PACKAGE_BOUNDARIES = {
     "ssh": ("openssh",),
     "network": ("netplan", "network-manager", "systemd", "dnsmasq"),
 }
+APT_CONTROL_UNITS = (
+    "apt-daily.timer",
+    "apt-daily-upgrade.timer",
+    "unattended-upgrades.service",
+)
 _APT_INSTALLED_RE = re.compile(r"^Inst\s+(\S+)(?:\s+\[[^]]+\])?\s+\((\S+)")
 CLI_LOG_FIELDS = (
     "generation",
@@ -719,6 +725,124 @@ def prepare_package_plan(output_dir: Path, *, included_holds: list[str]) -> dict
     }
 
 
+def load_package_plan(path: Path, expected_sha256: str) -> tuple[dict[str, Any], str]:
+    """Load exactly the package plan whose digest the operator confirmed."""
+    if path.is_symlink():
+        raise MaintenanceError("package plan must not be a symlink")
+    try:
+        raw = path.read_bytes()
+        plan = json.loads(raw)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise MaintenanceError(f"unable to read package plan at {path}") from exc
+    digest = hashlib.sha256(raw).hexdigest()
+    if not hmac.compare_digest(digest, expected_sha256.lower()):
+        raise MaintenanceError("package plan SHA-256 does not match --confirm-plan")
+    if not isinstance(plan, dict) or plan.get("schema_version") != 1:
+        raise MaintenanceError("package plan has an unsupported schema")
+    packages = plan.get("packages")
+    apply_command = plan.get("apply_command")
+    if not isinstance(packages, list) or not isinstance(apply_command, list):
+        raise MaintenanceError("package plan is missing transaction records")
+    if apply_command and (
+        apply_command[:2] != ["sudo", "apt-get"]
+        or not all(isinstance(argument, str) and argument for argument in apply_command)
+    ):
+        raise MaintenanceError("package plan contains an unsupported apply command")
+    return plan, digest
+
+
+def _read_existing_update_evidence(path: Path, plan_sha256: str) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    if path.is_symlink():
+        raise MaintenanceError("update evidence must not be a symlink")
+    try:
+        evidence = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise MaintenanceError(f"unable to read update evidence at {path}") from exc
+    if not isinstance(evidence, dict) or evidence.get("package_plan_sha256") != plan_sha256:
+        raise MaintenanceError("update evidence belongs to another package plan")
+    return evidence
+
+
+def apply_package_plan(args: argparse.Namespace) -> dict[str, Any]:
+    """Apply one confirmed offline transaction and leave apt automation masked."""
+    checkpoint = latest_checkpoint(args.checkpoint)
+    if checkpoint["phase"] not in {"stopped", "updated"}:
+        raise MaintenanceError(f"cannot update from checkpoint phase {checkpoint['phase']!r}")
+    if checkpoint.get("manifest_location") != args.manifest:
+        raise MaintenanceError("checkpoint manifest does not match --manifest")
+    if not args.confirm_apply:
+        raise MaintenanceError("--confirm-apply is required for package installation")
+
+    plan_path = Path(args.package_plan)
+    plan, digest = load_package_plan(plan_path, args.confirm_plan)
+    packages = plan["packages"]
+    boundaries = plan.get("compatibility_boundaries") or []
+    if packages and not args.release_notes_reviewed:
+        raise MaintenanceError("--release-notes-reviewed is required")
+    if boundaries and not args.compatibility_reviewed:
+        raise MaintenanceError("--compatibility-reviewed is required")
+
+    evidence_path = plan_path.with_name("update-result.json")
+    existing = _read_existing_update_evidence(evidence_path, digest)
+    unit_states = (existing or {}).get("apt_unit_states_before", {})
+    if not unit_states:
+        for unit in APT_CONTROL_UNITS:
+            state = _run_command(
+                ("systemctl", "is-enabled", unit),
+                allowed_returncodes=frozenset({0, 1, 3, 4}),
+            )
+            unit_states[unit] = state["stdout"].strip()
+
+    _run_command(("sudo", "systemctl", "mask", "--now", *APT_CONTROL_UNITS))
+    if plan["apply_command"]:
+        _run_command(tuple(plan["apply_command"]))
+    audit = _run_command(("sudo", "dpkg", "--audit"))
+    if audit["stdout"].strip():
+        raise MaintenanceError("dpkg --audit reported an inconsistent package database")
+
+    package_names = [package["name"] for package in packages]
+    installed_versions = {}
+    if package_names:
+        installed = _run_command(
+            (
+                "dpkg-query",
+                "--show",
+                "--showformat=${Package}\t${Version}\n",
+                *package_names,
+            )
+        )
+        for line in installed["stdout"].splitlines():
+            name, separator, version = line.partition("\t")
+            if separator:
+                installed_versions[name] = version
+        expected_versions = {package["name"]: package["version"] for package in packages}
+        if installed_versions != expected_versions:
+            raise MaintenanceError("installed package versions differ from the confirmed plan")
+
+    _run_command(("sync",))
+    evidence = {
+        "schema_version": 1,
+        "applied_at": _utc_now(),
+        "package_plan": str(plan_path),
+        "package_plan_sha256": digest,
+        "apt_unit_states_before": unit_states,
+        "apt_automation_masked": True,
+        "installed_versions": installed_versions,
+        "running_kernel": _running_kernel(),
+    }
+    _safe_json_write(evidence_path, evidence)
+    append_checkpoint(args.checkpoint, "updated", args.manifest)
+    return {
+        "phase": "updated",
+        "package_plan_sha256": digest,
+        "packages": len(packages),
+        "update_evidence": str(evidence_path),
+        "apt_automation_masked": True,
+    }
+
+
 def run_preflight(output_dir: Path, *, console_access_verified: bool) -> dict[str, Any]:
     if not console_access_verified:
         raise MaintenanceError("verify Oracle Cloud console access before preflight")
@@ -920,6 +1044,13 @@ def build_parser() -> argparse.ArgumentParser:
     prepare_update.add_argument("--output-dir", type=Path, required=True)
     prepare_update.add_argument("--include-held", action="append", default=[])
 
+    update = subparsers.add_parser("update")
+    update.add_argument("--package-plan", type=Path, required=True)
+    update.add_argument("--confirm-plan", required=True)
+    update.add_argument("--confirm-apply", action="store_true")
+    update.add_argument("--release-notes-reviewed", action="store_true")
+    update.add_argument("--compatibility-reviewed", action="store_true")
+
     subparsers.add_parser("status")
     subparsers.add_parser("begin-drain")
     subparsers.add_parser("drain-status")
@@ -951,6 +1082,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "authorize",
         "wait-active",
         "stop",
+        "update",
         "start",
         "begin-validation",
     }:
@@ -981,6 +1113,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         return wait_until_active(args)
     if args.command in {"stop", "start"}:
         return run_running_set_action(args, args.command)
+    if args.command == "update":
+        return apply_package_plan(args)
     routes = {
         "begin-drain": ("/coordination/begin-drain", "draining"),
         "authorize": ("/coordination/authorize", "active"),

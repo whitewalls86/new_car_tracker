@@ -1187,6 +1187,15 @@ transaction, and downloads it without installation. The resulting
 `package-plan.json` is content-addressed and calls out container-runtime,
 kernel, SSH, and network compatibility boundaries for review before `update`.
 
+**Offline package-apply slice built 2026-08-25:** `update` requires the
+`stopped` checkpoint, matching manifest, exact package-plan digest, and explicit
+apply, release-note, and compatibility-review confirmations. It records the apt
+automation enablement state, masks the timers and unattended-upgrade service,
+applies only the pinned argv, verifies installed versions and `dpkg --audit`,
+syncs filesystems, writes `update-result.json`, and only then checkpoints
+`updated`. Apt automation intentionally remains masked until the Stage 3 resume
+gate has passed.
+
 **Durable-history slice built 2026-08-25:** V044 adds the append-only
 `staging.coordination_state_events` record, every native and compatibility-
 facade state mutation writes exactly one event in the same transaction, and the
