@@ -2,11 +2,10 @@
 
 ## Status
 
-**Stages 0-3 DEPLOYED to production 2026-08-25 19:52 UTC (PR #247, in the
-combined evening deploy). Stage 4's production evidence was accepted on
-2026-08-26 after an 80,658-second observation window and ten controlled source
-probes. One closeout correction remains to deploy: the dashboard queried a
-nonexistent Promtail counter name.**
+**COMPLETE (2026-08-26).** Stages 0-3 deployed to production on 2026-08-25;
+Stage 4's production evidence was accepted after an 80,658-second observation
+window and ten controlled source probes. PR #253 deployed the closeout counter
+correction, and the live Grafana dashboard was verified afterward.
 
 **One acceptance instrument is known-unreliable.**
 `scripts/verify_promtail_contract.py` produced a false "Promtail dropped it"
@@ -301,15 +300,15 @@ recorded rather than rounded up to 24 hours.
 | Physical capacity | Loki occupied 4,120,786,946 bytes (4.12 GB); `/mnt/data` had 132,460,101,632 bytes (132.46 GB) available. |
 | `ct-log-error-spike` scope | Keep Airflow and oauth2-proxy excluded. The retained window contained 194 Airflow warnings and 290 OAuth warnings but zero `ERROR` or `CRITICAL` records from either source. There is no observed error distribution from which to justify a paging threshold; dashboard visibility remains the correct contract. |
 
-The closeout cross-check found one correction that must deploy before the plan
-can archive. Production Promtail 3.5.8 exports
+The closeout cross-check found one correction that still had to deploy at the
+time of the measurement. Production Promtail 3.5.8 exports
 `logentry_dropped_lines_total`, while the dashboard and its tests named the
 nonexistent `promtail_dropped_lines_total`. The panel's `or vector(0)` therefore
 turned the instrumentation error into a healthy-looking zero. Commit
 `1d96980` corrects both panels, their regression assertions, and this plan's
-counter references. Until that commit is deployed and the live dashboard query
-returns the real series, Plan 141 remains in the build order rather than the
-completed archive.
+counter references. PR #253 merged on 2026-08-26; after the production pull,
+the user verified the corrected dashboard and live counter query. That closed
+the final archive gate.
 
 #### The contract checker itself is unreliable — found 2026-08-25
 
