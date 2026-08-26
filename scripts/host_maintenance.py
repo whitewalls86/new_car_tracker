@@ -8,6 +8,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 import time
@@ -36,6 +37,13 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 RUNNING_SET_POLICY = REPO_ROOT / "maintenance-running-set.txt"
 logger = logging.getLogger(__name__)
 NON_RESTORABLE_POLICY_CLASSES = frozenset({"oneshot", "on-demand", "aux-paused", "aux-foreign"})
+PACKAGE_BOUNDARIES = {
+    "container_runtime": ("docker", "containerd", "runc"),
+    "kernel": ("linux-image", "linux-headers", "linux-modules", "linux-oracle"),
+    "ssh": ("openssh",),
+    "network": ("netplan", "network-manager", "systemd", "dnsmasq"),
+}
+_APT_INSTALLED_RE = re.compile(r"^Inst\s+(\S+)(?:\s+\[[^]]+\])?\s+\((\S+)")
 CLI_LOG_FIELDS = (
     "generation",
     "prior_phase",
@@ -597,6 +605,120 @@ def collect_preflight() -> dict[str, Any]:
     }
 
 
+def _parse_apt_simulation(output: str) -> dict[str, str]:
+    packages = {}
+    for line in output.splitlines():
+        match = _APT_INSTALLED_RE.match(line)
+        if match:
+            packages[match.group(1)] = match.group(2)
+    return packages
+
+
+def _package_boundaries(package: str) -> list[str]:
+    base_name = package.split(":", 1)[0]
+    return [
+        boundary
+        for boundary, prefixes in PACKAGE_BOUNDARIES.items()
+        if base_name.startswith(prefixes)
+    ]
+
+
+def prepare_package_plan(output_dir: Path, *, included_holds: list[str]) -> dict[str, Any]:
+    """Refresh, resolve, and download an exact transaction without installing it."""
+    refresh = _run_command(("sudo", "apt-get", "update"))
+    holds_result = _run_command(("apt-mark", "showhold"))
+    holds = sorted(line.strip() for line in holds_result["stdout"].splitlines() if line.strip())
+    if sorted(set(included_holds)) != holds:
+        raise MaintenanceError(
+            "--include-held must name every held package exactly: "
+            f"expected {holds}, got {sorted(set(included_holds))}"
+        )
+
+    ordinary = _run_command(("apt-get", "--simulate", "upgrade"))
+    packages = _parse_apt_simulation(ordinary["stdout"])
+    for package in holds:
+        held = _run_command(
+            (
+                "apt-get",
+                "--simulate",
+                "--allow-change-held-packages",
+                "install",
+                package,
+            )
+        )
+        packages.update(_parse_apt_simulation(held["stdout"]))
+
+    pins = [f"{name}={version}" for name, version in sorted(packages.items())]
+    exact_simulation_command = (
+        "apt-get",
+        "--simulate",
+        "--allow-change-held-packages",
+        "--no-remove",
+        "install",
+        *pins,
+    )
+    apply_command = (
+        "sudo",
+        "apt-get",
+        "--yes",
+        "--allow-change-held-packages",
+        "--no-remove",
+        "install",
+        *pins,
+    )
+    if pins:
+        exact = _run_command(exact_simulation_command)
+        exact_packages = _parse_apt_simulation(exact["stdout"])
+        if exact_packages != packages:
+            raise MaintenanceError("exact package transaction differs from the reviewed resolution")
+        _run_command(
+            (
+                "sudo",
+                "apt-get",
+                "--download-only",
+                "--yes",
+                "--allow-change-held-packages",
+                "--no-remove",
+                "install",
+                *pins,
+            )
+        )
+
+    package_rows = [
+        {
+            "name": name,
+            "version": version,
+            "boundaries": _package_boundaries(name),
+            "held": name in holds,
+        }
+        for name, version in sorted(packages.items())
+    ]
+    plan = {
+        "schema_version": 1,
+        "prepared_at": _utc_now(),
+        "apt_update_stdout_sha256": hashlib.sha256(refresh["stdout"].encode()).hexdigest(),
+        "holds": holds,
+        "packages": package_rows,
+        "apply_command": list(apply_command) if pins else [],
+        "requires_reboot_review": any(
+            "kernel" in package["boundaries"] for package in package_rows
+        ),
+        "compatibility_boundaries": sorted(
+            {boundary for package in package_rows for boundary in package["boundaries"]}
+        ),
+    }
+    plan_path = output_dir / "package-plan.json"
+    _safe_json_write(plan_path, plan)
+    digest = hashlib.sha256(plan_path.read_bytes()).hexdigest()
+    return {
+        "phase": "package-prepared",
+        "package_plan": str(plan_path),
+        "package_plan_sha256": digest,
+        "packages": len(package_rows),
+        "compatibility_boundaries": plan["compatibility_boundaries"],
+    }
+
+
 def run_preflight(output_dir: Path, *, console_access_verified: bool) -> dict[str, Any]:
     if not console_access_verified:
         raise MaintenanceError("verify Oracle Cloud console access before preflight")
@@ -794,6 +916,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Attest that Oracle Cloud console access was tested for this window",
     )
 
+    prepare_update = subparsers.add_parser("prepare-update")
+    prepare_update.add_argument("--output-dir", type=Path, required=True)
+    prepare_update.add_argument("--include-held", action="append", default=[])
+
     subparsers.add_parser("status")
     subparsers.add_parser("begin-drain")
     subparsers.add_parser("drain-status")
@@ -812,6 +938,11 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         return run_preflight(
             args.output_dir,
             console_access_verified=args.console_access_verified,
+        )
+    if args.command == "prepare-update":
+        return prepare_package_plan(
+            args.output_dir,
+            included_holds=args.include_held,
         )
 
     if args.command in {

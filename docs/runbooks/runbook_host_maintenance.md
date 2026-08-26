@@ -583,6 +583,8 @@ the check.
 The currently available sequence is:
 
 ```bash
+python scripts/host_maintenance.py prepare-update \
+  --output-dir "$(dirname "$MANIFEST")" --include-held docker.io
 python scripts/host_maintenance.py --manifest "$MANIFEST" request \
   --requested-by "$USER" --reason "reviewed host maintenance" \
   --expected-work "install reviewed packages" --expected-work reboot
@@ -593,6 +595,12 @@ python scripts/host_maintenance.py --manifest "$MANIFEST" stop
 python scripts/host_maintenance.py --manifest "$MANIFEST" start
 python scripts/host_maintenance.py --manifest "$MANIFEST" begin-validation
 ```
+
+Record the printed package-plan SHA-256 and review every pinned version plus
+the named compatibility boundaries before entering the drain. Preparation
+refreshes indexes and downloads the exact combined transaction but installs
+nothing. `--include-held` must name the complete current hold set, so a held
+runtime package cannot silently age outside the reviewed transaction.
 
 `wait-active` polls drain evidence every five seconds but prints structured
 progress no more than once per minute. It has no short overall deadline; stale

@@ -1180,6 +1180,13 @@ every selected container's resulting Docker state, and append `stopped` or
 API-confirmed offline checkpoint, so both commands remain replayable while the
 coordination API and Postgres are deliberately offline.
 
+**Package-preparation slice built 2026-08-25:** `prepare-update` refreshes apt
+indexes, requires the operator to name every held package explicitly, resolves
+ordinary plus held upgrades, re-simulates the combined version-pinned
+transaction, and downloads it without installation. The resulting
+`package-plan.json` is content-addressed and calls out container-runtime,
+kernel, SSH, and network compatibility boundaries for review before `update`.
+
 **Durable-history slice built 2026-08-25:** V044 adds the append-only
 `staging.coordination_state_events` record, every native and compatibility-
 facade state mutation writes exactly one event in the same transaction, and the

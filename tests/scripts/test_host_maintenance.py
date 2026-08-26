@@ -257,6 +257,7 @@ def test_parser_intentionally_exposes_no_complete_command():
     choices = next(action.choices for action in parser._actions if action.dest == "command")
     assert set(choices) == {
         "preflight",
+        "prepare-update",
         "request",
         "status",
         "begin-drain",
@@ -283,6 +284,67 @@ def test_preflight_command_contract_is_observation_only():
 
     for _, command, _ in host_maintenance.PREFLIGHT_COMMANDS:
         assert mutation_words.isdisjoint(command)
+
+
+def test_prepare_package_plan_pins_downloads_and_classifies_boundaries(mocker, tmp_path):
+    ordinary = "Inst openssl [1.0] (1.1 jammy-updates [amd64])\n"
+    held = "\n".join(
+        [
+            "Inst docker.io [28.0] (29.1 jammy-security [amd64])",
+            "Inst containerd [1.6] (1.7 jammy-security [amd64])",
+        ]
+    )
+    exact = ordinary + held + "\n"
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        stdout = ""
+        if command == ("sudo", "apt-get", "update"):
+            stdout = "indexes refreshed"
+        elif command == ("apt-mark", "showhold"):
+            stdout = "docker.io\n"
+        elif command == ("apt-get", "--simulate", "upgrade"):
+            stdout = ordinary
+        elif command[-2:] == ("install", "docker.io"):
+            stdout = held
+        elif command[:2] == ("apt-get", "--simulate"):
+            stdout = exact
+        return {"stdout": stdout, "stderr": "", "returncode": 0}
+
+    mocker.patch.object(host_maintenance, "_run_command", side_effect=fake_run)
+    mocker.patch.object(host_maintenance, "_utc_now", return_value="timestamp")
+
+    result = host_maintenance.prepare_package_plan(
+        tmp_path,
+        included_holds=["docker.io"],
+    )
+
+    plan_path = tmp_path / "package-plan.json"
+    plan = json.loads(plan_path.read_text())
+    assert (
+        result["package_plan_sha256"]
+        == host_maintenance.hashlib.sha256(plan_path.read_bytes()).hexdigest()
+    )
+    assert [package["name"] for package in plan["packages"]] == [
+        "containerd",
+        "docker.io",
+        "openssl",
+    ]
+    assert plan["compatibility_boundaries"] == ["container_runtime"]
+    assert "docker.io=29.1" in plan["apply_command"]
+    assert any("--download-only" in command for command in calls)
+
+
+def test_prepare_package_plan_requires_exact_held_package_review(mocker, tmp_path):
+    def fake_run(command, **kwargs):
+        stdout = "docker.io\n" if command == ("apt-mark", "showhold") else ""
+        return {"stdout": stdout, "stderr": "", "returncode": 0}
+
+    mocker.patch.object(host_maintenance, "_run_command", side_effect=fake_run)
+
+    with pytest.raises(host_maintenance.MaintenanceError, match="every held package"):
+        host_maintenance.prepare_package_plan(tmp_path, included_holds=[])
 
 
 def test_capture_running_set_records_compose_and_container_evidence(mocker):
