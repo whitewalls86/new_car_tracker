@@ -20,6 +20,7 @@ new filename) and then delete. Duplicate rows in Parquet are acceptable for
 append-only event logs.
 """
 
+import json
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -139,6 +140,19 @@ _COORDINATION_STATE_EVENTS_SCHEMA = pa.schema(
         pa.field("kind", pa.string()),
         pa.field("actor", pa.string()),
         pa.field("event_at", pa.timestamp("us", tz="UTC")),
+        pa.field("year", pa.int32()),
+        pa.field("month", pa.int32()),
+    ]
+)
+
+_COORDINATION_RELEASE_EVIDENCE_SCHEMA = pa.schema(
+    [
+        pa.field("evidence_id", pa.int64()),
+        pa.field("generation", pa.int64()),
+        pa.field("actor", pa.string()),
+        pa.field("submitted_at", pa.timestamp("us", tz="UTC")),
+        pa.field("gate_results", pa.string()),
+        pa.field("evidence_digests", pa.string()),
         pa.field("year", pa.int32()),
         pa.field("month", pa.int32()),
     ]
@@ -264,6 +278,23 @@ _TABLE_CONFIGS = [
         "minio_prefix": "ops_normalized/coordination_state_events",
         "uuid_cols": set(),
     },
+    {
+        "table": "staging.coordination_release_evidence",
+        "pk": "evidence_id",
+        "ts_col": "submitted_at",
+        "db_columns": [
+            "evidence_id",
+            "generation",
+            "actor",
+            "submitted_at",
+            "gate_results",
+            "evidence_digests",
+        ],
+        "schema": _COORDINATION_RELEASE_EVIDENCE_SCHEMA,
+        "minio_prefix": "ops_normalized/coordination_release_evidence",
+        "uuid_cols": set(),
+        "json_cols": {"gate_results", "evidence_digests"},
+    },
 ]
 
 
@@ -285,6 +316,7 @@ def _flush_one(config: dict, conn, fs) -> Dict[str, Any]:
     schema = config["schema"]
     minio_prefix = config["minio_prefix"]
     uuid_cols = config["uuid_cols"]
+    json_cols = config.get("json_cols", set())
 
     try:
         # 1. Establish snapshot boundary
@@ -315,6 +347,9 @@ def _flush_one(config: dict, conn, fs) -> Dict[str, Any]:
 
             for col in uuid_cols:
                 row[col] = _to_str(row.get(col))
+            for col in json_cols:
+                value = row.get(col)
+                row[col] = json.dumps(value, sort_keys=True) if value is not None else None
 
             for col, val in row.items():
                 if isinstance(val, datetime):

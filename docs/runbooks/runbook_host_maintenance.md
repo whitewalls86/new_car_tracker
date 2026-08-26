@@ -4,14 +4,14 @@ Operational companion to [Plan 142](../plans/plan_142_planned_host_maintenance.m
 Covers pausing production, updating Ubuntu, rebooting the single production VM,
 proving the host and stack healthy, and resuming work.
 
-**Most of this remains Stage 0 output: a worked example, not yet an executable
-procedure.** The whole sequence below is what was actually run on 2026-08-18,
-recovered verbatim from the session transcript. Stage 2's first slice adds the
-safe coordination client in
-[`scripts/host_maintenance.py`](../../scripts/host_maintenance.py); stop,
-package, reboot, restore, validation, and completion are deliberately not yet
-commands. Until those later slices land, this remains the record you read
-before starting and the source from which reviewed commands are taken.
+**Most of this remains Stage 0 output: a worked example, not a record of a new
+window.** The whole sequence below is what was actually run on 2026-08-18,
+recovered verbatim from the session transcript. The checked-in
+[`scripts/host_maintenance.py`](../../scripts/host_maintenance.py) now carries
+the reviewed coordination, package, reboot, validation, completion, and apt
+restoration commands; §10.7 is the authoritative close-out sequence. The
+earlier sections remain the record to read before starting and the source from
+which reviewed commands are taken.
 
 Everything here is one host: `147.224.199.86`, Compose project `cartracker` in
 `/opt/cartracker`. The SSH key lives in the repo root and is gitignored
@@ -627,9 +627,9 @@ selected container reached the requested state, and checkpoint the result.
 Rerunning either command repeats the same idempotent Compose operation; it never
 walks the host for additional projects or services.
 
-There is intentionally no `complete` command yet. Stage 3 must supply the host,
-stack, and intentionally-stopped-service evidence guard before release can be
-represented as authority.
+`complete` is intentionally unavailable until the Stage 3 resume-gate sequence
+below has recorded both evidence halves. A successful command is an explicit
+release of coordination authority, not an implicit consequence of recovery.
 
 ### 10.2 caddy's restart policy — Plan 142 Stage 0 item 7
 
@@ -810,6 +810,65 @@ docker inspect --format '{{.HostConfig.RestartPolicy.Name}}' caddy   # unless-st
 Confirm 28 pooled runs an hour are green again, and write the results into
 Plan 142's item 3 section — the measurements are the deliverable, and a window
 whose findings live only in a terminal has not closed.
+
+### 10.7 Stage 3 resume gate — host maintenance only
+
+Run this only after `start` and `begin-validation` from the host-maintenance
+sequence above. It is the closing procedure for a host window, not a deploy or
+the Stage 0 pool hold. Keep the same immutable evidence directory and manifest
+used for the window:
+
+```bash
+EVIDENCE=/var/lib/cartracker/maintenance/<window>
+MANIFEST="$EVIDENCE/running-set.json"
+PREFLIGHT="$EVIDENCE/preflight.json"
+PACKAGE_PLAN="$EVIDENCE/package-plan.json"
+PACKAGE_PLAN_SHA256=<the reviewed digest printed by prepare-update>
+
+# 1. Collect host facts, evaluate all seven host gates, and submit the passing
+#    bundle for the live coordination generation.
+python scripts/host_maintenance.py --manifest "$MANIFEST" validate-host \
+  --preflight "$PREFLIGHT" --output-dir "$EVIDENCE"
+
+# 2. Read the independently re-evaluated stack gate. It must report every gate
+#    as pass, including Plan 140 coverage and intentionally stopped auxiliaries.
+curl -sf http://localhost:8060/coordination/release-status
+
+# 3. Explicitly release only after both evidence halves pass.
+python scripts/host_maintenance.py --manifest "$MANIFEST" complete \
+  --confirm-complete
+
+# 4. Only after completion, restore the exact recorded apt-automation state and
+#    prove the reviewed hold set has not drifted.
+python scripts/host_maintenance.py --manifest "$MANIFEST" \
+  restore-apt-automation --package-plan "$PACKAGE_PLAN" \
+  --confirm-plan "$PACKAGE_PLAN_SHA256"
+```
+
+1. **Host evidence — no user-visible change, no data risk.** `validate-host`
+   writes `validate-host.json` and submits it only when every host gate passes.
+   Abort on any `fail` or `unknown`; investigate the named reason and leave
+   coordination in `validating`. Do not edit evidence or retry around a refusal.
+2. **Stack evidence — no user-visible change, no data risk.**
+   `release-status` is read-only. Confirm all returned gates pass; missing Plan
+   140 health data, an unhealthy/unconfigured service, stale observability, or
+   a restarted auxiliary is a failed gate. Abort by keeping the window paused;
+   repair the cause and rerun the read.
+3. **Completion — releases the paused surface.** `complete` re-evaluates stack
+   gates server-side and requires the durable host-evidence row for the current
+   generation, so its blast radius is resuming normal work. A `409` leaves the
+   phase at `validating`; do not force it or use a compatibility release route.
+   Fix the named gate, obtain fresh evidence, and repeat this sequence.
+4. **Apt restoration — enables background apt work after release.** Its blast
+   radius is limited to restoring the previously recorded enablement state;
+   package versions do not change. Abort on an enablement or hold-set refusal:
+   leave the units as they are, retain the evidence, and investigate. Never
+   restore these units before successful `complete`.
+
+Record the `validate-host.json` result, `release-status` response, completion
+response, and restored unit states with the window evidence. Completed-window
+reconstruction spans the current Postgres coordination records and the archived
+Parquet staging-event history; staging rows may be flushed after export.
 
 ---
 

@@ -81,28 +81,6 @@ def test_forward_transitions(mock_cursor_context, operation, source, target, tim
     assert event_params == (7, source, target, "service_maintenance", "operator")
 
 
-def test_complete_clears_kind_targets_and_scope(mock_cursor_context):
-    _, cursor = mock_cursor_context
-    cursor.fetchone.side_effect = [
-        ("validating", 7, "host_maintenance", "operator"),
-        (7,),
-    ]
-
-    assert coordination._transition("complete") == "ok"
-
-    sql = cursor.execute.call_args_list[-2].args[0]
-    assert "kind = NULL" in sql
-    assert "targets = '[]'::jsonb" in sql
-    assert "scope = '[]'::jsonb" in sql
-    assert cursor.execute.call_args_list[-1].args[1] == (
-        7,
-        "validating",
-        "none",
-        "host_maintenance",
-        "operator",
-    )
-
-
 def test_illegal_transition_does_not_write(mock_cursor_context, caplog):
     _, cursor = mock_cursor_context
     cursor.fetchone.return_value = (
@@ -155,10 +133,6 @@ def test_cancel_refuses_unsafe_states(mock_cursor_context, source):
 
     assert coordination._cancel() == "conflict"
     assert len(cursor.execute.call_args_list) == 2
-
-
-def test_release_route_remains_private_until_validation_guard_exists(mock_client):
-    assert mock_client.post("/coordination/complete").status_code == 404
 
 
 def test_begin_drain_endpoint_exposes_only_legal_transition(mock_client, mocker):
@@ -228,6 +202,228 @@ def test_drain_status_aggregates_authoritative_state_without_transition(mock_cli
     assert response.json()["drained"] is True
     collect.assert_called_once_with(state)
     transition.assert_not_called()
+
+
+def test_release_status_returns_full_gate_evidence_without_transition(mock_client, mocker):
+    state = {"phase": "validating", "kind": "host_maintenance"}
+    mocker.patch("ops.routers.coordination._status", return_value=state)
+    collect = mocker.patch(
+        "ops.routers.coordination.collect_release_status",
+        return_value={"release_ready": False, "blockers": ["container_health"], "gates": []},
+    )
+    transition = mocker.patch("ops.routers.coordination._transition")
+
+    response = mock_client.get("/coordination/release-status")
+
+    assert response.status_code == 200
+    assert response.json()["blockers"] == ["container_health"]
+    collect.assert_called_once_with(state)
+    transition.assert_not_called()
+
+
+def _host_evidence_payload(generation=7, gates=None):
+    gates = gates or {
+        name: {"verdict": "pass", "reason": "verified"}
+        for name in coordination.HOST_VALIDATION_GATES
+    }
+    return {
+        "generation": generation,
+        "gates": gates,
+        "evidence_digests": {"preflight": "a" * 64, "manifest": "b" * 64},
+    }
+
+
+def _complete_state():
+    return {
+        "phase": "validating",
+        "generation": 7,
+        "kind": "host_maintenance",
+        "requested_by": "operator",
+    }
+
+
+def test_complete_refuses_without_operator_confirmation(mock_cursor_context, mocker):
+    _, cursor = mock_cursor_context
+    cursor.fetchone.return_value = _complete_state()
+    release = mocker.patch("ops.routers.coordination.collect_release_status")
+
+    result, evidence = coordination._complete(coordination.CompletionRequest())
+
+    assert (result, evidence) == ("conflict", {"failing_gates": ["operator_confirmation"]})
+    release.assert_not_called()
+
+
+def test_complete_endpoint_returns_named_conflicts(mock_client, mocker):
+    mocker.patch(
+        "ops.routers.coordination._complete",
+        return_value=("conflict", {"failing_gates": ["operator_confirmation"]}),
+    )
+
+    response = mock_client.post("/coordination/complete", json={"confirm_complete": False})
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["failing_gates"] == ["operator_confirmation"]
+
+
+@pytest.mark.parametrize("phase", ["none", "requested", "draining", "active"])
+def test_complete_refuses_wrong_phase(mock_cursor_context, phase):
+    _, cursor = mock_cursor_context
+    state = _complete_state()
+    state["phase"] = phase
+    cursor.fetchone.side_effect = [state, None] if phase == "none" else [state]
+
+    result, evidence = coordination._complete(
+        coordination.CompletionRequest(
+            confirm_complete=True, generation=7, manifest_sha256="a" * 64
+        )
+    )
+
+    expected_gate = "completion_receipt" if phase == "none" else "coordination_expected"
+    assert (result, evidence) == ("conflict", {"failing_gates": [expected_gate]})
+
+
+def test_complete_refuses_failing_stack_gate(mock_cursor_context, mocker):
+    _, cursor = mock_cursor_context
+    cursor.fetchone.return_value = _complete_state()
+    mocker.patch(
+        "ops.routers.coordination.collect_release_status",
+        return_value={"blockers": ["container_health"], "gates": []},
+    )
+
+    result, evidence = coordination._complete(
+        coordination.CompletionRequest(
+            confirm_complete=True, generation=7, manifest_sha256="a" * 64
+        )
+    )
+
+    assert result == "conflict"
+    assert evidence["failing_gates"] == ["container_health"]
+
+
+def test_complete_refuses_without_passing_host_evidence(mock_cursor_context, mocker):
+    _, cursor = mock_cursor_context
+    cursor.fetchone.side_effect = [_complete_state()]
+    cursor.fetchall.return_value = []
+    mocker.patch(
+        "ops.routers.coordination.collect_release_status",
+        return_value={"blockers": [], "gates": []},
+    )
+
+    result, evidence = coordination._complete(
+        coordination.CompletionRequest(confirm_complete=True)
+    )
+
+    assert result == "conflict"
+    assert set(evidence["failing_gates"]) == set(coordination.HOST_VALIDATION_GATES)
+
+
+def test_complete_succeeds_with_both_validation_halves(mock_cursor_context, mocker):
+    _, cursor = mock_cursor_context
+    cursor.fetchone.side_effect = [_complete_state(), {"generation": 7}]
+    cursor.fetchall.return_value = [{"gate_results": _host_evidence_payload()["gates"]}]
+    mocker.patch(
+        "ops.routers.coordination.collect_release_status",
+        return_value={"blockers": [], "gates": []},
+    )
+
+    result, completed = coordination._complete(
+        coordination.CompletionRequest(
+            confirm_complete=True, generation=7, manifest_sha256="a" * 64
+        )
+    )
+
+    assert (result, completed) == ("ok", {"phase": "none", "generation": 7})
+    update_sql = cursor.execute.call_args_list[-3].args[0]
+    assert "kind = NULL" in update_sql
+    assert cursor.execute.call_args_list[-1].args[1] == (
+        7, "validating", "none", "host_maintenance", "operator"
+    )
+
+
+def test_complete_replay_confirms_matching_receipt(mock_cursor_context):
+    _, cursor = mock_cursor_context
+    state = _complete_state()
+    state["phase"] = "none"
+    cursor.fetchone.side_effect = [state, {"generation": 7}]
+
+    result, completed = coordination._complete(
+        coordination.CompletionRequest(
+            confirm_complete=True, generation=7, manifest_sha256="a" * 64
+        )
+    )
+
+    assert (result, completed) == ("ok", {"phase": "none", "generation": 7})
+
+
+def test_host_evidence_rejects_missing_gate(mock_client):
+    payload = _host_evidence_payload()
+    payload["gates"].pop(next(iter(payload["gates"])))
+
+    response = mock_client.post("/coordination/host-evidence", json=payload)
+
+    assert response.status_code == 422
+
+
+def test_host_evidence_rejects_stale_generation(mock_cursor_context):
+    _, cursor = mock_cursor_context
+    cursor.fetchone.return_value = {
+        "phase": "validating",
+        "generation": 8,
+        "kind": "host_maintenance",
+        "requested_by": "operator",
+    }
+
+    result, evidence = coordination._submit_host_evidence(
+        coordination.HostEvidenceRequest(**_host_evidence_payload())
+    )
+
+    assert result == "stale"
+    assert evidence == {"reason": "evidence generation is stale"}
+    assert all("INSERT INTO staging.coordination_release_evidence" not in call.args[0]
+               for call in cursor.execute.call_args_list)
+
+
+def test_host_evidence_is_accepted_and_returned(mock_cursor_context):
+    _, cursor = mock_cursor_context
+    cursor.fetchone.side_effect = [
+        {
+            "phase": "validating",
+            "generation": 7,
+            "kind": "host_maintenance",
+            "requested_by": "operator",
+        },
+        {"evidence_id": 4, "submitted_at": datetime(2026, 8, 26)},
+    ]
+
+    result, evidence = coordination._submit_host_evidence(
+        coordination.HostEvidenceRequest(**_host_evidence_payload())
+    )
+
+    assert result == "ok"
+    assert evidence["evidence_id"] == 4
+    assert evidence["actor"] == "operator"
+    sql, params = cursor.execute.call_args_list[-1].args
+    assert "INSERT INTO staging.coordination_release_evidence" in sql
+    assert params[0:2] == (7, "operator")
+
+
+def test_host_evidence_failed_insert_leaves_no_partial_state(mock_cursor_context):
+    _, cursor = mock_cursor_context
+    cursor.fetchone.return_value = {
+        "phase": "validating",
+        "generation": 7,
+        "kind": "host_maintenance",
+        "requested_by": "operator",
+    }
+    cursor.execute.side_effect = [None, None, RuntimeError("write failed")]
+
+    result, evidence = coordination._submit_host_evidence(
+        coordination.HostEvidenceRequest(**_host_evidence_payload())
+    )
+
+    assert (result, evidence) == ("error", None)
+    sql_calls = [call.args[0] for call in cursor.execute.call_args_list]
+    assert all("UPDATE coordination_state" not in sql for sql in sql_calls)
 
 
 def test_authorize_uses_locked_current_generation_confirming_read(mock_cursor_context, mocker):
@@ -462,6 +658,17 @@ def test_coordination_event_migration_is_append_only_and_archiver_accessible():
     assert "UPDATE staging.coordination_state_events" not in sql
     assert "SELECT, INSERT, DELETE ON staging.coordination_state_events" in sql
     assert "coordination_state_events_event_id_seq" in sql
+
+
+def test_host_evidence_migration_is_append_only_and_archiver_accessible():
+    sql = Path("db/migrations/V045__coordination_release_evidence.sql").read_text()
+
+    assert "CREATE TABLE staging.coordination_release_evidence" in sql
+    assert "evidence_id bigserial PRIMARY KEY" in sql
+    for column in ("generation", "actor", "submitted_at", "gate_results", "evidence_digests"):
+        assert column in sql
+    assert "UPDATE staging.coordination_release_evidence" not in sql
+    assert "SELECT, INSERT, DELETE ON staging.coordination_release_evidence" in sql
 
 
 def test_every_declared_transition_has_a_durable_event_phase():

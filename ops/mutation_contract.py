@@ -205,6 +205,8 @@ MUTATION_ROUTES = {
     "ops/routers/coordination.py:POST:/begin-validation": _short(
         _ATOMIC_STATE, "database"
     ),
+    "ops/routers/coordination.py:POST:/host-evidence": _short(_ATOMIC_DB, "database"),
+    "ops/routers/coordination.py:POST:/complete": _short(_ATOMIC_STATE, "database"),
     # Admin routes either delegate to a tracked long job or perform bounded
     # metadata/coordination transactions.
     "ops/routers/admin.py:POST:/dbt/trigger": _tracked("delegated", "dbt_runner_jobs", "analytics"),

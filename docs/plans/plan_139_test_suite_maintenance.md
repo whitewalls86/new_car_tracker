@@ -580,6 +580,22 @@ was wall-clock, since the fixture line is hardcoded at `14:01:37` and the
 failing run was later than a passing one, but `promtail.yml` has no
 `older_than` stage anywhere and a local run at an even later hour passed.
 
+**Additional CI evidence, 2026-08-26.** [PR #252 workflow run
+32979183839](https://github.com/whitewalls86/new_car_tracker/actions/runs/32979183839)
+on `d1309a3` again failed the real-image check despite that commit changing only
+the Plan 142 host-maintenance client and tests. Its independent mismatch was:
+
+```
+1 contract mismatch(es):
+  - oauth_lifecycle_severity_wins_over_status: corpus says retained, Promtail dropped it
+```
+
+The same run's other failure was Ruff E501 in the changed client; that formatting
+defect is unrelated and was corrected in `7778861`. The varying missing fixture
+line is the important evidence: the checker is reporting a policy verdict from
+short output, rather than distinguishing an incomplete Promtail replay from a
+real contract change.
+
 **The mechanism is in `_run()`.** Every line for a `(service, source_type)`
 pair is piped through **one** `promtail -dry-run -stdin`, and the result is
 matched **by line text**:
