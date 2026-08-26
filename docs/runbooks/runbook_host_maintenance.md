@@ -583,12 +583,13 @@ the check.
 The currently available sequence is:
 
 ```bash
+python scripts/host_maintenance.py plan
 python scripts/host_maintenance.py prepare-update \
   --output-dir "$(dirname "$MANIFEST")" --include-held docker.io
 python scripts/host_maintenance.py --manifest "$MANIFEST" request \
   --requested-by "$USER" --reason "reviewed host maintenance" \
   --expected-work "install reviewed packages" --expected-work reboot
-python scripts/host_maintenance.py --manifest "$MANIFEST" begin-drain
+python scripts/host_maintenance.py --manifest "$MANIFEST" drain
 python scripts/host_maintenance.py --manifest "$MANIFEST" wait-active
 python scripts/host_maintenance.py --manifest "$MANIFEST" stop
 python scripts/host_maintenance.py --manifest "$MANIFEST" update \
@@ -600,6 +601,11 @@ python scripts/host_maintenance.py --manifest "$MANIFEST" reboot
 python scripts/host_maintenance.py --manifest "$MANIFEST" start
 python scripts/host_maintenance.py --manifest "$MANIFEST" begin-validation
 ```
+
+`plan` is a non-mutating dry run of Stage 2's canonical ordering. It ends at
+`begin-validation`: the Stage 3 evidence gates own `validate-host`,
+`validate-stack`, apt-automation restoration, and explicit `complete`. There is
+no exit trap or Stage 2 failure path that can release coordination.
 
 Record the printed package-plan SHA-256 and review every pinned version plus
 the named compatibility boundaries before entering the drain. Preparation

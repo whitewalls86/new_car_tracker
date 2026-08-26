@@ -24,6 +24,7 @@ DEFAULT_CHECKPOINT = Path("/var/lib/cartracker/maintenance/history.jsonl")
 CHECKPOINT_PHASES = frozenset(
     {
         "requested",
+        "preflight",
         "draining",
         "active",
         "stopped",
@@ -50,6 +51,18 @@ APT_CONTROL_UNITS = (
     "unattended-upgrades.service",
 )
 _APT_INSTALLED_RE = re.compile(r"^Inst\s+(\S+)(?:\s+\[[^]]+\])?\s+\((\S+)")
+STAGE2_PROCEDURE = (
+    "preflight",
+    "prepare-update",
+    "request",
+    "drain",
+    "wait-active",
+    "stop",
+    "update",
+    "reboot",
+    "start",
+    "begin-validation",
+)
 CLI_LOG_FIELDS = (
     "generation",
     "prior_phase",
@@ -1072,6 +1085,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--checkpoint", type=Path, default=DEFAULT_CHECKPOINT)
     parser.add_argument("--manifest", help="running-set manifest path")
     subparsers = parser.add_subparsers(dest="command", required=True)
+    subparsers.add_parser("plan")
 
     request = subparsers.add_parser("request")
     request.add_argument("--requested-by", required=True)
@@ -1102,6 +1116,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("status")
     subparsers.add_parser("begin-drain")
+    subparsers.add_parser("drain")
     subparsers.add_parser("drain-status")
     subparsers.add_parser("authorize")
     wait_active = subparsers.add_parser("wait-active")
@@ -1114,11 +1129,23 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def run(args: argparse.Namespace) -> dict[str, Any]:
+    if args.command == "plan":
+        return {
+            "phase": "dry-run",
+            "commands": list(STAGE2_PROCEDURE),
+            "complete_implicit": False,
+        }
     if args.command == "preflight":
-        return run_preflight(
+        result = run_preflight(
             args.output_dir,
             console_access_verified=args.console_access_verified,
         )
+        append_checkpoint(
+            args.checkpoint,
+            "preflight",
+            result["manifest_location"],
+        )
+        return result
     if args.command == "prepare-update":
         return prepare_package_plan(
             args.output_dir,
@@ -1128,6 +1155,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     if args.command in {
         "request",
         "begin-drain",
+        "drain",
         "authorize",
         "wait-active",
         "stop",
@@ -1169,6 +1197,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         return run_reboot_boundary(args)
     routes = {
         "begin-drain": ("/coordination/begin-drain", "draining"),
+        "drain": ("/coordination/begin-drain", "draining"),
         "authorize": ("/coordination/authorize", "active"),
         "begin-validation": ("/coordination/begin-validation", "validating"),
     }

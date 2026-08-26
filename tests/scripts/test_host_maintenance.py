@@ -112,6 +112,7 @@ def test_request_is_always_host_scoped_and_checkpoints_after_confirmation(mocker
     ("command", "route", "phase"),
     [
         ("begin-drain", "/coordination/begin-drain", "draining"),
+        ("drain", "/coordination/begin-drain", "draining"),
         ("authorize", "/coordination/authorize", "active"),
         ("begin-validation", "/coordination/begin-validation", "validating"),
     ],
@@ -256,11 +257,13 @@ def test_parser_intentionally_exposes_no_complete_command():
     parser = host_maintenance.build_parser()
     choices = next(action.choices for action in parser._actions if action.dest == "command")
     assert set(choices) == {
+        "plan",
         "preflight",
         "prepare-update",
         "request",
         "status",
         "begin-drain",
+        "drain",
         "drain-status",
         "authorize",
         "wait-active",
@@ -270,6 +273,31 @@ def test_parser_intentionally_exposes_no_complete_command():
         "start",
         "begin-validation",
     }
+
+
+def test_dry_run_plan_has_canonical_order_and_never_completes(mocker, tmp_path):
+    run_command = mocker.patch.object(host_maintenance, "_run_command")
+
+    result = host_maintenance.run(_args(tmp_path, "plan", manifest=None))
+
+    assert result == {
+        "phase": "dry-run",
+        "commands": [
+            "preflight",
+            "prepare-update",
+            "request",
+            "drain",
+            "wait-active",
+            "stop",
+            "update",
+            "reboot",
+            "start",
+            "begin-validation",
+        ],
+        "complete_implicit": False,
+    }
+    assert "complete" not in result["commands"]
+    run_command.assert_not_called()
 
 
 def test_preflight_command_contract_is_observation_only():
@@ -968,3 +996,26 @@ def test_run_preflight_writes_manifest_config_and_observations(mocker, tmp_path)
     compose = json.loads((tmp_path / "compose" / "cartracker.json").read_text())
     assert compose["services"] == {"ops": {"profiles": [], "image": "ops:latest"}}
     assert "environment" not in json.dumps(compose)
+
+
+def test_preflight_command_checkpoints_only_after_evidence_is_written(mocker, tmp_path):
+    manifest = tmp_path / "running-set.json"
+    run_preflight = mocker.patch.object(
+        host_maintenance,
+        "run_preflight",
+        return_value={"phase": "preflight", "manifest_location": str(manifest)},
+    )
+    checkpoint = mocker.patch.object(host_maintenance, "append_checkpoint")
+    args = _args(
+        tmp_path,
+        "preflight",
+        manifest=None,
+        output_dir=tmp_path,
+        console_access_verified=True,
+    )
+
+    result = host_maintenance.run(args)
+
+    assert result["phase"] == "preflight"
+    run_preflight.assert_called_once_with(tmp_path, console_access_verified=True)
+    checkpoint.assert_called_once_with(args.checkpoint, "preflight", str(manifest))

@@ -1202,6 +1202,12 @@ syncs, checkpoints `rebooting`, and then invokes systemd. A post-boot replay
 must observe a different boot ID before it records `rebooted`; command return
 alone is never treated as reboot evidence.
 
+**Stage 2 ordering slice built 2026-08-25:** `plan` emits the canonical local
+procedure through `begin-validation` without executing commands, `drain` matches
+the plan's public command name while retaining `begin-drain` compatibility, and
+preflight now checkpoints only after its evidence bundle exists. Tests pin the
+phase order and prove Stage 2 has no implicit or exposed `complete` path.
+
 **Durable-history slice built 2026-08-25:** V044 adds the append-only
 `staging.coordination_state_events` record, every native and compatibility-
 facade state mutation writes exactly one event in the same transaction, and the
