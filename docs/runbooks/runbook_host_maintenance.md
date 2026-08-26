@@ -555,6 +555,12 @@ and is not the durable transition history: V044's
 `staging.coordination_state_events` records each mutation in the same database
 transaction and the existing staging-event processor archives those rows.
 
+The running-set manifest is also executable restore authority, not just an
+inventory. The client derives an exact per-project plan from containers recorded
+as running, including required Compose profiles. It refuses a manifest that
+marks a one-shot, on-demand, deliberately paused, or foreign service as running;
+it never discovers restore targets by walking the filesystem.
+
 Run the checked-in preflight after verifying Oracle Cloud console access. It is
 observation-only: it does not refresh apt, stop a service, install a package, or
 change coordination state.

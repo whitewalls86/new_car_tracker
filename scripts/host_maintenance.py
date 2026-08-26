@@ -23,6 +23,7 @@ CHECKPOINT_PHASES = frozenset({"requested", "draining", "active", "validating"})
 REPO_ROOT = Path(__file__).resolve().parent.parent
 RUNNING_SET_POLICY = REPO_ROOT / "maintenance-running-set.txt"
 logger = logging.getLogger(__name__)
+NON_RESTORABLE_POLICY_CLASSES = frozenset({"oneshot", "on-demand", "aux-paused", "aux-foreign"})
 CLI_LOG_FIELDS = (
     "generation",
     "prior_phase",
@@ -202,6 +203,96 @@ def _parse_running_set_policy(path: Path = RUNNING_SET_POLICY) -> dict[str, str]
             raise MaintenanceError(f"malformed running-set policy line: {line!r}")
         entries[fields[0]] = fields[1]
     return entries
+
+
+def load_running_set_manifest(path: Path) -> dict[str, Any]:
+    """Load one preflight manifest without following a replaceable symlink."""
+    if path.is_symlink():
+        raise MaintenanceError("running-set manifest must not be a symlink")
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise MaintenanceError(f"unable to read running-set manifest at {path}") from exc
+    if not isinstance(manifest, dict) or manifest.get("schema_version") != 1:
+        raise MaintenanceError("running-set manifest has an unsupported schema")
+    if not isinstance(manifest.get("containers"), list) or not isinstance(
+        manifest.get("compose_projects"), dict
+    ):
+        raise MaintenanceError("running-set manifest is missing restore records")
+    return manifest
+
+
+def build_running_set_plan(manifest: dict[str, Any]) -> list[dict[str, Any]]:
+    """Derive the exact Compose stop/start plan from captured running state."""
+    grouped: dict[str, dict[str, set[str]]] = {}
+    seen: set[tuple[str, str]] = set()
+    for container in manifest["containers"]:
+        if not isinstance(container, dict):
+            raise MaintenanceError("running-set manifest contains a malformed container")
+        if not (container.get("state") or {}).get("running"):
+            continue
+        project = container.get("project")
+        service = container.get("service")
+        if (
+            not isinstance(project, str)
+            or not project
+            or not isinstance(service, str)
+            or not service
+        ):
+            raise MaintenanceError("running container lacks Compose project/service identity")
+        identity = (project, service)
+        if identity in seen:
+            raise MaintenanceError(f"running-set manifest duplicates {project}/{service}")
+        seen.add(identity)
+        policy_class = container.get("policy_class")
+        if policy_class in NON_RESTORABLE_POLICY_CLASSES:
+            raise MaintenanceError(
+                f"{project}/{service} is running despite policy class {policy_class}"
+            )
+        profiles = container.get("declared_profiles") or []
+        if not isinstance(profiles, list) or not all(
+            isinstance(profile, str) and profile for profile in profiles
+        ):
+            raise MaintenanceError(f"{project}/{service} has malformed Compose profiles")
+        group = grouped.setdefault(project, {"services": set(), "profiles": set()})
+        group["services"].add(service)
+        group["profiles"].update(profiles)
+
+    plan = []
+    for project, selected in sorted(grouped.items()):
+        project_record = manifest["compose_projects"].get(project)
+        if not isinstance(project_record, dict):
+            raise MaintenanceError(f"running project {project} has no Compose source record")
+        working_directory = project_record.get("working_directory")
+        config_files = project_record.get("config_files")
+        if not isinstance(working_directory, str) or not working_directory:
+            raise MaintenanceError(f"running project {project} has no working directory")
+        if (
+            not isinstance(config_files, list)
+            or not config_files
+            or not all(isinstance(config_file, str) and config_file for config_file in config_files)
+        ):
+            raise MaintenanceError(f"running project {project} has no Compose files")
+        command_prefix = ["docker", "compose", "--project-name", project]
+        for config_file in config_files:
+            command_prefix.extend(("--file", config_file))
+        for profile in sorted(selected["profiles"]):
+            command_prefix.extend(("--profile", profile))
+        services = sorted(selected["services"])
+        plan.append(
+            {
+                "project": project,
+                "working_directory": working_directory,
+                "config_files": config_files,
+                "profiles": sorted(selected["profiles"]),
+                "services": services,
+                "stop_command": [*command_prefix, "stop", *services],
+                "start_command": [*command_prefix, "start", *services],
+            }
+        )
+    if not plan:
+        raise MaintenanceError("running-set manifest contains no running Compose services")
+    return plan
 
 
 def _split_compose_paths(raw: str, working_dir: Path) -> tuple[Path, ...]:

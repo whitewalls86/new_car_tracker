@@ -385,6 +385,123 @@ def test_capture_running_set_refuses_an_empty_host(mocker):
         host_maintenance.capture_running_set()
 
 
+def _round_trip_manifest():
+    return {
+        "schema_version": 1,
+        "compose_projects": {
+            "cartracker": {
+                "working_directory": "/opt/cartracker",
+                "config_files": ["/opt/cartracker/docker-compose.yml"],
+            },
+            "cartracker-mlflow": {
+                "working_directory": "/opt/cartracker",
+                "config_files": ["/opt/cartracker/docker-compose.mlflow.yml"],
+            },
+        },
+        "containers": [
+            {
+                "project": "cartracker",
+                "service": "ops",
+                "declared_profiles": [],
+                "policy_class": None,
+                "state": {"running": True},
+            },
+            {
+                "project": "cartracker",
+                "service": "trawl",
+                "declared_profiles": ["trawl"],
+                "policy_class": "profile-running",
+                "state": {"running": True},
+            },
+            {
+                "project": "cartracker",
+                "service": "flyway",
+                "declared_profiles": [],
+                "policy_class": "oneshot",
+                "state": {"running": False},
+            },
+            {
+                "project": "cartracker",
+                "service": "dbt",
+                "declared_profiles": ["tools"],
+                "policy_class": "on-demand",
+                "state": {"running": False},
+            },
+            {
+                "project": "cartracker-mlflow",
+                "service": "mlflow",
+                "declared_profiles": [],
+                "policy_class": "aux-paused",
+                "state": {"running": False},
+            },
+        ],
+    }
+
+
+def test_running_set_plan_round_trips_default_profile_and_stopped_services():
+    plan = host_maintenance.build_running_set_plan(_round_trip_manifest())
+
+    assert len(plan) == 1
+    assert plan[0]["project"] == "cartracker"
+    assert plan[0]["services"] == ["ops", "trawl"]
+    assert plan[0]["profiles"] == ["trawl"]
+    assert plan[0]["stop_command"] == [
+        "docker",
+        "compose",
+        "--project-name",
+        "cartracker",
+        "--file",
+        "/opt/cartracker/docker-compose.yml",
+        "--profile",
+        "trawl",
+        "stop",
+        "ops",
+        "trawl",
+    ]
+    assert plan[0]["start_command"][-3:] == ["start", "ops", "trawl"]
+    assert "flyway" not in plan[0]["services"]
+    assert "dbt" not in plan[0]["services"]
+    assert all(item["project"] != "cartracker-mlflow" for item in plan)
+
+
+@pytest.mark.parametrize("policy_class", sorted(host_maintenance.NON_RESTORABLE_POLICY_CLASSES))
+def test_running_set_plan_refuses_non_restorable_service_marked_running(policy_class):
+    manifest = _round_trip_manifest()
+    container = next(
+        (row for row in manifest["containers"] if row["policy_class"] == policy_class),
+        None,
+    )
+    if container is None:
+        container = {
+            "project": "cartracker",
+            "service": "foreign-test-service",
+            "declared_profiles": [],
+            "policy_class": policy_class,
+            "state": {"running": True},
+        }
+        manifest["containers"].append(container)
+    else:
+        container["state"]["running"] = True
+
+    with pytest.raises(host_maintenance.MaintenanceError, match="despite policy"):
+        host_maintenance.build_running_set_plan(manifest)
+
+
+def test_load_running_set_manifest_rejects_unknown_schema(tmp_path):
+    manifest = tmp_path / "running-set.json"
+    manifest.write_text(json.dumps({"schema_version": 2}), encoding="utf-8")
+    with pytest.raises(host_maintenance.MaintenanceError, match="unsupported schema"):
+        host_maintenance.load_running_set_manifest(manifest)
+
+
+def test_load_running_set_manifest_rejects_symlink(mocker, tmp_path):
+    manifest = tmp_path / "running-set.json"
+    mocker.patch.object(Path, "is_symlink", autospec=True, return_value=True)
+
+    with pytest.raises(host_maintenance.MaintenanceError, match="symlink"):
+        host_maintenance.load_running_set_manifest(manifest)
+
+
 def test_collect_preflight_enforces_lock_audit_and_hold_contract(mocker):
     def fake_run(command, **kwargs):
         stdout = "docker.io\n" if command == ("apt-mark", "showhold") else ""

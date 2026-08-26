@@ -1166,6 +1166,13 @@ Compose identity, profiles, image IDs/digests, runtime/health state, restart
 policy, and Docker log configuration without persisting interpolated environment
 variables. Stop, update, reboot, restore, and complete remain absent.
 
+**Running-set round-trip slice built 2026-08-25:** the client derives an exact
+per-project stop/start plan from that manifest. Only services captured as
+running are selected; profile-gated services retain their required Compose
+profiles, while one-shot, on-demand, deliberately paused, and foreign services
+remain excluded. Contradictory manifests fail closed. Unit coverage round-trips
+default, profile-running, one-shot, on-demand, and paused auxiliary examples.
+
 **Durable-history slice built 2026-08-25:** V044 adds the append-only
 `staging.coordination_state_events` record, every native and compatibility-
 facade state mutation writes exactly one event in the same transaction, and the
