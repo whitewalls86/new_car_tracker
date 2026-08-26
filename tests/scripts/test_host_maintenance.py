@@ -318,6 +318,128 @@ def test_complete_records_completion_checkpoint(mocker, tmp_path):
     checkpoint.assert_called_once_with(_args(tmp_path, "complete").checkpoint, "complete", "/tmp/m")
 
 
+def _restore_apt_args():
+    return Namespace(
+        checkpoint=Path("/checkpoint.jsonl"),
+        manifest="/var/lib/cartracker/maintenance/running-set.json",
+        package_plan=Path("/package-plan.json"),
+        confirm_plan="digest",
+    )
+
+
+def _restore_apt_evidence():
+    return {
+        "apt_automation_masked": True,
+        "apt_unit_states_before": {
+            "apt-daily.timer": "enabled",
+            "apt-daily-upgrade.timer": "disabled",
+            "unattended-upgrades.service": "enabled",
+        },
+    }
+
+
+def test_restore_apt_automation_refuses_before_resume_gate(mocker):
+    args = _restore_apt_args()
+    run_command = mocker.patch.object(host_maintenance, "_run_command")
+    mocker.patch.object(
+        host_maintenance,
+        "latest_checkpoint",
+        return_value={"phase": "validating", "manifest_location": args.manifest},
+    )
+
+    with pytest.raises(host_maintenance.MaintenanceError, match="resume gate"):
+        host_maintenance.restore_apt_automation(args)
+
+    run_command.assert_not_called()
+
+
+def test_restore_apt_automation_restores_recorded_units_and_verifies(mocker):
+    args = _restore_apt_args()
+    states = _restore_apt_evidence()["apt_unit_states_before"]
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        if command[:2] == ("systemctl", "is-enabled"):
+            return _command(f"{states[command[2]]}\n")
+        if command == ("apt-mark", "showhold"):
+            return _command("docker.io\n")
+        return _command()
+
+    mocker.patch.object(
+        host_maintenance,
+        "latest_checkpoint",
+        return_value={"phase": "complete", "manifest_location": args.manifest},
+    )
+    mocker.patch.object(
+        host_maintenance, "load_package_plan", return_value=({"holds": ["docker.io"]}, "digest")
+    )
+    mocker.patch.object(
+        host_maintenance, "_read_existing_update_evidence", return_value=_restore_apt_evidence()
+    )
+    mocker.patch.object(host_maintenance, "_run_command", side_effect=fake_run)
+
+    result = host_maintenance.restore_apt_automation(args)
+
+    assert ("sudo", "systemctl", "unmask", *host_maintenance.APT_CONTROL_UNITS) in calls
+    assert ("sudo", "systemctl", "enable", "apt-daily.timer") in calls
+    assert ("sudo", "systemctl", "disable", "apt-daily-upgrade.timer") in calls
+    assert ("sudo", "systemctl", "enable", "unattended-upgrades.service") in calls
+    assert result == {
+        "phase": "complete",
+        "apt_automation_restored": True,
+        "apt_unit_states": states,
+        "holds": ["docker.io"],
+    }
+
+
+def test_restore_apt_automation_fails_closed_when_enablement_does_not_restore(mocker):
+    args = _restore_apt_args()
+    mocker.patch.object(
+        host_maintenance,
+        "latest_checkpoint",
+        return_value={"phase": "complete", "manifest_location": args.manifest},
+    )
+    mocker.patch.object(
+        host_maintenance, "load_package_plan", return_value=({"holds": ["docker.io"]}, "digest")
+    )
+    mocker.patch.object(
+        host_maintenance, "_read_existing_update_evidence", return_value=_restore_apt_evidence()
+    )
+    mocker.patch.object(host_maintenance, "_run_command", return_value=_command("disabled\n"))
+
+    with pytest.raises(host_maintenance.MaintenanceError, match="did not restore"):
+        host_maintenance.restore_apt_automation(args)
+
+
+def test_restore_apt_automation_rechecks_reviewed_hold_set(mocker):
+    args = _restore_apt_args()
+    states = _restore_apt_evidence()["apt_unit_states_before"]
+
+    def fake_run(command, **kwargs):
+        if command[:2] == ("systemctl", "is-enabled"):
+            return _command(f"{states[command[2]]}\n")
+        if command == ("apt-mark", "showhold"):
+            return _command("different-package\n")
+        return _command()
+
+    mocker.patch.object(
+        host_maintenance,
+        "latest_checkpoint",
+        return_value={"phase": "complete", "manifest_location": args.manifest},
+    )
+    mocker.patch.object(
+        host_maintenance, "load_package_plan", return_value=({"holds": ["docker.io"]}, "digest")
+    )
+    mocker.patch.object(
+        host_maintenance, "_read_existing_update_evidence", return_value=_restore_apt_evidence()
+    )
+    mocker.patch.object(host_maintenance, "_run_command", side_effect=fake_run)
+
+    with pytest.raises(host_maintenance.MaintenanceError, match="holds changed"):
+        host_maintenance.restore_apt_automation(args)
+
+
 def test_checkpoint_refuses_symlink(mocker, tmp_path):
     mocker.patch.object(host_maintenance, "checkpoint_record", return_value={})
     link = tmp_path / "history"
@@ -533,10 +655,11 @@ def test_parser_exposes_guarded_complete_command():
         "begin-validation",
         "validate-host",
         "complete",
+        "restore-apt-automation",
     }
 
 
-def test_dry_run_plan_has_canonical_order_through_complete(mocker, tmp_path):
+def test_dry_run_plan_has_canonical_order_through_apt_restoration(mocker, tmp_path):
     run_command = mocker.patch.object(host_maintenance, "_run_command")
 
     result = host_maintenance.run(_args(tmp_path, "plan", manifest=None))
@@ -556,10 +679,11 @@ def test_dry_run_plan_has_canonical_order_through_complete(mocker, tmp_path):
             "begin-validation",
             "validate-host",
             "complete",
+            "restore-apt-automation",
         ],
         "complete_implicit": False,
     }
-    assert result["commands"][-1] == "complete"
+    assert result["commands"][-1] == "restore-apt-automation"
     run_command.assert_not_called()
 
 

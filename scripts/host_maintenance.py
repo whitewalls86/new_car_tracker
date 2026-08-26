@@ -65,6 +65,7 @@ HOST_MAINTENANCE_PROCEDURE = (
     "begin-validation",
     "validate-host",
     "complete",
+    "restore-apt-automation",
 )
 HOST_DISK_FLOORS = {
     "bytes_available": 10 * 1024 * 1024 * 1024,
@@ -1253,6 +1254,57 @@ def apply_package_plan(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def restore_apt_automation(args: argparse.Namespace) -> dict[str, Any]:
+    """Restore the apt controls only after the resume gate has completed."""
+    checkpoint = latest_checkpoint(args.checkpoint)
+    if checkpoint.get("phase") != "complete":
+        raise MaintenanceError(
+            "cannot restore apt automation before the resume gate has passed"
+        )
+    if checkpoint.get("manifest_location") != args.manifest:
+        raise MaintenanceError("checkpoint manifest does not match --manifest")
+
+    plan_path = Path(args.package_plan)
+    plan, digest = load_package_plan(plan_path, args.confirm_plan)
+    evidence = _read_existing_update_evidence(plan_path.with_name("update-result.json"), digest)
+    if evidence is None or evidence.get("apt_automation_masked") is not True:
+        raise MaintenanceError("package plan has no masked apt automation evidence")
+    states = evidence.get("apt_unit_states_before")
+    if not isinstance(states, dict) or set(states) != set(APT_CONTROL_UNITS):
+        raise MaintenanceError("update evidence has incomplete apt unit enablement states")
+    if any(state not in {"enabled", "disabled"} for state in states.values()):
+        raise MaintenanceError("update evidence has unsupported apt unit enablement states")
+
+    _run_command(("sudo", "systemctl", "unmask", *APT_CONTROL_UNITS))
+    for unit in APT_CONTROL_UNITS:
+        action = "enable" if states[unit] == "enabled" else "disable"
+        _run_command(("sudo", "systemctl", action, unit))
+
+    verified_states = {}
+    for unit in APT_CONTROL_UNITS:
+        observed = _run_command(
+            ("systemctl", "is-enabled", unit),
+            allowed_returncodes=frozenset({0, 1, 3, 4}),
+        )["stdout"].strip()
+        verified_states[unit] = observed
+        if observed != states[unit]:
+            raise MaintenanceError(f"apt automation unit did not restore: {unit}")
+
+    holds = sorted(
+        line.strip()
+        for line in _run_command(("apt-mark", "showhold"))["stdout"].splitlines()
+        if line.strip()
+    )
+    if holds != sorted(plan.get("holds") or []):
+        raise MaintenanceError("package holds changed before apt automation restoration")
+    return {
+        "phase": "complete",
+        "apt_automation_restored": True,
+        "apt_unit_states": verified_states,
+        "holds": holds,
+    }
+
+
 def run_reboot_boundary(args: argparse.Namespace) -> dict[str, Any]:
     """Initiate an explicitly confirmed reboot or prove it completed on replay."""
     checkpoint = latest_checkpoint(args.checkpoint)
@@ -1576,6 +1628,9 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("begin-validation")
     complete = subparsers.add_parser("complete")
     complete.add_argument("--confirm-complete", action="store_true")
+    restore_apt = subparsers.add_parser("restore-apt-automation")
+    restore_apt.add_argument("--package-plan", type=Path, required=True)
+    restore_apt.add_argument("--confirm-plan", required=True)
     return parser
 
 
@@ -1613,12 +1668,15 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "begin-validation",
         "validate-host",
         "complete",
+        "restore-apt-automation",
     }:
         if not args.manifest:
             raise MaintenanceError("--manifest is required for state transitions")
 
     if args.command == "validate-host":
         return run_validate_host(args)
+    if args.command == "restore-apt-automation":
+        return restore_apt_automation(args)
 
     if args.command == "status":
         return api_request(args.api_url, "GET", "/coordination/status")
@@ -1656,7 +1714,11 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "complete": ("/coordination/complete", "none"),
     }
     route, phase = routes[args.command]
-    payload = {"confirm_complete": True} if args.command == "complete" and args.confirm_complete else None
+    payload = (
+        {"confirm_complete": True}
+        if args.command == "complete" and args.confirm_complete
+        else None
+    )
     if args.command == "complete" and payload is None:
         raise MaintenanceError("--confirm-complete is required")
     return transition(
