@@ -40,7 +40,7 @@ Five findings, all on the Stages 0-3 commit, all fixed before deploy.
 3. **The contract-violation panel could not fire.** It counted `level=""` in
    Loki for services whose Promtail stages drop `level=""` — the malformed
    record it existed to surface never reaches Loki, so it read 0 and looked
-   green. That count exists only in `promtail_dropped_lines_total`, and Promtail
+   green. That count exists only in `logentry_dropped_lines_total`, and Promtail
    was not a Prometheus target at all. It is now scrape job `promtail`, inside
    `ct-service-down`'s job set, and the panel reads the drop counter. A second
    panel charts drops by reason, which is what success criterion 2 asks for.
@@ -258,7 +258,7 @@ Deploy by recreating Promtail only unless a Compose label changes. Afterward:
    fixtures for the shapes the parser most needs to catch are upstream defaults
    rather than observed lines. Tail each of the three containers and check that
    nothing carrying a severity is landing in
-   `promtail_dropped_lines_total{reason="airflow_unclassified_control_plane"}`;
+   `logentry_dropped_lines_total{reason="airflow_unclassified_control_plane"}`;
    that counter is now scraped, so this is a query rather than a log read.
 8. Decide from the measured stdout volume whether Airflow and oauth2-proxy
    belong in `ct-log-error-spike`, and at what threshold. They were deliberately
