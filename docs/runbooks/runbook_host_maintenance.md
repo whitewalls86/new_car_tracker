@@ -617,8 +617,9 @@ runtime package cannot silently age outside the reviewed transaction.
 SHA-256 printed by preparation. The three confirmation flags attest that the
 operator intends installation and has reviewed release notes and every named
 compatibility boundary. The command records and masks apt automation, applies
-only pinned versions, audits dpkg, verifies the installed versions, syncs, and
-leaves automation masked for restoration only after the Stage 3 resume gate.
+only pinned versions, rechecks locks before masking, audits dpkg, verifies the
+installed versions and hold set, syncs, and leaves automation masked for
+restoration only after the Stage 3 resume gate.
 
 The first `reboot` invocation syncs and writes `rebooting` before asking systemd
 to reboot; it does not claim success when that command returns. After reconnect,

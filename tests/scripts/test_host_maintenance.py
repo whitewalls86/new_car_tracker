@@ -390,6 +390,7 @@ def _write_package_plan(tmp_path):
             }
         ],
         "compatibility_boundaries": ["container_runtime"],
+        "holds": ["docker.io"],
         "apply_command": [
             "sudo",
             "apt-get",
@@ -428,11 +429,16 @@ def test_apply_package_plan_requires_digest_reviews_masks_and_audits(mocker, tmp
     def fake_run(command, **kwargs):
         calls.append(command)
         stdout = ""
+        returncode = 0
         if command[:2] == ("systemctl", "is-enabled"):
             stdout = "enabled\n"
         elif command[:2] == ("dpkg-query", "--show"):
             stdout = "docker.io\t29.1\n"
-        return {"stdout": stdout, "stderr": "", "returncode": 0}
+        elif command == ("apt-mark", "showhold"):
+            stdout = "docker.io\n"
+        elif command[:2] == ("sudo", "fuser"):
+            returncode = 1
+        return {"stdout": stdout, "stderr": "", "returncode": returncode}
 
     mocker.patch.object(host_maintenance, "_run_command", side_effect=fake_run)
 
@@ -449,6 +455,7 @@ def test_apply_package_plan_requires_digest_reviews_masks_and_audits(mocker, tmp
     assert evidence["apt_automation_masked"] is True
     assert set(evidence["apt_unit_states_before"].values()) == {"enabled"}
     assert evidence["installed_versions"] == {"docker.io": "29.1"}
+    assert evidence["holds_after"] == ["docker.io"]
     checkpoint.assert_called_once_with(args.checkpoint, "updated", args.manifest)
 
 
@@ -483,6 +490,44 @@ def test_apply_package_plan_refuses_missing_authority(mocker, tmp_path, override
         host_maintenance.run(args)
 
     run_command.assert_not_called()
+
+
+def test_apply_package_plan_refuses_live_package_manager_lock(mocker, tmp_path):
+    plan_path, digest = _write_package_plan(tmp_path)
+    args = _args(
+        tmp_path,
+        "update",
+        package_plan=plan_path,
+        confirm_plan=digest,
+        confirm_apply=True,
+        release_notes_reviewed=True,
+        compatibility_reviewed=True,
+    )
+    mocker.patch.object(
+        host_maintenance,
+        "latest_checkpoint",
+        return_value={"phase": "stopped", "manifest_location": args.manifest},
+    )
+    commands = []
+
+    def fake_run(command, **kwargs):
+        commands.append(command)
+        return {"stdout": "apt-owner", "stderr": "", "returncode": 0}
+
+    mocker.patch.object(host_maintenance, "_run_command", side_effect=fake_run)
+
+    with pytest.raises(host_maintenance.MaintenanceError, match="lock is held"):
+        host_maintenance.run(args)
+
+    assert commands == [
+        (
+            "sudo",
+            "fuser",
+            "/var/lib/dpkg/lock-frontend",
+            "/var/lib/apt/lists/lock",
+            "/var/cache/apt/archives/lock",
+        )
+    ]
 
 
 def _reboot_args(tmp_path, *, confirm_reboot):

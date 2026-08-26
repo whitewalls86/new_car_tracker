@@ -1192,7 +1192,8 @@ kernel, SSH, and network compatibility boundaries for review before `update`.
 apply, release-note, and compatibility-review confirmations. It records the apt
 automation enablement state, masks the timers and unattended-upgrade service,
 applies only the pinned argv, verifies installed versions and `dpkg --audit`,
-syncs filesystems, writes `update-result.json`, and only then checkpoints
+rechecks apt/dpkg locks immediately before masking, proves the reviewed hold set
+survived, syncs filesystems, writes `update-result.json`, and only then checkpoints
 `updated`. Apt automation intentionally remains masked until the Stage 3 resume
 gate has passed.
 

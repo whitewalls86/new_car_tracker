@@ -779,6 +779,25 @@ def _read_existing_update_evidence(path: Path, plan_sha256: str) -> dict[str, An
     return evidence
 
 
+def assert_package_manager_idle() -> None:
+    """Fail closed rather than stopping automation during an apt/dpkg transaction."""
+    locks = _run_command(
+        (
+            "sudo",
+            "fuser",
+            "/var/lib/dpkg/lock-frontend",
+            "/var/lib/apt/lists/lock",
+            "/var/cache/apt/archives/lock",
+        ),
+        allowed_returncodes=frozenset({0, 1}),
+    )
+    if locks["returncode"] == 0:
+        raise MaintenanceError("apt/dpkg lock is held; refusing to interrupt its owner")
+    audit = _run_command(("sudo", "dpkg", "--audit"))
+    if audit["stdout"].strip():
+        raise MaintenanceError("dpkg --audit reported an inconsistent package database")
+
+
 def apply_package_plan(args: argparse.Namespace) -> dict[str, Any]:
     """Apply one confirmed offline transaction and leave apt automation masked."""
     checkpoint = latest_checkpoint(args.checkpoint)
@@ -801,6 +820,7 @@ def apply_package_plan(args: argparse.Namespace) -> dict[str, Any]:
     evidence_path = plan_path.with_name("update-result.json")
     existing = _read_existing_update_evidence(evidence_path, digest)
     unit_states = (existing or {}).get("apt_unit_states_before", {})
+    assert_package_manager_idle()
     if not unit_states:
         for unit in APT_CONTROL_UNITS:
             state = _run_command(
@@ -835,6 +855,13 @@ def apply_package_plan(args: argparse.Namespace) -> dict[str, Any]:
         if installed_versions != expected_versions:
             raise MaintenanceError("installed package versions differ from the confirmed plan")
 
+    holds_result = _run_command(("apt-mark", "showhold"))
+    holds_after = sorted(
+        line.strip() for line in holds_result["stdout"].splitlines() if line.strip()
+    )
+    if holds_after != sorted(plan.get("holds") or []):
+        raise MaintenanceError("package holds changed during the confirmed transaction")
+
     _run_command(("sync",))
     evidence = {
         "schema_version": 1,
@@ -844,6 +871,7 @@ def apply_package_plan(args: argparse.Namespace) -> dict[str, Any]:
         "apt_unit_states_before": unit_states,
         "apt_automation_masked": True,
         "installed_versions": installed_versions,
+        "holds_after": holds_after,
         "running_kernel": _running_kernel(),
     }
     _safe_json_write(evidence_path, evidence)
