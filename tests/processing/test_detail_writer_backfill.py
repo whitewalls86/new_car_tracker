@@ -30,10 +30,19 @@ def test_active_backfill_uses_only_silver_and_historical_event(monkeypatch):
 
     rows = []
     monkeypatch.setattr(detail_writer, "db_cursor", cursor)
-    monkeypatch.setattr(detail_writer, "write_silver_observations_with_cursor", lambda c, value: rows.extend(value) or 1)
+    monkeypatch.setattr(
+        detail_writer,
+        "write_silver_observations_with_cursor",
+        lambda c, value: rows.extend(value) or 1,
+    )
     result = detail_writer.write_detail_active(
-        _primary(), [{"listing_id": "carousel"}], 9,
-        datetime(2026, 4, 21, tzinfo=timezone.utc), "listing", None, backfill=True,
+        _primary(),
+        [{"listing_id": "carousel"}],
+        9,
+        datetime(2026, 4, 21, tzinfo=timezone.utc),
+        "listing",
+        None,
+        backfill=True,
     )
 
     assert result["backfill"] is True
@@ -54,7 +63,12 @@ def test_unlisted_backfill_never_looks_up_or_mutates_live_state(monkeypatch):
     monkeypatch.setattr(detail_writer, "db_cursor", cursor)
     monkeypatch.setattr(detail_writer, "write_silver_observations_with_cursor", lambda _c, _rows: 1)
     result = detail_writer.write_detail_unlisted(
-        _primary(), 9, datetime(2026, 4, 21, tzinfo=timezone.utc), "listing", None, backfill=True,
+        _primary(),
+        9,
+        datetime(2026, 4, 21, tzinfo=timezone.utc),
+        "listing",
+        None,
+        backfill=True,
     )
 
     assert result["deleted"] is True

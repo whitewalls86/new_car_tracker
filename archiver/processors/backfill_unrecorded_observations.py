@@ -4,6 +4,7 @@ This module deliberately has no queue, pack, or sidecar write capability.  A
 manifest is an immutable projection of the April ledger; replaying it only
 reads source HTML and, with explicit approval, appends historical rows.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -66,7 +67,8 @@ def process_row(row: Dict[str, Any], ledger_fingerprint: str, *, apply: bool) ->
     if actual_hash != row["sha256"]:
         raise BackfillRefusal("source bytes sha256 does not match manifest")
     primary, _carousel, _meta = parse_cars_detail_page_html_v1(
-        raw.decode("utf-8", errors="replace"), row.get("url"),
+        raw.decode("utf-8", errors="replace"),
+        row.get("url"),
     )
     if primary.get("listing_id") != str(row["listing_id"]):
         raise BackfillRefusal("parsed listing_id does not match manifest identity")
@@ -76,12 +78,25 @@ def process_row(row: Dict[str, Any], ledger_fingerprint: str, *, apply: bool) ->
     outcome = {"listing_id": str(row["listing_id"]), "state": state, "written": False}
     if apply:
         writer = write_detail_unlisted if state == "unlisted" else write_detail_active
-        result = writer(
-            primary, int(row["artifact_id"]), _parse_time(row["fetched_at"]),
-            str(row["listing_id"]), None, backfill=True,
-        ) if state == "unlisted" else writer(
-            primary, [], int(row["artifact_id"]), _parse_time(row["fetched_at"]),
-            str(row["listing_id"]), None, backfill=True,
+        result = (
+            writer(
+                primary,
+                int(row["artifact_id"]),
+                _parse_time(row["fetched_at"]),
+                str(row["listing_id"]),
+                None,
+                backfill=True,
+            )
+            if state == "unlisted"
+            else writer(
+                primary,
+                [],
+                int(row["artifact_id"]),
+                _parse_time(row["fetched_at"]),
+                str(row["listing_id"]),
+                None,
+                backfill=True,
+            )
         )
         outcome.update(result)
         outcome["written"] = True
@@ -89,7 +104,11 @@ def process_row(row: Dict[str, Any], ledger_fingerprint: str, *, apply: bool) ->
 
 
 def run_manifest(
-    rows: Iterable[Dict[str, Any]], *, ledger_fingerprint: str, apply: bool, cap: int,
+    rows: Iterable[Dict[str, Any]],
+    *,
+    ledger_fingerprint: str,
+    apply: bool,
+    cap: int,
 ) -> Dict[str, Any]:
     if cap < 1:
         raise ValueError("cap must be at least one")
@@ -121,11 +140,25 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--apply", action="store_true", help="append historical rows")
     args = parser.parse_args(argv)
     rows = load_manifest(args.manifest, args.manifest_fingerprint)
-    receipt = run_manifest(rows, ledger_fingerprint=args.ledger_fingerprint, apply=args.apply, cap=args.cap)
-    receipt.update({"ledger_fingerprint": args.ledger_fingerprint,
-                    "manifest_fingerprint": args.manifest_fingerprint})
+    receipt = run_manifest(
+        rows, ledger_fingerprint=args.ledger_fingerprint, apply=args.apply, cap=args.cap
+    )
+    receipt.update(
+        {
+            "ledger_fingerprint": args.ledger_fingerprint,
+            "manifest_fingerprint": args.manifest_fingerprint,
+        }
+    )
     args.receipt.write_text(json.dumps(receipt, indent=2, sort_keys=True, default=str) + "\n")
-    print(json.dumps({key: receipt.get(key, 0) for key in ("attempted", "written", "dry_run", "refused", "failed")}, sort_keys=True))
+    print(
+        json.dumps(
+            {
+                key: receipt.get(key, 0)
+                for key in ("attempted", "written", "dry_run", "refused", "failed")
+            },
+            sort_keys=True,
+        )
+    )
     return 1 if receipt.get("failed") or receipt.get("refused") else 0
 
 

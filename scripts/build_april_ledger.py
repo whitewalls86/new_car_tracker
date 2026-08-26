@@ -3,6 +3,7 @@
 The production adapter may stream Parquet row groups into ``build_ledger``;
 the core is deliberately pure so fixture corpora exercise the same invariants.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -12,14 +13,32 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Sequence
 
-
 LEDGER_COLUMNS = (
-    "legacy_key", "row_group", "row_offset", "artifact_id", "run_id", "source",
-    "search_key", "search_scope", "listing_id", "url", "fetched_at", "http_status",
-    "content_length", "legacy_object_size", "legacy_etag", "legacy_last_modified",
-    "stored_sha256", "sha256",
-    "hash_matches_stored", "source_key", "pack_key", "sidecar_key", "raw_sha256",
-    "disposition", "unresolved_reason",
+    "legacy_key",
+    "row_group",
+    "row_offset",
+    "artifact_id",
+    "run_id",
+    "source",
+    "search_key",
+    "search_scope",
+    "listing_id",
+    "url",
+    "fetched_at",
+    "http_status",
+    "content_length",
+    "legacy_object_size",
+    "legacy_etag",
+    "legacy_last_modified",
+    "stored_sha256",
+    "sha256",
+    "hash_matches_stored",
+    "source_key",
+    "pack_key",
+    "sidecar_key",
+    "raw_sha256",
+    "disposition",
+    "unresolved_reason",
 )
 
 
@@ -42,7 +61,9 @@ def _disposition(row: Dict[str, Any]) -> str:
     return "redundant"
 
 
-def build_ledger(legacy_rows: Iterable[Dict[str, Any]], sidecars: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def build_ledger(
+    legacy_rows: Iterable[Dict[str, Any]], sidecars: Iterable[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
     """Join legacy rows to sidecars by content hash, never by artifact ID."""
     sidecar_by_hash = {str(row["raw_sha256"]): row for row in sidecars if row.get("raw_sha256")}
     ledger: List[Dict[str, Any]] = []
@@ -61,10 +82,20 @@ def build_ledger(legacy_rows: Iterable[Dict[str, Any]], sidecars: Iterable[Dict[
             entry["unresolved_reason"] = "stored_sha256_mismatch"
         match = sidecar_by_hash.get(digest or "")
         if match:
-            entry.update({key: match.get(key) for key in ("source_key", "pack_key", "sidecar_key", "raw_sha256")})
+            entry.update(
+                {
+                    key: match.get(key)
+                    for key in ("source_key", "pack_key", "sidecar_key", "raw_sha256")
+                }
+            )
         entry["disposition"] = _disposition({**source, **entry})
         ledger.append(entry)
-    return sorted(ledger, key=lambda row: tuple(str(row.get(key) or "") for key in ("legacy_key", "row_group", "row_offset")))
+    return sorted(
+        ledger,
+        key=lambda row: tuple(
+            str(row.get(key) or "") for key in ("legacy_key", "row_group", "row_offset")
+        ),
+    )
 
 
 def _listed_keys(client: Any, bucket: str, prefix: str) -> Iterable[Dict[str, Any]]:
@@ -86,9 +117,16 @@ def iter_legacy_parquet_rows(client: Any, bucket: str, prefix: str) -> Iterable[
         parquet = pq.ParquetFile(io.BytesIO(body))
         for group in range(parquet.num_row_groups):
             for offset, row in enumerate(parquet.read_row_group(group).to_pylist()):
-                row.update({"legacy_key": key, "row_group": group, "row_offset": offset,
-                            "legacy_object_size": meta.get("Size"), "legacy_etag": meta.get("ETag"),
-                            "legacy_last_modified": meta.get("LastModified")})
+                row.update(
+                    {
+                        "legacy_key": key,
+                        "row_group": group,
+                        "row_offset": offset,
+                        "legacy_object_size": meta.get("Size"),
+                        "legacy_etag": meta.get("ETag"),
+                        "legacy_last_modified": meta.get("LastModified"),
+                    }
+                )
                 # The historical source column is HTML bytes, not its length.
                 row["content_bytes"] = row.get("html") or b""
                 yield row
@@ -121,8 +159,12 @@ def write_ledger(rows: Sequence[Dict[str, Any]], output: Path) -> str:
     fingerprint = canonical_fingerprint(normalized)
     report = {"rows": len(normalized), "dispositions": {}}
     for row in normalized:
-        report["dispositions"][row["disposition"]] = report["dispositions"].get(row["disposition"], 0) + 1
-    output.with_suffix(".report.json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
+        report["dispositions"][row["disposition"]] = (
+            report["dispositions"].get(row["disposition"], 0) + 1
+        )
+    output.with_suffix(".report.json").write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n"
+    )
     output.with_suffix(".sha256").write_text(fingerprint + "\n")
     return fingerprint
 
@@ -137,13 +179,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--bucket", help="object-store bucket (defaults to shared.minio.BUCKET)")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
-    if bool(args.legacy_json) != bool(args.sidecars_json) or bool(args.legacy_prefix) != bool(args.sidecar_prefix):
+    if bool(args.legacy_json) != bool(args.sidecars_json) or bool(args.legacy_prefix) != bool(
+        args.sidecar_prefix
+    ):
         parser.error("provide both fixture inputs or both production prefixes")
     if args.legacy_json:
         legacy_rows = json.loads(args.legacy_json.read_text())
         sidecars = json.loads(args.sidecars_json.read_text())
     else:
         from shared.minio import BUCKET, get_boto3_client
+
         client = get_boto3_client()
         bucket = args.bucket or BUCKET
         legacy_rows = iter_legacy_parquet_rows(client, bucket, args.legacy_prefix)
