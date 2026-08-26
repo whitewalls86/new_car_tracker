@@ -19,6 +19,7 @@ Unlisted path:
 
 403 path: handled at scrape time in scraper/processors/scrape_detail.py.
 """
+
 import logging
 import re
 from datetime import datetime
@@ -31,6 +32,7 @@ from processing.queries import (
     DELETE_PRICE_OBSERVATION,
     DELETE_PRICE_OBSERVATION_BY_VIN,
     GET_TRACKED_MODELS,
+    INSERT_BACKFILL_PRICE_OBSERVATION_EVENT,
     INSERT_BLOCKED_COOLDOWN_CLEARED_EVENT,
     INSERT_DETAIL_CLAIM_EVENT,
     INSERT_PRICE_OBSERVATION_EVENT,
@@ -40,7 +42,10 @@ from processing.queries import (
     UPSERT_PRICE_OBSERVATION,
     UPSERT_VIN_TO_LISTING,
 )
-from processing.writers.silver_writer import write_silver_observations_postgres
+from processing.writers.silver_writer import (
+    write_silver_observations_postgres,
+    write_silver_observations_with_cursor,
+)
 from shared.db import db_cursor
 
 logger = logging.getLogger(__name__)
@@ -67,7 +72,8 @@ def _get_tracked_models() -> Set[Tuple[str, str]]:
 
     allowed: Set[Tuple[str, str]] = set()
     with db_cursor(
-        error_context="detail: get_tracked_models", dict_cursor=True,
+        error_context="detail: get_tracked_models",
+        dict_cursor=True,
     ) as cur:
         cur.execute(GET_TRACKED_MODELS)
         for row in cur.fetchall():
@@ -85,7 +91,8 @@ def _carousel_matches_search_config(hint: Dict[str, Any]) -> bool:
     #   → make="honda", rest="cr-v hybrid sport touring awd"
     m = re.match(
         r"^(?:New|Used|Certified|CPO)\s+\d{4}\s+(\S+)\s+(.+)",
-        body, re.IGNORECASE,
+        body,
+        re.IGNORECASE,
     )
     if not m:
         return False
@@ -108,6 +115,7 @@ def _carousel_matches_search_config(hint: Dict[str, Any]) -> bool:
 # Main write paths
 # ---------------------------------------------------------------------------
 
+
 def _clear_cooldown(cur, listing_id: str) -> None:
     """Clear a listing's blocked_cooldown row and, if one was actually removed,
     emit a 'cleared' lifecycle event so mart_cooldown_cohorts drops it from the
@@ -115,10 +123,92 @@ def _clear_cooldown(cur, listing_id: str) -> None:
     cur.execute(CLEAR_BLOCKED_COOLDOWN, {"listing_id": listing_id})
     cleared = cur.fetchone()
     if cleared:
-        cur.execute(INSERT_BLOCKED_COOLDOWN_CLEARED_EVENT, {
-            "listing_id": listing_id,
-            "num_of_attempts": cleared[0],
-        })
+        cur.execute(
+            INSERT_BLOCKED_COOLDOWN_CLEARED_EVENT,
+            {
+                "listing_id": listing_id,
+                "num_of_attempts": cleared[0],
+            },
+        )
+
+
+_URL_PREFIX = "https://www.cars.com/vehicledetail/"
+
+
+def _detail_silver_row(
+    primary: Dict[str, Any],
+    artifact_id: int,
+    fetched_at: datetime,
+    listing_id: str,
+    vin: Optional[str],
+    listing_state: str,
+) -> Dict[str, Any]:
+    """Construct the primary detail silver row for normal and recovery writes."""
+    return {
+        "artifact_id": artifact_id,
+        "listing_id": listing_id,
+        "vin": vin,
+        "canonical_detail_url": f"{_URL_PREFIX}{listing_id}/",
+        "price": None if listing_state == "unlisted" else primary.get("price"),
+        "make": primary.get("make"),
+        "model": primary.get("model"),
+        "trim": primary.get("trim"),
+        "year": primary.get("year"),
+        "mileage": None if listing_state == "unlisted" else primary.get("mileage"),
+        "msrp": primary.get("msrp"),
+        "stock_type": primary.get("stock_type"),
+        "fuel_type": primary.get("fuel_type"),
+        "body_style": primary.get("body_style"),
+        "dealer_name": primary.get("dealer_name"),
+        "dealer_zip": primary.get("dealer_zip"),
+        "customer_id": primary.get("customer_id"),
+        "seller_id": primary.get("seller_id"),
+        "dealer_street": primary.get("dealer_street"),
+        "dealer_city": primary.get("dealer_city"),
+        "dealer_state": primary.get("dealer_state"),
+        "dealer_phone": primary.get("dealer_phone"),
+        "dealer_website": primary.get("dealer_website"),
+        "dealer_cars_com_url": primary.get("dealer_cars_com_url"),
+        "dealer_rating": primary.get("dealer_rating"),
+        "listing_state": listing_state,
+        "source": "detail",
+        "fetched_at": fetched_at,
+    }
+
+
+def _write_backfill_detail(
+    primary: Dict[str, Any],
+    artifact_id: int,
+    fetched_at: datetime,
+    listing_id: str,
+    listing_state: str,
+) -> Dict[str, Any]:
+    """Append exactly one historical silver row and its paired event atomically."""
+    vin = primary.get("vin")
+    row = _detail_silver_row(primary, artifact_id, fetched_at, listing_id, vin, listing_state)
+    with db_cursor(error_context=f"detail_backfill: writes artifact_id={artifact_id}") as cur:
+        silver_written = write_silver_observations_with_cursor(cur, [row])
+        cur.execute(
+            INSERT_BACKFILL_PRICE_OBSERVATION_EVENT,
+            {
+                "listing_id": listing_id,
+                "vin": vin,
+                "price": row["price"],
+                "make": primary.get("make"),
+                "model": primary.get("model"),
+                "artifact_id": artifact_id,
+                "event_type": "deleted" if listing_state == "unlisted" else "upserted",
+                "source": "detail",
+                "event_at": fetched_at,
+            },
+        )
+    return {
+        "deleted": listing_state == "unlisted",
+        "upserted": listing_state != "unlisted",
+        "vin": vin,
+        "silver_written": silver_written,
+        "backfill": True,
+    }
 
 
 def write_detail_active(
@@ -128,11 +218,16 @@ def write_detail_active(
     fetched_at: datetime,
     listing_id: str,
     run_id: Optional[str],
+    *,
+    backfill: bool = False,
 ) -> Dict[str, Any]:
     """
     Detail write path for active listings.
     Returns a summary dict.
     """
+    if backfill:
+        return _write_backfill_detail(primary, artifact_id, fetched_at, listing_id, "active")
+
     vin = primary.get("vin")
     events_to_emit: List[Tuple[str, ...]] = []
 
@@ -166,62 +261,79 @@ def write_detail_active(
                 vin_collision_deleted = True
                 previous_listing_id = str(old_listing_id)
                 # Event: old row deleted due to relisting
-                cur.execute(INSERT_PRICE_OBSERVATION_EVENT, {
-                    "listing_id": old_listing_id,
-                    "vin": vin,
-                    "price": None,
-                    "make": None,
-                    "model": None,
-                    "artifact_id": artifact_id,
-                    "event_type": "deleted",
-                    "source": "detail",
-                })
+                cur.execute(
+                    INSERT_PRICE_OBSERVATION_EVENT,
+                    {
+                        "listing_id": old_listing_id,
+                        "vin": vin,
+                        "price": None,
+                        "make": None,
+                        "model": None,
+                        "artifact_id": artifact_id,
+                        "event_type": "deleted",
+                        "source": "detail",
+                    },
+                )
                 logger.info(
                     "detail: VIN relisting detected vin=%s old=%s new=%s",
-                    vin, old_listing_id, listing_id,
+                    vin,
+                    old_listing_id,
+                    listing_id,
                 )
 
         # Step 3: Upsert primary price_observation
-        cur.execute(UPSERT_PRICE_OBSERVATION, {
-            "listing_id": listing_id,
-            "vin": vin,
-            "price": primary.get("price"),
-            "make": primary.get("make"),
-            "model": primary.get("model"),
-            "customer_id": primary.get("customer_id"),
-            "last_seen_at": fetched_at,
-            "last_artifact_id": artifact_id,
-            "last_detail_scraped_at": fetched_at,
-        })
+        cur.execute(
+            UPSERT_PRICE_OBSERVATION,
+            {
+                "listing_id": listing_id,
+                "vin": vin,
+                "price": primary.get("price"),
+                "make": primary.get("make"),
+                "model": primary.get("model"),
+                "customer_id": primary.get("customer_id"),
+                "last_seen_at": fetched_at,
+                "last_artifact_id": artifact_id,
+                "last_detail_scraped_at": fetched_at,
+            },
+        )
         # Event: primary price_observation upserted
-        cur.execute(INSERT_PRICE_OBSERVATION_EVENT, {
-            "listing_id": listing_id,
-            "vin": vin,
-            "price": primary.get("price"),
-            "make": primary.get("make"),
-            "model": primary.get("model"),
-            "artifact_id": artifact_id,
-            "event_type": "upserted",
-            "source": "detail",
-        })
+        cur.execute(
+            INSERT_PRICE_OBSERVATION_EVENT,
+            {
+                "listing_id": listing_id,
+                "vin": vin,
+                "price": primary.get("price"),
+                "make": primary.get("make"),
+                "model": primary.get("model"),
+                "artifact_id": artifact_id,
+                "event_type": "upserted",
+                "source": "detail",
+            },
+        )
 
         # Step 4: Upsert vin_to_listing
         if vin:
-            cur.execute(UPSERT_VIN_TO_LISTING, {
-                "vin": vin,
-                "listing_id": listing_id,
-                "mapped_at": fetched_at,
-                "artifact_id": artifact_id,
-            })
-            if cur.rowcount > 0:
-                event_type = "remapped" if previous_listing_id else "mapped"
-                cur.execute(INSERT_VIN_TO_LISTING_EVENT, {
+            cur.execute(
+                UPSERT_VIN_TO_LISTING,
+                {
                     "vin": vin,
                     "listing_id": listing_id,
+                    "mapped_at": fetched_at,
                     "artifact_id": artifact_id,
-                    "event_type": event_type,
-                    "previous_listing_id": previous_listing_id,
-                })
+                },
+            )
+            if cur.rowcount > 0:
+                event_type = "remapped" if previous_listing_id else "mapped"
+                cur.execute(
+                    INSERT_VIN_TO_LISTING_EVENT,
+                    {
+                        "vin": vin,
+                        "listing_id": listing_id,
+                        "artifact_id": artifact_id,
+                        "event_type": event_type,
+                        "previous_listing_id": previous_listing_id,
+                    },
+                )
                 events_to_emit.append(("vin_mapped", listing_id, vin))
 
         # Step 5: Carousel filtering and upsert
@@ -239,44 +351,52 @@ def write_detail_active(
                 hint_vin = vin_by_listing.get(hint_listing_id)
                 if hint_vin:
                     cur.execute(
-                        LOOKUP_VIN_COLLISION, 
-                        {"vin": hint_vin, "listing_id": hint_listing_id}
+                        LOOKUP_VIN_COLLISION, {"vin": hint_vin, "listing_id": hint_listing_id}
                     )
                     collision = cur.fetchone()
                     if collision:
                         cur.execute(
-                            DELETE_PRICE_OBSERVATION_BY_VIN, 
-                            {"old_listing_id": collision[0]}
+                            DELETE_PRICE_OBSERVATION_BY_VIN, {"old_listing_id": collision[0]}
                         )
-                cur.execute(UPSERT_PRICE_OBSERVATION, {
-                    "listing_id": hint_listing_id,
-                    "vin": hint_vin,
-                    "price": hint.get("price"),
-                    "make": None,  # carousel doesn't have structured make/model
-                    "model": None,
-                    "customer_id": None,  # carousel never enriches dealer info
-                    "last_seen_at": fetched_at,
-                    "last_artifact_id": artifact_id,
-                    "last_detail_scraped_at": None,  # carousel must not set circuit-breaker
-                })
+                cur.execute(
+                    UPSERT_PRICE_OBSERVATION,
+                    {
+                        "listing_id": hint_listing_id,
+                        "vin": hint_vin,
+                        "price": hint.get("price"),
+                        "make": None,  # carousel doesn't have structured make/model
+                        "model": None,
+                        "customer_id": None,  # carousel never enriches dealer info
+                        "last_seen_at": fetched_at,
+                        "last_artifact_id": artifact_id,
+                        "last_detail_scraped_at": None,  # carousel must not set circuit-breaker
+                    },
+                )
                 # Event: carousel price_observation upserted
-                cur.execute(INSERT_PRICE_OBSERVATION_EVENT, {
-                    "listing_id": hint_listing_id,
-                    "vin": hint_vin,
-                    "price": hint.get("price"),
-                    "make": None,
-                    "model": None,
-                    "artifact_id": artifact_id,
-                    "event_type": "upserted",
-                    "source": "carousel",
-                })
+                cur.execute(
+                    INSERT_PRICE_OBSERVATION_EVENT,
+                    {
+                        "listing_id": hint_listing_id,
+                        "vin": hint_vin,
+                        "price": hint.get("price"),
+                        "make": None,
+                        "model": None,
+                        "artifact_id": artifact_id,
+                        "event_type": "upserted",
+                        "source": "carousel",
+                    },
+                )
                 carousel_upserted += 1
 
                 if hint_vin and hint.get("price"):
-                    events_to_emit.append((
-                        "price_updated", hint_vin, str(hint["price"]),
-                        hint_listing_id,
-                    ))
+                    events_to_emit.append(
+                        (
+                            "price_updated",
+                            hint_vin,
+                            str(hint["price"]),
+                            hint_listing_id,
+                        )
+                    )
             else:
                 carousel_filtered += 1
 
@@ -285,11 +405,14 @@ def write_detail_active(
 
         # Step 8: Release detail_scrape_claims
         cur.execute(RELEASE_DETAIL_CLAIMS, {"listing_id": listing_id})
-        cur.execute(INSERT_DETAIL_CLAIM_EVENT, {
-            "listing_id": listing_id,
-            "run_id": run_id,
-            "status": "processed",
-        })
+        cur.execute(
+            INSERT_DETAIL_CLAIM_EVENT,
+            {
+                "listing_id": listing_id,
+                "run_id": run_id,
+                "status": "processed",
+            },
+        )
 
     # --- Step 6: Silver write (non-fatal) ---
     _URL_PREFIX = "https://www.cars.com/vehicledetail/"
@@ -306,26 +429,28 @@ def write_detail_active(
         "dealer_cars_com_url": primary.get("dealer_cars_com_url"),
         "dealer_rating": primary.get("dealer_rating"),
     }
-    silver_rows = [{
-        "artifact_id": artifact_id,
-        "listing_id": listing_id,
-        "vin": vin,
-        "canonical_detail_url": f"{_URL_PREFIX}{listing_id}/",
-        "price": primary.get("price"),
-        "make": primary.get("make"),
-        "model": primary.get("model"),
-        "trim": primary.get("trim"),
-        "year": primary.get("year"),
-        "mileage": primary.get("mileage"),
-        "msrp": primary.get("msrp"),
-        "stock_type": primary.get("stock_type"),
-        "fuel_type": primary.get("fuel_type"),
-        "body_style": primary.get("body_style"),
-        "listing_state": "active",
-        "source": "detail",
-        "fetched_at": fetched_at,
-        **dealer_fields,
-    }]
+    silver_rows = [
+        {
+            "artifact_id": artifact_id,
+            "listing_id": listing_id,
+            "vin": vin,
+            "canonical_detail_url": f"{_URL_PREFIX}{listing_id}/",
+            "price": primary.get("price"),
+            "make": primary.get("make"),
+            "model": primary.get("model"),
+            "trim": primary.get("trim"),
+            "year": primary.get("year"),
+            "mileage": primary.get("mileage"),
+            "msrp": primary.get("msrp"),
+            "stock_type": primary.get("stock_type"),
+            "fuel_type": primary.get("fuel_type"),
+            "body_style": primary.get("body_style"),
+            "listing_state": "active",
+            "source": "detail",
+            "fetched_at": fetched_at,
+            **dealer_fields,
+        }
+    ]
     # All carousel hints go to silver regardless of search_config match
     for hint in carousel:
         if not hint.get("listing_id"):
@@ -333,34 +458,36 @@ def write_detail_active(
         if hint.get("price") is None or not hint.get("body"):
             continue
         hint_lid = hint["listing_id"]
-        silver_rows.append({
-            "artifact_id": artifact_id,
-            "listing_id": hint_lid,
-            "vin": vin_by_listing.get(hint_lid),
-            "canonical_detail_url": hint.get("canonical_detail_url")
-            or f"{_URL_PREFIX}{hint_lid}/",
-            "price": hint.get("price"),
-            "mileage": hint.get("mileage"),
-            "body": hint.get("body"),
-            "condition": hint.get("condition"),
-            "year": hint.get("year"),
-            "listing_state": "active",
-            "source": "carousel",
-            "fetched_at": fetched_at,
-            **dealer_fields,
-        })
+        silver_rows.append(
+            {
+                "artifact_id": artifact_id,
+                "listing_id": hint_lid,
+                "vin": vin_by_listing.get(hint_lid),
+                "canonical_detail_url": hint.get("canonical_detail_url")
+                or f"{_URL_PREFIX}{hint_lid}/",
+                "price": hint.get("price"),
+                "mileage": hint.get("mileage"),
+                "body": hint.get("body"),
+                "condition": hint.get("condition"),
+                "year": hint.get("year"),
+                "listing_state": "active",
+                "source": "carousel",
+                "fetched_at": fetched_at,
+                **dealer_fields,
+            }
+        )
     silver_written = write_silver_observations_postgres(silver_rows)
 
     # --- Emit events (after commit) ---
     if vin and primary.get("price"):
-        emit_price_updated(vin=vin, price=primary["price"],
-                           listing_id=listing_id, source="detail")
+        emit_price_updated(vin=vin, price=primary["price"], listing_id=listing_id, source="detail")
     for event in events_to_emit:
         if event[0] == "vin_mapped":
             emit_vin_mapped(listing_id=event[1], vin=event[2])
         elif event[0] == "price_updated":
-            emit_price_updated(vin=event[1], price=int(event[2]),
-                               listing_id=event[3], source="detail")
+            emit_price_updated(
+                vin=event[1], price=int(event[2]), listing_id=event[3], source="detail"
+            )
 
     return {
         "upserted": 1,
@@ -378,15 +505,21 @@ def write_detail_unlisted(
     fetched_at: datetime,
     listing_id: str,
     run_id: Optional[str],
+    *,
+    backfill: bool = False,
 ) -> Dict[str, Any]:
     """Detail write path for unlisted listings."""
+    if backfill:
+        return _write_backfill_detail(primary, artifact_id, fetched_at, listing_id, "unlisted")
+
     vin = primary.get("vin")
 
     # Unlisted pages rarely carry a VIN in the activity JSON — look it up so the
     # silver row has a vin17 and flows through int_latest_observation correctly.
     if not vin:
         with db_cursor(
-            error_context="detail_unlisted: vin_lookup", dict_cursor=True,
+            error_context="detail_unlisted: vin_lookup",
+            dict_cursor=True,
         ) as cur:
             cur.execute(BATCH_LOOKUP_VIN_TO_LISTING, {"listing_ids": [listing_id]})
             row = cur.fetchone()
@@ -396,51 +529,59 @@ def write_detail_unlisted(
     with db_cursor(error_context=f"detail_unlisted: writes artifact_id={artifact_id}") as cur:
         cur.execute(DELETE_PRICE_OBSERVATION, {"listing_id": listing_id})
         # Event: price_observation deleted (unlisted)
-        cur.execute(INSERT_PRICE_OBSERVATION_EVENT, {
-            "listing_id": listing_id,
-            "vin": vin,
-            "price": None,
-            "make": primary.get("make"),
-            "model": primary.get("model"),
-            "artifact_id": artifact_id,
-            "event_type": "deleted",
-            "source": "detail",
-        })
+        cur.execute(
+            INSERT_PRICE_OBSERVATION_EVENT,
+            {
+                "listing_id": listing_id,
+                "vin": vin,
+                "price": None,
+                "make": primary.get("make"),
+                "model": primary.get("model"),
+                "artifact_id": artifact_id,
+                "event_type": "deleted",
+                "source": "detail",
+            },
+        )
         _clear_cooldown(cur, listing_id)
         cur.execute(RELEASE_DETAIL_CLAIMS, {"listing_id": listing_id})
-        cur.execute(INSERT_DETAIL_CLAIM_EVENT, {
-            "listing_id": listing_id,
-            "run_id": run_id,
-            "status": "processed",
-        })
+        cur.execute(
+            INSERT_DETAIL_CLAIM_EVENT,
+            {
+                "listing_id": listing_id,
+                "run_id": run_id,
+                "status": "processed",
+            },
+        )
 
     # Silver write (non-fatal)
     _URL_PREFIX = "https://www.cars.com/vehicledetail/"
-    silver_written = write_silver_observations_postgres([{
-        "artifact_id": artifact_id,
-        "listing_id": listing_id,
-        "vin": vin,
-        "canonical_detail_url": f"{_URL_PREFIX}{listing_id}/",
-        "price": None,
-        "make": primary.get("make"),
-        "model": primary.get("model"),
-        "trim": primary.get("trim"),
-        "year": primary.get("year"),
-        "mileage": None,
-        "stock_type": primary.get("stock_type"),
-        "fuel_type": primary.get("fuel_type"),
-        "body_style": primary.get("body_style"),
-        "dealer_name": primary.get("dealer_name"),
-        "dealer_zip": primary.get("dealer_zip"),
-        "customer_id": primary.get("customer_id"),
-        "seller_id": primary.get("seller_id"),
-        "listing_state": "unlisted",
-        "source": "detail",
-        "fetched_at": fetched_at,
-    }])
+    silver_written = write_silver_observations_postgres(
+        [
+            {
+                "artifact_id": artifact_id,
+                "listing_id": listing_id,
+                "vin": vin,
+                "canonical_detail_url": f"{_URL_PREFIX}{listing_id}/",
+                "price": None,
+                "make": primary.get("make"),
+                "model": primary.get("model"),
+                "trim": primary.get("trim"),
+                "year": primary.get("year"),
+                "mileage": None,
+                "stock_type": primary.get("stock_type"),
+                "fuel_type": primary.get("fuel_type"),
+                "body_style": primary.get("body_style"),
+                "dealer_name": primary.get("dealer_name"),
+                "dealer_zip": primary.get("dealer_zip"),
+                "customer_id": primary.get("customer_id"),
+                "seller_id": primary.get("seller_id"),
+                "listing_state": "unlisted",
+                "source": "detail",
+                "fetched_at": fetched_at,
+            }
+        ]
+    )
 
     emit_listing_removed(vin=vin, listing_id=listing_id)
 
     return {"deleted": True, "vin": vin, "silver_written": silver_written}
-
-
