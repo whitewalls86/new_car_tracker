@@ -6,7 +6,7 @@ schedule via POST /flush/silver/run. See archiver/processors/flush_silver_observ
 """
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Sequence, Tuple
 
 from shared.db import db_cursor
 
@@ -52,6 +52,46 @@ _INSERT_SQL = """
 """
 
 
+def _postgres_rows(observations: Sequence[Dict[str, Any]]) -> List[Tuple[Any, ...]]:
+    """Normalize observations to the staging table's stable column order."""
+    rows = []
+    for obs in observations:
+        fetched_at = obs.get("fetched_at")
+        if isinstance(fetched_at, str):
+            fetched_at = datetime.fromisoformat(fetched_at)
+        if fetched_at and fetched_at.tzinfo is None:
+            fetched_at = fetched_at.replace(tzinfo=timezone.utc)
+
+        row = {name: obs.get(name) for name in _POSTGRES_COLS}
+        if row.get("listing_id") is not None:
+            row["listing_id"] = str(row["listing_id"])
+        if row.get("listing_state") is None:
+            row["listing_state"] = "active"
+        for field in _POSTGRES_INT_COLS:
+            val = row.get(field)
+            row[field] = None if val == "" or val is None else int(val)
+        row["fetched_at"] = fetched_at
+        rows.append(tuple(row[col] for col in _POSTGRES_COLS))
+    return rows
+
+
+def write_silver_observations_with_cursor(
+    cur: Any, observations: Sequence[Dict[str, Any]],
+) -> int:
+    """Insert observations using a caller-owned transaction.
+
+    Unlike :func:`write_silver_observations_postgres`, errors intentionally
+    propagate.  Recovery writes need the silver row and their paired event to
+    commit or roll back together.
+    """
+    if not observations:
+        return 0
+    from psycopg2.extras import execute_values
+
+    execute_values(cur, _INSERT_SQL, _postgres_rows(observations))
+    return cur.rowcount
+
+
 def write_silver_observations_postgres(
     observations: List[Dict[str, Any]],
 ) -> int:
@@ -65,33 +105,8 @@ def write_silver_observations_postgres(
         return 0
 
     try:
-        from psycopg2.extras import execute_values
-
-        rows = []
-        for obs in observations:
-            fetched_at = obs.get("fetched_at")
-            if isinstance(fetched_at, str):
-                fetched_at = datetime.fromisoformat(fetched_at)
-            if fetched_at and fetched_at.tzinfo is None:
-                fetched_at = fetched_at.replace(tzinfo=timezone.utc)
-
-            row = {name: obs.get(name) for name in _POSTGRES_COLS}
-            if row.get("listing_id") is not None:
-                row["listing_id"] = str(row["listing_id"])
-            if row.get("listing_state") is None:
-                row["listing_state"] = "active"
-            for field in _POSTGRES_INT_COLS:
-                val = row.get(field)
-                if val == "" or val is None:
-                    row[field] = None
-                else:
-                    row[field] = int(val)
-            row["fetched_at"] = fetched_at
-            rows.append(tuple(row[col] for col in _POSTGRES_COLS))
-
         with db_cursor(error_context="silver_write") as cur:
-            execute_values(cur, _INSERT_SQL, rows)
-            return cur.rowcount
+            return write_silver_observations_with_cursor(cur, observations)
 
     except Exception as e:
         logger.warning("silver_writer: postgres write failed: %s", e, exc_info=True)

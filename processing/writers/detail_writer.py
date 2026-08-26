@@ -32,6 +32,7 @@ from processing.queries import (
     DELETE_PRICE_OBSERVATION_BY_VIN,
     GET_TRACKED_MODELS,
     INSERT_BLOCKED_COOLDOWN_CLEARED_EVENT,
+    INSERT_BACKFILL_PRICE_OBSERVATION_EVENT,
     INSERT_DETAIL_CLAIM_EVENT,
     INSERT_PRICE_OBSERVATION_EVENT,
     INSERT_VIN_TO_LISTING_EVENT,
@@ -40,7 +41,10 @@ from processing.queries import (
     UPSERT_PRICE_OBSERVATION,
     UPSERT_VIN_TO_LISTING,
 )
-from processing.writers.silver_writer import write_silver_observations_postgres
+from processing.writers.silver_writer import (
+    write_silver_observations_postgres,
+    write_silver_observations_with_cursor,
+)
 from shared.db import db_cursor
 
 logger = logging.getLogger(__name__)
@@ -121,6 +125,56 @@ def _clear_cooldown(cur, listing_id: str) -> None:
         })
 
 
+_URL_PREFIX = "https://www.cars.com/vehicledetail/"
+
+
+def _detail_silver_row(
+    primary: Dict[str, Any], artifact_id: int, fetched_at: datetime,
+    listing_id: str, vin: Optional[str], listing_state: str,
+) -> Dict[str, Any]:
+    """Construct the primary detail silver row for normal and recovery writes."""
+    return {
+        "artifact_id": artifact_id,
+        "listing_id": listing_id,
+        "vin": vin,
+        "canonical_detail_url": f"{_URL_PREFIX}{listing_id}/",
+        "price": None if listing_state == "unlisted" else primary.get("price"),
+        "make": primary.get("make"), "model": primary.get("model"),
+        "trim": primary.get("trim"), "year": primary.get("year"),
+        "mileage": None if listing_state == "unlisted" else primary.get("mileage"),
+        "msrp": primary.get("msrp"), "stock_type": primary.get("stock_type"),
+        "fuel_type": primary.get("fuel_type"), "body_style": primary.get("body_style"),
+        "dealer_name": primary.get("dealer_name"), "dealer_zip": primary.get("dealer_zip"),
+        "customer_id": primary.get("customer_id"), "seller_id": primary.get("seller_id"),
+        "dealer_street": primary.get("dealer_street"), "dealer_city": primary.get("dealer_city"),
+        "dealer_state": primary.get("dealer_state"), "dealer_phone": primary.get("dealer_phone"),
+        "dealer_website": primary.get("dealer_website"),
+        "dealer_cars_com_url": primary.get("dealer_cars_com_url"),
+        "dealer_rating": primary.get("dealer_rating"),
+        "listing_state": listing_state, "source": "detail", "fetched_at": fetched_at,
+    }
+
+
+def _write_backfill_detail(
+    primary: Dict[str, Any], artifact_id: int, fetched_at: datetime,
+    listing_id: str, listing_state: str,
+) -> Dict[str, Any]:
+    """Append exactly one historical silver row and its paired event atomically."""
+    vin = primary.get("vin")
+    row = _detail_silver_row(primary, artifact_id, fetched_at, listing_id, vin, listing_state)
+    with db_cursor(error_context=f"detail_backfill: writes artifact_id={artifact_id}") as cur:
+        silver_written = write_silver_observations_with_cursor(cur, [row])
+        cur.execute(INSERT_BACKFILL_PRICE_OBSERVATION_EVENT, {
+            "listing_id": listing_id, "vin": vin, "price": row["price"],
+            "make": primary.get("make"), "model": primary.get("model"),
+            "artifact_id": artifact_id,
+            "event_type": "deleted" if listing_state == "unlisted" else "upserted",
+            "source": "detail", "event_at": fetched_at,
+        })
+    return {"deleted": listing_state == "unlisted", "upserted": listing_state != "unlisted",
+            "vin": vin, "silver_written": silver_written, "backfill": True}
+
+
 def write_detail_active(
     primary: Dict[str, Any],
     carousel: List[Dict[str, Any]],
@@ -128,11 +182,16 @@ def write_detail_active(
     fetched_at: datetime,
     listing_id: str,
     run_id: Optional[str],
+    *,
+    backfill: bool = False,
 ) -> Dict[str, Any]:
     """
     Detail write path for active listings.
     Returns a summary dict.
     """
+    if backfill:
+        return _write_backfill_detail(primary, artifact_id, fetched_at, listing_id, "active")
+
     vin = primary.get("vin")
     events_to_emit: List[Tuple[str, ...]] = []
 
@@ -378,8 +437,13 @@ def write_detail_unlisted(
     fetched_at: datetime,
     listing_id: str,
     run_id: Optional[str],
+    *,
+    backfill: bool = False,
 ) -> Dict[str, Any]:
     """Detail write path for unlisted listings."""
+    if backfill:
+        return _write_backfill_detail(primary, artifact_id, fetched_at, listing_id, "unlisted")
+
     vin = primary.get("vin")
 
     # Unlisted pages rarely carry a VIN in the activity JSON — look it up so the
