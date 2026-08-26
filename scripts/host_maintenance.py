@@ -63,6 +63,11 @@ STAGE2_PROCEDURE = (
     "start",
     "begin-validation",
 )
+HOST_DISK_FLOORS = {
+    "bytes_available": 10 * 1024 * 1024 * 1024,
+    "inodes_available": 100_000,
+}
+REQUIRED_HOST_UNITS = ("docker", "ssh")
 CLI_LOG_FIELDS = (
     "generation",
     "prior_phase",
@@ -142,7 +147,12 @@ PREFLIGHT_COMMANDS = (
     ("netplan_config", ("sudo", "netplan", "generate"), frozenset({0})),
     ("docker_active", ("systemctl", "is-active", "docker"), frozenset({0})),
     ("docker_version", ("docker", "version"), frozenset({0})),
-    ("docker_info", ("docker", "info"), frozenset({0})),
+    ("docker_info", ("docker", "info", "--format", "{{json .}}"), frozenset({0})),
+    (
+        "docker_daemon_config",
+        ("sudo", "cat", "/etc/docker/daemon.json"),
+        frozenset({0, 1}),
+    ),
     ("compose_version", ("docker", "compose", "version"), frozenset({0})),
     (
         "maintenance_pool",
@@ -160,17 +170,34 @@ PREFLIGHT_COMMANDS = (
 
 # Host facts are captured behind the command seam so gates and checkpoint
 # records consume data rather than reaching back into the host themselves.
-HOST_FACT_COMMANDS = (
+# Identity is split out from the rest: checkpoints and the running-set manifest
+# only ever need these three cheap fields, not the full Stage 3 gate sweep.
+HOST_IDENTITY_COMMANDS = (
     ("git_revision", ("git", "rev-parse", "HEAD"), frozenset({0})),
     ("kernel", ("uname", "-r"), frozenset({0})),
     ("boot_id", ("cat", "/proc/sys/kernel/random/boot_id"), frozenset({0})),
+)
+HOST_FACT_COMMANDS = (
     ("reboot_required", ("test", "-e", "/var/run/reboot-required"), frozenset({0, 1})),
     ("mounts", ("findmnt", "--json"), frozenset({0})),
     ("disk_bytes", ("df", "-B1", "/", "/boot", "/mnt/data"), frozenset({0})),
     ("disk_inodes", ("df", "-i", "/", "/boot", "/mnt/data"), frozenset({0})),
     ("failed_units", ("systemctl", "--failed", "--no-legend"), frozenset({0})),
     ("docker_active", ("systemctl", "is-active", "docker"), frozenset({0, 1, 3, 4})),
-    ("docker_info", ("docker", "info"), frozenset({0})),
+    ("ssh_active", ("systemctl", "is-active", "ssh"), frozenset({0, 1, 3, 4})),
+    ("dns", ("getent", "hosts", "archive.ubuntu.com"), frozenset({0})),
+    (
+        "clock_synchronised",
+        ("timedatectl", "show", "--property=NTPSynchronized", "--value"),
+        frozenset({0}),
+    ),
+    ("sshd_config", ("sudo", "sshd", "-t"), frozenset({0})),
+    ("docker_info", ("docker", "info", "--format", "{{json .}}"), frozenset({0})),
+    (
+        "docker_daemon_config",
+        ("sudo", "cat", "/etc/docker/daemon.json"),
+        frozenset({0, 1}),
+    ),
     ("dpkg_audit", ("sudo", "dpkg", "--audit"), frozenset({0})),
     (
         "apt_locks",
@@ -379,6 +406,24 @@ def latest_checkpoint(path: Path) -> dict[str, Any]:
     raise MaintenanceError(f"unable to read checkpoint at {path}")
 
 
+def checkpoint_for_phase(path: Path, phase: str) -> dict[str, Any]:
+    """Return the newest valid checkpoint for one prior lifecycle phase."""
+    if path.is_symlink():
+        raise MaintenanceError("checkpoint path must not be a symlink")
+    try:
+        lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line]
+    except OSError as exc:
+        raise MaintenanceError(f"unable to read checkpoint at {path}") from exc
+    for line in reversed(lines):
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(record, dict) and record.get("phase") == phase:
+            return record
+    raise MaintenanceError(f"checkpoint has no {phase!r} record")
+
+
 def _selected_container_ids(manifest: dict[str, Any], plan: list[dict[str, Any]]) -> list[str]:
     selected = {(entry["project"], service) for entry in plan for service in entry["services"]}
     ids = []
@@ -528,7 +573,7 @@ def _render_compose_projects(
 
 def capture_running_set() -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
     """Capture Compose identity and intended state before any stop is allowed."""
-    facts = host_facts()
+    facts = host_identity()
     ids_result = _run_command(("docker", "ps", "--all", "--quiet"))
     container_ids = [line.strip() for line in ids_result["stdout"].splitlines() if line.strip()]
     if not container_ids:
@@ -653,11 +698,12 @@ def collect_preflight() -> dict[str, Any]:
     }
 
 
-def host_facts() -> dict[str, Any]:
-    """Capture Stage 3 host evidence as data through the command seam."""
+def host_identity() -> dict[str, str]:
+    """Capture the cheap identity fields checkpoints and the running-set
+    manifest need, without the heavier Stage 3 gate sweep."""
     observations = {
         name: _run_command(command, allowed_returncodes=returncodes)
-        for name, command, returncodes in HOST_FACT_COMMANDS
+        for name, command, returncodes in HOST_IDENTITY_COMMANDS
     }
     boot_id = observations["boot_id"]["stdout"].strip()
     if not boot_id:
@@ -666,6 +712,18 @@ def host_facts() -> dict[str, Any]:
         "git_revision": observations["git_revision"]["stdout"].strip(),
         "kernel": observations["kernel"]["stdout"].strip(),
         "boot_id": boot_id,
+    }
+
+
+def host_facts() -> dict[str, Any]:
+    """Capture Stage 3 host evidence as data through the command seam."""
+    identity = host_identity()
+    observations = {
+        name: _run_command(command, allowed_returncodes=returncodes)
+        for name, command, returncodes in HOST_FACT_COMMANDS
+    }
+    return {
+        **identity,
         "reboot_required": observations["reboot_required"]["returncode"] == 0,
         "mounts": observations["mounts"],
         "disk": {
@@ -675,12 +733,260 @@ def host_facts() -> dict[str, Any]:
         "units": {
             "failed": observations["failed_units"],
             "docker": observations["docker_active"],
+            "ssh": observations["ssh_active"],
         },
+        "dns": observations["dns"],
+        "clock_synchronised": observations["clock_synchronised"],
+        "sshd": observations["sshd_config"],
         "docker": observations["docker_info"],
+        "docker_daemon_config": observations["docker_daemon_config"],
         "dpkg": observations["dpkg_audit"],
         "apt_locks": observations["apt_locks"],
         "package_holds": observations["package_holds"],
     }
+
+
+def _command_stdout(value: Any) -> str | None:
+    """Return a captured command's text, or mark malformed evidence unknown."""
+    if not isinstance(value, dict) or not isinstance(value.get("stdout"), str):
+        return None
+    return value["stdout"].strip()
+
+
+def _command_returncode(value: Any) -> int | None:
+    if not isinstance(value, dict) or not isinstance(value.get("returncode"), int):
+        return None
+    return value["returncode"]
+
+
+def _mount_devices(value: Any) -> dict[str, str] | None:
+    """Extract source devices for the mounts the maintenance contract owns."""
+    stdout = _command_stdout(value)
+    if stdout is None:
+        return None
+    try:
+        payload = json.loads(stdout)
+    except json.JSONDecodeError:
+        return None
+    filesystems = payload.get("filesystems") if isinstance(payload, dict) else None
+    if not isinstance(filesystems, list):
+        return None
+    mounts = {}
+    for filesystem in filesystems:
+        if not isinstance(filesystem, dict):
+            continue
+        target = filesystem.get("target")
+        source = filesystem.get("source")
+        if target in {"/", "/mnt/data"} and isinstance(source, str) and source:
+            mounts[target] = source
+    return mounts
+
+
+def _disk_availability(value: Any) -> dict[str, int] | None:
+    """Read available bytes/inodes per target from portable ``df`` output."""
+    stdout = _command_stdout(value)
+    if stdout is None:
+        return None
+    lines = stdout.splitlines()
+    if len(lines) < 2:
+        return None
+    availability: dict[str, int] = {}
+    for line in lines[1:]:
+        fields = line.split()
+        if len(fields) < 6:
+            return None
+        target = fields[-1]
+        try:
+            availability[target] = int(fields[-3])
+        except ValueError:
+            return None
+    return availability
+
+
+def _docker_settings(value: Any) -> dict[str, str] | None:
+    stdout = _command_stdout(value)
+    if stdout is None:
+        return None
+    try:
+        payload = json.loads(stdout)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    root = payload.get("DockerRootDir")
+    logging_driver = payload.get("LoggingDriver")
+    if (
+        not isinstance(root, str)
+        or not root
+        or not isinstance(logging_driver, str)
+        or not logging_driver
+    ):
+        return None
+    return {"DockerRootDir": root, "LoggingDriver": logging_driver}
+
+
+def _docker_daemon_config(value: Any) -> dict[str, Any] | None:
+    stdout = _command_stdout(value)
+    if stdout is None:
+        return None
+    returncode = _command_returncode(value)
+    if returncode == 1 and not stdout:
+        stderr = value.get("stderr") if isinstance(value, dict) else None
+        if isinstance(stderr, str) and "No such file or directory" in stderr:
+            return {}
+        return None
+    if returncode != 0:
+        return None
+    try:
+        payload = json.loads(stdout)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    return {
+        "data-root": payload.get("data-root"),
+        "log-opts": payload.get("log-opts"),
+    }
+
+
+def gate_kernel_expected(facts: dict[str, Any], preflight: dict[str, Any]) -> tuple[str, str]:
+    expected = preflight.get("updated_kernel")
+    kernel = facts.get("kernel")
+    if not isinstance(expected, str) or not expected or not isinstance(kernel, str) or not kernel:
+        return "unknown", "kernel target is missing from validation evidence"
+    if kernel != expected:
+        return "fail", f"running kernel {kernel!r} does not match expected {expected!r}"
+    return "pass", "running kernel matches the updated target"
+
+
+def gate_no_reboot_required(facts: dict[str, Any], preflight: dict[str, Any]) -> tuple[str, str]:
+    value = facts.get("reboot_required")
+    if not isinstance(value, bool):
+        return "unknown", "reboot-required evidence is missing"
+    if value:
+        return "fail", "a reboot is still required"
+    return "pass", "no reboot is required"
+
+
+def gate_mounts_expected(facts: dict[str, Any], preflight: dict[str, Any]) -> tuple[str, str]:
+    observed = _mount_devices(facts.get("mounts"))
+    baseline = _mount_devices((preflight.get("observations") or {}).get("mounts"))
+    if observed is None or baseline is None:
+        return "unknown", "mount evidence is unreadable"
+    for target in ("/", "/mnt/data"):
+        if target not in observed or target not in baseline:
+            return "fail", f"required mount {target} is missing"
+        if observed[target] != baseline[target]:
+            return "fail", f"mount source changed for {target}"
+    return "pass", "root and data mounts match preflight"
+
+
+def gate_disk_headroom(facts: dict[str, Any], preflight: dict[str, Any]) -> tuple[str, str]:
+    disk = facts.get("disk")
+    if not isinstance(disk, dict):
+        return "unknown", "disk evidence is missing"
+    bytes_available = _disk_availability(disk.get("bytes"))
+    inodes_available = _disk_availability(disk.get("inodes"))
+    if bytes_available is None or inodes_available is None:
+        return "unknown", "disk evidence is unreadable"
+    for target in ("/", "/mnt/data"):
+        if target not in bytes_available or target not in inodes_available:
+            return "fail", f"disk evidence has no {target} row"
+        if bytes_available[target] < HOST_DISK_FLOORS["bytes_available"]:
+            return "fail", f"available bytes below reviewed floor on {target}"
+        if inodes_available[target] < HOST_DISK_FLOORS["inodes_available"]:
+            return "fail", f"available inodes below reviewed floor on {target}"
+    return "pass", "disk byte and inode headroom meet reviewed floors"
+
+
+def gate_host_services(facts: dict[str, Any], preflight: dict[str, Any]) -> tuple[str, str]:
+    units = facts.get("units")
+    if not isinstance(units, dict):
+        return "unknown", "systemd evidence is missing"
+    failed = _command_stdout(units.get("failed"))
+    if failed is None:
+        return "unknown", "failed-unit evidence is unreadable"
+    if failed:
+        return "fail", "systemd reports failed units"
+    for unit in REQUIRED_HOST_UNITS:
+        state = _command_stdout(units.get(unit))
+        if state is None:
+            return "unknown", f"required unit {unit} evidence is unreadable"
+        if state != "active":
+            return "fail", f"required unit {unit} is not active"
+    dns = _command_stdout(facts.get("dns"))
+    if dns is None:
+        return "unknown", "DNS evidence is unreadable"
+    if not dns:
+        return "fail", "DNS lookup returned no addresses"
+    clock = _command_stdout(facts.get("clock_synchronised"))
+    if clock is None:
+        return "unknown", "clock synchronisation evidence is unreadable"
+    if clock != "yes":
+        return "fail", "clock is not synchronised"
+    sshd = _command_returncode(facts.get("sshd"))
+    if sshd is None:
+        return "unknown", "sshd evidence is unreadable"
+    if sshd != 0:
+        return "fail", "sshd configuration check failed"
+    return "pass", "required host services are healthy"
+
+
+def gate_docker_daemon(facts: dict[str, Any], preflight: dict[str, Any]) -> tuple[str, str]:
+    observed = _docker_settings(facts.get("docker"))
+    baseline = _docker_settings((preflight.get("observations") or {}).get("docker_info"))
+    observed_config = _docker_daemon_config(facts.get("docker_daemon_config"))
+    baseline_config = _docker_daemon_config(
+        (preflight.get("observations") or {}).get("docker_daemon_config")
+    )
+    if observed is None or baseline is None or observed_config is None or baseline_config is None:
+        return "unknown", "Docker daemon evidence is unreadable"
+    if observed != baseline or observed_config != baseline_config:
+        return "fail", "Docker storage path or log limits drifted from preflight"
+    return "pass", "Docker storage path and log limits match preflight"
+
+
+def gate_package_state(facts: dict[str, Any], preflight: dict[str, Any]) -> tuple[str, str]:
+    audit = _command_stdout(facts.get("dpkg"))
+    locks = _command_returncode(facts.get("apt_locks"))
+    if audit is None or locks is None:
+        return "unknown", "apt/dpkg evidence is unreadable"
+    if locks == 0:
+        return "fail", "apt/dpkg lock is held"
+    if locks != 1:
+        return "unknown", "apt/dpkg lock probe returned an unexpected status"
+    if audit:
+        return "fail", "dpkg audit reports unfinished configuration"
+    return "pass", "apt/dpkg is idle and configured"
+
+
+HOST_VALIDATION_GATES = {
+    "kernel_expected": gate_kernel_expected,
+    "no_reboot_required": gate_no_reboot_required,
+    "mounts_expected": gate_mounts_expected,
+    "disk_headroom": gate_disk_headroom,
+    "host_services": gate_host_services,
+    "docker_daemon": gate_docker_daemon,
+    "package_state": gate_package_state,
+}
+
+
+def collect_host_validation(
+    facts: dict[str, Any], preflight: dict[str, Any]
+) -> dict[str, dict[str, str]]:
+    """Evaluate every host gate; missing or malformed evidence fails closed."""
+    return {
+        name: {"verdict": verdict, "reason": reason}
+        for name, gate in HOST_VALIDATION_GATES.items()
+        for verdict, reason in [gate(facts, preflight)]
+    }
+
+
+def host_validation_passes(results: dict[str, dict[str, str]]) -> bool:
+    """Only a complete all-pass registry can release the next slice."""
+    return set(results) == set(HOST_VALIDATION_GATES) and all(
+        result.get("verdict") == "pass" for result in results.values()
+    )
 
 
 def _parse_apt_simulation(output: str) -> dict[str, str]:
@@ -921,7 +1227,7 @@ def apply_package_plan(args: argparse.Namespace) -> dict[str, Any]:
         raise MaintenanceError("package holds changed during the confirmed transaction")
 
     _run_command(("sync",))
-    facts = host_facts()
+    facts = host_identity()
     evidence = {
         "schema_version": 1,
         "applied_at": _utc_now(),
@@ -934,7 +1240,7 @@ def apply_package_plan(args: argparse.Namespace) -> dict[str, Any]:
         "running_kernel": facts["kernel"],
     }
     _safe_json_write(evidence_path, evidence)
-    append_checkpoint(args.checkpoint, "updated", args.manifest)
+    append_checkpoint(args.checkpoint, "updated", args.manifest, facts=facts)
     return {
         "phase": "updated",
         "package_plan_sha256": digest,
@@ -955,11 +1261,11 @@ def run_reboot_boundary(args: argparse.Namespace) -> dict[str, Any]:
     captured_boot_id = manifest.get("boot_id")
     if not isinstance(captured_boot_id, str) or not captured_boot_id:
         raise MaintenanceError("running-set manifest has no preflight boot id")
-    facts = host_facts()
+    facts = host_identity()
     current_boot_id = facts["boot_id"]
 
     if current_boot_id != captured_boot_id:
-        append_checkpoint(args.checkpoint, "rebooted", args.manifest)
+        append_checkpoint(args.checkpoint, "rebooted", args.manifest, facts=facts)
         return {
             "phase": "rebooted",
             "boot_id_changed": True,
@@ -971,7 +1277,7 @@ def run_reboot_boundary(args: argparse.Namespace) -> dict[str, Any]:
         raise MaintenanceError("--confirm-reboot is required to reboot the host")
 
     _run_command(("sync",))
-    append_checkpoint(args.checkpoint, "rebooting", args.manifest)
+    append_checkpoint(args.checkpoint, "rebooting", args.manifest, facts=facts)
     _run_command(("sudo", "systemctl", "reboot"))
     return {
         "phase": "rebooting",
@@ -995,6 +1301,52 @@ def run_preflight(output_dir: Path) -> dict[str, Any]:
         "containers": len(manifest["containers"]),
         "compose_projects": sorted(rendered),
     }
+
+
+def load_preflight_bundle(path: Path) -> dict[str, Any]:
+    """Read the pre-window evidence bundle without following a mutable link."""
+    if path.is_symlink():
+        raise MaintenanceError("preflight evidence must not be a symlink")
+    try:
+        bundle = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise MaintenanceError(f"unable to read preflight evidence at {path}") from exc
+    if not isinstance(bundle, dict) or bundle.get("schema_version") != 1:
+        raise MaintenanceError("preflight evidence has an unsupported schema")
+    if not isinstance(bundle.get("observations"), dict):
+        raise MaintenanceError("preflight evidence is missing observations")
+    return bundle
+
+
+def run_validate_host(args: argparse.Namespace) -> dict[str, Any]:
+    """Collect and record host validation without changing coordination state."""
+    checkpoint = latest_checkpoint(args.checkpoint)
+    if checkpoint.get("phase") != "validating":
+        raise MaintenanceError(
+            f"cannot validate host from checkpoint phase {checkpoint.get('phase')!r}"
+        )
+    if checkpoint.get("manifest_location") != args.manifest:
+        raise MaintenanceError("checkpoint manifest does not match --manifest")
+    preflight = load_preflight_bundle(args.preflight)
+    updated = checkpoint_for_phase(args.checkpoint, "updated")
+    expected_kernel = updated.get("running_kernel")
+    if not isinstance(expected_kernel, str) or not expected_kernel:
+        raise MaintenanceError("updated checkpoint has no kernel target")
+    facts = host_facts()
+    gates = collect_host_validation(facts, {**preflight, "updated_kernel": expected_kernel})
+    result = {
+        "schema_version": 1,
+        "validated_at": _utc_now(),
+        "preflight": str(args.preflight),
+        "manifest_location": args.manifest,
+        "gates": gates,
+        "passed": host_validation_passes(gates),
+    }
+    _safe_json_write(args.output_dir / "validate-host.json", result)
+    if not result["passed"]:
+        failed = [name for name, gate in gates.items() if gate["verdict"] != "pass"]
+        raise MaintenanceError(f"host validation did not pass: {', '.join(failed)}")
+    return result
 
 
 def _utc_now() -> str:
@@ -1035,7 +1387,7 @@ def append_checkpoint(
     if path.parent.is_symlink() or (path.exists() and path.is_symlink()):
         raise MaintenanceError("checkpoint path must not traverse a symlink")
     path.parent.chmod(0o755)
-    record = checkpoint_record(phase, manifest, facts if facts is not None else host_facts())
+    record = checkpoint_record(phase, manifest, facts if facts is not None else host_identity())
 
     flags = os.O_APPEND | os.O_CREAT | os.O_WRONLY
     if hasattr(os, "O_NOFOLLOW"):
@@ -1168,6 +1520,10 @@ def build_parser() -> argparse.ArgumentParser:
     preflight = subparsers.add_parser("preflight")
     preflight.add_argument("--output-dir", type=Path, required=True)
 
+    validate_host = subparsers.add_parser("validate-host")
+    validate_host.add_argument("--preflight", type=Path, required=True)
+    validate_host.add_argument("--output-dir", type=Path, required=True)
+
     prepare_update = subparsers.add_parser("prepare-update")
     prepare_update.add_argument("--output-dir", type=Path, required=True)
     prepare_update.add_argument("--include-held", action="append", default=[])
@@ -1228,9 +1584,13 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "reboot",
         "start",
         "begin-validation",
+        "validate-host",
     }:
         if not args.manifest:
             raise MaintenanceError("--manifest is required for state transitions")
+
+    if args.command == "validate-host":
+        return run_validate_host(args)
 
     if args.command == "status":
         return api_request(args.api_url, "GET", "/coordination/status")

@@ -79,6 +79,205 @@ def test_checkpoint_record_uses_supplied_facts(mocker):
     }
 
 
+def _command(stdout="", returncode=0):
+    return {"stdout": stdout, "stderr": "", "returncode": returncode}
+
+
+def _validation_inputs():
+    mounts = json.dumps(
+        {
+            "filesystems": [
+                {"target": "/", "source": "/dev/root"},
+                {"target": "/mnt/data", "source": "/dev/data"},
+            ]
+        }
+    )
+    docker = json.dumps({"DockerRootDir": "/var/lib/docker", "LoggingDriver": "json-file"})
+    docker_config = json.dumps(
+        {"data-root": "/var/lib/docker", "log-opts": {"max-file": "3", "max-size": "10m"}}
+    )
+    facts = {
+        "kernel": "6.8.0-target",
+        "reboot_required": False,
+        "mounts": _command(mounts),
+        "disk": {
+            "bytes": _command(
+                "Filesystem 1B-blocks Used Available Use% Mounted on\n"
+                "/dev/root 1 1 20000000000 1% /\n"
+                "/dev/data 1 1 20000000000 1% /mnt/data\n"
+            ),
+            "inodes": _command(
+                "Filesystem Inodes IUsed IFree IUse% Mounted on\n"
+                "/dev/root 1 1 200000 1% /\n"
+                "/dev/data 1 1 200000 1% /mnt/data\n"
+            ),
+        },
+        "units": {
+            "failed": _command(),
+            "docker": _command("active\n"),
+            "ssh": _command("active\n"),
+        },
+        "dns": _command("91.189.91.81 archive.ubuntu.com\n"),
+        "clock_synchronised": _command("yes\n"),
+        "sshd": _command(),
+        "docker": _command(docker),
+        "docker_daemon_config": _command(docker_config),
+        "dpkg": _command(),
+        "apt_locks": _command(returncode=1),
+    }
+    preflight = {
+        "updated_kernel": "6.8.0-target",
+        "observations": {
+            "mounts": _command(mounts),
+            "docker_info": _command(docker),
+            "docker_daemon_config": _command(docker_config),
+        },
+    }
+    return facts, preflight
+
+
+@pytest.mark.parametrize(
+    ("gate_name", "facts_change", "preflight_change", "expected"),
+    [
+        ("kernel_expected", {"kernel": "6.8.0-other"}, {}, "fail"),
+        ("kernel_expected", {"kernel": None}, {}, "unknown"),
+        ("no_reboot_required", {"reboot_required": True}, {}, "fail"),
+        ("no_reboot_required", {"reboot_required": None}, {}, "unknown"),
+        (
+            "mounts_expected",
+            {
+                "mounts": _command(
+                    json.dumps({"filesystems": [{"target": "/", "source": "/dev/other"}]})
+                )
+            },
+            {},
+            "fail",
+        ),
+        ("mounts_expected", {"mounts": _command("not-json")}, {}, "unknown"),
+        (
+            "disk_headroom",
+            {
+                "disk": {
+                    "bytes": _command(
+                        "Filesystem 1B-blocks Used Available Use% Mounted on\n"
+                        "/dev/root 1 1 1 1% /\n"
+                        "/dev/data 1 1 1 1% /mnt/data\n"
+                    ),
+                    "inodes": _command(
+                        "Filesystem Inodes IUsed IFree IUse% Mounted on\n"
+                        "/dev/root 1 1 200000 1% /\n"
+                        "/dev/data 1 1 200000 1% /mnt/data\n"
+                    ),
+                }
+            },
+            {},
+            "fail",
+        ),
+        ("disk_headroom", {"disk": {}}, {}, "unknown"),
+        ("host_services", {"clock_synchronised": _command("no\n")}, {}, "fail"),
+        ("host_services", {"units": {}}, {}, "unknown"),
+        (
+            "docker_daemon",
+            {
+                "docker": _command(
+                    json.dumps({"DockerRootDir": "/other", "LoggingDriver": "json-file"})
+                )
+            },
+            {},
+            "fail",
+        ),
+        ("docker_daemon", {"docker": _command("not-json")}, {}, "unknown"),
+        ("package_state", {"apt_locks": _command(returncode=0)}, {}, "fail"),
+        ("package_state", {"apt_locks": _command(returncode=2)}, {}, "unknown"),
+    ],
+)
+def test_host_validation_gates_are_pure_and_fail_closed(
+    gate_name, facts_change, preflight_change, expected
+):
+    facts, preflight = _validation_inputs()
+    facts.update(facts_change)
+    preflight.update(preflight_change)
+
+    verdict, reason = host_maintenance.HOST_VALIDATION_GATES[gate_name](facts, preflight)
+
+    assert verdict == expected
+    assert reason
+
+
+def test_all_host_validation_gates_pass_with_complete_evidence():
+    facts, preflight = _validation_inputs()
+
+    results = host_maintenance.collect_host_validation(facts, preflight)
+
+    assert set(results) == set(host_maintenance.HOST_VALIDATION_GATES)
+    assert {result["verdict"] for result in results.values()} == {"pass"}
+    assert host_maintenance.host_validation_passes(results) is True
+
+
+def test_host_validation_registry_rejects_one_unknown():
+    facts, preflight = _validation_inputs()
+    facts["dpkg"] = {"returncode": 0}
+
+    results = host_maintenance.collect_host_validation(facts, preflight)
+
+    assert results["package_state"]["verdict"] == "unknown"
+    assert host_maintenance.host_validation_passes(results) is False
+
+
+def test_docker_daemon_gate_does_not_mask_identical_sudo_failures_as_pass():
+    """A broken sudoers rule must not read as \"no daemon.json on either side\"."""
+    facts, preflight = _validation_inputs()
+    unreadable = _command(returncode=1)
+    facts["docker_daemon_config"] = unreadable
+    preflight["observations"]["docker_daemon_config"] = unreadable
+
+    verdict, reason = host_maintenance.gate_docker_daemon(facts, preflight)
+
+    assert verdict == "unknown"
+    assert reason
+
+
+def test_validate_host_wires_collector_bundle_and_evidence_without_checkpoint(mocker, tmp_path):
+    args = _args(
+        tmp_path,
+        "validate-host",
+        preflight=tmp_path / "preflight.json",
+        output_dir=tmp_path,
+    )
+    facts, preflight = _validation_inputs()
+    mocker.patch.object(
+        host_maintenance,
+        "latest_checkpoint",
+        return_value={"phase": "validating", "manifest_location": args.manifest},
+    )
+    mocker.patch.object(
+        host_maintenance, "checkpoint_for_phase", return_value={"running_kernel": "6.8.0-target"}
+    )
+    mocker.patch.object(host_maintenance, "load_preflight_bundle", return_value=preflight)
+    collector = mocker.patch.object(host_maintenance, "host_facts", return_value=facts)
+    write = mocker.patch.object(host_maintenance, "_safe_json_write")
+
+    result = host_maintenance.run(args)
+
+    assert result["passed"] is True
+    collector.assert_called_once_with()
+    write.assert_called_once()
+    assert write.call_args.args[0] == tmp_path / "validate-host.json"
+
+
+def test_validate_host_requires_manifest(tmp_path):
+    args = _args(
+        tmp_path,
+        "validate-host",
+        manifest=None,
+        preflight=tmp_path / "preflight.json",
+        output_dir=tmp_path,
+    )
+
+    with pytest.raises(host_maintenance.MaintenanceError, match="--manifest is required"):
+        host_maintenance.run(args)
+
+
 @pytest.mark.parametrize("phase", ["none", "complete", "offline", "secret=value"])
 def test_checkpoint_rejects_unreviewed_phases(phase, tmp_path):
     with pytest.raises(host_maintenance.MaintenanceError, match="unsupported"):
@@ -279,7 +478,7 @@ def test_cli_formatter_preserves_reviewed_structured_fields():
     }
 
 
-def test_parser_intentionally_exposes_no_complete_command():
+def test_parser_exposes_validate_host_but_no_complete_command():
     parser = host_maintenance.build_parser()
     choices = next(action.choices for action in parser._actions if action.dest == "command")
     assert set(choices) == {
@@ -298,6 +497,7 @@ def test_parser_intentionally_exposes_no_complete_command():
         "reboot",
         "start",
         "begin-validation",
+        "validate-host",
     }
 
 
@@ -450,7 +650,7 @@ def test_apply_package_plan_requires_digest_reviews_masks_and_audits(mocker, tmp
     mocker.patch.object(host_maintenance, "_utc_now", return_value="timestamp")
     mocker.patch.object(
         host_maintenance,
-        "host_facts",
+        "host_identity",
         return_value={"kernel": "6.8.0-test"},
     )
     checkpoint = mocker.patch.object(host_maintenance, "append_checkpoint")
@@ -486,7 +686,9 @@ def test_apply_package_plan_requires_digest_reviews_masks_and_audits(mocker, tmp
     assert set(evidence["apt_unit_states_before"].values()) == {"enabled"}
     assert evidence["installed_versions"] == {"docker.io": "29.1"}
     assert evidence["holds_after"] == ["docker.io"]
-    checkpoint.assert_called_once_with(args.checkpoint, "updated", args.manifest)
+    checkpoint.assert_called_once_with(
+        args.checkpoint, "updated", args.manifest, facts={"kernel": "6.8.0-test"}
+    )
 
 
 @pytest.mark.parametrize(
@@ -580,14 +782,14 @@ def test_reboot_requires_confirmation_and_checkpoints_before_command(mocker, tmp
     )
     mocker.patch.object(
         host_maintenance,
-        "host_facts",
+        "host_identity",
         return_value={"boot_id": "boot-before", "kernel": "6.8.0-before"},
     )
     events = []
     mocker.patch.object(
         host_maintenance,
         "append_checkpoint",
-        side_effect=lambda *call_args: events.append(("checkpoint", call_args[1])),
+        side_effect=lambda *call_args, **_: events.append(("checkpoint", call_args[1])),
     )
     mocker.patch.object(
         host_maintenance,
@@ -616,7 +818,7 @@ def test_reboot_replay_proves_changed_boot_before_checkpointing_rebooted(mocker,
     )
     mocker.patch.object(
         host_maintenance,
-        "host_facts",
+        "host_identity",
         return_value={"boot_id": "boot-after", "kernel": "6.8.0-after"},
     )
     checkpoint = mocker.patch.object(host_maintenance, "append_checkpoint")
@@ -628,7 +830,12 @@ def test_reboot_replay_proves_changed_boot_before_checkpointing_rebooted(mocker,
         "running_kernel": "6.8.0-after",
     }
 
-    checkpoint.assert_called_once_with(args.checkpoint, "rebooted", args.manifest)
+    checkpoint.assert_called_once_with(
+        args.checkpoint,
+        "rebooted",
+        args.manifest,
+        facts={"boot_id": "boot-after", "kernel": "6.8.0-after"},
+    )
     run_command.assert_not_called()
 
 
@@ -641,7 +848,7 @@ def test_reboot_without_confirmation_never_mutates_host(mocker, tmp_path):
     )
     mocker.patch.object(
         host_maintenance,
-        "host_facts",
+        "host_identity",
         return_value={"boot_id": "boot-before", "kernel": "6.8.0-before"},
     )
     run_command = mocker.patch.object(host_maintenance, "_run_command")
@@ -713,7 +920,7 @@ def test_capture_running_set_records_compose_and_container_evidence(mocker):
     mocker.patch.object(host_maintenance, "_run_command", side_effect=fake_run)
     mocker.patch.object(
         host_maintenance,
-        "host_facts",
+        "host_identity",
         return_value={
             "git_revision": "abc123",
             "kernel": "6.8.0-test",
@@ -754,7 +961,7 @@ def test_capture_running_set_records_compose_and_container_evidence(mocker):
 def test_capture_running_set_refuses_an_empty_host(mocker):
     mocker.patch.object(
         host_maintenance,
-        "host_facts",
+        "host_identity",
         return_value={"git_revision": "abc123", "kernel": "6.8.0-test", "boot_id": "boot"},
     )
     mocker.patch.object(
