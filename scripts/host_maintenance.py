@@ -944,6 +944,7 @@ def _git_revision() -> str:
     try:
         return subprocess.run(
             ["git", "rev-parse", "HEAD"],
+            cwd=REPO_ROOT,
             check=True,
             capture_output=True,
             text=True,

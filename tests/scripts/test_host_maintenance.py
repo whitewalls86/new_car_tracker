@@ -53,6 +53,23 @@ def test_checkpoint_is_append_only_five_field_jsonl(mocker, tmp_path):
     ]
 
 
+def test_git_revision_is_resolved_from_the_script_checkout(mocker):
+    run = mocker.patch.object(
+        host_maintenance.subprocess,
+        "run",
+        return_value=Namespace(stdout="abc123\n"),
+    )
+
+    assert host_maintenance._git_revision() == "abc123"
+    run.assert_called_once_with(
+        ["git", "rev-parse", "HEAD"],
+        cwd=host_maintenance.REPO_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
 @pytest.mark.parametrize("phase", ["none", "complete", "offline", "secret=value"])
 def test_checkpoint_rejects_unreviewed_phases(phase, tmp_path):
     with pytest.raises(host_maintenance.MaintenanceError, match="unsupported"):
