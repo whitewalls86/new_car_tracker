@@ -122,13 +122,33 @@ class PackIndexMismatchError(PackError):
 
 @dataclass(frozen=True)
 class PackMember:
-    """One artifact offered to a pack: raw (uncompressed) HTML plus its identity."""
+    """One artifact offered to a pack: raw (uncompressed) HTML plus its identity.
+
+    ``listing_id`` is *identity* — the listing this artifact is about — and is
+    what lands in the sidecar. ``cluster_key`` is *placement*: the value frame
+    boundaries are drawn on, so that members sharing it compress against each
+    other. They are usually the same thing and ``cluster_key`` defaults to
+    ``listing_id``.
+
+    They are separable because Plan 145 found a caller for which they differ.
+    The bronze packer clusters on a key derived from the whole silver group for
+    an artifact, which is not the artifact's own listing; recording that value
+    as identity is the defect Plan 145 Stage 5b fixes, and reusing identity as
+    the cluster key would change how every pack is laid out. Whether it
+    *should* is an open measurement, so the two are kept distinct rather than
+    silently collapsed.
+    """
 
     source_key: str
     content: bytes
     artifact_id: int | None = None
     listing_id: str | None = None
     fetched_at: datetime | None = None
+    cluster_key: str | None = None
+
+    def placement_key(self) -> str | None:
+        """The value frame boundaries are drawn on."""
+        return self.cluster_key if self.cluster_key is not None else self.listing_id
 
 
 @dataclass(frozen=True)
@@ -270,12 +290,12 @@ class PackWriter:
         if self._finished:
             raise PackError("cannot add to a finished pack")
 
-        # Seal *before* accepting a member that opens a new listing, so the
-        # listing that just ended keeps all of its captures in one window.
+        # Seal *before* accepting a member that opens a new cluster, so the
+        # cluster that just ended keeps all of its members in one window.
         if (
             self._pending
             and self._pending_bytes >= self._frame_target_bytes
-            and member.listing_id != self._pending[-1].listing_id
+            and member.placement_key() != self._pending[-1].placement_key()
         ):
             self._seal_frame()
 

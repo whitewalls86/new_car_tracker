@@ -102,13 +102,21 @@ def _seed(root: str, n: int) -> list[tuple[str, bytes]]:
 
 
 def _metadata_for(seeded):
-    """Stand in for the silver query, in listing order."""
+    """Stand in for the silver query, in cluster order.
+
+    Identity and cluster key are the same value here, which is the ordinary
+    case. They are separate columns because the bronze packer's are not always
+    the same thing — see Plan 145 Stage 5b — and the unit suite covers where
+    they diverge.
+    """
     def _fetch(con, bucket, artifact_type, year, month):
         for i, (key, _) in enumerate(seeded):
+            listing = f"L{i // 3:03d}"
             yield (
                 key,
                 1000 + i,
-                f"L{i // 3:03d}",
+                listing,
+                listing,
                 datetime(year, month, 1 + (i % 27), 12, tzinfo=timezone.utc),
             )
     return _fetch

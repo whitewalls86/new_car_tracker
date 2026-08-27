@@ -114,18 +114,24 @@ def _seed(store: FakeS3, n: int = 6, *, year: int = _YEAR, month: int = _MONTH) 
 
 
 def _metadata(keys, *, skip: set[int] = frozenset()) -> list[tuple]:
-    """Silver-side rows, already in (listing_id, fetched_at) order.
+    """Silver-side rows, already in (cluster_key, fetched_at) order.
 
     Two captures per listing, so ordering is observable in the sidecar.
+
+    Identity and cluster key are the same value here, which is the ordinary
+    case and what the packer produced before Plan 145 Stage 5b. The tests that
+    matter for the split give them different values deliberately.
     """
     rows = []
     for i, key in enumerate(keys):
         if i in skip:
             continue
+        listing = f"L{i // 2:03d}"
         rows.append((
             f"s3://bronze/{key}",
             1000 + i,
-            f"L{i // 2:03d}",
+            listing,
+            listing,
             datetime(_YEAR, _MONTH, 2 + i, 12, 0, tzinfo=timezone.utc),
         ))
     return rows
@@ -702,15 +708,18 @@ def test_a_pack_without_a_sidecar_is_reported_and_left_alone(store, duckdb):
 def test_iter_ordered_keys_consumes_remaining_and_appends_the_leftovers():
     remaining = {"a", "b", "c"}
     metadata = iter([
-        ("b", 1, "L1", None),
-        ("z", 2, "L2", None),   # in silver, not in MinIO
-        ("b", 3, "L3", None),   # duplicate row for an object already emitted
+        ("b", 1, "L1", "C1", None),
+        ("z", 2, "L2", "C2", None),   # in silver, not in MinIO
+        ("b", 3, "L3", "C3", None),   # duplicate row for an object already emitted
     ])
 
     out = list(packer.iter_ordered_keys(metadata, remaining))
 
     assert [key for key, *_ in out] == ["b", "a", "c"]
     assert [entry[1] for entry in out] == [1, None, None]
+    # A leftover has neither identity nor a cluster key: nothing in silver
+    # describes it, which is the whole reason it is a leftover.
+    assert out[1] == ("a", None, None, None, None)
     assert remaining == set()
 
 
@@ -809,11 +818,11 @@ def test_fetch_member_metadata_orders_by_listing_then_fetched_at(local_lake):
          "minio_path": f"s3://bronze/{_PREFIX}srp.html.zst"},
     ])
     _write_parquet(silver, [
-        {"artifact_id": 100, "listing_id": "L2",
+        {"artifact_id": 100, "listing_id": "L2", "source": "detail",
          "fetched_at": datetime(_YEAR, _MONTH, 4, 9, tzinfo=timezone.utc)},
-        {"artifact_id": 101, "listing_id": "L1",
+        {"artifact_id": 101, "listing_id": "L1", "source": "detail",
          "fetched_at": datetime(_YEAR, _MONTH, 6, 9, tzinfo=timezone.utc)},
-        {"artifact_id": 102, "listing_id": "L1",
+        {"artifact_id": 102, "listing_id": "L1", "source": "detail",
          "fetched_at": datetime(_YEAR, _MONTH, 3, 9, tzinfo=timezone.utc)},
         # artifact 103 has no silver row at all.
     ])
@@ -837,9 +846,9 @@ def test_fetch_member_metadata_deduplicates_repeated_event_rows(local_lake):
         for _ in range(3)
     ])
     _write_parquet(silver, [
-        {"artifact_id": 100, "listing_id": "L1",
+        {"artifact_id": 100, "listing_id": "L1", "source": "detail",
          "fetched_at": datetime(_YEAR, _MONTH, 4, 9, tzinfo=timezone.utc)},
-        {"artifact_id": 100, "listing_id": "L1",
+        {"artifact_id": 100, "listing_id": "L1", "source": "detail",
          "fetched_at": datetime(_YEAR, _MONTH, 5, 9, tzinfo=timezone.utc)},
     ])
 
@@ -857,3 +866,118 @@ def test_pack_state_of_an_empty_bucket(store):
     assert packed == set()
     assert next_seq == 0
     assert orphans == []
+
+
+# ---------------------------------------------------------------------------
+# Sidecar identity vs clustering key (Plan 145 Stage 5b)
+# ---------------------------------------------------------------------------
+#
+# One detail artifact writes one source='detail' silver row -- the page's
+# actual subject -- plus ~5.7 source='carousel' rows for the other cars shown
+# on that page, all sharing that one artifact_id. Reducing that group with
+# any_value(listing_id) therefore returns one of ~6.7 listings, and only one of
+# them is the page's subject. Measured 2026-08-27 across all 144 production
+# packs: the sidecar names the right listing for 31.4% of April members, 59.5%
+# of May, 9.8% of June and 8.4% of July.
+#
+# Every silver fixture above gives one row per artifact_id, so any_value has
+# nothing to pick wrong and the defect was invisible to the suite for four
+# months. These fixtures use the production shape.
+
+def _detail_artifact_rows(artifact_id: int, subject: str, carousel: list[str],
+                          when: datetime) -> list[dict]:
+    """One artifact's silver rows: the detail subject plus its carousel hints.
+
+    Every row carries the same artifact_id and the same fetched_at, because
+    detail_writer stamps one capture time across the primary and all carousel
+    rows. Only listing_id differs -- which is exactly what makes an unfiltered
+    any_value() over the group arbitrary.
+
+    The subject row is written **last** on purpose. ``any_value`` returns
+    whichever row it scans first, and ``detail_writer`` happens to write the
+    primary before its carousel hints -- so a fixture in write order would let
+    the unfixed reducer pass by luck. Production says it does not: silver is
+    flushed and compacted before the packer reads it, and the sidecar names the
+    right listing for only 8.4% of July members. Scan order is not a contract,
+    and this fixture must not lean on one.
+    """
+    rows = [{"artifact_id": artifact_id, "listing_id": hint,
+             "source": "carousel", "fetched_at": when}
+            for hint in carousel]
+    rows.append({"artifact_id": artifact_id, "listing_id": subject,
+                 "source": "detail", "fetched_at": when})
+    return rows
+
+
+def test_sidecar_identity_is_the_detail_subject_not_a_carousel_hint(local_lake):
+    import duckdb
+
+    events, silver = local_lake
+    key = f"{_PREFIX}uuid-000.html.zst"
+    _write_parquet(events, [
+        {"artifact_id": 100, "artifact_type": _TYPE,
+         "minio_path": f"s3://bronze/{key}"},
+    ])
+    # Six carousel hints scanned before the subject, so a reducer that ignores
+    # `source` cannot pass by luck of scan order.
+    _write_parquet(silver, _detail_artifact_rows(
+        100, "L7-subject", ["L1", "L2", "L3", "L4", "L5", "L6"],
+        datetime(_YEAR, _MONTH, 4, 9, tzinfo=timezone.utc),
+    ))
+
+    rows = list(
+        packer.fetch_member_metadata(duckdb.connect(), "bronze", _TYPE, _YEAR, _MONTH)
+    )
+
+    assert len(rows) == 1
+    assert rows[0][2] == "L7-subject", (
+        "the sidecar must name the listing the page is about, not one of the "
+        "carousel vehicles that happen to share its artifact_id"
+    )
+
+
+def test_an_artifact_with_no_detail_row_has_no_sidecar_identity(local_lake):
+    # Carousel rows alone cannot name a subject. Guessing one from them is the
+    # defect; the honest answer is NULL, which is also the signal Plan 145
+    # relies on to mean "silver has no observation of this page".
+    import duckdb
+
+    events, silver = local_lake
+    key = f"{_PREFIX}uuid-000.html.zst"
+    _write_parquet(events, [
+        {"artifact_id": 100, "artifact_type": _TYPE,
+         "minio_path": f"s3://bronze/{key}"},
+    ])
+    _write_parquet(silver, [
+        {"artifact_id": 100, "listing_id": "L1", "source": "carousel",
+         "fetched_at": datetime(_YEAR, _MONTH, 4, 9, tzinfo=timezone.utc)},
+        {"artifact_id": 100, "listing_id": "L2", "source": "carousel",
+         "fetched_at": datetime(_YEAR, _MONTH, 4, 9, tzinfo=timezone.utc)},
+    ])
+
+    rows = list(
+        packer.fetch_member_metadata(duckdb.connect(), "bronze", _TYPE, _YEAR, _MONTH)
+    )
+
+    assert len(rows) == 1
+    assert rows[0][2] is None
+
+
+def test_the_capture_time_survives_the_source_filter(local_lake):
+    # fetched_at was never scrambled -- one capture time is stamped across the
+    # primary and every carousel row -- and the fix must not regress it.
+    import duckdb
+
+    events, silver = local_lake
+    when = datetime(_YEAR, _MONTH, 4, 9, tzinfo=timezone.utc)
+    _write_parquet(events, [
+        {"artifact_id": 100, "artifact_type": _TYPE,
+         "minio_path": f"s3://bronze/{_PREFIX}uuid-000.html.zst"},
+    ])
+    _write_parquet(silver, _detail_artifact_rows(100, "L7", ["L1", "L2"], when))
+
+    rows = list(
+        packer.fetch_member_metadata(duckdb.connect(), "bronze", _TYPE, _YEAR, _MONTH)
+    )
+
+    assert rows[0][4] == when

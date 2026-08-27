@@ -23,7 +23,8 @@ What changed, and why:
   result is one directory of distinct captures. Every later stage then reads
   one store instead of reconciling two.
 
-Stage 1 is complete (commit `3f6e6d4`). Stage 2 is in flight.
+Stage 1 is complete (commit `3f6e6d4`). Stage 2 is complete (2026-08-27).
+Stage 3a is complete (2026-08-27); Stage 3b is in flight.
 
 **Supersedes [Plan 132](plan_132_unrecorded_artifact_recovery.md) and
 [Plan 137](plan_137_legacy_bronze_parquet_disposition.md).**
@@ -58,7 +59,8 @@ later stage has to re-derive them.
 | **Legacy `fetched_at`** | **Trustworthy** | Corroborated by the same 194,734 exact-timestamp matches. |
 | **Sidecar `raw_sha256`** | **Trustworthy** | It is what `read_packed_html` verifies every read against. |
 | **Sidecar `artifact_id`** | **Trustworthy where present** | Written from `artifacts_queue_events` by `minio_path`. NULL for 42,276 of 557,065 members. |
-| **Sidecar `listing_id` / `fetched_at`** | **Unusable as identity; meaningful as a signal** | See below. |
+| **Sidecar `listing_id`** | **Unusable as identity; its NULL-ness is a reliable signal** | Correct for 31.4% of April members, 9.8% of June, 8.4% of July, measured against the scraper's own record. See below. |
+| **Sidecar `fetched_at`** | **Trustworthy where present** | 100.00% exact against `artifacts_queue_events` for June's 1,124,122 members; 99.98% for April's named members. `detail_writer` stamps one capture time on the primary and every carousel row, so `min(fetched_at)` over the group returns it regardless of which listing was picked. NULL where the member has no silver row. |
 | **Legacy `artifact_id`** | **Unusable** | `raw_artifacts` and `ops.artifacts_queue` are separate `bigserial` sequences. The same integer names two different artifacts across the cutover. |
 | **Stored `sha256` of an empty body** | **Unusable** | The Plan 72 writer archived `b""` while copying the database hash. 43,014 rows. |
 
@@ -79,6 +81,93 @@ definitionally, **an object silver has no observation for**. Measured
 This single fact replaces the entire metadata-join apparatus of the previous
 two revisions. "What is missing from silver" is legible from the sidecar
 without trusting a single sidecar identity *value*.
+
+### Why the non-NULL values are wrong
+
+The same `obs` CTE has **no `source` filter** and reduces with
+`any_value(listing_id) GROUP BY artifact_id`. One detail artifact writes one
+`source='detail'` row — the page's actual subject — plus ~5.7
+`source='carousel'` rows for the other cars shown on that page, all sharing
+that one `artifact_id`. `any_value` therefore returns one of ~6.7 listings, and
+only one of them is the page's subject.
+
+`artifact_id` is unaffected: it comes from `artifacts_queue_events` by
+`minio_path`, before the join. `fetched_at` is unaffected: `detail_writer`
+stamps the same capture time on the primary and every carousel row, so `min`
+over the group returns it whichever listing was picked. **Only `listing_id` is
+scrambled.**
+
+Measured 2026-08-27 across all 144 packs — correct `listing_id`, and the share
+of adjacent members that are captures of the same vehicle:
+
+| month | members | `listing_id` correct | adjacency |
+|---|---:|---:|---:|
+| April | 557,065 | 31.4% | 32.7% |
+| May | 1,021,266 | 59.5% | 57.6% |
+| June | 1,124,122 | 9.8% | 16.7% |
+| July | 909,654 | 8.4% | 17.1% |
+
+This is **not a correctness defect in production**: artifact serving looks up
+by `source_key` and verifies `raw_sha256`, and `check_index` validates only
+member counts, frame ordinals and offset tiling. Nothing on the read path
+consults `listing_id`. Its one real cost is that sidecar identity is a trap for
+metadata joins — three revisions of this plan were lost to it.
+
+### The compression question — open, and not to be guessed at
+
+`listing_id` is also the packer's sort key, and `PackWriter.add` seals a frame
+at a listing boundary so a vehicle's repeat captures compress together. So a
+naive `source = 'detail'` fix does not merely correct a column: it reorders
+every pack. Whether that helps or hurts is **unresolved**, and two attempts to
+resolve it were both biased.
+
+The scrambled column is not random. It is a **coarser clustering key** than the
+true listing, because one carousel car appears on many detail pages and
+`any_value` collapses them together:
+
+| July pack-00023 | scrambled id | true listing |
+|---|---:|---:|
+| distinct values | 2,591 | 6,078 |
+| members per value (in-pack) | 9.98 | 4.25 |
+| largest cluster | 1,955 | — |
+| neighbours sharing it, stored order | 90.0% | 26.0% |
+
+Two repack experiments, production dictionary, level 9, 16 MiB frame target,
+control reproducing the stored size exactly:
+
+| test | true-listing order vs current | why it is still biased |
+|---|---:|---|
+| whole pack, frame structure held constant | **19.4% worse** (July), 3.2% (May) | the member set was chosen *by* the scrambled sort, so true ordering got only 4.25 of each listing's ~10 captures |
+| only listings wholly inside one pack | **8.4% worse** | listings that fit in one pack are the low-capture ones — median 2 captures — so the case that benefits most is excluded |
+
+Production sorts the whole month and then slices it into packs, so a real fix
+would gather **all** of a listing's captures. Month-wide for July: 90,832
+listings, mean 10.0 captures each (median 7, max 980), today scattered over a
+mean 2.2 packs with **4.56 captures of a listing per frame**. A global true sort
+would roughly double that.
+
+The deficit halved (19.4% → 8.4%) as true ordering was given more of its
+cluster, so the trend points toward parity or better and the question cannot be
+called from the evidence here.
+
+**Stage 6 answers it with a bounded trial instead.** April is repacked
+regardless, so a fixed ~50,000-member subset is packed both ways, the winner
+carries the single full pass, and the trial packs are discarded. Holding the
+population fixed is what makes the difference attributable — cross-month
+comparison cannot, because achieved ratios already range 43.66x to 82.00x
+without tracking clustering quality at all. See *The ordering trial* under
+Stage 6.
+
+**What is safe to conclude regardless:** the repair records the correct
+`listing_id` in the sidecar and leaves ordering and frame sealing alone, and it
+needs no repack — rewriting that one column while preserving `source_key`,
+`frame_ordinal`, `offset_in_frame`, `length` and `raw_sha256` leaves the pack
+bytes untouched and every read and index check passing. Changing the sort is a
+separate, unproven optimization.
+
+Fixed in **Stage 5b**, before Stage 6 writes anything: identity and placement
+are split so the sidecar can be corrected without relaying out a pack, and the
+ordering question stays open for Stage 6's trial to answer.
 
 ---
 
@@ -259,7 +348,7 @@ SHA 797,073. The discrepancy is the *Empty bodies* finding, not a failure.
 
 ---
 
-## Stage 2 — Materialize successful bodies (CAR-19) — in flight
+## Stage 2 — Materialize successful bodies (CAR-19) — **complete**
 
 `scripts/reconcile_april_detail.py materialize`, dry-run by default.
 
@@ -269,12 +358,33 @@ otherwise derive a content-based key, skip if the object exists, write with
 manifest row. One Parquet manifest shard per source file under
 `recovery/plan145/materialized/`.
 
-### Gate
+### Evidence — 2026-08-27
+
+`materialize --apply` ran under tmux `plan145` on the VM, ~4h10m at
+~4.7 source-files/min, exit 0. All 1,172 manifest shards written under
+`recovery/plan145/materialized/`. Disposition totals over the shard set:
+
+| disposition | rows |
+|---|---:|
+| `written` | 796,430 |
+| `exists` | 11,367 |
+| `skipped_empty` | 43,014 |
+| `skipped_non_success` | 101,010 |
+| **sum** | **951,821** |
+
+**807,797** materialized objects (`written` + `exists`), matching the Stage 1
+projection. The 11,367 `exists` rows are the idempotency proof — identical
+bytes recomputed the same content-derived key and were skipped rather than
+rewritten. 403/5xx bodies recorded, never written.
+
+### Gate — met
 
 - Every legacy occurrence carries exactly one disposition; the four counts sum
-  to 951,821.
-- Every materialized object reads back byte-identically; any mismatch stops the run.
+  to 951,821. **Reproduced exactly.**
+- Every materialized object reads back byte-identically; any mismatch stops the
+  run. **Run completed clean.**
 - Every manifest row retains its legacy locator, `listing_id` and `fetched_at`.
+  **Consumed unchanged by Stage 3a.**
 - Object keys are distinct and content-derived; a re-run writes nothing.
 - No silver, artifact-queue or live-state row is written.
 
@@ -296,14 +406,55 @@ to the pack for a missing object.
 `minio_path` → `artifact_id` join in `artifacts_queue_events`. Existing keys
 are skipped, so the step is idempotent and resumable.
 
+Implemented as the `dedupe` and `unpack` modes on
+`scripts/reconcile_april_detail.py` (PR #260, merged to `master` as
+`cd57a25`), dry-run by default with `--apply`, following the `census` /
+`materialize` structure.
+
+### Evidence — 3a, 2026-08-27
+
+`dedupe --apply` ran 19:57–20:10 UTC, exit 0.
+
+| | |
+|---|---:|
+| deletion candidates (`written` + `exists`) | 806,898 |
+| delete operations / receipts | 371,495 |
+| **distinct objects deleted** | **371,095** |
+| rate over candidates | 46.0% (gate 45.6% ± 10%) |
+
+371,095 distinct is the plan's 371,095 content matches, to the object. 1,172
+deletion-manifest shards written before any delete, plus 1,172 receipt shards,
+under `recovery/plan145/dedupe/`; every receipt `deleted`, zero errors.
+Deletion was by explicit key list, ≤1,000 keys per `delete_objects` call,
+never by prefix.
+
+Post-run verification: **0 of 371,495** deletion-manifest rows carry a
+`raw_sha256` absent from an April sidecar (checked against 557,063 distinct
+packed hashes). The 400-row gap between operations and distinct objects is
+idempotent re-deletes of identical content materialized from two source files;
+0 key/hash conflicts. `ops.artifacts_queue` and silver untouched.
+
+### Evidence — 3b, in flight
+
+Dry run verified 2 packs / 34,751 members — every member ranged-read and
+checked against its sidecar `raw_sha256`, no failure. `unpack --apply` started
+2026-08-27 20:24 UTC under tmux `plan145-s3b` (log
+`/home/ubuntu/plan145-unpack.log`), writing via `write_html` under each
+member's original `source_key` with production dictionary `1367127621`.
+557,065 members, ~3h budget.
+
 ### Gate
 
 - Deletion is by exact key from a written manifest with receipts, never by
-  prefix; the count reconciles against the sidecar hash join.
+  prefix; the count reconciles against the sidecar hash join. **3a: met.**
 - No key is deleted whose content is not provably in a verified pack.
+  **3a: verified, 0 exceptions.**
 - Every unpacked member verifies against its `raw_sha256` on write.
+  *(3b, in flight.)*
 - The flattened population contains no two objects with identical content.
+  *(end-of-3b check.)*
 - `ops.artifacts_queue` is not written; no silver row is written.
+  **3a: held.**
 
 ---
 
@@ -366,6 +517,59 @@ with before/after snapshots of live tables and V040 views, before the full apply
 
 ---
 
+## Stage 5b — Fix the packer before it writes new packs
+
+Stage 6 does not merely read packs, it **writes** them. Left unfixed, it would
+mint fresh April sidecars carrying the scrambled `listing_id` — turning a
+historical defect into one this plan actively produces, immediately after
+spending three revisions proving that column cannot be trusted.
+
+It also blocks Stage 6's own trial. That trial decides which value the *sort
+key* should be, and today a single column is both sort key and recorded
+identity. They have to be separable before the question can even be asked.
+
+So the packer is corrected first, and only in the way that is knowable now:
+
+- **`shared/packfile.py`** — `PackMember` gains `cluster_key`. `listing_id`
+  stays identity and is what reaches the sidecar; `cluster_key` is placement,
+  the value frame boundaries are drawn on, and it defaults to `listing_id`, so
+  every other caller is unchanged.
+- **`archiver/processors/pack_bronze_html.py`** — the `obs` CTE now selects
+  both: `any_value(listing_id) FILTER (WHERE source = 'detail')` as identity,
+  and the historical unfiltered reduction as `cluster_key`. `ORDER BY` and
+  frame sealing move to `cluster_key`, which is the value they already used —
+  so **this change corrects the sidecar without relaying out a single pack.**
+
+That last property is the point. Correcting identity and changing placement are
+two decisions, and only the first is settled; bundling them would ship an
+unproven rewrite of every pack under cover of a defect fix.
+
+### The audit
+
+Every other reducer over silver was checked for the same shape. The three
+analysis scripts that group by `artifact_id` — `estimate_dictionary_savings`,
+`estimate_pack_savings`, `diff_log_analysis` — already filter
+`WHERE source ILIKE '%detail%'` ahead of the reduction, so carousel rows never
+reach them. The remaining `any_value` calls reduce `minio_path`, which is
+unambiguous per artifact. `pack_bronze_html` was the only affected reducer.
+
+### Gate
+
+- A regression test builds the production shape — one artifact with one
+  `source='detail'` row and six `source='carousel'` rows — and asserts the
+  sidecar names the subject. It fails on the pre-fix code.
+- The fixture does **not** depend on scan order. `any_value` returns the first
+  row it scans and `detail_writer` writes the primary first, so a fixture in
+  write order lets the unfixed reducer pass by luck; the subject is written
+  last.
+- An artifact with only carousel rows yields a NULL identity rather than a
+  guessed one — that NULL is the signal Plan 145 depends on.
+- `fetched_at` is unchanged, which its own test asserts.
+- Placement is byte-for-byte what it was: no pack is relaid out by this stage.
+- Every other silver reducer is audited and the result recorded.
+
+---
+
 ## Stage 6 — Repack, prune and delete (CAR-22)
 
 Run the existing packer over the flattened population, which by now is
@@ -383,6 +587,60 @@ Keep the original April packs until the replacements verify.
 No new pack format, generation selector, reader contract or prune algorithm is
 part of this plan.
 
+### The ordering trial, before the full pass
+
+April is repacked regardless, so it is also where the open ordering
+question gets a controlled answer — from a **bounded trial**, not a second full
+pass.
+
+Take the first ~50,000 members of the flattened population (about two packs'
+worth), pack that same set twice, and compare total stored bytes:
+
+| trial | members added in |
+|---|---|
+| **current** | the existing clustering key, as the packer orders today |
+| **true** | `(listing_id, fetched_at)` on the corrected listing |
+
+Same members, same dictionary, level and frame target; only the order differs.
+Discard both trial packs, then run **one** full pass over the whole population
+in the winning order. Fix the rule before running: smaller wins.
+
+Cost is minutes. Risk is nil — the trial packs are thrown away and the original
+April packs stay authoritative until the real replacement set verifies.
+
+#### Why a trial and not a cross-month comparison
+
+Comparing April's finished bytes-per-page against other months cannot isolate
+ordering, because the months already differ far more than the effect being
+measured. Achieved ratios, from production metadata on 2026-08-27:
+
+| month | members | raw GiB | stored GiB | ratio | `listing_id` correct |
+|---|---:|---:|---:|---:|---:|
+| April | 557,065 | 86.77 | 1.99 | 43.66x | 31.4% |
+| May | 1,021,266 | 170.45 | 2.51 | 67.95x | 59.5% |
+| June | 1,124,122 | 190.30 | 2.32 | 82.00x | 9.8% |
+| July | 909,654 | 157.28 | 2.03 | 77.44x | 8.4% |
+
+The ratio does not track clustering quality at all — June, the *worst*
+true-listing clustered month, achieves the *best* ratio. Between-month spread
+is nearly 2x, against an ordering effect of 8–19%. That is not evidence
+ordering is irrelevant; it is evidence that cross-month comparison is far too
+noisy to detect it. Holding the population fixed is the only way to attribute
+the difference.
+
+#### Caveats for the result
+
+- **April is the least representative month.** Its sidecar is already 31.4%
+  correct, so its current clustering is a hybrid; June and July are ~9%. The
+  direction should generalize; the magnitude should not be assumed to.
+- A 50,000-member trial cannot gather every capture of a listing the way a
+  month-global sort would, so it still understates true-listing ordering — less
+  than the two bench tests did, and on a population that is at least fixed.
+
+If the true ordering wins, the size of the win is what justifies (or does not)
+a separate plan to reorder May, June and July — 6.86 GiB and ~3M members that
+this plan does not touch.
+
 ### Gate
 
 - Every retained member reads byte-identically before old packs are retired.
@@ -390,6 +648,11 @@ part of this plan.
   unexplained failures.
 - Sidecar NULL-identity members drop from 99,981 to the 42,276 that have no
   `artifacts_queue_events` row, or the difference is explained.
+- Replacement sidecars carry the **correct** `listing_id`, whichever ordering
+  wins; identity and sort key are recorded independently.
+- The ordering trial runs on a fixed ~50,000-member subset, both orderings are
+  compared, the winner carries the single full pass, and the trial packs are
+  discarded — with the decision rule fixed before the run.
 - Deleted, absent and failed legacy-key counts reconcile to exactly 1,172.
 - The legacy `detail_page` prefix contains zero Parquet objects.
 - The legacy `results_page` population is unchanged.
