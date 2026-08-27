@@ -9,12 +9,6 @@ remains, and it is a test to write rather than a measurement to take.**
 [Plan 137](plan_137_legacy_bronze_parquet_disposition.md).** See
 [Effect on other plans](#effect-on-other-plans).
 
-The five-ticket delivery sequence is specified in
-[Implementation Plan 145](implementation_plan_145_april_cutover_reconciliation.md):
-CAR-13 builds and proves the complete recovery machine; CAR-19 through CAR-22
-execute recovery, selective recovery, preservation and deletion as separate
-slices.
-
 April 2026 is the month the system moved from local storage and n8n to MinIO
 and the processing service. Three separate investigations each found one face
 of that cutover and none could see the other two.
