@@ -113,46 +113,51 @@ member counts, frame ordinals and offset tiling. Nothing on the read path
 consults `listing_id`. Its one real cost is that sidecar identity is a trap for
 metadata joins — three revisions of this plan were lost to it.
 
-### The compression question, settled
+### The compression question — open, and not to be guessed at
 
 `listing_id` is also the packer's sort key, and `PackWriter.add` seals a frame
-at a listing boundary so a vehicle's repeat captures compress together. The
-obvious worry is that a scrambled key defeats that.
+at a listing boundary so a vehicle's repeat captures compress together. So a
+naive `source = 'detail'` fix does not merely correct a column: it reorders
+every pack. Whether that helps or hurts is **unresolved**, and two attempts to
+resolve it were both biased.
 
-**It does not. The scrambled order compresses better.** Two real packs were
-repacked in memory with the production dictionary, level and frame target; the
-control reproduced the stored size exactly. Holding frame structure constant so
-that only the ordering differs, sorting by the *true* listing is **19.4% worse**
-in July (10.2% correct today) and **3.2% worse** in May (85.3% correct) — the
-gap tracking how wrong the sidecar is, as a real ordering effect should.
-
-The mechanism, measured on the same two packs: the scrambled column is not
-random, it is a **coarser clustering key** than the true listing. One carousel
-car appears on many different detail pages, so `any_value` collapses them
-together.
+The scrambled column is not random. It is a **coarser clustering key** than the
+true listing, because one carousel car appears on many detail pages and
+`any_value` collapses them together:
 
 | July pack-00023 | scrambled id | true listing |
 |---|---:|---:|
 | distinct values | 2,591 | 6,078 |
-| members per value | 9.98 | 4.25 |
+| members per value (in-pack) | 9.98 | 4.25 |
 | largest cluster | 1,955 | — |
 | neighbours sharing it, stored order | 90.0% | 26.0% |
 
-zstd's match window at level 9 spans roughly 15–20 pages of ~180 KB. Filling it
-with ~10 pages that share a carousel vehicle — same model, trim, dealer, region,
-and so a great deal of shared markup and spec text — beats filling it with ~4
-near-identical captures of one car followed by unrelated vehicles. May's gap is
-small for the same reason: there the two keys are nearly the same coarseness
-(9.41 vs 7.94 members each, 89.4% vs 79.3% adjacency), so there is little to
-change.
+Two repack experiments, production dictionary, level 9, 16 MiB frame target,
+control reproducing the stored size exactly:
 
-So the naive one-line `source = 'detail'` fix is a **regression**, because the
-same column feeds `ORDER BY o.listing_id`. The correct repair records the right
-`listing_id` in the sidecar while leaving ordering and frame sealing on the
-existing clustering key, and it needs no repack: rewriting that one column
-while preserving `source_key`, `frame_ordinal`, `offset_in_frame`, `length` and
-`raw_sha256` leaves the pack bytes untouched and every read and index check
-passing.
+| test | true-listing order vs current | why it is still biased |
+|---|---:|---|
+| whole pack, frame structure held constant | **19.4% worse** (July), 3.2% (May) | the member set was chosen *by* the scrambled sort, so true ordering got only 4.25 of each listing's ~10 captures |
+| only listings wholly inside one pack | **8.4% worse** | listings that fit in one pack are the low-capture ones — median 2 captures — so the case that benefits most is excluded |
+
+Production sorts the whole month and then slices it into packs, so a real fix
+would gather **all** of a listing's captures. Month-wide for July: 90,832
+listings, mean 10.0 captures each (median 7, max 980), today scattered over a
+mean 2.2 packs with **4.56 captures of a listing per frame**. A global true sort
+would roughly double that.
+
+The deficit halved (19.4% → 8.4%) as true ordering was given more of its
+cluster, so the trend points toward parity or better and the question cannot be
+called from the evidence here. Settling it needs high-capture listings with all
+their captures, across several packs — feasible, but it should not run while
+the box is already saturated.
+
+**What is safe to conclude regardless:** the repair records the correct
+`listing_id` in the sidecar and leaves ordering and frame sealing alone, and it
+needs no repack — rewriting that one column while preserving `source_key`,
+`frame_ordinal`, `offset_in_frame`, `length` and `raw_sha256` leaves the pack
+bytes untouched and every read and index check passing. Changing the sort is a
+separate, unproven optimization.
 
 Tracked as CAR-28. Within this plan it matters only in Stage 6: the April
 repack must write the correct `listing_id` into the replacement sidecars
