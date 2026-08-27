@@ -126,11 +126,25 @@ that only the ordering differs, sorting by the *true* listing is **19.4% worse**
 in July (10.2% correct today) and **3.2% worse** in May (85.3% correct) — the
 gap tracking how wrong the sidecar is, as a real ordering effect should.
 
-The likely mechanism is that zstd's match window at level 9 spans only ~15–20
-pages. `any_value` picks a *carousel* listing, which is shared across many
-detail pages for similar vehicles, so a window holds ~15 related pages; true
-listing order gives runs of only ~4.3 near-identical captures followed by
-unrelated vehicles.
+The mechanism, measured on the same two packs: the scrambled column is not
+random, it is a **coarser clustering key** than the true listing. One carousel
+car appears on many different detail pages, so `any_value` collapses them
+together.
+
+| July pack-00023 | scrambled id | true listing |
+|---|---:|---:|
+| distinct values | 2,591 | 6,078 |
+| members per value | 9.98 | 4.25 |
+| largest cluster | 1,955 | — |
+| neighbours sharing it, stored order | 90.0% | 26.0% |
+
+zstd's match window at level 9 spans roughly 15–20 pages of ~180 KB. Filling it
+with ~10 pages that share a carousel vehicle — same model, trim, dealer, region,
+and so a great deal of shared markup and spec text — beats filling it with ~4
+near-identical captures of one car followed by unrelated vehicles. May's gap is
+small for the same reason: there the two keys are nearly the same coarseness
+(9.41 vs 7.94 members each, 89.4% vs 79.3% adjacency), so there is little to
+change.
 
 So the naive one-line `source = 'detail'` fix is a **regression**, because the
 same column feeds `ORDER BY o.listing_id`. The correct repair records the right
