@@ -59,7 +59,8 @@ later stage has to re-derive them.
 | **Legacy `fetched_at`** | **Trustworthy** | Corroborated by the same 194,734 exact-timestamp matches. |
 | **Sidecar `raw_sha256`** | **Trustworthy** | It is what `read_packed_html` verifies every read against. |
 | **Sidecar `artifact_id`** | **Trustworthy where present** | Written from `artifacts_queue_events` by `minio_path`. NULL for 42,276 of 557,065 members. |
-| **Sidecar `listing_id` / `fetched_at`** | **Unusable as identity; meaningful as a signal** | See below. |
+| **Sidecar `listing_id`** | **Unusable as identity; its NULL-ness is a reliable signal** | Correct for 31.4% of April members, 9.8% of June, 8.4% of July, measured against the scraper's own record. See below. |
+| **Sidecar `fetched_at`** | **Trustworthy where present** | 100.00% exact against `artifacts_queue_events` for June's 1,124,122 members; 99.98% for April's named members. `detail_writer` stamps one capture time on the primary and every carousel row, so `min(fetched_at)` over the group returns it regardless of which listing was picked. NULL where the member has no silver row. |
 | **Legacy `artifact_id`** | **Unusable** | `raw_artifacts` and `ops.artifacts_queue` are separate `bigserial` sequences. The same integer names two different artifacts across the cutover. |
 | **Stored `sha256` of an empty body** | **Unusable** | The Plan 72 writer archived `b""` while copying the database hash. 43,014 rows. |
 
@@ -80,6 +81,53 @@ definitionally, **an object silver has no observation for**. Measured
 This single fact replaces the entire metadata-join apparatus of the previous
 two revisions. "What is missing from silver" is legible from the sidecar
 without trusting a single sidecar identity *value*.
+
+### Why the non-NULL values are wrong
+
+The same `obs` CTE has **no `source` filter** and reduces with
+`any_value(listing_id) GROUP BY artifact_id`. One detail artifact writes one
+`source='detail'` row — the page's actual subject — plus ~5.7
+`source='carousel'` rows for the other cars shown on that page, all sharing
+that one `artifact_id`. `any_value` therefore returns one of ~6.7 listings, and
+only one of them is the page's subject.
+
+`artifact_id` is unaffected: it comes from `artifacts_queue_events` by
+`minio_path`, before the join. `fetched_at` is unaffected: `detail_writer`
+stamps the same capture time on the primary and every carousel row, so `min`
+over the group returns it whichever listing was picked. **Only `listing_id` is
+scrambled.**
+
+Measured 2026-08-27 across all 144 packs — correct `listing_id`, and the share
+of adjacent members that are captures of the same vehicle:
+
+| month | members | `listing_id` correct | adjacency |
+|---|---:|---:|---:|
+| April | 557,065 | 31.4% | 32.7% |
+| May | 1,021,266 | 59.5% | 57.6% |
+| June | 1,124,122 | 9.8% | 16.7% |
+| July | 909,654 | 8.4% | 17.1% |
+
+Two consequences, neither of which is a correctness defect in production:
+artifact serving looks up by `source_key` and verifies `raw_sha256`, and
+`check_index` validates only member counts, frame ordinals and offset tiling.
+
+1. **Sidecar identity is a trap for metadata joins.** Three revisions of this
+   plan were lost to it.
+2. **Frame locality is degraded.** `PackWriter.add` seals a frame at a listing
+   boundary so a vehicle's repeat captures compress against each other; a
+   scrambled sort key defeats that, which is what the adjacency column
+   measures. The cost is real but purely economic, and unmeasured.
+
+Repairing the metadata does **not** require repacking — a sidecar is a separate
+object, and rewriting `listing_id` while preserving `source_key`,
+`frame_ordinal`, `offset_in_frame`, `length` and `raw_sha256` leaves the pack
+bytes untouched and every read and index check passing. Recovering the
+compression would require a repack, and should not be undertaken before the
+gain is measured.
+
+Tracked as CAR-28. Within this plan it matters only in Stage 6: the April
+repack must apply the `source = 'detail'` filter, or it writes the same
+scrambled identities into the replacement sidecars.
 
 ---
 

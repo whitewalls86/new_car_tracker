@@ -71,10 +71,17 @@ a pack directly at this stage — that is what Stage 3b was for.
 
 ## Identity: three tiers, in this order
 
-This is the part to get right. **The unpack manifest's `listing_id` and
-`fetched_at` columns are the sidecar's values and must be ignored.** They are
-wrong for 313,701 of 457,084 named members, measured against the scraper's own
-record on 2026-08-27.
+This is the part to get right. **The unpack manifest's `listing_id` column
+holds the sidecar's value and must be ignored** — it is wrong for 313,701 of
+457,084 named April members, measured against the scraper's own record on
+2026-08-27, because the packer reduces silver with
+`any_value(listing_id) GROUP BY artifact_id` and one detail artifact
+contributes ~6.7 differing listings (CAR-28).
+
+The sidecar's `fetched_at` is *not* affected — 100.00% exact for June,
+99.98% for April, since one capture time is stamped on the primary and every
+carousel row. It is still not used below, because tiers 1 and 2 already cover
+everything it could and one rule is easier to hold than two.
 
 **Tier 1 — the legacy manifest, by `raw_sha256`.** 797,073 identities.
 Trustworthy: Stage 1 verified every hash, and silver corroborates the legacy
@@ -222,8 +229,10 @@ governance files CI enforces. Run the long job under tmux on the VM.
 2. **No production mutation.** Writes go only under `recovery/plan145/parsed/`.
    No Postgres, no silver, no `ops.artifacts_queue`.
 3. **Decode exactly as production decodes.**
-4. **Never use the sidecar's `listing_id`/`fetched_at`**, including the copies
-   sitting in the unpack manifest.
+4. **Never use the sidecar's `listing_id`**, including the copy sitting in the
+   unpack manifest. (Its `fetched_at` *is* correct where present — 100.00%
+   exact for June, 99.98% for April — but tiers 1 and 2 already cover
+   everything it could, so prefer them and keep one rule.)
 5. **Announce the blast radius** of any production command before running it —
    object counts, request counts, which prefix. Prefer manifests over
    re-scanning production.
