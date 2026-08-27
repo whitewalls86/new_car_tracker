@@ -148,9 +148,12 @@ would roughly double that.
 
 The deficit halved (19.4% → 8.4%) as true ordering was given more of its
 cluster, so the trend points toward parity or better and the question cannot be
-called from the evidence here. Settling it needs high-capture listings with all
-their captures, across several packs — feasible, but it should not run while
-the box is already saturated.
+called from the evidence here.
+
+**It is settled by Stage 6 instead**, at no extra risk and one extra packing
+pass: April is repacked regardless, so it is packed both ways and the smaller
+result is kept. That is a month-global sort over the real population — the
+regime neither bench test reached. See *The ordering A/B* under Stage 6.
 
 **What is safe to conclude regardless:** the repair records the correct
 `listing_id` in the sidecar and leaves ordering and frame sealing alone, and it
@@ -528,6 +531,42 @@ Keep the original April packs until the replacements verify.
 No new pack format, generation selector, reader contract or prune algorithm is
 part of this plan.
 
+### The ordering A/B, carried by this repack
+
+April is being repacked regardless, because its population changes. That makes
+it the one chance to settle the open compression question (CAR-28) under real
+conditions: a **month-global** sort with every capture of a listing available
+to cluster, which is exactly the regime the two bench tests could not reach.
+
+Pack the flattened population **twice** and keep the smaller result:
+
+| pass | members added in |
+|---|---|
+| **current** | the existing clustering key, as the packer orders today |
+| **true** | `(listing_id, fetched_at)` on the corrected listing |
+
+Same population, same dictionary, level and frame target; only the order
+differs. Compare total stored bytes across all replacement packs.
+
+Both passes are safe by construction: the originals stay authoritative until a
+replacement set verifies, so a losing pass is discarded rather than rolled back.
+Decide before running that the winner is whichever is smaller, so the choice is
+not made after seeing which way it went.
+
+Two caveats to carry into the write-up:
+
+- **April is the least representative month for this.** Its sidecar is already
+  31.4% correct, so its current clustering is a hybrid; June and July are ~9%
+  correct and may behave differently in either direction. April's result
+  bounds the question, it does not close it for them.
+- The added materialized objects were never packed before, so the two passes
+  measure ordering over a population no earlier pack held. That is the right
+  population for April's own decision, and a caveat for extrapolation.
+
+If the true ordering wins, the size of the win is what justifies (or does not)
+a separate plan to reorder May, June and July — 6.86 GiB and ~3M members that
+this plan does not touch.
+
 ### Gate
 
 - Every retained member reads byte-identically before old packs are retired.
@@ -535,6 +574,10 @@ part of this plan.
   unexplained failures.
 - Sidecar NULL-identity members drop from 99,981 to the 42,276 that have no
   `artifacts_queue_events` row, or the difference is explained.
+- Replacement sidecars carry the **correct** `listing_id`, whichever ordering
+  wins; identity and sort key are recorded independently.
+- Both orderings are packed, their total stored bytes compared, and the smaller
+  kept — with the decision rule fixed before the run.
 - Deleted, absent and failed legacy-key counts reconcile to exactly 1,172.
 - The legacy `detail_page` prefix contains zero Parquet objects.
 - The legacy `results_page` population is unchanged.
