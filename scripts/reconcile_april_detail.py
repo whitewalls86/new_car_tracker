@@ -6,12 +6,28 @@ silver or rebuilt as a real current artifact. That is six stages of work over
 one frozen population, so this is one command with one mode per stage rather
 than six scripts that each re-derive the census.
 
-Stage 1 (``census``) is implemented here. It is **read-only**: it enumerates
-the exact legacy prefix, streams every row occurrence, recomputes hashes, and
-writes local manifests plus fingerprints. It never writes to MinIO, never
-touches Postgres, and never deletes anything. Later stages join these frozen
-manifests to pack sidecars (Stage 2) and to silver (Stage 3); nothing mutates
-production before Stage 4.
+Four modes live here, one per early stage of the plan's third revision, which
+*flattens* the population before parsing it:
+
+* ``census`` (Stage 1) -- read-only. Enumerates the exact legacy prefix,
+  streams every row occurrence, recomputes hashes, and writes local manifests
+  plus fingerprints. Never writes to MinIO, never touches Postgres.
+* ``materialize`` (Stage 2) -- writes every surviving successful legacy body as
+  a normal ``.html.zst`` object under a content-derived key, one Parquet
+  manifest shard per source file under ``recovery/plan145/materialized/``.
+* ``dedupe`` (Stage 3a) -- deletes each materialized object whose ``raw_sha256``
+  already appears in an April pack sidecar. A join of two written-down columns;
+  no bytes are re-hashed. The per-shard deletion manifest under
+  ``recovery/plan145/dedupe/`` is written before that shard's first delete,
+  which is by exact key in capped batches with one receipt per key.
+* ``unpack`` (Stage 3b) -- writes every April pack member back as a loose
+  object **under its original ``source_key``**, verifying each member against
+  its sidecar ``raw_sha256`` first, one manifest shard per pack under
+  ``recovery/plan145/unpacked/``.
+
+``dedupe`` and ``unpack`` default to a dry run and take an explicit ``--apply``;
+between them the population becomes one flat prefix of distinct captures that
+Stage 4 parses. No mode writes Postgres.
 
 What the legacy rows actually are
 ---------------------------------
@@ -1028,6 +1044,576 @@ def run_materialize(args: argparse.Namespace) -> int:
 
 
 # --------------------------------------------------------------------------
+# Stage 3 helpers -- one flat prefix, shared by 3a and 3b
+# --------------------------------------------------------------------------
+
+def _april_pack_prefix() -> str:
+    """The one pack prefix that could hold an April legacy detail capture.
+
+    ``pack_lookup_prefix`` maps every ``html/year=2026/month=4/
+    artifact_type=detail_page/`` key to exactly this prefix, so a content match
+    against a sidecar here is a match against the store that would serve the
+    read after a materialized twin is deleted.
+    """
+    from shared.packfile import PACK_PREFIX
+
+    return (
+        f"{PACK_PREFIX}/{TARGET_ARTIFACT_TYPE}/"
+        f"{TARGET_YEAR:04d}/{TARGET_MONTH:02d}/"
+    )
+
+
+def _read_parquet_rows(
+    client, bucket: str, key: str, *, columns: Optional[Sequence[str]] = None,
+) -> list[dict[str, Any]]:
+    import io
+
+    import pyarrow.parquet as pq
+
+    body = client.get_object(Bucket=bucket, Key=key)["Body"].read()
+    table = pq.read_table(
+        io.BytesIO(body), columns=list(columns) if columns else None,
+    )
+    return table.to_pylist()
+
+
+def _write_parquet_shard(
+    shard_key: str, schema: Any, records: Sequence[dict[str, Any]],
+) -> None:
+    """Persist one unit's manifest as Parquet, straight to MinIO.
+
+    Parquet rather than CSV because the later stages read these with DuckDB;
+    MinIO rather than local disk because a disposable worker container's
+    filesystem does not outlive the run. Matches :func:`write_manifest_shard`.
+    """
+    import io
+
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    from shared.minio import write_bytes
+
+    rows = [{name: r.get(name) for name in schema.names} for r in records]
+    buf = io.BytesIO()
+    pq.write_table(pa.Table.from_pylist(rows, schema=schema), buf, compression="zstd")
+    write_bytes(shard_key, buf.getvalue(), content_type="application/octet-stream")
+
+
+# --------------------------------------------------------------------------
+# Stage 3a -- delete materialized objects the April packs already hold
+# --------------------------------------------------------------------------
+
+#: Deletion manifest + receipts. The manifest for a source shard is written
+#: before that shard's first delete, so an interrupted run still leaves a
+#: complete record of what it intended to remove.
+DEDUPE_PREFIX = "recovery/plan145/dedupe"
+
+#: The only two dispositions that ever produced an object. ``skipped_empty`` and
+#: ``skipped_non_success`` rows carry no ``object_key`` and can never be a
+#: deletion candidate.
+MATERIALIZED_DISPOSITIONS = ("written", "exists")
+
+#: S3 ``DeleteObjects`` accepts at most this many keys per request.
+MAX_DELETE_BATCH = 1000
+
+
+def _deletion_schema() -> Any:
+    import pyarrow as pa
+
+    return pa.schema([
+        pa.field("object_key", pa.string()),
+        pa.field("raw_sha256", pa.string()),
+        pa.field("legacy_object_key", pa.string()),
+        pa.field("row_group", pa.int32()),
+        pa.field("row_offset", pa.int32()),
+        pa.field("claimed_by_sidecar", pa.string()),
+        pa.field("claimed_by_source_key", pa.string()),
+    ])
+
+
+def _receipt_schema() -> Any:
+    import pyarrow as pa
+
+    return pa.schema([
+        pa.field("object_key", pa.string()),
+        pa.field("raw_sha256", pa.string()),
+        pa.field("result", pa.string()),
+    ])
+
+
+def _list_keys(client, bucket: str, prefix: str, suffix: str) -> list[str]:
+    return sorted(
+        entry["Key"]
+        for entry in _list_prefix(client, bucket, prefix)
+        if entry["Key"].endswith(suffix)
+    )
+
+
+def load_sidecar_hashes(
+    client, bucket: str, sidecar_keys: Sequence[str],
+) -> dict[str, tuple[str, str]]:
+    """Map every packed member's ``raw_sha256`` to the sidecar that holds it.
+
+    Projects only ``raw_sha256`` and ``source_key`` -- ~557k members across 32
+    sidecars, about a minute. No pack bytes are read and nothing is re-hashed:
+    the sidecar ``raw_sha256`` is the value ``read_packed_html`` verifies every
+    served read against, so its presence here is proof the content sits in a
+    verified pack.
+
+    When two members share a hash the lowest ``(sidecar_key, source_key)`` wins,
+    so the deletion manifest names one claimant deterministically.
+    """
+    hashes: dict[str, tuple[str, str]] = {}
+    for sidecar_key in sidecar_keys:
+        rows = _read_parquet_rows(
+            client, bucket, sidecar_key, columns=["raw_sha256", "source_key"],
+        )
+        for row in rows:
+            sha = row.get("raw_sha256")
+            if not sha:
+                continue
+            claim = (sidecar_key, row.get("source_key") or "")
+            current = hashes.get(sha)
+            if current is None or claim < current:
+                hashes[sha] = claim
+    return hashes
+
+
+def plan_deletions(
+    manifest_rows: Sequence[dict[str, Any]],
+    sidecar_hashes: dict[str, tuple[str, str]],
+) -> list[dict[str, Any]]:
+    """Pick the materialized objects whose content an April pack already holds.
+
+    Pure: a join of two written-down ``raw_sha256`` columns, nothing re-hashed.
+    Only ``written`` / ``exists`` rows carry an ``object_key``; the two skipped
+    dispositions are structurally ineligible and are never considered. The
+    result is sorted and de-duplicated on ``object_key`` so identical bytes
+    across two legacy rows plan exactly one deletion.
+    """
+    planned: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for row in sorted(
+        manifest_rows,
+        key=lambda r: (
+            r.get("object_key") or "",
+            r.get("legacy_object_key") or "",
+            r.get("row_group") or 0,
+            r.get("row_offset") or 0,
+        ),
+    ):
+        if row.get("disposition") not in MATERIALIZED_DISPOSITIONS:
+            continue
+        object_key = row.get("object_key")
+        sha = row.get("raw_sha256")
+        if not object_key or not sha or object_key in seen:
+            continue
+        if sha not in sidecar_hashes:
+            continue
+        seen.add(object_key)
+        sidecar_key, source_key = sidecar_hashes[sha]
+        planned.append({
+            "object_key": object_key,
+            "raw_sha256": sha,
+            "legacy_object_key": row.get("legacy_object_key"),
+            "row_group": row.get("row_group"),
+            "row_offset": row.get("row_offset"),
+            "claimed_by_sidecar": sidecar_key,
+            "claimed_by_source_key": source_key,
+        })
+    return planned
+
+
+def _dedupe_shard_key(materialize_shard_key: str) -> str:
+    stem = materialize_shard_key.rsplit("/", 1)[-1]
+    return f"{DEDUPE_PREFIX}/{stem}"
+
+
+def _dedupe_receipt_key(materialize_shard_key: str) -> str:
+    stem = materialize_shard_key.rsplit("/", 1)[-1]
+    return f"{DEDUPE_PREFIX}/receipts/{stem}"
+
+
+def delete_objects_in_batches(
+    client,
+    bucket: str,
+    records: Sequence[dict[str, Any]],
+    *,
+    apply: bool,
+    batch_size: int,
+    verified_hashes: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Delete each planned key by exact name, in capped batches, one receipt per key.
+
+    A record whose ``raw_sha256`` is not in ``verified_hashes`` is refused and
+    the run stops: the manifest and the join share a source, but the guard
+    means a hand-edited manifest cannot widen the blast radius. Nothing is ever
+    deleted by prefix.
+    """
+    cap = max(1, min(batch_size, MAX_DELETE_BATCH))
+    for record in records:
+        if record.get("raw_sha256") not in verified_hashes:
+            raise ReconcileError(
+                f"refusing to delete {record.get('object_key')!r}: its content "
+                f"{str(record.get('raw_sha256'))[:12]} is not in any April pack "
+                f"sidecar"
+            )
+
+    receipts: list[dict[str, Any]] = []
+    for start in range(0, len(records), cap):
+        batch = records[start:start + cap]
+        if not apply:
+            receipts.extend(
+                {"object_key": r["object_key"], "raw_sha256": r["raw_sha256"],
+                 "result": "planned"}
+                for r in batch
+            )
+            continue
+        response = client.delete_objects(
+            Bucket=bucket,
+            Delete={"Objects": [{"Key": r["object_key"]} for r in batch],
+                    "Quiet": False},
+        )
+        errors = {
+            e["Key"]: e.get("Code", "Unknown") for e in response.get("Errors", [])
+        }
+        deleted = {d["Key"] for d in response.get("Deleted", [])}
+        for record in batch:
+            key = record["object_key"]
+            if key in errors:
+                result = f"error:{errors[key]}"
+            elif key in deleted:
+                result = "deleted"
+            else:
+                result = "absent"
+            receipts.append({
+                "object_key": key,
+                "raw_sha256": record["raw_sha256"],
+                "result": result,
+            })
+    return receipts
+
+
+def run_dedupe(args: argparse.Namespace) -> int:
+    from shared.minio import BUCKET as DEFAULT_BUCKET
+    from shared.minio import object_exists
+
+    bucket = args.bucket or DEFAULT_BUCKET
+    client = _s3_client()
+
+    pack_prefix = args.pack_prefix or _april_pack_prefix()
+    sidecar_keys = _list_keys(client, bucket, pack_prefix, ".idx.parquet")
+    if not sidecar_keys:
+        raise ReconcileError(f"no sidecars under s3://{bucket}/{pack_prefix}")
+    logger.info("loading %d April sidecars from %s", len(sidecar_keys), pack_prefix)
+    sidecar_hashes = load_sidecar_hashes(client, bucket, sidecar_keys)
+    logger.info("indexed %d distinct packed content hashes", len(sidecar_hashes))
+
+    shard_keys = _list_keys(
+        client, bucket, MATERIALIZE_PREFIX + "/", ".parquet",
+    )
+    shard_keys = [k for k in shard_keys if "/" not in k[len(MATERIALIZE_PREFIX) + 1:]]
+    if not shard_keys:
+        raise ReconcileError(
+            f"no materialize manifest shards under s3://{bucket}/{MATERIALIZE_PREFIX}/"
+        )
+    if args.max_shards:
+        shard_keys = shard_keys[: args.max_shards]
+        logger.warning("--max-shards set: %d shards; the rate gate is disabled",
+                       len(shard_keys))
+
+    if not args.apply:
+        logger.warning("DRY RUN: planning only, nothing will be deleted. "
+                       "Pass --apply to delete.")
+
+    # -- plan phase: write every deletion manifest shard, delete nothing -------
+    #: shard key -> the minimal (object_key, raw_sha256) pairs the delete phase
+    #: needs. The full locator/claim columns live in the written manifest, not
+    #: here -- ~371k rows held whole would be a few hundred MB for no reason.
+    plan_by_shard: dict[str, list[dict[str, Any]]] = {}
+    candidates = 0
+    done_shards = 0
+    for index, shard_key in enumerate(shard_keys, start=1):
+        checkpoint = (
+            _dedupe_receipt_key(shard_key) if args.apply
+            else _dedupe_shard_key(shard_key)
+        )
+        if not args.force and object_exists(checkpoint):
+            done_shards += 1
+            continue
+
+        rows = _read_parquet_rows(client, bucket, shard_key)
+        candidates += len({
+            r["object_key"] for r in rows
+            if r.get("disposition") in MATERIALIZED_DISPOSITIONS and r.get("object_key")
+        })
+        planned = plan_deletions(rows, sidecar_hashes)
+        _write_parquet_shard(_dedupe_shard_key(shard_key), _deletion_schema(), planned)
+        plan_by_shard[shard_key] = [
+            {"object_key": p["object_key"], "raw_sha256": p["raw_sha256"]}
+            for p in planned
+        ]
+
+        if args.progress_every and index % args.progress_every == 0:
+            logger.info("planned %d/%d shards, %d deletions so far",
+                        index, len(shard_keys), sum(len(v) for v in plan_by_shard.values()))
+
+    planned_total = sum(len(v) for v in plan_by_shard.values())
+    rate = (planned_total / candidates) if candidates else 0.0
+    lo = args.expect_rate - args.rate_tolerance
+    hi = args.expect_rate + args.rate_tolerance
+    gated = bool(candidates) and not args.max_shards
+    off_band = gated and not (lo <= rate <= hi)
+
+    print()
+    print("Plan 145 Stage 3a -- delete materialized twins the packs already hold")
+    print("=" * 70)
+    print(f"mode                   {'APPLY' if args.apply else 'DRY RUN'}")
+    print(f"source shards          {len(shard_keys):>12,}")
+    print(f"shards already done    {done_shards:>12,}")
+    print(f"packed content hashes  {len(sidecar_hashes):>12,}")
+    print(f"deletion candidates    {candidates:>12,}")
+    print(f"planned for deletion   {planned_total:>12,}"
+          f"   ({rate:.1%} of candidates)")
+    print(f"expected rate          {args.expect_rate:.1%}"
+          f" +/- {args.rate_tolerance:.1%}")
+    print()
+
+    if off_band:
+        message = (
+            f"deletion rate {rate:.1%} is outside the expected "
+            f"{lo:.1%}-{hi:.1%} band; the sidecar join may be wrong -- "
+            f"stopping before any delete"
+        )
+        if not args.allow_rate_drift:
+            raise ReconcileError(message)
+        logger.warning("%s (continuing: --allow-rate-drift)", message)
+
+    if not args.apply:
+        print(f"wrote {len(plan_by_shard)} deletion manifest shard(s); deleted nothing.")
+        print()
+        return 0
+
+    # -- delete phase: exact keys, capped batches, a receipt shard per source --
+    receipt_results: Counter[str] = Counter()
+    deleted_total = 0
+    for index, shard_key in enumerate(sorted(plan_by_shard), start=1):
+        planned = plan_by_shard[shard_key]
+        receipts = delete_objects_in_batches(
+            client, bucket, planned,
+            apply=True, batch_size=args.batch_size, verified_hashes=sidecar_hashes,
+        )
+        _write_parquet_shard(
+            _dedupe_receipt_key(shard_key), _receipt_schema(), receipts,
+        )
+        for receipt in receipts:
+            receipt_results[receipt["result"]] += 1
+        deleted_total += sum(1 for r in receipts if r["result"] == "deleted")
+        if args.progress_every and index % args.progress_every == 0:
+            logger.info("deleted %d/%d shards, %d objects removed",
+                        index, len(plan_by_shard), deleted_total)
+
+    print("Plan 145 Stage 3a -- deletions applied")
+    print("=" * 70)
+    print(f"objects deleted        {deleted_total:>12,}")
+    for result, count in sorted(receipt_results.items()):
+        print(f"  receipt {result:<13} {count:>12,}")
+    print()
+    return 0
+
+
+# --------------------------------------------------------------------------
+# Stage 3b -- unpack every April pack member back to a loose object
+# --------------------------------------------------------------------------
+
+#: One manifest shard per source pack: an interrupted unpack loses only the
+#: pack in flight, and a completed shard proves that pack is done.
+UNPACK_PREFIX = "recovery/plan145/unpacked"
+
+#: An unpacked member was either written now or already present.
+UNPACK_DISPOSITIONS = ("written", "exists")
+
+
+def _unpack_schema() -> Any:
+    import pyarrow as pa
+
+    return pa.schema([
+        pa.field("source_key", pa.string()),
+        pa.field("raw_sha256", pa.string()),
+        pa.field("html_len", pa.int64()),
+        pa.field("disposition", pa.string()),
+        pa.field("pack_key", pa.string()),
+        pa.field("frame_ordinal", pa.int32()),
+        pa.field("offset_in_frame", pa.int64()),
+        pa.field("artifact_id", pa.int64()),
+        pa.field("listing_id", pa.string()),
+        pa.field("fetched_at", pa.timestamp("us", tz="UTC")),
+    ])
+
+
+def _unpack_shard_key(pack_key: str) -> str:
+    stem = pack_key.rsplit("/", 1)[-1]
+    if stem.endswith(".zpack"):
+        stem = stem[: -len(".zpack")]
+    return f"{UNPACK_PREFIX}/{stem}.parquet"
+
+
+def _ranged_pack_reader(client, bucket: str, pack_key: str):
+    """A ``PackReader`` over the stored pack via ranged GETs, one frame cached.
+
+    ``max_cached_frames=1`` is deliberate: members are walked in frame order,
+    so a single cached frame turns a frame's whole run of ~1,000 members into
+    one decompress. A larger cache would only retain frames already finished
+    with.
+    """
+    from shared.packfile import PackReader
+
+    size = client.head_object(Bucket=bucket, Key=pack_key)["ContentLength"]
+
+    def fetch(offset: int, length: int) -> bytes:
+        end = offset + length - 1
+        return client.get_object(
+            Bucket=bucket, Key=pack_key, Range=f"bytes={offset}-{end}"
+        )["Body"].read()
+
+    return PackReader(fetch, size, max_cached_frames=1)
+
+
+def iter_members_by_frame(entries: Sequence[Any]) -> list[Any]:
+    """Sidecar entries in ``(frame_ordinal, offset_in_frame)`` order.
+
+    Reading members in this order means each ~16 MiB frame is decompressed
+    exactly once for the members it serves. Sidecar order is usually already
+    this; sorting makes the property hold regardless and makes a resumed run
+    byte-for-byte deterministic.
+    """
+    return sorted(entries, key=lambda e: (e.frame_ordinal, e.offset_in_frame))
+
+
+def unpack_member(
+    reader, entry: Any, pack_key: str, *, apply: bool, verify: bool = True,
+) -> dict[str, Any]:
+    """Extract one member, prove its bytes, and write it under its original key.
+
+    The sha256 is checked against the sidecar's ``raw_sha256`` before any write.
+    The packer verified these at finalize time and ``read_packed_html`` verifies
+    them on every read, so a disagreement here means the store moved under the
+    run -- it stops, it is not a per-member skip.
+
+    An existing key is left untouched, which is what makes the mode idempotent
+    and resumable.
+    """
+    from shared.minio import object_exists, write_html
+
+    record = {
+        "source_key": entry.source_key,
+        "raw_sha256": entry.raw_sha256,
+        "html_len": entry.length,
+        "disposition": None,
+        "pack_key": pack_key,
+        "frame_ordinal": entry.frame_ordinal,
+        "offset_in_frame": entry.offset_in_frame,
+        "artifact_id": entry.artifact_id,
+        "listing_id": entry.listing_id,
+        "fetched_at": entry.fetched_at,
+    }
+
+    if object_exists(entry.source_key):
+        record["disposition"] = "exists"
+        return record
+
+    content = reader.read_member(entry)
+    if verify:
+        actual = hashlib.sha256(content).hexdigest()
+        if actual != entry.raw_sha256:
+            raise ReconcileError(
+                f"pack member {entry.source_key} hashes to {actual[:12]}, its "
+                f"sidecar says {entry.raw_sha256[:12]} -- the store moved; stopping"
+            )
+    record["html_len"] = len(content)
+
+    if apply:
+        write_html(entry.source_key, content)
+    record["disposition"] = "written"
+    return record
+
+
+def run_unpack(args: argparse.Namespace) -> int:
+    from shared.minio import BUCKET as DEFAULT_BUCKET
+    from shared.minio import object_exists
+    from shared.packfile import index_key, read_index_parquet
+
+    bucket = args.bucket or DEFAULT_BUCKET
+    client = _s3_client()
+
+    pack_prefix = args.pack_prefix or _april_pack_prefix()
+    pack_keys = _list_keys(client, bucket, pack_prefix, ".zpack")
+    if not pack_keys:
+        raise ReconcileError(f"no .zpack objects under s3://{bucket}/{pack_prefix}")
+    if args.max_packs:
+        pack_keys = pack_keys[: args.max_packs]
+        logger.warning("--max-packs set: processing %d packs", len(pack_keys))
+
+    if not args.apply:
+        logger.warning("DRY RUN: reading and verifying every member, writing "
+                       "nothing. Pass --apply to write.")
+
+    totals: Counter[str] = Counter()
+    members_total = 0
+    done_packs = 0
+
+    for pindex, pack_key in enumerate(pack_keys, start=1):
+        shard_key = _unpack_shard_key(pack_key)
+        if not args.force and object_exists(shard_key):
+            done_packs += 1
+            logger.debug("shard exists, skipping pack %s", pack_key)
+            continue
+
+        body = client.get_object(
+            Bucket=bucket, Key=index_key(pack_key),
+        )["Body"].read()
+        entries = read_index_parquet(body)
+
+        reader = _ranged_pack_reader(client, bucket, pack_key)
+        if reader.member_count != len(entries):
+            raise ReconcileError(
+                f"{pack_key}: sidecar has {len(entries)} members, the pack header "
+                f"says {reader.member_count}"
+            )
+
+        records: list[dict[str, Any]] = []
+        for entry in iter_members_by_frame(entries):
+            record = unpack_member(
+                reader, entry, pack_key,
+                apply=args.apply, verify=not args.no_verify,
+            )
+            totals[record["disposition"]] += 1
+            members_total += 1
+            records.append(record)
+
+        if args.apply:
+            _write_parquet_shard(shard_key, _unpack_schema(), records)
+
+        if args.progress_every and pindex % args.progress_every == 0:
+            logger.info(
+                "pack %d/%d  %s", pindex, len(pack_keys),
+                "  ".join(f"{k}={v:,}" for k, v in sorted(totals.items())),
+            )
+
+    print()
+    print("Plan 145 Stage 3b -- unpack April pack members to loose objects")
+    print("=" * 64)
+    print(f"mode                {'APPLY' if args.apply else 'DRY RUN'}")
+    print(f"packs               {len(pack_keys):>12,}")
+    print(f"packs already done  {done_packs:>12,}")
+    for disposition in UNPACK_DISPOSITIONS:
+        print(f"  {disposition:<16} {totals.get(disposition, 0):>12,}")
+    print(f"  {'members total':<16} {members_total:>12,}")
+    print()
+    return 0
+
+
+# --------------------------------------------------------------------------
 # CLI
 # --------------------------------------------------------------------------
 
@@ -1124,6 +1710,59 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
                      help="Log cumulative totals every N source objects.")
     mat.add_argument("--log-level", default="INFO", help="DEBUG | INFO | WARNING")
     mat.set_defaults(func=run_materialize)
+
+    ded = sub.add_parser(
+        "dedupe",
+        help="Stage 3a: delete materialized objects whose content an April pack "
+             "already holds.",
+    )
+    ded.add_argument("--apply", action="store_true",
+                     help="Actually delete. Without it the run plans, writes the "
+                          "deletion manifests, and deletes nothing.")
+    ded.add_argument("--bucket", default=None, help="Override MINIO_BUCKET.")
+    ded.add_argument("--pack-prefix", default=None,
+                     help="Override the derived April pack prefix.")
+    ded.add_argument("--max-shards", type=int, default=0,
+                     help="Process only the first N materialize manifest shards "
+                          "(smoke test; disables the rate gate).")
+    ded.add_argument("--batch-size", type=int, default=MAX_DELETE_BATCH,
+                     help="Keys per delete request (S3 caps this at 1000).")
+    ded.add_argument("--expect-rate", type=float, default=0.456,
+                     help="Expected share of candidates already in the packs.")
+    ded.add_argument("--rate-tolerance", type=float, default=0.10,
+                     help="Half-width of the accepted band around --expect-rate.")
+    ded.add_argument("--allow-rate-drift", action="store_true",
+                     help="Report an out-of-band deletion rate instead of "
+                          "stopping. Never use it to proceed past a broken join.")
+    ded.add_argument("--force", action="store_true",
+                     help="Reprocess shards whose receipt (apply) or deletion "
+                          "manifest (dry run) already exists.")
+    ded.add_argument("--progress-every", type=int, default=50,
+                     help="Log progress every N shards.")
+    ded.add_argument("--log-level", default="INFO", help="DEBUG | INFO | WARNING")
+    ded.set_defaults(func=run_dedupe)
+
+    unp = sub.add_parser(
+        "unpack",
+        help="Stage 3b: write every April pack member back as a loose .html.zst "
+             "object under its original key.",
+    )
+    unp.add_argument("--apply", action="store_true",
+                     help="Actually write objects. Without it the run reads and "
+                          "verifies every member but writes nothing.")
+    unp.add_argument("--bucket", default=None, help="Override MINIO_BUCKET.")
+    unp.add_argument("--pack-prefix", default=None,
+                     help="Override the derived April pack prefix.")
+    unp.add_argument("--max-packs", type=int, default=0,
+                     help="Process only the first N packs.")
+    unp.add_argument("--force", action="store_true",
+                     help="Reprocess packs whose manifest shard already exists.")
+    unp.add_argument("--no-verify", action="store_true",
+                     help="Skip the per-member sha256 check. Not recommended.")
+    unp.add_argument("--progress-every", type=int, default=1,
+                     help="Log cumulative totals every N packs.")
+    unp.add_argument("--log-level", default="INFO", help="DEBUG | INFO | WARNING")
+    unp.set_defaults(func=run_unpack)
 
     return parser.parse_args(argv)
 

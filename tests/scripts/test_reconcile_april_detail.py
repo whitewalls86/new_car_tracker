@@ -13,6 +13,11 @@ the scan executing:
   E - baseline drift stops the run
   F - manifests are deterministic and fingerprints are reproducible
   G - CLI wiring
+  H - a real fixture Parquet through the real streaming loop
+  I - materialize: deterministic keys and disposition rules
+  J - materialize: write path
+  K - dedupe (Stage 3a): the sidecar-hash join, the delete guard, the rate gate
+  L - unpack (Stage 3b): original keys, frame grouping, the verify-or-stop rule
 """
 from __future__ import annotations
 
@@ -629,3 +634,450 @@ def test_materialize_defaults_to_a_dry_run():
     assert args.apply is False
     assert args.force is False
     assert args.no_verify is False
+
+
+# -- K: dedupe (Stage 3a) -- the sidecar-hash join and the delete guard ----
+
+from scripts.reconcile_april_detail import (  # noqa: E402
+    MATERIALIZE_PREFIX,
+    MAX_DELETE_BATCH,
+    _dedupe_receipt_key,
+    _dedupe_shard_key,
+    delete_objects_in_batches,
+    plan_deletions,
+)
+
+SHA_IN_PACK = "aa" * 32
+SHA_NOT_IN_PACK = "bb" * 32
+SIDECAR_KEY = "html_packs/detail_page/2026/04/pack-00000.idx.parquet"
+
+
+def _mrow(object_key, sha, disposition="written", *, offset=0,
+          legacy="html/year=2026/month=4/artifact_type=detail_page/part-0.parquet"):
+    return {
+        "disposition": disposition,
+        "object_key": object_key,
+        "raw_sha256": sha,
+        "legacy_object_key": legacy,
+        "row_group": 0,
+        "row_offset": offset,
+    }
+
+
+def test_a_hash_in_a_sidecar_plans_a_deletion_one_absent_does_not():
+    sidecar = {SHA_IN_PACK: (SIDECAR_KEY, "html/.../claimed.html.zst")}
+    planned = plan_deletions(
+        [_mrow("k1", SHA_IN_PACK), _mrow("k2", SHA_NOT_IN_PACK, offset=1)],
+        sidecar,
+    )
+    assert [p["object_key"] for p in planned] == ["k1"]
+    assert planned[0]["claimed_by_sidecar"] == SIDECAR_KEY
+    assert planned[0]["claimed_by_source_key"] == "html/.../claimed.html.zst"
+    assert planned[0]["legacy_object_key"].endswith("part-0.parquet")
+
+
+@pytest.mark.parametrize("disposition", ["skipped_empty", "skipped_non_success"])
+def test_skipped_dispositions_are_never_planned_for_deletion(disposition):
+    sidecar = {SHA_IN_PACK: (SIDECAR_KEY, "src")}
+    # Even a row that wrongly carries an object_key is ineligible on its
+    # disposition alone -- those rows never produced an object.
+    rows = [
+        _mrow(None, SHA_IN_PACK, disposition),
+        _mrow("ghost-key", SHA_IN_PACK, disposition, offset=1),
+    ]
+    assert plan_deletions(rows, sidecar) == []
+
+
+def test_identical_bytes_across_two_rows_plan_exactly_one_deletion():
+    sidecar = {SHA_IN_PACK: (SIDECAR_KEY, "src")}
+    planned = plan_deletions(
+        [_mrow("same", SHA_IN_PACK, "written"),
+         _mrow("same", SHA_IN_PACK, "exists", offset=1)],
+        sidecar,
+    )
+    assert len(planned) == 1
+
+
+def test_plan_deletions_is_sorted_independently_of_row_order():
+    shas = {f"{i:02x}" * 32: (SIDECAR_KEY, "src") for i in range(5)}
+    rows = [_mrow(f"k{i}", f"{i:02x}" * 32, offset=i) for i in (3, 0, 4, 1, 2)]
+    planned = plan_deletions(rows, shas)
+    assert [p["object_key"] for p in planned] == ["k0", "k1", "k2", "k3", "k4"]
+
+
+def test_deletion_refuses_a_key_whose_content_is_not_in_a_sidecar():
+    with pytest.raises(ReconcileError, match="not in any April pack sidecar"):
+        delete_objects_in_batches(
+            None, "bronze", [{"object_key": "k1", "raw_sha256": SHA_IN_PACK}],
+            apply=True, batch_size=1000, verified_hashes={},
+        )
+
+
+def test_a_dry_run_delete_plans_receipts_and_calls_nothing():
+    class Boom:
+        def delete_objects(self, **kwargs):
+            raise AssertionError("a dry run must not delete")
+
+    receipts = delete_objects_in_batches(
+        Boom(), "bronze",
+        [{"object_key": f"k{i}", "raw_sha256": SHA_IN_PACK} for i in range(3)],
+        apply=False, batch_size=2, verified_hashes={SHA_IN_PACK: 1},
+    )
+    assert [r["result"] for r in receipts] == ["planned", "planned", "planned"]
+
+
+def test_deletes_are_capped_at_the_s3_batch_limit_with_a_receipt_per_key():
+    sizes = []
+
+    class FakeClient:
+        def delete_objects(self, Bucket, Delete):
+            keys = [o["Key"] for o in Delete["Objects"]]
+            sizes.append(len(keys))
+            return {"Deleted": [{"Key": k} for k in keys], "Errors": []}
+
+    records = [{"object_key": f"k{i}", "raw_sha256": SHA_IN_PACK} for i in range(2500)]
+    receipts = delete_objects_in_batches(
+        FakeClient(), "bronze", records,
+        apply=True, batch_size=99999, verified_hashes={SHA_IN_PACK: 1},
+    )
+    assert sizes == [MAX_DELETE_BATCH, MAX_DELETE_BATCH, 500]
+    assert len(receipts) == 2500
+    assert all(r["result"] == "deleted" for r in receipts)
+
+
+def test_a_delete_error_lands_on_the_receipt_rather_than_ending_the_run():
+    class FakeClient:
+        def delete_objects(self, Bucket, Delete):
+            keys = [o["Key"] for o in Delete["Objects"]]
+            return {
+                "Deleted": [{"Key": keys[0]}],
+                "Errors": [{"Key": keys[1], "Code": "AccessDenied"}],
+            }
+
+    receipts = delete_objects_in_batches(
+        FakeClient(), "bronze",
+        [{"object_key": "k0", "raw_sha256": SHA_IN_PACK},
+         {"object_key": "k1", "raw_sha256": SHA_IN_PACK}],
+        apply=True, batch_size=10, verified_hashes={SHA_IN_PACK: 1},
+    )
+    assert {r["object_key"]: r["result"] for r in receipts} == {
+        "k0": "deleted", "k1": "error:AccessDenied",
+    }
+
+
+def test_dedupe_manifest_and_receipt_keys_mirror_the_source_shard():
+    src = f"{MATERIALIZE_PREFIX}/part-abc-0.parquet"
+    assert _dedupe_shard_key(src) == "recovery/plan145/dedupe/part-abc-0.parquet"
+    assert _dedupe_receipt_key(src) == \
+        "recovery/plan145/dedupe/receipts/part-abc-0.parquet"
+
+
+def test_dedupe_defaults_to_a_dry_run():
+    args = parse_args(["dedupe"])
+    assert args.mode == "dedupe"
+    assert args.apply is False
+    assert args.allow_rate_drift is False
+
+
+def _patch_dedupe(monkeypatch, events, rows, sidecar_hashes):
+    """Wire run_dedupe onto in-memory fakes, recording write/delete order."""
+    import scripts.reconcile_april_detail as mod
+    import shared.minio as minio
+
+    monkeypatch.setattr(mod, "_s3_client", lambda: object())
+    monkeypatch.setattr(mod, "_list_keys", lambda c, b, prefix, suffix: (
+        [SIDECAR_KEY] if suffix == ".idx.parquet"
+        else [f"{MATERIALIZE_PREFIX}/part-0.parquet"]
+    ))
+    monkeypatch.setattr(mod, "load_sidecar_hashes",
+                        lambda c, b, keys: dict(sidecar_hashes))
+    monkeypatch.setattr(mod, "_read_parquet_rows",
+                        lambda c, b, k, columns=None: list(rows))
+    monkeypatch.setattr(mod, "_write_parquet_shard",
+                        lambda key, schema, records: events.append(
+                            ("write", key, len(records))))
+    monkeypatch.setattr(minio, "object_exists", lambda k: False)
+
+    def fake_delete(client, bucket, records, *, apply, batch_size, verified_hashes):
+        events.append(("delete", [r["object_key"] for r in records]))
+        return [{"object_key": r["object_key"], "raw_sha256": r["raw_sha256"],
+                 "result": "deleted"} for r in records]
+
+    monkeypatch.setattr(mod, "delete_objects_in_batches", fake_delete)
+    return mod
+
+
+def test_run_dedupe_writes_the_deletion_manifest_before_any_delete(monkeypatch):
+    events: list = []
+    mod = _patch_dedupe(
+        monkeypatch, events,
+        rows=[_mrow("k1", SHA_IN_PACK)],
+        sidecar_hashes={SHA_IN_PACK: (SIDECAR_KEY, "src")},
+    )
+    rc = mod.run_dedupe(mod.parse_args(
+        ["dedupe", "--apply", "--expect-rate", "1.0", "--rate-tolerance", "1.0"]))
+    assert rc == 0
+    assert [e[0] for e in events] == ["write", "delete", "write"]
+    assert events[0][1] == "recovery/plan145/dedupe/part-0.parquet"
+    assert events[2][1] == "recovery/plan145/dedupe/receipts/part-0.parquet"
+
+
+def test_run_dedupe_stops_before_deleting_when_the_rate_is_off_band(monkeypatch):
+    events: list = []
+    mod = _patch_dedupe(
+        monkeypatch, events,
+        rows=[_mrow("k1", SHA_IN_PACK)],  # 1 of 1 candidate -> 100%, far off 45.6%
+        sidecar_hashes={SHA_IN_PACK: (SIDECAR_KEY, "src")},
+    )
+    with pytest.raises(ReconcileError, match="outside the expected"):
+        mod.run_dedupe(mod.parse_args(["dedupe", "--apply"]))
+    # the deletion manifest is still written -- it is the reviewer's evidence --
+    # but nothing is deleted.
+    assert [e[0] for e in events] == ["write"]
+
+
+def test_run_dedupe_allow_rate_drift_reports_instead_of_stopping(monkeypatch):
+    events: list = []
+    mod = _patch_dedupe(
+        monkeypatch, events,
+        rows=[_mrow("k1", SHA_IN_PACK)],
+        sidecar_hashes={SHA_IN_PACK: (SIDECAR_KEY, "src")},
+    )
+    rc = mod.run_dedupe(mod.parse_args(
+        ["dedupe", "--apply", "--allow-rate-drift"]))
+    assert rc == 0
+    assert "delete" in [e[0] for e in events]
+
+
+# -- L: unpack (Stage 3b) -- original keys, frame grouping, verify-or-stop -
+
+import itertools  # noqa: E402
+
+import shared.compression as _compression  # noqa: E402
+from scripts.reconcile_april_detail import (  # noqa: E402
+    _unpack_shard_key,
+    iter_members_by_frame,
+    unpack_member,
+)
+from shared.packfile import (  # noqa: E402
+    PackIndexEntry,
+    PackMember,
+    PackReader,
+    build_pack,
+    index_key,
+    write_index_parquet,
+)
+
+DETAIL_KEY = "html/year=2026/month=4/artifact_type=detail_page/{}.html.zst"
+
+
+class _Body:
+    def __init__(self, data: bytes):
+        self._data = data
+
+    def read(self) -> bytes:
+        return self._data
+
+
+def _entry(source_key, frame_ordinal, offset, content, **over):
+    return PackIndexEntry(
+        source_key=source_key,
+        frame_ordinal=frame_ordinal,
+        offset_in_frame=offset,
+        length=len(content),
+        raw_sha256=hashlib.sha256(content).hexdigest(),
+        artifact_id=over.get("artifact_id"),
+        listing_id=over.get("listing_id"),
+        fetched_at=over.get("fetched_at"),
+    )
+
+
+def test_unpack_shard_key_is_named_for_its_pack():
+    assert _unpack_shard_key("html_packs/detail_page/2026/04/pack-00007.zpack") == \
+        "recovery/plan145/unpacked/pack-00007.parquet"
+
+
+def test_members_are_iterated_in_frame_then_offset_order():
+    out_of_order = [
+        PackIndexEntry("c", 1, 0, 5, "x"),
+        PackIndexEntry("a", 0, 0, 3, "x"),
+        PackIndexEntry("b", 0, 3, 4, "x"),
+    ]
+    assert [e.source_key for e in iter_members_by_frame(out_of_order)] == \
+        ["a", "b", "c"]
+
+
+def _small_pack(n=8):
+    members = [
+        PackMember(
+            source_key=DETAIL_KEY.format(f"uuid-{i}"),
+            content=f"<html>listing {i} ".encode() + b"x" * 80,
+            artifact_id=1000 + i,
+            listing_id=LISTING_A,
+        )
+        for i in range(n)
+    ]
+    # Same listing for every member, so only the hard ceiling seals frames:
+    # ~100-byte members and a 150-byte ceiling give ~2 members per frame.
+    pack = build_pack(members, frame_target_bytes=150, frame_max_bytes=150)
+    return members, pack
+
+
+def test_walking_members_in_frame_order_decompresses_each_frame_once(monkeypatch):
+    _members, pack = _small_pack()
+    assert pack.frame_count >= 2
+
+    calls: list = []
+    real = _compression.decompress_frame
+    monkeypatch.setattr(
+        _compression, "decompress_frame",
+        lambda frame: (calls.append(1), real(frame))[1],
+    )
+
+    reader = PackReader.from_bytes(pack.data, max_cached_frames=1)
+    for entry in iter_members_by_frame(pack.entries):
+        reader.read_member(entry)
+    assert sum(calls) == pack.frame_count
+
+    # Interleaving frames with a single-frame cache pays for each frame switch,
+    # which is exactly what the frame grouping exists to avoid.
+    calls.clear()
+    by_frame: dict = {}
+    for entry in pack.entries:
+        by_frame.setdefault(entry.frame_ordinal, []).append(entry)
+    interleaved = [
+        e for e in itertools.chain.from_iterable(
+            itertools.zip_longest(*by_frame.values())
+        ) if e is not None
+    ]
+    reader2 = PackReader.from_bytes(pack.data, max_cached_frames=1)
+    for entry in interleaved:
+        reader2.read_member(entry)
+    assert sum(calls) > pack.frame_count
+
+
+def test_unpack_writes_under_the_original_source_key_not_a_content_key(monkeypatch):
+    import shared.minio as minio
+    written: dict = {}
+    monkeypatch.setattr(minio, "object_exists", lambda k: False)
+    monkeypatch.setattr(minio, "write_html", lambda k, c: written.__setitem__(k, c))
+
+    content = b"<html>a real captured page</html>"
+    entry = _entry(DETAIL_KEY.format("original-uuid"), 0, 0, content,
+                   artifact_id=42, listing_id=LISTING_A)
+
+    class FakeReader:
+        def read_member(self, e):
+            return content
+
+    rec = unpack_member(
+        FakeReader(), entry, "html_packs/detail_page/2026/04/pack-00000.zpack",
+        apply=True,
+    )
+    assert list(written) == [entry.source_key]
+    assert written[entry.source_key] == content
+    assert rec["disposition"] == "written"
+    assert rec["artifact_id"] == 42
+    assert rec["pack_key"].endswith("pack-00000.zpack")
+
+
+def test_a_member_that_does_not_match_its_sidecar_hash_stops_the_run(monkeypatch):
+    import shared.minio as minio
+    monkeypatch.setattr(minio, "object_exists", lambda k: False)
+    monkeypatch.setattr(minio, "write_html",
+                        lambda k, c: pytest.fail("must not write on a mismatch"))
+
+    entry = PackIndexEntry(DETAIL_KEY.format("x"), 0, 0, 4, "00" * 32)
+
+    class FakeReader:
+        def read_member(self, e):
+            return b"real"
+
+    with pytest.raises(ReconcileError, match="the store moved"):
+        unpack_member(FakeReader(), entry, "pack", apply=True)
+
+
+def test_an_existing_key_is_skipped_rather_than_re_read_or_rewritten(monkeypatch):
+    import shared.minio as minio
+    calls: list = []
+    monkeypatch.setattr(minio, "object_exists", lambda k: True)
+    monkeypatch.setattr(minio, "write_html", lambda k, c: calls.append(k))
+
+    entry = PackIndexEntry(DETAIL_KEY.format("x"), 2, 8, 4, "00" * 32)
+
+    class FakeReader:
+        def read_member(self, e):
+            raise AssertionError("an existing key must not be read from the pack")
+
+    rec = unpack_member(FakeReader(), entry, "pack", apply=True)
+    assert rec["disposition"] == "exists"
+    assert calls == []
+
+
+def test_unpack_dry_run_verifies_but_writes_nothing(monkeypatch):
+    import shared.minio as minio
+    calls: list = []
+    monkeypatch.setattr(minio, "object_exists", lambda k: False)
+    monkeypatch.setattr(minio, "write_html", lambda k, c: calls.append(k))
+
+    content = b"<html>x</html>"
+    entry = _entry(DETAIL_KEY.format("x"), 0, 0, content)
+
+    class FakeReader:
+        def read_member(self, e):
+            return content
+
+    rec = unpack_member(FakeReader(), entry, "pack", apply=False)
+    assert calls == []
+    assert rec["disposition"] == "written"
+
+
+def test_unpack_defaults_to_a_dry_run():
+    args = parse_args(["unpack"])
+    assert args.mode == "unpack"
+    assert args.apply is False
+    assert args.no_verify is False
+
+
+def test_run_unpack_writes_every_member_under_its_original_key(monkeypatch):
+    import scripts.reconcile_april_detail as mod
+    import shared.minio as minio
+
+    members, pack = _small_pack()
+    assert pack.frame_count >= 2
+    pack_key = "html_packs/detail_page/2026/04/pack-00000.zpack"
+    store = {pack_key: pack.data, index_key(pack_key): write_index_parquet(pack.entries)}
+    written: dict = {}
+    shards: dict = {}
+
+    class FakeClient:
+        def head_object(self, Bucket, Key):
+            return {"ContentLength": len(store[Key])}
+
+        def get_object(self, Bucket, Key, Range=None):
+            data = store[Key]
+            if Range:
+                lo, hi = Range.removeprefix("bytes=").split("-")
+                data = data[int(lo):int(hi) + 1]
+            return {"Body": _Body(data)}
+
+        def list_objects_v2(self, **kwargs):
+            prefix = kwargs["Prefix"]
+            return {
+                "Contents": [{"Key": k} for k in store if k.startswith(prefix)],
+                "IsTruncated": False,
+            }
+
+    monkeypatch.setattr(mod, "_s3_client", lambda: FakeClient())
+    monkeypatch.setattr(minio, "object_exists", lambda k: k in written)
+    monkeypatch.setattr(minio, "write_html", lambda k, c: written.__setitem__(k, c))
+    monkeypatch.setattr(mod, "_write_parquet_shard",
+                        lambda key, schema, records: shards.__setitem__(key, list(records)))
+
+    rc = mod.run_unpack(mod.parse_args(["unpack", "--apply"]))
+    assert rc == 0
+    assert set(written) == {m.source_key for m in members}
+    for member in members:
+        assert written[member.source_key] == member.content
+    assert list(shards) == ["recovery/plan145/unpacked/pack-00000.parquet"]
+    assert len(shards["recovery/plan145/unpacked/pack-00000.parquet"]) == len(members)
