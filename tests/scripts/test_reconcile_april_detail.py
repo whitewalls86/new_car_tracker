@@ -494,3 +494,138 @@ def test_a_fixture_missing_a_schema_column_stops_the_run(tmp_path):
     with pytest.raises(ReconcileError, match="missing expected columns"):
         list(iter_rows("bronze", objects, progress_every=0,
                        opener=lambda key: fixture.open("rb")))
+
+
+# -- I: materialize -- deterministic keys and disposition rules -------------
+
+from scripts.reconcile_april_detail import (  # noqa: E402
+    DISPOSITIONS,
+    _shard_key,
+    materialize_row,
+    plan_row,
+    sha_to_file_id,
+)
+
+SHA_A = "3e193dfdadc2f0be546e9867c1e96bae713f7556c67ebefd20a6be3ca53d4a3f"
+
+
+def _occurrence(**over):
+    row = make_row(**{k: v for k, v in over.items() if k in {
+        "key", "row_group", "row_offset", "listing", "fetched_at", "status",
+        "html", "stored_sha", "artifact_id"}})
+    return classify_row(row)
+
+
+def test_file_id_is_derived_from_content_not_random():
+    # A random UUID would make every re-run write a second copy of the whole
+    # population; the stem has to be a pure function of the bytes.
+    assert sha_to_file_id(SHA_A) == "3e193dfd-adc2-f0be-546e-9867c1e96bae"
+    assert sha_to_file_id(SHA_A) == sha_to_file_id(SHA_A)
+
+
+def test_file_id_refuses_a_hash_it_cannot_use():
+    with pytest.raises(ReconcileError, match="cannot derive a file id"):
+        sha_to_file_id("abc")
+    with pytest.raises(ReconcileError, match="cannot derive a file id"):
+        sha_to_file_id(None)
+
+
+def test_a_successful_row_plans_an_april_detail_key_from_its_own_hash():
+    rec = plan_row(_occurrence(html=b"<html>car</html>"))
+    assert rec["disposition"] == "written"
+    assert rec["object_key"].startswith(
+        "html/year=2026/month=4/artifact_type=detail_page/")
+    assert rec["object_key"].endswith(".html.zst")
+    assert sha_to_file_id(rec["raw_sha256"]) in rec["object_key"]
+
+
+def test_identical_bytes_plan_the_same_key():
+    a = plan_row(_occurrence(html=b"<html>same</html>", row_offset=0))
+    b = plan_row(_occurrence(html=b"<html>same</html>", row_offset=1))
+    assert a["object_key"] == b["object_key"]
+
+
+def test_an_empty_body_is_recorded_and_never_written():
+    rec = plan_row(_occurrence(html=b"", stored_sha="ab" * 32))
+    assert rec["disposition"] == "skipped_empty"
+    assert rec["object_key"] is None
+
+
+@pytest.mark.parametrize("status", [403, 503])
+def test_non_success_bodies_are_recorded_and_never_written(status):
+    # They parse to a blocked/failed state and yield no observation, so they
+    # are recorded for accounting rather than carried into the parse stage.
+    rec = plan_row(_occurrence(status=status, html=b"<html>denied</html>"))
+    assert rec["disposition"] == "skipped_non_success"
+    assert rec["object_key"] is None
+
+
+def test_every_disposition_is_a_declared_one():
+    for occ in (_occurrence(html=b"<html>ok</html>"),
+                _occurrence(html=b"", stored_sha="ab" * 32),
+                _occurrence(status=403, html=b"<html>no</html>")):
+        assert plan_row(occ)["disposition"] in DISPOSITIONS
+
+
+def test_the_manifest_shard_is_named_for_its_source_file():
+    assert _shard_key("html/year=2026/month=4/artifact_type=detail_page/part-abc-0.parquet") \
+        == "recovery/plan145/materialized/part-abc-0.parquet"
+
+
+# -- J: materialize -- write path ------------------------------------------
+
+def test_dry_run_writes_nothing(monkeypatch):
+    import shared.minio as minio
+    calls = []
+    monkeypatch.setattr(minio, "object_exists", lambda k: False)
+    monkeypatch.setattr(minio, "write_html", lambda k, c: calls.append(k))
+    rec = plan_row(_occurrence(html=b"<html>car</html>"))
+    out = materialize_row(rec, b"<html>car</html>", apply=False)
+    assert calls == []
+    assert out["disposition"] == "written"
+
+
+def test_an_existing_object_is_not_rewritten(monkeypatch):
+    import shared.minio as minio
+    calls = []
+    monkeypatch.setattr(minio, "object_exists", lambda k: True)
+    monkeypatch.setattr(minio, "write_html", lambda k, c: calls.append(k))
+    rec = plan_row(_occurrence(html=b"<html>car</html>"))
+    out = materialize_row(rec, b"<html>car</html>", apply=True)
+    assert calls == []
+    assert out["disposition"] == "exists"
+
+
+def test_apply_writes_and_verifies_the_read_back(monkeypatch):
+    import shared.minio as minio
+    html = b"<html>car</html>"
+    written = {}
+    monkeypatch.setattr(minio, "object_exists", lambda k: False)
+    monkeypatch.setattr(minio, "write_html", lambda k, c: written.update({k: c}))
+    monkeypatch.setattr(minio, "read_html", lambda p: html)
+    monkeypatch.setattr(minio, "object_size", lambda p: 1234)
+    rec = plan_row(_occurrence(html=html))
+    out = materialize_row(rec, html, apply=True)
+    assert list(written) == [rec["object_key"]]
+    assert out["compressed_len"] == 1234
+
+
+def test_a_read_back_that_does_not_match_stops_the_run(monkeypatch):
+    # Verification reads through the production path rather than comparing the
+    # in-memory bytes to themselves, so a corrupted store is actually caught.
+    import shared.minio as minio
+    monkeypatch.setattr(minio, "object_exists", lambda k: False)
+    monkeypatch.setattr(minio, "write_html", lambda k, c: None)
+    monkeypatch.setattr(minio, "read_html", lambda p: b"<html>corrupted</html>")
+    monkeypatch.setattr(minio, "object_size", lambda p: 1)
+    rec = plan_row(_occurrence(html=b"<html>car</html>"))
+    with pytest.raises(ReconcileError, match="read-back mismatch"):
+        materialize_row(rec, b"<html>car</html>", apply=True)
+
+
+def test_materialize_defaults_to_a_dry_run():
+    args = parse_args(["materialize"])
+    assert args.mode == "materialize"
+    assert args.apply is False
+    assert args.force is False
+    assert args.no_verify is False

@@ -530,6 +530,48 @@ services:
     networks:
       - cartracker-net
 
+  # Plan 145: isolated one-shot worker for the April cutover reconciliation --
+  # materializing legacy Parquet bodies as normal HTML objects, parsing them,
+  # and comparing the result to silver. Follows snapshot-worker's lifecycle:
+  # profile-gated, no ports, no restart policy, never started by
+  # `docker compose up`. Built from the processing image because the parse
+  # stage needs bs4/lxml, which the archiver image does not carry.
+  #
+  # Deliberately not resource-capped. pack-worker runs month-scale jobs
+  # unlimited and the box tolerates it; a cap can be added from measured
+  # contention rather than guessed at. Invoke explicitly, e.g.:
+  #   docker compose run --rm april-processor python -m \
+  #     scripts.reconcile_april_detail materialize --max-objects 5
+  # (add --apply to write; without it the run plans and reports only)
+  april-processor:
+    build:
+      context: .
+      dockerfile: processing/Dockerfile
+    image: cartracker-processing
+    container_name: cartracker-april-processor
+    profiles: ["april-processor"]
+    environment:
+      PGHOST: postgres
+      PGPORT: 5432
+      PGDATABASE: cartracker
+      PGUSER: cartracker
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_BUCKET: bronze
+      # Without this every object it writes would be dictionary-less and so
+      # unlike every other HTML object in the store. The scraper -- the only
+      # other writer of these objects -- sets the same variable.
+      HTML_COMPRESSION_DICT_ID: ${HTML_COMPRESSION_DICT_ID:-}
+    depends_on:
+      flyway:
+        condition: service_completed_successfully
+      minio:
+        condition: service_started
+    networks:
+      - cartracker-net
+
   dashboard:
     build:
       context: .

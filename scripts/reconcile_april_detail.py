@@ -339,15 +339,24 @@ def enumerate_objects(client, bucket: str, prefix: str) -> list[dict[str, Any]]:
 # --------------------------------------------------------------------------
 
 def _s3_opener(bucket: str):
-    """Return an opener that resolves a legacy object key to a binary stream."""
-    import s3fs
+    """Return an opener that resolves a legacy object key to a binary stream.
 
-    from shared.minio import ACCESS, ENDPOINT, SECRET
+    Uses boto3 into an in-memory buffer rather than ``s3fs``. The images this
+    runs in ship different s3fs versions -- the processing image's constructor
+    rejects ``endpoint_url`` outright -- and boto3 is present and identical in
+    all of them. The whole object is buffered because ``ParquetFile`` needs a
+    seekable stream and ``get_object`` bodies are not; at ~12.5 MB average that
+    is cheaper than the row groups it is about to decompress anyway.
+    """
+    import io
 
-    fs = s3fs.S3FileSystem(
-        endpoint_url=ENDPOINT, key=ACCESS, secret=SECRET, use_ssl=False,
-    )
-    return lambda key: fs.open(f"{bucket}/{key}", "rb")
+    client = _s3_client()
+
+    def _open(key: str):
+        body = client.get_object(Bucket=bucket, Key=key)["Body"].read()
+        return io.BytesIO(body)
+
+    return _open
 
 
 def iter_rows(
@@ -780,6 +789,245 @@ def print_report(report: dict) -> None:
 
 
 # --------------------------------------------------------------------------
+# Stage 2 -- materialize successful bodies as normal HTML objects
+# --------------------------------------------------------------------------
+
+#: Where the per-source-file manifest shards land. One shard per legacy Parquet
+#: object, so a crash loses only the in-flight file and a completed shard is
+#: proof that source is done.
+MATERIALIZE_PREFIX = "recovery/plan145/materialized"
+
+#: Why a legacy row produced no object. Every HTTP 200 row is either `written`
+#: or `exists`; the rest are recorded so all 951,821 occurrences stay accounted
+#: for rather than silently vanishing from the population.
+DISPOSITIONS = ("written", "exists", "skipped_empty", "skipped_non_success")
+
+MANIFEST_FIELDS = [
+    "object_key", "raw_sha256", "html_len", "compressed_len", "disposition",
+    "legacy_object_key", "row_group", "row_offset",
+    "listing_id", "fetched_at", "url", "http_status",
+    "run_id", "source", "search_key", "search_scope", "page_num",
+    "legacy_artifact_id",
+]
+
+
+def sha_to_file_id(sha256: str) -> str:
+    """Derive a stable UUID-shaped object stem from a content hash.
+
+    ``make_key`` generates a random UUID when none is given, which would make
+    every re-run of this job write a second copy of the entire population. A
+    content-derived stem makes the job idempotent instead: a rerun recomputes
+    the same key, ``object_exists`` skips it, and two rows with identical bytes
+    can never produce two objects.
+
+    This is a deliberate departure from how the scraper names objects, and it
+    is visible in the store permanently. Nothing reads meaning from the stem --
+    lookups go through the queue and pack sidecars -- so the only effect is
+    that these keys are reproducible and the scraper's are not.
+    """
+    if not sha256 or len(sha256) < 32:
+        raise ReconcileError(f"cannot derive a file id from sha {sha256!r}")
+    h = sha256[:32]
+    return f"{h[:8]}-{h[8:12]}-{h[12:16]}-{h[16:20]}-{h[20:32]}"
+
+
+def plan_row(occurrence: dict[str, Any]) -> dict[str, Any]:
+    """Decide what, if anything, this legacy row should become.
+
+    Pure and side-effect free so the disposition rules are testable without a
+    MinIO. The actual write happens in :func:`materialize_row`.
+    """
+    from shared.minio import make_key
+
+    record = {field: occurrence.get(field) for field in MANIFEST_FIELDS
+              if field in occurrence}
+    record.update({
+        "object_key": None,
+        "raw_sha256": occurrence.get("recomputed_sha256"),
+        "compressed_len": None,
+        "legacy_artifact_id": occurrence.get("legacy_artifact_id"),
+    })
+
+    if occurrence["is_empty"]:
+        # The Plan 72 writer archived b"" for a page whose file was already
+        # gone. There are no bytes to materialize; the row survives only as
+        # metadata.
+        record["disposition"] = "skipped_empty"
+        return record
+
+    if occurrence["status_bucket"] != "200":
+        # Challenge pages and error bodies parse to a blocked/failed state and
+        # yield no vehicle observation, so carrying them into the parse stage
+        # costs storage and CPU for nothing. Recorded, not written.
+        record["disposition"] = "skipped_non_success"
+        return record
+
+    record["object_key"] = make_key(
+        TARGET_ARTIFACT_TYPE,
+        occurrence["fetched_at"],
+        file_id=sha_to_file_id(occurrence["recomputed_sha256"]),
+    )
+    record["disposition"] = "written"
+    return record
+
+
+def materialize_row(
+    record: dict[str, Any],
+    html: bytes,
+    *,
+    apply: bool,
+    verify: bool = True,
+) -> dict[str, Any]:
+    """Write one body and prove it reads back byte-identically.
+
+    Verification is a read-back through ``read_html`` -- the same path
+    production uses -- rather than a comparison against the bytes still in
+    memory. Checking what we just compressed against itself would prove
+    nothing about what actually landed in the store.
+    """
+    from shared.minio import (
+        BUCKET,
+        object_exists,
+        object_size,
+        read_html,
+        write_html,
+    )
+
+    if record["disposition"] != "written":
+        return record
+
+    key = record["object_key"]
+    if object_exists(key):
+        record["disposition"] = "exists"
+        return record
+
+    if not apply:
+        return record
+
+    write_html(key, html)
+
+    if verify:
+        readback = read_html(f"s3://{BUCKET}/{key}")
+        actual = hashlib.sha256(readback).hexdigest()
+        if actual != record["raw_sha256"]:
+            raise ReconcileError(
+                f"read-back mismatch for {key}: wrote {record['raw_sha256']}, "
+                f"read {actual}"
+            )
+    record["compressed_len"] = object_size(f"s3://{BUCKET}/{key}")
+    return record
+
+
+def _shard_key(legacy_object_key: str) -> str:
+    stem = legacy_object_key.rsplit("/", 1)[-1]
+    if stem.endswith(".parquet"):
+        stem = stem[: -len(".parquet")]
+    return f"{MATERIALIZE_PREFIX}/{stem}.parquet"
+
+
+def write_manifest_shard(records: Sequence[dict[str, Any]], shard_key: str) -> None:
+    """Persist one source file's manifest to MinIO as Parquet.
+
+    Parquet rather than CSV because the parse and compare stages read these
+    with DuckDB; MinIO rather than a local directory because a disposable
+    worker container's filesystem does not outlive the run.
+    """
+    import io
+
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    from shared.minio import write_bytes
+
+    schema = pa.schema([
+        pa.field("object_key", pa.string()),
+        pa.field("raw_sha256", pa.string()),
+        pa.field("html_len", pa.int64()),
+        pa.field("compressed_len", pa.int64()),
+        pa.field("disposition", pa.string()),
+        pa.field("legacy_object_key", pa.string()),
+        pa.field("row_group", pa.int32()),
+        pa.field("row_offset", pa.int32()),
+        pa.field("listing_id", pa.string()),
+        pa.field("fetched_at", pa.string()),
+        pa.field("url", pa.string()),
+        pa.field("http_status", pa.int32()),
+        pa.field("run_id", pa.string()),
+        pa.field("source", pa.string()),
+        pa.field("search_key", pa.string()),
+        pa.field("search_scope", pa.string()),
+        pa.field("page_num", pa.int32()),
+        pa.field("legacy_artifact_id", pa.int64()),
+    ])
+    rows = [{f: r.get(f) for f in schema.names} for r in records]
+    table = pa.Table.from_pylist(rows, schema=schema)
+    buf = io.BytesIO()
+    pq.write_table(table, buf, compression="zstd")
+    write_bytes(shard_key, buf.getvalue(), content_type="application/octet-stream")
+
+
+def run_materialize(args: argparse.Namespace) -> int:
+    from shared.minio import BUCKET as DEFAULT_BUCKET
+    from shared.minio import object_exists
+
+    bucket = args.bucket or DEFAULT_BUCKET
+    client = _s3_client()
+    prefix = args.prefix or _discover_prefix(client, bucket)
+    logger.info("frozen prefix: s3://%s/%s", bucket, prefix)
+
+    objects = enumerate_objects(client, bucket, prefix)
+    logger.info("enumerated %d Parquet objects", len(objects))
+    if args.max_objects:
+        objects = objects[: args.max_objects]
+        logger.warning("--max-objects set: processing %d objects", len(objects))
+
+    if not args.apply:
+        logger.warning("DRY RUN: planning only, no object will be written. "
+                       "Pass --apply to write.")
+
+    totals: Counter[str] = Counter()
+    done_shards = 0
+
+    for index, obj in enumerate(objects, start=1):
+        legacy_key = obj["legacy_object_key"]
+        shard_key = _shard_key(legacy_key)
+
+        if not args.force and object_exists(shard_key):
+            done_shards += 1
+            logger.debug("shard exists, skipping source %s", legacy_key)
+            continue
+
+        records: list[dict[str, Any]] = []
+        for row in iter_rows(bucket, [obj], progress_every=0):
+            occurrence = classify_row(row)
+            record = plan_row(occurrence)
+            html = row.get(HTML_COLUMN) or b""
+            record = materialize_row(record, html, apply=args.apply,
+                                     verify=not args.no_verify)
+            totals[record["disposition"]] += 1
+            records.append(record)
+
+        if args.apply:
+            write_manifest_shard(records, shard_key)
+
+        if args.progress_every and index % args.progress_every == 0:
+            logger.info("source %d/%d  %s", index, len(objects),
+                        "  ".join(f"{k}={v:,}" for k, v in sorted(totals.items())))
+
+    print()
+    print("Plan 145 -- materialize April detail bodies")
+    print("=" * 52)
+    print(f"mode                {'APPLY' if args.apply else 'DRY RUN'}")
+    print(f"source objects      {len(objects):>12,}")
+    print(f"shards already done {done_shards:>12,}")
+    for disposition in DISPOSITIONS:
+        print(f"  {disposition:<22} {totals.get(disposition, 0):>12,}")
+    print(f"  {'total rows':<22} {sum(totals.values()):>12,}")
+    print()
+    return 0
+
+
+# --------------------------------------------------------------------------
 # CLI
 # --------------------------------------------------------------------------
 
@@ -855,6 +1103,27 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
                              "produce a delta report, never to proceed past a gate.")
     census.add_argument("--log-level", default="INFO", help="DEBUG | INFO | WARNING")
     census.set_defaults(func=run_census)
+
+    mat = sub.add_parser(
+        "materialize",
+        help="Write every successful legacy body as a normal .html.zst object.",
+    )
+    mat.add_argument("--apply", action="store_true",
+                     help="Actually write objects. Without it the run plans "
+                          "and reports only.")
+    mat.add_argument("--bucket", default=None, help="Override MINIO_BUCKET.")
+    mat.add_argument("--prefix", default=None,
+                     help="Override the discovered detail_page prefix.")
+    mat.add_argument("--max-objects", type=int, default=0,
+                     help="Process only the first N source Parquet objects.")
+    mat.add_argument("--force", action="store_true",
+                     help="Reprocess source files whose manifest shard exists.")
+    mat.add_argument("--no-verify", action="store_true",
+                     help="Skip the read-back hash check. Not recommended.")
+    mat.add_argument("--progress-every", type=int, default=10,
+                     help="Log cumulative totals every N source objects.")
+    mat.add_argument("--log-level", default="INFO", help="DEBUG | INFO | WARNING")
+    mat.set_defaults(func=run_materialize)
 
     return parser.parse_args(argv)
 
