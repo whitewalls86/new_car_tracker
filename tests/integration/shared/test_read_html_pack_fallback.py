@@ -103,11 +103,15 @@ def _seed(artifact_type: str, n: int) -> list[tuple[str, bytes]]:
 def _pack(monkeypatch, artifact_type: str, seeded, **kwargs):
     """Run the production packer over exactly the seeded artifacts."""
     def _fetch(con, bucket, a_type, year, month):
+        # (source_key, artifact_id, listing_id, cluster_key, fetched_at) —
+        # identity and cluster key hold the same value here, the ordinary case.
         for i, (key, _) in enumerate(seeded):
+            listing = f"L{i // 3:03d}"
             yield (
                 key,
                 1000 + i,
-                f"L{i // 3:03d}",
+                listing,
+                listing,
                 datetime(year, month, 1 + (i % 27), 12, tzinfo=timezone.utc),
             )
 
