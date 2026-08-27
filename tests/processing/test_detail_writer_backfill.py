@@ -1,4 +1,3 @@
-# ruff: noqa: E501
 from contextlib import contextmanager
 from datetime import datetime, timezone
 

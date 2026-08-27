@@ -1,4 +1,3 @@
-# ruff: noqa: E501
 import hashlib
 
 import pytest

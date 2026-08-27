@@ -1,4 +1,3 @@
-# ruff: noqa: E501
 """Dry-run-first replay of reviewed Plan 145 recovery manifests.
 
 This module deliberately has no queue, pack, or sidecar write capability.  A
