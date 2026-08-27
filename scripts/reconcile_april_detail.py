@@ -1,0 +1,1145 @@
+"""Plan 145: the April detail-page reconciliation command.
+
+Plan 145 deletes the 1,172 legacy April ``detail_page`` Parquet objects, but
+only after every distinct successful capture is either already represented in
+silver or rebuilt as a real current artifact. That is six stages of work over
+one frozen population, so this is one command with one mode per stage rather
+than six scripts that each re-derive the census.
+
+Stage 1 (``census``) is implemented here. It is **read-only**: it enumerates
+the exact legacy prefix, streams every row occurrence, recomputes hashes, and
+writes local manifests plus fingerprints. It never writes to MinIO, never
+touches Postgres, and never deletes anything. Later stages join these frozen
+manifests to pack sidecars (Stage 2) and to silver (Stage 3); nothing mutates
+production before Stage 4.
+
+What the legacy rows actually are
+---------------------------------
+The population was written by the Plan 72 archiver
+(``archiver/processors/archive_artifacts.py`` at commit 1798a99), which paired
+``raw_artifacts`` metadata from Postgres with the HTML read off local disk::
+
+    html = b""
+    if filepath and os.path.exists(filepath):
+        html = open(filepath, "rb").read()
+
+Three consequences drive this script's design, and each one contradicts a
+convenient reading of the plan:
+
+1. **Empty bodies carry a non-empty stored hash.** When the disk file was
+   already gone at archive time, the writer stored ``b""`` for ``html`` while
+   still copying ``sha256`` from the database row -- the hash of the *original*
+   page. So for empty rows the stored hash is real and the bytes are not, and
+   ``sha256(b"") != stored_sha256`` is the expected state, not corruption.
+   Empty rows are therefore excluded from hash verification and from the
+   recovery population: there are no bytes to recover. They are still counted,
+   because the plan's census invariant is over occurrences.
+
+2. **A row's status says nothing about whether its bytes survived.** An empty
+   row is typically ``http_status = 200``: the fetch succeeded, the file was
+   just cleaned up before the archiver reached it. So "successful capture" and
+   "recoverable capture" are different populations, and this script reports the
+   status census and the empty census as a cross-tab rather than as one number.
+
+3. **There is no ``listing_id`` column.** The legacy schema carries
+   ``artifact_id, run_id, source, artifact_type, search_key, search_scope, url,
+   fetched_at, http_status, content_bytes, sha256, error, page_num, html``.
+   The plan's ``(listing_id, fetched_at)`` identity is recovered from ``url``
+   using the same UUID extraction the production parser applies
+   (``processing/processors/parse_detail_page.py``), so legacy and current
+   identity are derived by identical rules.
+
+Two hashes, deliberately kept apart
+-----------------------------------
+``stored_sha256`` is what the old system recorded. ``recomputed_sha256`` is
+what the surviving bytes actually hash to. Plan 145 leans on "the SHA" in
+several places, but the two answer different questions and Stage 2 needs the
+second one specifically:
+
+* the pack join is content-based, so it must use ``recomputed_sha256``; a
+  stored hash whose bytes are gone would join a pack member this Parquet row
+  cannot actually supply.
+* the distinct-observation count is an identity question, so it tolerates
+  either -- but the report emits both distinct counts so the Stage 1 gate can
+  be checked against whichever the reviewer means.
+
+Fail-closed behaviour
+---------------------
+The run stops, non-zero, without writing manifests when a non-empty body
+disagrees with its stored hash, or when two occurrences sharing
+``(listing_id, fetched_at)`` disagree on recomputed hash. Both are donor
+selection problems, and Plan 145 is explicit that this run must not choose a
+donor. Disagreements are reported with bounded examples so the delta can be
+explained before a rerun.
+
+Where it runs
+-------------
+Needs pyarrow, s3fs and boto3 plus network reach to MinIO, so it runs inside
+the compose network (or through a tunnel with ``MINIO_ENDPOINT`` pointed at
+it), not from a laptop against nothing.
+"""
+from __future__ import annotations
+
+import argparse
+import csv
+import hashlib
+import json
+import logging
+import os
+import re
+import sys
+from collections import Counter, defaultdict
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Iterator, Optional, Sequence
+
+logger = logging.getLogger("reconcile_april_detail")
+
+# The Plan 72 archiver wrote s3://<bucket>/html partitioned by year, month and
+# artifact_type. pyarrow renders int32 partition values unpadded ("month=4"),
+# but the exact spelling is discovered by listing rather than assumed -- a
+# hardcoded guess that matches nothing would look like an empty population
+# instead of a failure. See _discover_prefix.
+ARCHIVE_ROOT = "html"
+TARGET_YEAR = 2026
+TARGET_MONTH = 4
+TARGET_ARTIFACT_TYPE = "detail_page"
+
+# Plan 145's baseline, restated so drift is a stop rather than a shrug. These
+# are assertions about production as measured 2026-08-21, not configuration.
+BASELINE_OBJECTS = 1172
+BASELINE_ROWS = 951821
+BASELINE_STATUS_CENSUS = {"200": 847785, "403": 104025, "5xx": 11}
+
+# Columns stored inside each Parquet file. `year`, `month` and `artifact_type`
+# are *partition* columns: pyarrow encodes them in the key path and omits them
+# from the file, so asking for them by name fails the schema check. The prefix
+# already pins all three, which is why nothing is lost by dropping them here.
+METADATA_COLUMNS = [
+    "artifact_id", "run_id", "source", "search_key",
+    "search_scope", "url", "fetched_at", "http_status", "content_bytes",
+    "sha256", "error", "page_num",
+]
+PARTITION_COLUMNS = ("year", "month", "artifact_type")
+HTML_COLUMN = "html"
+
+# Same extraction the production detail parser uses, so legacy and current
+# listing identity cannot diverge by rule.
+_UUID_RE = re.compile(
+    r"[0-9a-fA-F]{8}-"
+    r"[0-9a-fA-F]{4}-"
+    r"[0-9a-fA-F]{4}-"
+    r"[0-9a-fA-F]{4}-"
+    r"[0-9a-fA-F]{12}"
+)
+
+EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
+
+OCCURRENCE_FIELDS = [
+    "legacy_object_key", "row_group", "row_offset",
+    "legacy_artifact_id", "run_id", "source", "search_key", "search_scope",
+    "url", "listing_id", "fetched_at", "http_status", "page_num", "error",
+    "content_bytes", "html_len", "stored_sha256", "recomputed_sha256",
+]
+
+OBSERVATION_FIELDS = [
+    "listing_id", "fetched_at", "recomputed_sha256", "stored_sha256",
+    "html_len", "http_status", "url", "run_id", "source",
+    "search_key", "search_scope", "page_num",
+    "donor_legacy_object_key", "donor_row_group", "donor_row_offset",
+    "occurrence_count",
+]
+
+
+class ReconcileError(RuntimeError):
+    """A gate failed. The run stops and writes no manifests."""
+
+
+def extract_listing_id(url: Optional[str]) -> Optional[str]:
+    if not url:
+        return None
+    m = _UUID_RE.search(url)
+    return m.group(0) if m else None
+
+
+def status_bucket(http_status: Optional[int]) -> str:
+    """Collapse a status into the plan's three census buckets.
+
+    Plan 145 censuses 200 / 403 / 5xx and nothing else. Anything outside those
+    is bucketed under its own label rather than silently folded into one of
+    them: a fourth bucket appearing is exactly the kind of drift the gate is
+    supposed to catch.
+    """
+    if http_status is None:
+        return "null"
+    if http_status == 200:
+        return "200"
+    if http_status == 403:
+        return "403"
+    if 500 <= http_status <= 599:
+        return "5xx"
+    return str(http_status)
+
+
+def _normalize_fetched_at(value: Any) -> Optional[str]:
+    """Render a capture time as a stable UTC ISO-8601 string.
+
+    Plan 145 matches silver on *exact normalized* ``(listing_id, fetched_at)``,
+    so the normalization has to be one rule applied everywhere rather than
+    whatever repr pyarrow hands back for a given chunk type.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        value = datetime.fromisoformat(value)
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc).isoformat(timespec="microseconds")
+    raise ReconcileError(f"unhandled fetched_at type: {type(value)!r}")
+
+
+# --------------------------------------------------------------------------
+# Object enumeration
+# --------------------------------------------------------------------------
+
+def _s3_client():
+    import boto3
+
+    from shared.minio import ACCESS, ENDPOINT, SECRET
+
+    return boto3.client(
+        "s3",
+        endpoint_url=ENDPOINT,
+        aws_access_key_id=ACCESS,
+        aws_secret_access_key=SECRET,
+    )
+
+
+def _list_prefix(client, bucket: str, prefix: str) -> list[dict[str, Any]]:
+    objects: list[dict[str, Any]] = []
+    token: Optional[str] = None
+    while True:
+        kwargs = {"Bucket": bucket, "Prefix": prefix}
+        if token:
+            kwargs["ContinuationToken"] = token
+        page = client.list_objects_v2(**kwargs)
+        for entry in page.get("Contents", []):
+            objects.append(entry)
+        if not page.get("IsTruncated"):
+            break
+        token = page.get("NextContinuationToken")
+    return objects
+
+
+def _list_common_prefixes(client, bucket: str, prefix: str) -> list[str]:
+    """List only the immediate child "directories" of a prefix.
+
+    Delimiter listing returns partition prefixes instead of every key beneath
+    them. The archive root holds the whole HTML population, so walking it key
+    by key to find one partition would list millions of objects to learn
+    something three cheap requests can answer.
+    """
+    prefixes: list[str] = []
+    token: Optional[str] = None
+    while True:
+        kwargs = {"Bucket": bucket, "Prefix": prefix, "Delimiter": "/"}
+        if token:
+            kwargs["ContinuationToken"] = token
+        page = client.list_objects_v2(**kwargs)
+        for entry in page.get("CommonPrefixes", []):
+            prefixes.append(entry["Prefix"])
+        if not page.get("IsTruncated"):
+            break
+        token = page.get("NextContinuationToken")
+    return prefixes
+
+
+def _discover_prefix(client, bucket: str) -> str:
+    """Find the real detail_page partition prefix by listing, not by guessing.
+
+    pyarrow writes int partition values unpadded ("month=4"), but this
+    population is four months old and has been touched by later plans, so the
+    spelling is confirmed against the bucket rather than assumed: a hardcoded
+    guess that matched nothing would look like an empty population instead of a
+    failure.
+
+    The walk is level by level -- year, then month, then artifact_type -- so it
+    costs three delimiter listings rather than a full enumeration of the
+    archive.
+    """
+    root = f"{ARCHIVE_ROOT}/"
+
+    def _match(prefixes: Sequence[str], field: str, want: Any) -> list[str]:
+        matched = []
+        for candidate in prefixes:
+            leaf = candidate.rstrip("/").rsplit("/", 1)[-1]
+            if not leaf.startswith(f"{field}="):
+                continue
+            value = leaf.split("=", 1)[1]
+            if isinstance(want, int):
+                try:
+                    if int(value) != want:
+                        continue
+                except ValueError:
+                    continue
+            elif value != want:
+                continue
+            matched.append(candidate)
+        return matched
+
+    years = _match(_list_common_prefixes(client, bucket, root), "year", TARGET_YEAR)
+    months: list[str] = []
+    for year_prefix in years:
+        months += _match(
+            _list_common_prefixes(client, bucket, year_prefix), "month", TARGET_MONTH,
+        )
+    seen: list[str] = []
+    for month_prefix in months:
+        seen += _match(
+            _list_common_prefixes(client, bucket, month_prefix),
+            "artifact_type", TARGET_ARTIFACT_TYPE,
+        )
+
+    if not seen:
+        raise ReconcileError(
+            f"no {TARGET_ARTIFACT_TYPE} partition found for "
+            f"{TARGET_YEAR}-{TARGET_MONTH:02d} under s3://{bucket}/{root}"
+        )
+    if len(set(seen)) > 1:
+        raise ReconcileError(f"ambiguous target prefix: {sorted(set(seen))}")
+    return seen[0]
+
+
+def enumerate_objects(client, bucket: str, prefix: str) -> list[dict[str, Any]]:
+    """Census the Parquet objects under the frozen prefix.
+
+    Records the immutable source metadata Stage 6 regenerates its deletion
+    manifest from: key, size, ETag and last-modified. Non-Parquet keys are
+    excluded rather than counted, so a stray marker object cannot inflate the
+    object count past its baseline.
+    """
+    objects = []
+    for entry in _list_prefix(client, bucket, prefix):
+        key = entry["Key"]
+        if not key.endswith(".parquet"):
+            continue
+        objects.append({
+            "legacy_object_key": key,
+            "size_bytes": int(entry["Size"]),
+            "etag": entry["ETag"].strip('"'),
+            "last_modified": entry["LastModified"].astimezone(timezone.utc).isoformat(),
+        })
+    objects.sort(key=lambda row: row["legacy_object_key"])
+    return objects
+
+
+# --------------------------------------------------------------------------
+# Row streaming
+# --------------------------------------------------------------------------
+
+def _s3_opener(bucket: str):
+    """Return an opener that resolves a legacy object key to a binary stream.
+
+    Uses boto3 into an in-memory buffer rather than ``s3fs``. The images this
+    runs in ship different s3fs versions -- the processing image's constructor
+    rejects ``endpoint_url`` outright -- and boto3 is present and identical in
+    all of them. The whole object is buffered because ``ParquetFile`` needs a
+    seekable stream and ``get_object`` bodies are not; at ~12.5 MB average that
+    is cheaper than the row groups it is about to decompress anyway.
+    """
+    import io
+
+    client = _s3_client()
+
+    def _open(key: str):
+        body = client.get_object(Bucket=bucket, Key=key)["Body"].read()
+        return io.BytesIO(body)
+
+    return _open
+
+
+def iter_rows(
+    bucket: str,
+    objects: Sequence[dict[str, Any]],
+    *,
+    progress_every: int = 50,
+    opener: Optional[Any] = None,
+) -> Iterator[dict[str, Any]]:
+    """Stream every row occurrence, one row group at a time.
+
+    The HTML column is large_binary and the whole population is ~13.66 GiB, so
+    row groups are read and released individually. Each row carries its
+    ``(legacy_object_key, row_group, row_offset)`` locator, which is the
+    coordinate Plan 145 uses to account for occurrences and to name a donor.
+
+    ``opener`` exists so fixture Parquet on local disk drives this same loop in
+    tests. The schema check and the row-group walk are the parts most likely to
+    be wrong against a four-month-old population, so they should not be
+    reachable only through a live MinIO.
+    """
+    import pyarrow.parquet as pq
+
+    if opener is None:
+        opener = _s3_opener(bucket)
+    columns = METADATA_COLUMNS + [HTML_COLUMN]
+
+    for index, obj in enumerate(objects, start=1):
+        key = obj["legacy_object_key"]
+        if progress_every and index % progress_every == 0:
+            logger.info("scanning object %d/%d: %s", index, len(objects), key)
+        with opener(key) as handle:
+            parquet_file = pq.ParquetFile(handle)
+            available = set(parquet_file.schema_arrow.names)
+            missing = [c for c in columns if c not in available]
+            if missing:
+                raise ReconcileError(f"{key}: missing expected columns {missing}")
+            for row_group in range(parquet_file.num_row_groups):
+                table = parquet_file.read_row_group(row_group, columns=columns)
+                batch = table.to_pydict()
+                for offset in range(table.num_rows):
+                    row = {name: batch[name][offset] for name in columns}
+                    row["legacy_object_key"] = key
+                    row["row_group"] = row_group
+                    row["row_offset"] = offset
+                    yield row
+                del table, batch
+
+
+def classify_row(row: dict[str, Any]) -> dict[str, Any]:
+    """Turn one raw Parquet row into a manifest occurrence.
+
+    Hashing is the expensive part and only non-empty bodies are hashed: an
+    empty body's recomputed hash is a constant that carries no information and
+    would join pack sidecars spuriously if it reached Stage 2.
+    """
+    html = row.get(HTML_COLUMN) or b""
+    html_len = len(html)
+    is_empty = html_len == 0
+    stored = row.get("sha256")
+    recomputed = None if is_empty else hashlib.sha256(html).hexdigest()
+
+    return {
+        "legacy_object_key": row["legacy_object_key"],
+        "row_group": row["row_group"],
+        "row_offset": row["row_offset"],
+        "legacy_artifact_id": row.get("artifact_id"),
+        "run_id": row.get("run_id"),
+        "source": row.get("source"),
+        "search_key": row.get("search_key"),
+        "search_scope": row.get("search_scope"),
+        "url": row.get("url"),
+        "listing_id": extract_listing_id(row.get("url")),
+        "fetched_at": _normalize_fetched_at(row.get("fetched_at")),
+        "http_status": row.get("http_status"),
+        "page_num": row.get("page_num"),
+        "error": row.get("error"),
+        "content_bytes": row.get("content_bytes"),
+        "html_len": html_len,
+        "stored_sha256": stored,
+        "recomputed_sha256": recomputed,
+        "is_empty": is_empty,
+        "status_bucket": status_bucket(row.get("http_status")),
+    }
+
+
+# --------------------------------------------------------------------------
+# Stage 1 aggregation and gates
+# --------------------------------------------------------------------------
+
+class CensusAccumulator:
+    """Accumulates the Stage 1 census, manifests and gate evidence.
+
+    Kept as a class so the fixture tests can drive it with synthetic rows and
+    assert on the same gate logic the production scan runs, without a MinIO.
+
+    Memory: one entry per HTTP 200 occurrence is retained (~848k), which is the
+    working set Stage 1 has to hold to collapse duplicates and prove the
+    identity invariant. Non-200 rows are counted and released.
+    """
+
+    def __init__(self, *, max_examples: int = 20) -> None:
+        self.max_examples = max_examples
+        self.total_rows = 0
+        self.status_census: Counter[str] = Counter()
+        # status x empty, because "successful" and "has bytes" are different
+        # populations in this dataset and the plan reads as if they are not.
+        self.empty_by_status: Counter[str] = Counter()
+        self.missing_listing_id = 0
+        self.missing_fetched_at = 0
+
+        self.occurrences: list[dict[str, Any]] = []
+        self.hash_mismatches: list[dict[str, Any]] = []
+        self.empty_with_stored_hash = 0
+
+    def add(self, occurrence: dict[str, Any]) -> None:
+        self.total_rows += 1
+        bucket = occurrence["status_bucket"]
+        self.status_census[bucket] += 1
+        if occurrence["is_empty"]:
+            self.empty_by_status[bucket] += 1
+            # Expected for this population: the Plan 72 writer stored the
+            # database hash of a page whose bytes it could no longer read.
+            if occurrence["stored_sha256"]:
+                self.empty_with_stored_hash += 1
+        elif occurrence["stored_sha256"] and (
+            occurrence["stored_sha256"] != occurrence["recomputed_sha256"]
+        ):
+            if len(self.hash_mismatches) < self.max_examples:
+                self.hash_mismatches.append({
+                    "legacy_object_key": occurrence["legacy_object_key"],
+                    "row_group": occurrence["row_group"],
+                    "row_offset": occurrence["row_offset"],
+                    "stored_sha256": occurrence["stored_sha256"],
+                    "recomputed_sha256": occurrence["recomputed_sha256"],
+                })
+            else:
+                self.hash_mismatches.append({"truncated": True})
+
+        if bucket != "200":
+            return
+
+        if not occurrence["listing_id"]:
+            self.missing_listing_id += 1
+        if not occurrence["fetched_at"]:
+            self.missing_fetched_at += 1
+        self.occurrences.append(occurrence)
+
+    # -- gates ------------------------------------------------------------
+
+    def check_hashes(self) -> None:
+        if self.hash_mismatches:
+            shown = [m for m in self.hash_mismatches if not m.get("truncated")]
+            raise ReconcileError(
+                f"{len(self.hash_mismatches)} non-empty rows disagree with their "
+                f"stored hash; first {len(shown)}: {json.dumps(shown, indent=2)}"
+            )
+
+    def collapse(self) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        """Collapse HTTP 200 occurrences to distinct observations.
+
+        Identity is ``(listing_id, fetched_at)``. Occurrences sharing an
+        identity must agree on recomputed hash; if they disagree there is no
+        rule here that picks a donor, so the run stops. Empty-bodied rows
+        collapse alongside their identity but can never become the donor: a
+        donor has to supply bytes.
+        """
+        groups: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+        unidentified = 0
+        for occurrence in self.occurrences:
+            listing_id = occurrence["listing_id"]
+            fetched_at = occurrence["fetched_at"]
+            if not listing_id or not fetched_at:
+                unidentified += 1
+                continue
+            groups[(listing_id, fetched_at)].append(occurrence)
+
+        conflicts: list[dict[str, Any]] = []
+        observations: list[dict[str, Any]] = []
+        empty_only_identities = 0
+
+        for (listing_id, fetched_at), members in groups.items():
+            hashes = {m["recomputed_sha256"] for m in members if not m["is_empty"]}
+            if len(hashes) > 1:
+                if len(conflicts) < self.max_examples:
+                    conflicts.append({
+                        "listing_id": listing_id,
+                        "fetched_at": fetched_at,
+                        "recomputed_sha256": sorted(hashes),
+                        "locators": [
+                            [m["legacy_object_key"], m["row_group"], m["row_offset"]]
+                            for m in members
+                        ],
+                    })
+                else:
+                    conflicts.append({"truncated": True})
+                continue
+
+            # Deterministic donor: the lowest locator among rows that actually
+            # have bytes. Sorting makes reruns byte-identical.
+            with_bytes = sorted(
+                (m for m in members if not m["is_empty"]),
+                key=lambda m: (m["legacy_object_key"], m["row_group"], m["row_offset"]),
+            )
+            if not with_bytes:
+                # Successful capture whose bytes the archiver never captured.
+                # Counted, never recovered -- Stage 4 would have nothing to write.
+                empty_only_identities += 1
+                continue
+
+            donor = with_bytes[0]
+            observations.append({
+                "listing_id": listing_id,
+                "fetched_at": fetched_at,
+                "recomputed_sha256": donor["recomputed_sha256"],
+                "stored_sha256": donor["stored_sha256"],
+                "html_len": donor["html_len"],
+                "http_status": donor["http_status"],
+                "url": donor["url"],
+                "run_id": donor["run_id"],
+                "source": donor["source"],
+                "search_key": donor["search_key"],
+                "search_scope": donor["search_scope"],
+                "page_num": donor["page_num"],
+                "donor_legacy_object_key": donor["legacy_object_key"],
+                "donor_row_group": donor["row_group"],
+                "donor_row_offset": donor["row_offset"],
+                "occurrence_count": len(members),
+            })
+
+        if conflicts:
+            shown = [c for c in conflicts if not c.get("truncated")]
+            raise ReconcileError(
+                f"{len(conflicts)} (listing_id, fetched_at) identities disagree on "
+                f"recomputed hash; this run does not select a donor. First "
+                f"{len(shown)}: {json.dumps(shown, indent=2)}"
+            )
+
+        observations.sort(key=lambda row: (row["listing_id"], row["fetched_at"]))
+
+        non_empty = [o for o in self.occurrences if not o["is_empty"]]
+        stats = {
+            "http_200_occurrences": len(self.occurrences),
+            "http_200_occurrences_empty": self.empty_by_status.get("200", 0),
+            "http_200_occurrences_with_bytes": len(non_empty),
+            "unidentified_occurrences": unidentified,
+            "distinct_identities": len(groups),
+            "identities_with_bytes": len(observations),
+            "identities_empty_only": empty_only_identities,
+            "distinct_recomputed_sha256": len(
+                {o["recomputed_sha256"] for o in non_empty}
+            ),
+            "distinct_stored_sha256": len(
+                {o["stored_sha256"] for o in self.occurrences if o["stored_sha256"]}
+            ),
+            "duplicate_occurrences_collapsed": (
+                len(self.occurrences) - unidentified - len(groups)
+            ),
+        }
+        return observations, stats
+
+
+def check_baseline(objects: Sequence[dict], accumulator: CensusAccumulator,
+                   *, strict: bool) -> list[str]:
+    """Compare the scan against Plan 145's published baseline.
+
+    Returns the list of drifts. Under ``strict`` (the default) any drift stops
+    the run, which is the Stage 1 gate: "all baseline counts reproduce exactly
+    or the plan stops". ``--allow-drift`` downgrades it to a reported delta so
+    a reviewer can see the whole picture before deciding.
+    """
+    drifts = []
+    if len(objects) != BASELINE_OBJECTS:
+        drifts.append(f"objects: expected {BASELINE_OBJECTS}, found {len(objects)}")
+    if accumulator.total_rows != BASELINE_ROWS:
+        drifts.append(f"rows: expected {BASELINE_ROWS}, found {accumulator.total_rows}")
+    for bucket, expected in BASELINE_STATUS_CENSUS.items():
+        found = accumulator.status_census.get(bucket, 0)
+        if found != expected:
+            drifts.append(f"status {bucket}: expected {expected}, found {found}")
+    unexpected = set(accumulator.status_census) - set(BASELINE_STATUS_CENSUS)
+    if unexpected:
+        drifts.append(
+            "unexpected status buckets: "
+            + ", ".join(f"{b}={accumulator.status_census[b]}" for b in sorted(unexpected))
+        )
+    if drifts and strict:
+        raise ReconcileError(
+            "baseline drift; Stage 1 stops until each difference is explained:\n  - "
+            + "\n  - ".join(drifts)
+        )
+    return drifts
+
+
+# --------------------------------------------------------------------------
+# Output
+# --------------------------------------------------------------------------
+
+def _fingerprint(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _write_csv(path: Path, fields: Sequence[str], rows: Sequence[dict]) -> str:
+    """Write a manifest deterministically.
+
+    ``\\n`` line endings and a fixed field order are what make the fingerprint
+    reproducible across reruns and machines, which is the Stage 3 gate
+    ("rerunning against the same inputs produces identical fingerprints").
+    """
+    with path.open("w", newline="\n", encoding="utf-8") as handle:
+        writer = csv.DictWriter(
+            handle, fieldnames=list(fields), extrasaction="ignore", lineterminator="\n",
+        )
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(row)
+    return _fingerprint(path)
+
+
+def write_outputs(
+    out_dir: Path,
+    *,
+    objects: Sequence[dict],
+    accumulator: CensusAccumulator,
+    observations: Sequence[dict],
+    stats: dict,
+    drifts: Sequence[str],
+    context: dict,
+) -> dict:
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    occurrences = sorted(
+        accumulator.occurrences,
+        key=lambda row: (row["legacy_object_key"], row["row_group"], row["row_offset"]),
+    )
+
+    fingerprints = {
+        "object_census.csv": _write_csv(
+            out_dir / "object_census.csv",
+            ["legacy_object_key", "size_bytes", "etag", "last_modified"],
+            objects,
+        ),
+        "occurrences_http200.csv": _write_csv(
+            out_dir / "occurrences_http200.csv", OCCURRENCE_FIELDS, occurrences,
+        ),
+        "observations_distinct.csv": _write_csv(
+            out_dir / "observations_distinct.csv", OBSERVATION_FIELDS, observations,
+        ),
+    }
+
+    report = {
+        "stage": "plan_145_stage_1_census",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "context": context,
+        "objects": {
+            "count": len(objects),
+            "stored_bytes": sum(o["size_bytes"] for o in objects),
+            "baseline_count": BASELINE_OBJECTS,
+        },
+        "rows": {
+            "total": accumulator.total_rows,
+            "baseline_total": BASELINE_ROWS,
+            "status_census": dict(sorted(accumulator.status_census.items())),
+            "baseline_status_census": BASELINE_STATUS_CENSUS,
+            "empty_by_status": dict(sorted(accumulator.empty_by_status.items())),
+            "empty_rows_carrying_stored_hash": accumulator.empty_with_stored_hash,
+        },
+        "identity": {
+            **stats,
+            "http_200_missing_listing_id": accumulator.missing_listing_id,
+            "http_200_missing_fetched_at": accumulator.missing_fetched_at,
+        },
+        "gates": {
+            "hash_mismatches": len(accumulator.hash_mismatches),
+            "baseline_drifts": list(drifts),
+        },
+        "fingerprints": fingerprints,
+    }
+
+    report_path = out_dir / "stage1_report.json"
+    report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n",
+                           encoding="utf-8")
+    report["fingerprints"]["stage1_report.json"] = _fingerprint(report_path)
+    return report
+
+
+def print_report(report: dict) -> None:
+    rows = report["rows"]
+    identity = report["identity"]
+    print()
+    print("Plan 145 Stage 1 — April detail-page census")
+    print("=" * 62)
+    print(f"objects            {report['objects']['count']:>12,}"
+          f"  (baseline {report['objects']['baseline_count']:,})")
+    print(f"stored bytes       {report['objects']['stored_bytes']:>12,}")
+    print(f"row occurrences    {rows['total']:>12,}"
+          f"  (baseline {rows['baseline_total']:,})")
+    print()
+    print("status census            rows      of which empty")
+    for bucket in sorted(rows["status_census"]):
+        print(f"  {bucket:<10} {rows['status_census'][bucket]:>12,}"
+              f"  {rows['empty_by_status'].get(bucket, 0):>12,}")
+    print(f"\nempty rows carrying a stored hash: "
+          f"{rows['empty_rows_carrying_stored_hash']:,}")
+    print("  (expected: the Plan 72 writer stored the DB hash of bytes it could")
+    print("   not read; these are counted but are not recovery candidates)")
+    print()
+    print("identity")
+    for key in ("http_200_occurrences", "http_200_occurrences_empty",
+                "http_200_occurrences_with_bytes", "distinct_identities",
+                "identities_with_bytes", "identities_empty_only",
+                "distinct_recomputed_sha256", "distinct_stored_sha256",
+                "duplicate_occurrences_collapsed", "unidentified_occurrences",
+                "http_200_missing_listing_id", "http_200_missing_fetched_at"):
+        print(f"  {key:<34} {identity[key]:>12,}")
+    print()
+    if report["gates"]["baseline_drifts"]:
+        print("BASELINE DRIFT")
+        for drift in report["gates"]["baseline_drifts"]:
+            print(f"  - {drift}")
+        print()
+    print("fingerprints")
+    for name, digest in sorted(report["fingerprints"].items()):
+        print(f"  {name:<28} {digest}")
+    print()
+
+
+# --------------------------------------------------------------------------
+# Stage 2 -- materialize successful bodies as normal HTML objects
+# --------------------------------------------------------------------------
+
+#: Where the per-source-file manifest shards land. One shard per legacy Parquet
+#: object, so a crash loses only the in-flight file and a completed shard is
+#: proof that source is done.
+MATERIALIZE_PREFIX = "recovery/plan145/materialized"
+
+#: Why a legacy row produced no object. Every HTTP 200 row is either `written`
+#: or `exists`; the rest are recorded so all 951,821 occurrences stay accounted
+#: for rather than silently vanishing from the population.
+DISPOSITIONS = ("written", "exists", "skipped_empty", "skipped_non_success")
+
+MANIFEST_FIELDS = [
+    "object_key", "raw_sha256", "html_len", "compressed_len", "disposition",
+    "legacy_object_key", "row_group", "row_offset",
+    "listing_id", "fetched_at", "url", "http_status",
+    "run_id", "source", "search_key", "search_scope", "page_num",
+    "legacy_artifact_id",
+]
+
+
+def sha_to_file_id(sha256: str) -> str:
+    """Derive a stable UUID-shaped object stem from a content hash.
+
+    ``make_key`` generates a random UUID when none is given, which would make
+    every re-run of this job write a second copy of the entire population. A
+    content-derived stem makes the job idempotent instead: a rerun recomputes
+    the same key, ``object_exists`` skips it, and two rows with identical bytes
+    can never produce two objects.
+
+    This is a deliberate departure from how the scraper names objects, and it
+    is visible in the store permanently. Nothing reads meaning from the stem --
+    lookups go through the queue and pack sidecars -- so the only effect is
+    that these keys are reproducible and the scraper's are not.
+    """
+    if not sha256 or len(sha256) < 32:
+        raise ReconcileError(f"cannot derive a file id from sha {sha256!r}")
+    h = sha256[:32]
+    return f"{h[:8]}-{h[8:12]}-{h[12:16]}-{h[16:20]}-{h[20:32]}"
+
+
+def plan_row(occurrence: dict[str, Any]) -> dict[str, Any]:
+    """Decide what, if anything, this legacy row should become.
+
+    Pure and side-effect free so the disposition rules are testable without a
+    MinIO. The actual write happens in :func:`materialize_row`.
+    """
+    from shared.minio import make_key
+
+    record = {field: occurrence.get(field) for field in MANIFEST_FIELDS
+              if field in occurrence}
+    record.update({
+        "object_key": None,
+        "raw_sha256": occurrence.get("recomputed_sha256"),
+        "compressed_len": None,
+        "legacy_artifact_id": occurrence.get("legacy_artifact_id"),
+    })
+
+    if occurrence["is_empty"]:
+        # The Plan 72 writer archived b"" for a page whose file was already
+        # gone. There are no bytes to materialize; the row survives only as
+        # metadata.
+        record["disposition"] = "skipped_empty"
+        return record
+
+    if occurrence["status_bucket"] != "200":
+        # Challenge pages and error bodies parse to a blocked/failed state and
+        # yield no vehicle observation, so carrying them into the parse stage
+        # costs storage and CPU for nothing. Recorded, not written.
+        record["disposition"] = "skipped_non_success"
+        return record
+
+    record["object_key"] = make_key(
+        TARGET_ARTIFACT_TYPE,
+        occurrence["fetched_at"],
+        file_id=sha_to_file_id(occurrence["recomputed_sha256"]),
+    )
+    record["disposition"] = "written"
+    return record
+
+
+def materialize_row(
+    record: dict[str, Any],
+    html: bytes,
+    *,
+    apply: bool,
+    verify: bool = True,
+) -> dict[str, Any]:
+    """Write one body and prove it reads back byte-identically.
+
+    Verification is a read-back through ``read_html`` -- the same path
+    production uses -- rather than a comparison against the bytes still in
+    memory. Checking what we just compressed against itself would prove
+    nothing about what actually landed in the store.
+    """
+    from shared.minio import (
+        BUCKET,
+        object_exists,
+        object_size,
+        read_html,
+        write_html,
+    )
+
+    if record["disposition"] != "written":
+        return record
+
+    key = record["object_key"]
+    if object_exists(key):
+        record["disposition"] = "exists"
+        return record
+
+    if not apply:
+        return record
+
+    write_html(key, html)
+
+    if verify:
+        readback = read_html(f"s3://{BUCKET}/{key}")
+        actual = hashlib.sha256(readback).hexdigest()
+        if actual != record["raw_sha256"]:
+            raise ReconcileError(
+                f"read-back mismatch for {key}: wrote {record['raw_sha256']}, "
+                f"read {actual}"
+            )
+    record["compressed_len"] = object_size(f"s3://{BUCKET}/{key}")
+    return record
+
+
+def _shard_key(legacy_object_key: str) -> str:
+    stem = legacy_object_key.rsplit("/", 1)[-1]
+    if stem.endswith(".parquet"):
+        stem = stem[: -len(".parquet")]
+    return f"{MATERIALIZE_PREFIX}/{stem}.parquet"
+
+
+def write_manifest_shard(records: Sequence[dict[str, Any]], shard_key: str) -> None:
+    """Persist one source file's manifest to MinIO as Parquet.
+
+    Parquet rather than CSV because the parse and compare stages read these
+    with DuckDB; MinIO rather than a local directory because a disposable
+    worker container's filesystem does not outlive the run.
+    """
+    import io
+
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    from shared.minio import write_bytes
+
+    schema = pa.schema([
+        pa.field("object_key", pa.string()),
+        pa.field("raw_sha256", pa.string()),
+        pa.field("html_len", pa.int64()),
+        pa.field("compressed_len", pa.int64()),
+        pa.field("disposition", pa.string()),
+        pa.field("legacy_object_key", pa.string()),
+        pa.field("row_group", pa.int32()),
+        pa.field("row_offset", pa.int32()),
+        pa.field("listing_id", pa.string()),
+        pa.field("fetched_at", pa.string()),
+        pa.field("url", pa.string()),
+        pa.field("http_status", pa.int32()),
+        pa.field("run_id", pa.string()),
+        pa.field("source", pa.string()),
+        pa.field("search_key", pa.string()),
+        pa.field("search_scope", pa.string()),
+        pa.field("page_num", pa.int32()),
+        pa.field("legacy_artifact_id", pa.int64()),
+    ])
+    rows = [{f: r.get(f) for f in schema.names} for r in records]
+    table = pa.Table.from_pylist(rows, schema=schema)
+    buf = io.BytesIO()
+    pq.write_table(table, buf, compression="zstd")
+    write_bytes(shard_key, buf.getvalue(), content_type="application/octet-stream")
+
+
+def run_materialize(args: argparse.Namespace) -> int:
+    from shared.minio import BUCKET as DEFAULT_BUCKET
+    from shared.minio import object_exists
+
+    bucket = args.bucket or DEFAULT_BUCKET
+    client = _s3_client()
+    prefix = args.prefix or _discover_prefix(client, bucket)
+    logger.info("frozen prefix: s3://%s/%s", bucket, prefix)
+
+    objects = enumerate_objects(client, bucket, prefix)
+    logger.info("enumerated %d Parquet objects", len(objects))
+    if args.max_objects:
+        objects = objects[: args.max_objects]
+        logger.warning("--max-objects set: processing %d objects", len(objects))
+
+    if not args.apply:
+        logger.warning("DRY RUN: planning only, no object will be written. "
+                       "Pass --apply to write.")
+
+    totals: Counter[str] = Counter()
+    done_shards = 0
+
+    for index, obj in enumerate(objects, start=1):
+        legacy_key = obj["legacy_object_key"]
+        shard_key = _shard_key(legacy_key)
+
+        if not args.force and object_exists(shard_key):
+            done_shards += 1
+            logger.debug("shard exists, skipping source %s", legacy_key)
+            continue
+
+        records: list[dict[str, Any]] = []
+        for row in iter_rows(bucket, [obj], progress_every=0):
+            occurrence = classify_row(row)
+            record = plan_row(occurrence)
+            html = row.get(HTML_COLUMN) or b""
+            record = materialize_row(record, html, apply=args.apply,
+                                     verify=not args.no_verify)
+            totals[record["disposition"]] += 1
+            records.append(record)
+
+        if args.apply:
+            write_manifest_shard(records, shard_key)
+
+        if args.progress_every and index % args.progress_every == 0:
+            logger.info("source %d/%d  %s", index, len(objects),
+                        "  ".join(f"{k}={v:,}" for k, v in sorted(totals.items())))
+
+    print()
+    print("Plan 145 -- materialize April detail bodies")
+    print("=" * 52)
+    print(f"mode                {'APPLY' if args.apply else 'DRY RUN'}")
+    print(f"source objects      {len(objects):>12,}")
+    print(f"shards already done {done_shards:>12,}")
+    for disposition in DISPOSITIONS:
+        print(f"  {disposition:<22} {totals.get(disposition, 0):>12,}")
+    print(f"  {'total rows':<22} {sum(totals.values()):>12,}")
+    print()
+    return 0
+
+
+# --------------------------------------------------------------------------
+# CLI
+# --------------------------------------------------------------------------
+
+def run_census(args: argparse.Namespace) -> int:
+    from shared.minio import BUCKET
+
+    bucket = args.bucket or BUCKET
+    client = _s3_client()
+
+    prefix = args.prefix or _discover_prefix(client, bucket)
+    logger.info("frozen prefix: s3://%s/%s", bucket, prefix)
+
+    objects = enumerate_objects(client, bucket, prefix)
+    logger.info("enumerated %d Parquet objects", len(objects))
+    if args.max_objects:
+        objects = objects[: args.max_objects]
+        logger.warning("--max-objects set: scanning %d objects; counts will not "
+                       "reproduce the baseline", len(objects))
+
+    accumulator = CensusAccumulator(max_examples=args.max_examples)
+    for row in iter_rows(bucket, objects, progress_every=args.progress_every):
+        accumulator.add(classify_row(row))
+
+    accumulator.check_hashes()
+    drifts = check_baseline(
+        objects, accumulator, strict=not (args.allow_drift or args.max_objects),
+    )
+    observations, stats = accumulator.collapse()
+
+    report = write_outputs(
+        Path(args.out_dir),
+        objects=objects,
+        accumulator=accumulator,
+        observations=observations,
+        stats=stats,
+        drifts=drifts,
+        context={
+            "bucket": bucket,
+            "prefix": prefix,
+            "max_objects": args.max_objects,
+            "allow_drift": bool(args.allow_drift),
+            "git_commit": os.environ.get("GIT_COMMIT"),
+        },
+    )
+    print_report(report)
+    return 0
+
+
+def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Plan 145 April detail-page reconciliation.",
+    )
+    sub = parser.add_subparsers(dest="mode", required=True)
+
+    census = sub.add_parser(
+        "census",
+        help="Stage 1: freeze the successful-capture manifest (read-only).",
+    )
+    census.add_argument("--out-dir", type=Path, required=True,
+                        help="Local directory for manifests, report and fingerprints.")
+    census.add_argument("--bucket", default=None, help="Override MINIO_BUCKET.")
+    census.add_argument("--prefix", default=None,
+                        help="Override the discovered detail_page prefix.")
+    census.add_argument("--max-objects", type=int, default=0,
+                        help="Scan only the first N objects (smoke test; "
+                             "disables the baseline gate).")
+    census.add_argument("--max-examples", type=int, default=20,
+                        help="Bounded examples reported per gate failure.")
+    census.add_argument("--progress-every", type=int, default=50,
+                        help="Log progress every N objects.")
+    census.add_argument("--allow-drift", action="store_true",
+                        help="Report baseline drift instead of stopping. Use to "
+                             "produce a delta report, never to proceed past a gate.")
+    census.add_argument("--log-level", default="INFO", help="DEBUG | INFO | WARNING")
+    census.set_defaults(func=run_census)
+
+    mat = sub.add_parser(
+        "materialize",
+        help="Write every successful legacy body as a normal .html.zst object.",
+    )
+    mat.add_argument("--apply", action="store_true",
+                     help="Actually write objects. Without it the run plans "
+                          "and reports only.")
+    mat.add_argument("--bucket", default=None, help="Override MINIO_BUCKET.")
+    mat.add_argument("--prefix", default=None,
+                     help="Override the discovered detail_page prefix.")
+    mat.add_argument("--max-objects", type=int, default=0,
+                     help="Process only the first N source Parquet objects.")
+    mat.add_argument("--force", action="store_true",
+                     help="Reprocess source files whose manifest shard exists.")
+    mat.add_argument("--no-verify", action="store_true",
+                     help="Skip the read-back hash check. Not recommended.")
+    mat.add_argument("--progress-every", type=int, default=10,
+                     help="Log cumulative totals every N source objects.")
+    mat.add_argument("--log-level", default="INFO", help="DEBUG | INFO | WARNING")
+    mat.set_defaults(func=run_materialize)
+
+    return parser.parse_args(argv)
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    args = parse_args(argv)
+    logging.basicConfig(
+        level=getattr(logging, args.log_level.upper(), logging.INFO),
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+    try:
+        return args.func(args)
+    except ReconcileError as exc:
+        logger.error("STOP: %s", exc)
+        return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

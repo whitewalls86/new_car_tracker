@@ -1,69 +1,128 @@
-# Plan 145: Deleting the April Cutover Backlog Without Losing Data
+# Plan 145: Recover April Detail Artifacts and Delete the Legacy Parquet
 
 ## Status
 
-**Draft — Stage 0 gates 0a, 0b, 0c, 0e and 0f closed 2026-08-21. Only 0d
-remains, and it is a test to write rather than a measurement to take.**
+**Revised draft — 2026-08-26.** The first implementation guide and two CAR-13
+implementations were reverted before this rewrite. They remain in git history
+and are not inputs to this design.
+
+Production measurements taken read-only on 2026-08-21 remain valid evidence.
+No recovery or deletion has run. This revision replaces selective recovery
+with a simpler bounded migration: keep successful captures, discard failed
+responses, recover every distinct successful observation missing from silver,
+repack April and delete the obsolete detail-page Parquet.
 
 **Supersedes [Plan 132](plan_132_unrecorded_artifact_recovery.md) and
-[Plan 137](plan_137_legacy_bronze_parquet_disposition.md).** See
-[Effect on other plans](#effect-on-other-plans).
-
-April 2026 is the month the system moved from local storage and n8n to MinIO
-and the processing service. Three separate investigations each found one face
-of that cutover and none could see the other two.
+[Plan 137](plan_137_legacy_bronze_parquet_disposition.md).**
 
 ---
 
 ## Goal
 
-**Delete the 1,299 legacy Parquet objects (13.79 GiB) having lost nothing that
-matters.** Everything before that is loss minimisation.
+Delete the **1,172 April 2026 `detail_page` Parquet objects** containing
+951,821 legacy row occurrences and occupying 14,670,223,837 bytes
+(approximately 13.66 GiB), after every distinct successful capture is either:
 
-This framing is deliberate and replaces an earlier draft whose goal was "build
-a reconciliation ledger." A ledger-shaped plan is complete when the ledger
-exists, which is how [Plan 137](plan_137_legacy_bronze_parquet_disposition.md)
-came to be written and never scheduled. **The plan is not done until the bytes
-are gone.**
+1. already represented by a silver observation; or
+2. reconstructed as a real current artifact, parsed and written to silver
+   history.
 
-The precedent is in this project's own history: Plan 102's n8n decommission
-removed the only lifecycle rule bronze ever had and nothing replaced it — the
-origin of the inode problem Plan 131 exists to solve. A recovery plan that
-defers deletion to a separate document repeats that.
+The 127 legacy `results_page` Parquet objects are out of scope. So are all
+current `results_page` objects and the broader raw-HTML retention policy.
 
-**There is no deadline.** 13.79 GiB is ~23% of `/mnt/data`'s 59 GiB, so the
-prize is real, but 1,299 objects is nothing in inode terms and Plan 131 Stage 5
-already converted the inode constraint into a steady state. Deletion is not
-racing anything, which is what makes careful loss-minimisation affordable.
+This is a one-time cleanup, not a general recovery platform. Prefer slow use of
+existing, proven storage machinery over new pack generations, lookup rules or
+reusable workflow infrastructure.
+
+There is no deadline. Nothing is deleted until the recovered artifacts read
+back correctly, the historical writes reconcile and an exact deletion-key
+manifest receives named approval.
 
 ---
 
-## The three populations
+## Recovery contract
 
-Verified against production 2026-08-21, read-only, inside `cartracker-archiver`.
+### Keep successful captures; discard failed responses
 
-| population | n | bytes live in | record lives in |
-|---|---:|---|---|
-| orphan captures | **36,241** | packs (verified) | **nowhere** |
-| challenge-page stubs | 48,600 | packs | events say `skip` — correctly no observation |
-| legacy 200s with no observation | ~224,000 | legacy Parquet **only** | legacy Parquet only — but see [0f](#stage-0f--does-recovering-them-add-price-information-almost-never-closed): only **~11,600** carry information silver lacks |
+The in-scope legacy population is:
 
-### What "missing" means, precisely
+| HTTP result | row occurrences | treatment |
+|---|---:|---|
+| 200 | 847,785 | reconcile, persist and recover when missing |
+| 403 | 104,025 | discard; challenge pages correctly produce no observation |
+| 5xx | 11 | discard; failed responses are not vehicle observations |
+| **total** | **951,821** | exact census |
 
-**No listing was lost.** Of 847,785 successful legacy captures, 847,647
-(100.0%) are for a `listing_id` that appears in silver; only **138** are for a
-listing that never appears at all. What is missing is ~224,000 **observations**
-— individual price points — on listings that other scrapes still cover.
+No 403, 5xx or empty body is copied into the recovered artifact population.
+The original Parquet remains untouched until final deletion, so these rows are
+not destroyed early merely because they have no recovery work.
 
-That lowers the stakes and it is recorded here so nobody plans around the
-wrong number. The value of recovery is **price-history density in a specific
-window**, which matters most to Plan 111/112/113's volatility and
-adaptive-refresh features, not rescue from oblivion.
+### Identity and duplication
 
-### Stage 0a — window sensitivity: the gap is real (CLOSED)
+The three identifiers have separate jobs:
 
-Nearest silver observation for the same `listing_id`, by ASOF join, silver
-widened to March–May:
+| identity | use |
+|---|---|
+| `(legacy_object_key, row_group, row_offset)` | account for every legacy occurrence |
+| `(listing_id, fetched_at)` | identify one observation and decide whether silver already has it |
+| recomputed `sha256` | prove byte identity and join legacy HTML to pack sidecars |
+
+Legacy `artifact_id` is metadata only. It is never joined to a current artifact
+ID. Recovered artifacts receive new current-system IDs from
+`ops.artifacts_queue`.
+
+The 847,785 successful row occurrences contain 837,061 distinct SHA values and
+exactly 837,061 distinct `(listing_id, fetched_at)` pairs. The additional
+approximately 10,700 rows are exact duplicate occurrences. They remain in the
+census but collapse to one recovery candidate and at most one historical write.
+If rows sharing `(listing_id, fetched_at)` disagree on recomputed SHA, the run
+stops rather than selecting a donor.
+
+### Reconstruct an artifact before parsing it
+
+For a pack-backed capture:
+
+```text
+pack sidecar -> source key + surviving bytes + raw SHA
+legacy row   -> listing ID + fetched_at + URL + run/search metadata
+SHA join     -> reconstructed artifact
+```
+
+For content absent from packs, the legacy row already supplies both metadata
+and HTML. It is materialized as a standard compressed April detail object and
+then receives a new queue artifact record.
+
+Both forms are real current artifacts before they are written as historical
+observations. The current parser consumes their verified HTML; the authoritative
+`fetched_at` comes from legacy Parquet, not from the parser or recovery run.
+
+### Recover every missing successful observation
+
+This revision deliberately drops the prior information-value cohorts. Their
+measurement was useful—it proved that bulk recovery changes little—but
+selectively deciding which missing successful captures are valuable introduced
+more machinery than this bounded cleanup warrants.
+
+Every distinct HTTP 200 capture with no exact silver observation at
+`(listing_id, fetched_at)` is recovered. The previous window analysis measured
+approximately 224,000 missing observations; Stage 3 records the exact distinct
+count used for execution. Even that approximate population is small against the
+roughly 40 million observations already held.
+
+Equal parsed values at different capture times are not duplicates. A stable
+price observed twice is still two observations. Only the same listing and
+capture time collapses.
+
+---
+
+## Evidence carried forward
+
+The implementation must reproduce these facts before mutating production.
+
+### Silver matching is sound
+
+For the 847,785 successful legacy rows, the nearest silver observation for the
+same listing, with silver widened to March-May, was:
 
 | window | matched | share |
 |---|---:|---:|
@@ -74,447 +133,346 @@ widened to March–May:
 | <= 86,400 s | 837,114 | 98.7% |
 | listing present at all | 847,647 | 100.0% |
 
-**73.4% match within five seconds and the curve is flat to ten minutes.** That
-is exact fetch-to-observation matching, not a fuzzy window catching neighbours.
-The remaining 26.6% have no observation within ten minutes and a median nearest
-neighbour 8,051 s away (p90 48,642 s) — a different scrape of the same listing,
-hours later. **Not a join artifact. Gate passes.**
+The curve is flat from five seconds to ten minutes. The unmatched captures are
+not an ASOF-window artifact; their nearest observations are different scrapes
+hours later. The implementation uses exact normalized `(listing_id,
+fetched_at)` equality and records the same window profile as a diagnostic.
 
-### Stage 0b — duplication: none (CLOSED)
+### The pack join is content-based and complete
 
-847,785 rows hold **837,061 distinct `sha256`** and **837,061 distinct
-`(listing_id, fetched_at)`**. ~10,700 exact duplicates, and the two counts
-agreeing exactly is an independent consistency signal. The row count is a
-population.
+April detail bronze has 32 packs and 32 sidecars containing 557,065 members.
+The sidecars reproduce the orphan predicate exactly:
 
-### Stage 0c — month boundary: not the explanation (CLOSED)
+| sidecar predicate | members |
+|---|---:|
+| `artifact_id IS NULL` | 42,276 |
+| >=50 KiB | 36,241 |
+| 1-50 KiB | 294 |
+| <1 KiB | 5,741 |
 
-Silver was widened from April to March–May. The gap did not move.
+All 42,276 orphan sidecar members join by `raw_sha256 = recomputed legacy
+sha256` to the legacy detail Parquet. The join reaches 42,976 legacy row
+occurrences because exact duplicates exist. Those occurrences split 37,715
+HTTP 200 and 5,261 HTTP 403.
 
-### Stage 0f — does recovering them add price information? Almost never (CLOSED)
+Every sampled orphan read byte-identically through the pack fallback. Legacy
+Parquet supplies authoritative `listing_id`, `fetched_at`, URL, status, run ID
+and search metadata for the content match.
 
-The decision this plan turns on is not "how many captures are missing" but
-"what would recovering them tell us that silver does not already say."
+### Artifact IDs cannot cross the cutover
 
-For every legacy 200-row with no **priced** silver observation within 60 s,
-the bracketing priced observations were classified:
+The legacy and current bigserial spaces overlap numerically but describe
+different artifacts. A prior legacy-ID-to-silver join returned 4,672,074 rows
+while agreeing on listing ID only 48 times and never agreeing on `fetched_at`
+within 60 seconds. Therefore:
 
-| class | n | share |
-|---|---:|---:|
-| bracketed <=24h, price **stable** | 21,209 | 6.0% |
-| bracketed <=24h, price **changed** | **270** | **0.1%** |
-| one side only within 24h | 16,203 | 4.6% |
-| nearest priced obs >24h away | 306,964 | 86.3% |
-| no priced observation for this listing at all | 11,199 | 3.1% |
-
-**270 captures out of 355,845 sit inside an observed price change** — 0.076%.
-Their median bracket is 24.2 h wide (p90 32.5 h), so recovering even those would
-not date a change tightly. **The strongest argument for bulk recovery — that
-these captures are the only witness to a price movement — does not survive
-measurement.**
-
-#### Two denominators, and why they differ
-
-Requiring `price IS NOT NULL` moves the unmatched count from 224,630 to
-355,845. The cause is not missing data; it is that `detail`-source rows are
-30.6% price-less, and the ASOF join takes the single nearest row:
-
-| source | state | rows | null price |
-|---|---|---:|---:|
-| carousel | active | 5,971,440 | 0.4% |
-| detail | active | 952,694 | **10.2%** |
-| detail | unlisted | 319,923 | 91.3% |
-| srp | active | 80,651 | 0.6% |
-
-`detail/unlisted` at 91.3% is correct and benign — an unlisted car has no price,
-and the legacy capture would not have supplied one either.
-
-**`detail/active` at 10.2% is not benign.** 96,909 April observations parsed an
-active detail page and produced no price. That is a parser gap, it is unrelated
-to the cutover, and it is recorded in
-[Out of Scope](#out-of-scope) rather than silently folded into these counts.
-
-Listing-level coverage is unaffected either way: of 139,146 distinct April
-listings, **138,050 (99.2%) have at least one priced observation.**
-
-### The incident window is April 11–21
-
-Misses by capture day:
-
-```
-04-09   1,705      04-15  17,454      04-21  38,168
-04-10   2,497      04-16  16,463      04-22   1,056
-04-11   6,356      04-17  20,390      04-23     775
-04-12  15,934      04-18  26,111      04-24     988
-04-13  10,054      04-19  24,011      04-25   1,059
-04-14  14,885      04-20  25,156      04-27     555
-```
-
-Rising through the month, peaking 2026-04-21, collapsing the next day.
-**All five sampled orphans decoded to 2026-04-21 as well** — one incident, two
-faces.
-
-**This contradicts Plan 137's stated April 20–27 dual-write boundary.** The
-damage precedes it by nine days and ends where 137 thought it began. Plan 137's
-whole-file safety classes were built without this profile and must be re-derived
-against it before any deletion manifest is trusted.
-
-### Other measurements
-
-**Bronze, April `detail_page`:** 0 surviving `.html.zst` objects — Plan 131's
-prune is complete. 32 packs + 32 sidecars hold 557,065 members, 56,808 under 1 KB.
-
-**The orphan predicate reproduces exactly** from the sidecars alone, four months
-on, at the cost of 32 GETs and no object reads:
-
-| | Plan 132 (2026-08-14) | sidecars (2026-08-21) |
-|---|---:|---:|
-| `artifact_id IS NULL` | 42,276 | **42,276** |
-| >=50 KB | 36,241 | **36,241** |
-| 1-50 KB | 294 | **294** |
-| <1 KB | 5,741 | **5,741** |
-
-**Orphans read back clean through the pack path** — `object_exists=False`,
-`read_html` byte-identical, `sha256` verified, `timestamp_utc` present on all
-five samples.
-
-**Legacy Parquet, April `detail_page`:** 1,172 objects, 951,821 rows, carrying
-`artifact_id, run_id, source, search_key, search_scope, url, fetched_at,
-http_status, content_bytes, sha256, error, page_num, html`. By status: 847,785
-× 200, 104,025 × 403, 11 × 5xx. The 403s are challenge pages and correctly have
-no observation — `_process_detail_page` marks them `skip` and writes nothing.
-
-### `artifact_id` does not survive the cutover — never join on it
-
-Recorded because it produced a plausible and entirely false result:
-
-```
-legacy artifact_id range 61-3,782,652   silver 827-3,872,055
-joined rows      : 4,672,074
-listing_id agrees: 48  (0.0%)
-fetched_at <=60s : 0  (0.0%)
-median |delta|   : 6.4 days
-```
-
-The ID spaces overlap numerically, so the join runs and returns millions of rows
-describing unrelated artifacts. **The valid keys are content-based: `sha256`
-against pack `raw_sha256`, and `(listing_id, fetched_at)` against silver.**
-
-### The legacy Parquet is the orphans' missing record
-
-A 60-file sample (5%, 48,118 rows) joined on `sha256` against all 42,276 orphan
-`raw_sha256` values:
-
-```
-matches an ORPHAN pack member : 800   (200: 676, 403: 124)
-matches a non-orphan member   : 16,906
-in no pack at all             : 30,412
-```
-
-Where that holds, the legacy row supplies an authoritative `fetched_at`, `url`,
-`http_status`, `run_id` and `search_key`. That 5% sample extrapolated to ~37%
-coverage. **The full run says 100%** — see 0e.
-
-### Stage 0e — every orphan is in the legacy Parquet (CLOSED)
-
-All 1,172 legacy files joined on `sha256` against all 42,276 orphan
-`raw_sha256` values:
-
-```
-legacy rows reaching an orphan by sha256 : 42,976
-distinct orphan members reached          : 42,276  (100.0%)
-```
-
-**Every orphan is identifiable from the legacy Parquet.** The 5% sample was off
-by 2.7x because orphan rows cluster in the files written during the incident
-rather than spreading evenly — a reminder that an extrapolation over a
-non-uniform population is a guess wearing a percentage sign.
-
-Two consequences:
-
-- **HTML `timestamp_utc` extraction is unnecessary.** Plan 132's central gate
-  was dating orphans from the page body at >=99% agreement. The legacy row
-  carries an authoritative `fetched_at` for 100% of them, so
-  `scripts/probe_html_capture_timestamp.py` is dropped from this plan entirely.
-- **Plan 132's 0b residual is closed.** The orphan-matching rows split
-  **37,715 `200` / 5,261 `403`** against the sidecar's 36,241 large / 5,741
-  sub-1KB. The sub-kilobyte orphans are challenge pages, confirmed from a third
-  independent direction.
-
-### The orphans were never processed — not merely unnamed
-
-An approach was tried and **failed**, and it is recorded because it looked
-correct: use the legacy row's `(listing_id, fetched_at)` to find the silver
-observation for that capture, read its current `artifact_id`, and write that id
-back into the pack sidecar — naming the orphan without touching the `.zpack`,
-since `artifact_id` lives only in the index (`write_index_parquet`).
-
-It returns **zero** at 5 s, 60 s and 300 s. The join is sound — 100% of the
-candidate `listing_id`s are present in silver — but:
-
-```
-nearest silver detail observation: min=678s  median=86,460s  max=1,469,456s
-nearest observation, any source  : min= 31s  median=45,001s
-```
-
-**Not one of the 42,976 captures has an observation within five minutes.** The
-orphans are not processed-but-unnamed; **no observation was ever written for
-these fetches**, so there is no current `artifact_id` to recover. Silver cannot
-name them, and it never could.
-
-It does not matter, because the legacy row carries `listing_id` and `fetched_at`
-directly. The silver hop was never needed.
-
-### What deletion actually costs: re-derivability, not integrity
-
-**Nothing dereferences silver's `artifact_id`.** `read_html` has exactly one
-production caller, `processing/routers/batch.py`, and it reads
-`artifact["minio_path"]` from the **queue**. The 16 dbt models touching
-`artifact_id` use it for grouping, dedup and fingerprinting — never to fetch
-bytes. **So deleting the legacy Parquet breaks no pointer and requires no
-update to any analytics row.**
-
-What is lost is the ability to re-derive. Of April's silver artifacts, only
-**41.0% resolve into a pack**:
-
-| source | artifacts | resolved |
-|---|---:|---:|
-| detail | 1,110,888 | 41.1% |
-| carousel | 843,005 | 37.2% |
-| srp | 3,692 | see caveat |
-
-1,110,888 detail artifacts against 557,065 April bronze objects means ~554,000
-artifacts never had a bronze object at all. The likely cause is in Plan 132's
-archaeology: the n8n-era policy was **`ok` -> delete after 48 hours**. Those
-observations have had no retrievable source since April 2026 *by design*.
-
-**Caveat, and it is a real one:** that measurement checked **pack membership**,
-which is not existence. `results_page` was never packed for any month, so the
-`srp` row reads 0% while its objects sit in MinIO untouched. The 41.0% figure
-is therefore a floor, overstated as a loss by an unmeasured amount. Re-measure
-against objects *and* packs before quoting it anywhere.
-
-Deleting the Parquet permanently removes the source HTML behind Plan 137's
-488,494 rows whose content is in no pack. That is the honest cost, and it is
-what the [preservation stage](#stage-4--preserve-what-is-worth-keeping-for-reasons-other-than-history)
-exists to bound.
-
-### Adjacent finding: `results_page` is outside Plan 131's coverage
-
-PLANS.md records Plan 131 as *"April-July packed and pruned"*. That is true for
-`detail_page`. `results_page` objects still exist unpacked and unpruned for
-**April through August** — April measured at 2,253 objects / 58.7 MB, later
-months larger. Small, not urgent, and **not this plan's job** — recorded so the
-next reader does not inherit "everything is packed" the way this plan inherited
-"the orphans are readable as objects."
+- legacy-to-pack uses SHA only;
+- legacy-to-silver uses `(listing_id, fetched_at)` only; and
+- recovered artifacts receive new current IDs.
 
 ---
 
-## Design
+## Delivery map
 
-### One backfill write path, not three
+The five existing Linear issues are repurposed around the six stages below.
+CAR-19 carries two stages because both are read-only joins over the same frozen
+manifest and require no code deploy between them.
 
-Reusing `POST /process/batch` to replay April — Plan 132's stated design, and
-the natural approach for Plan 137's recovery too — **corrupts live state**:
+| Order | Linear issue | Stage | Outcome | Production mutation |
+|---:|---|---|---|---|
+| 1 | CAR-13 | Stage 1 | Freeze and prove the successful-capture manifest | No |
+| 2 | CAR-19 | Stages 2 and 3 | Reconcile content to packs, then observations to silver | No |
+| 3 | CAR-20 | Stage 4 | Persist missing captures as held recovery artifacts | Yes: HTML objects and artifact records |
+| 4 | CAR-21 | Stage 5 | Parse recovery artifacts and append historical rows | Yes: staging history and artifact completion |
+| 5 | CAR-22 | Stage 6 | Restore, repack, prune and delete legacy Parquet | **Yes: irreversible deletion** |
 
-- [`upsert_price_observation.sql`](../../processing/sql/upsert_price_observation.sql)
-  has no `fetched_at` guard. `price`, `make`, `model`, `last_seen_at` and
-  `last_artifact_id` are unconditionally `EXCLUDED`, so an April observation
-  overwrites a still-active listing's current price.
-- `last_detail_scraped_at` is `COALESCE(EXCLUDED, existing)` — "a non-NULL
-  incoming value always wins", so April overwrites today.
-- [`V040__detail_scrape_circuit_breaker.sql`](../../db/migrations/V040__detail_scrape_circuit_breaker.sql)
-  computes `is_price_stale` and the detail-refresh predicate from exactly those
-  columns and orders the claim queue by `last_seen_at ASC`. Backdating
-  re-enqueues recovered listings at the front of the live scrape queue.
-- [`detail_writer.py`](../../processing/writers/detail_writer.py) DELETEs the
-  `price_observations` row at any other `listing_id` holding the same VIN, and
-  `_clear_cooldown` wipes live `blocked_cooldown` state.
-
-None of it is needed. The silver history is event-sourced —
-`write_silver_observations_postgres` -> `staging.silver_observations`, flushed
-to Parquet partitioned by `fetched_at` — so a backdated `fetched_at` lands in
-the correct April partition on its own. **The hot-table mutation, the VIN delete
-and the cooldown clear are current-state maintenance a backfill has no business
-performing.** Stage 1 removes the capability rather than guarding it.
-
-### Provenance is recorded, not inferred
-
-Every backfilled observation carries what it was recovered from: which system
-supplied `fetched_at`, and the `sha256` it was keyed on. A recovery nobody can
-audit later is a second unrecorded write.
+Ticket descriptions and acceptance criteria should be replaced with these
+outcomes. The old slice descriptions are obsolete and must not be used as
+implementation guidance.
 
 ---
 
-## Stages
+## Stage 1 — Freeze the successful population (CAR-13)
 
-### Stage 0 — Can this be deleted safely? (measurement only)
+Build one purpose-specific April reconciliation command. Its first mode is
+read-only and scans only the exact legacy `detail_page` prefix.
 
-- **0a window sensitivity — CLOSED, gap is real.**
-- **0b duplication — CLOSED, none.**
-- **0c month boundary — CLOSED, not the explanation.**
-- **0d backdated-write safety.** Confirm the Stage 1 path leaves
-  `ops.price_observations`, the V040 view and Plan 111/113 refresh state
-  untouched. **Blocker.**
-- **0e orphan dating coverage — CLOSED, 100%.** Legacy Parquet identifies every
-  orphan; `timestamp_utc` extraction dropped.
-- **0f recovery value — CLOSED.** 270 of 355,845 witness a price change.
+It must:
 
-Output is one ledger keyed on `sha256`: present in packs, present in legacy
-Parquet, has a queue event, has a silver observation, `http_status`, and
-best-available `fetched_at`.
+1. enumerate exactly 1,172 Parquet objects and record their key, size, ETag and
+   last-modified metadata;
+2. stream all 951,821 row occurrences;
+3. reproduce the 847,785 / 104,025 / 11 status census;
+4. recompute every non-empty HTML SHA and refuse stored-hash disagreement;
+5. emit one HTTP 200 occurrence manifest with legacy locator, metadata, HTML
+   length, stored SHA and recomputed SHA;
+6. collapse exact duplicates into a distinct observation manifest while
+   retaining the occurrence-to-observation mapping; and
+7. write deterministic manifests, a count report and fingerprints.
 
-### Stage 1 — The backfill write path
+Stage 1 does not need a permanent database ledger. The immutable files and
+fingerprints are the evidence for this one run.
 
-`backfill=True` through `write_detail_active` / `write_detail_unlisted`: silver
-row and price-observation event only, no hot-table upsert, no VIN-collision
-delete, no cooldown clear, provenance recorded. Dry-run by default, hard
-per-run cap. The only new machinery in the plan.
+### Gate
 
-### Stage 2 — Recover the orphans (36,241)
+- All baseline counts reproduce exactly or the plan stops.
+- Distinct SHA count equals distinct `(listing_id, fetched_at)` count.
+- Duplicate pairs agree on SHA.
+- No production object or database row is written.
 
-Bytes from the pack, metadata from the legacy Parquet, write through Stage 1.
-**No timestamp extraction, no silver round-trip, no sidecar rewrite, and the
-`.zpack` files are never touched.** 0e made this the most certain stage in the
-plan: every input is known for every artifact.
+---
 
-Target the 37,715 `200`s; the 5,261 `403`s are challenge pages and are
-discarded, consistent with `_process_detail_page`.
+## Stage 2 — Reconcile successful content to packs (CAR-19)
 
-Run ~500 first and compare against a control where both records exist. Also the
-first real measurement of `PACK_INDEX_CACHE_PACKS=48` under a month-sized
-sequential scan — Plan 133 proved it safe, not effective.
+Join the frozen distinct-observation manifest to all 32 April detail sidecars
+using recomputed SHA only.
 
-### Stage 3 — Recover only what carries information (gated on 0d)
+For each observation record either:
 
-**Bulk recovery of all ~224,000 is not proposed. Stage 0f killed it:** 270
-captures out of 355,845 sit inside a price change, and their brackets are a day
-wide. Recovering the rest would re-derive prices silver already holds.
+- the verified current packed source key, pack key and sidecar row; or
+- `legacy_only`, meaning its bytes must be materialized from its deterministic
+  donor occurrence in Stage 4.
 
-Recover only:
+Reproduce the documented pack and orphan counts. Read and hash a bounded sample
+from every pack through `shared.minio.read_html`.
 
-| cohort | n | why |
-|---|---:|---|
-| no priced observation for the listing at all | 11,199 | the legacy row is the only price evidence |
-| listings absent from silver entirely | 138 | nothing else knows they existed |
-| bracketed, price changed | 270 | cheap, and the only cohort with movement |
+### Gate
 
-~11,600 rows against ~224,000 — small enough to run in one pass through the
-Stage 1 path. Everything else is discarded at Stage 5 with its redundancy
-recorded in the ledger, not assumed.
+- All 42,276 orphan members are explained by legacy matches.
+- No legacy artifact ID participates in the join.
+- Exactly 32 pack indexes are read and the sampled read has zero hash failures.
 
-### Stage 4 — Preserve what is worth keeping for reasons other than history
+---
 
-Before deletion, extract and store separately:
+## Stage 3 — Reconcile observations to silver (CAR-19)
 
-- **Parser fixtures.** Historical-layout samples, which Plan 137 identified and
-  which are the one thing genuinely unrecoverable from silver.
-- **The 138 listings that appear nowhere in silver.** Small enough to handle
-  individually.
-- **The 5xx bodies** (11 rows) and a bounded sample of the 403 challenge pages,
-  as evidence for Plan 128's classifier.
+Without another deploy, join the Stage 2 manifest to March-May silver by exact
+normalized `(listing_id, fetched_at)`.
 
-### Stage 5 — Delete, by reviewed manifest and explicit approval
+Write two immutable outputs:
 
-**This stage requires named human approval and is irreversible.** Deletion is
-by explicit key manifest, in waves, never by prefix:
+1. `already_observed`: no recovery write is required; and
+2. `recover`: every distinct successful capture absent from silver.
 
-1. The 57 empty-placeholder files (43,019 rows of `b""`).
-2. Files whose every non-empty row is recovered, already present in silver, or
-   preserved by Stage 4.
-3. The remainder, individually justified.
+The recovery manifest retains its pack source or legacy donor locator and is
+sorted deterministically. It also records the <=5 s, <=60 s, <=10 min and
+listing-level profile so reviewers can compare it to the closed measurement.
 
-Plan 137's whole-file safety classes are the starting point but **must be
-re-derived** — they were built against an April 20–27 window this plan has since
-disproved.
+### Gate
 
-**Nothing is deleted until the ledger accounts for every row.**
+- Every distinct successful observation appears in exactly one output.
+- The approximate 224,000-row gap is replaced by one exact reviewed count.
+- Rerunning against the same inputs produces identical fingerprints.
+- No production mutation has occurred through the end of CAR-19.
+
+---
+
+## Stage 4 — Persist held recovery artifacts (CAR-20)
+
+Create real current artifacts for every row in the frozen recovery manifest,
+without exposing them to normal processing.
+
+The implementation adds an explicit non-claimable `recovery` artifact status.
+For each recovery row:
+
+1. pack-backed content keeps its existing source key and is read through the
+   verified fallback path;
+2. legacy-only content is read from its frozen Parquet donor, recompressed as a
+   standard April detail object, written under a collision-free key and read
+   back byte-identically;
+3. insert an `ops.artifacts_queue` row with a new current artifact ID, legacy
+   `listing_id`, `run_id` and `fetched_at`, the verified source key and status
+   `recovery`; and
+4. append the corresponding queue event and execution receipt.
+
+The mode is dry-run by default, takes the Stage 3 manifest fingerprint
+explicitly, runs in capped batches and never selects `recovery` rows through
+the normal pending/retry claim query.
+
+### Gate
+
+- Every manifest row has exactly one new current artifact record.
+- Every artifact reads back to the manifest SHA.
+- No artifact entered normal processing.
+- No silver, price-event or hot-state row was written.
+
+---
+
+## Stage 5 — Parse and write historical observations (CAR-21)
+
+Process only the explicit Stage 4 recovery artifact IDs. Use
+`parse_cars_detail_page_html_v1` unchanged.
+
+For each artifact:
+
+1. read and hash the HTML;
+2. parse it with the current production parser;
+3. require the parsed listing ID to equal the artifact/manifest listing ID;
+4. append one primary detail row to `staging.silver_observations` with the
+   artifact's legacy `fetched_at`;
+5. append the corresponding price event with `event_at` equal to that same
+   legacy `fetched_at`; and
+6. mark the artifact `complete` and append its queue completion event.
+
+The silver row, price event, artifact status and completion event commit in one
+database transaction. The recovery path cannot mutate `ops.price_observations`,
+`ops.vin_to_listing`, `ops.blocked_cooldown`, `ops.detail_scrape_claims`, or
+emit live messages.
+
+Before the full run, process an approximately 500-artifact canary. Compare
+parsed output to normal-parser control captures and snapshot the relevant live
+tables and V040 views before and after.
+
+### Gate
+
+- Every recovery artifact is complete or has an explicit reviewed failure.
+- No duplicate `(listing_id, fetched_at)` historical row was written.
+- Silver and price-event counts agree with successful artifact completions.
+- Event time and silver time equal the legacy capture time.
+- Live pricing, VIN, cooldown, claim and refresh state is unchanged.
+
+---
+
+## Stage 6 — Restore, repack, prune and delete (CAR-22)
+
+Use the existing storage path even though it is slower. Do not introduce pack
+generations, supplemental-pack lookup precedence or a new reader contract.
+
+### 6A. Restore the retained April population
+
+Use existing sidecars plus `read_html`/`write_html` to restore every successful
+April detail member from the 32 current packs to its normal individual object
+key. Newly materialized Stage 4 objects already join this population.
+
+Do not restore verified challenge or other non-success bodies. Sidecar members
+with a current artifact ID are classified from queue-event status; orphan
+members are classified from the legacy SHA join. The restore report must account
+for every old sidecar member as either retained-successful or intentionally
+discarded-non-successful.
+
+Every restored object is read back and checked against the sidecar SHA. Run a
+disk-space and inode preflight before apply; the temporary individual-object
+population is deliberately large.
+
+### 6B. Retire the old packs and run the existing packer
+
+Once every retained member exists independently and verifies, delete the 32 old
+packs and 32 sidecars by exact reviewed manifest. At that point normal reads are
+served from individual objects, so the packed representation is no longer
+load-bearing.
+
+Run the existing April month packer over the complete individual-object
+population. It already:
+
+- orders captures by listing and time;
+- uses the trained dictionary and established frame sizing;
+- writes the existing pack and sidecar format; and
+- re-extracts and verifies every stored member.
+
+After the new April packs verify, run the existing prune machinery to delete
+the individual source objects. No new pack format, reader behavior or pruning
+algorithm is part of this plan.
+
+### 6C. Delete the legacy detail Parquet
+
+Regenerate the exact 1,172-key deletion manifest from the frozen Stage 1 object
+census. With named approval, delete those keys in capped batches and write
+receipts.
+
+Deletion is by exact key only, never by prefix. The 127 `results_page` Parquet
+keys must not appear in the manifest.
+
+### Gate
+
+- The restore accounts for every old sidecar member.
+- Every retained artifact reads byte-identically before old packs are removed.
+- The existing packer verifies every member in the replacement April packs.
+- The existing prune reports zero unexplained failures.
+- Zero recovery artifacts remain in `recovery` status.
+- Deleted, absent and failed legacy-key counts reconcile to exactly 1,172.
+- The legacy `detail_page` prefix contains zero Parquet objects.
+- The legacy `results_page` population is unchanged.
+
+---
+
+## Testing and operational evidence
+
+Only tests that protect this bounded migration are required:
+
+- fixture Parquet proves census, SHA recomputation and exact duplicate collapse;
+- fixture sidecars prove SHA-only pack matching;
+- fixture silver proves exact `(listing_id, fetched_at)` partitioning;
+- `recovery` artifacts are invisible to normal claim SQL;
+- current parser output uses the manifest identity and authoritative time;
+- historical write plus artifact completion is atomic;
+- a real-Postgres test proves live tables and V040 views are unchanged;
+- restore refuses an unclassified sidecar member or a hash mismatch;
+- existing pack/read/prune integration tests remain the Stage 6 storage proof;
+- deletion refuses a results-page key, an unapproved run or an unverified
+  recovery manifest.
+
+Production evidence is recorded after each stage: input fingerprints, exact
+counts, sampled or complete verification, execution receipts and the approving
+name for irreversible deletion.
+
+---
+
+## Success criteria
+
+| Metric | Required result |
+|---|---|
+| Legacy detail Parquet deleted | 1,172 objects / approximately 13.66 GiB |
+| Legacy results Parquet deleted | 0 |
+| Distinct successful captures unaccounted for | 0 |
+| Recovery artifacts without verified bytes | 0 |
+| Recovery artifacts left non-terminal | 0 |
+| Duplicate `(listing_id, fetched_at)` writes | 0 |
+| Legacy `artifact_id` used as a current join key | 0 |
+| Hot-state mutations caused by recovery | 0 |
+| Deletion without named approval | 0 |
+
+The plan is complete only when the 1,172 legacy detail files are gone and all
+retained April detail artifacts remain readable through the newly rebuilt
+packs.
+
+---
+
+## Rollback and stopping points
+
+- **After Stages 1-3:** discard generated manifests and rerun; production is
+  unchanged.
+- **After Stage 4:** recovery objects and non-claimable artifact records may be
+  audited or removed by exact receipt; no observation exists yet.
+- **During Stage 5:** stop between capped batches. Completed artifacts and
+  their paired historical rows remain valid; `recovery` rows remain held.
+- **During Stage 6 restore:** old packs remain authoritative until every
+  retained source object is restored and verified.
+- **After old packs are retired:** individual objects are authoritative and the
+  existing packer can be rerun until its normal verification gate passes.
+- **After legacy deletion:** rollback is restoration from MinIO versioning or
+  backup only. This is why named approval and complete receipts are final gates.
 
 ---
 
 ## Effect on other plans
 
-| Plan | Change | Why |
-|---|---|---|
-| **132** | **Superseded** | Its Stage 4 was completed by Plan 131's prune on 2026-08-17; its Stage 0c is a known failure, not an open question; its Stage 5 pointed at Plan 128, which is closed; and its population is one of three. Its measurements, its `ok`-is-success finding, and its `LastModified` correction carry forward here |
-| **137** | **Superseded** | Its read-only census is an input to Stage 0 and its recovery half merged into Stage 1. Splitting deletion into its own plan was the error that left it unscheduled — deletion is now this plan's stated goal, with approval as a gate rather than a separate document. Its April 20–27 window is disproved above; its whole-file classes need re-deriving |
-| **131** | No change | Complete. Its prune is what makes the pack path load-bearing here |
-| **133** | No change | Complete, and carrying this plan — `artifact_exists` and the pack fallback are why Stage 2 is possible |
-| **111/112/113** | Inputs improve | ~224,000 recovered April observations raise density in the window these plans' volatility features are computed over |
-
----
-
-## Testing
-
-- Ledger construction is deterministic and reproducible across reruns.
-- `sha256` join is exact; `artifact_id` is never used as a join key.
-- Backfill write path asserts `ops.price_observations`, `blocked_cooldown` and
-  the V040 view are unchanged after a backfilled write.
-- Backfill is dry-run by default and idempotent — running twice writes one
-  observation.
-- `timestamp_utc` extraction: valid epoch-ms, missing, garbage, and a value
-  outside the artifact's own hive month — the last must be rejected, not written.
-- A recovered observation equals what a normal scrape would have written, on a
-  control artifact where both exist.
-- Deletion manifest: every key traced to a ledger row; a file with one
-  unaccounted row is refused.
-
----
-
-## Files Changed
-
-| File | Change | Stage |
-|---|---|---|
-| `scripts/build_april_ledger.py` | Stage 0, read-only | 0 |
-| ~~`scripts/probe_html_capture_timestamp.py`~~ | **Dropped** — 0e made HTML dating unnecessary | — |
-| `processing/writers/detail_writer.py` | `backfill=True` path | 1 |
-| `archiver/processors/backfill_unrecorded_observations.py` | Manifest + backfill driver, dry-run default | 1-3 |
-| `archiver/processors/preserve_legacy_samples.py` | Fixture/edge-case extraction | 4 |
-| `archiver/processors/delete_legacy_parquet.py` | Manifest-driven deletion, dry-run default | 5 |
-| `tests/processing/test_detail_writer_backfill.py` | New | 1 |
-| `tests/archiver/test_backfill_unrecorded_observations.py` | New | 1 |
-| `tests/archiver/test_delete_legacy_parquet.py` | New | 5 |
-
----
-
-## Success Criteria
-
-| Metric | Gate |
+| Plan | Effect |
 |---|---|
-| Legacy Parquet objects deleted | **1,299** |
-| Bytes freed | **~13.79 GiB** |
-| April captures unaccounted for in the ledger at deletion time | Zero |
-| `artifact_id` used as a cross-system join key | Never |
-| Hot-state rows mutated by a backfill write | Zero |
-| `fetched_at` agreement, legacy vs `timestamp_utc`, on the overlap | >=99% within 1 minute |
-| Observations written with an unverified `fetched_at` | Zero |
-| Deletion performed without named approval | Must not happen |
-| Deletion by prefix rather than reviewed key manifest | Must not happen |
+| 132 | Superseded; its orphan measurements and `ok`-is-success finding remain evidence here |
+| 137 | Superseded; its exact detail census remains evidence, but deletion now follows successful-capture recovery |
+| 131 | Its existing pack, verify, fallback and prune machinery carries Stage 6 |
+| 133 | Its hardened pack read path carries artifact reconstruction and restore |
+| 111/112/113 | Receive the recovered April observations; no live refresh state is changed by recovery |
 
 ---
 
-## Risks
+## Out of scope
 
-| Risk | Mitigation |
-|---|---|
-| **Deletion removes something unrecoverable** | Stages 0-4 exist entirely to prevent this; Stage 5 is manifest-driven, wave-by-wave, approval-gated |
-| A backfill corrupts live pricing or refresh state | Stage 1 removes the capability rather than guarding it; 0d asserts it |
-| Plan 137's whole-file classes are trusted as-is | Explicitly disproved above; re-derive against the April 11-21 window |
-| Backfill starves the live pipeline | Per-run cap and rate limit; the queue is shared with production |
-| Recovery is treated as the finish line | The goal is deletion; the plan is not done until the bytes are gone |
-| dbt aggregates move | Expected and intended — flagged so it is not a surprise |
-
----
-
-## Out of Scope
-
-- Fixing the events pipeline. May and June are exact; there is nothing to fix.
-- Reprocessing anything that already has a silver observation.
-- **The `detail/active` null-price gap.** 96,909 April observations (10.2% of
-  `detail/active`) parsed an active detail page and produced no price. Found
-  while measuring Stage 0f, unrelated to the cutover, and almost certainly not
-  April-specific. It needs its own investigation against current months before
-  anyone decides whether it is a live parser defect or an artifact of the
-  April-era parser. **Do not let it ride along with a deletion plan.**
-- The long-term raw-HTML retention policy that Plans 129/130/131 still need.
-  This plan deletes one bounded historical backlog, not a recurring rule.
+- All legacy and current `results_page` cleanup.
+- Preserving 403 challenge pages or 5xx response bodies.
+- Selecting only price-changing or otherwise information-bearing successful
+  captures; this revision recovers every missing successful observation.
+- Fixing the unrelated April `detail/active` null-price parser gap.
+- A reusable historical-reprocessing framework.
+- A new pack format, generation selector, reader or prune algorithm.
+- The long-term raw-HTML retention policy owned by Plans 129-131.
