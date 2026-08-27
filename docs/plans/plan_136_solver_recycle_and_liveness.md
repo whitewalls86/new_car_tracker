@@ -2,17 +2,26 @@
 
 ## Status
 
-**Stage 0 complete and verified in production 2026-08-18. Stage 2 deployed to
+**Closeout — 3b soak accepted 2026-08-27, re-measure gate 2026-09-17. Stage 0
+complete and verified in production 2026-08-18. Stage 2 deployed to
 production 2026-08-20 (PR #223, merge `50bba68`); its 24-hour soak closed on
 2026-08-21 — the alert half green, the shape half inconclusive by construction.
 Stage 3 redesigned 2026-08-23; Stage 3a COMPLETE — baseline read 2026-08-25,
 a monotonic +971 MiB/day climb with 15s peaks already at 86.5% of cap; Stage 3b
-CUT OVER 2026-08-25 19:50:55 to v1.4.2 on a pinned digest, 48-hour soak running,
-verdict due 2026-08-27; Stage 4 not started.**
+CUT OVER 2026-08-25 19:50:55 to v1.4.2 on a pinned digest, and its 48-hour soak
+was accepted 2026-08-27 — SLOWED, NOT BOUNDED: `restarts=0` and zero oom-kills
+across the window, solve rate 99.87%, and the climb cut to ~+250-350 MiB/day at
+the peak with real daily reclaim, but the curve still drifts up over the two
+cycles observed. Plan moved to closeout with a re-measure gate on 2026-09-17.
+Stage 4 not started.**
 
 **Whether 3c/3d are built at all depends on that verdict.** This stage's own
-text says "if 3b holds, Stage 3 may be finished here" — the early reads favour
-that outcome, but twenty minutes is not the evidence that decides it.
+text says "if 3b holds, Stage 3 may be finished here" — the 48-hour soak came
+back slowed but not bounded (see
+[the 3b soak verdict](#3b-soak-verdict--2026-08-27--slowed-not-yet-bounded)), so
+that question is deferred to the 2026-09-17 re-measure: if the curve is still
+climbing then, 3c/3d or a standing bi-weekly/monthly recycle becomes the status
+quo.
 
 The soak proved both new rules quiet and the counters healthy, but it **did not
 answer open question 2**: a healthy window contains no solver decay to read, so
@@ -1354,6 +1363,46 @@ is not separable from the upgrade in one soak, as this stage anticipated. Both
 drop them as inert, but that contradicted this stage's own reasoning, and
 dropping them would have changed two things at once. The Files row was
 corrected instead.
+
+#### 3b soak verdict — 2026-08-27 — SLOWED, NOT YET BOUNDED
+
+Accepted at 47h15m of the 48h window on the maintainer's call (window closes
+19:50:55 UTC). Read live from `cartracker_container_memory_bytes{container="trawl"}`
+and the VM kernel log.
+
+**Pool health — pass.** `restarts=0` the whole window, no container recreate,
+253 PIDs. Kernel log for the current boot (2026-08-18 →) shows zero oom-kills —
+none across the soak, and none of the involuntary `CONSTRAINT_MEMCG` recycles
+Stage 3 was sized against.
+
+**Solver outcomes — pass.** 48h `cartracker_detail_fetch_total`: ok=54,924,
+403=72, error=1 — a 99.87% solve rate, above the old build's last readings of
+95.7% / 96.1%. No `ct-solver-not-solving` or `ct-detail-fetch-failing` alert
+fired.
+
+**Memory — improved, not flat.** Daily sawtooth with reclaim on every cycle,
+which the old build never did:
+
+| Day | Peak (10-min res) | Trough |
+|---|---|---|
+| 08-25 (from 19:52) | 658 MiB / 16.1% | 358 MiB / 8.7% |
+| 08-26 | 1058 MiB / 25.8% | 463 MiB / 11.3% |
+| 08-27 (to 19:05) | 1318 MiB / 32.2% | 626 MiB / 15.3% |
+
+Instantaneous max over the window was 1755 MiB / 42.85% — a sub-10-minute batch
+transient. Against 3a's baseline (+971 MiB/day monotonic, 15s peaks at 86.5% of
+cap and climbing) this is a large improvement: the climb is cut to roughly
++250–350 MiB/day at the peak, reclaim is real, and the container never came near
+the 82–99% band where the pool wedges.
+
+**But the curve is still rising.** Both the peak and the trough floor drift up
+day over day (peak 658 → 1058 → 1318 MiB; floor 358 → 463 → 626 MiB) across the
+two full daily cycles observed. This is the "slows the climb rather than bounds
+it" case this slice's own text describes, which points to 3c/3d — or a standing
+bi-weekly/monthly recycle — rather than finishing Stage 3 here. Two cycles is a
+short base and some of the rise may be first-48h warmup, which is why the plan
+moves to closeout with a re-measure gate on **2026-09-17** rather than a verdict
+now.
 
 ### 3c — Restart authority: a second proxy instance, not a second verb
 
