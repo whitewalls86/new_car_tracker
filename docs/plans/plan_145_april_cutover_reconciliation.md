@@ -165,9 +165,9 @@ needs no repack — rewriting that one column while preserving `source_key`,
 bytes untouched and every read and index check passing. Changing the sort is a
 separate, unproven optimization.
 
-Tracked as CAR-28. Within this plan it matters only in Stage 6: the April
-repack must write the correct `listing_id` into the replacement sidecars
-**without** reordering members on it.
+Fixed in **Stage 5b**, before Stage 6 writes anything: identity and placement
+are split so the sidecar can be corrected without relaying out a pack, and the
+ordering question stays open for Stage 6's trial to answer.
 
 ---
 
@@ -517,6 +517,59 @@ with before/after snapshots of live tables and V040 views, before the full apply
 
 ---
 
+## Stage 5b — Fix the packer before it writes new packs
+
+Stage 6 does not merely read packs, it **writes** them. Left unfixed, it would
+mint fresh April sidecars carrying the scrambled `listing_id` — turning a
+historical defect into one this plan actively produces, immediately after
+spending three revisions proving that column cannot be trusted.
+
+It also blocks Stage 6's own trial. That trial decides which value the *sort
+key* should be, and today a single column is both sort key and recorded
+identity. They have to be separable before the question can even be asked.
+
+So the packer is corrected first, and only in the way that is knowable now:
+
+- **`shared/packfile.py`** — `PackMember` gains `cluster_key`. `listing_id`
+  stays identity and is what reaches the sidecar; `cluster_key` is placement,
+  the value frame boundaries are drawn on, and it defaults to `listing_id`, so
+  every other caller is unchanged.
+- **`archiver/processors/pack_bronze_html.py`** — the `obs` CTE now selects
+  both: `any_value(listing_id) FILTER (WHERE source = 'detail')` as identity,
+  and the historical unfiltered reduction as `cluster_key`. `ORDER BY` and
+  frame sealing move to `cluster_key`, which is the value they already used —
+  so **this change corrects the sidecar without relaying out a single pack.**
+
+That last property is the point. Correcting identity and changing placement are
+two decisions, and only the first is settled; bundling them would ship an
+unproven rewrite of every pack under cover of a defect fix.
+
+### The audit
+
+Every other reducer over silver was checked for the same shape. The three
+analysis scripts that group by `artifact_id` — `estimate_dictionary_savings`,
+`estimate_pack_savings`, `diff_log_analysis` — already filter
+`WHERE source ILIKE '%detail%'` ahead of the reduction, so carousel rows never
+reach them. The remaining `any_value` calls reduce `minio_path`, which is
+unambiguous per artifact. `pack_bronze_html` was the only affected reducer.
+
+### Gate
+
+- A regression test builds the production shape — one artifact with one
+  `source='detail'` row and six `source='carousel'` rows — and asserts the
+  sidecar names the subject. It fails on the pre-fix code.
+- The fixture does **not** depend on scan order. `any_value` returns the first
+  row it scans and `detail_writer` writes the primary first, so a fixture in
+  write order lets the unfixed reducer pass by luck; the subject is written
+  last.
+- An artifact with only carousel rows yields a NULL identity rather than a
+  guessed one — that NULL is the signal Plan 145 depends on.
+- `fetched_at` is unchanged, which its own test asserts.
+- Placement is byte-for-byte what it was: no pack is relaid out by this stage.
+- Every other silver reducer is audited and the result recorded.
+
+---
+
 ## Stage 6 — Repack, prune and delete (CAR-22)
 
 Run the existing packer over the flattened population, which by now is
@@ -536,7 +589,7 @@ part of this plan.
 
 ### The ordering trial, before the full pass
 
-April is repacked regardless, so it is also where CAR-28's open ordering
+April is repacked regardless, so it is also where the open ordering
 question gets a controlled answer — from a **bounded trial**, not a second full
 pass.
 

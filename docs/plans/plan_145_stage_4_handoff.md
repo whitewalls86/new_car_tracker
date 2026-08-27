@@ -76,7 +76,7 @@ holds the sidecar's value and must be ignored** — it is wrong for 313,701 of
 457,084 named April members, measured against the scraper's own record on
 2026-08-27, because the packer reduces silver with
 `any_value(listing_id) GROUP BY artifact_id` and one detail artifact
-contributes ~6.7 differing listings (CAR-28).
+contributes ~6.7 differing listings. Stage 5b corrects it in the packer.
 
 The sidecar's `fetched_at` is *not* affected — 100.00% exact for June,
 99.98% for April, since one capture time is stamped on the primary and every
@@ -280,7 +280,7 @@ Cover at least:
   revision. Read *The trust boundary* before deciding anything about identity.
 - **A NULL sidecar `listing_id` means silver has no observation for that
   object** — `pack_bronze_html.py:441-451` LEFT JOINs silver on `artifact_id`.
-- **Why the non-NULL sidecar values are wrong (CAR-28).** That same `obs` CTE
+- **Why the non-NULL sidecar values are wrong (fixed in Stage 5b).** That same `obs` CTE
   has no `source` filter and does `any_value(listing_id) GROUP BY artifact_id`
   over silver, where a detail artifact contributes one primary row *and* ~5.7
   carousel rows sharing the `artifact_id`. So `any_value` usually returns a

@@ -410,12 +410,19 @@ def _parse_seq(key: str) -> Optional[int]:
 
 def fetch_member_metadata(
     con: Any, bucket: str, artifact_type: str, year: int, month: int
-) -> Iterator[Tuple[str, Optional[int], Optional[str], Optional[datetime]]]:
-    """Stream (source_key, artifact_id, listing_id, fetched_at) for one bucket.
+) -> Iterator[
+    Tuple[str, Optional[int], Optional[str], Optional[str], Optional[datetime]]
+]:
+    """Stream (source_key, artifact_id, listing_id, cluster_key, fetched_at).
 
-    Ordered ``listing_id, fetched_at``: Stage 0d measured that a vehicle's
-    repeat captures must be adjacent inside one frame, because that is where
-    the redundancy is (30.4% within a listing against 0.65% across listings).
+    ``listing_id`` is the listing the artifact is about and goes to the
+    sidecar. ``cluster_key`` is what frames are cut on. They are different
+    columns because they answer different questions -- see the query below.
+
+    Ordered by ``cluster_key, fetched_at``: Stage 0d measured that members
+    which compress against each other must be adjacent inside one frame,
+    because that is where the redundancy is (30.4% within a cluster against
+    0.65% across).
 
     Results are streamed rather than materialised — a busy month holds several
     hundred thousand artifacts, and DuckDB spills its sort while Python would
@@ -440,7 +447,25 @@ def fetch_member_metadata(
     ),
     obs AS (
         SELECT artifact_id,
-               any_value(listing_id) AS listing_id,
+               -- Identity: the listing this artifact is *about*. One detail
+               -- artifact writes one source='detail' row plus ~5.7
+               -- source='carousel' rows for the other cars on the page, all
+               -- sharing its artifact_id, so the subject must be filtered for
+               -- by source rather than reduced for. Reducing the whole group
+               -- returned a carousel listing for ~90% of July members
+               -- (Plan 145 Stage 5b).
+               any_value(listing_id) FILTER (WHERE source = 'detail')
+                                     AS listing_id,
+               -- Placement: the value frames are cut on. Deliberately the
+               -- unfiltered reduction -- the historical behaviour -- so this
+               -- change corrects the sidecar without relaying out a single
+               -- pack. It is not the subject listing and is not identity; it
+               -- clusters pages that share a carousel vehicle, which are
+               -- pages for similar cars. Whether the subject listing would
+               -- cluster better is an open measurement (Plan 145 Stage 6),
+               -- and until it reports, changing this is an unproven rewrite
+               -- of every pack.
+               any_value(listing_id) AS cluster_key,
                min(fetched_at)       AS fetched_at
         FROM read_parquet(
             '{_SILVER_PATH.format(bucket=bucket)}',
@@ -450,29 +475,34 @@ def fetch_member_metadata(
           AND fetched_at >= ? AND fetched_at < ?
         GROUP BY artifact_id
     )
-    SELECT p.minio_path, p.artifact_id, o.listing_id, o.fetched_at
+    SELECT p.minio_path, p.artifact_id, o.listing_id, o.cluster_key, o.fetched_at
     FROM paths p
     LEFT JOIN obs o USING (artifact_id)
-    ORDER BY o.listing_id, o.fetched_at, p.artifact_id
+    ORDER BY o.cluster_key, o.fetched_at, p.artifact_id
     """
     con.execute(query, [artifact_type, key_prefix, window_start, window_end])
     while True:
         rows = con.fetchmany(_FETCH_BATCH)
         if not rows:
             return
-        for minio_path, artifact_id, listing_id, fetched_at in rows:
+        for minio_path, artifact_id, listing_id, cluster_key, fetched_at in rows:
             yield (
                 str(minio_path).split(f"s3://{bucket}/", 1)[-1],
                 int(artifact_id) if artifact_id is not None else None,
                 str(listing_id) if listing_id is not None else None,
+                str(cluster_key) if cluster_key is not None else None,
                 fetched_at,
             )
 
 
 def iter_ordered_keys(
-    metadata: Iterator[Tuple[str, Optional[int], Optional[str], Optional[datetime]]],
+    metadata: Iterator[
+        Tuple[str, Optional[int], Optional[str], Optional[str], Optional[datetime]]
+    ],
     remaining: Set[str],
-) -> Iterator[Tuple[str, Optional[int], Optional[str], Optional[datetime]]]:
+) -> Iterator[
+    Tuple[str, Optional[int], Optional[str], Optional[str], Optional[datetime]]
+]:
     """Yield packable objects in listing order, then whatever silver never saw.
 
     *remaining* is consumed as it goes, so a duplicate metadata row cannot pack
@@ -480,13 +510,13 @@ def iter_ordered_keys(
     with no silver row. Those are still packed — an object nobody can describe
     is still an inode, and leaving it out would leave it unpackable forever.
     """
-    for source_key, artifact_id, listing_id, fetched_at in metadata:
+    for source_key, artifact_id, listing_id, cluster_key, fetched_at in metadata:
         if source_key in remaining:
             remaining.discard(source_key)
-            yield source_key, artifact_id, listing_id, fetched_at
+            yield source_key, artifact_id, listing_id, cluster_key, fetched_at
 
     for source_key in sorted(remaining):
-        yield source_key, None, None, None
+        yield source_key, None, None, None, None
     remaining.clear()
 
 
@@ -612,7 +642,7 @@ def _pack_bucket(
     # existed.
     error: Optional[str] = None
     try:
-        for source_key, artifact_id, listing_id, fetched_at in ordered:
+        for source_key, artifact_id, listing_id, cluster_key, fetched_at in ordered:
             try:
                 content = read_html(f"s3://{bucket}/{source_key}")
             except Exception as exc:  # noqa: BLE001 - one bad object must not end the run.
@@ -630,6 +660,7 @@ def _pack_bucket(
                     content=content,
                     artifact_id=artifact_id,
                     listing_id=listing_id,
+                    cluster_key=cluster_key,
                     fetched_at=fetched_at,
                 )
             )
