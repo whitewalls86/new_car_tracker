@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 """Construct a deterministic, row-complete Plan 145 ledger from legacy rows.
 
 The production adapter may stream Parquet row groups into ``build_ledger``;

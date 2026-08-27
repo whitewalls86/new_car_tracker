@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 import hashlib
 
 from scripts.build_april_ledger import build_ledger, canonical_fingerprint

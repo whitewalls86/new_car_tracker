@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 """Stage 0d: backfill rows append history without changing live state."""
 
 import uuid
