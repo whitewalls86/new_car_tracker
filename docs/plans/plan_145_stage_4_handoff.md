@@ -285,12 +285,10 @@ Cover at least:
   over silver, where a detail artifact contributes one primary row *and* ~5.7
   carousel rows sharing the `artifact_id`. So `any_value` usually returns a
   carousel listing. **Do not "fix" this with a bare `source = 'detail'`
-  filter** — that column is also the packer's sort key, and measurement on
-  2026-08-27 showed the scrambled order compresses *better*: sorting by the
-  true listing is 19.4% worse in July, 3.2% worse in May, with frame structure
-  held constant. The repair records the right `listing_id` while leaving the
-  ordering alone. Not this stage's job either way; just do not propagate the
-  naive fix.
+  filter** — that column is also the packer's sort key, so filtering it
+  silently reorders every pack, and whether that helps or hurts compression is
+  an open question that Plan 145 Stage 6 settles with a bounded trial. Not this
+  stage's job either way; just do not propagate the naive fix.
 - **Container dependencies:** `cartracker-archiver` has duckdb + boto3 +
   pyarrow + `shared/`; `cartracker-processing` has bs4 + boto3 but **no
   duckdb**. Run with `-w /app`. See the `reference_running_lake_audits` memory.
