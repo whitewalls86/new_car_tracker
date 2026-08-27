@@ -103,6 +103,15 @@ SERVICE_CONTRACTS = {
     "snapshot-worker": _c(
         "analytics", lifecycle="one_shot", dependencies=("flyway", "minio")
     ),
+    # Plan 145. Writes bronze HTML objects during materialize and silver rows
+    # during the later apply stage, so it claims both surfaces rather than
+    # running beside a deploy that is pausing either one.
+    "april-processor": _c(
+        "archive",
+        "processing",
+        lifecycle="one_shot",
+        dependencies=("flyway", "minio"),
+    ),
     "dashboard": _c(
         lifecycle="continuous",
         dependencies=("flyway",),

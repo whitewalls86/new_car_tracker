@@ -276,6 +276,12 @@ SOURCE_POLICY: Final[dict[str, SourcePolicy]] = {
         "Airflow initialization exits after database and account setup.",
         _TRANSIENT,
     ),
+    "april-processor": _policy(
+        IngestionRoute.TRANSIENT_EXEMPTION,
+        "The profile-gated April reconciliation worker exits after the "
+        "materialize, parse or compare run it was invoked for.",
+        _TRANSIENT,
+    ),
 }
 
 

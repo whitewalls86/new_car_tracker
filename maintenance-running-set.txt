@@ -75,6 +75,13 @@ snapshot-worker on-demand Profile-gated (`snapshot-worker`) one-shot
     `docker compose run` target for CI lake snapshot generation, Plan 120 Gate
     C.5. No ports, no restart policy, never serves traffic.
 
+april-processor on-demand Profile-gated (`april-processor`) one-shot
+    `docker compose run` target for the Plan 145 April cutover reconciliation.
+    No ports, no restart policy, never serves traffic. A run is invoked
+    deliberately and must not be resurrected by a restore: restarting a
+    half-finished materialize is safe (its object keys are content-derived, so
+    it resumes) but it should be a person's decision, not a reboot's.
+
 trawl profile-running Profile-gated (`trawl`) but long-running once up, so the
     `profiles:` key must NOT decide restore scope. OBSERVED in the 2026-08-18
     window: after `docker compose up -d --force-recreate`, trawl and redis-trawl
