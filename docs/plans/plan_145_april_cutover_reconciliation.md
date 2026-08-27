@@ -150,10 +150,13 @@ The deficit halved (19.4% → 8.4%) as true ordering was given more of its
 cluster, so the trend points toward parity or better and the question cannot be
 called from the evidence here.
 
-**It is settled by Stage 6 instead**, at no extra risk and one extra packing
-pass: April is repacked regardless, so it is packed both ways and the smaller
-result is kept. That is a month-global sort over the real population — the
-regime neither bench test reached. See *The ordering A/B* under Stage 6.
+**Stage 6 answers it with a bounded trial instead.** April is repacked
+regardless, so a fixed ~50,000-member subset is packed both ways, the winner
+carries the single full pass, and the trial packs are discarded. Holding the
+population fixed is what makes the difference attributable — cross-month
+comparison cannot, because achieved ratios already range 43.66x to 82.00x
+without tracking clustering quality at all. See *The ordering trial* under
+Stage 6.
 
 **What is safe to conclude regardless:** the repair records the correct
 `listing_id` in the sidecar and leaves ordering and frame sealing alone, and it
@@ -531,37 +534,55 @@ Keep the original April packs until the replacements verify.
 No new pack format, generation selector, reader contract or prune algorithm is
 part of this plan.
 
-### The ordering A/B, carried by this repack
+### The ordering trial, before the full pass
 
-April is being repacked regardless, because its population changes. That makes
-it the one chance to settle the open compression question (CAR-28) under real
-conditions: a **month-global** sort with every capture of a listing available
-to cluster, which is exactly the regime the two bench tests could not reach.
+April is repacked regardless, so it is also where CAR-28's open ordering
+question gets a controlled answer — from a **bounded trial**, not a second full
+pass.
 
-Pack the flattened population **twice** and keep the smaller result:
+Take the first ~50,000 members of the flattened population (about two packs'
+worth), pack that same set twice, and compare total stored bytes:
 
-| pass | members added in |
+| trial | members added in |
 |---|---|
 | **current** | the existing clustering key, as the packer orders today |
 | **true** | `(listing_id, fetched_at)` on the corrected listing |
 
-Same population, same dictionary, level and frame target; only the order
-differs. Compare total stored bytes across all replacement packs.
+Same members, same dictionary, level and frame target; only the order differs.
+Discard both trial packs, then run **one** full pass over the whole population
+in the winning order. Fix the rule before running: smaller wins.
 
-Both passes are safe by construction: the originals stay authoritative until a
-replacement set verifies, so a losing pass is discarded rather than rolled back.
-Decide before running that the winner is whichever is smaller, so the choice is
-not made after seeing which way it went.
+Cost is minutes. Risk is nil — the trial packs are thrown away and the original
+April packs stay authoritative until the real replacement set verifies.
 
-Two caveats to carry into the write-up:
+#### Why a trial and not a cross-month comparison
 
-- **April is the least representative month for this.** Its sidecar is already
-  31.4% correct, so its current clustering is a hybrid; June and July are ~9%
-  correct and may behave differently in either direction. April's result
-  bounds the question, it does not close it for them.
-- The added materialized objects were never packed before, so the two passes
-  measure ordering over a population no earlier pack held. That is the right
-  population for April's own decision, and a caveat for extrapolation.
+Comparing April's finished bytes-per-page against other months cannot isolate
+ordering, because the months already differ far more than the effect being
+measured. Achieved ratios, from production metadata on 2026-08-27:
+
+| month | members | raw GiB | stored GiB | ratio | `listing_id` correct |
+|---|---:|---:|---:|---:|---:|
+| April | 557,065 | 86.77 | 1.99 | 43.66x | 31.4% |
+| May | 1,021,266 | 170.45 | 2.51 | 67.95x | 59.5% |
+| June | 1,124,122 | 190.30 | 2.32 | 82.00x | 9.8% |
+| July | 909,654 | 157.28 | 2.03 | 77.44x | 8.4% |
+
+The ratio does not track clustering quality at all — June, the *worst*
+true-listing clustered month, achieves the *best* ratio. Between-month spread
+is nearly 2x, against an ordering effect of 8–19%. That is not evidence
+ordering is irrelevant; it is evidence that cross-month comparison is far too
+noisy to detect it. Holding the population fixed is the only way to attribute
+the difference.
+
+#### Caveats for the result
+
+- **April is the least representative month.** Its sidecar is already 31.4%
+  correct, so its current clustering is a hybrid; June and July are ~9%. The
+  direction should generalize; the magnitude should not be assumed to.
+- A 50,000-member trial cannot gather every capture of a listing the way a
+  month-global sort would, so it still understates true-listing ordering — less
+  than the two bench tests did, and on a population that is at least fixed.
 
 If the true ordering wins, the size of the win is what justifies (or does not)
 a separate plan to reorder May, June and July — 6.86 GiB and ~3M members that
@@ -576,8 +597,9 @@ this plan does not touch.
   `artifacts_queue_events` row, or the difference is explained.
 - Replacement sidecars carry the **correct** `listing_id`, whichever ordering
   wins; identity and sort key are recorded independently.
-- Both orderings are packed, their total stored bytes compared, and the smaller
-  kept — with the decision rule fixed before the run.
+- The ordering trial runs on a fixed ~50,000-member subset, both orderings are
+  compared, the winner carries the single full pass, and the trial packs are
+  discarded — with the decision rule fixed before the run.
 - Deleted, absent and failed legacy-key counts reconcile to exactly 1,172.
 - The legacy `detail_page` prefix contains zero Parquet objects.
 - The legacy `results_page` population is unchanged.
