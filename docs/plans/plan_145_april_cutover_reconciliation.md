@@ -23,7 +23,8 @@ What changed, and why:
   result is one directory of distinct captures. Every later stage then reads
   one store instead of reconciling two.
 
-Stage 1 is complete (commit `3f6e6d4`). Stage 2 is in flight.
+Stage 1 is complete (commit `3f6e6d4`). Stage 2 is complete (2026-08-27).
+Stage 3a is complete (2026-08-27); Stage 3b is in flight.
 
 **Supersedes [Plan 132](plan_132_unrecorded_artifact_recovery.md) and
 [Plan 137](plan_137_legacy_bronze_parquet_disposition.md).**
@@ -259,7 +260,7 @@ SHA 797,073. The discrepancy is the *Empty bodies* finding, not a failure.
 
 ---
 
-## Stage 2 — Materialize successful bodies (CAR-19) — in flight
+## Stage 2 — Materialize successful bodies (CAR-19) — **complete**
 
 `scripts/reconcile_april_detail.py materialize`, dry-run by default.
 
@@ -269,12 +270,33 @@ otherwise derive a content-based key, skip if the object exists, write with
 manifest row. One Parquet manifest shard per source file under
 `recovery/plan145/materialized/`.
 
-### Gate
+### Evidence — 2026-08-27
+
+`materialize --apply` ran under tmux `plan145` on the VM, ~4h10m at
+~4.7 source-files/min, exit 0. All 1,172 manifest shards written under
+`recovery/plan145/materialized/`. Disposition totals over the shard set:
+
+| disposition | rows |
+|---|---:|
+| `written` | 796,430 |
+| `exists` | 11,367 |
+| `skipped_empty` | 43,014 |
+| `skipped_non_success` | 101,010 |
+| **sum** | **951,821** |
+
+**807,797** materialized objects (`written` + `exists`), matching the Stage 1
+projection. The 11,367 `exists` rows are the idempotency proof — identical
+bytes recomputed the same content-derived key and were skipped rather than
+rewritten. 403/5xx bodies recorded, never written.
+
+### Gate — met
 
 - Every legacy occurrence carries exactly one disposition; the four counts sum
-  to 951,821.
-- Every materialized object reads back byte-identically; any mismatch stops the run.
+  to 951,821. **Reproduced exactly.**
+- Every materialized object reads back byte-identically; any mismatch stops the
+  run. **Run completed clean.**
 - Every manifest row retains its legacy locator, `listing_id` and `fetched_at`.
+  **Consumed unchanged by Stage 3a.**
 - Object keys are distinct and content-derived; a re-run writes nothing.
 - No silver, artifact-queue or live-state row is written.
 
@@ -296,14 +318,55 @@ to the pack for a missing object.
 `minio_path` → `artifact_id` join in `artifacts_queue_events`. Existing keys
 are skipped, so the step is idempotent and resumable.
 
+Implemented as the `dedupe` and `unpack` modes on
+`scripts/reconcile_april_detail.py` (PR #260, merged to `master` as
+`cd57a25`), dry-run by default with `--apply`, following the `census` /
+`materialize` structure.
+
+### Evidence — 3a, 2026-08-27
+
+`dedupe --apply` ran 19:57–20:10 UTC, exit 0.
+
+| | |
+|---|---:|
+| deletion candidates (`written` + `exists`) | 806,898 |
+| delete operations / receipts | 371,495 |
+| **distinct objects deleted** | **371,095** |
+| rate over candidates | 46.0% (gate 45.6% ± 10%) |
+
+371,095 distinct is the plan's 371,095 content matches, to the object. 1,172
+deletion-manifest shards written before any delete, plus 1,172 receipt shards,
+under `recovery/plan145/dedupe/`; every receipt `deleted`, zero errors.
+Deletion was by explicit key list, ≤1,000 keys per `delete_objects` call,
+never by prefix.
+
+Post-run verification: **0 of 371,495** deletion-manifest rows carry a
+`raw_sha256` absent from an April sidecar (checked against 557,063 distinct
+packed hashes). The 400-row gap between operations and distinct objects is
+idempotent re-deletes of identical content materialized from two source files;
+0 key/hash conflicts. `ops.artifacts_queue` and silver untouched.
+
+### Evidence — 3b, in flight
+
+Dry run verified 2 packs / 34,751 members — every member ranged-read and
+checked against its sidecar `raw_sha256`, no failure. `unpack --apply` started
+2026-08-27 20:24 UTC under tmux `plan145-s3b` (log
+`/home/ubuntu/plan145-unpack.log`), writing via `write_html` under each
+member's original `source_key` with production dictionary `1367127621`.
+557,065 members, ~3h budget.
+
 ### Gate
 
 - Deletion is by exact key from a written manifest with receipts, never by
-  prefix; the count reconciles against the sidecar hash join.
+  prefix; the count reconciles against the sidecar hash join. **3a: met.**
 - No key is deleted whose content is not provably in a verified pack.
+  **3a: verified, 0 exceptions.**
 - Every unpacked member verifies against its `raw_sha256` on write.
+  *(3b, in flight.)*
 - The flattened population contains no two objects with identical content.
+  *(end-of-3b check.)*
 - `ops.artifacts_queue` is not written; no silver row is written.
+  **3a: held.**
 
 ---
 
