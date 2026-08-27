@@ -280,13 +280,17 @@ Cover at least:
   revision. Read *The trust boundary* before deciding anything about identity.
 - **A NULL sidecar `listing_id` means silver has no observation for that
   object** — `pack_bronze_html.py:441-451` LEFT JOINs silver on `artifact_id`.
-- **The sidecar defect is a one-line packer bug.** That same `obs` CTE has no
-  `source` filter and does `any_value(listing_id) GROUP BY artifact_id` over
-  silver, where a detail artifact contributes one primary row *and* ~5.7
+- **Why the non-NULL sidecar values are wrong (CAR-28).** That same `obs` CTE
+  has no `source` filter and does `any_value(listing_id) GROUP BY artifact_id`
+  over silver, where a detail artifact contributes one primary row *and* ~5.7
   carousel rows sharing the `artifact_id`. So `any_value` usually returns a
-  carousel listing. **This affects Stage 6 (CAR-22):** repacking alone will
-  reproduce the same wrong identities unless the query filters
-  `source = 'detail'`. Flag it; do not fix it in this stage.
+  carousel listing. **Do not "fix" this with a bare `source = 'detail'`
+  filter** — that column is also the packer's sort key, and measurement on
+  2026-08-27 showed the scrambled order compresses *better*: sorting by the
+  true listing is 19.4% worse in July, 3.2% worse in May, with frame structure
+  held constant. The repair records the right `listing_id` while leaving the
+  ordering alone. Not this stage's job either way; just do not propagate the
+  naive fix.
 - **Container dependencies:** `cartracker-archiver` has duckdb + boto3 +
   pyarrow + `shared/`; `cartracker-processing` has bs4 + boto3 but **no
   duckdb**. Run with `-w /app`. See the `reference_running_lake_audits` memory.
