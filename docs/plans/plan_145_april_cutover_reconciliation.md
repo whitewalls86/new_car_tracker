@@ -2,22 +2,26 @@
 
 ## Status
 
-**Second revision — 2026-08-27.** The first implementation guide and two CAR-13
-implementations were reverted before the 2026-08-26 rewrite. That rewrite's
-goal and success criteria survive unchanged; its *method* did not.
+**Third revision — 2026-08-27.** The goal and success criteria have survived
+every revision unchanged. The *method* has now changed three times, each time
+because a measurement contradicted an identity key the previous method relied
+on. This revision therefore states the trust boundary once, up front, and
+derives the method from it.
 
-The 2026-08-26 design reconciled the legacy Parquet to production through
-metadata joins. Production measurement on 2026-08-27 disproved the assumption
-that made that possible: **the pack sidecar's `listing_id` is wrong** for
-194,639 of the 371,095 members that match legacy content by hash. The join it
-specified cannot be trusted, and its Stage 2 rule — "join using recomputed SHA
-only" — structurally excludes the very population that most needs joining.
+What changed, and why:
 
-This revision therefore replaces metadata reconciliation with re-derivation
-from the bytes: materialize every surviving successful body as a normal HTML
-object, parse the whole April population with the production parser, and
-compare *parsed output* to silver. It is slower and less clever. It depends on
-nothing but content and the parser, both of which are trustworthy.
+- The 2026-08-26 design reconciled the legacy Parquet to production through
+  metadata joins. Disproved: the pack sidecar's `listing_id` is wrong for
+  194,639 of 371,095 content matches.
+- The 2026-08-27 second revision responded by refusing all metadata and
+  re-deriving everything from bytes — parsing the union of two stores,
+  deduplicated by content hash, at 24.8 core-hours. Correct but overbuilt: it
+  carried a two-store union through every stage of the pipeline to avoid a
+  question that unpacking answers for free.
+- This revision **flattens the population first**. Materialize the legacy
+  bodies, delete the ones the packs already hold, unpack the packs, and the
+  result is one directory of distinct captures. Every later stage then reads
+  one store instead of reconciling two.
 
 Stage 1 is complete (commit `3f6e6d4`). Stage 2 is in flight.
 
@@ -30,10 +34,9 @@ Stage 1 is complete (commit `3f6e6d4`). Stage 2 is in flight.
 
 Delete the **1,172 April 2026 `detail_page` Parquet objects** containing
 951,821 legacy row occurrences and occupying 14,670,223,837 bytes
-(approximately 13.66 GiB), after every distinct successful capture is either:
-
-1. already represented by a silver observation; or
-2. folded into production as a real HTML artifact and parsed into silver.
+(approximately 13.66 GiB), after every distinct successful capture is either
+already represented by a silver observation, or folded into production as a
+real HTML artifact and parsed into silver.
 
 The 127 legacy `results_page` Parquet objects are out of scope, as are all
 current `results_page` objects and the broader raw-HTML retention policy.
@@ -42,320 +45,322 @@ This is a one-time migration, not a recovery platform.
 
 ---
 
-## What the three populations actually are
+## The trust boundary
 
-Three separate things, and most of the 2026-08-26 design's trouble came from
-conflating them.
+Every previous revision died to an identity key that turned out to be
+unusable. They are enumerated here once, with what proves each verdict, so no
+later stage has to re-derive them.
 
-| population | what it is | trust |
+| key | verdict | proof |
 |---|---|---|
-| **The archive** — 144 packs + 144 sidecars under `html_packs/detail_page/`, 32 packs and 557,065 members for April | Production. The authoritative store of captured HTML. | Bytes: authoritative. **Sidecar identity columns: not trustworthy** (below). |
-| **The legacy Parquet** — 1,172 objects under `html/year=2026/month=4/artifact_type=detail_page/` | An orphaned parallel store from the Plan 72 archiver. Holds page bodies *inline* in an `html` column, not pointers to objects elsewhere. | Bytes: verified. Identity: corroborated by silver. |
-| **Silver** — `silver_normalized/observations` | Production's parsed record. | Authoritative. |
+| **Content bytes** (both stores) | **Trustworthy** | 807,797 legacy bodies agree with their stored hash, zero mismatches (Stage 1). Every pack member is verified against `raw_sha256` on read. |
+| **Legacy `listing_id`** (extracted from `url`) | **Trustworthy** | Where legacy and sidecar disagree, silver holds a `detail` observation for the *legacy* listing at that exact timestamp in 194,734 of 194,734 cases. |
+| **Legacy `fetched_at`** | **Trustworthy** | Corroborated by the same 194,734 exact-timestamp matches. |
+| **Sidecar `raw_sha256`** | **Trustworthy** | It is what `read_packed_html` verifies every read against. |
+| **Sidecar `artifact_id`** | **Trustworthy where present** | Written from `artifacts_queue_events` by `minio_path`. NULL for 42,276 of 557,065 members. |
+| **Sidecar `listing_id` / `fetched_at`** | **Unusable as identity; meaningful as a signal** | See below. |
+| **Legacy `artifact_id`** | **Unusable** | `raw_artifacts` and `ops.artifacts_queue` are separate `bigserial` sequences. The same integer names two different artifacts across the cutover. |
+| **Stored `sha256` of an empty body** | **Unusable** | The Plan 72 writer archived `b""` while copying the database hash. 43,014 rows. |
 
-There is no separate population of loose April `.html.zst` objects: the April
-detail prefix contained **zero** of them before this plan began, because Plan
-131's prune deleted the individual objects after packing. The legacy Parquet is
-itself the content store — 147.1 GiB of HTML compressed to 14.67 GiB.
+### What a NULL sidecar identity actually means
 
-The work is a three-way set difference: fold into production whatever exists
-outside it.
+`archiver/processors/pack_bronze_html.py:431-456` builds sidecar identity by
+taking `artifact_id` from `artifacts_queue_events` via `minio_path`, then
+**LEFT JOINing silver observations on `artifact_id`** for `listing_id` and
+`fetched_at`. The packer's own comment says an object with no silver row is
+still packed — *"an object nobody can describe."*
+
+So a NULL-identity pack member is not a defect and not a heuristic. It is,
+definitionally, **an object silver has no observation for**. Measured
+2026-08-27: 99,981 of 557,065 April members carry NULL `listing_id`, and a
+453-member sample found 445 with no silver observation within 300 s — the
+8 exceptions being carousel-only coverage.
+
+This single fact replaces the entire metadata-join apparatus of the previous
+two revisions. "What is missing from silver" is legible from the sidecar
+without trusting a single sidecar identity *value*.
 
 ---
 
-## Evidence
+## The production lifecycle of a captured page
 
-All figures below are production measurements from 2026-08-21 and 2026-08-27,
-reproduced by the Stage 1 census unless noted.
+Reprocessing must reproduce the parts of this that belong to a historical
+capture and none of the parts that belong to a live one. Traced from source
+2026-08-27.
 
-### The census reproduces exactly
+| # | Step | Where |
+|---:|---|---|
+| 1 | Scraper fetches the page | `scraper/processors/scrape_detail.py` |
+| 2 | Body written zstd-compressed under a `make_key` path | `shared/minio.py:write_html` |
+| 3 | `INSERT INTO ops.artifacts_queue ... RETURNING artifact_id` — the `bigserial` allocates identity here | `scrape_detail.py:186` |
+| 4 | `staging.artifacts_queue_events` row, status `pending` | `scrape_detail.py:196` |
+| 5 | Processing claims a batch, `FOR UPDATE SKIP LOCKED`, status → `processing` | `processing/sql/claim_artifacts.sql` |
+| 6 | `read_html(minio_path).decode("utf-8", errors="replace")` | `processing/routers/batch.py:87` |
+| 7 | `parse_cars_detail_page_html_v1(html, url)` → `(primary, carousel, meta)` | `processing/processors/parse_detail_page.py:292` |
+| 8 | **Blocked** → status `skip`, no observation, cooldown left intact | `batch.py:165` |
+| 9 | Batch VIN lookup for primary + carousel listing_ids | `detail_writer.py` |
+| 10 | VIN collision check (relisting detection) | `detail_writer.py` |
+| 11 | **Upsert `ops.price_observations`** for primary | `detail_writer.py` |
+| 12 | **Upsert `ops.vin_to_listing`** | `detail_writer.py` |
+| 13 | Carousel filtered by `search_configs`; matches upserted to `price_observations` | `detail_writer.py` |
+| 14 | **Silver write: primary + all carousel rows** (~5.7/page), regardless of filter | `silver_writer.py` |
+| 15 | **Clear `ops.blocked_cooldown`** + lifecycle event | `detail_writer.py:_clear_cooldown` |
+| 16 | **Release `ops.detail_scrape_claims`** + event | `detail_writer.py` |
+| 17 | Emit `price_updated` / `vin_mapped` / `listing_removed` | `processing/events.py` |
+| 18 | Status → `complete` | `batch.py:_set_status` |
+| 19 | `staging.silver_observations` flushed to lake Parquet, rows deleted | `flush_silver_observations.py` |
+| 20 | Queue row **deleted** once `complete`/`skip` | `cleanup_queue.py:35` |
+| 21 | dbt: `stg_observations` → intermediate → marts | `dbt/models/` |
+| 22 | Packer packs the object, attributing it via steps 3 + 14 | `pack_bronze_html.py` |
 
-Stage 1 scanned all 1,172 objects with zero drift and zero hash mismatches
-across 807,797 non-empty bodies:
+Step 20 is why `ops.artifacts_queue` holds nothing for April, and step 22 is
+why a capture that never reached step 14 becomes an unattributable pack member.
 
-| measure | value |
-|---|---:|
-| objects | 1,172 |
-| stored bytes | 14,670,223,837 |
-| row occurrences | 951,821 |
-| HTTP 200 | 847,785 |
-| HTTP 403 | 104,025 |
-| 5xx | 11 |
+### What "full treatment" means for a recovered April artifact
 
-### Empty bodies carry a real hash and no bytes
+A capture from April is a **historical observation**, not news. Steps that
+record history must run; steps that mutate present-tense state must not, because
+current price, VIN mapping, cooldown and claim state have four months of newer
+truth on top of them.
 
-The Plan 72 writer (`archiver/processors/archive_artifacts.py` at `1798a99`)
-read the page off local disk and archived `b""` when the file was already
-gone, while still copying `sha256` from `raw_artifacts`. So for those rows the
-stored hash describes a page whose bytes are absent, and
-`sha256(b"") != stored_sha256` is the expected state rather than corruption.
+| Lifecycle step | Recovered artifact | Why |
+|---|---|---|
+| 6 — production decode | **Yes, exactly** | A different decode changes parsed strings for encoding reasons and corrupts the comparison. |
+| 7 — parser, unmodified | **Yes** | Any parser change invalidates comparison against what production wrote. |
+| 9–10 — VIN lookup / collision | **Read-only** | Needed to populate `vin` on carousel rows; must not write. |
+| 14 — silver, primary + carousel | **Yes** | This is the deliverable. |
+| 17 — price events (historical) | **Yes, at the legacy capture time** | The historical price record is the point of the recovery. |
+| 3 — `artifact_id` allocation | **Yes, from the sequence** | See below. |
+| 11 — `price_observations` upsert | **No** | Would set current price from an April capture. |
+| 12 — `vin_to_listing` upsert | **No** | Four months of newer mappings. |
+| 13 — carousel → `price_observations` | **No** | Same. |
+| 15 — clear `blocked_cooldown` | **No** | Would clear live backoff on stale evidence. |
+| 16 — release `detail_scrape_claims` | **No** | Would release live claims. |
+| 17 — live event emission | **No** | Downstream consumers would treat April as now. |
+| 5 — queue claim | **No** | See `artifact_id`, below. |
+| 22 — repack with attribution | **Yes** | Stage 6. |
 
-| | rows |
-|---|---:|
-| empty bodies, total | 43,014 |
-| of which HTTP 200 | 39,988 |
-| of which HTTP 403 | 3,026 |
+---
 
-This is why the census reports **stored** and **recomputed** distinct-SHA counts
-separately, and why they disagree:
+## `artifact_id` for recovered artifacts
 
-| | count |
-|---|---:|
-| distinct `(listing_id, fetched_at)` identities | 837,061 |
-| distinct **stored** SHA | 837,061 |
-| distinct **recomputed** SHA (bodies that exist) | 797,073 |
-| duplicate occurrences collapsed | 10,724 |
+`artifact_id` reaches silver (`stg_observations`), price events, and the marts
+(`mart_scrape_volume`, `mart_detail_batch_outcomes` both count distinct
+`artifact_id`). It is also how the packer attributes an object. So recovered
+artifacts need real ones.
 
-A content-based join must use the recomputed hash. The 2026-08-26 claim that
-"distinct SHA count equals distinct identity count" is true only of the stored
-hash, and only because an absent body still had a recorded one.
+**For the 557,065 existing pack members: preserve, do not re-derive.** Their
+`artifact_id` lives in `ops_normalized/artifacts_queue_events` in the lake,
+keyed by `minio_path`. It is durable there — unlike `ops.artifacts_queue`,
+which step 20 empties. **Unpacking under each member's original `source_key`
+keeps that join intact for free**, which is the decisive argument for original
+keys over content-derived ones. 42,276 members have no event row and stay
+unattributed; they are counted, not invented.
 
-### Legacy identity is trustworthy; sidecar identity is not
+**For the newly materialized legacy bodies: allocate from the sequence, never
+compute one.** `ops.artifacts_queue_artifact_id_seq` is a `bigserial`
+sequence, currently around 7.52M. `nextval` is concurrency-safe by
+construction: it never returns a value twice, and it does not roll back or
+reuse on abort. Concurrent production inserts are therefore safe **as long as
+identity comes from the sequence** — a `max(artifact_id) + 1` would race and
+collide, and is forbidden.
 
-The legacy schema has no `listing_id`; it is extracted from `url` with the same
-UUID rule the production parser uses. That derivation was tested against
-production:
+**Allocate without enqueueing.** Do *not* insert `ops.artifacts_queue` rows:
+`claim_artifacts.sql` claims anything `pending` or `retry`, so an enqueued row
+is picked up by live processing within seconds and runs the full hot-state
+path this plan forbids. Instead:
 
-- For the 194,734 cases where legacy and sidecar disagree on which listing a
-  byte-identical page belongs to, silver holds a `detail` observation for the
-  **legacy** listing at that exact timestamp in **194,734 of 194,734** cases,
-  and none for the sidecar's listing.
-- Sidecar `listing_id` matches legacy for only 124,320 of 371,095 content
-  matches, while `fetched_at` matches for 318,959. Right time, wrong listing.
-- 104,669 sidecar members carry NULL `listing_id`/`fetched_at`, and 43,741
-  carry NULL `artifact_id`.
+1. `SELECT nextval('ops.artifacts_queue_artifact_id_seq')` per recovered artifact.
+2. Write the silver rows carrying that `artifact_id`.
+3. Write one `staging.artifacts_queue_events` row per artifact with status
+   `recovered` — the table has no FK and no status CHECK, and it is exactly
+   where the packer looks for attribution in step 22.
 
-**Consequence:** sidecars may be used for `raw_sha256` and content location and
-for nothing else. Legacy `artifact_id` remains unusable across the cutover, as
-the 2026-08-26 revision established.
+The result: recovered artifacts are attributable, countable in the marts, and
+repackable, without ever becoming claimable work.
 
-### The state of the population, measured
+---
 
-Of the 797,073 distinct successful captures whose bytes exist, cross-tabulating
-content presence in the packs against observation presence in March–May silver:
+## The block-page defect
 
-| | observation in silver | **not** in silver | total |
+The parser treats any non-Cloudflare block page as a live listing.
+`_detect_challenge` keys only on Cloudflare's `Just a moment...` title, so an
+Akamai `Access Denied` body (430 bytes) parses to `listing_state="active"`
+with every vehicle field NULL.
+
+Measured 2026-08-27 — `source=detail` silver, rows that are active with price,
+VIN and make all NULL:
+
+| month | detail rows | all-NULL | share |
 |---|---:|---:|---:|
-| **content in packs** | 318,959 | 52,136 | 371,095 |
-| **content NOT in packs** | 270,652 | 155,326 | 425,978 |
-| total | 589,611 | 207,462 | 797,073 |
+| April | 1,272,617 | 87,003 | **6.84%** |
+| June | 1,124,122 | 271 | 0.02% |
+| July | 907,090 | 178 | 0.02% |
+| August | 758,549 | 19 | 0.00% |
 
-Both margins reconcile against independent measurements. The 52,136 are real:
-52,041 of them match pack members with NULL identity — bytes production holds
-but cannot name.
+**This is not a live production emergency.** August's 19 rows fall inside a
+single 15-second window on 2026-08-20 and are a Cloudflare *"Site Maintenance"*
+page, not an Akamai block. The parser's blindness to non-Cloudflare blocks is
+structural and still present, but its current volume is negligible; April's
+cohort is an April phenomenon.
 
-Separately, of the 39,988 metadata-only HTTP 200 rows, 28,535 are already
-represented in silver and **11,453 are not**. Those 11,453 have no bytes in the
-Parquet and no surviving individual object; they are unrecoverable and are
-recorded as a closed loss.
+Two consequences:
 
-### Time matching, and the 15-minute clock
-
-Silver's April inter-observation intervals have their top non-zero mode at
-**15 minutes** (7.92%), flanked by 14 and 16, with 30/45/60-minute harmonics.
-Consecutive real captures of a listing are therefore ~900 s apart.
-
-Nearest-neighbour distance for the strict-anti-join gap is flat through ten
-minutes and then climbs steeply:
-
-| window | share of gap rows |
-|---|---:|
-| ≤ 1 s | 0.01% |
-| ≤ 60 s | 0.31% |
-| ≤ 600 s | 0.88% |
-| ≤ 3600 s | 29.66% |
-
-So the gap is real rather than an artifact of exact matching. A tolerance is
-still warranted for clock skew, but must stay far below the cycle boundary:
-exclusions rise from 1,140 at 300 s to 11,804 at 899 s, because a window
-approaching 900 s reaches the *neighbouring scrape* and swallows a genuine
-capture.
-
-**The comparison uses a 300 s tolerance**, excluding 1,140 probable skew
-duplicates and leaving 206,322 candidate imports. This figure is superseded in
-practice by the Stage 4 comparison of parsed output, and is retained as the
-expected order of magnitude.
-
-### Carousel rows come from detail artifacts
-
-`parse_cars_detail_page_html_v1` returns `(primary, carousel, meta)` from one
-detail artifact, and `detail_writer` writes primary plus all carousel rows to
-silver. April silver is `carousel` 5,971,440 / `detail` 1,272,617 / `srp`
-80,651, and a sampled page yields **5.7 carousel rows**.
-
-Two consequences: a nearby `carousel` observation is real coverage of that
-listing and must count as such when deciding what is missing; and parsing an
-imported artifact emits carousel rows for *other* listings, so the silver
-footprint of an import is several times its artifact count.
-
-### Costs, measured
-
-| operation | cost |
-|---|---|
-| parse | 90.7 ms/page → 24.8 core-hours for the 983,043-page deduped union |
-| compress (zstd-9 + dictionary `1367127621`) | 3.1 ms/page, **16.0x** vs 6.5x without the dictionary |
-| materialize | ~5 source files/min → ~4 h for 1,172 |
-| stored size | ~12–18 KB/object → ~13 GiB for 807,797 |
-
-Host headroom at the time of writing: 123 GB disk free, 11.2M inodes free,
-4 cores, load ~1.0.
+- **This plan must filter them.** 54,341 April pack members are 256–511 bytes,
+  and the sampled ones are Akamai blocks. Reprocessing without a filter would
+  inject tens of thousands of junk active/NULL-price observations into silver.
+  The filter is applied in the recovery pipeline, not in the parser, so the
+  "parser runs unmodified" property that makes the comparison meaningful is
+  preserved.
+- **The parser fix is a separate ticket**, low priority on current volume. It
+  is very likely the cause of the April `detail/active` null-price gap that
+  earlier revisions listed as out of scope.
 
 ---
 
 ## Method
 
-Re-derive from the bytes. Do not reconcile through metadata.
+Flatten the population, then treat it as one thing.
 
-1. **Materialize** every surviving successful body as an ordinary
-   `.html.zst` object with the production writer, dictionary and level.
-2. **Parse** the whole April population — materialized objects plus existing
-   pack members — with the unmodified production parser into a Parquet table.
-3. **Compare** that parsed table to silver and decide, per observation, what
-   is missing.
-4. **Apply** the missing observations.
-5. **Repack** April with the existing packer, prune, and delete the legacy
-   Parquet.
+1. **Materialize** every surviving successful legacy body as an ordinary
+   `.html.zst` object.
+2. **Delete** the materialized objects whose content the packs already hold.
+3. **Unpack** all 32 April packs under each member's original key.
+4. **Parse** the resulting single population.
+5. **Compare** to silver and apply what is missing.
+6. **Repack** with correct attribution, prune, delete the legacy Parquet.
 
-Identity comes from the legacy row (corroborated) and content comes from the
-bytes (verified). Nothing depends on `artifact_id` or on sidecar identity.
+Steps 2 and 3 are what buy the simplicity: after them, there is one directory
+of distinct captures, and every later stage reads one store.
 
-### Disposition rules
+### Population arithmetic
 
-Every one of the 951,821 legacy occurrences is recorded with exactly one
-disposition, so the population stays fully accounted for:
+| | count |
+|---|---:|
+| distinct successful legacy captures with bytes | 797,073 |
+| of which content already in the packs (45.6% measured over 392 shards) | ~371,000 |
+| materialized objects surviving step 2 | ~436,702 |
+| April pack members unpacked in step 3 | 557,065 |
+| **flattened population** | **~993,767** |
 
-| disposition | rows | meaning |
-|---|---:|---|
-| `written` / `exists` | ~807,797 | HTTP 200 with bytes; materialized |
-| `skipped_empty` | 43,014 | no bytes to write |
-| `skipped_non_success` | ~101,000 | 403 and 5xx bodies parse to a blocked state and yield no observation |
-
-403 and 5xx bodies are recorded but never materialized: carrying ~101,000
-challenge pages into the parse stage would cost storage and CPU for nothing.
-
-### Object naming
-
-Materialized objects take a key from `make_key` with a **content-derived**
-`file_id` (the first 32 hex of the SHA formatted as a UUID) rather than a
-random one. This makes the job idempotent — a re-run recomputes the same key,
-`object_exists` skips it, and identical bytes cannot produce two objects. It is
-a visible, permanent departure from the scraper's naming; nothing reads meaning
-from the stem, so the only effect is reproducibility.
-
-### Where the work runs
-
-`april-processor`, a profile-gated one-shot Compose service on the
-snapshot-worker pattern, built from the processing image because the parse
-stage needs bs4/lxml. It sets `HTML_COMPRESSION_DICT_ID`; without it every
-object would be written dictionary-less and 2.5x larger than the rest of the
-store. Deliberately not resource-capped, matching pack-worker.
-
----
-
-## Delivery map
-
-| Order | Issue | Stage | Outcome | Production mutation |
-|---:|---|---|---|---|
-| 1 | CAR-13 | Stage 1 | Freeze and prove the census | No |
-| 2 | CAR-19 | Stage 2 | Materialize successful bodies as HTML objects | **Yes: HTML objects** |
-| 3 | CAR-20 | Stage 3 | Parse the April population into a table | No |
-| 4 | CAR-21 | Stages 4–5 | Compare to silver, then apply the missing observations | **Yes: silver** |
-| 5 | CAR-22 | Stage 6 | Repack, prune and delete the legacy Parquet | **Yes: irreversible deletion** |
+Peak object count never exceeds the end state, because the deletion precedes
+the unpack.
 
 ---
 
 ## Stage 1 — Freeze the census (CAR-13) — **complete**
 
-`scripts/reconcile_april_detail.py census`, read-only. Enumerates the exact
-prefix, streams every occurrence a row group at a time, recomputes every
-non-empty hash, collapses exact duplicates, and writes deterministic manifests
-with fingerprints.
+`scripts/reconcile_april_detail.py census`, read-only. 1,172 objects,
+951,821 rows, 807,797 hashes verified, zero drift, zero mismatches.
 
-### Gate — met
-
-- Baseline counts reproduce exactly, or the run stops. **Reproduced, zero drift.**
-- Every non-empty body agrees with its stored hash. **807,797 checked, zero mismatches.**
-- Duplicate identities agree on content, or the run stops. **No conflicts.**
-- Deterministic manifests, report and fingerprints written. **Yes.**
-- No production object or database row written. **None.**
-
-The published criterion "distinct SHA count equals distinct `(listing_id,
-fetched_at)` count" holds for the **stored** hash (837,061 = 837,061) and not
-for the recomputed hash (797,073), for the reason given under *Empty bodies*.
-The discrepancy is the finding, not a failure.
+Status census: 200 = 847,785; 403 = 104,025; 5xx = 11. Empty bodies: 43,014
+(39,988 of them HTTP 200). Distinct stored SHA 837,061; distinct recomputed
+SHA 797,073. The discrepancy is the *Empty bodies* finding, not a failure.
 
 ---
 
-## Stage 2 — Materialize successful bodies (CAR-19)
+## Stage 2 — Materialize successful bodies (CAR-19) — in flight
 
 `scripts/reconcile_april_detail.py materialize`, dry-run by default.
 
-For each legacy row: skip empty and non-success with a recorded disposition;
-otherwise derive the content-based key, skip if the object already exists,
-write with `write_html`, read back through `read_html` and require a hash
-match, and record a manifest row. Manifests are written as one Parquet shard
-per source file under `recovery/plan145/materialized/`, so an interruption
-loses only the in-flight file.
+Per legacy row: skip empty and non-success with a recorded disposition;
+otherwise derive a content-based key, skip if the object exists, write with
+`write_html`, read back through `read_html` and require a hash match, record a
+manifest row. One Parquet manifest shard per source file under
+`recovery/plan145/materialized/`.
 
 ### Gate
 
-- Every legacy occurrence carries exactly one disposition and the four
-  disposition counts sum to 951,821.
-- Every materialized object reads back byte-identically; any mismatch stops
-  the run.
+- Every legacy occurrence carries exactly one disposition; the four counts sum
+  to 951,821.
+- Every materialized object reads back byte-identically; any mismatch stops the run.
 - Every manifest row retains its legacy locator, `listing_id` and `fetched_at`.
 - Object keys are distinct and content-derived; a re-run writes nothing.
 - No silver, artifact-queue or live-state row is written.
 
 ---
 
-## Stage 3 — Parse the April population (CAR-20)
+## Stage 3 — Flatten the population (CAR-20)
 
-Run `parse_cars_detail_page_html_v1` **unchanged** over the union of the
-materialized objects and the existing April pack members, deduplicated by
-content hash, and write primary and carousel output to a Parquet table under
-`recovery/plan145/parsed/`.
+Two mechanical steps, no parsing.
 
-HTML must be decoded exactly as production decodes it —
-`read_html(...).decode("utf-8", errors="replace")` — or parsed output will
-differ from silver for encoding reasons and poison the comparison.
+**3a — Delete the duplicates.** Both sides already record `raw_sha256`:
+materialize manifests write it per object, sidecars carry it per member. So
+the comparison is a join of two written-down columns — no bytes are re-hashed.
+Delete every materialized object whose hash appears in an April sidecar. Safe
+at every instant: the content remains in the pack, and `read_html` falls back
+to the pack for a missing object.
 
-Each parsed row carries the authoritative `fetched_at` from the legacy row or
-the sidecar, never from the parser or the run.
+**3b — Unpack.** Write every one of the 557,065 members back as a loose
+`.html.zst` object **under its original `source_key`**, preserving the
+`minio_path` → `artifact_id` join in `artifacts_queue_events`. Existing keys
+are skipped, so the step is idempotent and resumable.
 
 ### Gate
 
-- Every input is parsed or has an explicit recorded failure.
-- Parsed listing identity is compared to manifest identity and disagreements
-  are reported rather than silently resolved.
-- A sub-1 KiB body cohort exists (Plan 137 recorded 5,741 sidecar members
-  under 1 KiB); it is measured and reported rather than discovered as parse
-  failures.
-- No production mutation.
+- Deletion is by exact key from a written manifest with receipts, never by
+  prefix; the count reconciles against the sidecar hash join.
+- No key is deleted whose content is not provably in a verified pack.
+- Every unpacked member verifies against its `raw_sha256` on write.
+- The flattened population contains no two objects with identical content.
+- `ops.artifacts_queue` is not written; no silver row is written.
 
 ---
 
-## Stage 4–5 — Compare to silver, then apply (CAR-21)
+## Stage 4 — Parse the flattened population (CAR-23)
 
-Compare the parsed table to March–May silver on `(listing_id, fetched_at)` with
-a **300 s** tolerance, counting observations from any source because carousel
+Run `parse_cars_detail_page_html_v1` **unmodified** over the flattened
+population and write primary and carousel rows to `recovery/plan145/parsed/`.
+
+- Decode exactly as step 6 does: `read_html(...).decode("utf-8", errors="replace")`.
+- `fetched_at` is authoritative from the legacy manifest row, or from
+  `artifacts_queue_events` for a pack-only object; never from the parser or
+  the run.
+- Parsed listing identity is compared to manifest identity; disagreements are
+  reported, never silently resolved.
+- Block pages are classified and excluded from the import set, per *The
+  block-page defect*.
+- Body-size distribution is measured up front, so the sub-1 KiB cohort
+  (Plan 137 recorded 5,741; this plan measures 54,341 in the 256–511 band)
+  arrives as a number rather than as thousands of parse failures.
+
+Cost: 90.7 ms/page over ~993,767 pages ≈ 25 core-hours. A process pool is
+required — bs4/lxml is GIL-bound, one process ≈ one core. The host has 4 and
+production needs some.
+
+### Gate
+
+- Every input is parsed or carries an explicit recorded failure.
+- Every parsed row carries the authoritative capture time.
+- The block-page cohort is measured and excluded, with counts.
+- No production mutation outside the recovery prefix.
+
+---
+
+## Stage 5 — Compare to silver, then apply (CAR-21)
+
+Compare parsed output to March–May silver on `(listing_id, fetched_at)` with a
+**300 s** tolerance, counting observations from any source, because carousel
 rows are real coverage produced by detail artifacts.
 
-Produce two immutable outputs: observations already represented, and
-observations to import. Then write the import set into silver with the
-authoritative legacy capture time, in capped batches, dry-run first.
+Produce two immutable outputs — already represented, and to import — then
+write the import set with the treatment table above: silver rows and
+historical price events at the legacy capture time, sequence-allocated
+`artifact_id`s, `recovered` queue events, and **no** mutation of
+`ops.price_observations`, `ops.vin_to_listing`, `ops.blocked_cooldown`,
+`ops.detail_scrape_claims`, or live message emission.
 
-The recovery path must not mutate `ops.price_observations`,
-`ops.vin_to_listing`, `ops.blocked_cooldown`, `ops.detail_scrape_claims`, or
-emit live messages. Run an approximately 500-observation canary against
-normal-parser controls, with before/after snapshots of live tables and V040
-views, before the full apply.
+Run an approximately 500-observation canary against normal-parser controls,
+with before/after snapshots of live tables and V040 views, before the full apply.
 
 ### Gate
 
 - Every parsed observation is classified exactly once.
 - No duplicate `(listing_id, fetched_at)` observation is written.
 - Silver and price-event times equal the legacy capture time.
+- Every recovered artifact carries a sequence-allocated `artifact_id`; none is
+  computed from `max()`.
+- No row is inserted into `ops.artifacts_queue`.
 - Live pricing, VIN, cooldown, claim and refresh state is unchanged.
 - The carousel fan-out is measured and reviewed before the full apply.
 
@@ -363,19 +368,17 @@ views, before the full apply.
 
 ## Stage 6 — Repack, prune and delete (CAR-22)
 
-Run the existing April packer over the complete individual-object population,
-which by this point includes the materialized objects. Verify every member,
-then retire the superseded packs and sidecars by exact reviewed manifest, then
-run the existing prune to delete the individual objects.
-
-Keep the original April packs until the replacements verify. The temporary
-duplication is ~2.13 GB and it is what makes every step before deletion
-reversible.
+Run the existing packer over the flattened population, which by now is
+complete and — for everything that reached silver — attributable. Verify every
+member, retire the superseded packs and sidecars by exact reviewed manifest,
+then run the existing prune.
 
 Finally, regenerate the exact 1,172-key deletion manifest from the frozen
-Stage 1 object census and, with named approval, delete those keys in capped
-batches with receipts. Deletion is by exact key, never by prefix, and the 127
+Stage 1 census and, with named approval, delete those keys in capped batches
+with receipts. Deletion is by exact key, never by prefix, and the 127
 `results_page` keys must not appear.
+
+Keep the original April packs until the replacements verify.
 
 No new pack format, generation selector, reader contract or prune algorithm is
 part of this plan.
@@ -385,6 +388,8 @@ part of this plan.
 - Every retained member reads byte-identically before old packs are retired.
 - The existing packer verifies every replacement member; prune reports zero
   unexplained failures.
+- Sidecar NULL-identity members drop from 99,981 to the 42,276 that have no
+  `artifacts_queue_events` row, or the difference is explained.
 - Deleted, absent and failed legacy-key counts reconcile to exactly 1,172.
 - The legacy `detail_page` prefix contains zero Parquet objects.
 - The legacy `results_page` population is unchanged.
@@ -393,15 +398,19 @@ part of this plan.
 
 ## Testing
 
-- fixture Parquet in the exact Plan 72 schema — partition columns absent, as
-  in production — proving census, hash recomputation and duplicate collapse;
-- disposition rules, content-derived key stability, and the refusal to write
-  when a read-back hash disagrees;
+- fixture Parquet in the exact Plan 72 schema proving census, hash
+  recomputation and duplicate collapse;
+- disposition rules, content-derived key stability, and refusal to write on a
+  read-back hash disagreement;
+- the deletion join refusing a key whose content is not in a verified pack;
+- the unpack preserving original keys and verifying every member;
 - the parser consuming production-decoded HTML with manifest identity and
   authoritative time;
-- comparison partitioning every parsed observation exactly once under the
-  chosen tolerance;
-- a real-Postgres test proving live tables and V040 views are unchanged;
+- block-page classification, against real Akamai and Cloudflare bodies;
+- comparison partitioning every parsed observation exactly once;
+- a real-Postgres test proving `artifact_id` comes from the sequence, that no
+  `artifacts_queue` row is created, and that live tables and V040 views are
+  unchanged;
 - existing pack/read/prune integration tests as the Stage 6 storage proof;
 - deletion refusing a results-page key, an unapproved run, or an unverified
   manifest.
@@ -416,14 +425,18 @@ part of this plan.
 | Legacy results Parquet deleted | 0 |
 | Distinct successful captures unaccounted for | 0 |
 | Materialized objects failing read-back | 0 |
+| Objects deleted whose content was not in a verified pack | 0 |
 | Duplicate `(listing_id, fetched_at)` writes | 0 |
+| Block pages imported as observations | 0 |
+| Recovered artifacts without a sequence-allocated `artifact_id` | 0 |
+| Rows inserted into `ops.artifacts_queue` | 0 |
 | Legacy `artifact_id` used as a join key | 0 |
 | Sidecar `listing_id` used as a join key | 0 |
 | Hot-state mutations caused by recovery | 0 |
 | Deletion without named approval | 0 |
 
 Unrecoverable by construction, and accepted as a closed loss: the **11,453**
-successful captures that have no bytes in the Parquet, no surviving individual
+successful captures with no bytes in the Parquet, no surviving individual
 object, and no silver observation.
 
 ---
@@ -431,11 +444,12 @@ object, and no silver observation.
 ## Rollback and stopping points
 
 - **After Stage 1:** nothing to roll back.
-- **During Stage 2:** stop between source files. Materialized objects are
-  inert — nothing reads them until Stage 3 — and content-derived keys mean a
-  restart resumes rather than duplicates. Objects may be deleted by exact
-  manifest.
-- **During Stage 3:** parsing writes only to the recovery prefix.
+- **During Stage 2:** stop between source files; content-derived keys mean a
+  restart resumes rather than duplicates.
+- **During Stage 3a:** deleted objects are recoverable from the packs, which
+  are untouched. `read_html` falls back to the pack throughout.
+- **During Stage 3b:** stop between packs; existing keys are skipped.
+- **During Stage 4:** parsing writes only to the recovery prefix.
 - **During Stage 5:** stop between capped batches; written observations remain
   valid.
 - **During Stage 6:** the original packs remain authoritative until the
@@ -451,8 +465,8 @@ object, and no silver observation.
 |---|---|
 | 132 | Superseded; its orphan measurements remain evidence |
 | 137 | Superseded; its census and its sub-1 KiB cohort remain evidence |
-| 131 | Its pack, verify, fallback and prune machinery carries Stage 6 |
-| 133 | Its hardened pack read path carries the parse stage |
+| 131 | Its pack, verify, fallback and prune machinery carries Stages 3 and 6 |
+| 133 | Its hardened pack read path carries the unpack |
 | 111/112/113 | Receive the recovered April observations; no live refresh state changes |
 
 ---
@@ -461,8 +475,8 @@ object, and no silver observation.
 
 - All legacy and current `results_page` cleanup.
 - Preserving 403 challenge pages or 5xx response bodies.
-- Fixing the unrelated April `detail/active` null-price parser gap.
+- **Fixing `_detect_challenge`'s blindness to non-Cloudflare block pages.**
+  Measured, documented and filtered here; the parser fix is its own ticket so
+  that this plan's comparison runs against an unmodified parser.
 - A reusable historical-reprocessing framework.
 - A new pack format, generation selector, reader or prune algorithm.
-- Correcting the sidecar `listing_id` defect, which this plan documents and
-  routes around but does not fix.
