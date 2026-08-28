@@ -332,10 +332,15 @@ of distinct captures, and every later stage reads one store.
 | | count |
 |---|---:|
 | distinct successful legacy captures with bytes | 797,073 |
-| of which content already in the packs (45.6% measured over 392 shards) | ~371,000 |
-| materialized objects surviving step 2 | ~436,702 |
+| of which content already in the packs, deleted in step 2 | 371,095 |
+| materialized objects surviving step 2 | 425,978 |
 | April pack members unpacked in step 3 | 557,065 |
-| **flattened population** | **~993,767** |
+| **flattened population** | **983,043** |
+
+Reconciled 2026-08-28 against the Stage 3a receipts; the earlier projection of
+~993,767 was taken before 3a ran. `EXPECTED_FLATTENED_INPUTS` in
+`scripts/reconcile_april_detail.py` carries the reconciled figure, and the
+Stage 5 slice-1 probe reproduces it (see *Evidence — slice 1*).
 
 Peak object count never exceeds the end state, because the deletion precedes
 the unpack.
@@ -499,8 +504,8 @@ Compare parsed output to March–May silver on `(listing_id, fetched_at)` with a
 **300 s** tolerance, counting observations from any source, because carousel
 rows are real coverage produced by detail artifacts.
 
-Produce two immutable outputs — already represented, and to import — then
-write the import set with the treatment table above: silver rows and
+Produce three immutable outputs — already represented, to import, and
+unclassifiable — then write the import set with the treatment table above: silver rows and
 historical price events at the legacy capture time, preserved or
 sequence-allocated `artifact_id`s, `recovered` queue events, and **no** mutation of
 `ops.price_observations`, `ops.vin_to_listing`, `ops.blocked_cooldown`,
@@ -675,9 +680,64 @@ require byte-equivalent results before restarting the writers. Pausing or
 resuming those services remains a manual, separately approved production
 action.
 
+### Evidence — slice 1, 2026-08-28
+
+`compare` is implemented and merged (PR #265, `master` at `48987c1`). It adds a
+third output family the short design above did not have: **`unclassifiable`**,
+for a parsed row that cannot be windowed and cannot be imported. Two reasons
+are counted apart — `no_capture_time`, the tier-3 pages the design already
+expected at ~760, and `no_listing_id`, tier-2 rows that resolve a capture time
+but no listing. `staging.silver_observations.listing_id` is NOT NULL, so the
+second is no more importable than the first, and without the family those rows
+would have reached `to_import`. The three families are asserted to sum to the
+parsed row total, which is what makes *classified exactly once* enforceable.
+
+Two dry-run probes against the completed Stage 4 units, on the VM. Both wrote
+nothing and issued no VIN query.
+
+| | 20 units | 315 units |
+|---|---:|---:|
+| parsed rows | 44,446 | 657,963 |
+| source objects | 7,866 | 113,438 |
+| already represented | 77.2% | **80.7%** |
+| to import | 22.8% | **19.3%** |
+| unclassifiable | 0 | 0 |
+| more than one silver candidate | 21.04% | **21.1%** |
+| carousel rows per object | 4.65 | 4.80 |
+| recovery duplicates collapsed | 0 | 0 |
+| unrepresented captures with a neighbour ≤300 s | 39.1% of to-import | **21.3%** |
+
+The multiple-candidate share is stable across a 15× increase in sample and
+agrees with the 2026-08-27 design probe's 18%, which is the evidence that the
+existence test behaves consistently at scale. Object counts extrapolate to
+~978,000 against `EXPECTED_FLATTENED_INPUTS`'s 983,043, so the arithmetic
+closes. Memory did not move on the Grafana panels; CPU spiked.
+
+**What these numbers are not.** Every completed unit is a materialized legacy
+body, because Stage 4 walks a key-sorted inventory and the 32 unpacked shards
+sort last. So the population behind both probes is tier-1 identity only, and:
+
+- the `unclassifiable` cohort reads 0 because tier-1 resolves both halves of
+  identity every time — the `no_listing_id` population lives on the pack side
+  and remains unmeasured;
+- `recovery duplicates 0` is likewise structural: materialized survivors are
+  distinct-content by construction, so nothing can collapse;
+- both gates, and the fingerprint-conflict stop, have therefore never fired on
+  real data.
+
+**One finding that needs a ruling before slice 2 applies.** 27,078 of 127,048
+`to_import` rows — 21.3%, concentrated in 3,169 listings at ~8.5 each — are
+unrepresented captures with another unrepresented capture within 300 s. This is
+the asymmetry between the two windows: representation tests ±300 s, duplicate
+collapse tests an exact `(listing_id, fetched_at)`, so these all survive as
+distinct rows. They are most likely genuine burst re-scrapes and genuinely
+importable, and collapsing them would discard real history. The plan records
+the measurement; the decision is the maintainer's.
+
 ### Gate
 
-- Every parsed observation is classified exactly once.
+- Every parsed observation is classified exactly once, into one of the three
+  families, whose counts sum to the parsed row total.
 - The final comparison names and fingerprints every parsed, silver,
   artifact-event and VIN-lookup input it used.
 - No duplicate `(listing_id, fetched_at)` observation is written.

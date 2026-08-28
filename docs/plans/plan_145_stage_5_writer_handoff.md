@@ -1,7 +1,14 @@
 # Plan 145 Stage 5, slice 2 — assignment and the historical write set (CAR-21)
 
-Hand this to a fresh session **after slice 1 has produced an authoritative
-`compare` run**. This is the first slice in Plan 145 that writes to Postgres.
+Hand this to a fresh session. This is the first slice in Plan 145 that writes
+to Postgres.
+
+**Slice 1 is merged** (PR #265, `master` at `48987c1`), but **no authoritative
+`compare` run exists yet and cannot until Stage 4 finishes** — it was at
+315 of 1,204 units on 2026-08-28. So everything here is built and proven against
+fixtures and a real-Postgres integration test, which is what this document
+already asks for. Do not wait on Stage 4 to start; do not pretend to have run
+against real compare output when you have not.
 
 Read `docs/plans/plan_145_april_cutover_reconciliation.md` — its **Stage 5**
 section is the specification, and *The production lifecycle of a captured page*
@@ -25,6 +32,53 @@ Two modes on `scripts/reconcile_april_detail.py`, plus one Flyway migration.
 |---|---|---|
 | `assign` | `compared/<run_id>/to_import/` | `recovery/plan145/assigned/<batch>.parquet`, and `nextval` on one sequence |
 | `apply` | the assignment shards | three staging tables and the receipt table, one transaction per batch |
+
+---
+
+## What slice 1 settled, and what it left you
+
+Read this before the identity section; three of these change what you build.
+
+**`to_import` carries the parsed row schema plus a `reason` column** (NULL for a
+winner). `already_represented` additionally carries `match_count`,
+`nearest_distance_s` and `match_sources`; you do not read that family. The
+parsed schema is `_parsed_rows_schema()` in `scripts/reconcile_april_detail.py`.
+
+**A third output family exists that the plan's short design did not have.**
+`unclassifiable` holds rows that cannot be windowed and cannot be imported, for
+two counted-apart reasons: `no_capture_time` (tier-3 pages, expected ~760) and
+`no_listing_id` (tier-2 rows that resolve a capture time but no listing).
+`staging.silver_observations.listing_id` is NOT NULL, so the second is no more
+importable than the first.
+
+**So every `to_import` row has a non-NULL `listing_id` — but that invariant is
+enforced by a path nothing has exercised on real data.** Both probes ran on a
+materialized-only population where tier-1 identity always resolves, so the
+cohort read 0 both times. Validate rather than assume: a NULL `listing_id`
+reaching your writer is a stop, not a skip, exactly like the non-UUID case
+below.
+
+**Sizing, from the 315-unit probe (2026-08-28).** `to_import` was 19.3% of
+parsed rows at ~5.8 rows per source object. Extrapolated to the full 983,043
+objects that is roughly **1.1M import rows across ~190k artifacts — about 38
+batches** against the 5,000-artifact / 50,000-row caps. The receipt table's
+retry path is therefore routine traffic, not a corner case; build and test it as
+such. Treat the ratio as an order of magnitude, not a forecast — the unpacked
+half of the population has not been measured.
+
+**Do not collapse near-neighbour captures.** 21.3% of `to_import` rows have
+another unrepresented capture of the same listing within 300 s, concentrated in
+~3,169 listings. That is the deliberate asymmetry between the two windows:
+representation tests ±300 s, duplicate collapse tests an exact
+`(listing_id, fetched_at)`. They are most likely genuine burst re-scrapes, and
+collapsing them would discard real history. The maintainer rules on this before
+any full apply; your job is to write what compare handed you.
+
+**One lesson from slice 1's review, which applies to any gate you add.** Scope a
+refusal to `apply and not probe`. Slice 1 shipped a magnitude gate that fired on
+dry runs too, so the run whose only job was to measure a cohort died with one
+sentence instead of reporting it. A gate that stops a run which writes nothing
+protects nothing.
 
 ---
 
@@ -131,10 +185,18 @@ grant for `scraper_user` on that table anywhere in `db/migrations/`.
 
 Run this slice from the **`april-processor`** profile instead, which connects as
 `cartracker` (`docker-compose.yml:557`) — the role production's own processing
-service uses for exactly these three writes. It has no duckdb, which this slice
-does not need. Verify the effective grants before the first `--apply` and
-record what you found; if you choose to grant `scraper_user` INSERT instead,
-that is a second migration and a separate decision.
+service uses for exactly these three writes. Verify the effective grants before
+the first `--apply` and record what you found; if you choose to grant
+`scraper_user` INSERT instead, that is a second migration and a separate
+decision.
+
+**That choice constrains how you read Parquet.** `april-processor` builds from
+`processing/Dockerfile`, whose requirements have **no duckdb** — slice 1 runs in
+`cartracker-archiver` precisely because it needed it. So read the assignment and
+`to_import` shards with **pyarrow**, not duckdb. The import is lazy in this file,
+so a duckdb dependency would not fail at startup: it would fail after the run had
+already done its I/O. Slice 1 has both patterns in it; `_read_parquet_rows` is the
+pyarrow one.
 
 ```
 docker compose run --rm april-processor python -m \
