@@ -29,8 +29,10 @@ takes three), which *flattens* the population before parsing it:
   audit row per object. It never writes Postgres or production silver.
 * ``compare`` (Stage 5, slice 1) -- classifies every parsed observation against
   the deployed March-May silver on ``same listing_id AND abs(dt) <= 300s`` into
-  ``already_represented`` / ``to_import`` / ``unclassifiable`` under
-  ``recovery/plan145/compared/<run_id>/``, freezes the input inventory under
+  ``already_represented`` / ``to_import`` / ``unclassifiable`` /
+  ``blocked_excluded`` (whole objects whose detail row is an ``active`` page the
+  parser drew no price, VIN or make from -- a block page Stage 4 did not catch)
+  under ``recovery/plan145/compared/<run_id>/``, freezes the input inventory under
   ``recovery/plan145/inventory/<run_id>.json``, and writes one read-only VIN
   snapshot under ``recovery/plan145/vin_snapshot/<run_id>.parquet``. The only
   database statement it issues is that ``SELECT``; it writes no Postgres row and
@@ -2463,6 +2465,14 @@ def run_parse(args: argparse.Namespace) -> int:
 # and source / vin / artifact_id / every parsed business value are explicitly
 # *not* match keys. A parsed observation is:
 #
+#   * blocked_excluded    -- the object's detail row is an `active` page with
+#                            price, vin and make all NULL: a block page Stage
+#                            4's classifier missed because identity resolved.
+#                            The whole object is quarantined (detail + any
+#                            carousel rows) before classification is consulted,
+#                            so junk carousel hints read off an "Access Denied"
+#                            body never reach a family either. Independent of
+#                            body size by design -- see the Stage 5 handoff;
 #   * unclassifiable      -- fetched_at_source == 'none' (tier-3 identity, no
 #                            capture time): it cannot be windowed and cannot be
 #                            imported (silver.fetched_at is NOT NULL);
@@ -2470,7 +2480,7 @@ def run_parse(args: argparse.Namespace) -> int:
 #                            listing lies within +/-300 s, from any source;
 #   * to_import           -- zero candidates.
 #
-# The three families partition the parsed rows exactly -- that sum is what makes
+# The four families partition the parsed rows exactly -- that sum is what makes
 # the plan's "classified exactly once" gate enforceable.
 
 COMPARED_PREFIX = "recovery/plan145/compared"
@@ -2607,6 +2617,20 @@ def classify_from_summary(parsed_row: dict[str, Any],
         "nearest_distance_s": round(int(summary["nearest_us"]) / 1_000_000, 6),
         "match_sources": sorted(summary["match_sources"]),
     }
+
+
+#: The block-page signature, on an object's ``source == 'detail'`` parsed row.
+#: Stage 4's classifier only fires when identity did not resolve, so a block
+#: page whose listing_id resolved from ``legacy_manifest`` or ``queue_events``
+#: parses to an ``active`` detail row the parser drew no price, VIN or make
+#: from. It is deliberately independent of body size -- a size threshold would
+#: be a second, unproven rule (see the Stage 5 handoff).
+_BLOCK_VALUE_FIELDS = ("price", "vin", "make")
+
+
+def is_block_signature(row: dict[str, Any]) -> bool:
+    return (row.get("listing_state") == "active"
+            and all(row.get(name) is None for name in _BLOCK_VALUE_FIELDS))
 
 
 def classify_parsed_observation(parsed_row: dict[str, Any],
@@ -2901,6 +2925,41 @@ def _compare_run_complete(run_dir: str, inv_key: str) -> bool:
     from shared.minio import object_exists
 
     return object_exists(inv_key) and object_exists(f"{run_dir}/compare_report.json")
+
+
+def refuse_stale_compare_run(bucket: str, run_dir: str, run_id: str, *,
+                             apply: bool, probe: bool) -> None:
+    """Refuse a compare run that predates the block-page filter.
+
+    A ``compare_report.json`` with no ``blocked_excluded`` section is by
+    construction a run from before that filter. Its ``to_import`` family may
+    carry block pages in a shape the per-row check in :func:`_scan_to_import`
+    cannot see -- a block page's detail row can sit in ``already_represented``
+    while only its junk carousel rows reach ``to_import``.
+
+    Both ``assign`` and ``apply`` re-read the shards independently, so both
+    call this; ``apply`` especially, as the last check before the INSERT and
+    the one mode reachable from assignment shards written by an older build.
+
+    Keyed on ``apply``, not the report's truthiness: :func:`shared.minio.read_json`
+    returns ``None`` for a missing object, so a missing or empty report must
+    refuse an ``--apply`` run, not skip the gate. A dry run warns.
+    """
+    from shared.minio import read_json
+
+    report = read_json(f"s3://{bucket}/{run_dir}/compare_report.json") or {}
+    if "blocked_excluded" in report:
+        return
+    detail = (
+        f"compare run {run_id} predates the block-page filter (its "
+        f"compare_report.json has no 'blocked_excluded' section), so its "
+        f"to_import family may carry block pages the per-row check cannot see "
+        f"-- re-run `compare{' --probe' if probe else ''}` and re-assign before "
+        f"applying"
+    )
+    if apply:
+        raise ReconcileError(detail)
+    logger.warning("%s (advisory: dry run measures, does not gate)", detail)
 
 
 # -- output schemas -----------------------------------------------------
@@ -3325,15 +3384,67 @@ def run_compare(args: argparse.Namespace) -> int:
         detail_rows = carousel_rows = 0
         represented_written = 0
         unc_no_listing_id = unc_no_capture_time = 0
+        # -- blocked_excluded: block pages Stage 4's classifier missed ------
+        # Filtered at the object level, not the row level: if a block page also
+        # emitted carousel rows those are junk hints read off an "Access
+        # Denied" body, so the whole object is quarantined. Per-unit scope is
+        # correct -- an object's rows are all written by the unit that parsed
+        # it (a content-derived key in two units has a complete copy in each).
+        #
+        # blocked_carousel_objects is a maintainer signal, not a gate: a block
+        # body has no carousel, so a quarantined object with carousel rows is
+        # evidence the predicate caught a real page. Nobody has measured whether
+        # block pages emit carousel rows, so it is reported, never raised.
+        # blocked_detail_with_value only ever fires if is_block_signature is
+        # loosened -- a detail row it quarantined already matched price/vin/make
+        # all NULL -- so it is a cheap guard against a future edit, not a
+        # statement about real data.
+        blocked_written = 0
+        blocked_objects: set[str] = set()
+        blocked_carousel_objects: set[str] = set()
+        blocked_by_source: Counter[str] = Counter()
+        blocked_detail_with_value = 0
+        blocked_value_examples: list[dict[str, Any]] = []
 
         for uindex, unit in enumerate(unit_names, start=1):
             prows = pq.read_table(tmpdir / "rows" / f"{unit}.parquet").to_pylist()
             summaries = _summarise_unit(con, prows)
+            blocked_keys = {
+                row.get("object_key") for row in prows
+                if row.get("source") == "detail" and row.get("object_key")
+                and is_block_signature(row)
+            }
             rep_rows: list[dict[str, Any]] = []
             unc_rows: list[dict[str, Any]] = []
             ti_rows: list[dict[str, Any]] = []
+            blk_rows: list[dict[str, Any]] = []
             for rid, row in enumerate(prows):
                 src = row.get("source")
+                if row.get("object_key") in blocked_keys:
+                    out = dict(row)
+                    out["reason"] = "blocked_page"
+                    blk_rows.append(out)
+                    fam_counts["blocked_excluded"] += 1
+                    # str() to match `all_objects` (built with str(okey) in
+                    # Pass A); a type skew here would make `all_objects -
+                    # blocked_objects` subtract nothing and silently revert the
+                    # fan-out denominator to the including one.
+                    blocked_objects.add(str(row["object_key"]))
+                    blocked_by_source[src or "?"] += 1
+                    if src == "carousel":
+                        blocked_carousel_objects.add(str(row["object_key"]))
+                    elif src == "detail" and any(
+                        row.get(name) is not None for name in _BLOCK_VALUE_FIELDS
+                    ):
+                        blocked_detail_with_value += 1
+                        if len(blocked_value_examples) < 20:
+                            blocked_value_examples.append({
+                                "object_key": row.get("object_key"),
+                                "price": row.get("price"),
+                                "vin": row.get("vin"),
+                                "make": row.get("make"),
+                            })
+                    continue
                 if src == "detail":
                     detail_rows += 1
                     if row.get("vin") and row.get("listing_id"):
@@ -3370,7 +3481,11 @@ def run_compare(args: argparse.Namespace) -> int:
             _emit_compare_shard(run_dir, "unclassifiable", unit,
                                 _compared_schema("unclassifiable"), unc_rows,
                                 apply=apply)
+            _emit_compare_shard(run_dir, "blocked_excluded", unit,
+                                _compared_schema("blocked_excluded"), blk_rows,
+                                apply=apply)
             represented_written += len(rep_rows)
+            blocked_written += len(blk_rows)
             if ti_rows:
                 pq.write_table(
                     pa.Table.from_pylist(
@@ -3384,17 +3499,58 @@ def run_compare(args: argparse.Namespace) -> int:
                 logger.info("classified %d/%d units", uindex, len(unit_names))
 
         unclassifiable_written = unc_no_listing_id + unc_no_capture_time
+        blocked_excluded_written = blocked_written
 
-        # -- distinct carousel fan-out, over the whole localised population --
-        # Grouping by object_key across all row shards keeps a content-derived
-        # key that appears in two units bound to one object -- the same case
-        # `all_objects` fixes for the denominator (cf. 051f7d0).
+        # -- blocked_excluded cross-tab, from Stage 4's frozen inputs --------
+        # size_band and input_kind live only in parsed/inputs/, so the excluded
+        # objects are looked up there. object_key is on the parsed row, so the
+        # signature itself was decided in Pass B -- this pass only enriches it.
+        # It stops as soon as every excluded object has been seen.
+        blocked_size_band: Counter[str] = Counter()
+        blocked_input_kind: Counter[str] = Counter()
+        blocked_lid_source: Counter[str] = Counter()
+        if blocked_objects:
+            logger.info("blocked_excluded: %d rows over %d objects; reading "
+                        "parsed inputs for the size_band/input_kind cross-tab",
+                        blocked_excluded_written, len(blocked_objects))
+            seen: set[str] = set()
+            for obj in parsed_inputs:
+                for rec in _read_parquet_rows(
+                    client, bucket, obj["key"],
+                    columns=["object_key", "size_band", "input_kind",
+                             "listing_id_source"],
+                ):
+                    okey = rec.get("object_key")
+                    if okey in blocked_objects and okey not in seen:
+                        seen.add(okey)
+                        blocked_size_band[rec.get("size_band") or "?"] += 1
+                        blocked_input_kind[rec.get("input_kind") or "?"] += 1
+                        blocked_lid_source[rec.get("listing_id_source") or "?"] += 1
+                if len(seen) == len(blocked_objects):
+                    break
+
+        # -- distinct carousel fan-out, over the importable population -------
+        # Both terms describe importable objects only: `carousel_rows` already
+        # excludes blocked rows (they `continue` above the increment), so the
+        # denominator and this max must exclude the blocked objects too, or the
+        # ratio divides an excluding numerator by an including one.
         row_glob = str(tmpdir / "rows" / "*.parquet").replace("'", "''")
+        if blocked_objects:
+            con.register("blocked_okeys", pa.table(
+                {"object_key": pa.array(sorted(blocked_objects), pa.string())}))
+            not_blocked = ("AND object_key NOT IN "
+                           "(SELECT object_key FROM blocked_okeys) ")
+        else:
+            not_blocked = ""
         max_carousel_per_object = int(con.execute(
             "SELECT coalesce(max(c), 0) FROM (SELECT count(*) AS c FROM "
             f"read_parquet('{row_glob}') WHERE source = 'carousel' "
-            "AND object_key IS NOT NULL GROUP BY object_key)"
+            f"AND object_key IS NOT NULL {not_blocked}GROUP BY object_key)"
         ).fetchone()[0])
+        if blocked_objects:
+            con.unregister("blocked_okeys")
+        importable_objects = len(all_objects - blocked_objects)
+        importable_total = processed_total - blocked_excluded_written
 
         # -- the unclassifiable magnitude gates --------------------------
         # The ~760 expectation was sized for tier-3 pages with no capture time.
@@ -3429,6 +3585,28 @@ def run_compare(args: argparse.Namespace) -> int:
             logger.warning("%s (%s)", message,
                            "continuing: --allow-unclassifiable-drift" if apply and not probe
                            else "advisory: probe/dry run measures, does not gate")
+
+        # -- the blocked_excluded predicate-integrity guard --------------
+        # Scoped to the detail row that did the quarantining: it already
+        # matched price/vin/make all NULL one step earlier, so this can only
+        # fire if is_block_signature has been loosened and the filter is no
+        # longer precise. A quarantined object's carousel rows legitimately
+        # carry a price (Stage 4 drops NULL-price carousel hints), so they are
+        # never checked here -- that signal is blocked_carousel_objects in the
+        # report, a maintainer ruling, not a stop. Authoritative --apply
+        # stops; a dry run and a probe warn and report.
+        if blocked_detail_with_value:
+            keys = [e["object_key"] for e in blocked_value_examples[:5]]
+            message = (
+                f"{blocked_detail_with_value:,} block-page detail row(s) carry a "
+                f"non-NULL price, vin or make (e.g. {keys}); a detail row "
+                f"is_block_signature quarantined cannot, so the predicate has "
+                f"been loosened and the filter is no longer precise"
+            )
+            if apply and not probe:
+                raise ReconcileError(message)
+            logger.warning("%s (advisory: probe/dry run measures, does not gate)",
+                           message)
 
         # -- global duplicate resolution, over the temp shards ----------
         loser_uids, dup_report = _resolve_toimport_duplicates(
@@ -3478,10 +3656,11 @@ def run_compare(args: argparse.Namespace) -> int:
             dedupe_losers += len(lose)
 
         already_total = represented_written + dedupe_losers
-        family_sum = already_total + to_import_final + unclassifiable_written
+        family_sum = (already_total + to_import_final + unclassifiable_written
+                      + blocked_excluded_written)
         if family_sum != processed_total:
             raise ReconcileError(
-                f"the three families sum to {family_sum} but {processed_total} "
+                f"the four families sum to {family_sum} but {processed_total} "
                 f"parsed rows were processed; classification is not a partition"
             )
 
@@ -3553,31 +3732,38 @@ def run_compare(args: argparse.Namespace) -> int:
                 "already_represented": already_total,
                 "to_import": to_import_final,
                 "unclassifiable": unclassifiable_written,
+                "blocked_excluded": blocked_excluded_written,
                 "sum": family_sum,
                 "pre_dedupe": {
                     "already_represented": fam_counts["already_represented"],
                     "to_import": fam_counts["to_import"],
                     "unclassifiable": fam_counts["unclassifiable"],
+                    "blocked_excluded": fam_counts["blocked_excluded"],
                 },
             },
             "carousel_fan_out": {
                 "detail_rows": detail_rows,
                 "carousel_rows": carousel_rows,
-                "objects": len(all_objects),
+                "objects": importable_objects,
+                "objects_excluded_as_blocked": len(blocked_objects),
                 "carousel_per_detail_row": (
                     round(carousel_rows / detail_rows, 4) if detail_rows else None
                 ),
                 "carousel_per_object": (
-                    round(carousel_rows / len(all_objects), 4)
-                    if all_objects else None
+                    round(carousel_rows / importable_objects, 4)
+                    if importable_objects else None
                 ),
                 "max_carousel_per_object": max_carousel_per_object,
+                "note": "measured over importable objects only -- the "
+                        "blocked_excluded objects are out of both the numerator "
+                        "and the denominator, so this is a sharper figure than "
+                        "the probe's, not drift.",
             },
             "multiple_candidate_share": {
-                "observations": processed_total,
+                "observations": importable_total,
                 "with_multiple_candidates": multi_candidate,
-                "share": (round(multi_candidate / processed_total, 4)
-                          if processed_total else None),
+                "share": (round(multi_candidate / importable_total, 4)
+                          if importable_total else None),
             },
             "match_count_distribution": {
                 str(k): match_hist[k] for k in sorted(match_hist)
@@ -3600,6 +3786,28 @@ def run_compare(args: argparse.Namespace) -> int:
                     unc_no_capture_time > args.max_unclassifiable
                     or unc_no_listing_id > args.max_no_listing_id
                 ),
+            },
+            "blocked_excluded": {
+                "signature": "detail row: listing_state == 'active' AND price "
+                             "IS NULL AND vin IS NULL AND make IS NULL; the "
+                             "whole object is quarantined, size-independent",
+                "rows": blocked_excluded_written,
+                "objects": len(blocked_objects),
+                "by_source": dict(sorted(blocked_by_source.items())),
+                "objects_that_emitted_carousel_rows": len(blocked_carousel_objects),
+                "size_band": dict(sorted(blocked_size_band.items())),
+                "by_input_kind": dict(sorted(blocked_input_kind.items())),
+                "by_listing_id_source": dict(sorted(blocked_lid_source.items())),
+                "detail_rows_carrying_a_business_value": blocked_detail_with_value,
+                "value_examples": blocked_value_examples,
+                "note": "objects_that_emitted_carousel_rows is a maintainer "
+                        "ruling, not a gate: a 439-byte block body has no "
+                        "carousel, so a nonzero count is evidence the predicate "
+                        "caught a real page -- it was never measured, and zero "
+                        "is the confirmation the plan never got. Family "
+                        "percentages also move: rows a block page put in "
+                        "already_represented now land here -- excluded, not "
+                        "represented, and not drift.",
             },
             "vin_collisions": vin_collisions,
             "refusals": refusals,
@@ -3648,13 +3856,29 @@ def _print_compare_report(report: dict[str, Any], *, apply: bool, probe: bool) -
     print(f"parsed row total     {report['parsed_row_total']:>12,}")
     print()
     unc = report["unclassifiable"]
+    blk = report["blocked_excluded"]
     print(f"  already_represented {fam['already_represented']:>12,}")
     print(f"  to_import           {fam['to_import']:>12,}")
     print(f"  unclassifiable      {fam['unclassifiable']:>12,}"
           f"  (no_capture_time {unc['no_capture_time']:,}/~{unc['expectation_no_capture_time']}"
           f", no_listing_id {unc['no_listing_id']:,}/ceil {unc['ceiling_no_listing_id']:,})")
+    print(f"  blocked_excluded    {blk['rows']:>12,}"
+          f"  ({blk['objects']:,} objects, {blk['objects_that_emitted_carousel_rows']:,}"
+          f" with carousel rows; by_source {blk['by_source']})")
     print(f"  sum                 {fam['sum']:>12,}"
           f"  {'OK' if fam['sum'] == report['parsed_row_total'] else 'MISMATCH'}")
+    if blk["rows"]:
+        print(f"  blocked size_band  {blk['size_band']}")
+        print(f"  blocked input_kind {blk['by_input_kind']}"
+              f"  id_source {blk['by_listing_id_source']}")
+        if blk["objects_that_emitted_carousel_rows"]:
+            print(f"  -> {blk['objects_that_emitted_carousel_rows']:,} quarantined "
+                  f"objects emitted carousel rows -- MAINTAINER RULING (a block "
+                  f"body has no carousel)")
+        if blk["detail_rows_carrying_a_business_value"]:
+            print(f"  -> {blk['detail_rows_carrying_a_business_value']:,} blocked "
+                  f"detail rows carry a value -- is_block_signature is no longer "
+                  f"precise")
     print()
     print(f"carousel fan-out     {fan['carousel_per_object']} per object over "
           f"{fan['objects']:,} objects, max {fan['max_carousel_per_object']}")
@@ -4332,7 +4556,8 @@ def _scan_to_import(client, bucket: str, run_dir: str
         unit = key.rsplit("/", 1)[-1].removesuffix(".parquet")
         rows = _read_parquet_rows(
             client, bucket, key,
-            columns=["object_key", "listing_id", "source", "fetched_at"],
+            columns=["object_key", "listing_id", "source", "fetched_at",
+                     "listing_state", "price", "vin", "make"],
         )
         for row in rows:
             total_rows += 1
@@ -4346,6 +4571,13 @@ def _scan_to_import(client, bucket: str, run_dir: str
                                listing_id=row.get("listing_id"))
             if row.get("fetched_at") is None:
                 violations.add("null_fetched_at", unit=unit, object_key=object_key)
+            # Defence in depth: compare's blocked_excluded filter is the primary
+            # guard, but a compare run predating it can be assigned by a build
+            # that has this check. Count the whole cohort, then refuse.
+            if row.get("source") == "detail" and is_block_signature(row):
+                violations.add("block_page_signature", unit=unit,
+                               object_key=object_key,
+                               listing_id=row.get("listing_id"))
             record = objects.get(object_key)
             if record is None:
                 objects[object_key] = record = {
@@ -4441,7 +4673,7 @@ def _no_allocation(count: int) -> list[int]:
 
 def run_assign(args: argparse.Namespace) -> int:
     from shared.minio import BUCKET as DEFAULT_BUCKET
-    from shared.minio import object_exists, write_bytes
+    from shared.minio import object_exists, read_json, write_bytes
 
     bucket = args.bucket or DEFAULT_BUCKET
     client = _s3_client()
@@ -4459,6 +4691,13 @@ def run_assign(args: argparse.Namespace) -> int:
         if apply:
             raise ReconcileError(detail + "; finish slice 1 before assigning")
         logger.warning("%s (advisory: dry run measures, does not gate)", detail)
+
+    # The per-row check in _scan_to_import only sees the detail row that
+    # carries the signature; a block page's detail row can sit in
+    # already_represented while only its junk carousel rows reach to_import.
+    # Refuse the whole stale run rather than trust the per-row check to catch
+    # every shape of leakage.
+    refuse_stale_compare_run(bucket, run_dir, run_id, apply=apply, probe=probe)
 
     objects, violations, to_import_rows = _scan_to_import(client, bucket, run_dir)
     identity = _load_import_identity(client, bucket, set(objects))
@@ -4503,8 +4742,6 @@ def run_assign(args: argparse.Namespace) -> int:
     # name. The recorded caps make that a stop.
     report_key = _assign_report_key(run_id, roots.assigned)
     if object_exists(report_key):
-        from shared.minio import read_json
-
         previous = read_json(f"s3://{bucket}/{report_key}") or {}
         prior_caps = previous.get("caps") or {}
         if prior_caps and prior_caps != {"max_artifacts": args.max_artifacts,
@@ -4732,6 +4969,14 @@ def run_apply(args: argparse.Namespace) -> int:
             f"unknown batch name(s) {unknown}; this run has {len(all_names)} batches "
             f"from {all_names[0]} to {all_names[-1]}"
         )
+
+    run_dir = f"{roots.compared}/{run_id}"
+    # apply re-reads the shards independently and is the last check before the
+    # INSERT -- and the one mode reachable from assignment shards an older
+    # build wrote. `assign` refuses a stale run going forward; this refuses one
+    # whose shards already exist.
+    refuse_stale_compare_run(bucket, run_dir, run_id, apply=apply, probe=probe)
+
     # The blast radius, from the assignment shards, before anything is written.
     plan_rows: list[dict[str, Any]] = []
     for name in selected:
@@ -4768,7 +5013,6 @@ def run_apply(args: argparse.Namespace) -> int:
         )
 
     vin_map = _load_vin_snapshot(client, bucket, run_id, roots.vin_snapshot)
-    run_dir = f"{roots.compared}/{run_id}"
 
     # Batches are ordered by object_key while a to_import shard is one Stage 4
     # work unit, and materialized keys are content-derived -- so the two orders
@@ -5718,7 +5962,8 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         "compare",
         help="Stage 5 slice 1: classify parsed observations against deployed "
              "March-May silver into already_represented / to_import / "
-             "unclassifiable. Writes no Postgres row and no production object.",
+             "unclassifiable / blocked_excluded. Writes no Postgres row and no "
+             "production object.",
     )
     cmp_.add_argument("--apply", action="store_true",
                       help="Write the compared shards, the input inventory freeze "

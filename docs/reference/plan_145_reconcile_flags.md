@@ -156,6 +156,54 @@ and lets the report carry the counts. Measured 2026-08-28: neither is expected
 to trip, because the 5,260 objects without a capture time are all block pages
 and emit no rows.
 
+**Four families, not three.** `compare` classifies into `already_represented`,
+`to_import`, `unclassifiable` and — since Plan 145 Stage 5's block-page filter —
+`blocked_excluded`. Stage 4's block-page classifier is structurally dead for any
+object whose identity resolved, so a block page with a `legacy_manifest` /
+`queue_events` listing id parsed to an `active` detail row with `price`, `vin`
+and `make` all NULL and leaked into the other families. `compare` now
+quarantines the **whole object** (its detail row and any carousel rows it
+emitted) into `blocked_excluded` with `reason = blocked_page`, before
+`classify_from_summary` is consulted. The signature is on the detail row and is
+**independent of body size** by design. The four families sum to the parsed row
+total — that is what makes "classified exactly once" enforceable — and the
+`blocked_excluded` report section carries the row and object counts, the
+detail/carousel split, `objects_that_emitted_carousel_rows`, and the
+`size_band` / `input_kind` / `listing_id_source` cross-tabs of the excluded
+objects.
+
+There is **no flag and no magnitude ceiling** (the cohort size is the
+measurement). Two things are surfaced for a maintainer:
+
+- `objects_that_emitted_carousel_rows` — a 439-byte block body has no carousel,
+  so a nonzero count is evidence the predicate caught a real page. This is
+  **reported, never raised**: nobody has measured whether block pages emit
+  carousel rows, and a hard stop on an unmeasured number would be a gate tuned
+  to an assumption. Zero is the confirmation the plan never got.
+- `detail_rows_carrying_a_business_value` — tautologically zero today (a
+  quarantined detail row matched `price/vin/make` all NULL). It is a cheap
+  predicate-integrity guard: if `is_block_signature` is ever loosened so a
+  quarantined detail row can carry a value, an `apply and not probe` run
+  **stops** (a dry run or probe warns).
+
+`assign` **and** `apply` both **refuse any run whose `compare_report.json` has
+no `blocked_excluded` section** — such a report is by construction a compare run
+that predates the filter, and its `to_import` family may carry block pages in a
+shape the per-row check cannot see (a block page's detail row can sit in
+`already_represented` while only its junk carousel rows reach `to_import`). Both
+modes re-read the shards independently, so both check; `apply` especially, as
+the last stop before the INSERT and the one mode reachable from assignment
+shards an older build wrote. The refusal is keyed on `--apply`, not on the
+report being present, so a missing or empty report fails closed. Re-run
+`compare` (and re-`assign`) first. In addition, `assign` re-checks the
+detail-row signature on every `to_import` row as defence in depth and refuses
+the population — reporting the whole cohort's size, capped examples — which
+catches the plain case where the detail row itself is in `to_import`.
+
+The carousel fan-out and multi-candidate share are now measured over importable
+objects only (the `blocked_excluded` objects are out of both numerator and
+denominator), which makes them sharper than the probe's figures, not drift.
+
 ### `assign` (Stage 5 slice 2)
 | flag | default | meaning |
 |---|---|---|

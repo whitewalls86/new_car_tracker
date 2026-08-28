@@ -1747,8 +1747,11 @@ def _compare_fixture_store(tmp_path):
     shard_a = [
         _prow(l1, _WHEN, object_key="html/a1.zst", content_sha256="s1", price=100),
         _prow(l2, _WHEN, object_key="html/a2.zst", content_sha256="s2", price=200),
+        # A real price but no capture time: exercises the no_capture_time path
+        # without also tripping the blocked_excluded signature (active + price/
+        # vin/make all NULL), which quarantines the object before classifying.
         _prow(l3, None, fetched_at_source="none", object_key="html/a3.zst",
-              content_sha256="s3"),
+              content_sha256="s3", price=300),
         _prow(l4, _WHEN, object_key="html/a4.zst", content_sha256="s4", price=400),
     ]
     shard_b = [
@@ -1915,7 +1918,7 @@ def test_run_compare_apply_stops_on_any_no_listing_id_row_until_the_maintainer_r
         _write_parsed_rows_fixture(
             tmp_path / "rows-c.parquet",
             [_prow(listing_id=None, fetched_at=_WHEN, fetched_at_source="queue_events",
-                   object_key="html/c1.zst", content_sha256="sc1")],
+                   object_key="html/c1.zst", content_sha256="sc1", price=300)],
         )
     _patch_compare_io(monkeypatch, store, [(l1, "VIN-L1")], rows=6)
 
@@ -1963,7 +1966,7 @@ def test_run_compare_probe_measures_the_no_listing_id_cohort_instead_of_dying(
         _write_parsed_rows_fixture(
             tmp_path / "rows-c.parquet",
             [_prow(listing_id=None, fetched_at=_WHEN, fetched_at_source="queue_events",
-                   object_key="html/c1.zst", content_sha256="sc1")],
+                   object_key="html/c1.zst", content_sha256="sc1", price=300)],
         )
     _patch_compare_io(monkeypatch, store, [(l1, "VIN-L1")], rows=6)
     written_before = set(store)
@@ -2195,7 +2198,9 @@ def _slice2_fixture_store(tmp_path):
             _ti_row(l4, _PACK_ORPHAN, listing_state="unlisted", make="Kia",
                     model="Niro"),
         ])
-    store[f"recovery/plan145/compared/{_RUN}/compare_report.json"] = b"{}"
+    # a post-block-filter compare report (carries the blocked_excluded section)
+    store[f"recovery/plan145/compared/{_RUN}/compare_report.json"] = json.dumps(
+        {"blocked_excluded": {"rows": 0, "objects": 0}}).encode()
     store[f"recovery/plan145/inventory/{_RUN}.json"] = b"{}"
 
     store["recovery/plan145/parsed/inputs/materialized-a.parquet"] = \
@@ -2245,10 +2250,13 @@ def _patch_slice2_io(monkeypatch, store, conn=None):
         minio, "write_bytes",
         lambda k, data, content_type=None: store.__setitem__(k, bytes(data)),
     )
-    monkeypatch.setattr(
-        minio, "read_json",
-        lambda path: json.loads(store[path.split("bronze/")[-1]].decode()),
-    )
+    def _read_json(path):
+        # shared.minio.read_json returns None for a missing object -- model that
+        # rather than KeyError, so fail-closed gates keyed on it are testable.
+        key = path.split("bronze/")[-1]
+        return json.loads(store[key].decode()) if key in store else None
+
+    monkeypatch.setattr(minio, "read_json", _read_json)
     monkeypatch.setattr(db, "get_conn", lambda: conn)
     return conn
 
@@ -3767,3 +3775,350 @@ def test_canary_sample_probe_reads_and_writes_only_the_probe_prefix(
     assert rc == 0
     assert f"recovery/plan145/canary_probe/{_C3RUN}-canary_sample.parquet" in store
     assert not any(k.startswith("recovery/plan145/canary/") for k in store)
+
+
+# -- Q: blocked_excluded -- the block-page compare filter (Stage 5) -------
+#
+# Stage 4's block-page classifier only fires for objects whose identity did
+# not resolve. A block page whose listing_id resolved from legacy_manifest or
+# queue_events parses to an `active` detail row the parser drew no price, VIN
+# or make from, and -- before this filter -- leaked into to_import or
+# already_represented. `compare` now quarantines the whole object (detail row
+# and any carousel rows) into a fourth family, `blocked_excluded`, with
+# reason `blocked_page`, BEFORE classify_from_summary is consulted. The
+# signature is on the detail row and is independent of body size by design.
+# `assign` re-checks it as defence in depth for a compare run predating this.
+
+_BLK_REP = "b1111111-1111-1111-1111-111111111111"
+_BLK_IMP = "b2222222-2222-2222-2222-222222222222"
+_BLK_UNC = "b3333333-3333-3333-3333-333333333333"
+_BLK_PAGE = "b4444444-4444-4444-4444-444444444444"
+_BLK_HINT = "b5555555-5555-5555-5555-555555555555"
+_BLK_KEY = "html/blk.zst"
+
+
+def _block_compare_store(tmp_path, *, extra_rows=(), extra_inputs=()):
+    """One row in each of the four families: a represented detail row, a plain
+    to_import row, a no-capture-time unclassifiable row (given a price, so it
+    is not itself a block signature), and one block-page object whose detail
+    and carousel rows are both junk."""
+    rows = [
+        _prow(_BLK_REP, _WHEN, object_key="html/rep.zst", content_sha256="r",
+              price=100),
+        _prow(_BLK_IMP, _WHEN, object_key="html/imp.zst", content_sha256="i",
+              price=200),
+        _prow(_BLK_UNC, None, fetched_at_source="none", object_key="html/unc.zst",
+              content_sha256="u", price=300),
+        _prow(_BLK_PAGE, _WHEN, object_key=_BLK_KEY, content_sha256="b"),
+        _prow(_BLK_HINT, _WHEN, source="carousel", object_key=_BLK_KEY,
+              content_sha256="bc"),
+        *extra_rows,
+    ]
+    inputs = [
+        {"object_key": "html/rep.zst", "size_band": "008192-016383",
+         "input_kind": "materialized", "listing_id_source": "legacy_manifest"},
+        {"object_key": "html/imp.zst", "size_band": "008192-016383",
+         "input_kind": "materialized", "listing_id_source": "legacy_manifest"},
+        {"object_key": "html/unc.zst", "size_band": "004096-008191",
+         "input_kind": "unpacked", "listing_id_source": "none"},
+        {"object_key": _BLK_KEY, "size_band": "000000-000511",
+         "input_kind": "unpacked", "listing_id_source": "queue_events"},
+        *extra_inputs,
+    ]
+    store = {}
+    store["recovery/plan145/parsed/rows/materialized-a.parquet"] = \
+        _write_parsed_rows_fixture(tmp_path / "blk-rows.parquet", rows)
+    store["recovery/plan145/parsed/inputs/materialized-a.parquet"] = \
+        _write_inputs_shard(tmp_path / "blk-inputs.parquet", inputs)
+    for source in ("detail", "carousel", "listings_page"):
+        for month in (3, 4, 5):
+            listings = [_BLK_REP] if (source == "detail" and month == 4) else []
+            store[
+                f"silver_normalized/observations/source={source}/obs_year=2026/"
+                f"obs_month={month}/part-{source}-{month}.parquet"
+            ] = _write_silver_fixture(
+                tmp_path / f"blk-silver-{source}-{month}.parquet", listings, _WHEN,
+            )
+    store["ops_normalized/artifacts_queue_events/year=2026/month=4/"
+          "part-q.parquet"] = b"queue-events"
+    return store
+
+
+def _only_run_id(store):
+    ids = {k.split("/compared/")[1].split("/")[0]
+           for k in store if "/compared/" in k}
+    ids |= {k.split("/compared_probe/")[1].split("/")[0]
+            for k in store if "/compared_probe/" in k}
+    assert len(ids) == 1, ids
+    return ids.pop()
+
+
+def _family(store, family):
+    import io as _io
+
+    import pyarrow.parquet as _pq
+
+    out = []
+    for key, blob in store.items():
+        if f"/{family}/" in key and ("/compared/" in key or "/compared_probe/" in key):
+            out += _pq.read_table(_io.BytesIO(blob)).to_pylist()
+    return out
+
+
+def _blk_report(store):
+    run_id = _only_run_id(store)
+    for key, blob in store.items():
+        if key.endswith(f"{run_id}/compare_report.json"):
+            return json.loads(blob)
+    raise AssertionError("no compare_report.json written")
+
+
+def test_a_block_page_object_is_quarantined_whole_including_its_carousel_rows(
+        tmp_path, monkeypatch):
+    import scripts.reconcile_april_detail as mod
+
+    store = _block_compare_store(tmp_path)
+    _patch_compare_io(monkeypatch, store, [(_BLK_REP, "VIN")], rows=5)
+
+    assert mod.run_compare(mod.parse_args(["compare", "--apply"])) == 0
+
+    blocked = _family(store, "blocked_excluded")
+    assert {r["object_key"] for r in blocked} == {_BLK_KEY}
+    assert sorted(r["source"] for r in blocked) == ["carousel", "detail"]
+    assert {r["reason"] for r in blocked} == {"blocked_page"}
+    # none of that object's rows reached any other family
+    for fam in ("already_represented", "to_import", "unclassifiable"):
+        assert _BLK_KEY not in {r["object_key"] for r in _family(store, fam)}
+
+    report = _blk_report(store)
+    assert report["families"]["blocked_excluded"] == 2
+    blk = report["blocked_excluded"]
+    assert blk["rows"] == 2 and blk["objects"] == 1
+    assert blk["by_source"] == {"carousel": 1, "detail": 1}
+    assert blk["objects_that_emitted_carousel_rows"] == 1
+    assert blk["size_band"] == {"000000-000511": 1}
+    assert blk["by_input_kind"] == {"unpacked": 1}
+    assert blk["by_listing_id_source"] == {"queue_events": 1}
+    assert blk["detail_rows_carrying_a_business_value"] == 0
+
+
+def test_a_priced_detail_row_is_untouched_even_when_its_carousel_rows_are_null(
+        tmp_path, monkeypatch):
+    # Write this one first and watch it fail against a row-level filter: the
+    # carousel row here is active with price/vin/make all NULL, so a row-level
+    # predicate would quarantine it even though its object parsed a real price.
+    import scripts.reconcile_april_detail as mod
+
+    ok_key = "html/ok.zst"
+    ok_a = "c1111111-1111-1111-1111-111111111111"
+    ok_b = "c2222222-2222-2222-2222-222222222222"
+    store = _block_compare_store(
+        tmp_path,
+        extra_rows=[
+            _prow(ok_a, _WHEN, object_key=ok_key, content_sha256="ok", price=500),
+            _prow(ok_b, _WHEN, source="carousel", object_key=ok_key,
+                  content_sha256="okc"),
+        ],
+        extra_inputs=[
+            {"object_key": ok_key, "size_band": "008192-016383",
+             "input_kind": "materialized", "listing_id_source": "legacy_manifest"},
+        ],
+    )
+    _patch_compare_io(monkeypatch, store, [(_BLK_REP, "VIN")], rows=7)
+
+    assert mod.run_compare(mod.parse_args(["compare", "--apply"])) == 0
+
+    assert ok_key not in {r["object_key"] for r in _family(store, "blocked_excluded")}
+    ti = [r for r in _family(store, "to_import") if r["object_key"] == ok_key]
+    assert len(ti) == 2                       # both rows importable, neither dropped
+    report = _blk_report(store)
+    assert report["blocked_excluded"]["objects"] == 1   # only the real block page
+
+
+def test_an_unlisted_detail_row_with_null_values_is_not_excluded(
+        tmp_path, monkeypatch):
+    # An unlisted page legitimately has no price; excluding it would discard
+    # real observations.
+    import scripts.reconcile_april_detail as mod
+
+    un_key = "html/unl.zst"
+    un_id = "d1111111-1111-1111-1111-111111111111"
+    store = _block_compare_store(
+        tmp_path,
+        extra_rows=[
+            _prow(un_id, _WHEN, object_key=un_key, content_sha256="un",
+                  listing_state="unlisted"),
+        ],
+        extra_inputs=[
+            {"object_key": un_key, "size_band": "004096-008191",
+             "input_kind": "materialized", "listing_id_source": "legacy_manifest"},
+        ],
+    )
+    _patch_compare_io(monkeypatch, store, [(_BLK_REP, "VIN")], rows=6)
+
+    assert mod.run_compare(mod.parse_args(["compare", "--apply"])) == 0
+
+    assert un_key not in {r["object_key"] for r in _family(store, "blocked_excluded")}
+    assert un_key in {r["object_key"] for r in _family(store, "to_import")}
+
+
+def test_the_four_families_sum_to_the_parsed_row_total(tmp_path, monkeypatch):
+    import scripts.reconcile_april_detail as mod
+
+    store = _block_compare_store(tmp_path)
+    _patch_compare_io(monkeypatch, store, [(_BLK_REP, "VIN")], rows=5)
+
+    assert mod.run_compare(mod.parse_args(["compare", "--apply"])) == 0
+
+    fam = _blk_report(store)["families"]
+    assert fam["already_represented"] >= 1
+    assert fam["to_import"] >= 1
+    assert fam["unclassifiable"] >= 1
+    assert fam["blocked_excluded"] >= 1
+    assert (fam["already_represented"] + fam["to_import"] + fam["unclassifiable"]
+            + fam["blocked_excluded"] == fam["sum"] == 5)
+
+
+def test_a_quarantined_object_that_emitted_carousel_rows_is_reported_not_refused(
+        tmp_path, monkeypatch):
+    import scripts.reconcile_april_detail as mod
+
+    # Stage 4 drops NULL-price carousel hints, so every carousel row that
+    # exists carries a price. A quarantined object with carousel rows is a
+    # maintainer signal (a block body has no carousel), never a hard stop.
+    store = _block_compare_store(tmp_path, extra_rows=[
+        _prow("e6666666-6666-6666-6666-666666666666", _WHEN, source="carousel",
+              object_key=_BLK_KEY, content_sha256="bcm", price=41995, make="Ford"),
+    ])
+    _patch_compare_io(monkeypatch, store, [(_BLK_REP, "VIN")], rows=6)
+
+    assert mod.run_compare(mod.parse_args(["compare", "--apply"])) == 0   # no raise
+
+    blk = _blk_report(store)["blocked_excluded"]
+    assert blk["objects_that_emitted_carousel_rows"] == 1
+    assert blk["by_source"]["carousel"] == 2          # _BLK_HINT + the Ford row
+    assert blk["detail_rows_carrying_a_business_value"] == 0
+
+
+def test_a_loosened_block_predicate_that_keeps_a_valued_detail_row_stops_apply(
+        tmp_path, monkeypatch, capsys):
+    import scripts.reconcile_april_detail as mod
+
+    # Guard against a future edit to is_block_signature: drop the price/vin/
+    # make-all-NULL requirement and a quarantined detail row can carry a value
+    # -- the filter is no longer precise and an authoritative run must stop.
+    monkeypatch.setattr(mod, "is_block_signature",
+                        lambda row: row.get("listing_state") == "active")
+
+    store = _block_compare_store(tmp_path)
+    _patch_compare_io(monkeypatch, store, [(_BLK_REP, "VIN")], rows=5)
+    with pytest.raises(ReconcileError, match="no longer precise"):
+        mod.run_compare(mod.parse_args(["compare", "--apply"]))
+
+    store = _block_compare_store(tmp_path)
+    _patch_compare_io(monkeypatch, store, [(_BLK_REP, "VIN")], rows=5)
+    assert mod.run_compare(mod.parse_args(["compare"])) == 0        # dry run warns
+    out = capsys.readouterr().out
+    assert "is_block_signature is no longer precise" in out
+    assert "3 blocked detail rows carry a value" in out            # rep/imp/unc
+
+
+def test_assign_refuses_a_to_import_population_carrying_the_block_signature(
+        tmp_path, monkeypatch, capsys):
+    import scripts.reconcile_april_detail as mod
+
+    store, _ = _slice2_fixture_store(tmp_path)
+    # 25 block-page objects: each a detail row that is active with price/vin/
+    # make all NULL, plus a carousel row that is not counted.
+    blk_rows = []
+    blk_inputs = []
+    for i in range(25):
+        lid = f"{i:08d}-9999-9999-9999-999999999999"
+        okey = f"html/2026/04/pack/blk{i}.html.zst"
+        blk_rows.append(_ti_row(lid, okey))
+        blk_rows.append(_ti_row(lid, okey, source="carousel"))
+        blk_inputs.append({"object_key": okey, "listing_id": lid,
+                           "fetched_at": _WHEN, "input_kind": "unpacked"})
+    store[f"recovery/plan145/compared/{_RUN}/to_import/unpacked-c.parquet"] = \
+        _write_compared_shard(tmp_path / "blk-ti.parquet", blk_rows)
+    store["recovery/plan145/parsed/inputs/unpacked-c.parquet"] = \
+        _write_inputs_shard(tmp_path / "blk-in.parquet", blk_inputs)
+    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+    before = set(store)
+
+    with pytest.raises(ImportSetInvalid, match="block_page_signature"):
+        mod.run_assign(mod.parse_args(["assign", "--apply"]))
+    assert set(store) == before               # a stop, before any shard
+
+    out = capsys.readouterr().out
+    assert "block_page_signature" in out
+    # the whole cohort is counted (25 detail rows), the printed examples capped
+    assert re.search(r"block_page_signature\s+25", out)
+    assert out.count("e.g.") <= 20
+
+
+def test_assign_refuses_a_compare_run_that_predates_the_block_page_filter(
+        tmp_path, monkeypatch):
+    import scripts.reconcile_april_detail as mod
+
+    # The per-row check only sees the detail row that carries the signature,
+    # and a block page's detail row can sit in already_represented while only
+    # its carousel rows reach to_import -- so a stale compare run is refused
+    # outright, whatever shape its leakage takes.
+    store, _ = _slice2_fixture_store(tmp_path)
+    store[f"recovery/plan145/compared/{_RUN}/compare_report.json"] = json.dumps({
+        "plan": 145, "stage": 5, "slice": 1, "mode": "compare", "run_id": _RUN,
+        "families": {"already_represented": 10, "to_import": 3,
+                     "unclassifiable": 1, "sum": 14},
+    }).encode()
+    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+    before = set(store)
+
+    with pytest.raises(ReconcileError, match="predates the block-page filter"):
+        mod.run_assign(mod.parse_args(["assign", "--apply"]))
+    assert set(store) == before
+
+    # a report that has the section assigns normally
+    store[f"recovery/plan145/compared/{_RUN}/compare_report.json"] = json.dumps({
+        "families": {"already_represented": 10, "to_import": 3,
+                     "unclassifiable": 1, "blocked_excluded": 0, "sum": 14},
+        "blocked_excluded": {"rows": 0, "objects": 0},
+    }).encode()
+    _patch_slice2_io(monkeypatch, store, _FakeWriteConn(next_id=9_000_001))
+    assert mod.run_assign(mod.parse_args(["assign", "--apply"])) == 0
+
+
+def test_apply_refuses_assignment_shards_from_a_pre_block_filter_compare_run(
+        tmp_path, monkeypatch):
+    import scripts.reconcile_april_detail as mod
+
+    # assign refuses a stale run going forward; this is the same refusal for a
+    # run whose assignment shards already exist -- apply re-reads them
+    # independently and is the last check before the INSERT.
+    store, _ = _slice2_fixture_store(tmp_path)
+    _patch_slice2_io(monkeypatch, store, _FakeWriteConn(next_id=9_000_001))
+    mod.run_assign(mod.parse_args(["assign", "--apply"]))     # shards now exist
+    batch_name = assign_batch_name(_RUN, 1)
+
+    # the compare run turns out to predate the filter. --run-id is explicit:
+    # that is the path with no _compare_run_complete predecessor.
+    pre_filter = json.dumps({
+        "families": {"already_represented": 10, "to_import": 3, "sum": 13},
+    }).encode()
+    store[f"recovery/plan145/compared/{_RUN}/compare_report.json"] = pre_filter
+    conn = _FakeWriteConn()
+    _patch_slice2_io(monkeypatch, store, conn)
+    with pytest.raises(ReconcileError, match="predates the block-page filter"):
+        mod.run_apply(mod.parse_args(
+            ["apply", "--apply", "--run-id", _RUN, "--batch", batch_name]))
+    assert conn.sql == []                                     # no INSERT issued
+
+    # a missing report fails closed under --apply (keyed on apply, not the
+    # report's truthiness), and a dry run only warns
+    del store[f"recovery/plan145/compared/{_RUN}/compare_report.json"]
+    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+    with pytest.raises(ReconcileError, match="predates the block-page filter"):
+        mod.run_apply(mod.parse_args(
+            ["apply", "--apply", "--run-id", _RUN, "--batch", batch_name]))
+    assert mod.run_apply(mod.parse_args(
+        ["apply", "--run-id", _RUN, "--batch", batch_name])) == 0
