@@ -332,10 +332,15 @@ of distinct captures, and every later stage reads one store.
 | | count |
 |---|---:|
 | distinct successful legacy captures with bytes | 797,073 |
-| of which content already in the packs (45.6% measured over 392 shards) | ~371,000 |
-| materialized objects surviving step 2 | ~436,702 |
+| of which content already in the packs, deleted in step 2 | 371,095 |
+| materialized objects surviving step 2 | 425,978 |
 | April pack members unpacked in step 3 | 557,065 |
-| **flattened population** | **~993,767** |
+| **flattened population** | **983,043** |
+
+Reconciled 2026-08-28 against the Stage 3a receipts; the earlier projection of
+~993,767 was taken before 3a ran. `EXPECTED_FLATTENED_INPUTS` in
+`scripts/reconcile_april_detail.py` carries the reconciled figure, and the
+Stage 5 slice-1 probe reproduces it (see *Evidence — slice 1*).
 
 Peak object count never exceeds the end state, because the deletion precedes
 the unpack.
@@ -499,8 +504,8 @@ Compare parsed output to March–May silver on `(listing_id, fetched_at)` with a
 **300 s** tolerance, counting observations from any source, because carousel
 rows are real coverage produced by detail artifacts.
 
-Produce two immutable outputs — already represented, and to import — then
-write the import set with the treatment table above: silver rows and
+Produce three immutable outputs — already represented, to import, and
+unclassifiable — then write the import set with the treatment table above: silver rows and
 historical price events at the legacy capture time, preserved or
 sequence-allocated `artifact_id`s, `recovered` queue events, and **no** mutation of
 `ops.price_observations`, `ops.vin_to_listing`, `ops.blocked_cooldown`,
@@ -675,9 +680,141 @@ require byte-equivalent results before restarting the writers. Pausing or
 resuming those services remains a manual, separately approved production
 action.
 
+### Evidence — slice 1, 2026-08-28
+
+`compare` is implemented and merged (PR #265, `master` at `48987c1`). It adds a
+third output family the short design above did not have: **`unclassifiable`**,
+for a parsed row that cannot be windowed and cannot be imported. Two reasons
+are counted apart — `no_capture_time`, the tier-3 pages the design already
+expected at ~760, and `no_listing_id`, tier-2 rows that resolve a capture time
+but no listing. `staging.silver_observations.listing_id` is NOT NULL, so the
+second is no more importable than the first, and without the family those rows
+would have reached `to_import`. The three families are asserted to sum to the
+parsed row total, which is what makes *classified exactly once* enforceable.
+
+Two dry-run probes against the completed Stage 4 units, on the VM. Both wrote
+nothing and issued no VIN query.
+
+| | 20 units | 315 units |
+|---|---:|---:|
+| parsed rows | 44,446 | 657,963 |
+| source objects | 7,866 | 113,438 |
+| already represented | 77.2% | **80.7%** |
+| to import | 22.8% | **19.3%** |
+| unclassifiable | 0 | 0 |
+| more than one silver candidate | 21.04% | **21.1%** |
+| carousel rows per object | 4.65 | 4.80 |
+| recovery duplicates collapsed | 0 | 0 |
+| unrepresented captures with a neighbour ≤300 s | 39.1% of to-import | **21.3%** |
+
+The multiple-candidate share is stable across a 15× increase in sample and
+agrees with the 2026-08-27 design probe's 18%, which is the evidence that the
+existence test behaves consistently at scale. Object counts extrapolate to
+~978,000 against `EXPECTED_FLATTENED_INPUTS`'s 983,043, so the arithmetic
+closes. Memory did not move on the Grafana panels; CPU spiked.
+
+**What these numbers are not.** Every completed unit is a materialized legacy
+body, because Stage 4 walks a key-sorted inventory and the 32 unpacked shards
+sort last. So the population behind both probes is tier-1 identity only, and:
+
+- the `unclassifiable` cohort reads 0 because tier-1 resolves both halves of
+  identity every time — the `no_listing_id` population lives on the pack side
+  and remains unmeasured;
+- `recovery duplicates 0` is likewise structural: materialized survivors are
+  distinct-content by construction, so nothing can collapse;
+- both gates, and the fingerprint-conflict stop, have therefore never fired on
+  real data.
+
+**One finding that needs a ruling before slice 2 applies.** 27,078 of 127,048
+`to_import` rows — 21.3%, concentrated in 3,169 listings at ~8.5 each — are
+unrepresented captures with another unrepresented capture within 300 s. This is
+the asymmetry between the two windows: representation tests ±300 s, duplicate
+collapse tests an exact `(listing_id, fetched_at)`, so these all survive as
+distinct rows. They are most likely genuine burst re-scrapes and genuinely
+importable, and collapsing them would discard real history. The plan records
+the measurement; the decision is the maintainer's.
+
+### Evidence — slice 2, 2026-08-27
+
+`assign` and `apply` are implemented, together with
+`V047__plan145_recovery_batch_receipts.sql`. **No authoritative `compare` run
+exists yet** — Stage 4 was at 315 of 1,204 units — so everything below is
+proven against fixtures and a real-Postgres integration test, not against real
+compare output. No `--apply` has been run against production.
+
+Two modes on `scripts/reconcile_april_detail.py`, both defaulting to a dry run:
+
+| mode | reads | writes |
+|---|---|---|
+| `assign` | `compared/<run_id>/to_import/`, `parsed/inputs/`, the March–May artifact-event objects | `recovery/plan145/assigned/<run_id>-bNNNNN.parquet`, plus one assign report; `nextval` is its only statement |
+| `apply` | those shards, the `to_import` rows and the frozen VIN snapshot | three staging tables and the receipt, one transaction per batch |
+
+**What the deployed contracts forced.** Neither production helper survives
+contact with this problem: `shared.db.db_cursor` opens its own connection and
+commits on exit, so three calls are three transactions, and
+`write_silver_observations_postgres` catches every exception and returns 0, so
+a half-written batch would be logged as a warning and the run would continue
+believing it committed. The writer opens one connection, does all four writes
+on it, commits once, and lets exceptions propagate; it reuses `_POSTGRES_COLS`
+and `_INSERT_SQL` so a silver schema change cannot drift away from it silently.
+The run uses the `april-processor` profile, which connects as `cartracker`,
+because `scraper_user` has only `SELECT, DELETE` on
+`staging.price_observation_events` and no `INSERT` grant anywhere in
+`db/migrations/`; V047 therefore grants the receipt table to `cartracker` and
+leaves that gap alone rather than half-enabling a second role. Because
+`april-processor` builds from `processing/Dockerfile`, which has no duckdb,
+both modes read Parquet with pyarrow.
+
+**One thing the short design did not say, found while building.** A source
+object's detail row and its carousel rows are classified independently, so an
+object can contribute only carousel rows to `to_import` while its own detail
+row is already represented. The recovered queue event still needs that object's
+*page* listing id, which no carousel row carries. It comes from Stage 4's
+frozen `parsed/inputs/` shards, which also supply `input_kind` — and therefore
+the count of unattributed pack members that turn out to be import-bearing.
+
+**Refusals, all scoped so a run that writes nothing is never stopped by one.**
+A NULL or non-UUID `listing_id` anywhere in `to_import` stops `assign`, but only
+after the whole population has been scanned and the cohort counted, so the
+maintainer learns its size rather than the first offending row; only the printed
+examples are capped, so a systematic upstream defect is described in constant
+space rather than accumulating a dict per row. `apply` re-checks the same
+invariant on every row it is about to write, because it re-reads the shards
+independently and is the last thing standing before the INSERT — and because
+`staging.silver_observations.listing_id` being `text NOT NULL` does *not* catch
+it: `str(None)` is the four-character string `"None"`, which the column accepts.
+One object path mapped to two queue-event artifact ids stops the run rather than
+choosing. Re-assigning a run under different batch caps is refused, because the
+caps decide membership and the batch names would not change.
+
+**The canary gate is measured in rows, not batches.** `apply --apply` refuses a
+selection over `--max-unapproved-rows` (default 1,000 silver rows) without
+`--maintainer-approval <name>`. Counting batches would have been no gate at all
+for the case that matters: one default-cap batch is 5,000 artifacts and up to
+50,000 silver rows, two orders of magnitude past the ~500 observations this plan
+sizes the canary at. The row budget refuses that and still lets a genuinely
+canary-sized assignment through, however many batches it spans.
+
+**Proven on real Postgres** (`tests/integration/scripts/`, 14 tests, now run in
+CI): a committed batch re-run writes zero rows and does not advance the
+sequence; the same batch name with a different digest stops and leaves the
+first receipt intact; a failure on the third write rolls back all four, and the
+same connection then commits the batch whole on retry; deleting the staging
+rows the way the flusher does leaves the receipt behind and the retry still
+skips; `nextval` never repeats across two connections and a rolled-back
+allocation leaves a `bigserial` gap rather than a reuse; `ops.artifacts_queue`
+gains no row and `ops.price_observations`, `ops.vin_to_listing`,
+`ops.blocked_cooldown` and `ops.detail_scrape_claims` hash identically before
+and after, over deliberately non-empty tables.
+
+Slice 3 — the canary, the maintenance window and the quiesced-writer
+live-state proof — is unstarted. It is a manual, separately approved
+production action.
+
 ### Gate
 
-- Every parsed observation is classified exactly once.
+- Every parsed observation is classified exactly once, into one of the three
+  families, whose counts sum to the parsed row total.
 - The final comparison names and fingerprints every parsed, silver,
   artifact-event and VIN-lookup input it used.
 - No duplicate `(listing_id, fetched_at)` observation is written.
