@@ -570,6 +570,42 @@ short design above:
   colliding with current hot state is reported but never causes a delete or
   remap.
 
+### The tier-3 population, measured — 2026-08-28
+
+The Stage 4 run's identity census, over all 983,043 inputs, resolves every
+object by legacy manifest (797,073) or queue events (180,710) and leaves
+**5,260** with neither a listing nor a capture time, at **zero tier
+disagreements**. Arithmetic places all 5,260 inside the unpacked members:
+425,978 + 371,095 = 797,073, and 371,095 + 180,710 + 5,260 = 557,065. They are
+pack members whose content is absent from the legacy Parquet and which have no
+`artifacts_queue_events` row.
+
+They were characterized directly rather than estimated. Every one of them is a
+**block page**:
+
+| band | objects | what it is |
+|---|---:|---|
+| 426–441 B | 4,966 | Akamai `Access Denied`, parsing to `active` with every field NULL |
+| 5.4–16.4 KB | 294 | Cloudflare `Just a moment...`, which the parser flags correctly |
+
+That explains the identity gap rather than merely measuring it: a blocked fetch
+has no listing to record, so no silver row and no queue event, and its bytes
+were never worth keeping. **The absence of identity is the block.**
+
+**Consequence for Stage 5, correcting an expectation this plan carried.** Stage 4
+excludes block pages before emitting observation rows, so all 5,260 contribute
+**zero parsed rows** and never reach `compare`. Since the census shows these are
+the only objects without a capture time, the `unclassifiable` family should be
+**empty or near it, on both reasons** — not the ~760 the Stage 4 design
+estimated, and not 5,260. The ~760 figure counted a different thing than the
+`--max-unclassifiable` ceiling it inspired. Neither that ceiling nor
+`--max-no-listing-id 0` is expected to trip.
+
+The Akamai body embeds the listing UUID in its text, so identity is technically
+recoverable from these pages. It is not worth recovering — there is no capture
+time and they are blocks — but it is a note for the separate ticket that fixes
+`_detect_challenge`.
+
 ### Final comparison contract
 
 The exploratory probe may run against completed Stage 4 units and writes only
