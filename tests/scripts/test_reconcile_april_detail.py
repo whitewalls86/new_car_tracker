@@ -1165,6 +1165,24 @@ def test_parse_input_is_materialized_minus_deleted_union_unpacked():
     assert [r["object_key"] for _, rows in units for r in rows] == ["keep", "unpacked"]
 
 
+def test_parse_input_counts_repeated_materialized_keys_once():
+    from scripts.reconcile_april_detail import build_parse_units
+
+    repeated = {
+        "object_key": "content-derived-key",
+        "disposition": "written",
+        "raw_sha256": "same-content",
+    }
+    materialized = [
+        ("recovery/plan145/materialized/a.parquet", [repeated]),
+        ("recovery/plan145/materialized/b.parquet", [repeated]),
+    ]
+    units = build_parse_units(materialized, set(), [])
+    assert sum(len(rows) for _, rows in units) == 1
+    assert units[0][1][0]["object_key"] == "content-derived-key"
+    assert units[1][1] == []
+
+
 def test_identity_tiers_prefer_legacy_then_queue_and_count_disagreement():
     from scripts.reconcile_april_detail import resolve_manifest_identity
 

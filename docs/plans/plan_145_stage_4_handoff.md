@@ -36,13 +36,22 @@ test, but do not `--apply`. Never kill the unpack session.
 
 ## The population you are parsing
 
-Measured 2026-08-27, after Stage 3a deleted 371,495 duplicate objects:
+Reconciled 2026-08-28, after Stage 3a deleted 371,095 distinct duplicate
+objects:
 
 | source | objects |
 |---|---:|
-| materialized legacy bodies surviving dedupe | 425,578 |
+| materialized legacy bodies surviving dedupe | 425,978 |
 | unpacked April pack members | 557,065 |
-| **flattened population** | **982,643** |
+| **flattened population** | **983,043** |
+
+Stage 3a emitted 371,495 successful deletion receipts but only 371,095
+distinct object keys. The 400-row difference is idempotent re-deletes of the
+same content-derived key appearing in two source manifests, as already recorded
+in the Stage 3 evidence. Stage 4 counts distinct keys, not receipt rows. A
+2026-08-28 manifest-only audit found all 371,095 materialized content twins in
+the deletion manifests and receipts, with zero omitted twins and zero planned
+deletions lacking an unpacked hash.
 
 Both live in the same prefix, `html/year=2026/month=4/artifact_type=detail_page/`.
 Materialized objects have content-derived stems; unpacked ones keep their
@@ -179,7 +188,7 @@ size-band cross-tab so the cohort is a measurement rather than a surprise.
 
 ## Shape of the job
 
-- **Cost:** 90.7 ms/page × 982,643 ≈ 25 core-hours.
+- **Cost:** 90.7 ms/page × 983,043 ≈ 25 core-hours.
 - **Process pool required** — bs4/lxml is GIL-bound, one process ≈ one core.
   Default to `cpu_count() - 2`; the host has 4 and production needs some. No
   resource caps: pack-worker runs uncapped and that is the house precedent.
