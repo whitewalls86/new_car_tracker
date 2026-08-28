@@ -1381,3 +1381,464 @@ def test_parse_apply_gate_waits_for_every_unpack_member():
             ])],
             input_count=1,
         )
+
+
+# -- N: compare (Stage 5, slice 1) ---------------------------------------
+#
+# The predicate is `same listing_id AND abs(dt) <= 300 s`, from any source, and
+# classification is an existence test -- these tests hold that boundary and the
+# refusal to let a candidate supply identity or a value, the three-family
+# partition, the global duplicate collapse, the Stage 4 gate, the run_id freeze
+# and the read-only VIN snapshot.
+from datetime import datetime as _dt  # noqa: E402
+from datetime import timezone as _tz  # noqa: E402
+
+from scripts.reconcile_april_detail import (  # noqa: E402
+    COMPARE_WINDOW_US,
+    EXPECTED_FLATTENED_INPUTS,
+    DuplicateFingerprintConflict,
+    LiteDup,
+    _epoch_us,
+    check_compare_apply_gate,
+    classify_parsed_observation,
+    compute_run_id,
+    near_duplicate_window,
+    resolve_global_duplicates,
+    snapshot_vin_lookup,
+)
+
+_WHEN = _dt(2026, 4, 15, 12, 0, 0, tzinfo=_tz.utc)
+
+
+def _prow(listing_id=LISTING_A, fetched_at=_WHEN, *, source="detail",
+          fetched_at_source="legacy_manifest", **over):
+    from scripts.reconcile_april_detail import _parsed_rows_schema
+
+    row = {name: None for name in _parsed_rows_schema().names}
+    row.update({
+        "listing_id": listing_id,
+        "fetched_at": fetched_at,
+        "source": source,
+        "listing_state": "active",
+        "listing_id_source": "legacy_manifest",
+        "fetched_at_source": fetched_at_source,
+        "object_key": "html/year=2026/month=4/artifact_type=detail_page/x.html.zst",
+        "content_sha256": "sha-x",
+    })
+    row.update(over)
+    return row
+
+
+def _series(*offsets_and_sources):
+    base = _epoch_us(_WHEN)
+    return [(base + off, src) for off, src in offsets_and_sources]
+
+
+def test_one_candidate_inside_300s_is_represented():
+    verdict = classify_parsed_observation(
+        _prow(), {LISTING_A: _series((299_000_000, "detail"))},
+    )
+    assert verdict["family"] == "already_represented"
+    assert verdict["match_count"] == 1
+
+
+def test_a_candidate_301s_away_is_not_represented():
+    verdict = classify_parsed_observation(
+        _prow(), {LISTING_A: _series((301_000_000, "detail"))},
+    )
+    assert verdict["family"] == "to_import"
+
+
+def test_a_candidate_exactly_300s_away_is_represented_since_the_plan_says_lte():
+    # The plan writes `abs(delta) <= 300 s`, so the boundary is inclusive.
+    verdict = classify_parsed_observation(
+        _prow(), {LISTING_A: _series((COMPARE_WINDOW_US, "detail"))},
+    )
+    assert verdict["family"] == "already_represented"
+    assert verdict["nearest_distance_s"] == 300.0
+
+
+def test_a_candidate_differing_only_in_source_still_counts_as_coverage():
+    verdict = classify_parsed_observation(
+        _prow(source="detail"),
+        {LISTING_A: _series((0, "carousel"))},
+    )
+    assert verdict["family"] == "already_represented"
+    assert verdict["match_sources"] == ["carousel"]
+
+
+def test_differing_vin_price_or_artifact_id_never_affect_classification():
+    index = {LISTING_A: _series((10_000_000, "detail"))}
+    a = classify_parsed_observation(_prow(vin="AAA", price=1), index)
+    b = classify_parsed_observation(_prow(vin="ZZZ", price=999999), index)
+    assert a == b
+    assert a["family"] == "already_represented"
+
+
+def test_multiple_candidates_yield_one_classification_and_no_candidate_values():
+    verdict = classify_parsed_observation(
+        _prow(),
+        {LISTING_A: _series((5_000_000, "carousel"), (-20_000_000, "detail"),
+                            (120_000_000, "detail"))},
+    )
+    assert verdict["family"] == "already_represented"
+    assert verdict["match_count"] == 3
+    assert verdict["nearest_distance_s"] == 5.0
+    assert verdict["match_sources"] == ["carousel", "detail"]
+    # nothing on the evidence row comes from a candidate row
+    assert set(verdict) == {
+        "family", "reason", "match_count", "nearest_distance_s", "match_sources",
+    }
+
+
+def test_a_row_with_no_capture_time_is_unclassifiable_never_to_import():
+    verdict = classify_parsed_observation(
+        _prow(fetched_at=None, fetched_at_source="none"),
+        {LISTING_A: _series((0, "detail"))},
+    )
+    assert verdict["family"] == "unclassifiable"
+    assert verdict["reason"] == "no_capture_time"
+
+
+def test_the_three_families_partition_the_parsed_rows_exactly():
+    index = {LISTING_A: _series((0, "detail"))}
+    rows = [
+        _prow(LISTING_A),                                    # represented
+        _prow(LISTING_B),                                    # to_import
+        _prow(LISTING_B, fetched_at=None, fetched_at_source="none"),  # unclassifiable
+    ]
+    families = [classify_parsed_observation(r, index)["family"] for r in rows]
+    assert sorted(families) == ["already_represented", "to_import", "unclassifiable"]
+    assert len(families) == len(rows)
+
+
+def test_identical_duplicates_across_two_shards_collapse_to_one_winner():
+    # Same (listing_id, fetched_at) and business fingerprint, two Stage 4 shards,
+    # different object keys. The winner is deterministic and order-independent.
+    a = LiteDup(1, LISTING_A, "2026-04-15T12:00:00+00:00", 0, "fp",
+                "detail", "html/k-a.zst", "h-a")
+    b = LiteDup(2, LISTING_A, "2026-04-15T12:00:00+00:00", 0, "fp",
+                "carousel", "html/k-b.zst", "h-b")
+    win1, lose1, rep1 = resolve_global_duplicates([a, b])
+    win2, lose2, _ = resolve_global_duplicates([b, a])
+    assert win1 == win2 == {1}          # detail beats carousel
+    assert lose1 == lose2 == {2}
+    assert rep1["groups_collapsed"] == 1
+    assert rep1["rows_moved_to_already_represented"] == 1
+
+
+def test_duplicates_with_differing_business_fingerprints_stop_the_run():
+    a = LiteDup(1, LISTING_A, "2026-04-15T12:00:00+00:00", 0, "fp-1",
+                "detail", "html/k-a.zst", "h-a")
+    b = LiteDup(2, LISTING_A, "2026-04-15T12:00:00+00:00", 0, "fp-2",
+                "detail", "html/k-b.zst", "h-b")
+    with pytest.raises(DuplicateFingerprintConflict) as excinfo:
+        resolve_global_duplicates([a, b])
+    assert len(excinfo.value.conflicts) == 1
+    assert excinfo.value.conflicts[0]["listing_id"] == LISTING_A
+
+
+def test_the_gate_refuses_fewer_than_1204_completed_units():
+    with pytest.raises(ReconcileError, match="both must equal 1204"):
+        check_compare_apply_gate(
+            {"completed_units": 1203, "planned_units": 1203,
+             "totals": {"inputs": EXPECTED_FLATTENED_INPUTS, "rows": 10}},
+            real_observation_total=10,
+        )
+
+
+def test_the_gate_refuses_a_row_total_that_disagrees_with_the_real_counts():
+    with pytest.raises(ReconcileError, match="disagrees with the summed"):
+        check_compare_apply_gate(
+            {"completed_units": 1204, "planned_units": 1204,
+             "totals": {"inputs": EXPECTED_FLATTENED_INPUTS, "rows": 5_800_000}},
+            real_observation_total=5_799_999,
+        )
+
+
+def test_the_gate_passes_when_stage_4_is_complete_and_totals_reconcile():
+    check_compare_apply_gate(
+        {"completed_units": 1204, "planned_units": 1204,
+         "totals": {"inputs": EXPECTED_FLATTENED_INPUTS, "rows": 42}},
+        real_observation_total=42,
+    )
+
+
+def test_a_changed_input_etag_forces_a_new_run_id():
+    core = {"parsed_rows": [{"key": "rows/a.parquet", "size": 10, "etag": "e1"}],
+            "silver": [{"key": "s/1.parquet", "size": 99, "etag": "s1"}]}
+    before = compute_run_id(core)
+    core["silver"][0]["etag"] = "s2"
+    assert compute_run_id(core) != before
+
+
+def test_the_near_duplicate_window_measures_unrepresented_same_listing_pairs():
+    base = 0
+    measured = near_duplicate_window(iter([
+        (LISTING_A, base),
+        (LISTING_A, base + 200_000_000),   # 200 s -> a pair
+        (LISTING_A, base + 900_000_000),   # 900 s -> not a pair
+        (LISTING_B, base),
+    ]))
+    assert measured == {"pairs_within_300s": 1, "listings_involved": 1}
+
+
+def test_the_vin_snapshot_query_is_read_only():
+    class _FakeCursor:
+        def __init__(self):
+            self.statements = []
+
+        def execute(self, sql, params=None):
+            self.statements.append(sql)
+            self._rows = [(LISTING_A, "VIN-A")]
+
+        def fetchall(self):
+            return self._rows
+
+    cur = _FakeCursor()
+    ids = [f"{i:08d}-2222-3333-4444-555555555555" for i in range(2500)]
+    result = snapshot_vin_lookup(ids + [LISTING_A, "not-a-uuid"], cur, batch_size=1000)
+    assert result == {LISTING_A: "VIN-A"}
+    assert len(cur.statements) == 3                    # 2501 distinct ids / 1000
+    for sql in cur.statements:
+        upper = sql.upper()
+        assert upper.lstrip().startswith("SELECT")
+        assert "INSERT" not in upper
+        assert "UPDATE" not in upper
+        assert "DELETE" not in upper
+
+
+def test_compare_defaults_to_a_dry_run():
+    args = parse_args(["compare"])
+    assert args.mode == "compare"
+    assert args.apply is False
+    assert args.probe is False
+    assert args.duckdb_threads == 1
+
+
+# -- N.1: run_compare end to end, against a fake object store -------------
+
+def _write_parsed_rows_fixture(path, rows):
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    from scripts.reconcile_april_detail import _parsed_rows_schema
+
+    pq.write_table(
+        pa.Table.from_pylist(rows, schema=_parsed_rows_schema()), path,
+        compression="zstd",
+    )
+    return path.read_bytes()
+
+
+def _write_silver_fixture(path, listing_ids, when):
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    schema = pa.schema([
+        pa.field("listing_id", pa.string()),
+        pa.field("fetched_at", pa.timestamp("us", tz="UTC")),
+    ])
+    pq.write_table(
+        pa.Table.from_pylist(
+            [{"listing_id": lid, "fetched_at": when} for lid in listing_ids],
+            schema=schema,
+        ),
+        path, compression="zstd",
+    )
+    return path.read_bytes()
+
+
+class _FakeS3Store:
+    def __init__(self, store):
+        self.store = store
+
+    def list_objects_v2(self, **kw):
+        prefix = kw.get("Prefix", "")
+        delim = kw.get("Delimiter")
+        keys = [k for k in self.store if k.startswith(prefix)]
+        if delim:
+            commons = set()
+            for key in keys:
+                rest = key[len(prefix):]
+                if delim in rest:
+                    commons.add(prefix + rest.split(delim, 1)[0] + delim)
+            return {"CommonPrefixes": [{"Prefix": p} for p in sorted(commons)],
+                    "IsTruncated": False}
+        return {
+            "Contents": [
+                {"Key": key, "Size": len(self.store[key]),
+                 "ETag": '"' + hashlib.md5(self.store[key]).hexdigest() + '"'}
+                for key in sorted(keys)
+            ],
+            "IsTruncated": False,
+        }
+
+    def get_object(self, Bucket, Key, Range=None):
+        return {"Body": _Body(self.store[Key])}
+
+
+class _FakeConn:
+    def __init__(self, rows):
+        self._rows = rows
+        self.rolled_back = False
+
+    def cursor(self):
+        rows = self._rows
+
+        class _Cur:
+            def __enter__(self_):
+                return self_
+
+            def __exit__(self_, *a):
+                return False
+
+            def execute(self_, sql, params=None):
+                assert sql.lstrip().upper().startswith("SELECT")
+                self_._out = rows
+
+            def fetchall(self_):
+                return self_._out
+
+        return _Cur()
+
+    def rollback(self):
+        self.rolled_back = True
+
+    def close(self):
+        pass
+
+
+def _compare_fixture_store(tmp_path):
+    """A minimal but complete input set: two parsed row shards, two silver
+    objects, a queue-event object and a parse_report."""
+    l1 = "11111111-1111-1111-1111-111111111111"   # represented
+    l2 = "22222222-2222-2222-2222-222222222222"   # to_import singleton
+    l3 = "33333333-3333-3333-3333-333333333333"   # unclassifiable (no time)
+    l4 = "44444444-4444-4444-4444-444444444444"   # duplicated across two shards
+
+    shard_a = [
+        _prow(l1, _WHEN, object_key="html/a1.zst", content_sha256="s1", price=100),
+        _prow(l2, _WHEN, object_key="html/a2.zst", content_sha256="s2", price=200),
+        _prow(l3, None, fetched_at_source="none", object_key="html/a3.zst",
+              content_sha256="s3"),
+        _prow(l4, _WHEN, object_key="html/a4.zst", content_sha256="s4", price=400),
+    ]
+    shard_b = [
+        _prow(l4, _WHEN, object_key="html/b4.zst", content_sha256="s4b", price=400),
+    ]
+
+    store = {}
+    store["recovery/plan145/parsed/rows/materialized-a.parquet"] = \
+        _write_parsed_rows_fixture(tmp_path / "rows-a.parquet", shard_a)
+    store["recovery/plan145/parsed/rows/materialized-b.parquet"] = \
+        _write_parsed_rows_fixture(tmp_path / "rows-b.parquet", shard_b)
+    store["recovery/plan145/parsed/inputs/materialized-a.parquet"] = b"inputs-a"
+    store["recovery/plan145/parsed/inputs/materialized-b.parquet"] = b"inputs-b"
+    store["silver_normalized/observations/source=detail/obs_year=2026/"
+          "obs_month=4/part-d.parquet"] = _write_silver_fixture(
+              tmp_path / "silver-d.parquet", [l1], _WHEN)
+    store["silver_normalized/observations/source=carousel/obs_year=2026/"
+          "obs_month=4/part-c.parquet"] = _write_silver_fixture(
+              tmp_path / "silver-c.parquet", ["99999999-9999-9999-9999-999999999999"],
+              _WHEN)
+    store["ops_normalized/artifacts_queue_events/year=2026/month=4/"
+          "part-q.parquet"] = b"queue-events"
+    return store, (l1, l2, l3, l4)
+
+
+def _patch_compare_io(monkeypatch, store, vin_rows):
+    import scripts.reconcile_april_detail as mod
+    import shared.db as db
+    import shared.minio as minio
+
+    monkeypatch.setattr(mod, "_s3_client", lambda: _FakeS3Store(store))
+    monkeypatch.setattr(minio, "object_exists", lambda k: k in store)
+    monkeypatch.setattr(
+        minio, "write_bytes",
+        lambda k, data, content_type=None: store.__setitem__(k, bytes(data)),
+    )
+    monkeypatch.setattr(minio, "read_json", lambda _path: {
+        "completed_units": 1204, "planned_units": 1204,
+        "totals": {"inputs": EXPECTED_FLATTENED_INPUTS, "rows": 5},
+    })
+    monkeypatch.setattr(db, "get_conn", lambda: _FakeConn(vin_rows))
+
+
+def test_run_compare_apply_partitions_and_freezes_then_reruns_as_a_noop(
+        tmp_path, monkeypatch):
+    import scripts.reconcile_april_detail as mod
+
+    store, (l1, _l2, _l3, _l4) = _compare_fixture_store(tmp_path)
+    _patch_compare_io(monkeypatch, store, [(l1, "VIN-L1")])
+
+    rc = mod.run_compare(mod.parse_args(["compare", "--apply"]))
+    assert rc == 0
+
+    run_dirs = {
+        k.split("/compared/")[1].split("/")[0]
+        for k in store if "/compared/" in k
+    }
+    assert len(run_dirs) == 1
+    run_id = run_dirs.pop()
+    assert run_id.startswith("cmp-")
+
+    import io as _io
+
+    import pyarrow.parquet as _pq
+
+    def _family_rows(family):
+        total = []
+        for key, blob in store.items():
+            if f"/compared/{run_id}/{family}/" in key:
+                total += _pq.read_table(_io.BytesIO(blob)).to_pylist()
+        return total
+
+    represented = _family_rows("already_represented")
+    to_import = _family_rows("to_import")
+    unclassifiable = _family_rows("unclassifiable")
+
+    assert len(represented) == 2          # l1 (silver) + one l4 recovery_duplicate
+    assert len(to_import) == 2            # l2 + the winning l4
+    assert len(unclassifiable) == 1       # l3, no capture time
+    assert len(represented) + len(to_import) + len(unclassifiable) == 5
+
+    reasons = sorted(r["reason"] for r in represented)
+    assert reasons == ["recovery_duplicate", "silver_candidate"]
+    assert unclassifiable[0]["reason"] == "no_capture_time"
+    assert {r["listing_id"] for r in to_import} == {
+        "22222222-2222-2222-2222-222222222222",
+        "44444444-4444-4444-4444-444444444444",
+    }
+
+    # the freeze and the read-only VIN snapshot both landed
+    assert f"recovery/plan145/inventory/{run_id}.json" in store
+    assert f"recovery/plan145/vin_snapshot/{run_id}.parquet" in store
+    assert f"recovery/plan145/compared/{run_id}/compare_report.json" in store
+    report = json.loads(
+        store[f"recovery/plan145/compared/{run_id}/compare_report.json"])
+    assert report["families"]["sum"] == 5
+    assert report["duplicates"]["groups_collapsed"] == 1
+
+    # a second run with the same inventory writes nothing new
+    keys_before = set(store)
+    rc = mod.run_compare(mod.parse_args(["compare", "--apply"]))
+    assert rc == 0
+    assert set(store) == keys_before
+
+
+def test_run_compare_dry_run_writes_nothing_and_issues_no_vin_query(
+        tmp_path, monkeypatch):
+    import scripts.reconcile_april_detail as mod
+
+    store, (l1, *_rest) = _compare_fixture_store(tmp_path)
+    conn = _FakeConn([(l1, "VIN-L1")])
+    _patch_compare_io(monkeypatch, store, [(l1, "VIN-L1")])
+    import shared.db as db
+    monkeypatch.setattr(db, "get_conn", lambda: conn)
+
+    keys_before = set(store)
+    rc = mod.run_compare(mod.parse_args(["compare"]))
+    assert rc == 0
+    assert set(store) == keys_before          # nothing written
+    assert conn.rolled_back is False           # get_conn never called
