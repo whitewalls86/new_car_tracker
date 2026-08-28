@@ -3890,10 +3890,11 @@ def test_a_block_page_object_is_quarantined_whole_including_its_carousel_rows(
     blk = report["blocked_excluded"]
     assert blk["rows"] == 2 and blk["objects"] == 1
     assert blk["by_source"] == {"carousel": 1, "detail": 1}
+    assert blk["objects_that_emitted_carousel_rows"] == 1
     assert blk["size_band"] == {"000000-000511": 1}
     assert blk["by_input_kind"] == {"unpacked": 1}
     assert blk["by_listing_id_source"] == {"queue_events": 1}
-    assert blk["rows_carrying_a_business_value"] == 0
+    assert blk["detail_rows_carrying_a_business_value"] == 0
 
 
 def test_a_priced_detail_row_is_untouched_even_when_its_carousel_rows_are_null(
@@ -3973,38 +3974,48 @@ def test_the_four_families_sum_to_the_parsed_row_total(tmp_path, monkeypatch):
             + fam["blocked_excluded"] == fam["sum"] == 5)
 
 
-def test_a_blocked_row_with_a_non_null_make_stops_apply_but_only_warns_otherwise(
+def test_a_quarantined_object_that_emitted_carousel_rows_is_reported_not_refused(
         tmp_path, monkeypatch):
     import scripts.reconcile_april_detail as mod
 
-    # the block page's detail row is still all-NULL (so the object is
-    # quarantined), but a carousel row of the same object carries a make --
-    # the signal that the predicate has caught a page that parsed real data.
-    def _store():
-        return _block_compare_store(tmp_path, extra_rows=[
-            _prow("e6666666-6666-6666-6666-666666666666", _WHEN, source="carousel",
-                  object_key=_BLK_KEY, content_sha256="bcm", make="Ford"),
-        ])
-
-    store = _store()
+    # Stage 4 drops NULL-price carousel hints, so every carousel row that
+    # exists carries a price. A quarantined object with carousel rows is a
+    # maintainer signal (a block body has no carousel), never a hard stop.
+    store = _block_compare_store(tmp_path, extra_rows=[
+        _prow("e6666666-6666-6666-6666-666666666666", _WHEN, source="carousel",
+              object_key=_BLK_KEY, content_sha256="bcm", price=41995, make="Ford"),
+    ])
     _patch_compare_io(monkeypatch, store, [(_BLK_REP, "VIN")], rows=6)
-    with pytest.raises(ReconcileError, match="non-NULL price, vin or make"):
+
+    assert mod.run_compare(mod.parse_args(["compare", "--apply"])) == 0   # no raise
+
+    blk = _blk_report(store)["blocked_excluded"]
+    assert blk["objects_that_emitted_carousel_rows"] == 1
+    assert blk["by_source"]["carousel"] == 2          # _BLK_HINT + the Ford row
+    assert blk["detail_rows_carrying_a_business_value"] == 0
+
+
+def test_a_loosened_block_predicate_that_keeps_a_valued_detail_row_stops_apply(
+        tmp_path, monkeypatch, capsys):
+    import scripts.reconcile_april_detail as mod
+
+    # Guard against a future edit to is_block_signature: drop the price/vin/
+    # make-all-NULL requirement and a quarantined detail row can carry a value
+    # -- the filter is no longer precise and an authoritative run must stop.
+    monkeypatch.setattr(mod, "is_block_signature",
+                        lambda row: row.get("listing_state") == "active")
+
+    store = _block_compare_store(tmp_path)
+    _patch_compare_io(monkeypatch, store, [(_BLK_REP, "VIN")], rows=5)
+    with pytest.raises(ReconcileError, match="no longer precise"):
         mod.run_compare(mod.parse_args(["compare", "--apply"]))
 
-    store = _store()
-    _patch_compare_io(monkeypatch, store, [(_BLK_REP, "VIN")], rows=6)
-    assert mod.run_compare(mod.parse_args(["compare"])) == 0        # dry run measures
-
-    store = _store()
-    _patch_compare_io(monkeypatch, store, [(_BLK_REP, "VIN")], rows=6)
-    assert mod.run_compare(mod.parse_args(["compare", "--probe", "--apply"])) == 0
-    report = next(
-        json.loads(v) for k, v in store.items()
-        if k.startswith("recovery/plan145/compared_probe/")
-        and k.endswith("compare_report.json")
-    )
-    assert report["blocked_excluded"]["rows_carrying_a_business_value"] == 1
-    assert report["blocked_excluded"]["value_examples"][0]["make"] == "Ford"
+    store = _block_compare_store(tmp_path)
+    _patch_compare_io(monkeypatch, store, [(_BLK_REP, "VIN")], rows=5)
+    assert mod.run_compare(mod.parse_args(["compare"])) == 0        # dry run warns
+    out = capsys.readouterr().out
+    assert "is_block_signature is no longer precise" in out
+    assert "3 blocked detail rows carry a value" in out            # rep/imp/unc
 
 
 def test_assign_refuses_a_to_import_population_carrying_the_block_signature(

@@ -168,15 +168,31 @@ emitted) into `blocked_excluded` with `reason = blocked_page`, before
 **independent of body size** by design. The four families sum to the parsed row
 total — that is what makes "classified exactly once" enforceable — and the
 `blocked_excluded` report section carries the row and object counts, the
-detail/carousel split, and the `size_band` / `input_kind` / `listing_id_source`
-cross-tabs of the excluded objects. There is **no flag and no magnitude
-ceiling** (the cohort size is the measurement); the one guard is fail-closed:
-an `apply and not probe` run **stops** if any excluded row carries a non-NULL
-`price`, `vin` or `make`, and a dry run or probe warns and reports. `assign`
-re-checks the same signature on every `to_import` row as defence in depth and
-refuses the population — reporting the whole cohort's size, capped examples —
-so a compare run predating this filter cannot be assigned by a build that has
-it.
+detail/carousel split, `objects_that_emitted_carousel_rows`, and the
+`size_band` / `input_kind` / `listing_id_source` cross-tabs of the excluded
+objects.
+
+There is **no flag and no magnitude ceiling** (the cohort size is the
+measurement). Two things are surfaced for a maintainer:
+
+- `objects_that_emitted_carousel_rows` — a 439-byte block body has no carousel,
+  so a nonzero count is evidence the predicate caught a real page. This is
+  **reported, never raised**: nobody has measured whether block pages emit
+  carousel rows, and a hard stop on an unmeasured number would be a gate tuned
+  to an assumption. Zero is the confirmation the plan never got.
+- `detail_rows_carrying_a_business_value` — tautologically zero today (a
+  quarantined detail row matched `price/vin/make` all NULL). It is a cheap
+  predicate-integrity guard: if `is_block_signature` is ever loosened so a
+  quarantined detail row can carry a value, an `apply and not probe` run
+  **stops** (a dry run or probe warns).
+
+`assign` re-checks the same detail-row signature on every `to_import` row as
+defence in depth and refuses the population — reporting the whole cohort's
+size, capped examples — so a compare run predating this filter cannot be
+assigned by a build that has it. The carousel fan-out and multi-candidate
+share are now measured over importable objects only (the `blocked_excluded`
+objects are out of both numerator and denominator), which makes them sharper
+than the probe's figures, not drift.
 
 ### `assign` (Stage 5 slice 2)
 | flag | default | meaning |
