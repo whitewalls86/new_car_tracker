@@ -156,6 +156,28 @@ and lets the report carry the counts. Measured 2026-08-28: neither is expected
 to trip, because the 5,260 objects without a capture time are all block pages
 and emit no rows.
 
+**Four families, not three.** `compare` classifies into `already_represented`,
+`to_import`, `unclassifiable` and — since Plan 145 Stage 5's block-page filter —
+`blocked_excluded`. Stage 4's block-page classifier is structurally dead for any
+object whose identity resolved, so a block page with a `legacy_manifest` /
+`queue_events` listing id parsed to an `active` detail row with `price`, `vin`
+and `make` all NULL and leaked into the other families. `compare` now
+quarantines the **whole object** (its detail row and any carousel rows it
+emitted) into `blocked_excluded` with `reason = blocked_page`, before
+`classify_from_summary` is consulted. The signature is on the detail row and is
+**independent of body size** by design. The four families sum to the parsed row
+total — that is what makes "classified exactly once" enforceable — and the
+`blocked_excluded` report section carries the row and object counts, the
+detail/carousel split, and the `size_band` / `input_kind` / `listing_id_source`
+cross-tabs of the excluded objects. There is **no flag and no magnitude
+ceiling** (the cohort size is the measurement); the one guard is fail-closed:
+an `apply and not probe` run **stops** if any excluded row carries a non-NULL
+`price`, `vin` or `make`, and a dry run or probe warns and reports. `assign`
+re-checks the same signature on every `to_import` row as defence in depth and
+refuses the population — reporting the whole cohort's size, capped examples —
+so a compare run predating this filter cannot be assigned by a build that has
+it.
+
 ### `assign` (Stage 5 slice 2)
 | flag | default | meaning |
 |---|---|---|
