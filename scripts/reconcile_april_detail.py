@@ -3874,12 +3874,12 @@ def assign_batch_name(run_id: str, index: int) -> str:
     return f"{run_id}-b{index:05d}"
 
 
-def _assigned_key(batch_name: str) -> str:
-    return f"{ASSIGNED_PREFIX}/{batch_name}.parquet"
+def _assigned_key(batch_name: str, assigned_root: str = ASSIGNED_PREFIX) -> str:
+    return f"{assigned_root}/{batch_name}.parquet"
 
 
-def _assign_report_key(run_id: str) -> str:
-    return f"{ASSIGNED_PREFIX}/{run_id}-assign_report.json"
+def _assign_report_key(run_id: str, assigned_root: str = ASSIGNED_PREFIX) -> str:
+    return f"{assigned_root}/{run_id}-assign_report.json"
 
 
 # -- validation ------------------------------------------------------------
@@ -4183,8 +4183,18 @@ def write_import_batch(
     silver_rows: Sequence[dict[str, Any]],
     price_events: Sequence[dict[str, Any]],
     queue_events: Sequence[dict[str, Any]],
+    *, probe: bool = False,
 ) -> dict[str, Any]:
-    """All four writes on one connection, one commit, exceptions propagating.
+    """All four writes on one connection, exceptions propagating.
+
+    An authoritative call ends in ``COMMIT``. A ``probe=True`` call issues
+    **every** statement the authoritative path would -- the silver insert, the
+    price events, the queue events and the receipt insert -- against the real
+    connection, so every NOT NULL, every CHECK, every ``::uuid`` cast and every
+    type coercion fires at statement time, and then ends in ``ROLLBACK``. There
+    is no argument that turns a probe into a durable write: committing a batch
+    built from a partial compare would let the authoritative run classify the
+    same observations as ``to_import`` again and write them twice.
 
     Deliberately not ``shared.db.db_cursor`` (a connection and a commit per
     call) and deliberately not ``write_silver_observations_postgres`` (returns
@@ -4222,7 +4232,10 @@ def write_import_batch(
                 batch_name, manifest_sha256, len(queue_events), len(silver_rows),
                 len(price_events), len(queue_events),
             ))
-        conn.commit()
+        if probe:
+            conn.rollback()
+        else:
+            conn.commit()
     except Exception:
         conn.rollback()
         raise
@@ -4233,20 +4246,55 @@ def write_import_batch(
 
 # -- reading slice 1's outputs --------------------------------------------
 
-def _discover_compare_run(client, bucket: str) -> str:
-    """The one complete ``compare`` run, or a demand for ``--run-id``."""
+class _Stage5Roots(NamedTuple):
+    """The Stage-5 output prefixes for one run, authoritative or ``--probe``.
+
+    ``--probe`` routes every slice-2 read and write to a parallel ``*_probe``
+    prefix, exactly as slice 1 does for ``compare`` (search ``PROBE_SUFFIX`` in
+    ``run_compare``). Slice 1 open-coded ``PREFIX + suffix`` at each of three
+    uses; slice 2 needs the same routing in more places, so it is derived once
+    here and threaded. Probe output is **never** promoted to the authoritative
+    prefixes, and an authoritative run never reads a probe prefix.
+    """
+
+    compared: str
+    inventory: str
+    assigned: str
+    vin_snapshot: str
+
+
+def _stage5_roots(probe: bool) -> _Stage5Roots:
+    suffix = PROBE_SUFFIX if probe else ""
+    return _Stage5Roots(
+        compared=COMPARED_PREFIX + suffix,
+        inventory=INVENTORY_PREFIX + suffix,
+        assigned=ASSIGNED_PREFIX + suffix,
+        vin_snapshot=VIN_SNAPSHOT_PREFIX + suffix,
+    )
+
+
+def _discover_compare_run(client, bucket: str, roots: _Stage5Roots) -> str:
+    """The one complete ``compare`` run, or a demand for ``--run-id``.
+
+    ``compared_probe/`` and ``compared/`` are disjoint key prefixes, so a probe
+    discovery cannot see an authoritative run and vice versa: a bare list of
+    ``compared/`` never matches ``compared_probe/...`` because the byte after
+    ``compared`` is ``_`` rather than ``/``.
+    """
     candidates = []
-    for prefix in _list_common_prefixes(client, bucket, COMPARED_PREFIX + "/"):
+    for prefix in _list_common_prefixes(client, bucket, roots.compared + "/"):
         run_id = prefix.rstrip("/").rsplit("/", 1)[-1]
-        if _compare_run_complete(f"{COMPARED_PREFIX}/{run_id}",
-                                 f"{INVENTORY_PREFIX}/{run_id}.json"):
+        if _compare_run_complete(f"{roots.compared}/{run_id}",
+                                 f"{roots.inventory}/{run_id}.json"):
             candidates.append(run_id)
     if len(candidates) == 1:
         return candidates[0]
     if not candidates:
+        need = ("run `compare --probe --apply` first"
+                if roots.compared.endswith(PROBE_SUFFIX)
+                else "slice 1 must finish before slice 2 can assign")
         raise ReconcileError(
-            f"no complete compare run under s3://{bucket}/{COMPARED_PREFIX}/; "
-            f"slice 1 must finish before slice 2 can assign"
+            f"no complete compare run under s3://{bucket}/{roots.compared}/; {need}"
         )
     raise ReconcileError(
         f"{len(candidates)} complete compare runs ({', '.join(sorted(candidates))}); "
@@ -4336,26 +4384,37 @@ def _load_import_identity(client, bucket: str, wanted: set[str]
     return out
 
 
-def _load_vin_snapshot(client, bucket: str, run_id: str) -> dict[str, Any]:
-    """Slice 1's read-only ``ops.vin_to_listing`` snapshot. Never written back."""
-    key = f"{VIN_SNAPSHOT_PREFIX}/{run_id}.parquet"
+def _load_vin_snapshot(client, bucket: str, run_id: str,
+                       vin_root: str) -> dict[str, Any]:
+    """Slice 1's read-only ``ops.vin_to_listing`` snapshot. Never written back.
+
+    A ``--probe`` compare writes this under ``vin_snapshot_probe/``. ``vin_root``
+    is required, not defaulted: ``_read_parquet_rows`` fetches the key unguarded,
+    so a probe apply pointed at the authoritative prefix would raise on the
+    missing object rather than quietly run with no VINs -- and defaulting toward
+    the authoritative prefix is the one direction non-negotiable 2 forbids.
+    """
+    key = f"{vin_root}/{run_id}.parquet"
     rows = _read_parquet_rows(client, bucket, key, columns=["listing_id", "vin"])
     return {str(r["listing_id"]): r.get("vin") for r in rows if r.get("listing_id")}
 
 
-def _read_assignment_shard(client, bucket: str, batch_name: str
+def _read_assignment_shard(client, bucket: str, batch_name: str,
+                           assigned_root: str
                            ) -> tuple[list[dict[str, Any]], str]:
     """The assignment shard's rows and the SHA-256 of its exact bytes.
 
     The digest is over the stored object, so the receipt is keyed to the bytes
-    a retry will read rather than to a re-derived summary of them.
+    a retry will read rather than to a re-derived summary of them. ``assigned_root``
+    is required, not defaulted -- a call site that forgot it would read from the
+    authoritative prefix, the one direction non-negotiable 2 forbids.
     """
     import io
 
     import pyarrow.parquet as pq
 
     body = client.get_object(
-        Bucket=bucket, Key=_assigned_key(batch_name),
+        Bucket=bucket, Key=_assigned_key(batch_name, assigned_root),
     )["Body"].read()
     rows = pq.read_table(io.BytesIO(body)).to_pylist()
     return rows, hashlib.sha256(body).hexdigest()
@@ -4379,10 +4438,12 @@ def run_assign(args: argparse.Namespace) -> int:
     bucket = args.bucket or DEFAULT_BUCKET
     client = _s3_client()
     apply = bool(args.apply)
+    probe = bool(args.probe)
+    roots = _stage5_roots(probe)
 
-    run_id = args.run_id or _discover_compare_run(client, bucket)
-    run_dir = f"{COMPARED_PREFIX}/{run_id}"
-    if not _compare_run_complete(run_dir, f"{INVENTORY_PREFIX}/{run_id}.json"):
+    run_id = args.run_id or _discover_compare_run(client, bucket, roots)
+    run_dir = f"{roots.compared}/{run_id}"
+    if not _compare_run_complete(run_dir, f"{roots.inventory}/{run_id}.json"):
         detail = (
             f"compare run {run_id} has no inventory freeze and/or no "
             f"compare_report.json, so its to_import family is not final"
@@ -4432,7 +4493,7 @@ def run_assign(args: argparse.Namespace) -> int:
     # The caps decide batch membership, so re-assigning a run under different
     # caps would silently reuse shards whose contents no longer match their
     # name. The recorded caps make that a stop.
-    report_key = _assign_report_key(run_id)
+    report_key = _assign_report_key(run_id, roots.assigned)
     if object_exists(report_key):
         from shared.minio import read_json
 
@@ -4457,12 +4518,14 @@ def run_assign(args: argparse.Namespace) -> int:
     try:
         for index, batch in enumerate(batches, start=1):
             batch_name = assign_batch_name(run_id, index)
-            key = _assigned_key(batch_name)
+            key = _assigned_key(batch_name, roots.assigned)
             planned = {o["object_key"] for o in batch["objects"]}
             if object_exists(key):
                 # Immutable: every retry reuses the recorded value. That is
                 # what makes apply idempotent at the identity level.
-                recorded, _digest = _read_assignment_shard(client, bucket, batch_name)
+                recorded, _digest = _read_assignment_shard(
+                    client, bucket, batch_name, roots.assigned,
+                )
                 if {r["object_key"] for r in recorded} != planned:
                     raise ReconcileError(
                         f"assignment shard {key} holds a different object set "
@@ -4530,6 +4593,7 @@ def run_assign(args: argparse.Namespace) -> int:
         "plan": 145, "stage": 5, "slice": 2, "mode": "assign",
         "run_id": run_id,
         "apply": apply,
+        "probe": probe,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "caps": {"max_artifacts": args.max_artifacts,
                  "max_silver_rows": args.max_silver_rows},
@@ -4555,17 +4619,23 @@ def run_assign(args: argparse.Namespace) -> int:
             (json.dumps(report, indent=2, sort_keys=True, default=str) + "\n").encode(),
             content_type="application/json",
         )
-    _print_assign_report(report, apply=apply)
+    _print_assign_report(report, apply=apply, probe=probe)
     return 0
 
 
-def _print_assign_report(report: dict[str, Any], *, apply: bool) -> None:
+def _print_assign_report(report: dict[str, Any], *, apply: bool,
+                         probe: bool = False) -> None:
     census = report["identity_census"]
     batches = report["batches"]
+    assigned_root = ASSIGNED_PREFIX + (PROBE_SUFFIX if probe else "")
+    if probe:
+        mode = "PROBE APPLY" if apply else "PROBE DRY RUN"
+    else:
+        mode = "APPLY" if apply else "DRY RUN"
     print()
     print("Plan 145 Stage 5 slice 2 -- assign artifact identity")
     print("=" * 66)
-    print(f"mode                 {'APPLY' if apply else 'DRY RUN'}")
+    print(f"mode                 {mode}")
     print(f"run_id               {report['run_id']}")
     print(f"to_import rows       {report['to_import']['rows']:>12,}")
     print(f"artifacts            {report['to_import']['artifacts']:>12,}")
@@ -4583,8 +4653,13 @@ def _print_assign_report(report: dict[str, Any], *, apply: bool) -> None:
           f"{report['caps']['max_silver_rows']:,} rows; bound by "
           f"{batches['bound_by']}")
     if apply:
-        print(f"\nwrote {ASSIGNED_PREFIX}/{report['run_id']}-b*.parquet "
+        print(f"\nwrote {assigned_root}/{report['run_id']}-b*.parquet "
               f"(create-if-absent) and the assign report")
+        if probe:
+            print(f"PROBE: {ARTIFACT_ID_SEQUENCE} was advanced by real nextval. "
+                  f"The sequence never reuses, so a value lost before its shard "
+                  f"write is a harmless bigserial gap -- expect artifact_id to "
+                  f"jump. Nothing here is promoted to {ASSIGNED_PREFIX}/.")
     else:
         print(f"\nDRY RUN: planned only. No shard was written and "
               f"{ARTIFACT_ID_SEQUENCE} was not touched.")
@@ -4606,15 +4681,41 @@ def run_apply(args: argparse.Namespace) -> int:
     bucket = args.bucket or DEFAULT_BUCKET
     client = _s3_client()
     apply = bool(args.apply)
+    probe = bool(args.probe)
+    if probe and args.maintainer_approval:
+        raise ReconcileError(
+            "apply --probe runs the real transaction and rolls it back, so it "
+            "never commits and --maintainer-approval has nothing to authorise. "
+            "Drop --maintainer-approval, or drop --probe for an authoritative run."
+        )
+    if probe and apply and not args.batch:
+        # The approval gate was also the only bound on how much a bare run did.
+        # A probe is exempt from approval (it commits nothing), but that removes
+        # the bound too: a bare probe apply would issue ~200k INSERTs across
+        # several 50,000-row transactions against production Postgres while live
+        # processing writes the same staging tables -- rolled back, but still WAL
+        # and dead tuples. One batch proves every constraint and cast the probe
+        # exists to check, so name the batch(es) explicitly.
+        raise ReconcileError(
+            "apply --probe --apply has no row budget (a probe commits nothing, "
+            "so the canary gate does not apply); name the batch(es) with --batch "
+            "rather than replaying the whole assigned population against "
+            "production Postgres. One batch is enough to exercise every "
+            "constraint and type coercion."
+        )
+    roots = _stage5_roots(probe)
 
-    run_id = args.run_id or _discover_compare_run(client, bucket)
+    run_id = args.run_id or _discover_compare_run(client, bucket, roots)
     all_names = sorted(
         key.rsplit("/", 1)[-1].removesuffix(".parquet")
-        for key in _list_keys(client, bucket, f"{ASSIGNED_PREFIX}/{run_id}-b", ".parquet")
+        for key in _list_keys(
+            client, bucket, f"{roots.assigned}/{run_id}-b", ".parquet",
+        )
     )
     if not all_names:
         raise ReconcileError(
-            f"no assignment shards for run {run_id}; run `assign --apply` first"
+            f"no assignment shards for run {run_id}; run `assign "
+            f"{'--probe --apply' if probe else '--apply'}` first"
         )
     selected = list(args.batch) if args.batch else all_names
     unknown = [name for name in selected if name not in all_names]
@@ -4626,7 +4727,9 @@ def run_apply(args: argparse.Namespace) -> int:
     # The blast radius, from the assignment shards, before anything is written.
     plan_rows: list[dict[str, Any]] = []
     for name in selected:
-        records, digest = _read_assignment_shard(client, bucket, name)
+        records, digest = _read_assignment_shard(
+            client, bucket, name, roots.assigned,
+        )
         plan_rows.append({
             "batch_name": name, "digest": digest, "records": records,
             "artifacts": len(records),
@@ -4634,15 +4737,18 @@ def run_apply(args: argparse.Namespace) -> int:
             "detail_rows": sum(int(r["detail_rows"]) for r in records),
         })
     _print_apply_plan(run_id, plan_rows, apply=apply,
-                      approval=args.maintainer_approval)
+                      approval=args.maintainer_approval, probe=probe)
 
     # The canary gate, measured in rows rather than in batches. Counting
     # batches would have let one default-cap batch -- 5,000 artifacts and up to
     # 50,000 silver rows -- through unapproved, two orders of magnitude past
     # the ~500 observations the plan sizes the canary at. The write set is the
-    # thing being approved, so it is the thing that is measured.
+    # thing being approved, so it is the thing that is measured. A probe issues
+    # the same statements and then rolls them back, so it writes nothing to cap
+    # and the gate does not apply to it (Non-negotiable 4: scope every refusal
+    # to the run that can actually cause harm).
     selected_rows = sum(entry["silver_rows"] for entry in plan_rows)
-    if apply and selected_rows > args.max_unapproved_rows \
+    if apply and not probe and selected_rows > args.max_unapproved_rows \
             and not args.maintainer_approval:
         raise ReconcileError(
             f"--apply selected {selected_rows:,} silver rows across "
@@ -4653,8 +4759,8 @@ def run_apply(args: argparse.Namespace) -> int:
             f"--maintainer-approval <name>"
         )
 
-    vin_map = _load_vin_snapshot(client, bucket, run_id)
-    run_dir = f"{COMPARED_PREFIX}/{run_id}"
+    vin_map = _load_vin_snapshot(client, bucket, run_id, roots.vin_snapshot)
+    run_dir = f"{roots.compared}/{run_id}"
 
     # Batches are ordered by object_key while a to_import shard is one Stage 4
     # work unit, and materialized keys are content-derived -- so the two orders
@@ -4743,14 +4849,21 @@ def run_apply(args: argparse.Namespace) -> int:
             else:
                 outcome = write_import_batch(
                     conn, batch_name, entry["digest"],
-                    silver_rows, price_events, queue_events,
+                    silver_rows, price_events, queue_events, probe=probe,
                 )
-                results.append({**outcome, "receipt":
-                                "already_committed" if outcome["skipped"] else "written"})
+                if outcome["skipped"]:
+                    receipt = "already_committed"
+                elif probe:
+                    receipt = "rolled_back"
+                else:
+                    receipt = "written"
+                results.append({**outcome, "receipt": receipt})
                 logger.info(
                     "batch %s: %s (%d artifacts, %d silver, %d price events)",
-                    batch_name, "skipped -- receipt already present"
-                    if outcome["skipped"] else "committed",
+                    batch_name,
+                    "skipped -- receipt already present" if outcome["skipped"]
+                    else "probe: every statement issued, rolled back" if probe
+                    else "committed",
                     outcome["artifacts"], outcome["silver"], outcome["price_events"],
                 )
             totals["silver"] += results[-1]["silver"]
@@ -4762,7 +4875,7 @@ def run_apply(args: argparse.Namespace) -> int:
             conn.close()
         tmp.cleanup()
 
-    _print_apply_report(run_id, results, totals, apply=apply)
+    _print_apply_report(run_id, results, totals, apply=apply, probe=probe)
     return 0
 
 
@@ -4782,12 +4895,17 @@ _APPLY_NEVER_TOUCHES = (
 
 
 def _print_apply_plan(run_id: str, plan_rows: Sequence[dict[str, Any]], *,
-                      apply: bool, approval: Optional[str]) -> None:
+                      apply: bool, approval: Optional[str],
+                      probe: bool = False) -> None:
     """The blast radius, printed before the first write of a production run."""
+    if probe:
+        mode = "PROBE (real transaction, rolled back)" if apply else "PROBE DRY RUN"
+    else:
+        mode = "APPLY" if apply else "DRY RUN"
     print()
     print("Plan 145 Stage 5 slice 2 -- apply the historical write set")
     print("=" * 66)
-    print(f"mode                 {'APPLY' if apply else 'DRY RUN'}")
+    print(f"mode                 {mode}")
     print(f"run_id               {run_id}")
     if approval:
         print(f"maintainer approval  {approval}")
@@ -4797,13 +4915,15 @@ def _print_apply_plan(run_id: str, plan_rows: Sequence[dict[str, Any]], *,
     print(f"price events (max)   {sum(r['detail_rows'] for r in plan_rows):>12,}")
     print(f"queue events         {sum(r['artifacts'] for r in plan_rows):>12,}")
     print()
-    print("writes               " + "\n                     ".join(_APPLY_WRITES))
+    print(f"{'would write' if probe else 'writes':<21}"
+          + "\n                     ".join(_APPLY_WRITES))
     print("never touched        " + "\n                     ".join(_APPLY_NEVER_TOUCHES))
     print()
 
 
 def _print_apply_report(run_id: str, results: Sequence[dict[str, Any]],
-                        totals: Counter, *, apply: bool) -> None:
+                        totals: Counter, *, apply: bool,
+                        probe: bool = False) -> None:
     skipped = sum(1 for r in results if r.get("skipped"))
     print()
     print(f"batches processed    {len(results):>12,}"
@@ -4811,7 +4931,12 @@ def _print_apply_report(run_id: str, results: Sequence[dict[str, Any]],
     print(f"silver rows          {totals['silver']:>12,}")
     print(f"price events         {totals['price_events']:>12,}")
     print(f"queue events         {totals['queue_events']:>12,}")
-    if apply:
+    if apply and probe:
+        print(f"\nPROBE: ran every statement for {len(results) - skipped:,} "
+              f"batch(es) of run {run_id} against real Postgres, one transaction "
+              f"each, then ROLLED BACK. No row was committed; the per-table "
+              f"counts above are what an authoritative run would write.")
+    elif apply:
         print(f"\ncommitted {len(results) - skipped:,} batch(es) of run {run_id}, "
               f"one transaction each, receipt included.")
     else:
@@ -5050,10 +5175,20 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
                      help="Allocate sequence values and write the assignment "
                           "shards. Without it the run plans and reports only, "
                           "and the sequence is never touched.")
+    asg.add_argument("--probe", action="store_true",
+                     help="Assign a disposable compare run: read compared_probe/ "
+                          "and inventory_probe/, and write the assignment shards "
+                          "and report to assigned_probe/. With --apply this "
+                          f"calls the real nextval on {ARTIFACT_ID_SEQUENCE}; the "
+                          "sequence never reuses, so a value lost before a shard "
+                          "write is a harmless bigserial gap -- expect "
+                          "artifact_id to jump. Probe output is never promoted "
+                          "to the authoritative prefix.")
     asg.add_argument("--bucket", default=None, help="Override MINIO_BUCKET.")
     asg.add_argument("--run-id", default=None,
                      help="The compare run to assign. Default: the one complete "
-                          "run under recovery/plan145/compared/.")
+                          "run under recovery/plan145/compared/ (or "
+                          "compared_probe/ under --probe).")
     asg.add_argument("--max-artifacts", type=int, default=MAX_BATCH_ARTIFACTS,
                      help=f"Artifacts per batch (default {MAX_BATCH_ARTIFACTS}). "
                           f"Changing it changes every batch's membership, so a "
@@ -5075,13 +5210,24 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
                      help="Actually write. Without it the run builds and "
                           "validates the whole write set, prints the blast "
                           "radius and issues no statement.")
+    app.add_argument("--probe", action="store_true",
+                     help="Apply a disposable compare run: read compared_probe/, "
+                          "assigned_probe/ and vin_snapshot_probe/. With --apply, "
+                          "issue every statement the authoritative path would -- "
+                          "silver insert, price events, queue events, receipt -- "
+                          "against real Postgres, then ROLLBACK instead of "
+                          "COMMIT, so every constraint and cast is proven at "
+                          "statement time. A probe never commits and cannot be "
+                          "made to: --maintainer-approval is refused with --probe.")
     app.add_argument("--bucket", default=None, help="Override MINIO_BUCKET.")
     app.add_argument("--run-id", default=None,
                      help="The compare run whose assignment shards to apply.")
     app.add_argument("--batch", action="append", default=[],
                      help="Batch name to apply; repeatable. Default: every batch "
-                          "of the run, which --apply refuses without "
-                          "--maintainer-approval.")
+                          "of the run -- which an authoritative --apply then "
+                          "refuses without --maintainer-approval, and which "
+                          "--probe --apply refuses outright (a probe has no row "
+                          "budget; name the batch).")
     app.add_argument("--max-unapproved-rows", type=int,
                      default=CANARY_ROW_BUDGET,
                      help=f"Silver rows an --apply run may write without a named "

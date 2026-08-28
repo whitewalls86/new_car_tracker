@@ -11,10 +11,16 @@ page is a convenience, the parser is the authority.**
 that plans, validates and reports, and writes nothing. A dry run is safe to run
 against production at any time.
 
-**`--probe` means disposable** (`compare` only today; `assign`/`apply` next).
-It routes every read and write to a parallel `*_probe` prefix and relaxes the
-gate that demands a complete Stage 4. Probe output is **never promoted** to the
-authoritative prefixes.
+**`--probe` means disposable** (`compare`, `assign` and `apply`). It routes
+every Stage-5 read and write to a parallel `*_probe` prefix
+(`compared_probe/`, `inventory_probe/`, `assigned_probe/`, `vin_snapshot_probe/`)
+and relaxes the gate that demands a complete Stage 4, so slice 2 can be run
+against real data while Stage 4 is still parsing. Probe output is **never
+promoted** to the authoritative prefixes, and an authoritative run never reads a
+probe prefix. `apply --probe --apply` issues every statement against real
+Postgres and then rolls the transaction back; **no probe run ever commits, and
+there is no flag that lifts that** — a committed probe batch would be re-imported
+by the authoritative run and written twice.
 
 The two are orthogonal, which is the part people get wrong:
 
@@ -22,6 +28,8 @@ The two are orthogonal, which is the part people get wrong:
 |---|---|---|
 | **authoritative** | `compare` | `compare --apply` |
 | **disposable** | `compare --probe` | `compare --probe --apply` |
+
+The same orthogonality holds for `assign` and `apply`; the full matrix is below.
 
 ## Blast radius, by mode
 
@@ -37,6 +45,35 @@ The two are orthogonal, which is the part people get wrong:
 | `apply` | 5.2 | `assigned/` | **three staging tables + receipt** | yes, writes |
 
 `dedupe --apply` and `apply --apply` are the only two that are hard to undo.
+`apply --probe --apply` touches Postgres but rolls back, so it undoes itself.
+
+### `assign` / `apply` × `--probe` × `--apply`
+
+| invocation | sequence | writes objects | Postgres |
+|---|---|---|---|
+| `assign` | untouched | none | none |
+| `assign --probe` | untouched | none | none |
+| `assign --probe --apply` | `nextval` | `assigned_probe/` | none |
+| `assign --apply` | `nextval` | `assigned/` | none |
+| `apply --probe` | — | none | none |
+| `apply --probe --apply` | — | none | **full transaction, rolled back** |
+| `apply --apply` | — | none | commits, budget-capped |
+
+`--probe` and a real commit are mutually exclusive with no override:
+`apply --probe --maintainer-approval …` is refused rather than run, and the
+canary row budget does not apply to a probe (it caps a commit; a probe has
+nothing to cap).
+
+Because a probe has no row budget, `apply --probe --apply` **requires an
+explicit `--batch`** — a bare run would replay the whole assigned population
+against production Postgres (rolled back, but still WAL and dead tuples), and
+one batch proves every constraint and coercion the probe exists to check.
+
+`compute_run_id` hashes the frozen input inventory, so each `compare --probe
+--apply` as Stage 4 advances mints a **new** `run_id`. Once a second probe
+compare lands, `assign --probe` / `apply --probe` stop auto-selecting and need
+`--run-id`; the "one complete run" default below is only reliable for the
+authoritative prefix.
 
 ## Universal flags
 
@@ -123,7 +160,8 @@ and emit no rows.
 | flag | default | meaning |
 |---|---|---|
 | `--apply` | off | allocate sequence values and write the assignment shards |
-| `--run-id` | the one complete run | which compare run to assign |
+| `--probe` | off | assign a `compared_probe/` run; write shards + report to `assigned_probe/`. `--probe --apply` calls the real `nextval` (a lost value is a harmless `bigserial` gap — expect `artifact_id` to jump). Never promoted. |
+| `--run-id` | the one complete run | which compare run to assign (under `compared_probe/` with `--probe`) |
 | `--max-artifacts` | 5000 | artifacts per batch; changing it changes every batch's membership |
 | `--max-silver-rows` | 50000 | rows per batch; an artifact is never split |
 
@@ -131,10 +169,11 @@ and emit no rows.
 | flag | default | meaning |
 |---|---|---|
 | `--apply` | off | actually write; without it the whole write set is built, validated and printed |
+| `--probe` | off | apply a `compared_probe/` run from `assigned_probe/`. `--probe --apply` runs every statement (silver insert, price events, queue events, receipt) against real Postgres in one transaction, then `ROLLBACK`. Never commits; the canary budget does not apply; `--maintainer-approval` is refused alongside it; **`--batch` is required**. |
 | `--run-id` | the one complete run | which run's assignment shards to apply |
-| `--batch` | every batch | batch name, repeatable |
-| `--max-unapproved-rows` | canary budget | silver rows an `--apply` may write without named approval |
-| `--maintainer-approval NAME` | none | named approval to exceed that budget |
+| `--batch` | every batch (authoritative); **required** under `--probe --apply` | batch name, repeatable |
+| `--max-unapproved-rows` | canary budget | silver rows an authoritative `--apply` may write without named approval (a probe writes nothing durable, so it is exempt) |
+| `--maintainer-approval NAME` | none | named approval to exceed that budget; refused if combined with `--probe` |
 
 Plan 145 allows nothing beyond the canary until slice 3 closes the live-state
 proof. `--maintainer-approval` is a record of a human decision, not a way past

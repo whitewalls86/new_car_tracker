@@ -2044,6 +2044,7 @@ class _FakeCursor:
 
     def execute(self, sql, params=None):
         self.owner.sql.append((sql, params))
+        self.owner.ops.append(("execute", sql))
         self.owner.on_execute(sql, params)
 
     def fetchall(self):
@@ -2066,6 +2067,10 @@ class _FakeWriteConn:
         self.receipts = receipts or {}
         self.fail_on = fail_on
         self.executed_values = []
+        # An ordered log across cur.execute, execute_values, commit and
+        # rollback, so a test can assert the *sequence* the writer issued --
+        # which sql and executed_values alone cannot show interleaved.
+        self.ops = []
 
     def on_execute(self, sql, params):
         if self.fail_on and self.fail_on in sql:
@@ -2084,9 +2089,11 @@ class _FakeWriteConn:
 
     def commit(self):
         self.commits += 1
+        self.ops.append(("commit", None))
 
     def rollback(self):
         self.rollbacks += 1
+        self.ops.append(("rollback", None))
 
     def close(self):
         self.closed = True
@@ -2474,7 +2481,10 @@ def _record_execute_values(monkeypatch, conn):
     import psycopg2.extras
 
     def _fake(cur, sql, rows, template=None, page_size=100):
+        if conn.fail_on and conn.fail_on in sql:
+            raise RuntimeError("injected failure")
         conn.executed_values.append((sql, list(rows)))
+        conn.ops.append(("execute_values", sql))
 
     monkeypatch.setattr(psycopg2.extras, "execute_values", _fake)
 
@@ -2936,3 +2946,290 @@ def test_apply_refuses_a_run_whose_identities_were_never_assigned(
     with pytest.raises(ReconcileError, match="run `assign --apply` first"):
         mod.run_apply(mod.parse_args(["apply", "--apply"]))
     assert conn.sql == []
+
+
+# -- O.7: --probe on assign and apply (Plan 145 Stage 5 slice 2) --------
+#
+# --probe routes every Stage-5 read and write to a parallel *_probe prefix so
+# slice 2 can be exercised against real data while Stage 4 is still parsing.
+# assign --probe --apply calls the real nextval; apply --probe --apply runs the
+# whole transaction against real Postgres and then ROLLS IT BACK. No probe run
+# ever commits, and no override lifts that.
+
+_AUTH_ONLY_KEY = "html/2026/04/pack/authonly.html.zst"
+
+_PROBE_REMAP = (
+    ("recovery/plan145/compared/", "recovery/plan145/compared_probe/"),
+    ("recovery/plan145/inventory/", "recovery/plan145/inventory_probe/"),
+    ("recovery/plan145/vin_snapshot/", "recovery/plan145/vin_snapshot_probe/"),
+)
+
+
+def _to_probe_store(store):
+    """Re-key a slice-2 fixture store's Stage-5 outputs to their *_probe twins.
+
+    ``parsed/``, ``ops_normalized/`` and ``assigned/`` are left alone: --probe
+    reads the same parsed inputs and event lake, and the assignment shards are
+    what the probe run itself writes.
+    """
+    out = {}
+    for key, value in store.items():
+        for auth, probe in _PROBE_REMAP:
+            if key.startswith(auth):
+                key = probe + key[len(auth):]
+                break
+        out[key] = value
+    return out
+
+
+def _probe_assigned_key(batch_name):
+    return f"recovery/plan145/assigned_probe/{batch_name}.parquet"
+
+
+def test_probe_defaults_to_off_on_assign_and_apply():
+    from scripts.reconcile_april_detail import parse_args
+
+    assert parse_args(["assign"]).probe is False
+    assert parse_args(["apply"]).probe is False
+
+
+def test_probe_assign_reads_the_probe_run_and_ignores_a_same_named_authoritative_one(
+        tmp_path, monkeypatch):
+    import pyarrow.parquet as pq
+
+    import scripts.reconcile_april_detail as mod
+
+    auth_store, _ = _slice2_fixture_store(tmp_path)
+    store = _to_probe_store(auth_store)
+    # A same-named authoritative run, complete, with a DIFFERENT object in its
+    # to_import family. A probe assign must not read a byte of it.
+    store[f"recovery/plan145/compared/{_RUN}/compare_report.json"] = b"{}"
+    store[f"recovery/plan145/inventory/{_RUN}.json"] = b"{}"
+    store[f"recovery/plan145/compared/{_RUN}/to_import/materialized-x.parquet"] = \
+        _write_compared_shard(
+            tmp_path / "ti-x.parquet",
+            [_ti_row("eeeeeeee-5555-5555-5555-555555555555", _AUTH_ONLY_KEY)],
+        )
+
+    conn = _FakeWriteConn(next_id=9_000_001)
+    _patch_slice2_io(monkeypatch, store, conn)
+    assert mod.run_assign(mod.parse_args(["assign", "--probe", "--apply"])) == 0
+
+    shard = _probe_assigned_key(assign_batch_name(_RUN, 1))
+    assert shard in store
+    assert _assigned_key(assign_batch_name(_RUN, 1)) not in store   # not authoritative
+    rows = pq.read_table(io.BytesIO(store[shard])).to_pylist()
+    assert {r["object_key"] for r in rows} == {_MAT_KEY, _PACK_KEPT, _PACK_ORPHAN}
+    assert _AUTH_ONLY_KEY not in {r["object_key"] for r in rows}
+    # the real sequence was read
+    assert any("nextval" in sql for sql, _ in conn.sql)
+
+
+def test_authoritative_assign_does_not_see_a_probe_only_compare_run(
+        tmp_path, monkeypatch):
+    import scripts.reconcile_april_detail as mod
+
+    auth_store, _ = _slice2_fixture_store(tmp_path)
+    store = _to_probe_store(auth_store)          # ONLY *_probe Stage-5 outputs
+    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+
+    with pytest.raises(ReconcileError, match="no complete compare run"):
+        mod.run_assign(mod.parse_args(["assign", "--apply"]))    # authoritative
+
+
+def test_authoritative_assign_with_both_prefixes_present_reads_the_authoritative_run(
+        tmp_path, monkeypatch):
+    # The true reverse of the "probe ignores authoritative" case: both runs
+    # exist, and an authoritative assign must pick the authoritative one.
+    import pyarrow.parquet as pq
+
+    import scripts.reconcile_april_detail as mod
+
+    auth_store, _ = _slice2_fixture_store(tmp_path)
+    store = {**auth_store, **_to_probe_store(auth_store)}
+    # an object only the PROBE run's to_import family carries
+    store[f"recovery/plan145/compared_probe/{_RUN}/to_import/materialized-x.parquet"] = \
+        _write_compared_shard(
+            tmp_path / "ti-probe-x.parquet",
+            [_ti_row("eeeeeeee-5555-5555-5555-555555555555", _AUTH_ONLY_KEY)],
+        )
+    _patch_slice2_io(monkeypatch, store, _FakeWriteConn(next_id=9_000_001))
+    assert mod.run_assign(mod.parse_args(["assign", "--apply"])) == 0
+
+    key = _assigned_key(assign_batch_name(_RUN, 1))
+    rows = pq.read_table(io.BytesIO(store[key])).to_pylist()
+    assert _AUTH_ONLY_KEY not in {r["object_key"] for r in rows}
+    assert not any(k.startswith("recovery/plan145/assigned_probe/") for k in store)
+
+
+def test_probe_assign_writes_only_under_assigned_probe_and_apply_cannot_see_it(
+        tmp_path, monkeypatch):
+    import scripts.reconcile_april_detail as mod
+
+    auth_store, _ = _slice2_fixture_store(tmp_path)
+    store = {**auth_store, **_to_probe_store(auth_store)}   # both prefixes present
+    _patch_slice2_io(monkeypatch, store, _FakeWriteConn(next_id=9_000_001))
+    assert mod.run_assign(mod.parse_args(["assign", "--probe", "--apply"])) == 0
+
+    probe_keys = [k for k in store if k.startswith("recovery/plan145/assigned_probe/")]
+    assert _probe_assigned_key(assign_batch_name(_RUN, 1)) in probe_keys
+    assert f"recovery/plan145/assigned_probe/{_RUN}-assign_report.json" in probe_keys
+    # nothing landed in the authoritative prefix
+    assert not any(k.startswith("recovery/plan145/assigned/") for k in store)
+
+    # an authoritative apply for the same run finds no shards -- it only ever
+    # lists assigned/, never assigned_probe/.
+    conn = _FakeWriteConn()
+    _patch_slice2_io(monkeypatch, store, conn)
+    with pytest.raises(ReconcileError, match="run `assign --apply` first"):
+        mod.run_apply(mod.parse_args(["apply", "--apply"]))
+    assert conn.sql == []
+
+
+def _seed_probe_assignment(tmp_path, monkeypatch):
+    """A probe compare fixture with its assignment shards already written."""
+    import scripts.reconcile_april_detail as mod
+
+    auth_store, ids = _slice2_fixture_store(tmp_path)
+    store = _to_probe_store(auth_store)
+    _patch_slice2_io(monkeypatch, store, _FakeWriteConn(next_id=9_000_001))
+    assert mod.run_assign(mod.parse_args(["assign", "--probe", "--apply"])) == 0
+    return store, ids
+
+
+def test_apply_probe_apply_issues_every_statement_then_rolls_back(
+        tmp_path, monkeypatch):
+    import scripts.reconcile_april_detail as mod
+
+    store, _ = _seed_probe_assignment(tmp_path, monkeypatch)
+    conn = _FakeWriteConn()
+    _record_execute_values(monkeypatch, conn)
+    _patch_slice2_io(monkeypatch, store, conn)
+
+    batch = assign_batch_name(_RUN, 1)
+    assert mod.run_apply(mod.parse_args(
+        ["apply", "--probe", "--apply", "--batch", batch])) == 0
+
+    # The exact authoritative statement sequence, then ROLLBACK instead of COMMIT.
+    assert [kind for kind, _ in conn.ops] == [
+        "execute",          # check_batch_receipt SELECT
+        "execute_values",   # staging.silver_observations
+        "execute_values",   # staging.price_observation_events
+        "execute_values",   # staging.artifacts_queue_events
+        "execute",          # the receipt INSERT
+        "rollback",
+    ]
+    assert conn.commits == 0
+    ev = [sql for kind, sql in conn.ops if kind == "execute_values"]
+    assert "silver_observations" in ev[0]
+    assert "price_observation_events" in ev[1]
+    assert "artifacts_queue_events" in ev[2]
+    receipt_execs = [sql for kind, sql in conn.ops
+                     if kind == "execute" and "plan145_recovery_batch_receipts" in sql]
+    assert len(receipt_execs) == 2 and "INSERT" in receipt_execs[1]
+
+
+def test_probe_apply_reports_the_would_be_write_set_like_a_dry_run(
+        tmp_path, monkeypatch, capsys):
+    import scripts.reconcile_april_detail as mod
+
+    store, _ = _seed_probe_assignment(tmp_path, monkeypatch)
+    conn = _FakeWriteConn()
+    _record_execute_values(monkeypatch, conn)
+    _patch_slice2_io(monkeypatch, store, conn)
+
+    mod.run_apply(mod.parse_args(
+        ["apply", "--probe", "--apply", "--batch", assign_batch_name(_RUN, 1)]))
+    out = capsys.readouterr().out
+    assert "ROLLED BACK" in out
+    assert re.search(r"^silver rows +4$", out, re.M)     # 3 detail + 1 carousel
+    assert re.search(r"^price events +3$", out, re.M)    # detail rows only
+
+
+def test_a_constraint_violation_in_probe_apply_is_not_swallowed_by_the_rollback(
+        tmp_path, monkeypatch):
+    import scripts.reconcile_april_detail as mod
+
+    store, _ = _seed_probe_assignment(tmp_path, monkeypatch)
+    conn = _FakeWriteConn(fail_on="staging.price_observation_events")
+    _record_execute_values(monkeypatch, conn)
+    _patch_slice2_io(monkeypatch, store, conn)
+
+    with pytest.raises(RuntimeError, match="injected failure"):
+        mod.run_apply(mod.parse_args(
+            ["apply", "--probe", "--apply", "--batch", assign_batch_name(_RUN, 1)]))
+    assert conn.commits == 0
+    assert conn.rollbacks >= 1          # the exception path rolled back and re-raised
+
+
+def test_apply_probe_apply_refuses_a_bare_run_and_wants_an_explicit_batch(
+        tmp_path, monkeypatch):
+    # The approval gate was the only bound on how much a bare apply --apply did;
+    # a probe is exempt from approval, so it needs its own bound. --batch is it.
+    import scripts.reconcile_april_detail as mod
+
+    store, _ = _seed_probe_assignment(tmp_path, monkeypatch)
+    conn = _FakeWriteConn()
+    _patch_slice2_io(monkeypatch, store, conn)
+    with pytest.raises(ReconcileError, match="no row budget"):
+        mod.run_apply(mod.parse_args(["apply", "--probe", "--apply"]))
+    assert conn.sql == []
+
+
+def test_probe_apply_refuses_maintainer_approval_and_ignores_the_canary_budget(
+        tmp_path, monkeypatch):
+    import scripts.reconcile_april_detail as mod
+
+    store, _ = _seed_probe_assignment(tmp_path, monkeypatch)
+    batch = assign_batch_name(_RUN, 1)
+
+    # 1. --probe + --maintainer-approval is refused outright: a probe never
+    #    commits, so there is nothing to approve.
+    conn = _FakeWriteConn()
+    _patch_slice2_io(monkeypatch, store, conn)
+    with pytest.raises(ReconcileError, match="never commits"):
+        mod.run_apply(mod.parse_args(
+            ["apply", "--probe", "--apply", "--batch", batch,
+             "--maintainer-approval", "someone"]))
+    assert conn.sql == []
+
+    # 2. The canary row budget caps a commit; a probe writes nothing durable, so
+    #    a budget of one row does not stop a named-batch probe (Non-negotiable 4).
+    conn = _FakeWriteConn()
+    _record_execute_values(monkeypatch, conn)
+    _patch_slice2_io(monkeypatch, store, conn)
+    assert mod.run_apply(mod.parse_args(
+        ["apply", "--probe", "--apply", "--batch", batch,
+         "--max-unapproved-rows", "1"])) == 0
+    assert conn.commits == 0 and conn.rollbacks >= 1
+
+
+def test_apply_probe_dry_run_reads_probe_prefixes_and_issues_no_statement(
+        tmp_path, monkeypatch, capsys):
+    import scripts.reconcile_april_detail as mod
+
+    store, _ = _seed_probe_assignment(tmp_path, monkeypatch)
+    conn = _FakeWriteConn()
+    _patch_slice2_io(monkeypatch, store, conn)
+
+    assert mod.run_apply(mod.parse_args(["apply", "--probe"])) == 0
+    assert conn.sql == []
+    assert "PROBE DRY RUN" in capsys.readouterr().out
+
+
+def test_authoritative_slice2_paths_are_unchanged_by_probe(tmp_path, monkeypatch):
+    # A bare authoritative assign+apply still lands in the authoritative
+    # prefixes and commits, with no probe artefact anywhere.
+    import scripts.reconcile_april_detail as mod
+
+    store, _ = _slice2_fixture_store(tmp_path)
+    _patch_slice2_io(monkeypatch, store, _FakeWriteConn(next_id=9_000_001))
+    mod.run_assign(mod.parse_args(["assign", "--apply"]))
+
+    conn = _FakeWriteConn()
+    _record_execute_values(monkeypatch, conn)
+    _patch_slice2_io(monkeypatch, store, conn)
+    assert mod.run_apply(mod.parse_args(["apply", "--apply"])) == 0
+    assert conn.commits == 1 and conn.rollbacks == 0
+    assert _assigned_key(assign_batch_name(_RUN, 1)) in store
+    assert not any("_probe/" in k for k in store)
