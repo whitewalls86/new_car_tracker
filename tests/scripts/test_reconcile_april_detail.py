@@ -1599,9 +1599,15 @@ def test_the_near_duplicate_window_counts_adjacent_gaps_not_all_pairs():
         (LISTING_A, base + 100_000_000),   # gap 100 s
         (LISTING_A, base + 200_000_000),   # gap 100 s
         (LISTING_A, base + 900_000_000),   # gap 700 s -> not counted
-        (LISTING_B, base),                 # lone capture -> no pair
+        (LISTING_B, base),                 # lone capture -> no neighbour
     ]))
-    assert measured == {"adjacent_pairs_within_300s": 2, "listings_involved": 1}
+    # the burst is 3 captures with a neighbour (2 adjacent gaps), not 3 pairs;
+    # the isolated 900 s capture and LISTING_B's lone capture have none.
+    assert measured == {
+        "adjacent_pairs_within_300s": 2,
+        "listings_involved": 1,
+        "captures_with_a_neighbour": 3,
+    }
 
 
 def test_the_vin_snapshot_query_is_read_only():
@@ -1775,7 +1781,7 @@ def _compare_fixture_store(tmp_path):
     return store, (l1, l2, l3, l4)
 
 
-def _patch_compare_io(monkeypatch, store, vin_rows):
+def _patch_compare_io(monkeypatch, store, vin_rows, *, rows=5):
     import scripts.reconcile_april_detail as mod
     import shared.db as db
     import shared.minio as minio
@@ -1788,7 +1794,7 @@ def _patch_compare_io(monkeypatch, store, vin_rows):
     )
     monkeypatch.setattr(minio, "read_json", lambda _path: {
         "completed_units": 1204, "planned_units": 1204,
-        "totals": {"inputs": EXPECTED_FLATTENED_INPUTS, "rows": 5},
+        "totals": {"inputs": EXPECTED_FLATTENED_INPUTS, "rows": rows},
     })
     monkeypatch.setattr(db, "get_conn", lambda: _FakeConn(vin_rows))
 
@@ -1893,3 +1899,51 @@ def test_run_compare_apply_refuses_a_silver_shape_that_is_not_the_frozen_nine(
         store[f"recovery/plan145/compared/{run_id}/compare_report.json"])
     assert report["refusals"][0]["kind"] == "silver_object_count"
     assert report["refusals"][0]["enforced"] is False
+
+
+def test_run_compare_apply_stops_on_any_no_listing_id_row_until_the_maintainer_rules(
+        tmp_path, monkeypatch):
+    import io as _io
+
+    import pyarrow.parquet as _pq
+
+    import scripts.reconcile_april_detail as mod
+
+    store, (l1, *_rest) = _compare_fixture_store(tmp_path)
+    # a tier-2 capture: a real fetched_at, but no listing_id resolved.
+    store["recovery/plan145/parsed/rows/materialized-c.parquet"] = \
+        _write_parsed_rows_fixture(
+            tmp_path / "rows-c.parquet",
+            [_prow(listing_id=None, fetched_at=_WHEN, fetched_at_source="queue_events",
+                   object_key="html/c1.zst", content_sha256="sc1")],
+        )
+    _patch_compare_io(monkeypatch, store, [(l1, "VIN-L1")], rows=6)
+
+    # default ceiling is 0: any non-zero no_listing_id cohort stops the run
+    with pytest.raises(ReconcileError, match="no_listing_id rows 1"):
+        mod.run_compare(mod.parse_args(["compare", "--apply"]))
+
+    # the maintainer acknowledges it and proceeds
+    rc = mod.run_compare(
+        mod.parse_args(["compare", "--apply", "--allow-unclassifiable-drift"]))
+    assert rc == 0
+    run_id = next(k for k in store if "/inventory/" in k).split("/")[-1][:-5]
+    report = json.loads(
+        store[f"recovery/plan145/compared/{run_id}/compare_report.json"])
+    assert report["unclassifiable"]["no_listing_id"] == 1
+    assert report["unclassifiable"]["no_capture_time"] == 1        # l3, unchanged
+    assert report["unclassifiable"]["materially_larger"] is True
+    assert report["families"]["sum"] == 6
+    # the row landed in the unclassifiable family, never to_import
+    unc = [
+        row
+        for key, blob in store.items() if f"/compared/{run_id}/unclassifiable/" in key
+        for row in _pq.read_table(_io.BytesIO(blob)).to_pylist()
+    ]
+    assert {r["reason"] for r in unc} == {"no_listing_id", "no_capture_time"}
+    to_import = [
+        row
+        for key, blob in store.items() if f"/compared/{run_id}/to_import/" in key
+        for row in _pq.read_table(_io.BytesIO(blob)).to_pylist()
+    ]
+    assert to_import and all(r["listing_id"] is not None for r in to_import)

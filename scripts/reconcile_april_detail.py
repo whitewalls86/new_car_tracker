@@ -2704,28 +2704,38 @@ def near_duplicate_window(
     captures -- but the maintainer needs the number before slice 2 writes
     anything, so this measures it without collapsing anything.
 
-    The count is over *adjacent* captures in time order (the gap to the
-    predecessor is ``0 < gap <= 300 s``), which is linear in a listing's capture
-    count -- a listing with up to 980 captures, some bursting inside one window,
-    must not cost a quadratic scan. ``run_compare`` computes the same definition
-    with a window query over the temp shards rather than re-accumulating the
-    population in memory.
+    ``adjacent_pairs_within_300s`` is over *adjacent* captures in time order (the
+    gap to the predecessor is ``0 < gap <= 300 s``), which is linear in a
+    listing's capture count -- a listing with up to 980 captures, some bursting
+    inside one window, must not cost a quadratic scan. A cluster of *k* captures
+    inside one window contributes *k-1*, so this is a lower bound on
+    ``captures_with_a_neighbour`` -- the count of captures with another within
+    300 s on either side, which is the quantity the maintainer rules on.
+    ``run_compare`` computes the same definitions with a window query over the
+    temp shards rather than re-accumulating the population in memory.
     """
     by_listing: dict[str, list[int]] = defaultdict(list)
     for listing_id, ts_us in pairs_source:
         by_listing[listing_id].append(ts_us)
     pairs = 0
     listings = 0
+    with_neighbour = 0
     for series in by_listing.values():
         series.sort()
+        n = len(series)
         hit = False
-        for earlier, later in zip(series, series[1:]):
-            if 0 < later - earlier <= COMPARE_WINDOW_US:
+        for i in range(n):
+            prev_near = i > 0 and 0 < series[i] - series[i - 1] <= COMPARE_WINDOW_US
+            next_near = i < n - 1 and 0 < series[i + 1] - series[i] <= COMPARE_WINDOW_US
+            if prev_near:
                 pairs += 1
                 hit = True
+            if prev_near or next_near:
+                with_neighbour += 1
         if hit:
             listings += 1
-    return {"adjacent_pairs_within_300s": pairs, "listings_involved": listings}
+    return {"adjacent_pairs_within_300s": pairs, "listings_involved": listings,
+            "captures_with_a_neighbour": with_neighbour}
 
 
 # -- the input freeze -----------------------------------------------------
@@ -3076,19 +3086,24 @@ def _resolve_toimport_duplicates(
     if glob is None:
         return set(), {"groups_collapsed": 0,
                        "rows_moved_to_already_represented": 0, "conflicts": []}
+    # One `list(struct_pack(...))` rather than five parallel `list()` aggregates
+    # zipped positionally: DuckDB does not document that separate list aggregates
+    # order their elements identically within a group, and the scan can be
+    # parallel (--duckdb-threads). A mis-zip would silently pick the wrong
+    # duplicate winner; a struct keeps the columns bound to their row.
     groups = con.execute(
         "SELECT listing_id, fetched_at, "
-        "       list(_uid) AS uids, list(_fp) AS fps, "
-        "       list(source) AS srcs, list(object_key) AS oks, "
-        "       list(content_sha256) AS hs "
+        "  list(struct_pack(uid := _uid, fp := _fp, src := source, "
+        "                   ok := object_key, h := content_sha256)) AS members "
         f"FROM read_parquet('{glob}') "
         "GROUP BY listing_id, fetched_at HAVING count(*) > 1"
     ).fetchall()
     multi: list[LiteDup] = []
-    for listing_id, fetched_at, uids, fps, srcs, oks, hs in groups:
+    for listing_id, fetched_at, members in groups:
         key_time = _normalize_fetched_at(fetched_at) if fetched_at is not None else None
-        for u, fp, src, ok, h in zip(uids, fps, srcs, oks, hs):
-            multi.append(LiteDup(int(u), listing_id, key_time, None, fp, src, ok, h))
+        for m in members:
+            multi.append(LiteDup(int(m["uid"]), listing_id, key_time, None,
+                                 m["fp"], m["src"], m["ok"], m["h"]))
     try:
         _, loser_uids, report = resolve_global_duplicates(multi)
     except DuplicateFingerprintConflict as exc:
@@ -3104,16 +3119,20 @@ def _measure_near_duplicates(
 ) -> dict[str, int]:
     """The near-duplicate window, as a linear gap scan over the temp shards.
 
-    Same definition as :func:`near_duplicate_window` -- unrepresented captures of
-    one listing whose gap to the previous capture is ``0 < gap <= 300 s`` --
-    computed without re-accumulating the population in memory. Recovery
-    duplicates are excluded so a collapsed pair is not counted as a near one.
+    ``adjacent_pairs_within_300s`` counts consecutive captures whose gap is
+    ``0 < gap <= 300 s`` -- a cluster of *k* captures inside one window is *k-1*,
+    not ``k(k-1)/2``. ``captures_with_a_neighbour`` is the count of unrepresented
+    captures that have another within 300 s on either side; that is the quantity
+    the maintainer rules on. Recovery duplicates are excluded so a collapsed
+    pair is not counted as a near one.
     """
     import pyarrow as pa
 
+    empty = {"adjacent_pairs_within_300s": 0, "listings_involved": 0,
+             "captures_with_a_neighbour": 0}
     glob = _toimport_glob(toimport_dir)
     if glob is None:
-        return {"adjacent_pairs_within_300s": 0, "listings_involved": 0}
+        return empty
     exclude = ""
     if loser_uids:
         con.register(
@@ -3121,19 +3140,29 @@ def _measure_near_duplicates(
             pa.table({"uid": pa.array(sorted(loser_uids), pa.int64())}),
         )
         exclude = " WHERE _uid NOT IN (SELECT uid FROM _losers)"
+    win = COMPARE_WINDOW_US
     try:
-        pairs, listings = con.execute(
-            "SELECT count(*), count(DISTINCT listing_id) FROM ("
-            "  SELECT listing_id, epoch_us(fetched_at) - lag(epoch_us(fetched_at)) "
-            "         OVER (PARTITION BY listing_id ORDER BY fetched_at) AS gap "
-            f"  FROM read_parquet('{glob}'){exclude}"
-            f") WHERE gap > 0 AND gap <= {COMPARE_WINDOW_US}"
+        pairs, listings, with_neighbour = con.execute(
+            "SELECT "
+            f"  count(*) FILTER (WHERE gap_prev > 0 AND gap_prev <= {win}), "
+            "  count(DISTINCT listing_id) FILTER "
+            f"    (WHERE gap_prev > 0 AND gap_prev <= {win}), "
+            f"  count(*) FILTER (WHERE (gap_prev > 0 AND gap_prev <= {win}) "
+            f"                      OR (gap_next > 0 AND gap_next <= {win})) "
+            "FROM ("
+            "  SELECT listing_id, "
+            "    epoch_us(fetched_at) - lag(epoch_us(fetched_at)) OVER w AS gap_prev, "
+            "    lead(epoch_us(fetched_at)) OVER w - epoch_us(fetched_at) AS gap_next "
+            f"  FROM read_parquet('{glob}'){exclude} "
+            "  WINDOW w AS (PARTITION BY listing_id ORDER BY fetched_at)"
+            ")"
         ).fetchone()
     finally:
         if loser_uids:
             con.unregister("_losers")
     return {"adjacent_pairs_within_300s": int(pairs or 0),
-            "listings_involved": int(listings or 0)}
+            "listings_involved": int(listings or 0),
+            "captures_with_a_neighbour": int(with_neighbour or 0)}
 
 
 def run_compare(args: argparse.Namespace) -> int:
@@ -3280,27 +3309,23 @@ def run_compare(args: argparse.Namespace) -> int:
         match_hist: Counter[int] = Counter()
         multi_candidate = 0
         detail_rows = carousel_rows = 0
-        max_carousel_per_object = 0
         represented_written = 0
         unc_no_listing_id = unc_no_capture_time = 0
 
         for uindex, unit in enumerate(unit_names, start=1):
             prows = pq.read_table(tmpdir / "rows" / f"{unit}.parquet").to_pylist()
             summaries = _summarise_unit(con, prows)
-            per_object: Counter[str] = Counter()
             rep_rows: list[dict[str, Any]] = []
             unc_rows: list[dict[str, Any]] = []
             ti_rows: list[dict[str, Any]] = []
             for rid, row in enumerate(prows):
                 src = row.get("source")
-                obj_key = row.get("object_key")
                 if src == "detail":
                     detail_rows += 1
                     if row.get("vin") and row.get("listing_id"):
                         parsed_vin.setdefault(str(row["listing_id"]), row.get("vin"))
                 elif src == "carousel":
                     carousel_rows += 1
-                    per_object[obj_key] += 1
                 verdict = classify_from_summary(row, summaries.get(rid))
                 fam_counts[verdict["family"]] += 1
                 match_hist[verdict["match_count"]] += 1
@@ -3332,9 +3357,6 @@ def run_compare(args: argparse.Namespace) -> int:
                                 _compared_schema("unclassifiable"), unc_rows,
                                 apply=apply)
             represented_written += len(rep_rows)
-            if per_object:
-                max_carousel_per_object = max(max_carousel_per_object,
-                                              max(per_object.values()))
             if ti_rows:
                 pq.write_table(
                     pa.Table.from_pylist(
@@ -3349,16 +3371,40 @@ def run_compare(args: argparse.Namespace) -> int:
 
         unclassifiable_written = unc_no_listing_id + unc_no_capture_time
 
-        # -- the unclassifiable magnitude gate ----------------------------
-        # The ~760 expectation was sized for tier-3 pages with no capture time;
-        # the NULL-listing_id cohort is a distinct population and reported apart.
+        # -- distinct carousel fan-out, over the whole localised population --
+        # Grouping by object_key across all row shards keeps a content-derived
+        # key that appears in two units bound to one object -- the same case
+        # `all_objects` fixes for the denominator (cf. 051f7d0).
+        row_glob = str(tmpdir / "rows" / "*.parquet").replace("'", "''")
+        max_carousel_per_object = int(con.execute(
+            "SELECT coalesce(max(c), 0) FROM (SELECT count(*) AS c FROM "
+            f"read_parquet('{row_glob}') WHERE source = 'carousel' "
+            "AND object_key IS NOT NULL GROUP BY object_key)"
+        ).fetchone()[0])
+
+        # -- the unclassifiable magnitude gates --------------------------
+        # The ~760 expectation was sized for tier-3 pages with no capture time.
+        # The NULL-listing_id cohort is a distinct population whose size is not
+        # known ahead of time; its ceiling defaults to 0, so any non-zero count
+        # stops the first authoritative run for a maintainer ruling, after which
+        # --max-no-listing-id is set to the measured number.
+        gate_failures = []
         if unc_no_capture_time > args.max_unclassifiable:
-            message = (
+            gate_failures.append(
                 f"no_capture_time rows {unc_no_capture_time:,} exceed the "
                 f"~{UNCLASSIFIABLE_EXPECTATION} expectation and the "
-                f"{args.max_unclassifiable:,} ceiling; stopping so the maintainer "
-                f"rules on it before slice 2 runs"
+                f"{args.max_unclassifiable:,} ceiling"
             )
+        if unc_no_listing_id > args.max_no_listing_id:
+            gate_failures.append(
+                f"no_listing_id rows {unc_no_listing_id:,} exceed the "
+                f"{args.max_no_listing_id:,} ceiling; a large cohort means "
+                f"compare drops that share as unimportable and slice 2 imports "
+                f"less than the plan's arithmetic expects"
+            )
+        if gate_failures:
+            message = ("; ".join(gate_failures)
+                       + "; stopping so the maintainer rules on it before slice 2")
             if not args.allow_unclassifiable_drift:
                 raise ReconcileError(message)
             logger.warning("%s (continuing: --allow-unclassifiable-drift)", message)
@@ -3419,6 +3465,11 @@ def run_compare(args: argparse.Namespace) -> int:
             )
 
         near = _measure_near_duplicates(con, tmpdir / "toimport", loser_uids)
+        near["note"] = (
+            "adjacent_pairs_within_300s counts consecutive captures; "
+            "captures_with_a_neighbour is the count of unrepresented captures "
+            "with another within 300 s -- the quantity to rule on"
+        )
 
         # -- the read-only VIN snapshot --------------------------------
         vin_info = {"key": None, "rows": 0, "size": 0, "sha256": None}
@@ -3522,7 +3573,12 @@ def run_compare(args: argparse.Namespace) -> int:
                 "no_capture_time": unc_no_capture_time,
                 "no_listing_id": unc_no_listing_id,
                 "expectation_no_capture_time": UNCLASSIFIABLE_EXPECTATION,
-                "materially_larger": unc_no_capture_time > args.max_unclassifiable,
+                "ceiling_no_capture_time": args.max_unclassifiable,
+                "ceiling_no_listing_id": args.max_no_listing_id,
+                "materially_larger": (
+                    unc_no_capture_time > args.max_unclassifiable
+                    or unc_no_listing_id > args.max_no_listing_id
+                ),
             },
             "vin_collisions": vin_collisions,
             "refusals": refusals,
@@ -3574,8 +3630,8 @@ def _print_compare_report(report: dict[str, Any], *, apply: bool, probe: bool) -
     print(f"  already_represented {fam['already_represented']:>12,}")
     print(f"  to_import           {fam['to_import']:>12,}")
     print(f"  unclassifiable      {fam['unclassifiable']:>12,}"
-          f"  (no_capture_time {unc['no_capture_time']:,} ~{unc['expectation_no_capture_time']}"
-          f", no_listing_id {unc['no_listing_id']:,})")
+          f"  (no_capture_time {unc['no_capture_time']:,}/~{unc['expectation_no_capture_time']}"
+          f", no_listing_id {unc['no_listing_id']:,}/ceil {unc['ceiling_no_listing_id']:,})")
     print(f"  sum                 {fam['sum']:>12,}"
           f"  {'OK' if fam['sum'] == report['parsed_row_total'] else 'MISMATCH'}")
     print()
@@ -3585,9 +3641,10 @@ def _print_compare_report(report: dict[str, Any], *, apply: bool, probe: bool) -
           f"  ({report['multiple_candidate_share']['share']})")
     print(f"recovery duplicates  {report['duplicates']['rows_moved_to_already_represented']:,}"
           f" in {report['duplicates']['groups_collapsed']:,} groups")
-    print(f"near-dup <=300s      "
-          f"{report['near_duplicate_window']['adjacent_pairs_within_300s']:,} adjacent pairs"
-          f" over {report['near_duplicate_window']['listings_involved']:,} listings")
+    nd = report["near_duplicate_window"]
+    print(f"near-dup <=300s      {nd['adjacent_pairs_within_300s']:,} adjacent pairs, "
+          f"{nd['captures_with_a_neighbour']:,} captures with a neighbour, over "
+          f"{nd['listings_involved']:,} listings")
     print(f"vin collisions       {report['vin_collisions']['count']:,}")
     print(f"inventory digest     {report['inventory']['digest']}")
     if apply:
@@ -3804,11 +3861,16 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     cmp_.add_argument("--vin-batch", type=int, default=VIN_BATCH,
                       help="listing_ids per read-only ops.vin_to_listing SELECT.")
     cmp_.add_argument("--max-unclassifiable", type=int, default=MAX_UNCLASSIFIABLE,
-                      help="Stop if more rows than this land in unclassifiable "
-                           f"(expectation ~{UNCLASSIFIABLE_EXPECTATION}).")
+                      help="Stop if more no_capture_time rows than this land in "
+                           f"unclassifiable (expectation ~{UNCLASSIFIABLE_EXPECTATION}).")
+    cmp_.add_argument("--max-no-listing-id", type=int, default=0,
+                      help="Stop if more no_listing_id rows than this land in "
+                           "unclassifiable (default 0: any non-zero count needs a "
+                           "maintainer ruling; set to the measured number after).")
     cmp_.add_argument("--allow-unclassifiable-drift", action="store_true",
-                      help="Report an oversized unclassifiable cohort instead of "
-                           "stopping. Never use it to proceed past the gate.")
+                      help="Report an oversized unclassifiable cohort (either "
+                           "reason) instead of stopping. Never use it to proceed "
+                           "past the gate.")
     cmp_.add_argument("--progress-every", type=int, default=50,
                       help="Log progress every N classified units.")
     cmp_.add_argument("--log-level", default="INFO", help="DEBUG | INFO | WARNING")
