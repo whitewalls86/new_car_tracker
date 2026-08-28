@@ -4251,16 +4251,23 @@ class _Stage5Roots(NamedTuple):
 
     ``--probe`` routes every slice-2 read and write to a parallel ``*_probe``
     prefix, exactly as slice 1 does for ``compare`` (search ``PROBE_SUFFIX`` in
-    ``run_compare``). Slice 1 open-coded ``PREFIX + suffix`` at each of three
-    uses; slice 2 needs the same routing in more places, so it is derived once
-    here and threaded. Probe output is **never** promoted to the authoritative
-    prefixes, and an authoritative run never reads a probe prefix.
+    ``run_compare``). Slice 1 open-codes ``PREFIX + suffix`` at each of three
+    uses in ``run_compare`` (``scripts/reconcile_april_detail.py:3195-3197``);
+    slice 2 needs the same routing in more places, so it is derived once here
+    and threaded. The two derivations produce the same values two ways -- if a
+    fifth Stage-5 prefix is ever added, both places have to move together.
+    Probe output is **never** promoted to the authoritative prefixes, and an
+    authoritative run never reads a probe prefix.
+
+    ``probe`` carries the mode explicitly so callers do not have to recover it
+    by inspecting a prefix for the ``PROBE_SUFFIX``.
     """
 
     compared: str
     inventory: str
     assigned: str
     vin_snapshot: str
+    probe: bool
 
 
 def _stage5_roots(probe: bool) -> _Stage5Roots:
@@ -4270,6 +4277,7 @@ def _stage5_roots(probe: bool) -> _Stage5Roots:
         inventory=INVENTORY_PREFIX + suffix,
         assigned=ASSIGNED_PREFIX + suffix,
         vin_snapshot=VIN_SNAPSHOT_PREFIX + suffix,
+        probe=probe,
     )
 
 
@@ -4290,8 +4298,7 @@ def _discover_compare_run(client, bucket: str, roots: _Stage5Roots) -> str:
     if len(candidates) == 1:
         return candidates[0]
     if not candidates:
-        need = ("run `compare --probe --apply` first"
-                if roots.compared.endswith(PROBE_SUFFIX)
+        need = ("run `compare --probe --apply` first" if roots.probe
                 else "slice 1 must finish before slice 2 can assign")
         raise ReconcileError(
             f"no complete compare run under s3://{bucket}/{roots.compared}/; {need}"
@@ -4909,7 +4916,12 @@ def _print_apply_plan(run_id: str, plan_rows: Sequence[dict[str, Any]], *,
     print(f"run_id               {run_id}")
     if approval:
         print(f"maintainer approval  {approval}")
-    print(f"batches selected     {len(plan_rows):>12,}")
+    # Print the names, not just the count: a probe apply refuses a bare run and
+    # asks for --batch, and this dry-run line is where the maintainer reads the
+    # exact string to pass.
+    names = [entry["batch_name"] for entry in plan_rows]
+    span = names[0] if len(names) == 1 else f"{names[0]} to {names[-1]}"
+    print(f"batches selected     {len(plan_rows):>12,}  ({span})")
     print(f"artifacts            {sum(r['artifacts'] for r in plan_rows):>12,}")
     print(f"silver rows          {sum(r['silver_rows'] for r in plan_rows):>12,}")
     print(f"price events (max)   {sum(r['detail_rows'] for r in plan_rows):>12,}")
@@ -5218,7 +5230,10 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
                           "against real Postgres, then ROLLBACK instead of "
                           "COMMIT, so every constraint and cast is proven at "
                           "statement time. A probe never commits and cannot be "
-                          "made to: --maintainer-approval is refused with --probe.")
+                          "made to: --maintainer-approval is refused with --probe, "
+                          "and --probe --apply requires an explicit --batch (a "
+                          "probe has no row budget). Use a bare `apply --probe` "
+                          "to list the batch names first.")
     app.add_argument("--bucket", default=None, help="Override MINIO_BUCKET.")
     app.add_argument("--run-id", default=None,
                      help="The compare run whose assignment shards to apply.")
