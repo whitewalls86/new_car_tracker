@@ -6,7 +6,7 @@ silver or rebuilt as a real current artifact. That is six stages of work over
 one frozen population, so this is one command with one mode per stage rather
 than six scripts that each re-derive the census.
 
-Four modes live here, one per early stage of the plan's third revision, which
+Five modes live here, one per early stage of the plan's third revision, which
 *flattens* the population before parsing it:
 
 * ``census`` (Stage 1) -- read-only. Enumerates the exact legacy prefix,
@@ -24,6 +24,9 @@ Four modes live here, one per early stage of the plan's third revision, which
   object **under its original ``source_key``**, verifying each member against
   its sidecar ``raw_sha256`` first, one manifest shard per pack under
   ``recovery/plan145/unpacked/``.
+* ``parse`` (Stage 4) -- parses the flattened population with the production
+  parser into recovery-only Parquet, with identity provenance and one input
+  audit row per object. It never writes Postgres or production silver.
 
 ``dedupe`` and ``unpack`` default to a dry run and take an explicit ``--apply``;
 between them the population becomes one flat prefix of distinct captures that
@@ -97,10 +100,12 @@ it), not from a laptop against nothing.
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import csv
 import hashlib
 import json
 import logging
+import multiprocessing
 import os
 import re
 import sys
@@ -1614,6 +1619,814 @@ def run_unpack(args: argparse.Namespace) -> int:
 
 
 # --------------------------------------------------------------------------
+# Stage 4 -- parse the flattened population into recovery-only silver rows
+# --------------------------------------------------------------------------
+
+PARSED_PREFIX = "recovery/plan145/parsed"
+QUEUE_EVENTS_PREFIX = "ops_normalized/artifacts_queue_events"
+QUEUE_EVENT_MONTHS = (3, 4, 5)
+_NOT_FOUND_CODES = ("404", "NoSuchKey", "NotFound")
+EXPECTED_MATERIALIZED_SHARDS = 1172
+EXPECTED_UNPACK_SHARDS = 32
+EXPECTED_UNPACK_MEMBERS = 557065
+EXPECTED_FLATTENED_INPUTS = 982643
+
+SILVER_FIELDS = [
+    "listing_id", "vin", "canonical_detail_url", "source", "listing_state",
+    "fetched_at", "price", "make", "model", "trim", "year", "mileage",
+    "msrp", "stock_type", "fuel_type", "body_style", "dealer_name",
+    "dealer_zip", "customer_id", "seller_id", "dealer_street", "dealer_city",
+    "dealer_state", "dealer_phone", "dealer_website", "dealer_cars_com_url",
+    "dealer_rating", "financing_type", "seller_zip", "seller_customer_id",
+    "page_number", "position_on_page", "trid", "isa_context", "body",
+    "condition",
+]
+
+DEALER_FIELDS = [
+    "dealer_name", "dealer_zip", "customer_id", "seller_id", "dealer_street",
+    "dealer_city", "dealer_state", "dealer_phone", "dealer_website",
+    "dealer_cars_com_url", "dealer_rating",
+]
+
+def _parsed_rows_schema() -> Any:
+    import pyarrow as pa
+
+    fields = [
+        pa.field("listing_id", pa.string()),
+        pa.field("vin", pa.string()),
+        pa.field("canonical_detail_url", pa.string()),
+        pa.field("source", pa.string()),
+        pa.field("listing_state", pa.string()),
+        pa.field("fetched_at", pa.timestamp("us", tz="UTC")),
+        pa.field("price", pa.int32()),
+        pa.field("make", pa.string()),
+        pa.field("model", pa.string()),
+        pa.field("trim", pa.string()),
+        pa.field("year", pa.int16()),
+        pa.field("mileage", pa.int32()),
+        pa.field("msrp", pa.int32()),
+        pa.field("stock_type", pa.string()),
+        pa.field("fuel_type", pa.string()),
+        pa.field("body_style", pa.string()),
+        pa.field("dealer_name", pa.string()),
+        pa.field("dealer_zip", pa.string()),
+        pa.field("customer_id", pa.string()),
+        pa.field("seller_id", pa.string()),
+        pa.field("dealer_street", pa.string()),
+        pa.field("dealer_city", pa.string()),
+        pa.field("dealer_state", pa.string()),
+        pa.field("dealer_phone", pa.string()),
+        pa.field("dealer_website", pa.string()),
+        pa.field("dealer_cars_com_url", pa.string()),
+        pa.field("dealer_rating", pa.float32()),
+        pa.field("financing_type", pa.string()),
+        pa.field("seller_zip", pa.string()),
+        pa.field("seller_customer_id", pa.string()),
+        pa.field("page_number", pa.int16()),
+        pa.field("position_on_page", pa.int16()),
+        pa.field("trid", pa.string()),
+        pa.field("isa_context", pa.string()),
+        pa.field("body", pa.string()),
+        pa.field("condition", pa.string()),
+        pa.field("content_sha256", pa.string()),
+        pa.field("object_key", pa.string()),
+        pa.field("listing_id_source", pa.string()),
+        pa.field("fetched_at_source", pa.string()),
+        pa.field("legacy_object_key", pa.string()),
+        pa.field("row_group", pa.int32()),
+        pa.field("row_offset", pa.int32()),
+        pa.field("legacy_artifact_id", pa.int64()),
+    ]
+    return pa.schema(fields)
+
+
+def _parsed_inputs_schema() -> Any:
+    import pyarrow as pa
+
+    return pa.schema([
+        pa.field("object_key", pa.string()),
+        pa.field("raw_sha256", pa.string()),
+        pa.field("html_len", pa.int64()),
+        pa.field("size_band", pa.string()),
+        pa.field("input_kind", pa.string()),
+        pa.field("listing_id", pa.string()),
+        pa.field("listing_id_source", pa.string()),
+        pa.field("fetched_at", pa.timestamp("us", tz="UTC")),
+        pa.field("fetched_at_source", pa.string()),
+        pa.field("importable", pa.bool_()),
+        pa.field("identity_disagreement", pa.bool_()),
+        pa.field("outcome", pa.string()),
+        pa.field("carousel_seen", pa.int32()),
+        pa.field("carousel_emitted", pa.int32()),
+        pa.field("carousel_drop_listing_id", pa.int32()),
+        pa.field("carousel_drop_price", pa.int32()),
+        pa.field("carousel_drop_body", pa.int32()),
+        pa.field("error", pa.string()),
+        pa.field("legacy_object_key", pa.string()),
+        pa.field("row_group", pa.int32()),
+        pa.field("row_offset", pa.int32()),
+        pa.field("legacy_artifact_id", pa.int64()),
+        pa.field("pack_key", pa.string()),
+        pa.field("frame_ordinal", pa.int32()),
+    ])
+
+
+def size_band(size: Optional[int]) -> str:
+    """Stable byte bands used to measure the short block-page cohort."""
+    if size is None:
+        return "unknown"
+    if size < 512:
+        return "000000-000511"
+    if size < 1024:
+        return "000512-001023"
+    if size < 4096:
+        return "001024-004095"
+    if size < 16384:
+        return "004096-016383"
+    if size < 65536:
+        return "016384-065535"
+    return "065536+"
+
+
+def _as_utc_datetime(value: Any) -> Optional[datetime]:
+    """Convert manifest ISO strings to the timestamp type used by Parquet."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        value = datetime.fromisoformat(value)
+    if not isinstance(value, datetime):
+        raise ReconcileError(f"unhandled parse fetched_at type: {type(value)!r}")
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _bare_object_key(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    if value.startswith("s3://"):
+        rest = value[len("s3://"):]
+        _, slash, key = rest.partition("/")
+        return key if slash else None
+    return value.lstrip("/")
+
+
+def build_queue_identity(rows: Sequence[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Reduce queue events to the scraper identity recorded for each object key."""
+    grouped: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        if row.get("artifact_type") != TARGET_ARTIFACT_TYPE:
+            continue
+        key = _bare_object_key(row.get("minio_path"))
+        if not key:
+            continue
+        current = grouped.setdefault(key, {"listing_id": None, "fetched_at": None})
+        listing_id = row.get("listing_id")
+        if current["listing_id"] is None and listing_id is not None:
+            current["listing_id"] = str(listing_id)
+        fetched_at = row.get("fetched_at")
+        if fetched_at is not None:
+            normalized = _normalize_fetched_at(fetched_at)
+            if current["fetched_at"] is None or normalized < current["fetched_at"]:
+                current["fetched_at"] = normalized
+    return grouped
+
+
+def build_legacy_identity(
+    materialized_rows: Sequence[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Index the trusted legacy identity by verified content hash."""
+    result: dict[str, dict[str, Any]] = {}
+    for row in materialized_rows:
+        if row.get("disposition") not in MATERIALIZED_DISPOSITIONS:
+            continue
+        sha = row.get("raw_sha256")
+        if not sha or not row.get("listing_id"):
+            continue
+        identity = {
+            "listing_id": str(row["listing_id"]),
+            "fetched_at": _normalize_fetched_at(row.get("fetched_at")),
+        }
+        previous = result.get(sha)
+        if previous is not None and previous != identity:
+            raise ReconcileError(
+                f"legacy hash {sha[:12]} maps to conflicting identities: "
+                f"{previous!r} and {identity!r}"
+            )
+        result[sha] = identity
+    return result
+
+
+def resolve_manifest_identity(
+    record: dict[str, Any],
+    legacy_identity: dict[str, dict[str, Any]],
+    queue_identity: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    """Resolve tiers 1 and 2, preserving evidence of every disagreement."""
+    legacy = legacy_identity.get(record.get("raw_sha256"))
+    queue = queue_identity.get(record["object_key"])
+    disagreement = bool(legacy and queue and (
+        (
+            queue.get("listing_id") is not None
+            and legacy.get("listing_id") != queue.get("listing_id")
+        ) or (
+            queue.get("fetched_at") is not None
+            and legacy.get("fetched_at") != queue.get("fetched_at")
+        )
+    ))
+    if legacy:
+        return {
+            "listing_id": legacy.get("listing_id"),
+            "listing_id_source": "legacy_manifest",
+            "fetched_at": legacy.get("fetched_at"),
+            "fetched_at_source": (
+                "legacy_manifest" if legacy.get("fetched_at") else "none"
+            ),
+            "identity_disagreement": disagreement,
+        }
+    if queue:
+        return {
+            "listing_id": queue.get("listing_id"),
+            "listing_id_source": "queue_events" if queue.get("listing_id") else "none",
+            "fetched_at": queue.get("fetched_at"),
+            "fetched_at_source": "queue_events" if queue.get("fetched_at") else "none",
+            "identity_disagreement": False,
+        }
+    return {
+        "listing_id": None,
+        "listing_id_source": "none",
+        "fetched_at": None,
+        "fetched_at_source": "none",
+        "identity_disagreement": False,
+    }
+
+
+def build_parse_units(
+    materialized: Sequence[tuple[str, Sequence[dict[str, Any]]]],
+    deleted_keys: set[str],
+    unpacked: Sequence[tuple[str, Sequence[dict[str, Any]]]],
+) -> list[tuple[str, list[dict[str, Any]]]]:
+    """Build materialized-minus-deleted union unpacked without listing HTML."""
+    units: list[tuple[str, list[dict[str, Any]]]] = []
+    seen: set[str] = set()
+    for shard_key, rows in [*materialized, *unpacked]:
+        unit_rows: list[dict[str, Any]] = []
+        kind = "unpacked" if shard_key.startswith(UNPACK_PREFIX + "/") else "materialized"
+        key_field = "source_key" if kind == "unpacked" else "object_key"
+        for row in rows:
+            key = row.get(key_field)
+            if not key or key in seen:
+                continue
+            if kind == "materialized":
+                if row.get("disposition") not in MATERIALIZED_DISPOSITIONS:
+                    continue
+                if key in deleted_keys:
+                    continue
+            elif row.get("disposition") not in UNPACK_DISPOSITIONS:
+                continue
+            seen.add(key)
+            unit_rows.append({
+                "object_key": key,
+                "raw_sha256": row.get("raw_sha256"),
+                "html_len": row.get("html_len"),
+                "input_kind": kind,
+                "legacy_object_key": row.get("legacy_object_key"),
+                "row_group": row.get("row_group"),
+                "row_offset": row.get("row_offset"),
+                "legacy_artifact_id": row.get("legacy_artifact_id"),
+                "pack_key": row.get("pack_key"),
+                "frame_ordinal": row.get("frame_ordinal"),
+            })
+        stem = shard_key.rsplit("/", 1)[-1].removesuffix(".parquet")
+        units.append((f"{kind}-{stem}", unit_rows))
+    return units
+
+
+def _base_input_record(record: dict[str, Any], identity: dict[str, Any]) -> dict[str, Any]:
+    return {
+        **{name: record.get(name) for name in (
+            "object_key", "raw_sha256", "html_len", "input_kind",
+            "legacy_object_key", "row_group", "row_offset", "legacy_artifact_id",
+            "pack_key", "frame_ordinal",
+        )},
+        "size_band": size_band(record.get("html_len")),
+        "listing_id": identity["listing_id"],
+        "listing_id_source": identity["listing_id_source"],
+        "fetched_at": _as_utc_datetime(identity["fetched_at"]),
+        "fetched_at_source": identity["fetched_at_source"],
+        "importable": bool(identity["listing_id"] and identity["fetched_at"]),
+        "identity_disagreement": identity["identity_disagreement"],
+        "outcome": None,
+        "carousel_seen": 0,
+        "carousel_emitted": 0,
+        "carousel_drop_listing_id": 0,
+        "carousel_drop_price": 0,
+        "carousel_drop_body": 0,
+        "error": None,
+    }
+
+
+def _row_provenance(record: dict[str, Any], input_row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "content_sha256": record.get("raw_sha256"),
+        "object_key": record.get("object_key"),
+        "listing_id_source": input_row["listing_id_source"],
+        "fetched_at_source": input_row["fetched_at_source"],
+        "legacy_object_key": record.get("legacy_object_key"),
+        "row_group": record.get("row_group"),
+        "row_offset": record.get("row_offset"),
+        "legacy_artifact_id": record.get("legacy_artifact_id"),
+    }
+
+
+def build_observation_rows(
+    record: dict[str, Any],
+    identity: dict[str, Any],
+    primary: dict[str, Any],
+    carousel: Sequence[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, int], dict[str, Any]]:
+    """Mirror detail_writer's silver rows, including all three carousel drops."""
+    resolved = dict(identity)
+    if not resolved["listing_id"] and primary.get("listing_id"):
+        resolved["listing_id"] = str(primary["listing_id"])
+        resolved["listing_id_source"] = "parsed_page"
+    input_row = _base_input_record(record, resolved)
+    input_row["importable"] = bool(resolved["listing_id"] and resolved["fetched_at"])
+    provenance = _row_provenance(record, input_row)
+    fetched_at = _as_utc_datetime(resolved.get("fetched_at"))
+    listing_id = resolved.get("listing_id")
+    canonical = (
+        f"https://www.cars.com/vehicledetail/{listing_id}/" if listing_id else None
+    )
+    dealer = {name: primary.get(name) for name in DEALER_FIELDS}
+    detail = {name: None for name in SILVER_FIELDS}
+    detail.update({name: primary.get(name) for name in (
+        "vin", "price", "make", "model", "trim", "year", "mileage", "msrp",
+        "stock_type", "fuel_type", "body_style",
+    )})
+    detail.update({
+        "listing_id": listing_id,
+        "canonical_detail_url": canonical,
+        "source": "detail",
+        "listing_state": primary.get("listing_state") or "active",
+        "fetched_at": fetched_at,
+        **dealer,
+        **provenance,
+    })
+    if detail["listing_state"] == "unlisted":
+        detail["price"] = None
+        detail["mileage"] = None
+
+    rows = [detail]
+    drops = {"listing_id": 0, "price": 0, "body": 0}
+    for hint in carousel:
+        if not hint.get("listing_id"):
+            drops["listing_id"] += 1
+            continue
+        if hint.get("price") is None:
+            drops["price"] += 1
+            continue
+        if not hint.get("body"):
+            drops["body"] += 1
+            continue
+        hint_id = str(hint["listing_id"])
+        row = {name: None for name in SILVER_FIELDS}
+        row.update({name: hint.get(name) for name in (
+            "price", "mileage", "body", "condition", "year",
+        )})
+        row.update({
+            "listing_id": hint_id,
+            "vin": None,
+            "canonical_detail_url": hint.get("canonical_detail_url")
+            or f"https://www.cars.com/vehicledetail/{hint_id}/",
+            "source": "carousel",
+            "listing_state": "active",
+            "fetched_at": fetched_at,
+            **dealer,
+            **provenance,
+        })
+        rows.append(row)
+    return rows, drops, input_row
+
+
+def parse_one_input(
+    record: dict[str, Any], identity: dict[str, Any], *, reader: Optional[Any] = None,
+    parser: Optional[Any] = None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Read, verify and parse one object; a hash disagreement always escapes."""
+    if reader is None:
+        from shared.minio import read_html
+        reader = read_html
+    if parser is None:
+        from processing.processors.parse_detail_page import parse_cars_detail_page_html_v1
+        parser = parse_cars_detail_page_html_v1
+
+    input_row = _base_input_record(record, identity)
+    try:
+        body = reader(record["object_key"])
+    except Exception as exc:
+        code = getattr(exc, "response", {}).get("Error", {}).get("Code")
+        if isinstance(exc, (FileNotFoundError, KeyError)) or code in _NOT_FOUND_CODES:
+            input_row["outcome"] = "missing_object"
+            input_row["error"] = str(exc)
+            return [], input_row
+        input_row["outcome"] = "failed"
+        input_row["error"] = f"read: {type(exc).__name__}: {exc}"
+        return [], input_row
+
+    actual = hashlib.sha256(body).hexdigest()
+    if actual != record.get("raw_sha256"):
+        raise ReconcileError(
+            f"{record['object_key']} hashes to {actual[:12]}, manifest says "
+            f"{str(record.get('raw_sha256'))[:12]} -- the store moved; stopping"
+        )
+    input_row["html_len"] = len(body)
+    input_row["size_band"] = size_band(len(body))
+    text = body.decode("utf-8", errors="replace")
+    url = (
+        f"https://www.cars.com/vehicledetail/{identity['listing_id']}/"
+        if identity.get("listing_id_source") in ("legacy_manifest", "queue_events")
+        and identity.get("listing_id") else None
+    )
+    try:
+        primary, carousel, _meta = parser(text, url)
+    except Exception as exc:
+        input_row["outcome"] = "failed"
+        input_row["error"] = f"parse: {type(exc).__name__}: {exc}"
+        return [], input_row
+
+    if primary.get("listing_state") == "blocked":
+        input_row["outcome"] = "blocked_cloudflare"
+        return [], input_row
+    if primary.get("listing_state") == "active" and all(
+        primary.get(name) is None for name in ("listing_id", "vin", "price", "make")
+    ):
+        input_row["outcome"] = "blocked_other"
+        return [], input_row
+
+    rows, drops, final_input = build_observation_rows(
+        record, identity, primary, carousel,
+    )
+    final_input.update({
+        "outcome": "parsed",
+        "carousel_seen": len(carousel),
+        "carousel_emitted": len(rows) - 1,
+        "carousel_drop_listing_id": drops["listing_id"],
+        "carousel_drop_price": drops["price"],
+        "carousel_drop_body": drops["body"],
+    })
+    return rows, final_input
+
+
+_PARSE_LEGACY_IDENTITY: dict[str, dict[str, Any]] = {}
+_PARSE_QUEUE_IDENTITY: dict[str, dict[str, Any]] = {}
+
+
+def _parse_worker_init() -> None:
+    import shared.minio as minio
+
+    minio._boto3_client = None
+    minio.clear_pack_caches()
+
+
+def _parse_output_key(kind: str, unit_name: str) -> str:
+    return f"{PARSED_PREFIX}/{kind}/{unit_name}.parquet"
+
+
+def _parse_unit(unit: tuple[str, list[dict[str, Any]]]) -> dict[str, Any]:
+    unit_name, records = unit
+    rows: list[dict[str, Any]] = []
+    inputs: list[dict[str, Any]] = []
+    for record in records:
+        identity = resolve_manifest_identity(
+            record, _PARSE_LEGACY_IDENTITY, _PARSE_QUEUE_IDENTITY,
+        )
+        parsed_rows, input_row = parse_one_input(record, identity)
+        rows.extend(parsed_rows)
+        inputs.append(input_row)
+    _write_parquet_shard(_parse_output_key("rows", unit_name), _parsed_rows_schema(), rows)
+    _write_parquet_shard(
+        _parse_output_key("inputs", unit_name), _parsed_inputs_schema(), inputs,
+    )
+    return summarize_parse_unit(unit_name, inputs, row_count=len(rows))
+
+
+def _load_manifest_family(
+    client, bucket: str, prefix: str, *, columns: Optional[Sequence[str]] = None,
+) -> list[tuple[str, list[dict[str, Any]]]]:
+    keys = _list_keys(client, bucket, prefix + "/", ".parquet")
+    keys = [key for key in keys if "/" not in key[len(prefix) + 1:]]
+    return [
+        (key, _read_parquet_rows(client, bucket, key, columns=columns))
+        for key in keys
+    ]
+
+
+def _load_deleted_keys(client, bucket: str) -> set[str]:
+    keys = _list_keys(client, bucket, DEDUPE_PREFIX + "/", ".parquet")
+    keys = [key for key in keys if "/receipts/" not in key]
+    deleted: set[str] = set()
+    for key in keys:
+        deleted.update(
+            row["object_key"] for row in _read_parquet_rows(
+                client, bucket, key, columns=["object_key"],
+            ) if row.get("object_key")
+        )
+    return deleted
+
+
+def _parquet_num_rows(client, bucket: str, key: str) -> int:
+    import io
+
+    import pyarrow.parquet as pq
+
+    body = client.get_object(Bucket=bucket, Key=key)["Body"].read()
+    return pq.ParquetFile(io.BytesIO(body)).metadata.num_rows
+
+
+def _load_queue_events(client, bucket: str) -> dict[str, dict[str, Any]]:
+    identities: dict[str, dict[str, Any]] = {}
+    year_prefix = f"{QUEUE_EVENTS_PREFIX}/year={TARGET_YEAR}/"
+    month_prefixes = []
+    for prefix in _list_common_prefixes(client, bucket, year_prefix):
+        leaf = prefix.rstrip("/").rsplit("/", 1)[-1]
+        if not leaf.startswith("month="):
+            continue
+        try:
+            month = int(leaf.split("=", 1)[1])
+        except ValueError:
+            continue
+        if month in QUEUE_EVENT_MONTHS:
+            month_prefixes.append(prefix)
+    if len(month_prefixes) != len(QUEUE_EVENT_MONTHS):
+        raise ReconcileError(
+            f"expected queue-event months {QUEUE_EVENT_MONTHS}, found {month_prefixes}"
+        )
+    for prefix in sorted(month_prefixes):
+        for key in _list_keys(client, bucket, prefix, ".parquet"):
+            shard = build_queue_identity(_read_parquet_rows(
+                client, bucket, key,
+                columns=["minio_path", "listing_id", "fetched_at", "artifact_type"],
+            ))
+            for object_key, identity in shard.items():
+                current = identities.setdefault(
+                    object_key, {"listing_id": None, "fetched_at": None},
+                )
+                if current["listing_id"] is None and identity["listing_id"] is not None:
+                    current["listing_id"] = identity["listing_id"]
+                fetched_at = identity["fetched_at"]
+                if fetched_at is not None and (
+                    current["fetched_at"] is None or fetched_at < current["fetched_at"]
+                ):
+                    current["fetched_at"] = fetched_at
+    return identities
+
+
+def check_parse_apply_gate(
+    materialized_shards: int,
+    unpacked: Sequence[tuple[str, Sequence[dict[str, Any]]]],
+    input_count: int,
+) -> None:
+    """Refuse --apply until Stage 3b and the flattened census are complete."""
+    unpack_members = sum(
+        1 for _, rows in unpacked for row in rows
+        if row.get("disposition") in UNPACK_DISPOSITIONS
+    )
+    failures = []
+    if materialized_shards != EXPECTED_MATERIALIZED_SHARDS:
+        failures.append(
+            f"materialized shards {materialized_shards:,} "
+            f"!= {EXPECTED_MATERIALIZED_SHARDS:,}"
+        )
+    if len(unpacked) != EXPECTED_UNPACK_SHARDS:
+        failures.append(
+            f"unpack shards {len(unpacked):,} != {EXPECTED_UNPACK_SHARDS:,}"
+        )
+    if unpack_members != EXPECTED_UNPACK_MEMBERS:
+        failures.append(
+            f"unpack members {unpack_members:,} != {EXPECTED_UNPACK_MEMBERS:,}"
+        )
+    if input_count != EXPECTED_FLATTENED_INPUTS:
+        failures.append(
+            f"flattened inputs {input_count:,} != {EXPECTED_FLATTENED_INPUTS:,}"
+        )
+    if failures:
+        raise ReconcileError(
+            "Stage 4 --apply gate failed (Stage 3b may still be running): "
+            + "; ".join(failures)
+        )
+
+
+def aggregate_parse_report(
+    results: Sequence[dict[str, Any]], *, planned_units: int,
+) -> dict[str, Any]:
+    outcomes: Counter[str] = Counter()
+    listing_sources: Counter[str] = Counter()
+    fetched_sources: Counter[str] = Counter()
+    size_x_outcome: Counter[tuple[str, str]] = Counter()
+    totals: Counter[str] = Counter()
+    disagreements = 0
+    for result in results:
+        totals.update(result["totals"])
+        outcomes.update(result["outcomes"])
+        listing_sources.update(result["listing_id_sources"])
+        fetched_sources.update(result["fetched_at_sources"])
+        disagreements += result["identity_disagreements"]
+        for band, by_outcome in result["size_band_by_outcome"].items():
+            for outcome, count in by_outcome.items():
+                size_x_outcome[(band, outcome)] += count
+    return {
+        "plan": 145,
+        "stage": 4,
+        "identity_lookup": "pyarrow in-process over queue-event months 3-5",
+        "planned_units": planned_units,
+        "completed_units": len(results),
+        "totals": dict(totals),
+        "outcomes": dict(sorted(outcomes.items())),
+        "listing_id_sources": dict(sorted(listing_sources.items())),
+        "fetched_at_sources": dict(sorted(fetched_sources.items())),
+        "identity_disagreements": disagreements,
+        "block_pages": {
+            "cloudflare": outcomes["blocked_cloudflare"],
+            "other": outcomes["blocked_other"],
+            "total": outcomes["blocked_cloudflare"] + outcomes["blocked_other"],
+        },
+        "size_band_by_outcome": {
+            band: {
+                outcome: size_x_outcome[(band, outcome)]
+                for outcome in sorted(outcomes)
+                if size_x_outcome[(band, outcome)]
+            }
+            for band in sorted({band for band, _ in size_x_outcome})
+        },
+    }
+
+
+def summarize_parse_unit(
+    unit_name: str, inputs: Sequence[dict[str, Any]], *, row_count: int,
+) -> dict[str, Any]:
+    outcomes: Counter[str] = Counter()
+    listing_sources: Counter[str] = Counter()
+    fetched_sources: Counter[str] = Counter()
+    size_x_outcome: Counter[tuple[str, str]] = Counter()
+    totals: Counter[str] = Counter({"rows": row_count})
+    disagreements = 0
+    for row in inputs:
+        outcomes[row["outcome"]] += 1
+        listing_sources[row["listing_id_source"]] += 1
+        fetched_sources[row["fetched_at_source"]] += 1
+        size_x_outcome[(row["size_band"], row["outcome"])] += 1
+        totals["inputs"] += 1
+        totals["importable"] += int(row["importable"])
+        totals["carousel_seen"] += row["carousel_seen"]
+        totals["carousel_emitted"] += row["carousel_emitted"]
+        totals["carousel_drop_listing_id"] += row["carousel_drop_listing_id"]
+        totals["carousel_drop_price"] += row["carousel_drop_price"]
+        totals["carousel_drop_body"] += row["carousel_drop_body"]
+        disagreements += int(row["identity_disagreement"])
+    return {
+        "unit": unit_name,
+        "totals": dict(totals),
+        "outcomes": dict(outcomes),
+        "listing_id_sources": dict(listing_sources),
+        "fetched_at_sources": dict(fetched_sources),
+        "identity_disagreements": disagreements,
+        "size_band_by_outcome": {
+            band: {
+                outcome: size_x_outcome[(band, outcome)]
+                for outcome in outcomes if size_x_outcome[(band, outcome)]
+            }
+            for band in {band for band, _ in size_x_outcome}
+        },
+    }
+
+
+def run_parse(args: argparse.Namespace) -> int:
+    global _PARSE_LEGACY_IDENTITY, _PARSE_QUEUE_IDENTITY
+
+    from shared.minio import BUCKET as DEFAULT_BUCKET
+    from shared.minio import object_exists, write_bytes
+
+    bucket = args.bucket or DEFAULT_BUCKET
+    client = _s3_client()
+    materialized = _load_manifest_family(
+        client, bucket, MATERIALIZE_PREFIX,
+        columns=[
+            "object_key", "raw_sha256", "html_len", "disposition",
+            "legacy_object_key", "row_group", "row_offset", "legacy_artifact_id",
+            "listing_id", "fetched_at",
+        ],
+    )
+    unpacked = _load_manifest_family(
+        client, bucket, UNPACK_PREFIX,
+        columns=[
+            "source_key", "raw_sha256", "html_len", "disposition", "pack_key",
+            "frame_ordinal",
+        ],
+    )
+    if not materialized or not unpacked:
+        raise ReconcileError(
+            f"parse requires both manifest families; found {len(materialized)} "
+            f"materialized and {len(unpacked)} unpacked shards"
+        )
+    deleted_keys = _load_deleted_keys(client, bucket)
+    units = build_parse_units(materialized, deleted_keys, unpacked)
+    full_input_count = sum(len(rows) for _, rows in units)
+    if args.apply:
+        check_parse_apply_gate(len(materialized), unpacked, full_input_count)
+    all_materialized_rows = [row for _, rows in materialized for row in rows]
+    legacy_identity = build_legacy_identity(all_materialized_rows)
+    queue_identity = _load_queue_events(client, bucket)
+    if args.max_units:
+        units = units[:args.max_units]
+
+    planned_listing_sources: Counter[str] = Counter()
+    planned_fetched_sources: Counter[str] = Counter()
+    planned_disagreements = 0
+    for _, records in units:
+        for record in records:
+            identity = resolve_manifest_identity(
+                record, legacy_identity, queue_identity,
+            )
+            planned_listing_sources[identity["listing_id_source"]] += 1
+            planned_fetched_sources[identity["fetched_at_source"]] += 1
+            planned_disagreements += int(identity["identity_disagreement"])
+
+    pending = [unit for unit in units if args.force or not (
+        object_exists(_parse_output_key("rows", unit[0]))
+        and object_exists(_parse_output_key("inputs", unit[0]))
+    )]
+    input_count = sum(len(rows) for _, rows in units)
+    print()
+    print("Plan 145 Stage 4 -- parse flattened April detail artifacts")
+    print("=" * 66)
+    print(f"mode                 {'APPLY' if args.apply else 'DRY RUN'}")
+    print(f"materialized shards  {len(materialized):>12,}")
+    print(f"unpacked shards      {len(unpacked):>12,}")
+    print(f"deleted keys         {len(deleted_keys):>12,}")
+    print(f"input objects        {input_count:>12,}")
+    print(f"work units           {len(units):>12,}")
+    print(f"pending units        {len(pending):>12,}")
+    print(f"queue identities     {len(queue_identity):>12,}")
+    print(f"tier disagreements   {planned_disagreements:>12,}")
+    for source, count in sorted(planned_listing_sources.items()):
+        print(f"  listing {source:<19} {count:>12,}")
+    for source, count in sorted(planned_fetched_sources.items()):
+        print(f"  fetched {source:<19} {count:>12,}")
+    if not args.apply:
+        print("\nDRY RUN: manifests were measured; no HTML was read and nothing was written.")
+        return 0
+
+    _PARSE_LEGACY_IDENTITY = legacy_identity
+    _PARSE_QUEUE_IDENTITY = queue_identity
+    workers = args.workers or max(1, multiprocessing.cpu_count() - 2)
+    results: list[dict[str, Any]] = []
+    if pending:
+        context = multiprocessing.get_context("fork")
+        with concurrent.futures.ProcessPoolExecutor(
+            max_workers=workers, mp_context=context, initializer=_parse_worker_init,
+        ) as executor:
+            futures = {executor.submit(_parse_unit, unit): unit[0] for unit in pending}
+            for index, future in enumerate(concurrent.futures.as_completed(futures), 1):
+                try:
+                    results.append(future.result())
+                except Exception as exc:
+                    for other in futures:
+                        other.cancel()
+                    raise ReconcileError(
+                        f"parse unit {futures[future]} failed; stopping: {exc}"
+                    ) from exc
+                if args.progress_every and index % args.progress_every == 0:
+                    logger.info("completed %d/%d parse units", index, len(pending))
+
+    # Include already-complete input shards in the aggregate report on resume.
+    completed_names = {result["unit"] for result in results}
+    for unit_name, _ in units:
+        if unit_name in completed_names:
+            continue
+        input_key = _parse_output_key("inputs", unit_name)
+        row_key = _parse_output_key("rows", unit_name)
+        if object_exists(input_key) and object_exists(row_key):
+            prior_inputs = _read_parquet_rows(client, bucket, input_key)
+            results.append(
+                summarize_parse_unit(
+                    unit_name, prior_inputs,
+                    row_count=_parquet_num_rows(client, bucket, row_key),
+                )
+            )
+    report = aggregate_parse_report(results, planned_units=len(units))
+    write_bytes(
+        f"{PARSED_PREFIX}/parse_report.json",
+        (json.dumps(report, indent=2, sort_keys=True) + "\n").encode(),
+        content_type="application/json",
+    )
+    print(f"\nparsed inputs        {report['totals'].get('inputs', 0):>12,}")
+    print(f"observation rows     {report['totals'].get('rows', 0):>12,}")
+    print(f"report               {PARSED_PREFIX}/parse_report.json")
+    return 0
+
+
+# --------------------------------------------------------------------------
 # CLI
 # --------------------------------------------------------------------------
 
@@ -1763,6 +2576,25 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
                      help="Log cumulative totals every N packs.")
     unp.add_argument("--log-level", default="INFO", help="DEBUG | INFO | WARNING")
     unp.set_defaults(func=run_unpack)
+
+    prs = sub.add_parser(
+        "parse",
+        help="Stage 4: parse flattened April objects to recovery-only Parquet.",
+    )
+    prs.add_argument("--apply", action="store_true",
+                     help="Read and parse objects and write recovery shards. "
+                          "Without it, only plan and measure the manifest input set.")
+    prs.add_argument("--bucket", default=None, help="Override MINIO_BUCKET.")
+    prs.add_argument("--workers", type=int, default=0,
+                     help="Worker processes (default: cpu_count - 2, minimum 1).")
+    prs.add_argument("--max-units", type=int, default=0,
+                     help="Process only the first N manifest work units.")
+    prs.add_argument("--force", action="store_true",
+                     help="Reprocess units whose two output shards already exist.")
+    prs.add_argument("--progress-every", type=int, default=10,
+                     help="Log progress every N completed units.")
+    prs.add_argument("--log-level", default="INFO", help="DEBUG | INFO | WARNING")
+    prs.set_defaults(func=run_parse)
 
     return parser.parse_args(argv)
 

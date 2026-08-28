@@ -1081,3 +1081,285 @@ def test_run_unpack_writes_every_member_under_its_original_key(monkeypatch):
         assert written[member.source_key] == member.content
     assert list(shards) == ["recovery/plan145/unpacked/pack-00000.parquet"]
     assert len(shards["recovery/plan145/unpacked/pack-00000.parquet"]) == len(members)
+
+
+# -- M: parse (Stage 4) ----------------------------------------------------
+
+def _parse_record(**overrides):
+    body = overrides.pop("body", b"<html>detail</html>")
+    record = {
+        "object_key": DETAIL_KEY.format("parse"),
+        "raw_sha256": hashlib.sha256(body).hexdigest(),
+        "html_len": len(body),
+        "input_kind": "unpacked",
+        "legacy_object_key": None,
+        "row_group": None,
+        "row_offset": None,
+        "legacy_artifact_id": None,
+        "pack_key": "pack.zpack",
+        "frame_ordinal": 0,
+    }
+    record.update(overrides)
+    return body, record
+
+
+def _identity(listing_id=LISTING_A, fetched_at="2026-04-15T12:00:00+00:00",
+              listing_id_source="queue_events", fetched_at_source="queue_events"):
+    return {
+        "listing_id": listing_id,
+        "listing_id_source": listing_id_source,
+        "fetched_at": fetched_at,
+        "fetched_at_source": fetched_at_source,
+        "identity_disagreement": False,
+    }
+
+
+def _primary(**overrides):
+    row = {
+        "listing_state": "active",
+        "listing_id": LISTING_A,
+        "vin": "VIN1",
+        "price": 25000,
+        "make": "Honda",
+        "model": "Civic",
+        "dealer_name": "Dealer",
+    }
+    row.update(overrides)
+    return row
+
+
+def test_parse_decodes_invalid_utf8_exactly_like_production():
+    from scripts.reconcile_april_detail import parse_one_input
+
+    body, record = _parse_record(body=b"before\xffafter")
+    seen = {}
+
+    def parser(text, url):
+        seen["text"] = text
+        return _primary(), [], {}
+
+    rows, audit = parse_one_input(
+        record, _identity(), reader=lambda _key: body, parser=parser,
+    )
+    assert seen["text"] == body.decode("utf-8", errors="replace")
+    assert audit["outcome"] == "parsed"
+    assert len(rows) == 1
+
+
+def test_parse_input_is_materialized_minus_deleted_union_unpacked():
+    from scripts.reconcile_april_detail import build_parse_units
+
+    mat = [(
+        "recovery/plan145/materialized/a.parquet",
+        [
+            {"object_key": "keep", "disposition": "written", "raw_sha256": "a"},
+            {"object_key": "delete", "disposition": "exists", "raw_sha256": "b"},
+            {"object_key": None, "disposition": "skipped_empty"},
+        ],
+    )]
+    unpack = [(
+        "recovery/plan145/unpacked/p.parquet",
+        [{"source_key": "unpacked", "disposition": "written", "raw_sha256": "c"}],
+    )]
+    units = build_parse_units(mat, {"delete"}, unpack)
+    assert [r["object_key"] for _, rows in units for r in rows] == ["keep", "unpacked"]
+
+
+def test_identity_tiers_prefer_legacy_then_queue_and_count_disagreement():
+    from scripts.reconcile_april_detail import resolve_manifest_identity
+
+    record = {"object_key": "key", "raw_sha256": "sha"}
+    legacy = {"sha": {"listing_id": LISTING_A, "fetched_at": "2026-04-01T00:00:00+00:00"}}
+    queue = {"key": {"listing_id": LISTING_B, "fetched_at": "2026-04-02T00:00:00+00:00"}}
+    resolved = resolve_manifest_identity(record, legacy, queue)
+    assert resolved["listing_id"] == LISTING_A
+    assert resolved["listing_id_source"] == "legacy_manifest"
+    assert resolved["fetched_at_source"] == "legacy_manifest"
+    assert resolved["identity_disagreement"] is True
+
+    resolved = resolve_manifest_identity(record, {}, queue)
+    assert resolved["listing_id"] == LISTING_B
+    assert resolved["listing_id_source"] == "queue_events"
+
+
+def test_parsed_page_identity_has_no_time_and_is_unimportable():
+    from scripts.reconcile_april_detail import parse_one_input
+
+    body, record = _parse_record()
+    rows, audit = parse_one_input(
+        record, _identity(None, None, "none", "none"),
+        reader=lambda _key: body,
+        parser=lambda text, url: (_primary(listing_id=LISTING_B), [], {}),
+    )
+    assert rows[0]["listing_id"] == LISTING_B
+    assert audit["listing_id_source"] == "parsed_page"
+    assert audit["fetched_at_source"] == "none"
+    assert audit["importable"] is False
+
+
+def test_unpack_sidecar_listing_id_never_reaches_parser_or_output():
+    from scripts.reconcile_april_detail import build_parse_units, parse_one_input
+
+    sidecar_id = "ffffffff-ffff-ffff-ffff-ffffffffffff"
+    unpack = [(
+        "recovery/plan145/unpacked/p.parquet",
+        [{
+            "source_key": "key", "raw_sha256": "sha", "html_len": 1,
+            "disposition": "written", "listing_id": sidecar_id,
+        }],
+    )]
+    record = build_parse_units([], set(), unpack)[0][1][0]
+    body = b"x"
+    record["raw_sha256"] = hashlib.sha256(body).hexdigest()
+    seen = {}
+
+    def parser(text, url):
+        seen["url"] = url
+        return _primary(listing_id=LISTING_B), [], {}
+
+    rows, _ = parse_one_input(
+        record, _identity(None, None, "none", "none"),
+        reader=lambda _key: body, parser=parser,
+    )
+    assert seen["url"] is None
+    assert rows[0]["listing_id"] == LISTING_B
+    assert sidecar_id not in repr(rows)
+
+
+def test_primary_and_qualifying_carousel_rows_mirror_production_drop_rules():
+    from scripts.reconcile_april_detail import build_observation_rows
+
+    _, record = _parse_record()
+    carousel = [
+        {"listing_id": LISTING_B, "price": 100, "body": "SUV", "year": 2025},
+        {"listing_id": None, "price": 100, "body": "SUV"},
+        {"listing_id": "no-price", "price": None, "body": "SUV"},
+        {"listing_id": "no-body", "price": 100, "body": None},
+    ]
+    rows, drops, audit = build_observation_rows(
+        record, _identity(), _primary(), carousel,
+    )
+    assert [row["source"] for row in rows] == ["detail", "carousel"]
+    assert drops == {"listing_id": 1, "price": 1, "body": 1}
+    assert rows[1]["vin"] is None
+    assert rows[1]["dealer_name"] == "Dealer"
+    assert all("artifact_id" not in row for row in rows)
+    assert audit["importable"] is True
+
+
+def test_unlisted_page_yields_one_null_price_row_and_no_carousel():
+    from scripts.reconcile_april_detail import build_observation_rows
+
+    _, record = _parse_record()
+    rows, _, _ = build_observation_rows(
+        record, _identity(),
+        _primary(listing_state="unlisted", price=100, mileage=99), [],
+    )
+    assert len(rows) == 1
+    assert rows[0]["listing_state"] == "unlisted"
+    assert rows[0]["price"] is None
+    assert rows[0]["mileage"] is None
+
+
+@pytest.mark.parametrize("primary,outcome", [
+    ({"listing_state": "blocked", "listing_id": LISTING_A}, "blocked_cloudflare"),
+    ({"listing_state": "active", "listing_id": None, "vin": None,
+      "price": None, "make": None}, "blocked_other"),
+])
+def test_block_pages_are_distinct_and_emit_no_rows(primary, outcome):
+    from scripts.reconcile_april_detail import parse_one_input
+
+    body, record = _parse_record()
+    rows, audit = parse_one_input(
+        record, _identity(None, None, "none", "none"),
+        reader=lambda _key: body,
+        parser=lambda text, url: (primary, [], {}),
+    )
+    assert rows == []
+    assert audit["outcome"] == outcome
+
+
+@pytest.mark.parametrize("body,outcome", [
+    (b"<html><head><title>Just a moment...</title></head></html>",
+     "blocked_cloudflare"),
+    (b"<html><head><title>Access Denied</title></head><body>Reference #1</body></html>",
+     "blocked_other"),
+])
+def test_real_production_parser_classifies_cloudflare_and_akamai(body, outcome):
+    from scripts.reconcile_april_detail import parse_one_input
+
+    _, record = _parse_record(body=body)
+    rows, audit = parse_one_input(
+        record, _identity(None, None, "none", "none"),
+        reader=lambda _key: body,
+    )
+    assert rows == []
+    assert audit["outcome"] == outcome
+
+
+def test_parse_hash_disagreement_stops_the_run():
+    from scripts.reconcile_april_detail import parse_one_input
+
+    _, record = _parse_record()
+    with pytest.raises(ReconcileError, match="store moved"):
+        parse_one_input(record, _identity(), reader=lambda _key: b"changed")
+
+
+def test_parse_exception_is_recorded_as_failed():
+    from scripts.reconcile_april_detail import parse_one_input
+
+    body, record = _parse_record()
+
+    def broken(text, url):
+        raise ValueError("fixture failure")
+
+    rows, audit = parse_one_input(
+        record, _identity(), reader=lambda _key: body, parser=broken,
+    )
+    assert rows == []
+    assert audit["outcome"] == "failed"
+    assert "fixture failure" in audit["error"]
+
+
+def test_stage4_rows_round_trip_through_real_parquet_schemas(tmp_path):
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    from scripts.reconcile_april_detail import (
+        _parsed_inputs_schema,
+        _parsed_rows_schema,
+        build_observation_rows,
+    )
+
+    _, record = _parse_record()
+    rows, _, audit = build_observation_rows(record, _identity(), _primary(), [])
+    audit["outcome"] = "parsed"
+    row_path = tmp_path / "rows.parquet"
+    input_path = tmp_path / "inputs.parquet"
+    pq.write_table(pa.Table.from_pylist(rows, schema=_parsed_rows_schema()), row_path)
+    pq.write_table(pa.Table.from_pylist([audit], schema=_parsed_inputs_schema()), input_path)
+    recovered = pq.read_table(row_path).to_pylist()[0]
+    recovered_input = pq.read_table(input_path).to_pylist()[0]
+    assert recovered["listing_id"] == LISTING_A
+    assert "artifact_id" not in recovered
+    assert recovered_input["outcome"] == "parsed"
+
+
+def test_parse_defaults_to_a_dry_run():
+    args = parse_args(["parse"])
+    assert args.mode == "parse"
+    assert args.apply is False
+    assert args.workers == 0
+
+
+def test_parse_apply_gate_waits_for_every_unpack_member():
+    from scripts.reconcile_april_detail import check_parse_apply_gate
+
+    with pytest.raises(ReconcileError, match="Stage 3b may still be running"):
+        check_parse_apply_gate(
+            1,
+            [("recovery/plan145/unpacked/one.parquet", [
+                {"disposition": "written"},
+            ])],
+            input_count=1,
+        )
