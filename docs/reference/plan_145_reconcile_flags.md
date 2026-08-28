@@ -186,13 +186,19 @@ measurement). Two things are surfaced for a maintainer:
   quarantined detail row can carry a value, an `apply and not probe` run
   **stops** (a dry run or probe warns).
 
-`assign` re-checks the same detail-row signature on every `to_import` row as
-defence in depth and refuses the population — reporting the whole cohort's
-size, capped examples — so a compare run predating this filter cannot be
-assigned by a build that has it. The carousel fan-out and multi-candidate
-share are now measured over importable objects only (the `blocked_excluded`
-objects are out of both numerator and denominator), which makes them sharper
-than the probe's figures, not drift.
+`assign` guards this two ways. First, it **refuses any run whose
+`compare_report.json` has no `blocked_excluded` section** — such a report is by
+construction a compare run that predates the filter, and its `to_import` family
+may carry block pages in a shape the per-row check cannot see (a block page's
+detail row can sit in `already_represented` while only its junk carousel rows
+reach `to_import`). Re-run `compare` first. Second, it re-checks the detail-row
+signature on every `to_import` row as defence in depth and refuses the
+population — reporting the whole cohort's size, capped examples — which catches
+the plain case where the detail row itself is in `to_import`.
+
+The carousel fan-out and multi-candidate share are now measured over importable
+objects only (the `blocked_excluded` objects are out of both numerator and
+denominator), which makes them sharper than the probe's figures, not drift.
 
 ### `assign` (Stage 5 slice 2)
 | flag | default | meaning |

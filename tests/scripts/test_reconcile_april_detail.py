@@ -4050,3 +4050,34 @@ def test_assign_refuses_a_to_import_population_carrying_the_block_signature(
     # the whole cohort is counted (25 detail rows), the printed examples capped
     assert re.search(r"block_page_signature\s+25", out)
     assert out.count("e.g.") <= 20
+
+
+def test_assign_refuses_a_compare_run_that_predates_the_block_page_filter(
+        tmp_path, monkeypatch):
+    import scripts.reconcile_april_detail as mod
+
+    # The per-row check only sees the detail row that carries the signature,
+    # and a block page's detail row can sit in already_represented while only
+    # its carousel rows reach to_import -- so a stale compare run is refused
+    # outright, whatever shape its leakage takes.
+    store, _ = _slice2_fixture_store(tmp_path)
+    store[f"recovery/plan145/compared/{_RUN}/compare_report.json"] = json.dumps({
+        "plan": 145, "stage": 5, "slice": 1, "mode": "compare", "run_id": _RUN,
+        "families": {"already_represented": 10, "to_import": 3,
+                     "unclassifiable": 1, "sum": 14},
+    }).encode()
+    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+    before = set(store)
+
+    with pytest.raises(ReconcileError, match="predates the block-page filter"):
+        mod.run_assign(mod.parse_args(["assign", "--apply"]))
+    assert set(store) == before
+
+    # a report that has the section assigns normally
+    store[f"recovery/plan145/compared/{_RUN}/compare_report.json"] = json.dumps({
+        "families": {"already_represented": 10, "to_import": 3,
+                     "unclassifiable": 1, "blocked_excluded": 0, "sum": 14},
+        "blocked_excluded": {"rows": 0, "objects": 0},
+    }).encode()
+    _patch_slice2_io(monkeypatch, store, _FakeWriteConn(next_id=9_000_001))
+    assert mod.run_assign(mod.parse_args(["assign", "--apply"])) == 0

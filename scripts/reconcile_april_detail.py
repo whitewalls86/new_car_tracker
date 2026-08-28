@@ -3390,10 +3390,14 @@ def run_compare(args: argparse.Namespace) -> int:
                     out["reason"] = "blocked_page"
                     blk_rows.append(out)
                     fam_counts["blocked_excluded"] += 1
-                    blocked_objects.add(row["object_key"])
+                    # str() to match `all_objects` (built with str(okey) in
+                    # Pass A); a type skew here would make `all_objects -
+                    # blocked_objects` subtract nothing and silently revert the
+                    # fan-out denominator to the including one.
+                    blocked_objects.add(str(row["object_key"]))
                     blocked_by_source[src or "?"] += 1
                     if src == "carousel":
-                        blocked_carousel_objects.add(row["object_key"])
+                        blocked_carousel_objects.add(str(row["object_key"]))
                     elif src == "detail" and any(
                         row.get(name) is not None for name in _BLOCK_VALUE_FIELDS
                     ):
@@ -4634,7 +4638,7 @@ def _no_allocation(count: int) -> list[int]:
 
 def run_assign(args: argparse.Namespace) -> int:
     from shared.minio import BUCKET as DEFAULT_BUCKET
-    from shared.minio import object_exists, write_bytes
+    from shared.minio import object_exists, read_json, write_bytes
 
     bucket = args.bucket or DEFAULT_BUCKET
     client = _s3_client()
@@ -4651,6 +4655,25 @@ def run_assign(args: argparse.Namespace) -> int:
         )
         if apply:
             raise ReconcileError(detail + "; finish slice 1 before assigning")
+        logger.warning("%s (advisory: dry run measures, does not gate)", detail)
+
+    # A compare_report.json with no `blocked_excluded` section is by
+    # construction a run that predates the block-page filter. The per-row
+    # check below only sees the detail row that carries the signature, and a
+    # block page's detail row can sit in `already_represented` while only its
+    # junk carousel rows reach `to_import` -- so that check cannot see the
+    # whole class. Refuse the stale run outright; re-run `compare` first.
+    compare_report = read_json(f"s3://{bucket}/{run_dir}/compare_report.json") or {}
+    if compare_report and "blocked_excluded" not in compare_report:
+        detail = (
+            f"compare run {run_id} predates the block-page filter (its "
+            f"compare_report.json has no 'blocked_excluded' section), so its "
+            f"to_import family may carry block pages the per-row check cannot "
+            f"see -- re-run `compare{' --probe' if probe else ''}` before "
+            f"assigning"
+        )
+        if apply:
+            raise ReconcileError(detail)
         logger.warning("%s (advisory: dry run measures, does not gate)", detail)
 
     objects, violations, to_import_rows = _scan_to_import(client, bucket, run_dir)
@@ -4696,8 +4719,6 @@ def run_assign(args: argparse.Namespace) -> int:
     # name. The recorded caps make that a stop.
     report_key = _assign_report_key(run_id, roots.assigned)
     if object_exists(report_key):
-        from shared.minio import read_json
-
         previous = read_json(f"s3://{bucket}/{report_key}") or {}
         prior_caps = previous.get("caps") or {}
         if prior_caps and prior_caps != {"max_artifacts": args.max_artifacts,
