@@ -3388,6 +3388,11 @@ def run_compare(args: argparse.Namespace) -> int:
         # known ahead of time; its ceiling defaults to 0, so any non-zero count
         # stops the first authoritative run for a maintainer ruling, after which
         # --max-no-listing-id is set to the measured number.
+        #
+        # Like the silver-shape refusal above, this only *stops* an --apply run:
+        # a dry run and a probe write nothing and cannot advance slice 2, and
+        # they are exactly the runs whose job is to measure these cohorts, so
+        # there they warn and let the report carry the counts.
         gate_failures = []
         if unc_no_capture_time > args.max_unclassifiable:
             gate_failures.append(
@@ -3405,9 +3410,11 @@ def run_compare(args: argparse.Namespace) -> int:
         if gate_failures:
             message = ("; ".join(gate_failures)
                        + "; stopping so the maintainer rules on it before slice 2")
-            if not args.allow_unclassifiable_drift:
+            if apply and not probe and not args.allow_unclassifiable_drift:
                 raise ReconcileError(message)
-            logger.warning("%s (continuing: --allow-unclassifiable-drift)", message)
+            logger.warning("%s (%s)", message,
+                           "continuing: --allow-unclassifiable-drift" if apply and not probe
+                           else "advisory: probe/dry run measures, does not gate")
 
         # -- global duplicate resolution, over the temp shards ----------
         loser_uids, dup_report = _resolve_toimport_duplicates(

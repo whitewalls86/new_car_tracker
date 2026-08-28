@@ -1919,20 +1919,22 @@ def test_run_compare_apply_stops_on_any_no_listing_id_row_until_the_maintainer_r
         )
     _patch_compare_io(monkeypatch, store, [(l1, "VIN-L1")], rows=6)
 
-    # default ceiling is 0: any non-zero no_listing_id cohort stops the run
+    # default ceiling is 0: any non-zero no_listing_id cohort stops an --apply run
     with pytest.raises(ReconcileError, match="no_listing_id rows 1"):
         mod.run_compare(mod.parse_args(["compare", "--apply"]))
 
-    # the maintainer acknowledges it and proceeds
+    # the maintainer acknowledges it by setting the ceiling to the measured
+    # number -- the workflow the help text describes, which leaves the
+    # no_capture_time ceiling armed (unlike --allow-unclassifiable-drift)
     rc = mod.run_compare(
-        mod.parse_args(["compare", "--apply", "--allow-unclassifiable-drift"]))
+        mod.parse_args(["compare", "--apply", "--max-no-listing-id", "1"]))
     assert rc == 0
     run_id = next(k for k in store if "/inventory/" in k).split("/")[-1][:-5]
     report = json.loads(
         store[f"recovery/plan145/compared/{run_id}/compare_report.json"])
     assert report["unclassifiable"]["no_listing_id"] == 1
     assert report["unclassifiable"]["no_capture_time"] == 1        # l3, unchanged
-    assert report["unclassifiable"]["materially_larger"] is True
+    assert report["unclassifiable"]["materially_larger"] is False  # ceiling now met
     assert report["families"]["sum"] == 6
     # the row landed in the unclassifiable family, never to_import
     unc = [
@@ -1947,3 +1949,41 @@ def test_run_compare_apply_stops_on_any_no_listing_id_row_until_the_maintainer_r
         for row in _pq.read_table(_io.BytesIO(blob)).to_pylist()
     ]
     assert to_import and all(r["listing_id"] is not None for r in to_import)
+
+
+def test_run_compare_probe_measures_the_no_listing_id_cohort_instead_of_dying(
+        tmp_path, monkeypatch, capsys):
+    # The probe run's whole job is to learn this cohort's size against the
+    # completed Stage 4 units. The gate must not stop it: nothing to protect,
+    # since a probe writes nothing that can advance slice 2.
+    import scripts.reconcile_april_detail as mod
+
+    store, (l1, *_rest) = _compare_fixture_store(tmp_path)
+    store["recovery/plan145/parsed/rows/materialized-c.parquet"] = \
+        _write_parsed_rows_fixture(
+            tmp_path / "rows-c.parquet",
+            [_prow(listing_id=None, fetched_at=_WHEN, fetched_at_source="queue_events",
+                   object_key="html/c1.zst", content_sha256="sc1")],
+        )
+    _patch_compare_io(monkeypatch, store, [(l1, "VIN-L1")], rows=6)
+    written_before = set(store)
+
+    rc = mod.run_compare(mod.parse_args(["compare", "--probe"]))
+    assert rc == 0                                   # measured, did not die
+    assert set(store) == written_before              # a bare probe writes nothing
+    out = capsys.readouterr().out
+    assert "no_listing_id 1" in out
+
+    # --probe --apply writes only under the disposable *_probe prefix
+    rc = mod.run_compare(mod.parse_args(["compare", "--probe", "--apply"]))
+    assert rc == 0
+    probe_report = next(
+        v for k, v in store.items()
+        if k.startswith("recovery/plan145/compared_probe/")
+        and k.endswith("compare_report.json")
+    )
+    report = json.loads(probe_report)
+    assert report["probe"] is True
+    assert report["unclassifiable"]["no_listing_id"] == 1
+    assert report["unclassifiable"]["materially_larger"] is True   # default ceiling 0
+    assert not any(k.startswith("recovery/plan145/compared/") for k in store)
