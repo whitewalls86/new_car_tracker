@@ -3214,7 +3214,12 @@ def test_apply_probe_dry_run_reads_probe_prefixes_and_issues_no_statement(
 
     assert mod.run_apply(mod.parse_args(["apply", "--probe"])) == 0
     assert conn.sql == []
-    assert "PROBE DRY RUN" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "PROBE DRY RUN" in out
+    assert "would write" in out
+    # the dry run hands the maintainer the exact --batch string the
+    # probe-apply refusal asks for.
+    assert assign_batch_name(_RUN, 1) in out
 
 
 def test_authoritative_slice2_paths_are_unchanged_by_probe(tmp_path, monkeypatch):
