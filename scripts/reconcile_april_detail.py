@@ -27,10 +27,19 @@ Five modes live here, one per early stage of the plan's third revision, which
 * ``parse`` (Stage 4) -- parses the flattened population with the production
   parser into recovery-only Parquet, with identity provenance and one input
   audit row per object. It never writes Postgres or production silver.
+* ``compare`` (Stage 5, slice 1) -- classifies every parsed observation against
+  the deployed March-May silver on ``same listing_id AND abs(dt) <= 300s`` into
+  ``already_represented`` / ``to_import`` / ``unclassifiable`` under
+  ``recovery/plan145/compared/<run_id>/``, freezes the input inventory under
+  ``recovery/plan145/inventory/<run_id>.json``, and writes one read-only VIN
+  snapshot under ``recovery/plan145/vin_snapshot/<run_id>.parquet``. The only
+  database statement it issues is that ``SELECT``; it writes no Postgres row and
+  no production object. Slices 2 (assign+apply) and 3 (canary) are separate.
 
-``dedupe`` and ``unpack`` default to a dry run and take an explicit ``--apply``;
-between them the population becomes one flat prefix of distinct captures that
-Stage 4 parses. No mode writes Postgres.
+``dedupe``, ``unpack`` and ``compare`` default to a dry run and take an explicit
+``--apply``; between 3a and 3b the population becomes one flat prefix of distinct
+captures that Stage 4 parses and Stage 5 compares. No mode writes Postgres bar
+``compare``'s one VIN ``SELECT``.
 
 What the legacy rows actually are
 ---------------------------------
@@ -112,7 +121,7 @@ import sys
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator, Optional, Sequence
+from typing import Any, Iterator, NamedTuple, Optional, Sequence
 
 logger = logging.getLogger("reconcile_april_detail")
 
@@ -2427,6 +2436,1234 @@ def run_parse(args: argparse.Namespace) -> int:
 
 
 # --------------------------------------------------------------------------
+# Stage 5 slice 1 -- compare parsed observations to the deployed silver
+# --------------------------------------------------------------------------
+#
+# This slice writes no Postgres row and no production object. Its outputs land
+# only under recovery/plan145/{compared,inventory,vin_snapshot}/. Classification
+# is an *existence test*, not a join that picks a silver row: the plan's
+# predicate is
+#
+#     same listing_id AND abs(silver.fetched_at - parsed.fetched_at) <= 300 s
+#
+# and source / vin / artifact_id / every parsed business value are explicitly
+# *not* match keys. A parsed observation is:
+#
+#   * unclassifiable      -- fetched_at_source == 'none' (tier-3 identity, no
+#                            capture time): it cannot be windowed and cannot be
+#                            imported (silver.fetched_at is NOT NULL);
+#   * already_represented -- at least one silver observation for the same
+#                            listing lies within +/-300 s, from any source;
+#   * to_import           -- zero candidates.
+#
+# The three families partition the parsed rows exactly -- that sum is what makes
+# the plan's "classified exactly once" gate enforceable.
+
+COMPARED_PREFIX = "recovery/plan145/compared"
+INVENTORY_PREFIX = "recovery/plan145/inventory"
+VIN_SNAPSHOT_PREFIX = "recovery/plan145/vin_snapshot"
+#: --probe writes here instead; probe output is never promoted.
+PROBE_SUFFIX = "_probe"
+
+SILVER_PREFIX = "silver_normalized/observations"
+SILVER_MONTHS = (3, 4, 5)
+
+#: The plan's window, as microseconds. `<=` -- exactly 300 s is a match.
+COMPARE_WINDOW_US = 300 * 1_000_000
+
+#: The authoritative run refuses to start until Stage 4 reports all of these.
+COMPARE_PLANNED_UNITS = 1204
+
+#: Tier-3 identity yields ~760 pages with no capture time. Materially more than
+#: this means something upstream is wrong; stop rather than proceed to slice 2.
+UNCLASSIFIABLE_EXPECTATION = 760
+MAX_UNCLASSIFIABLE = 2000
+
+#: listing_ids per read-only ops.vin_to_listing SELECT.
+VIN_BATCH = 1000
+
+#: The business columns a recovery-duplicate collapse compares. Provenance,
+#: object_key and content_sha256 are not in SILVER_FIELDS so they are already
+#: out; vin is excluded because the parse stage deliberately leaves it NULL on
+#: carousel rows.
+FINGERPRINT_FIELDS = tuple(f for f in SILVER_FIELDS if f != "vin")
+
+
+class DuplicateFingerprintConflict(ReconcileError):
+    """Two parsed rows share ``(listing_id, fetched_at)`` but differ in business
+    content. The plan says stop and let a human rule; do not pick a winner."""
+
+    def __init__(self, conflicts: list[dict[str, Any]]) -> None:
+        self.conflicts = conflicts
+        super().__init__(
+            f"{len(conflicts)} (listing_id, fetched_at) group(s) share the key but "
+            f"differ in business fingerprint; compare stops without choosing a winner"
+        )
+
+
+class LiteDup(NamedTuple):
+    """The minimum a global duplicate pass needs -- so the full rows can stay on
+    local disk while the key/fingerprint grouping runs in memory."""
+
+    uid: int
+    listing_id: Optional[str]
+    fetched_at: Optional[str]
+    ts_us: Optional[int]
+    fingerprint: str
+    source: Optional[str]
+    object_key: Optional[str]
+    content_sha256: Optional[str]
+
+
+# -- time --------------------------------------------------------------------
+
+def _epoch_us(value: Any) -> Optional[int]:
+    """Whole microseconds since the Unix epoch, by exact integer arithmetic.
+
+    The comparison window is +/-300 s and the probe reported distances to the
+    millisecond, so float epoch seconds are avoided: two ~1.75e15 microsecond
+    values subtracted in float would lose the low bits.
+    """
+    if value is None:
+        return None
+    dt = value if isinstance(value, datetime) else _as_utc_datetime(value)
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    delta = dt.astimezone(timezone.utc) - datetime(1970, 1, 1, tzinfo=timezone.utc)
+    return (delta.days * 86_400_000_000
+            + delta.seconds * 1_000_000
+            + delta.microseconds)
+
+
+# -- classification (existence test only) ----------------------------------
+
+def match_within_window(target_us: Optional[int],
+                        series: Sequence[tuple[Optional[int], str]]
+                        ) -> list[tuple[int, str]]:
+    """Silver events for one listing that fall within the +/-300 s window.
+
+    Returns ``(abs_distance_us, source)`` pairs -- measurements, never a chosen
+    row. The predicate is ``abs(delta) <= 300 s`` so an event exactly 300 s away
+    is included.
+    """
+    if target_us is None:
+        return []
+    out: list[tuple[int, str]] = []
+    for event_us, source in series:
+        if event_us is None:
+            continue
+        dist = abs(event_us - target_us)
+        if dist <= COMPARE_WINDOW_US:
+            out.append((dist, source))
+    return out
+
+
+def classify_from_summary(parsed_row: dict[str, Any],
+                          summary: Optional[dict[str, Any]]) -> dict[str, Any]:
+    """Decide the family from a match summary. One decision path for both the
+    DuckDB scan and the pure-Python test helper.
+
+    ``summary`` is ``{"match_count", "nearest_us", "match_sources"}`` or ``None``.
+    No candidate identity or value is ever consulted -- only count and distance.
+
+    ``unclassifiable`` covers *both* halves of a missing identity: a NULL
+    ``listing_id`` (tier-2 resolved a capture time but no listing) cannot be
+    windowed and ``staging.silver_observations.listing_id`` is NOT NULL, so such
+    a row is no more importable than a tier-3 page with no capture time. The two
+    are reasoned apart -- ``no_listing_id`` vs ``no_capture_time`` -- because the
+    ~760 expectation was sized for the latter only. This mirrors
+    ``build_observation_rows``'s ``importable = bool(listing_id and fetched_at)``.
+    """
+    if parsed_row.get("listing_id") is None:
+        return {"family": "unclassifiable", "reason": "no_listing_id",
+                "match_count": 0, "nearest_distance_s": None, "match_sources": []}
+    if (parsed_row.get("fetched_at_source") == "none"
+            or parsed_row.get("fetched_at") is None):
+        return {"family": "unclassifiable", "reason": "no_capture_time",
+                "match_count": 0, "nearest_distance_s": None, "match_sources": []}
+    if not summary or not summary.get("match_count"):
+        return {"family": "to_import", "reason": None,
+                "match_count": 0, "nearest_distance_s": None, "match_sources": []}
+    return {
+        "family": "already_represented",
+        "reason": "silver_candidate",
+        "match_count": int(summary["match_count"]),
+        "nearest_distance_s": round(int(summary["nearest_us"]) / 1_000_000, 6),
+        "match_sources": sorted(summary["match_sources"]),
+    }
+
+
+def classify_parsed_observation(parsed_row: dict[str, Any],
+                                silver_index: dict[str, Sequence[tuple[Optional[int], str]]]
+                                ) -> dict[str, Any]:
+    """Pure classifier over an in-memory silver index -- the shape the tests use.
+
+    ``silver_index`` maps ``listing_id`` to a sequence of ``(event_us, source)``.
+    """
+    lid = parsed_row.get("listing_id")
+    if (lid is None
+            or parsed_row.get("fetched_at_source") == "none"
+            or parsed_row.get("fetched_at") is None):
+        return classify_from_summary(parsed_row, None)
+    series = silver_index.get(str(lid), ())
+    hits = match_within_window(_epoch_us(parsed_row.get("fetched_at")), series)
+    if not hits:
+        return classify_from_summary(parsed_row, None)
+    return classify_from_summary(parsed_row, {
+        "match_count": len(hits),
+        "nearest_us": min(d for d, _ in hits),
+        "match_sources": sorted({s for _, s in hits}),
+    })
+
+
+# -- global duplicate resolution (across shard boundaries) ----------------
+
+def _fp_json_default(value: Any) -> str:
+    if isinstance(value, datetime):
+        return value.astimezone(timezone.utc).isoformat()
+    return str(value)
+
+
+def business_fingerprint(row: dict[str, Any]) -> str:
+    """A hash over the silver business columns, excluding provenance and vin."""
+    payload = {name: row.get(name) for name in FINGERPRINT_FIELDS}
+    blob = json.dumps(payload, sort_keys=True, default=_fp_json_default)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def _dup_sort_key(rec: LiteDup) -> tuple[int, str, str]:
+    # detail before carousel, then lowest object_key, then lowest content hash.
+    return (0 if rec.source == "detail" else 1,
+            rec.object_key or "", rec.content_sha256 or "")
+
+
+def resolve_global_duplicates(
+    records: Sequence[LiteDup],
+) -> tuple[set[int], set[int], dict[str, Any]]:
+    """Collapse identical unrepresented ``(listing_id, fetched_at)`` duplicates.
+
+    Stage 4's work unit is one manifest shard, so the same key can appear in two
+    shards; collapsing inside a shard would let a pair through and break the
+    plan's zero-duplicate-write criterion. Resolution is therefore global.
+
+    Returns ``(winner_uids, loser_uids, report)``. Raises
+    :class:`DuplicateFingerprintConflict` when a key's members disagree on
+    business content -- the plan forbids picking a winner there.
+    """
+    groups: dict[tuple[Optional[str], Optional[str]], list[LiteDup]] = defaultdict(list)
+    for rec in records:
+        groups[(rec.listing_id, rec.fetched_at)].append(rec)
+
+    winner_uids: set[int] = set()
+    loser_uids: set[int] = set()
+    conflicts: list[dict[str, Any]] = []
+    collapsed = 0
+    for (listing_id, fetched_at), members in groups.items():
+        if len(members) == 1:
+            winner_uids.add(members[0].uid)
+            continue
+        fingerprints = {m.fingerprint for m in members}
+        if len(fingerprints) > 1:
+            conflicts.append({
+                "listing_id": listing_id,
+                "fetched_at": fetched_at,
+                "fingerprints": sorted(fingerprints),
+                "members": [
+                    {"source": m.source, "object_key": m.object_key,
+                     "content_sha256": m.content_sha256}
+                    for m in sorted(members, key=lambda m: (m.object_key or "",
+                                                            m.content_sha256 or ""))
+                ],
+            })
+            continue
+        collapsed += 1
+        ordered = sorted(members, key=_dup_sort_key)
+        winner_uids.add(ordered[0].uid)
+        loser_uids.update(m.uid for m in ordered[1:])
+
+    if conflicts:
+        raise DuplicateFingerprintConflict(conflicts)
+
+    return winner_uids, loser_uids, {
+        "groups_collapsed": collapsed,
+        "rows_moved_to_already_represented": len(loser_uids),
+        "conflicting_fingerprint_groups": 0,
+    }
+
+
+def near_duplicate_window(
+    pairs_source: Iterator[tuple[str, int]],
+) -> dict[str, int]:
+    """Count unrepresented same-listing captures within 300 s of the previous one.
+
+    Representation uses a +/-300 s window but duplicate collapse uses an *exact*
+    ``(listing_id, fetched_at)``, so two real captures of one listing 200 s
+    apart both survive into ``to_import``. That is correct -- they are two real
+    captures -- but the maintainer needs the number before slice 2 writes
+    anything, so this measures it without collapsing anything.
+
+    ``adjacent_pairs_within_300s`` is over *adjacent* captures in time order (the
+    gap to the predecessor is ``0 < gap <= 300 s``), which is linear in a
+    listing's capture count -- a listing with up to 980 captures, some bursting
+    inside one window, must not cost a quadratic scan. A cluster of *k* captures
+    inside one window contributes *k-1*, so this is a lower bound on
+    ``captures_with_a_neighbour`` -- the count of captures with another within
+    300 s on either side, which is the quantity the maintainer rules on.
+    ``run_compare`` computes the same definitions with a window query over the
+    temp shards rather than re-accumulating the population in memory.
+    """
+    by_listing: dict[str, list[int]] = defaultdict(list)
+    for listing_id, ts_us in pairs_source:
+        by_listing[listing_id].append(ts_us)
+    pairs = 0
+    listings = 0
+    with_neighbour = 0
+    for series in by_listing.values():
+        series.sort()
+        n = len(series)
+        hit = False
+        for i in range(n):
+            prev_near = i > 0 and 0 < series[i] - series[i - 1] <= COMPARE_WINDOW_US
+            next_near = i < n - 1 and 0 < series[i + 1] - series[i] <= COMPARE_WINDOW_US
+            if prev_near:
+                pairs += 1
+                hit = True
+            if prev_near or next_near:
+                with_neighbour += 1
+        if hit:
+            listings += 1
+    return {"adjacent_pairs_within_300s": pairs, "listings_involved": listings,
+            "captures_with_a_neighbour": with_neighbour}
+
+
+# -- the input freeze -----------------------------------------------------
+
+def compute_run_id(inventory_core: dict[str, Any]) -> str:
+    """A run id that changes iff any frozen input object changes.
+
+    A changed inventory requires a new ``run_id`` and a complete re-compare;
+    never a patch of one family in place.
+    """
+    blob = json.dumps(inventory_core, sort_keys=True, separators=(",", ":"))
+    return "cmp-" + hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
+
+
+def check_compare_apply_gate(parse_report: dict[str, Any],
+                             real_observation_total: int) -> None:
+    """Refuse the authoritative run until Stage 4 is complete.
+
+    This refusal is a feature of the slice, not an operational note: it reads
+    ``parse_report.json`` but reproduces the observation total from the real
+    ``rows/*.parquet`` row counts rather than trusting the report.
+    """
+    failures: list[str] = []
+    completed = parse_report.get("completed_units")
+    planned = parse_report.get("planned_units")
+    if completed != COMPARE_PLANNED_UNITS or planned != COMPARE_PLANNED_UNITS:
+        failures.append(
+            f"parse units completed={completed} planned={planned}; both must "
+            f"equal {COMPARE_PLANNED_UNITS}"
+        )
+    totals = parse_report.get("totals") or {}
+    if totals.get("inputs") != EXPECTED_FLATTENED_INPUTS:
+        failures.append(
+            f"parsed inputs {totals.get('inputs')} != {EXPECTED_FLATTENED_INPUTS}"
+        )
+    if totals.get("rows") != real_observation_total:
+        failures.append(
+            f"parse_report rows total {totals.get('rows')} disagrees with the "
+            f"summed rows/*.parquet row counts {real_observation_total}"
+        )
+    if failures:
+        raise ReconcileError(
+            "Stage 5 compare --apply gate failed (is Stage 4 complete?): "
+            + "; ".join(failures)
+        )
+
+
+def _object_inventory(client, bucket: str, prefix: str, suffix: str
+                      ) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for entry in _list_prefix(client, bucket, prefix):
+        key = entry["Key"]
+        if not key.endswith(suffix):
+            continue
+        out.append({
+            "key": key,
+            "size": int(entry["Size"]),
+            "etag": entry["ETag"].strip('"'),
+        })
+    out.sort(key=lambda r: r["key"])
+    return out
+
+
+def _silver_source(key: str) -> Optional[str]:
+    m = re.search(r"/source=([^/]+)/", key)
+    return m.group(1) if m else None
+
+
+def _discover_silver_objects(client, bucket: str,
+                             silver_prefix: Optional[str] = None
+                             ) -> list[dict[str, Any]]:
+    """The March-May silver objects, read as named objects -- never a dbt view.
+
+    ``source`` is a hive partition column, encoded in the key path and absent
+    from the file, so it is recorded here per object.
+    """
+    root = (silver_prefix or SILVER_PREFIX).rstrip("/") + "/"
+    out: list[dict[str, Any]] = []
+    for source_prefix in _list_common_prefixes(client, bucket, root):
+        leaf = source_prefix.rstrip("/").rsplit("/", 1)[-1]
+        if not leaf.startswith("source="):
+            continue
+        for month_prefix in _list_common_prefixes(
+            client, bucket, f"{source_prefix}obs_year={TARGET_YEAR}/",
+        ):
+            m_leaf = month_prefix.rstrip("/").rsplit("/", 1)[-1]
+            if not m_leaf.startswith("obs_month="):
+                continue
+            try:
+                month = int(m_leaf.split("=", 1)[1])
+            except ValueError:
+                continue
+            if month not in SILVER_MONTHS:
+                continue
+            for entry in _list_prefix(client, bucket, month_prefix):
+                if not entry["Key"].endswith(".parquet"):
+                    continue
+                out.append({
+                    "key": entry["Key"],
+                    "size": int(entry["Size"]),
+                    "etag": entry["ETag"].strip('"'),
+                    "source": _silver_source(entry["Key"]),
+                })
+    out.sort(key=lambda r: r["key"])
+    if not out:
+        raise ReconcileError(
+            f"no silver objects under s3://{bucket}/{root} for months {SILVER_MONTHS}"
+        )
+    return out
+
+
+def _discover_queue_event_objects(client, bucket: str) -> list[dict[str, Any]]:
+    """The March-May artifact-event objects -- frozen for slice 2's identity
+    step, not consumed here."""
+    out: list[dict[str, Any]] = []
+    for prefix in _list_common_prefixes(
+        client, bucket, f"{QUEUE_EVENTS_PREFIX}/year={TARGET_YEAR}/",
+    ):
+        leaf = prefix.rstrip("/").rsplit("/", 1)[-1]
+        if not leaf.startswith("month="):
+            continue
+        try:
+            month = int(leaf.split("=", 1)[1])
+        except ValueError:
+            continue
+        if month not in QUEUE_EVENT_MONTHS:
+            continue
+        for entry in _list_prefix(client, bucket, prefix):
+            if entry["Key"].endswith(".parquet"):
+                out.append({
+                    "key": entry["Key"],
+                    "size": int(entry["Size"]),
+                    "etag": entry["ETag"].strip('"'),
+                })
+    out.sort(key=lambda r: r["key"])
+    return out
+
+
+def _compare_unit_name(row_shard_key: str) -> str:
+    return row_shard_key.rsplit("/", 1)[-1].removesuffix(".parquet")
+
+
+def _compare_run_complete(run_dir: str, inv_key: str) -> bool:
+    """A run_id is finished once its inventory freeze and its report both exist.
+
+    Per-family per-unit shards are not a completeness signal: a unit can
+    legitimately contribute zero rows to a family.
+    """
+    from shared.minio import object_exists
+
+    return object_exists(inv_key) and object_exists(f"{run_dir}/compare_report.json")
+
+
+# -- output schemas -----------------------------------------------------
+
+def _compared_schema(family: str) -> Any:
+    import pyarrow as pa
+
+    fields = list(_parsed_rows_schema())
+    fields.append(pa.field("reason", pa.string()))
+    if family == "already_represented":
+        fields.append(pa.field("match_count", pa.int32()))
+        fields.append(pa.field("nearest_distance_s", pa.float64()))
+        fields.append(pa.field("match_sources", pa.list_(pa.string())))
+    return pa.schema(fields)
+
+
+def _toimport_temp_schema() -> Any:
+    import pyarrow as pa
+
+    fields = list(_parsed_rows_schema())
+    fields.append(pa.field("reason", pa.string()))
+    fields.append(pa.field("_uid", pa.int64()))
+    fields.append(pa.field("_fp", pa.string()))
+    return pa.schema(fields)
+
+
+def _emit_compare_shard(run_dir: str, family: str, unit: str, schema: Any,
+                        rows: Sequence[dict[str, Any]], *, apply: bool) -> None:
+    if not apply or not rows:
+        return
+    from shared.minio import object_exists
+
+    key = f"{run_dir}/{family}/{unit}.parquet"
+    if object_exists(key):
+        return
+    _write_parquet_shard(key, schema, rows)
+
+
+# -- the read-only VIN snapshot --------------------------------------------
+
+def _valid_uuid_ids(values: Iterator[Any]) -> list[str]:
+    seen: set[str] = set()
+    for value in values:
+        if not value:
+            continue
+        text = str(value)
+        if _UUID_RE.fullmatch(text):
+            seen.add(text)
+    return sorted(seen)
+
+
+def snapshot_vin_lookup(listing_ids: Sequence[Any], cursor, *,
+                        batch_size: int = VIN_BATCH) -> dict[str, Any]:
+    """Read ``ops.vin_to_listing`` for the distinct parsed listing ids.
+
+    Read-only, by design: the only statement issued is the ``SELECT`` from
+    ``processing/sql/batch_lookup_vin_to_listing.sql``. A parsed VIN that
+    collides with current hot state is reported by the caller and never causes a
+    delete, a remap or an exclusion.
+    """
+    ids = _valid_uuid_ids(iter(listing_ids))
+    out: dict[str, Any] = {}
+    for start in range(0, len(ids), max(1, batch_size)):
+        batch = ids[start:start + max(1, batch_size)]
+        cursor.execute(
+            "SELECT listing_id, vin FROM ops.vin_to_listing "
+            "WHERE listing_id = ANY(%(listing_ids)s::uuid[])",
+            {"listing_ids": batch},
+        )
+        for row in cursor.fetchall():
+            out[str(row[0])] = row[1]
+    return out
+
+
+def _write_vin_snapshot(key: str, vin_map: dict[str, Any], *, apply: bool
+                        ) -> dict[str, Any]:
+    import io
+
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    from shared.minio import write_bytes
+
+    schema = pa.schema([pa.field("listing_id", pa.string()),
+                        pa.field("vin", pa.string())])
+    rows = [{"listing_id": k, "vin": v} for k, v in sorted(vin_map.items())]
+    buf = io.BytesIO()
+    pq.write_table(pa.Table.from_pylist(rows, schema=schema), buf, compression="zstd")
+    data = buf.getvalue()
+    info = {"key": key, "rows": len(rows), "size": len(data),
+            "sha256": hashlib.sha256(data).hexdigest()}
+    if apply:
+        write_bytes(key, data, content_type="application/octet-stream")
+    return info
+
+
+# -- the silver index (DuckDB, thread- and memory-bounded, disk-backed) ----
+
+def _open_compare_duckdb(db_path: Path, *, threads: int = 1,
+                         memory_limit: Optional[str] = "2GB"):
+    """A disk-backed DuckDB connection with an explicit thread and memory cap.
+
+    The silver side filters to only the listings the parsed population asks
+    about, but with ~1M distinct parsed listings against 20.7M silver rows that
+    still materialises most of the table plus a ``listing_id`` index. An
+    in-memory connection on a 4-core host production is also using is a real
+    risk, so the connection is a file with a spill path and a ceiling.
+    """
+    import duckdb
+
+    con = duckdb.connect(str(db_path))
+    con.execute(f"PRAGMA threads={max(1, threads)}")
+    if memory_limit:
+        con.execute(f"PRAGMA memory_limit='{memory_limit}'")
+    return con
+
+
+def _load_silver_index(con, source_paths: Sequence[tuple[str, Optional[str]]],
+                       wanted: set[str]) -> None:
+    """Materialise ``silver(listing_id, ts_us, source)`` on ``con``, filtered to
+    the wanted listings, with an index on ``listing_id`` for the per-unit
+    probes."""
+    import pyarrow as pa
+
+    selects = []
+    for path, source in source_paths:
+        literal_path = path.replace("'", "''")
+        literal_source = (source or "").replace("'", "''")
+        selects.append(
+            "SELECT CAST(listing_id AS VARCHAR) AS listing_id, "
+            "epoch_us(fetched_at) AS ts_us, "
+            f"'{literal_source}' AS source "
+            f"FROM read_parquet('{literal_path}')"
+        )
+    union_sql = " UNION ALL ".join(selects)
+    con.register("wanted", pa.table({"listing_id": pa.array(sorted(wanted), pa.string())}))
+    con.execute(
+        f"CREATE TABLE silver AS SELECT s.* FROM ({union_sql}) s "
+        "WHERE s.ts_us IS NOT NULL AND s.listing_id IS NOT NULL "
+        "AND s.listing_id IN (SELECT listing_id FROM wanted)"
+    )
+    con.unregister("wanted")
+    con.execute("CREATE INDEX silver_listing_idx ON silver(listing_id)")
+
+
+def _summarise_unit(con, prows: Sequence[dict[str, Any]]) -> dict[int, dict[str, Any]]:
+    """Per parsed row: silver candidate count, nearest distance, and the
+    distinct candidate sources -- as measurements, never a chosen row."""
+    import pyarrow as pa
+
+    ids = [str(r["listing_id"]) if r.get("listing_id") else None for r in prows]
+    ts = [_epoch_us(r.get("fetched_at")) for r in prows]
+    con.register("parsed_unit", pa.table({
+        "rid": pa.array(range(len(prows)), pa.int64()),
+        "listing_id": pa.array(ids, pa.string()),
+        "ts_us": pa.array(ts, pa.int64()),
+    }))
+    try:
+        rows = con.execute(
+            "SELECT p.rid, count(*) AS mc, "
+            "       min(abs(s.ts_us - p.ts_us)) AS nearest_us, "
+            "       list(DISTINCT s.source) AS srcs "
+            "FROM parsed_unit p JOIN silver s ON s.listing_id = p.listing_id "
+            "WHERE p.ts_us IS NOT NULL "
+            f"  AND abs(s.ts_us - p.ts_us) <= {COMPARE_WINDOW_US} "
+            "GROUP BY p.rid"
+        ).fetchall()
+    finally:
+        con.unregister("parsed_unit")
+    return {
+        rid: {"match_count": mc, "nearest_us": nearest_us,
+              "match_sources": list(srcs or [])}
+        for rid, mc, nearest_us, srcs in rows
+    }
+
+
+def _toimport_glob(toimport_dir: Path) -> Optional[str]:
+    """The read_parquet glob for the temp to_import shards, or None if empty."""
+    if not any(toimport_dir.glob("*.parquet")):
+        return None
+    return str(toimport_dir / "*.parquet").replace("'", "''")
+
+
+def _resolve_toimport_duplicates(
+    con, toimport_dir: Path,
+) -> tuple[set[int], dict[str, Any]]:
+    """Collapse identical unrepresented ``(listing_id, fetched_at)`` duplicates
+    across shard boundaries, reading the temp shards rather than an in-memory
+    list.
+
+    DuckDB groups the shards and hands only the multi-member groups to the pure,
+    tested :func:`resolve_global_duplicates`; singletons never leave the scan.
+    Returns ``(loser_uids, report)``; ``report["conflicts"]`` is populated when a
+    key's members disagree on business fingerprint.
+    """
+    glob = _toimport_glob(toimport_dir)
+    if glob is None:
+        return set(), {"groups_collapsed": 0,
+                       "rows_moved_to_already_represented": 0, "conflicts": []}
+    # One `list(struct_pack(...))` rather than five parallel `list()` aggregates
+    # zipped positionally: DuckDB does not document that separate list aggregates
+    # order their elements identically within a group, and the scan can be
+    # parallel (--duckdb-threads). A mis-zip would silently pick the wrong
+    # duplicate winner; a struct keeps the columns bound to their row.
+    groups = con.execute(
+        "SELECT listing_id, fetched_at, "
+        "  list(struct_pack(uid := _uid, fp := _fp, src := source, "
+        "                   ok := object_key, h := content_sha256)) AS members "
+        f"FROM read_parquet('{glob}') "
+        "GROUP BY listing_id, fetched_at HAVING count(*) > 1"
+    ).fetchall()
+    multi: list[LiteDup] = []
+    for listing_id, fetched_at, members in groups:
+        key_time = _normalize_fetched_at(fetched_at) if fetched_at is not None else None
+        for m in members:
+            multi.append(LiteDup(int(m["uid"]), listing_id, key_time, None,
+                                 m["fp"], m["src"], m["ok"], m["h"]))
+    try:
+        _, loser_uids, report = resolve_global_duplicates(multi)
+    except DuplicateFingerprintConflict as exc:
+        return set(), {"groups_collapsed": 0,
+                       "rows_moved_to_already_represented": 0,
+                       "conflicts": exc.conflicts}
+    report["conflicts"] = []
+    return loser_uids, report
+
+
+def _measure_near_duplicates(
+    con, toimport_dir: Path, loser_uids: set[int],
+) -> dict[str, int]:
+    """The near-duplicate window, as a linear gap scan over the temp shards.
+
+    ``adjacent_pairs_within_300s`` counts consecutive captures whose gap is
+    ``0 < gap <= 300 s`` -- a cluster of *k* captures inside one window is *k-1*,
+    not ``k(k-1)/2``. ``captures_with_a_neighbour`` is the count of unrepresented
+    captures that have another within 300 s on either side; that is the quantity
+    the maintainer rules on. Recovery duplicates are excluded so a collapsed
+    pair is not counted as a near one.
+    """
+    import pyarrow as pa
+
+    empty = {"adjacent_pairs_within_300s": 0, "listings_involved": 0,
+             "captures_with_a_neighbour": 0}
+    glob = _toimport_glob(toimport_dir)
+    if glob is None:
+        return empty
+    exclude = ""
+    if loser_uids:
+        con.register(
+            "_losers",
+            pa.table({"uid": pa.array(sorted(loser_uids), pa.int64())}),
+        )
+        exclude = " WHERE _uid NOT IN (SELECT uid FROM _losers)"
+    win = COMPARE_WINDOW_US
+    try:
+        pairs, listings, with_neighbour = con.execute(
+            "SELECT "
+            f"  count(*) FILTER (WHERE gap_prev > 0 AND gap_prev <= {win}), "
+            "  count(DISTINCT listing_id) FILTER "
+            f"    (WHERE gap_prev > 0 AND gap_prev <= {win}), "
+            f"  count(*) FILTER (WHERE (gap_prev > 0 AND gap_prev <= {win}) "
+            f"                      OR (gap_next > 0 AND gap_next <= {win})) "
+            "FROM ("
+            "  SELECT listing_id, "
+            "    epoch_us(fetched_at) - lag(epoch_us(fetched_at)) OVER w AS gap_prev, "
+            "    lead(epoch_us(fetched_at)) OVER w - epoch_us(fetched_at) AS gap_next "
+            f"  FROM read_parquet('{glob}'){exclude} "
+            "  WINDOW w AS (PARTITION BY listing_id ORDER BY fetched_at)"
+            ")"
+        ).fetchone()
+    finally:
+        if loser_uids:
+            con.unregister("_losers")
+    return {"adjacent_pairs_within_300s": int(pairs or 0),
+            "listings_involved": int(listings or 0),
+            "captures_with_a_neighbour": int(with_neighbour or 0)}
+
+
+def run_compare(args: argparse.Namespace) -> int:
+    import tempfile
+
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    from shared.minio import BUCKET as DEFAULT_BUCKET
+    from shared.minio import read_json, write_bytes
+
+    bucket = args.bucket or DEFAULT_BUCKET
+    client = _s3_client()
+    probe = bool(args.probe)
+    apply = bool(args.apply)
+
+    compared_root = COMPARED_PREFIX + (PROBE_SUFFIX if probe else "")
+    inventory_root = INVENTORY_PREFIX + (PROBE_SUFFIX if probe else "")
+    vin_root = VIN_SNAPSHOT_PREFIX + (PROBE_SUFFIX if probe else "")
+
+    # -- freeze the inputs ------------------------------------------------
+    parsed_rows = _object_inventory(client, bucket, PARSED_PREFIX + "/rows/", ".parquet")
+    parsed_inputs = _object_inventory(
+        client, bucket, PARSED_PREFIX + "/inputs/", ".parquet",
+    )
+    if not parsed_rows:
+        raise ReconcileError(
+            f"no parsed row shards under s3://{bucket}/{PARSED_PREFIX}/rows/"
+        )
+    silver = _discover_silver_objects(client, bucket, args.silver_prefix)
+    queue_events = _discover_queue_event_objects(client, bucket)
+
+    inventory_core = {
+        "parsed_rows": parsed_rows,
+        "parsed_inputs": parsed_inputs,
+        "silver": [{k: o[k] for k in ("key", "size", "etag")} for o in silver],
+        "queue_events": queue_events,
+    }
+    run_id = compute_run_id(inventory_core)
+    run_dir = f"{compared_root}/{run_id}"
+    inv_key = f"{inventory_root}/{run_id}.json"
+
+    row_shards = parsed_rows[: args.max_units] if args.max_units else parsed_rows
+    unit_names = [_compare_unit_name(o["key"]) for o in row_shards]
+    refusals: list[dict[str, Any]] = []
+    if len(silver) != 9:
+        detail = (
+            f"expected 9 compacted objects (one per source/month), found "
+            f"{len(silver)}; the silver side of the comparison is not the shape "
+            f"the design was validated against"
+        )
+        refusals.append({"kind": "silver_object_count", "detail": detail,
+                         "enforced": apply and not probe
+                         and not args.allow_silver_shape_drift})
+        if apply and not probe and not args.allow_silver_shape_drift:
+            raise ReconcileError(
+                detail + ". The maintainer should rule on the shape change before "
+                "an authoritative run; --allow-silver-shape-drift to proceed."
+            )
+        logger.warning("%s (advisory: %s)", detail,
+                       "probe/dry run" if not apply
+                       else "--allow-silver-shape-drift")
+
+    logger.info("run_id %s  (%d parsed row shards, %d silver objects, %d queue-event "
+                "objects)", run_id, len(row_shards), len(silver), len(queue_events))
+
+    if apply and not probe and not args.force and _compare_run_complete(run_dir, inv_key):
+        print(f"\ncompare: run {run_id} is already complete and the inventory is "
+              f"unchanged; nothing to do.\n")
+        return 0
+
+    tmp = tempfile.TemporaryDirectory(prefix="p145compare-")
+    tmpdir = Path(tmp.name)
+    for sub in ("rows", "silver", "toimport"):
+        (tmpdir / sub).mkdir()
+    con = None
+
+    try:
+        # -- Pass A: localise the parsed row shards, count rows, collect ids --
+        # `all_objects` is the distinct source-object count for the carousel
+        # fan-out denominator. Accumulating it here (like `wanted`) counts a
+        # content-derived key that legitimately appears in two source manifests
+        # exactly once -- a per-unit `+= len(set)` would double it (cf. 051f7d0).
+        nrows: dict[str, int] = {}
+        wanted: set[str] = set()
+        all_objects: set[str] = set()
+        for obj, unit in zip(row_shards, unit_names):
+            dest = tmpdir / "rows" / f"{unit}.parquet"
+            dest.write_bytes(
+                client.get_object(Bucket=bucket, Key=obj["key"])["Body"].read()
+            )
+            nrows[unit] = pq.ParquetFile(dest).metadata.num_rows
+            table = pq.read_table(dest, columns=["listing_id", "object_key"])
+            for lid in table.column("listing_id").to_pylist():
+                if lid:
+                    wanted.add(str(lid))
+            for okey in table.column("object_key").to_pylist():
+                if okey:
+                    all_objects.add(str(okey))
+        processed_total = sum(nrows.values())
+
+        parse_report = read_json(
+            f"s3://{bucket}/{PARSED_PREFIX}/parse_report.json"
+        ) or {}
+        if not probe:
+            if not parse_report:
+                raise ReconcileError(
+                    f"s3://{bucket}/{PARSED_PREFIX}/parse_report.json is missing; "
+                    f"Stage 4 has not finished. Use --probe to run against whatever "
+                    f"units exist."
+                )
+            check_compare_apply_gate(parse_report, processed_total)
+        elif not args.max_units and len(row_shards) != COMPARE_PLANNED_UNITS:
+            logger.warning("PROBE: %d/%d parsed row shards present; results are partial",
+                           len(row_shards), COMPARE_PLANNED_UNITS)
+
+        # -- build the silver index ------------------------------------------
+        source_paths: list[tuple[str, Optional[str]]] = []
+        for index, obj in enumerate(silver):
+            dest = tmpdir / "silver" / f"{index}.parquet"
+            dest.write_bytes(
+                client.get_object(Bucket=bucket, Key=obj["key"])["Body"].read()
+            )
+            source_paths.append((str(dest), obj.get("source")))
+        con = _open_compare_duckdb(
+            tmpdir / "compare.duckdb", threads=args.duckdb_threads,
+            memory_limit=args.duckdb_memory_limit or None,
+        )
+        _load_silver_index(con, source_paths, wanted)
+        silver_obs = con.execute("SELECT count(*) FROM silver").fetchone()[0]
+        logger.info("silver index: %d observations for %d wanted listings "
+                    "(duckdb threads=%d memory_limit=%s)",
+                    silver_obs, len(wanted), max(1, args.duckdb_threads),
+                    args.duckdb_memory_limit or "unset")
+
+        # -- Pass B: classify every parsed row -----------------------------
+        # to_import candidate rows are streamed straight to per-unit temp
+        # shards carrying `_uid` and `_fp`; the global duplicate pass and the
+        # near-duplicate measurement both run over those files, so nothing
+        # per-row is retained in memory here.
+        uid = 0
+        parsed_vin: dict[str, Any] = {}
+        fam_counts: Counter[str] = Counter()
+        match_hist: Counter[int] = Counter()
+        multi_candidate = 0
+        detail_rows = carousel_rows = 0
+        represented_written = 0
+        unc_no_listing_id = unc_no_capture_time = 0
+
+        for uindex, unit in enumerate(unit_names, start=1):
+            prows = pq.read_table(tmpdir / "rows" / f"{unit}.parquet").to_pylist()
+            summaries = _summarise_unit(con, prows)
+            rep_rows: list[dict[str, Any]] = []
+            unc_rows: list[dict[str, Any]] = []
+            ti_rows: list[dict[str, Any]] = []
+            for rid, row in enumerate(prows):
+                src = row.get("source")
+                if src == "detail":
+                    detail_rows += 1
+                    if row.get("vin") and row.get("listing_id"):
+                        parsed_vin.setdefault(str(row["listing_id"]), row.get("vin"))
+                elif src == "carousel":
+                    carousel_rows += 1
+                verdict = classify_from_summary(row, summaries.get(rid))
+                fam_counts[verdict["family"]] += 1
+                match_hist[verdict["match_count"]] += 1
+                if verdict["match_count"] > 1:
+                    multi_candidate += 1
+                out = dict(row)
+                out["reason"] = verdict["reason"]
+                if verdict["family"] == "already_represented":
+                    out["match_count"] = verdict["match_count"]
+                    out["nearest_distance_s"] = verdict["nearest_distance_s"]
+                    out["match_sources"] = verdict["match_sources"]
+                    rep_rows.append(out)
+                elif verdict["family"] == "unclassifiable":
+                    if verdict["reason"] == "no_listing_id":
+                        unc_no_listing_id += 1
+                    else:
+                        unc_no_capture_time += 1
+                    unc_rows.append(out)
+                else:
+                    out["_uid"] = uid
+                    out["_fp"] = business_fingerprint(out)
+                    ti_rows.append(out)
+                    uid += 1
+
+            _emit_compare_shard(run_dir, "already_represented", unit,
+                                _compared_schema("already_represented"), rep_rows,
+                                apply=apply)
+            _emit_compare_shard(run_dir, "unclassifiable", unit,
+                                _compared_schema("unclassifiable"), unc_rows,
+                                apply=apply)
+            represented_written += len(rep_rows)
+            if ti_rows:
+                pq.write_table(
+                    pa.Table.from_pylist(
+                        [{k: r.get(k) for k in _toimport_temp_schema().names}
+                         for r in ti_rows],
+                        schema=_toimport_temp_schema(),
+                    ),
+                    tmpdir / "toimport" / f"{unit}.parquet",
+                )
+            if args.progress_every and uindex % args.progress_every == 0:
+                logger.info("classified %d/%d units", uindex, len(unit_names))
+
+        unclassifiable_written = unc_no_listing_id + unc_no_capture_time
+
+        # -- distinct carousel fan-out, over the whole localised population --
+        # Grouping by object_key across all row shards keeps a content-derived
+        # key that appears in two units bound to one object -- the same case
+        # `all_objects` fixes for the denominator (cf. 051f7d0).
+        row_glob = str(tmpdir / "rows" / "*.parquet").replace("'", "''")
+        max_carousel_per_object = int(con.execute(
+            "SELECT coalesce(max(c), 0) FROM (SELECT count(*) AS c FROM "
+            f"read_parquet('{row_glob}') WHERE source = 'carousel' "
+            "AND object_key IS NOT NULL GROUP BY object_key)"
+        ).fetchone()[0])
+
+        # -- the unclassifiable magnitude gates --------------------------
+        # The ~760 expectation was sized for tier-3 pages with no capture time.
+        # The NULL-listing_id cohort is a distinct population whose size is not
+        # known ahead of time; its ceiling defaults to 0, so any non-zero count
+        # stops the first authoritative run for a maintainer ruling, after which
+        # --max-no-listing-id is set to the measured number.
+        #
+        # Like the silver-shape refusal above, this only *stops* an --apply run:
+        # a dry run and a probe write nothing and cannot advance slice 2, and
+        # they are exactly the runs whose job is to measure these cohorts, so
+        # there they warn and let the report carry the counts.
+        gate_failures = []
+        if unc_no_capture_time > args.max_unclassifiable:
+            gate_failures.append(
+                f"no_capture_time rows {unc_no_capture_time:,} exceed the "
+                f"~{UNCLASSIFIABLE_EXPECTATION} expectation and the "
+                f"{args.max_unclassifiable:,} ceiling"
+            )
+        if unc_no_listing_id > args.max_no_listing_id:
+            gate_failures.append(
+                f"no_listing_id rows {unc_no_listing_id:,} exceed the "
+                f"{args.max_no_listing_id:,} ceiling; a large cohort means "
+                f"compare drops that share as unimportable and slice 2 imports "
+                f"less than the plan's arithmetic expects"
+            )
+        if gate_failures:
+            message = ("; ".join(gate_failures)
+                       + "; stopping so the maintainer rules on it before slice 2")
+            if apply and not probe and not args.allow_unclassifiable_drift:
+                raise ReconcileError(message)
+            logger.warning("%s (%s)", message,
+                           "continuing: --allow-unclassifiable-drift" if apply and not probe
+                           else "advisory: probe/dry run measures, does not gate")
+
+        # -- global duplicate resolution, over the temp shards ----------
+        loser_uids, dup_report = _resolve_toimport_duplicates(
+            con, tmpdir / "toimport",
+        )
+        if dup_report.get("conflicts"):
+            if apply:
+                stopped = {
+                    "plan": 145, "stage": 5, "slice": 1, "mode": "compare",
+                    "run_id": run_id, "status": "stopped_fingerprint_conflict",
+                    "conflicting_fingerprint_groups": len(dup_report["conflicts"]),
+                    "conflicts": dup_report["conflicts"][:50],
+                }
+                write_bytes(
+                    f"{run_dir}/compare_report.stopped.json",
+                    (json.dumps(stopped, indent=2, sort_keys=True, default=str)
+                     + "\n").encode(),
+                    content_type="application/json",
+                )
+            raise DuplicateFingerprintConflict(dup_report["conflicts"])
+
+        # -- Pass C: split to_import into winners and recovery duplicates --
+        to_import_final = 0
+        dedupe_losers = 0
+        for unit in unit_names:
+            src_path = tmpdir / "toimport" / f"{unit}.parquet"
+            if not src_path.exists():
+                continue
+            keep: list[dict[str, Any]] = []
+            lose: list[dict[str, Any]] = []
+            for row in pq.read_table(src_path).to_pylist():
+                if row.get("_uid") in loser_uids:
+                    row["reason"] = "recovery_duplicate"
+                    row["match_count"] = 0
+                    row["nearest_distance_s"] = None
+                    row["match_sources"] = []
+                    lose.append(row)
+                else:
+                    row["reason"] = None
+                    keep.append(row)
+            _emit_compare_shard(run_dir, "to_import", unit,
+                                _compared_schema("to_import"), keep, apply=apply)
+            _emit_compare_shard(run_dir, "already_represented", f"{unit}.dedup",
+                                _compared_schema("already_represented"), lose,
+                                apply=apply)
+            to_import_final += len(keep)
+            dedupe_losers += len(lose)
+
+        already_total = represented_written + dedupe_losers
+        family_sum = already_total + to_import_final + unclassifiable_written
+        if family_sum != processed_total:
+            raise ReconcileError(
+                f"the three families sum to {family_sum} but {processed_total} "
+                f"parsed rows were processed; classification is not a partition"
+            )
+
+        near = _measure_near_duplicates(con, tmpdir / "toimport", loser_uids)
+        near["note"] = (
+            "adjacent_pairs_within_300s counts consecutive captures; "
+            "captures_with_a_neighbour is the count of unrepresented captures "
+            "with another within 300 s -- the quantity to rule on"
+        )
+
+        # -- the read-only VIN snapshot --------------------------------
+        vin_info = {"key": None, "rows": 0, "size": 0, "sha256": None}
+        vin_collisions: dict[str, Any] = {"count": 0, "examples": []}
+        if apply:
+            from shared.db import get_conn
+
+            conn = get_conn()
+            try:
+                with conn.cursor() as cur:
+                    vin_map = snapshot_vin_lookup(sorted(wanted), cur,
+                                                  batch_size=args.vin_batch)
+                conn.rollback()
+            finally:
+                conn.close()
+            vin_info = _write_vin_snapshot(
+                f"{vin_root}/{run_id}.parquet", vin_map, apply=True,
+            )
+            for listing_id, parsed_value in parsed_vin.items():
+                hot = vin_map.get(listing_id)
+                if hot and parsed_value and hot != parsed_value:
+                    vin_collisions["count"] += 1
+                    if len(vin_collisions["examples"]) < 50:
+                        vin_collisions["examples"].append({
+                            "listing_id": listing_id,
+                            "parsed_vin": parsed_value,
+                            "hot_vin": hot,
+                        })
+
+        # -- report -----------------------------------------------------
+        report = {
+            "plan": 145, "stage": 5, "slice": 1, "mode": "compare",
+            "run_id": run_id,
+            "probe": probe,
+            "apply": apply,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "predicate": "same listing_id AND abs(silver.fetched_at - "
+                         "parsed.fetched_at) <= 300 seconds",
+            "inventory": {
+                "key": inv_key,
+                "digest": hashlib.sha256(
+                    json.dumps(inventory_core, sort_keys=True,
+                               separators=(",", ":")).encode()
+                ).hexdigest(),
+                "parsed_rows": {"objects": len(parsed_rows),
+                                "bytes": sum(o["size"] for o in parsed_rows)},
+                "parsed_inputs": {"objects": len(parsed_inputs),
+                                  "bytes": sum(o["size"] for o in parsed_inputs)},
+                "silver": {"objects": len(silver),
+                           "bytes": sum(o["size"] for o in silver),
+                           "observations": silver_obs},
+                "queue_events": {"objects": len(queue_events),
+                                 "bytes": sum(o["size"] for o in queue_events)},
+                "vin_snapshot": vin_info,
+            },
+            "units_processed": len(unit_names),
+            "planned_units": COMPARE_PLANNED_UNITS,
+            "parsed_row_total": processed_total,
+            "families": {
+                "already_represented": already_total,
+                "to_import": to_import_final,
+                "unclassifiable": unclassifiable_written,
+                "sum": family_sum,
+                "pre_dedupe": {
+                    "already_represented": fam_counts["already_represented"],
+                    "to_import": fam_counts["to_import"],
+                    "unclassifiable": fam_counts["unclassifiable"],
+                },
+            },
+            "carousel_fan_out": {
+                "detail_rows": detail_rows,
+                "carousel_rows": carousel_rows,
+                "objects": len(all_objects),
+                "carousel_per_detail_row": (
+                    round(carousel_rows / detail_rows, 4) if detail_rows else None
+                ),
+                "carousel_per_object": (
+                    round(carousel_rows / len(all_objects), 4)
+                    if all_objects else None
+                ),
+                "max_carousel_per_object": max_carousel_per_object,
+            },
+            "multiple_candidate_share": {
+                "observations": processed_total,
+                "with_multiple_candidates": multi_candidate,
+                "share": (round(multi_candidate / processed_total, 4)
+                          if processed_total else None),
+            },
+            "match_count_distribution": {
+                str(k): match_hist[k] for k in sorted(match_hist)
+            },
+            "duplicates": {
+                "groups_collapsed": dup_report["groups_collapsed"],
+                "rows_moved_to_already_represented":
+                    dup_report["rows_moved_to_already_represented"],
+                "conflicting_fingerprint_groups": 0,
+            },
+            "near_duplicate_window": near,
+            "unclassifiable": {
+                "count": unclassifiable_written,
+                "no_capture_time": unc_no_capture_time,
+                "no_listing_id": unc_no_listing_id,
+                "expectation_no_capture_time": UNCLASSIFIABLE_EXPECTATION,
+                "ceiling_no_capture_time": args.max_unclassifiable,
+                "ceiling_no_listing_id": args.max_no_listing_id,
+                "materially_larger": (
+                    unc_no_capture_time > args.max_unclassifiable
+                    or unc_no_listing_id > args.max_no_listing_id
+                ),
+            },
+            "vin_collisions": vin_collisions,
+            "refusals": refusals,
+        }
+
+        if apply:
+            inventory = dict(inventory_core)
+            inventory.update({
+                "run_id": run_id,
+                "generated_at": report["generated_at"],
+                "digest": report["inventory"]["digest"],
+                "silver_observations": silver_obs,
+                "vin_snapshot": vin_info,
+            })
+            write_bytes(
+                inv_key,
+                (json.dumps(inventory, indent=2, sort_keys=True) + "\n").encode(),
+                content_type="application/json",
+            )
+            write_bytes(
+                f"{run_dir}/compare_report.json",
+                (json.dumps(report, indent=2, sort_keys=True, default=str)
+                 + "\n").encode(),
+                content_type="application/json",
+            )
+    finally:
+        if con is not None:
+            con.close()
+        tmp.cleanup()
+
+    _print_compare_report(report, apply=apply, probe=probe)
+    return 0
+
+
+def _print_compare_report(report: dict[str, Any], *, apply: bool, probe: bool) -> None:
+    fam = report["families"]
+    fan = report["carousel_fan_out"]
+    print()
+    print("Plan 145 Stage 5 slice 1 -- compare parsed observations to silver")
+    print("=" * 66)
+    print(f"mode                 {'APPLY' if apply else 'DRY RUN'}"
+          f"{'  (PROBE)' if probe else ''}")
+    print(f"run_id               {report['run_id']}")
+    print(f"units processed      {report['units_processed']:>12,}"
+          f"  (planned {report['planned_units']:,})")
+    print(f"parsed row total     {report['parsed_row_total']:>12,}")
+    print()
+    unc = report["unclassifiable"]
+    print(f"  already_represented {fam['already_represented']:>12,}")
+    print(f"  to_import           {fam['to_import']:>12,}")
+    print(f"  unclassifiable      {fam['unclassifiable']:>12,}"
+          f"  (no_capture_time {unc['no_capture_time']:,}/~{unc['expectation_no_capture_time']}"
+          f", no_listing_id {unc['no_listing_id']:,}/ceil {unc['ceiling_no_listing_id']:,})")
+    print(f"  sum                 {fam['sum']:>12,}"
+          f"  {'OK' if fam['sum'] == report['parsed_row_total'] else 'MISMATCH'}")
+    print()
+    print(f"carousel fan-out     {fan['carousel_per_object']} per object over "
+          f"{fan['objects']:,} objects, max {fan['max_carousel_per_object']}")
+    print(f"multi-candidate      {report['multiple_candidate_share']['with_multiple_candidates']:,}"
+          f"  ({report['multiple_candidate_share']['share']})")
+    print(f"recovery duplicates  {report['duplicates']['rows_moved_to_already_represented']:,}"
+          f" in {report['duplicates']['groups_collapsed']:,} groups")
+    nd = report["near_duplicate_window"]
+    print(f"near-dup <=300s      {nd['adjacent_pairs_within_300s']:,} adjacent pairs, "
+          f"{nd['captures_with_a_neighbour']:,} captures with a neighbour, over "
+          f"{nd['listings_involved']:,} listings")
+    print(f"vin collisions       {report['vin_collisions']['count']:,}")
+    print(f"inventory digest     {report['inventory']['digest']}")
+    if apply:
+        print(f"\nwrote compared/{report['run_id']}/, inventory/{report['run_id']}.json"
+              f" and the VIN snapshot")
+    else:
+        print("\nDRY RUN: classified and measured only; no object was written and "
+              "no VIN query was issued.")
+    print()
+
+
+# --------------------------------------------------------------------------
 # CLI
 # --------------------------------------------------------------------------
 
@@ -2595,6 +3832,56 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
                      help="Log progress every N completed units.")
     prs.add_argument("--log-level", default="INFO", help="DEBUG | INFO | WARNING")
     prs.set_defaults(func=run_parse)
+
+    cmp_ = sub.add_parser(
+        "compare",
+        help="Stage 5 slice 1: classify parsed observations against deployed "
+             "March-May silver into already_represented / to_import / "
+             "unclassifiable. Writes no Postgres row and no production object.",
+    )
+    cmp_.add_argument("--apply", action="store_true",
+                      help="Write the compared shards, the input inventory freeze "
+                           "and the read-only VIN snapshot. Without it, classify "
+                           "and measure only -- no object written, no VIN query.")
+    cmp_.add_argument("--probe", action="store_true",
+                      help="Run against whatever parsed units exist and write to a "
+                           "disposable *_probe prefix; skips the Stage 4 gate. "
+                           "Probe output is never promoted.")
+    cmp_.add_argument("--bucket", default=None, help="Override MINIO_BUCKET.")
+    cmp_.add_argument("--silver-prefix", default=None,
+                      help="Override silver_normalized/observations.")
+    cmp_.add_argument("--allow-silver-shape-drift", action="store_true",
+                      help="Proceed under --apply even when silver is not the "
+                           "frozen 9 objects (one per source/month). Never use it "
+                           "to skip a maintainer's ruling on the shape change.")
+    cmp_.add_argument("--max-units", type=int, default=0,
+                      help="Process only the first N parsed row shards (smoke "
+                           "test; the gate still runs unless --probe).")
+    cmp_.add_argument("--force", action="store_true",
+                      help="Re-run even when this run_id's outputs already exist.")
+    cmp_.add_argument("--duckdb-threads", type=int, default=1,
+                      help="DuckDB thread cap for the silver scan (default 1; the "
+                           "host has 4 cores production also needs).")
+    cmp_.add_argument("--duckdb-memory-limit", default="2GB",
+                      help="DuckDB memory ceiling for the disk-backed silver "
+                           "index (default 2GB; empty string disables).")
+    cmp_.add_argument("--vin-batch", type=int, default=VIN_BATCH,
+                      help="listing_ids per read-only ops.vin_to_listing SELECT.")
+    cmp_.add_argument("--max-unclassifiable", type=int, default=MAX_UNCLASSIFIABLE,
+                      help="Stop if more no_capture_time rows than this land in "
+                           f"unclassifiable (expectation ~{UNCLASSIFIABLE_EXPECTATION}).")
+    cmp_.add_argument("--max-no-listing-id", type=int, default=0,
+                      help="Stop if more no_listing_id rows than this land in "
+                           "unclassifiable (default 0: any non-zero count needs a "
+                           "maintainer ruling; set to the measured number after).")
+    cmp_.add_argument("--allow-unclassifiable-drift", action="store_true",
+                      help="Report an oversized unclassifiable cohort (either "
+                           "reason) instead of stopping. Never use it to proceed "
+                           "past the gate.")
+    cmp_.add_argument("--progress-every", type=int, default=50,
+                      help="Log progress every N classified units.")
+    cmp_.add_argument("--log-level", default="INFO", help="DEBUG | INFO | WARNING")
+    cmp_.set_defaults(func=run_compare)
 
     return parser.parse_args(argv)
 
