@@ -830,7 +830,7 @@ production action.
 
 ---
 
-## Stage 5b — Fix the packer before it writes new packs
+## Stage 5b — Fix the packer before it writes new packs — **complete**
 
 Stage 6 does not merely read packs, it **writes** them. Left unfixed, it would
 mint fresh April sidecars carrying the scrambled `listing_id` — turning a
@@ -866,7 +866,35 @@ analysis scripts that group by `artifact_id` — `estimate_dictionary_savings`,
 reach them. The remaining `any_value` calls reduce `minio_path`, which is
 unambiguous per artifact. `pack_bronze_html` was the only affected reducer.
 
-### Gate
+### Evidence — 2026-08-27
+
+Shipped in `dd6aa26`, before Stage 6 writes anything.
+
+- `shared/packfile.py` — `PackMember.cluster_key` added, defaulting to
+  `listing_id`, so every other caller is unchanged. Identity and placement are
+  now separable, which is what lets Stage 6's ordering trial ask its question.
+- `archiver/processors/pack_bronze_html.py` — the `obs` CTE selects
+  `any_value(listing_id) FILTER (WHERE source = 'detail')` as identity and keeps
+  the historical unfiltered reduction as `cluster_key`. `ORDER BY` and frame
+  sealing use `cluster_key`, the value they already used, so **no pack is
+  relaid out**.
+- `tests/archiver/test_pack_bronze_html.py` — both gate tests present.
+  `test_sidecar_identity_is_the_detail_subject_not_a_carousel_hint` writes the
+  six carousel hints *before* the subject, so a reducer ignoring `source`
+  cannot pass by luck of scan order;
+  `test_an_artifact_with_no_detail_row_has_no_sidecar_identity` asserts the
+  carousel-only case yields NULL rather than a guess — the signal Stage 5
+  depends on.
+
+The audit of every other silver reducer stands as recorded above: the three
+analysis scripts filter `source ILIKE '%detail%'` ahead of their reduction, and
+the remaining `any_value` calls reduce `minio_path`, which is unambiguous per
+artifact. `pack_bronze_html` was the only affected reducer.
+
+Existing April packs still carry the scrambled column; this stage stops the
+defect being reproduced, and Stage 6 rewrites the sidecars it replaces.
+
+### Gate — met
 
 - A regression test builds the production shape — one artifact with one
   `source='detail'` row and six `source='carousel'` rows — and asserts the

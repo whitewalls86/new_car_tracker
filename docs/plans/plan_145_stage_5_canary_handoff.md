@@ -1,10 +1,9 @@
 # Plan 145 Stage 5, slice 3 — the canary and the live-state proof (CAR-21)
 
-Hand this to a fresh session **after slices 1 and 2 are built, unit-tested and
-integration-tested**, and only when the maintainer is available. This slice
-contains the two checks that stand between Plan 145 and the full apply, and one
-of them requires a **named maintenance window with production writers
-quiesced** — a manual action the maintainer approves and performs.
+Slices 1 and 2 are merged. This slice contains the checks that stand between
+Plan 145 and the full apply, and one of them requires a **named maintenance
+window with production writers quiesced** — a manual action the maintainer
+approves and performs.
 
 Read `docs/plans/plan_145_april_cutover_reconciliation.md` — its **Stage 5**
 section, *Canary and live-state proof*, is the specification — then
@@ -12,6 +11,41 @@ section, *Canary and live-state proof*, is the specification — then
 `docs/plans/plan_145_stage_5_writer_handoff.md` for what you are validating.
 
 This slice builds tooling. **It does not decide that the gate has closed.**
+
+---
+
+## Build it in two phases
+
+The three checks below were specified together, but only one of them depends on
+slice 2 having run. Stage 4 was at 426 of 1,204 units on 2026-08-28 with the
+32 unpacked shards not yet started, so no authoritative `compare` run exists and
+slice 2 cannot run for days. Phase A is therefore the work available now, and
+splitting it out is not a convenience — it changes what gets proven first.
+
+| phase | what | depends on |
+|---|---|---|
+| **A — now** | the parser control; the V040 live-state verifier | slice 1's output shape; nothing from slice 2 |
+| **B — after slice 2 has assigned** | the write canary; the flush round trip | real assignment shards |
+
+**Phase A first, and the parser control before the verifier.** It validates the
+deepest assumption in the plan — that reprocessing reproduces what production
+wrote. If that is false, slice 1's classification is meaningless and slice 2 is
+writing against a broken premise, so it is the check whose failure would
+invalidate the most work. It draws entirely from `already_represented/` and
+touches nothing slice 2 produces, so it can run the moment an authoritative
+compare exists, before a single row is written.
+
+**Phase A also audits slice 2 for free.** The canary in phase B must stratify
+across identity source — `preserved_queue_event` versus `allocated_sequence` —
+and across detail/carousel, active/unlisted and input kind. Write the sampler in
+phase A against the real assignment schema. If slice 2 does not record what the
+sampler needs per row, that is a slice 2 gap found before it ever runs, which is
+the cheapest moment to find it.
+
+**The risk this leaves, stated plainly:** three slices merged and none run
+against production data. Phase A is the mitigation, because it is the
+earliest-runnable check on the layer everything else sits on. Do not let phase B
+tempt you into declaring phase A done by inspection.
 
 ---
 
