@@ -129,6 +129,7 @@ import json
 import logging
 import multiprocessing
 import os
+import random
 import re
 import sys
 from collections import Counter, defaultdict
@@ -4957,6 +4958,592 @@ def _print_apply_report(run_id: str, results: Sequence[dict[str, Any]],
     print()
 
 
+# ======================================================================
+# Stage 5 slice 3, Phase A -- the parser control and the canary sampler
+# ======================================================================
+#
+# Two read-only analysis modes that stand between Plan 145 and the full apply.
+# Neither writes a Postgres row; each writes one JSON report (and the sampler
+# one manifest) under recovery/plan145/, and only under --apply.
+#
+#   * control       -- proves the recovery reproduces what production wrote, on
+#                      pages production already parsed. It draws exact,
+#                      same-source represented observations from slice 1's
+#                      already_represented/ family and diffs every silver
+#                      business field against the deployed silver row.
+#   * canary-sample -- picks the ~500-observation, artifact-whole,
+#                      every-stratum selection Phase B's write canary commits.
+#
+# The V040 live-state proof is a separate script,
+# scripts/verify_recovery_live_state.py, because it runs inside a
+# maintainer-opened maintenance window with production writers quiesced.
+
+CONTROL_PREFIX = "recovery/plan145/control"
+CANARY_PREFIX = "recovery/plan145/canary"
+
+CONTROL_SAMPLE_SIZE = 500
+
+#: The parser control ignores exactly these four things, by name, and says so
+#: per field in its report. A fifth entry is a plan decision, not a code one,
+#: so _control_field_disagreements asserts the length.
+CONTROL_IGNORED_FIELDS = (
+    "recovery_provenance",  # parsed-row columns absent from the silver schema
+    "artifact_id",          # a recovered artifact carries a different, legit id
+    "written_at",           # stamped by the flusher, not by the capture
+    "carousel_vin",         # Stage 4 leaves carousel vin NULL; slice 2 fills it
+)
+
+
+def _is_exact_same_source(row: dict[str, Any]) -> bool:
+    """True for an ``already_represented`` row that matched at the exact
+    microsecond with a candidate of its own source and no other -- the only
+    rows the parser control draws from."""
+    if row.get("reason") not in (None, "silver_candidate"):
+        return False
+    if row.get("nearest_distance_s") != 0.0:
+        return False
+    source = row.get("source")
+    return bool(source) and list(row.get("match_sources") or []) == [source]
+
+
+def _control_norm(value: Any) -> Any:
+    """Normalise for an equality check that does not care about representation:
+    a datetime to whole microseconds, everything else unchanged."""
+    if isinstance(value, datetime):
+        return _epoch_us(value)
+    return value
+
+
+#: The two columns the deployed silver row has that the parsed row never will;
+#: they are part of the comparison universe so that skipping them is driven by
+#: CONTROL_IGNORED_FIELDS rather than by their happening to be absent.
+_CONTROL_SILVER_ONLY = ("artifact_id", "written_at")
+
+
+def _control_compare_columns() -> tuple[str, ...]:
+    return tuple(_parsed_rows_schema().names) + _CONTROL_SILVER_ONLY
+
+
+def _control_ignored_columns(source: Optional[str]) -> set[str]:
+    """Resolve ``CONTROL_IGNORED_FIELDS`` to the concrete columns skipped for a
+    row of this ``source``.
+
+    Every one of the four tokens drives a branch here. A token that is renamed
+    or dropped stops skipping its column, which then surfaces as a disagreement
+    (and fails a test) -- the length ``assert`` alone was decorative.
+    """
+    assert len(CONTROL_IGNORED_FIELDS) == 4, (
+        "the parser control ignores exactly four things (plan Stage 5 "
+        "'Check 1'); adding a fifth is a plan decision, not a code change"
+    )
+    tokens = set(CONTROL_IGNORED_FIELDS)
+    cols: set[str] = set()
+    if "recovery_provenance" in tokens:
+        cols.update(c for c in _parsed_rows_schema().names if c not in SILVER_FIELDS)
+    if "artifact_id" in tokens:
+        cols.add("artifact_id")
+    if "written_at" in tokens:
+        cols.add("written_at")
+    if "carousel_vin" in tokens and source == "carousel":
+        cols.add("vin")
+    return cols
+
+
+def _control_field_disagreements(
+    parsed_row: dict[str, Any], silver_row: dict[str, Any],
+) -> list[tuple[str, Any, Any]]:
+    """Every column where the parsed row and the deployed silver row disagree,
+    with ``CONTROL_IGNORED_FIELDS`` resolved to concrete skipped columns."""
+    skip = _control_ignored_columns(parsed_row.get("source"))
+    out: list[tuple[str, Any, Any]] = []
+    for field in _control_compare_columns():
+        if field in skip:
+            continue
+        if _control_norm(parsed_row.get(field)) != _control_norm(silver_row.get(field)):
+            out.append((field, parsed_row.get(field), silver_row.get(field)))
+    return out
+
+
+def _load_control_silver_rows(
+    client, bucket: str, silver_objs: Sequence[dict[str, Any]],
+    wanted: set[str], *, threads: int = 1, memory_limit: Optional[str] = "2GB",
+) -> list[dict[str, Any]]:
+    """The deployed silver business rows for the wanted listings.
+
+    Same disk-backed, thread- and memory-bounded DuckDB approach as slice 1's
+    silver index (:func:`_load_silver_index`), but every business column is kept
+    so the control can diff them. ``source`` is a hive partition column, absent
+    from the file and injected per object.
+    """
+    import tempfile
+
+    import pyarrow as pa
+
+    if not wanted:
+        return []
+    business = [c for c in SILVER_FIELDS if c != "source"] + list(_CONTROL_SILVER_ONLY)
+    sel = ", ".join(f'"{c}"' for c in business)
+    tmp = tempfile.TemporaryDirectory(prefix="p145control-")
+    con = None
+    try:
+        tmpdir = Path(tmp.name)
+        selects = []
+        for index, obj in enumerate(silver_objs):
+            dest = tmpdir / f"{index}.parquet"
+            dest.write_bytes(
+                client.get_object(Bucket=bucket, Key=obj["key"])["Body"].read()
+            )
+            literal_path = str(dest).replace("'", "''")
+            literal_source = (obj.get("source") or "").replace("'", "''")
+            selects.append(
+                f"SELECT {sel}, '{literal_source}' AS source, "
+                f'epoch_us("fetched_at") AS ts_us '
+                f"FROM read_parquet('{literal_path}')"
+            )
+        con = _open_compare_duckdb(
+            tmpdir / "control.duckdb", threads=threads, memory_limit=memory_limit,
+        )
+        con.register(
+            "wanted",
+            pa.table({"listing_id": pa.array(sorted(wanted), pa.string())}),
+        )
+        cur = con.execute(
+            f"SELECT s.* FROM ({' UNION ALL '.join(selects)}) s "
+            "WHERE s.listing_id IN (SELECT listing_id FROM wanted)"
+        )
+        cols = [d[0] for d in cur.description]
+        rows = [dict(zip(cols, record)) for record in cur.fetchall()]
+        con.unregister("wanted")
+        return rows
+    finally:
+        if con is not None:
+            con.close()
+        tmp.cleanup()
+
+
+def _print_control_report(report: dict[str, Any], *, apply: bool, probe: bool
+                          ) -> None:
+    tag = "PROBE " if probe else ""
+    print()
+    print(f"Plan 145 Stage 5 slice 3 Phase A -- {tag}parser control")
+    print("=" * 66)
+    print(f"run_id               {report['run_id']}")
+    s = report["sample"]
+    print(f"exact same-source    {s['exact_same_source_candidates']:>12,} candidates")
+    print(f"sampled              {s['sampled']:>12,}  (by source: {s['by_source']})")
+    print(f"compared             {report['compared']:>12,}")
+    fs = report["findings_summary"]
+    print(f"no silver row        {fs['no_silver_row']:>12,}")
+    print(f"multiple silver rows {fs['multiple_silver_rows']:>12,}")
+    print(f"field disagreements  {fs['field_disagreements']:>12,}")
+    if report["field_disagreement_census"]:
+        print("  per field:")
+        for field, count in report["field_disagreement_census"].items():
+            print(f"    {field:<24} {count:>10,}")
+    print("\nignored by name      "
+          + "\n                     ".join(sorted(report["ignored_fields"])))
+    print(f"\nresult               {'CLEAN' if report['clean'] else 'FINDINGS'}")
+    if apply:
+        print(f"report               {CONTROL_PREFIX}{'_probe' if probe else ''}/"
+              f"{report['run_id']}-control_report.json")
+    else:
+        print("\nDRY RUN: report printed only; --apply writes it to the recovery prefix.")
+    print()
+
+
+def run_control(args: argparse.Namespace) -> int:
+    from shared.minio import BUCKET as DEFAULT_BUCKET
+    from shared.minio import write_bytes
+
+    bucket = args.bucket or DEFAULT_BUCKET
+    client = _s3_client()
+    probe = bool(args.probe)
+    apply = bool(args.apply)
+    roots = _stage5_roots(probe)
+    control_root = CONTROL_PREFIX + (PROBE_SUFFIX if probe else "")
+
+    run_id = args.run_id or _discover_compare_run(client, bucket, roots)
+    run_dir = f"{roots.compared}/{run_id}"
+
+    if args.sample_size < 1:
+        raise ReconcileError("--sample-size must be at least 1")
+
+    keys = _list_keys(client, bucket, f"{run_dir}/already_represented/", ".parquet")
+    if not keys:
+        raise ReconcileError(
+            f"no already_represented shards under "
+            f"s3://{bucket}/{run_dir}/already_represented/"
+        )
+    # Reservoir sample (algorithm R) so memory is bounded at --sample-size, not
+    # at the size of the already_represented family -- 3,980,701 rows in the
+    # 2026-08-28 probe. _scan_to_import and dedupe refuse to hold rows for the
+    # same reason.
+    rng = random.Random(args.seed)
+    sample: list[dict[str, Any]] = []
+    candidate_total = 0
+    for key in keys:
+        for row in _read_parquet_rows(client, bucket, key):
+            if not _is_exact_same_source(row):
+                continue
+            candidate_total += 1
+            if len(sample) < args.sample_size:
+                sample.append(row)
+            else:
+                j = rng.randrange(candidate_total)
+                if j < args.sample_size:
+                    sample[j] = row
+    if candidate_total == 0:
+        raise ReconcileError(
+            f"compare run {run_id} has no exact, same-source represented "
+            f"observations; nothing for the parser control to check"
+        )
+
+    silver_objs = _discover_silver_objects(client, bucket, args.silver_prefix)
+    wanted = {str(r["listing_id"]) for r in sample if r.get("listing_id")}
+    silver_rows = _load_control_silver_rows(
+        client, bucket, silver_objs, wanted,
+        threads=args.duckdb_threads,
+        memory_limit=args.duckdb_memory_limit or None,
+    )
+    index: dict[tuple[Any, Any, Any], list[dict[str, Any]]] = defaultdict(list)
+    for srow in silver_rows:
+        index[(str(srow.get("listing_id")), srow.get("ts_us"),
+               srow.get("source"))].append(srow)
+
+    field_census: Counter[str] = Counter()
+    per_source: Counter[str] = Counter()
+    findings: list[dict[str, Any]] = []
+    compared = no_silver = multi_silver = 0
+    for prow in sample:
+        per_source[prow.get("source") or "?"] += 1
+        lookup = (str(prow.get("listing_id")), _epoch_us(prow.get("fetched_at")),
+                  prow.get("source"))
+        matches = index.get(lookup, [])
+        if not matches:
+            no_silver += 1
+            findings.append({"kind": "no_silver_row", "listing_id": lookup[0],
+                             "source": lookup[2],
+                             "object_key": prow.get("object_key")})
+            continue
+        if len(matches) > 1:
+            multi_silver += 1
+            findings.append({"kind": "multiple_silver_rows",
+                             "listing_id": lookup[0], "source": lookup[2],
+                             "count": len(matches)})
+            continue
+        compared += 1
+        for field, pv, sv in _control_field_disagreements(prow, matches[0]):
+            field_census[field] += 1
+            if len(findings) < 300:
+                findings.append({"kind": "field_disagreement", "field": field,
+                                 "listing_id": lookup[0], "source": lookup[2],
+                                 "object_key": prow.get("object_key"),
+                                 "parsed": pv, "silver": sv})
+
+    # A run that compared nothing is not "clean" -- an empty or missing-silver
+    # sample must not persist a green report.
+    clean = (compared > 0 and not field_census
+             and no_silver == 0 and multi_silver == 0)
+    report = {
+        "plan": 145, "stage": 5, "slice": 3, "phase": "A",
+        "check": "parser_control", "mode": "control",
+        "run_id": run_id, "probe": probe, "apply": apply,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "comparing": ("the raw parsed row from already_represented/ "
+                      "(pre-slice-2) against the deployed silver row; the "
+                      "carousel vin gap is expected and ignored"),
+        "sample": {
+            "exact_same_source_candidates": candidate_total,
+            "sampled": len(sample),
+            "requested": args.sample_size,
+            "seed": args.seed,
+            "by_source": dict(sorted(per_source.items())),
+        },
+        "compared": compared,
+        "findings_summary": {
+            "no_silver_row": no_silver,
+            "multiple_silver_rows": multi_silver,
+            "field_disagreements": int(sum(field_census.values())),
+        },
+        "ignored_fields": {
+            "recovery_provenance": "parsed-row columns absent from the silver "
+                                   "business schema (content hash, object key, "
+                                   "the *_source columns, legacy locators)",
+            "artifact_id": "a recovered artifact carries a different, legitimate id",
+            "written_at": "stamped by the flusher, not by the capture",
+            "carousel_vin": "Stage 4 leaves carousel vin NULL; ignored only on a "
+                            "carousel row and only pre-slice-2",
+        },
+        "field_disagreement_census": dict(sorted(field_census.items())),
+        "clean": clean,
+        "findings": findings[:300],
+    }
+    if apply:
+        write_bytes(
+            f"{control_root}/{run_id}-control_report.json",
+            (json.dumps(report, indent=2, sort_keys=True, default=str) + "\n").encode(),
+            content_type="application/json",
+        )
+    _print_control_report(report, apply=apply, probe=probe)
+    return 0 if clean else 1
+
+
+# -- canary-sample -------------------------------------------------------
+
+def _canary_manifest_schema() -> Any:
+    import pyarrow as pa
+
+    return pa.schema([
+        pa.field("run_id", pa.string()),
+        pa.field("object_key", pa.string()),
+        pa.field("artifact_id", pa.int64()),
+        pa.field("id_source", pa.string()),
+        pa.field("input_kind", pa.string()),
+        pa.field("batch_name", pa.string()),
+        pa.field("page_listing_id", pa.string()),
+        pa.field("silver_rows", pa.int32()),
+        pa.field("detail_rows", pa.int32()),
+        pa.field("strata", pa.list_(pa.string())),
+    ])
+
+
+def _stratum_label(row: dict[str, Any], assignment: dict[str, Any]) -> str:
+    """The four canary strata, joined -- source / listing_state (from the
+    to_import row) and input_kind / id_source (from the assignment shard)."""
+    return "|".join((
+        row.get("source") or "?",
+        row.get("listing_state") or "active",
+        assignment.get("input_kind") or "?",
+        assignment.get("id_source") or "?",
+    ))
+
+
+def _load_assignment_index(client, bucket: str, run_id: str, assigned_root: str
+                           ) -> dict[str, dict[str, Any]]:
+    """Per-object assigned identity, from slice 2's shards for one run."""
+    out: dict[str, dict[str, Any]] = {}
+    for key in _list_keys(client, bucket, assigned_root + "/", ".parquet"):
+        name = key.rsplit("/", 1)[-1].removesuffix(".parquet")
+        if not name.startswith(f"{run_id}-b"):
+            continue
+        for row in _read_parquet_rows(
+            client, bucket, key,
+            columns=["object_key", "artifact_id", "id_source", "input_kind",
+                     "batch_name", "listing_id", "silver_rows", "detail_rows"],
+        ):
+            out[row["object_key"]] = {
+                "artifact_id": row.get("artifact_id"),
+                "id_source": row.get("id_source"),
+                "input_kind": row.get("input_kind"),
+                "batch_name": row.get("batch_name"),
+                "page_listing_id": row.get("listing_id"),
+                "silver_rows": row.get("silver_rows"),
+                "detail_rows": row.get("detail_rows"),
+            }
+    return out
+
+
+def _print_canary_sample_report(report: dict[str, Any], *, apply: bool,
+                                probe: bool) -> None:
+    tag = "PROBE " if probe else ""
+    sel = report["selection"]
+    strata = report["strata"]
+    print()
+    print(f"Plan 145 Stage 5 slice 3 Phase A -- {tag}canary stratified sample")
+    print("=" * 66)
+    print(f"run_id               {report['run_id']}")
+    print(f"target rows          {report['target_rows']:>12,}")
+    print(f"selected artifacts   {sel['artifacts']:>12,}")
+    print(f"silver rows          {sel['silver_rows']:>12,}  "
+          f"({sel['detail_rows']:,} detail / {sel['carousel_rows']:,} carousel)")
+    print(f"strata in population {len(strata['present_in_population']):>12,}")
+    print(f"strata covered       {len(strata['covered_by_sample']):>12,}  "
+          f"(every stratum covered: {strata['every_stratum_covered']})")
+    for stratum, count in strata["rows_per_stratum"].items():
+        print(f"    {stratum:<40} {count:>8,} rows")
+    print(f"no artifact split    {report['no_artifact_split']}")
+    if apply:
+        print(f"manifest             {report['manifest_key']}")
+    else:
+        print("\nDRY RUN: selection printed only; --apply writes the manifest "
+              "and report.")
+    print()
+
+
+def run_canary_sample(args: argparse.Namespace) -> int:
+    from shared.minio import BUCKET as DEFAULT_BUCKET
+    from shared.minio import object_exists, write_bytes
+
+    bucket = args.bucket or DEFAULT_BUCKET
+    client = _s3_client()
+    probe = bool(args.probe)
+    apply = bool(args.apply)
+    roots = _stage5_roots(probe)
+    canary_root = CANARY_PREFIX + (PROBE_SUFFIX if probe else "")
+
+    run_id = args.run_id or _discover_compare_run(client, bucket, roots)
+    run_dir = f"{roots.compared}/{run_id}"
+
+    assignments = _load_assignment_index(client, bucket, run_id, roots.assigned)
+    if not assignments:
+        raise ReconcileError(
+            f"no assignment shards for run {run_id} under "
+            f"s3://{bucket}/{roots.assigned}/; run "
+            f"`assign{' --probe' if probe else ''} --apply` first"
+        )
+
+    keys = _list_keys(client, bucket, f"{run_dir}/to_import/", ".parquet")
+    if not keys:
+        raise ReconcileError(
+            f"no to_import shards under s3://{bucket}/{run_dir}/to_import/"
+        )
+    rows_by_object: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for key in keys:
+        for row in _read_parquet_rows(
+            client, bucket, key,
+            columns=["object_key", "listing_id", "source", "listing_state",
+                     "fetched_at"],
+        ):
+            rows_by_object[row["object_key"]].append(row)
+
+    # slice 2's `assign` builds from `_scan_to_import`, which stops on
+    # violations rather than dropping objects, so the assignment set and the
+    # to_import object set are exactly 1:1. Both directions of that are checked:
+    #   - `missing`: an object read here with no assignment;
+    #   - `absent`:  an assigned object with no rows in this read -- a whole
+    #                dropped shard, which the count cross-check below cannot see
+    #                (the object is simply gone) and which would silently shrink
+    #                the population the sample is drawn from;
+    #   - `split`:   an object read short of its assigned per-object count -- a
+    #                half-artifact, the one thing the batch contract forbids.
+    missing = sorted(o for o in rows_by_object if o not in assignments)
+    if missing:
+        raise ReconcileError(
+            f"{len(missing)} to_import object(s) have no assignment shard row "
+            f"(e.g. {missing[:3]}); the canary sample must draw from assigned "
+            f"identity -- run `assign` for run {run_id} first"
+        )
+    absent = sorted(o for o in assignments if o not in rows_by_object)
+    if absent:
+        raise ReconcileError(
+            f"{len(absent)} assigned object(s) have no to_import rows in this "
+            f"read (e.g. {absent[:3]}); assign is 1:1 with the to_import object "
+            f"set, so a whole shard was dropped -- the sample would be drawn "
+            f"from a silently smaller population"
+        )
+    split = sorted(
+        okey for okey, rows in rows_by_object.items()
+        if len(rows) != assignments[okey].get("silver_rows")
+    )
+    if split:
+        raise ReconcileError(
+            f"{len(split)} object(s) have a to_import row count that disagrees "
+            f"with slice 2's assignment (e.g. {split[:3]}): a truncated read "
+            f"would commit a half-artifact -- refusing"
+        )
+
+    obj_strata: dict[str, set[str]] = {
+        okey: {_stratum_label(r, assignments[okey]) for r in rows}
+        for okey, rows in rows_by_object.items()
+    }
+    all_strata = set().union(*obj_strata.values()) if obj_strata else set()
+
+    order = sorted(rows_by_object)
+    random.Random(args.seed).shuffle(order)
+
+    selected: list[str] = []
+    covered: set[str] = set()
+    selected_rows = 0
+    for okey in order:                       # pass 1: cover every stratum
+        if obj_strata[okey] - covered:
+            selected.append(okey)
+            covered |= obj_strata[okey]
+            selected_rows += len(rows_by_object[okey])
+    chosen = set(selected)
+    for okey in order:                       # pass 2: top up toward the target
+        if selected_rows >= args.target_rows:
+            break
+        if okey in chosen:
+            continue
+        selected.append(okey)
+        chosen.add(okey)
+        selected_rows += len(rows_by_object[okey])
+
+    if covered != all_strata:
+        raise ReconcileError(
+            f"canary sample covers {len(covered)}/{len(all_strata)} strata "
+            f"(missing {sorted(all_strata - covered)}); the input changed "
+            f"under the selection"
+        )
+
+    manifest_rows: list[dict[str, Any]] = []
+    per_stratum_rows: Counter[str] = Counter()
+    per_stratum_objects: Counter[str] = Counter()
+    total_rows = total_detail = 0
+    for okey in sorted(selected):
+        assignment = assignments[okey]
+        rows = rows_by_object[okey]
+        strata = sorted(obj_strata[okey])
+        for stratum in strata:
+            per_stratum_objects[stratum] += 1
+        for row in rows:
+            per_stratum_rows[_stratum_label(row, assignment)] += 1
+        detail = sum(1 for r in rows if r.get("source") == "detail")
+        total_rows += len(rows)
+        total_detail += detail
+        manifest_rows.append({
+            "run_id": run_id, "object_key": okey,
+            "artifact_id": assignment.get("artifact_id"),
+            "id_source": assignment.get("id_source"),
+            "input_kind": assignment.get("input_kind"),
+            "batch_name": assignment.get("batch_name"),
+            "page_listing_id": assignment.get("page_listing_id"),
+            "silver_rows": len(rows), "detail_rows": detail,
+            "strata": strata,
+        })
+
+    # True because `split` above was empty -- i.e. every selected object's
+    # to_import row count matched slice 2's independent assignment count, not
+    # merely itself.
+    no_split = not split
+
+    manifest_key = f"{canary_root}/{run_id}-canary_sample.parquet"
+    report = {
+        "plan": 145, "stage": 5, "slice": 3, "phase": "A",
+        "check": "canary_stratified_sample", "mode": "canary-sample",
+        "run_id": run_id, "probe": probe, "apply": apply,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "target_rows": args.target_rows, "seed": args.seed,
+        "selection": {
+            "artifacts": len(selected),
+            "silver_rows": total_rows,
+            "detail_rows": total_detail,
+            "carousel_rows": total_rows - total_detail,
+        },
+        "strata": {
+            "dimensions": ["source", "listing_state", "input_kind", "id_source"],
+            "present_in_population": sorted(all_strata),
+            "covered_by_sample": sorted(covered),
+            "rows_per_stratum": dict(sorted(per_stratum_rows.items())),
+            "artifacts_per_stratum": dict(sorted(per_stratum_objects.items())),
+            "every_stratum_covered": covered == all_strata,
+        },
+        "no_artifact_split": no_split,
+        "manifest_key": manifest_key,
+    }
+    if apply:
+        if not object_exists(manifest_key):
+            _write_parquet_shard(manifest_key, _canary_manifest_schema(),
+                                 manifest_rows)
+        write_bytes(
+            f"{canary_root}/{run_id}-canary_report.json",
+            (json.dumps(report, indent=2, sort_keys=True, default=str) + "\n").encode(),
+            content_type="application/json",
+        )
+    _print_canary_sample_report(report, apply=apply, probe=probe)
+    return 0
+
+
 # --------------------------------------------------------------------------
 # CLI
 # --------------------------------------------------------------------------
@@ -5255,6 +5842,64 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
                           "canary until slice 3 closes the live-state proof.")
     app.add_argument("--log-level", default="INFO", help="DEBUG | INFO | WARNING")
     app.set_defaults(func=run_apply)
+
+    ctl = sub.add_parser(
+        "control",
+        help="Stage 5 slice 3 (Phase A): the parser control. Draw ~500 exact, "
+             "same-source represented observations from slice 1's "
+             "already_represented family and diff every silver business field "
+             "against the deployed silver row. Read-only; writes one JSON "
+             "report under recovery/plan145/control[_probe]/ only with --apply. "
+             "Exits non-zero if any business field disagrees.",
+    )
+    ctl.add_argument("--apply", action="store_true",
+                     help="Write the control report to the recovery prefix. "
+                          "Without it the census is printed only.")
+    ctl.add_argument("--probe", action="store_true",
+                     help="Read the disposable compared_probe/ run.")
+    ctl.add_argument("--bucket", default=None, help="Override MINIO_BUCKET.")
+    ctl.add_argument("--run-id", default=None,
+                     help="The compare run to check. Default: the one complete "
+                          "run under recovery/plan145/compared[_probe]/.")
+    ctl.add_argument("--sample-size", type=int, default=CONTROL_SAMPLE_SIZE,
+                     help=f"Observations to draw (default {CONTROL_SAMPLE_SIZE}).")
+    ctl.add_argument("--seed", type=int, default=145,
+                     help="Deterministic sample seed.")
+    ctl.add_argument("--silver-prefix", default=None,
+                     help="Override silver_normalized/observations.")
+    ctl.add_argument("--duckdb-threads", type=int, default=1,
+                     help="DuckDB thread cap for the silver read (default 1).")
+    ctl.add_argument("--duckdb-memory-limit", default="2GB",
+                     help="DuckDB memory ceiling (default 2GB; empty disables).")
+    ctl.add_argument("--log-level", default="INFO", help="DEBUG | INFO | WARNING")
+    ctl.set_defaults(func=run_control)
+
+    can = sub.add_parser(
+        "canary-sample",
+        help="Stage 5 slice 3 (Phase A): pick the ~500-observation, "
+             "artifact-whole, every-stratum selection Phase B's write canary "
+             "commits. Reads slice 1's to_import family and slice 2's "
+             "assignment shards; writes one manifest + report under "
+             "recovery/plan145/canary[_probe]/ only with --apply.",
+    )
+    can.add_argument("--apply", action="store_true",
+                     help="Write the canary sample manifest and report. Without "
+                          "it the selection is printed only.")
+    can.add_argument("--probe", action="store_true",
+                     help="Read the disposable compared_probe/ and assigned_probe/ "
+                          "runs.")
+    can.add_argument("--bucket", default=None, help="Override MINIO_BUCKET.")
+    can.add_argument("--run-id", default=None,
+                     help="The compare run to sample. Default: the one complete "
+                          "run under recovery/plan145/compared[_probe]/.")
+    can.add_argument("--target-rows", type=int, default=CONTROL_SAMPLE_SIZE,
+                     help=f"Approximate silver-row budget (default "
+                          f"{CONTROL_SAMPLE_SIZE}); every non-empty stratum is "
+                          f"covered even if that overshoots.")
+    can.add_argument("--seed", type=int, default=145,
+                     help="Deterministic selection seed.")
+    can.add_argument("--log-level", default="INFO", help="DEBUG | INFO | WARNING")
+    can.set_defaults(func=run_canary_sample)
 
     return parser.parse_args(argv)
 
