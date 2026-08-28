@@ -1500,28 +1500,46 @@ def test_a_row_with_no_capture_time_is_unclassifiable_never_to_import():
     assert verdict["reason"] == "no_capture_time"
 
 
+def test_a_row_with_no_listing_id_is_unclassifiable_never_to_import():
+    # Tier-2 identity can resolve a real capture time but a NULL listing_id.
+    # staging.silver_observations.listing_id is NOT NULL, so such a row is no
+    # more importable than a tier-3 page with no time -- and grouping it under
+    # (None, fetched_at) would fabricate duplicate-fingerprint conflicts.
+    verdict = classify_parsed_observation(
+        _prow(listing_id=None, fetched_at_source="queue_events"),
+        {None: _series((0, "detail"))},
+    )
+    assert verdict["family"] == "unclassifiable"
+    assert verdict["reason"] == "no_listing_id"
+
+
 def test_the_three_families_partition_the_parsed_rows_exactly():
     index = {LISTING_A: _series((0, "detail"))}
     rows = [
         _prow(LISTING_A),                                    # represented
         _prow(LISTING_B),                                    # to_import
         _prow(LISTING_B, fetched_at=None, fetched_at_source="none"),  # unclassifiable
+        _prow(listing_id=None, fetched_at_source="queue_events"),     # unclassifiable
     ]
     families = [classify_parsed_observation(r, index)["family"] for r in rows]
-    assert sorted(families) == ["already_represented", "to_import", "unclassifiable"]
+    assert sorted(families) == [
+        "already_represented", "to_import", "unclassifiable", "unclassifiable",
+    ]
     assert len(families) == len(rows)
 
 
-def test_identical_duplicates_across_two_shards_collapse_to_one_winner():
+def test_cross_shard_duplicate_collapse_is_deterministic_regardless_of_shard_order():
     # Same (listing_id, fetched_at) and business fingerprint, two Stage 4 shards,
-    # different object keys. The winner is deterministic and order-independent.
+    # different object keys. Feeding the two records in both orders must pick the
+    # same uid as winner -- this is what makes a resumed or reordered run
+    # reproducible.
     a = LiteDup(1, LISTING_A, "2026-04-15T12:00:00+00:00", 0, "fp",
                 "detail", "html/k-a.zst", "h-a")
     b = LiteDup(2, LISTING_A, "2026-04-15T12:00:00+00:00", 0, "fp",
                 "carousel", "html/k-b.zst", "h-b")
     win1, lose1, rep1 = resolve_global_duplicates([a, b])
     win2, lose2, _ = resolve_global_duplicates([b, a])
-    assert win1 == win2 == {1}          # detail beats carousel
+    assert win1 == win2 == {1}          # detail beats carousel, both orders
     assert lose1 == lose2 == {2}
     assert rep1["groups_collapsed"] == 1
     assert rep1["rows_moved_to_already_represented"] == 1
@@ -1572,15 +1590,18 @@ def test_a_changed_input_etag_forces_a_new_run_id():
     assert compute_run_id(core) != before
 
 
-def test_the_near_duplicate_window_measures_unrepresented_same_listing_pairs():
+def test_the_near_duplicate_window_counts_adjacent_gaps_not_all_pairs():
     base = 0
     measured = near_duplicate_window(iter([
+        # LISTING_A: a 3-capture burst -- 2 adjacent gaps <=300 s (not 3 pairs),
+        # so the count stays linear even for a listing with many captures.
         (LISTING_A, base),
-        (LISTING_A, base + 200_000_000),   # 200 s -> a pair
-        (LISTING_A, base + 900_000_000),   # 900 s -> not a pair
-        (LISTING_B, base),
+        (LISTING_A, base + 100_000_000),   # gap 100 s
+        (LISTING_A, base + 200_000_000),   # gap 100 s
+        (LISTING_A, base + 900_000_000),   # gap 700 s -> not counted
+        (LISTING_B, base),                 # lone capture -> no pair
     ]))
-    assert measured == {"pairs_within_300s": 1, "listings_involved": 1}
+    assert measured == {"adjacent_pairs_within_300s": 2, "listings_involved": 1}
 
 
 def test_the_vin_snapshot_query_is_read_only():
@@ -1710,8 +1731,8 @@ class _FakeConn:
 
 
 def _compare_fixture_store(tmp_path):
-    """A minimal but complete input set: two parsed row shards, two silver
-    objects, a queue-event object and a parse_report."""
+    """A minimal but complete input set: two parsed row shards, the nine
+    March-May silver objects, a queue-event object and a parse_report."""
     l1 = "11111111-1111-1111-1111-111111111111"   # represented
     l2 = "22222222-2222-2222-2222-222222222222"   # to_import singleton
     l3 = "33333333-3333-3333-3333-333333333333"   # unclassifiable (no time)
@@ -1735,13 +1756,20 @@ def _compare_fixture_store(tmp_path):
         _write_parsed_rows_fixture(tmp_path / "rows-b.parquet", shard_b)
     store["recovery/plan145/parsed/inputs/materialized-a.parquet"] = b"inputs-a"
     store["recovery/plan145/parsed/inputs/materialized-b.parquet"] = b"inputs-b"
-    store["silver_normalized/observations/source=detail/obs_year=2026/"
-          "obs_month=4/part-d.parquet"] = _write_silver_fixture(
-              tmp_path / "silver-d.parquet", [l1], _WHEN)
-    store["silver_normalized/observations/source=carousel/obs_year=2026/"
-          "obs_month=4/part-c.parquet"] = _write_silver_fixture(
-              tmp_path / "silver-c.parquet", ["99999999-9999-9999-9999-999999999999"],
-              _WHEN)
+
+    # The nine compacted objects: three sources x March/April/May. Only
+    # detail/2026-04 carries a row that matches a parsed observation (l1); the
+    # rest are legitimately empty for this fixture.
+    for source in ("detail", "carousel", "listings_page"):
+        for month in (3, 4, 5):
+            listings = [l1] if (source == "detail" and month == 4) else []
+            store[
+                f"silver_normalized/observations/source={source}/obs_year=2026/"
+                f"obs_month={month}/part-{source}-{month}.parquet"
+            ] = _write_silver_fixture(
+                tmp_path / f"silver-{source}-{month}.parquet", listings, _WHEN,
+            )
+
     store["ops_normalized/artifacts_queue_events/year=2026/month=4/"
           "part-q.parquet"] = b"queue-events"
     return store, (l1, l2, l3, l4)
@@ -1842,3 +1870,26 @@ def test_run_compare_dry_run_writes_nothing_and_issues_no_vin_query(
     assert rc == 0
     assert set(store) == keys_before          # nothing written
     assert conn.rolled_back is False           # get_conn never called
+
+
+def test_run_compare_apply_refuses_a_silver_shape_that_is_not_the_frozen_nine(
+        tmp_path, monkeypatch):
+    import scripts.reconcile_april_detail as mod
+
+    store, (l1, *_rest) = _compare_fixture_store(tmp_path)
+    for key in [k for k in store if "/source=carousel/" in k or "/source=listings_page/" in k]:
+        del store[key]                       # leaves 3 silver objects, not 9
+    _patch_compare_io(monkeypatch, store, [(l1, "VIN-L1")])
+
+    with pytest.raises(ReconcileError, match="found 3"):
+        mod.run_compare(mod.parse_args(["compare", "--apply"]))
+
+    # the escape hatch lets a maintainer proceed once they have ruled on it
+    rc = mod.run_compare(
+        mod.parse_args(["compare", "--apply", "--allow-silver-shape-drift"]))
+    assert rc == 0
+    run_id = next(k for k in store if "/inventory/" in k).split("/")[-1][:-5]
+    report = json.loads(
+        store[f"recovery/plan145/compared/{run_id}/compare_report.json"])
+    assert report["refusals"][0]["kind"] == "silver_object_count"
+    assert report["refusals"][0]["enforced"] is False

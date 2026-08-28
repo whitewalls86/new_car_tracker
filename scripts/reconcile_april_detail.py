@@ -2567,10 +2567,20 @@ def classify_from_summary(parsed_row: dict[str, Any],
 
     ``summary`` is ``{"match_count", "nearest_us", "match_sources"}`` or ``None``.
     No candidate identity or value is ever consulted -- only count and distance.
+
+    ``unclassifiable`` covers *both* halves of a missing identity: a NULL
+    ``listing_id`` (tier-2 resolved a capture time but no listing) cannot be
+    windowed and ``staging.silver_observations.listing_id`` is NOT NULL, so such
+    a row is no more importable than a tier-3 page with no capture time. The two
+    are reasoned apart -- ``no_listing_id`` vs ``no_capture_time`` -- because the
+    ~760 expectation was sized for the latter only. This mirrors
+    ``build_observation_rows``'s ``importable = bool(listing_id and fetched_at)``.
     """
-    no_time = (parsed_row.get("fetched_at_source") == "none"
-               or parsed_row.get("fetched_at") is None)
-    if no_time:
+    if parsed_row.get("listing_id") is None:
+        return {"family": "unclassifiable", "reason": "no_listing_id",
+                "match_count": 0, "nearest_distance_s": None, "match_sources": []}
+    if (parsed_row.get("fetched_at_source") == "none"
+            or parsed_row.get("fetched_at") is None):
         return {"family": "unclassifiable", "reason": "no_capture_time",
                 "match_count": 0, "nearest_distance_s": None, "match_sources": []}
     if not summary or not summary.get("match_count"):
@@ -2592,11 +2602,12 @@ def classify_parsed_observation(parsed_row: dict[str, Any],
 
     ``silver_index`` maps ``listing_id`` to a sequence of ``(event_us, source)``.
     """
-    if (parsed_row.get("fetched_at_source") == "none"
+    lid = parsed_row.get("listing_id")
+    if (lid is None
+            or parsed_row.get("fetched_at_source") == "none"
             or parsed_row.get("fetched_at") is None):
         return classify_from_summary(parsed_row, None)
-    lid = parsed_row.get("listing_id")
-    series = silver_index.get(str(lid) if lid is not None else None, ())
+    series = silver_index.get(str(lid), ())
     hits = match_within_window(_epoch_us(parsed_row.get("fetched_at")), series)
     if not hits:
         return classify_from_summary(parsed_row, None)
@@ -2685,13 +2696,20 @@ def resolve_global_duplicates(
 def near_duplicate_window(
     pairs_source: Iterator[tuple[str, int]],
 ) -> dict[str, int]:
-    """Count unrepresented same-listing pairs within 300 s of each other.
+    """Count unrepresented same-listing captures within 300 s of the previous one.
 
     Representation uses a +/-300 s window but duplicate collapse uses an *exact*
     ``(listing_id, fetched_at)``, so two real captures of one listing 200 s
     apart both survive into ``to_import``. That is correct -- they are two real
     captures -- but the maintainer needs the number before slice 2 writes
     anything, so this measures it without collapsing anything.
+
+    The count is over *adjacent* captures in time order (the gap to the
+    predecessor is ``0 < gap <= 300 s``), which is linear in a listing's capture
+    count -- a listing with up to 980 captures, some bursting inside one window,
+    must not cost a quadratic scan. ``run_compare`` computes the same definition
+    with a window query over the temp shards rather than re-accumulating the
+    population in memory.
     """
     by_listing: dict[str, list[int]] = defaultdict(list)
     for listing_id, ts_us in pairs_source:
@@ -2701,17 +2719,13 @@ def near_duplicate_window(
     for series in by_listing.values():
         series.sort()
         hit = False
-        for i in range(len(series)):
-            for j in range(i + 1, len(series)):
-                delta = series[j] - series[i]
-                if delta > COMPARE_WINDOW_US:
-                    break
-                if delta > 0:
-                    pairs += 1
-                    hit = True
+        for earlier, later in zip(series, series[1:]):
+            if 0 < later - earlier <= COMPARE_WINDOW_US:
+                pairs += 1
+                hit = True
         if hit:
             listings += 1
-    return {"pairs_within_300s": pairs, "listings_involved": listings}
+    return {"adjacent_pairs_within_300s": pairs, "listings_involved": listings}
 
 
 # -- the input freeze -----------------------------------------------------
@@ -2959,19 +2973,34 @@ def _write_vin_snapshot(key: str, vin_map: dict[str, Any], *, apply: bool
     return info
 
 
-# -- the silver index (DuckDB, thread-bounded) --------------------------
+# -- the silver index (DuckDB, thread- and memory-bounded, disk-backed) ----
 
-def _open_silver_duckdb(source_paths: Sequence[tuple[str, Optional[str]]],
-                        wanted: set[str], *, threads: int = 1):
-    """A DuckDB table ``silver(listing_id, ts_us, source)`` over the frozen
-    objects, filtered to the listings the parsed population actually asks about,
-    with an index on ``listing_id`` for the per-unit probes.
+def _open_compare_duckdb(db_path: Path, *, threads: int = 1,
+                         memory_limit: Optional[str] = "2GB"):
+    """A disk-backed DuckDB connection with an explicit thread and memory cap.
+
+    The silver side filters to only the listings the parsed population asks
+    about, but with ~1M distinct parsed listings against 20.7M silver rows that
+    still materialises most of the table plus a ``listing_id`` index. An
+    in-memory connection on a 4-core host production is also using is a real
+    risk, so the connection is a file with a spill path and a ceiling.
     """
     import duckdb
+
+    con = duckdb.connect(str(db_path))
+    con.execute(f"PRAGMA threads={max(1, threads)}")
+    if memory_limit:
+        con.execute(f"PRAGMA memory_limit='{memory_limit}'")
+    return con
+
+
+def _load_silver_index(con, source_paths: Sequence[tuple[str, Optional[str]]],
+                       wanted: set[str]) -> None:
+    """Materialise ``silver(listing_id, ts_us, source)`` on ``con``, filtered to
+    the wanted listings, with an index on ``listing_id`` for the per-unit
+    probes."""
     import pyarrow as pa
 
-    con = duckdb.connect()
-    con.execute(f"PRAGMA threads={max(1, threads)}")
     selects = []
     for path, source in source_paths:
         literal_path = path.replace("'", "''")
@@ -2991,7 +3020,6 @@ def _open_silver_duckdb(source_paths: Sequence[tuple[str, Optional[str]]],
     )
     con.unregister("wanted")
     con.execute("CREATE INDEX silver_listing_idx ON silver(listing_id)")
-    return con
 
 
 def _summarise_unit(con, prows: Sequence[dict[str, Any]]) -> dict[int, dict[str, Any]]:
@@ -3023,6 +3051,89 @@ def _summarise_unit(con, prows: Sequence[dict[str, Any]]) -> dict[int, dict[str,
               "match_sources": list(srcs or [])}
         for rid, mc, nearest_us, srcs in rows
     }
+
+
+def _toimport_glob(toimport_dir: Path) -> Optional[str]:
+    """The read_parquet glob for the temp to_import shards, or None if empty."""
+    if not any(toimport_dir.glob("*.parquet")):
+        return None
+    return str(toimport_dir / "*.parquet").replace("'", "''")
+
+
+def _resolve_toimport_duplicates(
+    con, toimport_dir: Path,
+) -> tuple[set[int], dict[str, Any]]:
+    """Collapse identical unrepresented ``(listing_id, fetched_at)`` duplicates
+    across shard boundaries, reading the temp shards rather than an in-memory
+    list.
+
+    DuckDB groups the shards and hands only the multi-member groups to the pure,
+    tested :func:`resolve_global_duplicates`; singletons never leave the scan.
+    Returns ``(loser_uids, report)``; ``report["conflicts"]`` is populated when a
+    key's members disagree on business fingerprint.
+    """
+    glob = _toimport_glob(toimport_dir)
+    if glob is None:
+        return set(), {"groups_collapsed": 0,
+                       "rows_moved_to_already_represented": 0, "conflicts": []}
+    groups = con.execute(
+        "SELECT listing_id, fetched_at, "
+        "       list(_uid) AS uids, list(_fp) AS fps, "
+        "       list(source) AS srcs, list(object_key) AS oks, "
+        "       list(content_sha256) AS hs "
+        f"FROM read_parquet('{glob}') "
+        "GROUP BY listing_id, fetched_at HAVING count(*) > 1"
+    ).fetchall()
+    multi: list[LiteDup] = []
+    for listing_id, fetched_at, uids, fps, srcs, oks, hs in groups:
+        key_time = _normalize_fetched_at(fetched_at) if fetched_at is not None else None
+        for u, fp, src, ok, h in zip(uids, fps, srcs, oks, hs):
+            multi.append(LiteDup(int(u), listing_id, key_time, None, fp, src, ok, h))
+    try:
+        _, loser_uids, report = resolve_global_duplicates(multi)
+    except DuplicateFingerprintConflict as exc:
+        return set(), {"groups_collapsed": 0,
+                       "rows_moved_to_already_represented": 0,
+                       "conflicts": exc.conflicts}
+    report["conflicts"] = []
+    return loser_uids, report
+
+
+def _measure_near_duplicates(
+    con, toimport_dir: Path, loser_uids: set[int],
+) -> dict[str, int]:
+    """The near-duplicate window, as a linear gap scan over the temp shards.
+
+    Same definition as :func:`near_duplicate_window` -- unrepresented captures of
+    one listing whose gap to the previous capture is ``0 < gap <= 300 s`` --
+    computed without re-accumulating the population in memory. Recovery
+    duplicates are excluded so a collapsed pair is not counted as a near one.
+    """
+    import pyarrow as pa
+
+    glob = _toimport_glob(toimport_dir)
+    if glob is None:
+        return {"adjacent_pairs_within_300s": 0, "listings_involved": 0}
+    exclude = ""
+    if loser_uids:
+        con.register(
+            "_losers",
+            pa.table({"uid": pa.array(sorted(loser_uids), pa.int64())}),
+        )
+        exclude = " WHERE _uid NOT IN (SELECT uid FROM _losers)"
+    try:
+        pairs, listings = con.execute(
+            "SELECT count(*), count(DISTINCT listing_id) FROM ("
+            "  SELECT listing_id, epoch_us(fetched_at) - lag(epoch_us(fetched_at)) "
+            "         OVER (PARTITION BY listing_id ORDER BY fetched_at) AS gap "
+            f"  FROM read_parquet('{glob}'){exclude}"
+            f") WHERE gap > 0 AND gap <= {COMPARE_WINDOW_US}"
+        ).fetchone()
+    finally:
+        if loser_uids:
+            con.unregister("_losers")
+    return {"adjacent_pairs_within_300s": int(pairs or 0),
+            "listings_involved": int(listings or 0)}
 
 
 def run_compare(args: argparse.Namespace) -> int:
@@ -3069,8 +3180,22 @@ def run_compare(args: argparse.Namespace) -> int:
     unit_names = [_compare_unit_name(o["key"]) for o in row_shards]
     refusals: list[dict[str, Any]] = []
     if len(silver) != 9:
-        refusals.append({"kind": "silver_object_count",
-                         "detail": f"expected 9 compacted objects, found {len(silver)}"})
+        detail = (
+            f"expected 9 compacted objects (one per source/month), found "
+            f"{len(silver)}; the silver side of the comparison is not the shape "
+            f"the design was validated against"
+        )
+        refusals.append({"kind": "silver_object_count", "detail": detail,
+                         "enforced": apply and not probe
+                         and not args.allow_silver_shape_drift})
+        if apply and not probe and not args.allow_silver_shape_drift:
+            raise ReconcileError(
+                detail + ". The maintainer should rule on the shape change before "
+                "an authoritative run; --allow-silver-shape-drift to proceed."
+            )
+        logger.warning("%s (advisory: %s)", detail,
+                       "probe/dry run" if not apply
+                       else "--allow-silver-shape-drift")
 
     logger.info("run_id %s  (%d parsed row shards, %d silver objects, %d queue-event "
                 "objects)", run_id, len(row_shards), len(silver), len(queue_events))
@@ -3088,17 +3213,26 @@ def run_compare(args: argparse.Namespace) -> int:
 
     try:
         # -- Pass A: localise the parsed row shards, count rows, collect ids --
+        # `all_objects` is the distinct source-object count for the carousel
+        # fan-out denominator. Accumulating it here (like `wanted`) counts a
+        # content-derived key that legitimately appears in two source manifests
+        # exactly once -- a per-unit `+= len(set)` would double it (cf. 051f7d0).
         nrows: dict[str, int] = {}
         wanted: set[str] = set()
+        all_objects: set[str] = set()
         for obj, unit in zip(row_shards, unit_names):
             dest = tmpdir / "rows" / f"{unit}.parquet"
             dest.write_bytes(
                 client.get_object(Bucket=bucket, Key=obj["key"])["Body"].read()
             )
             nrows[unit] = pq.ParquetFile(dest).metadata.num_rows
-            for lid in pq.read_table(dest, columns=["listing_id"]).column(0).to_pylist():
+            table = pq.read_table(dest, columns=["listing_id", "object_key"])
+            for lid in table.column("listing_id").to_pylist():
                 if lid:
                     wanted.add(str(lid))
+            for okey in table.column("object_key").to_pylist():
+                if okey:
+                    all_objects.add(str(okey))
         processed_total = sum(nrows.values())
 
         parse_report = read_json(
@@ -3124,35 +3258,42 @@ def run_compare(args: argparse.Namespace) -> int:
                 client.get_object(Bucket=bucket, Key=obj["key"])["Body"].read()
             )
             source_paths.append((str(dest), obj.get("source")))
-        con = _open_silver_duckdb(source_paths, wanted, threads=args.duckdb_threads)
+        con = _open_compare_duckdb(
+            tmpdir / "compare.duckdb", threads=args.duckdb_threads,
+            memory_limit=args.duckdb_memory_limit or None,
+        )
+        _load_silver_index(con, source_paths, wanted)
         silver_obs = con.execute("SELECT count(*) FROM silver").fetchone()[0]
-        logger.info("silver index: %d observations for %d wanted listings",
-                    silver_obs, len(wanted))
+        logger.info("silver index: %d observations for %d wanted listings "
+                    "(duckdb threads=%d memory_limit=%s)",
+                    silver_obs, len(wanted), max(1, args.duckdb_threads),
+                    args.duckdb_memory_limit or "unset")
 
         # -- Pass B: classify every parsed row -----------------------------
+        # to_import candidate rows are streamed straight to per-unit temp
+        # shards carrying `_uid` and `_fp`; the global duplicate pass and the
+        # near-duplicate measurement both run over those files, so nothing
+        # per-row is retained in memory here.
         uid = 0
-        lite: list[LiteDup] = []
         parsed_vin: dict[str, Any] = {}
         fam_counts: Counter[str] = Counter()
         match_hist: Counter[int] = Counter()
         multi_candidate = 0
-        detail_rows = carousel_rows = distinct_objects = 0
+        detail_rows = carousel_rows = 0
         max_carousel_per_object = 0
-        represented_written = unclassifiable_written = 0
+        represented_written = 0
+        unc_no_listing_id = unc_no_capture_time = 0
 
         for uindex, unit in enumerate(unit_names, start=1):
             prows = pq.read_table(tmpdir / "rows" / f"{unit}.parquet").to_pylist()
             summaries = _summarise_unit(con, prows)
             per_object: Counter[str] = Counter()
-            unit_objects: set[str] = set()
             rep_rows: list[dict[str, Any]] = []
             unc_rows: list[dict[str, Any]] = []
             ti_rows: list[dict[str, Any]] = []
             for rid, row in enumerate(prows):
                 src = row.get("source")
                 obj_key = row.get("object_key")
-                if obj_key:
-                    unit_objects.add(obj_key)
                 if src == "detail":
                     detail_rows += 1
                     if row.get("vin") and row.get("listing_id"):
@@ -3173,22 +3314,15 @@ def run_compare(args: argparse.Namespace) -> int:
                     out["match_sources"] = verdict["match_sources"]
                     rep_rows.append(out)
                 elif verdict["family"] == "unclassifiable":
+                    if verdict["reason"] == "no_listing_id":
+                        unc_no_listing_id += 1
+                    else:
+                        unc_no_capture_time += 1
                     unc_rows.append(out)
                 else:
-                    fp = business_fingerprint(out)
                     out["_uid"] = uid
-                    out["_fp"] = fp
+                    out["_fp"] = business_fingerprint(out)
                     ti_rows.append(out)
-                    lite.append(LiteDup(
-                        uid=uid,
-                        listing_id=str(row["listing_id"]) if row.get("listing_id") else None,
-                        fetched_at=_normalize_fetched_at(row.get("fetched_at")),
-                        ts_us=_epoch_us(row.get("fetched_at")),
-                        fingerprint=fp,
-                        source=src,
-                        object_key=obj_key,
-                        content_sha256=row.get("content_sha256"),
-                    ))
                     uid += 1
 
             _emit_compare_shard(run_dir, "already_represented", unit,
@@ -3198,8 +3332,6 @@ def run_compare(args: argparse.Namespace) -> int:
                                 _compared_schema("unclassifiable"), unc_rows,
                                 apply=apply)
             represented_written += len(rep_rows)
-            unclassifiable_written += len(unc_rows)
-            distinct_objects += len(unit_objects)
             if per_object:
                 max_carousel_per_object = max(max_carousel_per_object,
                                               max(per_object.values()))
@@ -3215,10 +3347,14 @@ def run_compare(args: argparse.Namespace) -> int:
             if args.progress_every and uindex % args.progress_every == 0:
                 logger.info("classified %d/%d units", uindex, len(unit_names))
 
+        unclassifiable_written = unc_no_listing_id + unc_no_capture_time
+
         # -- the unclassifiable magnitude gate ----------------------------
-        if unclassifiable_written > args.max_unclassifiable:
+        # The ~760 expectation was sized for tier-3 pages with no capture time;
+        # the NULL-listing_id cohort is a distinct population and reported apart.
+        if unc_no_capture_time > args.max_unclassifiable:
             message = (
-                f"unclassifiable rows {unclassifiable_written:,} exceed the "
+                f"no_capture_time rows {unc_no_capture_time:,} exceed the "
                 f"~{UNCLASSIFIABLE_EXPECTATION} expectation and the "
                 f"{args.max_unclassifiable:,} ceiling; stopping so the maintainer "
                 f"rules on it before slice 2 runs"
@@ -3227,16 +3363,17 @@ def run_compare(args: argparse.Namespace) -> int:
                 raise ReconcileError(message)
             logger.warning("%s (continuing: --allow-unclassifiable-drift)", message)
 
-        # -- global duplicate resolution --------------------------------
-        try:
-            winner_uids, loser_uids, dup_report = resolve_global_duplicates(lite)
-        except DuplicateFingerprintConflict as exc:
+        # -- global duplicate resolution, over the temp shards ----------
+        loser_uids, dup_report = _resolve_toimport_duplicates(
+            con, tmpdir / "toimport",
+        )
+        if dup_report.get("conflicts"):
             if apply:
                 stopped = {
                     "plan": 145, "stage": 5, "slice": 1, "mode": "compare",
                     "run_id": run_id, "status": "stopped_fingerprint_conflict",
-                    "conflicting_fingerprint_groups": len(exc.conflicts),
-                    "conflicts": exc.conflicts[:50],
+                    "conflicting_fingerprint_groups": len(dup_report["conflicts"]),
+                    "conflicts": dup_report["conflicts"][:50],
                 }
                 write_bytes(
                     f"{run_dir}/compare_report.stopped.json",
@@ -3244,7 +3381,7 @@ def run_compare(args: argparse.Namespace) -> int:
                      + "\n").encode(),
                     content_type="application/json",
                 )
-            raise
+            raise DuplicateFingerprintConflict(dup_report["conflicts"])
 
         # -- Pass C: split to_import into winners and recovery duplicates --
         to_import_final = 0
@@ -3281,10 +3418,7 @@ def run_compare(args: argparse.Namespace) -> int:
                 f"parsed rows were processed; classification is not a partition"
             )
 
-        near = near_duplicate_window(
-            (rec.listing_id, rec.ts_us) for rec in lite
-            if rec.uid not in loser_uids and rec.listing_id and rec.ts_us is not None
-        )
+        near = _measure_near_duplicates(con, tmpdir / "toimport", loser_uids)
 
         # -- the read-only VIN snapshot --------------------------------
         vin_info = {"key": None, "rows": 0, "size": 0, "sha256": None}
@@ -3357,13 +3491,13 @@ def run_compare(args: argparse.Namespace) -> int:
             "carousel_fan_out": {
                 "detail_rows": detail_rows,
                 "carousel_rows": carousel_rows,
-                "objects": distinct_objects,
+                "objects": len(all_objects),
                 "carousel_per_detail_row": (
                     round(carousel_rows / detail_rows, 4) if detail_rows else None
                 ),
                 "carousel_per_object": (
-                    round(carousel_rows / distinct_objects, 4)
-                    if distinct_objects else None
+                    round(carousel_rows / len(all_objects), 4)
+                    if all_objects else None
                 ),
                 "max_carousel_per_object": max_carousel_per_object,
             },
@@ -3385,8 +3519,10 @@ def run_compare(args: argparse.Namespace) -> int:
             "near_duplicate_window": near,
             "unclassifiable": {
                 "count": unclassifiable_written,
-                "expectation": UNCLASSIFIABLE_EXPECTATION,
-                "materially_larger": unclassifiable_written > args.max_unclassifiable,
+                "no_capture_time": unc_no_capture_time,
+                "no_listing_id": unc_no_listing_id,
+                "expectation_no_capture_time": UNCLASSIFIABLE_EXPECTATION,
+                "materially_larger": unc_no_capture_time > args.max_unclassifiable,
             },
             "vin_collisions": vin_collisions,
             "refusals": refusals,
@@ -3434,20 +3570,23 @@ def _print_compare_report(report: dict[str, Any], *, apply: bool, probe: bool) -
           f"  (planned {report['planned_units']:,})")
     print(f"parsed row total     {report['parsed_row_total']:>12,}")
     print()
+    unc = report["unclassifiable"]
     print(f"  already_represented {fam['already_represented']:>12,}")
     print(f"  to_import           {fam['to_import']:>12,}")
     print(f"  unclassifiable      {fam['unclassifiable']:>12,}"
-          f"  (expected ~{report['unclassifiable']['expectation']})")
+          f"  (no_capture_time {unc['no_capture_time']:,} ~{unc['expectation_no_capture_time']}"
+          f", no_listing_id {unc['no_listing_id']:,})")
     print(f"  sum                 {fam['sum']:>12,}"
           f"  {'OK' if fam['sum'] == report['parsed_row_total'] else 'MISMATCH'}")
     print()
-    print(f"carousel fan-out     {fan['carousel_per_object']} per object, "
-          f"max {fan['max_carousel_per_object']}")
+    print(f"carousel fan-out     {fan['carousel_per_object']} per object over "
+          f"{fan['objects']:,} objects, max {fan['max_carousel_per_object']}")
     print(f"multi-candidate      {report['multiple_candidate_share']['with_multiple_candidates']:,}"
           f"  ({report['multiple_candidate_share']['share']})")
     print(f"recovery duplicates  {report['duplicates']['rows_moved_to_already_represented']:,}"
           f" in {report['duplicates']['groups_collapsed']:,} groups")
-    print(f"near-dup <=300s      {report['near_duplicate_window']['pairs_within_300s']:,} pairs"
+    print(f"near-dup <=300s      "
+          f"{report['near_duplicate_window']['adjacent_pairs_within_300s']:,} adjacent pairs"
           f" over {report['near_duplicate_window']['listings_involved']:,} listings")
     print(f"vin collisions       {report['vin_collisions']['count']:,}")
     print(f"inventory digest     {report['inventory']['digest']}")
@@ -3647,6 +3786,10 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     cmp_.add_argument("--bucket", default=None, help="Override MINIO_BUCKET.")
     cmp_.add_argument("--silver-prefix", default=None,
                       help="Override silver_normalized/observations.")
+    cmp_.add_argument("--allow-silver-shape-drift", action="store_true",
+                      help="Proceed under --apply even when silver is not the "
+                           "frozen 9 objects (one per source/month). Never use it "
+                           "to skip a maintainer's ruling on the shape change.")
     cmp_.add_argument("--max-units", type=int, default=0,
                       help="Process only the first N parsed row shards (smoke "
                            "test; the gate still runs unless --probe).")
@@ -3655,6 +3798,9 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     cmp_.add_argument("--duckdb-threads", type=int, default=1,
                       help="DuckDB thread cap for the silver scan (default 1; the "
                            "host has 4 cores production also needs).")
+    cmp_.add_argument("--duckdb-memory-limit", default="2GB",
+                      help="DuckDB memory ceiling for the disk-backed silver "
+                           "index (default 2GB; empty string disables).")
     cmp_.add_argument("--vin-batch", type=int, default=VIN_BATCH,
                       help="listing_ids per read-only ops.vin_to_listing SELECT.")
     cmp_.add_argument("--max-unclassifiable", type=int, default=MAX_UNCLASSIFIABLE,
