@@ -3522,7 +3522,7 @@ _OC = "html/oc.zst"   # detail active                     (unpacked/alloc)
 _OD = "html/od.zst"   # carousel active                   (materialized/preserved)
 
 
-def _canary_store(tmp_path, *, drop_assignment_for=None):
+def _canary_store(tmp_path, *, drop_assignment_for=None, orphan_assignment=False):
     la = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
     lac = "aaaaaaaa-0000-0000-0000-aaaaaaaaaaaa"
     lb = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
@@ -3563,6 +3563,17 @@ def _canary_store(tmp_path, *, drop_assignment_for=None):
     ]
     if drop_assignment_for:
         assigned = [a for a in assigned if a["object_key"] != drop_assignment_for]
+    if orphan_assignment:
+        # An assigned object with no to_import rows in the read -- i.e. a whole
+        # dropped to_import shard.
+        assigned.append(
+            {"batch_name": f"{_C3RUN}-b00001", "run_id": _C3RUN,
+             "object_key": "html/oe.zst", "artifact_id": 9000009,
+             "id_source": "allocated_sequence",
+             "listing_id": "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee",
+             "fetched_at": _WHEN, "input_kind": "materialized",
+             "source_unit": "unit-b", "silver_rows": 1, "detail_rows": 1,
+             "assigned_at": _WHEN})
     store[f"recovery/plan145/assigned/{_C3RUN}-b00001.parquet"] = \
         _write_assigned_shard(tmp_path / "asg.parquet", assigned)
     return store
@@ -3621,6 +3632,21 @@ def test_canary_sample_stops_when_a_to_import_object_has_no_assignment(
     _patch_slice3_io(monkeypatch, store)
 
     with pytest.raises(ReconcileError, match="no assignment"):
+        mod.run_canary_sample(
+            mod.parse_args(["canary-sample", "--run-id", _C3RUN, "--apply"]))
+    assert not any("/canary/" in k for k in store)
+
+
+def test_canary_sample_stops_when_an_assigned_object_is_missing_from_the_read(
+        tmp_path, monkeypatch):
+    # A whole dropped to_import shard: the object is gone from the read, so the
+    # per-object count cross-check cannot see it -- only the assign-side check.
+    import scripts.reconcile_april_detail as mod
+
+    store = _canary_store(tmp_path, orphan_assignment=True)
+    _patch_slice3_io(monkeypatch, store)
+
+    with pytest.raises(ReconcileError, match="dropped"):
         mod.run_canary_sample(
             mod.parse_args(["canary-sample", "--run-id", _C3RUN, "--apply"]))
     assert not any("/canary/" in k for k in store)

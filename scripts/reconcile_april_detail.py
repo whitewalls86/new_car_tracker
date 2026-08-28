@@ -5406,6 +5406,16 @@ def run_canary_sample(args: argparse.Namespace) -> int:
         ):
             rows_by_object[row["object_key"]].append(row)
 
+    # slice 2's `assign` builds from `_scan_to_import`, which stops on
+    # violations rather than dropping objects, so the assignment set and the
+    # to_import object set are exactly 1:1. Both directions of that are checked:
+    #   - `missing`: an object read here with no assignment;
+    #   - `absent`:  an assigned object with no rows in this read -- a whole
+    #                dropped shard, which the count cross-check below cannot see
+    #                (the object is simply gone) and which would silently shrink
+    #                the population the sample is drawn from;
+    #   - `split`:   an object read short of its assigned per-object count -- a
+    #                half-artifact, the one thing the batch contract forbids.
     missing = sorted(o for o in rows_by_object if o not in assignments)
     if missing:
         raise ReconcileError(
@@ -5413,12 +5423,14 @@ def run_canary_sample(args: argparse.Namespace) -> int:
             f"(e.g. {missing[:3]}); the canary sample must draw from assigned "
             f"identity -- run `assign` for run {run_id} first"
         )
-
-    # Cross-check the to_import rows read here against slice 2's own per-object
-    # count from _scan_to_import. A short read (a dropped shard, truncated
-    # pagination) would otherwise put a half-artifact in the canary -- the one
-    # thing the batch contract forbids -- and "no_artifact_split" computed from
-    # this same read would call it whole.
+    absent = sorted(o for o in assignments if o not in rows_by_object)
+    if absent:
+        raise ReconcileError(
+            f"{len(absent)} assigned object(s) have no to_import rows in this "
+            f"read (e.g. {absent[:3]}); assign is 1:1 with the to_import object "
+            f"set, so a whole shard was dropped -- the sample would be drawn "
+            f"from a silently smaller population"
+        )
     split = sorted(
         okey for okey, rows in rows_by_object.items()
         if len(rows) != assignments[okey].get("silver_rows")

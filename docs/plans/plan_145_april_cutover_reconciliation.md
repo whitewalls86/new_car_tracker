@@ -987,18 +987,19 @@ Three checks, none of which decides the gate:
   one shared `txid`. It **does not and cannot** quiesce or resume any writer —
   that is the maintainer's manual, separately approved action, before and after.
 
-Tests: `tests/scripts/test_reconcile_april_detail.py` section P (15 tests),
+Tests: `tests/scripts/test_reconcile_april_detail.py` section P (16 tests),
 `tests/scripts/test_verify_recovery_live_state.py` (6 tests) and
 `tests/integration/scripts/test_plan145_live_state_verifier.py` (2, real
 Postgres) — the control samples only exact same-source matches by reservoir so
 memory is bounded at `--sample-size`; the four ignores each drive a branch and
 renaming one surfaces its column; a single differing field is reported and
 exits non-zero; the sampler covers every stratum (proven on a 40-object / 3-row
-budget) and its no-split check cross-references slice 2's own per-object count;
-a missing or short assignment stops it; the verifier refuses without a window;
-both snapshots share one transaction; a write committed between them on another
+budget) and cross-references slice 2's own per-object count both ways — a
+missing assignment, an assigned object absent from the read (a dropped shard),
+and a short read all stop it; the verifier refuses without a window; both
+snapshots share one transaction; a write committed between them on another
 connection is **seen** and fails the proof; a failing canary command fails the
-check. `python -m pytest tests/scripts -q -m "not integration"` — 805 passed;
+check. `python -m pytest tests/scripts -q -m "not integration"` — 806 passed;
 `ruff` clean.
 
 **What remains unproven — every run.** The control and the canary sampler have
