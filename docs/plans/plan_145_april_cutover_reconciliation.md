@@ -2,7 +2,7 @@
 
 ## Status
 
-**Third revision — 2026-08-27.** The goal and success criteria have survived
+**BUILD ORDER — Stage 5; slice 3 waiting on Stage 4 and slices 1/2 to compute.** The goal and success criteria have survived
 every revision unchanged. The *method* has now changed three times, each time
 because a measurement contradicted an identity key the previous method relied
 on. This revision therefore states the trust boundary once, up front, and
@@ -570,6 +570,42 @@ short design above:
   colliding with current hot state is reported but never causes a delete or
   remap.
 
+### The tier-3 population, measured — 2026-08-28
+
+The Stage 4 run's identity census, over all 983,043 inputs, resolves every
+object by legacy manifest (797,073) or queue events (180,710) and leaves
+**5,260** with neither a listing nor a capture time, at **zero tier
+disagreements**. Arithmetic places all 5,260 inside the unpacked members:
+425,978 + 371,095 = 797,073, and 371,095 + 180,710 + 5,260 = 557,065. They are
+pack members whose content is absent from the legacy Parquet and which have no
+`artifacts_queue_events` row.
+
+They were characterized directly rather than estimated. Every one of them is a
+**block page**:
+
+| band | objects | what it is |
+|---|---:|---|
+| 426–441 B | 4,966 | Akamai `Access Denied`, parsing to `active` with every field NULL |
+| 5.4–16.4 KB | 294 | Cloudflare `Just a moment...`, which the parser flags correctly |
+
+That explains the identity gap rather than merely measuring it: a blocked fetch
+has no listing to record, so no silver row and no queue event, and its bytes
+were never worth keeping. **The absence of identity is the block.**
+
+**Consequence for Stage 5, correcting an expectation this plan carried.** Stage 4
+excludes block pages before emitting observation rows, so all 5,260 contribute
+**zero parsed rows** and never reach `compare`. Since the census shows these are
+the only objects without a capture time, the `unclassifiable` family should be
+**empty or near it, on both reasons** — not the ~760 the Stage 4 design
+estimated, and not 5,260. The ~760 figure counted a different thing than the
+`--max-unclassifiable` ceiling it inspired. Neither that ceiling nor
+`--max-no-listing-id 0` is expected to trip.
+
+The Akamai body embeds the listing UUID in its text, so identity is technically
+recoverable from these pages. It is not worth recovering — there is no capture
+time and they are blocks — but it is a note for the separate ticket that fixes
+`_detect_challenge`.
+
 ### Final comparison contract
 
 The exploratory probe may run against completed Stage 4 units and writes only
@@ -695,23 +731,31 @@ parsed row total, which is what makes *classified exactly once* enforceable.
 Two dry-run probes against the completed Stage 4 units, on the VM. Both wrote
 nothing and issued no VIN query.
 
-| | 20 units | 315 units |
-|---|---:|---:|
-| parsed rows | 44,446 | 657,963 |
-| source objects | 7,866 | 113,438 |
-| already represented | 77.2% | **80.7%** |
-| to import | 22.8% | **19.3%** |
-| unclassifiable | 0 | 0 |
-| more than one silver candidate | 21.04% | **21.1%** |
-| carousel rows per object | 4.65 | 4.80 |
-| recovery duplicates collapsed | 0 | 0 |
-| unrepresented captures with a neighbour ≤300 s | 39.1% of to-import | **21.3%** |
+| | 20 units | 315 units | 532 units |
+|---|---:|---:|---:|
+| parsed rows | 44,446 | 657,963 | **1,142,700** |
+| source objects | 7,866 | 113,438 | **196,453** |
+| already represented | 77.2% | 80.7% | **81.1%** |
+| to import | 22.8% | 19.3% | **18.9%** |
+| unclassifiable | 0 | 0 | **0** |
+| more than one silver candidate | 21.04% | 21.1% | **20.6%** |
+| carousel rows per object | 4.65 | 4.80 | **4.82** |
+| recovery duplicates collapsed | 0 | 0 | **0** |
+| unrepresented captures with a neighbour ≤300 s | 39.1% of to-import | 21.3% | **19.9%** |
 
-The multiple-candidate share is stable across a 15× increase in sample and
-agrees with the 2026-08-27 design probe's 18%, which is the evidence that the
-existence test behaves consistently at scale. Object counts extrapolate to
-~978,000 against `EXPECTED_FLATTENED_INPUTS`'s 983,043, so the arithmetic
-closes. Memory did not move on the Grafana panels; CPU spiked.
+Every ratio converges rather than drifting: the multiple-candidate share holds
+near 21% across a 26× increase in sample and agrees with the 2026-08-27 design
+probe's 18%, and the near-neighbour share settles from a small-sample 39% toward
+~20%. That stability is the evidence that the existence test behaves
+consistently at scale. Object counts extrapolate to ~978,000 against
+`EXPECTED_FLATTENED_INPUTS`'s 983,043, so the arithmetic closes.
+
+**Cost, for planning the authoritative run.** The 532-unit run took three
+minutes wall: 39 s to build a silver index of 14,862,304 observations over
+89,612 wanted listings, then 532 units classified in about two. DuckDB was
+capped at one thread and 2 GB and stayed inside it; memory did not move on the
+Grafana panels while CPU spiked. The full run indexes toward the whole
+20,681,645 and classifies 1,204 units, so single-digit minutes, not hours.
 
 **What these numbers are not.** Every completed unit is a materialized legacy
 body, because Stage 4 walks a key-sorted inventory and the 32 unpacked shards
@@ -830,7 +874,7 @@ production action.
 
 ---
 
-## Stage 5b — Fix the packer before it writes new packs
+## Stage 5b — Fix the packer before it writes new packs — **complete**
 
 Stage 6 does not merely read packs, it **writes** them. Left unfixed, it would
 mint fresh April sidecars carrying the scrambled `listing_id` — turning a
@@ -866,7 +910,35 @@ analysis scripts that group by `artifact_id` — `estimate_dictionary_savings`,
 reach them. The remaining `any_value` calls reduce `minio_path`, which is
 unambiguous per artifact. `pack_bronze_html` was the only affected reducer.
 
-### Gate
+### Evidence — 2026-08-27
+
+Shipped in `dd6aa26`, before Stage 6 writes anything.
+
+- `shared/packfile.py` — `PackMember.cluster_key` added, defaulting to
+  `listing_id`, so every other caller is unchanged. Identity and placement are
+  now separable, which is what lets Stage 6's ordering trial ask its question.
+- `archiver/processors/pack_bronze_html.py` — the `obs` CTE selects
+  `any_value(listing_id) FILTER (WHERE source = 'detail')` as identity and keeps
+  the historical unfiltered reduction as `cluster_key`. `ORDER BY` and frame
+  sealing use `cluster_key`, the value they already used, so **no pack is
+  relaid out**.
+- `tests/archiver/test_pack_bronze_html.py` — both gate tests present.
+  `test_sidecar_identity_is_the_detail_subject_not_a_carousel_hint` writes the
+  six carousel hints *before* the subject, so a reducer ignoring `source`
+  cannot pass by luck of scan order;
+  `test_an_artifact_with_no_detail_row_has_no_sidecar_identity` asserts the
+  carousel-only case yields NULL rather than a guess — the signal Stage 5
+  depends on.
+
+The audit of every other silver reducer stands as recorded above: the three
+analysis scripts filter `source ILIKE '%detail%'` ahead of their reduction, and
+the remaining `any_value` calls reduce `minio_path`, which is unambiguous per
+artifact. `pack_bronze_html` was the only affected reducer.
+
+Existing April packs still carry the scrambled column; this stage stops the
+defect being reproduced, and Stage 6 rewrites the sidecars it replaces.
+
+### Gate — met
 
 - A regression test builds the production shape — one artifact with one
   `source='detail'` row and six `source='carousel'` rows — and asserts the

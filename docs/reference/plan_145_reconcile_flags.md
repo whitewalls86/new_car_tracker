@@ -1,0 +1,163 @@
+# `reconcile_april_detail` — every mode and every flag
+
+Reference for `scripts/reconcile_april_detail.py`, the one script carrying Plan
+145 Stages 1–5. Generated against `master` at `d4df9cb`; re-derive with
+`python -m scripts.reconcile_april_detail <mode> --help` if in doubt — **this
+page is a convenience, the parser is the authority.**
+
+## The two words that matter
+
+**`--apply` means write.** Every mode except `census` defaults to a dry run
+that plans, validates and reports, and writes nothing. A dry run is safe to run
+against production at any time.
+
+**`--probe` means disposable** (`compare` only today; `assign`/`apply` next).
+It routes every read and write to a parallel `*_probe` prefix and relaxes the
+gate that demands a complete Stage 4. Probe output is **never promoted** to the
+authoritative prefixes.
+
+The two are orthogonal, which is the part people get wrong:
+
+| | writes nothing | writes |
+|---|---|---|
+| **authoritative** | `compare` | `compare --apply` |
+| **disposable** | `compare --probe` | `compare --probe --apply` |
+
+## Blast radius, by mode
+
+| mode | stage | reads | writes | touches Postgres |
+|---|---|---|---|---|
+| `census` | 1 | legacy Parquet | local CSV/JSON only | no |
+| `materialize` | 2 | legacy Parquet | `html/…` objects + `materialized/` manifests | no |
+| `dedupe` | 3a | manifests + sidecars | **deletes** `html/…` objects, writes receipts | no |
+| `unpack` | 3b | April packs | `html/…` objects + `unpacked/` manifests | no |
+| `parse` | 4 | flattened `html/…` | `parsed/rows`, `parsed/inputs`, `parse_report.json` | no |
+| `compare` | 5.1 | parsed + silver + events | `compared/`, `inventory/`, `vin_snapshot/` | one read-only `SELECT` |
+| `assign` | 5.2 | `compared/<run>/to_import` | `assigned/` | `nextval` only |
+| `apply` | 5.2 | `assigned/` | **three staging tables + receipt** | yes, writes |
+
+`dedupe --apply` and `apply --apply` are the only two that are hard to undo.
+
+## Universal flags
+
+| flag | default | meaning |
+|---|---|---|
+| `--bucket` | `MINIO_BUCKET` | override the bucket |
+| `--log-level` | `INFO` | `DEBUG` \| `INFO` \| `WARNING` |
+| `--progress-every` | mode-specific | log every N units (not on `assign`/`apply`) |
+
+## Per-mode flags
+
+### `census` (Stage 1) — the only mode with no `--apply`; it never writes
+| flag | default | meaning |
+|---|---|---|
+| `--out-dir` | cwd | where the CSV/JSON report lands |
+| `--prefix` | discovered | legacy Parquet prefix |
+| `--max-objects` | all | stop after N source objects |
+| `--max-examples` | 20 | sample rows kept per finding |
+| `--allow-drift` | off | report a census that disagrees with the frozen baseline instead of stopping |
+
+### `materialize` (Stage 2)
+| flag | default | meaning |
+|---|---|---|
+| `--apply` | off | write the `.html.zst` objects and manifests |
+| `--prefix` | discovered | legacy Parquet prefix |
+| `--max-objects` | all | stop after N source objects |
+| `--force` | off | re-process a source file whose manifest already exists |
+| `--no-verify` | off | skip the read-back hash check. **Do not use** — the check is the stage's gate |
+
+### `dedupe` (Stage 3a) — deletes objects
+| flag | default | meaning |
+|---|---|---|
+| `--apply` | off | actually delete |
+| `--pack-prefix` | April packs | where sidecar hashes are read from |
+| `--max-shards` | all | stop after N manifest shards |
+| `--batch-size` | 1000 | keys per `delete_objects` call (the S3 cap) |
+| `--expect-rate` | 0.456 | expected share of candidates deleted |
+| `--rate-tolerance` | 0.10 | how far off that may be before stopping |
+| `--allow-rate-drift` | off | report an off-band rate instead of stopping |
+| `--force` | off | re-run a shard that already has receipts |
+
+### `unpack` (Stage 3b)
+| flag | default | meaning |
+|---|---|---|
+| `--apply` | off | write members back as loose objects |
+| `--pack-prefix` | April packs | packs to unpack |
+| `--max-packs` | all | stop after N packs |
+| `--force` | off | re-run a pack that already has a manifest |
+| `--no-verify` | off | skip per-member `raw_sha256` verification. **Do not use** |
+
+### `parse` (Stage 4)
+| flag | default | meaning |
+|---|---|---|
+| `--apply` | off | write `parsed/rows`, `parsed/inputs`, `parse_report.json` |
+| `--workers` | `cpu_count()-2` | process pool size; bs4/lxml is GIL-bound |
+| `--max-units` | all | stop after N of the 1,204 units |
+| `--force` | off | re-parse a unit whose outputs exist |
+
+`--apply` refuses until Stage 3b is complete: 1,172 materialized shards,
+32 unpack shards, 557,065 members, 983,043 flattened inputs.
+
+### `compare` (Stage 5 slice 1)
+| flag | default | meaning |
+|---|---|---|
+| `--apply` | off | write the compared families, inventory freeze and VIN snapshot |
+| `--probe` | off | run against whatever Stage 4 units exist; `*_probe` prefixes; skips the completeness gate |
+| `--silver-prefix` | `silver_normalized/observations` | override the silver root |
+| `--allow-silver-shape-drift` | off | proceed under `--apply` when silver is not the frozen nine objects |
+| `--max-units` | all | first N parsed row shards (lexical, **not a sample**) |
+| `--force` | off | re-run a `run_id` whose outputs already exist |
+| `--duckdb-threads` | 1 | thread cap for the silver scan |
+| `--duckdb-memory-limit` | `2GB` | DuckDB ceiling; empty string disables |
+| `--vin-batch` | 1000 | listing_ids per read-only `vin_to_listing` SELECT |
+| `--max-unclassifiable` | 2000 | stop if more **`no_capture_time`** rows than this |
+| `--max-no-listing-id` | 0 | stop if any **`no_listing_id`** rows; set to the measured number after a ruling |
+| `--allow-unclassifiable-drift` | off | warn instead of stopping — **disarms both ceilings at once** |
+
+Both ceilings only stop an `apply and not probe` run; a dry run or probe warns
+and lets the report carry the counts. Measured 2026-08-28: neither is expected
+to trip, because the 5,260 objects without a capture time are all block pages
+and emit no rows.
+
+### `assign` (Stage 5 slice 2)
+| flag | default | meaning |
+|---|---|---|
+| `--apply` | off | allocate sequence values and write the assignment shards |
+| `--run-id` | the one complete run | which compare run to assign |
+| `--max-artifacts` | 5000 | artifacts per batch; changing it changes every batch's membership |
+| `--max-silver-rows` | 50000 | rows per batch; an artifact is never split |
+
+### `apply` (Stage 5 slice 2) — the only mode that writes to Postgres
+| flag | default | meaning |
+|---|---|---|
+| `--apply` | off | actually write; without it the whole write set is built, validated and printed |
+| `--run-id` | the one complete run | which run's assignment shards to apply |
+| `--batch` | every batch | batch name, repeatable |
+| `--max-unapproved-rows` | canary budget | silver rows an `--apply` may write without named approval |
+| `--maintainer-approval NAME` | none | named approval to exceed that budget |
+
+Plan 145 allows nothing beyond the canary until slice 3 closes the live-state
+proof. `--maintainer-approval` is a record of a human decision, not a way past
+one.
+
+## Flags that are gates, and must not be routine
+
+`--no-verify`, `--allow-drift`, `--allow-rate-drift`, `--allow-silver-shape-drift`,
+`--allow-unclassifiable-drift`, `--force`, `--maintainer-approval`.
+
+Each exists so a human can overrule a specific measured refusal after looking at
+it. Reaching for one to make a run finish is how a plan built on measurement
+starts shipping on assumption. Prefer raising the specific ceiling — e.g.
+`--max-no-listing-id 3` — over a blanket drift flag, which disarms checks you
+did not mean to touch.
+
+## Where each mode runs
+
+| image | has | use for |
+|---|---|---|
+| `cartracker-archiver` (`scraper_user`) | duckdb, pyarrow, boto3, psycopg2 | `census`, `materialize`, `dedupe`, `unpack`, `compare` |
+| `cartracker-processing` / `april-processor` (`cartracker`) | bs4, lxml, pyarrow, boto3 — **no duckdb** | `parse`, `assign`, `apply` |
+
+`assign`/`apply` run as `cartracker` because `scraper_user` has no INSERT on
+`staging.price_observation_events`. That image has no duckdb, and the import is
+lazy — a duckdb dependency there fails *after* the I/O, not at startup.

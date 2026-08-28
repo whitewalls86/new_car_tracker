@@ -2,7 +2,7 @@
 
 ## Status
 
-**BACKLOG, written 2026-08-25.** Priority **70 (medium)**. Effort **S plus a
+**BUILD ORDER, written 2026-08-25.** Priority **70 (medium)**. Effort **S plus a
 7-day volume observation**.
 
 Split out of the Plan 141 logging health check. Depends on Plan 141, which

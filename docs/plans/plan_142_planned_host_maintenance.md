@@ -2,7 +2,7 @@
 
 ## Status
 
-DRAFT, written 2026-08-18 after the first deliberate whole-host maintenance
+BUILD ORDER — Stage 4; Stage 3 complete, waiting for a reviewed maintenance window, written 2026-08-18 after the first deliberate whole-host maintenance
 window exposed that the repository has a deploy procedure and a storage
 runbook, but no durable procedure for pausing production, updating Ubuntu,
 rebooting the VM, proving the host and stack healthy, and safely resuming work.

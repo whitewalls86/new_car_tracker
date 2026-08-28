@@ -2,7 +2,7 @@
 
 ## Status
 
-**BACKLOG, written 2026-08-25.** Priority **62 (medium)**. Effort **S**.
+**BUILD ORDER, written 2026-08-25.** Priority **62 (medium)**. Effort **S**.
 
 Trigger: Plan 141 lands its label contract and formatter change. Presentation
 work before then would be built on labels that are about to change.
