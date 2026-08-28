@@ -238,17 +238,20 @@ truth on top of them.
 `artifact_id`). It is also how the packer attributes an object. So recovered
 artifacts need real ones.
 
-**For the 557,065 existing pack members: preserve, do not re-derive.** Their
-`artifact_id` lives in `ops_normalized/artifacts_queue_events` in the lake,
-keyed by `minio_path`. It is durable there — unlike `ops.artifacts_queue`,
-which step 20 empties. **Unpacking under each member's original `source_key`
-keeps that join intact for free**, which is the decisive argument for original
-keys over content-derived ones. 42,276 members have no event row and stay
-unattributed; they are counted, not invented.
+**For the 557,065 existing pack members: preserve when one exists, never
+re-derive.** Their `artifact_id` lives in
+`ops_normalized/artifacts_queue_events` in the lake, keyed by `minio_path`. It
+is durable there — unlike `ops.artifacts_queue`, which step 20 empties.
+**Unpacking under each member's original `source_key` keeps that join intact
+for free**, which is the decisive argument for original keys over
+content-derived ones. The 42,276 members with no event row may remain
+unattributed only if Stage 5 imports no observation from them; an import-bearing
+member requires a real ID and receives a new sequence value.
 
-**For the newly materialized legacy bodies: allocate from the sequence, never
-compute one.** `ops.artifacts_queue_artifact_id_seq` is a `bigserial`
-sequence, currently around 7.52M. `nextval` is concurrency-safe by
+**For every import-bearing artifact without that trusted ID, including newly
+materialized legacy bodies: allocate from the sequence, never compute one.**
+`ops.artifacts_queue_artifact_id_seq` is a `bigserial` sequence; it was at
+7,732,177 during the 2026-08-27 design audit. `nextval` is concurrency-safe by
 construction: it never returns a value twice, and it does not roll back or
 reuse on abort. Concurrent production inserts are therefore safe **as long as
 identity comes from the sequence** — a `max(artifact_id) + 1` would race and
@@ -259,7 +262,9 @@ collide, and is forbidden.
 is picked up by live processing within seconds and runs the full hot-state
 path this plan forbids. Instead:
 
-1. `SELECT nextval('ops.artifacts_queue_artifact_id_seq')` per recovered artifact.
+1. Preserve the unique event-lake ID, or call
+   `nextval('ops.artifacts_queue_artifact_id_seq')`, once per import-bearing
+   artifact.
 2. Write the silver rows carrying that `artifact_id`.
 3. Write one `staging.artifacts_queue_events` row per artifact with status
    `recovered` — the table has no FK and no status CHECK, and it is exactly
@@ -496,21 +501,192 @@ rows are real coverage produced by detail artifacts.
 
 Produce two immutable outputs — already represented, and to import — then
 write the import set with the treatment table above: silver rows and
-historical price events at the legacy capture time, sequence-allocated
-`artifact_id`s, `recovered` queue events, and **no** mutation of
+historical price events at the legacy capture time, preserved or
+sequence-allocated `artifact_id`s, `recovered` queue events, and **no** mutation of
 `ops.price_observations`, `ops.vin_to_listing`, `ops.blocked_cooldown`,
 `ops.detail_scrape_claims`, or live message emission.
 
 Run an approximately 500-observation canary against normal-parser controls,
 with before/after snapshots of live tables and V040 views, before the full apply.
 
+### Design findings — 2026-08-27
+
+The Stage 4 run made enough real materialized output available to test the
+comparison shape without waiting for the unpacked units. The probe was bounded
+to one DuckDB thread and three completed row shards; two were legitimately
+empty and the non-empty shard held **3,374 observations from 643 artifacts**.
+Against the deployed March–May silver snapshot:
+
+| probe result | count |
+|---|---:|
+| parsed observations | 3,374 |
+| distinct artifacts | 643 |
+| average / maximum silver fan-out | 5.25 / 9 |
+| represented within 300 s | 2,898 |
+| not represented | 476 |
+| represented at the exact microsecond | 2,879 |
+| more than one silver candidate inside the window | 614 |
+| duplicate parsed `(listing_id, fetched_at)` groups | 0 |
+| maximum nearest-match distance | 228.945 s |
+
+This sample is deliberately **not** a population estimate. Materialized units
+are selection-biased and the 32 large unpacked units had not started. It does
+settle the algorithmic question: classification is an existence test, not a
+join that chooses a silver row. Multiple candidates are normal. The evidence
+row records `match_count`, nearest absolute distance and the nearest sources;
+no arbitrary candidate supplies identity or values.
+
+The production inputs are tractable without a database export. March–May
+silver contains **20,681,645 observations** in nine compacted Parquet objects
+(one object per source/month), 219,710,181 stored bytes. A one-thread scan on
+the VM completed in seconds. The final comparison therefore reads those nine
+named objects directly and records each key, size and ETag in its report; it
+does not read a moving dbt view without freezing its backing objects.
+
+The deployed Flyway and writer contracts add requirements absent from the
+short design above:
+
+- `staging.silver_observations.artifact_id` is NOT NULL, but has no FK or
+  uniqueness constraint. `staging.price_observation_events.listing_id` is a
+  UUID and `event_at` defaults to `now()`. Recovery must validate UUIDs and
+  explicitly insert the legacy capture time; the normal insert helper cannot
+  be reused unchanged.
+- `staging.artifacts_queue_events` intentionally has no status CHECK or FK, so
+  `status='recovered'` with no hot queue row is valid. Its `event_at` is the
+  recovery action time; its separate `fetched_at` is the April capture time.
+- The March–May artifact-event lake has 4,906,595 detail event rows reducing to
+  **1,536,055 distinct object paths, with zero paths mapped to conflicting
+  artifact IDs**. Existing identity is therefore a strict lookup by normalized
+  `minio_path`, never by sidecar listing ID. The largest historical ID in that
+  window is 4,902,473; the deployed sequence was at 7,732,177 during the audit.
+- `ops.vin_to_listing` has an index on `listing_id`, so the production batch
+  lookup can be used read-only. Parsed primary VIN wins; missing primary and
+  carousel VINs may be filled from one frozen lookup snapshot. A parsed VIN
+  colliding with current hot state is reported but never causes a delete or
+  remap.
+
+### Final comparison contract
+
+The exploratory probe may run against completed Stage 4 units and writes only
+a disposable report. The authoritative `compare` run refuses to start until
+`parse_report.json` says all 1,204 units completed and reproduces the Stage 4
+input and observation totals. It freezes:
+
+1. every parsed row/input object key, size and ETag;
+2. the nine March–May silver object keys, sizes and ETags;
+3. the March–May artifact-event objects used for identity; and
+4. the read-only VIN lookup rows used to enrich the import set.
+
+For each parsed observation, the silver predicate is:
+
+```text
+same listing_id AND abs(silver.fetched_at - parsed.fetched_at) <= 300 seconds
+```
+
+Source, VIN, `artifact_id` and parsed values are not match keys. An observation
+with at least one candidate goes to
+`recovery/plan145/compared/already_represented/`; otherwise it goes to
+`recovery/plan145/compared/to_import/`. Both families are sharded, immutable,
+carry the parsed provenance, and are covered by a report digest. Existing
+objects are never overwritten; a changed input inventory requires a new run
+identifier and a complete re-compare.
+
+Parsed duplicates are resolved globally, not independently per Stage 4 shard.
+For an otherwise-unrepresented `(listing_id, fetched_at)` group, an identical
+business-row duplicate has one deterministic canonical winner (`detail`
+before `carousel`, then `object_key` and content hash); the rest enter
+`already_represented` with reason `recovery_duplicate`. Two rows with that key
+but different business fingerprints stop the comparison for review. This is
+what makes the no-duplicate-write gate enforceable across shard boundaries.
+
+### Artifact identity and immutable assignment
+
+Identity is one value per source HTML object, shared by its primary and every
+carousel row:
+
+- preserve the queue-event `artifact_id` when the normalized object path has
+  exactly one;
+- otherwise allocate with
+  `nextval('ops.artifacts_queue_artifact_id_seq')`, including for an old pack
+  member with no historical event ID; and
+- never read or compare `legacy_artifact_id`, and never use `max()`.
+
+This corrects one statement earlier in the plan: the 42,276 April pack members
+with no historical event ID can stay unattributed only when they contribute no
+row to the import set. A pack member with a row to import cannot stay that way:
+the silver table requires a non-NULL ID and the repacker needs attribution, so
+it receives a new sequence value just like a materialized legacy object.
+
+Allocation is an explicit apply step after comparison. It writes a
+create-if-absent assignment shard under
+`recovery/plan145/assigned/<batch>.parquet` before database insertion. A
+sequence value lost before that immutable write is a harmless gap; after the
+write, every retry reuses the recorded value. Each assignment records whether
+the ID was `preserved_queue_event` or `allocated_sequence`.
+
+### Historical write set
+
+A batch is ordered by `object_key`, never splits an artifact, and is capped at
+5,000 artifacts and 50,000 silver rows. One transaction writes:
+
+1. only the `to_import` rows to `staging.silver_observations`, enriched by the
+   frozen read-only VIN lookup and carrying the assigned artifact ID;
+2. one historical price event for each imported **detail** row — `upserted`
+   for active and `deleted` for unlisted — with `event_at=fetched_at`; and
+3. one `staging.artifacts_queue_events` row per artifact with
+   `status='recovered'`, the full `s3://bronze/<object_key>` path, the primary
+   listing ID, `artifact_type='detail_page'`, and the legacy `fetched_at`.
+
+Recovery does not mint carousel price events. Production emits those only for
+carousel hints passing the search configuration active at capture time; that
+April configuration is not recoverable, and applying today's filter or writing
+all carousel rows would manufacture history. Carousel remains first-class
+silver coverage and participates fully in comparison.
+
+The same transaction inserts a row into a plan-specific durable Flyway receipt
+table keyed by batch name and assignment-manifest SHA-256. The receipt stores
+the artifact, silver, price-event and queue-event counts. On retry, an equal
+receipt skips the batch; the same batch name with a different digest stops.
+This receipt is necessary because all three staging tables are asynchronously
+flushed and deleted: checking PostgreSQL after an ambiguous client response
+cannot otherwise distinguish “never committed” from “committed and flushed.”
+
+### Canary and live-state proof
+
+Parser controls and the write canary are separate checks:
+
+- choose approximately 500 exact, same-source represented observations and
+  compare every silver business field to the production row, ignoring only
+  recovery provenance, `artifact_id`, `written_at`, and the intentional
+  pre-Stage-5 carousel VIN gap;
+- choose approximately 500 `to_import` observations, grouped by artifact and
+  stratified across detail/carousel, active/unlisted, input kind and identity
+  source, then run them through the real assignment and batch writer; and
+- require the silver/event flushers to carry the canary through to their lake
+  prefixes before approving the full apply.
+
+The before/after V040 assertion must run in a short named maintenance window;
+otherwise live production legitimately changes the same tables while the
+canary runs and an equality claim is meaningless. Quiesce every service with
+write access to the four protected hot tables, begin one verifier transaction
+so PostgreSQL's `now()` is fixed for both V040 snapshots, capture the hot tables
+and views, run the canary on a separate connection, capture them again, and
+require byte-equivalent results before restarting the writers. Pausing or
+resuming those services remains a manual, separately approved production
+action.
+
 ### Gate
 
 - Every parsed observation is classified exactly once.
+- The final comparison names and fingerprints every parsed, silver,
+  artifact-event and VIN-lookup input it used.
 - No duplicate `(listing_id, fetched_at)` observation is written.
-- Silver and price-event times equal the legacy capture time.
-- Every recovered artifact carries a sequence-allocated `artifact_id`; none is
-  computed from `max()`.
+- Silver times and every emitted price-event time equal the legacy capture
+  time; recovered queue-event `fetched_at` does too.
+- Every import-bearing artifact carries either its one trusted historical
+  `artifact_id` or a sequence-allocated one; none is computed from `max()`.
+- Every committed batch has one matching durable receipt and re-running it
+  writes zero rows.
 - No row is inserted into `ops.artifacts_queue`.
 - Live pricing, VIN, cooldown, claim and refresh state is unchanged.
 - The carousel fan-out is measured and reviewed before the full apply.
@@ -671,8 +847,9 @@ this plan does not touch.
   authoritative time;
 - block-page classification, against real Akamai and Cloudflare bodies;
 - comparison partitioning every parsed observation exactly once;
-- a real-Postgres test proving `artifact_id` comes from the sequence, that no
-  `artifacts_queue` row is created, and that live tables and V040 views are
+- a real-Postgres test proving missing `artifact_id` values come from the
+  sequence, committed batch receipts make a retry a zero-write no-op, no
+  `artifacts_queue` row is created, and live tables and V040 views are
   unchanged;
 - existing pack/read/prune integration tests as the Stage 6 storage proof;
 - deletion refusing a results-page key, an unapproved run, or an unverified
@@ -691,7 +868,7 @@ this plan does not touch.
 | Objects deleted whose content was not in a verified pack | 0 |
 | Duplicate `(listing_id, fetched_at)` writes | 0 |
 | Block pages imported as observations | 0 |
-| Recovered artifacts without a sequence-allocated `artifact_id` | 0 |
+| Import-bearing artifacts without a trusted preserved or sequence-allocated `artifact_id` | 0 |
 | Rows inserted into `ops.artifacts_queue` | 0 |
 | Legacy `artifact_id` used as a join key | 0 |
 | Sidecar `listing_id` used as a join key | 0 |
