@@ -942,6 +942,68 @@ the sequence advanced 292,432, V047 is now applied on prod (a prerequisite the
 authoritative run needs anyway), and the `*_probe/` prefixes hold disposable
 output. The authoritative `compare --apply` still waits for all 1,204 units.
 
+### Evidence — slice 3 Phase A, 2026-08-28
+
+Slice 3 splits into two build phases
+(`docs/plans/plan_145_stage_5_canary_handoff.md`). **Phase A is built and
+unit-tested; nothing in it has been run against production, and no service was
+paused.** Phase B — the write canary as a real commit, and the flush round trip
+— is a follow-up once the authoritative `compare` lands.
+
+Three checks, none of which decides the gate:
+
+- **The parser control** — `control` mode on `scripts/reconcile_april_detail.py`.
+  Draws exact, same-source represented observations from slice 1's
+  `already_represented/` family (`nearest_distance_s == 0` and `match_sources`
+  is the row's own source), reads the one deployed silver row at
+  `(listing_id, fetched_at, source)`, and diffs every silver business field.
+  Ignores exactly four things by name — recovery provenance columns,
+  `artifact_id`, `written_at`, and carousel `vin` (on the raw parsed row);
+  a fifth entry raises. Any other field disagreement is a finding and the mode
+  exits non-zero. Read-only; runs in `cartracker-archiver` (DuckDB, read-only
+  `scraper_user`); writes one JSON report under
+  `recovery/plan145/control[_probe]/` only with `--apply`.
+- **The canary stratified sampler** — `canary-sample` mode. Joins slice 1's
+  `to_import/` rows to slice 2's `assigned/` shards on `object_key`, stratifies
+  across `source` × `listing_state` (from the `to_import` row) and `input_kind`
+  × `id_source` (from the assignment shard), and greedily selects **whole
+  artifacts** — no object split across the sample boundary — until every
+  non-empty stratum is covered and the ~500-row target is met. An `to_import`
+  object with no assignment row is a stop. Writes a manifest +
+  report under `recovery/plan145/canary[_probe]/` with `--apply`; this manifest
+  is Phase B's input.
+- **The V040 live-state verifier** — `scripts/verify_recovery_live_state.py`,
+  a standalone script. **Refuses to run without `--window <name>`** and opens no
+  connection until that check passes. Opens one `REPEATABLE READ` transaction,
+  snapshots the four protected hot tables and the two `now()`-dependent V040
+  views (order-independent content digest + row count) plus `txid_current()`,
+  runs the canary on a **separate connection** (`--canary-cmd` subprocess, or an
+  injected callable in tests), snapshots again in the same transaction, and
+  requires byte-equivalence and one shared `txid`. It **does not and cannot**
+  quiesce or resume any writer — that is the maintainer's manual, separately
+  approved action, before and after.
+
+Tests: `tests/scripts/test_reconcile_april_detail.py` section P (11 tests) and
+`tests/scripts/test_verify_recovery_live_state.py` (6 tests) — the control
+samples only exact same-source matches; the four ignores are by name and a
+fifth breaks it; a single differing field is reported and exits non-zero; the
+sampler covers every stratum and never splits an artifact; a missing assignment
+stops it; the verifier refuses without a window; both snapshots share one
+transaction; a simulated mutation between them fails; a failing canary command
+fails the check. `python -m pytest tests/scripts -q -m "not integration"` — 801
+passed; `ruff` clean.
+
+**What remains unproven — every run.** The control and the canary sampler have
+run only against fixtures and need the authoritative `compare`/`assign` output
+on the VM. The V040 verifier has run only against a fake connection and needs a
+maintainer-opened window with the writers quiesced. The write canary itself
+(a real commit) and the flush round trip into `silver_normalized/observations/`
+and `ops_normalized/` are Phase B and unbuilt. The carousel fan-out review
+(probe: 5.6332/object, max 8) and the near-duplicate cohort (probe: 67,994
+adjacent pairs, 95,168 captures with a neighbour, 7,483 listings) are recorded
+above and still need to be put in front of the maintainer, off the authoritative
+`compare_report.json`, before any authoritative apply.
+
 ### Gate
 
 - Every parsed observation is classified exactly once, into one of the three
