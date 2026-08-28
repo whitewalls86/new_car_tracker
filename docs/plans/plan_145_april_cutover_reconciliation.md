@@ -734,6 +734,71 @@ distinct rows. They are most likely genuine burst re-scrapes and genuinely
 importable, and collapsing them would discard real history. The plan records
 the measurement; the decision is the maintainer's.
 
+### Evidence — slice 2, 2026-08-27
+
+`assign` and `apply` are implemented, together with
+`V047__plan145_recovery_batch_receipts.sql`. **No authoritative `compare` run
+exists yet** — Stage 4 was at 315 of 1,204 units — so everything below is
+proven against fixtures and a real-Postgres integration test, not against real
+compare output. No `--apply` has been run against production.
+
+Two modes on `scripts/reconcile_april_detail.py`, both defaulting to a dry run:
+
+| mode | reads | writes |
+|---|---|---|
+| `assign` | `compared/<run_id>/to_import/`, `parsed/inputs/`, the March–May artifact-event objects | `recovery/plan145/assigned/<run_id>-bNNNNN.parquet`, plus one assign report; `nextval` is its only statement |
+| `apply` | those shards, the `to_import` rows and the frozen VIN snapshot | three staging tables and the receipt, one transaction per batch |
+
+**What the deployed contracts forced.** Neither production helper survives
+contact with this problem: `shared.db.db_cursor` opens its own connection and
+commits on exit, so three calls are three transactions, and
+`write_silver_observations_postgres` catches every exception and returns 0, so
+a half-written batch would be logged as a warning and the run would continue
+believing it committed. The writer opens one connection, does all four writes
+on it, commits once, and lets exceptions propagate; it reuses `_POSTGRES_COLS`
+and `_INSERT_SQL` so a silver schema change cannot drift away from it silently.
+The run uses the `april-processor` profile, which connects as `cartracker`,
+because `scraper_user` has only `SELECT, DELETE` on
+`staging.price_observation_events` and no `INSERT` grant anywhere in
+`db/migrations/`; V047 therefore grants the receipt table to `cartracker` and
+leaves that gap alone rather than half-enabling a second role. Because
+`april-processor` builds from `processing/Dockerfile`, which has no duckdb,
+both modes read Parquet with pyarrow.
+
+**One thing the short design did not say, found while building.** A source
+object's detail row and its carousel rows are classified independently, so an
+object can contribute only carousel rows to `to_import` while its own detail
+row is already represented. The recovered queue event still needs that object's
+*page* listing id, which no carousel row carries. It comes from Stage 4's
+frozen `parsed/inputs/` shards, which also supply `input_kind` — and therefore
+the count of unattributed pack members that turn out to be import-bearing.
+
+**Refusals, all scoped so a run that writes nothing is never stopped by one.**
+A NULL or non-UUID `listing_id` anywhere in `to_import` stops `assign`, but only
+after the whole population has been scanned and the cohort reported, so the
+maintainer learns its size rather than the first offending row. One object path
+mapped to two queue-event artifact ids stops the run rather than choosing.
+Re-assigning a run under different batch caps is refused, because the caps
+decide membership and the batch names would not change. `apply --apply` across
+more than one batch is refused without `--maintainer-approval <name>`, which is
+the plan's own non-negotiable expressed in the tool.
+
+**Proven on real Postgres** (`tests/integration/scripts/`, 14 tests, now run in
+CI): a committed batch re-run writes zero rows and does not advance the
+sequence; the same batch name with a different digest stops and leaves the
+first receipt intact; a failure on the third write rolls back all four, and the
+same connection then commits the batch whole on retry; deleting the staging
+rows the way the flusher does leaves the receipt behind and the retry still
+skips; `nextval` never repeats across two connections and a rolled-back
+allocation leaves a `bigserial` gap rather than a reuse; `ops.artifacts_queue`
+gains no row and `ops.price_observations`, `ops.vin_to_listing`,
+`ops.blocked_cooldown` and `ops.detail_scrape_claims` hash identically before
+and after, over deliberately non-empty tables.
+
+Slice 3 — the canary, the maintenance window and the quiesced-writer
+live-state proof — is unstarted. It is a manual, separately approved
+production action.
+
 ### Gate
 
 - Every parsed observation is classified exactly once, into one of the three
