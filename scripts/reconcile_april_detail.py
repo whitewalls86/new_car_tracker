@@ -3732,6 +3732,13 @@ ARTIFACT_ID_SEQUENCE = "ops.artifacts_queue_artifact_id_seq"
 MAX_BATCH_ARTIFACTS = 5000
 MAX_BATCH_SILVER_ROWS = 50000
 
+#: Silver rows one `apply --apply` may write before it needs a named maintainer
+#: approval. The plan sizes the canary at ~500 `to_import` observations, so this
+#: leaves headroom for one while refusing a full batch -- which, at the caps
+#: above, is 50,000 rows. The gate has to be measured in rows: a batch count
+#: says nothing about how much history a run writes.
+CANARY_ROW_BUDGET = 1000
+
 #: `staging.artifacts_queue_events` has no status CHECK and no FK, so this
 #: value with no hot queue row is valid by construction.
 RECOVERED_STATUS = "recovered"
@@ -3800,6 +3807,34 @@ class ReceiptConflict(ReconcileError):
     two different populations were given one name. Both digests are surfaced
     and nothing is written.
     """
+
+
+class ViolationLog:
+    """Counts every invariant violation; keeps only a bounded sample of them.
+
+    The stop path exists to report a *cohort* before refusing, rather than
+    dying on row three. That needs the counts and a handful of examples, and
+    nothing else -- so a systematic upstream defect (every row missing
+    ``fetched_at``, say) is described in constant space instead of
+    accumulating one dict per row across a ~1.1M-row population.
+    """
+
+    def __init__(self, max_examples: int = 20) -> None:
+        self.counts: Counter[str] = Counter()
+        self.examples: list[dict[str, Any]] = []
+        self.max_examples = max_examples
+
+    def add(self, reason: str, **detail: Any) -> None:
+        self.counts[reason] += 1
+        if len(self.examples) < self.max_examples:
+            self.examples.append({"reason": reason, **detail})
+
+    @property
+    def total(self) -> int:
+        return sum(self.counts.values())
+
+    def __bool__(self) -> bool:
+        return bool(self.counts)
 
 
 class ImportSetInvalid(ReconcileError):
@@ -4041,9 +4076,23 @@ def build_recovery_silver_row(
     The VIN snapshot only *fills* -- a parsed VIN always wins, and the snapshot
     is never written back. Carousel rows are the reason it exists: the parse
     stage deliberately leaves their ``vin`` NULL.
+
+    The listing id is validated *before* it is cast, because the cast would
+    otherwise defeat the column that is supposed to catch this:
+    ``staging.silver_observations.listing_id`` is ``text NOT NULL``, and
+    ``str(None)`` is the perfectly acceptable four-character string ``"None"``.
+    A carousel row never reaches ``build_recovery_price_event``, so this is the
+    only check standing between it and the INSERT.
     """
     from processing.writers.silver_writer import _POSTGRES_COLS
 
+    problem = validate_import_listing_id(row.get("listing_id"))
+    if problem:
+        raise ImportSetInvalid(
+            f"{problem}: {row.get('listing_id')!r} on object "
+            f"{row.get('object_key')!r} ({row.get('source')} row) cannot be "
+            f"imported; a stop, not a skip"
+        )
     out = {name: row.get(name) for name in _POSTGRES_COLS}
     out["artifact_id"] = int(artifact_id)
     out["listing_id"] = str(row["listing_id"])
@@ -4206,15 +4255,17 @@ def _discover_compare_run(client, bucket: str) -> str:
 
 
 def _scan_to_import(client, bucket: str, run_dir: str
-                    ) -> tuple[dict[str, dict[str, Any]], list[dict[str, Any]], int]:
+                    ) -> tuple[dict[str, dict[str, Any]], ViolationLog, int]:
     """Stream every ``to_import`` shard into per-object aggregates.
 
-    Only four columns are read and nothing per-row is retained: at the probe's
-    measured ratio the population is ~1.1M rows over ~190k artifacts, and
-    holding those rows to plan batches would cost gigabytes for a count.
+    Only four columns are read and nothing per-row is retained -- not even a
+    violation, beyond its count and a bounded sample: at the probe's measured
+    ratio the population is ~1.1M rows over ~190k artifacts, and holding those
+    rows to plan batches, or to describe a systematic failure, would cost
+    gigabytes for a count.
     """
     objects: dict[str, dict[str, Any]] = {}
-    violations: list[dict[str, Any]] = []
+    violations = ViolationLog()
     total_rows = 0
     keys = _list_keys(client, bucket, f"{run_dir}/to_import/", ".parquet")
     if not keys:
@@ -4231,16 +4282,14 @@ def _scan_to_import(client, bucket: str, run_dir: str
             total_rows += 1
             object_key = row.get("object_key")
             if not object_key:
-                violations.append({"reason": "null_object_key", "unit": unit})
+                violations.add("null_object_key", unit=unit)
                 continue
             problem = validate_import_listing_id(row.get("listing_id"))
             if problem:
-                violations.append({"reason": problem, "unit": unit,
-                                   "object_key": object_key,
-                                   "listing_id": row.get("listing_id")})
+                violations.add(problem, unit=unit, object_key=object_key,
+                               listing_id=row.get("listing_id"))
             if row.get("fetched_at") is None:
-                violations.append({"reason": "null_fetched_at", "unit": unit,
-                                   "object_key": object_key})
+                violations.add("null_fetched_at", unit=unit, object_key=object_key)
             record = objects.get(object_key)
             if record is None:
                 objects[object_key] = record = {
@@ -4251,9 +4300,8 @@ def _scan_to_import(client, bucket: str, run_dir: str
                 # Stage 4 dedupes object keys across work units, so one object's
                 # rows live in exactly one shard. Two shards would mean a batch
                 # could not hold one artifact whole.
-                violations.append({"reason": "object_split_across_units",
-                                   "object_key": object_key,
-                                   "units": [record["source_unit"], unit]})
+                violations.add("object_split_across_units", object_key=object_key,
+                               units=[record["source_unit"], unit])
             record["silver_rows"] += 1
             if row.get("source") == "detail":
                 record["detail_rows"] += 1
@@ -4348,34 +4396,31 @@ def run_assign(args: argparse.Namespace) -> int:
     for object_key in sorted(objects):
         context = identity.get(object_key)
         if context is None:
-            violations.append({"reason": "no_parsed_input_row",
-                               "object_key": object_key})
+            violations.add("no_parsed_input_row", object_key=object_key)
             continue
         problem = validate_import_listing_id(context["listing_id"])
         if problem:
-            violations.append({"reason": f"page_{problem}",
-                               "object_key": object_key,
-                               "listing_id": context["listing_id"]})
+            violations.add(f"page_{problem}", object_key=object_key,
+                           listing_id=context["listing_id"])
         if context["fetched_at"] is None:
-            violations.append({"reason": "page_null_fetched_at",
-                               "object_key": object_key})
+            violations.add("page_null_fetched_at", object_key=object_key)
         objects[object_key].update(context)
 
     # Reported first, then refused: a run that dies on row three cannot tell
     # the maintainer how large the problem is.
     if violations:
-        counts = Counter(v["reason"] for v in violations)
         print()
         print("Plan 145 Stage 5 slice 2 -- assign STOPPED: the import set is invalid")
         print("=" * 70)
-        for reason, count in sorted(counts.items()):
+        for reason, count in sorted(violations.counts.items()):
             print(f"  {reason:<28} {count:>10,}")
-        for example in violations[:20]:
+        for example in violations.examples:
             print(f"    e.g. {example}")
         print()
         raise ImportSetInvalid(
-            f"{len(violations):,} invalid to_import row(s) across "
-            f"{len(counts)} reason(s): {dict(sorted(counts.items()))}"
+            f"{violations.total:,} invalid to_import row(s) across "
+            f"{len(violations.counts)} reason(s): "
+            f"{dict(sorted(violations.counts.items()))}"
         )
 
     queue_ids = _load_queue_artifact_ids(client, bucket, set(objects))
@@ -4551,6 +4596,8 @@ def _print_assign_report(report: dict[str, Any], *, apply: bool) -> None:
 def run_apply(args: argparse.Namespace) -> int:
     import tempfile
 
+    import pyarrow as pa
+    import pyarrow.compute as pc
     import pyarrow.parquet as pq
 
     from shared.minio import BUCKET as DEFAULT_BUCKET
@@ -4576,14 +4623,6 @@ def run_apply(args: argparse.Namespace) -> int:
             f"unknown batch name(s) {unknown}; this run has {len(all_names)} batches "
             f"from {all_names[0]} to {all_names[-1]}"
         )
-    if apply and len(selected) > 1 and not args.maintainer_approval:
-        raise ReconcileError(
-            f"--apply selected {len(selected)} batches. Plan 145 allows nothing "
-            f"beyond the canary until slice 3 closes the live-state proof and the "
-            f"maintainer approves by name: pass one --batch, or "
-            f"--maintainer-approval <name>"
-        )
-
     # The blast radius, from the assignment shards, before anything is written.
     plan_rows: list[dict[str, Any]] = []
     for name in selected:
@@ -4596,6 +4635,23 @@ def run_apply(args: argparse.Namespace) -> int:
         })
     _print_apply_plan(run_id, plan_rows, apply=apply,
                       approval=args.maintainer_approval)
+
+    # The canary gate, measured in rows rather than in batches. Counting
+    # batches would have let one default-cap batch -- 5,000 artifacts and up to
+    # 50,000 silver rows -- through unapproved, two orders of magnitude past
+    # the ~500 observations the plan sizes the canary at. The write set is the
+    # thing being approved, so it is the thing that is measured.
+    selected_rows = sum(entry["silver_rows"] for entry in plan_rows)
+    if apply and selected_rows > args.max_unapproved_rows \
+            and not args.maintainer_approval:
+        raise ReconcileError(
+            f"--apply selected {selected_rows:,} silver rows across "
+            f"{len(plan_rows)} batch(es), over the {args.max_unapproved_rows:,}-row "
+            f"canary budget. Plan 145 allows nothing beyond the canary until "
+            f"slice 3 closes the live-state proof and the maintainer approves by "
+            f"name: select a canary-sized assignment, or pass "
+            f"--maintainer-approval <name>"
+        )
 
     vin_map = _load_vin_snapshot(client, bucket, run_id)
     run_dir = f"{COMPARED_PREFIX}/{run_id}"
@@ -4635,12 +4691,21 @@ def run_apply(args: argparse.Namespace) -> int:
             silver_rows: list[dict[str, Any]] = []
             price_events: list[dict[str, Any]] = []
             seen_rows: Counter[str] = Counter()
+            wanted_keys = pa.array(sorted(by_object))
             for unit in units:
-                for row in pq.read_table(local_units[unit]).to_pylist():
-                    object_key = row.get("object_key")
-                    assignment = by_object.get(object_key)
-                    if assignment is None:
-                        continue
+                # Filtered in Arrow, not in Python. A unit shard holds every
+                # to_import row of one Stage 4 work unit while a batch keeps
+                # only the objects assigned to it, and the two orders
+                # interleave -- so materialising the shard and discarding most
+                # of it would build tens of millions of dicts across a full run
+                # to keep about a million.
+                table = pq.read_table(local_units[unit])
+                keep = table.filter(
+                    pc.is_in(table["object_key"], value_set=wanted_keys),
+                )
+                for row in keep.to_pylist():
+                    object_key = row["object_key"]
+                    assignment = by_object[object_key]
                     seen_rows[object_key] += 1
                     silver = build_recovery_silver_row(
                         row, assignment["artifact_id"], vin_map,
@@ -5017,10 +5082,16 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
                      help="Batch name to apply; repeatable. Default: every batch "
                           "of the run, which --apply refuses without "
                           "--maintainer-approval.")
+    app.add_argument("--max-unapproved-rows", type=int,
+                     default=CANARY_ROW_BUDGET,
+                     help=f"Silver rows an --apply run may write without a named "
+                          f"maintainer approval (default {CANARY_ROW_BUDGET}). "
+                          f"Sized for the plan's ~500-observation canary; one "
+                          f"default-cap batch is 50,000.")
     app.add_argument("--maintainer-approval", default=None, metavar="NAME",
-                     help="Named maintainer approval for writing more than one "
-                          "batch. Plan 145 allows nothing beyond the canary until "
-                          "slice 3 closes the live-state proof.")
+                     help="Named maintainer approval for writing more than the "
+                          "canary row budget. Plan 145 allows nothing beyond the "
+                          "canary until slice 3 closes the live-state proof.")
     app.add_argument("--log-level", default="INFO", help="DEBUG | INFO | WARNING")
     app.set_defaults(func=run_apply)
 

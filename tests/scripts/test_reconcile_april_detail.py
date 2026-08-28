@@ -2371,12 +2371,33 @@ def test_a_carousel_row_mints_no_price_event():
     assert build_recovery_price_event(silver) is None
 
 
-def test_a_non_uuid_listing_id_stops_before_a_price_event_is_minted():
-    silver = build_recovery_silver_row(
-        _ti_row("not-a-uuid", _MAT_KEY), 1, {},
-    )
+def test_a_non_uuid_listing_id_stops_at_the_silver_row(monkeypatch):
     with pytest.raises(ImportSetInvalid, match="non_uuid_listing_id"):
-        build_recovery_price_event(silver)
+        build_recovery_silver_row(_ti_row("not-a-uuid", _MAT_KEY), 1, {})
+
+
+@pytest.mark.parametrize("bad", [None, "", "not-a-uuid"])
+def test_a_carousel_row_with_no_usable_listing_id_stops_rather_than_writing_it(bad):
+    # `str(None)` is the four-character string "None", which
+    # staging.silver_observations.listing_id (text NOT NULL) accepts happily --
+    # so the cast would defeat the column that is supposed to catch this. A
+    # carousel row never reaches build_recovery_price_event, so the silver
+    # builder is the only check before the INSERT.
+    with pytest.raises(ImportSetInvalid):
+        build_recovery_silver_row(
+            _ti_row(bad, _MAT_KEY, source="carousel", price=900), 1, {},
+        )
+
+
+def test_the_price_event_guard_still_stands_on_a_hand_built_row():
+    # Second line of defence: even if a silver row reached the event minter
+    # without passing the builder, the uuid NOT NULL column is not left to
+    # catch it.
+    with pytest.raises(ImportSetInvalid, match="non_uuid_listing_id"):
+        build_recovery_price_event({
+            "source": "detail", "listing_id": "not-a-uuid", "artifact_id": 1,
+            "fetched_at": _WHEN, "listing_state": "active",
+        })
 
 
 def test_validate_import_listing_id_names_both_refusals():
@@ -2728,20 +2749,134 @@ def test_run_apply_writes_four_things_per_batch_in_one_transaction(
                 )["artifact_id"] == _PRESERVED_ID
 
 
-def test_run_apply_refuses_every_batch_at_once_without_a_named_approval(
+def test_run_apply_refuses_a_write_set_over_the_canary_row_budget(
         tmp_path, monkeypatch):
+    # The gate is measured in rows, not batches: counting batches would let one
+    # default-cap batch -- 50,000 silver rows -- through unapproved.
     import scripts.reconcile_april_detail as mod
 
     store, _ = _slice2_fixture_store(tmp_path)
     _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
-    mod.run_assign(mod.parse_args(
-        ["assign", "--apply", "--max-artifacts", "1"],
-    ))
+    mod.run_assign(mod.parse_args(["assign", "--apply"]))
+
     conn = _FakeWriteConn()
     _patch_slice2_io(monkeypatch, store, conn)
-    with pytest.raises(ReconcileError, match="maintainer approves by name"):
-        mod.run_apply(mod.parse_args(["apply", "--apply"]))
-    assert conn.sql == []
+    with pytest.raises(ReconcileError, match="canary budget"):
+        mod.run_apply(mod.parse_args(
+            ["apply", "--apply", "--max-unapproved-rows", "3"],
+        ))
+    assert conn.sql == []                    # refused before any statement
+
+
+def test_a_named_approval_lets_an_oversized_write_set_through(tmp_path, monkeypatch):
+    import scripts.reconcile_april_detail as mod
+
+    store, _ = _slice2_fixture_store(tmp_path)
+    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+    mod.run_assign(mod.parse_args(["assign", "--apply"]))
+
+    conn = _FakeWriteConn()
+    _record_execute_values(monkeypatch, conn)
+    _patch_slice2_io(monkeypatch, store, conn)
+    assert mod.run_apply(mod.parse_args(
+        ["apply", "--apply", "--max-unapproved-rows", "3",
+         "--maintainer-approval", "a-maintainer"],
+    )) == 0
+    assert conn.commits == 1
+
+
+def test_several_canary_sized_batches_need_no_approval(tmp_path, monkeypatch):
+    # Three one-artifact batches, four silver rows in total: a batch count
+    # would have refused this, a row budget correctly permits it.
+    import scripts.reconcile_april_detail as mod
+
+    store, _ = _slice2_fixture_store(tmp_path)
+    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+    mod.run_assign(mod.parse_args(["assign", "--apply", "--max-artifacts", "1"]))
+
+    conn = _FakeWriteConn()
+    _record_execute_values(monkeypatch, conn)
+    _patch_slice2_io(monkeypatch, store, conn)
+    assert mod.run_apply(mod.parse_args(["apply", "--apply"])) == 0
+    assert conn.commits == 3                 # one transaction per batch
+
+
+def test_the_canary_budget_leaves_room_for_the_plans_500_observation_canary():
+    from scripts.reconcile_april_detail import (
+        CANARY_ROW_BUDGET,
+        MAX_BATCH_SILVER_ROWS,
+    )
+
+    assert 500 < CANARY_ROW_BUDGET < MAX_BATCH_SILVER_ROWS
+
+
+def test_a_carousel_row_with_no_listing_id_stops_apply_before_any_write(
+        tmp_path, monkeypatch):
+    # assign would have caught it, but apply re-reads the shards independently
+    # and is the last check before the INSERT.
+    import scripts.reconcile_april_detail as mod
+
+    store, _ = _slice2_fixture_store(tmp_path)
+    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+    mod.run_assign(mod.parse_args(["assign", "--apply"]))
+
+    rows = _read_to_import_fixture(store, "materialized-a")
+    rows[1]["listing_id"] = None             # the carousel row
+    store[f"recovery/plan145/compared/{_RUN}/to_import/materialized-a.parquet"] = \
+        _write_compared_shard(tmp_path / "ti-a-null.parquet", rows)
+
+    conn = _FakeWriteConn()
+    _record_execute_values(monkeypatch, conn)
+    _patch_slice2_io(monkeypatch, store, conn)
+    with pytest.raises(ImportSetInvalid, match="null_listing_id"):
+        mod.run_apply(mod.parse_args(
+            ["apply", "--apply", "--batch", assign_batch_name(_RUN, 1)],
+        ))
+    assert conn.executed_values == [] and conn.commits == 0
+
+
+def _read_to_import_fixture(store, unit):
+    import pyarrow.parquet as pq
+
+    key = f"recovery/plan145/compared/{_RUN}/to_import/{unit}.parquet"
+    return pq.read_table(io.BytesIO(store[key])).to_pylist()
+
+
+# -- O.6: the bounded violation log --------------------------------------
+
+def test_the_violation_log_counts_everything_and_keeps_a_bounded_sample():
+    from scripts.reconcile_april_detail import ViolationLog
+
+    log = ViolationLog(max_examples=3)
+    for i in range(1000):
+        log.add("null_fetched_at", object_key=f"k{i}")
+    log.add("no_parsed_input_row", object_key="other")
+
+    assert log.total == 1001
+    assert log.counts == {"null_fetched_at": 1000, "no_parsed_input_row": 1}
+    assert len(log.examples) == 3            # constant space, not 1,001 dicts
+    assert bool(log) is True
+    assert bool(ViolationLog()) is False
+
+
+def test_a_systematic_failure_reports_its_true_size_from_a_bounded_sample(
+        tmp_path, monkeypatch, capsys):
+    import scripts.reconcile_april_detail as mod
+
+    store, _ = _slice2_fixture_store(tmp_path)
+    store[f"recovery/plan145/compared/{_RUN}/to_import/materialized-c.parquet"] = \
+        _write_compared_shard(tmp_path / "ti-c.parquet", [
+            _ti_row(None, f"html/2026/04/pack/o{i}.html.zst") for i in range(50)
+        ])
+    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+
+    with pytest.raises(ImportSetInvalid) as exc:
+        mod.run_assign(mod.parse_args(["assign", "--apply"]))
+    # The count is the whole cohort; only the printed examples are capped.
+    assert "'null_listing_id': 50" in str(exc.value)
+    out = capsys.readouterr().out
+    assert "null_listing_id" in out
+    assert out.count("e.g.") <= 20
 
 
 def test_run_apply_stops_when_the_compare_output_moved_under_the_assignment(

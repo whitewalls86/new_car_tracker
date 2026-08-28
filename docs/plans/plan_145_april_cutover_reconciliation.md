@@ -775,13 +775,25 @@ the count of unattributed pack members that turn out to be import-bearing.
 
 **Refusals, all scoped so a run that writes nothing is never stopped by one.**
 A NULL or non-UUID `listing_id` anywhere in `to_import` stops `assign`, but only
-after the whole population has been scanned and the cohort reported, so the
-maintainer learns its size rather than the first offending row. One object path
-mapped to two queue-event artifact ids stops the run rather than choosing.
-Re-assigning a run under different batch caps is refused, because the caps
-decide membership and the batch names would not change. `apply --apply` across
-more than one batch is refused without `--maintainer-approval <name>`, which is
-the plan's own non-negotiable expressed in the tool.
+after the whole population has been scanned and the cohort counted, so the
+maintainer learns its size rather than the first offending row; only the printed
+examples are capped, so a systematic upstream defect is described in constant
+space rather than accumulating a dict per row. `apply` re-checks the same
+invariant on every row it is about to write, because it re-reads the shards
+independently and is the last thing standing before the INSERT — and because
+`staging.silver_observations.listing_id` being `text NOT NULL` does *not* catch
+it: `str(None)` is the four-character string `"None"`, which the column accepts.
+One object path mapped to two queue-event artifact ids stops the run rather than
+choosing. Re-assigning a run under different batch caps is refused, because the
+caps decide membership and the batch names would not change.
+
+**The canary gate is measured in rows, not batches.** `apply --apply` refuses a
+selection over `--max-unapproved-rows` (default 1,000 silver rows) without
+`--maintainer-approval <name>`. Counting batches would have been no gate at all
+for the case that matters: one default-cap batch is 5,000 artifacts and up to
+50,000 silver rows, two orders of magnitude past the ~500 observations this plan
+sizes the canary at. The row budget refuses that and still lets a genuinely
+canary-sized assignment through, however many batches it spans.
 
 **Proven on real Postgres** (`tests/integration/scripts/`, 14 tests, now run in
 CI): a committed batch re-run writes zero rows and does not advance the

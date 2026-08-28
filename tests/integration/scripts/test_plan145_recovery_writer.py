@@ -328,6 +328,42 @@ def test_the_receipt_outlives_the_flush_that_deletes_the_rows_it_describes(
     assert vc.fetchone()["n"] == 0            # the flushed rows stay flushed
 
 
+def test_the_not_null_column_would_have_accepted_the_string_None(vc):
+    """Why the listing id is validated in Python before it is cast.
+
+    ``staging.silver_observations.listing_id`` is ``text NOT NULL``, so it is
+    tempting to treat the column as the check. It is not: ``str(None)`` is the
+    four-character string ``"None"``, which satisfies NOT NULL and commits. A
+    carousel row never reaches the price-event minter, so nothing downstream
+    would have caught it either.
+    """
+    vc.execute(
+        "INSERT INTO staging.silver_observations "
+        "(artifact_id, listing_id, source, listing_state, fetched_at) "
+        "VALUES (%s, %s, 'carousel', 'active', %s) RETURNING id",
+        (-1, str(None), CAPTURE_AT),
+    )
+    row_id = vc.fetchone()["id"]
+    try:
+        vc.execute("SELECT listing_id FROM staging.silver_observations "
+                   "WHERE id = %s", (row_id,))
+        assert vc.fetchone()["listing_id"] == "None"      # committed happily
+    finally:
+        vc.execute("DELETE FROM staging.silver_observations WHERE id = %s",
+                   (row_id,))
+
+
+@pytest.mark.parametrize("bad", [None, "", "not-a-uuid"])
+def test_the_writer_refuses_that_row_before_it_reaches_the_column(bad):
+    from scripts.reconcile_april_detail import ImportSetInvalid
+
+    with pytest.raises(ImportSetInvalid):
+        build_recovery_silver_row(
+            _parsed_row(bad, "html/2026/04/pack/x.html.zst", source="carousel"),
+            1, {},
+        )
+
+
 # -- identity -------------------------------------------------------------
 
 def test_nextval_never_returns_a_value_twice_across_two_connections(
