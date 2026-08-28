@@ -1987,3 +1987,817 @@ def test_run_compare_probe_measures_the_no_listing_id_cohort_instead_of_dying(
     assert report["unclassifiable"]["no_listing_id"] == 1
     assert report["unclassifiable"]["materially_larger"] is True   # default ceiling 0
     assert not any(k.startswith("recovery/plan145/compared/") for k in store)
+
+
+# -- O: assign + apply (Stage 5, slice 2) --------------------------------
+#
+# The first Plan 145 mode that writes to Postgres. These tests hold the four
+# invariants a reviewer cannot check by reading: identity comes from a
+# preserved queue event or from `nextval` and never from `max()`; one source
+# object is one artifact_id across its primary and every carousel row, in one
+# batch and one transaction; a carousel row mints no price event; and every
+# written time is the legacy capture time rather than `now()`.
+
+import io  # noqa: E402
+import re  # noqa: E402
+
+from scripts.reconcile_april_detail import (  # noqa: E402
+    ID_ALLOCATED,
+    ID_PRESERVED,
+    MAX_BATCH_ARTIFACTS,
+    MAX_BATCH_SILVER_ROWS,
+    RECOVERED_STATUS,
+    ImportSetInvalid,
+    ReceiptConflict,
+    _assigned_key,
+    allocate_artifact_ids,
+    assign_batch_name,
+    assign_identities,
+    build_queue_artifact_ids,
+    build_recovery_price_event,
+    build_recovery_queue_event,
+    build_recovery_silver_row,
+    check_batch_receipt,
+    plan_import_batches,
+    validate_import_listing_id,
+    write_import_batch,
+)
+
+_RUN = "cmp-slice2fixture01"
+_MAT_KEY = "html/year=2026/month=4/artifact_type=detail_page/mat1.html.zst"
+_PACK_KEPT = "html/2026/04/pack/orig1.html.zst"
+_PACK_ORPHAN = "html/2026/04/pack/orig2.html.zst"
+_PRESERVED_ID = 4_902_400
+
+
+class _FakeCursor:
+    """Records every statement so a test can assert on the SQL that was sent."""
+
+    def __init__(self, owner):
+        self.owner = owner
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def execute(self, sql, params=None):
+        self.owner.sql.append((sql, params))
+        self.owner.on_execute(sql, params)
+
+    def fetchall(self):
+        return self.owner.result
+
+    def close(self):
+        pass
+
+
+class _FakeWriteConn:
+    """A connection that answers nextval and receipt reads and counts commits."""
+
+    def __init__(self, *, next_id=9_000_000, receipts=None, fail_on=None):
+        self.sql = []
+        self.result = []
+        self.commits = 0
+        self.rollbacks = 0
+        self.closed = False
+        self._next_id = next_id
+        self.receipts = receipts or {}
+        self.fail_on = fail_on
+        self.executed_values = []
+
+    def on_execute(self, sql, params):
+        if self.fail_on and self.fail_on in sql:
+            raise RuntimeError("injected failure")
+        if "nextval" in sql:
+            count = params[0]
+            self.result = [(self._next_id + i,) for i in range(count)]
+            self._next_id += count
+        elif "manifest_sha256 FROM" in sql:
+            self.result = [(d,) for d in self.receipts.get(params[0], [])]
+        else:
+            self.result = []
+
+    def cursor(self):
+        return _FakeCursor(self)
+
+    def commit(self):
+        self.commits += 1
+
+    def rollback(self):
+        self.rollbacks += 1
+
+    def close(self):
+        self.closed = True
+
+
+def _ti_row(listing_id, object_key, *, source="detail", when=_WHEN,
+            listing_state="active", **over):
+    row = _prow(listing_id, when, source=source, object_key=object_key,
+                listing_state=listing_state, **over)
+    row["reason"] = None
+    return row
+
+
+def _write_compared_shard(path, rows):
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    from scripts.reconcile_april_detail import _compared_schema
+
+    schema = _compared_schema("to_import")
+    pq.write_table(
+        pa.Table.from_pylist(
+            [{k: r.get(k) for k in schema.names} for r in rows], schema=schema,
+        ),
+        path, compression="zstd",
+    )
+    return path.read_bytes()
+
+
+def _write_inputs_shard(path, records):
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    from scripts.reconcile_april_detail import _parsed_inputs_schema
+
+    schema = _parsed_inputs_schema()
+    pq.write_table(
+        pa.Table.from_pylist(
+            [{k: r.get(k) for k in schema.names} for r in records], schema=schema,
+        ),
+        path, compression="zstd",
+    )
+    return path.read_bytes()
+
+
+def _write_queue_events_shard(path, rows):
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    schema = pa.schema([
+        pa.field("minio_path", pa.string()),
+        pa.field("artifact_id", pa.int64()),
+        pa.field("artifact_type", pa.string()),
+        pa.field("listing_id", pa.string()),
+        pa.field("fetched_at", pa.timestamp("us", tz="UTC")),
+    ])
+    pq.write_table(
+        pa.Table.from_pylist(
+            [{k: r.get(k) for k in schema.names} for r in rows], schema=schema,
+        ),
+        path, compression="zstd",
+    )
+    return path.read_bytes()
+
+
+def _write_vin_shard(path, pairs):
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    schema = pa.schema([pa.field("listing_id", pa.string()),
+                        pa.field("vin", pa.string())])
+    pq.write_table(
+        pa.Table.from_pylist(
+            [{"listing_id": k, "vin": v} for k, v in pairs], schema=schema,
+        ),
+        path, compression="zstd",
+    )
+    return path.read_bytes()
+
+
+def _slice2_fixture_store(tmp_path):
+    """One materialized object with a carousel row, one preserved pack member,
+    and one pack member from the unattributed cohort."""
+    l1 = "aaaaaaaa-1111-1111-1111-111111111111"   # mat1 primary
+    l2 = "bbbbbbbb-2222-2222-2222-222222222222"   # mat1 carousel hint
+    l3 = "cccccccc-3333-3333-3333-333333333333"   # orig1 primary (preserved)
+    l4 = "dddddddd-4444-4444-4444-444444444444"   # orig2 primary (unlisted)
+
+    store = {}
+    store[f"recovery/plan145/compared/{_RUN}/to_import/materialized-a.parquet"] = \
+        _write_compared_shard(tmp_path / "ti-a.parquet", [
+            _ti_row(l1, _MAT_KEY, price=31000, make="Honda", model="CR-V",
+                    vin="VIN-PARSED-L1"),
+            _ti_row(l2, _MAT_KEY, source="carousel", price=17000),
+        ])
+    store[f"recovery/plan145/compared/{_RUN}/to_import/unpacked-b.parquet"] = \
+        _write_compared_shard(tmp_path / "ti-b.parquet", [
+            _ti_row(l3, _PACK_KEPT, price=22000, make="Toyota", model="RAV4"),
+            _ti_row(l4, _PACK_ORPHAN, listing_state="unlisted", make="Kia",
+                    model="Niro"),
+        ])
+    store[f"recovery/plan145/compared/{_RUN}/compare_report.json"] = b"{}"
+    store[f"recovery/plan145/inventory/{_RUN}.json"] = b"{}"
+
+    store["recovery/plan145/parsed/inputs/materialized-a.parquet"] = \
+        _write_inputs_shard(tmp_path / "in-a.parquet", [
+            {"object_key": _MAT_KEY, "listing_id": l1, "fetched_at": _WHEN,
+             "input_kind": "materialized"},
+        ])
+    store["recovery/plan145/parsed/inputs/unpacked-b.parquet"] = \
+        _write_inputs_shard(tmp_path / "in-b.parquet", [
+            {"object_key": _PACK_KEPT, "listing_id": l3, "fetched_at": _WHEN,
+             "input_kind": "unpacked"},
+            {"object_key": _PACK_ORPHAN, "listing_id": l4, "fetched_at": _WHEN,
+             "input_kind": "unpacked"},
+        ])
+
+    for month in (3, 4, 5):
+        rows = []
+        if month == 4:
+            rows = [
+                {"minio_path": f"s3://bronze/{_PACK_KEPT}",
+                 "artifact_id": _PRESERVED_ID, "artifact_type": "detail_page",
+                 "listing_id": l3, "fetched_at": _WHEN},
+                # A results_page event on the same path family must not leak in.
+                {"minio_path": "s3://bronze/html/2026/04/pack/srp.html.zst",
+                 "artifact_id": 7, "artifact_type": "results_page",
+                 "listing_id": None, "fetched_at": _WHEN},
+            ]
+        store[f"ops_normalized/artifacts_queue_events/year=2026/month={month}/"
+              f"part-{month}.parquet"] = _write_queue_events_shard(
+            tmp_path / f"qe-{month}.parquet", rows)
+
+    store[f"recovery/plan145/vin_snapshot/{_RUN}.parquet"] = _write_vin_shard(
+        tmp_path / "vin.parquet", [(l2, "VIN-SNAPSHOT-L2"), (l4, "VIN-SNAPSHOT-L4")],
+    )
+    return store, (l1, l2, l3, l4)
+
+
+def _patch_slice2_io(monkeypatch, store, conn=None):
+    import scripts.reconcile_april_detail as mod
+    import shared.db as db
+    import shared.minio as minio
+
+    monkeypatch.setattr(mod, "_s3_client", lambda: _FakeS3Store(store))
+    monkeypatch.setattr(minio, "object_exists", lambda k: k.split("bronze/")[-1] in store
+                        or k in store)
+    monkeypatch.setattr(
+        minio, "write_bytes",
+        lambda k, data, content_type=None: store.__setitem__(k, bytes(data)),
+    )
+    monkeypatch.setattr(
+        minio, "read_json",
+        lambda path: json.loads(store[path.split("bronze/")[-1]].decode()),
+    )
+    monkeypatch.setattr(db, "get_conn", lambda: conn)
+    return conn
+
+
+# -- O.1: identity -------------------------------------------------------
+
+def test_a_path_with_one_queue_event_preserves_it_and_the_rest_allocate():
+    queue_ids = {_PACK_KEPT: _PRESERVED_ID}
+    objects = [{"object_key": _PACK_KEPT, "silver_rows": 1},
+               {"object_key": _MAT_KEY, "silver_rows": 2}]
+    calls = []
+
+    def _allocate(count):
+        calls.append(count)
+        return [9_000_001]
+
+    assigned = assign_identities(objects, queue_ids, _allocate)
+    by_key = {row["object_key"]: row for row in assigned}
+    assert by_key[_PACK_KEPT]["artifact_id"] == _PRESERVED_ID
+    assert by_key[_PACK_KEPT]["id_source"] == ID_PRESERVED
+    assert by_key[_MAT_KEY]["artifact_id"] == 9_000_001
+    assert by_key[_MAT_KEY]["id_source"] == ID_ALLOCATED
+    assert calls == [1]          # one round trip for the whole batch
+
+
+def test_allocation_uses_nextval_and_never_max():
+    conn = _FakeWriteConn(next_id=7_732_178)
+    cur = conn.cursor()
+    assert allocate_artifact_ids(cur, 3) == [7_732_178, 7_732_179, 7_732_180]
+    sql = " ".join(s for s, _ in conn.sql)
+    assert "nextval('ops.artifacts_queue_artifact_id_seq')" in sql
+    assert "max(" not in sql.lower()
+
+
+def test_allocating_zero_ids_issues_no_statement():
+    conn = _FakeWriteConn()
+    assert allocate_artifact_ids(conn.cursor(), 0) == []
+    assert conn.sql == []
+
+
+def test_queue_identity_ignores_other_artifact_types_and_missing_ids():
+    ids = build_queue_artifact_ids([
+        {"minio_path": f"s3://bronze/{_PACK_KEPT}", "artifact_id": 5,
+         "artifact_type": "detail_page"},
+        {"minio_path": "s3://bronze/other.zst", "artifact_id": 6,
+         "artifact_type": "results_page"},
+        {"minio_path": "s3://bronze/nolist.zst", "artifact_id": None,
+         "artifact_type": "detail_page"},
+    ])
+    assert ids == {_PACK_KEPT: 5}
+
+
+def test_a_path_mapped_to_two_artifact_ids_stops_rather_than_choosing():
+    with pytest.raises(ReconcileError, match="conflicting queue-event artifact"):
+        build_queue_artifact_ids([
+            {"minio_path": f"s3://bronze/{_PACK_KEPT}", "artifact_id": 5,
+             "artifact_type": "detail_page"},
+            {"minio_path": f"s3://bronze/{_PACK_KEPT}", "artifact_id": 6,
+             "artifact_type": "detail_page"},
+        ])
+
+
+# -- O.2: batching -------------------------------------------------------
+
+def test_the_artifact_cap_binds_and_never_splits_an_artifact():
+    objects = [{"object_key": f"k{i:03d}", "silver_rows": 1} for i in range(5)]
+    batches = plan_import_batches(objects, max_artifacts=2, max_silver_rows=1000)
+    assert [len(b["objects"]) for b in batches] == [2, 2, 1]
+    assert [b["bound_by"] for b in batches] == ["artifacts", "artifacts", "end"]
+
+
+def test_the_row_cap_binds_before_the_artifact_cap_when_it_is_tighter():
+    objects = [{"object_key": f"k{i:03d}", "silver_rows": 6} for i in range(5)]
+    batches = plan_import_batches(objects, max_artifacts=100, max_silver_rows=12)
+    assert [len(b["objects"]) for b in batches] == [2, 2, 1]
+    assert batches[0]["bound_by"] == "silver_rows"
+
+
+def test_an_artifact_larger_than_the_row_cap_becomes_its_own_batch():
+    # Every row of one object shares one identity and one transaction, so the
+    # cap yields rather than cutting the artifact in half.
+    objects = [{"object_key": "a", "silver_rows": 1},
+               {"object_key": "b", "silver_rows": 999},
+               {"object_key": "c", "silver_rows": 1}]
+    batches = plan_import_batches(objects, max_artifacts=100, max_silver_rows=10)
+    assert [[o["object_key"] for o in b["objects"]] for b in batches] == \
+        [["a"], ["b"], ["c"]]
+
+
+def test_batches_are_ordered_by_object_key_independently_of_input_order():
+    objects = [{"object_key": k, "silver_rows": 1} for k in ("c", "a", "b")]
+    batches = plan_import_batches(objects, max_artifacts=2, max_silver_rows=99)
+    assert [o["object_key"] for o in batches[0]["objects"]] == ["a", "b"]
+
+
+def test_the_default_caps_are_the_plans_numbers():
+    assert (MAX_BATCH_ARTIFACTS, MAX_BATCH_SILVER_ROWS) == (5000, 50000)
+
+
+# -- O.3: the four writes ------------------------------------------------
+
+def test_a_detail_row_mints_one_upserted_event_at_the_legacy_capture_time():
+    silver = build_recovery_silver_row(
+        _ti_row(LISTING_A, _MAT_KEY, price=1000, make="Honda", model="CR-V"),
+        4242, {},
+    )
+    event = build_recovery_price_event(silver)
+    assert event["event_type"] == "upserted"
+    assert event["source"] == "detail"
+    assert event["artifact_id"] == 4242
+    assert event["event_at"] == _WHEN            # not now()
+
+
+def test_an_unlisted_detail_row_mints_a_deleted_event():
+    silver = build_recovery_silver_row(
+        _ti_row(LISTING_A, _MAT_KEY, listing_state="unlisted"), 1, {},
+    )
+    assert build_recovery_price_event(silver)["event_type"] == "deleted"
+
+
+def test_a_carousel_row_mints_no_price_event():
+    # Production mints carousel events only for hints passing the search
+    # configuration active at capture time, and April's is not recoverable.
+    silver = build_recovery_silver_row(
+        _ti_row(LISTING_A, _MAT_KEY, source="carousel", price=900), 1, {},
+    )
+    assert build_recovery_price_event(silver) is None
+
+
+def test_a_non_uuid_listing_id_stops_before_a_price_event_is_minted():
+    silver = build_recovery_silver_row(
+        _ti_row("not-a-uuid", _MAT_KEY), 1, {},
+    )
+    with pytest.raises(ImportSetInvalid, match="non_uuid_listing_id"):
+        build_recovery_price_event(silver)
+
+
+def test_validate_import_listing_id_names_both_refusals():
+    assert validate_import_listing_id(None) == "null_listing_id"
+    assert validate_import_listing_id("") == "null_listing_id"
+    assert validate_import_listing_id("nope") == "non_uuid_listing_id"
+    assert validate_import_listing_id(LISTING_A) is None
+
+
+def test_the_vin_snapshot_fills_a_missing_vin_and_never_beats_a_parsed_one():
+    vin_map = {LISTING_A: "VIN-FROM-SNAPSHOT"}
+    filled = build_recovery_silver_row(
+        _ti_row(LISTING_A, _MAT_KEY, source="carousel"), 1, vin_map,
+    )
+    assert filled["vin"] == "VIN-FROM-SNAPSHOT"
+    parsed = build_recovery_silver_row(
+        _ti_row(LISTING_A, _MAT_KEY, vin="VIN-PARSED"), 1, vin_map,
+    )
+    assert parsed["vin"] == "VIN-PARSED"
+    assert vin_map == {LISTING_A: "VIN-FROM-SNAPSHOT"}   # never written back
+
+
+def test_the_silver_row_carries_the_legacy_capture_time_and_the_assigned_id():
+    silver = build_recovery_silver_row(_ti_row(LISTING_A, _MAT_KEY), 555, {})
+    assert silver["fetched_at"] == _WHEN
+    assert silver["artifact_id"] == 555
+    assert silver["listing_state"] == "active"
+
+
+def test_the_queue_event_splits_the_capture_time_from_the_recovery_time():
+    event = build_recovery_queue_event(
+        {"object_key": _MAT_KEY, "artifact_id": 77, "listing_id": LISTING_A,
+         "fetched_at": _WHEN}, "batch-1", "bronze",
+    )
+    assert event["status"] == RECOVERED_STATUS
+    assert event["artifact_type"] == "detail_page"
+    assert event["minio_path"] == f"s3://bronze/{_MAT_KEY}"
+    assert event["fetched_at"] == _WHEN          # the April capture
+    assert "event_at" not in event               # left to the now() default
+
+
+# -- O.4: the receipt ----------------------------------------------------
+
+def test_an_absent_receipt_lets_the_batch_run():
+    conn = _FakeWriteConn(receipts={})
+    assert check_batch_receipt(conn.cursor(), "b1", "a" * 64) == "absent"
+
+
+def test_a_matching_receipt_reports_the_batch_already_committed():
+    conn = _FakeWriteConn(receipts={"b1": ["a" * 64]})
+    assert check_batch_receipt(conn.cursor(), "b1", "a" * 64) == "committed"
+
+
+def test_the_same_batch_name_with_another_digest_stops_and_shows_both():
+    conn = _FakeWriteConn(receipts={"b1": ["b" * 64]})
+    with pytest.raises(ReceiptConflict) as exc:
+        check_batch_receipt(conn.cursor(), "b1", "a" * 64)
+    assert "b" * 64 in str(exc.value) and "a" * 64 in str(exc.value)
+
+
+def test_a_committed_batch_writes_zero_rows_on_retry(monkeypatch):
+    conn = _FakeWriteConn(receipts={"b1": ["a" * 64]})
+    _record_execute_values(monkeypatch, conn)
+    out = write_import_batch(conn, "b1", "a" * 64,
+                             [{"listing_id": LISTING_A}], [{"listing_id": LISTING_A}],
+                             [{"artifact_id": 1}])
+    assert out["skipped"] is True
+    assert out["silver"] == 0 and out["price_events"] == 0
+    assert conn.executed_values == []            # nothing was inserted
+    assert conn.commits == 0 and conn.rollbacks == 1
+
+
+def _record_execute_values(monkeypatch, conn):
+    import psycopg2.extras
+
+    def _fake(cur, sql, rows, template=None, page_size=100):
+        conn.executed_values.append((sql, list(rows)))
+
+    monkeypatch.setattr(psycopg2.extras, "execute_values", _fake)
+
+
+def test_one_batch_is_one_transaction_with_the_receipt_inside_it(monkeypatch):
+    conn = _FakeWriteConn()
+    _record_execute_values(monkeypatch, conn)
+    out = write_import_batch(
+        conn, "b1", "a" * 64,
+        [build_recovery_silver_row(_ti_row(LISTING_A, _MAT_KEY), 7, {})],
+        [build_recovery_price_event(
+            build_recovery_silver_row(_ti_row(LISTING_A, _MAT_KEY), 7, {}))],
+        [build_recovery_queue_event(
+            {"object_key": _MAT_KEY, "artifact_id": 7, "listing_id": LISTING_A,
+             "fetched_at": _WHEN}, "b1", "bronze")],
+    )
+    assert out == {"batch_name": "b1", "skipped": False, "silver": 1,
+                   "price_events": 1, "queue_events": 1, "artifacts": 1}
+    assert conn.commits == 1 and conn.rollbacks == 0
+    receipt_sql = [s for s, _ in conn.sql if "plan145_recovery_batch_receipts" in s
+                   and "INSERT" in s]
+    assert len(receipt_sql) == 1
+    assert [sql for sql, _ in conn.executed_values] != []
+
+
+def test_a_failure_inside_the_batch_rolls_back_and_escapes(monkeypatch):
+    # write_silver_observations_postgres would have logged a warning and
+    # returned 0 here; this path must not.
+    conn = _FakeWriteConn(fail_on="plan145_recovery_batch_receipts")
+    _record_execute_values(monkeypatch, conn)
+    with pytest.raises(RuntimeError, match="injected failure"):
+        write_import_batch(conn, "b1", "a" * 64, [], [], [])
+    assert conn.commits == 0 and conn.rollbacks == 1
+
+
+def test_no_write_statement_names_the_protected_tables(monkeypatch):
+    conn = _FakeWriteConn()
+    _record_execute_values(monkeypatch, conn)
+    write_import_batch(
+        conn, "b1", "a" * 64,
+        [build_recovery_silver_row(_ti_row(LISTING_A, _MAT_KEY), 7, {})], [],
+        [build_recovery_queue_event(
+            {"object_key": _MAT_KEY, "artifact_id": 7, "listing_id": LISTING_A,
+             "fetched_at": _WHEN}, "b1", "bronze")],
+    )
+    every_sql = " ".join(
+        [s for s, _ in conn.sql] + [s for s, _ in conn.executed_values]
+    ).lower()
+    for forbidden in ("ops.artifacts_queue", "ops.price_observations",
+                      "ops.vin_to_listing", "ops.blocked_cooldown",
+                      "ops.detail_scrape_claims"):
+        assert forbidden not in every_sql
+
+
+# -- O.5: run_assign and run_apply end to end ----------------------------
+
+def test_run_assign_dry_run_plans_without_touching_the_sequence(tmp_path,
+                                                                monkeypatch, capsys):
+    import scripts.reconcile_april_detail as mod
+
+    store, _ = _slice2_fixture_store(tmp_path)
+    conn = _FakeWriteConn()
+    _patch_slice2_io(monkeypatch, store, conn)
+    before = set(store)
+
+    assert mod.run_assign(mod.parse_args(["assign"])) == 0
+    assert set(store) == before                  # no shard, no report
+    assert conn.sql == []                        # nextval never issued
+    out = capsys.readouterr().out
+    assert "DRY RUN" in out and "preserved_queue_event" in out
+
+
+def test_run_assign_writes_one_identity_per_object_shared_by_all_its_rows(
+        tmp_path, monkeypatch):
+    import pyarrow.parquet as pq
+
+    import scripts.reconcile_april_detail as mod
+
+    store, (l1, _l2, l3, l4) = _slice2_fixture_store(tmp_path)
+    conn = _FakeWriteConn(next_id=9_000_001)
+    _patch_slice2_io(monkeypatch, store, conn)
+
+    assert mod.run_assign(mod.parse_args(["assign", "--apply"])) == 0
+
+    batch_name = assign_batch_name(_RUN, 1)
+    rows = pq.read_table(io.BytesIO(store[_assigned_key(batch_name)])).to_pylist()
+    by_key = {r["object_key"]: r for r in rows}
+    assert set(by_key) == {_MAT_KEY, _PACK_KEPT, _PACK_ORPHAN}
+
+    # The preserved id comes from the queue event; the other two allocate.
+    assert by_key[_PACK_KEPT]["artifact_id"] == _PRESERVED_ID
+    assert by_key[_PACK_KEPT]["id_source"] == ID_PRESERVED
+    assert by_key[_MAT_KEY]["id_source"] == ID_ALLOCATED
+    assert by_key[_PACK_ORPHAN]["id_source"] == ID_ALLOCATED
+    assert by_key[_MAT_KEY]["artifact_id"] != by_key[_PACK_ORPHAN]["artifact_id"]
+
+    # mat1's primary and its carousel row are one artifact with two silver rows.
+    assert by_key[_MAT_KEY]["silver_rows"] == 2
+    assert by_key[_MAT_KEY]["detail_rows"] == 1
+    assert by_key[_MAT_KEY]["listing_id"] == l1
+    assert by_key[_PACK_KEPT]["listing_id"] == l3
+    assert by_key[_PACK_ORPHAN]["listing_id"] == l4
+
+    report = json.loads(store[f"recovery/plan145/assigned/{_RUN}-assign_report.json"])
+    census = report["identity_census"]
+    assert census[ID_PRESERVED] == 1 and census[ID_ALLOCATED] == 2
+    # Exactly one unattributed pack member turned out to be import-bearing.
+    assert census["unattributed_pack_members_now_import_bearing"] == 1
+
+
+def test_a_rerun_after_a_crash_reuses_the_recorded_ids(tmp_path, monkeypatch):
+    import pyarrow.parquet as pq
+
+    import scripts.reconcile_april_detail as mod
+
+    store, _ = _slice2_fixture_store(tmp_path)
+    first = _FakeWriteConn(next_id=9_000_001)
+    _patch_slice2_io(monkeypatch, store, first)
+    mod.run_assign(mod.parse_args(["assign", "--apply"]))
+    key = _assigned_key(assign_batch_name(_RUN, 1))
+    original = pq.read_table(io.BytesIO(store[key])).to_pylist()
+
+    # A second run finds the shard present: it must not burn new sequence
+    # values or rewrite the recorded identities.
+    second = _FakeWriteConn(next_id=5_555_555)
+    _patch_slice2_io(monkeypatch, store, second)
+    mod.run_assign(mod.parse_args(["assign", "--apply"]))
+    assert second.sql == []
+    assert pq.read_table(io.BytesIO(store[key])).to_pylist() == original
+
+
+def test_run_assign_never_reads_legacy_artifact_id(tmp_path, monkeypatch):
+    import scripts.reconcile_april_detail as mod
+
+    store, _ = _slice2_fixture_store(tmp_path)
+    requested = []
+    real = mod._read_parquet_rows
+
+    def _spy(client, bucket, key, *, columns=None):
+        requested.append(columns)
+        return real(client, bucket, key, columns=columns)
+
+    monkeypatch.setattr(mod, "_read_parquet_rows", _spy)
+    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+    mod.run_assign(mod.parse_args(["assign"]))
+
+    named = {c for cols in requested if cols for c in cols}
+    assert "legacy_artifact_id" not in named
+    assert "artifact_id" in named                # the queue-event one, only
+
+
+def test_a_null_listing_id_in_to_import_stops_assign_and_reports_the_cohort(
+        tmp_path, monkeypatch, capsys):
+    import scripts.reconcile_april_detail as mod
+
+    store, _ = _slice2_fixture_store(tmp_path)
+    store[f"recovery/plan145/compared/{_RUN}/to_import/materialized-c.parquet"] = \
+        _write_compared_shard(tmp_path / "ti-c.parquet", [
+            _ti_row(None, "html/2026/04/pack/orig3.html.zst"),
+        ])
+    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+    before = set(store)
+
+    with pytest.raises(ImportSetInvalid, match="null_listing_id"):
+        mod.run_assign(mod.parse_args(["assign", "--apply"]))
+    assert set(store) == before                  # a stop, before any shard
+    assert "null_listing_id" in capsys.readouterr().out
+
+
+def test_a_non_uuid_listing_id_stops_assign_before_any_write(tmp_path, monkeypatch):
+    import scripts.reconcile_april_detail as mod
+
+    store, _ = _slice2_fixture_store(tmp_path)
+    store[f"recovery/plan145/compared/{_RUN}/to_import/materialized-c.parquet"] = \
+        _write_compared_shard(tmp_path / "ti-c.parquet", [
+            _ti_row("12345", "html/2026/04/pack/orig3.html.zst"),
+        ])
+    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+    before = set(store)
+    with pytest.raises(ImportSetInvalid, match="non_uuid_listing_id"):
+        mod.run_assign(mod.parse_args(["assign", "--apply"]))
+    assert set(store) == before
+
+
+def test_reassigning_a_run_under_different_caps_is_refused(tmp_path, monkeypatch):
+    import scripts.reconcile_april_detail as mod
+
+    store, _ = _slice2_fixture_store(tmp_path)
+    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+    mod.run_assign(mod.parse_args(["assign", "--apply"]))
+    with pytest.raises(ReconcileError, match="already assigned under caps"):
+        mod.run_assign(mod.parse_args(
+            ["assign", "--apply", "--max-artifacts", "1"],
+        ))
+
+
+def test_run_apply_dry_run_announces_the_blast_radius_and_writes_nothing(
+        tmp_path, monkeypatch, capsys):
+    import scripts.reconcile_april_detail as mod
+
+    store, _ = _slice2_fixture_store(tmp_path)
+    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+    mod.run_assign(mod.parse_args(["assign", "--apply"]))
+
+    conn = _FakeWriteConn()
+    _patch_slice2_io(monkeypatch, store, conn)
+    assert mod.run_apply(mod.parse_args(["apply"])) == 0
+    out = capsys.readouterr().out
+    assert "DRY RUN" in out
+    assert "staging.silver_observations" in out
+    assert "ops.artifacts_queue" in out          # named as never touched
+    assert re.search(r"^artifacts +3$", out, re.M)      # 3 source objects
+    assert conn.sql == []                        # no statement at all
+
+
+def test_run_apply_writes_four_things_per_batch_in_one_transaction(
+        tmp_path, monkeypatch):
+    import scripts.reconcile_april_detail as mod
+
+    store, (l1, l2, l3, l4) = _slice2_fixture_store(tmp_path)
+    _patch_slice2_io(monkeypatch, store, _FakeWriteConn(next_id=9_000_001))
+    mod.run_assign(mod.parse_args(["assign", "--apply"]))
+
+    conn = _FakeWriteConn()
+    _record_execute_values(monkeypatch, conn)
+    _patch_slice2_io(monkeypatch, store, conn)
+    batch_name = assign_batch_name(_RUN, 1)
+    assert mod.run_apply(mod.parse_args(
+        ["apply", "--apply", "--batch", batch_name],
+    )) == 0
+    assert conn.commits == 1
+
+    inserts = {"silver": None, "price": None, "queue": None}
+    for sql, rows in conn.executed_values:
+        if "silver_observations" in sql:
+            inserts["silver"] = rows
+        elif "price_observation_events" in sql:
+            inserts["price"] = rows
+        elif "artifacts_queue_events" in sql:
+            inserts["queue"] = rows
+
+    assert len(inserts["silver"]) == 4           # 3 detail + 1 carousel
+    assert len(inserts["price"]) == 3            # detail rows only
+    assert len(inserts["queue"]) == 3            # one per artifact
+
+    from processing.writers.silver_writer import _POSTGRES_COLS
+    from scripts.reconcile_april_detail import (
+        _PRICE_EVENT_COLS,
+        _QUEUE_EVENT_COLS,
+    )
+
+    silver = [dict(zip(_POSTGRES_COLS, row)) for row in inserts["silver"]]
+    assert {r["fetched_at"] for r in silver} == {_WHEN}
+    # mat1's primary and carousel row carry the one artifact_id assigned to it.
+    mat_ids = {r["artifact_id"] for r in silver if r["listing_id"] in (l1, l2)}
+    assert len(mat_ids) == 1
+    # The carousel row's VIN came from the read-only snapshot.
+    assert next(r for r in silver if r["listing_id"] == l2)["vin"] == "VIN-SNAPSHOT-L2"
+    assert next(r for r in silver if r["listing_id"] == l1)["vin"] == "VIN-PARSED-L1"
+
+    events = [dict(zip(_PRICE_EVENT_COLS, row)) for row in inserts["price"]]
+    assert {e["event_at"] for e in events} == {_WHEN}
+    assert {e["source"] for e in events} == {"detail"}
+    assert {e["listing_id"] for e in events} == {l1, l3, l4}
+    assert next(e for e in events if e["listing_id"] == l4)["event_type"] == "deleted"
+    assert next(e for e in events if e["listing_id"] == l1)["event_type"] == "upserted"
+
+    queue = [dict(zip(_QUEUE_EVENT_COLS, row)) for row in inserts["queue"]]
+    assert {q["status"] for q in queue} == {RECOVERED_STATUS}
+    assert {q["fetched_at"] for q in queue} == {_WHEN}
+    assert next(q for q in queue if q["minio_path"].endswith("orig1.html.zst")
+                )["artifact_id"] == _PRESERVED_ID
+
+
+def test_run_apply_refuses_every_batch_at_once_without_a_named_approval(
+        tmp_path, monkeypatch):
+    import scripts.reconcile_april_detail as mod
+
+    store, _ = _slice2_fixture_store(tmp_path)
+    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+    mod.run_assign(mod.parse_args(
+        ["assign", "--apply", "--max-artifacts", "1"],
+    ))
+    conn = _FakeWriteConn()
+    _patch_slice2_io(monkeypatch, store, conn)
+    with pytest.raises(ReconcileError, match="maintainer approves by name"):
+        mod.run_apply(mod.parse_args(["apply", "--apply"]))
+    assert conn.sql == []
+
+
+def test_run_apply_stops_when_the_compare_output_moved_under_the_assignment(
+        tmp_path, monkeypatch):
+    import scripts.reconcile_april_detail as mod
+
+    store, _ = _slice2_fixture_store(tmp_path)
+    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+    mod.run_assign(mod.parse_args(["assign", "--apply"]))
+
+    # A row disappears from to_import after the identity was frozen.
+    store[f"recovery/plan145/compared/{_RUN}/to_import/materialized-a.parquet"] = \
+        _write_compared_shard(tmp_path / "ti-a2.parquet", [
+            _ti_row("aaaaaaaa-1111-1111-1111-111111111111", _MAT_KEY),
+        ])
+    conn = _FakeWriteConn()
+    _patch_slice2_io(monkeypatch, store, conn)
+    with pytest.raises(ReconcileError, match="row count their assignment recorded"):
+        mod.run_apply(mod.parse_args(
+            ["apply", "--apply", "--batch", assign_batch_name(_RUN, 1)],
+        ))
+    assert conn.commits == 0
+
+
+def test_assign_and_apply_both_default_to_a_dry_run():
+    from scripts.reconcile_april_detail import parse_args
+
+    assert parse_args(["assign"]).apply is False
+    assert parse_args(["apply"]).apply is False
+    assert parse_args(["apply"]).maintainer_approval is None
+
+
+def test_assign_issues_nextval_and_never_an_insert(tmp_path, monkeypatch):
+    # The assignment shard is written before any database insertion because
+    # assign issues none: the only statement it may send is the sequence read.
+    import scripts.reconcile_april_detail as mod
+
+    store, _ = _slice2_fixture_store(tmp_path)
+    conn = _FakeWriteConn(next_id=9_000_001)
+    _patch_slice2_io(monkeypatch, store, conn)
+    mod.run_assign(mod.parse_args(["assign", "--apply"]))
+
+    assert conn.sql, "the sequence should have been read"
+    for sql, _params in conn.sql:
+        assert "nextval" in sql
+        assert "insert" not in sql.lower()
+    assert _assigned_key(assign_batch_name(_RUN, 1)) in store
+
+
+def test_apply_refuses_a_run_whose_identities_were_never_assigned(
+        tmp_path, monkeypatch):
+    import scripts.reconcile_april_detail as mod
+
+    store, _ = _slice2_fixture_store(tmp_path)
+    conn = _FakeWriteConn()
+    _patch_slice2_io(monkeypatch, store, conn)
+    with pytest.raises(ReconcileError, match="run `assign --apply` first"):
+        mod.run_apply(mod.parse_args(["apply", "--apply"]))
+    assert conn.sql == []

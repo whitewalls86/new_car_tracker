@@ -415,6 +415,16 @@ jobs:
           TEST_DATABASE_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
           LOG_PATH: /tmp/ops_test.log
 
+      - name: Run recovery-script integration tests
+        # Plan 145 Stage 5 slice 2 writes to Postgres inside one transaction
+        # per batch; the rollback, receipt and protected-table properties are
+        # only observable against a real database with the migrations applied.
+        run: pytest tests/integration/scripts/ -v -m integration
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          TEST_DATABASE_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
+          LOG_PATH: /tmp/scripts_test.log
+
       - name: Install Airflow test dependencies (isolated venv)
         # Isolated from the "Install dependencies" step above: apache-airflow's
         # starlette/fastapi constraints conflict with the FastAPI services', so

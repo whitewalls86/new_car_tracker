@@ -6,8 +6,8 @@ silver or rebuilt as a real current artifact. That is six stages of work over
 one frozen population, so this is one command with one mode per stage rather
 than six scripts that each re-derive the census.
 
-Five modes live here, one per early stage of the plan's third revision, which
-*flattens* the population before parsing it:
+Seven modes live here, one per stage of the plan's third revision (Stage 5
+takes three), which *flattens* the population before parsing it:
 
 * ``census`` (Stage 1) -- read-only. Enumerates the exact legacy prefix,
   streams every row occurrence, recomputes hashes, and writes local manifests
@@ -34,12 +34,25 @@ Five modes live here, one per early stage of the plan's third revision, which
   ``recovery/plan145/inventory/<run_id>.json``, and writes one read-only VIN
   snapshot under ``recovery/plan145/vin_snapshot/<run_id>.parquet``. The only
   database statement it issues is that ``SELECT``; it writes no Postgres row and
-  no production object. Slices 2 (assign+apply) and 3 (canary) are separate.
+  no production object. Slice 3 (canary and the live-state proof) is separate.
+* ``assign`` (Stage 5, slice 2) -- gives every import-bearing source object one
+  ``artifact_id``, preserved from its queue event where the normalized path has
+  exactly one and otherwise allocated with
+  ``nextval('ops.artifacts_queue_artifact_id_seq')``, and records it in an
+  immutable per-batch shard under ``recovery/plan145/assigned/`` *before* any
+  database insertion. ``nextval`` is the only statement it issues.
+* ``apply`` (Stage 5, slice 2) -- writes one batch's silver rows, its historical
+  ``detail`` price events at the legacy capture time, one ``recovered``
+  artifact event per artifact, and the durable receipt, in **one transaction**
+  on **one connection**. It never inserts into ``ops.artifacts_queue`` and never
+  touches ``ops.price_observations``, ``ops.vin_to_listing``,
+  ``ops.blocked_cooldown``, ``ops.detail_scrape_claims`` or live event emission.
 
-``dedupe``, ``unpack`` and ``compare`` default to a dry run and take an explicit
+Every mode from ``dedupe`` on defaults to a dry run and takes an explicit
 ``--apply``; between 3a and 3b the population becomes one flat prefix of distinct
-captures that Stage 4 parses and Stage 5 compares. No mode writes Postgres bar
-``compare``'s one VIN ``SELECT``.
+captures that Stage 4 parses and Stage 5 compares. Only ``assign`` and ``apply``
+write Postgres: every earlier mode is confined to MinIO, bar ``compare``'s one
+read-only VIN ``SELECT``.
 
 What the legacy rows actually are
 ---------------------------------
@@ -3664,6 +3677,1085 @@ def _print_compare_report(report: dict[str, Any], *, apply: bool, probe: bool) -
 
 
 # --------------------------------------------------------------------------
+# Stage 5 slice 2 -- assign identity, then write the historical import set
+# --------------------------------------------------------------------------
+#
+# This is the first Plan 145 mode that writes to Postgres. Two modes:
+#
+#   assign  reads compared/<run_id>/to_import/ and writes one immutable
+#           assignment shard per batch under recovery/plan145/assigned/. The
+#           only database statement it issues is `nextval` on
+#           ops.artifacts_queue_artifact_id_seq.
+#   apply   reads those shards back and writes four things per batch in one
+#           transaction: staging.silver_observations, the historical
+#           staging.price_observation_events for detail rows,
+#           staging.artifacts_queue_events with status 'recovered', and the
+#           durable receipt row.
+#
+# Both default to a dry run.
+#
+# Three deployed-contract details shape the code, and each one is a trap:
+#
+# 1. `shared.db.db_cursor` opens its own connection and commits on exit, so
+#    three calls are three transactions. `write_silver_observations_postgres`
+#    catches every exception and returns 0, so a failed batch would be logged
+#    as a warning and the run would carry on believing it committed. Neither
+#    can be reused. One connection is opened here, all four writes run on it,
+#    it commits once, and exceptions propagate. The *column list* is reused --
+#    `_POSTGRES_COLS` and `_INSERT_SQL` are imported so a schema change cannot
+#    drift silently -- but not the function.
+# 2. `staging.price_observation_events.listing_id` is `uuid NOT NULL` while
+#    `staging.silver_observations.listing_id` is `text`. Every listing id is
+#    validated against `_UUID_RE`, and a failure is a stop, not a skip.
+# 3. The staging tables are asynchronously flushed and then *deleted*
+#    (`flush_silver_observations.py` deletes the rows it flushed), so querying
+#    Postgres after an ambiguous client response cannot tell "never committed"
+#    from "committed and already flushed away". The receipt written inside the
+#    same transaction is the only durable evidence, which is why retry is
+#    keyed on it rather than on the rows.
+#
+# What is never touched: `ops.artifacts_queue` (an inserted row would be
+# claimed by `processing/sql/claim_artifacts.sql` within seconds and run the
+# whole hot-state path this plan forbids), `ops.price_observations`,
+# `ops.vin_to_listing`, `ops.blocked_cooldown`, `ops.detail_scrape_claims`,
+# and live event emission.
+
+ASSIGNED_PREFIX = "recovery/plan145/assigned"
+
+#: `bigserial`. `nextval` never returns a value twice and does not roll back on
+#: abort, so concurrent live inserts are safe. `max(artifact_id) + 1` races
+#: them and is forbidden.
+ARTIFACT_ID_SEQUENCE = "ops.artifacts_queue_artifact_id_seq"
+
+#: A batch never splits an artifact: all of an object's rows share one identity
+#: and one transaction. Whichever cap binds first closes the batch.
+MAX_BATCH_ARTIFACTS = 5000
+MAX_BATCH_SILVER_ROWS = 50000
+
+#: `staging.artifacts_queue_events` has no status CHECK and no FK, so this
+#: value with no hot queue row is valid by construction.
+RECOVERED_STATUS = "recovered"
+
+ID_PRESERVED = "preserved_queue_event"
+ID_ALLOCATED = "allocated_sequence"
+
+#: April pack members with no historical event row (2026-08-27 audit). They may
+#: stay unattributed only while they contribute no row to `to_import`; one that
+#: does gets a sequence value like any other artifact.
+UNATTRIBUTED_PACK_MEMBERS = 42276
+
+RECEIPT_TABLE = "public.plan145_recovery_batch_receipts"
+
+_RECEIPT_SELECT_SQL = (
+    f"SELECT manifest_sha256 FROM {RECEIPT_TABLE} WHERE batch_name = %s"
+)
+
+_RECEIPT_INSERT_SQL = f"""
+    INSERT INTO {RECEIPT_TABLE} (
+        batch_name, manifest_sha256, artifact_count, silver_count,
+        price_event_count, queue_event_count
+    ) VALUES (%s, %s, %s, %s, %s, %s)
+"""
+
+#: `event_at` is listed explicitly because the column defaults to `now()` and
+#: this is a historical capture, not news. The uuid cast is explicit because
+#: the parsed listing id arrives as text.
+_PRICE_EVENT_INSERT_SQL = """
+    INSERT INTO staging.price_observation_events (
+        listing_id, vin, price, make, model, artifact_id,
+        event_type, source, event_at
+    ) VALUES %s
+"""
+_PRICE_EVENT_TEMPLATE = "(%s::uuid, %s, %s, %s, %s, %s, %s, %s, %s)"
+_PRICE_EVENT_COLS = (
+    "listing_id", "vin", "price", "make", "model", "artifact_id",
+    "event_type", "source", "event_at",
+)
+
+#: `fetched_at` is the April capture time; `event_at` is left to its `now()`
+#: default because it records when the recovery ran, not when the page was
+#: captured. Mirrors `processing/sql/insert_artifact_event.sql` plus that split.
+_QUEUE_EVENT_INSERT_SQL = """
+    INSERT INTO staging.artifacts_queue_events (
+        artifact_id, status, minio_path, artifact_type,
+        fetched_at, listing_id, run_id
+    ) VALUES %s
+"""
+_QUEUE_EVENT_COLS = (
+    "artifact_id", "status", "minio_path", "artifact_type",
+    "fetched_at", "listing_id", "run_id",
+)
+
+#: One `nextval` per identity, in one round trip. `generate_series` is the
+#: whole point: it cannot be written as an arithmetic offset from a `max()`.
+_ALLOCATE_SQL = (
+    f"SELECT nextval('{ARTIFACT_ID_SEQUENCE}') FROM generate_series(1, %s)"
+)
+
+
+class ReceiptConflict(ReconcileError):
+    """The same batch name already carries a *different* assignment digest.
+
+    Not a retry: either the assignment set changed under a committed batch or
+    two different populations were given one name. Both digests are surfaced
+    and nothing is written.
+    """
+
+
+class ImportSetInvalid(ReconcileError):
+    """The import set violates an invariant that must hold before any write.
+
+    Slice 1 enforced "every ``to_import`` row has a non-NULL ``listing_id``"
+    through a path no real data has exercised -- both probes ran on a
+    materialized-only population where tier-1 identity always resolves. So the
+    invariant is re-validated here rather than assumed, and a violation stops
+    the run instead of skipping the row.
+    """
+
+
+# -- schema ----------------------------------------------------------------
+
+def _assigned_schema() -> Any:
+    import pyarrow as pa
+
+    return pa.schema([
+        pa.field("batch_name", pa.string()),
+        pa.field("run_id", pa.string()),
+        pa.field("object_key", pa.string()),
+        pa.field("artifact_id", pa.int64()),
+        pa.field("id_source", pa.string()),
+        pa.field("listing_id", pa.string()),
+        pa.field("fetched_at", pa.timestamp("us", tz="UTC")),
+        pa.field("input_kind", pa.string()),
+        pa.field("source_unit", pa.string()),
+        pa.field("silver_rows", pa.int32()),
+        pa.field("detail_rows", pa.int32()),
+        pa.field("assigned_at", pa.timestamp("us", tz="UTC")),
+    ])
+
+
+def assign_batch_name(run_id: str, index: int) -> str:
+    """Batch names are run-scoped so a receipt names one population forever."""
+    return f"{run_id}-b{index:05d}"
+
+
+def _assigned_key(batch_name: str) -> str:
+    return f"{ASSIGNED_PREFIX}/{batch_name}.parquet"
+
+
+def _assign_report_key(run_id: str) -> str:
+    return f"{ASSIGNED_PREFIX}/{run_id}-assign_report.json"
+
+
+# -- validation ------------------------------------------------------------
+
+def validate_import_listing_id(value: Any) -> Optional[str]:
+    """Return why this listing id cannot be imported, or None.
+
+    Both failures are stops. A NULL id cannot reach
+    ``staging.silver_observations`` (NOT NULL) and a non-UUID id cannot reach
+    ``staging.price_observation_events`` (uuid NOT NULL); either one arriving
+    here means an upstream classification is wrong, not that one row should be
+    dropped quietly.
+    """
+    if value is None or value == "":
+        return "null_listing_id"
+    if not _UUID_RE.fullmatch(str(value)):
+        return "non_uuid_listing_id"
+    return None
+
+
+# -- batching --------------------------------------------------------------
+
+def plan_import_batches(
+    objects: Sequence[dict[str, Any]], *,
+    max_artifacts: int = MAX_BATCH_ARTIFACTS,
+    max_silver_rows: int = MAX_BATCH_SILVER_ROWS,
+) -> list[dict[str, Any]]:
+    """Order by ``object_key`` and cut on whichever cap binds first.
+
+    An artifact is never split: every row of one source object shares one
+    identity and one transaction, so an object larger than ``max_silver_rows``
+    becomes a batch of its own rather than being cut in half.
+    """
+    batches: list[dict[str, Any]] = []
+    current: list[dict[str, Any]] = []
+    rows = 0
+    for obj in sorted(objects, key=lambda o: o["object_key"]):
+        obj_rows = int(obj["silver_rows"])
+        if current:
+            over_artifacts = len(current) + 1 > max_artifacts
+            over_rows = rows + obj_rows > max_silver_rows
+            if over_artifacts or over_rows:
+                batches.append({
+                    "objects": current, "silver_rows": rows,
+                    "bound_by": "artifacts" if over_artifacts else "silver_rows",
+                })
+                current, rows = [], 0
+        current.append(obj)
+        rows += obj_rows
+    if current:
+        batches.append({"objects": current, "silver_rows": rows, "bound_by": "end"})
+    return batches
+
+
+# -- identity --------------------------------------------------------------
+
+def build_queue_artifact_ids(
+    rows: Sequence[dict[str, Any]], wanted: Optional[set[str]] = None,
+) -> dict[str, int]:
+    """Map a normalized object path to its one historical ``artifact_id``.
+
+    The March-May artifact-event lake holds 4,906,595 detail event rows
+    reducing to 1,536,055 distinct object paths with **zero** paths mapped to
+    conflicting artifact ids, so this is a strict lookup. A conflict would
+    falsify that audit, so it stops the run rather than picking a side.
+
+    ``legacy_artifact_id`` is never consulted: ``raw_artifacts`` and
+    ``ops.artifacts_queue`` are separate sequences and the same integer names
+    two different artifacts across the cutover.
+    """
+    out: dict[str, int] = {}
+    for row in rows:
+        if row.get("artifact_type") != TARGET_ARTIFACT_TYPE:
+            continue
+        key = _bare_object_key(row.get("minio_path"))
+        if not key:
+            continue
+        if wanted is not None and key not in wanted:
+            continue
+        artifact_id = row.get("artifact_id")
+        if artifact_id is None:
+            continue
+        artifact_id = int(artifact_id)
+        previous = out.get(key)
+        if previous is None:
+            out[key] = artifact_id
+        elif previous != artifact_id:
+            raise ReconcileError(
+                f"object path {key} maps to conflicting queue-event artifact "
+                f"ids {previous} and {artifact_id}; the identity audit says no "
+                f"such path exists, so this is a stop rather than a choice"
+            )
+    return out
+
+
+def _load_queue_artifact_ids(client, bucket: str, wanted: set[str]) -> dict[str, int]:
+    """Read the frozen March-May artifact-event objects for identity only."""
+    identities: dict[str, int] = {}
+    month_prefixes = []
+    for prefix in _list_common_prefixes(
+        client, bucket, f"{QUEUE_EVENTS_PREFIX}/year={TARGET_YEAR}/",
+    ):
+        leaf = prefix.rstrip("/").rsplit("/", 1)[-1]
+        if not leaf.startswith("month="):
+            continue
+        try:
+            month = int(leaf.split("=", 1)[1])
+        except ValueError:
+            continue
+        if month in QUEUE_EVENT_MONTHS:
+            month_prefixes.append(prefix)
+    if len(month_prefixes) != len(QUEUE_EVENT_MONTHS):
+        raise ReconcileError(
+            f"expected queue-event months {QUEUE_EVENT_MONTHS}, found {month_prefixes}"
+        )
+    for prefix in sorted(month_prefixes):
+        for key in _list_keys(client, bucket, prefix, ".parquet"):
+            shard = build_queue_artifact_ids(
+                _read_parquet_rows(
+                    client, bucket, key,
+                    columns=["minio_path", "artifact_id", "artifact_type"],
+                ),
+                wanted,
+            )
+            for object_key, artifact_id in shard.items():
+                previous = identities.get(object_key)
+                if previous is None:
+                    identities[object_key] = artifact_id
+                elif previous != artifact_id:
+                    raise ReconcileError(
+                        f"object path {object_key} maps to conflicting "
+                        f"queue-event artifact ids {previous} and {artifact_id} "
+                        f"across shards"
+                    )
+    return identities
+
+
+def allocate_artifact_ids(cursor, count: int) -> list[int]:
+    """``count`` fresh sequence values, in one round trip.
+
+    Never ``max(artifact_id) + 1``: that races live inserts. ``nextval`` never
+    returns a value twice and does not roll back on abort, so a value lost
+    before the assignment shard is written is a harmless gap in a `bigserial`.
+    """
+    if count <= 0:
+        return []
+    cursor.execute(_ALLOCATE_SQL, (count,))
+    ids = [int(row[0]) for row in cursor.fetchall()]
+    if len(ids) != count:
+        raise ReconcileError(
+            f"{ARTIFACT_ID_SEQUENCE} returned {len(ids)} values for {count} artifacts"
+        )
+    return ids
+
+
+def assign_identities(
+    objects: Sequence[dict[str, Any]],
+    queue_ids: dict[str, int],
+    allocate,
+) -> list[dict[str, Any]]:
+    """Preserve where the path has a historical id, allocate otherwise.
+
+    ``allocate(n) -> list[int]`` is called exactly once, for the objects with
+    no preserved id, so a batch costs one sequence round trip.
+    """
+    needing = [o for o in objects if o["object_key"] not in queue_ids]
+    allocated = list(allocate(len(needing)))
+    if len(allocated) != len(needing):
+        raise ReconcileError(
+            f"allocator returned {len(allocated)} ids for {len(needing)} artifacts"
+        )
+    pending = iter(allocated)
+    out: list[dict[str, Any]] = []
+    for obj in objects:
+        preserved = queue_ids.get(obj["object_key"])
+        record = dict(obj)
+        if preserved is not None:
+            record["artifact_id"] = preserved
+            record["id_source"] = ID_PRESERVED
+        else:
+            record["artifact_id"] = next(pending)
+            record["id_source"] = ID_ALLOCATED
+        out.append(record)
+    return out
+
+
+# -- the four writes -------------------------------------------------------
+
+def build_recovery_silver_row(
+    row: dict[str, Any], artifact_id: int, vin_map: dict[str, Any],
+) -> dict[str, Any]:
+    """One ``staging.silver_observations`` row, from one ``to_import`` row.
+
+    The VIN snapshot only *fills* -- a parsed VIN always wins, and the snapshot
+    is never written back. Carousel rows are the reason it exists: the parse
+    stage deliberately leaves their ``vin`` NULL.
+    """
+    from processing.writers.silver_writer import _POSTGRES_COLS
+
+    out = {name: row.get(name) for name in _POSTGRES_COLS}
+    out["artifact_id"] = int(artifact_id)
+    out["listing_id"] = str(row["listing_id"])
+    if not out.get("vin"):
+        out["vin"] = vin_map.get(out["listing_id"])
+    out["listing_state"] = row.get("listing_state") or "active"
+    out["fetched_at"] = _as_utc_datetime(row.get("fetched_at"))
+    return out
+
+
+def build_recovery_price_event(silver_row: dict[str, Any]) -> Optional[dict[str, Any]]:
+    """The historical price event for one imported **detail** row, or None.
+
+    No carousel price events. Production mints those only for carousel hints
+    passing the search configuration active at capture time, and that April
+    configuration is not recoverable: applying today's filter, or writing all
+    carousel rows, would manufacture history. Carousel rows stay first-class
+    silver coverage.
+    """
+    if silver_row.get("source") != "detail":
+        return None
+    listing_id = silver_row.get("listing_id")
+    problem = validate_import_listing_id(listing_id)
+    if problem:
+        raise ImportSetInvalid(
+            f"{problem}: {listing_id!r} cannot mint a price event "
+            f"(staging.price_observation_events.listing_id is uuid NOT NULL)"
+        )
+    fetched_at = silver_row.get("fetched_at")
+    if fetched_at is None:
+        raise ImportSetInvalid(
+            f"listing {listing_id} has no capture time; a price event at "
+            f"now() would date an April capture as today"
+        )
+    return {
+        "listing_id": str(listing_id),
+        "vin": silver_row.get("vin"),
+        "price": silver_row.get("price"),
+        "make": silver_row.get("make"),
+        "model": silver_row.get("model"),
+        "artifact_id": silver_row["artifact_id"],
+        "event_type": (
+            "deleted" if silver_row.get("listing_state") == "unlisted" else "upserted"
+        ),
+        "source": "detail",
+        "event_at": fetched_at,
+    }
+
+
+def build_recovery_queue_event(
+    assignment: dict[str, Any], batch_name: str, bucket: str,
+) -> dict[str, Any]:
+    """One ``recovered`` artifact event per artifact -- never a queue row."""
+    return {
+        "artifact_id": int(assignment["artifact_id"]),
+        "status": RECOVERED_STATUS,
+        "minio_path": f"s3://{bucket}/{assignment['object_key']}",
+        "artifact_type": TARGET_ARTIFACT_TYPE,
+        "fetched_at": assignment["fetched_at"],
+        "listing_id": assignment["listing_id"],
+        "run_id": batch_name,
+    }
+
+
+def check_batch_receipt(cursor, batch_name: str, manifest_sha256: str) -> str:
+    """``"absent"`` or ``"committed"``; a different digest raises.
+
+    The staging tables are flushed and deleted, so this receipt is the only
+    thing that can answer "did this batch commit?" after an ambiguous client
+    response.
+    """
+    cursor.execute(_RECEIPT_SELECT_SQL, (batch_name,))
+    digests = {str(row[0]) for row in cursor.fetchall()}
+    if not digests:
+        return "absent"
+    if digests == {manifest_sha256}:
+        return "committed"
+    raise ReceiptConflict(
+        f"batch {batch_name} already has receipt digest(s) "
+        f"{sorted(digests)} but this assignment manifest hashes to "
+        f"{manifest_sha256}; refusing to write and refusing to overwrite the "
+        f"receipt"
+    )
+
+
+def write_import_batch(
+    conn, batch_name: str, manifest_sha256: str,
+    silver_rows: Sequence[dict[str, Any]],
+    price_events: Sequence[dict[str, Any]],
+    queue_events: Sequence[dict[str, Any]],
+) -> dict[str, Any]:
+    """All four writes on one connection, one commit, exceptions propagating.
+
+    Deliberately not ``shared.db.db_cursor`` (a connection and a commit per
+    call) and deliberately not ``write_silver_observations_postgres`` (returns
+    0 on failure and logs a warning). Either would turn a half-written batch
+    into a success.
+    """
+    from psycopg2.extras import execute_values
+
+    from processing.writers.silver_writer import _INSERT_SQL as _SILVER_INSERT_SQL
+    from processing.writers.silver_writer import _POSTGRES_COLS
+
+    try:
+        with conn.cursor() as cur:
+            if check_batch_receipt(cur, batch_name, manifest_sha256) == "committed":
+                conn.rollback()
+                return {"batch_name": batch_name, "skipped": True,
+                        "silver": 0, "price_events": 0, "queue_events": 0,
+                        "artifacts": 0}
+            if silver_rows:
+                execute_values(cur, _SILVER_INSERT_SQL, [
+                    tuple(row.get(col) for col in _POSTGRES_COLS)
+                    for row in silver_rows
+                ])
+            if price_events:
+                execute_values(cur, _PRICE_EVENT_INSERT_SQL, [
+                    tuple(event.get(col) for col in _PRICE_EVENT_COLS)
+                    for event in price_events
+                ], template=_PRICE_EVENT_TEMPLATE)
+            if queue_events:
+                execute_values(cur, _QUEUE_EVENT_INSERT_SQL, [
+                    tuple(event.get(col) for col in _QUEUE_EVENT_COLS)
+                    for event in queue_events
+                ])
+            cur.execute(_RECEIPT_INSERT_SQL, (
+                batch_name, manifest_sha256, len(queue_events), len(silver_rows),
+                len(price_events), len(queue_events),
+            ))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    return {"batch_name": batch_name, "skipped": False,
+            "silver": len(silver_rows), "price_events": len(price_events),
+            "queue_events": len(queue_events), "artifacts": len(queue_events)}
+
+
+# -- reading slice 1's outputs --------------------------------------------
+
+def _discover_compare_run(client, bucket: str) -> str:
+    """The one complete ``compare`` run, or a demand for ``--run-id``."""
+    candidates = []
+    for prefix in _list_common_prefixes(client, bucket, COMPARED_PREFIX + "/"):
+        run_id = prefix.rstrip("/").rsplit("/", 1)[-1]
+        if _compare_run_complete(f"{COMPARED_PREFIX}/{run_id}",
+                                 f"{INVENTORY_PREFIX}/{run_id}.json"):
+            candidates.append(run_id)
+    if len(candidates) == 1:
+        return candidates[0]
+    if not candidates:
+        raise ReconcileError(
+            f"no complete compare run under s3://{bucket}/{COMPARED_PREFIX}/; "
+            f"slice 1 must finish before slice 2 can assign"
+        )
+    raise ReconcileError(
+        f"{len(candidates)} complete compare runs ({', '.join(sorted(candidates))}); "
+        f"name one with --run-id"
+    )
+
+
+def _scan_to_import(client, bucket: str, run_dir: str
+                    ) -> tuple[dict[str, dict[str, Any]], list[dict[str, Any]], int]:
+    """Stream every ``to_import`` shard into per-object aggregates.
+
+    Only four columns are read and nothing per-row is retained: at the probe's
+    measured ratio the population is ~1.1M rows over ~190k artifacts, and
+    holding those rows to plan batches would cost gigabytes for a count.
+    """
+    objects: dict[str, dict[str, Any]] = {}
+    violations: list[dict[str, Any]] = []
+    total_rows = 0
+    keys = _list_keys(client, bucket, f"{run_dir}/to_import/", ".parquet")
+    if not keys:
+        raise ReconcileError(
+            f"no to_import shards under s3://{bucket}/{run_dir}/to_import/"
+        )
+    for key in keys:
+        unit = key.rsplit("/", 1)[-1].removesuffix(".parquet")
+        rows = _read_parquet_rows(
+            client, bucket, key,
+            columns=["object_key", "listing_id", "source", "fetched_at"],
+        )
+        for row in rows:
+            total_rows += 1
+            object_key = row.get("object_key")
+            if not object_key:
+                violations.append({"reason": "null_object_key", "unit": unit})
+                continue
+            problem = validate_import_listing_id(row.get("listing_id"))
+            if problem:
+                violations.append({"reason": problem, "unit": unit,
+                                   "object_key": object_key,
+                                   "listing_id": row.get("listing_id")})
+            if row.get("fetched_at") is None:
+                violations.append({"reason": "null_fetched_at", "unit": unit,
+                                   "object_key": object_key})
+            record = objects.get(object_key)
+            if record is None:
+                objects[object_key] = record = {
+                    "object_key": object_key, "source_unit": unit,
+                    "silver_rows": 0, "detail_rows": 0,
+                }
+            elif record["source_unit"] != unit:
+                # Stage 4 dedupes object keys across work units, so one object's
+                # rows live in exactly one shard. Two shards would mean a batch
+                # could not hold one artifact whole.
+                violations.append({"reason": "object_split_across_units",
+                                   "object_key": object_key,
+                                   "units": [record["source_unit"], unit]})
+            record["silver_rows"] += 1
+            if row.get("source") == "detail":
+                record["detail_rows"] += 1
+    return objects, violations, total_rows
+
+
+def _load_import_identity(client, bucket: str, wanted: set[str]
+                          ) -> dict[str, dict[str, Any]]:
+    """Per-object page identity, from Stage 4's frozen ``inputs`` shards.
+
+    The *page's* listing id is needed even for an object whose own detail row
+    landed in ``already_represented`` while its carousel rows did not: the
+    recovered queue event carries the primary listing, and a carousel row's
+    ``listing_id`` is the hint's, not the page's.
+    """
+    out: dict[str, dict[str, Any]] = {}
+    for key in _list_keys(client, bucket, PARSED_PREFIX + "/inputs/", ".parquet"):
+        for row in _read_parquet_rows(
+            client, bucket, key,
+            columns=["object_key", "listing_id", "fetched_at", "input_kind"],
+        ):
+            object_key = row.get("object_key")
+            if not object_key or object_key not in wanted:
+                continue
+            out[object_key] = {
+                "listing_id": (
+                    str(row["listing_id"]) if row.get("listing_id") else None
+                ),
+                "fetched_at": _as_utc_datetime(row.get("fetched_at")),
+                "input_kind": row.get("input_kind"),
+            }
+    return out
+
+
+def _load_vin_snapshot(client, bucket: str, run_id: str) -> dict[str, Any]:
+    """Slice 1's read-only ``ops.vin_to_listing`` snapshot. Never written back."""
+    key = f"{VIN_SNAPSHOT_PREFIX}/{run_id}.parquet"
+    rows = _read_parquet_rows(client, bucket, key, columns=["listing_id", "vin"])
+    return {str(r["listing_id"]): r.get("vin") for r in rows if r.get("listing_id")}
+
+
+def _read_assignment_shard(client, bucket: str, batch_name: str
+                           ) -> tuple[list[dict[str, Any]], str]:
+    """The assignment shard's rows and the SHA-256 of its exact bytes.
+
+    The digest is over the stored object, so the receipt is keyed to the bytes
+    a retry will read rather than to a re-derived summary of them.
+    """
+    import io
+
+    import pyarrow.parquet as pq
+
+    body = client.get_object(
+        Bucket=bucket, Key=_assigned_key(batch_name),
+    )["Body"].read()
+    rows = pq.read_table(io.BytesIO(body)).to_pylist()
+    return rows, hashlib.sha256(body).hexdigest()
+
+
+# -- assign ----------------------------------------------------------------
+
+def _no_allocation(count: int) -> list[int]:
+    """A dry run's allocator: it must not advance the sequence.
+
+    The sentinel is negative so that a dry-run record reaching a shard or a
+    database would be obviously wrong rather than plausibly right.
+    """
+    return [-1] * count
+
+
+def run_assign(args: argparse.Namespace) -> int:
+    from shared.minio import BUCKET as DEFAULT_BUCKET
+    from shared.minio import object_exists, write_bytes
+
+    bucket = args.bucket or DEFAULT_BUCKET
+    client = _s3_client()
+    apply = bool(args.apply)
+
+    run_id = args.run_id or _discover_compare_run(client, bucket)
+    run_dir = f"{COMPARED_PREFIX}/{run_id}"
+    if not _compare_run_complete(run_dir, f"{INVENTORY_PREFIX}/{run_id}.json"):
+        detail = (
+            f"compare run {run_id} has no inventory freeze and/or no "
+            f"compare_report.json, so its to_import family is not final"
+        )
+        if apply:
+            raise ReconcileError(detail + "; finish slice 1 before assigning")
+        logger.warning("%s (advisory: dry run measures, does not gate)", detail)
+
+    objects, violations, to_import_rows = _scan_to_import(client, bucket, run_dir)
+    identity = _load_import_identity(client, bucket, set(objects))
+    for object_key in sorted(objects):
+        context = identity.get(object_key)
+        if context is None:
+            violations.append({"reason": "no_parsed_input_row",
+                               "object_key": object_key})
+            continue
+        problem = validate_import_listing_id(context["listing_id"])
+        if problem:
+            violations.append({"reason": f"page_{problem}",
+                               "object_key": object_key,
+                               "listing_id": context["listing_id"]})
+        if context["fetched_at"] is None:
+            violations.append({"reason": "page_null_fetched_at",
+                               "object_key": object_key})
+        objects[object_key].update(context)
+
+    # Reported first, then refused: a run that dies on row three cannot tell
+    # the maintainer how large the problem is.
+    if violations:
+        counts = Counter(v["reason"] for v in violations)
+        print()
+        print("Plan 145 Stage 5 slice 2 -- assign STOPPED: the import set is invalid")
+        print("=" * 70)
+        for reason, count in sorted(counts.items()):
+            print(f"  {reason:<28} {count:>10,}")
+        for example in violations[:20]:
+            print(f"    e.g. {example}")
+        print()
+        raise ImportSetInvalid(
+            f"{len(violations):,} invalid to_import row(s) across "
+            f"{len(counts)} reason(s): {dict(sorted(counts.items()))}"
+        )
+
+    queue_ids = _load_queue_artifact_ids(client, bucket, set(objects))
+    batches = plan_import_batches(
+        list(objects.values()),
+        max_artifacts=args.max_artifacts, max_silver_rows=args.max_silver_rows,
+    )
+
+    # The caps decide batch membership, so re-assigning a run under different
+    # caps would silently reuse shards whose contents no longer match their
+    # name. The recorded caps make that a stop.
+    report_key = _assign_report_key(run_id)
+    if object_exists(report_key):
+        from shared.minio import read_json
+
+        previous = read_json(f"s3://{bucket}/{report_key}") or {}
+        prior_caps = previous.get("caps") or {}
+        if prior_caps and prior_caps != {"max_artifacts": args.max_artifacts,
+                                         "max_silver_rows": args.max_silver_rows}:
+            raise ReconcileError(
+                f"run {run_id} was already assigned under caps {prior_caps}; "
+                f"re-assigning under "
+                f"{{'max_artifacts': {args.max_artifacts}, "
+                f"'max_silver_rows': {args.max_silver_rows}}} would change every "
+                f"batch's membership without changing its name"
+            )
+
+    conn = None
+    cursor = None
+    census = Counter()
+    existing_batches = 0
+    written_batches = 0
+    batch_rows: list[dict[str, Any]] = []
+    try:
+        for index, batch in enumerate(batches, start=1):
+            batch_name = assign_batch_name(run_id, index)
+            key = _assigned_key(batch_name)
+            planned = {o["object_key"] for o in batch["objects"]}
+            if object_exists(key):
+                # Immutable: every retry reuses the recorded value. That is
+                # what makes apply idempotent at the identity level.
+                recorded, _digest = _read_assignment_shard(client, bucket, batch_name)
+                if {r["object_key"] for r in recorded} != planned:
+                    raise ReconcileError(
+                        f"assignment shard {key} holds a different object set "
+                        f"than batch {batch_name} now plans; the compare run or "
+                        f"the caps changed under an immutable assignment"
+                    )
+                for row in recorded:
+                    census[row["id_source"]] += 1
+                    if (row.get("input_kind") == "unpacked"
+                            and row["id_source"] == ID_ALLOCATED):
+                        census["unattributed_pack_member_now_import_bearing"] += 1
+                existing_batches += 1
+                batch_rows.append({"batch_name": batch_name, "existing": True,
+                                   "artifacts": len(recorded),
+                                   "silver_rows": batch["silver_rows"],
+                                   "bound_by": batch["bound_by"]})
+                continue
+
+            if apply and conn is None:
+                from shared.db import get_conn
+
+                conn = get_conn()
+                cursor = conn.cursor()
+
+            assigned = assign_identities(
+                batch["objects"], queue_ids,
+                (lambda n: allocate_artifact_ids(cursor, n)) if apply else _no_allocation,
+            )
+            now = datetime.now(timezone.utc)
+            records = [{
+                "batch_name": batch_name, "run_id": run_id,
+                "object_key": row["object_key"], "artifact_id": row["artifact_id"],
+                "id_source": row["id_source"], "listing_id": row["listing_id"],
+                "fetched_at": row["fetched_at"], "input_kind": row.get("input_kind"),
+                "source_unit": row["source_unit"],
+                "silver_rows": row["silver_rows"], "detail_rows": row["detail_rows"],
+                "assigned_at": now,
+            } for row in assigned]
+            for row in records:
+                census[row["id_source"]] += 1
+                if (row.get("input_kind") == "unpacked"
+                        and row["id_source"] == ID_ALLOCATED):
+                    census["unattributed_pack_member_now_import_bearing"] += 1
+            if apply:
+                # Before any database insertion, create-if-absent. A sequence
+                # value lost before this write is a harmless bigserial gap;
+                # after it, every retry reuses the recorded value.
+                _write_parquet_shard(key, _assigned_schema(), records)
+                if conn is not None:
+                    conn.commit()
+                written_batches += 1
+            batch_rows.append({"batch_name": batch_name, "existing": False,
+                               "artifacts": len(records),
+                               "silver_rows": batch["silver_rows"],
+                               "bound_by": batch["bound_by"]})
+    finally:
+        if cursor is not None:
+            cursor.close()
+        if conn is not None:
+            conn.commit()
+            conn.close()
+
+    bound = Counter(b["bound_by"] for b in batch_rows)
+    report = {
+        "plan": 145, "stage": 5, "slice": 2, "mode": "assign",
+        "run_id": run_id,
+        "apply": apply,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "caps": {"max_artifacts": args.max_artifacts,
+                 "max_silver_rows": args.max_silver_rows},
+        "to_import": {"rows": to_import_rows, "artifacts": len(objects)},
+        "identity_census": {
+            ID_PRESERVED: census[ID_PRESERVED],
+            ID_ALLOCATED: census[ID_ALLOCATED],
+            "unattributed_pack_members_now_import_bearing":
+                census["unattributed_pack_member_now_import_bearing"],
+            "unattributed_pack_members_total": UNATTRIBUTED_PACK_MEMBERS,
+        },
+        "batches": {
+            "total": len(batches),
+            "written": written_batches,
+            "already_present": existing_batches,
+            "bound_by": dict(sorted(bound.items())),
+        },
+        "batch_list": batch_rows,
+    }
+    if apply:
+        write_bytes(
+            report_key,
+            (json.dumps(report, indent=2, sort_keys=True, default=str) + "\n").encode(),
+            content_type="application/json",
+        )
+    _print_assign_report(report, apply=apply)
+    return 0
+
+
+def _print_assign_report(report: dict[str, Any], *, apply: bool) -> None:
+    census = report["identity_census"]
+    batches = report["batches"]
+    print()
+    print("Plan 145 Stage 5 slice 2 -- assign artifact identity")
+    print("=" * 66)
+    print(f"mode                 {'APPLY' if apply else 'DRY RUN'}")
+    print(f"run_id               {report['run_id']}")
+    print(f"to_import rows       {report['to_import']['rows']:>12,}")
+    print(f"artifacts            {report['to_import']['artifacts']:>12,}")
+    print()
+    print(f"  {ID_PRESERVED:<24}{census[ID_PRESERVED]:>12,}")
+    print(f"  {ID_ALLOCATED:<24}{census[ID_ALLOCATED]:>12,}")
+    print(f"  pack members newly attributed "
+          f"{census['unattributed_pack_members_now_import_bearing']:,}"
+          f" of {census['unattributed_pack_members_total']:,}")
+    print()
+    print(f"batches              {batches['total']:>12,}"
+          f"  (written {batches['written']:,}, already present "
+          f"{batches['already_present']:,})")
+    print(f"caps                 {report['caps']['max_artifacts']:,} artifacts / "
+          f"{report['caps']['max_silver_rows']:,} rows; bound by "
+          f"{batches['bound_by']}")
+    if apply:
+        print(f"\nwrote {ASSIGNED_PREFIX}/{report['run_id']}-b*.parquet "
+              f"(create-if-absent) and the assign report")
+    else:
+        print(f"\nDRY RUN: planned only. No shard was written and "
+              f"{ARTIFACT_ID_SEQUENCE} was not touched.")
+    print()
+
+
+# -- apply -----------------------------------------------------------------
+
+def run_apply(args: argparse.Namespace) -> int:
+    import tempfile
+
+    import pyarrow.parquet as pq
+
+    from shared.minio import BUCKET as DEFAULT_BUCKET
+    from shared.minio import object_exists
+
+    bucket = args.bucket or DEFAULT_BUCKET
+    client = _s3_client()
+    apply = bool(args.apply)
+
+    run_id = args.run_id or _discover_compare_run(client, bucket)
+    all_names = sorted(
+        key.rsplit("/", 1)[-1].removesuffix(".parquet")
+        for key in _list_keys(client, bucket, f"{ASSIGNED_PREFIX}/{run_id}-b", ".parquet")
+    )
+    if not all_names:
+        raise ReconcileError(
+            f"no assignment shards for run {run_id}; run `assign --apply` first"
+        )
+    selected = list(args.batch) if args.batch else all_names
+    unknown = [name for name in selected if name not in all_names]
+    if unknown:
+        raise ReconcileError(
+            f"unknown batch name(s) {unknown}; this run has {len(all_names)} batches "
+            f"from {all_names[0]} to {all_names[-1]}"
+        )
+    if apply and len(selected) > 1 and not args.maintainer_approval:
+        raise ReconcileError(
+            f"--apply selected {len(selected)} batches. Plan 145 allows nothing "
+            f"beyond the canary until slice 3 closes the live-state proof and the "
+            f"maintainer approves by name: pass one --batch, or "
+            f"--maintainer-approval <name>"
+        )
+
+    # The blast radius, from the assignment shards, before anything is written.
+    plan_rows: list[dict[str, Any]] = []
+    for name in selected:
+        records, digest = _read_assignment_shard(client, bucket, name)
+        plan_rows.append({
+            "batch_name": name, "digest": digest, "records": records,
+            "artifacts": len(records),
+            "silver_rows": sum(int(r["silver_rows"]) for r in records),
+            "detail_rows": sum(int(r["detail_rows"]) for r in records),
+        })
+    _print_apply_plan(run_id, plan_rows, apply=apply,
+                      approval=args.maintainer_approval)
+
+    vin_map = _load_vin_snapshot(client, bucket, run_id)
+    run_dir = f"{COMPARED_PREFIX}/{run_id}"
+
+    # Batches are ordered by object_key while a to_import shard is one Stage 4
+    # work unit, and materialized keys are content-derived -- so the two orders
+    # interleave and almost every batch touches almost every shard. Fetching
+    # per batch would cost batches x shards requests; localising once costs
+    # shards, and every batch then reads from disk. Same shape as compare.
+    tmp = tempfile.TemporaryDirectory(prefix="p145apply-")
+    tmpdir = Path(tmp.name)
+    local_units: dict[str, Path] = {}
+
+    conn = None
+    results: list[dict[str, Any]] = []
+    totals = Counter()
+    try:
+        for unit in sorted({r["source_unit"] for e in plan_rows for r in e["records"]}):
+            key = f"{run_dir}/to_import/{unit}.parquet"
+            if not object_exists(key):
+                raise ReconcileError(
+                    f"assignment names to_import unit {unit} but "
+                    f"s3://{bucket}/{key} is missing"
+                )
+            dest = tmpdir / f"{unit}.parquet"
+            dest.write_bytes(client.get_object(Bucket=bucket, Key=key)["Body"].read())
+            local_units[unit] = dest
+
+        if apply:
+            from shared.db import get_conn
+
+            conn = get_conn()
+        for entry in plan_rows:
+            batch_name = entry["batch_name"]
+            by_object = {r["object_key"]: r for r in entry["records"]}
+            units = sorted({r["source_unit"] for r in entry["records"]})
+            silver_rows: list[dict[str, Any]] = []
+            price_events: list[dict[str, Any]] = []
+            seen_rows: Counter[str] = Counter()
+            for unit in units:
+                for row in pq.read_table(local_units[unit]).to_pylist():
+                    object_key = row.get("object_key")
+                    assignment = by_object.get(object_key)
+                    if assignment is None:
+                        continue
+                    seen_rows[object_key] += 1
+                    silver = build_recovery_silver_row(
+                        row, assignment["artifact_id"], vin_map,
+                    )
+                    silver_rows.append(silver)
+                    event = build_recovery_price_event(silver)
+                    if event is not None:
+                        price_events.append(event)
+            drift = [
+                {"object_key": k, "assigned": int(by_object[k]["silver_rows"]),
+                 "found": seen_rows.get(k, 0)}
+                for k in by_object
+                if seen_rows.get(k, 0) != int(by_object[k]["silver_rows"])
+            ]
+            if drift:
+                raise ReconcileError(
+                    f"batch {batch_name}: {len(drift)} artifact(s) no longer "
+                    f"carry the row count their assignment recorded, e.g. "
+                    f"{drift[:5]}; the compare output changed under an immutable "
+                    f"assignment"
+                )
+            queue_events = [
+                build_recovery_queue_event(by_object[k], batch_name, bucket)
+                for k in sorted(by_object)
+            ]
+
+            if not apply:
+                receipt = "unknown"
+                results.append({
+                    "batch_name": batch_name, "receipt": receipt, "skipped": False,
+                    "artifacts": len(queue_events), "silver": len(silver_rows),
+                    "price_events": len(price_events),
+                    "queue_events": len(queue_events),
+                })
+            else:
+                outcome = write_import_batch(
+                    conn, batch_name, entry["digest"],
+                    silver_rows, price_events, queue_events,
+                )
+                results.append({**outcome, "receipt":
+                                "already_committed" if outcome["skipped"] else "written"})
+                logger.info(
+                    "batch %s: %s (%d artifacts, %d silver, %d price events)",
+                    batch_name, "skipped -- receipt already present"
+                    if outcome["skipped"] else "committed",
+                    outcome["artifacts"], outcome["silver"], outcome["price_events"],
+                )
+            totals["silver"] += results[-1]["silver"]
+            totals["price_events"] += results[-1]["price_events"]
+            totals["queue_events"] += results[-1]["queue_events"]
+            totals["artifacts"] += results[-1]["artifacts"]
+    finally:
+        if conn is not None:
+            conn.close()
+        tmp.cleanup()
+
+    _print_apply_report(run_id, results, totals, apply=apply)
+    return 0
+
+
+_APPLY_WRITES = (
+    "staging.silver_observations",
+    "staging.price_observation_events",
+    "staging.artifacts_queue_events",
+    RECEIPT_TABLE,
+)
+_APPLY_NEVER_TOUCHES = (
+    "ops.artifacts_queue",
+    "ops.price_observations",
+    "ops.vin_to_listing",
+    "ops.blocked_cooldown",
+    "ops.detail_scrape_claims",
+)
+
+
+def _print_apply_plan(run_id: str, plan_rows: Sequence[dict[str, Any]], *,
+                      apply: bool, approval: Optional[str]) -> None:
+    """The blast radius, printed before the first write of a production run."""
+    print()
+    print("Plan 145 Stage 5 slice 2 -- apply the historical write set")
+    print("=" * 66)
+    print(f"mode                 {'APPLY' if apply else 'DRY RUN'}")
+    print(f"run_id               {run_id}")
+    if approval:
+        print(f"maintainer approval  {approval}")
+    print(f"batches selected     {len(plan_rows):>12,}")
+    print(f"artifacts            {sum(r['artifacts'] for r in plan_rows):>12,}")
+    print(f"silver rows          {sum(r['silver_rows'] for r in plan_rows):>12,}")
+    print(f"price events (max)   {sum(r['detail_rows'] for r in plan_rows):>12,}")
+    print(f"queue events         {sum(r['artifacts'] for r in plan_rows):>12,}")
+    print()
+    print("writes               " + "\n                     ".join(_APPLY_WRITES))
+    print("never touched        " + "\n                     ".join(_APPLY_NEVER_TOUCHES))
+    print()
+
+
+def _print_apply_report(run_id: str, results: Sequence[dict[str, Any]],
+                        totals: Counter, *, apply: bool) -> None:
+    skipped = sum(1 for r in results if r.get("skipped"))
+    print()
+    print(f"batches processed    {len(results):>12,}"
+          f"  ({skipped:,} skipped on an existing receipt)")
+    print(f"silver rows          {totals['silver']:>12,}")
+    print(f"price events         {totals['price_events']:>12,}")
+    print(f"queue events         {totals['queue_events']:>12,}")
+    if apply:
+        print(f"\ncommitted {len(results) - skipped:,} batch(es) of run {run_id}, "
+              f"one transaction each, receipt included.")
+    else:
+        print("\nDRY RUN: built and validated the write set only; no statement "
+              "was issued and no row was written.")
+    print()
+
+
+# --------------------------------------------------------------------------
 # CLI
 # --------------------------------------------------------------------------
 
@@ -3882,6 +4974,55 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
                       help="Log progress every N classified units.")
     cmp_.add_argument("--log-level", default="INFO", help="DEBUG | INFO | WARNING")
     cmp_.set_defaults(func=run_compare)
+
+    asg = sub.add_parser(
+        "assign",
+        help="Stage 5 slice 2: assign one artifact_id per source object and "
+             "write the immutable per-batch assignment shards. The only "
+             "database statement it issues is nextval on the sequence.",
+    )
+    asg.add_argument("--apply", action="store_true",
+                     help="Allocate sequence values and write the assignment "
+                          "shards. Without it the run plans and reports only, "
+                          "and the sequence is never touched.")
+    asg.add_argument("--bucket", default=None, help="Override MINIO_BUCKET.")
+    asg.add_argument("--run-id", default=None,
+                     help="The compare run to assign. Default: the one complete "
+                          "run under recovery/plan145/compared/.")
+    asg.add_argument("--max-artifacts", type=int, default=MAX_BATCH_ARTIFACTS,
+                     help=f"Artifacts per batch (default {MAX_BATCH_ARTIFACTS}). "
+                          f"Changing it changes every batch's membership, so a "
+                          f"run already assigned under other caps is refused.")
+    asg.add_argument("--max-silver-rows", type=int, default=MAX_BATCH_SILVER_ROWS,
+                     help=f"Silver rows per batch (default {MAX_BATCH_SILVER_ROWS}). "
+                          f"An artifact is never split, so one object larger than "
+                          f"this becomes a batch of its own.")
+    asg.add_argument("--log-level", default="INFO", help="DEBUG | INFO | WARNING")
+    asg.set_defaults(func=run_assign)
+
+    app = sub.add_parser(
+        "apply",
+        help="Stage 5 slice 2: write one batch's silver rows, historical price "
+             "events, recovered queue events and receipt in one transaction. "
+             "Never inserts into ops.artifacts_queue.",
+    )
+    app.add_argument("--apply", action="store_true",
+                     help="Actually write. Without it the run builds and "
+                          "validates the whole write set, prints the blast "
+                          "radius and issues no statement.")
+    app.add_argument("--bucket", default=None, help="Override MINIO_BUCKET.")
+    app.add_argument("--run-id", default=None,
+                     help="The compare run whose assignment shards to apply.")
+    app.add_argument("--batch", action="append", default=[],
+                     help="Batch name to apply; repeatable. Default: every batch "
+                          "of the run, which --apply refuses without "
+                          "--maintainer-approval.")
+    app.add_argument("--maintainer-approval", default=None, metavar="NAME",
+                     help="Named maintainer approval for writing more than one "
+                          "batch. Plan 145 allows nothing beyond the canary until "
+                          "slice 3 closes the live-state proof.")
+    app.add_argument("--log-level", default="INFO", help="DEBUG | INFO | WARNING")
+    app.set_defaults(func=run_apply)
 
     return parser.parse_args(argv)
 
