@@ -3037,6 +3037,22 @@ def test_authoritative_assign_does_not_see_a_probe_only_compare_run(
         mod.run_assign(mod.parse_args(["assign", "--apply"]))    # authoritative
 
 
+def test_probe_assign_with_no_probe_compare_says_to_run_one_not_to_finish_slice_1(
+        tmp_path, monkeypatch):
+    # The mirror of the test above, and the coverage for roots.probe: when a
+    # probe run finds nothing, the fix is a probe compare -- telling a
+    # maintainer "slice 1 must finish" would send them to wait on the very
+    # thing this mode exists to route around.
+    import scripts.reconcile_april_detail as mod
+
+    auth_store, _ = _slice2_fixture_store(tmp_path)   # authoritative outputs only
+    _patch_slice2_io(monkeypatch, auth_store, _FakeWriteConn())
+
+    with pytest.raises(ReconcileError,
+                       match=r"run `compare --probe --apply` first"):
+        mod.run_assign(mod.parse_args(["assign", "--probe", "--apply"]))
+
+
 def test_authoritative_assign_with_both_prefixes_present_reads_the_authoritative_run(
         tmp_path, monkeypatch):
     # The true reverse of the "probe ignores authoritative" case: both runs
@@ -3073,7 +3089,10 @@ def test_probe_assign_writes_only_under_assigned_probe_and_apply_cannot_see_it(
 
     probe_keys = [k for k in store if k.startswith("recovery/plan145/assigned_probe/")]
     assert _probe_assigned_key(assign_batch_name(_RUN, 1)) in probe_keys
-    assert f"recovery/plan145/assigned_probe/{_RUN}-assign_report.json" in probe_keys
+    report_key = f"recovery/plan145/assigned_probe/{_RUN}-assign_report.json"
+    assert report_key in probe_keys
+    # the report carries the durable record that this run was disposable
+    assert json.loads(store[report_key])["probe"] is True
     # nothing landed in the authoritative prefix
     assert not any(k.startswith("recovery/plan145/assigned/") for k in store)
 
