@@ -2198,7 +2198,9 @@ def _slice2_fixture_store(tmp_path):
             _ti_row(l4, _PACK_ORPHAN, listing_state="unlisted", make="Kia",
                     model="Niro"),
         ])
-    store[f"recovery/plan145/compared/{_RUN}/compare_report.json"] = b"{}"
+    # a post-block-filter compare report (carries the blocked_excluded section)
+    store[f"recovery/plan145/compared/{_RUN}/compare_report.json"] = json.dumps(
+        {"blocked_excluded": {"rows": 0, "objects": 0}}).encode()
     store[f"recovery/plan145/inventory/{_RUN}.json"] = b"{}"
 
     store["recovery/plan145/parsed/inputs/materialized-a.parquet"] = \
@@ -2248,10 +2250,13 @@ def _patch_slice2_io(monkeypatch, store, conn=None):
         minio, "write_bytes",
         lambda k, data, content_type=None: store.__setitem__(k, bytes(data)),
     )
-    monkeypatch.setattr(
-        minio, "read_json",
-        lambda path: json.loads(store[path.split("bronze/")[-1]].decode()),
-    )
+    def _read_json(path):
+        # shared.minio.read_json returns None for a missing object -- model that
+        # rather than KeyError, so fail-closed gates keyed on it are testable.
+        key = path.split("bronze/")[-1]
+        return json.loads(store[key].decode()) if key in store else None
+
+    monkeypatch.setattr(minio, "read_json", _read_json)
     monkeypatch.setattr(db, "get_conn", lambda: conn)
     return conn
 
@@ -4081,3 +4086,39 @@ def test_assign_refuses_a_compare_run_that_predates_the_block_page_filter(
     }).encode()
     _patch_slice2_io(monkeypatch, store, _FakeWriteConn(next_id=9_000_001))
     assert mod.run_assign(mod.parse_args(["assign", "--apply"])) == 0
+
+
+def test_apply_refuses_assignment_shards_from_a_pre_block_filter_compare_run(
+        tmp_path, monkeypatch):
+    import scripts.reconcile_april_detail as mod
+
+    # assign refuses a stale run going forward; this is the same refusal for a
+    # run whose assignment shards already exist -- apply re-reads them
+    # independently and is the last check before the INSERT.
+    store, _ = _slice2_fixture_store(tmp_path)
+    _patch_slice2_io(monkeypatch, store, _FakeWriteConn(next_id=9_000_001))
+    mod.run_assign(mod.parse_args(["assign", "--apply"]))     # shards now exist
+    batch_name = assign_batch_name(_RUN, 1)
+
+    # the compare run turns out to predate the filter. --run-id is explicit:
+    # that is the path with no _compare_run_complete predecessor.
+    pre_filter = json.dumps({
+        "families": {"already_represented": 10, "to_import": 3, "sum": 13},
+    }).encode()
+    store[f"recovery/plan145/compared/{_RUN}/compare_report.json"] = pre_filter
+    conn = _FakeWriteConn()
+    _patch_slice2_io(monkeypatch, store, conn)
+    with pytest.raises(ReconcileError, match="predates the block-page filter"):
+        mod.run_apply(mod.parse_args(
+            ["apply", "--apply", "--run-id", _RUN, "--batch", batch_name]))
+    assert conn.sql == []                                     # no INSERT issued
+
+    # a missing report fails closed under --apply (keyed on apply, not the
+    # report's truthiness), and a dry run only warns
+    del store[f"recovery/plan145/compared/{_RUN}/compare_report.json"]
+    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+    with pytest.raises(ReconcileError, match="predates the block-page filter"):
+        mod.run_apply(mod.parse_args(
+            ["apply", "--apply", "--run-id", _RUN, "--batch", batch_name]))
+    assert mod.run_apply(mod.parse_args(
+        ["apply", "--run-id", _RUN, "--batch", batch_name])) == 0

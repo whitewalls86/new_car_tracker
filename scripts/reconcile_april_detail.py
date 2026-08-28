@@ -2927,6 +2927,41 @@ def _compare_run_complete(run_dir: str, inv_key: str) -> bool:
     return object_exists(inv_key) and object_exists(f"{run_dir}/compare_report.json")
 
 
+def refuse_stale_compare_run(bucket: str, run_dir: str, run_id: str, *,
+                             apply: bool, probe: bool) -> None:
+    """Refuse a compare run that predates the block-page filter.
+
+    A ``compare_report.json`` with no ``blocked_excluded`` section is by
+    construction a run from before that filter. Its ``to_import`` family may
+    carry block pages in a shape the per-row check in :func:`_scan_to_import`
+    cannot see -- a block page's detail row can sit in ``already_represented``
+    while only its junk carousel rows reach ``to_import``.
+
+    Both ``assign`` and ``apply`` re-read the shards independently, so both
+    call this; ``apply`` especially, as the last check before the INSERT and
+    the one mode reachable from assignment shards written by an older build.
+
+    Keyed on ``apply``, not the report's truthiness: :func:`shared.minio.read_json`
+    returns ``None`` for a missing object, so a missing or empty report must
+    refuse an ``--apply`` run, not skip the gate. A dry run warns.
+    """
+    from shared.minio import read_json
+
+    report = read_json(f"s3://{bucket}/{run_dir}/compare_report.json") or {}
+    if "blocked_excluded" in report:
+        return
+    detail = (
+        f"compare run {run_id} predates the block-page filter (its "
+        f"compare_report.json has no 'blocked_excluded' section), so its "
+        f"to_import family may carry block pages the per-row check cannot see "
+        f"-- re-run `compare{' --probe' if probe else ''}` and re-assign before "
+        f"applying"
+    )
+    if apply:
+        raise ReconcileError(detail)
+    logger.warning("%s (advisory: dry run measures, does not gate)", detail)
+
+
 # -- output schemas -----------------------------------------------------
 
 def _compared_schema(family: str) -> Any:
@@ -4657,24 +4692,12 @@ def run_assign(args: argparse.Namespace) -> int:
             raise ReconcileError(detail + "; finish slice 1 before assigning")
         logger.warning("%s (advisory: dry run measures, does not gate)", detail)
 
-    # A compare_report.json with no `blocked_excluded` section is by
-    # construction a run that predates the block-page filter. The per-row
-    # check below only sees the detail row that carries the signature, and a
-    # block page's detail row can sit in `already_represented` while only its
-    # junk carousel rows reach `to_import` -- so that check cannot see the
-    # whole class. Refuse the stale run outright; re-run `compare` first.
-    compare_report = read_json(f"s3://{bucket}/{run_dir}/compare_report.json") or {}
-    if compare_report and "blocked_excluded" not in compare_report:
-        detail = (
-            f"compare run {run_id} predates the block-page filter (its "
-            f"compare_report.json has no 'blocked_excluded' section), so its "
-            f"to_import family may carry block pages the per-row check cannot "
-            f"see -- re-run `compare{' --probe' if probe else ''}` before "
-            f"assigning"
-        )
-        if apply:
-            raise ReconcileError(detail)
-        logger.warning("%s (advisory: dry run measures, does not gate)", detail)
+    # The per-row check in _scan_to_import only sees the detail row that
+    # carries the signature; a block page's detail row can sit in
+    # already_represented while only its junk carousel rows reach to_import.
+    # Refuse the whole stale run rather than trust the per-row check to catch
+    # every shape of leakage.
+    refuse_stale_compare_run(bucket, run_dir, run_id, apply=apply, probe=probe)
 
     objects, violations, to_import_rows = _scan_to_import(client, bucket, run_dir)
     identity = _load_import_identity(client, bucket, set(objects))
@@ -4946,6 +4969,14 @@ def run_apply(args: argparse.Namespace) -> int:
             f"unknown batch name(s) {unknown}; this run has {len(all_names)} batches "
             f"from {all_names[0]} to {all_names[-1]}"
         )
+
+    run_dir = f"{roots.compared}/{run_id}"
+    # apply re-reads the shards independently and is the last check before the
+    # INSERT -- and the one mode reachable from assignment shards an older
+    # build wrote. `assign` refuses a stale run going forward; this refuses one
+    # whose shards already exist.
+    refuse_stale_compare_run(bucket, run_dir, run_id, apply=apply, probe=probe)
+
     # The blast radius, from the assignment shards, before anything is written.
     plan_rows: list[dict[str, Any]] = []
     for name in selected:
@@ -4982,7 +5013,6 @@ def run_apply(args: argparse.Namespace) -> int:
         )
 
     vin_map = _load_vin_snapshot(client, bucket, run_id, roots.vin_snapshot)
-    run_dir = f"{roots.compared}/{run_id}"
 
     # Batches are ordered by object_key while a to_import shard is one Stage 4
     # work unit, and materialized keys are content-derived -- so the two orders

@@ -186,15 +186,19 @@ measurement). Two things are surfaced for a maintainer:
   quarantined detail row can carry a value, an `apply and not probe` run
   **stops** (a dry run or probe warns).
 
-`assign` guards this two ways. First, it **refuses any run whose
-`compare_report.json` has no `blocked_excluded` section** — such a report is by
-construction a compare run that predates the filter, and its `to_import` family
-may carry block pages in a shape the per-row check cannot see (a block page's
-detail row can sit in `already_represented` while only its junk carousel rows
-reach `to_import`). Re-run `compare` first. Second, it re-checks the detail-row
-signature on every `to_import` row as defence in depth and refuses the
-population — reporting the whole cohort's size, capped examples — which catches
-the plain case where the detail row itself is in `to_import`.
+`assign` **and** `apply` both **refuse any run whose `compare_report.json` has
+no `blocked_excluded` section** — such a report is by construction a compare run
+that predates the filter, and its `to_import` family may carry block pages in a
+shape the per-row check cannot see (a block page's detail row can sit in
+`already_represented` while only its junk carousel rows reach `to_import`). Both
+modes re-read the shards independently, so both check; `apply` especially, as
+the last stop before the INSERT and the one mode reachable from assignment
+shards an older build wrote. The refusal is keyed on `--apply`, not on the
+report being present, so a missing or empty report fails closed. Re-run
+`compare` (and re-`assign`) first. In addition, `assign` re-checks the
+detail-row signature on every `to_import` row as defence in depth and refuses
+the population — reporting the whole cohort's size, capped examples — which
+catches the plain case where the detail row itself is in `to_import`.
 
 The carousel fan-out and multi-candidate share are now measured over importable
 objects only (the `blocked_excluded` objects are out of both numerator and
