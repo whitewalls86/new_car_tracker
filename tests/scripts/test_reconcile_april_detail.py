@@ -3037,6 +3037,31 @@ def test_authoritative_assign_does_not_see_a_probe_only_compare_run(
         mod.run_assign(mod.parse_args(["assign", "--apply"]))    # authoritative
 
 
+def test_authoritative_assign_with_both_prefixes_present_reads_the_authoritative_run(
+        tmp_path, monkeypatch):
+    # The true reverse of the "probe ignores authoritative" case: both runs
+    # exist, and an authoritative assign must pick the authoritative one.
+    import pyarrow.parquet as pq
+
+    import scripts.reconcile_april_detail as mod
+
+    auth_store, _ = _slice2_fixture_store(tmp_path)
+    store = {**auth_store, **_to_probe_store(auth_store)}
+    # an object only the PROBE run's to_import family carries
+    store[f"recovery/plan145/compared_probe/{_RUN}/to_import/materialized-x.parquet"] = \
+        _write_compared_shard(
+            tmp_path / "ti-probe-x.parquet",
+            [_ti_row("eeeeeeee-5555-5555-5555-555555555555", _AUTH_ONLY_KEY)],
+        )
+    _patch_slice2_io(monkeypatch, store, _FakeWriteConn(next_id=9_000_001))
+    assert mod.run_assign(mod.parse_args(["assign", "--apply"])) == 0
+
+    key = _assigned_key(assign_batch_name(_RUN, 1))
+    rows = pq.read_table(io.BytesIO(store[key])).to_pylist()
+    assert _AUTH_ONLY_KEY not in {r["object_key"] for r in rows}
+    assert not any(k.startswith("recovery/plan145/assigned_probe/") for k in store)
+
+
 def test_probe_assign_writes_only_under_assigned_probe_and_apply_cannot_see_it(
         tmp_path, monkeypatch):
     import scripts.reconcile_april_detail as mod
@@ -3137,11 +3162,26 @@ def test_a_constraint_violation_in_probe_apply_is_not_swallowed_by_the_rollback(
     assert conn.rollbacks >= 1          # the exception path rolled back and re-raised
 
 
+def test_apply_probe_apply_refuses_a_bare_run_and_wants_an_explicit_batch(
+        tmp_path, monkeypatch):
+    # The approval gate was the only bound on how much a bare apply --apply did;
+    # a probe is exempt from approval, so it needs its own bound. --batch is it.
+    import scripts.reconcile_april_detail as mod
+
+    store, _ = _seed_probe_assignment(tmp_path, monkeypatch)
+    conn = _FakeWriteConn()
+    _patch_slice2_io(monkeypatch, store, conn)
+    with pytest.raises(ReconcileError, match="no row budget"):
+        mod.run_apply(mod.parse_args(["apply", "--probe", "--apply"]))
+    assert conn.sql == []
+
+
 def test_probe_apply_refuses_maintainer_approval_and_ignores_the_canary_budget(
         tmp_path, monkeypatch):
     import scripts.reconcile_april_detail as mod
 
     store, _ = _seed_probe_assignment(tmp_path, monkeypatch)
+    batch = assign_batch_name(_RUN, 1)
 
     # 1. --probe + --maintainer-approval is refused outright: a probe never
     #    commits, so there is nothing to approve.
@@ -3149,16 +3189,18 @@ def test_probe_apply_refuses_maintainer_approval_and_ignores_the_canary_budget(
     _patch_slice2_io(monkeypatch, store, conn)
     with pytest.raises(ReconcileError, match="never commits"):
         mod.run_apply(mod.parse_args(
-            ["apply", "--probe", "--apply", "--maintainer-approval", "someone"]))
+            ["apply", "--probe", "--apply", "--batch", batch,
+             "--maintainer-approval", "someone"]))
     assert conn.sql == []
 
     # 2. The canary row budget caps a commit; a probe writes nothing durable, so
-    #    a budget of one row does not stop it (Non-negotiable 4).
+    #    a budget of one row does not stop a named-batch probe (Non-negotiable 4).
     conn = _FakeWriteConn()
     _record_execute_values(monkeypatch, conn)
     _patch_slice2_io(monkeypatch, store, conn)
     assert mod.run_apply(mod.parse_args(
-        ["apply", "--probe", "--apply", "--max-unapproved-rows", "1"])) == 0
+        ["apply", "--probe", "--apply", "--batch", batch,
+         "--max-unapproved-rows", "1"])) == 0
     assert conn.commits == 0 and conn.rollbacks >= 1
 
 

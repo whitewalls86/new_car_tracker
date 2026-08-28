@@ -64,6 +64,17 @@ The same orthogonality holds for `assign` and `apply`; the full matrix is below.
 canary row budget does not apply to a probe (it caps a commit; a probe has
 nothing to cap).
 
+Because a probe has no row budget, `apply --probe --apply` **requires an
+explicit `--batch`** — a bare run would replay the whole assigned population
+against production Postgres (rolled back, but still WAL and dead tuples), and
+one batch proves every constraint and coercion the probe exists to check.
+
+`compute_run_id` hashes the frozen input inventory, so each `compare --probe
+--apply` as Stage 4 advances mints a **new** `run_id`. Once a second probe
+compare lands, `assign --probe` / `apply --probe` stop auto-selecting and need
+`--run-id`; the "one complete run" default below is only reliable for the
+authoritative prefix.
+
 ## Universal flags
 
 | flag | default | meaning |
@@ -158,9 +169,9 @@ and emit no rows.
 | flag | default | meaning |
 |---|---|---|
 | `--apply` | off | actually write; without it the whole write set is built, validated and printed |
-| `--probe` | off | apply a `compared_probe/` run from `assigned_probe/`. `--probe --apply` runs every statement (silver insert, price events, queue events, receipt) against real Postgres in one transaction, then `ROLLBACK`. Never commits; the canary budget does not apply; `--maintainer-approval` is refused alongside it. |
+| `--probe` | off | apply a `compared_probe/` run from `assigned_probe/`. `--probe --apply` runs every statement (silver insert, price events, queue events, receipt) against real Postgres in one transaction, then `ROLLBACK`. Never commits; the canary budget does not apply; `--maintainer-approval` is refused alongside it; **`--batch` is required**. |
 | `--run-id` | the one complete run | which run's assignment shards to apply |
-| `--batch` | every batch | batch name, repeatable |
+| `--batch` | every batch (authoritative); **required** under `--probe --apply` | batch name, repeatable |
 | `--max-unapproved-rows` | canary budget | silver rows an authoritative `--apply` may write without named approval (a probe writes nothing durable, so it is exempt) |
 | `--maintainer-approval NAME` | none | named approval to exceed that budget; refused if combined with `--probe` |
 

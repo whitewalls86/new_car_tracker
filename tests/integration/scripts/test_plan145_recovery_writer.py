@@ -16,6 +16,7 @@ import hashlib
 import uuid
 from datetime import datetime, timedelta, timezone
 
+import psycopg2.errors
 import pytest
 
 from scripts.reconcile_april_detail import (
@@ -313,9 +314,10 @@ def test_a_probe_apply_still_lets_a_constraint_fire_at_statement_time(
         _one_object_batch(recovery_batch, writer_conn)
     # artifact_id is NOT NULL on staging.artifacts_queue_events: the third write
     # fails at statement time, inside the probe's own transaction. The rollback
-    # must not swallow that -- the exception has to escape.
+    # must not swallow that -- the exact NotNullViolation has to escape (a bare
+    # `Exception` would also pass on a TypeError raised before any SQL ran).
     broken = [dict(queue[0], artifact_id=None)]
-    with pytest.raises(Exception):
+    with pytest.raises(psycopg2.errors.NotNullViolation):
         write_import_batch(writer_conn, batch, _digest(batch), silver, events,
                            broken, probe=True)
 

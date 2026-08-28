@@ -4290,9 +4290,11 @@ def _discover_compare_run(client, bucket: str, roots: _Stage5Roots) -> str:
     if len(candidates) == 1:
         return candidates[0]
     if not candidates:
+        need = ("run `compare --probe --apply` first"
+                if roots.compared.endswith(PROBE_SUFFIX)
+                else "slice 1 must finish before slice 2 can assign")
         raise ReconcileError(
-            f"no complete compare run under s3://{bucket}/{roots.compared}/; "
-            f"slice 1 must finish before slice 2 can assign"
+            f"no complete compare run under s3://{bucket}/{roots.compared}/; {need}"
         )
     raise ReconcileError(
         f"{len(candidates)} complete compare runs ({', '.join(sorted(candidates))}); "
@@ -4383,11 +4385,14 @@ def _load_import_identity(client, bucket: str, wanted: set[str]
 
 
 def _load_vin_snapshot(client, bucket: str, run_id: str,
-                       vin_root: str = VIN_SNAPSHOT_PREFIX) -> dict[str, Any]:
+                       vin_root: str) -> dict[str, Any]:
     """Slice 1's read-only ``ops.vin_to_listing`` snapshot. Never written back.
 
-    A ``--probe`` compare writes this under ``vin_snapshot_probe/``, so a probe
-    apply has to read it from there or every carousel VIN comes back empty.
+    A ``--probe`` compare writes this under ``vin_snapshot_probe/``. ``vin_root``
+    is required, not defaulted: ``_read_parquet_rows`` fetches the key unguarded,
+    so a probe apply pointed at the authoritative prefix would raise on the
+    missing object rather than quietly run with no VINs -- and defaulting toward
+    the authoritative prefix is the one direction non-negotiable 2 forbids.
     """
     key = f"{vin_root}/{run_id}.parquet"
     rows = _read_parquet_rows(client, bucket, key, columns=["listing_id", "vin"])
@@ -4395,12 +4400,14 @@ def _load_vin_snapshot(client, bucket: str, run_id: str,
 
 
 def _read_assignment_shard(client, bucket: str, batch_name: str,
-                           assigned_root: str = ASSIGNED_PREFIX
+                           assigned_root: str
                            ) -> tuple[list[dict[str, Any]], str]:
     """The assignment shard's rows and the SHA-256 of its exact bytes.
 
     The digest is over the stored object, so the receipt is keyed to the bytes
-    a retry will read rather than to a re-derived summary of them.
+    a retry will read rather than to a re-derived summary of them. ``assigned_root``
+    is required, not defaulted -- a call site that forgot it would read from the
+    authoritative prefix, the one direction non-negotiable 2 forbids.
     """
     import io
 
@@ -4681,6 +4688,21 @@ def run_apply(args: argparse.Namespace) -> int:
             "never commits and --maintainer-approval has nothing to authorise. "
             "Drop --maintainer-approval, or drop --probe for an authoritative run."
         )
+    if probe and apply and not args.batch:
+        # The approval gate was also the only bound on how much a bare run did.
+        # A probe is exempt from approval (it commits nothing), but that removes
+        # the bound too: a bare probe apply would issue ~200k INSERTs across
+        # several 50,000-row transactions against production Postgres while live
+        # processing writes the same staging tables -- rolled back, but still WAL
+        # and dead tuples. One batch proves every constraint and cast the probe
+        # exists to check, so name the batch(es) explicitly.
+        raise ReconcileError(
+            "apply --probe --apply has no row budget (a probe commits nothing, "
+            "so the canary gate does not apply); name the batch(es) with --batch "
+            "rather than replaying the whole assigned population against "
+            "production Postgres. One batch is enough to exercise every "
+            "constraint and type coercion."
+        )
     roots = _stage5_roots(probe)
 
     run_id = args.run_id or _discover_compare_run(client, bucket, roots)
@@ -4893,7 +4915,8 @@ def _print_apply_plan(run_id: str, plan_rows: Sequence[dict[str, Any]], *,
     print(f"price events (max)   {sum(r['detail_rows'] for r in plan_rows):>12,}")
     print(f"queue events         {sum(r['artifacts'] for r in plan_rows):>12,}")
     print()
-    print("writes               " + "\n                     ".join(_APPLY_WRITES))
+    print(f"{'would write' if probe else 'writes':<21}"
+          + "\n                     ".join(_APPLY_WRITES))
     print("never touched        " + "\n                     ".join(_APPLY_NEVER_TOUCHES))
     print()
 
@@ -5201,8 +5224,10 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
                      help="The compare run whose assignment shards to apply.")
     app.add_argument("--batch", action="append", default=[],
                      help="Batch name to apply; repeatable. Default: every batch "
-                          "of the run, which --apply refuses without "
-                          "--maintainer-approval.")
+                          "of the run -- which an authoritative --apply then "
+                          "refuses without --maintainer-approval, and which "
+                          "--probe --apply refuses outright (a probe has no row "
+                          "budget; name the batch).")
     app.add_argument("--max-unapproved-rows", type=int,
                      default=CANARY_ROW_BUDGET,
                      help=f"Silver rows an --apply run may write without a named "
