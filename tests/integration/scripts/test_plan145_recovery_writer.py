@@ -7,7 +7,10 @@ staging flush that deletes the rows it describes, or that the four protected
 hot tables are byte-identical before and after. Those are this file's job.
 
 Every test cleans up after itself by artifact_id and batch name: the writer
-commits by design, so a rollback fixture would prove nothing about it.
+commits by design, so a rollback fixture would prove nothing about it. The
+exception is ``write_import_batch(..., probe=True)``, whose whole contract is
+that it issues every statement and then rolls back -- the two probe tests below
+assert exactly that against real Postgres.
 """
 import hashlib
 import uuid
@@ -270,6 +273,56 @@ def test_a_failure_mid_batch_rolls_back_all_four_writes(
     vc.execute("SELECT count(*) AS n FROM staging.silver_observations "
                "WHERE artifact_id = %s", (artifact_id,))
     assert vc.fetchone()["n"] == 2
+
+
+# -- probe: run the real transaction, then roll it back -----------------
+
+def test_a_probe_apply_issues_every_statement_and_commits_nothing(
+        recovery_batch, writer_conn, vc):
+    (batch, silver, events, queue, artifact_id, *_rest) = \
+        _one_object_batch(recovery_batch, writer_conn)
+    manifest = _digest(batch)
+
+    out = write_import_batch(writer_conn, batch, manifest, silver, events, queue,
+                             probe=True)
+    # The would-be write set is reported exactly as an authoritative commit
+    # reports it -- same dict shape, same counts.
+    assert out == {"batch_name": batch, "skipped": False, "silver": 2,
+                   "price_events": 1, "queue_events": 1, "artifacts": 1}
+
+    for table in ("staging.silver_observations",
+                  "staging.price_observation_events",
+                  "staging.artifacts_queue_events"):
+        vc.execute(f"SELECT count(*) AS n FROM {table} WHERE artifact_id = %s",
+                   (artifact_id,))
+        assert vc.fetchone()["n"] == 0, table
+    vc.execute(f"SELECT count(*) AS n FROM {RECEIPT_TABLE} WHERE batch_name = %s",
+               (batch,))
+    assert vc.fetchone()["n"] == 0
+
+    # The connection survives the rollback and an authoritative write still commits.
+    write_import_batch(writer_conn, batch, manifest, silver, events, queue)
+    vc.execute("SELECT count(*) AS n FROM staging.silver_observations "
+               "WHERE artifact_id = %s", (artifact_id,))
+    assert vc.fetchone()["n"] == 2
+
+
+def test_a_probe_apply_still_lets_a_constraint_fire_at_statement_time(
+        recovery_batch, writer_conn, vc):
+    (batch, silver, events, queue, artifact_id, *_rest) = \
+        _one_object_batch(recovery_batch, writer_conn)
+    # artifact_id is NOT NULL on staging.artifacts_queue_events: the third write
+    # fails at statement time, inside the probe's own transaction. The rollback
+    # must not swallow that -- the exception has to escape.
+    broken = [dict(queue[0], artifact_id=None)]
+    with pytest.raises(Exception):
+        write_import_batch(writer_conn, batch, _digest(batch), silver, events,
+                           broken, probe=True)
+
+    for table in ("staging.silver_observations", "staging.price_observation_events"):
+        vc.execute(f"SELECT count(*) AS n FROM {table} WHERE artifact_id = %s",
+                   (artifact_id,))
+        assert vc.fetchone()["n"] == 0, table
 
 
 # -- what must not move ---------------------------------------------------
