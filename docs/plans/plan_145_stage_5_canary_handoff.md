@@ -14,38 +14,64 @@ This slice builds tooling. **It does not decide that the gate has closed.**
 
 ---
 
+## Preconditions (2026-08-28)
+
+- **V047 (`plan145_recovery_batch_receipts`) is applied on prod** (2026-08-28
+  15:56:39). The probe's first `apply --probe --apply` failed on it — the prod
+  DB was one migration behind. If you rebuild and the receipt table is missing,
+  `docker compose run --rm flyway`.
+- A partial real compare is already on disk: `compared_probe/cmp-e37723ede49fad4f/`,
+  with 59 assignment shards at `assigned_probe/`. Prototype phase A against it —
+  it is disposable and never promoted to the authoritative prefixes.
+- The recovery-writer integration tests run locally against a throwaway
+  `postgres:16` + Flyway V001–V047 (`tests/integration/scripts/`), not only in
+  CI.
+
+---
+
 ## Build it in two phases
 
-The three checks below were specified together, but only one of them depends on
-slice 2 having run. Stage 4 was at 426 of 1,204 units on 2026-08-28 with the
-32 unpacked shards not yet started, so no authoritative `compare` run exists and
-slice 2 cannot run for days. Phase A is therefore the work available now, and
-splitting it out is not a convenience — it changes what gets proven first.
+The three checks below were specified together, but only one of them needs the
+**authoritative** `compare` run. Split the build so the parser control does not
+wait on it.
 
-| phase | what | depends on |
+| phase | what | needs |
 |---|---|---|
 | **A — now** | the parser control; the V040 live-state verifier | slice 1's output shape; nothing from slice 2 |
-| **B — after slice 2 has assigned** | the write canary; the flush round trip | real assignment shards |
+| **B — after the authoritative compare** | the write canary; the flush round trip | real `assigned/` shards from an authoritative run |
 
-**Phase A first, and the parser control before the verifier.** It validates the
-deepest assumption in the plan — that reprocessing reproduces what production
-wrote. If that is false, slice 1's classification is meaningless and slice 2 is
-writing against a broken premise, so it is the check whose failure would
-invalidate the most work. It draws entirely from `already_represented/` and
-touches nothing slice 2 produces, so it can run the moment an authoritative
-compare exists, before a single row is written.
+**Where things stand (2026-08-28).** Stage 4 is at 1,188 of 1,204 parsed units —
+the authoritative `compare --apply` is hours away, not days. `--probe` on
+`compare` / `assign` / `apply` (PRs #268, #269) has already produced a complete
+*partial* compare at `compared_probe/cmp-e37723ede49fad4f/`, 59 real assignment
+shards at `assigned_probe/`, and one `apply --probe --apply` batch that ran the
+full write set against production Postgres and rolled it back with every `::uuid`
+cast, `NOT NULL` and CHECK holding on real rows (plan doc, *Evidence — slice 1 &
+2 probe*, 2026-08-28). So "the code has never met production data" is **not** the
+risk any more; you are building the checks that let the maintainer *rule*, not
+de-risking untested inserts.
 
-**Phase A also audits slice 2 for free.** The canary in phase B must stratify
-across identity source — `preserved_queue_event` versus `allocated_sequence` —
-and across detail/carousel, active/unlisted and input kind. Write the sampler in
-phase A against the real assignment schema. If slice 2 does not record what the
-sampler needs per row, that is a slice 2 gap found before it ever runs, which is
-the cheapest moment to find it.
+**Phase A first, and the parser control before the verifier.** The probe did not
+test the deepest assumption in the plan — that reprocessing reproduces what
+production wrote. That is the parser control's job, and its failure would
+invalidate slice 1's classification and everything built on it. It draws
+entirely from `already_represented/` and touches nothing slice 2 produces.
+Prototype it now against
+`compared_probe/cmp-e37723ede49fad4f/already_represented/`; it then runs
+unchanged against the authoritative output when that lands.
 
-**The risk this leaves, stated plainly:** three slices merged and none run
-against production data. Phase A is the mitigation, because it is the
-earliest-runnable check on the layer everything else sits on. Do not let phase B
-tempt you into declaring phase A done by inspection.
+**Phase A also audits slice 2 — now against real shards, not a schema.** The
+canary in phase B must stratify across identity source
+(`preserved_queue_event` / `allocated_sequence`), detail/carousel,
+active/unlisted and input kind. Write the sampler in phase A and point it at
+`assigned_probe/cmp-e37723ede49fad4f-b*.parquet`. Two things it will show:
+`id_source` and `input_kind` are on the assignment shard, but `listing_state` is
+**not** — it is on the `to_import` rows, so the sampler joins `assigned_probe/`
+back to `compared_probe/<run>/to_import/` to stratify on it. That join is
+expected, not a slice 2 gap.
+
+**Do not let phase B tempt you into declaring phase A done by inspection.** The
+parser control is the check the whole plan rests on.
 
 ---
 
@@ -64,9 +90,13 @@ different things and either can pass while the other fails.
 ## Check 1 — the parser control
 
 Draw approximately **500 exact, same-source represented observations** from
-slice 1's `already_represented/` — rows matched at the exact microsecond, of
-which the probe found 2,879 of 3,374, so the supply is ample. For each, compare
-**every silver business field** to the deployed production row.
+slice 1's `already_represented/` — rows where `nearest_distance_s == 0` and
+`match_sources` is the parsed row's own source. The partial probe put
+**3,980,701** rows in `already_represented`, so the exact-microsecond
+same-source subset is ample however small its fraction; measure it from
+`compared_probe/cmp-e37723ede49fad4f/already_represented/` rather than trusting
+the one-shard smoke figure the plan doc still cites (2,879 of 3,374). For each,
+compare **every silver business field** to the deployed production row.
 
 Ignore exactly four things, and say so per field in the report:
 
@@ -98,6 +128,14 @@ artifact is split, and **stratified** across:
 
 Run them through the **real** `assign` and `apply` code paths from slice 2. A
 canary that takes a shortcut around the writer proves nothing about the writer.
+
+**The canary is a real commit, not `apply --probe`.** `apply --probe --apply`
+already ran every statement for one batch against production Postgres and rolled
+it back — that retired "does the write set type-check against real data" as a
+question. The canary is the next thing: ~500 rows **committed** through
+authoritative `assign --apply` / `apply --apply` (inside the default
+`--max-unapproved-rows` budget), because the flush round trip below cannot be
+proven on rows that were rolled back. Do not use `--probe` for the canary.
 
 Then **require the flushers to carry the canary through to their lake
 prefixes** before approving the full apply. `staging.silver_observations` and
@@ -145,10 +183,17 @@ report. A verifier that can be run casually will be.
 
 The plan's gate requires the carousel fan-out to be **measured and reviewed
 before the full apply**. It is a review, not an assertion: production writes
-~5.7 carousel rows per detail page, the biased probe measured 5.25 average and
-9 maximum on one shard, and slice 1 measures it over the real population. Put
-the real number in front of the maintainer and let them rule on it. Do not
-encode a threshold and do not treat your own summary as the approval.
+~5.7 carousel rows per detail page, and the partial probe measured **5.6332 per
+object over 671,657 objects, max 8** — within a rounding error of production, but
+the ruling is the maintainer's, not yours. Re-read the number off the
+authoritative `compare_report.json` when it lands, put it in front of the
+maintainer, and let them rule. Do not encode a threshold and do not treat your
+own summary as the approval.
+
+The **near-duplicate cohort** rides alongside it: the probe found 67,994
+adjacent same-listing pairs within 300 s (95,168 captures with a neighbour, over
+7,483 listings). The slice-1 gate requires this in front of the maintainer
+before an authoritative apply too — surface it, do not collapse it.
 
 ---
 
