@@ -855,6 +855,93 @@ Slice 3 — the canary, the maintenance window and the quiesced-writer
 live-state proof — is unstarted. It is a manual, separately approved
 production action.
 
+### Evidence — slice 1 & 2 probe against real compare output, 2026-08-28
+
+`--probe` on `compare`, `assign` and `apply` (PRs #268, #269) exists so slice 2
+can be exercised on real data while Stage 4 finishes. First real run, on the VM
+2026-08-28 with Stage 4 at 1,186 → 1,188 of 1,204 parsed units. Everything below
+routed to the `*_probe/` prefixes; nothing was committed to Postgres.
+
+**Slice 1 — `compare --probe --apply`** (`cartracker-archiver`, `scraper_user`,
+`--duckdb-threads 1`). run_id `cmp-e37723ede49fad4f`, inventory digest
+`e37723ede49fad4f9efb02d663096eb1021f6e8cc68503bfd545a9f5984e1991`:
+
+- 1,186 / 1,204 parsed row shards, 4,455,248 parsed rows; silver index 16,318,833
+  observations over 111,915 wanted listings.
+- `already_represented` 3,980,701 / `to_import` 474,547 / `unclassifiable` 0 —
+  sum 4,455,248, the three families partition the parsed rows exactly.
+- `unclassifiable` 0 confirms the reference-doc measurement: the ~760
+  no-capture-time / no-listing-id pages are block pages and emit no parsed rows.
+- carousel fan-out 5.6332 per object over 671,657 objects (max 8); multi-candidate
+  share 0.3069 (1,367,256); recovery duplicates 0; VIN collisions 0.
+- near-dup ≤ 300 s: 67,994 adjacent pairs, 95,168 captures with a neighbour, over
+  7,483 listings — recorded for the maintainer's ruling before any authoritative
+  apply, per the slice-1 gate.
+- Wrote `compared_probe/cmp-e37723ede49fad4f/`,
+  `inventory_probe/cmp-e37723ede49fad4f.json`,
+  `vin_snapshot_probe/cmp-e37723ede49fad4f.parquet`.
+- Nit found: slice 1's success line prints `wrote compared/…, inventory/….json`
+  without the `_probe` suffix under `--probe --apply`
+  (`_print_compare_report`, `scripts/reconcile_april_detail.py:3671`). Cosmetic —
+  the data went to `*_probe/`, proven by the isolation check below — but
+  misleading in exactly the line that gets screenshotted. Follow-up, not a slice-2
+  regression.
+
+**Slice 2 — `assign --probe --apply`** (`april-processor` /
+`cartracker-processing`, `cartracker` role, pyarrow — no duckdb):
+
+- 474,547 `to_import` rows → 294,325 artifacts, no validation stop (no NULL or
+  non-UUID `listing_id`, no object split across units).
+- Identity: 1,893 preserved from queue events, 292,432 allocated via real
+  `nextval`; 0 of 42,276 unattributed pack members turned out import-bearing at
+  this partial stage.
+- 59 batches (58 bound by the 5,000-artifact cap, 1 by end). Wrote
+  `assigned_probe/cmp-e37723ede49fad4f-b00001…b00059.parquet` and
+  `assigned_probe/cmp-e37723ede49fad4f-assign_report.json`.
+- `ops.artifacts_queue_artifact_id_seq`: 7,747,250 → 8,039,682, advanced by
+  exactly 292,432. Permanent and sanctioned — a `bigserial` gap, not a reuse.
+  This is the only durable effect of the whole probe.
+
+**Slice 2 — `apply --probe`**:
+
+- The first `--probe --apply` on batch `b00001` failed on its first statement:
+  `psycopg2.errors.UndefinedTable: relation
+  "public.plan145_recovery_batch_receipts" does not exist`. V047 had not been
+  applied to the prod DB — it was one migration behind (V045/V046 dated
+  2026-08-27). The probe surfaced the missing precondition rather than writing:
+  `write_import_batch`'s `except` rolled back and re-raised, no partial state.
+- `docker compose run --rm flyway` applied V047 at 2026-08-28 15:56:39; only V047
+  was pending.
+- Re-run of
+  `apply --probe --apply --run-id cmp-e37723ede49fad4f --batch cmp-e37723ede49fad4f-b00001`:
+  5,000 artifacts, 7,993 silver rows, 2,678 price events, 5,000 queue events. The
+  full statement sequence — receipt `SELECT`, silver insert, price-event insert,
+  queue-event insert, receipt `INSERT` — ran against production Postgres in one
+  transaction and then `ROLLBACK`. No constraint or cast error: the `::uuid` cast
+  on `price_observation_events.listing_id` (2,678 rows), the `NOT NULL` on
+  `silver_observations.listing_id` (7,993 rows), both CHECK constraints and every
+  coercion held on real rows. Report: `mode  PROBE (real transaction, rolled
+  back)`, "No row was committed".
+
+**Isolation, verified after the run:**
+
+- `recovery/plan145/compared/` and `recovery/plan145/assigned/` (authoritative) —
+  0 keys. Probe output never left the `*_probe/` prefixes.
+- `staging.artifacts_queue_events WHERE status = 'recovered'` — 0;
+  `public.plan145_recovery_batch_receipts` — 0 rows;
+  `staging.silver_observations WHERE artifact_id >= 8000000` — 0. The rollback
+  held; nothing committed.
+
+**What this establishes.** The probe path works end to end on real April data:
+slice 1 produces a complete real compare under `compared_probe/`, slice 2 assigns
+identity from it and runs the full historical write set against production
+Postgres and rolls it back, with every constraint and cast exercised on real
+rows rather than fixtures. The near-dup cohort above is the one number a
+maintainer still has to rule on before an authoritative apply. Durable footprint:
+the sequence advanced 292,432, V047 is now applied on prod (a prerequisite the
+authoritative run needs anyway), and the `*_probe/` prefixes hold disposable
+output. The authoritative `compare --apply` still waits for all 1,204 units.
+
 ### Gate
 
 - Every parsed observation is classified exactly once, into one of the three
