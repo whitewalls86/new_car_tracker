@@ -2,7 +2,7 @@
 
 ## Status
 
-**Third revision — 2026-08-27.** The goal and success criteria have survived
+**BUILD ORDER — Stage 5; slice 3 waiting on Stage 4 and slices 1/2 to compute.** The goal and success criteria have survived
 every revision unchanged. The *method* has now changed three times, each time
 because a measurement contradicted an identity key the previous method relied
 on. This revision therefore states the trust boundary once, up front, and

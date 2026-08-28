@@ -2,7 +2,7 @@
 
 ## Status
 
-**Draft — not started.** Split out of [Plan 131](plan_131_packed_cold_storage.md)
+**Build order — ready to start.** Split out of [Plan 131](plan_131_packed_cold_storage.md)
 Stage 5 decision D5 on 2026-08-14, which fixed the two Plan 131 endpoints and
 deliberately left the rest alone.
 
