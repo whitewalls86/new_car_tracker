@@ -3305,7 +3305,11 @@ def _write_full_silver_fixture(path, rows):
     from scripts.reconcile_april_detail import SILVER_FIELDS, _parsed_rows_schema
 
     base = _parsed_rows_schema()
-    schema = pa.schema([base.field(c) for c in SILVER_FIELDS if c != "source"])
+    schema = pa.schema(
+        [base.field(c) for c in SILVER_FIELDS if c != "source"]
+        + [pa.field("artifact_id", pa.int64()),
+           pa.field("written_at", pa.timestamp("us", tz="UTC"))]
+    )
     pq.write_table(
         pa.Table.from_pylist(
             [{k: r.get(k) for k in schema.names} for r in rows], schema=schema,
@@ -3367,15 +3371,19 @@ def _control_store(tmp_path, *, l1_silver_price=25000):
                     object_key="html/l3.zst"),
             _ar_row(l4, source="carousel", object_key="html/l4.zst"),
         ])
+    # artifact_id and written_at carry recovery-vs-production values that must
+    # be skipped by name, not by absence.
     store[_silver_key("detail", 4, "d")] = _write_full_silver_fixture(
         tmp_path / "sv-d.parquet", [
             {"listing_id": l1, "fetched_at": _WHEN, "source": "detail",
-             "listing_state": "active", "price": l1_silver_price, "make": "Honda"},
+             "listing_state": "active", "price": l1_silver_price, "make": "Honda",
+             "artifact_id": 4_902_111, "written_at": _WHEN},
         ])
     store[_silver_key("carousel", 4, "c")] = _write_full_silver_fixture(
         tmp_path / "sv-c.parquet", [
             {"listing_id": l4, "fetched_at": _WHEN, "source": "carousel",
-             "listing_state": "active"},
+             "listing_state": "active", "artifact_id": 4_902_222,
+             "written_at": _WHEN},
         ])
     return store, (l1, l2, l3, l4)
 
@@ -3443,6 +3451,40 @@ def test_control_ignore_list_is_exactly_four_and_a_fifth_breaks_it(monkeypatch):
     )
     with pytest.raises(AssertionError):
         mod._control_field_disagreements({"source": "detail"}, {"source": "detail"})
+
+
+def test_control_renaming_an_ignore_token_makes_that_column_a_finding(
+        tmp_path, monkeypatch):
+    # The token list is load-bearing: drop "artifact_id" from it (keeping the
+    # count at four) and the deployed row's artifact_id starts showing up as a
+    # disagreement, while "written_at" -- still named -- stays ignored.
+    import scripts.reconcile_april_detail as mod
+
+    store, _ids = _control_store(tmp_path)
+    _patch_slice3_io(monkeypatch, store)
+    monkeypatch.setattr(mod, "CONTROL_IGNORED_FIELDS",
+                        ("recovery_provenance", "written_at", "carousel_vin",
+                         "not_artifact_id"))
+
+    rc = mod.run_control(
+        mod.parse_args(["control", "--run-id", _C3RUN, "--apply"]))
+    assert rc == 1
+    report = json.loads(
+        store[f"recovery/plan145/control/{_C3RUN}-control_report.json"])
+    census = report["field_disagreement_census"]
+    assert census.get("artifact_id") == 2       # both sampled rows
+    assert "written_at" not in census           # still ignored by name
+
+
+def test_control_sample_size_below_one_is_refused(tmp_path, monkeypatch):
+    import scripts.reconcile_april_detail as mod
+
+    store, _ids = _control_store(tmp_path)
+    _patch_slice3_io(monkeypatch, store)
+
+    with pytest.raises(ReconcileError, match="sample-size"):
+        mod.run_control(
+            mod.parse_args(["control", "--run-id", _C3RUN, "--sample-size", "0"]))
 
 
 def test_control_dry_run_writes_nothing(tmp_path, monkeypatch):
@@ -3582,6 +3624,91 @@ def test_canary_sample_stops_when_a_to_import_object_has_no_assignment(
         mod.run_canary_sample(
             mod.parse_args(["canary-sample", "--run-id", _C3RUN, "--apply"]))
     assert not any("/canary/" in k for k in store)
+
+
+def test_canary_sample_stops_when_the_to_import_read_is_short_of_the_assignment(
+        tmp_path, monkeypatch):
+    # OA's carousel row is missing from the to_import read; its assignment still
+    # says silver_rows=2. Selecting OA would commit a half-artifact.
+    import scripts.reconcile_april_detail as mod
+
+    store = _canary_store(tmp_path)
+    la = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    lb = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+    lc = "cccccccc-cccc-cccc-cccc-cccccccccccc"
+    ld = "dddddddd-0000-0000-0000-dddddddddddd"
+    store[f"recovery/plan145/compared/{_C3RUN}/to_import/unit-a.parquet"] = \
+        _write_compared_shard(tmp_path / "ti-short.parquet", [
+            _ti_row(la, _OA, source="detail"),
+            _ti_row(lb, _OB, source="detail", listing_state="unlisted"),
+            _ti_row(lc, _OC, source="detail"),
+            _ti_row(ld, _OD, source="carousel"),
+        ])
+    _patch_slice3_io(monkeypatch, store)
+
+    with pytest.raises(ReconcileError, match="half-artifact"):
+        mod.run_canary_sample(
+            mod.parse_args(["canary-sample", "--run-id", _C3RUN, "--apply"]))
+    assert not any("/canary/" in k for k in store)
+
+
+def _canary_store_wide(tmp_path, *, n_common=38):
+    """40 objects, 38 sharing one stratum and two carrying a rare one each --
+    so covering all three strata from a small --target-rows budget is only
+    possible via the stratification pass, not the top-up loop."""
+    ti_rows, asg_rows = [], []
+    for i in range(n_common):
+        key = f"html/w{i:02d}.zst"
+        lid = f"{i:08x}-0000-0000-0000-000000000000"
+        ti_rows.append(_ti_row(lid, key, source="detail"))
+        asg_rows.append(
+            {"batch_name": f"{_C3RUN}-b00001", "run_id": _C3RUN, "object_key": key,
+             "artifact_id": 9_000_000 + i, "id_source": "allocated_sequence",
+             "listing_id": lid, "fetched_at": _WHEN, "input_kind": "materialized",
+             "source_unit": "unit-a", "silver_rows": 1, "detail_rows": 1,
+             "assigned_at": _WHEN})
+    rare = [
+        ("html/rare-unlisted.zst", "ffffffff-1111-0000-0000-000000000000",
+         dict(source="detail", listing_state="unlisted"),
+         "unpacked", "preserved_queue_event", 1),
+        ("html/rare-carousel.zst", "ffffffff-2222-0000-0000-000000000000",
+         dict(source="carousel"),
+         "materialized", "preserved_queue_event", 0),
+    ]
+    for key, lid, ti_kw, input_kind, id_source, detail_rows in rare:
+        ti_rows.append(_ti_row(lid, key, **ti_kw))
+        asg_rows.append(
+            {"batch_name": f"{_C3RUN}-b00001", "run_id": _C3RUN, "object_key": key,
+             "artifact_id": 4_900_000 + len(asg_rows), "id_source": id_source,
+             "listing_id": lid, "fetched_at": _WHEN, "input_kind": input_kind,
+             "source_unit": "unit-a", "silver_rows": 1, "detail_rows": detail_rows,
+             "assigned_at": _WHEN})
+    store = {}
+    store[f"recovery/plan145/compared/{_C3RUN}/to_import/unit-a.parquet"] = \
+        _write_compared_shard(tmp_path / "ti-wide.parquet", ti_rows)
+    store[f"recovery/plan145/assigned/{_C3RUN}-b00001.parquet"] = \
+        _write_assigned_shard(tmp_path / "asg-wide.parquet", asg_rows)
+    return store
+
+
+def test_canary_sample_stratification_pass_covers_the_rare_strata_on_a_tiny_budget(
+        tmp_path, monkeypatch):
+    import scripts.reconcile_april_detail as mod
+
+    store = _canary_store_wide(tmp_path)
+    _patch_slice3_io(monkeypatch, store)
+
+    rc = mod.run_canary_sample(mod.parse_args(
+        ["canary-sample", "--run-id", _C3RUN, "--target-rows", "3", "--apply"]))
+    assert rc == 0
+    strata = json.loads(
+        store[f"recovery/plan145/canary/{_C3RUN}-canary_report.json"])["strata"]
+    assert len(strata["present_in_population"]) == 3
+    assert strata["every_stratum_covered"] is True
+    # 38 of 40 objects share one stratum, so hitting all three from a 3-row
+    # budget means pass 1 targeted the two rare objects -- top-up alone would
+    # have grabbed three near-certain common ones and tripped the coverage guard.
+    assert set(strata["covered_by_sample"]) == set(strata["present_in_population"])
 
 
 def test_canary_sample_dry_run_writes_nothing(tmp_path, monkeypatch):

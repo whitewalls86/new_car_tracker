@@ -5014,20 +5014,50 @@ def _control_norm(value: Any) -> Any:
     return value
 
 
+#: The two columns the deployed silver row has that the parsed row never will;
+#: they are part of the comparison universe so that skipping them is driven by
+#: CONTROL_IGNORED_FIELDS rather than by their happening to be absent.
+_CONTROL_SILVER_ONLY = ("artifact_id", "written_at")
+
+
+def _control_compare_columns() -> tuple[str, ...]:
+    return tuple(_parsed_rows_schema().names) + _CONTROL_SILVER_ONLY
+
+
+def _control_ignored_columns(source: Optional[str]) -> set[str]:
+    """Resolve ``CONTROL_IGNORED_FIELDS`` to the concrete columns skipped for a
+    row of this ``source``.
+
+    Every one of the four tokens drives a branch here. A token that is renamed
+    or dropped stops skipping its column, which then surfaces as a disagreement
+    (and fails a test) -- the length ``assert`` alone was decorative.
+    """
+    assert len(CONTROL_IGNORED_FIELDS) == 4, (
+        "the parser control ignores exactly four things (plan Stage 5 "
+        "'Check 1'); adding a fifth is a plan decision, not a code change"
+    )
+    tokens = set(CONTROL_IGNORED_FIELDS)
+    cols: set[str] = set()
+    if "recovery_provenance" in tokens:
+        cols.update(c for c in _parsed_rows_schema().names if c not in SILVER_FIELDS)
+    if "artifact_id" in tokens:
+        cols.add("artifact_id")
+    if "written_at" in tokens:
+        cols.add("written_at")
+    if "carousel_vin" in tokens and source == "carousel":
+        cols.add("vin")
+    return cols
+
+
 def _control_field_disagreements(
     parsed_row: dict[str, Any], silver_row: dict[str, Any],
 ) -> list[tuple[str, Any, Any]]:
-    """Every silver business field where the parsed row and the deployed silver
-    row disagree, with the four ignored things (see the plan's Stage 5
-    'Check 1') left out by name."""
-    assert len(CONTROL_IGNORED_FIELDS) == 4, (
-        "the parser control ignores exactly four things; adding a fifth is a "
-        "plan decision, not a code change"
-    )
+    """Every column where the parsed row and the deployed silver row disagree,
+    with ``CONTROL_IGNORED_FIELDS`` resolved to concrete skipped columns."""
+    skip = _control_ignored_columns(parsed_row.get("source"))
     out: list[tuple[str, Any, Any]] = []
-    carousel = parsed_row.get("source") == "carousel"
-    for field in SILVER_FIELDS:
-        if field == "vin" and carousel:            # carousel_vin
+    for field in _control_compare_columns():
+        if field in skip:
             continue
         if _control_norm(parsed_row.get(field)) != _control_norm(silver_row.get(field)):
             out.append((field, parsed_row.get(field), silver_row.get(field)))
@@ -5051,7 +5081,7 @@ def _load_control_silver_rows(
 
     if not wanted:
         return []
-    business = [c for c in SILVER_FIELDS if c != "source"]
+    business = [c for c in SILVER_FIELDS if c != "source"] + list(_CONTROL_SILVER_ONLY)
     sel = ", ".join(f'"{c}"' for c in business)
     tmp = tempfile.TemporaryDirectory(prefix="p145control-")
     con = None
@@ -5135,28 +5165,38 @@ def run_control(args: argparse.Namespace) -> int:
     run_id = args.run_id or _discover_compare_run(client, bucket, roots)
     run_dir = f"{roots.compared}/{run_id}"
 
+    if args.sample_size < 1:
+        raise ReconcileError("--sample-size must be at least 1")
+
     keys = _list_keys(client, bucket, f"{run_dir}/already_represented/", ".parquet")
     if not keys:
         raise ReconcileError(
             f"no already_represented shards under "
             f"s3://{bucket}/{run_dir}/already_represented/"
         )
-    candidates: list[dict[str, Any]] = []
+    # Reservoir sample (algorithm R) so memory is bounded at --sample-size, not
+    # at the size of the already_represented family -- 3,980,701 rows in the
+    # 2026-08-28 probe. _scan_to_import and dedupe refuse to hold rows for the
+    # same reason.
+    rng = random.Random(args.seed)
+    sample: list[dict[str, Any]] = []
+    candidate_total = 0
     for key in keys:
         for row in _read_parquet_rows(client, bucket, key):
-            if _is_exact_same_source(row):
-                candidates.append(row)
-    if not candidates:
+            if not _is_exact_same_source(row):
+                continue
+            candidate_total += 1
+            if len(sample) < args.sample_size:
+                sample.append(row)
+            else:
+                j = rng.randrange(candidate_total)
+                if j < args.sample_size:
+                    sample[j] = row
+    if candidate_total == 0:
         raise ReconcileError(
             f"compare run {run_id} has no exact, same-source represented "
             f"observations; nothing for the parser control to check"
         )
-
-    rng = random.Random(args.seed)
-    sample = (
-        rng.sample(candidates, args.sample_size)
-        if len(candidates) > args.sample_size else list(candidates)
-    )
 
     silver_objs = _discover_silver_objects(client, bucket, args.silver_prefix)
     wanted = {str(r["listing_id"]) for r in sample if r.get("listing_id")}
@@ -5200,7 +5240,10 @@ def run_control(args: argparse.Namespace) -> int:
                                  "object_key": prow.get("object_key"),
                                  "parsed": pv, "silver": sv})
 
-    clean = not field_census and no_silver == 0 and multi_silver == 0
+    # A run that compared nothing is not "clean" -- an empty or missing-silver
+    # sample must not persist a green report.
+    clean = (compared > 0 and not field_census
+             and no_silver == 0 and multi_silver == 0)
     report = {
         "plan": 145, "stage": 5, "slice": 3, "phase": "A",
         "check": "parser_control", "mode": "control",
@@ -5210,7 +5253,7 @@ def run_control(args: argparse.Namespace) -> int:
                       "(pre-slice-2) against the deployed silver row; the "
                       "carousel vin gap is expected and ignored"),
         "sample": {
-            "exact_same_source_candidates": len(candidates),
+            "exact_same_source_candidates": candidate_total,
             "sampled": len(sample),
             "requested": args.sample_size,
             "seed": args.seed,
@@ -5286,7 +5329,7 @@ def _load_assignment_index(client, bucket: str, run_id: str, assigned_root: str
         for row in _read_parquet_rows(
             client, bucket, key,
             columns=["object_key", "artifact_id", "id_source", "input_kind",
-                     "batch_name", "listing_id"],
+                     "batch_name", "listing_id", "silver_rows", "detail_rows"],
         ):
             out[row["object_key"]] = {
                 "artifact_id": row.get("artifact_id"),
@@ -5294,6 +5337,8 @@ def _load_assignment_index(client, bucket: str, run_id: str, assigned_root: str
                 "input_kind": row.get("input_kind"),
                 "batch_name": row.get("batch_name"),
                 "page_listing_id": row.get("listing_id"),
+                "silver_rows": row.get("silver_rows"),
+                "detail_rows": row.get("detail_rows"),
             }
     return out
 
@@ -5369,6 +5414,22 @@ def run_canary_sample(args: argparse.Namespace) -> int:
             f"identity -- run `assign` for run {run_id} first"
         )
 
+    # Cross-check the to_import rows read here against slice 2's own per-object
+    # count from _scan_to_import. A short read (a dropped shard, truncated
+    # pagination) would otherwise put a half-artifact in the canary -- the one
+    # thing the batch contract forbids -- and "no_artifact_split" computed from
+    # this same read would call it whole.
+    split = sorted(
+        okey for okey, rows in rows_by_object.items()
+        if len(rows) != assignments[okey].get("silver_rows")
+    )
+    if split:
+        raise ReconcileError(
+            f"{len(split)} object(s) have a to_import row count that disagrees "
+            f"with slice 2's assignment (e.g. {split[:3]}): a truncated read "
+            f"would commit a half-artifact -- refusing"
+        )
+
     obj_strata: dict[str, set[str]] = {
         okey: {_stratum_label(r, assignments[okey]) for r in rows}
         for okey, rows in rows_by_object.items()
@@ -5429,15 +5490,10 @@ def run_canary_sample(args: argparse.Namespace) -> int:
             "strata": strata,
         })
 
-    no_split = all(
-        m["silver_rows"] == len(rows_by_object[m["object_key"]])
-        for m in manifest_rows
-    )
-    if not no_split:
-        raise ReconcileError(
-            "a selected object is missing to_import rows from the manifest; "
-            "refusing to write a split-artifact canary sample"
-        )
+    # True because `split` above was empty -- i.e. every selected object's
+    # to_import row count matched slice 2's independent assignment count, not
+    # merely itself.
+    no_split = not split
 
     manifest_key = f"{canary_root}/{run_id}-canary_sample.parquet"
     report = {

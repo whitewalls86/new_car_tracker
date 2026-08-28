@@ -974,29 +974,38 @@ Three checks, none of which decides the gate:
   is Phase B's input.
 - **The V040 live-state verifier** — `scripts/verify_recovery_live_state.py`,
   a standalone script. **Refuses to run without `--window <name>`** and opens no
-  connection until that check passes. Opens one `REPEATABLE READ` transaction,
-  snapshots the four protected hot tables and the two `now()`-dependent V040
-  views (order-independent content digest + row count) plus `txid_current()`,
-  runs the canary on a **separate connection** (`--canary-cmd` subprocess, or an
-  injected callable in tests), snapshots again in the same transaction, and
-  requires byte-equivalence and one shared `txid`. It **does not and cannot**
-  quiesce or resume any writer — that is the maintainer's manual, separately
-  approved action, before and after.
+  connection until that check passes. Opens one `READ COMMITTED` transaction —
+  **not** `REPEATABLE READ`, which would freeze the transaction's data snapshot
+  at the first statement so the second snapshot could never see the canary's
+  committed writes; `now()` is `transaction_timestamp()` and is fixed for the
+  whole transaction at every isolation level, which is all the time-dependent
+  views need. Snapshots the four protected hot tables and the two V040 views
+  (`bit_xor(hashtextextended(t::text,0))` — order-independent, no giant
+  intermediate) plus `txid_current()`, runs the canary on a **separate
+  connection** (`--canary-cmd` subprocess, or an injected callable in tests),
+  snapshots again in the same transaction, and requires byte-equivalence and
+  one shared `txid`. It **does not and cannot** quiesce or resume any writer —
+  that is the maintainer's manual, separately approved action, before and after.
 
-Tests: `tests/scripts/test_reconcile_april_detail.py` section P (11 tests) and
-`tests/scripts/test_verify_recovery_live_state.py` (6 tests) — the control
-samples only exact same-source matches; the four ignores are by name and a
-fifth breaks it; a single differing field is reported and exits non-zero; the
-sampler covers every stratum and never splits an artifact; a missing assignment
-stops it; the verifier refuses without a window; both snapshots share one
-transaction; a simulated mutation between them fails; a failing canary command
-fails the check. `python -m pytest tests/scripts -q -m "not integration"` — 801
-passed; `ruff` clean.
+Tests: `tests/scripts/test_reconcile_april_detail.py` section P (15 tests),
+`tests/scripts/test_verify_recovery_live_state.py` (6 tests) and
+`tests/integration/scripts/test_plan145_live_state_verifier.py` (2, real
+Postgres) — the control samples only exact same-source matches by reservoir so
+memory is bounded at `--sample-size`; the four ignores each drive a branch and
+renaming one surfaces its column; a single differing field is reported and
+exits non-zero; the sampler covers every stratum (proven on a 40-object / 3-row
+budget) and its no-split check cross-references slice 2's own per-object count;
+a missing or short assignment stops it; the verifier refuses without a window;
+both snapshots share one transaction; a write committed between them on another
+connection is **seen** and fails the proof; a failing canary command fails the
+check. `python -m pytest tests/scripts -q -m "not integration"` — 805 passed;
+`ruff` clean.
 
 **What remains unproven — every run.** The control and the canary sampler have
 run only against fixtures and need the authoritative `compare`/`assign` output
-on the VM. The V040 verifier has run only against a fake connection and needs a
-maintainer-opened window with the writers quiesced. The write canary itself
+on the VM. The V040 verifier's mechanism is covered by a real-Postgres
+integration test, but the proof itself needs a maintainer-opened window with the
+writers quiesced. The write canary itself
 (a real commit) and the flush round trip into `silver_normalized/observations/`
 and `ops_normalized/` are Phase B and unbuilt. The carousel fan-out review
 (probe: 5.6332/object, max 8) and the near-duplicate cohort (probe: 67,994

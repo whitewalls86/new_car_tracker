@@ -48,11 +48,13 @@ class _Cur:
         if "txid_current()" in s:
             self._result = (self.store.next_txid(),)
             return
-        m = re.search(r"FROM \(SELECT t::text AS r FROM (\S+) t\)", s)
+        m = re.search(r"FROM (\S+) t$", s)
         if m:
             data = self.store.rows.get(m.group(1), [])
-            blob = "\n".join(sorted(repr(x) for x in data))
-            digest = hashlib.md5(blob.encode()).hexdigest() if data else ""
+            # order-independent, like the real bit_xor digest
+            digest = 0
+            for row in data:
+                digest ^= int(hashlib.md5(repr(row).encode()).hexdigest()[:16], 16)
             self._result = (len(data), digest)
             return
         raise AssertionError(f"unexpected SQL: {s}")
@@ -162,5 +164,7 @@ def test_both_snapshots_are_taken_on_one_cursor_before_any_rollback(tmp_path):
     # two txid probes + two full relation sweeps, all before the single rollback
     txid_probes = [s for s in conn.statements if "txid_current()" in s]
     assert len(txid_probes) == 2
-    assert conn.statements[0].startswith("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+    # READ COMMITTED, not REPEATABLE READ: RR would freeze the data snapshot at
+    # the first statement and the second snapshot could never see the canary.
+    assert conn.statements[0] == "SET TRANSACTION ISOLATION LEVEL READ COMMITTED"
     assert conn.rolled_back == 1

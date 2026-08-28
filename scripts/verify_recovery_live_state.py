@@ -26,8 +26,12 @@ service with write access to the protected tables is **already quiesced**.
 The sequence:
 
   1. refuse without ``--window``; record the window name in the report;
-  2. open one verifier connection, one ``REPEATABLE READ`` transaction, so
-     PostgreSQL's ``now()`` is fixed for both view snapshots;
+  2. open one verifier connection, one ``READ COMMITTED`` transaction. ``now()``
+     is ``transaction_timestamp()`` and is fixed for the whole transaction at
+     every isolation level, so both view snapshots see one ``now()``. It must
+     **not** be ``REPEATABLE READ``: that freezes the transaction's data
+     snapshot at the first statement, so the second snapshot could never see
+     the canary's committed writes and the equality check could never fail;
   3. snapshot the four tables and two views (an order-independent content
      digest + a row count), and ``txid_current()``;
   4. run the canary on a **separate connection** (``--canary-cmd`` subprocess,
@@ -40,10 +44,16 @@ The sequence:
 Exit code: 0 pass, 1 fail (a relation changed, or the two snapshots were not
 one transaction, or the canary command failed), 2 refused (no ``--window``).
 
+``--canary-cmd`` must run the Phase B write canary that commits **exactly** the
+objects in ``recovery/plan145/canary/<run>-canary_sample.parquet`` (the
+`canary-sample` mode's manifest), within the default ``--max-unapproved-rows``
+budget. Do **not** pass ``--maintainer-approval`` here -- that flag lifts the
+row budget, and Plan 145 allows nothing beyond the ~500-row canary until this
+proof closes. Phase B builds that command; it is not `apply --batch`, whose
+unit is a full slice-2 batch of up to 5,000 artifacts.
+
     python scripts/verify_recovery_live_state.py --window <name> \\
-        --canary-cmd "docker compose run --rm april-processor python -m \\
-            scripts.reconcile_april_detail apply --apply --batch <canary-batch> \\
-            --maintainer-approval <name>" \\
+        --canary-cmd "<phase B canary-commit command>" \\
         --report /tmp/p145-v040-<name>.json
 """
 from __future__ import annotations
@@ -89,13 +99,17 @@ _BANNER = (
 def _digest_sql(relation: str) -> str:
     """An order-independent content digest and a row count for one relation.
 
-    ``t::text`` renders a whole row as a text tuple; ``string_agg(... ORDER BY)``
-    makes the hash independent of physical row order.
+    ``bit_xor`` (PostgreSQL 14+) over ``hashtextextended(t::text, 0)`` -- a
+    built-in 64-bit row hash -- is independent of physical row order and builds
+    no intermediate. ``md5(string_agg(...))`` would: on a wide 1M-row view its
+    single text value can exceed PostgreSQL's 1 GiB varlena limit and error out
+    mid-window. ``coalesce`` handles the empty relation (``bit_xor`` of nothing
+    is NULL).
     """
     return (
         "SELECT count(*)::bigint AS n, "
-        "coalesce(md5(string_agg(r, chr(10) ORDER BY r)), '') AS digest "
-        f"FROM (SELECT t::text AS r FROM {relation} t) s"
+        "coalesce(bit_xor(hashtextextended(t::text, 0)), 0) AS digest "
+        f"FROM {relation} t"
     )
 
 
@@ -194,7 +208,7 @@ def run(argv: Optional[list[str]] = None, *,
         except Exception:                     # pragma: no cover - fake conns
             pass
         with conn.cursor() as cur:
-            cur.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+            cur.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
             txid_before, snap_before = _snapshot(cur)
             canary_result = _run_canary(args, canary)
             txid_after, snap_after = _snapshot(cur)
