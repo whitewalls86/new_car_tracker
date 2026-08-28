@@ -731,23 +731,31 @@ parsed row total, which is what makes *classified exactly once* enforceable.
 Two dry-run probes against the completed Stage 4 units, on the VM. Both wrote
 nothing and issued no VIN query.
 
-| | 20 units | 315 units |
-|---|---:|---:|
-| parsed rows | 44,446 | 657,963 |
-| source objects | 7,866 | 113,438 |
-| already represented | 77.2% | **80.7%** |
-| to import | 22.8% | **19.3%** |
-| unclassifiable | 0 | 0 |
-| more than one silver candidate | 21.04% | **21.1%** |
-| carousel rows per object | 4.65 | 4.80 |
-| recovery duplicates collapsed | 0 | 0 |
-| unrepresented captures with a neighbour ≤300 s | 39.1% of to-import | **21.3%** |
+| | 20 units | 315 units | 532 units |
+|---|---:|---:|---:|
+| parsed rows | 44,446 | 657,963 | **1,142,700** |
+| source objects | 7,866 | 113,438 | **196,453** |
+| already represented | 77.2% | 80.7% | **81.1%** |
+| to import | 22.8% | 19.3% | **18.9%** |
+| unclassifiable | 0 | 0 | **0** |
+| more than one silver candidate | 21.04% | 21.1% | **20.6%** |
+| carousel rows per object | 4.65 | 4.80 | **4.82** |
+| recovery duplicates collapsed | 0 | 0 | **0** |
+| unrepresented captures with a neighbour ≤300 s | 39.1% of to-import | 21.3% | **19.9%** |
 
-The multiple-candidate share is stable across a 15× increase in sample and
-agrees with the 2026-08-27 design probe's 18%, which is the evidence that the
-existence test behaves consistently at scale. Object counts extrapolate to
-~978,000 against `EXPECTED_FLATTENED_INPUTS`'s 983,043, so the arithmetic
-closes. Memory did not move on the Grafana panels; CPU spiked.
+Every ratio converges rather than drifting: the multiple-candidate share holds
+near 21% across a 26× increase in sample and agrees with the 2026-08-27 design
+probe's 18%, and the near-neighbour share settles from a small-sample 39% toward
+~20%. That stability is the evidence that the existence test behaves
+consistently at scale. Object counts extrapolate to ~978,000 against
+`EXPECTED_FLATTENED_INPUTS`'s 983,043, so the arithmetic closes.
+
+**Cost, for planning the authoritative run.** The 532-unit run took three
+minutes wall: 39 s to build a silver index of 14,862,304 observations over
+89,612 wanted listings, then 532 units classified in about two. DuckDB was
+capped at one thread and 2 GB and stayed inside it; memory did not move on the
+Grafana panels while CPU spiked. The full run indexes toward the whole
+20,681,645 and classifies 1,204 units, so single-digit minutes, not hours.
 
 **What these numbers are not.** Every completed unit is a materialized legacy
 body, because Stage 4 walks a key-sorted inventory and the 32 unpacked shards
