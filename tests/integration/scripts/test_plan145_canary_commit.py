@@ -345,6 +345,52 @@ def test_the_migrated_manifest_commits_against_real_postgres(canary_world, vc):
     assert vc.fetchone()["n"] == 4
 
 
+def test_a_substituted_sibling_manifest_commits_nothing(canary_world, vc):
+    """A digest-bearing sibling is accepted by resolution because it exists.
+    The commit has to re-prove it against the frozen original, or an
+    independently created one could hand it a different object set."""
+    import io
+
+    import pyarrow.parquet as pq
+
+    world = canary_world
+    store = world["store"]
+    ids = sorted(world["artifact_ids"].values())
+    source_key = f"recovery/plan145/canary/{world['run_id']}-canary_sample.parquet"
+    target_key = (f"recovery/plan145/canary/{world['run_id']}"
+                  f"-canary_sample_digested.parquet")
+
+    rows = pq.read_table(io.BytesIO(store[source_key])).to_pylist()
+    for row in rows:
+        for name in ("write_set_digest", "vin_snapshot_sha256", "page_fetched_at"):
+            row[name] = None
+    store[source_key] = _write_parquet(mod._canary_manifest_schema(), rows)
+    assert mod.run_canary_remanifest(mod.parse_args(
+        ["canary-remanifest", "--run-id", world["run_id"], "--apply"])) == 0
+
+    # drop one artifact from the sibling: still self-consistent, still
+    # digest-bearing, but no longer the frozen object set
+    migrated = pq.read_table(io.BytesIO(store[target_key])).to_pylist()
+    dropped = migrated[0]["object_key"]
+    store[target_key] = _write_parquet(
+        mod._canary_manifest_schema(),
+        [r for r in migrated if r["object_key"] != dropped])
+
+    with pytest.raises(ReconcileError, match="not a promotion of the frozen"):
+        mod.run_canary_commit(mod.parse_args(
+            ["canary-commit", "--run-id", world["run_id"], "--apply",
+             "--expect-manifest-sha256",
+             hashlib.sha256(store[target_key]).hexdigest(),
+             "--expect-rows", "3"]))
+
+    vc.execute("SELECT count(*) AS n FROM staging.silver_observations "
+               "WHERE artifact_id = ANY(%s)", (ids,))
+    assert vc.fetchone()["n"] == 0
+    vc.execute(f"SELECT count(*) AS n FROM {RECEIPT_TABLE} WHERE batch_name = %s",
+               (world["batch_name"],))
+    assert vc.fetchone()["n"] == 0
+
+
 def test_a_vin_snapshot_that_moved_after_sampling_commits_nothing(canary_world,
                                                                   vc):
     """The VIN snapshot is an input to the write set, not just to the

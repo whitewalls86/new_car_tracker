@@ -5604,6 +5604,12 @@ def _canary_manifest_schema() -> Any:
         pa.field("strata", pa.list_(pa.string())),
         pa.field("write_set_digest", pa.string()),
         pa.field("vin_snapshot_sha256", pa.string()),
+        # Only a *migrated* manifest carries these, and they are what lets a
+        # consumer re-prove the promotion from the two objects alone. A
+        # manifest `canary-sample` wrote leaves them NULL: it is the original,
+        # not a promotion of one.
+        pa.field("source_manifest_sha256", pa.string()),
+        pa.field("source_object_set_digest", pa.string()),
     ])
 
 
@@ -6013,6 +6019,37 @@ def run_canary_sample(args: argparse.Namespace) -> int:
 # they need when it is oversized. The dry run reports the overage and exits 0.
 
 
+def _canary_bucket(args: argparse.Namespace) -> str:
+    """The bucket for a Phase B run -- and a refusal if it is not the default.
+
+    ``--bucket`` is only half-honoured across this file, and Phase B is the
+    part that commits. Reads take the requested bucket, but bare-key
+    ``shared.minio.object_exists`` inspects the *configured* bucket and
+    ``write_bytes`` / ``_write_parquet_shard`` write to it, so an override
+    splits reads from existence checks and outputs: inputs are reported
+    missing that are present, and the commit report lands beside a manifest it
+    does not describe.
+
+    Rather than half-fix it here and leave the same seam in `compare`,
+    `assign` and `apply`, Phase B refuses the mismatch. Nothing in the run
+    sheet needs it: every command is a ``compose run`` whose ``MINIO_BUCKET``
+    already names the production bucket. Making the whole file bucket-aware is
+    a separate change with its own review.
+    """
+    from shared.minio import BUCKET as DEFAULT_BUCKET
+
+    bucket = args.bucket or DEFAULT_BUCKET
+    if bucket != DEFAULT_BUCKET:
+        raise ReconcileError(
+            f"--bucket {bucket!r} does not match the configured MINIO_BUCKET "
+            f"{DEFAULT_BUCKET!r}. Phase B reads with the bucket it is given but "
+            f"writes and existence-checks against the configured one, so an "
+            f"override would split this run's inputs, its checks and its "
+            f"outputs across two buckets. Set MINIO_BUCKET instead"
+        )
+    return bucket
+
+
 def canary_batch_name(run_id: str) -> str:
     """The canary's receipt name -- deliberately not a ``-bNNNNN`` batch name.
 
@@ -6040,8 +6077,9 @@ def _resolve_canary_manifest_key(run_id: str,
 
     Resolution is by existence rather than by a flag so there is no way to
     commit against the weaker manifest while a migrated one sits beside it.
-    Which one was read is not left implicit either: it is named in the plan,
-    and --expect-manifest-sha256 is taken over its exact bytes.
+    Existence is *not* on its own a reason to trust the sibling, though --
+    :func:`_verify_canary_promotion` re-proves it against the original before
+    any consumer uses it.
     """
     from shared.minio import object_exists
 
@@ -6049,6 +6087,87 @@ def _resolve_canary_manifest_key(run_id: str,
     if object_exists(digested):
         return digested
     return _canary_manifest_key(run_id, canary_root)
+
+
+def _verify_canary_promotion(client, bucket: str, run_id: str,
+                             rows: Sequence[dict[str, Any]],
+                             canary_root: str = CANARY_PREFIX) -> dict[str, Any]:
+    """Re-prove a migrated manifest against the frozen original it claims.
+
+    ``canary-remanifest`` writes a report saying the object sets matched. That
+    report is not evidence a *consumer* can rely on: it is a separate object,
+    written after the manifest, by the very run whose correctness is in
+    question. Nothing stops a digest-bearing sibling from being created or
+    replaced independently, and resolution-by-existence would then hand a
+    commit an object set that is not the V040 window's subject.
+
+    So the promotion is re-derived here, from the two manifests alone:
+
+      * the sibling names the exact bytes it was migrated from
+        (``source_manifest_sha256``), and those bytes must still be the
+        original's;
+      * the object-set digest it recorded must equal the original's, and
+        equal its own.
+
+    The original is therefore required to still exist. That is deliberate --
+    it is the only record of what the window's subject was, and a promotion
+    that can no longer be checked against it is not a promotion.
+    """
+    import io
+
+    import pyarrow.parquet as pq
+
+    source_key = _canary_manifest_key(run_id, canary_root)
+    claimed_sha = {r.get("source_manifest_sha256") for r in rows}
+    claimed_set = {r.get("source_object_set_digest") for r in rows}
+    if len(claimed_sha) != 1 or len(claimed_set) != 1 \
+            or None in claimed_sha or None in claimed_set:
+        raise ReconcileError(
+            f"the migrated canary manifest s3://{bucket}/"
+            f"{_canary_digested_manifest_key(run_id, canary_root)} does not "
+            f"name one frozen manifest it was promoted from "
+            f"(source_manifest_sha256={sorted(claimed_sha, key=str)}, "
+            f"source_object_set_digest={sorted(claimed_set, key=str)}); only "
+            f"`canary-remanifest` may write this object"
+        )
+    try:
+        source_body = client.get_object(Bucket=bucket, Key=source_key)["Body"].read()
+    except Exception as exc:
+        raise ReconcileError(
+            f"a migrated canary manifest exists but the frozen manifest it was "
+            f"promoted from, s3://{bucket}/{source_key}, is gone; it is the "
+            f"only record of what the window's subject was, so the promotion "
+            f"can no longer be proven -- restore it before committing"
+        ) from exc
+
+    source_sha = hashlib.sha256(source_body).hexdigest()
+    source_rows = pq.read_table(io.BytesIO(source_body)).to_pylist()
+    source_set = canary_object_set_digest(r["object_key"] for r in source_rows)
+    migrated_set = canary_object_set_digest(r["object_key"] for r in rows)
+
+    problems = []
+    if claimed_sha != {source_sha}:
+        problems.append(
+            f"it was promoted from bytes hashing to "
+            f"{next(iter(claimed_sha))}, but {source_key} now hashes to "
+            f"{source_sha}")
+    if claimed_set != {source_set}:
+        problems.append(
+            f"it records a frozen object set of {next(iter(claimed_set))}, but "
+            f"{source_key} holds {source_set}")
+    if migrated_set != source_set:
+        problems.append(
+            f"its own object set is {migrated_set}, not the frozen "
+            f"{source_set} -- it selects different artifacts")
+    if problems:
+        raise ReconcileError(
+            "the migrated canary manifest is not a promotion of the frozen "
+            "one: " + "; ".join(problems) + ". Refusing: a commit must write "
+            "the object set the V040 window was opened for"
+        )
+    return {"source_key": source_key, "source_sha256": source_sha,
+            "object_set_digest": source_set,
+            "artifacts": len(source_rows)}
 
 
 def _canary_commit_key(run_id: str, canary_root: str = CANARY_PREFIX) -> str:
@@ -6061,8 +6180,13 @@ def _canary_flush_key(run_id: str, canary_root: str = CANARY_PREFIX) -> str:
 
 def _read_canary_manifest(client, bucket: str, run_id: str,
                           canary_root: str = CANARY_PREFIX
-                          ) -> tuple[list[dict[str, Any]], str, str]:
-    """The frozen sample's rows, the SHA-256 of its exact bytes, and its key.
+                          ) -> tuple[list[dict[str, Any]], str, str,
+                                     Optional[dict[str, Any]]]:
+    """The rows, the SHA-256 of the exact bytes, the key, and the promotion.
+
+    The fourth value is ``None`` for the frozen original and the re-proved
+    promotion record for a migrated sibling, so a caller can say which manifest
+    it read and on what grounds.
 
     The digest is over the stored object, exactly as ``_read_assignment_shard``
     does it, because it becomes the receipt's ``manifest_sha256``: a re-run
@@ -6104,7 +6228,21 @@ def _read_canary_manifest(client, bucket: str, run_id: str,
             f"that manifest's exact object set into a digest-bearing one and "
             f"leaves the original in place"
         )
-    return rows, hashlib.sha256(body).hexdigest(), key
+    # Resolution picked this object because it exists. That is not a reason to
+    # trust it: re-prove the promotion against the frozen original before any
+    # consumer builds a write set from it.
+    promotion = None
+    if key == _canary_digested_manifest_key(run_id, canary_root):
+        promotion = _verify_canary_promotion(
+            client, bucket, run_id, rows, canary_root)
+    elif any(row.get("source_manifest_sha256") is not None for row in rows):
+        raise ReconcileError(
+            f"s3://{bucket}/{key} is the frozen manifest slot but claims to be "
+            f"a promotion of another manifest; `canary-sample` writes the "
+            f"original and `canary-remanifest` writes the migrated sibling, "
+            f"and the two slots are not interchangeable"
+        )
+    return rows, hashlib.sha256(body).hexdigest(), key, promotion
 
 
 #: Every field the canary manifest copies out of slice 2's assignment shard,
@@ -6159,9 +6297,8 @@ def build_canary_write_set(client, bucket: str, run_id: str, *,
 
     from shared.minio import object_exists
 
-    manifest_rows, manifest_sha256, manifest_key = _read_canary_manifest(
-        client, bucket, run_id, canary_root,
-    )
+    manifest_rows, manifest_sha256, manifest_key, promotion = \
+        _read_canary_manifest(client, bucket, run_id, canary_root)
     wanted = {r["object_key"] for r in manifest_rows}
     if len(wanted) != len(manifest_rows):
         raise ReconcileError(
@@ -6333,6 +6470,7 @@ def build_canary_write_set(client, bucket: str, run_id: str, *,
     return {
         "manifest_key": manifest_key,
         "manifest_sha256": manifest_sha256,
+        "promotion": promotion,
         "manifest_rows": manifest_rows,
         "assignment_batches": batches,
         "assignment_digests": shard_digests,
@@ -6467,6 +6605,12 @@ def _print_canary_commit_plan(run_id: str, batch_name: str,
     print(f"receipt batch name   {batch_name}")
     print(f"manifest             {write_set['manifest_key']}")
     print(f"manifest sha256      {write_set['manifest_sha256']}")
+    promotion = write_set.get("promotion")
+    if promotion:
+        print(f"promoted from        {promotion['source_key']}")
+        print(f"  source sha256      {promotion['source_sha256']}")
+        print(f"  object set         {promotion['object_set_digest']}  "
+              f"(re-proved against the frozen manifest)")
     print(f"assignment shards    {len(write_set['assignment_batches']):>12,}"
           f"  ({write_set['assignment_batches'][0]} to "
           f"{write_set['assignment_batches'][-1]})")
@@ -6488,10 +6632,9 @@ def _print_canary_commit_plan(run_id: str, batch_name: str,
 
 
 def run_canary_commit(args: argparse.Namespace) -> int:
-    from shared.minio import BUCKET as DEFAULT_BUCKET
     from shared.minio import write_bytes
 
-    bucket = args.bucket or DEFAULT_BUCKET
+    bucket = _canary_bucket(args)
     client = _s3_client()
     apply = bool(args.apply)
     # Authoritative prefixes only. There is no --probe: see the section header.
@@ -6618,6 +6761,10 @@ def run_canary_commit(args: argparse.Namespace) -> int:
         "run_id": run_id, "batch_name": batch_name,
         "manifest_key": write_set["manifest_key"],
         "manifest_sha256": write_set["manifest_sha256"],
+        # None when the frozen manifest was read directly; otherwise the
+        # promotion this run re-proved from the two manifests themselves, so
+        # the evidence names which object set was committed and on what basis.
+        "promotion": write_set.get("promotion"),
         "assignment_batches": write_set["assignment_batches"],
         "assignment_digests": write_set["assignment_digests"],
         "started_at": started_at.isoformat(),
@@ -6712,10 +6859,9 @@ def run_canary_remanifest(args: argparse.Namespace) -> int:
 
     import pyarrow.parquet as pq
 
-    from shared.minio import BUCKET as DEFAULT_BUCKET
     from shared.minio import object_exists, write_bytes
 
-    bucket = args.bucket or DEFAULT_BUCKET
+    bucket = _canary_bucket(args)
     client = _s3_client()
     apply = bool(args.apply)
     roots = _stage5_roots(False)
@@ -6841,6 +6987,14 @@ def run_canary_remanifest(args: argparse.Namespace) -> int:
     vin_map = _load_vin_snapshot(client, bucket, run_id, roots.vin_snapshot)
     batch_name = canary_batch_name(run_id)
 
+    # Computed before the loop so every migrated row carries the same pair:
+    # the exact bytes this was promoted from, and the object set they held.
+    # Together they let a consumer re-derive the promotion from the two
+    # manifests alone, without trusting the report written beside them.
+    source_sha256 = hashlib.sha256(frozen_body).hexdigest()
+    source_set_digest = canary_object_set_digest(
+        r["object_key"] for r in frozen_rows)
+
     migrated: list[dict[str, Any]] = []
     total_rows = total_detail = 0
     for okey in sorted(wanted):
@@ -6859,6 +7013,8 @@ def run_canary_remanifest(args: argparse.Namespace) -> int:
             "page_fetched_at": assignment.get("fetched_at"),
             "write_set_digest": canary_write_set_digest(silver, events, queue),
             "vin_snapshot_sha256": vin_sha256,
+            "source_manifest_sha256": source_sha256,
+            "source_object_set_digest": source_set_digest,
         })
 
     # The promotion proof: the object set is bit-identical, by digest.
@@ -6875,8 +7031,7 @@ def run_canary_remanifest(args: argparse.Namespace) -> int:
         "check": "canary_manifest_migration", "mode": "canary-remanifest",
         "run_id": run_id, "apply": apply,
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "source_key": source_key, "source_sha256":
-            hashlib.sha256(frozen_body).hexdigest(),
+        "source_key": source_key, "source_sha256": source_sha256,
         "target_key": target_key,
         "object_set_digest": {"frozen": before, "migrated": after,
                               "identical": before == after},
@@ -6969,10 +7124,9 @@ def _print_canary_flush_report(report: dict[str, Any], *, apply: bool) -> None:
 
 
 def run_canary_flush_verify(args: argparse.Namespace) -> int:
-    from shared.minio import BUCKET as DEFAULT_BUCKET
     from shared.minio import write_bytes
 
-    bucket = args.bucket or DEFAULT_BUCKET
+    bucket = _canary_bucket(args)
     client = _s3_client()
     apply = bool(args.apply)
     roots = _stage5_roots(False)

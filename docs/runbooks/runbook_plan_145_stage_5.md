@@ -498,6 +498,19 @@ manifest by existence, so there is no way to commit against the weaker one
 while the migrated one sits beside it. Pin the migrated manifest's digest — the
 dry run prints it.
 
+**Existence is not trust.** The migrated manifest records the exact bytes it
+was promoted from (`source_manifest_sha256`) and the object set those bytes
+held (`source_object_set_digest`), and every consumer **re-proves the promotion
+from the two manifests alone** before building a write set — not from the
+migration's own report, which is a separate object written afterwards by the
+run whose correctness is in question. A sibling created or replaced
+independently, or one whose object set differs from the frozen manifest's, is
+refused. The commit's blast-radius print names the promotion it re-proved.
+
+That means **the frozen manifest must stay in place after migration.** It is
+the only record of what the window's subject was, and a promotion that can no
+longer be checked against it is refused, not assumed.
+
 ---
 
 ## 7. Slice 3 Phase B — the write canary, in the window
@@ -629,6 +642,17 @@ verifier: 0 pass, 1 fail, 2 refused (no `--window`).
 **Run the canary exactly once.** It is idempotent on its receipt, so a second
 run — inside the window or outside it — writes zero rows and measures nothing.
 Committing it before the window therefore *spends* the window's subject.
+
+### 7.3a `--bucket` is refused, not half-honoured
+
+All three Phase B modes refuse a `--bucket` that is not the configured
+`MINIO_BUCKET`. Across this file reads take the bucket they are given, but
+bare-key `object_exists` and `write_bytes` use the configured one — so an
+override would report present inputs as missing and land a commit report
+beside a manifest it does not describe. Nothing here needs it: every command is
+a `compose run` whose `MINIO_BUCKET` already names the production bucket. Set
+that env var rather than passing the flag. (The same seam exists in `compare`,
+`assign` and `apply`; making the whole file bucket-aware is separate work.)
 
 ### 7.4 Services to quiesce
 

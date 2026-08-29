@@ -5028,6 +5028,200 @@ def test_a_migrated_manifest_beside_the_original_is_the_one_that_is_read(
         store[f"recovery/plan145/canary/{_C3RUN}-canary_sample.parquet"]).hexdigest()
 
 
+def _migrated(mod, tmp_path, monkeypatch, store):
+    """Age the manifest to v1 and migrate it, returning the sibling's key."""
+    _v1_manifest(tmp_path, store)
+    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+    assert mod.run_canary_remanifest(mod.parse_args(
+        ["canary-remanifest", "--run-id", _C3RUN, "--apply"])) == 0
+    return f"recovery/plan145/canary/{_C3RUN}-canary_sample_digested.parquet"
+
+
+def _commit_the_sibling(mod, monkeypatch, store, target_key, *, rows=5):
+    conn = _FakeWriteConn()
+    _record_execute_values(monkeypatch, conn)
+    _patch_slice2_io(monkeypatch, store, conn)
+    args = ["canary-commit", "--run-id", _C3RUN, "--apply",
+            "--expect-manifest-sha256",
+            hashlib.sha256(store[target_key]).hexdigest(),
+            "--expect-rows", str(rows)]
+    return conn, mod.parse_args(args)
+
+
+def test_a_substituted_sibling_with_a_different_object_set_commits_nothing(
+        tmp_path, monkeypatch):
+    """Resolution picks the sibling because it exists. Existence is not a
+    reason to trust it: a sibling created or replaced independently could hand
+    a commit an object set that is not the window's subject."""
+    import scripts.reconcile_april_detail as mod
+
+    store = _canary_ready(mod, tmp_path, monkeypatch)
+    target_key = _migrated(mod, tmp_path, monkeypatch, store)
+
+    # a valid, digest-bearing, self-consistent sibling -- over three artifacts
+    # instead of four. Every per-artifact check inside it passes.
+    rows = [r for r in _read_manifest_rows(store[target_key])
+            if r["object_key"] != _OD]
+    store[target_key] = _write_canary_manifest(tmp_path / "sub.parquet", rows)
+
+    conn, parsed = _commit_the_sibling(mod, monkeypatch, store, target_key, rows=4)
+    with pytest.raises(ReconcileError, match="not a promotion of the frozen") as exc:
+        mod.run_canary_commit(parsed)
+    assert "it selects different artifacts" in str(exc.value)
+    assert conn.sql == []
+    assert conn.executed_values == []
+    assert conn.commits == 0
+
+
+def test_a_sibling_promoted_from_other_bytes_commits_nothing(tmp_path,
+                                                             monkeypatch):
+    import scripts.reconcile_april_detail as mod
+
+    store = _canary_ready(mod, tmp_path, monkeypatch)
+    target_key = _migrated(mod, tmp_path, monkeypatch, store)
+    rows = _read_manifest_rows(store[target_key])
+    for row in rows:
+        row["source_manifest_sha256"] = "a" * 64
+    store[target_key] = _write_canary_manifest(tmp_path / "othersrc.parquet", rows)
+
+    conn, parsed = _commit_the_sibling(mod, monkeypatch, store, target_key)
+    with pytest.raises(ReconcileError, match="not a promotion of the frozen") as exc:
+        mod.run_canary_commit(parsed)
+    assert "now hashes to" in str(exc.value)
+    assert conn.executed_values == []
+
+
+def test_a_sibling_naming_no_source_at_all_commits_nothing(tmp_path,
+                                                           monkeypatch):
+    """Only canary-remanifest may write this object, and it always names what
+    it promoted."""
+    import scripts.reconcile_april_detail as mod
+
+    store = _canary_ready(mod, tmp_path, monkeypatch)
+    target_key = _migrated(mod, tmp_path, monkeypatch, store)
+    rows = _read_manifest_rows(store[target_key])
+    for row in rows:
+        row["source_manifest_sha256"] = None
+        row["source_object_set_digest"] = None
+    store[target_key] = _write_canary_manifest(tmp_path / "nosrc.parquet", rows)
+
+    conn, parsed = _commit_the_sibling(mod, monkeypatch, store, target_key)
+    with pytest.raises(ReconcileError,
+                       match="does not name one frozen manifest"):
+        mod.run_canary_commit(parsed)
+    assert conn.executed_values == []
+
+
+def test_the_frozen_manifest_must_still_exist_to_prove_the_promotion(
+        tmp_path, monkeypatch):
+    """It is the only record of what the window's subject was. A promotion
+    that can no longer be checked against it is not a promotion."""
+    import scripts.reconcile_april_detail as mod
+
+    store = _canary_ready(mod, tmp_path, monkeypatch)
+    target_key = _migrated(mod, tmp_path, monkeypatch, store)
+    del store[f"recovery/plan145/canary/{_C3RUN}-canary_sample.parquet"]
+
+    conn, parsed = _commit_the_sibling(mod, monkeypatch, store, target_key)
+    with pytest.raises(ReconcileError, match="is gone; it is the only record"):
+        mod.run_canary_commit(parsed)
+    assert conn.executed_values == []
+
+
+def test_the_frozen_slot_may_not_claim_to_be_a_promotion(tmp_path, monkeypatch):
+    import scripts.reconcile_april_detail as mod
+
+    store = _canary_ready(mod, tmp_path, monkeypatch)
+    key = f"recovery/plan145/canary/{_C3RUN}-canary_sample.parquet"
+    rows = _read_manifest_rows(store[key])
+    for row in rows:
+        row["source_manifest_sha256"] = "b" * 64
+    store[key] = _write_canary_manifest(tmp_path / "fakesrc.parquet", rows)
+
+    conn = _FakeWriteConn()
+    _record_execute_values(monkeypatch, conn)
+    _patch_slice2_io(monkeypatch, store, conn)
+    with pytest.raises(ReconcileError, match="slots are not interchangeable"):
+        mod.run_canary_commit(mod.parse_args(
+            ["canary-commit", "--run-id", _C3RUN, "--apply"] + _pin(store)))
+    assert conn.executed_values == []
+
+
+def test_a_good_promotion_is_reproved_and_reported_at_commit_time(
+        tmp_path, monkeypatch, capsys):
+    import scripts.reconcile_april_detail as mod
+
+    store = _canary_ready(mod, tmp_path, monkeypatch)
+    source_key = f"recovery/plan145/canary/{_C3RUN}-canary_sample.parquet"
+    target_key = _migrated(mod, tmp_path, monkeypatch, store)
+
+    conn, parsed = _commit_the_sibling(mod, monkeypatch, store, target_key)
+    assert mod.run_canary_commit(parsed) == 0
+    assert conn.commits == 1
+    out = capsys.readouterr().out
+    assert f"promoted from        {source_key}" in out
+    assert "re-proved against the frozen manifest" in out
+    report = json.loads(
+        store[f"recovery/plan145/canary/{_C3RUN}-canary_commit.json"])
+    assert report["promotion"]["source_sha256"] == hashlib.sha256(
+        store[source_key]).hexdigest()
+
+
+def test_the_flush_check_also_refuses_an_unproven_sibling(tmp_path, monkeypatch):
+    """It rebuilds the write set from the manifest, so it resolves the same
+    sibling and must apply the same proof."""
+    import scripts.reconcile_april_detail as mod
+
+    store = _canary_ready(mod, tmp_path, monkeypatch)
+    target_key = _migrated(mod, tmp_path, monkeypatch, store)
+    conn, parsed = _commit_the_sibling(mod, monkeypatch, store, target_key)
+    mod.run_canary_commit(parsed)
+
+    rows = [r for r in _read_manifest_rows(store[target_key])
+            if r["object_key"] != _OD]
+    store[target_key] = _write_canary_manifest(tmp_path / "sub2.parquet", rows)
+    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+    with pytest.raises(ReconcileError, match="not a promotion of the frozen"):
+        mod.run_canary_flush_verify(mod.parse_args(
+            ["canary-flush-verify", "--run-id", _C3RUN]))
+
+
+# -- R.1f: --bucket is refused rather than half-honoured -------------------
+
+@pytest.mark.parametrize("mode", ["canary-commit", "canary-remanifest",
+                                  "canary-flush-verify"])
+def test_phase_b_refuses_a_bucket_that_is_not_the_configured_one(
+        tmp_path, monkeypatch, mode):
+    """Reads take the bucket they are given, but bare-key object_exists and
+    write_bytes use the configured one -- so an override splits a run's
+    inputs, its checks and its outputs across two buckets."""
+    import scripts.reconcile_april_detail as mod
+
+    store = _canary_ready(mod, tmp_path, monkeypatch)
+    conn = _FakeWriteConn()
+    _record_execute_values(monkeypatch, conn)
+    _patch_slice2_io(monkeypatch, store, conn)
+
+    argv = [mode, "--run-id", _C3RUN, "--bucket", "somewhere-else"]
+    if mode == "canary-commit":
+        argv += ["--apply"] + _pin(store)
+    with pytest.raises(ReconcileError, match="does not match the configured"):
+        mod.parse_args(argv).func(mod.parse_args(argv))
+    assert conn.sql == []
+    assert conn.executed_values == []
+
+
+def test_phase_b_accepts_the_configured_bucket_named_explicitly(tmp_path,
+                                                                monkeypatch):
+    import scripts.reconcile_april_detail as mod
+    import shared.minio as minio
+
+    store = _canary_ready(mod, tmp_path, monkeypatch)
+    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+    assert mod.run_canary_commit(mod.parse_args(
+        ["canary-commit", "--run-id", _C3RUN, "--bucket", minio.BUCKET])) == 0
+
+
 # -- R.1e: the VIN snapshot is an input to the write set -------------------
 
 def test_a_vin_snapshot_that_moved_after_sampling_stops_the_commit(
