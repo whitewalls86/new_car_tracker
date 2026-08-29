@@ -146,6 +146,12 @@ def test_a_batch_writes_all_four_things_at_the_legacy_capture_time(
     manifest = _digest(batch)
 
     out = write_import_batch(writer_conn, batch, manifest, silver, events, queue)
+    # committed_at comes back with the outcome, RETURNING'd from the INSERT
+    # that set it: the only durable record of when the batch landed, once the
+    # flush has deleted the rows it describes.
+    receipt = out.pop("receipt_row")
+    assert receipt["silver_count"] == 2 and receipt["artifact_count"] == 1
+    assert receipt["committed_at"] is not None
     assert out == {"batch_name": batch, "skipped": False, "silver": 2,
                    "price_events": 1, "queue_events": 1, "artifacts": 1}
 
@@ -287,7 +293,9 @@ def test_a_probe_apply_issues_every_statement_and_commits_nothing(
     out = write_import_batch(writer_conn, batch, manifest, silver, events, queue,
                              probe=True)
     # The would-be write set is reported exactly as an authoritative commit
-    # reports it -- same dict shape, same counts.
+    # reports it -- same dict shape, same counts. The receipt row comes back
+    # too, from the RETURNING that then rolled back with everything else.
+    assert out.pop("receipt_row")["silver_count"] == 2
     assert out == {"batch_name": batch, "skipped": False, "silver": 2,
                    "price_events": 1, "queue_events": 1, "artifacts": 1}
 

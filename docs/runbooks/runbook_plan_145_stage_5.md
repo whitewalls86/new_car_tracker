@@ -1,0 +1,835 @@
+# Run Sheet: Plan 145 Stage 5 — Compare, Assign, and the Canary
+
+Operational companion to [Plan 145](../plans/plan_145_april_cutover_reconciliation.md),
+whose **Stage 5** section is the specification. Covers **slice 1** (`compare`),
+**slice 2** (`assign`; `apply` only as far as the dry run), **slice 3 Phase A**
+(`control`, `canary-sample`) and **slice 3 Phase B** (`canary-commit`,
+`canary-flush-verify`, and the V040 verifier). Follow it in order.
+
+**§7 is the only step in this sheet that commits a row to Postgres**, and it
+runs inside a maintainer-opened maintenance window. Everything before it writes
+under `recovery/plan145/` or writes nothing.
+
+> **Two things here cannot be undone by deleting an object.** `assign --apply`
+> (§5.2) advances `ops.artifacts_queue_artifact_id_seq` by one value per
+> artifact, permanently — sanctioned, since a `bigserial` gap is not a reuse.
+> And `canary-commit --apply` (§7) commits 505 silver rows. Both are meant to
+> happen; neither is reversible by an object delete.
+
+## The run id
+
+Everything below is scoped to one authoritative compare run. **Pin it on every
+command; never rely on auto-discovery.**
+
+```
+RUN_ID = cmp-6c7c90d807bbdf13
+```
+
+Inventory digest
+`6c7c90d807bbdf137bf9b96c94d2a54c2cb9d94706a6a29afa36c209a08ea60d`.
+
+## Where things stand — measured 2026-08-29 06:40 UTC
+
+| step | state |
+|---|---|
+| Stage 4 (`parse`) | **complete** 2026-08-28 — 1,204/1,204 units, 983,043 inputs, 5,738,532 rows |
+| §0 deploy | **done** — VM at `c5c5ee2`, both images rebuilt 04:21:36 UTC |
+| §2 slice 1 `compare --apply` | **done** 04:54 UTC — `cmp-6c7c90d807bbdf13` |
+| §3 parser control | **run 2026-08-29 — `FINDINGS`, diagnosed as out-of-scope (see below)** |
+| §4 rulings | near-dup decomposed and fan-out measured 2026-08-29; neither shows divergence. **No ruling recorded** — §5.2 was run without one |
+| §5 slice 2 `assign` | **done** 2026-08-29 — 341,903 artifacts, 69 batches; sequence 8,054,031 → 8,383,887. `apply` dry run validated `b00001`, nothing committed |
+| §6 `canary-sample` | **done** 2026-08-29 — 234 artifacts, 505 rows, **9/9 strata covered**, no split. **The manifest on disk must be migrated (§6.1): it predates `write_set_digest`, and `canary-commit` refuses one without it. Migrate it — do not re-sample** |
+| §7 Phase B + V040 proof | **← you are here.** `canary-commit` / `canary-flush-verify` are **built and tested** (unit + real-Postgres integration) but **have never run against production**. Needs a named window |
+
+| live state | |
+|---|---|
+| `compared/` · `inventory/` · `vin_snapshot/` | 1,758 · 1 · 1 objects |
+| `assigned/` · `control/` · `canary/` | **70 · 1 · 1** objects |
+| `ops.artifacts_queue_artifact_id_seq` | **8,383,887** (advanced by `assign --apply`) |
+| `plan145_recovery_batch_receipts` | 0 rows |
+| `staging.artifacts_queue_events WHERE status='recovered'` | 0 |
+| Flyway head | V047, applied 2026-08-28 15:56:39 |
+
+---
+
+## 0. Preflight — verify, do not redo
+
+The deploy step this sheet used to open with is **already done**. Confirm rather
+than repeat:
+
+```bash
+ssh -i ssh-key-2026-04-08.key ubuntu@147.224.199.86
+cd /opt/cartracker
+git rev-parse --short HEAD          # expect c5c5ee2 or later
+docker images --format '{{.Repository}}\t{{.CreatedAt}}' \
+  | grep -E 'cartracker-(archiver|processing)'
+```
+
+Both images were built from `c5c5ee2` at 2026-08-29 04:21:36 UTC. If you pull
+again, rebuild with `docker compose build archiver processing` — **build, do not
+redeploy**. The running containers keep serving the old image until they
+restart, and every command here is an ephemeral `docker compose run --rm` that
+picks up the new one. There is no reason to restart a live service for this work.
+
+### 0.1 Use `compose run`, not `docker exec`
+
+The Stage 4 handoff uses `docker exec -w /app cartracker-archiver …`. **Do not
+use that pattern.** It runs inside the long-lived container, which is not
+guaranteed to be on the built image. Use:
+
+```bash
+docker compose run --rm archiver         python -m scripts.reconcile_april_detail …
+docker compose run --rm april-processor  python -m scripts.reconcile_april_detail …
+```
+
+Verified 2026-08-28: `archiver` gives cwd `/app`, Python 3.13.15, duckdb 1.5.5,
+`scraper_user`; `april-processor` gives cwd `/app`, `cartracker`, pyarrow and
+bs4, **duckdb absent by design**. `april-processor` is profile-gated but naming
+it explicitly is enough — no `--profile` flag needed. Each `compose run` also
+starts `flyway`, which migrates and exits; that is idempotent noise, not an
+action.
+
+### 0.2 Which image for which mode
+
+| mode | image | role | why |
+|---|---|---|---|
+| `compare` | `archiver` | `scraper_user` | duckdb for the silver scan; read-only on `ops` is the right privilege |
+| `control` | `archiver` | `scraper_user` | duckdb for the silver read; touches no Postgres |
+| `canary-sample` | `archiver` | — | pyarrow only, no Postgres, no duckdb |
+| `assign` | `april-processor` | `cartracker` | `nextval` needs `USAGE`; pyarrow only |
+| `apply` | `april-processor` | `cartracker` | `scraper_user` has no `INSERT` on `staging.price_observation_events` |
+| `canary-remanifest` | `april-processor` | — | pyarrow only, no Postgres, no duckdb |
+| `canary-commit` | `april-processor` | `cartracker` | same `INSERT` grants as `apply`; pyarrow only |
+| `canary-flush-verify` | `archiver` | — | pyarrow only, no Postgres, no duckdb |
+
+### 0.3 tmux
+
+Four sessions hold Stage 4, probe and Stage 5 scrollback: `plan145-compare`,
+`plan145-probe`, `plan145-stage4-dryrun`, `plan145-stage-5`. **Do not kill
+them.** Continue in `plan145-stage-5` or open a new one.
+
+---
+
+## 1. The probe run is superseded — and the code now refuses it
+
+`compared_probe/cmp-e37723ede49fad4f/` and its 59 `assigned_probe/` shards are
+**not read by anything in this sheet**, and as of `7410016`/`5802cb5` they
+cannot be: `assign` and `apply` refuse any run whose `compare_report.json` has
+no `blocked_excluded` section, which is by construction a compare run predating
+the block-page filter. The refusal is keyed on `apply`, so a missing or empty
+report fails closed rather than skipping the gate.
+
+Two independent reasons it is superseded, both now moot but worth knowing:
+
+- **It is 22% short of the population, and short in the half that matters.**
+  Taken at 1,186 of 1,204 units, missing 18 of the 32 unpacked shards — the
+  pack-side cohort in which every never-fired check lives.
+- **Its assignment shards predate the block-page filter**, so its `to_import`
+  carries block pages that the authoritative run quarantines.
+
+Leave the `*_probe/` prefixes in place or delete them — maintainer's call,
+~0.25 GB. What matters is that they are never promoted, which the code enforces.
+
+---
+
+## 2. Slice 1 — the authoritative `compare` — **done**
+
+Run 2026-08-29, dry run 04:30→04:38 and `--apply` 04:40→04:54 UTC, identical
+counts, `refusals: []`, no drift flag.
+
+```bash
+# for the record — do not re-run
+docker compose run --rm archiver python -m scripts.reconcile_april_detail \
+  compare --apply --duckdb-threads 1 --duckdb-memory-limit 2GB
+```
+
+| family | rows | share |
+|---|---:|---:|
+| `already_represented` | 4,977,697 | 86.74% |
+| `to_import` | **701,375** | 12.22% |
+| `blocked_excluded` | 59,460 | 1.04% |
+| `unclassifiable` | **0** | 0% |
+| sum | 5,738,532 | matches the parsed total |
+
+Wrote `compared/cmp-6c7c90d807bbdf13/`,
+`inventory/cmp-6c7c90d807bbdf13.json`,
+`vin_snapshot/cmp-6c7c90d807bbdf13.parquet` (61,117 rows).
+
+**Do not re-run this.** A re-run with an unchanged inventory is a no-op; one
+with a changed inventory mints a new run id and invalidates every step below.
+`--force` exists but has no business here.
+
+---
+
+## 3. The parser control — the next thing to run
+
+The check the whole plan rests on: that reprocessing reproduces what production
+wrote. **Its failure would invalidate slice 1's classification and everything
+built on it**, so it runs before the rulings and before a single sequence value
+is allocated. It reads only slice 1's output and needs nothing from slice 2.
+
+```bash
+docker compose run --rm archiver python -m scripts.reconcile_april_detail \
+  control --apply --run-id cmp-6c7c90d807bbdf13 \
+  --sample-size 500 --seed 145 \
+  --duckdb-threads 1 --duckdb-memory-limit 2GB 2>&1 \
+  | tee /home/ubuntu/plan145-control-auth.log
+```
+
+**Blast radius:** reads the `already_represented/` shards (4,977,697 rows,
+reservoir-sampled so memory is bounded at `--sample-size`) and the nine silver
+objects. **No Postgres statement.** `--apply` writes one JSON report to
+`recovery/plan145/control/`; drop it to print only. Minutes.
+
+What you are reading:
+
+- `exact same-source candidates` — rows with `nearest_distance_s == 0` matching
+  their own source. The plan doc still cites 2,879 of 3,374 from a one-shard
+  smoke test; **measure it here**.
+- `field disagreements` and the per-field census. **Any non-zero count is a
+  finding, not a tolerance.** The mode exits non-zero.
+- `ignored by name` — exactly four: recovery provenance, `artifact_id`,
+  `written_at`, carousel `vin`. Each drives a real branch in
+  `_control_ignored_columns`, and the silver read pulls `artifact_id` and
+  `written_at` deliberately so the skip is **by name, not by absence**. A fifth
+  raises.
+- `no silver row` / `multiple silver rows` — both findings. "Clean" requires
+  `compared > 0` and all three counters zero; a run that compared nothing does
+  not persist a green result.
+
+You are comparing the **raw parsed row**, so the carousel `vin` gap is expected —
+slice 2 fills it from the frozen VIN snapshot.
+
+### 3.1 It reported FINDINGS on 2026-08-29 — and why that is not a stop
+
+The first real run returned `FINDINGS`, 2,867 field disagreements over 498
+compared rows (46.8%). **Diagnosed: the Plan 100 migration boundary, not a parse
+defect.**
+
+[Plan 100](../plans/plan_100_historical_data_migration.md) migrated the legacy
+observation tables into MinIO silver for `fetched_at < 2026-04-21`, the date the
+Airflow processing service went live. April silver is therefore a mix, and the
+legacy schema carried only `dealer_name` / `dealer_zip` / `customer_id` — none
+of the seven dealer-address columns the control flagged. Measured over 19,872
+exact-distance rows:
+
+| | rows | disagree |
+|---|---:|---:|
+| `fetched_at >= 2026-04-21` | 11,665 | **4 (0.03%)** |
+| `fetched_at < 2026-04-21` | 8,404 | 8,404 (100.0%) |
+
+Against rows production actually wrote from the same artifact, recovery
+reproduces production at 0.03%. `different_object` is 0 in every bucket, so the
+control is matching the right artifact throughout.
+
+**So: this specific FINDINGS result does not block §4 or §5.** The reasoning is
+recorded in the plan document under *Evidence — slice 3 Phase A, the parser
+control run, 2026-08-29*.
+
+**A future FINDINGS result still does.** Until the mode gains a scope predicate
+(`fetched_at >= 2026-04-21`, or silver rows whose `artifact_id` resolves in the
+queue-event lake), read its exit code as *out of scope*, and check the split
+above before concluding anything. Do not widen the four ignored fields to make
+it pass — the ignore list is a plan decision and a fifth entry raises by design.
+
+**If a rerun disagrees on post-cutoff rows, stop.** That is the real signal, and
+the compare output stays valid as data — you would be re-deciding what it means,
+not re-running it.
+
+---
+
+## 4. The rulings — one recorded, one still open
+
+### 4.1 Near-duplicate cohort — measured and recorded 2026-08-29
+
+Decomposed by a read-only scan over the authoritative `to_import/`. **The
+"burst re-scrape" explanation the plan carried is wrong** — that mechanism is
+105 of 96,800 pairs, 0.11%. All 96,800 pairs span two different source objects,
+and zero have `gap == 0`.
+
+| pair type | pairs | identical values | what it is |
+|---|---:|---:|---|
+| carousel ↔ carousel | 82,280 | 82,249 (100.0%) | one listing in two pages' carousels, same pass |
+| carousel ↔ detail | 14,415 | **0 (0.0%)** | card vs full page — different observations |
+| detail ↔ detail | 105 | 105 (100.0%) | the actual re-scrape case |
+
+**Recommendation on the record: import all of them.** Production writes this
+shape today with no deduplication anywhere in the live path — no `ON CONFLICT`
+in `_INSERT_SQL`, no uniqueness on `(listing_id, fetched_at)`, no dedup in the
+flusher or `stg_observations.sql`. Collapsing would make April's silver uniquely
+deduplicated against every other month. Full detail in the plan document,
+*The near-duplicate cohort, decomposed*.
+
+### 4.2 Carousel fan-out — measured 2026-08-29, ruling open
+
+The gate requires it measured and reviewed, not asserted. The recovery figure is
+**5.2 per object over 915,972 objects, max 8** — measured over importable
+objects only, blocked objects out of both numerator and denominator, so it is a
+sharper figure than the probe's 5.6332, not drift.
+
+Against production's own monthly fan-out, read straight from
+`silver_normalized/observations` (carousel rows ÷ artifacts producing a detail
+row):
+
+| month | fan-out | median | max |
+|---|---:|---:|---:|
+| 2026-01 | 5.07 | 6 | 8 |
+| 2026-02 | 2.92 | 0 | 8 |
+| 2026-03 | 2.53 | 0 | 8 |
+| **2026-04 — production silver** | **5.38** | 7 | **40** |
+| **2026-04 — Plan 145 recovery** | **5.2** | — | **8** |
+| 2026-05 | 7.33 | 8 | 16 |
+| 2026-06 | 7.39 | 8 | 8 |
+| 2026-07 | 7.29 | 8 | 16 |
+| 2026-08 | 7.15 | 8 | 8 |
+
+Three readings:
+
+- **April against April agrees to within 3%** — 5.2 recovered against 5.38 in
+  production silver. The recovery reproduces its own month's rate. A figure near
+  May's 7.33 would have been the alarming result, meaning recovery was emitting
+  carousel rows the month did not have.
+- **The month-to-month spread is 2.53–7.39, nearly 3×**, so "production is
+  ~5.7" was never a constant and 5.2 sits well inside the range. The spread is
+  the Plan 100 boundary again: Feb and Mar are fully migrated legacy months with
+  a **median of 0**, April straddles the 04-21 cutoff, and May onward settle at
+  7.15–7.39 with median 8.
+- **April production silver has a max of 40**, out of family with every other
+  month (8 or 16) and almost certainly a migrated legacy artifact, since the
+  current pipeline caps hints at 8. The recovery's max is 8. On this axis the
+  recovered rows are better behaved than what is already in silver.
+
+Caveat: the two April rows cover overlapping but not identical populations —
+production April silver includes migrated rows the recovery does not touch. The
+3% agreement is a strong signal, not a like-for-like identity.
+
+**The ruling has not been made.** Nothing here suggests divergence, but it
+blocks §5.2 from being run, and this sheet's summary is not the approval.
+
+---
+
+## 5. Slice 2 — `assign`, and `apply` as far as the dry run
+
+### 5.1 Assign, dry run
+
+```bash
+docker compose run --rm april-processor python -m scripts.reconcile_april_detail \
+  assign --run-id cmp-6c7c90d807bbdf13 2>&1 \
+  | tee /home/ubuntu/plan145-assign-dryrun.log
+```
+
+**Blast radius:** reads `compared/cmp-6c7c90d807bbdf13/to_import/`,
+`parsed/inputs/` and the March–May artifact-event objects. **Writes nothing and
+touches no sequence.**
+
+Validation happens here, before anything is allocated. It scans the **whole**
+population before stopping, so a cohort is reported with its size rather than
+dying on the first row. **Four refusals**, the last two new since PR #272:
+
+| refusal | trigger |
+|---|---|
+| non-UUID / NULL `listing_id` | any `to_import` row |
+| conflicting identity | one object path mapped to two queue-event artifact ids |
+| **stale compare run** | the run's `compare_report.json` has no `blocked_excluded` section — a pre-filter run. `--apply` stops, a dry run warns |
+| **block signature** | a `to_import` row that is `active` with `price`/`vin`/`make` all NULL — defence in depth behind compare's object-level filter |
+
+`cmp-6c7c90d807bbdf13` passes the stale-run check by construction. The block
+signature check is row-level and detail-only where compare's filter is
+object-level; on this run the gap it hedges is provably empty
+(`objects_that_emitted_carousel_rows: 0`), but the check stays because that was
+not knowable in advance.
+
+**Neither of the first two has ever fired on real data** — earlier probes ran
+where the cohorts are structurally empty. This is the first run with the
+pack-side population in scope at full weight. Treat a stop as information.
+
+Record: artifact count; the `preserved_queue_event` / `allocated_sequence`
+split; how many of the 42,276 unattributed pack members became import-bearing;
+and the batch count. Expect the order of ~400k artifacts and ~80 batches from
+701,375 rows, but **take the real number from the dry run**.
+
+### 5.2 Assign, apply — the irreversible step
+
+**Requires §3 clean and §4.2 ruled.**
+
+```bash
+docker compose run --rm april-processor python -m scripts.reconcile_april_detail \
+  assign --apply --run-id cmp-6c7c90d807bbdf13 2>&1 \
+  | tee /home/ubuntu/plan145-assign-apply.log
+```
+
+**Blast radius:** writes the `assigned/cmp-6c7c90d807bbdf13-bNNNNN.parquet`
+shards plus one assign report, and calls real `nextval` once per allocated
+artifact — **advancing the sequence permanently** from 8,054,031. No table row
+is written. Expect `artifact_id` to jump; a `bigserial` gap is not a reuse.
+
+Do **not** change `--max-artifacts` / `--max-silver-rows` from 5,000 / 50,000.
+The caps decide batch membership, so re-assigning under different caps is
+refused — the names would not change but their contents would.
+
+```bash
+docker exec cartracker-postgres psql -U cartracker -tAc \
+  "select last_value from ops.artifacts_queue_artifact_id_seq"
+```
+
+Confirm it moved by exactly the allocated count.
+
+### 5.3 Apply, dry run only
+
+```bash
+docker compose run --rm april-processor python -m scripts.reconcile_april_detail \
+  apply --run-id cmp-6c7c90d807bbdf13 --batch cmp-6c7c90d807bbdf13-b00001 2>&1 \
+  | tee /home/ubuntu/plan145-apply-dryrun.log
+```
+
+**Blast radius:** builds, validates and prints the whole write set. **No
+statement is issued.** It re-checks the listing-id invariant on every row —
+`text NOT NULL` does not catch `str(None)`, the four-character string `"None"` —
+and `refuse_stale_compare_run` runs here too, because `apply` re-reads the
+shards independently and with an explicit `--run-id` would otherwise select
+batches straight from the assigned prefix.
+
+**Stop here.** `apply --apply` commits, and Plan 145 allows nothing beyond the
+~500-row canary until the live-state proof closes. An authoritative `--apply`
+over `--max-unapproved-rows` (default **1,000** silver rows) is refused without
+`--maintainer-approval <name>`; one default-cap batch is up to 50,000 rows, so a
+bare `apply --apply` will be refused, correctly. `--maintainer-approval` is a
+record of a human decision, not a way past one.
+
+> The probe already retired the question this dry run half-answers. On
+> 2026-08-28 `apply --probe --apply` ran the full statement sequence for one
+> batch against production Postgres and rolled it back; every `::uuid` cast,
+> `NOT NULL` and CHECK held on real rows. Note that path is now closed for the
+> old run — its shards are refused as stale.
+
+---
+
+## 6. The canary sample
+
+```bash
+docker compose run --rm archiver python -m scripts.reconcile_april_detail \
+  canary-sample --apply --run-id cmp-6c7c90d807bbdf13 \
+  --target-rows 500 --seed 145 2>&1 \
+  | tee /home/ubuntu/plan145-canary-sample-auth.log
+```
+
+**Blast radius:** reads the authoritative `to_import/` and `assigned/` shards.
+No Postgres, no duckdb. `--apply` writes one manifest plus a report to
+`recovery/plan145/canary/`.
+
+Requires §5.2. It joins the assignment shards back to `to_import` because
+`listing_state` lives on the compared row while `id_source` and `input_kind`
+live on the assignment — expected, not a slice 2 gap.
+
+**Three stops**, cross-checks against slice 2's own per-object counts. `assign`
+builds from `_scan_to_import`, which stops on violations rather than dropping
+objects, so the two object sets are exactly 1:1 and both directions are checked:
+
+| stop | meaning |
+|---|---|
+| `missing` | an object read here with no assignment row |
+| `absent` | an assigned object with **no rows** in this read — a whole dropped shard |
+| `split` | an object read **short** of its assigned count — a half artifact |
+
+`absent` is new in `5a5cce7`: a zero-row object vanishes from the read entirely,
+so neither the short-read check nor the coverage guard — computed from that same
+truncated read — could see it. **Any of the three is a real defect in the
+inputs, not a sampler bug.**
+
+Confirm every non-empty stratum across `source` × `listing_state` ×
+`input_kind` × `id_source` is covered and no artifact is split. This is the
+first run with the pack-side strata at full weight.
+
+The manifest — `recovery/plan145/canary/cmp-6c7c90d807bbdf13-canary_sample.parquet`
+— **is Phase B's input**, and is what `verify_recovery_live_state.py
+--canary-cmd` will commit. Record the seed with the result.
+
+### 6.1 The manifest on disk must be migrated — it predates `write_set_digest`
+
+The manifest written on 2026-08-29 freezes per-artifact **counts** but not the
+rows themselves, and counts are not a contract over the write set. Flip one
+selected row from `carousel` to `detail` and the artifact still carries two
+rows, still names the same object, still resolves to the same assignment — and
+`build_recovery_price_event` mints a historical price event the sample never
+approved. Every count-based check passes on a strict superset.
+
+So the manifest schema now carries `write_set_digest`, `page_fetched_at` and
+`vin_snapshot_sha256`, and **`canary-commit` refuses a manifest without them.**
+
+**Do not get there by re-running `canary-sample`.** It *reselects*.
+Determinism reproduces the selection only while every input is unchanged,
+which is exactly the assumption the digest exists to distrust — and confirming
+the result by its aggregates (234 artifacts, 505 rows, 9 strata) cannot tell
+one 234-object set from another. The sampler is create-if-absent, so that
+route also means deleting the only record of what the V040 window's subject
+was, *before* set equality has been established.
+
+`canary-remanifest` migrates instead. It takes the frozen manifest's object set
+as given, re-checks every field that manifest already carried against the
+assignment shards, rebuilds the write set for exactly those artifacts, and
+writes a **new** object beside the original. It never deletes and never
+overwrites.
+
+```bash
+docker compose run --rm april-processor python -m scripts.reconcile_april_detail \
+  canary-remanifest --run-id cmp-6c7c90d807bbdf13 2>&1 \
+  | tee /home/ubuntu/plan145-canary-remanifest-dryrun.log
+
+# then, once the object-set digests match:
+docker compose run --rm april-processor python -m scripts.reconcile_april_detail \
+  canary-remanifest --apply --run-id cmp-6c7c90d807bbdf13 2>&1 \
+  | tee /home/ubuntu/plan145-canary-remanifest.log
+```
+
+**Blast radius:** reads the frozen manifest, the assignment shards it names,
+the `to_import` units those name, and the VIN snapshot. **No Postgres
+statement.** `--apply` writes exactly two new objects —
+`cmp-6c7c90d807bbdf13-canary_sample_digested.parquet` and its report. The
+frozen `…-canary_sample.parquet` is **not** deleted and **not** overwritten;
+re-running against an existing migrated manifest is refused.
+
+**What to read:** the two object-set digests and `identical: True`. That is the
+promotion proof — not the aggregate counts. It also refuses outright if any
+input moved under the frozen sample, which is the case a re-sample would have
+silently absorbed.
+
+From then on `canary-commit` and `canary-flush-verify` resolve the **migrated**
+manifest by existence, so there is no way to commit against the weaker one
+while the migrated one sits beside it. Pin the migrated manifest's digest — the
+dry run prints it.
+
+**Existence is not trust.** The migrated manifest records the exact bytes it
+was promoted from (`source_manifest_sha256`) and the object set those bytes
+held (`source_object_set_digest`), and every consumer **re-proves the promotion
+from the two manifests alone** before building a write set — not from the
+migration's own report, which is a separate object written afterwards by the
+run whose correctness is in question. Three things are proved:
+
+| proved | catches |
+|---|---|
+| the sibling names the frozen manifest's exact bytes, as they stand now | a sibling promoted from something else |
+| its object set equals the frozen manifest's, and equals what it recorded | a sibling over different artifacts |
+| **every field the frozen manifest carried survives, per object key** | a sibling over the *same* artifacts that changed `detail_rows`, `strata`, `artifact_id`, `batch_name`, `id_source`, `input_kind`, `page_listing_id` or `silver_rows` |
+
+The third is not implied by the first two, and it is the one that matters most.
+A substituted sibling can hold the identical object set and still carry
+`write_set_digest` values that agree with equally-mutated `assigned/` or
+`to_import` inputs — and everything downstream compares the sibling against
+those *current* inputs, so it all passes. The frozen manifest is the only thing
+that still remembers what was approved. A promotion may add `page_fetched_at`,
+`write_set_digest`, `vin_snapshot_sha256` and the two source columns; nothing
+else may move.
+
+The commit's blast-radius print names the promotion it re-proved.
+
+That means **the frozen manifest must stay in place after migration.** It is
+the only record of what the window's subject was, and a promotion that can no
+longer be checked against it is refused, not assumed.
+
+---
+
+## 7. Slice 3 Phase B — the write canary, in the window
+
+Three modes and one script, all built and covered by unit and real-Postgres
+integration tests, **none of them ever run against production**. No maintenance
+window is scheduled; opening one is the maintainer's action.
+
+| mode | image | role | what it does |
+|---|---|---|---|
+| `canary-remanifest` (§6.1) | `april-processor` | — | migrates the frozen manifest into a digest-bearing one, preserving it |
+| `canary-commit` | `april-processor` | `cartracker` | commits exactly that manifest — one transaction, receipt included |
+| `canary-flush-verify` | `archiver` or `april-processor` | — | reads only; requires those rows in the lake, by key |
+| `verify_recovery_live_state.py` | host | — | the before/after V040 assertion around the commit |
+
+### 7.1 Why the canary is not `apply --batch`
+
+The slice-2 batch unit is **not** the canary unit. `b00001` alone is 5,000
+artifacts and 10,157 silver rows — ten times the 1,000-row canary budget — so
+`apply --apply --batch` is refused, correctly, and reaching for
+`--maintainer-approval` to force it commits 5,000 artifacts where the plan
+sizes the canary at 234. `canary-commit` is **manifest-scoped**: it reads §6's
+frozen manifest, takes identity from the real `assigned/` shards, builds the
+write set with slice 2's own `build_recovery_*` functions and commits through
+slice 2's own `write_import_batch`.
+
+Three things it deliberately does not have:
+
+- **no `--probe`.** A probe rolls back, and the flush round trip cannot be
+  proven on rolled-back rows. `apply --probe --apply` already retired the
+  question a probe answers (2026-08-28, every cast and CHECK held on real rows).
+- **no `--maintainer-approval`, and no ceiling flag either.** On `apply`,
+  `--maintainer-approval` records a decision to write past the canary budget.
+  The canary *is* the budget, so `CANARY_ROW_BUDGET` is **fixed in code at
+  1,000** and this mode carries nothing that raises it. A widenable ceiling is
+  the same escape hatch under another name: an oversized or wrongly regenerated
+  manifest could then be committed by editing one number.
+- **no slice-2 batch name.** The receipt is `cmp-6c7c90d807bbdf13-canary`. A
+  canary that borrowed `b00001`'s name would mark all 5,000 of its artifacts
+  committed on the strength of 505 rows, and the full apply would skip that
+  batch forever.
+
+And one thing `--apply` **requires**: `--expect-manifest-sha256` and
+`--expect-rows`, pinning the manifest the commit was approved against. Unlike a
+ceiling flag these can only ever refuse — a wrong value stops the run. The dry
+run prints both, which is how you read them.
+
+What it binds before issuing a statement, in widening order of strength:
+
+| bound | catches |
+|---|---|
+| every manifest field against the assignment shard — `artifact_id`, `id_source`, `input_kind`, `batch_name`, `page_listing_id`, **`page_fetched_at`**, `silver_rows`, `detail_rows` | a manifest and a shard that no longer describe one population — including a moved capture time, which is the queue event's historical `fetched_at` |
+| `vin_snapshot_sha256` against the live snapshot | a VIN snapshot that moved after sampling — it fills the carousel VINs this would commit |
+| per-artifact row count | a truncated read — half an artifact |
+| per-artifact `detail_rows` and stratum set | a carousel row flipped to detail: same count, an extra price event |
+| per-artifact **`write_set_digest`** over the built silver rows, price events and queue event | anything else at all |
+
+The last one is taken over the **built** write set — the exact column tuples
+the three INSERTs send — not over the raw `to_import` rows. Two things happen
+between the rows and the write set that a raw-row digest cannot see: a missing
+carousel `vin` is filled from the frozen VIN snapshot, and the queue event's
+historical `fetched_at` comes from the assignment, which no `to_import` row
+carries. Digesting the product covers both by construction; the named checks
+above exist so those two failures are *diagnosed* rather than surfacing as an
+opaque mismatch across hundreds of artifacts.
+
+### 7.2 Dry run first — read-only, runnable today
+
+```bash
+docker compose run --rm april-processor python -m scripts.reconcile_april_detail \
+  canary-commit --run-id cmp-6c7c90d807bbdf13 2>&1 \
+  | tee /home/ubuntu/plan145-canary-commit-dryrun.log
+```
+
+**Blast radius:** reads the canary manifest, the assignment shards it names,
+the `to_import` units those shards name, the VIN snapshot and
+`compare_report.json`. **No Postgres connection is opened at all** — the dry
+run returns before `get_conn`. Prints the whole write set, the per-stratum
+census and the blast radius.
+
+Expect, from §6's manifest: **234 artifacts, 505 silver rows, 140 price
+events, 234 queue events.** Take the real numbers from the dry run — and take
+the pin from its last two lines, which print the exact
+`--expect-manifest-sha256 … --expect-rows …` the commit will need.
+
+An over-budget manifest does **not** kill this run. The dry run opens no
+connection, so refusing it would only cost you the number you need; it prints
+`OVER BUDGET` with the overage and exits 0. Only `--apply` refuses.
+
+### 7.3 The window
+
+The ordering is not negotiable, because the V040 views are time-dependent.
+
+1. the maintainer opens a **named window** and quiesces the writers (§7.4);
+2. one verifier transaction, `READ COMMITTED` — **not** `REPEATABLE READ`,
+   which would freeze the data snapshot so the second snapshot could never see
+   the canary's commit and the check could never fail;
+3. snapshot the four tables and both views, plus `txid_current()`;
+4. run the canary **on a separate connection**;
+5. snapshot again **in the same transaction**;
+6. require byte-equivalence and one shared txid;
+7. the maintainer restarts the writers.
+
+Steps 2–6 are the script, and step 4 is its `--canary-cmd`:
+
+```bash
+python scripts/verify_recovery_live_state.py --window <name> \
+  --canary-cmd "docker compose run --rm april-processor python -m \
+    scripts.reconcile_april_detail canary-commit --apply \
+    --run-id cmp-6c7c90d807bbdf13 \
+    --expect-manifest-sha256 <from the dry run> --expect-rows 505" \
+  --report /tmp/p145-v040-<name>.json
+```
+
+**Blast radius of the `--apply`:** one transaction against production Postgres
+inserting **505 rows** into `staging.silver_observations`, ~140 into
+`staging.price_observation_events`, 234 into `staging.artifacts_queue_events`
+and one receipt row into `public.plan145_recovery_batch_receipts`. **Nothing is
+written to `ops.artifacts_queue`, `ops.price_observations`,
+`ops.vin_to_listing`, `ops.blocked_cooldown` or `ops.detail_scrape_claims`** —
+which is the claim the verifier around it is measuring. It writes one report
+object to `recovery/plan145/canary/`. Irreversible in the sense that a commit
+is; re-running it is a no-op on the receipt.
+
+Do **not** pass `--maintainer-approval` inside `--canary-cmd`: `canary-commit`
+does not accept it, and on `apply` it lifts the row budget. Exit codes on the
+verifier: 0 pass, 1 fail, 2 refused (no `--window`).
+
+**Run the canary exactly once.** It is idempotent on its receipt, so a second
+run — inside the window or outside it — writes zero rows and measures nothing.
+Committing it before the window therefore *spends* the window's subject.
+
+### 7.3a `--bucket` is refused, not half-honoured
+
+All three Phase B modes refuse a `--bucket` that is not the configured
+`MINIO_BUCKET`. Across this file reads take the bucket they are given, but
+bare-key `object_exists` and `write_bytes` use the configured one — so an
+override would report present inputs as missing and land a commit report
+beside a manifest it does not describe. Nothing here needs it: every command is
+a `compose run` whose `MINIO_BUCKET` already names the production bucket. Set
+that env var rather than passing the flag. (The same seam exists in `compare`,
+`assign` and `apply`; making the whole file bucket-aware is separate work.)
+
+### 7.4 Services to quiesce
+
+The script **refuses without `--window <name>`** and opens no connection until
+that check passes. It **does not and cannot** quiesce or resume a writer.
+
+Under test: `ops.price_observations`, `ops.vin_to_listing`,
+`ops.blocked_cooldown`, `ops.detail_scrape_claims`, and the two V040 views
+`ops.ops_vehicle_staleness` and `ops.ops_detail_scrape_queue`
+(`db/migrations/V040__detail_scrape_circuit_breaker.sql:19,75`).
+
+**Services to quiesce**, derived from the writers in the tree:
+
+| table | written by |
+|---|---|
+| `ops.price_observations` | `processing` — `upsert_price_observation.sql`, `delete_price_observation.sql`, `delete_price_observation_by_vin.sql`, `srp_writer.py` |
+| `ops.vin_to_listing` | `processing` — `upsert_vin_to_listing.sql` |
+| `ops.blocked_cooldown` | `scraper` — `upsert_blocked_cooldown.sql`; `processing` — `clear_blocked_cooldown.sql`; `ops` — `evict_delisted_cooldowns.sql` |
+| `ops.detail_scrape_claims` | `ops` — `routers/scrape.py`, `expire_orphan_detail_claims.sql`; `processing` — `release_detail_claims.sql` |
+
+So: **`scraper`, `processing`, `ops`**, plus what triggers them —
+`airflow-scheduler`, or the `scrape_detail_pages`, `scrape_listings`,
+`results_processing` and `orphan_checker` DAGs. Plan 142's deploy intent
+(`POST /deploy/start`, `ops/routers/deploy.py`, with
+`ops/coordination_drain.py` aggregating evidence) is the house drain mechanism;
+whether to use it or stop containers is the maintainer's call.
+
+### 7.5 The flush round trip, after the window
+
+`staging.silver_observations` and the two event tables are asynchronously
+flushed and then **DELETED**, so a canary that stopped at Postgres has not
+proven the rows survive. `hourly_analytics_refresh` (`0 * * * *`) owns the
+scheduled flush, so this is runnable within the hour after the commit — the
+standalone `flush_silver_observations` / `flush_staging_events` DAGs are
+`schedule=None` and exist for a manual trigger.
+
+```bash
+docker compose run --rm archiver python -m scripts.reconcile_april_detail \
+  canary-flush-verify --apply --run-id cmp-6c7c90d807bbdf13 2>&1 \
+  | tee /home/ubuntu/plan145-canary-flush.log
+```
+
+**Blast radius:** reads only. No Postgres, no duckdb. `--apply` writes one JSON
+report to `recovery/plan145/canary/`. Exit 0 pass, 1 if any row is absent.
+
+It rebuilds the expected write set from the manifest and the shards rather than
+trusting the commit report — a check that read its expectation out of the
+writer's own record of what it wrote would pass on a writer that recorded the
+wrong thing. It then requires every row, **by key**, in:
+
+| table | lake prefix | key |
+|---|---|---|
+| `staging.silver_observations` | `silver_normalized/observations/source=…/obs_year=2026/obs_month=4/` | `artifact_id`, `listing_id`, `source`, `fetched_at` |
+| `staging.price_observation_events` | `ops_normalized/price_observation_events/year=2026/month=4/` | `artifact_id`, `listing_id`, `event_type`, `event_at` |
+| `staging.artifacts_queue_events` | `ops_normalized/artifacts_queue_events/year=…/month=…` | `artifact_id`, `status`, `run_id`, `fetched_at` |
+
+The commit time it bounds the scan with is **the receipt's `committed_at`**,
+which V047 sets with `now()` inside the writing transaction and `canary-commit`
+reads back with `RETURNING`. It is never this process's wall clock — so if the
+commit report write failed *after* the transaction committed, the retry that
+repairs it still records when the batch actually landed. Across a month
+boundary that distinction decides which queue-event partition gets read.
+
+There is no fallback. If the transaction reports no receipt `committed_at`,
+`canary-commit` **refuses** rather than substituting a clock: V047 declares
+that column `NOT NULL DEFAULT now()`, so a missing value is a receipt problem,
+and writing a commit report or a flush expectation against a guessed time is
+exactly the failure reading the receipt exists to prevent.
+
+Two things about the partitions. A silver row's **`source` lives in the hive
+path, not in the file** — `pq.write_to_dataset(partition_cols=…)` drops the
+partition columns from the Parquet — so the check reads it off the key; a check
+that asked for it as a column would match nothing. And the queue events land in
+the month the canary **ran**, not April: `build_recovery_queue_event` leaves
+`event_at` to its `now()` default by design, so that partition comes from the
+commit report's `committed_at`.
+
+By default only objects modified at or after the commit are read, which keeps
+this to the freshly flushed parts. **After a compaction has folded them into
+the month's compacted object, pass `--scan-all`** — correct, but it reads the
+whole partition.
+
+### 7.6 What Phase B does not resolve
+
+The 234 canary artifacts also belong to slice-2 batches `b*`. Once the canary
+commits, a later full `apply` of those batches **writes the same 505
+observations again**, which the Stage 5 gate's *no duplicate
+`(listing_id, fetched_at)`* clause forbids. `canary-commit` writes a durable
+record of exactly what it committed —
+`recovery/plan145/canary/<run>-canary_commit.json`, naming the manifest digest,
+the artifact ids and the assignment batches — so the full apply has something
+authoritative to exclude with. **`apply` itself is unchanged and does not yet
+read it.** Resolving that is the full apply's problem and the maintainer's
+ruling, not Phase B's.
+
+---
+
+## 8. Where this sheet stops
+
+After §6 you have: the authoritative four-family classification with its
+inventory digest; the parser control's per-field census; the assignment census
+and the sequence advance; and the canary sample's stratum coverage and manifest
+key.
+
+**Unproven, and to be said so explicitly in any report:**
+
+- the write canary as a **real commit**, and the flush round trip into
+  `silver_normalized/observations/` and `ops_normalized/` — Phase B is **built
+  and tested but has never run**, against production or otherwise;
+- the V040 before/after equality — needs Phase B's canary and a window;
+- the duplicate-write interaction between the committed canary and a later full
+  `apply` of the same batches (§7.6);
+- the full apply — gated on all of the above plus named maintainer approval.
+
+Do not merge a branch, do not open a Linear issue, and do not declare the gate
+closed.
+
+---
+
+## Appendix A — blast radius at a glance
+
+| § | step | objects written | Postgres | reversible |
+|---|---|---|---|---|
+| 2 | `compare --apply` | 1,760, ~0.3 GB | one read-only VIN `SELECT` | **done** |
+| 3 | `control --apply` | 1 report | none | yes |
+| 5.1 | `assign` | none | none | yes |
+| 5.2 | `assign --apply` | ~80 shards + report | **`nextval` per artifact** | **no — permanent** |
+| 5.3 | `apply` (dry) | none | none | yes |
+| 6 | `canary-sample --apply` | 1 manifest + 1 report | none | yes |
+| 6.1 | `canary-remanifest` (dry) | none | none | yes |
+| 6.1 | `canary-remanifest --apply` | 2 new objects; **the frozen manifest is preserved** | none | yes |
+| 7.2 | `canary-commit` (dry) | none | none — no connection opened | yes |
+| 7.3 | `canary-commit --apply` | 1 report | **505 silver + ~140 price + 234 queue + 1 receipt, one transaction** | **no — a commit** |
+| 7.5 | `canary-flush-verify --apply` | 1 report | none | yes |
+
+## Appendix B — flags that are gates
+
+`--no-verify`, `--allow-drift`, `--allow-rate-drift`,
+`--allow-silver-shape-drift`, `--allow-unclassifiable-drift`, `--force`,
+`--maintainer-approval`.
+
+Each exists so a human can overrule one specific measured refusal after looking
+at it. **None was needed by the compare run, and none is expected below.**
+Reaching for one to make a run finish is how a plan built on measurement starts
+shipping on assumption. Raise a specific ceiling rather than a blanket drift
+flag — `--allow-unclassifiable-drift` disarms both ceilings at once.
+
+## Appendix C — things that will cost you a debugging pass
+
+- **`docker exec` may run stale code.** §0.1.
+- **Pin `--run-id cmp-6c7c90d807bbdf13` on every command.** Auto-discovery
+  exists but a second run under either prefix breaks it silently.
+- **Do not re-run `compare`.** §2. And never re-run `parse --apply`,
+  `dedupe --apply` or `unpack --apply` — Stage 4 is complete and Stage 3a's
+  deletions are irreversible.
+- **The probe prefixes are refused, not merely stale.** §1.
+- **Four families, not three.** Any doc or memory saying three predates the
+  block-page filter (PR #272).
+- **Never use the sidecar `listing_id`**, including the copy in the unpack
+  manifest — wrong for 313,701 of 457,084 named April members. Never read or
+  compare `legacy_artifact_id`: the two `bigserial` sequences collide across the
+  cutover.
+- **`--probe` and a real commit are mutually exclusive, with no override.**
+- **`compose run` starts `flyway` each time.** Idempotent; V047 is the head.
+- **Never kill the four tmux sessions.** §0.3.

@@ -778,6 +778,12 @@ distinct rows. They are most likely genuine burst re-scrapes and genuinely
 importable, and collapsing them would discard real history. The plan records
 the measurement; the decision is the maintainer's.
 
+> **Superseded 2026-08-29.** The burst-re-scrape reading was wrong: measured on
+> the authoritative run, that mechanism is 0.11% of the cohort and the rest is
+> carousel fan-out in the time domain. See *The near-duplicate cohort,
+> decomposed* below. The conclusion — do not collapse — survives; the reason
+> does not.
+
 ### Evidence — slice 2, 2026-08-27
 
 `assign` and `apply` are implemented, together with
@@ -1014,10 +1020,393 @@ adjacent pairs, 95,168 captures with a neighbour, 7,483 listings) are recorded
 above and still need to be put in front of the maintainer, off the authoritative
 `compare_report.json`, before any authoritative apply.
 
+### Evidence — slice 1, the authoritative run, 2026-08-29
+
+**Stage 4 completed 2026-08-28** — 1,204/1,204 units, 983,043 inputs, 5,738,532
+observation rows, zero `failed`, zero `missing_object`, zero identity
+disagreements — so the completeness gate that had blocked the authoritative
+`compare` since 2026-08-27 passes. The run below is the first authoritative
+Stage 5 output that exists; `recovery/plan145/compared/` was empty before it.
+
+Run on the VM under `cartracker-archiver` (`scraper_user`, `--duckdb-threads 1
+--duckdb-memory-limit 2GB`), on `master` at `c5c5ee2` — that is, **with the
+block-page filter of PR #272**. The dry run and the `--apply` produced identical
+counts and the same `run_id`, which is the inventory digest doing its job.
+
+- `run_id` **`cmp-6c7c90d807bbdf13`**
+- inventory digest
+  `6c7c90d807bbdf137bf9b96c94d2a54c2cb9d94706a6a29afa36c209a08ea60d`
+- dry run 04:30:34 → 04:38:57 UTC; `--apply` 04:40:49 → 04:54:08. About
+  8½ and 13½ minutes, against the "single-digit minutes" the slice-1 probe
+  projected.
+- `refusals: []`. Neither `--max-unclassifiable` nor `--max-no-listing-id 0`
+  fired, and no drift flag was used.
+
+**The four families, and the sum that makes *classified exactly once*
+enforceable:**
+
+| family | rows | share |
+|---|---:|---:|
+| `already_represented` | 4,977,697 | 86.74% |
+| `to_import` | **701,375** | 12.22% |
+| `blocked_excluded` | 59,460 | 1.04% |
+| `unclassifiable` | **0** | 0% |
+| **sum** | **5,738,532** | matches the parsed row total exactly |
+
+`unclassifiable` is 0 on **both** reasons — `no_capture_time` 0 against the
+~760 the design expected, `no_listing_id` 0 against a ceiling of 0. That
+confirms the 2026-08-28 reference measurement at full population rather than on
+the materialized-only sample: the 5,260 objects with neither a listing nor a
+capture time are all block pages and emit no parsed rows. The `no_listing_id`
+cohort, unmeasured until now because it lives on the pack side, is genuinely
+empty.
+
+**The block-page filter, measured for the first time.** 59,460 rows over 59,460
+objects, every one a `detail` row; the filter quarantines whole objects and
+excluded nothing else:
+
+| cross-tab | |
+|---|---|
+| `size_band` | 000000–000511 **59,455** · 000512–001023 3 · 004096–016383 2 |
+| `input_kind` | unpacked 51,844 · materialized 7,616 |
+| `listing_id_source` | `queue_events` 44,374 · `legacy_manifest` 15,086 |
+
+Two numbers in that section answer questions the plan had left open rather than
+merely restating the cohort:
+
+- **`objects_that_emitted_carousel_rows` is 0.** The handoff flagged this as
+  unmeasured and as the shape that defeats a row-level check — a block page
+  contributing only carousel rows to `to_import` while its detail row sits in
+  `already_represented`. It does not happen: a 439-byte `Access Denied` body has
+  no carousel. The object-level filter and `assign`'s row-level check therefore
+  agree, and the stale-run refusal added in `7410016`/`5802cb5` is guarding a
+  gap that is empty **for this run** — it stays, because that was not knowable
+  in advance and is not knowable for a future one.
+- **`detail_rows_carrying_a_business_value` is 0.** The fail-closed precision
+  gate — stop an `apply and not probe` run if any excluded row carries a
+  non-NULL `price`, `vin` or `make` — did not fire. The predicate is exactly as
+  targeted as it was specified to be.
+
+The 44,374 `queue_events` and 15,086 `legacy_manifest` split is the defect the
+filter exists for, confirmed at scale: Stage 4's classifier is structurally dead
+for every object whose identity resolved, so all 59,460 of these were recorded
+as `parsed` upstream. `parse_report.json`'s `blocked_other: 4,966` remains an
+accurate record of what Stage 4 classified; it is not rewritten.
+
+**The two maintainer rulings, now off the authoritative report.** Both moved
+from their probe values, as the handoff predicted they would once block pages
+left the population:
+
+| | probe `cmp-e37723ede49fad4f` | authoritative `cmp-6c7c90d807bbdf13` |
+|---|---:|---:|
+| carousel fan-out per object | 5.6332 over 671,657 objects | **5.2 over 915,972 objects**, max 8 |
+| near-dup adjacent pairs ≤ 300 s | 67,994 | **96,800** |
+| captures with a neighbour | 95,168 | **142,397** |
+| listings involved | 7,483 | **20,625** |
+| multi-candidate share | 0.3069 | **0.3207** (1,821,048 of 5,679,072) |
+
+The fan-out is now measured over importable objects only — blocked objects are
+out of both numerator and denominator — so **5.2 is a sharper figure than the
+probe's 5.6332, not drift**, and it sits just under production's ~5.7. The
+near-duplicate cohort is the quantity to rule on: 142,397 unrepresented captures
+have another unrepresented capture of the same listing within 300 s, across
+20,625 listings. This is the deliberate asymmetry between the two windows —
+representation tests ±300 s, duplicate collapse tests an exact
+`(listing_id, fetched_at)` — and are decomposed immediately below.
+Collapsing them would discard real history. **Neither ruling is made here.**
+
+#### The near-duplicate cohort, decomposed — 2026-08-29
+
+The cohort was characterized directly rather than reasoned about, by a
+read-only DuckDB scan over `compared/cmp-6c7c90d807bbdf13/to_import/` (658
+shards, 71.4 MB). **It corrects an explanation this plan and the slice-2
+handoff both carried**: that these are "most likely genuine burst re-scrapes."
+They are not.
+
+All 96,800 adjacent pairs span **two different source objects** — not one pair
+is two rows of the same page — and **zero** pairs have `gap == 0`, which
+independently confirms that `groups_collapsed: 0` reflects an absence of
+exact-key duplicates rather than a missed collapse.
+
+| pair type | pairs | identical business values | what it is |
+|---|---:|---:|---|
+| carousel ↔ carousel | 82,280 | **82,249 (100.0%)** | one listing carried in two different pages' carousels |
+| carousel ↔ detail | 14,415 | **0 (0.0%)** | a summary card and a full page — two different observations |
+| detail ↔ detail | 105 | 105 (100.0%) | the burst re-scrape case the plan assumed |
+
+**The burst-re-scrape population is 105 of 96,800 pairs — 0.11%.** What the
+cohort actually measures is carousel fan-out in the time domain: one scrape pass
+captures many detail pages seconds apart, and a listing popular enough to appear
+in several of their carousels is then observed several times inside a 300 s
+window. 47,042 pairs (48.6%) are ≤ 1 s apart, which is the signature of a single
+pass rather than of re-scraping. By source, the 142,397 captures with a
+neighbour are 132,002 carousel and 10,395 detail.
+
+The carousel ↔ detail pairs are not duplicates under any definition — **none**
+carries identical values, and the price differs in 7,651 of them. A carousel
+card and a detail page are different views of the same listing, and collapsing
+them would discard the more informative one.
+
+That leaves exactly one genuinely duplicative population: the 82,249
+identical-valued carousel ↔ carousel pairs, about **11.7% of `to_import` rows**
+if each run were collapsed to a single winner.
+
+**Why the recommendation is to import all of them.** Production writes this
+shape today — one carousel row per hint per artifact, with no deduplication
+anywhere in the live path. Verified 2026-08-29 across the whole chain:
+`_INSERT_SQL` (`processing/writers/silver_writer.py:38`) is a plain
+`INSERT … VALUES` with no `ON CONFLICT`; `staging.silver_observations` has only
+a `bigserial` primary key and no uniqueness on `(listing_id, fetched_at)`
+(`V025__silver_observations_staging.sql:12`);
+`archiver/processors/flush_silver_observations.py` does not deduplicate; and
+`dbt/models/staging/stg_observations.sql` has no `distinct`, `row_number`,
+`qualify` or `group by`. Silver is a coverage record, not a deduplicated fact
+table. Collapsing here would make April's silver uniquely deduplicated against
+every other month — worse than the redundancy, because it breaks comparability
+and deletes observations production itself would have written. These rows are in
+`to_import` precisely because silver holds no record of them; that absence is
+the loss being recovered.
+
+Unexplained, and too small to gate anything: **31** carousel ↔ carousel pairs
+whose values differ inside the window — a real price change within a second or
+two, or a stale card on one of the two pages.
+
+**Everything else the gate asks for.** Recovery duplicates 0 collapsed in 0
+groups, and **0 conflicting-fingerprint groups** — the stop that has never fired
+did not fire at full population either. VIN collisions 0. The match-count
+distribution runs from 701,375 rows at zero candidates to a long tail (40
+candidates at the top), which is the existence test behaving as designed:
+multiple candidates are normal and none supplies identity or a value.
+
+**The freeze.** The inventory names and fingerprints all four input families:
+1,204 `parsed/rows/` objects (242,126,394 B), 1,204 `parsed/inputs/`
+(87,411,145 B), the **nine** March–May silver objects (219,710,181 B, unchanged
+from the frozen shape, 16,663,136 observations indexed over 119,445 wanted
+listings), and 3 `artifacts_queue_events` objects (204,175,412 B). The
+read-only VIN snapshot is 61,117 rows, 1,736,857 B, sha256
+`085c2655…785c68`. Written to `compared/cmp-6c7c90d807bbdf13/`,
+`inventory/cmp-6c7c90d807bbdf13.json` and
+`vin_snapshot/cmp-6c7c90d807bbdf13.parquet`.
+
+**What this supersedes.** The probe's 81.1% / 18.9% family split is retired:
+rows a block page had put in `already_represented` now land in
+`blocked_excluded`, and the authoritative split is 86.74% / 12.22% / 1.04% / 0%.
+The probe run `cmp-e37723ede49fad4f` and its 59 `assigned_probe/` shards predate
+the filter and are refused by `assign` and `apply` on sight — their
+`compare_report.json` has no `blocked_excluded` section.
+
+**What remains unproven.** The parser control has not been run against this
+output, so nothing yet establishes that reprocessing reproduces what production
+wrote. No identity has been allocated and the sequence is untouched by this run.
+The two rulings above are recorded, not decided.
+
+### Evidence — slice 3 Phase A, the parser control run, 2026-08-29
+
+The parser control ran for the first time against real data, on the
+authoritative compare run. **It reported `FINDINGS` and exited non-zero.** The
+diagnosis below is what that verdict turned out to mean, and it changes the
+check rather than the recovery.
+
+```
+control --apply --run-id cmp-6c7c90d807bbdf13 --sample-size 500 --seed 145
+  exact same-source candidates   4,183,152
+  sampled                              500   (carousel 425 / detail 75)
+  compared                             498
+  no silver row / multiple silver rows   0 / 2
+  field disagreements                2,867
+  result                          FINDINGS
+```
+
+The census decomposes exactly — 206 carousel rows × 13 fields + 27 detail rows
+× 7 fields = 2,867 — so **233 of 498 compared rows, 46.8%**, disagreed. Not
+noise, and far too large to wave through.
+
+**The cause is the Plan 100 migration boundary, not a parse defect.**
+[Plan 100](plan_100_historical_data_migration.md) migrated the legacy
+`detail_observations`, `srp_observations` and `detail_carousel_hints` tables
+into MinIO silver, and its *Cutoff Date* section fixes the boundary: the Airflow
+processing service went live **2026-04-21**, and only rows with
+`fetched_at < 2026-04-21` were migrated. April silver is therefore a **mix** —
+migrated legacy rows before the 21st, live-written rows from the 21st — and
+Plan 145's April population straddles it.
+
+The legacy schema explains the exact field set that disagrees. Plan 100's
+`silver/detail` mapping carries `dealer_name`, `dealer_zip` and `customer_id`
+and **nothing else dealer-side**: no `dealer_street`, `dealer_city`,
+`dealer_state`, `dealer_phone`, `dealer_website`, `dealer_cars_com_url`,
+`dealer_rating`, no `seller_id`. Those seven columns did not exist in the old
+pipeline, so no reparse can reproduce them — and they are precisely the fields
+the control flagged.
+
+**Measured directly.** A read-only scan over 19,872 exact-distance
+`already_represented` rows (reservoir sample, seed 145), matched to silver on
+the control's own key — same listing, same source, same microsecond — and split
+on the cutoff:
+
+| | rows | with a disagreement | mean fields |
+|---|---:|---:|---:|
+| `fetched_at >= 2026-04-21` | 11,665 | **4 (0.03%)** | 0.00 |
+| `fetched_at < 2026-04-21` | 8,404 | **8,404 (100.0%)** | 12.19 |
+
+By attribution — joining the silver row's `artifact_id` back to
+`ops_normalized/artifacts_queue_events`:
+
+| silver row | rows | with a disagreement |
+|---|---:|---:|
+| artifact **unmapped** (no queue event) | 8,120 | 8,120 (100.0%) |
+| **same object** as the one being reparsed | 11,949 | 288 (2.4%) |
+| different object | **0** | — |
+
+**`different_object` is zero in every bucket.** A competing hypothesis — that
+the control's `(listing_id, fetched_at, source)` key was silently matching a
+carousel row written by a *different* page — is therefore **refuted**. The
+control matches the right artifact; that artifact's silver row simply predates
+the current pipeline in 42% of cases. Post-cutoff, 0 of 11,665 rows are
+unmapped and 100% resolve to the same object.
+
+**So the control passes on everything it can legitimately test.** Against silver
+rows production actually wrote from the same artifact, recovery reproduces
+production at **0.03% disagreement — 4 rows in 11,665**. That is the assertion
+Stage 5 rests on, and it holds.
+
+**The consequence for the check.** "Recovery must reproduce silver" is not
+well-posed against a migrated legacy row: the dealer address fields were never
+captured, so there is no page that would reparse to it. The control needs a
+**scope predicate** — restrict the sample to `fetched_at >= 2026-04-21`, or
+equivalently to silver rows whose `artifact_id` resolves in the queue-event
+lake. The two agree here (8,120 of 8,404 pre-cutoff rows are unmapped; 0 of
+11,665 post-cutoff rows are), and the date predicate is the cheaper of the two.
+Until that lands, the control's non-zero exit should be read as *out of scope*,
+not as a parse regression.
+
+**The consequence for the recovery — this is upside, not damage.** On pre-cutoff
+observations the reparse recovers a mean of **12.19 silver fields per row** that
+the legacy pipeline never captured, chiefly the seven dealer-address columns.
+That data exists only because the bronze HTML was kept; it is not recoverable
+from any downstream table. It also means recovered April rows before 2026-04-21
+will be **richer than their migrated neighbours**, which is a property to state
+in the plan rather than discover in a dashboard.
+
+**Residuals, none blocking.**
+
+- **4 post-cutoff `detail` disagreements** in 1,815 (0.2%). Small enough to be
+  individual pages rather than a class, but unexamined.
+- **2 `multiple_silver_rows`.** The mode counts these as findings, so even a
+  clean field census would not have returned `clean` as written.
+- **Migrated carousel rows carry `make`/`model`, which Plan 100 says they should
+  not.** Its `silver/carousel` mapping lists only `artifact_id`, `listing_id`,
+  `source_listing_id`, `source`, `listing_state`, `fetched_at`, `price`,
+  `mileage`, `year`, `body`, `condition` — no `make`, no `model`. No version of
+  `detail_writer` sets them on a carousel row either, and `srp_writer` writes
+  `source='srp'`. The migration implementation therefore diverged from its own
+  plan document. Harmless here — those rows are out of scope once the predicate
+  lands — but it means Plan 100's schema tables should not be trusted as a
+  description of what is actually in the lake.
+
+### Evidence — slice 2, the authoritative assign, 2026-08-29
+
+`assign` ran against the authoritative compare run `cmp-6c7c90d807bbdf13` in
+`april-processor` (`cartracker` role, pyarrow). The dry run and `--apply` agree.
+
+```
+to_import rows            701,375
+artifacts                 341,903
+  preserved_queue_event    13,253
+  allocated_sequence      328,650
+  pack members newly attributed 36,220 of 42,276
+batches                        69   (68 bound by the artifact cap, 1 by end)
+```
+
+**All four refusals passed on real data.** No NULL or non-UUID `listing_id`, no
+object path mapped to two queue-event artifact ids, no stale-compare-run
+rejection, and no block-signature hit. Two of these had never fired or been
+exercised against a population that could trip them — both probes ran
+materialized-only, where the cohorts are structurally empty. This is the first
+run with the pack side at full weight and they are genuinely clean.
+
+**The finding: 36,220 of the 42,276 unattributed pack members are
+import-bearing — 85.7%.** The 2026-08-28 probe measured **0 of 42,276**. That
+is not drift; it is the probe's structural blind spot closing, because those
+members live in the 18 unpacked shards the partial compare never reached. The
+plan already rules on this case — a pack member with a row to import cannot
+stay unattributed, because silver's `artifact_id` is NOT NULL and the Stage 6
+repacker needs the attribution — so it is handled by design rather than
+discovered. **Downstream consequence: 36,220 previously unattributable pack
+members now carry artifact ids, which is material to Stage 6's repacker.**
+
+**Arithmetic.** 13,253 + 328,650 = 341,903. 701,375 rows over 341,903 artifacts
+is 2.05 rows per artifact. 341,903 ÷ 5,000 = 68 full batches plus one partial,
+matching the reported 69. The **artifact cap binds every time**: the mean batch
+is ~10,165 silver rows against a 50,000-row cap, so the row cap never engages.
+Preservation rose to 3.9% from the probe's 0.6%, consistent with more
+post-cutoff objects having queue events.
+
+**`--apply` durable effect.** 70 objects under `recovery/plan145/assigned/` —
+69 batch shards plus the assign report — and
+`ops.artifacts_queue_artifact_id_seq` advanced **8,054,031 → 8,383,887**. The
+329,856 advance is the 328,650 allocations plus ~1,200 from concurrent live
+production traffic. `nextval` is called only for allocations; preserved ids do
+not consume one. Permanent and sanctioned: a `bigserial` gap is not a reuse.
+
+**`apply` dry run, batch `cmp-6c7c90d807bbdf13-b00001`:** 5,000 artifacts,
+10,157 silver rows, 2,995 price events, 5,000 queue events; the write set was
+built and validated and **no statement was issued**. Verified after:
+`public.plan145_recovery_batch_receipts` 0 rows and
+`staging.artifacts_queue_events WHERE status = 'recovered'` 0. Nothing has
+committed.
+
+Note that b00001's 10,157 silver rows are **ten times** the 1,000-row canary
+budget. The slice-2 batch unit is therefore not the canary unit, which is what
+Phase B has to reconcile.
+
+### Evidence — slice 3 Phase A, the canary sample, 2026-08-29
+
+`canary-sample --apply` against the authoritative run, seed 145, target 500
+rows:
+
+```
+selected artifacts            234
+silver rows                   505   (140 detail / 365 carousel)
+strata in population            9
+strata covered                  9   (every stratum covered: True)
+no artifact split            True
+```
+
+| stratum | rows |
+|---|---:|
+| `carousel \| active \| materialized \| allocated_sequence` | 213 |
+| `carousel \| active \| unpacked \| allocated_sequence` | 112 |
+| `detail \| unlisted \| materialized \| allocated_sequence` | 105 |
+| `carousel \| active \| unpacked \| preserved_queue_event` | 40 |
+| `detail \| active \| unpacked \| allocated_sequence` | 14 |
+| `detail \| unlisted \| unpacked \| allocated_sequence` | 11 |
+| `detail \| unlisted \| unpacked \| preserved_queue_event` | 6 |
+| `detail \| active \| materialized \| allocated_sequence` | 3 |
+| `detail \| active \| unpacked \| preserved_queue_event` | 1 |
+
+None of the three cross-checks fired — no `missing` object, no `absent`
+assigned object (the dropped-shard blind spot closed in `5a5cce7`), and no
+`split` artifact. The population holds nine non-empty strata rather than the
+sixteen the cross-product allows: `materialized × preserved_queue_event` is
+empty by construction, since materialized objects carry content-derived keys
+with no queue event, and `carousel × unlisted` cannot exist because an unlisted
+page emits no carousel rows.
+
+505 rows slightly overshoots the 500 target because every non-empty stratum is
+covered even when that costs a few rows — the documented behaviour of
+`--target-rows`.
+
+The manifest at
+`recovery/plan145/canary/cmp-6c7c90d807bbdf13-canary_sample.parquet` is
+**Phase B's input**.
+
 ### Gate
 
-- Every parsed observation is classified exactly once, into one of the three
-  families, whose counts sum to the parsed row total.
+- Every parsed observation is classified exactly once, into one of the **four**
+  families — `already_represented`, `to_import`, `blocked_excluded`,
+  `unclassifiable` — whose counts sum to the parsed row total. (Three when this
+  gate was written; `blocked_excluded` was added by the block-page filter, and
+  the four-way sum was met by `cmp-6c7c90d807bbdf13` on 2026-08-29.)
 - The final comparison names and fingerprints every parsed, silver,
   artifact-event and VIN-lookup input it used.
 - No duplicate `(listing_id, fetched_at)` observation is written.
