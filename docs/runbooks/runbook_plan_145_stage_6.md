@@ -94,11 +94,13 @@ Dry run first — it reads no object and tells you the sample composition:
 python -m scripts.reconcile_april_detail pack-trial
 ```
 
-The dry run took **35 s** and reported 843,439 members described by the lake,
-657,629 eligible, 50,000 per sample.
+**This step is done.** Run 2026-08-29 as `trial-5fbadb36972161fb`, 18m02s
+(not the 1–1.5 hours budgeted). The verdict is a **split — `current` carries**,
+so step 3 needs no code change. Kept here for the record and for anyone
+re-running it:
 
-Then the real thing. **~200,000 GETs and ~31 GiB of level-9 compression:
-budget 1–1.5 hours**, not the "minutes" the plan says. Run it under tmux.
+The dry run took **35 s** and reported 843,439 members described by the lake,
+657,629 eligible, 50,000 per sample. The real run takes ~18 min under tmux.
 
 ```bash
 python -m scripts.reconcile_april_detail pack-trial --apply
@@ -119,15 +121,18 @@ If `true` wins, the size of the win is what justifies — or does not — a sepa
 plan to reorder May, June and July: 6.86 GiB and ~3M members this plan does not
 touch.
 
-### Carrying the verdict into step 3
+### Carrying the verdict into step 3 — settled
 
-If `current` wins, step 3 needs no change: it is what the packer already does.
+`current` won, so **step 3 needs no change**: it is what the packer already
+does. Do not touch `fetch_member_metadata`.
 
-If `true` wins, the packer's `ORDER BY` and frame sealing must move from
-`cluster_key` to `listing_id` before step 3 — a one-line change in
-`fetch_member_metadata`, which Stage 5b deliberately left separable. **That is a
-code change with a review, not a flag**, and it is out of this sheet's scope
-until the trial reports.
+The verdict was a split — true ordering was 27.50% *worse* on the sample drawn
+in `current` order and 4.76% *better* on the sample drawn in `true` order, a
+32-point swing on the same population with only the 50,000 members differing.
+Each sample favours whichever ordering drew it, by more than the effect under
+test, so the trial refuses to call it and the incumbent carries. Had this run
+the plan's original single sample, it would have reported a confident 27.50%
+loss for true ordering on the strength of a selection artefact.
 
 ---
 

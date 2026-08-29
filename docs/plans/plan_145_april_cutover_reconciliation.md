@@ -1670,10 +1670,16 @@ draws **one contiguous sample per ordering** and packs each both ways — four
 passes — and the rule becomes: true ordering carries only if it is smaller on
 **both**. A split verdict leaves the incumbent in place and the question open.
 
-**Cost is 1–1.5 hours, not minutes** — four passes is ~200,000 GETs and ~31 GiB
-of level-9 dictionary compression. Risk is still nil: the trial packs are built
-in memory and never stored, and the original April packs stay authoritative
+**Cost measured at 18m02s** — the 1–1.5 hour estimate counted GETs and ignored
+page cache on the re-read passes. Risk is nil and was confirmed: the trial packs
+are built in memory and never stored, the April pack prefix still held exactly
+32 packs and 32 sidecars afterwards, and the original packs stay authoritative
 until the real replacement set verifies.
+
+**Answered 2026-08-29: a split verdict, so `current` carries.** See *Evidence —
+the ordering trial*. Each sample favoured whichever ordering drew it, across a
+32-point swing, so the trial cannot separate ordering quality from selection
+bias at this size. The repack proceeds in the existing clustering order.
 
 Members with no subject listing are excluded. One cannot inform a question
 about ordering by subject listing, and in the `true` arm they would collapse
@@ -1914,6 +1920,106 @@ finished, and the cumulative figure the log prints kept falling only because it
 is a running average dragging the two slow chunks along — it looked like decay
 and was not. During the real repack, which reads 983k bodies as well, contention
 would be far more expensive.
+
+### Evidence — the ordering trial, 2026-08-29
+
+`pack-trial --apply`, run id `trial-5fbadb36972161fb`, 17:31:26–17:49:28 UTC,
+**18m02s**. Production dictionary `1367127621`, level 9, 16 MiB frame target,
+64 MiB pack roll — the packer's own values, resolved from it rather than
+restated.
+
+The run id is a hash of the sample composition and **reproduced the dry run's
+exactly**, 45 minutes apart, so the selection is deterministic and the
+population did not move between them.
+
+| sample | arm | stored bytes | packs | frames | ratio |
+|---|---|---:|---:|---:|---:|
+| drawn in `current` | current | 170,640,788 | 3 | 407 | **54.39x** |
+| | true | 217,572,014 | 4 | 486 | 42.65x |
+| drawn in `true` | current | 176,817,588 | 3 | 374 | 46.70x |
+| | true | 168,407,136 | 3 | 370 | **49.04x** |
+
+```
+drawn in current  true ordering is larger  by 46,931,226 B (27.50%)
+drawn in true     true ordering is smaller by  8,410,452 B ( 4.76%)
+
+WINNER                 current
+  split verdict -- the incumbent carries and the question stays open
+```
+
+**The decision rule, fixed before the run, returns `current`.** The repack
+therefore proceeds in the existing clustering order and
+`fetch_member_metadata` is not changed. The compression question stays open,
+which is the honest outcome rather than a null one.
+
+#### The split is the finding
+
+Each sample favours whichever ordering drew it, and **the swing is 32
+percentage points** — from true being 27.50% worse to true being 4.76% better,
+on the same population, the same dictionary, the same frame target, with only
+the 50,000 members differing. That is far larger than the effect under test.
+
+This is exactly the bias the plan's own *Caveats for the result* section
+predicted and could not size. It can now be sized, and it is bigger than the
+signal.
+
+**A single sample would have produced a confident wrong answer in whichever
+direction it was drawn.** The plan originally specified one — "the first
+~50,000 members of the flattened population" — which, taken in stored order, is
+the `current` draw: it would have reported *true ordering is 27.50% worse* and
+closed the question on the strength of a selection artefact. Drawn the other
+way it would have reported a 4.76% win. The two-sample rule is what turned an
+answer into a refusal.
+
+Why the asymmetry, mechanically: the scrambled `cluster_key` is a **coarser**
+key than the true listing — the plan measured 9.98 members per scrambled value
+against 4.25 per true listing in-pack. A contiguous draw in `current` order
+therefore captures whole coarse clusters, and re-sorting that sample by true
+listing shatters them into fragments (−27.50%). A contiguous draw in `true`
+order captures whole fine clusters spread across many *partial* coarse ones, so
+re-sorting by `cluster_key` costs much less (−4.76%). Coarse clustering is
+simply more robust to sample truncation, which means a bounded trial measures
+containment at least as much as it measures ordering.
+
+#### What this says about reordering May, June and July
+
+The plan asked whether a win would justify a separate plan for the other three
+months — 6.86 GiB and ~3M members it does not touch.
+
+In its **most favourable** condition here, with whole true-listing clusters
+present, true ordering wins by **4.76%**. Applied to 6.86 GiB that is about
+**0.33 GiB**, against a full repack of ~3M members. The earlier bench tests
+showed true ordering 19.4% and 8.4% *worse* as it was given more of its
+cluster, so the trend toward parity the plan identified does continue past
+parity — but it arrives at a modest win, not a transformative one.
+
+That is not a decision, and this trial cannot make it: 50,000 members is not a
+month-global sort. It is the first evidence that the ceiling is low.
+
+#### The trial wrote no pack
+
+Verified after the run: the April pack prefix holds **32 `.zpack` and 32
+`.idx.parquet`** — unchanged — and `recovery/plan145/pack_trial/` holds exactly
+**one** object, the report. Both trial pack sets were built in memory and
+discarded, which is a stronger form of "the trial packs are discarded" than
+deleting them, and it is why no trial pack can ever be mistaken for a
+replacement by `_pack_state`.
+
+#### Timing, corrected again
+
+18m02s, not the 1–1.5 hours this plan and the run sheet budgeted. Per pass, for
+50,000 members each:
+
+| pass | duration |
+|---|---|
+| `current` sample, `current` order | 5m31s |
+| `current` sample, `true` order | 3m47s |
+| `true` sample, `current` order | 4m29s |
+| `true` sample, `true` order | 3m44s |
+
+~151 objects/s on the first pass and faster after, the later passes benefiting
+from page cache on re-read. The 1–1.5 hour figure was extrapolated from GET
+counts alone and did not account for that.
 
 ### Gate
 
