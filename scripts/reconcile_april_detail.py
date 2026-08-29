@@ -3987,6 +3987,21 @@ _RECEIPT_INSERT_SQL = f"""
         batch_name, manifest_sha256, artifact_count, silver_count,
         price_event_count, queue_event_count
     ) VALUES (%s, %s, %s, %s, %s, %s)
+    RETURNING committed_at
+"""
+
+#: The receipt row for one committed batch. `committed_at` is the column V047
+#: defaults to `now()` inside the writing transaction, so it is the *true*
+#: commit time -- the only durable record of it once the staging rows have been
+#: flushed and deleted. Read back rather than guessed at, because a caller that
+#: stamped its own wall clock on a skip path would date a batch by when it was
+#: retried. `manifest_sha256` is a predicate here, not a projection, so this
+#: string cannot be mistaken for the digest lookup in `_RECEIPT_SELECT_SQL`.
+_RECEIPT_ROW_SQL = f"""
+    SELECT committed_at, artifact_count, silver_count,
+           price_event_count, queue_event_count
+    FROM {RECEIPT_TABLE}
+    WHERE batch_name = %s AND manifest_sha256 = %s
 """
 
 #: `event_at` is listed explicitly because the column defaults to `now()` and
@@ -4403,6 +4418,26 @@ def check_batch_receipt(cursor, batch_name: str, manifest_sha256: str) -> str:
     )
 
 
+def read_batch_receipt(cursor, batch_name: str, manifest_sha256: str
+                       ) -> Optional[dict[str, Any]]:
+    """The durable receipt row for one committed batch, or None.
+
+    This is how a retry recovers *when* a batch committed. Everything else
+    about it -- the rows, the events -- has been flushed to the lake and
+    deleted from Postgres by then; the receipt is what is left.
+    """
+    cursor.execute(_RECEIPT_ROW_SQL, (batch_name, manifest_sha256))
+    row = cursor.fetchone()
+    if row is None:
+        return None
+    committed_at, artifacts, silver, price_events, queue_events = row
+    return {
+        "committed_at": committed_at, "artifact_count": int(artifacts),
+        "silver_count": int(silver), "price_event_count": int(price_events),
+        "queue_event_count": int(queue_events),
+    }
+
+
 def write_import_batch(
     conn, batch_name: str, manifest_sha256: str,
     silver_rows: Sequence[dict[str, Any]],
@@ -4434,10 +4469,16 @@ def write_import_batch(
     try:
         with conn.cursor() as cur:
             if check_batch_receipt(cur, batch_name, manifest_sha256) == "committed":
+                # Carry the receipt out with the skip. Its `committed_at` is
+                # the only surviving record of when this batch landed, and a
+                # caller that fell back to the retry's wall clock would date
+                # the batch by the retry -- which, across a month boundary,
+                # sends a lake verification looking in the wrong partition.
+                receipt = read_batch_receipt(cur, batch_name, manifest_sha256)
                 conn.rollback()
                 return {"batch_name": batch_name, "skipped": True,
                         "silver": 0, "price_events": 0, "queue_events": 0,
-                        "artifacts": 0}
+                        "artifacts": 0, "receipt_row": receipt}
             if silver_rows:
                 execute_values(cur, _SILVER_INSERT_SQL, [
                     tuple(row.get(col) for col in _POSTGRES_COLS)
@@ -4457,6 +4498,11 @@ def write_import_batch(
                 batch_name, manifest_sha256, len(queue_events), len(silver_rows),
                 len(price_events), len(queue_events),
             ))
+            # RETURNING, not a second SELECT after COMMIT: the commit time has
+            # to come out of the transaction that set it, or an ambiguous
+            # response leaves the caller guessing at it again.
+            returned = cur.fetchone()
+            committed_at = returned[0] if returned else None
         if probe:
             conn.rollback()
         else:
@@ -4466,7 +4512,14 @@ def write_import_batch(
         raise
     return {"batch_name": batch_name, "skipped": False,
             "silver": len(silver_rows), "price_events": len(price_events),
-            "queue_events": len(queue_events), "artifacts": len(queue_events)}
+            "queue_events": len(queue_events), "artifacts": len(queue_events),
+            "receipt_row": {
+                "committed_at": committed_at,
+                "artifact_count": len(queue_events),
+                "silver_count": len(silver_rows),
+                "price_event_count": len(price_events),
+                "queue_event_count": len(queue_events),
+            }}
 
 
 # -- reading slice 1's outputs --------------------------------------------
@@ -5548,7 +5601,31 @@ def _canary_manifest_schema() -> Any:
         pa.field("silver_rows", pa.int32()),
         pa.field("detail_rows", pa.int32()),
         pa.field("strata", pa.list_(pa.string())),
+        pa.field("row_digest", pa.string()),
     ])
+
+
+def canary_row_digest(rows: Sequence[dict[str, Any]]) -> str:
+    """One artifact's selected ``to_import`` rows, over every silver column.
+
+    This is what makes the manifest a contract over the **row multiset** rather
+    than over its size. Counts alone are not enough: flip one selected row from
+    ``carousel`` to ``detail`` and the artifact still carries the same number of
+    rows, still names the same object, still resolves to the same assignment --
+    and ``build_recovery_price_event`` then mints a historical price event the
+    sample never approved. The write set would be a strict superset of the
+    frozen one and every count-based check would pass.
+
+    Over ``SILVER_FIELDS`` because those are exactly the columns that reach
+    ``staging.silver_observations``; sorted, because a shard's row order is not
+    part of the contract and re-reading one must not perturb the digest.
+    """
+    payload = sorted(
+        json.dumps({name: row.get(name) for name in SILVER_FIELDS},
+                   sort_keys=True, default=_fp_json_default)
+        for row in rows
+    )
+    return hashlib.sha256("\n".join(payload).encode("utf-8")).hexdigest()
 
 
 def _stratum_label(row: dict[str, Any], assignment: dict[str, Any]) -> str:
@@ -5642,6 +5719,12 @@ def run_canary_sample(args: argparse.Namespace) -> int:
             f"no to_import shards under s3://{bucket}/{run_dir}/to_import/"
         )
     rows_by_object: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    # Which shard each object came from. The selection pass reads a five-column
+    # projection over the whole to_import family -- materialising all ~36 silver
+    # columns for 701,375 rows to digest a few hundred of them would be absurd
+    # -- so the digest pass below re-reads, at full width, only the shards that
+    # actually hold a selected object.
+    shard_of_object: dict[str, str] = {}
     for key in keys:
         for row in _read_parquet_rows(
             client, bucket, key,
@@ -5649,6 +5732,7 @@ def run_canary_sample(args: argparse.Namespace) -> int:
                      "fetched_at"],
         ):
             rows_by_object[row["object_key"]].append(row)
+            shard_of_object[row["object_key"]] = key
 
     # slice 2's `assign` builds from `_scan_to_import`, which stops on
     # violations rather than dropping objects, so the assignment set and the
@@ -5720,6 +5804,23 @@ def run_canary_sample(args: argparse.Namespace) -> int:
             f"under the selection"
         )
 
+    # The digest pass: full-width reads of just the shards holding a selection.
+    chosen_shards = sorted({shard_of_object[okey] for okey in selected})
+    full_rows: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    chosen_set = set(selected)
+    for key in chosen_shards:
+        for row in _read_parquet_rows(client, bucket, key):
+            if row["object_key"] in chosen_set:
+                full_rows[row["object_key"]].append(row)
+    widened = [okey for okey in selected
+               if len(full_rows.get(okey, [])) != len(rows_by_object[okey])]
+    if widened:
+        raise ReconcileError(
+            f"{len(widened)} selected object(s) read a different row count at "
+            f"full width than in the projection (e.g. {widened[:3]}); the "
+            f"to_import shards moved under the selection"
+        )
+
     manifest_rows: list[dict[str, Any]] = []
     per_stratum_rows: Counter[str] = Counter()
     per_stratum_objects: Counter[str] = Counter()
@@ -5744,6 +5845,7 @@ def run_canary_sample(args: argparse.Namespace) -> int:
             "page_listing_id": assignment.get("page_listing_id"),
             "silver_rows": len(rows), "detail_rows": detail,
             "strata": strata,
+            "row_digest": canary_row_digest(full_rows[okey]),
         })
 
     # True because `split` above was empty -- i.e. every selected object's
@@ -5819,11 +5921,21 @@ def run_canary_sample(args: argparse.Namespace) -> int:
 # 2026-08-28 it ran the full statement sequence for one batch against
 # production Postgres and every ::uuid cast, NOT NULL and CHECK held.
 #
-# Why there is no --maintainer-approval here either. On `apply` that flag is a
-# record of a human decision to write more than the canary budget. The canary
-# *is* the budget: a manifest that has outgrown it is a sampler or manifest
-# problem, not something an approval should paper over. The ceiling is
-# --max-rows, and it refuses before a single statement is issued.
+# Why there is no --maintainer-approval here, and no ceiling flag either. On
+# `apply`, --maintainer-approval records a human decision to write more than
+# the canary budget. The canary *is* the budget: a manifest that has outgrown
+# CANARY_ROW_BUDGET is a sampler or manifest problem, and the fix is upstream.
+# So the ceiling is fixed in code and this mode carries no flag that raises it
+# -- a widenable ceiling is the same escape hatch under another name, and an
+# oversized or wrongly regenerated manifest could then be committed by editing
+# one number. What --apply does require is the opposite: --expect-manifest-sha256
+# and --expect-rows pin the manifest the commit was approved against, and can
+# only ever refuse.
+#
+# Why the budget refusal is scoped to --apply. A dry run opens no connection
+# and writes nothing, so refusing one would kill the safe measurement that
+# tells the maintainer *how far* over budget a manifest is -- exactly the run
+# they need when it is oversized. The dry run reports the overage and exits 0.
 
 
 def canary_batch_name(run_id: str) -> str:
@@ -5878,7 +5990,47 @@ def _read_canary_manifest(client, bucket: str, run_id: str,
             f"the canary manifest s3://{bucket}/{key} is empty; there is "
             f"nothing to commit"
         )
+    # Fail closed rather than exempt an old manifest. A manifest without
+    # `row_digest` freezes only counts, and the whole point of the column is
+    # that counts are not a contract over the write set. `canary-sample` is
+    # deterministic in `--seed`, so regenerating one costs a delete and a
+    # read-only re-run and selects the same artifacts.
+    if any("row_digest" not in row or row["row_digest"] is None for row in rows):
+        raise ReconcileError(
+            f"the canary manifest s3://{bucket}/{key} carries no row_digest: "
+            f"it predates the column and freezes only per-artifact row counts, "
+            f"which a carousel-to-detail flip passes while minting a price "
+            f"event the sample never approved. Delete that object and re-run "
+            f"`canary-sample --apply --run-id {run_id} --seed <the recorded "
+            f"seed>` -- the selection is deterministic in the seed and will "
+            f"pick the same artifacts"
+        )
     return rows, hashlib.sha256(body).hexdigest(), key
+
+
+#: Every field the canary manifest copies out of slice 2's assignment shard,
+#: as ``(manifest column, assignment column)``. All of them are checked before
+#: a statement is issued: the manifest is the maintainer's approved record and
+#: the shard is the immutable allocation, so a disagreement on any one of them
+#: means the two no longer describe one population.
+_MANIFEST_ASSIGNMENT_FIELDS = (
+    ("artifact_id", "artifact_id"),
+    ("id_source", "id_source"),
+    ("input_kind", "input_kind"),
+    ("batch_name", "batch_name"),
+    ("page_listing_id", "listing_id"),
+    ("silver_rows", "silver_rows"),
+    ("detail_rows", "detail_rows"),
+)
+
+
+def _manifest_field_agrees(manifest_value: Any, assigned_value: Any) -> bool:
+    """Compare across the int32/int64 and NULL/None seams Parquet introduces."""
+    if manifest_value is None or assigned_value is None:
+        return manifest_value is None and assigned_value is None
+    if isinstance(manifest_value, int) and isinstance(assigned_value, int):
+        return int(manifest_value) == int(assigned_value)
+    return str(manifest_value) == str(assigned_value)
 
 
 def build_canary_write_set(client, bucket: str, run_id: str, *,
@@ -5917,6 +6069,15 @@ def build_canary_write_set(client, bucket: str, run_id: str, *,
     by_object: dict[str, dict[str, Any]] = {}
     shard_digests: dict[str, str] = {}
     for name in batches:
+        # A batch name the manifest invented resolves to no object, and a bare
+        # client error here would surface as a KeyError from deep in the read
+        # rather than as the refusal it is.
+        if not object_exists(_assigned_key(name, roots.assigned)):
+            raise ReconcileError(
+                f"the canary manifest names assignment batch {name!r}, but "
+                f"s3://{bucket}/{_assigned_key(name, roots.assigned)} does not "
+                f"exist; the manifest does not describe this run's assignment"
+            )
         records, digest = _read_assignment_shard(
             client, bucket, name, roots.assigned,
         )
@@ -5932,19 +6093,26 @@ def build_canary_write_set(client, bucket: str, run_id: str, *,
             f"shard the manifest names (e.g. {missing[:3]}); the canary writes "
             f"slice 2's assigned identity, not the manifest's copy of it"
         )
+    # Every field the manifest copied out of the assignment shard is checked,
+    # not just artifact_id. Each of these reaches the write set: `artifact_id`
+    # and `page_listing_id` land on the queue event, `silver_rows` and
+    # `detail_rows` are the counts the write set is validated against, and
+    # `id_source` / `input_kind` / `batch_name` are the strata the sample was
+    # approved on. A manifest that disagrees with the shard on any of them and
+    # the shards no longer describe one population.
     drifted = [
-        {"object_key": r["object_key"],
-         "manifest": int(r["artifact_id"]),
-         "assigned": int(by_object[r["object_key"]]["artifact_id"])}
-        for r in manifest_rows
-        if int(r["artifact_id"]) != int(by_object[r["object_key"]]["artifact_id"])
+        {"object_key": row["object_key"], "field": field,
+         "manifest": row.get(field), "assigned": by_object[row["object_key"]].get(key)}
+        for row in manifest_rows
+        for field, key in _MANIFEST_ASSIGNMENT_FIELDS
+        if not _manifest_field_agrees(
+            row.get(field), by_object[row["object_key"]].get(key))
     ]
     if drifted:
         raise ReconcileError(
-            f"{len(drifted)} manifest object(s) name a different artifact_id "
-            f"than their assignment shard does, e.g. {drifted[:3]}; the "
-            f"assignment is immutable, so the manifest and the shards no "
-            f"longer describe one population"
+            f"{len(drifted)} manifest field(s) disagree with the assignment "
+            f"shard, e.g. {drifted[:3]}; the assignment is immutable, so the "
+            f"manifest and the shards no longer describe one population"
         )
 
     # -- the rows themselves, from the to_import shards --------------------
@@ -5965,25 +6133,39 @@ def build_canary_write_set(client, bucket: str, run_id: str, *,
         for row in keep.to_pylist():
             rows_by_object[row["object_key"]].append(row)
 
-    # Both counts, not one: the assignment shard is what `apply` would check,
-    # and the manifest is what the maintainer approved. A canary that committed
-    # a different number of rows than the sample they read is not the canary.
-    manifest_counts = {r["object_key"]: int(r["silver_rows"]) for r in manifest_rows}
-    short = [
-        {"object_key": okey,
-         "assigned": int(by_object[okey]["silver_rows"]),
-         "manifest": manifest_counts[okey],
-         "found": len(rows_by_object.get(okey, []))}
-        for okey in sorted(wanted)
-        if not (len(rows_by_object.get(okey, []))
-                == int(by_object[okey]["silver_rows"])
-                == manifest_counts[okey])
-    ]
-    if short:
+    # The rows themselves must be the frozen ones -- not merely as many of
+    # them. A count-only check passes on a to_import row that flipped from
+    # carousel to detail under an unchanged artifact row count, and
+    # build_recovery_price_event would then mint a historical price event the
+    # sample never approved: a strict superset of the approved write set. So
+    # three things are bound per artifact, in widening order of strength:
+    # the row count, the detail/carousel composition and the stratum set, and
+    # the row multiset itself by digest over every silver column.
+    by_manifest = {r["object_key"]: r for r in manifest_rows}
+    mismatched: list[dict[str, Any]] = []
+    for okey in sorted(wanted):
+        rows = rows_by_object.get(okey, [])
+        frozen = by_manifest[okey]
+        assignment = by_object[okey]
+        found_detail = sum(1 for r in rows if r.get("source") == "detail")
+        found_strata = sorted({_stratum_label(r, assignment) for r in rows})
+        checks = (
+            ("silver_rows", len(rows), int(frozen["silver_rows"])),
+            ("assigned_silver_rows", len(rows), int(assignment["silver_rows"])),
+            ("detail_rows", found_detail, int(frozen["detail_rows"])),
+            ("strata", found_strata, sorted(frozen["strata"] or [])),
+            ("row_digest", canary_row_digest(rows), frozen["row_digest"]),
+        )
+        for field, found, expected in checks:
+            if found != expected:
+                mismatched.append({"object_key": okey, "field": field,
+                                   "found": found, "frozen": expected})
+    if mismatched:
         raise ReconcileError(
-            f"{len(short)} object(s) no longer carry the row count the "
-            f"assignment and the manifest agree on, e.g. {short[:3]}; "
-            f"committing would write half an artifact"
+            f"{len(mismatched)} artifact(s) no longer match the frozen canary "
+            f"manifest, e.g. {mismatched[:3]}; the to_import rows moved under "
+            f"an approved sample, so committing would write a set the "
+            f"maintainer never saw"
         )
 
     # -- the four writes, through slice 2's own builders -------------------
@@ -6137,8 +6319,7 @@ _CANARY_NEVER_TOUCHES = _APPLY_NEVER_TOUCHES
 
 
 def _print_canary_commit_plan(run_id: str, batch_name: str,
-                              write_set: dict[str, Any], *, apply: bool,
-                              max_rows: int) -> None:
+                              write_set: dict[str, Any], *, apply: bool) -> None:
     """The blast radius, printed before the first statement of a real commit."""
     print()
     print("Plan 145 Stage 5 slice 3 Phase B -- the write canary (a real commit)")
@@ -6153,7 +6334,8 @@ def _print_canary_commit_plan(run_id: str, batch_name: str,
           f"{write_set['assignment_batches'][-1]})")
     print(f"artifacts            {len(write_set['queue_events']):>12,}")
     print(f"silver rows          {len(write_set['silver_rows']):>12,}"
-          f"  (budget {max_rows:,}; no --maintainer-approval on this mode)")
+          f"  (fixed budget {CANARY_ROW_BUDGET:,}; this mode has no flag that "
+          f"raises it)")
     print(f"price events         {len(write_set['price_events']):>12,}")
     print(f"queue events         {len(write_set['queue_events']):>12,}")
     for stratum, count in write_set["rows_per_stratum"].items():
@@ -6185,24 +6367,66 @@ def run_canary_commit(args: argparse.Namespace) -> int:
     write_set = build_canary_write_set(
         client, bucket, run_id, roots=roots, batch_name=batch_name,
     )
-    _print_canary_commit_plan(run_id, batch_name, write_set,
-                              apply=apply, max_rows=args.max_rows)
+    _print_canary_commit_plan(run_id, batch_name, write_set, apply=apply)
 
     rows = len(write_set["silver_rows"])
-    if rows > args.max_rows:
+    over_budget = rows > CANARY_ROW_BUDGET
+
+    # The pin. A commit names the manifest it was approved against, by digest
+    # and by row count, and a mismatch stops. This is the opposite of a
+    # widening flag: it can only ever refuse. A dry run may omit it -- the dry
+    # run is how the maintainer *learns* the two values to pin.
+    if apply:
+        if not args.expect_manifest_sha256 or args.expect_rows is None:
+            raise ReconcileError(
+                f"--apply requires --expect-manifest-sha256 and --expect-rows: "
+                f"a commit names the manifest it was approved against. Run the "
+                f"dry run first and pin what it measured -- for this manifest, "
+                f"--expect-manifest-sha256 {write_set['manifest_sha256']} "
+                f"--expect-rows {rows}"
+            )
+        pinned = [
+            ("manifest sha256", args.expect_manifest_sha256,
+             write_set["manifest_sha256"]),
+            ("silver rows", int(args.expect_rows), rows),
+        ]
+        wrong = [(name, want, got) for name, want, got in pinned if want != got]
+        if wrong:
+            raise ReconcileError(
+                "the canary manifest is not the one this run was approved "
+                "against: " + "; ".join(
+                    f"{name} pinned {want!r} but measured {got!r}"
+                    for name, want, got in wrong
+                ) + ". Re-read the dry run before changing the pin"
+            )
+
+    # Scoped to --apply. A dry run opens no connection and writes nothing, so
+    # refusing one would kill the safe measurement that tells the maintainer
+    # how far over budget the manifest is -- exactly the run they need when it
+    # is oversized. It reports the overage instead.
+    if apply and over_budget:
         raise ReconcileError(
-            f"the canary write set is {rows:,} silver rows, over the "
-            f"{args.max_rows:,}-row canary budget. This mode has no "
-            f"--maintainer-approval: the canary *is* the budget, and a manifest "
-            f"that has outgrown it is a sampler or manifest problem, not an "
-            f"approval one. Re-run `canary-sample` with a smaller --target-rows, "
-            f"or raise --max-rows deliberately and say so in the record"
+            f"the canary write set is {rows:,} silver rows, over the fixed "
+            f"{CANARY_ROW_BUDGET:,}-row canary budget. This mode has no "
+            f"--maintainer-approval and no ceiling flag: the canary *is* the "
+            f"budget, so a manifest that has outgrown it is a sampler or "
+            f"manifest problem and the fix is upstream -- re-run "
+            f"`canary-sample` with a smaller --target-rows and re-pin"
         )
 
     if not apply:
+        if over_budget:
+            print(f"OVER BUDGET: {rows:,} silver rows against the fixed "
+                  f"{CANARY_ROW_BUDGET:,}-row canary budget, by "
+                  f"{rows - CANARY_ROW_BUDGET:,}. An --apply run would be "
+                  f"refused, and there is no flag that raises the budget: "
+                  f"re-run `canary-sample` with a smaller --target-rows.")
         print("DRY RUN: built and validated the canary write set from the "
               "frozen manifest; no statement was issued and no row was "
-              "written.\n")
+              "written.")
+        print(f"\nTo commit this manifest, pin it:\n"
+              f"  --expect-manifest-sha256 {write_set['manifest_sha256']} "
+              f"--expect-rows {rows}\n")
         return 0
 
     from shared.db import get_conn
@@ -6217,19 +6441,32 @@ def run_canary_commit(args: argparse.Namespace) -> int:
         )
     finally:
         conn.close()
-    committed_at = datetime.now(timezone.utc)
 
-    if outcome["skipped"]:
-        # The receipt already names this manifest digest: the canary committed
-        # on an earlier run and its rows are in the lake or on their way there.
-        # Keep the original commit report -- its committed_at is what bounds
-        # the flush verification's object scan.
+    # The receipt's own `committed_at`, on both paths: set by `now()` inside
+    # the writing transaction and read back with RETURNING, or read off the
+    # existing receipt row on a skip. It is deliberately not this process's
+    # wall clock. If the report write below failed on an earlier run, the
+    # retry that repairs it must still record when the batch *actually*
+    # landed -- canary-flush-verify uses that time both as its LastModified
+    # lower bound and to pick the queue-event partition, so a retry's clock
+    # would send it looking in the wrong month.
+    receipt_row = outcome.get("receipt_row") or {}
+    committed_at = _as_utc_datetime(receipt_row.get("committed_at"))
+    committed_at_source = "receipt"
+    if committed_at is None:
         existing = _read_canary_commit_report(bucket, run_id)
-        if existing is not None:
-            committed_at = _as_utc_datetime(existing.get("committed_at")) \
-                or committed_at
-        logger.info("canary %s already committed -- receipt present, zero rows "
-                    "written", batch_name)
+        committed_at = _as_utc_datetime((existing or {}).get("committed_at"))
+        committed_at_source = "prior commit report"
+    if committed_at is None:
+        committed_at = datetime.now(timezone.utc)
+        committed_at_source = "wall clock (no receipt row, no prior report)"
+        logger.warning(
+            "canary %s: neither the receipt nor a prior report gave a commit "
+            "time; falling back to the wall clock, so canary-flush-verify may "
+            "need an explicit --since", batch_name)
+    if outcome["skipped"]:
+        logger.info("canary %s already committed at %s -- receipt present, "
+                    "zero rows written", batch_name, committed_at)
 
     expectations = _canary_expectations(write_set, committed_at)
     report = {
@@ -6242,6 +6479,8 @@ def run_canary_commit(args: argparse.Namespace) -> int:
         "assignment_digests": write_set["assignment_digests"],
         "started_at": started_at.isoformat(),
         "committed_at": committed_at.isoformat(),
+        "committed_at_source": committed_at_source,
+        "receipt_row": receipt_row,
         "skipped_on_receipt": bool(outcome["skipped"]),
         "committed": {
             "artifacts": len(write_set["queue_events"]),
@@ -6273,9 +6512,15 @@ def run_canary_commit(args: argparse.Namespace) -> int:
     # true record of when it landed. Everything in it is re-derivable from the
     # manifest and the shards, so losing the write does not lose the evidence.
     key = _canary_commit_key(run_id)
-    from shared.minio import object_exists
-
-    if not object_exists(key):
+    prior = _read_canary_commit_report(bucket, run_id)
+    stale = (prior is not None and committed_at_source == "receipt"
+             and _as_utc_datetime(prior.get("committed_at")) != committed_at)
+    if stale:
+        logger.warning(
+            "canary %s: the stored commit report says %s but the receipt says "
+            "%s; rewriting it from the receipt", batch_name,
+            prior.get("committed_at"), committed_at.isoformat())
+    if prior is None or stale:
         write_bytes(
             key,
             (json.dumps(report, indent=2, sort_keys=True, default=str)
@@ -6859,12 +7104,16 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     cmt.add_argument("--bucket", default=None, help="Override MINIO_BUCKET.")
     cmt.add_argument("--run-id", default=None,
                      help="The compare run whose canary manifest to commit.")
-    cmt.add_argument("--max-rows", type=int, default=CANARY_ROW_BUDGET,
-                     help=f"Hard ceiling on the silver rows this may write "
-                          f"(default {CANARY_ROW_BUDGET}). There is deliberately "
-                          f"no --maintainer-approval on this mode: the canary "
-                          f"*is* the budget, so a manifest that has outgrown it "
-                          f"is a sampler problem, not an approval one.")
+    cmt.add_argument("--expect-manifest-sha256", default=None, metavar="SHA256",
+                     help="REQUIRED with --apply. The SHA-256 of the canary "
+                          "manifest this commit was approved against; a "
+                          "mismatch stops. It can only refuse -- there is no "
+                          "flag on this mode that raises the "
+                          f"{CANARY_ROW_BUDGET}-row budget or admits a larger "
+                          "manifest. Run the dry run to read it.")
+    cmt.add_argument("--expect-rows", type=int, default=None, metavar="N",
+                     help="REQUIRED with --apply. The silver-row count the dry "
+                          "run measured; a mismatch stops.")
     cmt.add_argument("--log-level", default="INFO", help="DEBUG | INFO | WARNING")
     cmt.set_defaults(func=run_canary_commit)
 

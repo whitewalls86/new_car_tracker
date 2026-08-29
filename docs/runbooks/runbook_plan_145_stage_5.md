@@ -38,7 +38,7 @@ Inventory digest
 | §3 parser control | **run 2026-08-29 — `FINDINGS`, diagnosed as out-of-scope (see below)** |
 | §4 rulings | near-dup decomposed and fan-out measured 2026-08-29; neither shows divergence. **No ruling recorded** — §5.2 was run without one |
 | §5 slice 2 `assign` | **done** 2026-08-29 — 341,903 artifacts, 69 batches; sequence 8,054,031 → 8,383,887. `apply` dry run validated `b00001`, nothing committed |
-| §6 `canary-sample` | **done** 2026-08-29 — 234 artifacts, 505 rows, **9/9 strata covered**, no split. Manifest is Phase B's input |
+| §6 `canary-sample` | **done** 2026-08-29 — 234 artifacts, 505 rows, **9/9 strata covered**, no split. **The manifest on disk must be regenerated (§6.1): it predates `row_digest`, and `canary-commit` refuses one without it** |
 | §7 Phase B + V040 proof | **← you are here.** `canary-commit` / `canary-flush-verify` are **built and tested** (unit + real-Postgres integration) but **have never run against production**. Needs a named window |
 
 | live state | |
@@ -443,6 +443,42 @@ The manifest — `recovery/plan145/canary/cmp-6c7c90d807bbdf13-canary_sample.par
 — **is Phase B's input**, and is what `verify_recovery_live_state.py
 --canary-cmd` will commit. Record the seed with the result.
 
+### 6.1 The manifest on disk must be regenerated — it predates `row_digest`
+
+The manifest written on 2026-08-29 freezes per-artifact **counts** but not the
+rows themselves. That is not a contract over the write set: flip one selected
+row from `carousel` to `detail` and the artifact still carries two rows, still
+names the same object, still resolves to the same assignment — and
+`build_recovery_price_event` then mints a historical price event the sample
+never approved. Every count-based check passes on a strict superset.
+
+So the manifest schema now carries `row_digest`, a SHA-256 over every silver
+column of that artifact's selected rows, and **`canary-commit` refuses a
+manifest without it** rather than exempting the old one.
+
+Regenerating is cheap. `canary-sample` is deterministic in `--seed`, and
+neither the selection algorithm nor its inputs changed, so **it will pick the
+same 234 artifacts and the same 505 rows** — the only difference is the added
+column. The writer is create-if-absent, so the existing object has to go first:
+
+```bash
+# blast radius: deletes and rewrites ONE object under recovery/plan145/canary/.
+# No Postgres, no duckdb. Reversible by re-running.
+docker compose run --rm archiver python -c \
+  "from shared.minio import get_boto3_client, BUCKET; \
+   get_boto3_client().delete_object(Bucket=BUCKET, \
+     Key='recovery/plan145/canary/cmp-6c7c90d807bbdf13-canary_sample.parquet')"
+
+docker compose run --rm archiver python -m scripts.reconcile_april_detail \
+  canary-sample --apply --run-id cmp-6c7c90d807bbdf13 \
+  --target-rows 500 --seed 145 2>&1 \
+  | tee /home/ubuntu/plan145-canary-sample-redigest.log
+```
+
+**Confirm the selection is unchanged before going on**: 234 artifacts, 505 rows
+(140 detail / 365 carousel), 9/9 strata, no split. A different selection means
+an input moved, and that is not Phase B to debug.
+
 ---
 
 ## 7. Slice 3 Phase B — the write canary, in the window
@@ -473,14 +509,30 @@ Three things it deliberately does not have:
 - **no `--probe`.** A probe rolls back, and the flush round trip cannot be
   proven on rolled-back rows. `apply --probe --apply` already retired the
   question a probe answers (2026-08-28, every cast and CHECK held on real rows).
-- **no `--maintainer-approval`.** On `apply` that flag records a decision to
-  write past the canary budget. The canary *is* the budget: a manifest that has
-  outgrown it is a sampler problem, not an approval one. The ceiling is
-  `--max-rows` (default 1,000) and it refuses before any statement.
+- **no `--maintainer-approval`, and no ceiling flag either.** On `apply`,
+  `--maintainer-approval` records a decision to write past the canary budget.
+  The canary *is* the budget, so `CANARY_ROW_BUDGET` is **fixed in code at
+  1,000** and this mode carries nothing that raises it. A widenable ceiling is
+  the same escape hatch under another name: an oversized or wrongly regenerated
+  manifest could then be committed by editing one number.
 - **no slice-2 batch name.** The receipt is `cmp-6c7c90d807bbdf13-canary`. A
   canary that borrowed `b00001`'s name would mark all 5,000 of its artifacts
   committed on the strength of 505 rows, and the full apply would skip that
   batch forever.
+
+And one thing `--apply` **requires**: `--expect-manifest-sha256` and
+`--expect-rows`, pinning the manifest the commit was approved against. Unlike a
+ceiling flag these can only ever refuse — a wrong value stops the run. The dry
+run prints both, which is how you read them.
+
+What it binds before issuing a statement, in widening order of strength:
+
+| bound | catches |
+|---|---|
+| every manifest field against the assignment shard — `artifact_id`, `id_source`, `input_kind`, `batch_name`, `page_listing_id`, `silver_rows`, `detail_rows` | a manifest and a shard that no longer describe one population |
+| per-artifact row count | a truncated read — half an artifact |
+| per-artifact `detail_rows` and stratum set | a carousel row flipped to detail: same count, an extra price event |
+| per-artifact `row_digest` over every silver column | any changed business value at all |
 
 ### 7.2 Dry run first — read-only, runnable today
 
@@ -496,8 +548,14 @@ the `to_import` units those shards name, the VIN snapshot and
 run returns before `get_conn`. Prints the whole write set, the per-stratum
 census and the blast radius.
 
-Expect, from §6's manifest: **234 artifacts, 505 silver rows, ~140 price
-events, 234 queue events.** Take the real numbers from the dry run.
+Expect, from §6's manifest: **234 artifacts, 505 silver rows, 140 price
+events, 234 queue events.** Take the real numbers from the dry run — and take
+the pin from its last two lines, which print the exact
+`--expect-manifest-sha256 … --expect-rows …` the commit will need.
+
+An over-budget manifest does **not** kill this run. The dry run opens no
+connection, so refusing it would only cost you the number you need; it prints
+`OVER BUDGET` with the overage and exits 0. Only `--apply` refuses.
 
 ### 7.3 The window
 
@@ -519,7 +577,8 @@ Steps 2–6 are the script, and step 4 is its `--canary-cmd`:
 python scripts/verify_recovery_live_state.py --window <name> \
   --canary-cmd "docker compose run --rm april-processor python -m \
     scripts.reconcile_april_detail canary-commit --apply \
-    --run-id cmp-6c7c90d807bbdf13" \
+    --run-id cmp-6c7c90d807bbdf13 \
+    --expect-manifest-sha256 <from the dry run> --expect-rows 505" \
   --report /tmp/p145-v040-<name>.json
 ```
 
@@ -596,6 +655,13 @@ wrong thing. It then requires every row, **by key**, in:
 | `staging.price_observation_events` | `ops_normalized/price_observation_events/year=2026/month=4/` | `artifact_id`, `listing_id`, `event_type`, `event_at` |
 | `staging.artifacts_queue_events` | `ops_normalized/artifacts_queue_events/year=…/month=…` | `artifact_id`, `status`, `run_id`, `fetched_at` |
 
+The commit time it bounds the scan with is **the receipt's `committed_at`**,
+which V047 sets with `now()` inside the writing transaction and `canary-commit`
+reads back with `RETURNING`. It is never this process's wall clock — so if the
+commit report write failed *after* the transaction committed, the retry that
+repairs it still records when the batch actually landed. Across a month
+boundary that distinction decides which queue-event partition gets read.
+
 Two things about the partitions. A silver row's **`source` lives in the hive
 path, not in the file** — `pq.write_to_dataset(partition_cols=…)` drops the
 partition columns from the Parquet — so the check reads it off the key; a check
@@ -656,6 +722,7 @@ closed.
 | 5.2 | `assign --apply` | ~80 shards + report | **`nextval` per artifact** | **no — permanent** |
 | 5.3 | `apply` (dry) | none | none | yes |
 | 6 | `canary-sample --apply` | 1 manifest + 1 report | none | yes |
+| 6.1 | re-sample for `row_digest` | 1 object deleted + rewritten | none | yes |
 | 7.2 | `canary-commit` (dry) | none | none — no connection opened | yes |
 | 7.3 | `canary-commit --apply` | 1 report | **505 silver + ~140 price + 234 queue + 1 receipt, one transaction** | **no — a commit** |
 | 7.5 | `canary-flush-verify --apply` | 1 report | none | yes |

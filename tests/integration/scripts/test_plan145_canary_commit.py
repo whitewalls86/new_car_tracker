@@ -178,10 +178,14 @@ def canary_world(monkeypatch, writer_conn, vc):
     assert mod.run_canary_sample(mod.parse_args(
         ["canary-sample", "--run-id", run_id, "--apply"])) == 0
 
+    manifest = store[f"recovery/plan145/canary/{run_id}-canary_sample.parquet"]
     yield {
         "run_id": run_id, "store": store, "keys": keys,
         "artifact_ids": artifact_ids, "primary": primary, "hint": hint,
         "batch_name": canary_batch_name(run_id),
+        # The --apply pin: a commit names the manifest it was approved against.
+        "pin": ["--expect-manifest-sha256", hashlib.sha256(manifest).hexdigest(),
+                "--expect-rows", "4"],
     }
 
     vc.execute("DELETE FROM staging.silver_observations "
@@ -210,7 +214,8 @@ def test_the_canary_commits_exactly_the_manifests_rows_and_nothing_else(
     ids = sorted(world["artifact_ids"].values())
 
     assert mod.run_canary_commit(mod.parse_args(
-        ["canary-commit", "--run-id", world["run_id"], "--apply"])) == 0
+        ["canary-commit", "--run-id", world["run_id"], "--apply"]
+        + world["pin"])) == 0
 
     vc.execute("SELECT artifact_id, listing_id, source, listing_state, vin, "
                "fetched_at FROM staging.silver_observations "
@@ -252,7 +257,8 @@ def test_the_canary_leaves_one_receipt_naming_the_manifest_digest(canary_world,
     ]).hexdigest()
 
     mod.run_canary_commit(mod.parse_args(
-        ["canary-commit", "--run-id", world["run_id"], "--apply"]))
+        ["canary-commit", "--run-id", world["run_id"], "--apply"]
+        + world["pin"]))
 
     vc.execute(f"SELECT * FROM {RECEIPT_TABLE} WHERE batch_name = %s",
                (world["batch_name"],))
@@ -270,7 +276,8 @@ def test_a_rerun_of_the_canary_writes_zero_rows(canary_world, vc):
     world = canary_world
     ids = sorted(world["artifact_ids"].values())
     mod.run_canary_commit(mod.parse_args(
-        ["canary-commit", "--run-id", world["run_id"], "--apply"]))
+        ["canary-commit", "--run-id", world["run_id"], "--apply"]
+        + world["pin"]))
 
     def _counts():
         out = []
@@ -284,29 +291,93 @@ def test_a_rerun_of_the_canary_writes_zero_rows(canary_world, vc):
 
     before = _counts()
     assert mod.run_canary_commit(mod.parse_args(
-        ["canary-commit", "--run-id", world["run_id"], "--apply"])) == 0
+        ["canary-commit", "--run-id", world["run_id"], "--apply"]
+        + world["pin"])) == 0
     assert _counts() == before
     vc.execute(f"SELECT count(*) AS n FROM {RECEIPT_TABLE} "
                "WHERE batch_name = %s", (world["batch_name"],))
     assert vc.fetchone()["n"] == 1
 
 
+def test_the_commit_time_comes_from_the_receipt_not_the_process_clock(
+        canary_world, vc):
+    """V047 sets `committed_at` with now() inside the writing transaction. The
+    writer reads it back with RETURNING rather than stamping its own clock, so
+    the recorded time is the one the database wrote."""
+    world = canary_world
+    mod.run_canary_commit(mod.parse_args(
+        ["canary-commit", "--run-id", world["run_id"], "--apply"]
+        + world["pin"]))
+
+    vc.execute(f"SELECT committed_at FROM {RECEIPT_TABLE} WHERE batch_name = %s",
+               (world["batch_name"],))
+    from_db = vc.fetchone()["committed_at"]
+    report = json.loads(world["store"][
+        f"recovery/plan145/canary/{world['run_id']}-canary_commit.json"])
+    assert report["committed_at_source"] == "receipt"
+    assert report["committed_at"] == from_db.isoformat()
+
+
+def test_a_lost_report_is_repaired_from_the_receipt_after_the_clock_moves(
+        canary_world, vc, monkeypatch):
+    """The failure this closes: the transaction commits, the MinIO report write
+    fails, and the rerun invents a fresh commit time. canary-flush-verify uses
+    that time as its LastModified bound and to pick the queue-event partition,
+    so across a month boundary it would look in the wrong place."""
+    import shared.minio as minio
+
+    world = canary_world
+    commit_key = (f"recovery/plan145/canary/{world['run_id']}-canary_commit.json")
+    good_write = minio.write_bytes
+
+    def _boom(key, data, content_type=None):
+        if key == commit_key:
+            raise RuntimeError("MinIO write failed after the commit")
+        return good_write(key, data, content_type)
+
+    monkeypatch.setattr(minio, "write_bytes", _boom)
+    with pytest.raises(RuntimeError, match="after the commit"):
+        mod.run_canary_commit(mod.parse_args(
+            ["canary-commit", "--run-id", world["run_id"], "--apply"]
+            + world["pin"]))
+
+    # the rows and the receipt are durable; the evidence object is not
+    vc.execute(f"SELECT committed_at FROM {RECEIPT_TABLE} WHERE batch_name = %s",
+               (world["batch_name"],))
+    true_commit = vc.fetchone()["committed_at"]
+    assert commit_key not in world["store"]
+
+    # the repair run, later by the wall clock, skips on the receipt and still
+    # records when the batch actually landed
+    monkeypatch.setattr(minio, "write_bytes", good_write)
+    assert mod.run_canary_commit(mod.parse_args(
+        ["canary-commit", "--run-id", world["run_id"], "--apply"]
+        + world["pin"])) == 0
+    report = json.loads(world["store"][commit_key])
+    assert report["skipped_on_receipt"] is True
+    assert report["committed_at_source"] == "receipt"
+    assert report["committed_at"] == true_commit.isoformat()
+    assert report["receipt_row"]["silver_count"] == 4
+
+
 def test_the_canary_moves_no_protected_table(canary_world, vc):
     world = canary_world
     before = _snapshot_protected(vc)
     mod.run_canary_commit(mod.parse_args(
-        ["canary-commit", "--run-id", world["run_id"], "--apply"]))
+        ["canary-commit", "--run-id", world["run_id"], "--apply"]
+        + world["pin"]))
     assert _snapshot_protected(vc) == before
 
 
-def test_the_canary_row_budget_refuses_before_any_row_is_committed(canary_world,
-                                                                   vc):
+def test_the_canary_row_budget_refuses_before_any_row_is_committed(
+        canary_world, vc, monkeypatch):
     world = canary_world
     ids = sorted(world["artifact_ids"].values())
-    with pytest.raises(ReconcileError, match="over the 2-row canary budget"):
+    monkeypatch.setattr(mod, "CANARY_ROW_BUDGET", 2)
+    with pytest.raises(ReconcileError, match="over the fixed 2-row canary budget"):
         mod.run_canary_commit(mod.parse_args(
-            ["canary-commit", "--run-id", world["run_id"], "--apply",
-             "--max-rows", "2"]))
+            ["canary-commit", "--run-id", world["run_id"], "--apply"]
+            + world["pin"]))
     vc.execute("SELECT count(*) AS n FROM staging.silver_observations "
                "WHERE artifact_id = ANY(%s)", (ids,))
     assert vc.fetchone()["n"] == 0
@@ -397,7 +468,8 @@ def test_the_round_trip_passes_on_lake_objects_with_staging_emptied(
     world = canary_world
     ids = sorted(world["artifact_ids"].values())
     mod.run_canary_commit(mod.parse_args(
-        ["canary-commit", "--run-id", world["run_id"], "--apply"]))
+        ["canary-commit", "--run-id", world["run_id"], "--apply"]
+        + world["pin"]))
 
     # Before the flush the rows are only in Postgres, and the check says so.
     assert mod.run_canary_flush_verify(mod.parse_args(
@@ -429,7 +501,8 @@ def test_the_receipt_outlives_the_flush_that_deletes_the_rows(canary_world, vc):
     world = canary_world
     ids = sorted(world["artifact_ids"].values())
     mod.run_canary_commit(mod.parse_args(
-        ["canary-commit", "--run-id", world["run_id"], "--apply"]))
+        ["canary-commit", "--run-id", world["run_id"], "--apply"]
+        + world["pin"]))
     _flush_like_the_flushers(world, vc)
 
     vc.execute(f"SELECT count(*) AS n FROM {RECEIPT_TABLE} WHERE batch_name = %s",
@@ -437,7 +510,8 @@ def test_the_receipt_outlives_the_flush_that_deletes_the_rows(canary_world, vc):
     assert vc.fetchone()["n"] == 1
 
     assert mod.run_canary_commit(mod.parse_args(
-        ["canary-commit", "--run-id", world["run_id"], "--apply"])) == 0
+        ["canary-commit", "--run-id", world["run_id"], "--apply"]
+        + world["pin"])) == 0
     vc.execute("SELECT count(*) AS n FROM staging.silver_observations "
                "WHERE artifact_id = ANY(%s)", (ids,))
     assert vc.fetchone()["n"] == 0        # not rewritten into the emptied table
@@ -446,7 +520,8 @@ def test_the_receipt_outlives_the_flush_that_deletes_the_rows(canary_world, vc):
 def test_a_half_flushed_canary_fails_the_round_trip(canary_world, vc):
     world = canary_world
     mod.run_canary_commit(mod.parse_args(
-        ["canary-commit", "--run-id", world["run_id"], "--apply"]))
+        ["canary-commit", "--run-id", world["run_id"], "--apply"]
+        + world["pin"]))
     _flush_like_the_flushers(world, vc, tables=("silver", "price"))
 
     assert mod.run_canary_flush_verify(mod.parse_args(
