@@ -138,6 +138,7 @@ order** — a row with no trigger is a wish, and wishes do not leave tables.
 | Plan | Title | Priority | Effort | Trigger |
 |---|---|---:|---|---|
 | [152](plans/plan_152_scheduled_worker_lifecycle.md) | Scheduled worker lifecycle and one-shot execution | 64 | S | Plan 142 Stage 1 lands, then schedule a production-behavior window to separate monthly packing and daily disk measurement from continuously running services |
+| [157](plans/plan_157_april_reprocessing_enrichment.md) | April reprocessing enrichment | 57 | M | **Plan 125 is complete** — this writes row-level updates into `silver_normalized/observations`, safe only once it is an Iceberg table with merge-on-read deletes and snapshot isolation. Plan 100 migrated pre-2026-04-21 April silver from a legacy schema missing seven dealer columns; Plan 145's retained reparse recovers a measured mean of 12.19 fields per pre-cutoff row across an estimated ~2M rows. Inputs frozen at `recovery/plan145/parsed/` (329 MB) — **do not prune** |
 | [66](plans/plan_66_sql_injection.md) | SQL injection audit | 55 | M | Any new public mutation surface or auth-boundary change |
 | [122](plans/plan_122_runtime_scraper_fetch_config.md) | Runtime scraper fetch configuration | 52 | S | Plan 136 telemetry shows timeout or solver tuning needs runtime control |
 | [130](plans/plan_130_parser_input_projection.md) | Parser-input projection | 45 | L | Plan 129's reversible options are exhausted **and** the parser taxonomy gap is closed. Largest measured storage win and the only irreversible one |
