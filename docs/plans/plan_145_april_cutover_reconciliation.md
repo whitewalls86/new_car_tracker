@@ -1749,6 +1749,172 @@ defect.
 above is what the run is checked against; a large divergence is a finding to
 understand before anything is retired.
 
+### Evidence — the Stage 6 dry runs, 2026-08-29
+
+Every mode run read-only against production, on `master` at `64631de`, in
+`docker compose run --rm archiver`. **Nothing was packed, retired, pruned or
+deleted**, and the only write any of them made is one verification report under
+the recovery prefix. Logs on the VM under `~/plan145-s6-*.log`, tmux session
+`plan145-stage-6`.
+
+The archiver image had to be rebuilt first: it dated from 14:13 UTC, before the
+16:42 merge, and carried none of the four modes. The archiver bakes code into
+its image rather than mounting the source, so `compose run` alone would have run
+Stage 5's binary and reported `invalid choice: 'pack-trial'`.
+
+#### `pack-trial` — the metadata query, and a confirmed derivation
+
+```
+population members          843,439
+eligible for the trial      657,629
+  sample drawn in current        50,000 members
+  sample drawn in true           50,000 members
+--apply would read 200,000 objects and build 4 pack sets, writing none.
+```
+
+**843,439 is exactly the figure this plan derived for "members with a queue
+event"** when the Stage 6 gate was corrected — 551,009 old pack members plus
+292,430 materialized, reasoned from the assign and full-apply censuses before
+anything was run. The packer's own `fetch_member_metadata` reproduces it to the
+member. The derivation is confirmed, not merely plausible.
+
+The dictionary resolved to `1367127621` from MinIO — the same production
+dictionary Stage 3b unpacked with, so the trial will measure production's
+packing rather than something adjacent to it.
+
+#### Sidecar identity in the replacement packs, now measured
+
+The corrected gate predicted the decomposition; a bounded re-run of the same
+metadata query measures it exactly:
+
+| | members | `listing_id` |
+|---|---:|---|
+| both `listing_id` and `cluster_key` set | 657,629 | recorded |
+| `listing_id` NULL, `cluster_key` set | 137,209 | **NULL** — carousel-only artifacts |
+| `listing_id` set, `cluster_key` NULL | **0** | impossible by construction |
+| both NULL | 48,601 | **NULL** — queue event, no April silver row |
+| **described by the lake** | **843,439** | |
+| not described at all | 139,604 | **NULL** — no queue event |
+| **flattened population** | **983,043** | |
+
+So the replacement sidecars will carry **657,629 members with a subject listing
+and 325,414 without** — and 657,629 + 325,414 = 983,043 exactly.
+
+The zero in row three is worth keeping: `cluster_key` is the unfiltered
+reduction and `listing_id` the `source='detail'` filter of the same group, so a
+member can never have identity without placement. It is a structural invariant
+of the Stage 5b split, and the population satisfies it with no exceptions.
+
+**This retires the gate's original figure for good.** 42,276 was a property of
+the 557,065-member pack population; the replacement packs hold 983,043, and
+325,414 of them have no subject listing. The plan's corrected prediction — "NULL
+`listing_id` will be higher than 139,604" — is right, and the margin is 2.3x.
+
+#### `repack-verify` — refuses, on the two grounds it should
+
+```
+old packs (frozen 3b)                32          replacement packs        0
+baseline members                557,065          live population    983,043
+old member not replaced         557,065          live object not packed 983,043
+old member bytes changed              0          member in two packs      0
+REFUSED: no replacement sidecars — run the repack before verifying it
+REFUSED: the replacement packs do not cover the old population
+VERDICT                    FAIL
+```
+
+Exit 1. Every load path ran before the refusal, which is what makes the run
+worth having:
+
+- the frozen Stage 3b baseline resolved to **557,065 members over 32 packs**,
+  from the 32 unpack manifests;
+- the sidecar split found **32 old, 0 replacement**, against the frozen set
+  rather than against sequence numbers;
+- the population derived from the Stage 2/3a/3b manifests came to **983,043**,
+  matching `EXPECTED_FLATTENED_INPUTS` and the count Stage 4 parsed, in 23
+  seconds and ~2,376 Parquet reads.
+
+**Peak memory 1.148 GiB** against 23.42 GiB on the VM — inside the 1–1.5 GiB
+the handoff predicted, and not a constraint.
+
+The report is durable at
+`recovery/plan145/repack/repack-e3b0c44298fc1c14/verify_report.json`, naming all
+32 old pack keys `pack-00000` through `pack-00031`.
+
+One cosmetic note: with no replacement sidecars the run id hashes the empty
+string, hence `e3b0c44298fc1c14`. Harmless — a run in that state always fails —
+but two such runs would overwrite one report.
+
+#### The two deletion gates refuse a *failed* report, not merely a missing one
+
+Both stopped at exit 2, quoting the report and both of its refusals:
+
+```
+STOP: recovery/plan145/repack/repack-e3b0c44298fc1c14/verify_report.json did not
+pass: no replacement sidecars — run the repack before verifying it; the
+replacement packs do not cover the old population
+```
+
+This is a stronger test than the one planned. A missing report only proves the
+lookup fails closed; a report that exists and says `passed: false` proves the
+gate reads the verdict. `retire-packs` and `delete-legacy` both refuse to delete
+anything on the strength of a verification that failed.
+
+#### `pack_bronze_html --repack-bucket` — the flag, and the store cross-check
+
+```
+repacking            true          already_packed     557,065
+objects_pending    983,043          next_seq                32
+orphan_packs            []          read_failures            0
+source_bytes  9,478,040,747         estimated_packs_upper_bound  142
+```
+
+Listed **983,043 objects in 1,643s** (27.4 min, mean 598 keys/s).
+
+Three things this establishes that nothing else could:
+
+- **The store agrees with the manifests.** The listing is an independent walk of
+  `html/year=2026/month=4/artifact_type=detail_page/`, and it returns exactly
+  the 983,043 the Stage 2/3a/3b manifests derive. Nothing unexpected has
+  appeared in the prefix, and nothing the manifests claim has gone missing. This
+  is the cross-check `repack-verify --list-population` exists for, obtained
+  early and for free.
+- **`--repack-bucket` does precisely what it claims.** `already_packed` is
+  557,065 — the exact frozen baseline, every one of them still a live loose
+  object — and `pending` is nonetheless the full 983,043. Without the flag,
+  `pending` would have been 425,978 and the scrambled sidecars would have
+  survived the stage. `next_seq` is 32, so replacements will be
+  `pack-00032` onward and nothing overwrites `pack-00000`–`pack-00031`.
+- **No orphan packs and no read failures**, so the 32 existing packs are all
+  sidecar-complete and there is no interrupted prior run to reason about.
+
+`source_bytes` is 8.83 GiB of individually-compressed loose objects. The 142-pack
+upper bound assumes zero cross-member compression gain and is therefore loose:
+April's current 32 packs hold 557,065 members in 1.99 GiB, so the replacement
+set should land nearer ~3.5 GiB and ~56 packs. Free space is 105.5 GiB against a
+5 GiB floor.
+
+#### Timing, measured rather than budgeted
+
+| phase | measured |
+|---|---|
+| archiver image rebuild | ~3 min |
+| `pack-trial` dry run | 35 s |
+| `repack-verify` | 26 s, peak RSS 1.148 GiB |
+| `retire-packs` / `delete-legacy` gates | ~30 s each, dominated by container start |
+| April prefix listing | **1,643 s (27.4 min)** |
+
+The listing figure is the one that matters, because **step 3 pays it again** —
+the repack lists before it reads. Nothing caches the enumeration between the two
+commands, so ~27 minutes is spent twice across the stage.
+
+**Keep other work off MinIO during a listing.** Two DuckDB queries run
+concurrently here dropped the instantaneous rate from ~750 to 446 keys/s and
+cost ~90 seconds. Per-chunk rates recovered to a flat ~600 as soon as they
+finished, and the cumulative figure the log prints kept falling only because it
+is a running average dragging the two slow chunks along — it looked like decay
+and was not. During the real repack, which reads 983k bodies as well, contention
+would be far more expensive.
+
 ### Gate
 
 - Every retained member reads byte-identically before old packs are retired.

@@ -264,15 +264,31 @@ The end of the plan.
 
 ---
 
-## What is unproven
+## What the dry runs settled, 2026-08-29
 
-Everything. Not one of these modes has been run against production, or against
-anything but fixtures. In particular:
+All four modes ran read-only against production on `master` at `64631de`. Full
+numbers in *Evidence — the Stage 6 dry runs* in the plan. In short:
 
-- the ordering trial has never met real April data, so **there is no verdict**;
-- no repack has been attempted, so the runtime in the run sheet is an estimate;
-- the NULL-identity decomposition above is **derived from Stage 5's recorded
-  counts, not measured**. `repack-verify` is what measures it.
+- **the derivation above is confirmed.** `fetch_member_metadata` reports
+  **843,439** members described by the lake — exactly the 551,009 + 292,430 this
+  page derived from the assign and apply censuses before anything ran;
+- the identity split is now **measured**: 657,629 members with a subject
+  listing, 325,414 without (137,209 carousel-only, 48,601 with a queue event but
+  no April silver row, 139,604 with no event at all);
+- `--repack-bucket` reports `already_packed=557,065` and `pending=983,043`, and
+  an independent store walk returns exactly the manifest-derived count;
+- `repack-verify` refuses on the right two grounds at **1.148 GiB peak RSS**,
+  inside the predicted range;
+- `retire-packs` and `delete-legacy` both refuse a report that exists and says
+  `passed: false` — a stronger check than the missing-report case.
+
+## What is still unproven
+
+- the ordering trial has never been run with `--apply`, so **there is no
+  verdict** and the repack has no ordering to carry;
+- no repack has been attempted, so its runtime is still an estimate — though the
+  listing phase within it is now measured at 27.4 min;
+- nothing has been packed, retired, pruned or deleted.
 
 Stage 5 is no longer a blocker: the full apply committed on 2026-08-29 and
 staging drained to 0, so Stage 6 can run as soon as someone chooses to start

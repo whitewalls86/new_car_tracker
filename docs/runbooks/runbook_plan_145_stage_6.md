@@ -3,9 +3,20 @@
 The last stage. It ends with 1,172 legacy Parquet objects gone and ~13.66 GiB
 reclaimed, which is the thing the whole plan exists to do.
 
-Nothing here has been run. The machinery is built and unit-tested; see
-[the handoff](../plans/plan_145_stage_6_handoff.md) for why each piece is
-shaped the way it is.
+**Every dry run below has been executed** — 2026-08-29, on `master` at
+`64631de`, in tmux `plan145-stage-6`, logs at `~/plan145-s6-*.log`. All four
+modes behaved as designed and the timings here are measured, not budgeted. See
+*Evidence — the Stage 6 dry runs* in the plan. **Nothing has been packed,
+retired, pruned or deleted.** See [the handoff](../plans/plan_145_stage_6_handoff.md)
+for why each piece is shaped the way it is.
+
+**Rebuild the archiver image before anything else.** It bakes code in rather
+than mounting the source, so `compose run` on a stale image reports
+`invalid choice: 'pack-trial'`:
+
+```bash
+docker compose build archiver
+```
 
 **Steps 5, 6 and 7 are irreversible.** Step 7 is recoverable only from MinIO
 versioning or backup, which is why it takes a name.
@@ -83,6 +94,9 @@ Dry run first — it reads no object and tells you the sample composition:
 python -m scripts.reconcile_april_detail pack-trial
 ```
 
+The dry run took **35 s** and reported 843,439 members described by the lake,
+657,629 eligible, 50,000 per sample.
+
 Then the real thing. **~200,000 GETs and ~31 GiB of level-9 compression:
 budget 1–1.5 hours**, not the "minutes" the plan says. Run it under tmux.
 
@@ -129,16 +143,30 @@ bound on pack count without reading a body.
 
 **Budget a night, not an hour.** ~983k GETs and ~155 GiB of level-9 dictionary
 compression, against Stage 3b's 2h03m for reading 557k pack members and writing
-them back. The listing phase alone took ~25 minutes on this VM at ~700 keys/s
-and looks hung; it is not, and it reports progress.
+them back.
+
+The listing phase is **measured at 1,643 s (27.4 min)** for 983,043 objects,
+mean 598 keys/s — the dry run of 2026-08-29 did exactly this walk. It looks
+hung and is not; it reports every 50,000 keys. Note this cost is paid **twice**
+across the stage, once by that dry run and again here, because nothing caches
+the enumeration between the two commands.
+
+**Keep other work off MinIO while it lists.** Two concurrent DuckDB queries
+during the dry run dropped the instantaneous rate from ~750 to 446 keys/s and
+cost ~90 s. The cumulative rate the log prints is a running average, so it keeps
+falling after the interference stops and looks like decay when it is not — read
+the per-chunk deltas instead. During this step, which also reads 983k bodies,
+contention is far more expensive.
 
 Watch for:
 
 - `--repack-bucket` logs a warning naming how many objects an existing sidecar
-  already names. Expect **557,065**. A much smaller number means the frozen
-  baseline is not what you think it is — stop.
-- `next_seq` should be **32**. Lower means a pack was retired early; higher
-  means a previous repack ran.
+  already names. **Measured 557,065** in the dry run. A much smaller number
+  means the frozen baseline is not what you think it is — stop.
+- `next_seq` should be **32**; the dry run confirms it, with no orphan packs.
+  Lower means a pack was retired early; higher means a previous repack ran.
+- `objects_pending` should be **983,043** — the dry run's independent store walk
+  returned exactly the manifest-derived count, so the two agree.
 - free space. The replacement set is ~3.5 GiB on top of the originals' 1.99 GiB,
   and the loose population is not pruned until step 6.
 
