@@ -147,10 +147,14 @@ class BucketPlan:
     already_packed: int = 0
     next_seq: int = 0
     orphan_packs: List[str] = field(default_factory=list)
+    repacking: bool = False
 
     @property
     def pending(self) -> int:
-        return self.objects - self.already_packed
+        # Under a repack every object is pending *including* the ones an
+        # existing sidecar already names, so ``already_packed`` is a count of
+        # what is being rewritten rather than a count of what is being skipped.
+        return self.objects if self.repacking else self.objects - self.already_packed
 
 
 def _today_utc() -> date:
@@ -600,7 +604,9 @@ def _pack_bucket(
     client: Any,
     bucket: str,
     plan: BucketPlan,
-    ordered: Iterator[Tuple[str, Optional[int], Optional[str], Optional[datetime]]],
+    ordered: Iterator[
+        Tuple[str, Optional[int], Optional[str], Optional[str], Optional[datetime]]
+    ],
     *,
     dict_id: Optional[int],
     max_packs: int,
@@ -768,15 +774,36 @@ def pack_bronze_html(
     dict_id: Optional[int] = None,
     allow_no_dictionary: bool = False,
     bucket: str = BUCKET,
+    repack_bucket: bool = False,
 ) -> Dict[str, Any]:
     """Pack eligible cold monthly capture buckets. Dry-run unless *apply*.
 
     Returns a summary dict plus a per-bucket breakdown. **No source object is
     ever deleted by this function**, in either mode.
+
+    *repack_bucket* packs objects an existing sidecar already names, instead of
+    skipping them. Normally that skip is the checkpoint that makes a run
+    resumable, so lifting it is only ever a deliberate act: Plan 145 Stage 6
+    rebuilds April's packs over a population that grew by ~426k objects and
+    whose sidecars carry the scrambled ``listing_id`` that Stage 5b fixed at
+    the source. The new packs take the next free sequence numbers and the old
+    ones are left in place — retiring them is a separate reviewed step.
+
+    It requires an explicit *year* and *month* for the same reason: applied to
+    a discovered bucket it would silently duplicate whatever happened to be
+    eligible that day.
     """
+    if repack_bucket and (year is None or month is None):
+        raise ValueError(
+            "repack_bucket requires an explicit year and month — it packs "
+            "objects that are already packed, which must never be aimed at a "
+            "bucket chosen by discovery"
+        )
+
     result: Dict[str, Any] = {
         "mode": "apply" if apply else "dry_run",
         "artifact_type": artifact_type,
+        "repacking": repack_bucket,
         "buckets_eligible": 0,
         "buckets_processed": 0,
         "objects_pending": 0,
@@ -867,6 +894,7 @@ def pack_bronze_html(
             max_packs=max_packs,
             max_pack_bytes=max_pack_bytes,
             frame_target_bytes=frame_target_bytes,
+            repack_bucket=repack_bucket,
         )
         result["buckets"].append(summary)
         result["buckets_processed"] += 1
@@ -906,9 +934,13 @@ def _process_bucket(
     max_packs: int,
     max_pack_bytes: int,
     frame_target_bytes: int,
+    repack_bucket: bool = False,
 ) -> Dict[str, Any]:
     prefix = bucket_prefix(artifact_type, year, month)
-    plan = BucketPlan(artifact_type=artifact_type, year=year, month=month, prefix=prefix)
+    plan = BucketPlan(
+        artifact_type=artifact_type, year=year, month=month, prefix=prefix,
+        repacking=repack_bucket,
+    )
 
     objects = _list_objects(client, bucket, prefix)
     plan.objects = len(objects)
@@ -918,9 +950,9 @@ def _process_bucket(
     packed_keys, next_seq, orphans = _pack_state(client, bucket, artifact_type, year, month)
     plan.next_seq = next_seq
     plan.orphan_packs = orphans
-    before = len(remaining)
-    remaining -= packed_keys
-    plan.already_packed = before - len(remaining)
+    plan.already_packed = len(remaining & packed_keys)
+    if not repack_bucket:
+        remaining -= packed_keys
 
     summary: Dict[str, Any] = {
         "artifact_type": artifact_type,
@@ -933,6 +965,7 @@ def _process_bucket(
         "pending": len(remaining),
         "next_seq": next_seq,
         "orphan_packs": orphans,
+        "repacking": repack_bucket,
         "packs": [],
         "read_failures": [],
         "stopped_at_max_packs": False,
@@ -941,11 +974,24 @@ def _process_bucket(
     }
 
     logger.info(
-        "pack_bronze_html: bucket %s — objects=%d already_packed=%d pending=%d "
+        "pack_bronze_html: bucket %s — objects=%d %s=%d pending=%d "
         "source_bytes=%d next_seq=%d",
-        prefix, plan.objects, plan.already_packed, len(remaining),
+        prefix, plan.objects,
+        "repacking" if repack_bucket else "already_packed",
+        plan.already_packed, len(remaining),
         plan.source_bytes, next_seq,
     )
+    if repack_bucket and plan.already_packed:
+        # Loud, because this run is deliberately producing a second pack set
+        # covering members an existing sidecar already names. Both sets are
+        # readable and verified; retiring the old one is a separate, reviewed
+        # step (Plan 145 Stage 6 `retire-packs`), never a side effect of this.
+        logger.warning(
+            "pack_bronze_html: --repack-bucket — %d of %d objects in %s are "
+            "already named by an existing sidecar and are being packed again "
+            "into seq %d+. The existing packs are NOT deleted.",
+            plan.already_packed, plan.objects, prefix, next_seq,
+        )
 
     if not apply:
         # Upper bound: source objects are already individually compressed, so a
@@ -1027,10 +1073,18 @@ def _parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         "--allow-no-dictionary", action="store_true",
         help="Permit undictionaried packs. Refused by default.",
     )
+    parser.add_argument(
+        "--repack-bucket", action="store_true",
+        help="Pack objects an existing sidecar already names, instead of "
+             "skipping them. Writes a second pack set at the next free "
+             "sequence numbers and deletes nothing. Requires --year/--month.",
+    )
     parser.add_argument("--json-out", default=None)
     args = parser.parse_args(argv)
     if (args.year is None) != (args.month is None):
         parser.error("--year and --month must be given together")
+    if args.repack_bucket and args.year is None:
+        parser.error("--repack-bucket requires --year and --month")
     return args
 
 
@@ -1057,6 +1111,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         min_free_bytes=args.min_free_bytes,
         dict_id=args.dict_id,
         allow_no_dictionary=args.allow_no_dictionary,
+        repack_bucket=args.repack_bucket,
     )
     print(json.dumps(result, indent=2, default=str))
     if args.json_out:
