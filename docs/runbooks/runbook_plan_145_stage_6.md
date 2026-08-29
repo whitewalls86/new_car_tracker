@@ -146,9 +146,21 @@ python -m archiver.processors.pack_bronze_html \
 Dry-run it first without `--apply`: it reports the pending count and an upper
 bound on pack count without reading a body.
 
-**Budget a night, not an hour.** ~983k GETs and ~155 GiB of level-9 dictionary
-compression, against Stage 3b's 2h03m for reading 557k pack members and writing
-them back.
+**This step is done.** Run 2026-08-29 17:56:59–20:17:35 UTC: 68 packs,
+983,043 members, 983,043 verified, 0 read failures, 4.58 GB at
+`pack-00032`–`pack-00099`. **Measured 2h20m** — 33 min listing, 1h47m packing —
+against the "budget a night" this sheet carried. Kept for anyone re-running it.
+
+~983k GETs and ~168 GiB of level-9 dictionary compression, against Stage 3b's
+2h03m for reading 557k pack members and writing them back.
+
+**It is not resumable.** `--repack-bucket` skips the already-packed subtraction
+entirely, so a restart after a partial run re-packs everything including what it
+already wrote, duplicating members. Recovery is to delete `pack-00032`+ and
+their sidecars and start over — safe, because the new packs are unreferenced
+until `repack-verify` passes, but it costs the hours. Do not trigger a deploy
+while it runs: deploy intent stops it cleanly between packs, and resuming is
+what duplicates.
 
 The listing phase is **measured at 1,643 s (27.4 min)** for 983,043 objects,
 mean 598 keys/s — the dry run of 2026-08-29 did exactly this walk. It looks
@@ -194,6 +206,10 @@ Once, on the authoritative run, add `--list-population`: it enumerates the
 April prefix instead of deriving the population from the manifests. Half an
 hour, ~1,000 LIST requests, and it is the only way to learn that nothing
 unexpected appeared.
+
+**Ran 2026-08-29 as `repack-4ea1c730c8b96ac1`: PASS**, in 73 seconds. All
+coverage classes zero, 1,972 members read back with 0 mismatches, changed share
+74.17%. The numbers below are what it reported.
 
 ### Read these four numbers
 

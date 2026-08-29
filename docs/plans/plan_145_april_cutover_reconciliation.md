@@ -1726,8 +1726,9 @@ packs hold the flattened **983,043**, and ~426k of those are materialized
 objects whose content-derived keys no `artifacts_queue_events` row has ever
 named. The original figure cannot be met, and is not the right question.
 
-Derived from the recorded `assign` and full-apply censuses — **derived, not yet
-measured:**
+Derived from the recorded `assign` and full-apply censuses, and **since
+confirmed exactly by `repack-verify` on 2026-08-29** — every cell below was
+reproduced to the member by the sidecars the packer actually wrote:
 
 | origin | members | with a queue event | **no queue event** |
 |---|---:|---:|---:|
@@ -2020,6 +2021,124 @@ replacement by `_pack_state`.
 ~151 objects/s on the first pass and faster after, the later passes benefiting
 from page cache on re-read. The 1–1.5 hour figure was extrapolated from GET
 counts alone and did not account for that.
+
+### Evidence — the repack and its verification, 2026-08-29
+
+`pack_bronze_html --year 2026 --month 4 --repack-bucket --max-packs 0 --apply`,
+17:56:59–20:17:35 UTC, **2h20m** — 33 min listing, 1h47m packing. Nothing was
+deleted.
+
+```
+packs_written        68        members_packed      983,043
+members_verified 983,043       read_failures             0
+pack_bytes   4,577,402,957     source_bytes  9,478,040,747
+```
+
+**Every one of the 983,043 members was verified from its stored pack.**
+`_verify_stored_pack` re-extracts each member out of the object as it actually
+landed in MinIO and checks its sha256 before the sidecar is written, so
+`members_verified == members_packed` is a statement about the store, not about
+what was in memory. Zero read failures across 983,043 reads.
+
+The replacement set is `pack-00032`–`pack-00099`, 4.58 GB over 68 packs. The
+original 32 are untouched at 2.13 GB, and both sets carry a sidecar: 100 packs,
+100 sidecars.
+
+#### Compression: 39.28x, below the original packs, and why
+
+179.81 GB raw into 4.58 GB stored is **39.28x**, against the original April
+packs' recorded **43.66x**. That is a property of the population, not of the
+packing.
+
+The head packs beat the old ratio comfortably — `pack-00036` holds 18,646
+members, 3.59 GB raw in 67.4 MB, **53.2x**. The tail collapses:
+`pack-00099` holds 6,326 members, 1.31 GB raw in 56.6 MB, **23.1x**.
+
+`iter_ordered_keys` yields metadata-matched members in cluster order and then
+whatever silver never described, sorted by key. The original packs contained
+only the 557,065 members production had already packed; this set adds 425,978
+materialized objects, of which **139,604 have no `artifacts_queue_events` row at
+all** and therefore cluster on nothing. They land in the tail and compress like
+unrelated documents, because that is what they are to the compressor.
+
+This also settles the ordering question for the tail specifically: a
+true-listing sort could not help members that have no listing either.
+
+The storage case is unaffected. After retire and prune, April goes from 2.13 GB
+(old packs) + 8.83 GB (loose objects) + 13.66 GB (legacy Parquet) ≈ **24.6 GB**
+down to **4.58 GB**.
+
+#### `repack-verify` — PASS
+
+Run `repack-4ea1c730c8b96ac1`, 20:22:52–20:24:05, read-only.
+
+```
+old packs (frozen 3b)          32        replacement packs          68
+baseline members          557,065        live population       983,043
+replacement members       983,043
+old member not replaced         0        old member bytes changed    0
+live object not packed          0        member in two packs         0
+packed, no live object          0
+read back sampled           1,972        mismatched                  0
+VERDICT                      PASS        refusals                   []
+```
+
+Every coverage class is zero. The read-back sampled 1,972 members — 29 from each
+of the 68 replacement sidecars — and extracted each from **the pack its
+replacement sidecar names**, not through `read_packed_html`, which the old
+sidecars would still answer for all 557,065 replaced members while both sets
+exist.
+
+#### The corrected gate, confirmed cell by cell
+
+The Stage 6 gate correction derived its figures from the assign and full-apply
+censuses and marked them *derived, not yet measured*. The verifier measures
+them:
+
+| | derived | measured |
+|---|---:|---:|
+| no `artifacts_queue_events` row, total | 139,604 | **139,604** |
+| — materialized | 133,548 | **133,548** |
+| — old pack member | 6,056 | **6,056** |
+| no `listing_id`, total | 325,414 | **325,414** |
+| with a subject listing | 657,629 | **657,629** |
+
+Exact in every cell. By origin:
+
+| origin | members | no `artifact_id` | no `listing_id` | attributed |
+|---|---:|---:|---:|---:|
+| `old_pack_member` | 557,065 | 6,056 | 54,682 | 502,383 |
+| `materialized` | 425,978 | 133,548 | 270,732 | 155,246 |
+| **total** | **983,043** | **139,604** | **325,414** | **657,629** |
+
+The two NULL columns differ by **185,810** — members that carry an
+`artifact_id` but no `source='detail'` silver row, which is precisely the
+carousel-only cohort the pre-run DuckDB breakdown measured at 137,209 + 48,601 =
+185,810. Three independent measurements of the same population agree: the
+metadata query, the arithmetic from Stage 5's censuses, and the sidecars the
+packer actually wrote.
+
+#### The Stage 5b fix reached the sidecars
+
+```
+compared              557,065
+listing_id unchanged  143,873   (25.8%)
+listing_id differs    358,510   (64.4%)
+listing_id now NULL    54,682   ( 9.8%)
+changed share          74.17%   (floor 50%)
+```
+
+74.17% of replaced members carry a different `listing_id` than the old sidecar
+did, well clear of the 50% floor. The 54,682 that became NULL are carousel-only
+artifacts whose old sidecar asserted a scrambled listing and whose replacement
+correctly asserts none — the NULL is the signal Plan 145 depends on, now being
+written rather than guessed at.
+
+The 25.8% left unchanged is where the historical `any_value` happened to pick
+the detail subject, against the 31.4% the plan measured for April by a different
+method. The two are not the same comparison and are not expected to match
+exactly; both say the same thing, which is that roughly a quarter to a third of
+April's old sidecar identities were accidentally right.
 
 ### Gate
 
