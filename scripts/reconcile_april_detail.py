@@ -137,7 +137,15 @@ import sys
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Iterable, Iterator, NamedTuple, Optional, Sequence
+from typing import (
+    Any,
+    Callable,
+    Iterable,
+    Iterator,
+    NamedTuple,
+    Optional,
+    Sequence,
+)
 
 logger = logging.getLogger("reconcile_april_detail")
 
@@ -1264,6 +1272,22 @@ def _dedupe_receipt_key(materialize_shard_key: str) -> str:
     return f"{DEDUPE_PREFIX}/receipts/{stem}"
 
 
+def _content_is_packed_guard(
+    verified_hashes: dict[str, Any],
+) -> Callable[[dict[str, Any]], Optional[str]]:
+    """Stage 3a's guard: refuse a key whose content no April sidecar holds."""
+
+    def guard(record: dict[str, Any]) -> Optional[str]:
+        if record.get("raw_sha256") in verified_hashes:
+            return None
+        return (
+            f"its content {str(record.get('raw_sha256'))[:12]} is not in any "
+            f"April pack sidecar"
+        )
+
+    return guard
+
+
 def delete_objects_in_batches(
     client,
     bucket: str,
@@ -1271,22 +1295,37 @@ def delete_objects_in_batches(
     *,
     apply: bool,
     batch_size: int,
-    verified_hashes: dict[str, Any],
+    verified_hashes: Optional[dict[str, Any]] = None,
+    guard: Optional[Callable[[dict[str, Any]], Optional[str]]] = None,
 ) -> list[dict[str, Any]]:
     """Delete each planned key by exact name, in capped batches, one receipt per key.
 
-    A record whose ``raw_sha256`` is not in ``verified_hashes`` is refused and
-    the run stops: the manifest and the join share a source, but the guard
-    means a hand-edited manifest cannot widen the blast radius. Nothing is ever
-    deleted by prefix.
+    Every record is put to a *guard* before anything is deleted, and a guard
+    that returns a reason stops the whole run rather than skipping that key:
+    the manifest and the guard share a source, so a disagreement means the
+    manifest was edited by hand, and the only safe response to that is to
+    delete nothing. Nothing is ever deleted by prefix.
+
+    ``verified_hashes`` is the Stage 3a guard — content must be in a verified
+    pack — kept as the default so that caller reads unchanged. Stage 6 supplies
+    its own: ``retire-packs`` checks membership of the frozen old-pack set, and
+    ``delete-legacy`` checks that every recoverable row in the object is
+    covered by a replacement sidecar.
     """
+    if guard is None:
+        if verified_hashes is None:
+            raise ReconcileError(
+                "delete_objects_in_batches needs a guard: pass verified_hashes "
+                "or guard. An unguarded delete is not a supported mode."
+            )
+        guard = _content_is_packed_guard(verified_hashes)
+
     cap = max(1, min(batch_size, MAX_DELETE_BATCH))
     for record in records:
-        if record.get("raw_sha256") not in verified_hashes:
+        reason = guard(record)
+        if reason:
             raise ReconcileError(
-                f"refusing to delete {record.get('object_key')!r}: its content "
-                f"{str(record.get('raw_sha256'))[:12]} is not in any April pack "
-                f"sidecar"
+                f"refusing to delete {record.get('object_key')!r}: {reason}"
             )
 
     receipts: list[dict[str, Any]] = []
@@ -1294,7 +1333,7 @@ def delete_objects_in_batches(
         batch = records[start:start + cap]
         if not apply:
             receipts.extend(
-                {"object_key": r["object_key"], "raw_sha256": r["raw_sha256"],
+                {"object_key": r["object_key"], "raw_sha256": r.get("raw_sha256"),
                  "result": "planned"}
                 for r in batch
             )
@@ -1318,7 +1357,7 @@ def delete_objects_in_batches(
                 result = "absent"
             receipts.append({
                 "object_key": key,
-                "raw_sha256": record["raw_sha256"],
+                "raw_sha256": record.get("raw_sha256"),
                 "result": result,
             })
     return receipts
@@ -7464,6 +7503,1319 @@ def run_canary_flush_verify(args: argparse.Namespace) -> int:
 
 
 # --------------------------------------------------------------------------
+# Stage 6 -- repack, retire, prune and delete
+# --------------------------------------------------------------------------
+
+#: The ordering trial: its samples, its report, and the trial packs only when
+#: they are deliberately kept. Trial packs are never written under the real
+#: pack prefix -- a pack object there would make ``_pack_state`` treat its
+#: members as packed, which is exactly the state Stage 6 exists to rebuild.
+PACK_TRIAL_PREFIX = "recovery/plan145/pack_trial"
+
+#: The replacement proof that gates every irreversible Stage 6 step.
+REPACK_PREFIX = "recovery/plan145/repack"
+
+#: Manifest and receipts for retiring the superseded April packs.
+RETIRE_PREFIX = "recovery/plan145/retire"
+
+#: Manifest and receipts for the 1,172 legacy Parquet deletions.
+LEGACY_DELETE_PREFIX = "recovery/plan145/legacy_delete"
+
+#: The plan's bounded trial -- "about two packs' worth" of members.
+TRIAL_SAMPLE_MEMBERS = 50_000
+
+#: The two orderings under test. ``current`` is the historical clustering key,
+#: the unfiltered ``any_value(listing_id)`` reduction; ``true`` is the
+#: corrected detail-filtered identity Stage 5b separated out.
+TRIAL_ARMS = ("current", "true")
+
+#: The legacy results-page population is out of scope for the entire plan, so
+#: its artifact_type is refused by key rather than filtered out of a listing.
+RESULTS_PAGE_ARTIFACT_TYPE = "results_page"
+
+#: April's sidecar ``listing_id`` was correct for 31.4% of members, so a
+#: replacement sidecar that agrees with the old one nearly everywhere means the
+#: Stage 5b fix did not reach this run. Floor, not a target.
+MIN_IDENTITY_CHANGE_SHARE = 0.50
+
+
+def load_flattened_population(client, bucket: str) -> dict[str, str]:
+    """The flattened population, ``object_key -> raw_sha256``.
+
+    Derived from the three manifest families exactly as Stage 4 derives its
+    parse units -- materialized, minus what Stage 3a deleted, union unpacked --
+    rather than by enumerating the prefix. Listing a million keys costs ~1,000
+    LIST requests and answers a weaker question: the manifests say what the
+    population *is*, by construction, and 983,043 of them is the number Stage 4
+    parsed and Stage 5 classified.
+
+    ``--list-population`` on the verifier reads the store instead, for the one
+    run where "and nothing unexpected appeared" is worth half an hour.
+    """
+    materialized = _load_manifest_family(
+        client, bucket, MATERIALIZE_PREFIX,
+        columns=["object_key", "raw_sha256", "disposition"],
+    )
+    unpacked = _load_manifest_family(
+        client, bucket, UNPACK_PREFIX,
+        columns=["source_key", "raw_sha256", "disposition"],
+    )
+    deleted = _load_deleted_keys(client, bucket)
+
+    population: dict[str, str] = {}
+    for _, rows in materialized:
+        for row in rows:
+            key = row.get("object_key")
+            if (not key or key in deleted
+                    or row.get("disposition") not in MATERIALIZED_DISPOSITIONS):
+                continue
+            population.setdefault(key, row.get("raw_sha256"))
+    for _, rows in unpacked:
+        for row in rows:
+            key = row.get("source_key")
+            if not key or row.get("disposition") not in UNPACK_DISPOSITIONS:
+                continue
+            population.setdefault(key, row.get("raw_sha256"))
+    return population
+
+
+def _new_pack_key(sidecar_key: str) -> str:
+    """The pack a sidecar describes."""
+    if not sidecar_key.endswith(".idx.parquet"):
+        raise ReconcileError(f"not a sidecar key: {sidecar_key}")
+    return sidecar_key[: -len(".idx.parquet")] + ".zpack"
+
+
+def load_unpack_baseline(
+    client, bucket: str,
+) -> tuple[dict[str, str], set[str]]:
+    """The old April pack set, frozen by Stage 3b before Stage 6 existed.
+
+    Returns ``(source_key -> raw_sha256, old pack keys)``. This is the only
+    honest baseline available: it was written while the original 32 packs were
+    the whole population, so it cannot be contaminated by anything Stage 6
+    does. Deriving "which packs are old" from sequence numbers after the fact
+    would be a guess about a store that has already been written to.
+    """
+    shard_keys = _list_keys(client, bucket, f"{UNPACK_PREFIX}/", ".parquet")
+    if not shard_keys:
+        raise ReconcileError(
+            f"no Stage 3b unpack manifests under {UNPACK_PREFIX}/ — the old "
+            f"pack set cannot be identified and nothing may be retired"
+        )
+
+    members: dict[str, str] = {}
+    packs: set[str] = set()
+    for shard_key in shard_keys:
+        rows = _read_parquet_rows(
+            client, bucket, shard_key,
+            columns=["source_key", "raw_sha256", "pack_key"],
+        )
+        for row in rows:
+            source_key = row.get("source_key")
+            if source_key:
+                members[source_key] = row.get("raw_sha256")
+            pack_key_value = row.get("pack_key")
+            if pack_key_value:
+                packs.add(pack_key_value)
+    return members, packs
+
+
+def split_sidecars(
+    sidecar_keys: Sequence[str], old_pack_keys: set[str],
+) -> tuple[list[str], list[str]]:
+    """Partition April's sidecars into (old, new) against the frozen set."""
+    old, new = [], []
+    for key in sorted(sidecar_keys):
+        (old if _new_pack_key(key) in old_pack_keys else new).append(key)
+    return old, new
+
+
+def load_pack_members(
+    client, bucket: str, sidecar_keys: Sequence[str],
+) -> dict[str, dict[str, Any]]:
+    """Every member of the named packs, by ``source_key``.
+
+    A source key claimed by two sidecars is recorded once with the claim
+    counted, because "packed twice" is a finding rather than a tie to break.
+    """
+    members: dict[str, dict[str, Any]] = {}
+    for sidecar_key in sidecar_keys:
+        rows = _read_parquet_rows(
+            client, bucket, sidecar_key,
+            columns=["source_key", "raw_sha256", "artifact_id", "listing_id"],
+        )
+        for row in rows:
+            source_key = row.get("source_key")
+            if not source_key:
+                continue
+            existing = members.get(source_key)
+            if existing is None:
+                members[source_key] = {
+                    "raw_sha256": row.get("raw_sha256"),
+                    "artifact_id": row.get("artifact_id"),
+                    "listing_id": row.get("listing_id"),
+                    "sidecar_key": sidecar_key,
+                    "claims": 1,
+                }
+            else:
+                existing["claims"] += 1
+    return members
+
+
+# --- the ordering trial ----------------------------------------------------
+
+def _trial_sort_key(arm: str):
+    """Order members for one arm. Members with no key for the arm sort last."""
+    index = 3 if arm == "current" else 2  # cluster_key | listing_id
+
+    def key(row: Sequence[Any]) -> tuple:
+        value = row[index]
+        return (
+            value is None,
+            str(value) if value is not None else "",
+            _epoch_us(row[4]) or 0,
+            int(row[1]) if row[1] is not None else 0,
+        )
+
+    return key
+
+
+def order_for_arm(rows: Sequence[Sequence[Any]], arm: str) -> list[Sequence[Any]]:
+    """The same member set, laid out for one arm. Pure."""
+    if arm not in TRIAL_ARMS:
+        raise ReconcileError(f"unknown trial arm {arm!r}")
+    return sorted(rows, key=_trial_sort_key(arm))
+
+
+def select_trial_sample(
+    rows: Sequence[Sequence[Any]],
+    *,
+    size: int,
+    drawn_in: str,
+    include_null_identity: bool = False,
+) -> list[Sequence[Any]]:
+    """A contiguous sample of *size* members, drawn in one arm's order.
+
+    Contiguity is the whole point: a random sample of 50,000 from a population
+    of 983,043 would hold about half a capture per listing and would destroy
+    the clustering *both* arms depend on, measuring nothing. Drawing
+    contiguously in one arm's order instead keeps that arm's clusters whole and
+    truncates the other's -- which is why the trial draws one sample per arm
+    and requires the winner to win on both.
+
+    Members with no true listing are dropped by default: a member that has no
+    subject listing cannot inform a question about ordering by subject listing,
+    and in the ``true`` arm they would otherwise collapse into one enormous
+    false cluster under NULL.
+    """
+    pool = list(rows)
+    if not include_null_identity:
+        pool = [r for r in pool if r[2] is not None and r[3] is not None]
+    return order_for_arm(pool, drawn_in)[:size]
+
+
+def pack_trial_arm(
+    rows: Sequence[Sequence[Any]],
+    fetch: Callable[[str], bytes],
+    *,
+    arm: str,
+    dict_id: Optional[int],
+    frame_target_bytes: int,
+    max_pack_bytes: int,
+) -> dict[str, Any]:
+    """Pack one member set in one arm's order and measure the stored bytes.
+
+    The packs are built and thrown away -- ``pack.size`` is the entire
+    measurement. Not writing them is a stronger form of "discard both trial
+    packs" than deleting them afterwards, and it removes the one real hazard
+    in the trial: a trial pack landing under the real pack prefix would make a
+    later ``_pack_state`` treat its members as already packed.
+
+    Placement follows the arm. In ``current`` the cluster key is the historical
+    unfiltered reduction, which is what production uses today; in ``true`` it
+    is the corrected subject listing, which is the change under test.
+    """
+    from shared.packfile import PackMember, PackWriter
+
+    ordered = order_for_arm(rows, arm)
+    packs: list[dict[str, Any]] = []
+    writer: Optional[Any] = None
+    raw_bytes = 0
+
+    def flush() -> None:
+        nonlocal writer
+        if writer is None or writer.member_count == 0:
+            return
+        pack = writer.finish()
+        packs.append({
+            "members": pack.member_count,
+            "frames": pack.frame_count,
+            "pack_bytes": pack.size,
+        })
+        writer = None
+
+    for source_key, artifact_id, listing_id, cluster_key, fetched_at in ordered:
+        content = fetch(source_key)
+        if writer is None:
+            writer = PackWriter(dict_id=dict_id, frame_target_bytes=frame_target_bytes)
+        writer.add(PackMember(
+            source_key=source_key,
+            content=content,
+            artifact_id=int(artifact_id) if artifact_id is not None else None,
+            listing_id=listing_id,
+            cluster_key=listing_id if arm == "true" else cluster_key,
+            fetched_at=fetched_at,
+        ))
+        raw_bytes += len(content)
+        if writer.compressed_bytes >= max_pack_bytes:
+            flush()
+    flush()
+
+    return {
+        "arm": arm,
+        "members": len(ordered),
+        "packs": len(packs),
+        "frames": sum(p["frames"] for p in packs),
+        "raw_bytes": raw_bytes,
+        "pack_bytes": sum(p["pack_bytes"] for p in packs),
+        "per_pack": packs,
+    }
+
+
+def decide_trial_winner(samples: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    """Apply the rule, which was fixed before the run: smaller wins, on *every*
+    sample.
+
+    A split verdict means the incumbent carries and the question stays open.
+    That is the honest reading of a disagreement between two samples that were
+    deliberately biased in opposite directions, and it is far cheaper than a
+    wrong month-wide reorder of May, June and July.
+    """
+    verdicts = []
+    for sample in samples:
+        current = sample["arms"]["current"]["pack_bytes"]
+        true = sample["arms"]["true"]["pack_bytes"]
+        verdicts.append({
+            "drawn_in": sample["drawn_in"],
+            "current_bytes": current,
+            "true_bytes": true,
+            "delta_bytes": true - current,
+            "delta_share": (true - current) / current if current else 0.0,
+            "true_wins": true < current,
+        })
+
+    unanimous = bool(verdicts) and all(v["true_wins"] for v in verdicts)
+    return {
+        "rule": "true ordering carries the full pass only if it is smaller on "
+                "every sample; a split verdict leaves the incumbent in place",
+        "per_sample": verdicts,
+        "winner": "true" if unanimous else "current",
+        "unanimous": unanimous,
+        "split": bool(verdicts) and not unanimous
+                 and any(v["true_wins"] for v in verdicts),
+    }
+
+
+def _trial_run_id(samples: Sequence[dict[str, Any]]) -> str:
+    """Reproducible from the member composition alone."""
+    digest = hashlib.sha256()
+    for sample in sorted(samples, key=lambda s: s["drawn_in"]):
+        digest.update(sample["drawn_in"].encode("utf-8"))
+        for key in sample["source_keys"]:
+            digest.update(key.encode("utf-8"))
+            digest.update(b"\n")
+    return f"trial-{digest.hexdigest()[:16]}"
+
+
+def _print_trial_report(report: dict[str, Any], *, apply: bool) -> None:
+    print()
+    print("Plan 145 Stage 6 -- the ordering trial")
+    print("=" * 70)
+    print(f"run id                 {report['run_id']}")
+    print(f"mode                   {'apply' if apply else 'dry run'}")
+    print(f"sample size            {report['sample_size']:>12,}")
+    print(f"population members     {report['population_members']:>12,}")
+    print(f"eligible for the trial {report['eligible_members']:>12,}")
+    print(f"  dropped, no identity {report['null_identity_members']:>12,}")
+    print()
+    for sample in report["samples"]:
+        print(f"sample drawn in {sample['drawn_in']!r} "
+              f"({sample['members']:,} members)")
+        for arm in TRIAL_ARMS:
+            data = sample["arms"].get(arm)
+            if not data:
+                continue
+            ratio = data["raw_bytes"] / data["pack_bytes"] if data["pack_bytes"] else 0
+            print(f"  {arm:<8} {data['pack_bytes']:>14,} B  "
+                  f"{data['packs']:>3} packs  {data['frames']:>4} frames  "
+                  f"{ratio:>6.2f}x")
+        print()
+
+    decision = report["decision"]
+    for verdict in decision["per_sample"]:
+        direction = "smaller" if verdict["true_wins"] else "larger"
+        print(f"drawn in {verdict['drawn_in']:<8} true ordering is {direction} by "
+              f"{abs(verdict['delta_bytes']):,} B "
+              f"({abs(verdict['delta_share']) * 100:.2f}%)")
+    print()
+    print(f"WINNER                 {decision['winner']}")
+    if decision["split"]:
+        print("  split verdict -- the incumbent carries and the question stays open")
+    print()
+
+
+def run_pack_trial(args: argparse.Namespace) -> int:
+    """Stage 6's bounded ordering trial. Writes a report; never a pack."""
+    from archiver.processors import pack_bronze_html as packer
+    from shared.minio import BUCKET as DEFAULT_BUCKET
+    from shared.minio import read_html
+
+    bucket = args.bucket or DEFAULT_BUCKET
+    apply = bool(args.apply)
+
+    # Production's own values, resolved from the packer rather than restated,
+    # so the trial measures the packing production actually does.
+    frame_bytes = args.frame_bytes or packer.FRAME_TARGET_BYTES
+    max_pack_bytes = args.max_pack_bytes or packer.MAX_PACK_BYTES
+
+    dict_id = packer._resolve_dictionary(args.dict_id, args.allow_no_dictionary)
+
+    from shared.duckdb_s3 import get_duckdb_s3_connection
+
+    con = get_duckdb_s3_connection()
+    con.execute(f"SET memory_limit='{args.duckdb_memory_limit}'")
+    con.execute(f"SET threads={args.duckdb_threads}")
+    rows = list(packer.fetch_member_metadata(
+        con, bucket, TARGET_ARTIFACT_TYPE, TARGET_YEAR, TARGET_MONTH,
+    ))
+    logger.info("trial: %d members described by the lake", len(rows))
+
+    eligible = [r for r in rows if r[2] is not None and r[3] is not None]
+    drawn_arms = TRIAL_ARMS if args.sample == "both" else (args.sample,)
+
+    samples: list[dict[str, Any]] = []
+    for drawn_in in drawn_arms:
+        members = select_trial_sample(
+            rows, size=args.sample_size, drawn_in=drawn_in,
+            include_null_identity=args.include_null_identity,
+        )
+        samples.append({
+            "drawn_in": drawn_in,
+            "members": len(members),
+            "rows": members,
+            "source_keys": [m[0] for m in members],
+            "arms": {},
+        })
+
+    run_id = _trial_run_id(samples)
+    logger.info("trial run id %s", run_id)
+
+    if not apply:
+        print()
+        print("Plan 145 Stage 6 -- the ordering trial (dry run)")
+        print("=" * 70)
+        print(f"run id                 {run_id}")
+        print(f"population members     {len(rows):>12,}")
+        print(f"eligible for the trial {len(eligible):>12,}")
+        for sample in samples:
+            print(f"  sample drawn in {sample['drawn_in']:<8} "
+                  f"{sample['members']:>12,} members")
+        print()
+        print(f"--apply would read {sum(s['members'] for s in samples) * 2:,} "
+              f"objects and build {len(samples) * 2} pack sets, writing none.")
+        print()
+        return 0
+
+    for sample in samples:
+        for arm in TRIAL_ARMS:
+            logger.info("trial: packing sample %r in %r order (%d members)",
+                        sample["drawn_in"], arm, sample["members"])
+            sample["arms"][arm] = pack_trial_arm(
+                sample["rows"],
+                lambda key: read_html(f"s3://{bucket}/{key}"),
+                arm=arm,
+                dict_id=dict_id,
+                frame_target_bytes=frame_bytes,
+                max_pack_bytes=max_pack_bytes,
+            )
+
+    report = {
+        "stage": "plan_145_stage_6_pack_trial",
+        "run_id": run_id,
+        "mode": "apply",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "sample_size": args.sample_size,
+        "dict_id": dict_id,
+        "frame_target_bytes": frame_bytes,
+        "max_pack_bytes": max_pack_bytes,
+        "population_members": len(rows),
+        "eligible_members": len(eligible),
+        "null_identity_members": len(rows) - len(eligible),
+        "include_null_identity": bool(args.include_null_identity),
+        "samples": [
+            {"drawn_in": s["drawn_in"], "members": s["members"], "arms": s["arms"]}
+            for s in samples
+        ],
+        "decision": decide_trial_winner(samples),
+    }
+
+    from shared.minio import write_json
+
+    report_key = f"{PACK_TRIAL_PREFIX}/{run_id}/trial_report.json"
+    write_json(report_key, report)
+    logger.info("wrote s3://%s/%s", bucket, report_key)
+
+    _print_trial_report(report, apply=True)
+    return 0
+
+
+# --- the replacement proof -------------------------------------------------
+
+def check_replacement_coverage(
+    baseline_members: dict[str, str],
+    population_keys: Sequence[str],
+    new_members: dict[str, dict[str, Any]],
+    *,
+    max_examples: int = 20,
+) -> dict[str, Any]:
+    """Prove the replacement packs hold everything the old ones did, and more.
+
+    Pure, so the three ways this can fail are testable without a store:
+    an old member that no replacement holds, an old member whose bytes changed,
+    and a live object that no replacement holds. Any of them is a stop -- the
+    next step after this one deletes the originals.
+    """
+    missing_old: list[str] = []
+    changed_old: list[dict[str, str]] = []
+    for source_key, sha in sorted(baseline_members.items()):
+        member = new_members.get(source_key)
+        if member is None:
+            missing_old.append(source_key)
+        elif sha and member.get("raw_sha256") != sha:
+            changed_old.append({
+                "source_key": source_key,
+                "was": sha,
+                "now": member.get("raw_sha256"),
+            })
+
+    population = set(population_keys)
+    unpacked_population = sorted(population - set(new_members))
+    packed_but_absent = sorted(set(new_members) - population)
+    duplicated = sorted(
+        key for key, member in new_members.items() if member["claims"] > 1
+    )
+
+    passed = not (missing_old or changed_old or unpacked_population or duplicated)
+    return {
+        "baseline_members": len(baseline_members),
+        "population_objects": len(population),
+        "new_members": len(new_members),
+        "missing_old": len(missing_old),
+        "changed_old": len(changed_old),
+        "population_not_packed": len(unpacked_population),
+        "packed_but_no_live_object": len(packed_but_absent),
+        "duplicated_members": len(duplicated),
+        "examples": {
+            "missing_old": missing_old[:max_examples],
+            "changed_old": changed_old[:max_examples],
+            "population_not_packed": unpacked_population[:max_examples],
+            "duplicated_members": duplicated[:max_examples],
+        },
+        "passed": passed,
+    }
+
+
+def describe_identity(
+    baseline_members: dict[str, str], new_members: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    """Decompose replacement-sidecar identity by where the member came from.
+
+    Stage 6's gate was written against the 557,065-member pack population and
+    asks for NULL identity to fall to 42,276. The replacement packs hold
+    983,043 members, and the ~426k materialized objects among them carry
+    content-derived keys that no ``artifacts_queue_events`` row has ever named.
+    Stage 5's apply attributes the import-bearing ones by writing a
+    ``recovered`` event per artifact; the rest are NULL by construction, the
+    same way a carousel-only pack member is.
+
+    So this reports the decomposition rather than asserting a number that was
+    true of a different population.
+    """
+    buckets: dict[str, dict[str, int]] = {}
+    for source_key, member in new_members.items():
+        origin = "old_pack_member" if source_key in baseline_members else "materialized"
+        cell = buckets.setdefault(origin, {
+            "members": 0,
+            "null_artifact_id": 0,
+            "null_listing_id": 0,
+            "attributed": 0,
+        })
+        cell["members"] += 1
+        if member.get("artifact_id") is None:
+            cell["null_artifact_id"] += 1
+        if member.get("listing_id") is None:
+            cell["null_listing_id"] += 1
+        if member.get("artifact_id") is not None and member.get("listing_id") is not None:
+            cell["attributed"] += 1
+
+    total = sum(cell["members"] for cell in buckets.values())
+    return {
+        "by_origin": buckets,
+        "members": total,
+        "null_listing_id": sum(c["null_listing_id"] for c in buckets.values()),
+        "null_artifact_id": sum(c["null_artifact_id"] for c in buckets.values()),
+    }
+
+
+def compare_identity_to_the_old_sidecars(
+    old_members: dict[str, dict[str, Any]], new_members: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    """Prove the Stage 5b fix actually reached the replacement sidecars.
+
+    The old April sidecars carried the scrambled ``any_value`` reduction, which
+    was measured correct for 31.4% of April's members. So the replacement
+    ``listing_id`` should *disagree* with the old one for most members. Near
+    total agreement means the run wrote the historical value again -- a silent
+    reproduction of the defect this plan spent three revisions proving.
+
+    Checked against the old sidecars rather than against silver because it
+    needs no lake read and answers exactly the question: did the column change.
+    """
+    same = differs = null_now = 0
+    for source_key, old in old_members.items():
+        new = new_members.get(source_key)
+        if new is None:
+            continue
+        old_value, new_value = old.get("listing_id"), new.get("listing_id")
+        if new_value is None:
+            null_now += 1
+        elif old_value == new_value:
+            same += 1
+        else:
+            differs += 1
+
+    compared = same + differs + null_now
+    changed = differs + null_now
+    return {
+        "compared": compared,
+        "same": same,
+        "differs": differs,
+        "null_now": null_now,
+        "changed_share": changed / compared if compared else 0.0,
+    }
+
+
+def _sample_members_for_readback(
+    new_members: dict[str, dict[str, Any]], *, size: int, seed: int,
+) -> dict[str, list[str]]:
+    """A deterministic sample, stratified over the replacement sidecars.
+
+    Grouped by sidecar, because the readback must be aimed at the *replacement*
+    pack specifically -- see :func:`read_back_members`.
+    """
+    import random
+
+    by_sidecar: dict[str, list[str]] = {}
+    for source_key, member in sorted(new_members.items()):
+        by_sidecar.setdefault(member["sidecar_key"], []).append(source_key)
+    if not by_sidecar or size <= 0:
+        return {}
+
+    rng = random.Random(seed)
+    per_sidecar = max(1, size // len(by_sidecar))
+    picked: dict[str, list[str]] = {}
+    budget = size
+    for sidecar_key in sorted(by_sidecar):
+        if budget <= 0:
+            break
+        keys = by_sidecar[sidecar_key]
+        take = min(per_sidecar, len(keys), budget)
+        chosen = sorted(rng.sample(keys, take))
+        picked[sidecar_key] = chosen
+        budget -= len(chosen)
+    return picked
+
+
+def read_back_members(
+    client, bucket: str, sampled: dict[str, list[str]],
+) -> tuple[int, list[dict[str, Any]]]:
+    """Extract each sampled member from its own replacement pack and prove it.
+
+    Deliberately **not** ``read_packed_html``. That resolves a ``source_key``
+    through whichever sidecar names it, and while both pack sets exist the old
+    pack names every one of the 557,065 replaced members -- so it could serve
+    the whole sample from the packs this stage is about to delete and report
+    success. The bytes under test are the replacement's.
+
+    It is the same machinery underneath: a ``PackReader`` over ranged GETs,
+    which is what ``read_packed_html`` uses once it has resolved the pack.
+    """
+    from shared.packfile import read_index_parquet
+
+    checked = 0
+    failures: list[dict[str, Any]] = []
+    for sidecar_key, wanted_keys in sorted(sampled.items()):
+        wanted = set(wanted_keys)
+        body = client.get_object(Bucket=bucket, Key=sidecar_key)["Body"].read()
+        entries = [e for e in read_index_parquet(body) if e.source_key in wanted]
+        if len(entries) != len(wanted):
+            failures.extend(
+                {"source_key": key, "error": f"absent from {sidecar_key}"}
+                for key in sorted(wanted - {e.source_key for e in entries})
+            )
+
+        pack_key = _new_pack_key(sidecar_key)
+        reader = _ranged_pack_reader(client, bucket, pack_key)
+        for entry in iter_members_by_frame(entries):
+            checked += 1
+            content = reader.read_member(entry)
+            actual = hashlib.sha256(content).hexdigest()
+            if actual != entry.raw_sha256:
+                failures.append({
+                    "source_key": entry.source_key,
+                    "pack_key": pack_key,
+                    "was": entry.raw_sha256,
+                    "now": actual,
+                })
+    return checked, failures
+
+
+def _print_verify_report(report: dict[str, Any]) -> None:
+    coverage = report["coverage"]
+    identity = report["identity"]
+
+    print()
+    print("Plan 145 Stage 6 -- replacement verification")
+    print("=" * 70)
+    print(f"run id                     {report['run_id']}")
+    print(f"old packs (frozen 3b)      {report['old_packs']:>12,}")
+    print(f"replacement packs          {report['new_packs']:>12,}")
+    print()
+    print("coverage")
+    print(f"  baseline members         {coverage['baseline_members']:>12,}")
+    print(f"  live population objects  {coverage['population_objects']:>12,}")
+    print(f"  replacement members      {coverage['new_members']:>12,}")
+    print(f"  old member not replaced  {coverage['missing_old']:>12,}")
+    print(f"  old member bytes changed {coverage['changed_old']:>12,}")
+    print(f"  live object not packed   {coverage['population_not_packed']:>12,}")
+    print(f"  member in two packs      {coverage['duplicated_members']:>12,}")
+    print(f"  packed, no live object   {coverage['packed_but_no_live_object']:>12,}")
+    print()
+    readback = report["readback"]
+    print("read back from the replacement packs")
+    print(f"  sampled                  {readback['sampled']:>12,}")
+    print(f"  mismatched               {readback['mismatched']:>12,}")
+    print()
+    print("sidecar identity, by origin")
+    for origin in sorted(identity["by_origin"]):
+        cell = identity["by_origin"][origin]
+        print(f"  {origin:<24} {cell['members']:>12,} members  "
+              f"{cell['null_listing_id']:>10,} no listing_id  "
+              f"{cell['attributed']:>10,} attributed")
+    print(f"  {'TOTAL':<24} {identity['members']:>12,} members  "
+          f"{identity['null_listing_id']:>10,} no listing_id")
+    print()
+    change = report["identity_change"]
+    print("the Stage 5b fix, against the old sidecars")
+    print(f"  compared                 {change['compared']:>12,}")
+    print(f"  listing_id unchanged     {change['same']:>12,}")
+    print(f"  listing_id differs       {change['differs']:>12,}")
+    print(f"  listing_id now NULL      {change['null_now']:>12,}")
+    print(f"  changed share            {change['changed_share'] * 100:>11.2f}%  "
+          f"(floor {report['min_identity_change'] * 100:.0f}%)")
+    print()
+    for refusal in report["refusals"]:
+        print(f"REFUSED: {refusal}")
+    print("VERDICT                    " + ("PASS" if report["passed"] else "FAIL"))
+    print()
+
+
+def run_repack_verify(args: argparse.Namespace) -> int:
+    """Stage 6's gate. Read-only; every step after it is irreversible."""
+    from shared.minio import BUCKET as DEFAULT_BUCKET
+    from shared.minio import write_json
+
+    bucket = args.bucket or DEFAULT_BUCKET
+    client = _s3_client()
+
+    baseline_members, old_pack_keys = load_unpack_baseline(client, bucket)
+    logger.info("frozen Stage 3b baseline: %d members over %d packs",
+                len(baseline_members), len(old_pack_keys))
+
+    pack_prefix = args.pack_prefix or _april_pack_prefix()
+    sidecars = _list_keys(client, bucket, pack_prefix, ".idx.parquet")
+    old_sidecars, new_sidecars = split_sidecars(sidecars, old_pack_keys)
+    logger.info("sidecars under %s: %d old, %d replacement",
+                pack_prefix, len(old_sidecars), len(new_sidecars))
+
+    refusals: list[str] = []
+    if len(old_pack_keys) != EXPECTED_UNPACK_SHARDS:
+        refusals.append(
+            f"the frozen baseline names {len(old_pack_keys)} packs, not "
+            f"{EXPECTED_UNPACK_SHARDS} — Stage 3b's manifest set is incomplete"
+        )
+    if not new_sidecars:
+        refusals.append(
+            "no replacement sidecars — run the repack before verifying it"
+        )
+
+    new_members = load_pack_members(client, bucket, new_sidecars)
+    old_members = load_pack_members(client, bucket, old_sidecars)
+
+    if args.list_population:
+        prefix = args.prefix or _discover_prefix(client, bucket)
+        population_keys = [
+            entry["Key"] for entry in _list_prefix(client, bucket, prefix)
+            if entry["Key"].endswith(".html.zst")
+        ]
+        population_source = f"listed under {prefix}"
+    else:
+        prefix = None
+        population_keys = sorted(load_flattened_population(client, bucket))
+        population_source = "derived from the Stage 2/3a/3b manifests"
+    logger.info("population %s: %d objects", population_source, len(population_keys))
+
+    if len(population_keys) != EXPECTED_FLATTENED_INPUTS:
+        refusals.append(
+            f"the population holds {len(population_keys)} objects, not the "
+            f"reconciled {EXPECTED_FLATTENED_INPUTS} Stage 4 parsed — the set "
+            f"being packed is not the set that was classified"
+        )
+
+    coverage = check_replacement_coverage(
+        baseline_members, population_keys, new_members,
+        max_examples=args.max_examples,
+    )
+    identity = describe_identity(baseline_members, new_members)
+    change = compare_identity_to_the_old_sidecars(old_members, new_members)
+
+    sampled = _sample_members_for_readback(
+        new_members, size=args.verify_sample, seed=args.seed,
+    )
+    checked, mismatched = read_back_members(client, bucket, sampled)
+
+    if not coverage["passed"]:
+        refusals.append("the replacement packs do not cover the old population")
+    if mismatched:
+        refusals.append(
+            f"{len(mismatched)} of {checked} sampled members failed to extract "
+            f"from their replacement pack"
+        )
+    if change["compared"] and change["changed_share"] < args.min_identity_change:
+        refusals.append(
+            f"only {change['changed_share'] * 100:.2f}% of replaced members' "
+            f"listing_id changed, under the {args.min_identity_change * 100:.0f}% "
+            f"floor — the replacement sidecars look like they carry the "
+            f"historical scrambled column, not the Stage 5b identity"
+        )
+
+    passed = not refusals
+    fingerprint = hashlib.sha256("".join(sorted(new_sidecars)).encode())
+    run_id = f"repack-{fingerprint.hexdigest()[:16]}"
+
+    report = {
+        "stage": "plan_145_stage_6_repack_verify",
+        "run_id": run_id,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "bucket": bucket,
+        "pack_prefix": pack_prefix,
+        "population_prefix": prefix,
+        "population_source": population_source,
+        "old_packs": len(old_pack_keys),
+        "old_pack_keys": sorted(old_pack_keys),
+        "new_packs": len(new_sidecars),
+        "new_sidecar_keys": new_sidecars,
+        "coverage": coverage,
+        "identity": identity,
+        "identity_change": change,
+        "min_identity_change": args.min_identity_change,
+        "readback": {
+            "sampled": checked,
+            "sidecars_sampled": len(sampled),
+            "mismatched": len(mismatched),
+            "examples": mismatched[: args.max_examples],
+        },
+        "refusals": refusals,
+        "passed": passed,
+    }
+
+    report_key = f"{REPACK_PREFIX}/{run_id}/verify_report.json"
+    write_json(report_key, report)
+    logger.info("wrote s3://%s/%s", bucket, report_key)
+
+    _print_verify_report(report)
+    return 0 if passed else 1
+
+
+# --- retiring the superseded packs -----------------------------------------
+
+def _retire_schema() -> Any:
+    import pyarrow as pa
+
+    return pa.schema([
+        pa.field("object_key", pa.string()),
+        pa.field("kind", pa.string()),
+        pa.field("pack_key", pa.string()),
+    ])
+
+
+def plan_pack_retirement(old_pack_keys: Sequence[str]) -> list[dict[str, Any]]:
+    """The exact key list: one pack and one sidecar per retired pack.
+
+    Sorted, and derived only from the frozen Stage 3b set, so the manifest a
+    human reviews is the manifest the deletes are made from.
+    """
+    from shared.packfile import index_key
+
+    planned: list[dict[str, Any]] = []
+    for pack in sorted(old_pack_keys):
+        planned.append({"object_key": pack, "kind": "pack", "pack_key": pack})
+        planned.append({
+            "object_key": index_key(pack), "kind": "sidecar", "pack_key": pack,
+        })
+    return planned
+
+
+def _load_verify_report(
+    client, bucket: str, run_id: Optional[str],
+) -> dict[str, Any]:
+    """The most recent passing verify report, or the one named."""
+    if run_id:
+        key = f"{REPACK_PREFIX}/{run_id}/verify_report.json"
+    else:
+        candidates = _list_keys(client, bucket, f"{REPACK_PREFIX}/", "verify_report.json")
+        if not candidates:
+            raise ReconcileError(
+                f"no repack verification under {REPACK_PREFIX}/ — nothing may be "
+                f"retired until the replacement packs have been proven"
+            )
+        if len(candidates) > 1:
+            raise ReconcileError(
+                f"{len(candidates)} verify reports under {REPACK_PREFIX}/; name "
+                f"one with --verify-run-id: {', '.join(candidates)}"
+            )
+        key = candidates[0]
+
+    body = client.get_object(Bucket=bucket, Key=key)["Body"].read()
+    report = json.loads(body)
+    if not report.get("passed"):
+        raise ReconcileError(
+            f"{key} did not pass: {'; '.join(report.get('refusals') or ['unknown'])}"
+        )
+    return report
+
+
+def run_retire_packs(args: argparse.Namespace) -> int:
+    """Delete the superseded April packs and sidecars, by exact reviewed key."""
+    from shared.minio import BUCKET as DEFAULT_BUCKET
+
+    bucket = args.bucket or DEFAULT_BUCKET
+    apply = bool(args.apply)
+    client = _s3_client()
+
+    report = _load_verify_report(client, bucket, args.verify_run_id)
+    baseline_members, old_pack_keys = load_unpack_baseline(client, bucket)
+
+    if sorted(old_pack_keys) != report.get("old_pack_keys"):
+        raise ReconcileError(
+            "the frozen Stage 3b pack set no longer matches the verification "
+            "report's — the store moved under the proof, so re-verify before "
+            "retiring anything"
+        )
+
+    pack_prefix = args.pack_prefix or _april_pack_prefix()
+    sidecars = _list_keys(client, bucket, pack_prefix, ".idx.parquet")
+    _, new_sidecars = split_sidecars(sidecars, old_pack_keys)
+    if new_sidecars != report.get("new_sidecar_keys"):
+        raise ReconcileError(
+            "the replacement sidecar set has changed since it was verified — "
+            "re-run repack-verify before retiring anything"
+        )
+
+    planned = plan_pack_retirement(old_pack_keys)
+    frozen = {row["object_key"] for row in planned}
+
+    def guard(record: dict[str, Any]) -> Optional[str]:
+        if record.get("object_key") in frozen:
+            return None
+        return "it is not in the frozen Stage 3b pack set"
+
+    manifest_key = f"{RETIRE_PREFIX}/{report['run_id']}/manifest.parquet"
+    receipt_key = f"{RETIRE_PREFIX}/{report['run_id']}/receipts.parquet"
+
+    print()
+    print("Plan 145 Stage 6 -- retire the superseded April packs")
+    print("=" * 70)
+    print(f"verified by            {report['run_id']}")
+    print(f"replacement packs      {len(new_sidecars):>12,}")
+    print(f"packs to retire        {len(old_pack_keys):>12,}")
+    print(f"objects to delete      {len(planned):>12,}")
+    print(f"members they held      {len(baseline_members):>12,}")
+    print(f"mode                   {'apply' if apply else 'dry run'}")
+    print()
+
+    if apply:
+        _write_parquet_shard(manifest_key, _retire_schema(), planned)
+        logger.info("wrote the retirement manifest before any delete: %s", manifest_key)
+
+    receipts = delete_objects_in_batches(
+        client, bucket, planned,
+        apply=apply, batch_size=args.batch_size, guard=guard,
+    )
+    results = Counter(r["result"] for r in receipts)
+
+    if apply:
+        _write_parquet_shard(
+            receipt_key, _receipt_schema(),
+            [{"object_key": r["object_key"], "raw_sha256": None,
+              "result": r["result"]} for r in receipts],
+        )
+
+    for result, count in sorted(results.items()):
+        print(f"  receipt {result:<14} {count:>12,}")
+    print()
+
+    errors = sum(v for k, v in results.items() if k.startswith("error:"))
+    if errors:
+        print(f"REFUSED: {errors} object(s) failed to delete")
+        return 1
+    return 0
+
+
+# --- deleting the legacy Parquet -------------------------------------------
+
+def _legacy_delete_schema() -> Any:
+    import pyarrow as pa
+
+    return pa.schema([
+        pa.field("object_key", pa.string()),
+        pa.field("size_bytes", pa.int64()),
+        pa.field("etag", pa.string()),
+        pa.field("recoverable_rows", pa.int32()),
+        pa.field("covered_rows", pa.int32()),
+        pa.field("approved_by", pa.string()),
+    ])
+
+
+def load_materialize_coverage(
+    client, bucket: str,
+) -> dict[str, dict[str, Any]]:
+    """Per legacy object, the content hashes Stage 2 derived from it.
+
+    The materialize manifests are the durable record of what each legacy
+    Parquet actually held: one shard per source object, one row per legacy row,
+    each carrying its disposition and -- for the two dispositions that produced
+    an object -- the ``raw_sha256`` of the body. Empty and non-success rows
+    carry no content and can never need covering.
+    """
+    shard_keys = _list_keys(client, bucket, f"{MATERIALIZE_PREFIX}/", ".parquet")
+    if not shard_keys:
+        raise ReconcileError(
+            f"no Stage 2 materialize manifests under {MATERIALIZE_PREFIX}/ — "
+            f"coverage cannot be proven and nothing may be deleted"
+        )
+
+    coverage: dict[str, dict[str, Any]] = {}
+    for shard_key in shard_keys:
+        rows = _read_parquet_rows(
+            client, bucket, shard_key,
+            columns=["legacy_object_key", "disposition", "raw_sha256"],
+        )
+        for row in rows:
+            legacy_key = row.get("legacy_object_key")
+            if not legacy_key:
+                continue
+            entry = coverage.setdefault(
+                legacy_key, {"hashes": set(), "rows": 0, "skipped": 0},
+            )
+            entry["rows"] += 1
+            if row.get("disposition") in MATERIALIZED_DISPOSITIONS:
+                sha = row.get("raw_sha256")
+                if sha:
+                    entry["hashes"].add(sha)
+            else:
+                entry["skipped"] += 1
+    return coverage
+
+
+def plan_legacy_deletions(
+    objects: Sequence[dict[str, Any]],
+    coverage: dict[str, dict[str, Any]],
+    packed_hashes: dict[str, Any],
+    *,
+    approved_by: str,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """The exact deletion set, plus every reason an object was refused.
+
+    Pure. An object is deletable only when every body Stage 2 derived from it
+    is present in a replacement sidecar -- that is the plan's *"no key is
+    deleted whose content is not provably in a verified pack"*, applied to the
+    Parquet rather than to a single object. An uncovered hash is a refusal, not
+    a skip: a partially recoverable legacy object is exactly the case where
+    deleting loses something.
+    """
+    planned: list[dict[str, Any]] = []
+    refusals: list[str] = []
+
+    for entry in sorted(objects, key=lambda o: o["legacy_object_key"]):
+        key = entry["legacy_object_key"]
+        if f"artifact_type={RESULTS_PAGE_ARTIFACT_TYPE}" in key:
+            refusals.append(f"{key}: a results_page object is out of scope")
+            continue
+        record = coverage.get(key)
+        if record is None:
+            refusals.append(f"{key}: no Stage 2 manifest describes it")
+            continue
+        uncovered = sorted(sha for sha in record["hashes"] if sha not in packed_hashes)
+        if uncovered:
+            refusals.append(
+                f"{key}: {len(uncovered)} of {len(record['hashes'])} recoverable "
+                f"bodies are in no replacement pack (e.g. {uncovered[0][:12]})"
+            )
+            continue
+        planned.append({
+            "object_key": key,
+            "size_bytes": int(entry.get("size_bytes") or 0),
+            "etag": entry.get("etag"),
+            "recoverable_rows": len(record["hashes"]),
+            "covered_rows": len(record["hashes"]),
+            "approved_by": approved_by,
+        })
+    return planned, refusals
+
+
+def _read_census_keys(census_dir: Path) -> set[str]:
+    """The frozen 1,172 keys, from the Stage 1 census, fingerprint checked.
+
+    The report records the census fingerprint, so an edited CSV is a stop
+    rather than a silently different deletion set.
+    """
+    census_path = census_dir / "object_census.csv"
+    report_path = census_dir / "stage1_report.json"
+    if not census_path.exists():
+        raise ReconcileError(f"no object_census.csv under {census_dir}")
+
+    if report_path.exists():
+        recorded = json.loads(report_path.read_text(encoding="utf-8"))
+        expected = (recorded.get("fingerprints") or {}).get("object_census.csv")
+        actual = _fingerprint(census_path)
+        if expected and expected != actual:
+            raise ReconcileError(
+                f"object_census.csv does not match the fingerprint Stage 1 "
+                f"recorded ({actual[:12]} != {expected[:12]}) — the frozen "
+                f"census has been edited"
+            )
+
+    with census_path.open(newline="", encoding="utf-8") as handle:
+        return {row["legacy_object_key"] for row in csv.DictReader(handle)}
+
+
+def run_delete_legacy(args: argparse.Namespace) -> int:
+    """The end of Plan 145: delete the 1,172 legacy detail Parquet objects."""
+    from shared.minio import BUCKET as DEFAULT_BUCKET
+    from shared.minio import write_json
+
+    bucket = args.bucket or DEFAULT_BUCKET
+    apply = bool(args.apply)
+    client = _s3_client()
+
+    if apply and not args.maintainer_approval:
+        raise ReconcileError(
+            "--apply requires --maintainer-approval '<name>'. This deletion is "
+            "recoverable only from MinIO versioning or backup, which is why the "
+            "plan makes named approval its final gate."
+        )
+    approved_by = args.maintainer_approval or ""
+
+    report = _load_verify_report(client, bucket, args.verify_run_id)
+    _, old_pack_keys = load_unpack_baseline(client, bucket)
+
+    pack_prefix = args.pack_prefix or _april_pack_prefix()
+    sidecars = _list_keys(client, bucket, pack_prefix, ".idx.parquet")
+    _, new_sidecars = split_sidecars(sidecars, old_pack_keys)
+    if not new_sidecars:
+        raise ReconcileError(
+            "no replacement sidecars — the legacy Parquet is the only surviving "
+            "copy of anything the packs do not hold"
+        )
+    packed_hashes = load_sidecar_hashes(client, bucket, new_sidecars)
+    logger.info("%d distinct hashes across %d replacement sidecars",
+                len(packed_hashes), len(new_sidecars))
+
+    prefix = args.prefix or _discover_prefix(client, bucket)
+    objects = enumerate_objects(client, bucket, prefix)
+    logger.info("enumerated %d legacy Parquet objects under %s", len(objects), prefix)
+
+    coverage = load_materialize_coverage(client, bucket)
+    live_keys = {o["legacy_object_key"] for o in objects}
+
+    drifts: list[str] = []
+    if len(objects) != BASELINE_OBJECTS:
+        drifts.append(
+            f"{len(objects)} legacy Parquet objects under {prefix}, not the "
+            f"frozen {BASELINE_OBJECTS}"
+        )
+
+    if args.census_dir:
+        frozen_keys = _read_census_keys(Path(args.census_dir))
+        source = "the Stage 1 census"
+    elif args.census_from_manifests:
+        # The Stage 2 shards are one per legacy object and name it in every
+        # row, so they carry the same key set the census froze -- and unlike
+        # the census they live in MinIO, which is why this fallback exists at
+        # all. It is a weaker attestation, not an absent one.
+        frozen_keys = set(coverage)
+        source = f"the {len(frozen_keys)} Stage 2 manifest shards"
+    else:
+        raise ReconcileError(
+            "pass --census-dir <stage 1 output> so the deletion set is "
+            "regenerated from the frozen census, or --census-from-manifests to "
+            "derive it from the 1,172 Stage 2 shards in MinIO instead"
+        )
+
+    if frozen_keys != live_keys:
+        drifts.append(
+            f"the live key set differs from {source}: "
+            f"{len(frozen_keys - live_keys)} gone, "
+            f"{len(live_keys - frozen_keys)} new"
+        )
+
+    if drifts and not args.allow_drift:
+        for drift in drifts:
+            print(f"REFUSED: {drift}")
+        raise ReconcileError(
+            "the legacy population has drifted from its frozen census; deleting "
+            "against a moved population is how a plan deletes the wrong thing"
+        )
+
+    if f"artifact_type={TARGET_ARTIFACT_TYPE}" not in prefix:
+        raise ReconcileError(
+            f"the population prefix {prefix!r} does not name "
+            f"artifact_type={TARGET_ARTIFACT_TYPE}, so the results_page "
+            f"population this run must leave alone cannot be located"
+        )
+    results_prefix = prefix.replace(
+        f"artifact_type={TARGET_ARTIFACT_TYPE}",
+        f"artifact_type={RESULTS_PAGE_ARTIFACT_TYPE}",
+    )
+    results_before = len(_list_prefix(client, bucket, results_prefix))
+
+    planned, refusals = plan_legacy_deletions(
+        objects, coverage, packed_hashes, approved_by=approved_by,
+    )
+
+    planned_keys = {row["object_key"] for row in planned}
+
+    def guard(record: dict[str, Any]) -> Optional[str]:
+        key = record.get("object_key")
+        if key not in planned_keys:
+            return "it is not in the reviewed deletion manifest"
+        if f"artifact_type={RESULTS_PAGE_ARTIFACT_TYPE}" in str(key):
+            return "it is a results_page object, which is out of scope"
+        if not str(key).endswith(".parquet"):
+            return "it is not a Parquet object"
+        return None
+
+    print()
+    print("Plan 145 Stage 6 -- delete the legacy April detail Parquet")
+    print("=" * 70)
+    print(f"verified by            {report['run_id']}")
+    print(f"approved by            {approved_by or '(none — dry run)'}")
+    print(f"legacy objects         {len(objects):>12,}  (baseline {BASELINE_OBJECTS:,})")
+    print(f"planned for deletion   {len(planned):>12,}")
+    print(f"refused                {len(refusals):>12,}")
+    print(f"results_page objects   {results_before:>12,}  (must not change)")
+    print(f"mode                   {'apply' if apply else 'dry run'}")
+    print()
+    for refusal in refusals[: args.max_examples]:
+        print(f"  refused: {refusal}")
+    if len(refusals) > args.max_examples:
+        print(f"  ... and {len(refusals) - args.max_examples} more")
+    print()
+
+    if refusals and not args.allow_partial:
+        raise ReconcileError(
+            f"{len(refusals)} legacy object(s) are not provably recoverable. "
+            f"Deleting the rest anyway needs --allow-partial and a reason, "
+            f"because each refusal is a body that exists nowhere else."
+        )
+
+    manifest_key = f"{LEGACY_DELETE_PREFIX}/{report['run_id']}/manifest.parquet"
+    if apply:
+        _write_parquet_shard(manifest_key, _legacy_delete_schema(), planned)
+        logger.info("wrote the deletion manifest before any delete: %s", manifest_key)
+
+    receipts = delete_objects_in_batches(
+        client, bucket, planned,
+        apply=apply, batch_size=args.batch_size, guard=guard,
+    )
+    results = Counter(r["result"] for r in receipts)
+    reconciled = sum(results.values())
+
+    detail_after = results_after = None
+    if apply:
+        _write_parquet_shard(
+            f"{LEGACY_DELETE_PREFIX}/{report['run_id']}/receipts.parquet",
+            _receipt_schema(),
+            [{"object_key": r["object_key"], "raw_sha256": None,
+              "result": r["result"]} for r in receipts],
+        )
+        detail_after = len(enumerate_objects(client, bucket, prefix))
+        results_after = len(_list_prefix(client, bucket, results_prefix))
+
+    for result, count in sorted(results.items()):
+        print(f"  receipt {result:<14} {count:>12,}")
+    print(f"  {'reconciled':<22} {reconciled:>12,}")
+    if apply:
+        print()
+        print(f"legacy detail Parquet remaining  {detail_after:>12,}  (must be 0)")
+        print(f"results_page objects             {results_after:>12,}  "
+              f"(was {results_before:,})")
+    print()
+
+    problems: list[str] = []
+    errors = sum(v for k, v in results.items() if k.startswith("error:"))
+    if errors:
+        problems.append(f"{errors} object(s) failed to delete")
+    if reconciled != len(planned):
+        problems.append(
+            f"{reconciled} receipts against {len(planned)} planned deletions"
+        )
+    if apply and detail_after:
+        problems.append(f"{detail_after} legacy detail Parquet object(s) survive")
+    if apply and results_after != results_before:
+        problems.append(
+            f"the results_page population changed: {results_before} -> {results_after}"
+        )
+
+    summary = {
+        "stage": "plan_145_stage_6_delete_legacy",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "mode": "apply" if apply else "dry_run",
+        "verified_by": report["run_id"],
+        "approved_by": approved_by,
+        "legacy_objects": len(objects),
+        "planned": len(planned),
+        "refusals": refusals,
+        "receipts": dict(results),
+        "reconciled": reconciled,
+        "detail_parquet_after": detail_after,
+        "results_page_before": results_before,
+        "results_page_after": results_after,
+        "problems": problems,
+    }
+    if apply:
+        write_json(
+            f"{LEGACY_DELETE_PREFIX}/{report['run_id']}/delete_report.json", summary,
+        )
+
+    for problem in problems:
+        print(f"REFUSED: {problem}")
+    return 1 if problems else 0
+
+
+# --------------------------------------------------------------------------
 # CLI
 # --------------------------------------------------------------------------
 
@@ -7898,6 +9250,145 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
                           "month's compacted object; costs a full partition read.")
     cfv.add_argument("--log-level", default="INFO", help="DEBUG | INFO | WARNING")
     cfv.set_defaults(func=run_canary_flush_verify)
+
+    trl = sub.add_parser(
+        "pack-trial",
+        help="Stage 6: the bounded ordering trial. Packs a fixed ~50,000-member "
+             "sample twice -- once in the historical clustering order, once by "
+             "the corrected subject listing -- and reports which is smaller. "
+             "Builds the trial packs in memory and stores none of them.",
+    )
+    trl.add_argument("--apply", action="store_true",
+                     help="Actually read the sample and build the trial packs. "
+                          "Without it the run reports the sample composition "
+                          "and reads no object.")
+    trl.add_argument("--bucket", default=None, help="Override MINIO_BUCKET.")
+    trl.add_argument("--sample", choices=("current", "true", "both"),
+                     default="both",
+                     help="Which order to draw the contiguous sample in. "
+                          "'both' draws one sample per order and requires the "
+                          "winner to win on both, which is what removes the "
+                          "selection bias a single sample carries "
+                          "[default: %(default)s].")
+    trl.add_argument("--sample-size", type=int, default=TRIAL_SAMPLE_MEMBERS,
+                     help="Members per sample [default: %(default)s].")
+    trl.add_argument("--include-null-identity", action="store_true",
+                     help="Keep members with no subject listing. They cannot "
+                          "inform a question about ordering by subject listing "
+                          "and collapse into one false cluster; excluded by "
+                          "default.")
+    trl.add_argument("--dict-id", type=int, default=None,
+                     help="zstd dictionary. Default: $PACK_BRONZE_DICT_ID, as "
+                          "production resolves it.")
+    trl.add_argument("--allow-no-dictionary", action="store_true",
+                     help="Permit an undictionaried trial. Refused by default, "
+                          "because it would not measure production's packing.")
+    trl.add_argument("--frame-bytes", type=int, default=None,
+                     help="Frame target. Default: the packer's own.")
+    trl.add_argument("--max-pack-bytes", type=int, default=None,
+                     help="Pack roll threshold. Default: the packer's own.")
+    trl.add_argument("--duckdb-threads", type=int, default=1)
+    trl.add_argument("--duckdb-memory-limit", default="2GB")
+    trl.add_argument("--log-level", default="INFO", help="DEBUG | INFO | WARNING")
+    trl.set_defaults(func=run_pack_trial)
+
+    rpv = sub.add_parser(
+        "repack-verify",
+        help="Stage 6: prove the replacement packs hold everything the "
+             "originals did before anything is retired. Read-only, and the "
+             "gate every irreversible Stage 6 step is checked against.",
+    )
+    rpv.add_argument("--bucket", default=None, help="Override MINIO_BUCKET.")
+    rpv.add_argument("--list-population", action="store_true",
+                     help="Enumerate the April prefix instead of deriving the "
+                          "population from the Stage 2/3a/3b manifests. ~1,000 "
+                          "LIST requests and about half an hour; worth it once, "
+                          "to prove nothing unexpected appeared.")
+    rpv.add_argument("--prefix", default=None,
+                     help="Override the discovered April population prefix. "
+                          "Only used with --list-population.")
+    rpv.add_argument("--pack-prefix", default=None,
+                     help="Override the derived April pack prefix.")
+    rpv.add_argument("--verify-sample", type=int, default=2000,
+                     help="Members read back through read_packed_html, "
+                          "stratified over the replacement packs "
+                          "[default: %(default)s].")
+    rpv.add_argument("--seed", type=int, default=145,
+                     help="Deterministic sampling seed.")
+    rpv.add_argument("--min-identity-change", type=float,
+                     default=MIN_IDENTITY_CHANGE_SHARE,
+                     help="Refuse if fewer than this share of replaced members' "
+                          "listing_id changed. April's old sidecar was correct "
+                          "for 31.4%% of members, so near-total agreement means "
+                          "the run wrote the scrambled column again "
+                          "[default: %(default)s].")
+    rpv.add_argument("--max-examples", type=int, default=20,
+                     help="Bounded examples reported per failure class.")
+    rpv.add_argument("--log-level", default="INFO", help="DEBUG | INFO | WARNING")
+    rpv.set_defaults(func=run_repack_verify)
+
+    ret = sub.add_parser(
+        "retire-packs",
+        help="Stage 6: delete the superseded April packs and their sidecars by "
+             "exact key, from the frozen Stage 3b set, gated on a passing "
+             "repack-verify report.",
+    )
+    ret.add_argument("--apply", action="store_true",
+                     help="Actually delete. Without it the run plans and "
+                          "reports and deletes nothing.")
+    ret.add_argument("--bucket", default=None, help="Override MINIO_BUCKET.")
+    ret.add_argument("--pack-prefix", default=None,
+                     help="Override the derived April pack prefix.")
+    ret.add_argument("--verify-run-id", default=None,
+                     help="The repack-verify run authorising this. Default: the "
+                          "one report under recovery/plan145/repack/.")
+    ret.add_argument("--batch-size", type=int, default=MAX_DELETE_BATCH,
+                     help="Keys per delete request (S3 caps this at 1000).")
+    ret.add_argument("--log-level", default="INFO", help="DEBUG | INFO | WARNING")
+    ret.set_defaults(func=run_retire_packs)
+
+    dll = sub.add_parser(
+        "delete-legacy",
+        help="Stage 6: delete the 1,172 legacy April detail Parquet objects. "
+             "By exact key from a written manifest, with named approval and a "
+             "receipt per key. The results_page population is refused by key.",
+    )
+    dll.add_argument("--apply", action="store_true",
+                     help="Actually delete. Without it the run plans, proves "
+                          "coverage and deletes nothing.")
+    dll.add_argument("--maintainer-approval", default=None,
+                     help="The name approving this deletion, recorded in the "
+                          "manifest and every receipt. Required by --apply.")
+    dll.add_argument("--bucket", default=None, help="Override MINIO_BUCKET.")
+    dll.add_argument("--prefix", default=None,
+                     help="Override the discovered legacy detail prefix.")
+    dll.add_argument("--pack-prefix", default=None,
+                     help="Override the derived April pack prefix.")
+    dll.add_argument("--verify-run-id", default=None,
+                     help="The repack-verify run authorising this.")
+    dll.add_argument("--census-dir", default=None,
+                     help="The Stage 1 census output directory. Its "
+                          "object_census.csv is the frozen key set and is "
+                          "fingerprint-checked against stage1_report.json.")
+    dll.add_argument("--census-from-manifests", action="store_true",
+                     help="Derive the key set from the 1,172 Stage 2 manifest "
+                          "shards in MinIO when the Stage 1 output directory no "
+                          "longer exists. The count is still held to the "
+                          "baseline; the per-key comparison is not made.")
+    dll.add_argument("--allow-drift", action="store_true",
+                     help="Report a drifted legacy population instead of "
+                          "stopping. Never use it to delete against a "
+                          "population that moved.")
+    dll.add_argument("--allow-partial", action="store_true",
+                     help="Delete the covered objects even though some were "
+                          "refused. Each refusal is a body that exists nowhere "
+                          "else, so this needs a reason.")
+    dll.add_argument("--batch-size", type=int, default=MAX_DELETE_BATCH,
+                     help="Keys per delete request (S3 caps this at 1000).")
+    dll.add_argument("--max-examples", type=int, default=20,
+                     help="Bounded refusals printed.")
+    dll.add_argument("--log-level", default="INFO", help="DEBUG | INFO | WARNING")
+    dll.set_defaults(func=run_delete_legacy)
 
     return parser.parse_args(argv)
 

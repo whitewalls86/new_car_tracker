@@ -6031,3 +6031,1101 @@ def test_a_probe_apply_ignores_the_canary_entirely(tmp_path, monkeypatch):
                   if "silver_observations" in sql)
     assert len(silver) == 4                       # nothing skipped
     assert conn.rollbacks == 1 and conn.commits == 0
+
+
+# ---------------------------------------------------------------------------
+# M - Stage 6: the ordering trial, the replacement proof, retirement, deletion
+# ---------------------------------------------------------------------------
+
+import dataclasses  # noqa: E402
+
+from scripts.reconcile_april_detail import (  # noqa: E402
+    DEDUPE_PREFIX,
+    LEGACY_DELETE_PREFIX,
+    REPACK_PREFIX,
+    RETIRE_PREFIX,
+    UNPACK_PREFIX,
+)
+
+_S6_PACK_PREFIX = "html_packs/detail_page/2026/04/"
+_S6_POP_PREFIX = "html/year=2026/month=4/artifact_type=detail_page/"
+
+
+def _s6_row(source_key, artifact_id, listing_id, cluster_key, day=1):
+    """One row in the packer's five-column member metadata shape."""
+    from datetime import datetime, timezone
+
+    return (
+        source_key, artifact_id, listing_id, cluster_key,
+        datetime(2026, 4, day, 12, 0, tzinfo=timezone.utc),
+    )
+
+
+class _FakeS6Store(_FakeS3Store):
+    """The shared fake, plus what Stage 6 needs: deletes and head_object."""
+
+    def __init__(self, store):
+        super().__init__(store)
+        self.deleted: list[str] = []
+        self.refuse: set[str] = set()
+
+    def list_objects_v2(self, **kw):
+        from datetime import datetime, timezone
+
+        page = super().list_objects_v2(**kw)
+        for entry in page.get("Contents", []):
+            entry["LastModified"] = datetime(2026, 4, 1, tzinfo=timezone.utc)
+        return page
+
+    def head_object(self, Bucket, Key):
+        return {"ContentLength": len(self.store[Key])}
+
+    def get_object(self, Bucket, Key, Range=None):
+        body = self.store[Key]
+        if Range:
+            first, last = Range.removeprefix("bytes=").split("-")
+            body = body[int(first): int(last) + 1]
+        return {"Body": _Body(body)}
+
+    def delete_objects(self, Bucket, Delete):
+        deleted, errors = [], []
+        for obj in Delete["Objects"]:
+            key = obj["Key"]
+            if key in self.refuse:
+                errors.append({"Key": key, "Code": "AccessDenied"})
+            elif key in self.store:
+                del self.store[key]
+                self.deleted.append(key)
+                deleted.append({"Key": key})
+            else:
+                pass  # absent: neither deleted nor an error, as S3 reports it
+        return {"Deleted": deleted, "Errors": errors}
+
+
+def _s6_index_bytes(entries):
+    from shared.packfile import write_index_parquet
+
+    return write_index_parquet(entries)
+
+
+def _s6_entry(source_key, sha, *, artifact_id=None, listing_id=None, length=10):
+    from shared.packfile import PackIndexEntry
+
+    return PackIndexEntry(
+        source_key=source_key,
+        frame_ordinal=0,
+        offset_in_frame=0,
+        length=length,
+        raw_sha256=sha,
+        artifact_id=artifact_id,
+        listing_id=listing_id,
+        fetched_at=None,
+    )
+
+
+def _s6_sha(text: str) -> str:
+    return hashlib.sha256(_s6_body(text)).hexdigest()
+
+
+def _s6_body(name: str) -> bytes:
+    """The uncompressed body of one fixture member, keyed by its short name."""
+    return f"<html><body>{name}</body></html>".encode()
+
+
+# --- the ordering trial ----------------------------------------------------
+
+def test_trial_orders_by_the_arm_under_test():
+    from scripts.reconcile_april_detail import order_for_arm
+
+    rows = [
+        _s6_row("k1", 1, "LB", "CA", day=1),
+        _s6_row("k2", 2, "LA", "CB", day=2),
+        _s6_row("k3", 3, "LA", "CA", day=3),
+    ]
+
+    assert [r[0] for r in order_for_arm(rows, "current")] == ["k1", "k3", "k2"]
+    assert [r[0] for r in order_for_arm(rows, "true")] == ["k2", "k3", "k1"]
+
+
+def test_trial_refuses_an_unknown_arm():
+    from scripts.reconcile_april_detail import ReconcileError, order_for_arm
+
+    with pytest.raises(ReconcileError, match="unknown trial arm"):
+        order_for_arm([], "whatever")
+
+
+def test_a_member_with_no_subject_listing_is_left_out_of_the_trial():
+    """In the true arm they would collapse into one enormous false cluster,
+    and a member with no subject listing cannot inform a question about
+    ordering by subject listing."""
+    from scripts.reconcile_april_detail import select_trial_sample
+
+    rows = [
+        _s6_row("k1", 1, "LA", "CA"),
+        _s6_row("k2", 2, None, "CB"),
+        _s6_row("k3", 3, "LC", None),
+    ]
+
+    kept = select_trial_sample(rows, size=10, drawn_in="current")
+    assert [r[0] for r in kept] == ["k1"]
+
+    with_nulls = select_trial_sample(
+        rows, size=10, drawn_in="current", include_null_identity=True,
+    )
+    assert len(with_nulls) == 3
+
+
+def test_the_trial_sample_is_contiguous_in_the_order_it_is_drawn_in():
+    from scripts.reconcile_april_detail import select_trial_sample
+
+    rows = [_s6_row(f"k{i}", i, f"L{9 - i}", f"C{i}") for i in range(6)]
+
+    current = select_trial_sample(rows, size=3, drawn_in="current")
+    assert [r[3] for r in current] == ["C0", "C1", "C2"]
+
+    true = select_trial_sample(rows, size=3, drawn_in="true")
+    assert [r[2] for r in true] == ["L4", "L5", "L6"]
+
+
+def test_both_arms_pack_exactly_the_same_members():
+    """The whole point of a fixed population: only the order may differ."""
+    from scripts.reconcile_april_detail import pack_trial_arm
+
+    rows = [_s6_row(f"k{i}", i, f"L{i % 3}", f"C{i % 2}") for i in range(6)]
+
+    def fetch(key):
+        return f"<html>{key}</html>".encode() * 40
+
+    current = pack_trial_arm(
+        rows, fetch, arm="current", dict_id=None,
+        frame_target_bytes=1 << 20, max_pack_bytes=1 << 24,
+    )
+    true = pack_trial_arm(
+        rows, fetch, arm="true", dict_id=None,
+        frame_target_bytes=1 << 20, max_pack_bytes=1 << 24,
+    )
+
+    assert current["members"] == true["members"] == 6
+    assert current["raw_bytes"] == true["raw_bytes"]
+
+
+def test_the_trial_arm_decides_which_key_frames_are_cut_on():
+    """Identity and placement are separable since Stage 5b; the trial is the
+    caller that makes them differ on purpose."""
+    from scripts.reconcile_april_detail import pack_trial_arm
+    from shared.packfile import PackWriter
+
+    seen: list[str | None] = []
+    real_add = PackWriter.add
+
+    def spy(self, member):
+        seen.append(member.placement_key())
+        return real_add(self, member)
+
+    rows = [_s6_row("k1", 1, "LA", "CX"), _s6_row("k2", 2, "LB", "CX")]
+
+    def fetch(key):
+        return b"<html>body</html>"
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(PackWriter, "add", spy)
+        pack_trial_arm(rows, fetch, arm="current", dict_id=None,
+                       frame_target_bytes=1 << 20, max_pack_bytes=1 << 24)
+        assert seen == ["CX", "CX"]
+
+        seen.clear()
+        pack_trial_arm(rows, fetch, arm="true", dict_id=None,
+                       frame_target_bytes=1 << 20, max_pack_bytes=1 << 24)
+        assert seen == ["LA", "LB"]
+
+
+def _trial_sample(drawn_in, current_bytes, true_bytes):
+    return {
+        "drawn_in": drawn_in,
+        "arms": {
+            "current": {"pack_bytes": current_bytes},
+            "true": {"pack_bytes": true_bytes},
+        },
+    }
+
+
+def test_true_ordering_carries_only_when_it_wins_on_every_sample():
+    from scripts.reconcile_april_detail import decide_trial_winner
+
+    decision = decide_trial_winner([
+        _trial_sample("current", 1000, 900),
+        _trial_sample("true", 1000, 800),
+    ])
+    assert decision["winner"] == "true"
+    assert decision["unanimous"] is True
+    assert decision["split"] is False
+
+
+def test_a_split_verdict_leaves_the_incumbent_in_place():
+    from scripts.reconcile_april_detail import decide_trial_winner
+
+    decision = decide_trial_winner([
+        _trial_sample("current", 1000, 1100),
+        _trial_sample("true", 1000, 900),
+    ])
+    assert decision["winner"] == "current"
+    assert decision["split"] is True
+
+
+def test_the_trial_reports_the_size_of_the_difference_not_only_its_sign():
+    from scripts.reconcile_april_detail import decide_trial_winner
+
+    decision = decide_trial_winner([_trial_sample("current", 1000, 800)])
+    verdict = decision["per_sample"][0]
+    assert verdict["delta_bytes"] == -200
+    assert verdict["delta_share"] == pytest.approx(-0.2)
+
+
+def test_a_trial_run_id_is_reproducible_from_the_member_set():
+    from scripts.reconcile_april_detail import _trial_run_id
+
+    a = [{"drawn_in": "current", "source_keys": ["k1", "k2"]}]
+    b = [{"drawn_in": "current", "source_keys": ["k1", "k2"]}]
+    c = [{"drawn_in": "current", "source_keys": ["k1", "k3"]}]
+
+    assert _trial_run_id(a) == _trial_run_id(b)
+    assert _trial_run_id(a) != _trial_run_id(c)
+
+
+def test_the_trial_defaults_to_both_samples_and_a_dry_run():
+    args = parse_args(["pack-trial"])
+    assert args.sample == "both"
+    assert args.apply is False
+    assert args.include_null_identity is False
+
+
+# --- the replacement proof -------------------------------------------------
+
+def _s6_new_member(sha, *, artifact_id=1, listing_id="L", claims=1,
+                   sidecar="sc-a"):
+    return {
+        "raw_sha256": sha, "artifact_id": artifact_id,
+        "listing_id": listing_id, "sidecar_key": sidecar, "claims": claims,
+    }
+
+
+def test_replacement_coverage_passes_when_everything_is_carried_over():
+    from scripts.reconcile_april_detail import check_replacement_coverage
+
+    baseline = {"old1": "sha1", "old2": "sha2"}
+    population = ["old1", "old2", "mat1"]
+    new = {
+        "old1": _s6_new_member("sha1"),
+        "old2": _s6_new_member("sha2"),
+        "mat1": _s6_new_member("sha3"),
+    }
+
+    result = check_replacement_coverage(baseline, population, new)
+    assert result["passed"] is True
+    assert result["new_members"] == 3
+
+
+def test_an_old_member_no_replacement_holds_is_a_stop():
+    from scripts.reconcile_april_detail import check_replacement_coverage
+
+    result = check_replacement_coverage(
+        {"old1": "sha1", "old2": "sha2"}, ["old1", "old2"],
+        {"old1": _s6_new_member("sha1")},
+    )
+    assert result["passed"] is False
+    assert result["missing_old"] == 1
+    assert result["examples"]["missing_old"] == ["old2"]
+
+
+def test_an_old_member_whose_bytes_changed_is_a_stop():
+    """The originals are deleted immediately after this passes, so a hash that
+    moved is the one thing that can never be reported as a warning."""
+    from scripts.reconcile_april_detail import check_replacement_coverage
+
+    result = check_replacement_coverage(
+        {"old1": "sha1"}, ["old1"], {"old1": _s6_new_member("DIFFERENT")},
+    )
+    assert result["passed"] is False
+    assert result["changed_old"] == 1
+    assert result["examples"]["changed_old"][0]["was"] == "sha1"
+
+
+def test_a_live_object_no_replacement_holds_is_a_stop():
+    from scripts.reconcile_april_detail import check_replacement_coverage
+
+    result = check_replacement_coverage(
+        {}, ["mat1", "mat2"], {"mat1": _s6_new_member("sha1")},
+    )
+    assert result["passed"] is False
+    assert result["population_not_packed"] == 1
+
+
+def test_a_member_claimed_by_two_replacement_packs_is_a_stop():
+    from scripts.reconcile_april_detail import check_replacement_coverage
+
+    result = check_replacement_coverage(
+        {"old1": "sha1"}, ["old1"], {"old1": _s6_new_member("sha1", claims=2)},
+    )
+    assert result["passed"] is False
+    assert result["duplicated_members"] == 1
+
+
+def test_identity_is_decomposed_by_where_the_member_came_from():
+    """Stage 6's gate names 42,276, which is a property of the 557,065-member
+    pack population. The replacement packs hold the flattened 983,043, so the
+    verifier reports the decomposition instead of asserting that number."""
+    from scripts.reconcile_april_detail import describe_identity
+
+    baseline = {"old1": "sha1", "old2": "sha2"}
+    new = {
+        "old1": _s6_new_member("sha1", artifact_id=7, listing_id="L1"),
+        "old2": _s6_new_member("sha2", artifact_id=None, listing_id=None),
+        "mat1": _s6_new_member("sha3", artifact_id=9, listing_id="L2"),
+        "mat2": _s6_new_member("sha4", artifact_id=None, listing_id=None),
+        "mat3": _s6_new_member("sha5", artifact_id=None, listing_id=None),
+    }
+
+    identity = describe_identity(baseline, new)
+
+    assert identity["members"] == 5
+    assert identity["null_listing_id"] == 3
+    assert identity["by_origin"]["old_pack_member"]["members"] == 2
+    assert identity["by_origin"]["old_pack_member"]["attributed"] == 1
+    assert identity["by_origin"]["materialized"]["members"] == 3
+    assert identity["by_origin"]["materialized"]["null_listing_id"] == 2
+
+
+def test_a_replacement_sidecar_that_repeats_the_scrambled_column_is_caught():
+    """April's old sidecar was correct for 31.4% of members, so near-total
+    agreement means the run wrote the historical value again."""
+    from scripts.reconcile_april_detail import compare_identity_to_the_old_sidecars
+
+    old = {f"k{i}": _s6_new_member("s", listing_id=f"L{i}") for i in range(10)}
+    unchanged = {f"k{i}": _s6_new_member("s", listing_id=f"L{i}") for i in range(10)}
+    assert compare_identity_to_the_old_sidecars(old, unchanged)["changed_share"] == 0.0
+
+    corrected = {
+        **{f"k{i}": _s6_new_member("s", listing_id=f"SUBJECT{i}") for i in range(7)},
+        **{f"k{i}": _s6_new_member("s", listing_id=None) for i in range(7, 10)},
+    }
+    change = compare_identity_to_the_old_sidecars(old, corrected)
+    assert change["same"] == 0
+    assert change["differs"] == 7
+    assert change["null_now"] == 3
+    assert change["changed_share"] == 1.0
+
+
+def test_sidecars_are_split_against_the_frozen_old_pack_set():
+    from scripts.reconcile_april_detail import split_sidecars
+
+    old_packs = {f"{_S6_PACK_PREFIX}pack-00000.zpack"}
+    old, new = split_sidecars(
+        [f"{_S6_PACK_PREFIX}pack-00001.idx.parquet",
+         f"{_S6_PACK_PREFIX}pack-00000.idx.parquet"],
+        old_packs,
+    )
+    assert old == [f"{_S6_PACK_PREFIX}pack-00000.idx.parquet"]
+    assert new == [f"{_S6_PACK_PREFIX}pack-00001.idx.parquet"]
+
+
+def test_the_read_back_sample_is_stratified_over_the_replacement_packs():
+    from scripts.reconcile_april_detail import _sample_members_for_readback
+
+    members = {}
+    for sidecar in ("sc-a", "sc-b", "sc-c"):
+        for i in range(50):
+            members[f"{sidecar}-k{i}"] = _s6_new_member("s", sidecar=sidecar)
+
+    picked = _sample_members_for_readback(members, size=9, seed=145)
+
+    assert set(picked) == {"sc-a", "sc-b", "sc-c"}
+    assert sum(len(v) for v in picked.values()) == 9
+    assert _sample_members_for_readback(members, size=9, seed=145) == picked
+
+
+def test_a_baseline_that_names_no_pack_refuses_rather_than_verifying_nothing(
+    monkeypatch,
+):
+    import scripts.reconcile_april_detail as mod
+
+    monkeypatch.setattr(mod, "_s3_client", lambda: _FakeS6Store({}))
+    with pytest.raises(ReconcileError, match="no Stage 3b unpack manifests"):
+        mod.load_unpack_baseline(_FakeS6Store({}), "bronze")
+
+
+# --- retiring the superseded packs -----------------------------------------
+
+def test_retirement_plans_one_pack_and_one_sidecar_per_retired_pack():
+    from scripts.reconcile_april_detail import plan_pack_retirement
+
+    planned = plan_pack_retirement([
+        f"{_S6_PACK_PREFIX}pack-00001.zpack",
+        f"{_S6_PACK_PREFIX}pack-00000.zpack",
+    ])
+
+    assert [p["object_key"] for p in planned] == [
+        f"{_S6_PACK_PREFIX}pack-00000.zpack",
+        f"{_S6_PACK_PREFIX}pack-00000.idx.parquet",
+        f"{_S6_PACK_PREFIX}pack-00001.zpack",
+        f"{_S6_PACK_PREFIX}pack-00001.idx.parquet",
+    ]
+    assert [p["kind"] for p in planned] == ["pack", "sidecar", "pack", "sidecar"]
+
+
+def test_a_key_outside_the_frozen_pack_set_is_refused_by_the_guard():
+    from scripts.reconcile_april_detail import (
+        delete_objects_in_batches,
+        plan_pack_retirement,
+    )
+
+    frozen = {p["object_key"] for p in plan_pack_retirement(
+        [f"{_S6_PACK_PREFIX}pack-00000.zpack"]
+    )}
+
+    def guard(record):
+        if record["object_key"] in frozen:
+            return None
+        return "it is not in the frozen Stage 3b pack set"
+
+    with pytest.raises(ReconcileError, match="frozen Stage 3b pack set"):
+        delete_objects_in_batches(
+            None, "bronze",
+            [{"object_key": f"{_S6_PACK_PREFIX}pack-00099.zpack"}],
+            apply=True, batch_size=10, guard=guard,
+        )
+
+
+def test_retiring_without_a_verification_report_is_refused(monkeypatch):
+    import scripts.reconcile_april_detail as mod
+
+    store = {f"{UNPACK_PREFIX}/pack-00000.parquet": b""}
+    with pytest.raises(ReconcileError, match="nothing may be retired"):
+        mod._load_verify_report(_FakeS6Store(store), "bronze", None)
+
+
+def test_retiring_on_a_failed_verification_report_is_refused():
+    import scripts.reconcile_april_detail as mod
+
+    key = f"{REPACK_PREFIX}/repack-abc/verify_report.json"
+    store = {key: json.dumps(
+        {"passed": False, "refusals": ["3 old members are not replaced"]}
+    ).encode()}
+
+    with pytest.raises(ReconcileError, match="did not pass"):
+        mod._load_verify_report(_FakeS6Store(store), "bronze", None)
+
+
+def test_two_verification_reports_must_be_disambiguated_by_name():
+    import scripts.reconcile_april_detail as mod
+
+    store = {
+        f"{REPACK_PREFIX}/repack-a/verify_report.json": b"{}",
+        f"{REPACK_PREFIX}/repack-b/verify_report.json": b"{}",
+    }
+    with pytest.raises(ReconcileError, match="--verify-run-id"):
+        mod._load_verify_report(_FakeS6Store(store), "bronze", None)
+
+
+# --- deleting the legacy Parquet -------------------------------------------
+
+def _legacy_object(key, size=1000):
+    return {"legacy_object_key": key, "size_bytes": size, "etag": "e"}
+
+
+def _legacy_coverage(hashes, skipped=0):
+    return {"hashes": set(hashes), "rows": len(hashes) + skipped,
+            "skipped": skipped}
+
+
+def test_a_legacy_object_is_deletable_when_every_body_is_in_a_replacement_pack():
+    from scripts.reconcile_april_detail import plan_legacy_deletions
+
+    key = f"{_S6_POP_PREFIX}part-0.parquet"
+    planned, refusals = plan_legacy_deletions(
+        [_legacy_object(key)],
+        {key: _legacy_coverage(["sha1", "sha2"], skipped=3)},
+        {"sha1": 1, "sha2": 1},
+        approved_by="the maintainer",
+    )
+
+    assert refusals == []
+    assert len(planned) == 1
+    assert planned[0]["recoverable_rows"] == 2
+    assert planned[0]["approved_by"] == "the maintainer"
+
+
+def test_a_legacy_object_with_an_uncovered_body_is_refused_not_skipped():
+    """A partially recoverable legacy object is exactly the case where
+    deleting loses something."""
+    from scripts.reconcile_april_detail import plan_legacy_deletions
+
+    key = f"{_S6_POP_PREFIX}part-0.parquet"
+    planned, refusals = plan_legacy_deletions(
+        [_legacy_object(key)],
+        {key: _legacy_coverage(["sha1", "missing"])},
+        {"sha1": 1},
+        approved_by="x",
+    )
+
+    assert planned == []
+    assert len(refusals) == 1
+    assert "in no replacement pack" in refusals[0]
+
+
+def test_a_results_page_key_is_refused_by_key():
+    """The 127 results-page objects are out of scope for the whole plan."""
+    from scripts.reconcile_april_detail import plan_legacy_deletions
+
+    key = "html/year=2026/month=4/artifact_type=results_page/part-0.parquet"
+    planned, refusals = plan_legacy_deletions(
+        [_legacy_object(key)],
+        {key: _legacy_coverage(["sha1"])},
+        {"sha1": 1},
+        approved_by="x",
+    )
+
+    assert planned == []
+    assert "out of scope" in refusals[0]
+
+
+def test_a_legacy_object_no_stage_2_manifest_describes_is_refused():
+    from scripts.reconcile_april_detail import plan_legacy_deletions
+
+    planned, refusals = plan_legacy_deletions(
+        [_legacy_object(f"{_S6_POP_PREFIX}part-0.parquet")],
+        {}, {}, approved_by="x",
+    )
+
+    assert planned == []
+    assert "no Stage 2 manifest" in refusals[0]
+
+
+def test_an_object_whose_rows_were_all_empty_or_blocked_needs_no_coverage():
+    """43,014 empty and 101,010 non-success rows produced no body, so they can
+    never need covering."""
+    from scripts.reconcile_april_detail import plan_legacy_deletions
+
+    key = f"{_S6_POP_PREFIX}part-0.parquet"
+    planned, refusals = plan_legacy_deletions(
+        [_legacy_object(key)], {key: _legacy_coverage([], skipped=812)}, {},
+        approved_by="x",
+    )
+
+    assert refusals == []
+    assert planned[0]["recoverable_rows"] == 0
+
+
+def test_the_legacy_delete_guard_refuses_anything_off_the_manifest():
+    from scripts.reconcile_april_detail import delete_objects_in_batches
+
+    planned_keys = {f"{_S6_POP_PREFIX}part-0.parquet"}
+
+    def guard(record):
+        key = record.get("object_key")
+        if key not in planned_keys:
+            return "it is not in the reviewed deletion manifest"
+        return None
+
+    with pytest.raises(ReconcileError, match="reviewed deletion manifest"):
+        delete_objects_in_batches(
+            None, "bronze", [{"object_key": f"{_S6_POP_PREFIX}other.parquet"}],
+            apply=True, batch_size=10, guard=guard,
+        )
+
+
+def test_deleting_without_named_approval_is_refused(monkeypatch):
+    import scripts.reconcile_april_detail as mod
+
+    args = parse_args(["delete-legacy", "--apply"])
+    monkeypatch.setattr(mod, "_s3_client", lambda: _FakeS6Store({}))
+
+    with pytest.raises(ReconcileError, match="maintainer-approval"):
+        mod.run_delete_legacy(args)
+
+
+def test_delete_legacy_needs_a_census_or_an_explicit_fallback():
+    args = parse_args(["delete-legacy"])
+    assert args.census_dir is None
+    assert args.census_from_manifests is False
+    assert args.allow_partial is False
+    assert args.apply is False
+
+
+def test_an_edited_stage_1_census_is_refused(tmp_path):
+    import scripts.reconcile_april_detail as mod
+
+    census = tmp_path / "object_census.csv"
+    census.write_text("legacy_object_key\nkey-a\n", encoding="utf-8")
+    (tmp_path / "stage1_report.json").write_text(
+        json.dumps({"fingerprints": {"object_census.csv": "0" * 64}}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ReconcileError, match="has been edited"):
+        mod._read_census_keys(tmp_path)
+
+
+def test_the_frozen_census_key_set_is_read_back_verbatim(tmp_path):
+    import scripts.reconcile_april_detail as mod
+
+    census = tmp_path / "object_census.csv"
+    census.write_text(
+        "legacy_object_key,size_bytes\nkey-a,1\nkey-b,2\n", encoding="utf-8",
+    )
+    (tmp_path / "stage1_report.json").write_text(
+        json.dumps({"fingerprints": {
+            "object_census.csv": mod._fingerprint(census),
+        }}),
+        encoding="utf-8",
+    )
+
+    assert mod._read_census_keys(tmp_path) == {"key-a", "key-b"}
+
+
+# --- end to end, through the real store shape ------------------------------
+
+def _s6_write_parquet(rows):
+    import io
+
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    buf = io.BytesIO()
+    pq.write_table(pa.Table.from_pylist(rows), buf)
+    return buf.getvalue()
+
+
+#: part-0 held old-a's body; part-1 held mat-c's. Both legacy objects also
+#: held rows that produced nothing -- empty and non-success -- which is the
+#: ordinary case and can never need covering.
+_S6_LEGACY_KEYS = [f"{_S6_POP_PREFIX}part-{i}.parquet" for i in range(2)]
+
+
+def _s6_materialize_rows(*, uncovered=False):
+    return {
+        _S6_LEGACY_KEYS[0]: [
+            {"legacy_object_key": _S6_LEGACY_KEYS[0], "disposition": "written",
+             "object_key": f"{_S6_POP_PREFIX}old-a.html.zst",
+             "raw_sha256": _s6_sha("old-a")},
+            {"legacy_object_key": _S6_LEGACY_KEYS[0],
+             "disposition": "skipped_empty",
+             "object_key": None, "raw_sha256": None},
+        ],
+        _S6_LEGACY_KEYS[1]: [
+            {"legacy_object_key": _S6_LEGACY_KEYS[1], "disposition": "exists",
+             "object_key": f"{_S6_POP_PREFIX}mat-c.html.zst",
+             "raw_sha256": _s6_sha("zzz" if uncovered else "mat-c")},
+        ],
+    }
+
+
+def _s6_seed_store(*, uncovered=False):
+    """Two old packs unpacked into loose objects, plus one materialized
+    survivor, replaced by a single new pack that holds all three.
+
+    Stage 3a deleted old-a's materialized twin, which is why the materialize
+    manifest names it and the population does not count it twice.
+    """
+    store: dict[str, bytes] = {}
+    old_packs = [f"{_S6_PACK_PREFIX}pack-{i:05d}.zpack" for i in range(2)]
+
+    members = [
+        ("old-a", _s6_sha("old-a"), old_packs[0]),
+        ("old-b", _s6_sha("old-b"), old_packs[1]),
+    ]
+
+    # Stage 3b's manifests: the frozen old-pack set.
+    for pack in old_packs:
+        rows = [
+            {"source_key": f"{_S6_POP_PREFIX}{name}.html.zst",
+             "raw_sha256": sha, "pack_key": pack, "disposition": "written"}
+            for name, sha, owner in members if owner == pack
+        ]
+        stem = pack.rsplit("/", 1)[-1].replace(".zpack", "")
+        store[f"{UNPACK_PREFIX}/{stem}.parquet"] = _s6_write_parquet(rows)
+
+    # Stage 2's manifests, and Stage 3a's record of the twin it deleted.
+    for i, rows in enumerate(_s6_materialize_rows(uncovered=uncovered).values()):
+        store[f"{MATERIALIZE_PREFIX}/part-{i}.parquet"] = _s6_write_parquet(rows)
+    store[f"{DEDUPE_PREFIX}/part-0.parquet"] = _s6_write_parquet(
+        [{"object_key": f"{_S6_POP_PREFIX}old-a.html.zst",
+          "raw_sha256": _s6_sha("old-a")}]
+    )
+
+    # The old sidecars, carrying the scrambled column.
+    for i, pack in enumerate(old_packs):
+        name, sha, _ = members[i]
+        store[pack] = b"old-pack-bytes"
+        store[pack.replace(".zpack", ".idx.parquet")] = _s6_index_bytes([
+            _s6_entry(f"{_S6_POP_PREFIX}{name}.html.zst", sha,
+                      artifact_id=100 + i, listing_id=f"SCRAMBLED{i}"),
+        ])
+
+    # The replacement pack is a *real* pack, so the verifier's read-back
+    # exercises the real reader over ranged GETs rather than a stub. Under
+    # *uncovered* it still holds the real body -- it is the Stage 2 manifest
+    # that names a hash no pack holds, which is the shape that must stop the
+    # deletion, since that body would exist nowhere else.
+    from shared.packfile import PackMember, PackWriter, write_index_parquet
+
+    writer = PackWriter(dict_id=None, frame_target_bytes=1 << 20)
+    for name, artifact_id, listing in (
+        ("old-a", 100, "SUBJECT0"), ("old-b", 101, "SUBJECT1"),
+        ("mat-c", None, None),
+    ):
+        writer.add(PackMember(
+            source_key=f"{_S6_POP_PREFIX}{name}.html.zst",
+            content=_s6_body(name),
+            artifact_id=artifact_id,
+            listing_id=listing,
+        ))
+    pack = writer.finish()
+
+    new_pack = f"{_S6_PACK_PREFIX}pack-00002.zpack"
+    store[new_pack] = pack.data
+    store[new_pack.replace(".zpack", ".idx.parquet")] = write_index_parquet(
+        pack.entries
+    )
+
+    for name in ("old-a", "old-b", "mat-c"):
+        store[f"{_S6_POP_PREFIX}{name}.html.zst"] = b"loose-object"
+
+    return store, old_packs, new_pack
+
+
+def _patch_verify_io(monkeypatch, store, *, population=3):
+    import scripts.reconcile_april_detail as mod
+
+    fake = _FakeS6Store(store)
+    monkeypatch.setattr(mod, "_s3_client", lambda: fake)
+    monkeypatch.setattr(mod, "EXPECTED_UNPACK_SHARDS", 2)
+    monkeypatch.setattr(mod, "EXPECTED_FLATTENED_INPUTS", population)
+    return fake
+
+
+def test_repack_verify_passes_on_a_complete_replacement(monkeypatch, capsys):
+    import scripts.reconcile_april_detail as mod
+    import shared.minio as minio
+
+    store, old_packs, _ = _s6_seed_store()
+    written: dict[str, object] = {}
+
+    _patch_verify_io(monkeypatch, store)
+    monkeypatch.setattr(minio, "write_json", lambda k, o: written.__setitem__(k, o))
+    monkeypatch.setattr(
+        minio, "read_packed_html",
+        lambda path: {"old-a": b"a", "old-b": b"b", "mat-c": b"c"}[
+            path.rsplit("/", 1)[-1].replace(".html.zst", "")
+        ],
+    )
+
+    args = parse_args([
+        "repack-verify", "--pack-prefix", _S6_PACK_PREFIX, "--verify-sample", "3",
+    ])
+    assert mod.run_repack_verify(args) == 0
+
+    report = next(iter(written.values()))
+    assert report["passed"] is True
+    assert report["coverage"]["baseline_members"] == 2
+    assert report["coverage"]["population_objects"] == 3
+    assert report["readback"]["mismatched"] == 0
+    assert report["identity_change"]["differs"] == 2
+    assert report["identity"]["by_origin"]["materialized"]["null_listing_id"] == 1
+
+
+def test_repack_verify_fails_and_exits_non_zero_when_a_member_is_dropped(
+    monkeypatch,
+):
+    import scripts.reconcile_april_detail as mod
+    import shared.minio as minio
+
+    store, _, new_pack = _s6_seed_store()
+    # The replacement forgets the materialized survivor.
+    store[new_pack.replace(".zpack", ".idx.parquet")] = _s6_index_bytes([
+        _s6_entry(f"{_S6_POP_PREFIX}old-a.html.zst", _s6_sha("a"),
+                  artifact_id=100, listing_id="SUBJECT0"),
+        _s6_entry(f"{_S6_POP_PREFIX}old-b.html.zst", _s6_sha("b"),
+                  artifact_id=101, listing_id="SUBJECT1"),
+    ])
+
+    written: dict[str, object] = {}
+    _patch_verify_io(monkeypatch, store)
+    monkeypatch.setattr(minio, "write_json", lambda k, o: written.__setitem__(k, o))
+    monkeypatch.setattr(minio, "read_packed_html", lambda path: b"a")
+
+    args = parse_args([
+        "repack-verify", "--pack-prefix", _S6_PACK_PREFIX, "--verify-sample", "0",
+    ])
+    assert mod.run_repack_verify(args) == 1
+
+    report = next(iter(written.values()))
+    assert report["passed"] is False
+    assert report["coverage"]["population_not_packed"] == 1
+
+
+def test_retire_packs_deletes_exactly_the_frozen_set_and_nothing_else(
+    monkeypatch,
+):
+    import scripts.reconcile_april_detail as mod
+    import shared.minio as minio
+
+    store, old_packs, new_pack = _s6_seed_store()
+    fake = _FakeS6Store(store)
+    monkeypatch.setattr(mod, "_s3_client", lambda: fake)
+    monkeypatch.setattr(
+        minio, "write_bytes",
+        lambda k, data, content_type=None: store.__setitem__(k, bytes(data)),
+    )
+    store[f"{REPACK_PREFIX}/repack-x/verify_report.json"] = json.dumps({
+        "run_id": "repack-x",
+        "passed": True,
+        "old_pack_keys": sorted(old_packs),
+        "new_sidecar_keys": [new_pack.replace(".zpack", ".idx.parquet")],
+    }).encode()
+
+    args = parse_args([
+        "retire-packs", "--apply", "--pack-prefix", _S6_PACK_PREFIX,
+    ])
+    assert mod.run_retire_packs(args) == 0
+
+    assert sorted(fake.deleted) == sorted(
+        old_packs + [p.replace(".zpack", ".idx.parquet") for p in old_packs]
+    )
+    assert new_pack in store
+    assert f"{_S6_POP_PREFIX}old-a.html.zst" in store
+    assert f"{RETIRE_PREFIX}/repack-x/manifest.parquet" in store
+    assert f"{RETIRE_PREFIX}/repack-x/receipts.parquet" in store
+
+
+def test_a_retire_dry_run_writes_no_manifest_and_deletes_nothing(monkeypatch):
+    import scripts.reconcile_april_detail as mod
+
+    store, old_packs, new_pack = _s6_seed_store()
+    fake = _FakeS6Store(store)
+    monkeypatch.setattr(mod, "_s3_client", lambda: fake)
+    store[f"{REPACK_PREFIX}/repack-x/verify_report.json"] = json.dumps({
+        "run_id": "repack-x",
+        "passed": True,
+        "old_pack_keys": sorted(old_packs),
+        "new_sidecar_keys": [new_pack.replace(".zpack", ".idx.parquet")],
+    }).encode()
+
+    args = parse_args(["retire-packs", "--pack-prefix", _S6_PACK_PREFIX])
+    assert mod.run_retire_packs(args) == 0
+    assert fake.deleted == []
+    assert not any(k.startswith(RETIRE_PREFIX) for k in store)
+
+
+def test_retiring_after_the_replacement_set_moved_is_refused(monkeypatch):
+    """Re-verify rather than retire against a proof of a store that changed."""
+    import scripts.reconcile_april_detail as mod
+
+    store, old_packs, new_pack = _s6_seed_store()
+    fake = _FakeS6Store(store)
+    monkeypatch.setattr(mod, "_s3_client", lambda: fake)
+    store[f"{REPACK_PREFIX}/repack-x/verify_report.json"] = json.dumps({
+        "run_id": "repack-x",
+        "passed": True,
+        "old_pack_keys": sorted(old_packs),
+        "new_sidecar_keys": [f"{_S6_PACK_PREFIX}pack-00099.idx.parquet"],
+    }).encode()
+
+    args = parse_args([
+        "retire-packs", "--apply", "--pack-prefix", _S6_PACK_PREFIX,
+    ])
+    with pytest.raises(ReconcileError, match="changed since it was verified"):
+        mod.run_retire_packs(args)
+    assert fake.deleted == []
+
+
+def _s6_legacy_store(*, uncovered=False):
+    """The store as Stage 6's last step meets it: legacy Parquet still present,
+    Stage 2 manifests describing it, and a replacement pack holding its bodies."""
+    store, old_packs, new_pack = _s6_seed_store(uncovered=uncovered)
+
+    for key in _S6_LEGACY_KEYS:
+        store[key] = b"legacy-parquet-bytes"
+
+    # Out of scope, and it must survive untouched.
+    results_key = (
+        "html/year=2026/month=4/artifact_type=results_page/part-0.parquet"
+    )
+    store[results_key] = b"results-parquet"
+
+    store[f"{REPACK_PREFIX}/repack-x/verify_report.json"] = json.dumps({
+        "run_id": "repack-x",
+        "passed": True,
+        "old_pack_keys": sorted(old_packs),
+        "new_sidecar_keys": [new_pack.replace(".zpack", ".idx.parquet")],
+    }).encode()
+
+    return store, _S6_LEGACY_KEYS, results_key
+
+
+def _patch_legacy_io(monkeypatch, store, *, baseline=2):
+    import scripts.reconcile_april_detail as mod
+    import shared.minio as minio
+
+    fake = _FakeS6Store(store)
+    monkeypatch.setattr(mod, "_s3_client", lambda: fake)
+    # The drift gate is exercised by its own test. Everywhere else the fixture
+    # states its own baseline rather than reaching for --allow-drift, which is
+    # a flag for overruling a measured refusal, not for making a test pass.
+    monkeypatch.setattr(mod, "BASELINE_OBJECTS", baseline)
+    monkeypatch.setattr(
+        minio, "write_bytes",
+        lambda k, data, content_type=None: store.__setitem__(k, bytes(data)),
+    )
+    monkeypatch.setattr(minio, "write_json", lambda k, o: store.__setitem__(k, b"{}"))
+    return fake
+
+
+def _legacy_args(*extra):
+    return parse_args([
+        "delete-legacy", "--prefix", _S6_POP_PREFIX,
+        "--pack-prefix", _S6_PACK_PREFIX, "--census-from-manifests", *extra,
+    ])
+
+
+def test_delete_legacy_removes_the_parquet_and_leaves_results_pages_alone(
+    monkeypatch,
+):
+    import scripts.reconcile_april_detail as mod
+
+    store, legacy_keys, results_key = _s6_legacy_store()
+    fake = _patch_legacy_io(monkeypatch, store)
+
+    args = _legacy_args("--apply", "--maintainer-approval", "the maintainer")
+    assert mod.run_delete_legacy(args) == 0
+
+    assert sorted(fake.deleted) == sorted(legacy_keys)
+    assert results_key in store
+    assert f"{_S6_POP_PREFIX}old-a.html.zst" in store
+    assert f"{LEGACY_DELETE_PREFIX}/repack-x/manifest.parquet" in store
+    assert f"{LEGACY_DELETE_PREFIX}/repack-x/receipts.parquet" in store
+
+
+def test_a_legacy_dry_run_deletes_nothing_and_writes_no_manifest(monkeypatch):
+    import scripts.reconcile_april_detail as mod
+
+    store, _, _ = _s6_legacy_store()
+    fake = _patch_legacy_io(monkeypatch, store)
+
+    assert mod.run_delete_legacy(_legacy_args()) == 0
+    assert fake.deleted == []
+    assert not any(k.startswith(LEGACY_DELETE_PREFIX) for k in store)
+
+
+def test_one_uncovered_body_stops_the_whole_deletion(monkeypatch):
+    """Not a skip: the refused object is a body that exists nowhere else."""
+    import scripts.reconcile_april_detail as mod
+
+    store, _, _ = _s6_legacy_store(uncovered=True)
+    fake = _patch_legacy_io(monkeypatch, store)
+
+    args = _legacy_args("--apply", "--maintainer-approval", "the maintainer")
+    with pytest.raises(ReconcileError, match="not provably recoverable"):
+        mod.run_delete_legacy(args)
+    assert fake.deleted == []
+
+
+def test_allow_partial_deletes_the_covered_objects_and_says_which_it_left(
+    monkeypatch,
+):
+    import scripts.reconcile_april_detail as mod
+
+    store, legacy_keys, _ = _s6_legacy_store(uncovered=True)
+    fake = _patch_legacy_io(monkeypatch, store)
+
+    args = _legacy_args(
+        "--apply", "--maintainer-approval", "the maintainer", "--allow-partial",
+    )
+    # Non-zero: one legacy detail Parquet object still survives.
+    assert mod.run_delete_legacy(args) == 1
+    assert fake.deleted == [legacy_keys[0]]
+    assert legacy_keys[1] in store
+
+
+def test_a_drifted_legacy_population_stops_the_run(monkeypatch):
+    """The count is held to the frozen baseline, so a population that moved is
+    a stop rather than a deletion against a different set of objects."""
+    import scripts.reconcile_april_detail as mod
+
+    store, _, _ = _s6_legacy_store()
+    _patch_legacy_io(monkeypatch, store, baseline=1172)
+
+    with pytest.raises(ReconcileError, match="drifted from its frozen census"):
+        mod.run_delete_legacy(_legacy_args())
+
+
+def test_a_legacy_object_no_stage_2_shard_names_is_drift_not_a_deletion(
+    monkeypatch,
+):
+    """--census-from-manifests is a weaker attestation than the census, not an
+    absent one: the Stage 2 shards still have to name every live key."""
+    import scripts.reconcile_april_detail as mod
+
+    store, _, _ = _s6_legacy_store()
+    store[f"{_S6_POP_PREFIX}part-stray.parquet"] = b"never materialized"
+    _patch_legacy_io(monkeypatch, store, baseline=3)
+
+    with pytest.raises(ReconcileError, match="drifted from its frozen census"):
+        mod.run_delete_legacy(_legacy_args())
+
+
+def test_deleting_before_any_replacement_pack_exists_is_refused(monkeypatch):
+    import scripts.reconcile_april_detail as mod
+
+    store, _, _ = _s6_legacy_store()
+    new_sidecar = f"{_S6_PACK_PREFIX}pack-00002.idx.parquet"
+    del store[new_sidecar]
+    _patch_legacy_io(monkeypatch, store)
+
+    with pytest.raises(ReconcileError, match="no replacement sidecars"):
+        mod.run_delete_legacy(_legacy_args())
+
+
+def test_the_read_back_extracts_from_the_replacement_pack_not_whichever_holds_it(
+):
+    """While both pack sets exist the old sidecars name every replaced member,
+    so a read through ``read_packed_html`` could serve the whole sample from
+    the packs this stage is about to delete and report success. The bytes under
+    test are the replacement's."""
+    from scripts.reconcile_april_detail import read_back_members
+    from shared.packfile import read_index_parquet, write_index_parquet
+
+    store, _, new_pack = _s6_seed_store()
+    sidecar = new_pack.replace(".zpack", ".idx.parquet")
+    key = f"{_S6_POP_PREFIX}old-a.html.zst"
+
+    checked, failures = read_back_members(
+        _FakeS6Store(store), "bronze", {sidecar: [key]},
+    )
+    assert (checked, failures) == (1, [])
+
+    # Claim a hash the replacement pack's own bytes do not produce.
+    entries = read_index_parquet(store[sidecar])
+    store[sidecar] = write_index_parquet([
+        dataclasses.replace(e, raw_sha256="ff" * 32) if e.source_key == key else e
+        for e in entries
+    ])
+
+    checked, failures = read_back_members(
+        _FakeS6Store(store), "bronze", {sidecar: [key]},
+    )
+    assert checked == 1
+    assert failures[0]["source_key"] == key
+    assert failures[0]["pack_key"] == new_pack
+
+
+def test_a_sidecar_naming_a_member_its_pack_does_not_hold_is_reported():
+    from scripts.reconcile_april_detail import read_back_members
+
+    store, _, new_pack = _s6_seed_store()
+    sidecar = new_pack.replace(".zpack", ".idx.parquet")
+
+    checked, failures = read_back_members(
+        _FakeS6Store(store), "bronze", {sidecar: [f"{_S6_POP_PREFIX}ghost.html.zst"]},
+    )
+    assert checked == 0
+    assert failures[0]["error"].startswith("absent from")

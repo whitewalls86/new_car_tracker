@@ -413,6 +413,86 @@ def test_resume_packs_only_the_new_objects(store, duckdb):
     assert sorted(e.source_key for e in entries) == sorted(more)
 
 
+# ---------------------------------------------------------------------------
+# Repacking a bucket that is already packed (Plan 145 Stage 6)
+# ---------------------------------------------------------------------------
+
+def test_repack_bucket_packs_what_an_existing_sidecar_already_names(store, duckdb):
+    """The default skip is the whole reason Stage 6 needs a flag.
+
+    April's 32 packs name 557,065 of the flattened population's 983,043
+    objects, so a Stage 6 run without this would pack only the materialized
+    remainder and leave the scrambled sidecars in place.
+    """
+    keys = _seed(store, 6)
+    duckdb(_metadata(keys))
+    first = _run()
+    assert first["members_packed"] == 6
+
+    duckdb(_metadata(keys))
+    second = _run(repack_bucket=True)
+
+    assert second["members_packed"] == 6
+    assert second["buckets"][0]["pending"] == 6
+    assert second["buckets"][0]["already_packed"] == 6
+    assert second["buckets"][0]["repacking"] is True
+
+    # A second, complete pack set — the originals are still there, because
+    # retiring them is a reviewed step and never a side effect of packing.
+    sidecars = sorted(k for k in store.objects if k.endswith(".idx.parquet"))
+    assert len(sidecars) == 2
+    for sidecar in sidecars:
+        entries = read_index_parquet(store.objects[sidecar])
+        assert sorted(e.source_key for e in entries) == sorted(keys)
+
+
+def test_repack_takes_the_next_free_sequence_and_overwrites_nothing(store, duckdb):
+    keys = _seed(store, 4)
+    duckdb(_metadata(keys))
+    first = _run()
+    original = {
+        k: v for k, v in store.objects.items() if k.endswith((".zpack", ".idx.parquet"))
+    }
+    assert first["buckets"][0]["next_seq"] == 0
+
+    duckdb(_metadata(keys))
+    second = _run(repack_bucket=True)
+
+    assert second["buckets"][0]["next_seq"] == 1
+    for key, body in original.items():
+        assert store.objects[key] == body, f"{key} was overwritten"
+
+
+def test_repack_leaves_every_source_object_in_place(store, duckdb):
+    keys = _seed(store, 4)
+    duckdb(_metadata(keys))
+    _run()
+
+    duckdb(_metadata(keys))
+    _run(repack_bucket=True)
+
+    assert all(key in store.objects for key in keys)
+
+
+def test_repack_without_an_explicit_month_is_refused(store, duckdb):
+    """Aimed at a discovered bucket it would silently duplicate whatever was
+    eligible that day, which is why the guard is a refusal and not a warning."""
+    duckdb(_metadata(_seed(store, 2)))
+
+    with pytest.raises(ValueError, match="explicit year and month"):
+        _run(repack_bucket=True, year=None, month=None)
+
+
+def test_repack_flag_defaults_off_and_the_cli_refuses_it_without_a_month():
+    assert packer._parse_args([]).repack_bucket is False
+    assert packer._parse_args(
+        ["--year", "2026", "--month", "4", "--repack-bucket"]
+    ).repack_bucket is True
+
+    with pytest.raises(SystemExit):
+        packer._parse_args(["--repack-bucket"])
+
+
 def test_checkpoint_state_does_not_grow_per_object(store, duckdb):
     """The sidecars are the checkpoint — there is no per-object state file.
 
