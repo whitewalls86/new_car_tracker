@@ -464,7 +464,7 @@ No window is scheduled — opening one is the maintainer's action.
 |---|---|---|---|---|
 | 1 | migrate the manifest | any time | `canary-remanifest --apply` | 2 objects under `recovery/plan145/canary/` |
 | 2 | dry run, read the pin | any time | `canary-commit` | nothing |
-| 3 | **the window** | quiesced | `verify_recovery_live_state.py --canary-cmd "… canary-commit --apply …"` | **505 silver + 140 price + 234 queue + 1 receipt**, one transaction |
+| 3 | **the window** | you make it — §7.3 (a)–(c) | `verify_recovery_live_state.py --canary-cmd "… canary-commit --apply …"` | **505 silver + 140 price + 234 queue + 1 receipt**, one transaction |
 | 4 | verify the flush | ≤1h after step 3 | `canary-flush-verify --apply` | 1 report object |
 
 Pin `--run-id cmp-6c7c90d807bbdf13` on every one of them.
@@ -519,39 +519,156 @@ the overage and exits 0. Only `--apply` refuses.
 
 ### 7.3 Step 3 — the window
 
-**Order is not negotiable**; the V040 views are time-dependent.
+**There is no window to book.** `--window <name>` is a free-text string: the
+script records it in the report and refuses to run without it, and that is the
+whole mechanism. It exists so a run that quiesced production is named on the
+record and cannot be fired off casually. Pick something like
+`p145-canary-2026-08-29` and use the same string in the report filename.
 
-1. **maintainer** opens a named window and quiesces the writers (table below);
-2. **the script** takes both snapshots in one `READ COMMITTED` transaction and
-   runs the canary between them, on a separate connection;
-3. **maintainer** restarts the writers.
+The window is a thing *you make* by doing (a)–(c) below, and unmake with (g).
+
+#### (a) Declare deploy intent — this holds every DAG
 
 ```bash
-python scripts/verify_recovery_live_state.py --window <name> \
+curl -sS -X POST http://localhost:8060/deploy/start \
+  -H 'Content-Type: application/json' \
+  -d '{"targets": ["scraper", "processing", "ops"], "pause_long_jobs": true}'
+```
+
+`targets` is validated against `ops/coordination_contract.py`'s
+`SERVICE_CONTRACTS`; unknown or duplicate names are a 422, and an intent
+already held is a 409. **Every mutating DAG's first task is
+`deploy_intent_sensor`**, which blocks in `reschedule` mode while an intent is
+pending — so this one call holds `scrape_detail_pages`, `scrape_listings`,
+`results_processing`, `orphan_checker`, `compact_silver` **and
+`hourly_analytics_refresh`**. You do not need to pause DAGs by hand, and
+`POST /deploy/complete` releases them all at once.
+
+Holding the hourly flush is deliberate, not incidental — see (f).
+
+#### (b) Stop the three writers — intent does not do this
+
+```bash
+docker compose stop scraper processing ops
+```
+
+**Deploy intent is a cooperative signal, not a stop.** `shared/deploy_intent.py`
+has exactly two consumers — `pack_bronze_html` and `delete_packed_source_html`
+— and its own docstring says *"nothing here kills anything."* `scraper`,
+`processing` and `ops` never read it. They write the protected tables directly:
+`ops` writes `ops.detail_scrape_claims` from an HTTP route (`routers/scrape.py`)
+that the scraper calls, with no DAG involved. Intent alone leaves them running.
+
+#### (c) Confirm it is quiet
+
+```bash
+curl -s http://localhost:8060/deploy/status          # number_running -> 0
+docker exec cartracker-postgres psql -U cartracker -tAc \
+  "select count(*) from airflow.dag_run where state = 'running'"
+docker compose ps --status running | grep -E 'scraper|processing|ops' || echo "writers down"
+```
+
+`number_running` is the live execution count; it was **400** when this sheet
+was written, so give it time to settle rather than assuming.
+
+#### (d) Run it
+
+```bash
+python scripts/verify_recovery_live_state.py --window p145-canary-2026-08-29 \
   --canary-cmd "docker compose run --rm april-processor python -m \
     scripts.reconcile_april_detail canary-commit --apply \
     --run-id cmp-6c7c90d807bbdf13 \
     --expect-manifest-sha256 <from step 2> --expect-rows 505" \
-  --report /tmp/p145-v040-<name>.json
+  --report /tmp/p145-v040-p145-canary-2026-08-29.json
 ```
 
 **Blast radius.** One transaction against production Postgres: **505** rows
 into `staging.silver_observations`, **140** into
 `staging.price_observation_events`, **234** into
 `staging.artifacts_queue_events`, **1** receipt into
-`public.plan145_recovery_batch_receipts`. Plus one report object. **Nothing** is
+`public.plan145_recovery_batch_receipts`, plus one report object. **Nothing** is
 written to `ops.artifacts_queue`, `ops.price_observations`,
 `ops.vin_to_listing`, `ops.blocked_cooldown` or `ops.detail_scrape_claims` —
 which is the claim the verifier around it measures.
 
-**Exit codes:** 0 pass, 1 fail, 2 refused (no `--window`).
+#### (e) Read the result
 
-> **Run the canary exactly once.** It is idempotent on its receipt, so a second
-> run writes zero rows and measures nothing. Committing it before the window
-> *spends* the window's subject.
+Exit **0** pass, **1** fail, **2** refused (no `--window`). A pass needs both
+`single transaction: True` and every relation `unchanged`. A failure on
+`single_transaction` invalidates the proof outright — the views are
+time-dependent and two snapshots at two `now()` values differ for reasons that
+have nothing to do with recovery.
 
-**Services to quiesce**, derived from the writers in the tree — the script does
-not and cannot quiesce them:
+#### (f) Keep it, or roll it back — while the flush is still held
+
+This is why (a) holds `hourly_analytics_refresh`. Until it runs, the canary's
+rows exist in **one** place — Postgres staging — and a rollback is one
+transaction. Once flushed they are also Parquet in the lake, and unwinding
+means editing objects in two systems.
+
+Check first, then decide:
+
+```bash
+docker exec cartracker-postgres psql -U cartracker -c "
+  SELECT 'silver' AS t, count(*) FROM staging.silver_observations
+   WHERE fetched_at < '2026-05-01' AND artifact_id IN (
+     SELECT artifact_id FROM staging.artifacts_queue_events
+      WHERE run_id = 'cmp-6c7c90d807bbdf13-canary')
+  UNION ALL SELECT 'price', count(*) FROM staging.price_observation_events
+   WHERE event_at < '2026-05-01' AND artifact_id IN (
+     SELECT artifact_id FROM staging.artifacts_queue_events
+      WHERE run_id = 'cmp-6c7c90d807bbdf13-canary')
+  UNION ALL SELECT 'queue', count(*) FROM staging.artifacts_queue_events
+   WHERE run_id = 'cmp-6c7c90d807bbdf13-canary'
+  UNION ALL SELECT 'receipt', count(*) FROM public.plan145_recovery_batch_receipts
+   WHERE batch_name = 'cmp-6c7c90d807bbdf13-canary';"
+```
+
+Expect 505 / 140 / 234 / 1. To roll back, in one transaction:
+
+```bash
+docker exec cartracker-postgres psql -U cartracker -c "
+BEGIN;
+CREATE TEMP TABLE canary_ids ON COMMIT DROP AS
+  SELECT artifact_id FROM staging.artifacts_queue_events
+   WHERE run_id = 'cmp-6c7c90d807bbdf13-canary';
+DELETE FROM staging.silver_observations
+ WHERE fetched_at < '2026-05-01'
+   AND artifact_id IN (SELECT artifact_id FROM canary_ids);
+DELETE FROM staging.price_observation_events
+ WHERE event_at < '2026-05-01'
+   AND artifact_id IN (SELECT artifact_id FROM canary_ids);
+DELETE FROM staging.artifacts_queue_events
+ WHERE run_id = 'cmp-6c7c90d807bbdf13-canary';
+DELETE FROM public.plan145_recovery_batch_receipts
+ WHERE batch_name = 'cmp-6c7c90d807bbdf13-canary';
+COMMIT;"
+```
+
+> **The `fetched_at` / `event_at` predicates are not decoration.** 13,253 of the
+> run's artifacts carry *preserved* historical `artifact_id`s, so an id alone
+> could match a live row that happened to be in staging. Every canary row is an
+> April capture; no live row is. The queue events need no such guard — `run_id`
+> is the canary's own batch name.
+>
+> Deleting the receipt is what makes the canary re-runnable. Leave it and the
+> next `canary-commit --apply` skips, writing nothing.
+
+#### (g) Restore
+
+```bash
+docker compose start scraper processing ops
+curl -sS -X POST http://localhost:8060/deploy/complete
+curl -s http://localhost:8060/deploy/status          # intent -> none
+```
+
+Only now does `hourly_analytics_refresh` resume, and with it the flush step 4
+verifies.
+
+#### Services and DAGs, for the record
+
+The script does not and cannot quiesce anything. What writes the four
+protected tables:
 
 | table | written by |
 |---|---|
@@ -560,17 +677,34 @@ not and cannot quiesce them:
 | `ops.blocked_cooldown` | `scraper` — `upsert_blocked_cooldown.sql`; `processing` — `clear_blocked_cooldown.sql`; `ops` — `evict_delisted_cooldowns.sql` |
 | `ops.detail_scrape_claims` | `ops` — `routers/scrape.py`, `expire_orphan_detail_claims.sql`; `processing` — `release_detail_claims.sql` |
 
-So **`scraper`, `processing`, `ops`**, plus what triggers them —
-`airflow-scheduler`, or the `scrape_detail_pages`, `scrape_listings`,
-`results_processing` and `orphan_checker` DAGs. Plan 142's deploy intent
-(`POST /deploy/start`) is the house drain mechanism; whether to use it or stop
-containers is the maintainer's call.
+Both V040 views resolve to `ops.price_observations` alone —
+`ops_vehicle_staleness` reads it directly and `ops_detail_scrape_queue` reads
+that view — so no fifth table hides behind them, and `cleanup_queue`,
+`cleanup_parquet` and `pack_bronze_html` cannot affect the assertion.
+
+> **Run the canary exactly once.** It is idempotent on its receipt, so a second
+> run writes zero rows and measures nothing. Committing it outside a window
+> *spends* the window's subject — and (f) is the only cheap way back.
 
 ### 7.4 Step 4 — verify the flush round trip
 
-Runnable within the hour after step 3: `hourly_analytics_refresh` (`0 * * * *`)
-owns the scheduled flush. The standalone `flush_silver_observations` /
-`flush_staging_events` DAGs are `schedule=None`, for a manual trigger.
+**Only after §7.3 (g).** `hourly_analytics_refresh` owns the scheduled flush
+(`0 * * * *`) and is held by the deploy intent for the whole window — on
+purpose, so a rollback stays one transaction. Once intent is released it
+resumes and the canary's rows reach the lake within the hour.
+
+To flush on demand instead of waiting, call what the DAGs call. **The archiver
+publishes no host port**, so go through a container on its network:
+
+```bash
+docker exec cartracker-airflow-scheduler \
+  curl -sS -X POST http://archiver:8001/flush/silver/run
+docker exec cartracker-airflow-scheduler \
+  curl -sS -X POST http://archiver:8001/flush/staging/run
+```
+
+(The standalone `flush_silver_observations` / `flush_staging_events` DAGs are
+`schedule=None` and exist for the same purpose.)
 
 ```bash
 docker compose run --rm archiver python -m scripts.reconcile_april_detail \
