@@ -70,9 +70,18 @@ half of the population has not been measured.
 another unrepresented capture of the same listing within 300 s, concentrated in
 ~3,169 listings. That is the deliberate asymmetry between the two windows:
 representation tests ±300 s, duplicate collapse tests an exact
-`(listing_id, fetched_at)`. They are most likely genuine burst re-scrapes, and
-collapsing them would discard real history. The maintainer rules on this before
-any full apply; your job is to write what compare handed you.
+`(listing_id, fetched_at)`. Your job is to write what compare handed you.
+
+**Measured on the authoritative run, 2026-08-29** (the numbers above are from a
+partial probe and the explanation with them was wrong). The cohort is 96,800
+adjacent pairs over 20,625 listings, and it is **not** burst re-scrapes — that
+mechanism is 105 pairs, 0.11%. Every pair spans two different source objects;
+82,280 are carousel ↔ carousel (100.0% identical values — one listing carried in
+two pages' carousels from the same scrape pass) and 14,415 are carousel ↔ detail
+(0.0% identical — two different views, not duplicates). See *The near-duplicate
+cohort, decomposed* in the plan document. The recommendation on the record is to
+import all of them, because production writes this shape today with no
+deduplication anywhere in the live path.
 
 **One lesson from slice 1's review, which applies to any gate you add.** Scope a
 refusal to `apply and not probe`. Slice 1 shipped a magnitude gate that fired on
