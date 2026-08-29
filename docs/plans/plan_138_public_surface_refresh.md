@@ -96,7 +96,10 @@ bare domain sees a login screen before seeing what the project is.
 - Calling the GitHub API, cloning the repository, or parsing Markdown on a public
   HTTP request.
 - Publishing secrets, production infrastructure identifiers, private metrics, or
-  operational endpoints that are not already intentionally public.
+  operational endpoints that are not already intentionally public. This now has a
+  named instance: the internal overviews recorded under Stage 0 document the
+  anti-detection path and production object prefixes, and neither may reach a
+  public surface.
 
 ---
 
@@ -192,6 +195,41 @@ during later plans without forcing a prose rewrite.
 
 **Gate 0:** every contradiction in the table above has an assigned replacement or
 an explicit decision to remove the claim.
+
+### Internal source documents
+
+Two current-state overviews were written on 2026-08-28, after this plan's
+2026-08-17 audit and against a later tree. They are the strongest material this
+plan has for Stage 1a, and they are **internal engineering references, not
+public copy**.
+
+| document | what Stage 1 draws from it |
+|---|---|
+| [ARCHITECTURAL_OVERVIEW.md](../ARCHITECTURAL_OVERVIEW.md) | 1a.3 accurate production data flow — the ingestion-to-mart diagram and the Bronze / Operational / Staging / Silver / Mart shape table; the "Production today vs platform evolution" split; its own "Current-source truth versus older summaries" section, which independently reaches the archiver/HOT row in the table above |
+| [OPERATIONAL_ENGINEERING_OVERVIEW.md](../OPERATIONAL_ENGINEERING_OVERVIEW.md) | 1a.5 case studies — deploy drain (§3.2–3.4), dictionary compression and packed storage (§4.2–4.3), functional-liveness learning (§2.5–2.6); 1a.7 test strategy without brittle totals (§5.1, §5.4); and the narrowed alerting language the truth contract's §3 requires (§2.5–2.7) |
+
+**Boundary.** These inform `README.md`. They do **not** feed the public landing
+page or the project-updates snapshot. `ARCHITECTURAL_OVERVIEW` §1 documents the
+anti-detection path in detail — TLS fingerprint matching, `cf_clearance`
+acquisition, the credential cache, 403 handling — and both documents print
+production object prefixes. That is precisely the material the non-goals bar
+from public surfaces. Drawing on them for the README means paraphrasing the
+architecture, never lifting §1 or the prefix listings.
+
+**They are sources, not authorities, until reconciled.** A truth pass cannot
+draw from a document that carries the same drift it exists to remove.
+`ARCHITECTURAL_OVERVIEW` §1 states that FlareSolverr performs the browser
+bootstrap; `docker-compose.yml:174` marks that container **vestigial** and names
+`trawl` as the live scrape path. The mechanism described is accurate — the code
+still speaks the FlareSolverr v1 protocol and the environment variable is still
+`FLARESOLVERR_URL` — but a reader concludes the project runs FlareSolverr in
+production, which it does not. Both documents also predate Plan 145's Stage 5
+commit and the Stage 6 machinery.
+
+**Gate 0b:** the scraper section of `ARCHITECTURAL_OVERVIEW` is reconciled
+against `docker-compose.yml` and `scraper/processors/cf_session.py`, and both
+documents' review dates are refreshed, before any Stage 1 copy is drawn from
+them. Anything not reconciled is quoted from the source tree instead.
 
 ## Stage 1 — Rewrite the factual narrative
 
