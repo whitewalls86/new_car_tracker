@@ -5827,3 +5827,207 @@ def test_an_unreadable_lake_object_is_reported_and_does_not_crash_the_check(
         store[f"recovery/plan145/canary/{_C3RUN}-canary_flush_report.json"])
     bad = report["tables"]["staging.silver_observations"]["unreadable_objects"]
     assert [b["key"] for b in bad] == [_silver_key("detail", 4, "junk")]
+
+
+# -- S: apply skips what the canary already committed ----------------------
+#
+# Receipts are keyed by batch name. The canary commits under `<run>-canary`
+# while the same artifacts also sit in b00001-b00069, so a full apply would
+# write its rows a second time and nothing downstream would notice -- which is
+# what the Stage 5 gate's *no duplicate (listing_id, fetched_at)* forbids.
+
+
+def _commit_report(run_id, *, manifest_key, manifest_sha256, artifacts, silver):
+    return json.dumps({
+        "run_id": run_id, "batch_name": f"{run_id}-canary",
+        "manifest_key": manifest_key, "manifest_sha256": manifest_sha256,
+        "committed_at": "2026-08-29T14:51:23.182919+00:00",
+        "committed_at_source": "receipt",
+        "committed": {"artifacts": artifacts, "silver": silver},
+    }).encode()
+
+
+def _slice2_with_canary(tmp_path, monkeypatch, *, skip=(_MAT_KEY,)):
+    """A committed canary covering `skip`, over the slice-2 fixture's objects."""
+    store, ids = _slice2_fixture_store(tmp_path)
+    _patch_slice2_io(monkeypatch, store, _FakeWriteConn(next_id=9_000_001))
+    mod = __import__("scripts.reconcile_april_detail", fromlist=["x"])
+    mod.run_assign(mod.parse_args(["assign", "--apply"]))
+
+    manifest_key = f"recovery/plan145/canary/{_RUN}-canary_sample.parquet"
+    rows = [{"run_id": _RUN, "object_key": k, "artifact_id": 1, "id_source": "x",
+             "input_kind": "materialized", "batch_name": f"{_RUN}-b00001",
+             "page_listing_id": None, "page_fetched_at": _WHEN,
+             "silver_rows": 1, "detail_rows": 1, "strata": ["s"],
+             "write_set_digest": "d" * 64, "vin_snapshot_sha256": "v" * 64,
+             "source_manifest_sha256": None, "source_object_set_digest": None}
+            for k in skip]
+    store[manifest_key] = _write_canary_manifest(tmp_path / "cm.parquet", rows)
+    digest = hashlib.sha256(store[manifest_key]).hexdigest()
+    store[f"recovery/plan145/canary/{_RUN}-canary_commit.json"] = _commit_report(
+        _RUN, manifest_key=manifest_key, manifest_sha256=digest,
+        artifacts=len(skip), silver=2)
+    return store, ids, digest
+
+
+def test_apply_skips_the_artifacts_the_canary_already_committed(tmp_path,
+                                                                monkeypatch):
+    import scripts.reconcile_april_detail as mod
+
+    store, (l1, l2, l3, l4), digest = _slice2_with_canary(tmp_path, monkeypatch)
+    conn = _FakeWriteConn(receipts={f"{_RUN}-canary": [digest]})
+    _record_execute_values(monkeypatch, conn)
+    _patch_slice2_io(monkeypatch, store, conn)
+
+    assert mod.run_apply(mod.parse_args(
+        ["apply", "--apply", "--maintainer-approval", "tester"])) == 0
+
+    inserts = {}
+    for sql, rows in conn.executed_values:
+        for name in ("silver_observations", "price_observation_events",
+                     "artifacts_queue_events"):
+            if name in sql:
+                inserts[name] = rows
+
+    from processing.writers.silver_writer import _POSTGRES_COLS
+
+    silver = [dict(zip(_POSTGRES_COLS, r)) for r in inserts["silver_observations"]]
+    # the materialized object carried 2 of the fixture's 4 silver rows; the
+    # canary committed it, so neither listing appears here
+    assert len(silver) == 2
+    assert {s["listing_id"] for s in silver} == {l3, l4}
+    assert len(inserts["artifacts_queue_events"]) == 2      # 3 artifacts - 1
+
+
+def test_apply_reports_the_skip_in_its_blast_radius(tmp_path, monkeypatch,
+                                                    capsys):
+    import scripts.reconcile_april_detail as mod
+
+    store, _, _ = _slice2_with_canary(tmp_path, monkeypatch)
+    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+    assert mod.run_apply(mod.parse_args(["apply"])) == 0
+    out = capsys.readouterr().out
+    assert "canary already wrote" in out
+    assert re.search(r"^artifacts +2$", out, re.M)          # 3 - 1
+    # a dry run opens no connection, so it says the receipt is unverified
+    assert "receipt NOT confirmed" in out
+
+
+def test_the_apply_dry_run_still_opens_no_connection(tmp_path, monkeypatch):
+    import scripts.reconcile_april_detail as mod
+
+    store, _, _ = _slice2_with_canary(tmp_path, monkeypatch)
+    conn = _FakeWriteConn()
+    _record_execute_values(monkeypatch, conn)
+    _patch_slice2_io(monkeypatch, store, conn)
+    assert mod.run_apply(mod.parse_args(["apply"])) == 0
+    assert conn.sql == [] and conn.executed_values == []
+
+
+def test_the_budget_gate_still_refuses_before_any_statement(tmp_path,
+                                                            monkeypatch):
+    """The exclusion is computed connection-free precisely so the gate keeps
+    this property: nothing is issued until the row budget has been cleared."""
+    import scripts.reconcile_april_detail as mod
+
+    store, _, _ = _slice2_with_canary(tmp_path, monkeypatch)
+    conn = _FakeWriteConn()
+    _record_execute_values(monkeypatch, conn)
+    _patch_slice2_io(monkeypatch, store, conn)
+    with pytest.raises(ReconcileError, match="canary budget"):
+        mod.run_apply(mod.parse_args(
+            ["apply", "--apply", "--max-unapproved-rows", "1"]))
+    assert conn.sql == []
+
+
+def test_a_commit_report_with_no_receipt_stops_the_apply(tmp_path, monkeypatch):
+    """The canary was rolled back and its report left behind. Excluding would
+    silently drop those artifacts from the import."""
+    import scripts.reconcile_april_detail as mod
+
+    store, _, _ = _slice2_with_canary(tmp_path, monkeypatch)
+    conn = _FakeWriteConn()                       # no receipt for the canary
+    _record_execute_values(monkeypatch, conn)
+    _patch_slice2_io(monkeypatch, store, conn)
+    with pytest.raises(ReconcileError, match="no matching receipt"):
+        mod.run_apply(mod.parse_args(
+            ["apply", "--apply", "--maintainer-approval", "tester"]))
+    assert conn.executed_values == []
+    assert conn.commits == 0
+
+
+def test_a_receipt_with_no_commit_report_stops_the_apply(tmp_path, monkeypatch):
+    """The mirror failure: rows were committed that this run cannot identify,
+    so it cannot avoid writing them twice."""
+    import scripts.reconcile_april_detail as mod
+
+    store, _, digest = _slice2_with_canary(tmp_path, monkeypatch)
+    del store[f"recovery/plan145/canary/{_RUN}-canary_commit.json"]
+    conn = _FakeWriteConn(receipts={f"{_RUN}-canary": [digest]})
+    _record_execute_values(monkeypatch, conn)
+    _patch_slice2_io(monkeypatch, store, conn)
+    with pytest.raises(ReconcileError, match="cannot avoid writing them twice"):
+        mod.run_apply(mod.parse_args(
+            ["apply", "--apply", "--maintainer-approval", "tester"]))
+    assert conn.executed_values == []
+
+
+def test_a_manifest_that_moved_under_the_commit_report_stops_the_apply(
+        tmp_path, monkeypatch):
+    import scripts.reconcile_april_detail as mod
+
+    store, _, digest = _slice2_with_canary(tmp_path, monkeypatch)
+    store[f"recovery/plan145/canary/{_RUN}-canary_sample.parquet"] += b"tamper"
+    conn = _FakeWriteConn(receipts={f"{_RUN}-canary": [digest]})
+    _record_execute_values(monkeypatch, conn)
+    _patch_slice2_io(monkeypatch, store, conn)
+    with pytest.raises(ReconcileError, match="no longer describes what the canary"):
+        mod.run_apply(mod.parse_args(["apply"]))
+    assert conn.sql == []
+
+
+def test_no_canary_means_no_exclusion_and_no_extra_statement(tmp_path,
+                                                             monkeypatch):
+    import scripts.reconcile_april_detail as mod
+
+    store, _ = _slice2_fixture_store(tmp_path)
+    _patch_slice2_io(monkeypatch, store, _FakeWriteConn(next_id=9_000_001))
+    mod.run_assign(mod.parse_args(["assign", "--apply"]))
+
+    conn = _FakeWriteConn()
+    _record_execute_values(monkeypatch, conn)
+    _patch_slice2_io(monkeypatch, store, conn)
+    assert mod.run_apply(mod.parse_args(
+        ["apply", "--apply", "--maintainer-approval", "tester"])) == 0
+    # all 3 artifacts and all 4 silver rows, exactly as before the exclusion
+    silver = next(r for sql, r in conn.executed_values
+                  if "silver_observations" in sql)
+    assert len(silver) == 4
+    assert conn.commits == 1
+
+
+def test_a_probe_apply_ignores_the_canary_entirely(tmp_path, monkeypatch):
+    """A probe commits nothing, so it cannot duplicate the canary and must not
+    spend a statement checking."""
+    import scripts.reconcile_april_detail as mod
+
+    store, _, digest = _slice2_with_canary(tmp_path, monkeypatch)
+    probe_store = {k.replace("recovery/plan145/compared/",
+                             "recovery/plan145/compared_probe/")
+                    .replace("recovery/plan145/assigned/",
+                             "recovery/plan145/assigned_probe/")
+                    .replace("recovery/plan145/vin_snapshot/",
+                             "recovery/plan145/vin_snapshot_probe/")
+                    .replace("recovery/plan145/inventory/",
+                             "recovery/plan145/inventory_probe/"): v
+                   for k, v in store.items()}
+    conn = _FakeWriteConn()
+    _record_execute_values(monkeypatch, conn)
+    _patch_slice2_io(monkeypatch, probe_store, conn)
+    assert mod.run_apply(mod.parse_args(
+        ["apply", "--probe", "--apply", "--run-id", _RUN, "--batch",
+         assign_batch_name(_RUN, 1)])) == 0
+    silver = next(r for sql, r in conn.executed_values
+                  if "silver_observations" in sql)
+    assert len(silver) == 4                       # nothing skipped
+    assert conn.rollbacks == 1 and conn.commits == 0

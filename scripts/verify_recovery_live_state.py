@@ -52,9 +52,18 @@ row budget, and Plan 145 allows nothing beyond the ~500-row canary until this
 proof closes. Phase B builds that command; it is not `apply --batch`, whose
 unit is a full slice-2 batch of up to 5,000 artifacts.
 
-    python scripts/verify_recovery_live_state.py --window <name> \\
-        --canary-cmd "<phase B canary-commit command>" \\
-        --report /tmp/p145-v040-<name>.json
+Run it **inside a container that has psycopg2**, not on the VM host, which has
+neither it nor a venv (and no ``python``, only ``python3``). Inside
+``april-processor`` the canary command is a plain in-container invocation
+rather than a nested ``docker compose run``, and it is still a subprocess --
+so still its own connection. ``compose run --rm`` is ephemeral, so mount a
+directory for the report or it dies with the container::
+
+    docker compose run --rm -v /home/ubuntu:/out april-processor \\
+      python -m scripts.verify_recovery_live_state --window <name> \\
+        --canary-cmd "python -m scripts.reconcile_april_detail canary-commit \\
+          --apply --run-id <run> --expect-manifest-sha256 <sha> --expect-rows 505" \\
+        --report /out/p145-v040-<name>.json
 """
 from __future__ import annotations
 
