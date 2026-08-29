@@ -1,19 +1,20 @@
-# Run Sheet: Plan 145 Stage 5 — Compare, Assign, and the Phase A Checks
+# Run Sheet: Plan 145 Stage 5 — Compare, Assign, and the Canary
 
 Operational companion to [Plan 145](../plans/plan_145_april_cutover_reconciliation.md),
 whose **Stage 5** section is the specification. Covers **slice 1** (`compare`),
-**slice 2** (`assign`; `apply` only as far as the dry run), and **slice 3
-Phase A** (`control`, `canary-sample`, and the V040 verifier as a *documented*
-procedure). Follow it in order.
+**slice 2** (`assign`; `apply` only as far as the dry run), **slice 3 Phase A**
+(`control`, `canary-sample`) and **slice 3 Phase B** (`canary-commit`,
+`canary-flush-verify`, and the V040 verifier). Follow it in order.
 
-Slice 3 **Phase B** — the write canary as a real commit, and the flush round
-trip — is unbuilt. Nothing in this sheet commits a row to Postgres.
+**§7 is the only step in this sheet that commits a row to Postgres**, and it
+runs inside a maintainer-opened maintenance window. Everything before it writes
+under `recovery/plan145/` or writes nothing.
 
-> **The one irreversible thing in this sheet is `nextval`.** `assign --apply`
-> advances `ops.artifacts_queue_artifact_id_seq` by one value per artifact,
-> permanently. It is sanctioned — a `bigserial` gap is not a reuse — but it is
-> the only step here that cannot be undone by deleting an object. Everything
-> else writes under `recovery/plan145/` or writes nothing.
+> **Two things here cannot be undone by deleting an object.** `assign --apply`
+> (§5.2) advances `ops.artifacts_queue_artifact_id_seq` by one value per
+> artifact, permanently — sanctioned, since a `bigserial` gap is not a reuse.
+> And `canary-commit --apply` (§7) commits 505 silver rows. Both are meant to
+> happen; neither is reversible by an object delete.
 
 ## The run id
 
@@ -38,7 +39,7 @@ Inventory digest
 | §4 rulings | near-dup decomposed and fan-out measured 2026-08-29; neither shows divergence. **No ruling recorded** — §5.2 was run without one |
 | §5 slice 2 `assign` | **done** 2026-08-29 — 341,903 artifacts, 69 batches; sequence 8,054,031 → 8,383,887. `apply` dry run validated `b00001`, nothing committed |
 | §6 `canary-sample` | **done** 2026-08-29 — 234 artifacts, 505 rows, **9/9 strata covered**, no split. Manifest is Phase B's input |
-| §7 V040 proof | **← you are here — blocked.** Needs Phase B's ~500-row commit path, which is unbuilt |
+| §7 Phase B + V040 proof | **← you are here.** `canary-commit` / `canary-flush-verify` are **built and tested** (unit + real-Postgres integration) but **have never run against production**. Needs a named window |
 
 | live state | |
 |---|---|
@@ -97,6 +98,8 @@ action.
 | `canary-sample` | `archiver` | — | pyarrow only, no Postgres, no duckdb |
 | `assign` | `april-processor` | `cartracker` | `nextval` needs `USAGE`; pyarrow only |
 | `apply` | `april-processor` | `cartracker` | `scraper_user` has no `INSERT` on `staging.price_observation_events` |
+| `canary-commit` | `april-processor` | `cartracker` | same `INSERT` grants as `apply`; pyarrow only |
+| `canary-flush-verify` | `archiver` | — | pyarrow only, no Postgres, no duckdb |
 
 ### 0.3 tmux
 
@@ -442,22 +445,106 @@ The manifest — `recovery/plan145/canary/cmp-6c7c90d807bbdf13-canary_sample.par
 
 ---
 
-## 7. The V040 live-state proof — prepared, deliberately not run
+## 7. Slice 3 Phase B — the write canary, in the window
 
-`scripts/verify_recovery_live_state.py` is built and covered by unit and
-real-Postgres integration tests. **It is not run in this sheet, and no
-maintenance window is scheduled.**
+Two modes and one script, all built and covered by unit and real-Postgres
+integration tests, **none of them ever run against production**. No maintenance
+window is scheduled; opening one is the maintainer's action.
 
-Its `--canary-cmd` — the Phase B write canary that commits ~500 rows — does not
-exist yet. Without it the verifier can prove only its own mechanism, and a
-window costs quiesced production for evidence the integration tests already
-give. Run it when Phase B has something for it to measure.
+| mode | image | role | what it does |
+|---|---|---|---|
+| `canary-commit` | `april-processor` | `cartracker` | commits exactly §6's manifest — one transaction, receipt included |
+| `canary-flush-verify` | `archiver` or `april-processor` | — | reads only; requires those rows in the lake, by key |
+| `verify_recovery_live_state.py` | host | — | the before/after V040 assertion around the commit |
 
-### What the window will require
+### 7.1 Why the canary is not `apply --batch`
+
+The slice-2 batch unit is **not** the canary unit. `b00001` alone is 5,000
+artifacts and 10,157 silver rows — ten times the 1,000-row canary budget — so
+`apply --apply --batch` is refused, correctly, and reaching for
+`--maintainer-approval` to force it commits 5,000 artifacts where the plan
+sizes the canary at 234. `canary-commit` is **manifest-scoped**: it reads §6's
+frozen manifest, takes identity from the real `assigned/` shards, builds the
+write set with slice 2's own `build_recovery_*` functions and commits through
+slice 2's own `write_import_batch`.
+
+Three things it deliberately does not have:
+
+- **no `--probe`.** A probe rolls back, and the flush round trip cannot be
+  proven on rolled-back rows. `apply --probe --apply` already retired the
+  question a probe answers (2026-08-28, every cast and CHECK held on real rows).
+- **no `--maintainer-approval`.** On `apply` that flag records a decision to
+  write past the canary budget. The canary *is* the budget: a manifest that has
+  outgrown it is a sampler problem, not an approval one. The ceiling is
+  `--max-rows` (default 1,000) and it refuses before any statement.
+- **no slice-2 batch name.** The receipt is `cmp-6c7c90d807bbdf13-canary`. A
+  canary that borrowed `b00001`'s name would mark all 5,000 of its artifacts
+  committed on the strength of 505 rows, and the full apply would skip that
+  batch forever.
+
+### 7.2 Dry run first — read-only, runnable today
+
+```bash
+docker compose run --rm april-processor python -m scripts.reconcile_april_detail \
+  canary-commit --run-id cmp-6c7c90d807bbdf13 2>&1 \
+  | tee /home/ubuntu/plan145-canary-commit-dryrun.log
+```
+
+**Blast radius:** reads the canary manifest, the assignment shards it names,
+the `to_import` units those shards name, the VIN snapshot and
+`compare_report.json`. **No Postgres connection is opened at all** — the dry
+run returns before `get_conn`. Prints the whole write set, the per-stratum
+census and the blast radius.
+
+Expect, from §6's manifest: **234 artifacts, 505 silver rows, ~140 price
+events, 234 queue events.** Take the real numbers from the dry run.
+
+### 7.3 The window
+
+The ordering is not negotiable, because the V040 views are time-dependent.
+
+1. the maintainer opens a **named window** and quiesces the writers (§7.4);
+2. one verifier transaction, `READ COMMITTED` — **not** `REPEATABLE READ`,
+   which would freeze the data snapshot so the second snapshot could never see
+   the canary's commit and the check could never fail;
+3. snapshot the four tables and both views, plus `txid_current()`;
+4. run the canary **on a separate connection**;
+5. snapshot again **in the same transaction**;
+6. require byte-equivalence and one shared txid;
+7. the maintainer restarts the writers.
+
+Steps 2–6 are the script, and step 4 is its `--canary-cmd`:
+
+```bash
+python scripts/verify_recovery_live_state.py --window <name> \
+  --canary-cmd "docker compose run --rm april-processor python -m \
+    scripts.reconcile_april_detail canary-commit --apply \
+    --run-id cmp-6c7c90d807bbdf13" \
+  --report /tmp/p145-v040-<name>.json
+```
+
+**Blast radius of the `--apply`:** one transaction against production Postgres
+inserting **505 rows** into `staging.silver_observations`, ~140 into
+`staging.price_observation_events`, 234 into `staging.artifacts_queue_events`
+and one receipt row into `public.plan145_recovery_batch_receipts`. **Nothing is
+written to `ops.artifacts_queue`, `ops.price_observations`,
+`ops.vin_to_listing`, `ops.blocked_cooldown` or `ops.detail_scrape_claims`** —
+which is the claim the verifier around it is measuring. It writes one report
+object to `recovery/plan145/canary/`. Irreversible in the sense that a commit
+is; re-running it is a no-op on the receipt.
+
+Do **not** pass `--maintainer-approval` inside `--canary-cmd`: `canary-commit`
+does not accept it, and on `apply` it lifts the row budget. Exit codes on the
+verifier: 0 pass, 1 fail, 2 refused (no `--window`).
+
+**Run the canary exactly once.** It is idempotent on its receipt, so a second
+run — inside the window or outside it — writes zero rows and measures nothing.
+Committing it before the window therefore *spends* the window's subject.
+
+### 7.4 Services to quiesce
 
 The script **refuses without `--window <name>`** and opens no connection until
-that check passes. It **does not and cannot** quiesce or resume a writer — that
-is the maintainer's manual, separately approved action, before and after.
+that check passes. It **does not and cannot** quiesce or resume a writer.
 
 Under test: `ops.price_observations`, `ops.vin_to_listing`,
 `ops.blocked_cooldown`, `ops.detail_scrape_claims`, and the two V040 views
@@ -480,26 +567,60 @@ So: **`scraper`, `processing`, `ops`**, plus what triggers them —
 `ops/coordination_drain.py` aggregating evidence) is the house drain mechanism;
 whether to use it or stop containers is the maintainer's call.
 
-The ordering is not negotiable, because the views are time-dependent:
+### 7.5 The flush round trip, after the window
 
-1. maintainer opens a named window and quiesces the writers;
-2. one verifier transaction, `READ COMMITTED` — **not** `REPEATABLE READ`, which
-   would freeze the data snapshot so the second snapshot could never see the
-   canary's commit and the check could never fail;
-3. snapshot the four tables and both views, plus `txid_current()`;
-4. run the canary **on a separate connection**;
-5. snapshot again **in the same transaction**;
-6. require byte-equivalence and one shared txid;
-7. maintainer restarts the writers.
+`staging.silver_observations` and the two event tables are asynchronously
+flushed and then **DELETED**, so a canary that stopped at Postgres has not
+proven the rows survive. `hourly_analytics_refresh` (`0 * * * *`) owns the
+scheduled flush, so this is runnable within the hour after the commit — the
+standalone `flush_silver_observations` / `flush_staging_events` DAGs are
+`schedule=None` and exist for a manual trigger.
 
 ```bash
-python scripts/verify_recovery_live_state.py --window <name> \
-  --canary-cmd "<phase B canary-commit command>" \
-  --report /tmp/p145-v040-<name>.json
+docker compose run --rm archiver python -m scripts.reconcile_april_detail \
+  canary-flush-verify --apply --run-id cmp-6c7c90d807bbdf13 2>&1 \
+  | tee /home/ubuntu/plan145-canary-flush.log
 ```
 
-Do **not** pass `--maintainer-approval` inside `--canary-cmd`: it lifts the row
-budget. Exit codes: 0 pass, 1 fail, 2 refused (no `--window`).
+**Blast radius:** reads only. No Postgres, no duckdb. `--apply` writes one JSON
+report to `recovery/plan145/canary/`. Exit 0 pass, 1 if any row is absent.
+
+It rebuilds the expected write set from the manifest and the shards rather than
+trusting the commit report — a check that read its expectation out of the
+writer's own record of what it wrote would pass on a writer that recorded the
+wrong thing. It then requires every row, **by key**, in:
+
+| table | lake prefix | key |
+|---|---|---|
+| `staging.silver_observations` | `silver_normalized/observations/source=…/obs_year=2026/obs_month=4/` | `artifact_id`, `listing_id`, `source`, `fetched_at` |
+| `staging.price_observation_events` | `ops_normalized/price_observation_events/year=2026/month=4/` | `artifact_id`, `listing_id`, `event_type`, `event_at` |
+| `staging.artifacts_queue_events` | `ops_normalized/artifacts_queue_events/year=…/month=…` | `artifact_id`, `status`, `run_id`, `fetched_at` |
+
+Two things about the partitions. A silver row's **`source` lives in the hive
+path, not in the file** — `pq.write_to_dataset(partition_cols=…)` drops the
+partition columns from the Parquet — so the check reads it off the key; a check
+that asked for it as a column would match nothing. And the queue events land in
+the month the canary **ran**, not April: `build_recovery_queue_event` leaves
+`event_at` to its `now()` default by design, so that partition comes from the
+commit report's `committed_at`.
+
+By default only objects modified at or after the commit are read, which keeps
+this to the freshly flushed parts. **After a compaction has folded them into
+the month's compacted object, pass `--scan-all`** — correct, but it reads the
+whole partition.
+
+### 7.6 What Phase B does not resolve
+
+The 234 canary artifacts also belong to slice-2 batches `b*`. Once the canary
+commits, a later full `apply` of those batches **writes the same 505
+observations again**, which the Stage 5 gate's *no duplicate
+`(listing_id, fetched_at)`* clause forbids. `canary-commit` writes a durable
+record of exactly what it committed —
+`recovery/plan145/canary/<run>-canary_commit.json`, naming the manifest digest,
+the artifact ids and the assignment batches — so the full apply has something
+authoritative to exclude with. **`apply` itself is unchanged and does not yet
+read it.** Resolving that is the full apply's problem and the maintainer's
+ruling, not Phase B's.
 
 ---
 
@@ -513,8 +634,11 @@ key.
 **Unproven, and to be said so explicitly in any report:**
 
 - the write canary as a **real commit**, and the flush round trip into
-  `silver_normalized/observations/` and `ops_normalized/` — Phase B, unbuilt;
+  `silver_normalized/observations/` and `ops_normalized/` — Phase B is **built
+  and tested but has never run**, against production or otherwise;
 - the V040 before/after equality — needs Phase B's canary and a window;
+- the duplicate-write interaction between the committed canary and a later full
+  `apply` of the same batches (§7.6);
 - the full apply — gated on all of the above plus named maintainer approval.
 
 Do not merge a branch, do not open a Linear issue, and do not declare the gate
@@ -532,6 +656,9 @@ closed.
 | 5.2 | `assign --apply` | ~80 shards + report | **`nextval` per artifact** | **no — permanent** |
 | 5.3 | `apply` (dry) | none | none | yes |
 | 6 | `canary-sample --apply` | 1 manifest + 1 report | none | yes |
+| 7.2 | `canary-commit` (dry) | none | none — no connection opened | yes |
+| 7.3 | `canary-commit --apply` | 1 report | **505 silver + ~140 price + 234 queue + 1 receipt, one transaction** | **no — a commit** |
+| 7.5 | `canary-flush-verify --apply` | 1 report | none | yes |
 
 ## Appendix B — flags that are gates
 

@@ -135,7 +135,7 @@ import random
 import re
 import sys
 from collections import Counter, defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterator, NamedTuple, Optional, Sequence
 
@@ -5751,7 +5751,7 @@ def run_canary_sample(args: argparse.Namespace) -> int:
     # merely itself.
     no_split = not split
 
-    manifest_key = f"{canary_root}/{run_id}-canary_sample.parquet"
+    manifest_key = _canary_manifest_key(run_id, canary_root)
     report = {
         "plan": 145, "stage": 5, "slice": 3, "phase": "A",
         "check": "canary_stratified_sample", "mode": "canary-sample",
@@ -5786,6 +5786,703 @@ def run_canary_sample(args: argparse.Namespace) -> int:
         )
     _print_canary_sample_report(report, apply=apply, probe=probe)
     return 0
+
+# ======================================================================
+# Stage 5 slice 3, Phase B -- the write canary and the flush round trip
+# ======================================================================
+#
+# Phase A froze *which* ~500 observations the canary commits, in
+# recovery/plan145/canary/<run>-canary_sample.parquet. Phase B is the two
+# things that manifest exists for:
+#
+#   * canary-commit       -- commit exactly those objects, through slice 2's
+#                            real writer, in one transaction with a receipt.
+#   * canary-flush-verify -- prove the asynchronous flushers carried those rows
+#                            out of staging and into silver_normalized/
+#                            observations/ and ops_normalized/, by key.
+#
+# Why this is not `apply --batch`. The slice-2 batch unit is not the canary
+# unit: b00001 alone is 5,000 artifacts and 10,157 silver rows, ten times the
+# 1,000-row canary budget (plan document, *Evidence -- slice 2, the
+# authoritative assign*). So `apply --apply --batch` is refused, correctly, and
+# reaching for --maintainer-approval to force it commits 5,000 artifacts where
+# the plan sizes the canary at ~234. The canary needs a manifest-scoped write
+# unit, which is what this is -- and it reuses `write_import_batch`, the real
+# assignment shards and the frozen VIN snapshot to get there, because a canary
+# that shortcuts the writer proves nothing about the writer.
+#
+# Why there is no --probe here, unlike every other slice-2 and slice-3 mode. A
+# probe issues every statement and then ROLLBACKs. The flush round trip is a
+# claim about rows the flushers can *see*, and there is nothing for them to see
+# on a rolled-back transaction, so a probe canary could not be verified at all.
+# `apply --probe --apply` already retired the question a probe answers: on
+# 2026-08-28 it ran the full statement sequence for one batch against
+# production Postgres and every ::uuid cast, NOT NULL and CHECK held.
+#
+# Why there is no --maintainer-approval here either. On `apply` that flag is a
+# record of a human decision to write more than the canary budget. The canary
+# *is* the budget: a manifest that has outgrown it is a sampler or manifest
+# problem, not something an approval should paper over. The ceiling is
+# --max-rows, and it refuses before a single statement is issued.
+
+
+def canary_batch_name(run_id: str) -> str:
+    """The canary's receipt name -- deliberately not a ``-bNNNNN`` batch name.
+
+    ``run_apply`` selects batches with ``_list_keys(..., f"{assigned}/{run_id}-b")``
+    and the receipt table is keyed by batch name, so a canary that borrowed a
+    slice-2 batch name would mark that whole 5,000-artifact batch committed on
+    the strength of ~500 rows, and the full apply would skip it forever.
+    """
+    return f"{run_id}-canary"
+
+
+def _canary_manifest_key(run_id: str, canary_root: str = CANARY_PREFIX) -> str:
+    return f"{canary_root}/{run_id}-canary_sample.parquet"
+
+
+def _canary_commit_key(run_id: str, canary_root: str = CANARY_PREFIX) -> str:
+    return f"{canary_root}/{run_id}-canary_commit.json"
+
+
+def _canary_flush_key(run_id: str, canary_root: str = CANARY_PREFIX) -> str:
+    return f"{canary_root}/{run_id}-canary_flush_report.json"
+
+
+def _read_canary_manifest(client, bucket: str, run_id: str,
+                          canary_root: str = CANARY_PREFIX
+                          ) -> tuple[list[dict[str, Any]], str, str]:
+    """The frozen sample's rows, the SHA-256 of its exact bytes, and its key.
+
+    The digest is over the stored object, exactly as ``_read_assignment_shard``
+    does it, because it becomes the receipt's ``manifest_sha256``: a re-run
+    reads the same bytes and skips, and a manifest that changed under a
+    committed canary raises :class:`ReceiptConflict` rather than writing again.
+    """
+    import io
+
+    import pyarrow.parquet as pq
+
+    key = _canary_manifest_key(run_id, canary_root)
+    try:
+        body = client.get_object(Bucket=bucket, Key=key)["Body"].read()
+    except Exception as exc:
+        raise ReconcileError(
+            f"no canary manifest at s3://{bucket}/{key}; the canary commits "
+            f"the frozen Phase A selection and nothing else -- run "
+            f"`canary-sample --apply --run-id {run_id}` first"
+        ) from exc
+    rows = pq.read_table(io.BytesIO(body)).to_pylist()
+    if not rows:
+        raise ReconcileError(
+            f"the canary manifest s3://{bucket}/{key} is empty; there is "
+            f"nothing to commit"
+        )
+    return rows, hashlib.sha256(body).hexdigest(), key
+
+
+def build_canary_write_set(client, bucket: str, run_id: str, *,
+                           roots: "_Stage5Roots", batch_name: str,
+                           canary_root: str = CANARY_PREFIX) -> dict[str, Any]:
+    """Exactly the manifest's objects, built through slice 2's own functions.
+
+    Identity comes from the **assignment shards**, never from the manifest's
+    copy of it: the manifest is Phase A's record of a selection, the shard is
+    the immutable allocation, and a disagreement between them is a stop. The
+    silver rows, price events and queue events are then built by the same
+    ``build_recovery_*`` calls ``run_apply`` uses, from the same ``to_import``
+    shards and the same frozen VIN snapshot.
+    """
+    import io
+
+    import pyarrow as pa
+    import pyarrow.compute as pc
+    import pyarrow.parquet as pq
+
+    from shared.minio import object_exists
+
+    manifest_rows, manifest_sha256, manifest_key = _read_canary_manifest(
+        client, bucket, run_id, canary_root,
+    )
+    wanted = {r["object_key"] for r in manifest_rows}
+    if len(wanted) != len(manifest_rows):
+        raise ReconcileError(
+            f"the canary manifest names {len(manifest_rows)} rows over only "
+            f"{len(wanted)} distinct objects; an artifact listed twice would "
+            f"be committed twice"
+        )
+
+    # -- identity, from the real shards -----------------------------------
+    batches = sorted({r["batch_name"] for r in manifest_rows})
+    by_object: dict[str, dict[str, Any]] = {}
+    shard_digests: dict[str, str] = {}
+    for name in batches:
+        records, digest = _read_assignment_shard(
+            client, bucket, name, roots.assigned,
+        )
+        shard_digests[name] = digest
+        for record in records:
+            if record["object_key"] in wanted:
+                by_object[record["object_key"]] = record
+
+    missing = sorted(wanted - set(by_object))
+    if missing:
+        raise ReconcileError(
+            f"{len(missing)} manifest object(s) have no row in the assignment "
+            f"shard the manifest names (e.g. {missing[:3]}); the canary writes "
+            f"slice 2's assigned identity, not the manifest's copy of it"
+        )
+    drifted = [
+        {"object_key": r["object_key"],
+         "manifest": int(r["artifact_id"]),
+         "assigned": int(by_object[r["object_key"]]["artifact_id"])}
+        for r in manifest_rows
+        if int(r["artifact_id"]) != int(by_object[r["object_key"]]["artifact_id"])
+    ]
+    if drifted:
+        raise ReconcileError(
+            f"{len(drifted)} manifest object(s) name a different artifact_id "
+            f"than their assignment shard does, e.g. {drifted[:3]}; the "
+            f"assignment is immutable, so the manifest and the shards no "
+            f"longer describe one population"
+        )
+
+    # -- the rows themselves, from the to_import shards --------------------
+    run_dir = f"{roots.compared}/{run_id}"
+    units = sorted({r["source_unit"] for r in by_object.values()})
+    wanted_keys = pa.array(sorted(wanted))
+    rows_by_object: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for unit in units:
+        key = f"{run_dir}/to_import/{unit}.parquet"
+        if not object_exists(key):
+            raise ReconcileError(
+                f"assignment names to_import unit {unit} but "
+                f"s3://{bucket}/{key} is missing"
+            )
+        body = client.get_object(Bucket=bucket, Key=key)["Body"].read()
+        table = pq.read_table(io.BytesIO(body))
+        keep = table.filter(pc.is_in(table["object_key"], value_set=wanted_keys))
+        for row in keep.to_pylist():
+            rows_by_object[row["object_key"]].append(row)
+
+    # Both counts, not one: the assignment shard is what `apply` would check,
+    # and the manifest is what the maintainer approved. A canary that committed
+    # a different number of rows than the sample they read is not the canary.
+    manifest_counts = {r["object_key"]: int(r["silver_rows"]) for r in manifest_rows}
+    short = [
+        {"object_key": okey,
+         "assigned": int(by_object[okey]["silver_rows"]),
+         "manifest": manifest_counts[okey],
+         "found": len(rows_by_object.get(okey, []))}
+        for okey in sorted(wanted)
+        if not (len(rows_by_object.get(okey, []))
+                == int(by_object[okey]["silver_rows"])
+                == manifest_counts[okey])
+    ]
+    if short:
+        raise ReconcileError(
+            f"{len(short)} object(s) no longer carry the row count the "
+            f"assignment and the manifest agree on, e.g. {short[:3]}; "
+            f"committing would write half an artifact"
+        )
+
+    # -- the four writes, through slice 2's own builders -------------------
+    vin_map = _load_vin_snapshot(client, bucket, run_id, roots.vin_snapshot)
+    silver_rows: list[dict[str, Any]] = []
+    price_events: list[dict[str, Any]] = []
+    for okey in sorted(wanted):
+        assignment = by_object[okey]
+        for row in rows_by_object[okey]:
+            silver = build_recovery_silver_row(
+                row, assignment["artifact_id"], vin_map,
+            )
+            silver_rows.append(silver)
+            event = build_recovery_price_event(silver)
+            if event is not None:
+                price_events.append(event)
+    queue_events = [
+        build_recovery_queue_event(by_object[okey], batch_name, bucket)
+        for okey in sorted(wanted)
+    ]
+
+    strata: Counter[str] = Counter()
+    for okey in sorted(wanted):
+        for row in rows_by_object[okey]:
+            strata[_stratum_label(row, by_object[okey])] += 1
+
+    return {
+        "manifest_key": manifest_key,
+        "manifest_sha256": manifest_sha256,
+        "manifest_rows": manifest_rows,
+        "assignment_batches": batches,
+        "assignment_digests": shard_digests,
+        "by_object": by_object,
+        "silver_rows": silver_rows,
+        "price_events": price_events,
+        "queue_events": queue_events,
+        "rows_per_stratum": dict(sorted(strata.items())),
+    }
+
+
+#: What the flush verification looks for, per staging table: the lake prefix
+#: the flusher writes, the partition columns it derives, and the columns that
+#: identify one recovered row inside it.
+#:
+#: The partition values are *not* guessed -- they are read off the rows being
+#: verified. Silver partitions on ``source``/``obs_year``/``obs_month`` from
+#: ``fetched_at`` (April), price events on ``year``/``month`` from ``event_at``,
+#: which recovery sets to the capture time (also April), and queue events on
+#: ``year``/``month`` from ``event_at``, which recovery leaves to ``now()`` --
+#: so they land in the month the canary *ran*, not the month it captures.
+_SILVER_LAKE_PREFIX = "silver_normalized/observations"
+_QUEUE_EVENT_LAKE_PREFIX = "ops_normalized/artifacts_queue_events"
+_PRICE_EVENT_LAKE_PREFIX = "ops_normalized/price_observation_events"
+
+
+def _silver_lake_partition(row: dict[str, Any]) -> str:
+    at = _as_utc_datetime(row.get("fetched_at"))
+    return (f"{_SILVER_LAKE_PREFIX}/source={row.get('source')}/"
+            f"obs_year={at.year}/obs_month={at.month}/")
+
+
+def _event_lake_partition(prefix: str, at: Any) -> str:
+    at = _as_utc_datetime(at)
+    return f"{prefix}/year={at.year}/month={at.month}/"
+
+
+def _hive_partition_values(key: str) -> dict[str, str]:
+    """``source=detail/obs_year=2026/obs_month=4`` -> a dict.
+
+    ``pq.write_to_dataset(partition_cols=...)`` encodes the partition columns
+    in the *path* and drops them from the file, so a flushed silver row's
+    ``source`` is only recoverable from its key. Reading it back with
+    ``columns=["source", ...]`` would raise, not return NULL.
+    """
+    out: dict[str, str] = {}
+    for segment in key.split("/"):
+        name, sep, value = segment.partition("=")
+        if sep:
+            out[name] = value
+    return out
+
+
+def _silver_lake_key(row: dict[str, Any]) -> tuple:
+    return (int(row["artifact_id"]), str(row["listing_id"]), str(row["source"]),
+            _as_utc_datetime(row.get("fetched_at")))
+
+
+def _price_event_lake_key(row: dict[str, Any]) -> tuple:
+    return (int(row["artifact_id"]), str(row["listing_id"]),
+            str(row.get("event_type")), _as_utc_datetime(row.get("event_at")))
+
+
+def _queue_event_lake_key(row: dict[str, Any]) -> tuple:
+    return (int(row["artifact_id"]), str(row.get("status")),
+            str(row.get("run_id")), _as_utc_datetime(row.get("fetched_at")))
+
+
+def _expectation_digest(keys: Sequence[tuple]) -> str:
+    """A stable digest of the exact key multiset the canary expects to find.
+
+    ``canary-flush-verify`` rebuilds the write set from the manifest rather
+    than trusting a list copied into the commit report; this digest is how the
+    two runs prove they rebuilt the same thing.
+    """
+    payload = json.dumps(sorted(str(k) for k in keys), sort_keys=True)
+    return hashlib.sha256(payload.encode()).hexdigest()
+
+
+def _canary_expectations(write_set: dict[str, Any], committed_at: datetime
+                         ) -> dict[str, dict[str, Any]]:
+    """Per-table: the prefixes to look in, and the key multiset to find there."""
+    silver = write_set["silver_rows"]
+    prices = write_set["price_events"]
+    queues = write_set["queue_events"]
+    return {
+        "staging.silver_observations": {
+            "lake_prefixes": sorted({_silver_lake_partition(r) for r in silver}),
+            "keys": Counter(_silver_lake_key(r) for r in silver),
+            "columns": ["artifact_id", "listing_id", "fetched_at"],
+            "key_columns": ["artifact_id", "listing_id",
+                            "source (from the hive path)", "fetched_at"],
+            "key_of": _silver_lake_key,
+        },
+        "staging.price_observation_events": {
+            "lake_prefixes": sorted({
+                _event_lake_partition(_PRICE_EVENT_LAKE_PREFIX, r["event_at"])
+                for r in prices
+            }),
+            "keys": Counter(_price_event_lake_key(r) for r in prices),
+            "columns": ["artifact_id", "listing_id", "event_type", "event_at"],
+            "key_columns": ["artifact_id", "listing_id", "event_type", "event_at"],
+            "key_of": _price_event_lake_key,
+        },
+        "staging.artifacts_queue_events": {
+            # event_at is left to its now() default by
+            # build_recovery_queue_event, so these land in the month the canary
+            # committed -- which is why committed_at is recorded, not derived.
+            "lake_prefixes": [
+                _event_lake_partition(_QUEUE_EVENT_LAKE_PREFIX, committed_at),
+            ],
+            "keys": Counter(_queue_event_lake_key(r) for r in queues),
+            "columns": ["artifact_id", "status", "run_id", "fetched_at"],
+            "key_columns": ["artifact_id", "status", "run_id", "fetched_at"],
+            "key_of": _queue_event_lake_key,
+        },
+    }
+
+
+_CANARY_WRITES = _APPLY_WRITES
+_CANARY_NEVER_TOUCHES = _APPLY_NEVER_TOUCHES
+
+
+def _print_canary_commit_plan(run_id: str, batch_name: str,
+                              write_set: dict[str, Any], *, apply: bool,
+                              max_rows: int) -> None:
+    """The blast radius, printed before the first statement of a real commit."""
+    print()
+    print("Plan 145 Stage 5 slice 3 Phase B -- the write canary (a real commit)")
+    print("=" * 70)
+    print(f"mode                 {'APPLY (COMMITS)' if apply else 'DRY RUN'}")
+    print(f"run_id               {run_id}")
+    print(f"receipt batch name   {batch_name}")
+    print(f"manifest             {write_set['manifest_key']}")
+    print(f"manifest sha256      {write_set['manifest_sha256']}")
+    print(f"assignment shards    {len(write_set['assignment_batches']):>12,}"
+          f"  ({write_set['assignment_batches'][0]} to "
+          f"{write_set['assignment_batches'][-1]})")
+    print(f"artifacts            {len(write_set['queue_events']):>12,}")
+    print(f"silver rows          {len(write_set['silver_rows']):>12,}"
+          f"  (budget {max_rows:,}; no --maintainer-approval on this mode)")
+    print(f"price events         {len(write_set['price_events']):>12,}")
+    print(f"queue events         {len(write_set['queue_events']):>12,}")
+    for stratum, count in write_set["rows_per_stratum"].items():
+        print(f"    {stratum:<48} {count:>6,} rows")
+    print()
+    print(f"{'writes' if apply else 'would write':<21}"
+          + "\n                     ".join(_CANARY_WRITES))
+    print("never touched        " + "\n                     ".join(
+        _CANARY_NEVER_TOUCHES))
+    print("transactions         1 (all four writes and the receipt together)")
+    print()
+
+
+def run_canary_commit(args: argparse.Namespace) -> int:
+    from shared.minio import BUCKET as DEFAULT_BUCKET
+    from shared.minio import write_bytes
+
+    bucket = args.bucket or DEFAULT_BUCKET
+    client = _s3_client()
+    apply = bool(args.apply)
+    # Authoritative prefixes only. There is no --probe: see the section header.
+    roots = _stage5_roots(False)
+
+    run_id = args.run_id or _discover_compare_run(client, bucket, roots)
+    run_dir = f"{roots.compared}/{run_id}"
+    refuse_stale_compare_run(bucket, run_dir, run_id, apply=apply, probe=False)
+
+    batch_name = canary_batch_name(run_id)
+    write_set = build_canary_write_set(
+        client, bucket, run_id, roots=roots, batch_name=batch_name,
+    )
+    _print_canary_commit_plan(run_id, batch_name, write_set,
+                              apply=apply, max_rows=args.max_rows)
+
+    rows = len(write_set["silver_rows"])
+    if rows > args.max_rows:
+        raise ReconcileError(
+            f"the canary write set is {rows:,} silver rows, over the "
+            f"{args.max_rows:,}-row canary budget. This mode has no "
+            f"--maintainer-approval: the canary *is* the budget, and a manifest "
+            f"that has outgrown it is a sampler or manifest problem, not an "
+            f"approval one. Re-run `canary-sample` with a smaller --target-rows, "
+            f"or raise --max-rows deliberately and say so in the record"
+        )
+
+    if not apply:
+        print("DRY RUN: built and validated the canary write set from the "
+              "frozen manifest; no statement was issued and no row was "
+              "written.\n")
+        return 0
+
+    from shared.db import get_conn
+
+    started_at = datetime.now(timezone.utc)
+    conn = get_conn()
+    try:
+        outcome = write_import_batch(
+            conn, batch_name, write_set["manifest_sha256"],
+            write_set["silver_rows"], write_set["price_events"],
+            write_set["queue_events"],
+        )
+    finally:
+        conn.close()
+    committed_at = datetime.now(timezone.utc)
+
+    if outcome["skipped"]:
+        # The receipt already names this manifest digest: the canary committed
+        # on an earlier run and its rows are in the lake or on their way there.
+        # Keep the original commit report -- its committed_at is what bounds
+        # the flush verification's object scan.
+        existing = _read_canary_commit_report(bucket, run_id)
+        if existing is not None:
+            committed_at = _as_utc_datetime(existing.get("committed_at")) \
+                or committed_at
+        logger.info("canary %s already committed -- receipt present, zero rows "
+                    "written", batch_name)
+
+    expectations = _canary_expectations(write_set, committed_at)
+    report = {
+        "plan": 145, "stage": 5, "slice": 3, "phase": "B",
+        "check": "canary_commit", "mode": "canary-commit",
+        "run_id": run_id, "batch_name": batch_name,
+        "manifest_key": write_set["manifest_key"],
+        "manifest_sha256": write_set["manifest_sha256"],
+        "assignment_batches": write_set["assignment_batches"],
+        "assignment_digests": write_set["assignment_digests"],
+        "started_at": started_at.isoformat(),
+        "committed_at": committed_at.isoformat(),
+        "skipped_on_receipt": bool(outcome["skipped"]),
+        "committed": {
+            "artifacts": len(write_set["queue_events"]),
+            "silver": len(write_set["silver_rows"]),
+            "price_events": len(write_set["price_events"]),
+            "queue_events": len(write_set["queue_events"]),
+        },
+        "written_this_run": {
+            "silver": outcome["silver"], "price_events": outcome["price_events"],
+            "queue_events": outcome["queue_events"],
+            "artifacts": outcome["artifacts"],
+        },
+        "rows_per_stratum": write_set["rows_per_stratum"],
+        "writes": list(_CANARY_WRITES),
+        "never_touched": list(_CANARY_NEVER_TOUCHES),
+        "flush_expectation": {
+            table: {
+                "rows": int(sum(spec["keys"].values())),
+                "distinct_keys": len(spec["keys"]),
+                "lake_prefixes": spec["lake_prefixes"],
+                "key_columns": spec["key_columns"],
+                "expectation_digest": _expectation_digest(list(spec["keys"])),
+            }
+            for table, spec in expectations.items()
+        },
+    }
+    # Written after the commit, and only if absent: the report describes a
+    # durable transaction, so the first one written for a batch name is the
+    # true record of when it landed. Everything in it is re-derivable from the
+    # manifest and the shards, so losing the write does not lose the evidence.
+    key = _canary_commit_key(run_id)
+    from shared.minio import object_exists
+
+    if not object_exists(key):
+        write_bytes(
+            key,
+            (json.dumps(report, indent=2, sort_keys=True, default=str)
+             + "\n").encode(),
+            content_type="application/json",
+        )
+
+    receipt = ("already present -- zero rows written" if outcome["skipped"]
+               else "written")
+    print(f"receipt              {receipt}")
+    print(f"silver rows          {outcome['silver']:>12,}")
+    print(f"price events         {outcome['price_events']:>12,}")
+    print(f"queue events         {outcome['queue_events']:>12,}")
+    print(f"commit report        {key}")
+    if outcome["skipped"]:
+        print(f"\nSKIPPED: {batch_name} already carries a receipt for manifest "
+              f"digest {write_set['manifest_sha256'][:16]}...; nothing was "
+              f"written. Re-running the canary is a no-op by design.")
+    else:
+        print(f"\nCOMMITTED {len(write_set['silver_rows']):,} silver rows for "
+              f"{len(write_set['queue_events']):,} artifacts as {batch_name}, "
+              f"one transaction, receipt included. The rows are in staging and "
+              f"will be deleted once the flushers carry them to the lake -- run "
+              f"`canary-flush-verify --run-id {run_id}` after the next flush.")
+    print()
+    return 0
+
+
+def _read_canary_commit_report(bucket: str, run_id: str,
+                               canary_root: str = CANARY_PREFIX
+                               ) -> Optional[dict[str, Any]]:
+    from shared.minio import read_json
+
+    return read_json(f"s3://{bucket}/{_canary_commit_key(run_id, canary_root)}")
+
+
+def _print_canary_flush_report(report: dict[str, Any], *, apply: bool) -> None:
+    print()
+    print("Plan 145 Stage 5 slice 3 Phase B -- the flush round trip")
+    print("=" * 70)
+    print(f"run_id               {report['run_id']}")
+    print(f"batch name           {report['batch_name']}")
+    print(f"committed at         {report['committed_at']}")
+    scope = ("every object in the partition" if report["scan_all"]
+             else "modified at or after " + report["since"])
+    print(f"scanned objects      {scope}")
+    for table, result in report["tables"].items():
+        print()
+        print(f"  {table}")
+        print(f"    expected rows    {result['expected_rows']:>10,}")
+        print(f"    found rows       {result['found_rows']:>10,}")
+        print(f"    missing keys     {result['missing_keys']:>10,}")
+        print(f"    lake objects     {result['objects_scanned']:>10,} scanned, "
+              f"{len(result['lake_keys'])} carrying canary rows")
+        for key in result["lake_keys"]:
+            print(f"      {key}")
+        for example in result["missing_examples"]:
+            print(f"      MISSING {example}")
+        for bad in result["unreadable_objects"]:
+            print(f"      UNREADABLE {bad['key']}: {bad['error']}")
+    print(f"\nresult               {'PASS' if report['passed'] else 'FAIL'}")
+    if not report["passed"]:
+        print("FAIL: the canary's rows are not all in the lake. Either the "
+              "flushers have not run since the commit, or the round trip is "
+              "broken -- staging is deleted on flush, so this is the only "
+              "check that the rows survived it.")
+    if apply:
+        print(f"report               {report['report_key']}")
+    print()
+
+
+def run_canary_flush_verify(args: argparse.Namespace) -> int:
+    from shared.minio import BUCKET as DEFAULT_BUCKET
+    from shared.minio import write_bytes
+
+    bucket = args.bucket or DEFAULT_BUCKET
+    client = _s3_client()
+    apply = bool(args.apply)
+    roots = _stage5_roots(False)
+
+    run_id = args.run_id or _discover_compare_run(client, bucket, roots)
+    batch_name = canary_batch_name(run_id)
+
+    commit_report = _read_canary_commit_report(bucket, run_id)
+    if commit_report is None and not args.since:
+        raise ReconcileError(
+            f"no canary commit report at "
+            f"s3://{bucket}/{_canary_commit_key(run_id)}; the flush round trip "
+            f"is a claim about rows a commit put in staging, so run "
+            f"`canary-commit --apply --run-id {run_id}` first (or pass --since "
+            f"<iso8601> to verify a commit whose report was lost)"
+        )
+    committed_at = _as_utc_datetime(args.since) if args.since else None
+    if committed_at is None:
+        committed_at = _as_utc_datetime((commit_report or {}).get("committed_at"))
+    if committed_at is None:
+        raise ReconcileError(
+            "the canary commit report carries no committed_at; pass --since "
+            "<iso8601> to bound the object scan"
+        )
+    # The flusher writes new part-*.parquet objects, so anything written before
+    # the commit cannot hold the canary. The skew allowance covers clock drift
+    # between this host and MinIO; --scan-all drops the bound entirely, which
+    # is what a run after compaction needs.
+    since = committed_at - timedelta(seconds=args.clock_skew_seconds)
+
+    # Rebuilt from the manifest and the shards, not copied out of the commit
+    # report: a verification that trusted the writer's own record of what it
+    # wrote would pass on a writer that recorded the wrong thing.
+    write_set = build_canary_write_set(
+        client, bucket, run_id, roots=roots, batch_name=batch_name,
+    )
+    expectations = _canary_expectations(write_set, committed_at)
+
+    tables: dict[str, Any] = {}
+    passed = True
+    for table, spec in expectations.items():
+        wanted_ids = {k[0] for k in spec["keys"]}
+        found: Counter[tuple] = Counter()
+        lake_keys: list[str] = []
+        unreadable: list[dict[str, Any]] = []
+        scanned = 0
+        for prefix in spec["lake_prefixes"]:
+            for entry in _list_prefix(client, bucket, prefix):
+                key = entry["Key"]
+                if not key.endswith(".parquet"):
+                    continue
+                modified = entry.get("LastModified")
+                if not args.scan_all and modified is not None:
+                    if _as_utc_datetime(modified) < since:
+                        continue
+                scanned += 1
+                partition = _hive_partition_values(key)
+                hits = 0
+                try:
+                    rows = _read_parquet_rows(
+                        client, bucket, key, columns=spec["columns"],
+                    )
+                except Exception as exc:
+                    # Recorded, not raised, and never silently skipped: an
+                    # object in the partition this cannot read might be the one
+                    # holding the canary, so it is surfaced next to whatever
+                    # keys come up missing rather than crashing the whole check.
+                    unreadable.append({"key": key, "error": str(exc)})
+                    continue
+                for row in rows:
+                    if row.get("artifact_id") not in wanted_ids:
+                        continue
+                    try:
+                        row_key = spec["key_of"]({**partition, **row})
+                    except (TypeError, ValueError, KeyError):
+                        continue
+                    if row_key in spec["keys"]:
+                        found[row_key] += 1
+                        hits += 1
+                if hits:
+                    lake_keys.append(key)
+        # A flush interrupted between the Parquet write and the DELETE is
+        # re-run and writes the rows again, so the flusher's own docstring
+        # calls duplicates acceptable for an append-only log. Under-delivery is
+        # the failure; over-delivery is recorded and not one.
+        missing = sorted(
+            (k for k, n in spec["keys"].items() if found[k] < n), key=str,
+        )
+        duplicated = sum(
+            max(0, found[k] - n) for k, n in spec["keys"].items()
+        )
+        ok = not missing
+        passed = passed and ok
+        tables[table] = {
+            "expected_rows": int(sum(spec["keys"].values())),
+            "found_rows": int(sum(min(found[k], n) for k, n in spec["keys"].items())),
+            "duplicate_rows": int(duplicated),
+            "missing_keys": len(missing),
+            "missing_examples": [str(k) for k in missing[:5]],
+            "lake_prefixes": spec["lake_prefixes"],
+            "lake_keys": sorted(lake_keys),
+            "objects_scanned": scanned,
+            "unreadable_objects": unreadable,
+            "key_columns": spec["key_columns"],
+            "expectation_digest": _expectation_digest(list(spec["keys"])),
+            "passed": ok,
+        }
+
+    report_key = _canary_flush_key(run_id)
+    report = {
+        "plan": 145, "stage": 5, "slice": 3, "phase": "B",
+        "check": "canary_flush_round_trip", "mode": "canary-flush-verify",
+        "run_id": run_id, "batch_name": batch_name,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "committed_at": committed_at.isoformat(),
+        "since": since.isoformat(),
+        "scan_all": bool(args.scan_all),
+        "manifest_sha256": write_set["manifest_sha256"],
+        "tables": tables,
+        "passed": passed,
+        "report_key": report_key,
+    }
+    if apply:
+        write_bytes(
+            report_key,
+            (json.dumps(report, indent=2, sort_keys=True, default=str)
+             + "\n").encode(),
+            content_type="application/json",
+        )
+    _print_canary_flush_report(report, apply=apply)
+    return 0 if passed else 1
 
 
 # --------------------------------------------------------------------------
@@ -6145,6 +6842,62 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
                      help="Deterministic selection seed.")
     can.add_argument("--log-level", default="INFO", help="DEBUG | INFO | WARNING")
     can.set_defaults(func=run_canary_sample)
+
+    cmt = sub.add_parser(
+        "canary-commit",
+        help="Stage 5 slice 3 (Phase B): the write canary as a REAL COMMIT. "
+             "Writes exactly the objects in Phase A's frozen canary manifest "
+             "-- silver rows, historical price events, recovered queue events "
+             "and one receipt -- in one transaction, through slice 2's own "
+             "write_import_batch and the real assignment shards. Never "
+             "inserts into ops.artifacts_queue and mutates no live table.",
+    )
+    cmt.add_argument("--apply", action="store_true",
+                     help="Actually commit. Without it the run builds and "
+                          "validates the whole write set from the manifest, "
+                          "prints the blast radius and issues no statement.")
+    cmt.add_argument("--bucket", default=None, help="Override MINIO_BUCKET.")
+    cmt.add_argument("--run-id", default=None,
+                     help="The compare run whose canary manifest to commit.")
+    cmt.add_argument("--max-rows", type=int, default=CANARY_ROW_BUDGET,
+                     help=f"Hard ceiling on the silver rows this may write "
+                          f"(default {CANARY_ROW_BUDGET}). There is deliberately "
+                          f"no --maintainer-approval on this mode: the canary "
+                          f"*is* the budget, so a manifest that has outgrown it "
+                          f"is a sampler problem, not an approval one.")
+    cmt.add_argument("--log-level", default="INFO", help="DEBUG | INFO | WARNING")
+    cmt.set_defaults(func=run_canary_commit)
+
+    cfv = sub.add_parser(
+        "canary-flush-verify",
+        help="Stage 5 slice 3 (Phase B): the flush round trip. The three "
+             "staging tables are asynchronously flushed and then DELETED, so "
+             "a canary that stopped at Postgres has not proven its rows "
+             "survive. Rebuilds the expected write set from the manifest and "
+             "requires every row, by key, in silver_normalized/observations/ "
+             "and ops_normalized/. Reads only; exits non-zero if any row is "
+             "absent.",
+    )
+    cfv.add_argument("--apply", action="store_true",
+                     help="Write the flush report to the recovery prefix. "
+                          "Without it the result is printed only.")
+    cfv.add_argument("--bucket", default=None, help="Override MINIO_BUCKET.")
+    cfv.add_argument("--run-id", default=None,
+                     help="The compare run whose canary to verify.")
+    cfv.add_argument("--since", default=None,
+                     help="ISO 8601 commit time, bounding which lake objects "
+                          "are read. Default: committed_at from the canary "
+                          "commit report.")
+    cfv.add_argument("--clock-skew-seconds", type=float, default=300.0,
+                     help="Slack subtracted from --since when selecting "
+                          "candidate objects by LastModified (default 300).")
+    cfv.add_argument("--scan-all", action="store_true",
+                     help="Read every object in the target partitions, not "
+                          "only those modified since the commit. Needed after "
+                          "a compaction has folded the flushed parts into the "
+                          "month's compacted object; costs a full partition read.")
+    cfv.add_argument("--log-level", default="INFO", help="DEBUG | INFO | WARNING")
+    cfv.set_defaults(func=run_canary_flush_verify)
 
     return parser.parse_args(argv)
 
