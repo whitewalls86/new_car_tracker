@@ -1400,6 +1400,128 @@ The manifest at
 `recovery/plan145/canary/cmp-6c7c90d807bbdf13-canary_sample.parquet` is
 **Phase B's input**.
 
+### Evidence — slice 3 Phase B and the full apply, 2026-08-29
+
+Phase B built, the window run, the canary committed and verified through to the
+lake, and the whole `to_import` population applied — all on 2026-08-29 between
+14:40 and 15:30 UTC. Deployed at `9ed0f45`.
+
+#### The manifest migration
+
+The frozen Phase A manifest predated `write_set_digest`, which `canary-commit`
+requires. It was **migrated, not re-sampled**: re-running `canary-sample`
+reselects, and determinism reproduces a selection only while every input is
+unchanged — the assumption the digest exists to distrust. `canary-remanifest`
+took the frozen object set as given and wrote a new object beside it.
+
+```
+object set digest  frozen   0cf77c1a31fb2d0149c12ac9da96b7d9726a3494f8929a3d42b913efc21349f9
+                   migrated 0cf77c1a31fb2d0149c12ac9da96b7d9726a3494f8929a3d42b913efc21349f9
+                   identical: True
+carried forward    artifact_id, id_source, input_kind, batch_name,
+                   page_listing_id, silver_rows, detail_rows
+added              page_fetched_at, write_set_digest, vin_snapshot_sha256
+```
+
+The frozen `…-canary_sample.parquet` (`75c547dd…`) was neither deleted nor
+overwritten; `…-canary_sample_digested.parquet` hashes to `d2b9d4d5…`, and every
+consumer re-proves the promotion against the original before building a write
+set.
+
+#### The V040 live-state proof — two runs
+
+**The window was an ordinary deploy-intent drain, not a container stop.**
+`POST /deploy/start` with targets `scraper, processing, ops` holds every mutating
+DAG at its `deploy_intent_sensor`; `number_running` — `ops.artifacts_queue` in
+pending/processing plus `ops.detail_scrape_claims` in running — was drained to 0.
+No container was stopped: those three services are reactive `uvicorn` apps with
+no scheduler or background loop, and `shared/deploy_intent.py` has only two
+consumers, neither of them a writer of the protected tables.
+
+| window | txid | result | outcome |
+|---|---|---|---|
+| `p145-canary-2026-08-29` | 49539962 | **PASS** | rolled back deliberately, minutes later |
+| `p145-canary-2026-08-29-b` | 49540717 | **PASS** | kept — committed 14:51:23.182919 UTC |
+
+Both runs: `single transaction True`, and all six relations byte-identical
+across the canary — `ops.price_observations` 50,920, `ops.vin_to_listing`
+200,482, `ops.blocked_cooldown` 146, `ops.detail_scrape_claims` 1,869, and the
+two V040 views `ops.ops_vehicle_staleness` 50,920 and
+`ops.ops_detail_scrape_queue` 1,162.
+
+**The rollback is evidence, not an accident.** It exercised the path the run
+sheet documents — one transaction, scoped by `fetched_at < '2026-05-01'` because
+13,253 of the run's artifacts carry preserved historical `artifact_id`s that
+could otherwise match a live staging row — and deleting the receipt is what made
+the canary re-runnable. It also proved the commit report repairs itself: the
+second run rewrote `committed_at` from the receipt (`14:51:23.182919`), not from
+the stale first-run value, which is what `canary-flush-verify` uses as its scan
+lower bound.
+
+#### The canary and its flush round trip
+
+234 artifacts, **505 silver rows** (140 detail / 365 carousel), 140 price
+events, 234 queue events, one receipt — one transaction. `canary-flush-verify`
+then found every row **by key**, with staging already emptied by the flushers:
+
+| table | rows | lake object |
+|---|---:|---|
+| `staging.silver_observations` | 505 | `silver_normalized/observations/source={carousel,detail}/obs_year=2026/obs_month=4/part-b9b51291-…-0.parquet` |
+| `staging.price_observation_events` | 140 | `ops_normalized/price_observation_events/year=2026/month=4/part-1795523b-…-0.parquet` |
+| `staging.artifacts_queue_events` | 234 | `ops_normalized/artifacts_queue_events/year=2026/month=8/part-2e8a9bde-…-0.parquet` |
+
+0 missing, 0 duplicates. The partitions confirm two design decisions: a silver
+row's `source` lives in the hive path and not in the file, and the queue events
+land in the month the canary **ran** (August), because
+`build_recovery_queue_event` leaves `event_at` to `now()` by design while the
+price events carry April's capture time.
+
+#### The canary exclusion, and the full apply
+
+Receipts are keyed by batch name, so the canary's `<run>-canary` receipt could
+not stop a full `apply` from rewriting those same 234 artifacts out of
+`b00001`–`b00069`. `apply` now reads the canary's commit report, re-reads the
+manifest through the digest that report recorded, and drops those object keys —
+whole artifacts, computed connection-free so the exclusion shows in the dry run
+and in the budget the gate measures, with the receipt confirmed afterwards on
+the write connection. A report without a receipt, or a receipt without a report,
+both stop.
+
+Applied in 7 rounds of 10 batches, flushing between rounds — not for
+correctness, but because `flush_silver_observations` fetches every pending row
+into memory in one pass and the archiver container has no memory limit. Each
+flush stayed near 100k rows; the VM held flat at 15 GB available throughout, so
+the concern proved unfounded at this scale. Batches averaged **4.2 s**.
+
+| | artifacts | silver | price | queue |
+|---|---:|---:|---:|---:|
+| 69 batches | **341,669** | **700,870** | | |
+| canary | 234 | 505 | | |
+| **70 receipts, total** | **341,903** | **701,375** | **200,599** | **341,903** |
+
+**That arithmetic is the proof, in both directions.** The batches wrote exactly
+234 artifacts and 505 rows short of the assign census, so the exclusion caught
+every canary artifact — no duplicate. And the two rows sum to precisely the
+census, so it caught nothing else — no gap. `staging.silver_observations` and
+`staging.artifacts_queue_events WHERE status='recovered'` both drained to 0, and
+the flusher deletes only after a successful Parquet write.
+
+#### What this closes, and what it does not
+
+Closed: the write canary as a real commit; the flush round trip by key; the V040
+before/after equality in a named window; the duplicate-write interaction; and
+the full apply of all 701,375 `to_import` rows.
+
+Not closed: **Stage 6** — repack, prune, and the deletion of the 1,172 legacy
+Parquet objects, which is the plan's actual goal and remains unbuilt. Not one
+byte has been deleted. Stage 5b's compression trial is also still outstanding.
+
+The full-population lake verification was not run independently: `canary-flush-verify`
+proves the round trip by key for the canary's 234 artifacts only, and the
+evidence for the other 341,669 is the receipts plus the flushers' own
+delete-on-success contract. A by-key check at full population would need a
+mode that does not exist.
+
 ### Gate
 
 - Every parsed observation is classified exactly once, into one of the **four**
