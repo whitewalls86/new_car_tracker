@@ -43,9 +43,21 @@ The same orthogonality holds for `assign` and `apply`; the full matrix is below.
 | `compare` | 5.1 | parsed + silver + events | `compared/`, `inventory/`, `vin_snapshot/` | one read-only `SELECT` |
 | `assign` | 5.2 | `compared/<run>/to_import` | `assigned/` | `nextval` only |
 | `apply` | 5.2 | `assigned/` | **three staging tables + receipt** | yes, writes |
+| `pack-trial` | 6 | the lake + ~100k `html/…` objects | 1 report; **no pack, ever** | no |
+| `repack-verify` | 6 | manifests + sidecars + the pack read path | 1 report | no |
+| `retire-packs` | 6 | the frozen 3b set + a verify report | **deletes 64 pack/sidecar objects**, writes receipts | no |
+| `delete-legacy` | 6 | census + manifests + sidecars | **deletes 1,172 Parquet objects**, writes receipts | no |
 
-`dedupe --apply` and `apply --apply` are the only two that are hard to undo.
-`apply --probe --apply` touches Postgres but rolls back, so it undoes itself.
+`dedupe --apply` and `apply --apply` are the only two that are hard to undo
+before Stage 6. In Stage 6, `retire-packs --apply` and `delete-legacy --apply`
+join them, and `delete-legacy` is the only one in the plan with no copy left
+anywhere afterwards. `apply --probe --apply` touches Postgres but rolls back, so
+it undoes itself.
+
+The Stage 5 canary modes (`control`, `canary-sample`, `canary-commit`,
+`canary-remanifest`, `canary-flush-verify`) postdate this page's generation and
+are documented in the [Stage 5 run sheet](../runbooks/runbook_plan_145_stage_5.md)
+rather than here.
 
 ### `assign` / `apply` × `--probe` × `--apply`
 
@@ -227,10 +239,53 @@ Plan 145 allows nothing beyond the canary until slice 3 closes the live-state
 proof. `--maintainer-approval` is a record of a human decision, not a way past
 one.
 
+### `pack-trial` (Stage 6) — the ordering trial
+| flag | default | meaning |
+|---|---|---|
+| `--apply` | off | actually read the sample and build the trial packs. **Even with it, no pack object is ever stored** — `pack.size` is the whole measurement |
+| `--sample` | `both` | which order to draw the contiguous sample in. `both` draws one per arm and requires the winner to win on both, which is what removes the bias a single sample carries; `current` is the plan's literal single-sample reading |
+| `--sample-size` | 50,000 | members per sample |
+| `--include-null-identity` | off | keep members with no subject listing. They cannot inform a question about ordering by subject listing and collapse into one false cluster |
+| `--dict-id` / `--allow-no-dictionary` | `$PACK_BRONZE_DICT_ID` | as the packer resolves them. An undictionaried trial would not measure production's packing |
+| `--frame-bytes` / `--max-pack-bytes` | the packer's own | override only to answer a different question |
+
+### `repack-verify` (Stage 6) — read-only, and the gate for everything below it
+| flag | default | meaning |
+|---|---|---|
+| `--list-population` | off | enumerate the April prefix instead of deriving the population from the Stage 2/3a/3b manifests. ~1,000 LIST requests and about half an hour; worth it once |
+| `--verify-sample` | 2000 | members read back through `read_packed_html`, stratified over the replacement packs |
+| `--min-identity-change` | 0.50 | refuse below this share of replaced members whose `listing_id` changed. April's old sidecar was correct for 31.4% of members, so near-total agreement means the run rewrote the scrambled column |
+| `--seed` | 145 | deterministic sampling |
+
+### `retire-packs` (Stage 6) — deletes the superseded packs
+| flag | default | meaning |
+|---|---|---|
+| `--apply` | off | actually delete the 64 keys |
+| `--verify-run-id` | the one report | which `repack-verify` run authorises this |
+
+It refuses unless that report passed **and** both the old pack set and the
+replacement sidecar set still match what it verified. A mismatch means the store
+moved under the proof: re-verify, do not override.
+
+### `delete-legacy` (Stage 6) — the end of the plan
+| flag | default | meaning |
+|---|---|---|
+| `--apply` | off | actually delete the 1,172 |
+| `--maintainer-approval NAME` | none | **required by `--apply`**; recorded in the manifest and every receipt |
+| `--census-dir` | none | the Stage 1 output directory. Its `object_census.csv` is the frozen key set, fingerprint-checked against `stage1_report.json` |
+| `--census-from-manifests` | off | derive the key set from the 1,172 Stage 2 shards in MinIO when that directory is gone. Weaker attestation, not an absent one: the shards must still name every live key |
+| `--allow-drift` | off | proceed against a legacy population that moved from its frozen census |
+| `--allow-partial` | off | delete the covered objects even though some were refused. **Each refusal is a body that exists nowhere else** |
+| `--verify-run-id` | the one report | which `repack-verify` run authorises this |
+
+One of `--census-dir` or `--census-from-manifests` is required: there is no
+mode in which the deletion set is invented at run time.
+
 ## Flags that are gates, and must not be routine
 
 `--no-verify`, `--allow-drift`, `--allow-rate-drift`, `--allow-silver-shape-drift`,
-`--allow-unclassifiable-drift`, `--force`, `--maintainer-approval`.
+`--allow-unclassifiable-drift`, `--force`, `--maintainer-approval`,
+`--repack-bucket`, `--allow-partial`, `--include-null-identity`.
 
 Each exists so a human can overrule a specific measured refusal after looking at
 it. Reaching for one to make a run finish is how a plan built on measurement
@@ -243,7 +298,12 @@ did not mean to touch.
 | image | has | use for |
 |---|---|---|
 | `cartracker-archiver` (`scraper_user`) | duckdb, pyarrow, boto3, psycopg2 | `census`, `materialize`, `dedupe`, `unpack`, `compare` |
-| `cartracker-processing` / `april-processor` (`cartracker`) | bs4, lxml, pyarrow, boto3 — **no duckdb** | `parse`, `assign`, `apply` |
+| `cartracker-processing` / `april-processor` (`cartracker`) | bs4, lxml, pyarrow, boto3 — **no duckdb** | `parse`, `assign`, `apply`, `repack-verify`, `retire-packs`, `delete-legacy` |
+
+`pack-trial` needs duckdb — it reads the packer's own member metadata query —
+so it runs in `cartracker-archiver` with the rest of the lake-reading modes.
+The three other Stage 6 modes touch no lake and no Postgres and will run in
+either image.
 
 `assign`/`apply` run as `cartracker` because `scraper_user` has no INSERT on
 `staging.price_observation_events`. That image has no duckdb, and the import is
