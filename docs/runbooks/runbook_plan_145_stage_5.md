@@ -598,17 +598,47 @@ docker exec cartracker-postgres psql -U cartracker -tAc \
 
 #### (d) Run it
 
+**Run the verifier inside `april-processor`, not on the host.** The host has
+Python 3.10 with **no `psycopg2` and no venv**, so
+`python3 scripts/verify_recovery_live_state.py` cannot import `shared.db` at
+all — and there is no `python` on the host either, only `python3`. Inside the
+container the dependency is already there, and `--canary-cmd` becomes a plain
+in-container invocation rather than a nested `docker compose run`.
+
 ```bash
-python scripts/verify_recovery_live_state.py --window p145-canary-2026-08-29 \
-  --canary-cmd "docker compose run --rm april-processor python -m \
-    scripts.reconcile_april_detail canary-commit --apply \
-    --run-id cmp-6c7c90d807bbdf13 \
-    --expect-manifest-sha256 <from step 2> --expect-rows 505" \
-  --report /tmp/p145-v040-p145-canary-2026-08-29.json
+cd /opt/cartracker
+docker compose run --rm -v /home/ubuntu:/out april-processor \
+  python -m scripts.verify_recovery_live_state \
+    --window p145-canary-2026-08-29 \
+    --canary-cmd "python -m scripts.reconcile_april_detail canary-commit --apply \
+      --run-id cmp-6c7c90d807bbdf13 \
+      --expect-manifest-sha256 d2b9d4d58edd069b2ecc907f5b56c7dd02f9f144866aae3da05c7757d31ff010 \
+      --expect-rows 505" \
+    --report /out/p145-v040-p145-canary-2026-08-29.json \
+  2>&1 | tee /home/ubuntu/plan145-v040.log
 ```
 
-**Blast radius.** One transaction against production Postgres: **505** rows
-into `staging.silver_observations`, **140** into
+Three things that will bite if you paste around them:
+
+- **`--expect-manifest-sha256` is a value, not a placeholder.** The digest above
+  is this run's, verified against the stored object; step 2's dry run prints the
+  same pair on its last two lines. A wrong value stops the run — that is the
+  flag's whole job.
+- **`-v /home/ubuntu:/out` and `--report /out/…`.** `compose run --rm` is
+  ephemeral, so a report written to the container's `/tmp` is destroyed with it.
+- The canary still runs on **its own connection**: `--canary-cmd` is a
+  subprocess, which is a separate process and therefore a separate connection,
+  even though both now run in the same container.
+
+Sanity-check the invocation before the window by omitting `--window` — the
+script refuses with exit 2 and opens no connection:
+
+```bash
+docker compose run --rm april-processor python -m scripts.verify_recovery_live_state
+```
+
+**Blast radius** (with `--window`). One transaction against production Postgres:
+**505** rows into `staging.silver_observations`, **140** into
 `staging.price_observation_events`, **234** into
 `staging.artifacts_queue_events`, **1** receipt into
 `public.plan145_recovery_batch_receipts`, plus one report object. **Nothing** is
