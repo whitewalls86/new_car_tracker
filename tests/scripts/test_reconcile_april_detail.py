@@ -2063,8 +2063,13 @@ class _FakeCursor:
 class _FakeWriteConn:
     """A connection that answers nextval and receipt reads and counts commits."""
 
+    #: Sentinel so a test can pass receipt_committed_at=None deliberately --
+    #: the case where the database returns no durable commit time at all.
+    _DEFAULT_COMMITTED_AT = object()
+
     def __init__(self, *, next_id=9_000_000, receipts=None, fail_on=None,
-                 receipt_committed_at=None, receipt_counts=None):
+                 receipt_committed_at=_DEFAULT_COMMITTED_AT,
+                 receipt_counts=None):
         self.sql = []
         self.result = []
         self.commits = 0
@@ -2076,8 +2081,10 @@ class _FakeWriteConn:
         # V047 defaults committed_at to now() inside the writing transaction;
         # the writer reads it back with RETURNING rather than stamping its own
         # clock, so the fake has to answer it.
-        self.receipt_committed_at = receipt_committed_at or _dt(
-            2026, 8, 29, 7, 0, 0, tzinfo=_tz.utc)
+        self.receipt_committed_at = (
+            _dt(2026, 8, 29, 7, 0, 0, tzinfo=_tz.utc)
+            if receipt_committed_at is self._DEFAULT_COMMITTED_AT
+            else receipt_committed_at)
         self.receipt_counts = receipt_counts or (0, 0, 0, 0)
         self.executed_values = []
         # An ordered log across cur.execute, execute_values, commit and
@@ -3608,6 +3615,12 @@ def _canary_store(tmp_path, *, drop_assignment_for=None, orphan_assignment=False
              "assigned_at": _WHEN})
     store[f"recovery/plan145/assigned/{_C3RUN}-b00001.parquet"] = \
         _write_assigned_shard(tmp_path / "asg.parquet", assigned)
+    # The sampler builds the write set it freezes, so it reads the frozen VIN
+    # snapshot: build_recovery_silver_row fills a carousel row's NULL vin from
+    # it, and that value is part of what the manifest is a contract over.
+    store[f"recovery/plan145/vin_snapshot/{_C3RUN}.parquet"] = _write_vin_shard(
+        tmp_path / "canary-vin.parquet", [(lac, "VIN-SNAPSHOT-CAROUSEL")],
+    )
     return store
 
 
@@ -3746,6 +3759,8 @@ def _canary_store_wide(tmp_path, *, n_common=38):
         _write_compared_shard(tmp_path / "ti-wide.parquet", ti_rows)
     store[f"recovery/plan145/assigned/{_C3RUN}-b00001.parquet"] = \
         _write_assigned_shard(tmp_path / "asg-wide.parquet", asg_rows)
+    store[f"recovery/plan145/vin_snapshot/{_C3RUN}.parquet"] = _write_vin_shard(
+        tmp_path / "vin-wide.parquet", [])
     return store
 
 
@@ -3789,7 +3804,9 @@ def test_canary_sample_probe_reads_and_writes_only_the_probe_prefix(
     store = _canary_store(tmp_path)
     store = {
         k.replace("recovery/plan145/compared/", "recovery/plan145/compared_probe/")
-         .replace("recovery/plan145/assigned/", "recovery/plan145/assigned_probe/"): v
+         .replace("recovery/plan145/assigned/", "recovery/plan145/assigned_probe/")
+         .replace("recovery/plan145/vin_snapshot/",
+                  "recovery/plan145/vin_snapshot_probe/"): v
         for k, v in store.items()
     }
     _patch_slice3_io(monkeypatch, store)
@@ -4196,10 +4213,6 @@ def _canary_commit_store(tmp_path):
     store = _canary_store(tmp_path)
     store[f"recovery/plan145/compared/{_C3RUN}/compare_report.json"] = json.dumps(
         {"blocked_excluded": {"rows": 0, "objects": 0}}).encode()
-    store[f"recovery/plan145/vin_snapshot/{_C3RUN}.parquet"] = _write_vin_shard(
-        tmp_path / "canary-vin.parquet",
-        [("aaaaaaaa-0000-0000-0000-aaaaaaaaaaaa", "VIN-SNAPSHOT-CAROUSEL")],
-    )
     return store
 
 
@@ -4684,7 +4697,7 @@ def test_a_carousel_row_flipped_to_detail_is_caught_though_the_count_holds(
     assert conn.commits == 0
 
 
-def test_a_changed_business_value_is_caught_by_the_row_digest_alone(
+def test_a_changed_business_value_is_caught_by_the_write_set_digest_alone(
         tmp_path, monkeypatch):
     """Same object, same count, same detail/carousel split, same strata -- only
     the price moved. Nothing but the row digest sees this."""
@@ -4708,23 +4721,69 @@ def test_a_changed_business_value_is_caught_by_the_row_digest_alone(
     _record_execute_values(monkeypatch, conn)
     _patch_slice2_io(monkeypatch, store, conn)
     with pytest.raises(ReconcileError,
-                       match="no longer match the frozen canary manifest") as exc:
+                       match="rebuild to a different write set") as exc:
         mod.run_canary_commit(mod.parse_args(
             ["canary-commit", "--run-id", _C3RUN, "--apply"] + _pin(store)))
     message = str(exc.value)
-    assert "row_digest" in message
+    # the structural checks all passed -- only the digest saw this
     assert "detail_rows" not in message and "strata" not in message
     assert conn.executed_values == []
 
 
-def test_the_row_digest_ignores_shard_row_order(tmp_path, monkeypatch):
+def test_the_write_set_digest_ignores_shard_row_order():
     """A shard's row order is not part of the contract; re-reading one must not
     perturb the digest, or every commit would be a false alarm."""
     import scripts.reconcile_april_detail as mod
 
+    assignment = {"object_key": _OA, "artifact_id": 9000001,
+                  "listing_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                  "fetched_at": _WHEN}
     rows = [_ti_row("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", _OA, source="detail"),
             _ti_row("aaaaaaaa-0000-0000-0000-aaaaaaaaaaaa", _OA, source="carousel")]
-    assert mod.canary_row_digest(rows) == mod.canary_row_digest(list(reversed(rows)))
+    forward = mod.canary_write_set_digest(
+        *mod.build_canary_artifact_write_set(rows, assignment, {}, "b", "bronze"))
+    reverse = mod.canary_write_set_digest(
+        *mod.build_canary_artifact_write_set(
+            list(reversed(rows)), assignment, {}, "b", "bronze"))
+    assert forward == reverse
+
+
+def test_a_vin_the_snapshot_fills_changes_the_write_set_digest():
+    """The hole a raw-row digest leaves open: build_recovery_silver_row fills a
+    missing carousel vin from the frozen snapshot *after* the to_import row, so
+    a snapshot that moves changes what gets committed."""
+    import scripts.reconcile_april_detail as mod
+
+    hint = "aaaaaaaa-0000-0000-0000-aaaaaaaaaaaa"
+    assignment = {"object_key": _OA, "artifact_id": 9000001,
+                  "listing_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                  "fetched_at": _WHEN}
+    rows = [_ti_row(hint, _OA, source="carousel")]        # vin is NULL
+    one = mod.canary_write_set_digest(
+        *mod.build_canary_artifact_write_set(
+            rows, assignment, {hint: "VIN-ONE"}, "b", "bronze"))
+    two = mod.canary_write_set_digest(
+        *mod.build_canary_artifact_write_set(
+            rows, assignment, {hint: "VIN-TWO"}, "b", "bronze"))
+    assert one != two
+
+
+def test_the_assignment_capture_time_changes_the_write_set_digest():
+    """And the other one: the queue event's historical fetched_at comes from
+    the assignment, which no to_import row carries."""
+    import scripts.reconcile_april_detail as mod
+
+    rows = [_ti_row("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", _OA, source="detail")]
+    base = {"object_key": _OA, "artifact_id": 9000001,
+            "listing_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}
+    one = mod.canary_write_set_digest(
+        *mod.build_canary_artifact_write_set(
+            rows, {**base, "fetched_at": _WHEN}, {}, "b", "bronze"))
+    two = mod.canary_write_set_digest(
+        *mod.build_canary_artifact_write_set(
+            rows, {**base, "fetched_at": _dt(2026, 4, 16, 12, 0, 0, tzinfo=_tz.utc)},
+            {}, "b", "bronze"))
+    assert one != two
 
 
 @pytest.mark.parametrize("field,value", [
@@ -4784,9 +4843,9 @@ def test_a_manifest_naming_an_assignment_batch_that_does_not_exist_stops(
     assert conn.sql == []
 
 
-def test_a_manifest_with_no_row_digest_is_refused_not_exempted(tmp_path,
+def test_a_manifest_with_no_write_set_digest_is_refused_not_exempted(tmp_path,
                                                                monkeypatch):
-    """Fail closed. A pre-row_digest manifest freezes only counts, which is
+    """Fail closed. A pre-write_set_digest manifest freezes only counts, which is
     exactly the contract the column exists to replace."""
     import scripts.reconcile_april_detail as mod
 
@@ -4794,21 +4853,22 @@ def test_a_manifest_with_no_row_digest_is_refused_not_exempted(tmp_path,
     key = f"recovery/plan145/canary/{_C3RUN}-canary_sample.parquet"
     rows = _read_manifest_rows(store[key])
     for row in rows:
-        row["row_digest"] = None
+        row["write_set_digest"] = None
     store[key] = _write_canary_manifest(tmp_path / "nodigest.parquet", rows)
 
     conn = _FakeWriteConn()
     _record_execute_values(monkeypatch, conn)
     _patch_slice2_io(monkeypatch, store, conn)
-    with pytest.raises(ReconcileError, match="carries no row_digest") as exc:
+    with pytest.raises(ReconcileError, match="carries no write_set_digest") as exc:
         mod.run_canary_commit(mod.parse_args(
             ["canary-commit", "--run-id", _C3RUN, "--apply"] + _pin(store)))
-    # and it names the remedy, which is deterministic and cheap
-    assert "canary-sample --apply" in str(exc.value)
+    # and it names the migration, not a re-sample: re-sampling reselects
+    assert "canary-remanifest --apply" in str(exc.value)
+    assert "canary-sample" not in str(exc.value)
     assert conn.sql == []
 
 
-def test_the_sampler_freezes_a_row_digest_for_every_selected_artifact(
+def test_the_sampler_freezes_a_write_set_digest_for_every_selected_artifact(
         tmp_path, monkeypatch):
     import scripts.reconcile_april_detail as mod
 
@@ -4817,9 +4877,206 @@ def test_the_sampler_freezes_a_row_digest_for_every_selected_artifact(
         store[f"recovery/plan145/canary/{_C3RUN}-canary_sample.parquet"])
     assert rows
     for row in rows:
-        assert len(row["row_digest"]) == 64
+        assert len(row["write_set_digest"]) == 64
     # distinct artifacts, distinct digests
-    assert len({r["row_digest"] for r in rows}) == len(rows)
+    assert len({r["write_set_digest"] for r in rows}) == len(rows)
+
+
+# -- R.1d: migrating a pre-digest manifest, without destroying it ----------
+#
+# Re-running canary-sample to pick up the new columns *reselects*. Determinism
+# reproduces the selection only while every input is unchanged, which is the
+# assumption the digest exists to distrust -- and the aggregates (234 artifacts,
+# 505 rows, 9 strata) cannot tell one 234-object set from another. The sampler
+# is create-if-absent, so that route also means deleting the only record of what
+# the V040 window's subject was.
+
+
+def _v1_manifest(tmp_path, store, *, drop=("write_set_digest",
+                                           "vin_snapshot_sha256",
+                                           "page_fetched_at")):
+    """Age the manifest back to what is on disk today: no digest columns."""
+    key = f"recovery/plan145/canary/{_C3RUN}-canary_sample.parquet"
+    rows = _read_manifest_rows(store[key])
+    for row in rows:
+        for name in drop:
+            row[name] = None
+    store[key] = _write_canary_manifest(tmp_path / "v1.parquet", rows)
+    return rows
+
+
+def test_the_migration_preserves_the_frozen_manifest_and_its_object_set(
+        tmp_path, monkeypatch, capsys):
+    import scripts.reconcile_april_detail as mod
+
+    store = _canary_ready(mod, tmp_path, monkeypatch)
+    source_key = f"recovery/plan145/canary/{_C3RUN}-canary_sample.parquet"
+    target_key = f"recovery/plan145/canary/{_C3RUN}-canary_sample_digested.parquet"
+    v1_rows = _v1_manifest(tmp_path, store)
+    v1_bytes = store[source_key]
+
+    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+    assert mod.run_canary_remanifest(mod.parse_args(
+        ["canary-remanifest", "--run-id", _C3RUN, "--apply"])) == 0
+
+    # the original is untouched, byte for byte
+    assert store[source_key] == v1_bytes
+    migrated = _read_manifest_rows(store[target_key])
+    # the object set is identical, and the run says so by digest
+    assert ([r["object_key"] for r in migrated]
+            == sorted(r["object_key"] for r in v1_rows))
+    out = capsys.readouterr().out
+    assert "identical: True" in out
+    assert "is NOT deleted and NOT overwritten" in out
+    report = json.loads(
+        store[f"recovery/plan145/canary/{_C3RUN}-canary_remanifest_report.json"])
+    assert report["object_set_digest"]["identical"] is True
+    assert report["source_preserved"] is True
+    assert report["artifacts"] == 4 and report["silver_rows"] == 5
+
+    # and the migrated manifest is what canary-commit now reads
+    for row in migrated:
+        assert len(row["write_set_digest"]) == 64
+        assert row["page_fetched_at"] is not None
+    conn = _FakeWriteConn()
+    _record_execute_values(monkeypatch, conn)
+    _patch_slice2_io(monkeypatch, store, conn)
+    digest = hashlib.sha256(store[target_key]).hexdigest()
+    assert mod.run_canary_commit(mod.parse_args(
+        ["canary-commit", "--run-id", _C3RUN, "--apply",
+         "--expect-manifest-sha256", digest, "--expect-rows", "5"])) == 0
+    assert conn.commits == 1
+
+
+def test_the_migration_refuses_when_an_input_moved_under_the_frozen_sample(
+        tmp_path, monkeypatch):
+    """The whole reason not to re-sample: if an input moved, a re-selection
+    would quietly pick a different set. The migration stops instead."""
+    import scripts.reconcile_april_detail as mod
+
+    store = _canary_ready(mod, tmp_path, monkeypatch)
+    _v1_manifest(tmp_path, store)
+    la = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    lac = "aaaaaaaa-0000-0000-0000-aaaaaaaaaaaa"
+    lb = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+    lc = "cccccccc-cccc-cccc-cccc-cccccccccccc"
+    ld = "dddddddd-0000-0000-0000-dddddddddddd"
+    _retarget_to_import(tmp_path, store, [
+        _ti_row(la, _OA, source="detail"),
+        _ti_row(lac, _OA, source="detail"),          # was carousel
+        _ti_row(lb, _OB, source="detail", listing_state="unlisted"),
+        _ti_row(lc, _OC, source="detail"),
+        _ti_row(ld, _OD, source="carousel"),
+    ], "moved.parquet")
+
+    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+    with pytest.raises(ReconcileError, match="no longer read the way the manifest"):
+        mod.run_canary_remanifest(mod.parse_args(
+            ["canary-remanifest", "--run-id", _C3RUN, "--apply"]))
+    assert (f"recovery/plan145/canary/{_C3RUN}-canary_sample_digested.parquet"
+            not in store)
+
+
+def test_the_migration_will_not_overwrite_an_existing_migrated_manifest(
+        tmp_path, monkeypatch):
+    import scripts.reconcile_april_detail as mod
+
+    store = _canary_ready(mod, tmp_path, monkeypatch)
+    _v1_manifest(tmp_path, store)
+    store[f"recovery/plan145/canary/{_C3RUN}-canary_sample_digested.parquet"] = b"x"
+    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+    with pytest.raises(ReconcileError, match="already exists"):
+        mod.run_canary_remanifest(mod.parse_args(
+            ["canary-remanifest", "--run-id", _C3RUN, "--apply"]))
+
+
+def test_the_migration_dry_run_writes_nothing(tmp_path, monkeypatch):
+    import scripts.reconcile_april_detail as mod
+
+    store = _canary_ready(mod, tmp_path, monkeypatch)
+    _v1_manifest(tmp_path, store)
+    before = set(store)
+    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+    assert mod.run_canary_remanifest(mod.parse_args(
+        ["canary-remanifest", "--run-id", _C3RUN])) == 0
+    assert set(store) == before
+
+
+def test_a_migrated_manifest_beside_the_original_is_the_one_that_is_read(
+        tmp_path, monkeypatch):
+    """Resolution is by existence, not by a flag: there is no way to commit
+    against the weaker manifest while a migrated one sits beside it."""
+    import scripts.reconcile_april_detail as mod
+
+    store = _canary_ready(mod, tmp_path, monkeypatch)
+    _v1_manifest(tmp_path, store)
+    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+    mod.run_canary_remanifest(mod.parse_args(
+        ["canary-remanifest", "--run-id", _C3RUN, "--apply"]))
+
+    target_key = f"recovery/plan145/canary/{_C3RUN}-canary_sample_digested.parquet"
+    # pinning the *original* digest now refuses -- the resolved manifest is the
+    # migrated one, and the pin is taken over its exact bytes
+    conn = _FakeWriteConn()
+    _record_execute_values(monkeypatch, conn)
+    _patch_slice2_io(monkeypatch, store, conn)
+    with pytest.raises(ReconcileError, match="not the one this run was approved"):
+        mod.run_canary_commit(mod.parse_args(
+            ["canary-commit", "--run-id", _C3RUN, "--apply"] + _pin(store)))
+    assert conn.executed_values == []
+    assert hashlib.sha256(store[target_key]).hexdigest() != hashlib.sha256(
+        store[f"recovery/plan145/canary/{_C3RUN}-canary_sample.parquet"]).hexdigest()
+
+
+# -- R.1e: the VIN snapshot is an input to the write set -------------------
+
+def test_a_vin_snapshot_that_moved_after_sampling_stops_the_commit(
+        tmp_path, monkeypatch):
+    """build_recovery_silver_row fills a missing carousel vin from the frozen
+    snapshot, so changing it changes a committed VIN -- while every count,
+    stratum and assignment check passes."""
+    import scripts.reconcile_april_detail as mod
+
+    store = _canary_ready(mod, tmp_path, monkeypatch)
+    store[f"recovery/plan145/vin_snapshot/{_C3RUN}.parquet"] = _write_vin_shard(
+        tmp_path / "vin-moved.parquet",
+        [("aaaaaaaa-0000-0000-0000-aaaaaaaaaaaa", "VIN-SOMETHING-ELSE")],
+    )
+
+    conn = _FakeWriteConn()
+    _record_execute_values(monkeypatch, conn)
+    _patch_slice2_io(monkeypatch, store, conn)
+    with pytest.raises(ReconcileError, match="VIN snapshot") as exc:
+        mod.run_canary_commit(mod.parse_args(
+            ["canary-commit", "--run-id", _C3RUN, "--apply"] + _pin(store)))
+    assert "carousel VINs this canary would commit" in str(exc.value)
+    assert conn.sql == []
+    assert conn.executed_values == []
+
+
+def test_an_assignment_capture_time_that_moved_stops_the_commit(tmp_path,
+                                                                monkeypatch):
+    """The queue event's historical fetched_at comes from the assignment, and
+    no to_import row carries it."""
+    import scripts.reconcile_april_detail as mod
+
+    store = _canary_ready(mod, tmp_path, monkeypatch)
+    assigned_key = f"recovery/plan145/assigned/{_C3RUN}-b00001.parquet"
+    rows = _read_assigned_rows(store[assigned_key])
+    for row in rows:
+        if row["object_key"] == _OB:
+            row["fetched_at"] = _dt(2026, 4, 16, 12, 0, 0, tzinfo=_tz.utc)
+    store[assigned_key] = _write_assigned_shard(tmp_path / "asg-moved.parquet", rows)
+
+    conn = _FakeWriteConn()
+    _record_execute_values(monkeypatch, conn)
+    _patch_slice2_io(monkeypatch, store, conn)
+    with pytest.raises(ReconcileError,
+                       match="disagree with the assignment shard") as exc:
+        mod.run_canary_commit(mod.parse_args(
+            ["canary-commit", "--run-id", _C3RUN, "--apply"] + _pin(store)))
+    assert "page_fetched_at" in str(exc.value)
+    assert conn.executed_values == []
 
 
 # -- R.1c: the commit time is the receipt's, never a wall clock ------------
@@ -4890,6 +5147,53 @@ def test_the_first_commit_records_the_receipts_time_not_the_processs(
         store[f"recovery/plan145/canary/{_C3RUN}-canary_commit.json"])
     assert report["committed_at"] == real_commit.isoformat()
     assert report["committed_at_source"] == "receipt"
+
+
+def test_no_receipt_time_is_a_refusal_not_a_wall_clock_fallback(tmp_path,
+                                                                 monkeypatch):
+    """Falling back to a prior report, or to now(), reintroduces exactly the
+    wrong LastModified bound and the wrong queue-event partition that reading
+    the receipt exists to prevent. V047 declares the column NOT NULL DEFAULT
+    now(), so a missing value is a receipt problem, not a timing one."""
+    import scripts.reconcile_april_detail as mod
+
+    store = _canary_ready(mod, tmp_path, monkeypatch)
+    commit_key = f"recovery/plan145/canary/{_C3RUN}-canary_commit.json"
+    # a prior report exists, and must NOT be accepted as a substitute
+    store[commit_key] = json.dumps(
+        {"committed_at": "2026-08-29T07:00:00+00:00"}).encode()
+
+    conn = _FakeWriteConn(receipt_committed_at=None)
+    _record_execute_values(monkeypatch, conn)
+    _patch_slice2_io(monkeypatch, store, conn)
+    with pytest.raises(ReconcileError, match="no receipt committed_at") as exc:
+        mod.run_canary_commit(mod.parse_args(
+            ["canary-commit", "--run-id", _C3RUN, "--apply"] + _pin(store)))
+    assert "refusing to write a commit report" in str(exc.value)
+    # the stale report is left exactly as it was -- not updated, not trusted
+    assert json.loads(store[commit_key]) == {
+        "committed_at": "2026-08-29T07:00:00+00:00"}
+
+
+def test_no_receipt_time_leaves_no_flush_expectation_behind(tmp_path,
+                                                            monkeypatch):
+    import scripts.reconcile_april_detail as mod
+
+    store = _canary_ready(mod, tmp_path, monkeypatch)
+    conn = _FakeWriteConn(receipt_committed_at=None)
+    _record_execute_values(monkeypatch, conn)
+    _patch_slice2_io(monkeypatch, store, conn)
+    with pytest.raises(ReconcileError, match="no receipt committed_at"):
+        mod.run_canary_commit(mod.parse_args(
+            ["canary-commit", "--run-id", _C3RUN, "--apply"] + _pin(store)))
+    assert f"recovery/plan145/canary/{_C3RUN}-canary_commit.json" not in store
+
+    # and the flush check then has nothing to run against, rather than a
+    # guessed window it would silently scan the wrong month with
+    _patch_slice2_io(monkeypatch, store, _FakeWriteConn())
+    with pytest.raises(ReconcileError, match="canary-commit --apply"):
+        mod.run_canary_flush_verify(mod.parse_args(
+            ["canary-flush-verify", "--run-id", _C3RUN]))
 
 
 def test_a_commit_report_that_disagrees_with_the_receipt_is_rewritten(

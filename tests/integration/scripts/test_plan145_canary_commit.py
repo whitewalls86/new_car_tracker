@@ -299,6 +299,78 @@ def test_a_rerun_of_the_canary_writes_zero_rows(canary_world, vc):
     assert vc.fetchone()["n"] == 1
 
 
+def test_the_migrated_manifest_commits_against_real_postgres(canary_world, vc):
+    """The path the maintainer will actually run: the manifest on disk predates
+    `write_set_digest`, so it is migrated -- original preserved -- and the
+    commit goes against the migrated one."""
+    import io
+
+    import pyarrow.parquet as pq
+
+    world = canary_world
+    store = world["store"]
+    ids = sorted(world["artifact_ids"].values())
+    source_key = f"recovery/plan145/canary/{world['run_id']}-canary_sample.parquet"
+    target_key = (f"recovery/plan145/canary/{world['run_id']}"
+                  f"-canary_sample_digested.parquet")
+
+    # age the manifest back to what is on disk today
+    rows = pq.read_table(io.BytesIO(store[source_key])).to_pylist()
+    for row in rows:
+        for name in ("write_set_digest", "vin_snapshot_sha256", "page_fetched_at"):
+            row[name] = None
+    store[source_key] = _write_parquet(mod._canary_manifest_schema(), rows)
+    v1_bytes = store[source_key]
+
+    # a commit against it is refused, and names the migration
+    with pytest.raises(ReconcileError, match="canary-remanifest --apply"):
+        mod.run_canary_commit(mod.parse_args(
+            ["canary-commit", "--run-id", world["run_id"], "--apply"]
+            + world["pin"]))
+
+    assert mod.run_canary_remanifest(mod.parse_args(
+        ["canary-remanifest", "--run-id", world["run_id"], "--apply"])) == 0
+    assert store[source_key] == v1_bytes          # the original is untouched
+
+    migrated = pq.read_table(io.BytesIO(store[target_key])).to_pylist()
+    assert sorted(r["object_key"] for r in migrated) == sorted(world["keys"])
+
+    digest = hashlib.sha256(store[target_key]).hexdigest()
+    assert mod.run_canary_commit(mod.parse_args(
+        ["canary-commit", "--run-id", world["run_id"], "--apply",
+         "--expect-manifest-sha256", digest, "--expect-rows", "4"])) == 0
+
+    vc.execute("SELECT count(*) AS n FROM staging.silver_observations "
+               "WHERE artifact_id = ANY(%s)", (ids,))
+    assert vc.fetchone()["n"] == 4
+
+
+def test_a_vin_snapshot_that_moved_after_sampling_commits_nothing(canary_world,
+                                                                  vc):
+    """The VIN snapshot is an input to the write set, not just to the
+    comparison: it fills the carousel VIN that reaches Postgres."""
+    import pyarrow as pa
+
+    world = canary_world
+    ids = sorted(world["artifact_ids"].values())
+    world["store"][f"recovery/plan145/vin_snapshot/{world['run_id']}.parquet"] = \
+        _write_parquet(
+            pa.schema([pa.field("listing_id", pa.string()),
+                       pa.field("vin", pa.string())]),
+            [{"listing_id": world["hint"], "vin": "VIN-SOMETHING-ELSE"}])
+
+    with pytest.raises(ReconcileError, match="VIN snapshot"):
+        mod.run_canary_commit(mod.parse_args(
+            ["canary-commit", "--run-id", world["run_id"], "--apply"]
+            + world["pin"]))
+    vc.execute("SELECT count(*) AS n FROM staging.silver_observations "
+               "WHERE artifact_id = ANY(%s)", (ids,))
+    assert vc.fetchone()["n"] == 0
+    vc.execute(f"SELECT count(*) AS n FROM {RECEIPT_TABLE} WHERE batch_name = %s",
+               (world["batch_name"],))
+    assert vc.fetchone()["n"] == 0
+
+
 def test_the_commit_time_comes_from_the_receipt_not_the_process_clock(
         canary_world, vc):
     """V047 sets `committed_at` with now() inside the writing transaction. The

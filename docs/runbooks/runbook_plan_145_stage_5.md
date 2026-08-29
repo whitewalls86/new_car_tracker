@@ -38,7 +38,7 @@ Inventory digest
 | §3 parser control | **run 2026-08-29 — `FINDINGS`, diagnosed as out-of-scope (see below)** |
 | §4 rulings | near-dup decomposed and fan-out measured 2026-08-29; neither shows divergence. **No ruling recorded** — §5.2 was run without one |
 | §5 slice 2 `assign` | **done** 2026-08-29 — 341,903 artifacts, 69 batches; sequence 8,054,031 → 8,383,887. `apply` dry run validated `b00001`, nothing committed |
-| §6 `canary-sample` | **done** 2026-08-29 — 234 artifacts, 505 rows, **9/9 strata covered**, no split. **The manifest on disk must be regenerated (§6.1): it predates `row_digest`, and `canary-commit` refuses one without it** |
+| §6 `canary-sample` | **done** 2026-08-29 — 234 artifacts, 505 rows, **9/9 strata covered**, no split. **The manifest on disk must be migrated (§6.1): it predates `write_set_digest`, and `canary-commit` refuses one without it. Migrate it — do not re-sample** |
 | §7 Phase B + V040 proof | **← you are here.** `canary-commit` / `canary-flush-verify` are **built and tested** (unit + real-Postgres integration) but **have never run against production**. Needs a named window |
 
 | live state | |
@@ -98,6 +98,7 @@ action.
 | `canary-sample` | `archiver` | — | pyarrow only, no Postgres, no duckdb |
 | `assign` | `april-processor` | `cartracker` | `nextval` needs `USAGE`; pyarrow only |
 | `apply` | `april-processor` | `cartracker` | `scraper_user` has no `INSERT` on `staging.price_observation_events` |
+| `canary-remanifest` | `april-processor` | — | pyarrow only, no Postgres, no duckdb |
 | `canary-commit` | `april-processor` | `cartracker` | same `INSERT` grants as `apply`; pyarrow only |
 | `canary-flush-verify` | `archiver` | — | pyarrow only, no Postgres, no duckdb |
 
@@ -443,53 +444,72 @@ The manifest — `recovery/plan145/canary/cmp-6c7c90d807bbdf13-canary_sample.par
 — **is Phase B's input**, and is what `verify_recovery_live_state.py
 --canary-cmd` will commit. Record the seed with the result.
 
-### 6.1 The manifest on disk must be regenerated — it predates `row_digest`
+### 6.1 The manifest on disk must be migrated — it predates `write_set_digest`
 
 The manifest written on 2026-08-29 freezes per-artifact **counts** but not the
-rows themselves. That is not a contract over the write set: flip one selected
-row from `carousel` to `detail` and the artifact still carries two rows, still
-names the same object, still resolves to the same assignment — and
-`build_recovery_price_event` then mints a historical price event the sample
-never approved. Every count-based check passes on a strict superset.
+rows themselves, and counts are not a contract over the write set. Flip one
+selected row from `carousel` to `detail` and the artifact still carries two
+rows, still names the same object, still resolves to the same assignment — and
+`build_recovery_price_event` mints a historical price event the sample never
+approved. Every count-based check passes on a strict superset.
 
-So the manifest schema now carries `row_digest`, a SHA-256 over every silver
-column of that artifact's selected rows, and **`canary-commit` refuses a
-manifest without it** rather than exempting the old one.
+So the manifest schema now carries `write_set_digest`, `page_fetched_at` and
+`vin_snapshot_sha256`, and **`canary-commit` refuses a manifest without them.**
 
-Regenerating is cheap. `canary-sample` is deterministic in `--seed`, and
-neither the selection algorithm nor its inputs changed, so **it will pick the
-same 234 artifacts and the same 505 rows** — the only difference is the added
-column. The writer is create-if-absent, so the existing object has to go first:
+**Do not get there by re-running `canary-sample`.** It *reselects*.
+Determinism reproduces the selection only while every input is unchanged,
+which is exactly the assumption the digest exists to distrust — and confirming
+the result by its aggregates (234 artifacts, 505 rows, 9 strata) cannot tell
+one 234-object set from another. The sampler is create-if-absent, so that
+route also means deleting the only record of what the V040 window's subject
+was, *before* set equality has been established.
+
+`canary-remanifest` migrates instead. It takes the frozen manifest's object set
+as given, re-checks every field that manifest already carried against the
+assignment shards, rebuilds the write set for exactly those artifacts, and
+writes a **new** object beside the original. It never deletes and never
+overwrites.
 
 ```bash
-# blast radius: deletes and rewrites ONE object under recovery/plan145/canary/.
-# No Postgres, no duckdb. Reversible by re-running.
-docker compose run --rm archiver python -c \
-  "from shared.minio import get_boto3_client, BUCKET; \
-   get_boto3_client().delete_object(Bucket=BUCKET, \
-     Key='recovery/plan145/canary/cmp-6c7c90d807bbdf13-canary_sample.parquet')"
+docker compose run --rm april-processor python -m scripts.reconcile_april_detail \
+  canary-remanifest --run-id cmp-6c7c90d807bbdf13 2>&1 \
+  | tee /home/ubuntu/plan145-canary-remanifest-dryrun.log
 
-docker compose run --rm archiver python -m scripts.reconcile_april_detail \
-  canary-sample --apply --run-id cmp-6c7c90d807bbdf13 \
-  --target-rows 500 --seed 145 2>&1 \
-  | tee /home/ubuntu/plan145-canary-sample-redigest.log
+# then, once the object-set digests match:
+docker compose run --rm april-processor python -m scripts.reconcile_april_detail \
+  canary-remanifest --apply --run-id cmp-6c7c90d807bbdf13 2>&1 \
+  | tee /home/ubuntu/plan145-canary-remanifest.log
 ```
 
-**Confirm the selection is unchanged before going on**: 234 artifacts, 505 rows
-(140 detail / 365 carousel), 9/9 strata, no split. A different selection means
-an input moved, and that is not Phase B to debug.
+**Blast radius:** reads the frozen manifest, the assignment shards it names,
+the `to_import` units those name, and the VIN snapshot. **No Postgres
+statement.** `--apply` writes exactly two new objects —
+`cmp-6c7c90d807bbdf13-canary_sample_digested.parquet` and its report. The
+frozen `…-canary_sample.parquet` is **not** deleted and **not** overwritten;
+re-running against an existing migrated manifest is refused.
+
+**What to read:** the two object-set digests and `identical: True`. That is the
+promotion proof — not the aggregate counts. It also refuses outright if any
+input moved under the frozen sample, which is the case a re-sample would have
+silently absorbed.
+
+From then on `canary-commit` and `canary-flush-verify` resolve the **migrated**
+manifest by existence, so there is no way to commit against the weaker one
+while the migrated one sits beside it. Pin the migrated manifest's digest — the
+dry run prints it.
 
 ---
 
 ## 7. Slice 3 Phase B — the write canary, in the window
 
-Two modes and one script, all built and covered by unit and real-Postgres
+Three modes and one script, all built and covered by unit and real-Postgres
 integration tests, **none of them ever run against production**. No maintenance
 window is scheduled; opening one is the maintainer's action.
 
 | mode | image | role | what it does |
 |---|---|---|---|
-| `canary-commit` | `april-processor` | `cartracker` | commits exactly §6's manifest — one transaction, receipt included |
+| `canary-remanifest` (§6.1) | `april-processor` | — | migrates the frozen manifest into a digest-bearing one, preserving it |
+| `canary-commit` | `april-processor` | `cartracker` | commits exactly that manifest — one transaction, receipt included |
 | `canary-flush-verify` | `archiver` or `april-processor` | — | reads only; requires those rows in the lake, by key |
 | `verify_recovery_live_state.py` | host | — | the before/after V040 assertion around the commit |
 
@@ -529,10 +549,20 @@ What it binds before issuing a statement, in widening order of strength:
 
 | bound | catches |
 |---|---|
-| every manifest field against the assignment shard — `artifact_id`, `id_source`, `input_kind`, `batch_name`, `page_listing_id`, `silver_rows`, `detail_rows` | a manifest and a shard that no longer describe one population |
+| every manifest field against the assignment shard — `artifact_id`, `id_source`, `input_kind`, `batch_name`, `page_listing_id`, **`page_fetched_at`**, `silver_rows`, `detail_rows` | a manifest and a shard that no longer describe one population — including a moved capture time, which is the queue event's historical `fetched_at` |
+| `vin_snapshot_sha256` against the live snapshot | a VIN snapshot that moved after sampling — it fills the carousel VINs this would commit |
 | per-artifact row count | a truncated read — half an artifact |
 | per-artifact `detail_rows` and stratum set | a carousel row flipped to detail: same count, an extra price event |
-| per-artifact `row_digest` over every silver column | any changed business value at all |
+| per-artifact **`write_set_digest`** over the built silver rows, price events and queue event | anything else at all |
+
+The last one is taken over the **built** write set — the exact column tuples
+the three INSERTs send — not over the raw `to_import` rows. Two things happen
+between the rows and the write set that a raw-row digest cannot see: a missing
+carousel `vin` is filled from the frozen VIN snapshot, and the queue event's
+historical `fetched_at` comes from the assignment, which no `to_import` row
+carries. Digesting the product covers both by construction; the named checks
+above exist so those two failures are *diagnosed* rather than surfacing as an
+opaque mismatch across hundreds of artifacts.
 
 ### 7.2 Dry run first — read-only, runnable today
 
@@ -662,6 +692,12 @@ commit report write failed *after* the transaction committed, the retry that
 repairs it still records when the batch actually landed. Across a month
 boundary that distinction decides which queue-event partition gets read.
 
+There is no fallback. If the transaction reports no receipt `committed_at`,
+`canary-commit` **refuses** rather than substituting a clock: V047 declares
+that column `NOT NULL DEFAULT now()`, so a missing value is a receipt problem,
+and writing a commit report or a flush expectation against a guessed time is
+exactly the failure reading the receipt exists to prevent.
+
 Two things about the partitions. A silver row's **`source` lives in the hive
 path, not in the file** — `pq.write_to_dataset(partition_cols=…)` drops the
 partition columns from the Parquet — so the check reads it off the key; a check
@@ -722,7 +758,8 @@ closed.
 | 5.2 | `assign --apply` | ~80 shards + report | **`nextval` per artifact** | **no — permanent** |
 | 5.3 | `apply` (dry) | none | none | yes |
 | 6 | `canary-sample --apply` | 1 manifest + 1 report | none | yes |
-| 6.1 | re-sample for `row_digest` | 1 object deleted + rewritten | none | yes |
+| 6.1 | `canary-remanifest` (dry) | none | none | yes |
+| 6.1 | `canary-remanifest --apply` | 2 new objects; **the frozen manifest is preserved** | none | yes |
 | 7.2 | `canary-commit` (dry) | none | none — no connection opened | yes |
 | 7.3 | `canary-commit --apply` | 1 report | **505 silver + ~140 price + 234 queue + 1 receipt, one transaction** | **no — a commit** |
 | 7.5 | `canary-flush-verify --apply` | 1 report | none | yes |

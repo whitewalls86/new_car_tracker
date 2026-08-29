@@ -8,6 +8,8 @@ between the snapshots fails the proof.
 import hashlib
 import json
 import re
+import shlex
+import sys
 
 from scripts.verify_recovery_live_state import RELATIONS, run
 
@@ -144,8 +146,12 @@ def test_a_failing_canary_command_fails_the_check(tmp_path):
     store = _Store()
     report_path = tmp_path / "r.json"
 
+    # sys.executable, not the bare name: a `python` command is not guaranteed
+    # to exist even where Python does, and a 127 from the shell would look
+    # like the canary failing rather than the harness misfiring.
     rc = run(["--window", "w", "--report", str(report_path),
-              "--canary-cmd", "python -c \"import sys; sys.exit(3)\""],
+              "--canary-cmd",
+              f"{shlex.quote(sys.executable)} -c \"import sys; sys.exit(3)\""],
              connect=lambda: _Conn(store))
 
     assert rc == 1
