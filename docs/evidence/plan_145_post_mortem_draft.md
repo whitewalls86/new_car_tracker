@@ -1,10 +1,11 @@
 # Plan 145 — Post-Mortem (Draft)
 
-**Status: draft, gathered 2026-08-29. Plan 145 is not finished.** Stage 5 slice 3
-Phase B is built but has never run; Stage 6 is unstarted; not one of the 1,172
-legacy Parquet objects has been deleted. This is a mid-flight account assembled
-so the narrative can be written while the evidence is still recoverable — not a
-closeout.
+**Status: draft, gathered 2026-08-29, updated the same evening. Plan 145 is not
+finished.** Stage 5 is now complete — the whole `to_import` population is
+committed — but Stage 6 is unstarted and **not one of the 1,172 legacy Parquet
+objects has been deleted**, which is the entire point of the plan. This is a
+mid-flight account assembled so the narrative can be written while the evidence
+is still recoverable — not a closeout.
 
 **Sources.** Current plan, handoff, runbook and reference documents; the full git
 history including reverted and superseded revisions; the VM at `147.224.199.86`
@@ -57,7 +58,13 @@ maintainer proposed, in plain language, after saying he felt like he was
 | 2026-08-29 05:13 | Parser control runs for the first time and reports **FINDINGS** — diagnosed within the hour as the Plan 100 migration boundary |
 | 2026-08-29 ~05:50–06:16 | **The VM wedges.** SSH dead for ~25 minutes, self-inflicted |
 | 2026-08-29 06:25–06:33 | `assign --apply` (sequence +329,856, permanent) and `canary-sample` |
-| 2026-08-29 06:41– | Phase B built (PR #274, open), two review rounds |
+| 2026-08-29 06:41–08:00 | Phase B built (PR #274). **Four review rounds**, each finding a real hole — see §6 |
+| 2026-08-29 14:40 | Deploy intent declared; in-flight work drained from 400 to 0 |
+| 2026-08-29 14:4x | **V040 window run 1** — PASS, then rolled back deliberately |
+| 2026-08-29 14:51:23 | **V040 window run 2** — PASS, kept. The canary's 505 rows are committed |
+| 2026-08-29 ~14:55 | Flush; `canary-flush-verify` finds all 505 / 140 / 234 in the lake by key |
+| 2026-08-29 15:17 | PR #276 merged — `apply` skips what the canary already wrote |
+| 2026-08-29 15:20–15:30 | **The full apply.** 69 batches in 7 chunked rounds. 341,903 artifacts / 701,375 rows committed |
 
 ---
 
@@ -185,6 +192,10 @@ month and compresses best.
 | **A gate that fired on dry runs** | slice 1 review | *"the run whose only job was to measure a cohort died with one sentence instead of reporting it."* Now a standing rule in every handoff: scope a refusal to `apply and not probe` |
 | **The canary manifest froze counts, not rows** | PR #274 review | Flipping one selected row from carousel to detail keeps every count intact while minting a historical price event the sample never approved. Replaced by `write_set_digest` over the *built* write set — silver rows, price events and queue event, the exact tuples the three INSERTs send |
 | **The migration prescribed for that fix destroyed its own subject** | PR #274 follow-up review | §6.1 told the maintainer to delete the frozen manifest and re-sample. Re-sampling *reselects* — determinism reproduces the selection only while every input is unchanged, which is the exact assumption the digest exists to distrust. New `canary-remanifest` mode migrates in place and never deletes |
+| **The migrated manifest was trusted because it existed** | PR #274, round 3 | Resolution picked the digest-bearing sibling on existence alone, and the proof that it preserved the frozen object set lived in a separate report no consumer read. A substituted sibling could be pinned and committed. The promotion is now re-derived from the two manifests at consumption time |
+| **…and proving the object set was not enough** | PR #274, round 4 | A sibling can keep every object key and still change `detail_rows`, `strata` or `artifact_id`, carrying digests that agree with equally-mutated inputs — everything downstream compares against those *current* inputs. Every field the frozen manifest carried is now compared, per object key |
+| **The canary's own commit set up a duplicate write** | PR #276 | Receipts are keyed by *batch name*. The canary commits under `<run>-canary` while its 234 artifacts also sit in `b00001`–`b00069`, so the full apply would have written those 505 observations twice and nothing downstream would have noticed. Flagged when Phase B was built; fixed only when the apply was imminent |
+| **The documented invocation could not run** | the window itself | The run sheet said `python scripts/verify_recovery_live_state.py` on the VM host. There is no `python` there, only `python3` — and no `psycopg2` and no venv, so it could never have imported `shared.db`. Three failures deep in one line, found by the maintainer typing it under time pressure |
 
 ---
 
@@ -277,6 +288,11 @@ flusher or `stg_observations.sql`).
 | **Stage 4 `parse`** | **16h45m** |
 | Stage 5 `compare` (dry + apply) | 8m23s + 13m19s |
 | `control`, `assign`, `canary-sample` | minutes each |
+| Phase B — migrate, dry run, two windows, flush verify | ~50 min, most of it drain |
+| **Stage 5 `apply` — all 69 batches** | **~10 min** (4.2 s/batch, 7 chunked rounds) |
+
+The apply being the fastest stage in the plan is worth a line. Four days of
+design and 6,000 lines of test stood behind ten minutes of writing.
 
 **The parse's tail is worth a sentence in the narrative.** Units 1–1,170 (the
 materialized shards) finished in 7h20m. Units 1,171–1,204 — the 32 unpacked pack
@@ -288,22 +304,26 @@ unpacked shards sort last.
 
 | | at first commit | now |
 |---|---:|---:|
-| `scripts/reconcile_april_detail.py` | 876 | **7,562** |
-| `tests/scripts/test_reconcile_april_detail.py` | 496 | **5,513** |
+| `scripts/reconcile_april_detail.py` | 876 | **7,919** |
+| `tests/scripts/test_reconcile_april_detail.py` | 496 | **6,033** |
 
-Plus `scripts/verify_recovery_live_state.py` (274), three real-Postgres
-integration suites (1,183), one Flyway migration, and **13 CLI modes**: `census`,
+Plus `scripts/verify_recovery_live_state.py` (283), three real-Postgres
+integration suites (1,273), one Flyway migration, and **13 CLI modes**: `census`,
 `materialize`, `dedupe`, `unpack`, `parse`, `compare`, `assign`, `apply`,
 `control`, `canary-sample`, `canary-remanifest`, `canary-commit`,
 `canary-flush-verify`.
 
-**Documentation is comparable in size to the code**: 1,679-line plan, six
-handoffs (1,332 lines), a 796-line run sheet, a 250-line flag reference.
+Five of those thirteen modes exist only so ~500 rows could be committed safely.
+Whether that was proportionate is §13's question, not this section's.
+
+**Documentation is comparable in size to the code**: 1,801-line plan, six
+handoffs (1,332 lines), a 975-line run sheet, a 250-line flag reference.
 
 ### Process
 
-79 commits mentioning plan-145 · 18 merged PRs (#227, #255–#272) + 1 open (#274)
-· **2 reverted merges** · 5 review rounds that produced follow-up fix commits.
+85 commits mentioning plan-145 · 21 merged PRs (#227, #255–#276) · **2 reverted
+merges** · **9 review rounds** that produced follow-up fix commits — four of them
+on PR #274 alone, each finding a real defect in the canary's contract.
 
 ---
 
@@ -336,6 +356,27 @@ The maintainer's reaction is part of the record — *"The instance was stopped. 
 fucking nuked the server"* — and so is the correction four minutes later: *"I
 might have been confused. I'll own that one."* The instance had not been stopped.
 
+**The window, and the rollback that was not a mistake (2026-08-29 14:4x).** The
+first V040 run passed, and the maintainer then ran the rollback block —
+deliberately, because the commit had only just landed and rolling back while the
+flush is still held is one transaction rather than two systems. That is exactly
+what holding `hourly_analytics_refresh` through the window is *for*. It also
+exercised two paths that would otherwise have stayed theory: the scoped delete
+(`fetched_at < '2026-05-01'`, because 13,253 artifacts carry preserved historical
+ids that could otherwise match a live staging row), and the commit report
+repairing its own timestamp from the receipt on the second run instead of
+keeping the first run's — which is the value `canary-flush-verify` uses as its
+scan lower bound.
+
+**Operating instructions that were wrong three ways in one line
+(2026-08-29 ~14:45).** The run sheet's window command specified `python` on a
+host that has only `python3`; on a host with no `psycopg2` and no venv, so it
+could never have imported `shared.db`; with an
+`--expect-manifest-sha256 <from step 2>` placeholder that reads as prose and was
+pasted literally. All three surfaced with production drained and the maintainer
+typing under time pressure. The assistant had written and revised that line
+across four review rounds without once running it.
+
 **Friction worth noting.** tmux was unusable from the Mac at first ("too many
 lines to see anything… ctrl bd, option bd, and command bd do nothing"), an
 `~/p145status.sh` helper had to be written to make progress legible, and
@@ -346,40 +387,56 @@ to run stale code.
 
 ## 11. Where it stands
 
-> **Superseded within hours of being written (2026-08-29 14:40–15:30 UTC).**
-> Everything this section calls unproven was proven and committed the same day:
-> the V040 window ran twice, the canary committed and its flush round trip
-> verified by key, `apply` gained the canary exclusion, and the full apply
-> committed all 69 batches. The authoritative record is the plan document,
-> *Evidence — slice 3 Phase B and the full apply, 2026-08-29*. The text below is
-> left as written, because when it was written it was true, and the gap between
-> these two paragraphs is itself part of the account.
+**Stage 5 is complete.** As of 2026-08-29 15:30 UTC the whole `to_import`
+population is committed and flushed to the lake.
 
+| | artifacts | silver | price | queue |
+|---|---:|---:|---:|---:|
+| 69 batches | 341,669 | 700,870 | | |
+| canary | 234 | 505 | | |
+| **70 receipts** | **341,903** | **701,375** | **200,599** | **341,903** |
+
+The arithmetic is the proof in both directions: the batches wrote exactly 234
+artifacts and 505 rows short of the assign census, so the canary exclusion
+caught every canary artifact — no duplicate; and the two rows sum to precisely
+that census, so it caught nothing else — no gap. Staging drained to zero, and
+the flushers delete only after a successful Parquet write.
 
 **Done and irreversible:** 371,095 objects deleted (recoverable from the packs);
 557,065 members unpacked; V047 applied; `ops.artifacts_queue_artifact_id_seq`
 advanced twice, by 292,432 (probe) and 329,856 (authoritative) — sanctioned
-`bigserial` gaps, not reuses.
+`bigserial` gaps, not reuses; and now 701,375 silver rows, 200,599 historical
+price events and 341,903 recovered queue events committed and flushed.
 
-**Committed to production tables: nothing.** `plan145_recovery_batch_receipts` is
-empty; `staging.artifacts_queue_events WHERE status='recovered'` is 0.
+**The V040 assertion held.** Two runs in a named window on a deploy-intent
+drain, `single transaction True` in both, all six protected relations
+byte-identical across the canary. Recovery changes no live state — measured,
+not asserted.
 
-**Unproven, per the run sheet's own §8:**
+**Proven since this document was first written:**
 
 - the write canary as a real commit, and the flush round trip into
-  `silver_normalized/observations/` and `ops_normalized/` — built and tested,
-  never run;
-- the V040 before/after equality — needs Phase B plus a maintainer-opened
-  maintenance window with writers quiesced;
-- the duplicate-write interaction between a committed canary and a later full
-  `apply` of the same batches (§7.6) — the canary's 234 artifacts also belong to
-  slice-2 batches, and `apply` does not yet read the canary's commit record;
-- the full apply, Stage 5b's trial, and all of Stage 6 — repack, prune, and the
-  deletion that is the entire point.
+  `silver_normalized/observations/` and `ops_normalized/`, verified by key;
+- the V040 before/after equality, in a maintainer-opened window;
+- the duplicate-write interaction — `apply` now reads the canary's commit
+  record, with the receipt as the authority and both mismatch directions
+  stopping;
+- the full apply.
 
-**Two maintainer rulings are recorded but not made:** the near-duplicate cohort
-and the carousel fan-out. The run sheet states plainly that `assign --apply` —
-which advanced the sequence permanently — *was run without one*.
+**Still not done, and it is the whole point:** Stage 6 — repack, prune, and the
+deletion of the **1,172 legacy Parquet objects (13.66 GiB)**. Not one byte has
+been deleted. Stage 5b's compression trial is also outstanding.
+
+**One verification gap, stated plainly.** `canary-flush-verify` proves the round
+trip by key for the canary's 234 artifacts. The evidence for the other 341,669
+is the receipts plus the flushers' delete-on-success contract — strong, but not
+the same thing. A by-key check at full population would need a mode that does
+not exist, and none was written.
+
+**Two maintainer rulings:** the near-duplicate cohort and the carousel fan-out.
+The fan-out was approved verbally during the run; the run sheet still records
+that `assign --apply` — which advanced the sequence permanently — was run before
+either was recorded.
 
 **Work this plan spawned:** [Plan 156](../plans/plan_156_block_page_detection.md)
 (fix `_detect_challenge`'s blindness to non-Cloudflare blocks), [Plan
@@ -414,7 +471,15 @@ anything again.
    be executable by a session with no context, are why four days of work across
    many sessions and two models stayed coherent. They also carry the honest parts
    — "expect ~760, and if it is materially larger, stop and say so."
-8. **The maintainer's plain-language restatement beat the model's design twice.**
+8. **A safeguard can be built and still not be finished.** The canary's separate
+   receipt name was the right call and it created a duplicate write that sat
+   unaddressed until the apply was imminent — flagged in the same breath as it
+   was created, then left. Naming a consequence is not handling it.
+9. **Nothing you have not executed is a procedure.** The window command was
+   wrong three ways in one line and survived four review rounds, because every
+   round reviewed its *reasoning*. It failed the first time a human typed it,
+   with production drained.
+10. **The maintainer's plain-language restatement beat the model's design twice.**
    Flattening (2026-08-27 16:30) and doing the deletion before the unpack to save
    space (16:38) both came from the human, in one sitting, after he asked: *"I
    want to understand why this has been so complicated. I feel like we've taken 8
@@ -436,3 +501,11 @@ anything again.
   captures silver lacks.
 - What is the honest estimate-versus-actual? `docs/PLANS.md` still carries Plan
   145 at effort **M**.
+- **Was the canary apparatus proportionate?** Five of thirteen CLI modes,
+  `write_set_digest`, the promotion proof and four review rounds exist so that
+  ~500 rows could be committed safely — and the apply that followed, of 1,400×
+  as many rows, took ten minutes and needed none of it. The counter-argument is
+  that the canary is what made the apply boring. Both readings are available and
+  the document should pick one.
+- Would a full-population by-key lake verification have been worth writing? It
+  was not, and the gap is now permanent for this run.
