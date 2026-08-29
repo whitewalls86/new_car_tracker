@@ -5073,6 +5073,128 @@ def test_a_substituted_sibling_with_a_different_object_set_commits_nothing(
     assert conn.commits == 0
 
 
+def test_a_same_object_set_sibling_that_changed_a_field_commits_nothing(
+        tmp_path, monkeypatch):
+    """The attack object-set equality does not cover. Keep every object key,
+    flip one selected carousel row to detail in `to_import`, and substitute a
+    sibling that agrees with the flip: its write_set_digest matches the mutated
+    inputs, so every downstream check -- which compares against those *current*
+    inputs -- passes. Only the frozen manifest still remembers that _OA was
+    carousel, and an extra historical price event is minted without it."""
+    import scripts.reconcile_april_detail as mod
+
+    store = _canary_ready(mod, tmp_path, monkeypatch)
+    target_key = _migrated(mod, tmp_path, monkeypatch, store)
+    sibling = _read_manifest_rows(store[target_key])
+
+    la = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    lac = "aaaaaaaa-0000-0000-0000-aaaaaaaaaaaa"
+    lb = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+    lc = "cccccccc-cccc-cccc-cccc-cccccccccccc"
+    ld = "dddddddd-0000-0000-0000-dddddddddddd"
+    flipped = [_ti_row(la, _OA, source="detail"),
+               _ti_row(lac, _OA, source="detail")]        # was carousel
+    _retarget_to_import(tmp_path, store, flipped + [
+        _ti_row(lb, _OB, source="detail", listing_state="unlisted"),
+        _ti_row(lc, _OC, source="detail"),
+        _ti_row(ld, _OD, source="carousel"),
+    ], "flip-and-substitute.parquet")
+
+    # a sibling that agrees with the flip: same object keys, same source
+    # binding, but _OA now records two detail rows and one stratum
+    assignment = {"object_key": _OA, "artifact_id": 9000001,
+                  "listing_id": la, "fetched_at": _WHEN,
+                  "input_kind": "materialized",
+                  "id_source": "allocated_sequence"}
+    for row in sibling:
+        if row["object_key"] == _OA:
+            row["detail_rows"] = 2
+            row["strata"] = ["detail|active|materialized|allocated_sequence"]
+            row["write_set_digest"] = mod.canary_write_set_digest(
+                *mod.build_canary_artifact_write_set(
+                    flipped, assignment,
+                    {lac: "VIN-SNAPSHOT-CAROUSEL"}, f"{_C3RUN}-canary", "bronze"))
+    store[target_key] = _write_canary_manifest(tmp_path / "sameset.parquet",
+                                               sibling)
+
+    conn, parsed = _commit_the_sibling(mod, monkeypatch, store, target_key)
+    with pytest.raises(ReconcileError, match="not a promotion of the frozen") as exc:
+        mod.run_canary_commit(parsed)
+    message = str(exc.value)
+    assert "were changed" in message
+    assert "detail_rows" in message or "strata" in message
+    # the object set is untouched, so that branch did not fire
+    assert "selects different artifacts" not in message
+    assert conn.sql == []
+    assert conn.executed_values == []
+    assert conn.commits == 0
+
+
+@pytest.mark.parametrize("field,value", [
+    ("artifact_id", 7_777_777),
+    ("batch_name", f"{_C3RUN}-b00002"),
+    ("id_source", "preserved_queue_event"),
+    ("input_kind", "unpacked"),
+    ("page_listing_id", "99999999-9999-9999-9999-999999999999"),
+    ("silver_rows", 9),
+    ("detail_rows", 0),
+    ("strata", ["something|else|entirely|here"]),
+])
+def test_every_field_the_frozen_manifest_carried_must_survive_promotion(
+        tmp_path, monkeypatch, field, value):
+    """A promotion may add page_fetched_at, write_set_digest,
+    vin_snapshot_sha256 and the two source columns. Nothing else."""
+    import scripts.reconcile_april_detail as mod
+
+    store = _canary_ready(mod, tmp_path, monkeypatch)
+    target_key = _migrated(mod, tmp_path, monkeypatch, store)
+    sibling = _read_manifest_rows(store[target_key])
+    for row in sibling:
+        if row["object_key"] == _OA:
+            row[field] = value
+    store[target_key] = _write_canary_manifest(tmp_path / f"p-{field}.parquet",
+                                               sibling)
+
+    conn, parsed = _commit_the_sibling(mod, monkeypatch, store, target_key)
+    with pytest.raises(ReconcileError, match="were changed") as exc:
+        mod.run_canary_commit(parsed)
+    assert field in str(exc.value)
+    assert conn.executed_values == []
+
+
+def test_a_promotion_may_add_the_migration_columns_and_only_those():
+    import scripts.reconcile_april_detail as mod
+
+    added = mod._CANARY_MIGRATION_ADDED_FIELDS
+    assert added == {"page_fetched_at", "write_set_digest",
+                     "vin_snapshot_sha256", "source_manifest_sha256",
+                     "source_object_set_digest"}
+    # every other column in the schema is checked for preservation
+    carried = [n for n in mod._canary_manifest_schema().names if n not in added]
+    assert carried == ["run_id", "object_key", "artifact_id", "id_source",
+                       "input_kind", "batch_name", "page_listing_id",
+                       "silver_rows", "detail_rows", "strata"]
+
+
+def test_strata_order_is_not_part_of_the_promotion_contract(tmp_path,
+                                                            monkeypatch):
+    """The two manifests must name the same strata; a Parquet round trip is
+    not required to preserve their order."""
+    import scripts.reconcile_april_detail as mod
+
+    store = _canary_ready(mod, tmp_path, monkeypatch)
+    target_key = _migrated(mod, tmp_path, monkeypatch, store)
+    sibling = _read_manifest_rows(store[target_key])
+    for row in sibling:
+        row["strata"] = list(reversed(row["strata"]))
+    store[target_key] = _write_canary_manifest(tmp_path / "reordered.parquet",
+                                               sibling)
+
+    conn, parsed = _commit_the_sibling(mod, monkeypatch, store, target_key)
+    assert mod.run_canary_commit(parsed) == 0
+    assert conn.commits == 1
+
+
 def test_a_sibling_promoted_from_other_bytes_commits_nothing(tmp_path,
                                                              monkeypatch):
     import scripts.reconcile_april_detail as mod

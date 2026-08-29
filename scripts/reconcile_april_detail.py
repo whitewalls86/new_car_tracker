@@ -6089,6 +6089,24 @@ def _resolve_canary_manifest_key(run_id: str,
     return _canary_manifest_key(run_id, canary_root)
 
 
+#: The columns `canary-remanifest` *adds*. Everything else in the manifest
+#: schema was carried by the frozen original and must survive a promotion
+#: byte for byte -- see :func:`_verify_canary_promotion`.
+_CANARY_MIGRATION_ADDED_FIELDS = frozenset({
+    "page_fetched_at", "write_set_digest", "vin_snapshot_sha256",
+    "source_manifest_sha256", "source_object_set_digest",
+})
+
+
+def _promotion_field_agrees(frozen_value: Any, migrated_value: Any) -> bool:
+    """As :func:`_manifest_field_agrees`, but list-valued `strata` compares as
+    a set: the frozen and migrated manifests must name the same strata, and a
+    Parquet round trip is not required to preserve their order."""
+    if isinstance(frozen_value, list) or isinstance(migrated_value, list):
+        return sorted(frozen_value or []) == sorted(migrated_value or [])
+    return _manifest_field_agrees(frozen_value, migrated_value)
+
+
 def _verify_canary_promotion(client, bucket: str, run_id: str,
                              rows: Sequence[dict[str, Any]],
                              canary_root: str = CANARY_PREFIX) -> dict[str, Any]:
@@ -6107,7 +6125,19 @@ def _verify_canary_promotion(client, bucket: str, run_id: str,
         (``source_manifest_sha256``), and those bytes must still be the
         original's;
       * the object-set digest it recorded must equal the original's, and
-        equal its own.
+        equal its own;
+      * **every field the original carried is preserved, per object key.**
+
+    The last one is not implied by the first two. A substituted sibling can
+    hold the identical object set and still change ``detail_rows``,
+    ``strata``, ``artifact_id``, ``batch_name``, ``id_source`` or
+    ``input_kind`` -- and carry ``write_set_digest`` values that match
+    equally-mutated ``assigned/`` or ``to_import`` inputs. Everything
+    downstream compares the sibling against those *current* inputs, so it all
+    passes; the frozen manifest is the only thing that still remembers what
+    was approved. Flip one selected row from carousel to detail, substitute a
+    sibling that agrees with the flip, and an extra historical price event is
+    minted against a manifest that recorded carousel.
 
     The original is therefore required to still exist. That is deliberate --
     it is the only record of what the window's subject was, and a promotion
@@ -6159,6 +6189,28 @@ def _verify_canary_promotion(client, bucket: str, run_id: str,
         problems.append(
             f"its own object set is {migrated_set}, not the frozen "
             f"{source_set} -- it selects different artifacts")
+
+    # Field preservation, per object key. Only the columns the migration adds
+    # may differ; everything the frozen manifest recorded has to survive.
+    if migrated_set == source_set:
+        carried = [name for name in _canary_manifest_schema().names
+                   if name not in _CANARY_MIGRATION_ADDED_FIELDS]
+        by_key = {row["object_key"]: row for row in rows}
+        altered = [
+            {"object_key": source_row["object_key"], "field": name,
+             "frozen": source_row.get(name),
+             "migrated": by_key[source_row["object_key"]].get(name)}
+            for source_row in source_rows
+            for name in carried
+            if not _promotion_field_agrees(
+                source_row.get(name), by_key[source_row["object_key"]].get(name))
+        ]
+        if altered:
+            problems.append(
+                f"{len(altered)} field(s) the frozen manifest recorded were "
+                f"changed, e.g. {altered[:3]} -- a promotion may add "
+                f"{sorted(_CANARY_MIGRATION_ADDED_FIELDS)} and nothing else")
+
     if problems:
         raise ReconcileError(
             "the migrated canary manifest is not a promotion of the frozen "

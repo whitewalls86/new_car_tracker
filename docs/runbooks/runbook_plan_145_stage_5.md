@@ -503,9 +503,24 @@ was promoted from (`source_manifest_sha256`) and the object set those bytes
 held (`source_object_set_digest`), and every consumer **re-proves the promotion
 from the two manifests alone** before building a write set — not from the
 migration's own report, which is a separate object written afterwards by the
-run whose correctness is in question. A sibling created or replaced
-independently, or one whose object set differs from the frozen manifest's, is
-refused. The commit's blast-radius print names the promotion it re-proved.
+run whose correctness is in question. Three things are proved:
+
+| proved | catches |
+|---|---|
+| the sibling names the frozen manifest's exact bytes, as they stand now | a sibling promoted from something else |
+| its object set equals the frozen manifest's, and equals what it recorded | a sibling over different artifacts |
+| **every field the frozen manifest carried survives, per object key** | a sibling over the *same* artifacts that changed `detail_rows`, `strata`, `artifact_id`, `batch_name`, `id_source`, `input_kind`, `page_listing_id` or `silver_rows` |
+
+The third is not implied by the first two, and it is the one that matters most.
+A substituted sibling can hold the identical object set and still carry
+`write_set_digest` values that agree with equally-mutated `assigned/` or
+`to_import` inputs — and everything downstream compares the sibling against
+those *current* inputs, so it all passes. The frozen manifest is the only thing
+that still remembers what was approved. A promotion may add `page_fetched_at`,
+`write_set_digest`, `vin_snapshot_sha256` and the two source columns; nothing
+else may move.
+
+The commit's blast-radius print names the promotion it re-proved.
 
 That means **the frozen manifest must stay in place after migration.** It is
 the only record of what the window's subject was, and a promotion that can no
