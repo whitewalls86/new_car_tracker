@@ -464,7 +464,7 @@ No window is scheduled — opening one is the maintainer's action.
 |---|---|---|---|---|
 | 1 | migrate the manifest | any time | `canary-remanifest --apply` | 2 objects under `recovery/plan145/canary/` |
 | 2 | dry run, read the pin | any time | `canary-commit` | nothing |
-| 3 | **the window** | you make it — §7.3 (a)–(c) | `verify_recovery_live_state.py --canary-cmd "… canary-commit --apply …"` | **505 silver + 140 price + 234 queue + 1 receipt**, one transaction |
+| 3 | **the window** | after a deploy-intent drain — §7.3 (a)–(c) | `verify_recovery_live_state.py --canary-cmd "… canary-commit --apply …"` | **505 silver + 140 price + 234 queue + 1 receipt**, one transaction |
 | 4 | verify the flush | ≤1h after step 3 | `canary-flush-verify --apply` | 1 report object |
 
 Pin `--run-id cmp-6c7c90d807bbdf13` on every one of them.
@@ -525,9 +525,16 @@ whole mechanism. It exists so a run that quiesced production is named on the
 record and cannot be fired off casually. Pick something like
 `p145-canary-2026-08-29` and use the same string in the report filename.
 
-The window is a thing *you make* by doing (a)–(c) below, and unmake with (g).
+**The window is an ordinary deploy drain.** Declare intent, let the in-flight
+work finish, and then — instead of rebuilding containers, which is what a
+deploy would do next — run the canary and release. Nothing is stopped and
+nothing is restarted.
 
-#### (a) Declare deploy intent — this holds every DAG
+#### (a) Declare deploy intent
+
+This *is* the quiesce. It is an ordinary drain — the same one a redeploy uses —
+except that instead of rebuilding containers at the bottom of it, you run the
+canary.
 
 ```bash
 curl -sS -X POST http://localhost:8060/deploy/start \
@@ -536,40 +543,58 @@ curl -sS -X POST http://localhost:8060/deploy/start \
 ```
 
 `targets` is validated against `ops/coordination_contract.py`'s
-`SERVICE_CONTRACTS`; unknown or duplicate names are a 422, and an intent
-already held is a 409. **Every mutating DAG's first task is
-`deploy_intent_sensor`**, which blocks in `reschedule` mode while an intent is
-pending — so this one call holds `scrape_detail_pages`, `scrape_listings`,
-`results_processing`, `orphan_checker`, `compact_silver` **and
-`hourly_analytics_refresh`**. You do not need to pause DAGs by hand, and
-`POST /deploy/complete` releases them all at once.
+`SERVICE_CONTRACTS`; unknown or duplicate names are a 422, an intent already
+held is a 409. **Every mutating DAG's first task is `deploy_intent_sensor`**,
+which blocks in `reschedule` mode while an intent is pending — so this one call
+holds `scrape_detail_pages`, `scrape_listings`, `results_processing`,
+`orphan_checker`, `compact_silver` **and `hourly_analytics_refresh`**, and
+`POST /deploy/complete` releases them together. Do not pause DAGs by hand.
 
 Holding the hourly flush is deliberate, not incidental — see (f).
 
-#### (b) Stop the three writers — intent does not do this
+#### (b) Let the in-flight work drain
 
 ```bash
-docker compose stop scraper processing ops
+watch -n 15 'curl -s http://localhost:8060/deploy/status'
 ```
 
-**Deploy intent is a cooperative signal, not a stop.** `shared/deploy_intent.py`
-has exactly two consumers — `pack_bronze_html` and `delete_packed_source_html`
-— and its own docstring says *"nothing here kills anything."* `scraper`,
-`processing` and `ops` never read it. They write the protected tables directly:
-`ops` writes `ops.detail_scrape_claims` from an HTTP route (`routers/scrape.py`)
-that the scraper calls, with no DAG involved. Intent alone leaves them running.
+`number_running` is not a proxy. It is
+`ops.artifacts_queue` rows in `pending`/`processing` **plus**
+`ops.detail_scrape_claims` rows in `running` — precisely the work that writes
+the protected tables. **Wait for 0.** It was **400** when this sheet was
+written, so this takes real time; `min_started_at` tells you how long the
+oldest straggler has been going.
+
+**Do not stop the containers.** Draining is sufficient, and stopping is worse:
+
+- `scraper`, `processing` and `ops` are plain `uvicorn` FastAPI apps with **no
+  scheduler, no background loop and no startup task** — they write only when
+  called. Every caller is an Airflow DAG gated on the sensor, or ops' own
+  coordination code. `trawl` and `flaresolverr` are fetchers with **no database
+  credentials at all**.
+- `docker compose stop ops` would kill the service that serves
+  `/deploy/complete`, leaving you to release the intent by hand in SQL.
+
+What draining does *not* do is make the services *incapable* of writing —
+their ports are published, so an out-of-band HTTP call would still be served.
+That is the honest difference between a drain and a stop, and it is an
+acceptable one here: the verifier **measures** whether the protected tables
+moved. A stray write does not corrupt anything silently; it fails the proof,
+and you retry the window.
 
 #### (c) Confirm it is quiet
 
 ```bash
-curl -s http://localhost:8060/deploy/status          # number_running -> 0
+curl -s http://localhost:8060/deploy/status          # number_running: 0
 docker exec cartracker-postgres psql -U cartracker -tAc \
   "select count(*) from airflow.dag_run where state = 'running'"
-docker compose ps --status running | grep -E 'scraper|processing|ops' || echo "writers down"
 ```
 
-`number_running` is the live execution count; it was **400** when this sheet
-was written, so give it time to settle rather than assuming.
+> **Keep the window under 30 minutes, and never leave the intent pending.**
+> `STALE_LOCK_MINUTES = 30`: after that another caller's `/deploy/start` can
+> take the lock out from under you. And an intent nobody releases blocks every
+> mutating DAG until someone is paged — which `shared/deploy_intent.py` calls
+> the designed outcome, but not one to trigger by accident.
 
 #### (d) Run it
 
@@ -657,18 +682,17 @@ COMMIT;"
 #### (g) Restore
 
 ```bash
-docker compose start scraper processing ops
 curl -sS -X POST http://localhost:8060/deploy/complete
 curl -s http://localhost:8060/deploy/status          # intent -> none
 ```
 
-Only now does `hourly_analytics_refresh` resume, and with it the flush step 4
-verifies.
+Nothing to restart: no container was stopped. The DAGs resume at their next
+schedule, and with them `hourly_analytics_refresh` — the flush step 4 verifies.
 
 #### Services and DAGs, for the record
 
-The script does not and cannot quiesce anything. What writes the four
-protected tables:
+The script does not and cannot quiesce anything; the drain in (a)–(c) does.
+What writes the four protected tables, and why the drain reaches all of it:
 
 | table | written by |
 |---|---|
@@ -676,6 +700,13 @@ protected tables:
 | `ops.vin_to_listing` | `processing` — `upsert_vin_to_listing.sql` |
 | `ops.blocked_cooldown` | `scraper` — `upsert_blocked_cooldown.sql`; `processing` — `clear_blocked_cooldown.sql`; `ops` — `evict_delisted_cooldowns.sql` |
 | `ops.detail_scrape_claims` | `ops` — `routers/scrape.py`, `expire_orphan_detail_claims.sql`; `processing` — `release_detail_claims.sql` |
+
+All three are reactive HTTP services. Their callers are `scrape_detail_pages`,
+`scrape_listings`, `results_processing`, `orphan_checker` and
+`hourly_analytics_refresh` — every one gated on `deploy_intent_sensor` — plus
+ops' own `coordination_drain.py` / `coordination_release.py` / `routers/admin.py`,
+which are the deploy flow itself. Nothing else calls them, and nothing in them
+calls itself.
 
 Both V040 views resolve to `ops.price_observations` alone —
 `ops_vehicle_staleness` reads it directly and `ops_detail_scrape_queue` reads
