@@ -880,18 +880,29 @@ repaired with the time the batch actually landed. Across a month boundary that
 decides which queue-event partition gets read. There is no fallback: a missing
 receipt time is a refusal.
 
-### 7.6 What Phase B does not resolve
+### 7.6 The canary's artifacts, and the full apply
 
-The 234 canary artifacts also belong to slice-2 batches `b*`. Once the canary
-commits, a later full `apply` of those batches **writes the same 505
-observations again**, which the Stage 5 gate's *no duplicate
-`(listing_id, fetched_at)`* clause forbids. `canary-commit` writes a durable
-record of exactly what it committed —
-`recovery/plan145/canary/<run>-canary_commit.json`, naming the manifest digest,
-the artifact ids and the assignment batches — so the full apply has something
-authoritative to exclude with. **`apply` itself is unchanged and does not yet
-read it.** Resolving that is the full apply's problem and the maintainer's
-ruling, not Phase B's.
+The 234 canary artifacts also sit in slice-2 batches `b*`. Receipts are keyed
+by *batch name* and the canary commits under `<run>-canary`, so a full `apply`
+would write those 505 observations a second time — which the Stage 5 gate's
+*no duplicate `(listing_id, fetched_at)`* clause forbids.
+
+`apply` now skips them. It reads the canary's commit report, re-reads the
+manifest through the digest that report recorded, and drops those object keys
+from every batch — whole artifacts, so nothing splits. The exclusion is
+computed connection-free, so it shows in the dry run's blast radius and in the
+row budget the gate measures without costing a statement.
+
+**The receipt is the authority, not the report.** Before writing, `apply`
+confirms the canary's receipt on the connection it already opened. Both
+mismatches are stops, because only a human knows which side is right:
+
+| state | meaning | why it stops |
+|---|---|---|
+| report, no receipt | canary rolled back, report left behind | excluding would silently drop 234 artifacts from the import |
+| receipt, no report | rows committed this run cannot identify | it cannot avoid writing them twice |
+
+A dry run says `receipt NOT confirmed`, because it opens no connection.
 
 ---
 

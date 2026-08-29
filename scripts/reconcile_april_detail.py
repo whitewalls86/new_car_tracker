@@ -5042,8 +5042,44 @@ def run_apply(args: argparse.Namespace) -> int:
             "silver_rows": sum(int(r["silver_rows"]) for r in records),
             "detail_rows": sum(int(r["detail_rows"]) for r in records),
         })
+    # The canary already committed some of these artifacts under its own
+    # receipt name, so applying their batches unchanged would write those rows
+    # twice. Whole artifacts are dropped, never rows within one, so no batch is
+    # split. A probe writes nothing, so it has nothing to avoid duplicating and
+    # reports the full set.
+    # Read-only and connection-free: the exclusion has to be reflected in the
+    # plan and in the budget the gate measures, and neither may cost a
+    # statement. The receipt that *proves* the canary committed is checked
+    # later, on the connection already opened for the writes -- after the gate.
+    canary = ({"object_keys": frozenset(), "committed": False, "reason": "probe"}
+              if probe else
+              canary_committed_objects(client, bucket, run_id, roots=roots))
+
+    skipped_objects = canary["object_keys"]
+    if skipped_objects:
+        for entry in plan_rows:
+            kept = [r for r in entry["records"]
+                    if r["object_key"] not in skipped_objects]
+            entry["canary_skipped"] = len(entry["records"]) - len(kept)
+            entry["records"] = kept
+            entry["artifacts"] = len(kept)
+            entry["silver_rows"] = sum(int(r["silver_rows"]) for r in kept)
+            entry["detail_rows"] = sum(int(r["detail_rows"]) for r in kept)
+        found = sum(entry.get("canary_skipped", 0) for entry in plan_rows)
+        if args.batch and found == 0:
+            logger.info(
+                "no canary artifact falls in the selected batch(es); nothing "
+                "to skip")
+        elif not args.batch and found != len(skipped_objects):
+            raise ReconcileError(
+                f"the canary committed {len(skipped_objects)} objects but only "
+                f"{found} of them appear in this run's assignment shards; the "
+                f"canary and the assignment no longer describe one population"
+            )
+
     _print_apply_plan(run_id, plan_rows, apply=apply,
-                      approval=args.maintainer_approval, probe=probe)
+                      approval=args.maintainer_approval, probe=probe,
+                      canary=canary)
 
     # The canary gate, measured in rows rather than in batches. Counting
     # batches would have let one default-cap batch -- 5,000 artifacts and up to
@@ -5095,6 +5131,11 @@ def run_apply(args: argparse.Namespace) -> int:
             from shared.db import get_conn
 
             conn = get_conn()
+            if not probe:
+                # A probe commits nothing, so it cannot duplicate the canary
+                # and has no receipt to reconcile against.
+                with conn.cursor() as cur:
+                    confirm_canary_receipt(cur, bucket, run_id, canary)
         for entry in plan_rows:
             batch_name = entry["batch_name"]
             by_object = {r["object_key"]: r for r in entry["records"]}
@@ -5201,7 +5242,8 @@ _APPLY_NEVER_TOUCHES = (
 
 def _print_apply_plan(run_id: str, plan_rows: Sequence[dict[str, Any]], *,
                       apply: bool, approval: Optional[str],
-                      probe: bool = False) -> None:
+                      probe: bool = False,
+                      canary: Optional[dict[str, Any]] = None) -> None:
     """The blast radius, printed before the first write of a production run."""
     if probe:
         mode = "PROBE (real transaction, rolled back)" if apply else "PROBE DRY RUN"
@@ -5224,6 +5266,15 @@ def _print_apply_plan(run_id: str, plan_rows: Sequence[dict[str, Any]], *,
     print(f"silver rows          {sum(r['silver_rows'] for r in plan_rows):>12,}")
     print(f"price events (max)   {sum(r['detail_rows'] for r in plan_rows):>12,}")
     print(f"queue events         {sum(r['artifacts'] for r in plan_rows):>12,}")
+    skipped = sum(entry.get("canary_skipped", 0) for entry in plan_rows)
+    if canary and canary.get("committed"):
+        print(f"canary already wrote {skipped:>12,}  artifacts, skipped here "
+              f"({canary['batch_name']}, {canary.get('silver_rows')} rows, "
+              f"{canary.get('committed_at')})")
+        if not canary.get("receipt_confirmed"):
+            print("                     receipt NOT confirmed -- dry run opens "
+                  "no connection; --apply verifies it against "
+                  f"{RECEIPT_TABLE}")
     print()
     print(f"{'would write' if probe else 'writes':<21}"
           + "\n                     ".join(_APPLY_WRITES))
@@ -7138,6 +7189,106 @@ def _read_canary_commit_report(bucket: str, run_id: str,
     from shared.minio import read_json
 
     return read_json(f"s3://{bucket}/{_canary_commit_key(run_id, canary_root)}")
+
+
+def canary_committed_objects(client, bucket: str, run_id: str, *,
+                             roots: "_Stage5Roots", cursor=None,
+                             canary_root: str = CANARY_PREFIX) -> dict[str, Any]:
+    """The object keys the canary already committed, for `apply` to skip.
+
+    Without this the full apply writes the canary's 505 observations a second
+    time: receipts are keyed by *batch name*, the canary commits under
+    ``<run>-canary``, and those same artifacts also sit in ``b00001``-``b00069``.
+    Nothing downstream would notice -- which is exactly what the Stage 5 gate's
+    *no duplicate ``(listing_id, fetched_at)``* clause forbids.
+
+    **The receipt is the authority, not the report.** The commit report is an
+    object; the receipt is the row the transaction wrote. A canary that was
+    committed and then rolled back leaves the report behind (that is what
+    happened on 2026-08-29, twice), and excluding on the strength of it would
+    silently drop 234 artifacts from the import. So when a cursor is available
+    the receipt decides, and a report with no receipt is a **stop**, not a
+    shrug: the two disagree and only a human knows which is right.
+
+    The manifest is read through the digest the report recorded, so this cannot
+    quietly exclude a different set than the canary actually wrote.
+    """
+    import io
+
+    import pyarrow.parquet as pq
+
+    report = _read_canary_commit_report(bucket, run_id, canary_root)
+    batch_name = canary_batch_name(run_id)
+    if report is None:
+        return {"object_keys": frozenset(), "committed": False,
+                "batch_name": batch_name,
+                "reason": "no canary commit report"}
+
+    key = report.get("manifest_key")
+    digest = report.get("manifest_sha256")
+    if not key or not digest:
+        raise ReconcileError(
+            f"the canary commit report for {run_id} names no manifest; it "
+            f"cannot say which objects were committed"
+        )
+    body = client.get_object(Bucket=bucket, Key=key)["Body"].read()
+    found = hashlib.sha256(body).hexdigest()
+    if found != digest:
+        raise ReconcileError(
+            f"the canary manifest s3://{bucket}/{key} now hashes to {found} but "
+            f"the commit report recorded {digest}; it no longer describes what "
+            f"the canary wrote, so the objects to skip cannot be trusted"
+        )
+    rows = pq.read_table(io.BytesIO(body)).to_pylist()
+    return {
+        "object_keys": frozenset(r["object_key"] for r in rows),
+        "committed": True,
+        "batch_name": batch_name,
+        "manifest_key": key,
+        "manifest_sha256": digest,
+        "committed_at": report.get("committed_at"),
+        "receipt_confirmed": False,
+        "artifacts": (report.get("committed") or {}).get("artifacts"),
+        "silver_rows": (report.get("committed") or {}).get("silver"),
+    }
+
+
+def confirm_canary_receipt(cursor, bucket: str, run_id: str,
+                           canary: dict[str, Any],
+                           canary_root: str = CANARY_PREFIX) -> None:
+    """Check the canary's commit report against the row that proves it.
+
+    The report is an object; the receipt is what the transaction wrote. A
+    canary committed and then rolled back leaves the report behind -- that
+    happened twice on 2026-08-29 -- and excluding on the strength of it would
+    silently drop those artifacts from the import. A receipt with no report is
+    the mirror failure: rows were committed that this run cannot identify, so
+    it cannot avoid writing them twice. Both are stops, because only a human
+    knows which side is right.
+    """
+    batch_name = canary.get("batch_name") or canary_batch_name(run_id)
+    if not canary.get("committed"):
+        cursor.execute(_RECEIPT_SELECT_SQL, (batch_name,))
+        if cursor.fetchall():
+            raise ReconcileError(
+                f"{RECEIPT_TABLE} carries a receipt for {batch_name} but there "
+                f"is no canary commit report at s3://{bucket}/"
+                f"{_canary_commit_key(run_id, canary_root)}; the canary "
+                f"committed rows this run cannot identify, so it cannot avoid "
+                f"writing them twice"
+            )
+        return
+    if read_batch_receipt(cursor, batch_name, canary["manifest_sha256"]) is None:
+        raise ReconcileError(
+            f"a canary commit report exists for {run_id} but {RECEIPT_TABLE} "
+            f"has no matching receipt for {batch_name}. Either the canary was "
+            f"rolled back and its report was left behind -- delete the report, "
+            f"its rows are gone -- or the receipt was removed under a committed "
+            f"canary. Refusing to guess: excluding wrongly drops "
+            f"{canary.get('artifacts')} artifacts from the import, and not "
+            f"excluding writes {canary.get('silver_rows')} rows twice"
+        )
+    canary["receipt_confirmed"] = True
 
 
 def _print_canary_flush_report(report: dict[str, Any], *, apply: bool) -> None:
