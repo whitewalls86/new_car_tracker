@@ -2,7 +2,7 @@
 
 ## Status
 
-DRAFT, written 2026-08-23 after [Plan 142](plan_142_planned_host_maintenance.md)
+IN PROGRESS, written 2026-08-23 after [Plan 142](plan_142_planned_host_maintenance.md)
 Stage 0 found that pausing `results_processing` for a maintenance window would
 put the detail scraper into a re-scrape loop.
 
