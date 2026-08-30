@@ -367,19 +367,26 @@ this pool. Do not restore the pool assignment to achieve it.
 adds SRP artifacts to the durable pending backlog, which is the condition the
 drain contract wants to observe.
 
-`scrape_detail_pages` is held even though only `results_processing` looks like
-the mutating one, and the reason is a circuit breaker. `ops.ops_detail_scrape_queue`
-(a view, `V040__detail_scrape_circuit_breaker`) selects listings whose
-`price_observations.last_detail_scraped_at` is null or older than 7 days. That
-column is written in exactly one place — `processing/writers/detail_writer.py:194`,
-the processing service — while `POST /scrape/claims/release` **deletes** the
-claim. So holding processing alone means the scraper claims ~100 listings,
-scrapes them, releases, nothing marks them scraped, and fifteen minutes later
-it claims **the same listings again**: up to four redundant passes an hour,
-real fetches against cars.com through the solver Plan 136 is nursing. Holding
-processing without holding the detail scraper *disables the circuit breaker and
-leaves its producer running.* Plan 147 fixes the ownership properly; until it
-lands, the two are held together.
+`scrape_detail_pages` **used to be** held alongside `results_processing`, and
+the reason is worth keeping because it explains what changed. Under
+`V040__detail_scrape_circuit_breaker`, `ops.ops_detail_scrape_queue` selected
+listings whose `price_observations.last_detail_scraped_at` was null or older
+than 7 days, and that column was written in exactly one place — the processing
+service — while `POST /scrape/claims/release` **deletes** the claim. So holding
+processing alone meant the scraper claimed ~100 listings, fetched them,
+released, nothing marked them scraped, and fifteen minutes later it claimed
+**the same listings again**: up to four redundant passes an hour of real
+fetches against cars.com through the solver Plan 136 is nursing. Holding
+processing without holding the detail scraper *disabled the circuit breaker and
+left its producer running.*
+
+Plan 147 split that column into `last_detail_fetched_at`, written by
+`release_claims` in the transaction that deletes the claim, and
+`last_detail_enriched_at`, written by the processor. The guard now sits next to
+the fetch, so a processing pause no longer reopens the loop, and
+`scrape_detail_pages` has left the held set. `V049` dropped
+`last_detail_scraped_at` entirely; if you are reading a query that still names
+it, that query predates 2026-08-30.
 
 ### Holding and releasing
 
@@ -804,8 +811,9 @@ Then confirm the re-scrape storm did **not** happen — the reason
 `scrape_detail_pages` is in the held set at all (§9):
 
 - detail artifacts produced *during* the hold should be ~0;
-- `last_detail_scraped_at` for the held listings should advance **exactly once**
-  after release, not four times.
+- `last_detail_enriched_at` for the held listings should advance **exactly
+  once** after release, not four times. (`last_detail_fetched_at` is the
+  scraper's own record of the same batch and advances with the release.)
 
 > **The risk worth naming in advance.** `orphan_checker` has **no
 > `max_active_runs`**, so it defaults to 16 — up to 12 queued runs could fire at

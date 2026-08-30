@@ -157,8 +157,7 @@ class TestSrpScrapeStateOwnership:
         })
 
         cur.execute(
-            "SELECT price, last_detail_fetched_at, last_detail_enriched_at,"
-            "       last_detail_scraped_at"
+            "SELECT price, last_detail_fetched_at, last_detail_enriched_at"
             " FROM ops.price_observations WHERE listing_id = %s::uuid",
             (listing_id,),
         )
@@ -166,12 +165,12 @@ class TestSrpScrapeStateOwnership:
         assert row["price"] == 24000, "the price sighting is still recorded"
         assert row["last_detail_fetched_at"] is None
         assert row["last_detail_enriched_at"] is None
-        assert row["last_detail_scraped_at"] is None
 
     def test_srp_write_does_not_clear_an_existing_enrichment(
         self, cur, seed_artifact,
     ):
-        """COALESCE semantics, preserved verbatim on both columns."""
+        """COALESCE semantics: a null incoming value preserves the previous
+        one, so an SRP sighting never clears an enrichment."""
         listing_id = str(uuid.uuid4())
         artifact = seed_artifact(artifact_type="results_page")
         enriched_at = datetime.now(timezone.utc)
@@ -192,8 +191,7 @@ class TestSrpScrapeStateOwnership:
         })
 
         cur.execute(
-            "SELECT price, customer_id, last_detail_enriched_at,"
-            "       last_detail_scraped_at"
+            "SELECT price, customer_id, last_detail_enriched_at"
             " FROM ops.price_observations WHERE listing_id = %s::uuid",
             (listing_id,),
         )
@@ -201,4 +199,3 @@ class TestSrpScrapeStateOwnership:
         assert row["price"] == 23500
         assert row["customer_id"] == "cust-1"
         assert row["last_detail_enriched_at"] == enriched_at
-        assert row["last_detail_scraped_at"] == enriched_at
