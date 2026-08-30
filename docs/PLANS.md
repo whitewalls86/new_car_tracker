@@ -34,7 +34,7 @@ when a row is inserted; plan numbers do not.
 
 ---
 
-## Current State (as of 2026-08-25)
+## Current State (as of 2026-08-29)
 
 Site is live at https://cartracker.info. All major pre-lakehouse foundations are
 complete: auth, data migration, CI/CD, integration testing, MinIO artifact
@@ -42,20 +42,23 @@ store, processing service, Airflow migration, Grafana, dashboard restructure,
 full decommission, storage normalization, and adaptive-refresh feature
 foundation.
 
-**Production is at `bb06054`, deployed the evening of 2026-08-25.** PRs #243,
-#245, #246, #247, #248 and #249 are all live, and `V043` is applied.
+**Production code is still at `bb06054`, deployed 2026-08-25.** The running
+`ops` and `container-health` images were both built 2026-08-25T19:45Z, while
+`V044`–`V047` applied 2026-08-27/28: **the schema is four migrations ahead of
+the deployed code.** Expand-only, so harmless at rest — but Plan 142's Stage 3
+resume gate is not live, and a maintenance window run on these images would
+strand in `validating`. Plan 142 Stage 4's pre-window scoping found it; the fix
+is an ordinary scoped deploy.
 
-Two soaks are running, both clocked from the deploy rather than from any merge:
+Both 2026-08-25 soaks have closed. Plan 136 Stage 3b was accepted 2026-08-27
+(slowed, not bounded — re-measure 2026-09-17, see closeout); Plan 141 Stage 4
+was accepted 2026-08-26 and the plan is archived.
 
-- **Plan 136 Stage 3b** — 48 hours from 19:50:55, accepts **2026-08-27**.
-- **Plan 141 Stage 4** — 24 hours from 19:52, accepts **2026-08-26**.
-
-Plan 142's Phase B window ran the same evening and closed clean: Stage 0 items
-6 and 7 are done, and the maintenance-pool hold ran 20:14:57 → 21:14:57,
-draining 44 tasks in 74.5s with zero failures.
-
-Plan 134's one-week observation window unblocks when Plan 141 Stage 4 accepts,
-but it owes code first and stays in the build order until that lands.
+**Plan 145 Stage 6 is in flight and holds row 1.** April is repacked and
+verified over all 983,043 members and the 32 superseded packs are retired; the
+prune and the 1,172-object legacy deletion remain. No coordination request —
+deploy or maintenance window — may be issued until its one-off containers exit,
+which is why it sits above Plan 142 rather than beside it.
 
 Airflow owns scraping and maintenance. n8n is fully removed. Postgres owns hot
 operational state. MinIO stores bronze HTML and analytical history. dbt
@@ -110,11 +113,11 @@ it is smaller while a higher row has an executable next step.
 
 | Order | Plan | Title | Next executable slice | Workable? | Blocked by | Priority | Effort | Depends on / safe stopping point |
 |---:|---|---|---|---|---|---|---|---|
-| 1 | [142](plans/plan_142_planned_host_maintenance.md) **Stage 4** | Scoped operational coordination and host maintenance | Fix the four Stage 2/3 defects the 2026-08-29 scoping found — deferred-reboot kernel target, one-off manifest capture, the `oauth2-proxy` release-gate exemption, the client's API default — then deploy `ops` and `container-health` and run the window from the Stage 4 run sheet | **Y** | -- | 86 | M + first observed window | Stage 3 is built but **not deployed**: both images predate it while V044-V047 are applied. Scoping the window is what found this; the plan document holds all five blockers. Plan 145 Stage 6 must finish before any coordination request |
-| 2 | [134](plans/plan_134_archiver_endpoint_failure_contract.md) | Archiver endpoint failure contract | Add warning-only failure predicates and begin the one-week observation window | **Y** | -- | 88 | S | Plan 141 completed 2026-08-26; the one-week observation begins when Plan 134's warning-only predicates deploy, then enforcement follows if the evidence is clean |
-| 3 | [145](plans/plan_145_april_cutover_reconciliation.md) **Stage 5** | Recover April detail artifacts and delete the legacy Parquet | Stage 5 slice 3 — run the canary, maintenance window and quiesced-writer live-state proof after Stage 4 and slices 1/2 finish computing | **N** | Plan 145 Stage 4 and Stage 5 slices 1/2 computations | 84 | M | **Supersedes Plans 132 and 137. Second revision 2026-08-27: re-derives from the bytes rather than reconciling through metadata**, because pack sidecar `listing_id` is wrong for 194,639 of 371,095 content matches and cannot carry the join. One-time migration: materialize the surviving successful bodies, parse the whole April population with the production parser, compare parsed output to silver, apply what is missing, repack, then delete exactly 1,172 detail Parquet objects (~13.66 GiB). The 127 results-page Parquet objects are out of scope |
-| 4 | [138](plans/plan_138_public_surface_refresh.md) | Public surface refresh | Truth pass, public-root contract, accessible assets, Plan 143 stats presentation, and project-updates snapshot | **Y** | -- | 84 | L | Plan 143 supplies the stats contract; land before the next major platform milestone. **Its project-updates snapshot now reads [completed_plans.md](planning/completed_plans.md)**, since Plan 146 removed this file's duplicate Completed table |
-| 5 | [147](plans/plan_147_scrape_state_ownership.md) | Scrape state ownership — separating fetch from enrichment | `Vn+1` expand migration plus the fetch-backoff view rebuild — a no-op for every existing row | **Y** | -- | 75 | S | Nothing. Found by Plan 142 Stage 0, which hit the loop while scoping a maintenance pause. **Supersedes Plan 115's mechanism while preserving its goal** — the guard moves next to the fetch so new causes cannot reopen the loop. Expand/contract, so Stage 1 reverts by reverting the commit; only Stage 4's `Vn+2` drop is irreversible. Landing it lets Plan 142 drop `scrape_detail_pages` from its held set |
+| 1 | [145](plans/plan_145_april_cutover_reconciliation.md) **Stage 6** | Recover April detail artifacts and delete the legacy Parquet | Let the prune finish, then regenerate the exact 1,172-key deletion manifest from the frozen Stage 1 census and delete with named approval — by exact key with receipts, never by prefix | **Y** | -- | 84 | M | **Supersedes Plans 132 and 137.** Stages 1-5 are complete; April is repacked and verified over all 983,043 members and the 32 superseded packs are retired. The 127 results-page Parquet objects are out of scope. **Blocks every coordination request until its one-off containers exit**, which is what puts it above Plan 142 rather than beside it |
+| 2 | [142](plans/plan_142_planned_host_maintenance.md) **Stage 4** | Scoped operational coordination and host maintenance | Fix the four Stage 2/3 defects the 2026-08-29 scoping found — deferred-reboot kernel target, one-off manifest capture, the `oauth2-proxy` release-gate exemption, the client's API default — then deploy `ops` and `container-health` and run the window from the Stage 4 run sheet | **Y** | Plan 145 Stage 6, for the deploy and the window only — the four defect fixes are unblocked today | 86 | M + first observed window | Stage 3 is built but **not deployed**: both images predate it while V044-V047 are applied. Scoping the window is what found this; the plan document holds all five blockers |
+| 3 | [134](plans/plan_134_archiver_endpoint_failure_contract.md) | Archiver endpoint failure contract | Add warning-only failure predicates and begin the one-week observation window | **Y** | -- | 88 | S | Plan 141 completed 2026-08-26; the one-week observation begins when Plan 134's warning-only predicates deploy, then enforcement follows if the evidence is clean |
+| 4 | [147](plans/plan_147_scrape_state_ownership.md) | Scrape state ownership — separating fetch from enrichment | `Vn+1` expand migration plus the fetch-backoff view rebuild — a no-op for every existing row | **Y** | -- | 75 | S | Nothing. Found by Plan 142 Stage 0, which hit the loop while scoping a maintenance pause. **Supersedes Plan 115's mechanism while preserving its goal** — the guard moves next to the fetch so new causes cannot reopen the loop. Expand/contract, so Stage 1 reverts by reverting the commit; only Stage 4's `Vn+2` drop is irreversible. **Moved above Plan 138 on 2026-08-29**: it is S against L and it pays down row 2's held set by letting Plan 142 drop `scrape_detail_pages`, which Plan 138 does not |
+| 5 | [138](plans/plan_138_public_surface_refresh.md) | Public surface refresh | PR A truth-and-roadmap pass, then the public-root contract, accessible assets, and the Plan 143 stats presentation | **Y** | -- | 84 | L | Plan 143 supplies the stats contract; land before the next major platform milestone. The plan's own §Recommended PR sequence splits it A/B/C/D, with B and C reviewed together. **Its project-updates snapshot now reads [completed_plans.md](planning/completed_plans.md)**, since Plan 146 removed this file's duplicate Completed table |
 | 6 | [154](plans/plan_154_container_log_coverage.md) **Stage 0** | Container log coverage | Stage 0 — classify all 26 expected-running services and measure candidate log volume before admission | **Y** | -- | 70 | S + 7d observation | Plan 141 is complete; stop after Stage 0 unless measurements justify admitting new streams |
 | 7 | [151](plans/plan_151_distributed_tracing_and_runtime_topology_audit.md) | Distributed tracing and runtime topology audit | Stage 0 — define the bounded instrumentation experiment, telemetry contract, resource budgets, and Plan 142 declared-graph export | **Y** | -- | 72 | M + 7d observation | Plan 142 remains authoritative safety policy; begin metrics-only, and add Tempo only if aggregate telemetry cannot answer a recorded diagnostic question |
 | 8 | [125](plans/plan_125_duckdb_to_iceberg_migration.md) | DuckDB-to-Iceberg analytics migration | Gate C production runtime measurement, then Gate D reader inventory/dual-run | **Y** | -- | 81 | XL | Plan 120 closeout; swap Plan 143's producer adapter while preserving its snapshot and metric contracts. **Start from `feature/plan-125-portability-audit`, not `master`** — 17 unmerged commits (last 2026-07-21) carry the replay and scale harnesses and the local reproduction of the VM OOM |
@@ -122,11 +125,11 @@ it is smaller while a higher row has an executable next step.
 | 10 | [113](plans/plan_113_production_adaptive_refresh.md) | Production adaptive refresh | Promote one reviewed, pinned policy into ops claim logic | **N** | Plan 112 | 74 | M | Approved Plan 112 result; no live model dependency |
 | 11 | [139](plans/plan_139_test_suite_maintenance.md) **Stage C** | Profile the 92s `tests/integration/dbt/` step | Run it with `--durations=20` in CI and record the per-test breakdown before proposing any change | **Y** | -- | 60 | S | Measurement only; CI-only work — do not pip-install dbt locally |
 | 12 | [155](plans/plan_155_log_dashboards.md) **Stage 0** | Log dashboards and aggregate triage | Stage 0 — define the bounded dashboard questions against Plan 141's landed labels and fields | **Y** | -- | 62 | S | Plan 141 is complete. Plan 154 supplies additional streams but does not block Stage 0; keep behind Plan 139 Stage C so it does not delay the next feature milestone |
-| 13 | [119](plans/plan_119_lakehouse_governance.md) | Lakehouse governance | Add measured catalog controls and auditability | **N** | Plan 125 | 58 | L | Stable Plan 125 catalog and reader contracts |
-| 14 | [139](plans/plan_139_test_suite_maintenance.md) **Stage D** | Intent markers and the coverage-gate decision | Move `report_dbt_run_results.py` into `dbt_runner/`, add the `oneoff` marker per test class, decide the gate and the `airflow/dags`+`dashboard` exclusion in writing | **N** | 139 Stage A coverage data [~2026-09] | 52 | S | Several weeks of Stage A coverage data; opportunistic filler. Stage E then evaluates Plan 142-informed CI impact selection in advisory mode before any new skip policy. **Also the trigger for backlog Plans 103 and 107**, which overlap it and are re-scoped or superseded when it lands |
-| 15 | [126](plans/plan_126_basic_event_streaming.md) | Basic event streaming | Prove transport, replay, and one low-risk consumer | **N** | Plans 125, 112, 113 | 49 | XL | Plans 125 and 112/113 clarify stable event semantics |
-| 16 | [127](plans/plan_127_streaming_adaptive_scrape_control.md) | Streaming adaptive scrape control | Add closed-loop control behind batch-parity and rollback gates | **N** | Plan 126 | 42 | XL | Plan 126 plus approved Plan 112/113 behavior |
-| 17 | [69](plans/plan_69_terraform.md) | Terraform IaC | `terraform import` the existing VM/network/firewall until `plan` shows no diff against production | **Y** | -- | 66 | M | **Moved out of the backlog 2026-08-20** — its trigger was "a second environment is approved", and Plan 121 is that environment. Must land before Plan 121, not after |
+| 13 | [69](plans/plan_69_terraform.md) | Terraform IaC | `terraform import` the existing VM/network/firewall until `plan` shows no diff against production | **Y** | -- | 66 | M | **Moved out of the backlog 2026-08-20** — its trigger was "a second environment is approved", and Plan 121 is that environment. Must land before Plan 121, not after. **Moved from row 17 to 13 on 2026-08-29**: at priority 66 and workable, it was sitting below three blocked rows scoring 58, 49 and 42, none of which has an executable step |
+| 14 | [119](plans/plan_119_lakehouse_governance.md) | Lakehouse governance | Add measured catalog controls and auditability | **N** | Plan 125 | 58 | L | Stable Plan 125 catalog and reader contracts |
+| 15 | [139](plans/plan_139_test_suite_maintenance.md) **Stage D** | Intent markers and the coverage-gate decision | Move `report_dbt_run_results.py` into `dbt_runner/`, add the `oneoff` marker per test class, decide the gate and the `airflow/dags`+`dashboard` exclusion in writing | **N** | 139 Stage A coverage data [~2026-09] | 52 | S | Several weeks of Stage A coverage data; opportunistic filler. Stage E then evaluates Plan 142-informed CI impact selection in advisory mode before any new skip policy. **Also the trigger for backlog Plans 103 and 107**, which overlap it and are re-scoped or superseded when it lands |
+| 16 | [126](plans/plan_126_basic_event_streaming.md) | Basic event streaming | Prove transport, replay, and one low-risk consumer | **N** | Plans 125, 112, 113 | 49 | XL | Plans 125 and 112/113 clarify stable event semantics |
+| 17 | [127](plans/plan_127_streaming_adaptive_scrape_control.md) | Streaming adaptive scrape control | Add closed-loop control behind batch-parity and rollback gates | **N** | Plan 126 | 42 | XL | Plan 126 plus approved Plan 112/113 behavior |
 | 18 | [121](plans/plan_121_staging_environment.md) | Staging environment | Stand up the smallest fixture-backed deployed environment, provisioned from Plan 69's modules | **N** | Plan 69 | 63 | L | Plan 69 first, so staging and prod come from one module set instead of two hand-built hosts. Prefer after Plan 125 reader shape settles unless needed earlier for risky rollout |
 | 19 | [150](plans/plan_150_analytics_product_and_bi_serving_layer.md) | Analytics product and BI serving layer | Stage 0 research — inventory the existing dbt gold layer, define candidate analytical products and audiences, compare serving and BI options, and recommend a bounded architecture | **Y** | -- | 68 | XL, research-gated | Stage 0 ends with a written tool and architecture decision; Plan 150 remains behind Plans 126, 127, 69 and 121, and no warehouse or BI commitment is made before that decision |
 
