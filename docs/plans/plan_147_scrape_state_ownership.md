@@ -6,7 +6,17 @@ DRAFT, written 2026-08-23 after [Plan 142](plan_142_planned_host_maintenance.md)
 Stage 0 found that pausing `results_processing` for a maintenance window would
 put the detail scraper into a re-scrape loop.
 
-Priority **75 (medium)**. Effort **S**.
+Priority **75 (medium)**. Effort **S**. In the build order in
+[`docs/PLANS.md`](../PLANS.md), which is authoritative for its position.
+
+Re-verified against the codebase on **2026-08-29** before implementation began.
+That pass corrected the migration numbering, the Stage 4 blast radius, and the
+description of `release_claims`, and added the note that the only live caller
+reports `ok` for every listing. Sections carrying a *verified* date were checked
+against code on that date; everything else is as written on 2026-08-23.
+
+Stages are ticketed in cycle 1 as **CAR-12** (Stage 1, 3 pts), **CAR-23**
+(Stage 2), **CAR-24** (Stage 3) and **CAR-25** (Stage 4, 1 pt each).
 
 This is a **data-ownership refactor, not a refresh-policy change.** Which
 listings are eligible for a detail scrape, and how often, is deliberately
@@ -84,15 +94,46 @@ branch). It stays processor-owned, correctly: carousel and SRP prices are
 
 ### The scraper already reports what it needs to record
 
-No new endpoint and no new call. `POST /scrape/claims/release` already receives
+No new endpoint and no new call. `POST /scrape/claims/release`
+([`ops/routers/scrape.py`](../../ops/routers/scrape.py)) already receives
 `results: List[ReleaseResult]` with a per-listing `status` of `ok`, `failed` or
-`skipped`, and already writes to the database in the same transaction that
-deletes the claims. `last_detail_fetched_at` is set there.
+`skipped`, and already opens a `db_cursor` to delete the claim rows.
+`last_detail_fetched_at` is set by adding one `UPDATE` inside that same cursor
+block, so it commits or rolls back with the delete.
+
+Two things about the handler as it stands today, so neither surprises the
+implementer:
+
+- **Its docstring is stale.** It says the handler "marks the run as finished";
+  it does not. The claim `DELETE` is the handler's only statement, and there is
+  no runs-table write anywhere in it. Do not go looking for one. Correct the
+  docstring while adding the update.
+- **Ops connects as `PGUSER=cartracker`** (`docker-compose.yml`), the owner of
+  `ops.price_observations`, so the new write needs no additional grant —
+  unlike the scraper role, which needed `V038`. Confirm rather than assume.
 
 **Set it on `ok` and `failed`, not on `skipped`.** The column means "we spent a
 request", and a failed fetch spent one. A `skipped` listing was never attempted.
 Blocked/403 listings keep their existing cooldown path; this is not a
 replacement for it.
+
+**The only live caller sends `ok` for everything.**
+[`scrape_detail_pages.py`](../../airflow/dags/scrape_detail_pages.py) builds its
+release payload as `{"listing_id": ..., "status": "ok"}` for every claimed
+listing, with the comment *"treat all listings as ok (scraper handles
+per-artifact errors)"*, and the `release_claims` task carries
+`trigger_rule="all_done"` so it fires even when the fetch task failed. So in
+production today, `last_detail_fetched_at` will be stamped on every listing in
+every released batch, regardless of what actually happened to it.
+
+That is the correct behaviour for a loop guard — a claimed batch consumed
+requests whether or not the fetches succeeded, and the backoff should apply to
+all of it. It is called out because it means the `failed`/`skipped` branch is a
+**contract that no caller currently exercises**: the three-way rule is worth
+implementing so the endpoint stays honest, but its tests are endpoint-contract
+tests, not evidence about the live path. **Teaching the DAG to report real
+per-listing statuses is explicitly out of scope** — that is a behaviour change,
+and this plan is a refactor.
 
 ### Queue predicate
 
@@ -173,8 +214,11 @@ stronger reason to prefer it.
 Schema lives in Postgres and changes go through **Flyway**: versioned SQL in
 [`db/migrations/`](../../db/migrations/), applied by the one-shot `flyway`
 container that every other service gates on with
-`service_completed_successfully`. Highest applied version is `V042`, so this is
-**`Vn+1__scrape_state_ownership.sql`**.
+`service_completed_successfully`. Highest applied version is **`V047`**
+(`V047__plan145_recovery_batch_receipts.sql`), and no unmerged branch carries a
+`V048` or higher, so this is **`V048__scrape_state_ownership.sql`** and Stage
+4's contract is **`V049`**. *(Verified 2026-08-29; re-check `db/migrations/`
+before writing the file.)*
 
 **Expand/contract, not a rename in place.** Flyway here is forward-only, there
 is no down-migration, and there is no staging environment to rehearse against
@@ -185,7 +229,7 @@ fails its writes until it is recreated. Reverting the code would then leave a
 renamed column and no way back short of a hand-written migration. Both risks
 disappear if the old column simply keeps existing for one release.
 
-`Vn+1` therefore:
+`V048` therefore:
 
 1. Adds `last_detail_fetched_at timestamptz` — null, meaning "never fetched",
    which is correct: the queue admits on the other two predicates exactly as it
@@ -197,21 +241,47 @@ disappear if the old column simply keeps existing for one release.
 4. Rebuilds `ops.ops_vehicle_staleness` and `ops.ops_detail_scrape_queue` to
    read the new columns and add the backoff, preserving the
    `OWNER TO dbt_user` / `GRANT SELECT TO viewer` pattern from
-   `V040__detail_scrape_circuit_breaker.sql`.
+   `V040__detail_scrape_circuit_breaker.sql`. The enrichment check reads
+   through both columns for the length of the dual-write release — see
+   [below](#the-enrichment-check-must-read-through-both-columns), which is
+   load-bearing.
 
 Rollback at this point is reverting the application commit; the extra columns
 are inert and harm nothing.
 
-### Stage 4 — Contract
+#### The enrichment check must read through both columns
 
-Once Stage 3 has verified the new columns in production, a second migration
-(`Vn+2`) drops `last_detail_scraped_at` and the dual write. Deliberately a
-separate deploy: it is the only irreversible step, and it should not share a
-window with the change that proves the replacement works.
+*Corrected 2026-08-29. As originally written, Stage 1 reopened the loop it
+exists to close.*
 
-Blast radius is small and was measured: `last_detail_scraped_at` appears in
-three files under `processing/` and in the migrations. Nothing in `dbt/`,
-`dashboard/`, `ops/` or `scraper/` refers to it.
+Stage 1 rebuilds the view to read `last_detail_enriched_at`, but **Stage 2 is
+what makes any writer set that column**, and they are separate tickets. In the
+window between them a detail write still sets only `last_detail_scraped_at`, so
+a freshly enriched listing with `customer_id IS NULL` has
+`last_detail_enriched_at` still null, `is_full_details_stale` stays true, and it
+is re-queued every fifteen minutes — precisely the [Plan
+115](plan_115_detail_unenriched_circuit_breaker.md) regression. The new backoff
+cannot catch it either, because `last_detail_fetched_at` is unwritten until
+Stage 2 as well. The claim that `V048` is "a no-op for every existing row" is
+true of the columns and false of the view.
+
+So for the duration of the dual-write release the enrichment check reads
+through both columns:
+
+```sql
+COALESCE(po.last_detail_enriched_at, po.last_detail_scraped_at)
+```
+
+in both the `is_full_details_stale` expression and the `stale_reason` `CASE`,
+which are duplicate predicates in `V040` and must stay in agreement. The fetch
+backoff needs no such treatment: `last_detail_fetched_at` has no legacy
+counterpart, and all-null means the predicate simply does not bind, which is the
+intended no-op.
+
+This restores the property the expand step is for — `V048` is now genuinely
+inert on its own, and Stage 1 and Stage 2 stay independently deployable and
+independently revertable. `V049` collapses the `COALESCE` to
+`last_detail_enriched_at` when it drops the legacy column.
 
 ### Stage 2 — Writers
 
@@ -231,11 +301,34 @@ three files under `processing/` and in the migrations. Nothing in `dbt/`,
    plan's whole point, and is directly reusable as Plan 142's Stage 0 item 3
    evidence.
 
+### Stage 4 — Contract
+
+Once Stage 3 has verified the new columns in production, a second migration
+(`V049`) drops `last_detail_scraped_at` and the dual write, and collapses the
+Stage 1 `COALESCE` in both view predicates to a bare
+`last_detail_enriched_at`. Deliberately a separate deploy: it is the only
+irreversible step, and it should not share a window with the change that proves
+the replacement works.
+
+Blast radius is small and was measured (re-verified 2026-08-29):
+`last_detail_scraped_at` appears in three files under `processing/`
+(`writers/detail_writer.py`, `writers/srp_writer.py`,
+`sql/upsert_price_observation.sql`), in `V040`, and — the original measurement
+missed these — in **five test files**: `tests/processing/test_detail_writer.py`,
+`tests/processing/test_srp_writer.py`,
+`tests/integration/processing/test_detail_processing.py`,
+`tests/integration/processing/test_srp_processing.py` and
+`tests/integration/sql/test_ops_views.py` (42 occurrences in total). Nothing in
+`dbt/`, `dashboard/`, `ops/` or `scraper/` refers to it. Stage 4 is therefore a
+larger test edit than a production-code edit.
+
 ## Tests
 
 1. A listing fetched but not processed is not re-claimed inside the backoff.
 2. It *is* re-claimed after the backoff — the guard is a delay, not a deletion.
 3. `skipped` results do not set `last_detail_fetched_at`; `ok` and `failed` do.
+   An endpoint-contract test — no caller sends anything but `ok` today, so this
+   asserts the handler's rule, not observed production behaviour.
 4. A carousel write against an enriched listing refreshes price and advances
    neither fetch nor enrichment.
 5. A carousel-discovered listing with no prior detail scrape still enters the
@@ -246,6 +339,11 @@ three files under `processing/` and in the migrations. Nothing in `dbt/`,
 8. During the dual-write release, `last_detail_enriched_at` and
    `last_detail_scraped_at` never disagree — the check that makes Stage 4's drop
    safe rather than hopeful.
+9. **Stage 1 alone does not regress Plan 115.** With `V048` applied and the
+   Stage 2 writers *not* deployed, a detail write that sets only
+   `last_detail_scraped_at` still suppresses the listing for seven days. This
+   is the test that pins the `COALESCE` above; without it the regression is
+   silent and only visible as traffic.
 
 ## Intersections
 
