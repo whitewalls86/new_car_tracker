@@ -265,11 +265,12 @@ class TestWriteDetailUnlisted:
 
 
 # ---------------------------------------------------------------------------
-# Circuit-breaker: last_detail_scraped_at writer tests (Plan 115)
+# Circuit-breaker: last_detail_enriched_at writer tests (Plan 115, re-owned
+# by Plan 147 — the writer-facing parameter is now the enrichment fact)
 # ---------------------------------------------------------------------------
 
-class TestLastDetailScrapedAt:
-    """Verify last_detail_scraped_at is set on primary detail writes and absent
+class TestLastDetailEnrichedAt:
+    """Verify last_detail_enriched_at is set on primary detail writes and absent
     from carousel and SRP writes."""
 
     def _upsert_calls(self, mock_cursor) -> list:
@@ -290,10 +291,10 @@ class TestLastDetailScrapedAt:
                     params.append(d)
         return params
 
-    def test_primary_detail_sets_last_detail_scraped_at(
+    def test_primary_detail_sets_last_detail_enriched_at(
         self, mock_cursor, mock_silver, mock_search_configs,
     ):
-        """Primary detail active write passes last_detail_scraped_at = fetched_at."""
+        """Primary detail active write passes last_detail_enriched_at = fetched_at."""
         primary = {
             "listing_id": "aaa", "vin": "V1", "price": 25000,
             "make": "Honda", "model": "CR-V", "customer_id": "cust-1",
@@ -305,12 +306,13 @@ class TestLastDetailScrapedAt:
         upsert_params = self._find_upsert_params(mock_cursor)
         assert len(upsert_params) >= 1
         primary_params = upsert_params[0]
-        assert primary_params["last_detail_scraped_at"] == FETCHED_AT
+        assert primary_params["last_detail_enriched_at"] == FETCHED_AT
 
-    def test_primary_detail_sets_last_detail_scraped_at_when_customer_id_null(
+    def test_primary_detail_sets_last_detail_enriched_at_when_customer_id_null(
         self, mock_cursor, mock_silver, mock_search_configs,
     ):
-        """Primary detail active write sets last_detail_scraped_at even when customer_id is NULL."""
+        """Primary detail active write sets last_detail_enriched_at even when
+        customer_id is NULL (the Plan 115 case)."""
         primary = {
             "listing_id": "aaa", "vin": "V1", "price": 25000,
             "make": "Honda", "model": "CR-V", "customer_id": None,
@@ -322,12 +324,12 @@ class TestLastDetailScrapedAt:
         upsert_params = self._find_upsert_params(mock_cursor)
         primary_params = upsert_params[0]
         assert primary_params["customer_id"] is None
-        assert primary_params["last_detail_scraped_at"] == FETCHED_AT
+        assert primary_params["last_detail_enriched_at"] == FETCHED_AT
 
-    def test_carousel_upsert_does_not_set_last_detail_scraped_at(
+    def test_carousel_upsert_does_not_set_last_detail_enriched_at(
         self, mock_cursor, mock_silver, mock_search_configs,
     ):
-        """Carousel upserts pass last_detail_scraped_at = None."""
+        """Carousel upserts pass last_detail_enriched_at = None."""
         primary = {
             "listing_id": "aaa", "vin": "V1", "price": 25000,
             "make": "Honda", "model": "CR-V",
@@ -341,8 +343,8 @@ class TestLastDetailScrapedAt:
             listing_id="aaa", run_id="run3",
         )
         upsert_params = self._find_upsert_params(mock_cursor)
-        # First params = primary (last_detail_scraped_at set), rest = carousel
+        # First params = primary (last_detail_enriched_at set), rest = carousel
         carousel_params = [p for p in upsert_params if p["listing_id"] == "c1"]
         assert len(carousel_params) == 1
-        assert carousel_params[0]["last_detail_scraped_at"] is None
+        assert carousel_params[0]["last_detail_enriched_at"] is None
 

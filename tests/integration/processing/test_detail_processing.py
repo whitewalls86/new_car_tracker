@@ -51,7 +51,7 @@ class TestDetailActive:
             "customer_id": None,
             "last_seen_at": now,
             "last_artifact_id": artifact["artifact_id"],
-            "last_detail_scraped_at": now,
+            "last_detail_enriched_at": now,
         })
         cur.execute(UPSERT_VIN_TO_LISTING, {
             "vin": vin,
@@ -177,7 +177,7 @@ class TestVinRelisting:
             "customer_id": None,
             "last_seen_at": now,
             "last_artifact_id": artifact["artifact_id"],
-            "last_detail_scraped_at": now,
+            "last_detail_enriched_at": now,
         })
 
         # Update vin_to_listing
@@ -219,3 +219,132 @@ class TestReadyEndpoint:
         # Verified by test_app.py::TestReady. Included here for plan traceability.
         from shared.job_counter import is_idle
         assert is_idle() is True
+
+
+class TestScrapeStateOwnership:
+    """Plan 147: the upsert owns enrichment and must never touch the fetch fact.
+
+    last_detail_fetched_at belongs to the scraper, written by
+    POST /scrape/claims/release. A processor that could advance it would
+    reintroduce the very coupling Plan 147 removes, so these run the real
+    statement against real Postgres rather than asserting on a params dict.
+    """
+
+    def _observation(self, cur, listing_id: str) -> dict:
+        cur.execute(
+            "SELECT price, last_seen_at, customer_id, last_detail_fetched_at,"
+            "       last_detail_enriched_at, last_detail_scraped_at"
+            " FROM ops.price_observations WHERE listing_id = %s::uuid",
+            (listing_id,),
+        )
+        return cur.fetchone()
+
+    def test_detail_write_advances_enrichment_but_not_fetch(
+        self, cur, seed_artifact,
+    ):
+        listing_id = str(uuid.uuid4())
+        artifact = seed_artifact(artifact_type="detail_page", listing_id=listing_id)
+        now = datetime.now(timezone.utc)
+
+        cur.execute(UPSERT_PRICE_OBSERVATION, {
+            "listing_id": listing_id, "vin": None, "price": 28000,
+            "make": "Honda", "model": "CR-V", "customer_id": "cust-1",
+            "last_seen_at": now, "last_artifact_id": artifact["artifact_id"],
+            "last_detail_enriched_at": now,
+        })
+
+        row = self._observation(cur, listing_id)
+        assert row["last_detail_enriched_at"] is not None
+        assert row["last_detail_fetched_at"] is None, (
+            "the processor must never advance the scraper's fetch fact"
+        )
+
+    def test_dual_write_columns_never_disagree(self, cur, seed_artifact):
+        """The check that makes V049's drop of the legacy column safe.
+
+        Both columns are bound to one parameter, so they cannot diverge — this
+        pins that property rather than hoping for it.
+        """
+        listing_id = str(uuid.uuid4())
+        artifact = seed_artifact(artifact_type="detail_page", listing_id=listing_id)
+        now = datetime.now(timezone.utc)
+
+        cur.execute(UPSERT_PRICE_OBSERVATION, {
+            "listing_id": listing_id, "vin": None, "price": 28000,
+            "make": "Honda", "model": "CR-V", "customer_id": None,
+            "last_seen_at": now, "last_artifact_id": artifact["artifact_id"],
+            "last_detail_enriched_at": now,
+        })
+        row = self._observation(cur, listing_id)
+        assert row["last_detail_enriched_at"] == row["last_detail_scraped_at"]
+
+        # And a later carousel-shaped write leaves them equal rather than
+        # advancing one of the two.
+        cur.execute(UPSERT_PRICE_OBSERVATION, {
+            "listing_id": listing_id, "vin": None, "price": 27000,
+            "make": None, "model": None, "customer_id": None,
+            "last_seen_at": datetime.now(timezone.utc),
+            "last_artifact_id": artifact["artifact_id"],
+            "last_detail_enriched_at": None,
+        })
+        row = self._observation(cur, listing_id)
+        assert row["last_detail_enriched_at"] == row["last_detail_scraped_at"]
+
+    def test_carousel_write_refreshes_price_and_advances_neither(
+        self, cur, seed_artifact,
+    ):
+        """The load-bearing non-goal: a carousel write against an already
+        enriched listing keeps its price fresh and leaves it suppressed."""
+        listing_id = str(uuid.uuid4())
+        artifact = seed_artifact(artifact_type="detail_page", listing_id=listing_id)
+        enriched_at = datetime.now(timezone.utc)
+
+        # Enriched by a detail write.
+        cur.execute(UPSERT_PRICE_OBSERVATION, {
+            "listing_id": listing_id, "vin": None, "price": 28000,
+            "make": "Honda", "model": "CR-V", "customer_id": "cust-1",
+            "last_seen_at": enriched_at,
+            "last_artifact_id": artifact["artifact_id"],
+            "last_detail_enriched_at": enriched_at,
+        })
+        # Then seen again in a carousel: price only, no enrichment claimed.
+        cur.execute(UPSERT_PRICE_OBSERVATION, {
+            "listing_id": listing_id, "vin": None, "price": 26500,
+            "make": None, "model": None, "customer_id": None,
+            "last_seen_at": datetime.now(timezone.utc),
+            "last_artifact_id": artifact["artifact_id"],
+            "last_detail_enriched_at": None,
+        })
+
+        row = self._observation(cur, listing_id)
+        assert row["price"] == 26500, "carousel must refresh the price"
+        assert row["customer_id"] == "cust-1", "carousel must not clear enrichment"
+        assert row["last_detail_enriched_at"] == enriched_at, (
+            "carousel must not advance the 7-day enrichment window"
+        )
+        assert row["last_detail_fetched_at"] is None, (
+            "carousel must not advance the fetch backoff"
+        )
+
+    def test_carousel_discovered_listing_still_enters_the_queue(
+        self, cur, seed_artifact,
+    ):
+        """The other non-goal, asserted: a price without the full detail suite
+        is not enrichment, so a never-scraped carousel listing is still work."""
+        listing_id = str(uuid.uuid4())
+        artifact = seed_artifact(artifact_type="detail_page", listing_id=listing_id)
+
+        cur.execute(UPSERT_PRICE_OBSERVATION, {
+            "listing_id": listing_id, "vin": None, "price": 22000,
+            "make": None, "model": None, "customer_id": None,
+            "last_seen_at": datetime.now(timezone.utc),
+            "last_artifact_id": artifact["artifact_id"],
+            "last_detail_enriched_at": None,
+        })
+
+        cur.execute(
+            "SELECT listing_id FROM ops.ops_detail_scrape_queue"
+            " WHERE listing_id = %s::uuid",
+            (listing_id,),
+        )
+        assert cur.fetchone() is not None
