@@ -246,12 +246,15 @@ def test_maintenance_pool_reaches_the_real_operators():
         sys.path.insert(0, str(DAGS_DIR))
     from pools import MAINTENANCE_POOL  # noqa: PLC0415 -- resolved via DAGS_DIR above
 
+    # ("scrape_detail_pages", "claim_batch") was here until Plan 147 Stage 3
+    # (2026-08-30). It was held only because a processing pause used to loop
+    # the detail scraper; the guard now lives in release_claims, verified in
+    # production at 2,000 fetches with zero repeats across an 81-minute pause.
     expected = {
         ("results_processing", "process_batch"),
         ("orphan_checker", "expire_orphan_detail_claims"),
         ("orphan_checker", "reap_stuck_processing"),
         ("orphan_checker", "evict_delisted_cooldowns"),
-        ("scrape_detail_pages", "claim_batch"),
     }
 
     dagbag = _make_dagbag()

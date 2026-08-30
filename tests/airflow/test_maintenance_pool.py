@@ -29,10 +29,13 @@ EXPECTED_POOLED_TASKS = {
     ("orphan_checker.py", "expire_orphan_detail_claims"),
     ("orphan_checker.py", "reap_stuck_processing"),
     ("orphan_checker.py", "evict_delisted_cooldowns"),
-    # The claim, deliberately, not `scrape_detail`. Holding the claim means no
-    # listing is ever claimed; holding the scrape would strand a claimed batch
-    # for the length of the window.
-    ("scrape_detail_pages.py", "claim_batch"),
+    # `scrape_detail_pages.claim_batch` was here until Plan 147 Stage 3
+    # (2026-08-30). It was held only because pausing `results_processing` used
+    # to leave the detail scraper re-claiming the same listings every 15
+    # minutes; Plan 147 moved that guard next to the fetch, and production
+    # verification showed 2,000 fetches over five batches with zero repeats
+    # while processing was paused. See TestScrapeDetailPagesIsNotPooled below,
+    # which pins the removal rather than letting it look like drift.
 }
 
 # The sensor factories in sensors.py. Both build `mode="reschedule"` sensors,
@@ -113,11 +116,51 @@ class TestTheAssignmentCoversExactlyTheMutatingTasks:
         """Named separately from the set comparison because this one is a
         design decision rather than an omission: `scrape_detail` is the task
         Plan 136 Stage 3d wants in its own `solver` pool, and a task has
-        exactly one pool. The maintenance gate takes `claim_batch` instead,
-        which is upstream of it, so the two plans do not collide."""
+        exactly one pool."""
         tree = _tree(DAGS_DIR / "scrape_detail_pages.py")
         call = next(c for tid, c in _operator_calls(tree) if tid == "scrape_detail")
         assert _kwarg(call, "pool") is None
+
+
+class TestScrapeDetailPagesIsNotPooled:
+    """Plan 147 Stage 3 removed this DAG from the maintenance hold.
+
+    Asserted positively, rather than left to the set comparison above, because
+    the two failure directions mean opposite things. An absence caught only by
+    the set would read as drift — the exact thing these tests exist to catch —
+    and someone restoring the pool to "be safe" would silently reintroduce a
+    coupling that was measured and removed on evidence.
+    """
+
+    def test_claim_batch_is_not_pooled(self):
+        """Held only because a processing pause used to loop the scraper.
+
+        `release_claims` now records `last_detail_fetched_at` in the
+        transaction that deletes the claim, so the guard survives a processing
+        outage on its own. Verified in production 2026-08-30: with
+        `results_processing` paused 81 minutes, five batches fetched 2,000
+        listings and repeated none. Restoring the pool would mean a processing
+        pause once again implies a scraper pause, which is no longer true.
+        """
+        tree = _tree(DAGS_DIR / "scrape_detail_pages.py")
+        call = next(c for tid, c in _operator_calls(tree) if tid == "claim_batch")
+        assert _kwarg(call, "pool") is None, (
+            "claim_batch is pooled again — see Plan 147 Stage 3 evidence "
+            "before restoring it; the coupling that justified the hold is gone"
+        )
+
+    def test_no_task_in_this_dag_is_pooled(self):
+        """The DAG carries no maintenance hold at all.
+
+        Quiescing detail fetches for a host reboot is a separate concern and
+        Plan 142 covers it through the `detail_fetch` surface, not this pool.
+        """
+        tree = _tree(DAGS_DIR / "scrape_detail_pages.py")
+        pooled = [
+            tid for tid, call in _operator_calls(tree)
+            if _kwarg(call, "pool") is not None
+        ]
+        assert not pooled, f"scrape_detail_pages tasks unexpectedly pooled: {pooled}"
 
 
 class TestSensorsNeverHoldASlot:

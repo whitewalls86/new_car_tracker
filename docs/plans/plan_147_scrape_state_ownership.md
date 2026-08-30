@@ -463,8 +463,11 @@ the backfill before collapsing the `COALESCE`.
 
 ### Evidence — Stage 3 measurement, 2026-08-30
 
-**The gauge was not built.** The question it existed to answer was answered
-from the event log, which had been recording it all along.
+**The gauge was built and discarded before deploy** — collector, SQL, tests and
+dashboard panels — once the question it existed to answer turned out to be
+answerable from the event log, which had been recording it all along. Stated
+that way round deliberately: the hour this stage cost was spent building the
+wrong instrument, not saved by cleverly avoiding it.
 
 The claim in [The failure becomes measurable](#the-failure-becomes-measurable)
 that this population is "invisible and shows up only as traffic" is wrong, and
@@ -565,6 +568,89 @@ it would have reported the entire healthy population as owed an enrichment.
 Any future "fetched but not enriched" predicate must go through the artifact
 event log, not these two columns.
 
+### Evidence — Stage 3 verification, 2026-08-30
+
+`results_processing` paused **15:30:18 → 16:51 UTC**, 81 minutes, deliberately
+breaking the fetch-to-enrichment chain that every earlier instance of this loop
+ran through. `scrape_detail_pages` was left untouched at `*/15` throughout.
+
+| Run | Fetches | Distinct listings |
+|---|---|---|
+| 15:30 | 400 | 400 |
+| 15:45 | 400 | 400 |
+| 16:00 | 400 | 400 |
+| 16:15 | 400 | 400 |
+| 16:30 | 400 | 400 |
+| **Total** | **2,000** | **2,000** |
+
+**Zero listings were fetched twice.** Success criterion 2, met by observation
+under exactly the condition that used to produce the loop: with
+`results_processing` stopped, the pre-Plan-147 pipeline would have re-claimed
+run 1's listings on runs 2 through 5, because the claim rows were deleted and
+nothing else recorded that a request had been spent.
+
+**The zero is not an artifact of an empty queue.** Queue depth *rose* from 709
+to 1,118 across the window, as listings crossed the 24-hour price-staleness
+threshold with no enrichment running. The scraper had a full batch available at
+every run and selected 400 previously-unfetched listings each time. Had it been
+idling for want of work, "no repeats" would have been true by construction.
+
+2,000 `last_detail_fetched_at` stamps were written during the pause, one per
+fetch, which is the guard doing the recording that makes the suppression
+possible.
+
+#### Recovery
+
+The pause left 2,000 `pending` artifacts in `ops.artifacts_queue`, from a
+baseline of zero. `results_processing` was unpaused at 16:51 and the backlog
+drained on the normal `*/5` cadence with no intervention. Nothing was lost: a
+paused processor is a delayed one, which is the whole asymmetry
+[the ownership rule](#root-cause-one-column-two-questions-wrong-owner) is built
+on — stale-but-known is benign, looping is not.
+
+#### Two wrong ways to measure a pause
+
+Recorded because both failed **silently and in the safe-looking direction**,
+and the next person verifying a coordination hold can make either mistake just
+as easily.
+
+- `staging.detail_scrape_claim_events` with `status = 'processed'` is written
+  by the **processing service** — the component this test pauses. It reported
+  zero events, and therefore zero repeats. A clean pass over no data at all.
+- `staging.artifacts_queue_events` is scraper-written and survives the pause,
+  but the archiver flushes staging tables to MinIO and **deletes the rows**.
+  The count climbed to 800 and then collapsed to 0 mid-run.
+
+`ops.artifacts_queue` is the durable record: one row per fetched artifact,
+inserted by the scraper, emptied by nothing in this test. It also carries its
+own check — `count(*)` against `count(DISTINCT listing_id)`, so a drained table
+makes both fall together instead of producing a confident zero.
+
+**Do not measure a pause with a table that something else empties.**
+
+#### Gate
+
+- Success criterion 2 — with `results_processing` stopped, no listing fetched
+  more than once. **Met**, 2,000 for 2,000 across five runs.
+- Test 1, a listing fetched but not processed is not re-claimed inside the
+  backoff. **Met** in production, 2,000 times over.
+- Test 2, the guard is a delay and not a deletion. **Met in CI**, not in
+  production, and deliberately so: observing re-claim requires a listing to
+  stay unenriched past six hours, which means a six-hour processing pause
+  rather than a one-hour one.
+  [`test_ops_views.py`](../../tests/integration/sql/test_ops_views.py) walks
+  the scenario against a real Postgres carrying `V048`'s deployed DDL — stamp
+  `now()`, assert suppressed; rewind to seven hours, assert returned. Buying
+  the production observation was not judged worth a six-hour backlog.
+- Success criterion 4 — the fetched-but-unenriched population is "published
+  and non-mysterious". **Met in substance, not as written.** It is measured,
+  explained and re-runnable on demand; it is not published as a live metric,
+  because [the measurement above](#evidence--stage-3-measurement-2026-08-30)
+  found nothing worth alerting on and a gauge is the wrong shape for the
+  question regardless.
+- Plan 142's held set may now drop `scrape_detail_pages`. **Earned**, and
+  applied in [Plan 142](plan_142_planned_host_maintenance.md).
+
 ### Stage 4 — Contract
 
 Once Stage 3 has verified the new columns in production, a second migration
@@ -613,10 +699,11 @@ This is the same statement `V048` ran, and it is idempotent. Cheap to add,
 silent if missed — the failure is not an error but a slow re-queue that looks
 like ordinary staleness.
 
-**The population was 45 rows and is frozen**, measured at the Stage 2 deploy;
-Stage 2's one-parameter binding means it can no longer grow, and it decays as
-those listings are re-enriched inside seven days. It should reach zero around
-**2026-09-06**. Do not treat a zero as proof the backfill is unnecessary: it is
+**The population was 45 rows at the Stage 2 deploy and 43 at 16:38 UTC the same
+day**, when Stage 3 closed. Stage 2's one-parameter binding means it cannot
+grow; the two readings are the decay starting, as those listings are
+re-enriched inside seven days. It should reach zero around **2026-09-06**.
+Do not treat a zero as proof the backfill is unnecessary: it is
 only zero *if* every one of the 45 was re-enriched, the check and the drop are
 not atomic with each other, and the statement costs nothing when the population
 is empty. Re-measure with:

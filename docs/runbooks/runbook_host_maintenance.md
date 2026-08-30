@@ -344,11 +344,23 @@ called `maintenance`:
 
 | DAG | Task | Why it is the gate point |
 |---|---|---|
-| `results_processing` | `process_batch` | The only writer of `last_detail_scraped_at` |
+| `results_processing` | `process_batch` | The only writer of the enrichment timestamp |
 | `orphan_checker` | `expire_orphan_detail_claims` | Janitorial SQL against `ops` |
 | `orphan_checker` | `reap_stuck_processing` | ditto |
 | `orphan_checker` | `evict_delisted_cooldowns` | ditto |
-| `scrape_detail_pages` | **`claim_batch`**, not `scrape_detail` | Hold the claim and nothing is ever claimed. Hold the scrape and a batch is claimed, then stranded for the window |
+
+**`scrape_detail_pages` was held here until 2026-08-30 and no longer is.** It
+was in the pool for one reason: pausing `results_processing` used to leave the
+detail scraper re-claiming the same listings every 15 minutes, because the
+guard against re-fetching was written by the processing service. [Plan
+147](../plans/plan_147_scrape_state_ownership.md) moved that guard into
+`release_claims`, and a production run on 2026-08-30 paused processing for 81
+minutes and saw 2,000 fetches with zero repeats. **Pausing processing no longer
+requires pausing the scraper.**
+
+If you are quiescing detail fetches for a host reboot, that is a different
+mechanism and it still works — the `detail_fetch` coordination surface, not
+this pool. Do not restore the pool assignment to achieve it.
 
 `scrape_listings` is deliberately **not** held. It advances a rotation over
 `search_configs` and never consults processed state, so it cannot loop; it only

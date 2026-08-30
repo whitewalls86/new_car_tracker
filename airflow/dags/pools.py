@@ -56,12 +56,16 @@ lands, never after.**
 MAINTENANCE_POOL = "maintenance"
 
 # Sized far above concurrent demand so the assignment is inert. Steady-state
-# peak is 5 -- orphan_checker fans out to three parallel tasks, and
-# results_processing and scrape_detail_pages contribute one each under
-# max_active_runs=1. The ceiling is higher than that, though, and deliberately
-# so: orphan_checker sets no max_active_runs, so it inherits the default of 16
-# runs and could in principle want 3 slots per queued run. That is the same
-# thundering-herd risk Phase B is meant to measure on release, and it is the
-# reason this is 16 rather than 5 -- headroom bought before the measurement
-# rather than after it.
+# peak is 4 -- orphan_checker fans out to three parallel tasks and
+# results_processing contributes one under max_active_runs=1. It was 5 until
+# Plan 147 Stage 3 (2026-08-30) removed scrape_detail_pages.claim_batch from
+# the pool: the guard against a processing pause looping the scraper now lives
+# next to the fetch, so that DAG no longer needs holding.
+#
+# The ceiling is higher than that peak, and deliberately so: orphan_checker
+# sets no max_active_runs, so it inherits the default of 16 runs and could in
+# principle want 3 slots per queued run. That is the same thundering-herd risk
+# Phase B is meant to measure on release, and it is the reason this is 16
+# rather than 4 -- headroom bought before the measurement rather than after
+# it. The slot count is therefore unchanged by the removal above.
 MAINTENANCE_SLOTS = 16
