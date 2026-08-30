@@ -1175,7 +1175,10 @@ consume only that derived plan, carry Compose profiles and source files, verify
 every selected container's resulting Docker state, and append `stopped` or
 `started` only after the postcondition holds. Their authority is the latest
 API-confirmed offline checkpoint, so both commands remain replayable while the
-coordination API and Postgres are deliberately offline.
+coordination API and Postgres are deliberately offline. **Defect found 2026-08-29:** the capture
+this consumes has no one-off filter, so a live `docker compose run` makes `stop`
+refuse after production is already gated — see
+[pre-window scoping](#pre-window-scoping-2026-08-29--five-blockers-four-of-them-ours).
 
 **Package-preparation slice built 2026-08-25:** `prepare-update` refreshes apt
 indexes, requires the operator to name every held package explicitly, resolves
@@ -1198,7 +1201,10 @@ gate has passed.
 ID. `reboot` requires the `updated` checkpoint and explicit confirmation,
 syncs, checkpoints `rebooting`, and then invokes systemd. A post-boot replay
 must observe a different boot ID before it records `rebooted`; command return
-alone is never treated as reboot evidence.
+alone is never treated as reboot evidence. **Defect found 2026-08-29:** the
+target is derived only from the current transaction, so a window that reboots
+into a kernel `unattended-upgrades` already installed has no target at all — see
+[pre-window scoping](#pre-window-scoping-2026-08-29--five-blockers-four-of-them-ours).
 
 **Stage 2 ordering slice built 2026-08-25:** `plan` emits the canonical local
 procedure through `begin-validation` without executing commands, `drain` matches
@@ -1224,7 +1230,11 @@ stack evidence inside its advisory-locked transaction and requires the durable
 host-evidence row plus explicit confirmation before it releases coordination and
 checkpoints `complete` locally. Only after that resume gate passes does
 `restore-apt-automation` unmask, restore, and verify the pre-window unit states
-and package holds. The operator procedure is [runbook §10.7](../runbooks/runbook_host_maintenance.md#107-stage-3-resume-gate--host-maintenance-only).
+and package holds. **Defect found 2026-08-29:** the stack
+endpoint's `container_health` gate reads `EXPECTED_SERVICES` but not
+`healthcheck-exemptions.txt`, so `oauth2-proxy`'s documented `-1` blocks release
+on every window — see
+[pre-window scoping](#pre-window-scoping-2026-08-29--five-blockers-four-of-them-ours). The operator procedure is [runbook §10.7](../runbooks/runbook_host_maintenance.md#107-stage-3-resume-gate--host-maintenance-only).
 
 **Production preflight evidence, 2026-08-26:** PR #251 commit
 `23268c70a3d8c8a65194ec6de7b9b649b03e7cce` ran from the detached isolated
@@ -1422,6 +1432,98 @@ Capture:
 Every undocumented manual step either becomes a script/runbook step or receives
 a written reason for remaining judgment-based.
 
+#### Pre-window scoping, 2026-08-29 — five blockers, four of them ours
+
+The window was scoped against production before it was scheduled: the plan
+document, the machinery, and the live host. It is not runnable yet. The run
+sheet is [runbook_plan_142_stage_4.md](../runbooks/runbook_plan_142_stage_4.md);
+this is what scoping found, and four of the five are defects in stages this plan
+already calls built.
+
+The host itself is ready. Ubuntu 22.04.5 on `6.8.0-1058-oracle`, up since
+2026-08-18; no failed units, `dpkg --audit` clean, no apt/dpkg locks, apt index
+fresh, `docker.io` the only hold, coordination `phase=none`, `maintenance` pool
+at 16. The pending work is one deferred reboot into the already-installed
+`6.8.0-1060-oracle` plus 17 ordinary `jammy-updates` packages — no
+security-origin package is pending, because `unattended-upgrades` is doing its
+job.
+
+**1. The Stage 3 resume gate is not deployed, and two images are stale.** The
+running `ops` and `container-health` images were both built 2026-08-25T19:45Z.
+`ops` publishes no `/coordination/release-status`, `/coordination/host-evidence`
+or `/coordination/complete`; `container-health` 404s on the
+`/project-status/{project}` endpoint that `_auxiliary_still_stopped` reads.
+Meanwhile V044-V047 applied 2026-08-27/28 — the schema is ahead of the code that
+writes it. Expand-only, so harmless at rest, but a window run on these images
+would strand in `validating` with no release path but the forbidden facade.
+Rebuilding both is an ordinary scoped deploy; no config change is needed, and
+`ops` redeploying itself is safe because coordination state lives in Postgres.
+
+**2. `validate-host` cannot pass a deferred-reboot window.** `apply_package_plan`
+derives `boot_kernel_target` only from packages *in the transaction*. On this
+host `unattended-upgrades` installs kernels and only the reboot is deferred, so
+the transaction carries no `linux-image-*`, `kernel_target` is never
+checkpointed, and `run_validate_host` raises `"updated checkpoint has no kernel
+target"` — after the reboot, after `start`, with production paused and no path
+to `complete`.
+
+This is the normal shape of a window on this host, not a corner case. The
+[reboot-boundary slice](#stage-2--build-the-checked-in-host-procedure) assumed
+the window that installs the kernel is the window that boots it. The fix is a
+fallback to the highest installed versioned `linux-image-*-oracle`, recording
+which of the two sources the target came from. `GRUB_DEFAULT=0`, so that is what
+boots.
+
+**3. A `docker compose run` one-off makes `stop` fail closed.**
+`capture_running_set` walks `docker ps --all` with no `com.docker.compose.oneoff`
+filter, and `build_running_set_plan` rejects two running containers sharing one
+`(project, service)` identity. During scoping there were three running
+`cartracker/archiver` containers: the service plus two one-offs from Plan 145
+Stage 6. `preflight` does not derive the plan, so the refusal surfaces at `stop`,
+after coordination is already gated.
+
+Plan 140 solved this same problem in the other direction — its collector skips
+`ONEOFF_LABEL`, and `oneoff_processes()` treats one-offs as drain evidence rather
+than as expected services. This plan's capture never got the same treatment. CI
+invariant 5 is why it went unseen: the manifest round-trip is proven for default,
+profile-gated, auxiliary and intentionally stopped services, and a one-off is
+none of those.
+
+**4. `oauth2-proxy` fails the `container_health` release gate permanently.**
+`_container_health` fails on any expected service not reading `1`. `oauth2-proxy`
+is in `EXPECTED_SERVICES` and reads `-1` — unconfigured — and has since
+2026-08-20, because its distroless image has no shell for Docker to exec. That is
+[Plan 140](plan_140_service_health_contract.md)'s one documented unresolved
+service, recorded in `healthcheck-exemptions.txt`, with
+`ct-container-health-unconfigured` alerting on it daily by design.
+
+Nothing in `ops/` or `container_health/` reads that exemptions file. Stage 3's
+requirement that no unconfigured service hide as absence is right, and `-1`
+failing is deliberate — what was missed is that one expected service is
+permanently `-1` on purpose, which turns a fail-closed gate into one that cannot
+open. Either the gate honours the documented exemption, or the front door moves
+to an image that can be health-checked; the second is Plan 140's separate change
+and must not ride inside the first window.
+
+**5. Plan 145 Stage 6 must finish first.** V042 pauses long jobs on deploy
+intent, and Stage 6's repack is not resumable. No coordination request — for the
+deploy above or for the window — until its one-offs have exited.
+
+Two smaller findings, recorded because they cost a window each if met live: the
+client's default `--api-url` is `http://localhost:5050`, which answers 500 on
+this host, while the coordination API is on 8060 as `redeploy.sh` already knows;
+and `/` has crossed 72% used with 14 GB free against `validate-host`'s 10 GiB
+floor, driven by `/var/lib/containerd` at 29 GB, which the storage runbook does
+not measure because it watches `/var/lib/docker` (714 MB).
+
+**What this says about the stage.** Stage 4 exists to find exactly this, and it
+found it before touching production rather than during a paused window. Three of
+the four defects share a shape: a slice was proven against the case it was
+written for, and production presents a neighbouring case — a kernel installed by
+someone else, a container started by `run` rather than `up`, a service exempt
+from the contract the gate reads. None is visible from the tests; all are visible
+from one read-only pass over the live host.
+
 ## Rollback and recovery
 
 Rollback is phase-specific:
@@ -1451,7 +1553,8 @@ volume prune`, or automatically releasing maintenance intent.
 4. A long coordination window does not fail DAGs merely because time passes,
    and unaffected surfaces continue running.
 5. The running-set manifest round-trips default, profile-gated, auxiliary, and
-   intentionally stopped services.
+   intentionally stopped services — **and a live `docker compose run` one-off,
+   which is none of those and was the gap this invariant missed.**
 6. Script dry-run tests assert phase ordering and prove no failure path calls
    `complete` implicitly.
 7. [x] Plan 140 coverage is a declared dependency of the resume gate; missing

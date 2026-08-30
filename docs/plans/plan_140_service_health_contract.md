@@ -221,6 +221,16 @@ its `/ping` endpoint. It remains explicit in the Stage 3 deny-list rather than
 silently disappearing. Swapping the authenticated front door to
 `latest-alpine` needs a separate deploy decision and verification.
 
+**Its cost rose on 2026-08-29.** This is no longer only a daily
+`ct-container-health-unconfigured` page.
+[Plan 142](plan_142_planned_host_maintenance.md) Stage 3's `container_health`
+release gate fails on any service in `EXPECTED_SERVICES` not reading `1`, and
+nothing in `ops/` or `container_health/` reads `healthcheck-exemptions.txt` — so
+this one permanent `-1` blocks the resume gate of **every** host-maintenance
+window, found while scoping the first one. Whichever plan resolves it first, the
+two options are the same: teach the gate the documented exemption, or move the
+front door to an image that can be probed. This plan owns the second.
+
 **Verify:** `docker inspect --format '{{.State.Health.Status}}'` returns a real
 status for every in-scope service, and no service flips unhealthy on a normal
 cycle. Watch for false positives during `start_period` on the slow starters.

@@ -45,6 +45,19 @@ Baselines as of 2026-08-18: `/` at ~64%, `/mnt/data` at 41% bytes / 30% inodes.
 | Prune dangling images | `docker image prune` | ~0 today | low |
 | Prune build cache | `docker builder prune` | ~7 MiB today | low |
 
+> **This table has been measuring the wrong directory.** `/var/lib/docker` held
+> **714 MiB** on 2026-08-29 while `/var/lib/containerd` held **29 GiB** — Docker
+> 29 keeps image content in the containerd store, so repeated builds accumulate
+> there and `docker image prune` reports "~0 dangling" perfectly truthfully.
+> That is most of why `/` went from 49% right after the 2026-08-18 window to
+> **72%** eleven days later, against
+> [Plan 142](../plans/plan_142_planned_host_maintenance.md)'s 10 GiB
+> `disk_headroom` floor. Add `du -xh -d1 /var/lib` to the monthly check.
+> `docker system df` does not return within 100 s on this host, which is its own
+> signal. Reclaim policy is undecided and wants its own slice: rollback depends
+> on previous images being present, so `docker system prune -a` stays on the
+> §3 list below.
+
 **Truncate, never `rm`, a live log file.** The Docker daemon holds an open
 handle; deleting the file frees nothing until the daemon is restarted, and the
 space stays invisible to `du` while remaining unavailable.
