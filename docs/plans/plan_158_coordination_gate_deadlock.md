@@ -256,6 +256,86 @@ No deploy, by design: Stage 0 changes documentation only, so it is not subject
 to the defect it describes — which is the whole reason it goes first.
 
 
+### Evidence — Stage 1, 2026-08-30
+
+Shipped in [`airflow/dags/sensors.py`](../../airflow/dags/sensors.py) as the
+design above, with one addition: the `INSERT` is now the module-level constant
+`GATE_OBSERVATION_SQL`, consumed by a module-level `_record_observation`. That
+mirrors `coordination_drain`'s own query builders, which are module-level for
+exactly this reason — so `tests/integration/sql` can execute the real
+statement rather than a copy of it that is free to drift.
+
+**The seam test failed first, which was the point.** Written against the sensor
+as it stood at `220395a`, five of the new unit tests failed and all of them
+failed the same way — `assert set() == {(17, 'orphan_checker', ...)}`, nothing
+written. The twenty-four truth-table cases passed unchanged, before and after:
+admission was already correct and the fix leaves it alone.
+
+**Admission is unchanged, proved exhaustively.** `test_admission_is_unchanged_by_
+the_observation_write` parametrises the full cross product of intent ×
+phase × intersects — three intents, five phases, both scope answers, thirty
+cases — and asserts against the formula the old code computed:
+
+| intent | phase / scope | poke | before | after |
+|---|---|---|---|---|
+| `!= none` | any | `False` | ✔ | ✔ |
+| `none` | blocking phase ∧ intersects | `False` | ✔ | ✔ |
+| `none` | otherwise | `True` | ✔ | ✔ |
+
+A missing coordination row still fails closed, and a run with no discoverable
+`run_id` still blocks and now still writes nothing — the pre-existing guard is
+carried into `_record_observation` unchanged.
+
+**End to end against real Postgres.** Flyway's 48 migrations applied to a
+throwaway container, the 2026-08-30 shape reconstructed — `intent='pending'`,
+`phase='draining'`, `scope=['processing']`, generation 158, two live affected
+DAG runs — and the real sensor driven through a psycopg2-backed hook, so the
+jsonb `?|` read, the `INSERT` and `gate_observation_query` all executed for
+real. Three pokes per run, as the reschedule sensor would:
+
+| | blockers before | blockers after | observation rows |
+|---|---|---|---|
+| sensor at `220395a` | 2 | **2** | **0** |
+| sensor after Stage 1 | 2 | **0** | 2 |
+
+The first row is the deadlock: the count does not move, and would not have
+moved however long `redeploy.sh` polled. Six pokes produced two rows, not six.
+Re-running the drain query at generation 159 returns to 2, so a released
+generation is not authorized by the previous one's observations. No poke in
+either run returned `True`.
+
+| Plan §Tests item | Covered by |
+|---|---|
+| 1 — one row per `(generation, dag_id, run_id)` during a deploy-intent drain | `test_a_run_parked_by_deploy_intent_records_exactly_one_observation`, `test_each_live_run_of_a_dag_is_observed_under_its_own_key` |
+| 2 — the drain's count reaches zero | `test_every_live_affected_run_leaves_the_key_the_drain_looks_up` (the key contract) and `test_gate_observation_count_falls_to_zero_as_live_runs_observe` (the real query, real Postgres) |
+| 3 — admission unchanged | `test_admission_is_unchanged_by_the_observation_write`, plus the fail-closed and unblocked cases |
+| 4 — generation N does not satisfy N+1 | `test_an_observation_is_written_against_the_generation_it_saw`, `test_an_observation_does_not_satisfy_the_next_generation` |
+| 5 — repeated pokes, one row | `test_repeated_pokes_write_one_key_not_one_per_poke`, `test_repeated_observation_of_one_run_keeps_a_single_row` |
+
+Two further tests guard the note the plan makes about drift:
+`test_the_gate_read_selects_the_columns_this_row_supplies` ties the canned row's
+column order to the real `SELECT`, and
+`test_the_drain_and_the_sensor_read_the_same_declaration` asserts, for every
+surface, that the DAGs `gate_observation_query` filters on are exactly the DAGs
+whose sensor `intersects` term would fire. The `ADMISSION_SURFACES` agreement
+the plan asks for is now checked rather than remembered.
+
+**On why the unit tests do not use a database.** The gate `SELECT` cannot run
+outside Postgres, so its row is supplied directly; the writes are recorded.
+Executing Postgres SQL against a substitute engine would have tested the
+substitute. Everything that must meet real SQL is in
+`tests/integration/sql/test_ops_queries.py`, beside the existing
+`test_gate_observation_query_resolves`, and runs in CI.
+
+Suite: **3115 passed**, 470 deselected (`-m "not integration"`), up from 3095 —
+twenty new unit cases. `tests/integration/sql/`: **38 passed** against the
+throwaway Postgres, up from 35. Ruff clean.
+
+**Not deployed, deliberately.** Stage 1's own deploy is subject to the race it
+fixes and needs the quiet window or the operator hold Stage 0 wrote down; that
+is Stage 3's business. `scripts/redeploy.sh` is untouched — the unbounded
+authorize poll is Stage 2.
+
 ### Stage 2 — Bound the authorize wait
 
 The `redeploy.sh` guardrail, its timeout asserted in
