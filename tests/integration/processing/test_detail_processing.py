@@ -233,7 +233,7 @@ class TestScrapeStateOwnership:
     def _observation(self, cur, listing_id: str) -> dict:
         cur.execute(
             "SELECT price, last_seen_at, customer_id, last_detail_fetched_at,"
-            "       last_detail_enriched_at, last_detail_scraped_at"
+            "       last_detail_enriched_at"
             " FROM ops.price_observations WHERE listing_id = %s::uuid",
             (listing_id,),
         )
@@ -258,37 +258,6 @@ class TestScrapeStateOwnership:
         assert row["last_detail_fetched_at"] is None, (
             "the processor must never advance the scraper's fetch fact"
         )
-
-    def test_dual_write_columns_never_disagree(self, cur, seed_artifact):
-        """The check that makes V049's drop of the legacy column safe.
-
-        Both columns are bound to one parameter, so they cannot diverge — this
-        pins that property rather than hoping for it.
-        """
-        listing_id = str(uuid.uuid4())
-        artifact = seed_artifact(artifact_type="detail_page", listing_id=listing_id)
-        now = datetime.now(timezone.utc)
-
-        cur.execute(UPSERT_PRICE_OBSERVATION, {
-            "listing_id": listing_id, "vin": None, "price": 28000,
-            "make": "Honda", "model": "CR-V", "customer_id": None,
-            "last_seen_at": now, "last_artifact_id": artifact["artifact_id"],
-            "last_detail_enriched_at": now,
-        })
-        row = self._observation(cur, listing_id)
-        assert row["last_detail_enriched_at"] == row["last_detail_scraped_at"]
-
-        # And a later carousel-shaped write leaves them equal rather than
-        # advancing one of the two.
-        cur.execute(UPSERT_PRICE_OBSERVATION, {
-            "listing_id": listing_id, "vin": None, "price": 27000,
-            "make": None, "model": None, "customer_id": None,
-            "last_seen_at": datetime.now(timezone.utc),
-            "last_artifact_id": artifact["artifact_id"],
-            "last_detail_enriched_at": None,
-        })
-        row = self._observation(cur, listing_id)
-        assert row["last_detail_enriched_at"] == row["last_detail_scraped_at"]
 
     def test_carousel_write_refreshes_price_and_advances_neither(
         self, cur, seed_artifact,

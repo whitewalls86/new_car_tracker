@@ -1,21 +1,22 @@
 """
 Layer 1 — SQL smoke tests for ops_vehicle_staleness and ops_detail_scrape_queue.
 
-Both views are plain Postgres views (rebuilt by V048) reading directly from
+Both views are plain Postgres views (rebuilt by V049) reading directly from
 ops.price_observations and ops.blocked_cooldown. Tests seed HOT table rows and
 assert staleness flags and queue membership. Per-test rollback — no committed
 state.
 
-Staleness model (Plan 115 circuit breaker, re-owned by Plan 147 / V048):
-  enriched_at           = COALESCE(last_detail_enriched_at, last_detail_scraped_at)
-                          -- reads through both columns for the length of the
-                          -- dual-write release; V049 collapses it
-  is_full_details_stale = customer_id IS NULL AND (enriched_at IS NULL
-                          OR enriched_at < now() - 7 days)
+Staleness model (Plan 115 circuit breaker, re-owned by Plan 147 / V049):
+  is_full_details_stale = customer_id IS NULL AND (last_detail_enriched_at IS
+                          NULL OR last_detail_enriched_at < now() - 7 days)
+                          -- V048 read through the legacy last_detail_scraped_at
+                          -- as well, because the writers setting the new column
+                          -- deployed after the view did. V049 dropped the legacy
+                          -- column and collapsed the COALESCE.
   is_price_stale        = last_seen_at < now() - 24h (any source)
   stale_reason          = dealer_unenriched | price_only | not_stale
 
-Queue fetch backoff (V048, Plan 147):
+Queue fetch backoff (V048, Plan 147; carried through V049 verbatim):
   a listing is excluded while last_detail_fetched_at > now() - 6 hours. NULL
   means never fetched and the predicate does not bind.
 
@@ -64,7 +65,6 @@ def _insert_price_obs(
     price: int = 30000,
     customer_id: str = None,
     age_hours: float = 1.0,
-    last_detail_scraped_at_hours_ago: float = None,
     last_detail_fetched_at_hours_ago: float = None,
     last_detail_enriched_at_hours_ago: float = None,
 ):
@@ -73,10 +73,10 @@ def _insert_price_obs(
     Each *_hours_ago argument sets its column to now() minus that many hours;
     None leaves the column NULL.
 
-    last_detail_scraped_at is the legacy V040 column, still written through the
-    Plan 147 dual-write release. last_detail_fetched_at (scraper-owned, the
-    loop guard) and last_detail_enriched_at (processor-owned, the 7-day
-    enrichment window) are its V048 replacements.
+    last_detail_fetched_at is scraper-owned and drives the loop guard;
+    last_detail_enriched_at is processor-owned and drives the 7-day enrichment
+    window. They replaced the single V040 last_detail_scraped_at column, which
+    V049 dropped.
     """
     columns = [
         "listing_id", "vin", "price", "make", "model", "customer_id",
@@ -89,7 +89,6 @@ def _insert_price_obs(
     params = [listing_id, vin, price, customer_id, str(age_hours), artifact_id]
 
     for column, hours_ago in (
-        ("last_detail_scraped_at", last_detail_scraped_at_hours_ago),
         ("last_detail_fetched_at", last_detail_fetched_at_hours_ago),
         ("last_detail_enriched_at", last_detail_enriched_at_hours_ago),
     ):
@@ -204,12 +203,12 @@ class TestOpsVehicleStaleness:
     # Circuit-breaker tests (Plan 115)
     # -----------------------------------------------------------------------
 
-    def test_customer_id_null_last_detail_scraped_now_is_not_stale(self, cur):
-        """customer_id NULL + recently detail-scraped → not dealer_unenriched (circuit breaker)."""
+    def test_customer_id_null_recently_enriched_is_not_stale(self, cur):
+        """customer_id NULL + recently enriched → not dealer_unenriched (circuit breaker)."""
         artifact_id = _insert_artifact(cur)
         lid = _random_listing_id()
         _insert_price_obs(cur, artifact_id, lid, customer_id=None, age_hours=1,
-                          last_detail_scraped_at_hours_ago=0.1)
+                          last_detail_enriched_at_hours_ago=0.1)
 
         cur.execute(
             "SELECT is_full_details_stale, stale_reason"
@@ -220,12 +219,12 @@ class TestOpsVehicleStaleness:
         assert row["is_full_details_stale"] is False
         assert row["stale_reason"] == "not_stale"
 
-    def test_customer_id_null_last_detail_scraped_8_days_ago_is_stale(self, cur):
-        """customer_id NULL + last_detail_scraped_at 8 days ago → dealer_unenriched again."""
+    def test_customer_id_null_enriched_8_days_ago_is_stale(self, cur):
+        """customer_id NULL + last_detail_enriched_at 8 days ago → dealer_unenriched again."""
         artifact_id = _insert_artifact(cur)
         lid = _random_listing_id()
         _insert_price_obs(cur, artifact_id, lid, customer_id=None, age_hours=1,
-                          last_detail_scraped_at_hours_ago=8 * 24)
+                          last_detail_enriched_at_hours_ago=8 * 24)
 
         cur.execute(
             "SELECT is_full_details_stale, stale_reason"
@@ -235,21 +234,6 @@ class TestOpsVehicleStaleness:
         row = cur.fetchone()
         assert row["is_full_details_stale"] is True
         assert row["stale_reason"] == "dealer_unenriched"
-
-    def test_last_detail_scraped_at_exposed_in_view(self, cur):
-        """last_detail_scraped_at is returned from the view for diagnostics."""
-        artifact_id = _insert_artifact(cur)
-        lid = _random_listing_id()
-        _insert_price_obs(cur, artifact_id, lid, customer_id=None, age_hours=1,
-                          last_detail_scraped_at_hours_ago=1)
-
-        cur.execute(
-            "SELECT last_detail_scraped_at"
-            " FROM ops.ops_vehicle_staleness WHERE listing_id = %s::uuid",
-            (lid,),
-        )
-        row = cur.fetchone()
-        assert row["last_detail_scraped_at"] is not None
 
 
 # ---------------------------------------------------------------------------
@@ -391,7 +375,7 @@ class TestOpsDetailScrapeQueue:
 class TestCircuitBreakerQueue:
 
     def test_unenriched_null_last_detail_is_in_queue(self, cur):
-        """customer_id NULL, last_detail_scraped_at NULL → in queue (never scraped)."""
+        """customer_id NULL, last_detail_enriched_at NULL → in queue (never enriched)."""
         artifact_id = _insert_artifact(cur)
         lid = _random_listing_id()
         _insert_price_obs(cur, artifact_id, lid, customer_id=None, age_hours=1)
@@ -402,12 +386,12 @@ class TestCircuitBreakerQueue:
         )
         assert cur.fetchone() is not None
 
-    def test_unenriched_recently_scraped_not_in_queue(self, cur):
-        """customer_id NULL, last_detail_scraped_at now → suppressed by circuit breaker."""
+    def test_unenriched_recently_enriched_not_in_queue(self, cur):
+        """customer_id NULL, last_detail_enriched_at now → suppressed by circuit breaker."""
         artifact_id = _insert_artifact(cur)
         lid = _random_listing_id()
         _insert_price_obs(cur, artifact_id, lid, customer_id=None, age_hours=1,
-                          last_detail_scraped_at_hours_ago=0.25)
+                          last_detail_enriched_at_hours_ago=0.25)
 
         cur.execute(
             "SELECT listing_id FROM ops.ops_detail_scrape_queue WHERE listing_id = %s::uuid",
@@ -415,12 +399,12 @@ class TestCircuitBreakerQueue:
         )
         assert cur.fetchone() is None
 
-    def test_unenriched_scraped_8_days_ago_back_in_queue(self, cur):
-        """customer_id NULL, last_detail_scraped_at 8 days ago → back in queue."""
+    def test_unenriched_enriched_8_days_ago_back_in_queue(self, cur):
+        """customer_id NULL, last_detail_enriched_at 8 days ago → back in queue."""
         artifact_id = _insert_artifact(cur)
         lid = _random_listing_id()
         _insert_price_obs(cur, artifact_id, lid, customer_id=None, age_hours=1,
-                          last_detail_scraped_at_hours_ago=8 * 24)
+                          last_detail_enriched_at_hours_ago=8 * 24)
 
         cur.execute(
             "SELECT listing_id FROM ops.ops_detail_scrape_queue WHERE listing_id = %s::uuid",
@@ -458,13 +442,13 @@ class TestCircuitBreakerQueue:
     def test_second_detail_cycle_with_null_customer_id_suppressed(self, cur):
         """Regression: simulate two successful detail cycles with customer_id NULL.
 
-        After the first cycle sets last_detail_scraped_at, the listing must be
+        After the first cycle sets last_detail_enriched_at, the listing must be
         absent from the queue immediately on the next DAG run.
         """
         artifact_id = _insert_artifact(cur)
         lid = _random_listing_id()
 
-        # First cycle: no last_detail_scraped_at yet → in queue
+        # First cycle: no last_detail_enriched_at yet → in queue
         _insert_price_obs(cur, artifact_id, lid, customer_id=None, age_hours=1)
         cur.execute(
             "SELECT listing_id FROM ops.ops_detail_scrape_queue WHERE listing_id = %s::uuid",
@@ -472,9 +456,9 @@ class TestCircuitBreakerQueue:
         )
         assert cur.fetchone() is not None, "listing should be queued before first scrape"
 
-        # First cycle completes: set last_detail_scraped_at to now
+        # First cycle completes: set last_detail_enriched_at to now
         cur.execute(
-            "UPDATE ops.price_observations SET last_detail_scraped_at = now()"
+            "UPDATE ops.price_observations SET last_detail_enriched_at = now()"
             " WHERE listing_id = %s::uuid",
             (lid,),
         )
@@ -613,75 +597,19 @@ class TestFetchBackoffQueue:
 
 
 # ---------------------------------------------------------------------------
-# Dual-write window (Plan 147 Stage 1 / V048)
+# Fetch and enrichment are separate facts (Plan 147 / V049)
 # ---------------------------------------------------------------------------
 
-class TestDualWriteEnrichmentColumn:
-    """The enrichment check reads COALESCE(last_detail_enriched_at,
-    last_detail_scraped_at) until V049 drops the legacy column.
+class TestFetchAndEnrichmentAreSeparateFacts:
+    """The split V049 made permanent: spending a request and learning something
+    from it are two facts with two owners, and neither stands in for the other.
 
-    V048 (the view) and Stage 2 (the writers) are separate deploys. Between
-    them, a detail write still sets only the legacy column, so reading the new
-    column alone would leave every freshly enriched listing stale and re-queued
-    every fifteen minutes — the Plan 115 loop, reopened by the change meant to
-    close it.
+    V048 carried a COALESCE over the legacy last_detail_scraped_at because the
+    view deployed before the writers that set the new column. V049 dropped that
+    column, so the tests for the dual-write window are gone with it; the 7-day
+    circuit breaker is asserted through last_detail_enriched_at alone in
+    TestOpsVehicleStaleness and TestCircuitBreakerQueue above.
     """
-
-    def test_legacy_column_alone_still_suppresses(self, cur):
-        """V048 applied, Stage 2 writers NOT deployed: last_detail_scraped_at
-        alone must still buy the full seven days."""
-        artifact_id = _insert_artifact(cur)
-        lid = _random_listing_id()
-        _insert_price_obs(cur, artifact_id, lid, customer_id=None, age_hours=1,
-                          last_detail_scraped_at_hours_ago=0.25)
-
-        cur.execute(
-            "SELECT is_full_details_stale, stale_reason"
-            " FROM ops.ops_vehicle_staleness WHERE listing_id = %s::uuid",
-            (lid,),
-        )
-        row = cur.fetchone()
-        assert row["is_full_details_stale"] is False
-        assert row["stale_reason"] == "not_stale"
-
-        cur.execute(
-            "SELECT listing_id FROM ops.ops_detail_scrape_queue WHERE listing_id = %s::uuid",
-            (lid,),
-        )
-        assert cur.fetchone() is None
-
-    def test_new_column_alone_suppresses(self, cur):
-        """After Stage 4 drops the legacy write, last_detail_enriched_at alone
-        carries the same seven days."""
-        artifact_id = _insert_artifact(cur)
-        lid = _random_listing_id()
-        _insert_price_obs(cur, artifact_id, lid, customer_id=None, age_hours=1,
-                          last_detail_enriched_at_hours_ago=0.25)
-
-        cur.execute(
-            "SELECT is_full_details_stale, stale_reason"
-            " FROM ops.ops_vehicle_staleness WHERE listing_id = %s::uuid",
-            (lid,),
-        )
-        row = cur.fetchone()
-        assert row["is_full_details_stale"] is False
-        assert row["stale_reason"] == "not_stale"
-
-    def test_new_column_stale_after_seven_days(self, cur):
-        """The 7-day window is unchanged, measured on the new column."""
-        artifact_id = _insert_artifact(cur)
-        lid = _random_listing_id()
-        _insert_price_obs(cur, artifact_id, lid, customer_id=None, age_hours=1,
-                          last_detail_enriched_at_hours_ago=8 * 24)
-
-        cur.execute(
-            "SELECT is_full_details_stale, stale_reason"
-            " FROM ops.ops_vehicle_staleness WHERE listing_id = %s::uuid",
-            (lid,),
-        )
-        row = cur.fetchone()
-        assert row["is_full_details_stale"] is True
-        assert row["stale_reason"] == "dealer_unenriched"
 
     def test_fetch_does_not_advance_enrichment(self, cur):
         """A spent request is not enrichment: last_detail_fetched_at alone

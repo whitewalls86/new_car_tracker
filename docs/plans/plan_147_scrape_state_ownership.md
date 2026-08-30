@@ -713,6 +713,40 @@ SELECT count(*) FROM ops.price_observations
 WHERE last_detail_scraped_at IS NOT NULL AND last_detail_enriched_at IS NULL;
 ```
 
+Re-measured **41 rows at 2026-08-30 19:33 UTC**, on VM commit `a1ace17`. The
+decay is on track — 45, then 43, then 41 — and it is not zero, so the backfill
+is doing work rather than guarding a hypothetical.
+
+#### Deploy `processing` before the migration — the reverse of Stages 1–3
+
+Stages 1 to 3 ran the migration first, because `V048` expanded and the new
+columns had to exist before any writer could set them. **Stage 4 inverts that,
+and the muscle memory from three deploys is the hazard.**
+
+`redeploy.sh` uses `docker compose up -d --no-deps`, so it does not run Flyway
+— that is [Plan 144](plan_144_deploy_script_hardening.md)'s decision 1, added after a
+deploy walked the dependency graph and re-ran `flyway` unasked. Migrations are
+a separate, explicit `docker compose run --rm flyway`. So the operator chooses
+the order, and only one of the two is free:
+
+1. **`bash scripts/redeploy.sh processing` first.** The new image writes only
+   `last_detail_enriched_at`. The live view is still `V048`'s, which reads
+   `COALESCE(enriched, scraped)`, so the legacy column merely stops advancing
+   and nothing misreads a row written in the interval.
+2. **Then `docker compose run --rm flyway`.** `V049` backfills the stragglers
+   and drops the column that nothing is writing any more.
+
+Run the other way round, Flyway drops the column while the old dual-write image
+is still serving, and every upsert fails until the redeploy finishes — a build,
+a recreate and a health gate that can run to 300s. Artifacts stay `pending`
+rather than being lost, so it is recoverable, but it is a stretch of failing
+writes bought for nothing.
+
+`processing` is the only service that needs to lead:
+`upsert_price_observation.sql` is loaded solely by `processing/queries.py`, and
+nothing in `ops/`, `scraper/`, `dbt/` or `dashboard/` ever referenced the
+column.
+
 ## Tests
 
 1. A listing fetched but not processed is not re-claimed inside the backoff.

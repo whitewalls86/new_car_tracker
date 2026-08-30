@@ -276,7 +276,7 @@ response is a vehicle:
 
 For active details, the writer upserts the primary HOT observation, preserves
 previous dealer enrichment when a later source has null fields, records
-`last_detail_scraped_at`, updates the VIN mapping, optionally promotes
+`last_detail_enriched_at`, updates the VIN mapping, optionally promotes
 carousel observations that match tracked make/model configurations, clears a
 resolved cooldown, and releases the detail claim. The primary observation and
 VIN-mapping mutations have corresponding staging events in the same
