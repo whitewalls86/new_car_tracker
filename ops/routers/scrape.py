@@ -204,19 +204,46 @@ def claim_batch(batch_size: int = 450) -> Dict[str, Any]:
     return {"run_id": run_id, "listings": listings}
 
 
+# A detail request was spent for these outcomes, so the fetch backoff applies.
+# 'skipped' is excluded: that listing was never attempted.
+FETCH_SPENDING_STATUSES = ("ok", "failed")
+
+
 @router.post("/claims/release")
 def release_claims(body: ReleaseRequest) -> Dict[str, Any]:
     """
     Releases claims after a scrape batch completes.
 
-    Deletes claim rows for the given run_id and marks the run as finished.
-    The run status is 'completed' if all results are ok/skipped, 'failed' if
-    any result failed.
+    Deletes the claim rows for the given run_id and records, on the same
+    transaction, that a detail request was spent on each listing the scraper
+    actually attempted.
+
+    That second write is the loop guard (Plan 147). Before it, the only thing
+    stopping a listing being re-fetched was a timestamp written by the
+    *processing* service two hops downstream, so any break in that chain —
+    processing paused, crashed, backed up, or a parser gap — left the claims
+    deleted, the guard unwritten, and the same batch re-claimed fifteen minutes
+    later. The component that spends the resource now records having spent it.
+
+    last_detail_fetched_at is set for 'ok' and 'failed' results but not
+    'skipped': the column means "we spent a request", and a failed fetch spent
+    one. Blocked and delisted listings keep their existing cooldown paths; this
+    does not replace them.
+
+    Note that the three-way rule is a contract no caller exercises today.
+    scrape_detail_pages reports 'ok' for every claimed listing regardless of
+    outcome, which is correct for a loop guard — the batch consumed requests
+    either way — so in production every released listing is stamped.
+
+    The DELETE is this handler's only other statement. It does not mark any run
+    finished and never has, despite what its docstring claimed until Plan 147:
+    there is no runs-table write here.
     """
     run_id = body.run_id
     results = body.results
 
     listing_ids = [r.listing_id for r in results]
+    fetched_ids = [r.listing_id for r in results if r.status in FETCH_SPENDING_STATUSES]
     error_count = sum(1 for r in results if r.status == "failed")
 
     with db_cursor(error_context="release_claims") as cur:
@@ -226,9 +253,21 @@ def release_claims(body: ReleaseRequest) -> Dict[str, Any]:
                 " WHERE listing_id = ANY(%s::uuid[]) AND claimed_by = %s",
                 (listing_ids, run_id),
             )
+        if fetched_ids:
+            # Same cursor, so this commits or rolls back with the DELETE above:
+            # a released claim and its recorded fetch are never separated.
+            # ops connects as PGUSER=cartracker, the owner of
+            # ops.price_observations, so no additional grant is needed.
+            cur.execute(
+                "UPDATE ops.price_observations"
+                " SET last_detail_fetched_at = now()"
+                " WHERE listing_id = ANY(%s::uuid[])",
+                (fetched_ids,),
+            )
 
     return {
         "run_id": run_id,
         "total": len(results),
         "errors": error_count,
+        "fetches_recorded": len(fetched_ids),
     }

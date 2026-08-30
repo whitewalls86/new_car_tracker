@@ -148,8 +148,8 @@ class TestSrpWriter:
         ]
         assert len(tracked_calls) == 0
 
-    def test_srp_does_not_set_last_detail_scraped_at(self, mock_cursor, mock_silver):
-        """SRP writes must pass last_detail_scraped_at = None (circuit breaker must not advance)."""
+    def test_srp_does_not_set_last_detail_enriched_at(self, mock_cursor, mock_silver):
+        """SRP writes must pass last_detail_enriched_at = None (enrichment must not advance)."""
         listings = [
             {"listing_id": "aaa", "vin": "VIN001", "price": 25000,
              "make": "Honda", "model": "CR-V"},
@@ -165,4 +165,4 @@ class TestSrpWriter:
         ]
         assert len(upsert_params) >= 1
         for params in upsert_params:
-            assert params.get("last_detail_scraped_at") is None
+            assert params.get("last_detail_enriched_at") is None

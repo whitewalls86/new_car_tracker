@@ -283,6 +283,91 @@ inert on its own, and Stage 1 and Stage 2 stay independently deployable and
 independently revertable. `V049` collapses the `COALESCE` to
 `last_detail_enriched_at` when it drops the legacy column.
 
+### Evidence — Stage 1, 2026-08-30
+
+`V048__scrape_state_ownership.sql` applied to production at **2026-08-30
+05:35:06 UTC**, `success = t`, 1,098 ms, on VM commit `8b10160` (PR #284).
+
+The deploy was a `git pull` plus `docker compose run --rm flyway` — nothing
+else. The diff from the VM's prior commit `64631de` is documentation, this
+migration and its tests, so no image was rebuilt and no service recreated.
+Backfill sized 50,770 of 51,082 rows on a 19 MB table.
+
+| Check | Expected | Observed |
+|---|---|---|
+| Flyway `V048` | success | `t`, 1,098 ms |
+| Columns added | 3 `last_detail*` | `scraped_at`, `fetched_at`, `enriched_at`, all `timestamptz` |
+| **V040 vs V048 enrichment predicate** | **0 disagreements** | **0**, across 51,081 rows |
+| `last_detail_fetched_at` written | 0 | 0 |
+| Backfill coverage | ~50,770 | 50,768 |
+| View owner / `viewer` SELECT | `dbt_user` / `t` | both views |
+| Claim path after the rebuild | 200 OK | `claim-batch` and `release` both 200 |
+
+The predicate row is the load-bearing one. It evaluates V040's enrichment rule
+and V048's `COALESCE` rule side by side, in one query at one instant, across
+every live row, and finds no row classified differently — the Plan 115
+non-regression asserted against production data rather than fixtures, which is
+what [the `COALESCE`
+section](#the-enrichment-check-must-read-through-both-columns) exists to
+guarantee. The zero beneath it is the matching proof that the new backoff
+predicate cannot yet bind: null everywhere means the clause short-circuits, so
+queue membership is still exactly what `V040` produced.
+
+#### Two rows disagree, by design — and it corrects two claims made above
+
+Immediately after the migration, two rows carried `last_detail_scraped_at` with
+`last_detail_enriched_at` still null. They are **not** backfill misses: the
+backfill ran inside V048's transaction over every row whose
+`last_detail_scraped_at` was non-null at that instant. They are post-migration
+detail writes by the Stage-1-era processing image, which knows only the legacy
+column. [`detail_writer.py:194`](../../processing/writers/detail_writer.py)
+stamps `last_detail_scraped_at = fetched_at` — the *artifact's* fetch time, not
+`now()` — which is why their timestamps (05:31) read as pre-migration although
+the writes landed after it.
+
+Both rows are covered by the `COALESCE`, which is why the predicate check is
+still zero. Two consequences, neither of which changes Stage 1:
+
+- **Test 8 is misstated.** It requires the two columns to "never disagree"
+  during the dual-write release. They necessarily disagree between the Stage 1
+  and Stage 2 *deploys*, and the count grows with every detail write until
+  Stage 2 ships. The invariant begins holding when Stage 2 is deployed, not
+  when `V048` is applied.
+- **Stage 4 inherits a hazard.** `V049` collapses the `COALESCE` to a bare
+  `last_detail_enriched_at`. Any row still carrying only the legacy column at
+  that point — this window's rows, less those re-enriched inside seven days —
+  would read as never enriched, go `is_full_details_stale`, and re-enter the
+  loop this plan exists to close. `V049` should repeat the backfill immediately
+  before collapsing the predicate. Cheap to add; silent if missed. Recorded
+  here as an observation; amending Stage 4 is a separate change.
+
+  Stage 2 narrows this but does not close it. Rather than passing one value
+  under two names, its writers pass a single `last_detail_enriched_at` and the
+  SQL binds it to both columns, so the two become physically unable to
+  disagree — which is what its commit message means by making `V049`'s drop
+  safe rather than hopeful. That guarantee covers every write *after the Stage
+  2 image is deployed*. It cannot cover the rows written in the window this
+  section measured, which is precisely the population `V049` would misread.
+
+#### Gate — closed 2026-08-30, with one check reassigned
+
+CAR-12's four Exit checks, as resolved:
+
+- `V048` applied on prod with no row-count change to existing rows. **Met.**
+- The view rebuild returns an identical rowset. **Met** — on fixtures in CI (93
+  passed, PR #284) and on the full live table in production, per the table
+  above.
+- 24h soak, no spurious guard trips. **Waived by the maintainer**, on the
+  ground that the guard cannot trip while `last_detail_fetched_at` is null on
+  every row, which the run above measured directly.
+- Plan 142 held set drops `scrape_detail_pages`. **Reassigned to Stage 3
+  (CAR-24).** The drop is earned by the backoff actually binding, which needs
+  Stage 2's `release_claims` write; with Stage 1 alone, pausing
+  `results_processing` still loops the scraper, so
+  [Plan 142](plan_142_planned_host_maintenance.md)'s three-DAG hold remains
+  correct. Stage 3 already owns the production verification that licenses the
+  change.
+
 ### Stage 2 — Writers
 
 1. `release_claims` sets `last_detail_fetched_at = now()` for `ok` and `failed`
