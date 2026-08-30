@@ -448,42 +448,93 @@ fire park runs against it, and read the observation table before releasing.
 cd /opt/cartracker
 
 # 1. A decoy that blocks the drain and touches nothing.
-docker compose run -d --no-deps --name plan158-decoy dbt_test sleep 900
+#    --entrypoint is load-bearing; see "The entrypoint trap" below.
+docker compose run -d --no-deps --entrypoint sleep --name plan158-decoy dbt_test 900
 
-# 2. Declare intent. With no drift to deploy this recreates nothing and exits
-#    MUTATED=0 — a full coordination exercise with zero fleet change.
-bash scripts/redeploy.sh ops processing
+# 2. VERIFY THE DECOY BEFORE SPENDING A PARKED PIPELINE ON IT.
+#    Both reads are free and neither touches coordination.
+docker ps --filter name=plan158-decoy --format '{{.Names}} | {{.Status}} | {{.Command}}'
+docker exec cartracker-container-health python -c \
+  "import urllib.request;print(urllib.request.urlopen('http://localhost:9110/oneoff-processes').read().decode())"
+#    Expect: "Up", command "sleep 900", and active_processes >= 1 with
+#    service "dbt_test". A container that is not *running* is not counted
+#    (collector.py filters on running/restarting/paused), so an exited decoy
+#    holds nothing and the drain will authorize in the first gap.
 
-# 3. Expect blockers ['container_processes'], count 1.
+# 3. Declare intent, bounded. Time it 1-2 minutes before a :00 or :05 boundary.
+DEPLOY_DRAIN_TIMEOUT=420 bash scripts/redeploy.sh ops processing
+
+# 4. Expect blockers ['container_processes'], count 1.
 curl -s localhost:8060/coordination/drain-status | python3 -m json.tool
 
-# 4. After a */5 fire parks runs — THE PROOF:
+# 5. After a */5 fire parks runs — THE PROOF:
 docker exec cartracker-postgres psql -U cartracker -d cartracker -At -c \
   "SELECT count(*) FROM public.coordination_gate_observations;"
 
-# 5. Release the decoy; the drain should authorize on the next poll.
+# 6. Release the decoy; the drain should authorize on the next poll.
 docker rm -f plan158-decoy
 ```
 
-**Step 4 is the experiment.** Rows appearing *while the decoy still holds the
+**Step 5 is the experiment.** Rows appearing *while the decoy still holds the
 drain* is what distinguishes fixed from broken; at exactly that point on
-2026-08-30 the table was empty. Steps 5 and 6 only confirm the drain then
-clears.
+2026-08-30 the table was empty. Step 6 only confirms the drain then clears.
 
-Why `dbt_test` and why `docker compose run`, both load-bearing:
+Why `dbt_test` and why `docker compose run`, all four load-bearing:
 
 - `oneoff_processes` ([`container_health/collector.py:67`](../../container_health/collector.py))
   counts a container only if it carries `com.docker.compose.oneoff=True`, which
-  `docker compose run` sets and `docker compose up` does not.
+  `docker compose run` sets and `docker compose up` does not. It also counts
+  only a container that is **running** — hence step 2.
 - The service label is looked up in `SERVICE_CONTRACTS`, and **an unrecognised
   service raises, making the whole source return `unknown` — which fails
   closed.** An arbitrary `docker run` would hang the drain for the wrong reason
   and prove nothing. `dbt_test` is a declared `one_shot` whose `analytics`
   surface intersects the deploy scope.
-- The command is not part of the identification, so overriding it with `sleep`
-  gives a blocker that touches no data. `april-processor` also qualifies and is
-  deliberately not used — it is Plan 145's recovery worker.
+- The command is not part of the identification, so replacing it with `sleep`
+  gives a blocker that touches no data — but it must be *replaced*, not
+  appended to; see the entrypoint trap below. `april-processor` also qualifies
+  and is deliberately not used: it is Plan 145's recovery worker.
 - `--no-deps` keeps the decoy from starting anything else.
+
+Both preconditions are checkable offline, before anything is declared: the
+`ops processing` scope is `{analytics, archive, detail_fetch, listing_fetch,
+processing}`, `container_processes` is among its `required_drain_sources`, and
+`dbt_test`'s `analytics` surface intersects it. A decoy that satisfies those
+three and is *running* must be counted.
+
+#### The entrypoint trap
+
+The first attempt on 2026-08-30 ran this protocol as originally written and
+**proved nothing**, because the decoy was dead on arrival. `dbt/Dockerfile`
+sets `ENTRYPOINT ["dbt"]`, so `docker compose run … dbt_test sleep 900` runs
+**`dbt sleep 900`**, not `sleep 900`. The container exited 2 immediately —
+`docker ps -a` showed `Exited (2)`, command `"dbt sleep"` — and
+`oneoff_processes` counts only containers whose status is
+`running`/`restarting`/`paused`, so it contributed nothing. The drain
+authorized in **1s**, in a gap, and the pipeline was parked for nothing.
+
+Overriding the command is right; appending to an entrypoint is not the same
+thing. Hence `--entrypoint sleep` with `900` as the argument, and hence step 2:
+the protocol had no way to tell a holding decoy from a dead one until the
+expensive part had already begun.
+
+#### `MUTATED=0` is not guaranteed, and does not need to be
+
+The original step 2 claimed *"with no drift to deploy this recreates nothing
+and exits `MUTATED=0` — a full coordination exercise with zero fleet change."*
+That is wrong, and was wrong on the first attempt: `ops/Dockerfile` and
+`processing/Dockerfile` both `COPY . .` over the whole repository, so **any**
+commit — a documentation-only merge included — invalidates that layer, builds
+new images and recreates both containers. Expect a recreate unless the images
+were built from exactly the current tree.
+
+It does not matter, because the ordering already protects the experiment:
+`_prepare_coordination` runs *before* `MUTATED=1`, so a drain that never clears
+expires with nothing mutated and releases intent. That is the property
+`test_drain_expiry_leaves_nothing_mutated_so_intent_releases` asserts. What the
+recreate does cost is the claim of *zero fleet change* — so run this when a
+recreate of `ops` and `processing` is acceptable, not when it is not.
+
 
 #### Bounding the experiment
 
@@ -492,21 +543,103 @@ cycle — six to eight minutes, not the nineteen the incident ran. The `sleep 90
 is headroom, not a duration; the decoy is removed by hand well before it
 expires.
 
-**Abort condition:** if after step 5 the blocker becomes
+**Abort condition:** if after step 6 the blocker becomes
 `airflow_gate_observations` and its count does not fall across two reads, the
-fix did not take. Interrupt `redeploy.sh`; with nothing mutated `_on_exit`
-releases intent and the fleet resumes, exactly as it did on 2026-08-30. That
-path is written up in
+fix did not take. Since Stage 2 the abort is automatic — `DEPLOY_DRAIN_TIMEOUT`
+expires, prints the blocking sources and releases intent through the
+`MUTATED=0` path. Interrupting `redeploy.sh` by hand reaches the same place,
+exactly as it did on 2026-08-30, and that path is written up in
 [`runbook_host_maintenance.md`](../runbooks/runbook_host_maintenance.md) by
-Stage 0, which is why Stage 0 came first.
+Stage 0, which is why Stage 0 came first. Set the bound below the decoy's own
+`sleep` so the script, not the expiring decoy, is what ends a failed run.
 
-#### This stage runs before Stage 2, deliberately
+#### This stage was to run before Stage 2, and did not
 
-Stage 2 guards against *other* sources blocking a drain; it changes nothing
-about what this stage measures. Running Stage 3 first also supplies the number
-Stage 2 needs — the elapsed time between releasing the decoy and reaching
-authorization is the first measurement of a healthy drain with observations
-actually being written, and a timeout chosen before that is a guess.
+The intent was that Stage 3 supply the number Stage 2 needs — the elapsed time
+between releasing the decoy and reaching authorization — because *a timeout
+chosen before that is a guess*. In the event Stage 2 shipped first, with the
+bound **derived** from the tightest gated schedule plus the sensor's poke
+interval rather than measured, and Stage 3 then ran with that bound already in
+place as its abort condition. See Stage 2's evidence for the derivation and
+Stage 3's for the measurement that followed; the measurement did not move the
+number.
+
+### Evidence — Stage 3, 2026-08-30
+
+**`public.coordination_gate_observations` is no longer empty.** Four rows, all
+generation 23, written 15:30–15:31 UTC — the first rows in the mechanism's
+life, against a table that had been empty for every generation that had ever
+existed.
+
+| dag_id | run_id | observed_at |
+|---|---|---|
+| `results_processing` | `scheduled__2026-08-30T15:30:00+00:00` | 15:30:07.596 |
+| `scrape_detail_pages` | `scheduled__2026-08-30T15:30:00+00:00` | 15:31:14.026 |
+| `orphan_checker` | `scheduled__2026-08-30T15:30:00+00:00` | 15:31:14.039 |
+| `scrape_listings` | `scheduled__2026-08-30T15:30:00+00:00` | 15:31:14.169 |
+
+The 15:30 boundary aligns `*/5`, `*/15` and `*/30` at once, so a single fire
+parked four runs rather than the two a `*/5` alone would give.
+
+**The distinguishing observation.** Drain evidence sampled every ten seconds
+across the fire, with `draining_at` at 15:28:24.366 and the decoy holding
+throughout:
+
+```
+15:29:58 | blockers=container_processes | airflow_gate_observations=0 | rows=0
+15:30:09 | blockers=container_processes | airflow_gate_observations=0 | rows=4   ← the fire
+15:31:21 | blockers=container_processes | airflow_gate_observations=0 | rows=4
+```
+
+Rows appeared **while the decoy still held the drain open**, which is the whole
+experiment: at exactly that point on 2026-08-30 the table was empty and the
+count was climbing 6 → 8 → 9. Here `airflow_gate_observations` never rose above
+zero at all — every parked run recorded its observation faster than the drain
+could notice it was missing. The deadlock's load-bearing arrow is gone.
+
+**The `ON CONFLICT` path proved itself unplanned.** The row count was already 4
+at 15:30:09, yet three rows carry `observed_at` of 15:31:14 — exactly one 60s
+`poke_interval` later. Repeated pokes updated `observed_at` in place and the
+count never moved. That is §Tests item 5, against production Postgres, without
+anyone arranging it.
+
+**Release and authorization.** The decoy was removed between the 15:31:21
+sample, which still showed it blocking, and `active_at` at 15:31:29.836 —
+authorization within **≤9s** of the last blocker clearing, a window that
+includes the 5s `DRAIN_POLL_INTERVAL`. `validating_at` and `completed_at`
+followed at 15:31:39.3, generation 24. All four parked runs then proceeded;
+`orphan_checker` and `scrape_listings` succeeded at 15:32:24, having done no
+work at all while parked.
+
+| Total drain, 15:28:24.366 → 15:31:29.836 | 185s, all of it the deliberate hold |
+|---|---|
+| Last blocker clearing → authorization | ≤9s |
+| Gate observations blocking the drain | never, at any sample |
+
+**This does not move Stage 2's number.** 600s stands. A healthy drain cleared in
+under ten seconds once its blocker went, but drain duration is dominated by how
+long real admitted work runs, not by the gate, so one measurement of a drain
+whose only blocker was synthetic is not an argument for tightening the bound.
+It does confirm the derived floor was conservative in the right direction: the
+observations landed ~7s after a run parked, against the 60s the floor budgets.
+
+| Success criterion | Result |
+|---|---|
+| 1 — a deploy declared while gated runs are live reaches authorization | ✔ four runs parked, deploy reached `active` |
+| 2 — observations non-empty after a drain overlapping a live affected run | ✔ four rows, generation 23 |
+| 3 — no deploy waits unboundedly | ✔ bound in place at 420s; never needed to fire |
+| 4 — admission during a deploy is unchanged | ✔ every parked run did nothing until release, then completed |
+
+**Two corrections came out of the run, both now folded into the protocol
+above.** The first attempt proved nothing because the decoy was dead on arrival
+— `dbt/Dockerfile`'s `ENTRYPOINT ["dbt"]` turned `… dbt_test sleep 900` into
+`dbt sleep 900` — and the drain authorized in 1s in a gap, parking the pipeline
+for no result. The protocol's `MUTATED=0` claim was also wrong: `ops` and
+`processing` both `COPY . .`, so the documentation-only merge that preceded the
+run rebuilt both images and recreated both containers. Neither was dangerous,
+because the drain wait precedes the mutation either way, but a protocol that
+cannot distinguish a holding decoy from a dead one costs a parked pipeline to
+find out. The verification step in the protocol above is the fix.
 
 ## Tests
 
@@ -540,7 +673,8 @@ needed deploying before the window. That deploy would have hit this.
 ### Plan 147 — blocked on this
 
 [Plan 147](plan_147_scrape_state_ownership.md) Stage 2 is merged to master
-(`4b2426b`) and **not deployed**; its deploy is what surfaced this. Stage 1's
+(`4b2426b`); its deploy is what surfaced this, and it has since been
+deployed. Stage 1's
 `V048` is applied and inert, so production is in a consistent, safe state: the
 new columns exist, `last_detail_fetched_at` is null everywhere, and queue
 behaviour is exactly what `V040` produced. There is no urgency to force the
