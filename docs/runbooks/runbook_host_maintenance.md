@@ -460,6 +460,13 @@ a task for waiting, at `[scheduler] task_queued_timeout` = 600s — cannot see i
 failed DAG. The deploy-intent sensor cannot say the same: its own 600s timeout
 failed two `check_deploy_intent` tasks in the window recorded in §1.
 
+> **The deploy-intent sensor has a second defect, and it is live.** During a
+> deploy it never records the gate observation the coordination drain waits
+> on, so a deploy declared while a gated DAG run is live hangs indefinitely —
+> §11's *When the drain never drains* carries the recognition and the escape.
+> It is not the pool's problem, but it wears the same face: a fleet that has
+> gone quiet and stays that way.
+
 The sensors are therefore **not** pooled. A `reschedule`-mode sensor must not
 hold a slot while it waits, and both factories in `airflow/dags/sensors.py` take
 `**kwargs`, so `pool=` would sail straight through — the test asserts no DAG
@@ -925,6 +932,163 @@ force-complete endpoint: a whole-scope request that reaches `validating` must
 remain held until the host, stack, and intentionally-stopped-service evidence
 guard exists. Before Stage 3, its safe rehearsal boundary is `draining`, then
 `POST /coordination/cancel`; do not authorize it.
+
+### When the drain never drains — the gate deadlock
+
+**Live in production until [Plan 158](../plans/plan_158_coordination_gate_deadlock.md)
+Stage 1 deploys.** A deploy declared while a gated DAG run is live hangs
+forever. `_DeployIntentSensor.poke()`
+([`airflow/dags/sensors.py:66`](../../airflow/dags/sensors.py)) returns early on
+`intent != "none"`, so the `INSERT INTO coordination_gate_observations` beneath
+it is unreachable during a deploy — and `airflow_gate_observations` is exactly
+the source the drain waits on. **The drain is waiting for a write that cannot
+happen while it is waiting.**
+
+**Recognise it.** `redeploy.sh` prints `In-scope work is still draining;
+retrying in 5s` and keeps printing it. Read the evidence separately, twice,
+about five minutes apart:
+
+```bash
+curl -sf http://localhost:8060/coordination/drain-status | python3 -m json.tool
+```
+
+```json
+{
+    "phase": "draining",
+    "drained": false,
+    "blockers": ["airflow_gate_observations"],
+    "sources": [
+        {
+            "source": "airflow_gate_observations",
+            "status": "known",
+            "count": 6,
+            "oldest_started_at": "2026-08-30T06:00:00.690000+00:00"
+        }
+    ]
+}
+```
+
+The signature is the **direction of `count` between the two reads, not its
+value**. A healthy drain falls to zero as admitted work finishes — that is what
+the second read is for. This one does not fall, and given time it rises:
+`orphan_checker` fires every five minutes, each new run parks on the gate and
+adds one, and nothing in the loop can ever subtract. `oldest_started_at` stays
+pinned to the same instant across both reads, because the run it names will
+never end.
+
+> **This state lies when read against the interpretation list above.** *"`known`
+> with a positive count names real admitted work and its oldest start"* is true
+> of every other source and false of this one. These runs are parked on the
+> sensor, holding no work and doing none; the count names their existence, not
+> their activity. It is the one case where a positive count is not a reason to
+> keep waiting.
+
+Confirmation, if the two reads are not enough — the observations table is empty
+for the current generation, and has been for every generation that ever
+existed:
+
+```bash
+curl -sf http://localhost:8060/coordination/status | python3 -m json.tool   # → "generation": 17
+docker exec cartracker-postgres psql -U cartracker -d cartracker -At -c \
+  "select count(*) from public.coordination_gate_observations where generation = 17;"
+```
+
+```
+0
+```
+
+§9's role caveat applies here too: the container has no `postgres` role, so use
+`-U cartracker`.
+
+**Recover it.** Interrupt `redeploy.sh` — plain `Ctrl-C`. Nothing has been
+recreated, and that is guaranteed rather than hoped for: mutation happens only
+after `_prepare_coordination` returns, so a script still printing "still
+draining" has never reached it. `MUTATED` is therefore `0`, and `_on_exit`
+([`scripts/redeploy.sh:161`](../../scripts/redeploy.sh)) takes the release
+branch:
+
+```
+Signalling deploy complete...
+true
+```
+
+Intent is released and the fleet resumes by itself; the parked sensors poke
+every 60 seconds, so the gate opens within a minute with no further action.
+
+If the trap does not fire — `SIGKILL`, a dropped SSH session, a terminal that
+died with the script — post the release by hand:
+
+```bash
+curl -X POST http://localhost:8060/deploy/complete
+```
+
+```
+true
+```
+
+Then prove both halves released, because a released intent alone does not say
+the coordination row moved:
+
+```bash
+curl -sf http://localhost:8060/deploy/status | python3 -m json.tool
+curl -sf http://localhost:8060/coordination/status | python3 -m json.tool
+```
+
+`intent` reads `none`, `phase` reads `none`, and `generation` is **one higher
+than the deploy's** — the release increments it in the same transaction, so an
+unchanged generation means the release did not land and the gate is still shut.
+
+**Avoid it.** Pause the affected DAGs and let their in-flight runs finish
+before declaring intent. `drain-status`'s `scope` names the surfaces;
+`airflow.dag_run` names the runs that would park:
+
+```bash
+docker exec cartracker-postgres psql -U cartracker -d cartracker -At -F'|' -c \
+  "select dag_id, run_id, state, start_date
+     from airflow.dag_run
+    where state in ('queued', 'running') order by start_date;"
+
+docker exec cartracker-airflow-scheduler airflow dags pause orphan_checker
+# one per affected DAG — and unpause every one of them after the deploy
+```
+
+> **Pause; do not try to time it.** A deploy declared into a gap in the schedule
+> authorizes immediately, which is the only reason this has ever worked — see
+> generation 16, which went active at 02:52 UTC. But `orphan_checker` alone
+> fires twelve times an hour, the gap is minutes wide, its boundary is not
+> visible from outside, and the deploy is longer than the gap. Timing it is a
+> gamble whose losing branch is unbounded.
+
+> **Pausing is not the `maintenance` pool** (§9). A paused DAG creates no run at
+> all, so there is nothing for the gate to count; the pool holds a created run
+> in `SCHEDULED`, which is precisely the state that blocks here. Both are
+> durable in the Airflow metadata DB, and both fail in the same direction: a
+> forgotten pause outlives the window wearing the face of a quiet fleet.
+> Unpausing is part of the deploy, not something to do after it.
+
+**Why it hangs rather than fails.** `_prepare_coordination`
+([`scripts/redeploy.sh:135`](../../scripts/redeploy.sh)) polls
+`/coordination/authorize` in a `while :` loop with no timeout and no escape: a
+409 sleeps `DRAIN_POLL_INTERVAL` (5s) and retries, forever. It is the one wait
+in the script that does not follow the script's own decision 2 — the health
+gate fails loudly at 300s and this does not fail at all. Plan 158 Stage 2 bounds
+it; until that ships, **the operator is the timeout**, which is why recognising
+the shape above matters more than it should.
+
+**The reference incident — 2026-08-30**, deploying `ops` and `processing` for
+Plan 147 Stage 2:
+
+| Time (UTC) | Event |
+|---|---|
+| 05:56:34 | `redeploy.sh ops processing` declares intent; generation 17, phase `draining` |
+| 06:00:00 | Seven scheduled DAGs fire and park on the gate sensor |
+| 06:04 → 06:15 | `airflow_gate_observations` climbs 6 → 8 → 9; `oldest` pinned at 06:00:00.69 |
+| 06:15 | Aborted by hand. Nothing had been recreated, so the `MUTATED=0` branch released intent; generation 18, and the fleet recovered on its own |
+
+Nineteen minutes with every production DAG parked, and it would have hung
+indefinitely. `coordination_gate_observations` held no row for generation 17 —
+nor for any generation before it. The `INSERT` has never executed once in
+production.
 
 ## 12. Gaps in this record
 

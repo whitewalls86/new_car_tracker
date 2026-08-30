@@ -216,6 +216,46 @@ right now and will be until Stage 1 deploys:
 Stage 0 is documentation only and carries no deploy, so it is not subject to
 the defect it describes.
 
+### Evidence — Stage 0, 2026-08-30
+
+Shipped as *When the drain never drains — the gate deadlock*, the closing
+subsection of §11 of
+[`runbook_host_maintenance.md`](../runbooks/runbook_host_maintenance.md), plus a
+pointer to it from §9.
+
+**§11, not §9, on purpose.** §9 is the `maintenance` Airflow pool, which the
+runbook is at pains to distinguish from coordination — §10's own note warns that
+`/coordination/status` reads `phase=none` throughout a pool hold. This defect is
+entirely coordination: intent, generations, `drain-status`. §11 already teaches
+the exact reads it needs, and it teaches one of them wrongly for this case: its
+interpretation list says *"`known` with a positive count names real admitted
+work and its oldest start"*, which is precisely the false reading that cost
+nineteen minutes on 2026-08-30. The runs the count names were parked, not
+working. The new subsection sits below that list and corrects it for the one
+source where it does not hold.
+
+The subsection is the closing one in §11 rather than mid-section so its heading
+does not capture §11's trailing release-after-failure prose. §9's pointer is a
+blockquote beside the existing note about the sensor's 600s timeout, because a
+pool-side reader arriving at "the fleet is quiet, is that healthy?" should find
+this from there.
+
+| Item | Covered by |
+|---|---|
+| Recognise | `drain-status` JSON with `drained: false` and `blockers: ['airflow_gate_observations']`; two reads five minutes apart; the count rises rather than falls; `oldest_started_at` pinned; the empty-table confirmation for the generation |
+| Recover | `Ctrl-C`, why `MUTATED=0` is guaranteed there, `_on_exit`'s expected output, the `/deploy/complete` fallback, and the generation increment as proof the release landed |
+| Avoid | pause the affected DAGs, the query that names the runs that would park, and why pausing beats timing a gap |
+| Why it hangs | `_prepare_coordination`'s unbounded `while :`, contrasted with the script's own 300s health gate; the operator is the timeout until Stage 2 |
+| Incident | the 2026-08-30 timeline, and that the `INSERT` has never executed for any generation |
+
+`tests/test_planning_docs.py`: **33 passed** before the change and 33 after —
+the relevant one is `test_no_markdown_link_in_docs_is_dangling`, which resolves
+the four new relative links (this plan, `sensors.py`, `redeploy.sh` twice).
+
+No deploy, by design: Stage 0 changes documentation only, so it is not subject
+to the defect it describes — which is the whole reason it goes first.
+
+
 ### Stage 2 — Bound the authorize wait
 
 The `redeploy.sh` guardrail, its timeout asserted in
