@@ -378,6 +378,81 @@ CAR-12's four Exit checks, as resolved:
    `COALESCE` semantics are preserved verbatim on both — SRP and carousel still
    pass null and must not advance enrichment.
 
+### Evidence — Stage 2, 2026-08-30
+
+Deployed with `bash scripts/redeploy.sh ops processing`, completing at
+**07:04:27 UTC** (coordination generation 20). Both containers recreated onto
+freshly built images — `ops` `ef6a640e3b27`, `processing` `62a7c068d952` — and
+the running `ops` was confirmed to carry the new `release_claims` write before
+anything else was checked.
+
+**The first attempt at this deploy did not fail; it hung.** Declared at
+05:56:34, it deadlocked on the coordination drain and was aborted by hand at
+06:15 with nothing mutated. That defect is
+[Plan 158](plan_158_coordination_gate_deadlock.md), found here and fixed before
+this deploy could proceed. Worth recording in this plan because it is why Stage
+2 shipped an hour after it merged, and because the abort was clean — no
+half-deployed fleet, and `V048` remained inert throughout.
+
+| Check | Expected | Observed |
+|---|---|---|
+| `ops`/`processing` on new images | recreated | both, `Up` and healthy |
+| First `last_detail_fetched_at` stamps | one claim batch | **100 rows at 07:16:11** |
+| **Recently fetched listings still queued** | **0** | **0 of 100** |
+| Predicate disagreements (V040 vs V048) | 0 | **0** |
+| Legacy-only rows (the `V049` population) | frozen | **45**, static |
+| Enrichment still advancing | yes | 52 rows in the prior 30 min |
+
+#### The guard operated, which it had never done before
+
+The row that matters is the third. One hundred listings were claimed, fetched
+and released through the new handler at 07:16:11, and **not one of them is in
+`ops.ops_detail_scrape_queue`.** Before Stage 2 they would all have been
+eligible again fifteen minutes later, because nothing recorded that a request
+had been spent. This is the loop guard doing its job for the first time, in
+production, and it is success criterion 1 met by observation rather than by
+construction.
+
+The stamp count equalling the queue depth at claim time (100) is the secondary
+confirmation: the DAG reports `ok` for every listing in a released batch, so
+every claimed listing is stamped, exactly as
+[the plan predicted](#the-scraper-already-reports-what-it-needs-to-record).
+
+#### Queue depth rose, and that is not a regression
+
+Queue depth went 100 → 217 across the deploy. The backoff removed 100 listings
+from eligibility; the rise is the pipeline having been parked for roughly an
+hour by the Plan 158 deadlock, during which listings crossed the 24-hour price
+staleness threshold. The two movements are independent, and the backoff's
+effect is measured directly by the zero above rather than inferred from the
+total.
+
+#### The dual write holds, and the `V049` population is now fixed at 45
+
+`last_detail_scraped_at IS NOT NULL AND last_detail_enriched_at IS NULL` was 2
+at 05:40, 45 at deploy time, and **has not moved since** — while 52 rows had
+their enrichment advance in the same window. A legacy-only writer would have
+grown that population by roughly the same 52. It did not, which is Stage 2's
+one-parameter binding working as its commit message claims: the two columns are
+now physically unable to diverge.
+
+**45 is therefore the frozen size of the population `V049` would misread**, and
+the number Stage 4 needs. It decays as those listings are re-enriched within
+seven days, but it will never grow. Recorded here because it cannot be measured
+again once it has decayed — see the Stage 1 evidence for why `V049` must repeat
+the backfill before collapsing the `COALESCE`.
+
+#### Gate
+
+- Success criterion 1 — a detail fetch recorded by the component that performed
+  it, in the transaction that releases the claim. **Met**, 07:16:11.
+- Success criterion 3 — carousel and SRP semantics unchanged. **Met** on the
+  predicate check; 0 disagreements across the live table, unchanged from
+  Stage 1.
+- Success criterion 2 — no listing fetched more than once with
+  `results_processing` stopped. **Not tested here.** That is Stage 3's
+  deliberate pause, and the zero above is necessary but not sufficient for it.
+
 ### Stage 3 — Observability and verification
 
 1. Publish the fetched-but-unenriched gauge.
