@@ -2,7 +2,7 @@
 
 ## Status
 
-**BUILD ORDER — Stage 5; slice 3 waiting on Stage 4 and slices 1/2 to compute.** The goal and success criteria have survived
+**BUILD ORDER — Stage 6; the repack is verified, the prune and the legacy deletion remain.** The goal and success criteria have survived
 every revision unchanged. The *method* has now changed three times, each time
 because a measurement contradicted an identity key the previous method relied
 on. This revision therefore states the trust boundary once, up front, and
@@ -23,8 +23,16 @@ What changed, and why:
   result is one directory of distinct captures. Every later stage then reads
   one store instead of reconciling two.
 
-Stage 1 is complete (commit `3f6e6d4`). Stage 2 is complete (2026-08-27).
-Stage 3a is complete (2026-08-27); Stage 3b is in flight.
+Stages 1–5 are complete. Stage 1 (`3f6e6d4`), Stage 2, Stage 3a and Stage 3b
+all landed 2026-08-27; Stage 4 parsed the flattened population 2026-08-28; Stage
+5 committed all 701,375 `to_import` rows on 2026-08-29, and Stage 5b fixed the
+packer before Stage 6 wrote anything.
+
+**Stage 6, as of 2026-08-29:** the ordering trial ran and split, so the
+incumbent clustering carries; the replacement packs are written and
+`repack-verify` PASSED over all 983,043 members; the 32 superseded packs are
+retired. **The prune and the deletion of the 1,172 legacy Parquet objects
+remain, and not one of them has been deleted.**
 
 **Supersedes [Plan 132](plan_132_unrecorded_artifact_recovery.md) and
 [Plan 137](plan_137_legacy_bronze_parquet_disposition.md).**
@@ -113,7 +121,7 @@ member counts, frame ordinals and offset tiling. Nothing on the read path
 consults `listing_id`. Its one real cost is that sidecar identity is a trap for
 metadata joins — three revisions of this plan were lost to it.
 
-### The compression question — open, and not to be guessed at
+### The compression question — answered 2026-08-29 by a split trial
 
 `listing_id` is also the packer's sort key, and `PackWriter.add` seals a frame
 at a listing boundary so a vehicle's repeat captures compress together. So a
@@ -150,12 +158,18 @@ The deficit halved (19.4% → 8.4%) as true ordering was given more of its
 cluster, so the trend points toward parity or better and the question cannot be
 called from the evidence here.
 
-**Stage 6 answers it with a bounded trial instead.** April is repacked
-regardless, so a fixed ~50,000-member subset is packed both ways, the winner
-carries the single full pass, and the trial packs are discarded. Holding the
-population fixed is what makes the difference attributable — cross-month
-comparison cannot, because achieved ratios already range 43.66x to 82.00x
-without tracking clustering quality at all. See *The ordering trial* under
+**Stage 6 answered it with a bounded trial.** A fixed ~50,000-member subset was
+packed both ways — one such subset drawn in each ordering — and the trial
+**split**: true ordering came out 27.50% worse on the sample drawn in the
+current order and 4.76% better on the sample drawn in its own. A 32-point swing
+from sample selection alone, larger than the effect under test. The rule fixed
+before the run gives the incumbent the pass, so **April was repacked in the
+existing clustering order and `fetch_member_metadata` was not changed.**
+
+The bias this section worried about is therefore real and was measured: holding
+the population fixed is necessary but not sufficient, because a *contiguous*
+sample also has to be drawn in some order, and that choice moves the answer
+further than the ordering does. See *Evidence — the ordering trial* under
 Stage 6.
 
 **What is safe to conclude regardless:** the repair records the correct
@@ -400,7 +414,7 @@ rewritten. 403/5xx bodies recorded, never written.
 
 ---
 
-## Stage 3 — Flatten the population (CAR-20)
+## Stage 3 — Flatten the population (CAR-20) — **complete**
 
 Two mechanical steps, no parsing.
 
@@ -444,31 +458,46 @@ packed hashes). The 400-row gap between operations and distinct objects is
 idempotent re-deletes of identical content materialized from two source files;
 0 key/hash conflicts. `ops.artifacts_queue` and silver untouched.
 
-### Evidence — 3b, in flight
+### Evidence — 3b, 2026-08-27
 
 Dry run verified 2 packs / 34,751 members — every member ranged-read and
-checked against its sidecar `raw_sha256`, no failure. `unpack --apply` started
-2026-08-27 20:24 UTC under tmux `plan145-s3b` (log
-`/home/ubuntu/plan145-unpack.log`), writing via `write_html` under each
-member's original `source_key` with production dictionary `1367127621`.
-557,065 members, ~3h budget.
+checked against its sidecar `raw_sha256`, no failure. `unpack --apply` ran
+20:24–22:27 UTC under tmux `plan145-s3b` (log
+`/home/ubuntu/plan145-unpack.log`), **2h03m**, writing via `write_html` under
+each member's original `source_key` with production dictionary `1367127621`.
 
-### Gate
+**All 557,065 members, across 32 manifest shards.** Three later runs re-derive
+that figure independently rather than restating it: Stage 4's completeness gate
+would not open without it, `EXPECTED_UNPACK_SHARDS`/`EXPECTED_UNPACK_MEMBERS`
+assert it, and Stage 6's `repack-verify` reloaded the same manifests on
+2026-08-29 and reported *"frozen Stage 3b baseline: 557065 members over 32
+packs"* — then found every one of them present as a live loose object.
+
+### Gate — met
 
 - Deletion is by exact key from a written manifest with receipts, never by
   prefix; the count reconciles against the sidecar hash join. **3a: met.**
 - No key is deleted whose content is not provably in a verified pack.
   **3a: verified, 0 exceptions.**
 - Every unpacked member verifies against its `raw_sha256` on write.
-  *(3b, in flight.)*
+  **3b: met** — 557,065 members written, and Stage 6 re-read all of them against
+  the same hashes on 2026-08-29 with zero mismatches.
 - The flattened population contains no two objects with identical content.
-  *(end-of-3b check.)*
+  **Met for materialized objects by construction** — their keys are derived from
+  the content hash, so identical bytes cannot produce two objects — and **met
+  across the two stores** by 3a, which deleted every materialized twin of a
+  packed body. **Not met strictly within the packs:** 3a's own verification
+  counted **557,063 distinct hashes across 557,065 members**, so two members
+  duplicate another member's content under a different `source_key`. 3a never
+  targeted packed↔packed duplicates and this plan does not remove them: the
+  packer keys on `source_key`, both copies pack and verify, and the cost is two
+  objects in 983,043.
 - `ops.artifacts_queue` is not written; no silver row is written.
   **3a: held.**
 
 ---
 
-## Stage 4 — Parse the flattened population (CAR-23)
+## Stage 4 — Parse the flattened population (CAR-26) — **complete**
 
 Run `parse_cars_detail_page_html_v1` **unmodified** over the flattened
 population and write primary and carousel rows to `recovery/plan145/parsed/`.
@@ -489,7 +518,32 @@ Cost: 90.7 ms/page over ~993,767 pages ≈ 25 core-hours. A process pool is
 required — bs4/lxml is GIL-bound, one process ≈ one core. The host has 4 and
 production needs some.
 
-### Gate
+### Evidence — 2026-08-28
+
+The run completed on the VM 2026-08-28, `parse_report.json` reporting
+**1,204 / 1,204 units** over **983,043 inputs**, emitting **5,738,532**
+observation rows at **zero `failed`, zero `missing_object` and zero identity
+disagreements**. Identity resolved by legacy manifest for 797,073 objects and
+by `artifacts_queue_events` for 180,710, leaving the 5,260 characterized under
+*The tier-3 population, measured*.
+
+Those totals are reproduced by a second program rather than asserted here: the
+authoritative Stage 5 `compare` (`cmp-6c7c90d807bbdf13`) refuses to start until
+`parse_report.json` says all 1,204 units completed and its input and
+observation counts match, and it ran.
+
+**Where the two cohort counts actually come from.** Stage 4 classified 4,966
+Akamai bodies as `blocked_other`; its `_detect_challenge` is structurally dead
+for every object whose identity resolved, so a further 59,460 leaked pages were
+recorded as `parsed` upstream. Those were measured and excluded by the Stage 5
+block-page filter (PR #272, `c5c5ee2`) — 59,460 rows over 59,460 objects,
+cross-tabbed at *Evidence — slice 1, the authoritative run*, which is also where
+the size-band distribution lands: **59,455 in the 000000–000511 band**, against
+the 54,341 this stage's design projected for 256–511. `parse_report.json`'s
+`blocked_other: 4,966` stands as an accurate record of what Stage 4 itself
+classified and is not rewritten.
+
+### Gate — met
 
 - Every input is parsed or carries an explicit recorded failure.
 - Every parsed row carries the authoritative capture time.
@@ -498,7 +552,7 @@ production needs some.
 
 ---
 
-## Stage 5 — Compare to silver, then apply (CAR-21)
+## Stage 5 — Compare to silver, then apply (CAR-21) — **complete**
 
 Compare parsed output to March–May silver on `(listing_id, fetched_at)` with a
 **300 s** tolerance, counting observations from any source, because carousel
@@ -1516,13 +1570,18 @@ Not closed: **Stage 6** — repack, prune, and the deletion of the 1,172 legacy
 Parquet objects, which is the plan's actual goal and remains unbuilt. Not one
 byte has been deleted. Stage 5b's compression trial is also still outstanding.
 
+> *Overtaken the same day.* Stage 6 was built, the trial ran and split, the
+> replacement packs were written and verified, and the superseded packs were
+> retired — all on 2026-08-29. See the Stage 6 evidence below. The paragraph
+> above is left as written because it was true when written.
+
 The full-population lake verification was not run independently: `canary-flush-verify`
 proves the round trip by key for the canary's 234 artifacts only, and the
 evidence for the other 341,669 is the receipts plus the flushers' own
 delete-on-success contract. A by-key check at full population would need a
 mode that does not exist.
 
-### Gate
+### Gate — met
 
 - Every parsed observation is classified exactly once, into one of the **four**
   families — `already_represented`, `to_import`, `blocked_excluded`,
@@ -1626,6 +1685,12 @@ defect being reproduced, and Stage 6 rewrites the sidecars it replaces.
 ---
 
 ## Stage 6 — Repack, prune and delete (CAR-22)
+
+**In flight, 2026-08-29.** The machinery is built and merged (`64631de`); the
+trial ran and split; the replacement packs are written and verified over all
+983,043 members; the 32 superseded packs are retired. The prune and the
+deletion of the 1,172 legacy Parquet objects remain, and **not one of them has
+been deleted.**
 
 Run the existing packer over the flattened population, which by now is
 complete and — for everything that reached silver — attributable. Verify every
@@ -2140,6 +2205,39 @@ method. The two are not the same comparison and are not expected to match
 exactly; both say the same thing, which is that roughly a quarter to a third of
 April's old sidecar identities were accidentally right.
 
+### Evidence — retiring the superseded packs, 2026-08-29
+
+`retire-packs --apply --verify-run-id repack-4ea1c730c8b96ac1`, 23:07 UTC.
+
+```
+verified by            repack-4ea1c730c8b96ac1
+replacement packs                68
+packs to retire                  32
+objects to delete                64
+members they held           557,065
+  receipt deleted                  64
+```
+
+The manifest was written to
+`recovery/plan145/retire/repack-4ea1c730c8b96ac1/manifest.parquet` **before the
+first delete**, so an interrupted run would still leave a complete record of
+what it intended to remove. Sixty-four receipts, every one `deleted`; no
+`absent`, no `error:`.
+
+**The run-id argument was not optional.** Two verify reports existed — the
+failed `repack-e3b0c44298fc1c14` from the dry-run phase and the passing
+`repack-4ea1c730c8b96ac1` — and the mode refused to choose between them, naming
+both and stopping. It is worth recording that the ambiguity guard fired on a
+real ambiguity rather than a contrived one.
+
+Store afterwards: **68 packs, 68 sidecars, sequence 32–99, 4,577,402,957 bytes,
+and no pack below sequence 32.** The originals are gone.
+
+At this point every one of the 983,043 members exists in exactly two places —
+its loose `.html.zst` object and a verified replacement pack. The prune removes
+the first, which is what makes the verification above load-bearing rather than
+ceremonial.
+
 ### Gate
 
 - Every retained member reads byte-identically before old packs are retired.
@@ -2222,8 +2320,21 @@ object, and no silver observation.
 - **During Stage 4:** parsing writes only to the recovery prefix.
 - **During Stage 5:** stop between capped batches; written observations remain
   valid.
-- **During Stage 6:** the original packs remain authoritative until the
-  replacements verify.
+- **During Stage 6, before the retirement:** the original packs remained
+  authoritative until the replacements verified. That is now spent — the 32
+  originals were retired 2026-08-29 after `repack-verify` PASSED, and there is
+  no older pack set to fall back to.
+- **During Stage 6, between the retirement and the prune:** every member exists
+  twice, as a loose `.html.zst` object and as a verified replacement pack
+  member. Either side alone reconstitutes the population.
+- **During the prune:** stop between packs. It verifies each member against its
+  pack before deleting the object and refuses rather than deletes on any
+  disagreement, so a partial run leaves a consistent store — some members with
+  two copies, the rest with one.
+- **After the prune:** the replacement packs are the only copy of the recovered
+  population, and the legacy Parquet is still the only copy of anything the
+  packs do not hold. That is the state the deletion manifest's coverage join
+  exists to check.
 - **After legacy deletion:** restoration from MinIO versioning or backup only.
   This is why named approval and complete receipts are the final gates.
 
