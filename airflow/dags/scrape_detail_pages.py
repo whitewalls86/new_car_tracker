@@ -149,7 +149,6 @@ try:
     from datetime import datetime
 
     from airflow.providers.standard.operators.python import PythonOperator
-    from pools import MAINTENANCE_POOL
     from sensors import deploy_intent_sensor, http_health_sensor
 
     from airflow import DAG
@@ -168,11 +167,26 @@ try:
         claim = PythonOperator(
             task_id="claim_batch",
             python_callable=_claim_batch,
-            # The gate point for this DAG, and it must be the claim rather
-            # than the scrape: hold `claim_batch` and no listing is ever
-            # claimed. Holding `scrape_detail` would let a batch be claimed
-            # and then strand it for the length of the window.
-            pool=MAINTENANCE_POOL,
+            # Deliberately unpooled since Plan 147 Stage 3 (2026-08-30).
+            #
+            # This task was held by Plan 142's maintenance pool for one reason
+            # only: pausing `results_processing` used to leave the detail
+            # scraper re-claiming the same listings every 15 minutes, because
+            # the guard against re-fetching was a timestamp written by the
+            # processing service two hops downstream. Holding processing
+            # without holding this task disabled the guard.
+            #
+            # Plan 147 moved that guard next to the fetch -- `release_claims`
+            # now records `last_detail_fetched_at` in the transaction that
+            # deletes the claim -- and the coupling is gone. Verified in
+            # production: with `results_processing` paused 81 minutes, five
+            # batches fetched 2,000 listings and repeated none of them. A
+            # processing pause no longer implies a scraper pause.
+            #
+            # This does NOT mean detail fetches need not be quiesced for a host
+            # reboot; you still do not want fetches in flight while the machine
+            # goes down. That is a separate concern from the loop, and Plan 142
+            # covers it through the `detail_fetch` surface rather than here.
         )
 
         scrape = PythonOperator(

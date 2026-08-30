@@ -390,22 +390,45 @@ the reasoning; [runbook §9](../runbooks/runbook_host_maintenance.md) holds the
 operator commands and the preflight checks;
 `tests/airflow/test_maintenance_pool.py` holds the contract.
 
-Five tasks are pooled — `results_processing.process_batch`, `orphan_checker`'s
-three janitorial endpoints, and `scrape_detail_pages.claim_batch`. Sensors are
-not: a `reschedule`-mode sensor must not hold a slot while it waits, which is
-the failure this mechanism exists to avoid.
+Four tasks are pooled — `results_processing.process_batch` and
+`orphan_checker`'s three janitorial endpoints. (`scrape_detail_pages.claim_batch`
+was a fifth until Plan 147 Stage 3; see below.) Sensors are not: a
+`reschedule`-mode sensor must not hold a slot while it waits, which is the
+failure this mechanism exists to avoid.
 
-**The held set is three DAGs, not two.** `ops.ops_detail_scrape_queue` (view,
-`V040__detail_scrape_circuit_breaker`) keys on `last_detail_scraped_at`, which
-only the processing service writes (`processing/writers/detail_writer.py:194`),
-while `POST /scrape/claims/release` deletes the claim. Holding processing alone
-therefore leaves the detail scraper re-claiming the same ~100 listings every 15
-minutes — up to four redundant passes an hour against cars.com, through the
-solver Plan 136 is nursing. `last_detail_scraped_at` **is** the circuit breaker;
-holding its only writer without holding its producer disables it. Plan 147 fixes
-that ownership; until it lands the two are held together, which is also more
-faithful to "no new mutating task starts". `scrape_listings` stays running —
-it advances a rotation and never reads processed state, so it cannot loop.
+**The held set was three DAGs, and is now two.** *Reduced 2026-08-30 by
+[Plan 147](plan_147_scrape_state_ownership.md) Stage 3; the original reasoning
+is kept below because it is why the third was ever there.*
+
+`ops.ops_detail_scrape_queue` (view, `V040__detail_scrape_circuit_breaker`)
+keyed on `last_detail_scraped_at`, which only the processing service writes
+(`processing/writers/detail_writer.py:194`), while `POST /scrape/claims/release`
+deletes the claim. Holding processing alone therefore left the detail scraper
+re-claiming the same ~100 listings every 15 minutes — up to four redundant
+passes an hour against cars.com, through the solver Plan 136 is nursing.
+`last_detail_scraped_at` **was** the circuit breaker; holding its only writer
+without holding its producer disabled it. So the two were held together, which
+was also more faithful to "no new mutating task starts".
+
+**Plan 147 removed that coupling and it has been verified in production.**
+`release_claims` now records `last_detail_fetched_at` in the transaction that
+deletes the claim, so the guard survives a processing outage without help. With
+`results_processing` paused for 81 minutes on 2026-08-30, five `*/15` batches
+fetched 2,000 listings and re-fetched none of them — the evidence is in
+[Plan 147's Stage 3 section](plan_147_scrape_state_ownership.md#evidence--stage-3-verification-2026-08-30).
+`scrape_detail_pages.claim_batch` is therefore no longer pooled, and a
+*processing* pause no longer implies a *scraper* pause.
+
+**This removes one coupling, not the maintenance gate.** You still do not want
+detail fetches in flight while the machine goes down. That is a separate
+concern from the loop, and this plan covers it through the `detail_fetch`
+surface — see [the coordination
+contract](../../airflow/dags/coordination_contract.py) — rather than through
+the maintenance pool. A host reboot still quiesces fetches; a processing pause
+no longer has to.
+
+`scrape_listings` stays running — it advances a rotation and never reads
+processed state, so it cannot loop.
 
 ##### Question 1 answered: two pools, and the reason is mechanical
 
@@ -420,12 +443,21 @@ the part worth noticing:
 
 | Plan | Tasks it holds |
 |---|---|
-| 142 `maintenance` | `results_processing.process_batch`, `orphan_checker.{expire_orphan_detail_claims,reap_stuck_processing,evict_delisted_cooldowns}`, `scrape_detail_pages.claim_batch` |
+| 142 `maintenance` | `results_processing.process_batch`, `orphan_checker.{expire_orphan_detail_claims,reap_stuck_processing,evict_delisted_cooldowns}` — plus `scrape_detail_pages.claim_batch` until Plan 147 Stage 3 dropped it, 2026-08-30 |
 | 136 `solver` | `scrape_detail_pages.scrape_detail`, `scrape_listings.run_scrapes`, `recycle_solver.recycle` |
 
-The DAGs overlap; the tasks do not. The gate points differ because the *reasons*
-differ — 142 gates the claim so no listing is ever claimed, 136 gates the fetch
-because that is what touches the solver. Sizing settles it too: 136's pool is
+The DAGs overlapped; the tasks did not. The gate points differed because the
+*reasons* differ — 142 gated the claim so no listing was ever claimed, 136
+gates the fetch because that is what touches the solver.
+
+*Since 2026-08-30 the two do not overlap even by DAG:* Plan 147 Stage 3 removed
+`claim_batch` from 142's pool, so `scrape_detail_pages` now appears only in
+136's. **The two-pool conclusion is unaffected** — it never rested on this
+overlap but on the held sets not being identical, which they still are not, and
+on the sizing below, which is unchanged. The overlap is recorded because it is
+what made a shared pool look plausible in the first place.
+
+Sizing settles it too: 136's pool is
 exactly 2 slots so a 2-slot recycle achieves mutual exclusion, while 142's is 16
 so the assignment stays inert. One pool cannot be both 2 and 16.
 
