@@ -96,6 +96,44 @@
 #    exits 0 — correct, and indistinguishable from a real deploy in the output.
 #    That is defect 4's shape again: success reported for an action that did
 #    nothing. Container ids are sampled before `up -d` and compared after.
+#
+# ---------------------------------------------------------------------------
+# Plan 158 — the seventh decision, added 2026-08-30 after a deploy hung.
+#
+# 7. The authorize wait is bounded, like every other wait here. Decision 2
+#    already states the principle — a health gate, not `sleep 10`, and a
+#    recreated service that never goes healthy fails the deploy loudly — and
+#    the drain poll was the one wait that did not follow it. On 2026-08-30 a
+#    `redeploy.sh ops processing` sat in `while :` for nineteen minutes with
+#    every production DAG parked, and would have sat there indefinitely; it
+#    ended because an operator pressed Ctrl-C. The operator was the timeout.
+#
+#    On expiry the script prints the drain evidence, names the blocking
+#    sources, and returns 1. Nothing has been recreated at that point —
+#    `_prepare_coordination` runs before every mutation — so `MUTATED` is 0
+#    and the trap in decision 3 releases intent and the fleet resumes. A
+#    bounded wait therefore converts an unbounded silent hang into a failed
+#    deploy with a diagnosis attached, and costs nothing else.
+#
+#    This is defence in depth, not a fix for any particular blocker. The
+#    blocker that motivated it — a gate observation the sensor could never
+#    write — is fixed in airflow/dags/sensors.py; this bound is what catches
+#    the *next* stuck source, which on the same day was a Plan 145 one-shot
+#    container that had outlived its work by fourteen hours.
+#
+#    `scripts/host_maintenance.py`'s `wait_until_active` polls the same drain
+#    and is deliberately unbounded. That is not an inconsistency: a
+#    maintenance window has variable package and reboot duration and an
+#    operator watching it, whereas deploy intent protects "a short service
+#    replacement — expected duration under ten minutes" (Plan 142 D9).
+#    DEPLOY_DRAIN_TIMEOUT's default is that stated expectation, and it is
+#    generous against the only floor that is checked in: a drain must survive
+#    one complete fire-and-park cycle of the tightest-scheduled gated DAG
+#    (`*/5`) plus the deploy-intent sensor's 60s poke interval, because a run
+#    parked on the gate records its observation only on its next poke. That
+#    relationship is asserted in tests/test_deploy_script.py, so tightening a
+#    DAG schedule or slowing the sensor fails CI rather than manufacturing a
+#    deploy failure.
 # ---------------------------------------------------------------------------
 
 set -e
@@ -111,6 +149,8 @@ FOLLOWERS_FILE="$(dirname "$SCRIPT_DIR")/deploy-followers.txt"
 # See decision 2 above before changing these.
 HEALTH_TIMEOUT="${DEPLOY_HEALTH_TIMEOUT:-300}"
 HEALTH_POLL_INTERVAL="${DEPLOY_HEALTH_POLL_INTERVAL:-5}"
+# See decision 7 above before changing these.
+DRAIN_TIMEOUT="${DEPLOY_DRAIN_TIMEOUT:-600}"
 DRAIN_POLL_INTERVAL="${DEPLOY_DRAIN_POLL_INTERVAL:-5}"
 
 MODE="recreate"
@@ -121,8 +161,45 @@ SERVICES=""
 COORDINATION_REQUESTED=0
 declare -A BEFORE_ID   # service -> container id, sampled before `up -d`
 
+# Decision 7. Everything the operator needed at 06:15 on 2026-08-30 and had to
+# assemble by hand: which sources are holding the drain, and their counts.
+_dump_drain_evidence() {
+    local evidence
+    echo
+    echo "--- coordination drain evidence (${OPS_URL}/coordination/drain-status) ---"
+    evidence="$(curl -sS "$OPS_URL/coordination/drain-status" 2>/dev/null)" || evidence=""
+    if [ -z "$evidence" ]; then
+        echo "  drain-status did not answer. The ops API is itself unreachable,"
+        echo "  which is very likely why authorization never arrived."
+        return 0
+    fi
+    printf '%s' "$evidence" | python3 -c '
+import json, sys
+raw = sys.stdin.read()
+try:
+    doc = json.loads(raw)
+except ValueError:
+    print(raw)
+    raise SystemExit(0)
+blockers = doc.get("blockers") or []
+print("Blocking sources: " + (", ".join(blockers) if blockers else "none reported"))
+if not blockers:
+    print("  The drain reports no blocker, so a failing authorization is an ops")
+    print("  API fault rather than in-scope work. Read /coordination/status.")
+for item in doc.get("sources") or []:
+    if item.get("source") not in blockers:
+        continue
+    print("  {}: status={} count={} oldest_started_at={}{}".format(
+        item.get("source"), item.get("status"), item.get("count"),
+        item.get("oldest_started_at"),
+        " reason=" + item["reason"] if item.get("reason") else ""))
+print()
+print(json.dumps(doc, indent=2, sort_keys=True))
+' || printf '%s\n' "$evidence"
+}
+
 _prepare_coordination() {
-    local status payload
+    local status payload start=$SECONDS
     PHASE="drain"
     payload="$(python3 -c \
         'import json,sys; print(json.dumps({"targets": sys.argv[1:]}))' "$@")"
@@ -130,18 +207,26 @@ _prepare_coordination() {
     curl -sf -X POST "$OPS_URL/deploy/start" \
         -H 'Content-Type: application/json' -d "$payload" >/dev/null
     COORDINATION_REQUESTED=1
-    echo "Beginning scoped coordination drain..."
+    echo "Beginning scoped coordination drain (waiting up to ${DRAIN_TIMEOUT}s)..."
     curl -sf -X POST "$OPS_URL/coordination/begin-drain" >/dev/null
     while :; do
         status="$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
             "$OPS_URL/coordination/authorize")"
         case "$status" in
             200)
-                echo "Drain confirmed; deploy mutation authorized."
+                echo "Drain confirmed after $(( SECONDS - start ))s; deploy mutation authorized."
                 return 0
                 ;;
             409)
-                echo "  In-scope work is still draining; retrying in ${DRAIN_POLL_INTERVAL}s."
+                if [ $(( SECONDS - start )) -ge "$DRAIN_TIMEOUT" ]; then
+                    echo "ERROR: in-scope work did not drain within ${DRAIN_TIMEOUT}s." >&2
+                    _dump_drain_evidence
+                    echo "Nothing has been recreated, so deploy intent is released on exit" >&2
+                    echo "and the fleet resumes by itself. Re-run once the source above is" >&2
+                    echo "clear, or raise DEPLOY_DRAIN_TIMEOUT if the wait was legitimate." >&2
+                    return 1
+                fi
+                echo "  In-scope work is still draining ($(( SECONDS - start ))s of ${DRAIN_TIMEOUT}s); retrying in ${DRAIN_POLL_INTERVAL}s."
                 sleep "$DRAIN_POLL_INTERVAL"
                 ;;
             *)

@@ -10,7 +10,10 @@ deploy did not use ``redeploy.sh`` at all. It was driven by hand, because the
 script would have run ``up -d`` without ``--no-deps`` across three services and
 then reported "Done." after ``sleep 10``.
 """
+import json
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -50,6 +53,50 @@ def load_health_exemptions(path: Path = _EXEMPTIONS) -> dict:
 
 def _compose_services() -> dict:
     return yaml.safe_load((_REPO_ROOT / "docker-compose.yml").read_text())["services"]
+
+
+def _cron_fire_interval(schedule: str) -> int:
+    """Seconds between fires of a five-field cron expression.
+
+    Only the resolution the drain bound cares about: anything that does not
+    repeat within the minute or hour fields fires at most daily, and a daily
+    DAG cannot be the tightest one. Returns 86400 for those rather than
+    pretending to a precision this does not need.
+    """
+    fields = schedule.split()
+    if len(fields) != 5:
+        return 86400
+    minute, hour = fields[0], fields[1]
+    if minute == "*":
+        return 60
+    match = re.fullmatch(r"\*/(\d+)", minute)
+    if match:
+        return int(match.group(1)) * 60
+    if hour == "*":
+        return 3600
+    match = re.fullmatch(r"\*/(\d+)", hour)
+    if match:
+        return int(match.group(1)) * 3600
+    return 86400
+
+
+def _gated_dag_schedules() -> dict[str, str]:
+    """``{dag file: schedule}`` for every DAG behind the coordination gate.
+
+    Every DAG in ``airflow/dags`` carries ``deploy_intent_sensor`` as its first
+    task, which is what makes its runs park during a drain; the check is here
+    rather than assumed so a DAG added without the sensor does not silently
+    drop out of the floor this file derives.
+    """
+    schedules = {}
+    for path in sorted((_REPO_ROOT / "airflow" / "dags").glob("*.py")):
+        text = path.read_text(encoding="utf-8")
+        if "deploy_intent_sensor(" not in text:
+            continue
+        match = re.search(r'^\s*schedule="([^"]+)"', text, re.MULTILINE)
+        if match:
+            schedules[path.name] = match.group(1)
+    return schedules
 
 
 class TestHealthExemptionFile:
@@ -201,6 +248,181 @@ class TestRedeployScriptContract:
             f"the deploy health timeout is {timeout}s but a healthcheck in "
             f"docker-compose.yml can take {worst}s to settle. Raise "
             "DEPLOY_HEALTH_TIMEOUT's default, or lower the start_period."
+        )
+
+    def test_the_authorize_wait_is_bounded(self):
+        """Defect 7. The drain poll was the one wait in this script with no
+        timeout and no escape.
+
+        On 2026-08-30 a deploy of `ops processing` sat in `while :` for
+        nineteen minutes with every production DAG parked, and would have sat
+        there indefinitely -- the sensor could not write the observation the
+        drain was waiting for, so the count it polled could only rise. What
+        ended it was an operator pressing Ctrl-C. The operator was the timeout.
+
+        The bound has to be consulted on the *retry* branch, before sleeping
+        again: a timeout the loop only reaches after authorization succeeds is
+        not a timeout.
+        """
+        text = self._text()
+        assert re.search(r"DEPLOY_DRAIN_TIMEOUT:-(\d+)", text), (
+            "redeploy.sh no longer defines a default drain timeout, so the "
+            "authorize poll is unbounded again (Plan 158 decision 7)"
+        )
+        body = text[text.index("_prepare_coordination() {"):text.index("_begin_validation() {")]
+        assert "409)" in body and 'sleep "$DRAIN_POLL_INTERVAL"' in body, (
+            "the authorize poll no longer retries on 409; this test no longer "
+            "describes the loop it was written for"
+        )
+        retry = body[body.index("409)"):body.index('sleep "$DRAIN_POLL_INTERVAL"')]
+        assert "DRAIN_TIMEOUT" in retry and "return 1" in retry, (
+            "the 409 branch retries without consulting DRAIN_TIMEOUT, so a "
+            "drain that never drains still polls forever"
+        )
+        assert "_dump_drain_evidence" in retry, (
+            "expiry no longer prints the drain evidence; a bounded wait that "
+            "fails without naming the blocking source only saves the operator "
+            "the wait, not the diagnosis"
+        )
+
+    def test_the_drain_timeout_survives_one_fire_and_park_cycle(self):
+        """The number in the script is derived, not guessed -- the same trade
+        `test_the_health_timeout_covers_the_slowest_healthcheck` makes.
+
+        A gated DAG run parked on the coordination gate records the
+        observation the drain counts only on its *next* poke, so the floor for
+        a healthy drain is one complete cycle: the tightest gated schedule
+        (`*/5`), plus the deploy-intent sensor's poke interval. Tightening a
+        DAG schedule or slowing the sensor past the timeout would turn an
+        ordinary overlap into a failed deploy, so that lands here rather than
+        in production.
+        """
+        schedules = _gated_dag_schedules()
+        assert schedules, "no gated DAG declares a schedule; the floor is unverifiable"
+        tightest = min(_cron_fire_interval(s) for s in schedules.values())
+
+        sensors = (_REPO_ROOT / "airflow" / "dags" / "sensors.py").read_text()
+        gate = sensors[sensors.index("def deploy_intent_sensor("):]
+        match = re.search(r"poke_interval=(\d+)", gate)
+        assert match, "deploy_intent_sensor no longer declares a poke_interval"
+        poke = int(match.group(1))
+
+        match = re.search(r"DEPLOY_DRAIN_TIMEOUT:-(\d+)", self._text())
+        assert match, "redeploy.sh no longer defines a default drain timeout"
+        timeout = int(match.group(1))
+        assert timeout >= tightest + poke, (
+            f"the deploy drain timeout is {timeout}s, but a gated DAG fires "
+            f"every {tightest}s and a parked run takes up to {poke}s to record "
+            "its gate observation. Raise DEPLOY_DRAIN_TIMEOUT's default, or "
+            "loosen the schedule."
+        )
+
+    def test_drain_expiry_names_the_blocking_sources(self):
+        """Expiry must fail *loudly*: the evidence, and the sources holding it.
+
+        The formatter is lifted out of the script and executed, rather than
+        matched against, so this exercises the real embedded program on the
+        real shape of the document -- the 2026-08-30 drain-status read, where
+        `airflow_gate_observations` was the blocker and its count was rising.
+        """
+        text = self._text()
+        assert "_dump_drain_evidence() {" in text, (
+            "redeploy.sh no longer prints drain evidence on expiry (Plan 158 "
+            "decision 7); a bound that fails without a diagnosis saves the "
+            "operator the wait but not the triage"
+        )
+        section = text[
+            text.index("_dump_drain_evidence() {"):text.index("_prepare_coordination() {")
+        ]
+        assert "python3 -c '" in section, "the evidence formatter is gone"
+        program = section.split("python3 -c '", 1)[1].split("\n'", 1)[0]
+
+        document = {
+            "phase": "draining",
+            "scope": ["analytics", "detail_fetch", "processing"],
+            "drained": False,
+            "blockers": ["airflow_gate_observations", "container_processes"],
+            "sources": [
+                {
+                    "source": "airflow_gate_observations",
+                    "status": "known",
+                    "count": 9,
+                    "oldest_started_at": "2026-08-30T06:00:00.690000+00:00",
+                },
+                {
+                    "source": "container_processes",
+                    "status": "unknown",
+                    "count": None,
+                    "oldest_started_at": None,
+                    "reason": "evidence adapter not implemented",
+                },
+                {
+                    "source": "running_detail_claims",
+                    "status": "known",
+                    "count": 0,
+                    "oldest_started_at": None,
+                },
+                {
+                    "source": "ops_jobs",
+                    "status": "not_applicable",
+                    "count": None,
+                    "oldest_started_at": None,
+                },
+            ],
+        }
+        result = subprocess.run(
+            [sys.executable, "-c", program],
+            input=json.dumps(document),
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, result.stderr
+        out = result.stdout
+
+        assert "Blocking sources: airflow_gate_observations, container_processes" in out
+        assert "airflow_gate_observations: status=known count=9" in out, (
+            "the count the operator has to watch across two reads is missing"
+        )
+        assert "2026-08-30T06:00:00.690000+00:00" in out
+        assert "reason=evidence adapter not implemented" in out, (
+            "an `unknown` source fails the drain closed; expiry must say why "
+            "it could not be read, not merely that it blocked"
+        )
+        assert "running_detail_claims: status=" not in out, (
+            "a drained source is listed as though it were a blocker"
+        )
+        assert json.loads(out[out.index("{"):]) == document, (
+            "the full evidence document is no longer printed, so the operator "
+            "cannot see the sources that were *not* blocking"
+        )
+
+    def test_drain_expiry_leaves_nothing_mutated_so_intent_releases(self):
+        """The bound is only safe because of where it sits.
+
+        `_prepare_coordination` runs before every mutation, so an expiry
+        returns with `MUTATED` still 0 and decision 3's trap releases intent --
+        the fleet resumes by itself, exactly as it did after the Ctrl-C on
+        2026-08-30. A bounded wait placed after a recreate would strand a
+        half-deployed fleet instead.
+        """
+        text = self._text()
+        code = "\n".join(
+            line for line in text.splitlines() if not line.lstrip().startswith("#")
+        )
+        mutations = [m.start() for m in re.finditer(r"^\s*MUTATED=1", code, re.MULTILINE)]
+        assert mutations, "redeploy.sh no longer marks the fleet as mutated"
+        for position in mutations:
+            assert '_prepare_coordination "$@"' in code[:position], (
+                "a container is recreated before coordination is authorized, "
+                "so a drain timeout would abandon a half-deployed fleet"
+            )
+        marker = "ERROR: in-scope work did not drain"
+        assert marker in code, (
+            "the drain wait no longer expires loudly (Plan 158 decision 7)"
+        )
+        assert "DEPLOY_DRAIN_TIMEOUT" in code[code.index(marker):], (
+            "the expiry message no longer tells the operator which knob raises "
+            "the bound when the wait was legitimate"
         )
 
     def test_both_spellings_of_the_restart_mode_are_accepted(self):

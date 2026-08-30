@@ -342,6 +342,90 @@ The `redeploy.sh` guardrail, its timeout asserted in
 `tests/test_deploy_script.py` alongside the existing health-gate timeout
 relationship.
 
+### Evidence — Stage 2, 2026-08-30
+
+Shipped in [`scripts/redeploy.sh`](../../scripts/redeploy.sh) as **decision 7**,
+written into the header beside the six Plan 144 decisions it belongs with. The
+`while :` is now bounded by `DRAIN_TIMEOUT` (`DEPLOY_DRAIN_TIMEOUT`, default
+600s), checked on the 409 branch before the next sleep, and expiry calls a new
+`_dump_drain_evidence` before returning 1.
+
+**Ordering: this stage ran before Stage 3, which the plan asks for the other
+way round.** Stage 3 was to supply the first measurement of a healthy drain and
+so the number this stage needs; it cannot run yet, because Stage 1 is merged and
+not deployed and its own deploy is subject to the race. The number is therefore
+*derived rather than measured*, which is the same trade decision 2 makes for the
+health gate, and the derivation is asserted rather than remembered:
+
+| | |
+|---|---|
+| Floor | 360s — the tightest gated DAG schedule (`*/5`, `orphan_checker` and `results_processing`) plus `deploy_intent_sensor`'s 60s `poke_interval`, because a run parked on the gate records its observation only on its *next* poke |
+| Default | 600s — Plan 142 D9's stated expectation for deploy intent, *"a short service replacement — expected duration under ten minutes"*, and 240s of headroom over the floor |
+| Ceiling | none needed; expiry is cheap and the deploy is retryable |
+
+`test_the_drain_timeout_survives_one_fire_and_park_cycle` computes the floor
+from the DAG files and `sensors.py` rather than restating it, so tightening a
+schedule or slowing the sensor past the bound fails CI instead of manufacturing
+a deploy failure. Stage 3 may lower the default once it has a real measurement;
+nothing here depends on 600 specifically.
+
+**Failing in the wrong direction is cheap, and that governed the choice.** A
+timeout that is too long costs parked DAGs; too short costs a failed deploy that
+released intent cleanly and can be re-run, or raised with an environment
+variable the error message names. Given no measurement, err long.
+
+**`host_maintenance.py`'s identical wait is deliberately left unbounded.**
+`wait_until_active` polls the same drain with no deadline, and that is correct
+there: package and reboot duration are variable and an operator is watching.
+Deploy intent is not that. The asymmetry is written into decision 7 so the next
+reader does not "fix" the other one.
+
+**Driven for real, not only asserted.** The definitions above `# --- main ---`
+were sourced against a stub ops API that answers `/coordination/authorize` with
+409 forever and serves the 2026-08-30 `drain-status` shape, with
+`DEPLOY_DRAIN_TIMEOUT=8`:
+
+```
+Beginning scoped coordination drain (waiting up to 8s)...
+  In-scope work is still draining (0s of 8s); retrying in 2s.
+  ... 2s ... 4s ... 6s ...
+ERROR: in-scope work did not drain within 8s.
+
+--- coordination drain evidence (http://localhost:8060/coordination/drain-status) ---
+Blocking sources: airflow_gate_observations
+  airflow_gate_observations: status=known count=8 oldest_started_at=2026-08-30T06:00:00.690000+00:00
+{ ...the full evidence document... }
+Nothing has been recreated, so deploy intent is released on exit
+...
+Signalling deploy complete...
+```
+
+Exit code 1, and the stub recorded exactly one `POST /deploy/complete` — the
+`MUTATED=0` release path in decision 3, reached without the operator. That is
+the whole of the change: the nineteen minutes of 2026-08-30 become eight
+seconds and a diagnosis. With nothing listening on `OPS_URL`,
+`_dump_drain_evidence` says so and returns 0 rather than dying under `set -e`,
+so a dead ops API still reaches the release path.
+
+The elapsed drain time is now printed on the success line too, which is the
+measurement Stage 3 will read off a real deploy.
+
+| Plan §Tests item | Covered by |
+|---|---|
+| 6 — the wait expires | `test_the_authorize_wait_is_bounded` (the bound is consulted on the *retry* branch, before sleeping — a deadline only reachable after success is not a deadline) |
+| 6 — fails loudly with the blocking sources named | `test_drain_expiry_names_the_blocking_sources`, which lifts the embedded formatter out of the script and **executes** it on the 2026-08-30 document, so the real program meets the real shape: blockers named, counts and `oldest_started_at` printed, an `unknown` source's `reason` printed, drained sources not listed as blockers, full document dumped |
+| 6 — releases intent through the `MUTATED=0` path | `test_drain_expiry_leaves_nothing_mutated_so_intent_releases` asserts every `MUTATED=1` is preceded by a `_prepare_coordination` call, so expiry cannot strand a half-deployed fleet; confirmed live by the single `/deploy/complete` above |
+| — the number is derived | `test_the_drain_timeout_survives_one_fire_and_park_cycle` |
+
+All four failed against `b7b90ac`'s script and pass after — the same discipline
+Stage 1 used, and for the same reason: a guardrail nobody has watched fail is
+not a guardrail. `tests/test_deploy_script.py`: **32 passed**, up from 28. Ruff
+clean.
+
+**Not deployed.** Stage 2 changes only `scripts/redeploy.sh`, which the
+production VM reads from the checkout, so it takes effect on the next `git pull`
+there and carries no image build. Stage 3 is the first run that exercises it.
+
 ### Stage 3 — Prove it against the case that fails today
 
 Show that a drain held open across a DAG fire now reaches authorization, and
