@@ -2,7 +2,7 @@
 
 ## Status
 
-**BUILD ORDER — Stage 6; the repack is verified, the prune and the legacy deletion remain.** The goal and success criteria have survived
+**COMPLETE — 2026-08-30. All 1,172 legacy Parquet objects are deleted and every success criterion is met.** The goal and success criteria have survived
 every revision unchanged. The *method* has now changed three times, each time
 because a measurement contradicted an identity key the previous method relied
 on. This revision therefore states the trust boundary once, up front, and
@@ -28,11 +28,14 @@ all landed 2026-08-27; Stage 4 parsed the flattened population 2026-08-28; Stage
 5 committed all 701,375 `to_import` rows on 2026-08-29, and Stage 5b fixed the
 packer before Stage 6 wrote anything.
 
-**Stage 6, as of 2026-08-29:** the ordering trial ran and split, so the
-incumbent clustering carries; the replacement packs are written and
-`repack-verify` PASSED over all 983,043 members; the 32 superseded packs are
-retired. **The prune and the deletion of the 1,172 legacy Parquet objects
-remain, and not one of them has been deleted.**
+**Stage 6 completed 2026-08-30.** The ordering trial ran and split, so the
+incumbent clustering carried; the replacement packs were written and
+`repack-verify` PASSED over all 983,043 members; the 32 superseded packs were
+retired; the prune deleted 983,043 loose objects with 0 refused; and **all 1,172
+legacy Parquet objects were deleted with named approval.**
+`html/year=2026/month=4/artifact_type=detail_page/` is empty. April went from
+24.48 GiB to 4.34 GiB — **20.14 GiB reclaimed** — and the 127 out-of-scope
+results-page objects are untouched.
 
 **Supersedes [Plan 132](plan_132_unrecorded_artifact_recovery.md) and
 [Plan 137](plan_137_legacy_bronze_parquet_disposition.md).**
@@ -1684,13 +1687,12 @@ defect being reproduced, and Stage 6 rewrites the sidecars it replaces.
 
 ---
 
-## Stage 6 — Repack, prune and delete (CAR-22)
+## Stage 6 — Repack, prune and delete (CAR-22) — **complete**
 
-**In flight, 2026-08-29.** The machinery is built and merged (`64631de`); the
-trial ran and split; the replacement packs are written and verified over all
-983,043 members; the 32 superseded packs are retired. The prune and the
-deletion of the 1,172 legacy Parquet objects remain, and **not one of them has
-been deleted.**
+**Complete, 2026-08-30.** Machinery merged at `64631de`; the trial split so the
+incumbent ordering carried; 68 replacement packs written and verified; 32
+superseded packs retired; 983,043 loose objects pruned; **1,172 legacy Parquet
+objects deleted.**
 
 Run the existing packer over the flattened population, which by now is
 complete and — for everything that reached silver — attributable. Verify every
@@ -2238,11 +2240,126 @@ its loose `.html.zst` object and a verified replacement pack. The prune removes
 the first, which is what makes the verification above load-bearing rather than
 ceremonial.
 
-### Gate
+### Evidence — the prune, 2026-08-29/30
+
+`delete_packed_source_html --year 2026 --month 4 --max-packs 0 --max-objects 0
+--apply`, 23:43:52–02:26:44 UTC, **2h43m** — 29 min listing, 2h13m draining 68
+packs at ~2.0 min each.
+
+```
+run complete (apply) — deleted=983043 verified=983043 refused=0 already_gone=0
+bytes=9478040747 inodes~2202016 (measured delta 1937177)
+by_status={'complete': 445796, 'no_event_row': 468254, 'ok': 19950,
+           'retry': 443, 'skip': 48600}
+```
+
+**983,043 deleted, 983,043 verified, zero refused, zero already gone.** Every
+deletion was preceded by the full per-member check: the key resolves to the
+right pack prefix, the extracted member matches the sidecar's `raw_sha256`, and
+the loose object matches the packed bytes exactly. 25 members per pack also went
+through the complete production resolver. `surviving == members == handled` on
+all 68 packs, so nothing was skipped and nothing was assumed.
+
+8.83 GB and **1,937,177 inodes** reclaimed — the measured delta against an
+estimate of 2,202,016, the difference being ordinary filesystem churn from
+production running alongside.
+
+#### `no_event_row: 468,254` decomposes exactly
+
+| | members |
+|---|---:|
+| no `artifacts_queue_events` row at all | 139,604 |
+| Stage 5 `allocated_sequence` artifacts | 328,650 |
+| **total** | **468,254** |
+
+The second term is the whole `allocated_sequence` census from Stage 5's
+`assign`, and it appears here because those artifacts' `recovered` queue events
+carry `event_at = now()` — August — while `fetch_terminal_status` scans only the
+April window. They have identity; this particular query cannot see it.
+
+This is harmless and was predicted: status is **report-only** in this processor
+and cannot gate a deletion, which is exactly why the run sheet warns against
+"fixing" the packer's `paths` glob to an April window. It is recorded because a
+future reader will meet the same 468,254 and should not have to re-derive it.
+
+`skip: 48,600` corresponds to the blocked cohort — within one of the 48,601
+members the pre-run breakdown counted as having a queue event but no April
+silver row.
+
+---
+
+### Evidence — deleting the legacy Parquet, 2026-08-30
+
+**This is the plan's goal.** `delete-legacy --apply --maintainer-approval
+"Andrew Miller" --census-from-manifests --verify-run-id repack-4ea1c730c8b96ac1`,
+03:53:25–03:54 UTC, under a minute.
+
+```
+verified by            repack-4ea1c730c8b96ac1
+approved by            Andrew Miller
+legacy objects                1,172  (baseline 1,172)
+planned for deletion          1,172
+refused                           0
+mode                   apply
+
+  receipt deleted               1,172
+  reconciled                    1,172
+
+legacy detail Parquet remaining             0  (must be 0)
+results_page objects                    2,380  (was 2,380)
+```
+
+Every gate the plan set for this moment:
+
+- **1,172 planned, 1,172 deleted, 1,172 reconciled**, zero `absent` and zero
+  `error:`. Deletion by exact key from a manifest written to
+  `recovery/plan145/legacy_delete/repack-4ea1c730c8b96ac1/manifest.parquet`
+  **before the first delete**, in capped batches, never by prefix.
+- **`refused 0`** — the coverage join cleared. Every body Stage 2 derived from
+  every one of the 1,172 objects is present in a replacement sidecar. The
+  matching hash set held **983,041 distinct hashes across 983,043 members**,
+  the two-member gap being the packed↔packed content duplicates that Stage 3a's
+  own verification first surfaced as 557,063 distinct across 557,065. The same
+  discrepancy arriving independently from the other end is a good sign the
+  accounting is coherent rather than coincidental.
+- **1,172 against baseline 1,172** — the drift gate passed against the frozen
+  Stage 1 census, so the set deleted is the set frozen on 2026-08-21. Its bytes
+  were still `14,670,223,837` on the morning of the deletion, exact to the byte
+  against what Stage 1 recorded nine days earlier.
+- **The results-page population is unchanged at 2,380 objects** (2,253 `.zst`
+  and the 127 out-of-scope Parquet). Refused by key as a predicate, not filtered
+  out of a listing.
+- **Named approval recorded** in the manifest and every one of the 1,172
+  receipts.
+
+#### The end state
+
+| prefix | before Stage 6 | after |
+|---|---:|---:|
+| old April packs | 2,133,921,814 | — |
+| loose `.html.zst` | 9,478,040,747 | — |
+| legacy `.parquet` | 14,670,223,837 | — |
+| replacement packs + sidecars | — | 4,655,215,649 |
+| **total** | **24.48 GiB** | **4.34 GiB** |
+
+`html/year=2026/month=4/artifact_type=detail_page/` is **empty** — zero objects,
+zero bytes. **20.14 GiB reclaimed**, against the ~13.66 GiB the plan set out to
+delete; the rest is the loose population the flattening created and the prune
+removed.
+
+April's 983,043 distinct captures now live in 68 verified packs, each member
+carrying the corrected `listing_id` where silver can describe it and an honest
+NULL where it cannot.
+
+### Gate — met
 
 - Every retained member reads byte-identically before old packs are retired.
+  **Met** — `repack-verify` PASS: 0 unreplaced, 0 bytes changed, 0 in two packs,
+  1,972 sampled read-backs with 0 mismatches, each extracted from the pack its
+  replacement sidecar names.
 - The existing packer verifies every replacement member; prune reports zero
-  unexplained failures.
+  unexplained failures. **Met** — 983,043 of 983,043 verified at pack time, and
+  the prune verified 983,043 and refused 0.
 - Sidecar identity is reported **decomposed by origin** — old pack member
   against materialized, attributed against NULL — and reconciles with the
   derivation above (~139,604 members with no `artifacts_queue_events` row), or
@@ -2258,8 +2375,11 @@ ceremonial.
   carries the single full pass only if it wins on **both**, and the trial packs
   are discarded. The decision rule is fixed before the run.
 - Deleted, absent and failed legacy-key counts reconcile to exactly 1,172.
-- The legacy `detail_page` prefix contains zero Parquet objects.
-- The legacy `results_page` population is unchanged.
+  **Met** — 1,172 `deleted`, 0 `absent`, 0 `error:`.
+- The legacy `detail_page` prefix contains zero Parquet objects. **Met** — the
+  prefix is empty: zero objects, zero bytes.
+- The legacy `results_page` population is unchanged. **Met** — 2,380 objects
+  before and after, including all 127 out-of-scope Parquet.
 
 ---
 
@@ -2287,21 +2407,23 @@ ceremonial.
 
 ## Success criteria
 
-| Metric | Required result |
-|---|---|
-| Legacy detail Parquet deleted | 1,172 objects / approximately 13.66 GiB |
-| Legacy results Parquet deleted | 0 |
-| Distinct successful captures unaccounted for | 0 |
-| Materialized objects failing read-back | 0 |
-| Objects deleted whose content was not in a verified pack | 0 |
-| Duplicate `(listing_id, fetched_at)` writes | 0 |
-| Block pages imported as observations | 0 |
-| Import-bearing artifacts without a trusted preserved or sequence-allocated `artifact_id` | 0 |
-| Rows inserted into `ops.artifacts_queue` | 0 |
-| Legacy `artifact_id` used as a join key | 0 |
-| Sidecar `listing_id` used as a join key | 0 |
-| Hot-state mutations caused by recovery | 0 |
-| Deletion without named approval | 0 |
+**All met, 2026-08-30.**
+
+| Metric | Required | Achieved |
+|---|---|---|
+| Legacy detail Parquet deleted | 1,172 objects / ~13.66 GiB | **1,172 / 14,670,223,837 B** |
+| Legacy results Parquet deleted | 0 | **0** — 127 untouched, prefix unchanged at 2,380 objects |
+| Distinct successful captures unaccounted for | 0 | **0** — 983,043 packed and verified |
+| Materialized objects failing read-back | 0 | **0** across 807,797 |
+| Objects deleted whose content was not in a verified pack | 0 | **0** — prune refused 0 of 983,043; legacy coverage join refused 0 of 1,172 |
+| Duplicate `(listing_id, fetched_at)` writes | 0 | **0** — the canary exclusion arithmetic closes in both directions |
+| Block pages imported as observations | 0 | **0** — 59,460 quarantined by the Stage 5 filter |
+| Import-bearing artifacts without a trusted preserved or sequence-allocated `artifact_id` | 0 | **0** — 13,253 preserved + 328,650 allocated = 341,903 |
+| Rows inserted into `ops.artifacts_queue` | 0 | **0** |
+| Legacy `artifact_id` used as a join key | 0 | **0** |
+| Sidecar `listing_id` used as a join key | 0 | **0** |
+| Hot-state mutations caused by recovery | 0 | **0** — six protected relations byte-identical across the V040 window |
+| Deletion without named approval | 0 | **0** — recorded in the manifest and all 1,172 receipts |
 
 Unrecoverable by construction, and accepted as a closed loss: the **11,453**
 successful captures with no bytes in the Parquet, no surviving individual

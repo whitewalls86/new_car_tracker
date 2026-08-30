@@ -1,7 +1,10 @@
 # Run Sheet: Plan 145 Stage 6 — Repack, Retire, Prune, Delete
 
-The last stage. It ends with 1,172 legacy Parquet objects gone and ~13.66 GiB
-reclaimed, which is the thing the whole plan exists to do.
+The last stage. **It ran to completion 2026-08-29/30: all 1,172 legacy Parquet
+objects are deleted, `html/year=2026/month=4/artifact_type=detail_page/` is
+empty, and April went from 24.48 GiB to 4.34 GiB — 20.14 GiB reclaimed.** This
+sheet is kept as the record of how, and as the reference for the equivalent
+work on another month.
 
 **Every dry run below has been executed** — 2026-08-29, on `master` at
 `64631de`, in tmux `plan145-stage-6`, logs at `~/plan145-s6-*.log`. All four
