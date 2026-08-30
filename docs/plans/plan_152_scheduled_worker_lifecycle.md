@@ -28,6 +28,42 @@ two risk classes. Plan 142 must describe the production system that exists;
 this plan owns changing how scheduled work is launched, observed, retried, and
 drained.
 
+### Observed 2026-08-30 — a one-shot that outlived its work blocked every deploy
+
+The trigger for this plan was, until now, speculative: a one-shot whose
+lifecycle does not match its name is untidy, but nothing had gone wrong. Then
+something did.
+
+A `cartracker-archiver-run-*` one-shot from
+[Plan 145](plan_145_april_cutover_reconciliation.md) Stage 6 printed its results
+at 2026-08-29 15:32 and **never exited** — 0.00% CPU, sleeping, six threads: the
+classic non-daemon connection-pool shape, a process whose work is finished and
+whose runtime will not let it go.
+
+`container_processes` counted it as live admitted work for **fourteen hours.**
+It was the first blocker on the 2026-08-30 deploy hang, and removing it revealed
+[Plan 158](plan_158_coordination_gate_deadlock.md)'s defect underneath.
+
+**The lesson is the one this plan already argues, with a cost attached.** A
+one-shot that outlives its work does not merely waste a container: coordination
+treats it as work in progress, so it **blocks every deploy and every maintenance
+window** until someone finds it by hand. Nobody did, for fourteen hours.
+
+Two things follow, and they belong to different plans:
+
+- *This* plan owns the lifecycle — a container launched to do a bounded job
+  should be observably finished when the job is, and that is Stage 0's authority
+  contract and Stage 2's conversion.
+- **Noticing** is not this plan's. That same container's healthcheck failed
+  1,727 consecutive times with nothing surfacing it, because
+  `ct-container-unhealthy` covers the expected-service set and a one-off is
+  deliberately outside it. That asymmetry — the drain trusts it enough to block
+  on, health does not speak about it — is
+  [Plan 159](plan_159_unhealthy_container_escalation.md). The two are
+  complementary and neither subsumes the other: a well-behaved one-shot
+  population still wants the alarm, and a working alarm does not fix the
+  lifecycle.
+
 ## Objective
 
 Make infrequent maintenance workloads run in explicitly launched, disposable
