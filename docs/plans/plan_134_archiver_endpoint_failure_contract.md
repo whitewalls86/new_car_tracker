@@ -2,7 +2,7 @@
 
 ## Status
 
-**Build order — ready to start.** Split out of [Plan 131](plan_131_packed_cold_storage.md)
+**Build order — in progress at Stage 1.** Split out of [Plan 131](plan_131_packed_cold_storage.md)
 Stage 5 decision D5 on 2026-08-14, which fixed the two Plan 131 endpoints and
 deliberately left the rest alone.
 
@@ -448,10 +448,11 @@ flushes go through `post_json`, and both surface a 500. Each deploy is
 Each deploy's gate is 48 hours with no unexpected DAG failure. A failure that
 Stage 0 predicted is not unexpected — it is the plan working.
 
-### Stage 3 — `/cleanup/queue/run`, and deleting the dead parquet path
+### Stage 3 — `/cleanup/queue/run`
 
-After Stage 2 has held for a week. Two separate pieces of work that happen to
-live next to each other.
+After Stage 2 has held for a week. This began as two pieces of work that
+happened to live next to each other; the second is already done, out of stage
+order, and only the predicate is still owed.
 
 **The predicate.** `/cleanup/queue/run` is the only cleanup endpoint doing real
 work — 3017 runs — and it has the same defect: a candidate-fetch failure
@@ -463,29 +464,40 @@ candidates`). Note the five 2026-07-08 DAG failures: those are the ones that
 already went red, so understand what made them red before adding a predicate
 that would have caught more.
 
-**The deletion.** `/cleanup/parquet/run`, both its DAGs, its two SQL files and
-its processor are dead and should go, not gain a failure contract:
+**The deletion — done 2026-08-30, in commit `056cde7`.** The survey found the
+`/cleanup/parquet` chain dead rather than merely unsignalled, so it was deleted
+rather than given a failure contract. The call was the user's, made on the
+finding: Plan 145 had already finished the legacy Parquet disposition
+`cleanup_parquet` was residue of, and `cleanup_artifacts` had never run. That
+is why it landed ahead of Stage 2 rather than waiting for this stage's gate.
 
-- `archiver/sql/get_expired_parquet_months.sql` — a stub returning no rows.
-- `archiver/sql/mark_parquet_deleted.sql` — unreachable, and references a table
-  V036 dropped.
-- `archiver/processors/cleanup_parquet.py` — `cleanup_parquet()` is still
-  called by the caller-supplied `POST /cleanup/parquet`, so check that endpoint
-  has a real caller before removing the module rather than the run path.
-- `airflow/dags/cleanup_parquet.py` — 133 green runs of nothing, still firing.
-- `airflow/dags/cleanup_artifacts.py` — never ran once.
-- `tests/integration/airflow/test_dag_integrity.py` and
-  `tests/archiver/processors/test_cleanup_parquet.py` follow whatever is
-  removed.
+What went, together, because deleting the DAGs alone would have left a
+callerless endpoint behind:
 
-**This is a deletion of shipped behavior, so it is the user's call, not a
-side effect of a failure-contract plan.** If the answer is "delete it", it is
-plausibly its own small plan rather than Stage 3 of this one — say so and split
-it. What this plan owes is the finding, which is above.
+- `archiver/sql/get_expired_parquet_months.sql` — a stub returning no rows
+  since V036, and `archiver/sql/mark_parquet_deleted.sql`, unreachable and
+  referencing a table V036 dropped.
+- `archiver/processors/cleanup_parquet.py`, and **both** routes. The caller
+  check this stage asked for came back empty: the caller-supplied
+  `POST /cleanup/parquet` had no production caller either, so the module went
+  with the run path rather than being kept alive behind it.
+- `airflow/dags/cleanup_parquet.py` — 133 green runs of nothing — and
+  `airflow/dags/cleanup_artifacts.py`, which never ran once.
+- `tests/archiver/processors/test_cleanup_parquet.py` and the covering cases in
+  `test_dag_integrity.py` and `test_app.py`.
 
-`README.md:65-66` describes both DAGs as doing work they do not do. That is a
-truth-pass item and belongs to
-[Plan 138](plan_138_public_surface_refresh.md), not here.
+Three registries the finding had not named also knew about this chain and now
+do not: `ops/mutation_contract.py`, `coordination_contract.py`'s admission
+surfaces and drain evidence, and `archiver/queries.py`. 402 deletions, and the
+full non-integration suite stayed green at 3097 passed.
+
+So nothing is owed here any more. `/cleanup/parquet/run` is out of this plan's
+scope because there is no failure left to contract.
+
+`README.md` described both deleted DAGs as doing work neither did, and
+`056cde7` removed those two rows. What remains for
+[Plan 138](plan_138_public_surface_refresh.md)'s truth pass is the wrong
+schedules that table still gives for both flushes.
 
 ## Files
 
