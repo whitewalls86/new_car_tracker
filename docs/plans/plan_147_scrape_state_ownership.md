@@ -2,9 +2,11 @@
 
 ## Status
 
-IN PROGRESS, written 2026-08-23 after [Plan 142](plan_142_planned_host_maintenance.md)
-Stage 0 found that pausing `results_processing` for a maintenance window would
-put the detail scraper into a re-scrape loop.
+**COMPLETE — 2026-08-30. All four stages are deployed and every success
+criterion carries a production reading.** Written 2026-08-23 after
+[Plan 142](plan_142_planned_host_maintenance.md) Stage 0 found that pausing
+`results_processing` for a maintenance window would put the detail scraper into
+a re-scrape loop.
 
 Priority **75 (medium)**. Effort **S**. In the build order in
 [`docs/PLANS.md`](../PLANS.md), which is authoritative for its position.
@@ -746,6 +748,106 @@ writes bought for nothing.
 `upsert_price_observation.sql` is loaded solely by `processing/queries.py`, and
 nothing in `ops/`, `scraper/`, `dbt/` or `dashboard/` ever referenced the
 column.
+
+### Evidence — Stage 4, 2026-08-30
+
+`V049__scrape_state_ownership_contract.sql` applied to production at
+**2026-08-30 20:00:20 UTC**, `success = t`, 553 ms, on VM commit `de18913`
+(PR #291). `ops.price_observations` now carries two `last_detail_*` columns
+where it carried three.
+
+#### The deploy itself
+
+`bash scripts/redeploy.sh processing`, then `docker compose run --rm flyway` —
+in that order, which is the order this stage's note prescribes and the reverse
+of Stages 1 to 3. The timestamps record that it was followed: the `processing`
+container started at 19:59:23 UTC and Flyway ran 57 seconds later, so the old
+dual-write image was never live against the dropped column.
+
+The drain confirmed after 0s — no coordination-gate stall, which was
+[Plan 158](plan_158_coordination_gate_deadlock.md)'s live risk on the day. The
+container was healthy 5 seconds after recreate, and no follower notes printed,
+so no peer was left holding a stale address.
+
+Queue depth read **1,061** immediately after the migration, 661 a minute later
+and 653 at 20:12 UTC. Declining and settling is the shape that rules out a
+re-queue storm; a backfill that had failed would have shown the opposite.
+
+#### The backfill was load-bearing, and the arithmetic shows it
+
+| | 19:33 UTC (pre) | 20:02 UTC (post) |
+|---|---|---|
+| `last_detail_enriched_at` non-null | 50,664 | **50,699** |
+| `last_detail_scraped_at` non-null | 50,705 | *(column dropped)* |
+| rows with no enrichment | 582 | **540** |
+
+The unenriched population fell by 42 while the table lost 7 rows to ordinary
+churn. That is the legacy-only population — 41 rows at the pre-drop reading,
+down from 45 at the Stage 2 deploy — folded into the surviving column, leaving
+`enriched` where `legacy` had been. Had the backfill been skipped, every one of
+those rows would have read as never enriched and re-entered the queue.
+
+`dealer_unenriched` stands at 268 of 51,239 rows, against 50,076 `not_stale`.
+
+#### Rehearsed before deploy, because the drop is irreversible
+
+The migration was run against a throwaway Postgres carrying `V001`-`V048` with
+a seeded legacy-only row and two controls. `V049` backfilled the row and left
+it suppressed and out of the queue; all three rows behaved identically across
+the migration. Nulling that row's enrichment afterwards — the state a `V049`
+without the backfill would have produced — flipped it to `dealer_unenriched`
+and back into the queue. The hazard the Stage 3 amendment predicted is
+therefore demonstrated rather than asserted. `dbt_user` ownership and the
+`viewer` grant survived the view rebuild.
+
+#### The guard kept working across the deploy
+
+No `error`, `undefined`, `traceback` or `exception` in `processing` logs across
+the window, and a `POST /process/batch?batch_size=500` returned 200 after the
+migration — the new image completing a real batch against the new schema.
+`last_detail_fetched_at` moved 15,941 to 16,615 across the deploy, with 1,421
+listings fetched in the hour to 20:02 UTC. Fetched-recently-but-unenriched
+stands at 60, consistent with the population Stage 3 measured.
+
+#### A check that looked like a failure and was not
+
+The post-deploy verification included
+`last_detail_enriched_at IS NULL AND customer_id IS NOT NULL`, framed as an
+invariant that should return zero. It returned **272**, and the framing was
+wrong rather than the database. None of those rows has ever been fetched and
+none is in the queue. `customer_id` is set only by the detail writer, which
+always sets the enrichment timestamp alongside it — `srp_writer.py` and the
+carousel branch of `detail_writer.py` both pass `customer_id: None` explicitly
+— so the population is enrichments predating `V040` (2026-07-01) creating the
+column at all. `V048`'s backfill copied a NULL and left it NULL. They are
+invisible to the queue because `is_full_details_stale` requires
+`customer_id IS NULL`, which is V040's design and untouched by this plan.
+
+Recorded because the query looks like a safety check and is not one. Inference
+from the writers rather than proof, since nothing dates the enrichment — but it
+is the only explanation consistent with the code, and `V049` cannot have
+created a row whose `last_detail_fetched_at` was never written.
+
+#### Gate
+
+- Success criterion 1 — a detail fetch recorded by the component that performed
+  it, in the transaction that releases the claim. **Met** at Stage 2, unchanged
+  here.
+- Success criterion 2 — no listing fetched more than once with
+  `results_processing` stopped. **Met** at Stage 3, 2,000 for 2,000.
+- Success criterion 3 — carousel and SRP semantics unchanged. **Met.** Both
+  writers still pass null for enrichment and never touch the fetch column; the
+  272-row population above is pre-V040 and unaffected.
+- Success criterion 4 — the fetched-but-unenriched population is published and
+  non-mysterious. **Met in substance, not as written**, as recorded at Stage 3;
+  the reading here is 60.
+- Success criterion 5 — no new endpoint and no new call. **Met**; `V049`
+  removed code and added none.
+- Test 8, the dual-write columns never disagree. **Met on Stage 2's evidence
+  and the one-parameter binding, not on a fresh pre-drop check.** The strict
+  form — both columns non-null and unequal — was not re-run immediately before
+  the drop and cannot be run now. What was measured at 19:33 UTC was the
+  legacy-only population, which is a different question.
 
 ## Tests
 
