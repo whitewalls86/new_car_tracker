@@ -2,7 +2,7 @@
 
 ## Status
 
-**BACKLOG, written 2026-08-27.** Priority **42 (medium)**. Effort **S**.
+**BUILD ORDER, written 2026-08-27.** Priority **42 (medium)**. Effort **S**.
 
 Trigger: Plan 145 Stage 5 completes. Until then the detail parser must run
 unmodified, because Plan 145's whole deliverable is a comparison of recovered
