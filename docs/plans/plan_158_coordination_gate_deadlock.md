@@ -344,10 +344,85 @@ relationship.
 
 ### Stage 3 — Prove it against the case that fails today
 
-Deliberately declare a deploy overlapping a DAG fire — the exact shape that hung
-on 2026-08-30 — and show authorization is reached. Then confirm
-`coordination_gate_observations` is non-empty for that generation, which is the
+Show that a drain held open across a DAG fire now reaches authorization, and
+that `coordination_gate_observations` is non-empty for that generation — the
 first time in the mechanism's life it will be.
+
+**Do not wait for a lucky overlap.** The 2026-08-30 hang was not caused by
+declaring intent shortly before a fire; it was caused by a *second* blocker
+holding the drain open across one. Intent was declared at 05:56:34 and the only
+blocker was a stray `container_processes` one-off; without it the drain would
+have authorized in the gap before 06:00 and nothing would have been learned.
+Reproducing the failure therefore means reproducing the hold, not the timing.
+
+#### The decoy protocol
+
+Hold the drain open deliberately with a one-off that does nothing, let a DAG
+fire park runs against it, and read the observation table before releasing.
+
+```bash
+cd /opt/cartracker
+
+# 1. A decoy that blocks the drain and touches nothing.
+docker compose run -d --no-deps --name plan158-decoy dbt_test sleep 900
+
+# 2. Declare intent. With no drift to deploy this recreates nothing and exits
+#    MUTATED=0 — a full coordination exercise with zero fleet change.
+bash scripts/redeploy.sh ops processing
+
+# 3. Expect blockers ['container_processes'], count 1.
+curl -s localhost:8060/coordination/drain-status | python3 -m json.tool
+
+# 4. After a */5 fire parks runs — THE PROOF:
+docker exec cartracker-postgres psql -U cartracker -d cartracker -At -c \
+  "SELECT count(*) FROM public.coordination_gate_observations;"
+
+# 5. Release the decoy; the drain should authorize on the next poll.
+docker rm -f plan158-decoy
+```
+
+**Step 4 is the experiment.** Rows appearing *while the decoy still holds the
+drain* is what distinguishes fixed from broken; at exactly that point on
+2026-08-30 the table was empty. Steps 5 and 6 only confirm the drain then
+clears.
+
+Why `dbt_test` and why `docker compose run`, both load-bearing:
+
+- `oneoff_processes` ([`container_health/collector.py:67`](../../container_health/collector.py))
+  counts a container only if it carries `com.docker.compose.oneoff=True`, which
+  `docker compose run` sets and `docker compose up` does not.
+- The service label is looked up in `SERVICE_CONTRACTS`, and **an unrecognised
+  service raises, making the whole source return `unknown` — which fails
+  closed.** An arbitrary `docker run` would hang the drain for the wrong reason
+  and prove nothing. `dbt_test` is a declared `one_shot` whose `analytics`
+  surface intersects the deploy scope.
+- The command is not part of the identification, so overriding it with `sleep`
+  gives a blocker that touches no data. `april-processor` also qualifies and is
+  deliberately not used — it is Plan 145's recovery worker.
+- `--no-deps` keeps the decoy from starting anything else.
+
+#### Bounding the experiment
+
+Every gated DAG is parked from step 2 to step 5, so keep it to a single fire
+cycle — six to eight minutes, not the nineteen the incident ran. The `sleep 900`
+is headroom, not a duration; the decoy is removed by hand well before it
+expires.
+
+**Abort condition:** if after step 5 the blocker becomes
+`airflow_gate_observations` and its count does not fall across two reads, the
+fix did not take. Interrupt `redeploy.sh`; with nothing mutated `_on_exit`
+releases intent and the fleet resumes, exactly as it did on 2026-08-30. That
+path is written up in
+[`runbook_host_maintenance.md`](../runbooks/runbook_host_maintenance.md) by
+Stage 0, which is why Stage 0 came first.
+
+#### This stage runs before Stage 2, deliberately
+
+Stage 2 guards against *other* sources blocking a drain; it changes nothing
+about what this stage measures. Running Stage 3 first also supplies the number
+Stage 2 needs — the elapsed time between releasing the decoy and reaching
+authorization is the first measurement of a healthy drain with observations
+actually being written, and a timeout chosen before that is a guess.
 
 ## Tests
 
