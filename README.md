@@ -62,8 +62,6 @@ Scraper ──► MinIO (raw HTML)
 | `flush_silver_observations` | Every 5 min | Archiver writes accumulated observations to MinIO Parquet. |
 | `dbt_build` | Hourly | Runs `dbt build` against DuckDB. Supports selective model runs via `dag_run.conf`. |
 | `orphan_checker` | Every 5 min | Expires stale `detail_scrape_claims` rows left by crashed containers. |
-| `cleanup_artifacts` | Hourly | Sweeps completed and expired rows from `artifacts_queue`. |
-| `cleanup_parquet` | Daily 3 AM | Marks expired Parquet months as deleted per retention policy. |
 | `cleanup_queue` | Hourly | Removes fully-processed queue rows. |
 | `delete_stale_emails` | Every 2 hours | Nulls `notification_email` on access requests older than 48 hours (opt-in email retention). |
 
@@ -191,7 +189,6 @@ cartracker-scraper/
     processors/
       flush_staging_events.py   # HOT table flush
       flush_silver_observations.py  # MinIO Parquet writer
-      cleanup_parquet.py        # Expired Parquet month cleanup
   ops/                          # Admin UI + deploy coordination + auth proxy
     routers/
       admin.py                  # Search config CRUD, access request management

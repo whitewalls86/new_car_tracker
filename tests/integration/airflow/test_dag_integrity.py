@@ -25,17 +25,9 @@ DAGS_DIR = REPO_ROOT / "airflow" / "dags"
 
 # Map dag filename -> expected dag_id and expected task_ids
 DAG_SPECS = {
-    "cleanup_artifacts.py": {
-        "dag_id": "cleanup_artifacts",
-        "tasks": {"check_deploy_intent", "check_archiver_health", "cleanup_parquet"},
-    },
     "cleanup_queue.py": {
         "dag_id": "cleanup_queue",
         "tasks": {"check_deploy_intent", "check_archiver_health", "cleanup_queue"},
-    },
-    "cleanup_parquet.py": {
-        "dag_id": "cleanup_parquet",
-        "tasks": {"check_deploy_intent", "check_archiver_health", "cleanup_parquet"},
     },
     "dbt_build.py": {
         "dag_id": "dbt_build",

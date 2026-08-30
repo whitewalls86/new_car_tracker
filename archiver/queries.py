@@ -17,8 +17,5 @@ def _q(name: str) -> str:
     return load_query(_SQL_DIR, name)
 
 
-GET_EXPIRED_PARQUET_MONTHS = _q("get_expired_parquet_months")
-MARK_PARQUET_DELETED       = _q("mark_parquet_deleted")
-
 # Plan 97: artifacts_queue cleanup
 GET_QUEUE_CLEANUP_CANDIDATES = _q("get_queue_cleanup_candidates")

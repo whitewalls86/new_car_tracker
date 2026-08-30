@@ -6,8 +6,6 @@ from typing import Any, Dict, Optional
 
 from fastapi import Body, FastAPI, HTTPException
 
-from archiver.processors.cleanup_parquet import cleanup_parquet as _cleanup_parquet
-from archiver.processors.cleanup_parquet import run_cleanup_parquet as _run_cleanup_parquet
 from archiver.processors.cleanup_queue import cleanup_queue as _cleanup_queue
 from archiver.processors.cleanup_queue import run_cleanup_queue as _run_cleanup_queue
 from archiver.processors.compact_silver import compact_silver as _compact_silver
@@ -64,22 +62,6 @@ _ALLOW_SYNC_SNAPSHOT_COHORT = (
 _ALLOW_PACK_JOBS = (
     os.environ.get("ARCHIVER_ALLOW_PACK_JOBS", "false").lower() == "true"
 )
-
-@app.post("/cleanup/parquet")
-def run_cleanup_parquet(payload: dict = Body(...)) -> Dict[str, Any]:
-    with active_job():
-        paths = (payload or {}).get("paths", [])
-        results = _cleanup_parquet(paths)
-        deleted_count = sum(1 for r in results if r.get("deleted"))
-        return {"total": len(results), "deleted": deleted_count,
-                "failed": len(results) - deleted_count, "results": results}
-
-
-@app.post("/cleanup/parquet/run")
-def trigger_cleanup_parquet() -> Dict[str, Any]:
-    with active_job():
-        return _run_cleanup_parquet()
-
 
 @app.post("/cleanup/queue")
 def run_cleanup_queue_batch(payload: dict = Body(...)) -> Dict[str, Any]:

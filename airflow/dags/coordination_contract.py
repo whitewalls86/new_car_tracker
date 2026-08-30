@@ -1,8 +1,6 @@
 """Per-DAG admission surfaces for Plan 142 scoped coordination."""
 
 ADMISSION_SURFACES = {
-    "cleanup_artifacts": frozenset({"archive"}),
-    "cleanup_parquet": frozenset({"archive"}),
     "cleanup_queue": frozenset({"archive"}),
     "compact_silver": frozenset({"analytics", "archive"}),
     "dbt_build": frozenset({"analytics"}),
@@ -23,8 +21,6 @@ ADMISSION_SURFACES = {
 # Only tasks capable of mutating project state participate in drain evidence.
 # Sensors and notification tasks are intentionally excluded.
 DRAIN_TASKS = {
-    "cleanup_artifacts": frozenset({"cleanup_parquet"}),
-    "cleanup_parquet": frozenset({"cleanup_parquet"}),
     "cleanup_queue": frozenset({"cleanup_queue"}),
     "compact_silver": frozenset({"compact_silver"}),
     "dbt_build": frozenset({"dbt_build"}),
