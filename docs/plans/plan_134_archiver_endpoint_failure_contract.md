@@ -267,6 +267,135 @@ compared against.
 
 **Stage 0 is read-only in production and touches no code.**
 
+### Evidence — Stage 0, 2026-08-30
+
+**The answer is not "how often does this fail" but "twice in the last three
+weeks, and Airflow reported 128 consecutive successes across both."**
+
+#### The surface being turned on
+
+After the dead `/cleanup/parquet` path was removed, four endpoints across three
+scheduled DAGs are in scope. `flush_silver_observations` and
+`flush_staging_events` still exist as manual-only DAGs but are paused; they ran
+20,544 and 6,851 times before `hourly_analytics_refresh` took ownership on
+2026-07-02 and are not part of the enforcement surface.
+
+| DAG | Schedule | Runs | DAG failures | Endpoint tasks |
+|---|---|---:|---:|---|
+| `hourly_analytics_refresh` | `0 * * * *` | 1,426 | 12 | `flush_silver_observations`, `flush_staging_events` |
+| `cleanup_queue` | `0 * * * *` | 3,022 | 5 | `cleanup_queue` |
+| `compact_silver` | `10 4 * * *` | 91 | 0 | `compact_silver` |
+
+At **task** level the picture is emptier still. `flush_staging_events` has
+**never failed** — 1,419 successes, zero failures. `compact_silver` has never
+failed — 91 successes, zero failures. `flush_silver_observations` failed 4
+times, all on 2026-07-08, and those are HTTP-level failures (`post_json` raising
+on an unreachable archiver), not summary-level ones.
+
+So from Airflow's side, the enforcement surface has essentially never gone red.
+That is the finding, not a reassurance.
+
+#### Incident 1 — MinIO storage full, 2026-08-08 → 2026-08-13
+
+`{service="archiver", level="ERROR"}` holds 21 records across
+**2026-08-08 13:00:14 → 2026-08-13 02:00:17**, all
+`[Errno 5] ... (XMinioStorageFull) when calling the PutObject operation`:
+
+| Job | Records | What it means |
+|---|---:|---|
+| `flush_silver: failed:` | 4 | observations did not land in the silver layer |
+| `flush_staging: failed for` | 17 | four staging tables across `artifacts_queue_events`, `detail_scrape_claim_events`, `price_observation_events`, `vin_to_listing_events` |
+
+Over that window `hourly_analytics_refresh` ran **112 times. Every run is
+`success`, and every `flush_silver_observations` task instance is `success`.**
+
+This is the exact consequence the plan's opening table names: a failed silver
+flush returns 200, the DAG proceeds, and `dbt_build` builds on stale data. It
+did so for five days.
+
+21 records is fewer than five days of hourly failures would produce, so the
+`RotatingFileHandler` (5 MB × 3) almost certainly discarded some. **The counts
+below are floors, not totals.**
+
+#### Incident 2 — code deployed ahead of its migration, 2026-08-26 → 2026-08-27
+
+32 ERROR records across **2026-08-26 23:00:18 → 2026-08-27 14:00:18**, exactly
+16 hourly cycles × 2 tables, all
+`flush_staging: failed for staging.coordination_state_events` /
+`staging.coordination_release_evidence` — `relation ... does not exist`.
+
+The flyway history closes the timeline without ambiguity:
+
+| When | What |
+|---|---|
+| 2026-08-25 19:07:05 | `V043 coordination state` applied |
+| ≤ 2026-08-26 23:00 | archiver image carrying both tables in `_TABLE_CONFIGS` goes live |
+| 2026-08-26 23:00 → 08-27 14:00 | 16 hourly flushes fail on two tables, return 200 |
+| **2026-08-27 14:45:22/23** | **`V044` and `V045` applied** |
+| 2026-08-27 15:00 | first clean run |
+
+All 16 runs are `success` at both DAG and task level. An expand/contract
+ordering inversion — code shipped ahead of schema — ran for sixteen hours and
+produced no signal anywhere except a log line nobody was reading.
+
+#### What enforcement would have done
+
+Had Stage 2 been live, `hourly_analytics_refresh` would have failed **16
+consecutive times** on 2026-08-27 and **up to 112 times** across 2026-08-08–13.
+Both would have been correct. Both are also, precisely, the pager storm this
+plan warns about — which is the argument for Stage 1's warning-only window and
+for flipping `/flush/silver/run` last, not for softening the predicate.
+
+Note that the `retries=1, retry_delay=30s` on both flush tasks does **not**
+help here: neither a full disk nor a missing table heals in thirty seconds.
+Retry only absorbs transient blips, so for these two incidents the failure
+count and the page count are the same number.
+
+#### The pager has never worked
+
+`hourly_analytics_refresh`'s `notify` task has **12 failures, 1,414 skips, and
+zero successes.** Every time the DAG failed and notify fired, notify itself
+failed — most recently 2026-07-21, across 2026-07-02 to 2026-07-21.
+
+So Stage 1's `_notify` repair is not a polish item. The notification path has
+never once delivered, and enforcement without fixing it converts silent
+endpoint failures into silent DAG failures.
+
+#### compact_silver is genuinely clean
+
+Its INFO summary line carries the count directly. Over 30 days, **30 of 30**
+`compact_silver: run complete` lines report `failed=0`, and a scan of
+`bronze/silver_normalized/observations` finds **zero `*.parquet.tmp` objects**.
+
+So the 91 green runs are green, there is no unpublished-partition backlog, and
+`/compact/silver/run` is safe to enforce first as Stage 2 orders it.
+
+#### Correction to Stage 0's own method
+
+**The 90-day retrospective is not available at full label fidelity.** Loki's
+retention is 90 days, but Plan 141 Stage 1's labels only exist from
+2026-08-25. Before that, archiver records carry `service` but **no `source`
+label**, and 24,864 records in the 30-day window carry neither `source` nor
+`level`. Queries pinned to `source="application_file"` silently see only the
+last five days.
+
+Incident 1 was found only by dropping the `source` matcher. Any query written
+for this plan must either pin `source="application_file"` and state that it
+covers 2026-08-25 onward, or omit it and accept a mixed stream. Plan 141's own
+intersection note anticipated exactly this and it turned out to be load-bearing.
+
+The pre-2026-08-25 records are not a live contract violation — every record in
+the last five days carries both labels.
+
+#### What Stage 1 owes, revised
+
+The window is no longer discovery. Two failure modes are already characterised,
+and the predicate for each is confirmed correct against a real incident:
+`flush_staging`'s roll-up `error` catches Incident 2, and `flush_silver`'s
+`error` catches Incident 1. Stage 1's warning-only window is now a *regression
+check* — seven days confirming the predicates fire on nothing else — plus the
+`_notify` repair, which the evidence promotes from cleanup to prerequisite.
+
 ### Stage 1 — Warning-only predicates, and the two repairs the survey found
 
 One deploy of `archiver`, plus one of the Airflow DAG.
