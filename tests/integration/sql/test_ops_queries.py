@@ -5,13 +5,34 @@ Every query the ops service runs against Postgres is executed here against a rea
 DB with Flyway migrations applied. The goal is to catch schema breakage (column
 renames, dropped tables, type mismatches) — not to validate business logic.
 """
+import ast
 import uuid
+from pathlib import Path
 
 import pytest
 
 from ops import coordination_drain
 
 pytestmark = pytest.mark.integration
+
+
+def _sensor_constant(name: str) -> str:
+    """Read a module-level constant out of airflow/dags/sensors.py.
+
+    This suite runs in the main venv, which has no Airflow, so sensors.py
+    cannot be imported here -- but the statement under test is the sensor's
+    own, verbatim, not a copy that can drift away from it.
+    """
+    source = (Path(__file__).parents[3] / "airflow" / "dags" / "sensors.py").read_text()
+    return next(
+        node.value.value
+        for node in ast.parse(source).body
+        if isinstance(node, ast.Assign)
+        and any(t.id == name for t in node.targets if isinstance(t, ast.Name))
+    )
+
+
+GATE_OBSERVATION_SQL = _sensor_constant("GATE_OBSERVATION_SQL")
 
 # The surfaces a full-fleet deploy expands to; see ops/coordination_contract.py.
 DEPLOY_SCOPE = frozenset(
@@ -458,6 +479,72 @@ class TestCoordinationDrainQueries:
         assert query is not None, "the deploy scope must cover some admission DAGs"
         cur.execute(*query)
         assert cur.fetchone() is not None
+
+    # --- Plan 158: the seam. The two statements above and below never met.
+    # --- `coordination_gate_observations` was empty for every generation that
+    # --- had ever existed, because the sensor's INSERT sat below a return that
+    # --- always fired during a deploy. These execute the sensor's real write
+    # --- against the drain's real count.
+
+    def test_gate_observation_count_falls_to_zero_as_live_runs_observe(
+        self, cur, airflow_metadata_standin
+    ):
+        generation = 158
+        query = coordination_drain.gate_observation_query(DEPLOY_SCOPE, generation)
+        affected = query[1][:-1]
+        runs = [(dag_id, f"{dag_id}-{uuid.uuid4().hex[:8]}") for dag_id in affected]
+        for dag_id, run_id in runs:
+            cur.execute(
+                "INSERT INTO airflow.dag_run (dag_id, run_id, state, start_date)"
+                " VALUES (%s, %s, 'running', now())",
+                (dag_id, run_id),
+            )
+
+        cur.execute(*query)
+        assert cur.fetchone()["count"] == len(runs), "every live affected run blocks"
+
+        for dag_id, run_id in runs:
+            cur.execute(GATE_OBSERVATION_SQL, (generation, dag_id, run_id))
+
+        cur.execute(*query)
+        assert cur.fetchone()["count"] == 0, "an observed run no longer blocks the drain"
+
+    def test_an_observation_does_not_satisfy_the_next_generation(
+        self, cur, airflow_metadata_standin
+    ):
+        dag_id = coordination_drain.gate_observation_query(DEPLOY_SCOPE, 1)[1][0]
+        run_id = f"{dag_id}-{uuid.uuid4().hex[:8]}"
+        cur.execute(
+            "INSERT INTO airflow.dag_run (dag_id, run_id, state, start_date)"
+            " VALUES (%s, %s, 'running', now())",
+            (dag_id, run_id),
+        )
+        cur.execute(GATE_OBSERVATION_SQL, (158, dag_id, run_id))
+
+        cur.execute(*coordination_drain.gate_observation_query(DEPLOY_SCOPE, 158))
+        observed = cur.fetchone()["count"]
+        cur.execute(*coordination_drain.gate_observation_query(DEPLOY_SCOPE, 159))
+        next_generation = cur.fetchone()["count"]
+
+        assert next_generation == observed + 1, (
+            "a release increments the generation, so the new drain must be "
+            "observed afresh"
+        )
+
+    def test_repeated_observation_of_one_run_keeps_a_single_row(
+        self, cur, airflow_metadata_standin
+    ):
+        """The reschedule sensor pokes every 60s for the length of the drain."""
+        run_id = f"orphan_checker-{uuid.uuid4().hex[:8]}"
+        for _ in range(3):
+            cur.execute(GATE_OBSERVATION_SQL, (158, "orphan_checker", run_id))
+
+        cur.execute(
+            "SELECT COUNT(*) FROM public.coordination_gate_observations"
+            " WHERE generation = %s AND dag_id = %s AND run_id = %s",
+            (158, "orphan_checker", run_id),
+        )
+        assert cur.fetchone()["count"] == 1
 
     def test_every_drain_table_is_schema_qualified(self):
         """A bare table name is only correct by accident of search_path."""

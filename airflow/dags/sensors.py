@@ -46,6 +46,39 @@ class JsonPostError(requests.HTTPError):
         self.result = result
 
 
+GATE_OBSERVATION_SQL = """INSERT INTO coordination_gate_observations
+           (generation, dag_id, run_id, observed_at)
+    VALUES (%s, %s, %s, now())
+    ON CONFLICT (generation, dag_id, run_id)
+    DO UPDATE SET observed_at = EXCLUDED.observed_at"""
+
+
+def _record_observation(hook, generation: int, dag_id: str, context) -> None:
+    """
+    Record that this DAG run has seen the coordination gate and is holding.
+
+    `ops.coordination_drain.gate_observation_query` counts active runs of
+    affected DAGs with no row here for the current generation, and refuses to
+    authorize while that count is non-zero. The key must therefore be exactly
+    the (generation, dag_id, run_id) that query correlates on.
+
+    Module-level, and its SQL a module-level constant, so
+    tests/integration/sql can execute the real statement -- the same reason
+    `coordination_drain`'s query builders are module-level.
+
+    A run with no discoverable run_id has no key to write. It still blocks;
+    it just leaves no trace, which is the pre-existing behaviour.
+    """
+    dag_run = context.get("dag_run")
+    run_id = getattr(dag_run, "run_id", None) or context.get("run_id")
+    if not run_id:
+        return
+    hook.run(
+        GATE_OBSERVATION_SQL,
+        parameters=(generation, dag_id, run_id),
+    )
+
+
 class _DeployIntentSensor(BaseSensorOperator):
     def __init__(self, dag_id: str, **kwargs):
         super().__init__(**kwargs)
@@ -63,25 +96,23 @@ class _DeployIntentSensor(BaseSensorOperator):
                 WHERE di.id = 1 AND cs.id = 1""",
             parameters=(list(self.admission_surfaces),),
         )
-        if row is None or row[0] != "none":
+        if row is None:
             return False
+
         # Request fixes the immutable scope and is the admission boundary. Do
         # not admit another run merely because the operator has not yet asked
         # for the first drain read.
-        blocked = row[1] in {"requested", "draining", "active", "validating"} and row[2]
-        if blocked:
-            dag_run = context.get("dag_run")
-            run_id = getattr(dag_run, "run_id", None) or context.get("run_id")
-            if not run_id:
-                return False
-            hook.run(
-                """INSERT INTO coordination_gate_observations
-                           (generation, dag_id, run_id, observed_at)
-                    VALUES (%s, %s, %s, now())
-                    ON CONFLICT (generation, dag_id, run_id)
-                    DO UPDATE SET observed_at = EXCLUDED.observed_at""",
-                parameters=(row[3], self.coordination_dag_id, run_id),
-            )
+        blocked_by_coordination = (
+            row[1] in {"requested", "draining", "active", "validating"} and row[2]
+        )
+        # Above both returns, not below them. The observation records that this
+        # run has seen the gate and is holding, which is equally true whether
+        # the hold comes from deploy intent or from coordination phase -- and
+        # the drain waits on exactly this row. See Plan 158.
+        if blocked_by_coordination:
+            _record_observation(hook, row[3], self.coordination_dag_id, context)
+
+        if row[0] != "none" or blocked_by_coordination:
             return False
         return True
 
