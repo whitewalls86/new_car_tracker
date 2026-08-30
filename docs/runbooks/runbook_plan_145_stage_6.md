@@ -3,9 +3,20 @@
 The last stage. It ends with 1,172 legacy Parquet objects gone and ~13.66 GiB
 reclaimed, which is the thing the whole plan exists to do.
 
-Nothing here has been run. The machinery is built and unit-tested; see
-[the handoff](../plans/plan_145_stage_6_handoff.md) for why each piece is
-shaped the way it is.
+**Every dry run below has been executed** — 2026-08-29, on `master` at
+`64631de`, in tmux `plan145-stage-6`, logs at `~/plan145-s6-*.log`. All four
+modes behaved as designed and the timings here are measured, not budgeted. See
+*Evidence — the Stage 6 dry runs* in the plan. **Nothing has been packed,
+retired, pruned or deleted.** See [the handoff](../plans/plan_145_stage_6_handoff.md)
+for why each piece is shaped the way it is.
+
+**Rebuild the archiver image before anything else.** It bakes code in rather
+than mounting the source, so `compose run` on a stale image reports
+`invalid choice: 'pack-trial'`:
+
+```bash
+docker compose build archiver
+```
 
 **Steps 5, 6 and 7 are irreversible.** Step 7 is recoverable only from MinIO
 versioning or backup, which is why it takes a name.
@@ -83,8 +94,13 @@ Dry run first — it reads no object and tells you the sample composition:
 python -m scripts.reconcile_april_detail pack-trial
 ```
 
-Then the real thing. **~200,000 GETs and ~31 GiB of level-9 compression:
-budget 1–1.5 hours**, not the "minutes" the plan says. Run it under tmux.
+**This step is done.** Run 2026-08-29 as `trial-5fbadb36972161fb`, 18m02s
+(not the 1–1.5 hours budgeted). The verdict is a **split — `current` carries**,
+so step 3 needs no code change. Kept here for the record and for anyone
+re-running it:
+
+The dry run took **35 s** and reported 843,439 members described by the lake,
+657,629 eligible, 50,000 per sample. The real run takes ~18 min under tmux.
 
 ```bash
 python -m scripts.reconcile_april_detail pack-trial --apply
@@ -105,15 +121,18 @@ If `true` wins, the size of the win is what justifies — or does not — a sepa
 plan to reorder May, June and July: 6.86 GiB and ~3M members this plan does not
 touch.
 
-### Carrying the verdict into step 3
+### Carrying the verdict into step 3 — settled
 
-If `current` wins, step 3 needs no change: it is what the packer already does.
+`current` won, so **step 3 needs no change**: it is what the packer already
+does. Do not touch `fetch_member_metadata`.
 
-If `true` wins, the packer's `ORDER BY` and frame sealing must move from
-`cluster_key` to `listing_id` before step 3 — a one-line change in
-`fetch_member_metadata`, which Stage 5b deliberately left separable. **That is a
-code change with a review, not a flag**, and it is out of this sheet's scope
-until the trial reports.
+The verdict was a split — true ordering was 27.50% *worse* on the sample drawn
+in `current` order and 4.76% *better* on the sample drawn in `true` order, a
+32-point swing on the same population with only the 50,000 members differing.
+Each sample favours whichever ordering drew it, by more than the effect under
+test, so the trial refuses to call it and the incumbent carries. Had this run
+the plan's original single sample, it would have reported a confident 27.50%
+loss for true ordering on the strength of a selection artefact.
 
 ---
 
@@ -127,18 +146,44 @@ python -m archiver.processors.pack_bronze_html \
 Dry-run it first without `--apply`: it reports the pending count and an upper
 bound on pack count without reading a body.
 
-**Budget a night, not an hour.** ~983k GETs and ~155 GiB of level-9 dictionary
-compression, against Stage 3b's 2h03m for reading 557k pack members and writing
-them back. The listing phase alone took ~25 minutes on this VM at ~700 keys/s
-and looks hung; it is not, and it reports progress.
+**This step is done.** Run 2026-08-29 17:56:59–20:17:35 UTC: 68 packs,
+983,043 members, 983,043 verified, 0 read failures, 4.58 GB at
+`pack-00032`–`pack-00099`. **Measured 2h20m** — 33 min listing, 1h47m packing —
+against the "budget a night" this sheet carried. Kept for anyone re-running it.
+
+~983k GETs and ~168 GiB of level-9 dictionary compression, against Stage 3b's
+2h03m for reading 557k pack members and writing them back.
+
+**It is not resumable.** `--repack-bucket` skips the already-packed subtraction
+entirely, so a restart after a partial run re-packs everything including what it
+already wrote, duplicating members. Recovery is to delete `pack-00032`+ and
+their sidecars and start over — safe, because the new packs are unreferenced
+until `repack-verify` passes, but it costs the hours. Do not trigger a deploy
+while it runs: deploy intent stops it cleanly between packs, and resuming is
+what duplicates.
+
+The listing phase is **measured at 1,643 s (27.4 min)** for 983,043 objects,
+mean 598 keys/s — the dry run of 2026-08-29 did exactly this walk. It looks
+hung and is not; it reports every 50,000 keys. Note this cost is paid **twice**
+across the stage, once by that dry run and again here, because nothing caches
+the enumeration between the two commands.
+
+**Keep other work off MinIO while it lists.** Two concurrent DuckDB queries
+during the dry run dropped the instantaneous rate from ~750 to 446 keys/s and
+cost ~90 s. The cumulative rate the log prints is a running average, so it keeps
+falling after the interference stops and looks like decay when it is not — read
+the per-chunk deltas instead. During this step, which also reads 983k bodies,
+contention is far more expensive.
 
 Watch for:
 
 - `--repack-bucket` logs a warning naming how many objects an existing sidecar
-  already names. Expect **557,065**. A much smaller number means the frozen
-  baseline is not what you think it is — stop.
-- `next_seq` should be **32**. Lower means a pack was retired early; higher
-  means a previous repack ran.
+  already names. **Measured 557,065** in the dry run. A much smaller number
+  means the frozen baseline is not what you think it is — stop.
+- `next_seq` should be **32**; the dry run confirms it, with no orphan packs.
+  Lower means a pack was retired early; higher means a previous repack ran.
+- `objects_pending` should be **983,043** — the dry run's independent store walk
+  returned exactly the manifest-derived count, so the two agree.
 - free space. The replacement set is ~3.5 GiB on top of the originals' 1.99 GiB,
   and the loose population is not pruned until step 6.
 
@@ -161,6 +206,10 @@ Once, on the authoritative run, add `--list-population`: it enumerates the
 April prefix instead of deriving the population from the manifests. Half an
 hour, ~1,000 LIST requests, and it is the only way to learn that nothing
 unexpected appeared.
+
+**Ran 2026-08-29 as `repack-4ea1c730c8b96ac1`: PASS**, in 73 seconds. All
+coverage classes zero, 1,972 members read back with 0 mismatches, changed share
+74.17%. The numbers below are what it reported.
 
 ### Read these four numbers
 
