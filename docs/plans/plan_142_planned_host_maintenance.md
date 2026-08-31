@@ -1638,6 +1638,59 @@ same anti-drift bargain: a CI test asserts it equals the parsed
 that `oauth2-proxy` remains the only exempt service that is also expected
 running — a second one appearing is a design change, not a list edit.
 
+#### A fifth defect, found by reading the gate — 2026-08-31
+
+Reading `/coordination/release-status` on production — the free dress rehearsal
+the run sheet asks for — returned three blockers, not one:
+
+```
+"blockers": ["container_health", "observability_fresh", "coordination_expected"]
+```
+
+`container_health` was blocker 4, reproduced exactly. `coordination_expected`
+is correct: there is no window open. **`observability_fresh` was `unknown`, and
+had been since it was written.**
+
+`_observability_fresh` asked for
+`sum(increase(promtail_client_request_errors_total[5m]))`. That metric does not
+exist. Asking Prometheus for every `promtail_*` name it holds returns twenty-one
+series, and no `promtail_client_request_errors_total` among them — this Promtail
+publishes `promtail_dropped_{entries,bytes}_total` and
+`promtail_request_duration_seconds_*`, and never that counter under any
+condition. `sum()` over no series is an empty vector, `_prometheus_scalar`
+requires exactly one sample, and the resulting `ValueError` is caught and
+returned as `unknown` — which `collect_release_status` counts as a blocker.
+
+So the gate could never pass, on any host, in any state. It is the same shape as
+blocker 4 — a fail-closed gate that cannot open — and it would have stranded the
+window at `validating` in exactly the same way, after the reboot, with
+production paused.
+
+**Why no test caught it.** Every existing test mocks `_prometheus_scalar`, so
+none of them ever sees a query string. The queries are now module constants with
+a test asserting each counter query ends in `or vector(0)` — the structural
+property that makes "this counter has never fired" read as zero rather than as
+missing evidence. `up` stays deliberately unguarded: nothing being scraped is
+genuinely unreadable evidence, and reporting it as an age of 0 would turn a
+blind gate into a passing one.
+
+**Thresholds, measured rather than assumed.** The replacement splits one signal
+into two, because only one of them is absolute:
+
+| Signal | Production, 7 days | Gate |
+|---|---|---|
+| `promtail_dropped_entries_total` | **0**, including the 2026-08-25 full-stack recreation | any increase fails — this is permanent log loss |
+| non-2xx sends to Loki (`status_code!~"2.."`, which covers the `-1` no-response case) | 2 over 7 days; 9 in the host's entire life | more than 10 in 5 minutes fails |
+
+Gating failed *sends* at zero would have re-created the bug. This gate is read
+right after `start`, when Loki has just come back and a handful of retried sends
+is the expected reading — `_loki_has_recent_ingestion` is the positive proof
+that the pipe works, and dropped entries is the proof that nothing was lost.
+
+Verified against production before committing: all four queries return exactly
+one sample, and the new decision, evaluated inside the running `ops` container
+against live Prometheus and Loki, is **pass**.
+
 One thing deliberately *not* done: `preflight` still does not refuse a live
 one-off. The drain contract already counts one-offs
 (`ops/coordination_drain.py`'s `_container_processes`), so a `run` in flight

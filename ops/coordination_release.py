@@ -34,6 +34,36 @@ AUXILIARY_PROJECTS = frozenset({"cartracker-lakehouse", "cartracker-mlflow"})
 MAX_SCRAPE_AGE_SECONDS = 60
 LOG_INGESTION_LOOKBACK_SECONDS = 600
 MAX_PROMTAIL_READ_BYTES_5M = 50 * 1024 * 1024
+# Failed sends to Loki are normal in small numbers around a restart, which is
+# exactly when this gate is read. Promtail has recorded 9 in the host's entire
+# life and 2 in the last seven days -- including the 2026-08-25 full-stack
+# recreation -- so a five-minute window carrying more than this is a storm and
+# not a resume. Gating at >0 here would have failed the gate during the very
+# window it exists to clear, which is the bug this threshold was written after.
+MAX_PROMTAIL_SEND_FAILURES_5M = 10
+
+# `sum()` over a counter that has never fired is an *empty vector*, not 0, and
+# `_prometheus_scalar` requires exactly one sample. Without the `or vector(0)`
+# tail, the quietest possible Promtail reads as "evidence unavailable" and
+# blocks the release it should clear. That is not hypothetical: the gate asked
+# for `promtail_client_request_errors_total`, which this Promtail does not
+# publish under any condition, so `observability_fresh` had been permanently
+# `unknown` -- and therefore a permanent blocker -- since it was written.
+# Measured on production 2026-08-31 while verifying Plan 142 Stage 4.
+#
+# Loki send failures carry `status_code="-1"` when the request never got a
+# response, so the negated 2xx matcher covers both a refused connection and an
+# HTTP error.
+PROMTAIL_DROPPED_ENTRIES_5M = "sum(increase(promtail_dropped_entries_total[5m])) or vector(0)"
+PROMTAIL_SEND_FAILURES_5M = (
+    'sum(increase(promtail_request_duration_seconds_count{status_code!~"2.."}[5m]))'
+    " or vector(0)"
+)
+PROMTAIL_READ_BYTES_5M = "sum(increase(promtail_read_bytes_total[5m])) or vector(0)"
+# Deliberately *not* guarded. An empty `up` means Prometheus is scraping nothing
+# at all, which is genuinely unreadable evidence rather than a quiet counter --
+# reporting that as an age of 0 would turn a blind gate into a passing one.
+SCRAPE_AGE_SECONDS = "max(time() - timestamp(up))"
 
 
 def _passed(gate: str, reason: str = "") -> dict[str, str]:
@@ -169,21 +199,30 @@ def _loki_has_recent_ingestion() -> bool:
 
 
 def _observability_fresh(_: dict[str, Any]) -> dict[str, str]:
+    """Scrapes are fresh, logs are landing, and nothing is being lost.
+
+    Log loss and send failures are separate questions and only one of them is
+    absolute. ``promtail_dropped_entries_total`` counts lines Promtail gave up
+    on -- it has read 0 across seven days including a full-stack recreation, so
+    any increase is real loss and fails. A failed *send* is retried, so a
+    handful around a restart says nothing except that Loki was still starting;
+    only a storm of them matters, and ``_loki_has_recent_ingestion`` is the
+    positive proof that the pipe is working now.
+    """
     gate = "observability_fresh"
     try:
-        scrape_age = _prometheus_scalar("max(time() - timestamp(up))")
-        promtail_errors = _prometheus_scalar(
-            "sum(increase(promtail_client_request_errors_total[5m]))"
-        )
-        promtail_read_bytes = _prometheus_scalar(
-            "sum(increase(promtail_read_bytes_total[5m]))"
-        )
+        scrape_age = _prometheus_scalar(SCRAPE_AGE_SECONDS)
+        promtail_dropped = _prometheus_scalar(PROMTAIL_DROPPED_ENTRIES_5M)
+        promtail_send_failures = _prometheus_scalar(PROMTAIL_SEND_FAILURES_5M)
+        promtail_read_bytes = _prometheus_scalar(PROMTAIL_READ_BYTES_5M)
         ingested = _loki_has_recent_ingestion()
     except (requests.RequestException, KeyError, TypeError, ValueError, IndexError, OverflowError):
         return _unknown(gate, "observability evidence unavailable or malformed")
     if scrape_age > MAX_SCRAPE_AGE_SECONDS:
         return _failed(gate, f"Prometheus scrape age {scrape_age:.0f}s exceeds limit")
-    if promtail_errors > 0:
+    if promtail_dropped > 0:
+        return _failed(gate, f"Promtail dropped {promtail_dropped:.0f} log entries")
+    if promtail_send_failures > MAX_PROMTAIL_SEND_FAILURES_5M:
         return _failed(gate, "Promtail client error storm detected")
     if promtail_read_bytes > MAX_PROMTAIL_READ_BYTES_5M:
         return _failed(gate, "Promtail replay storm detected")
