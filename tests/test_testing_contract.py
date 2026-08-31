@@ -537,11 +537,21 @@ def app_routes(service: str) -> tuple[tuple[str, str], ...]:
             capture_output=True, text=True,
         )
         if result.returncode == 0:
-            return tuple(
+            found = tuple(
                 (method, path)
                 for method, path, module in json.loads(result.stdout)
                 if not module.startswith("fastapi.")
             )
+            # An empty table would satisfy every route rule by having nothing
+            # to check, which is G1's failure in miniature: the rule passes
+            # because nothing ran, not because everything is covered. A service
+            # whose app.py constructs a FastAPI() serves at least one route.
+            assert found, (
+                f"{service}'s app imported but exposed no routes of its own. "
+                f"Nothing can be proved about a service whose routing table is "
+                f"empty, so this fails rather than passing vacuously."
+            )
+            return found
         failures.append(result.stderr.strip()[-600:])
     raise AssertionError(
         f"{service}'s routing table could not be loaded, so no test can prove "
@@ -593,6 +603,7 @@ def test_every_route_is_reached_through_the_apps_routing_table():
     seen from two sides.
     """
     uncovered = set()
+    census = []
     for service in sorted(service_packages()):
         entrypoint = REPO_ROOT / service / "app.py"
         # ``dashboard`` has an ``app.py`` and no routing table: Streamlit owns
@@ -600,24 +611,35 @@ def test_every_route_is_reached_through_the_apps_routing_table():
         if not entrypoint.exists() or "FastAPI(" not in entrypoint.read_text(
             encoding="utf-8"
         ):
+            census.append(f"{service}: skipped, no FastAPI app")
             continue
         requested = _requested_routes([
             TESTS_DIR / service,
             TESTS_DIR / "integration" / service,
         ])
-        for method, path in app_routes(service):
+        routes = app_routes(service)
+        for method, path in routes:
             if not any(
                 verb == method and _matches(path, target)
                 for verb, target in requested
             ):
                 uncovered.add(f"{service}: {method} {path}")
+        census.append(
+            f"{service}: {len(routes)} routes, {len(requested)} request literals"
+        )
+
+    # The census rides along in the failure message on purpose. A stale route
+    # waiver is the hardest failure in this file to read without it -- the
+    # message says a route is no longer uncovered, and the two ways that can
+    # happen (someone tested it, or it stopped being enumerated) want opposite
+    # responses. The counts tell them apart in one line.
     _assert_exactly(
         uncovered,
         ROUTE_WAIVERS,
         "Every route is reached through the app's routing table by at least "
         "one test in that service's own test directory. Health and readiness "
         "endpoints are not exempt -- they are what another service's drain "
-        "logic reads.",
+        "logic reads.\n\nWhat was enumerated:\n  " + "\n  ".join(census),
     )
 
 
