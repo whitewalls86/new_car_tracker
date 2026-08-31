@@ -118,8 +118,6 @@ _DELEGATED_SHORT = (
 MUTATION_ROUTES = {
     # Archiver and pack-worker share the app implementation but run in separate
     # processes, so their counters are intentionally distinct evidence sources.
-    "archiver/app.py:POST:/cleanup/parquet": _tracked("in_process", "archiver_jobs", "archive"),
-    "archiver/app.py:POST:/cleanup/parquet/run": _tracked("in_process", "archiver_jobs", "archive"),
     "archiver/app.py:POST:/cleanup/queue": _tracked("in_process", "archiver_jobs", "archive"),
     "archiver/app.py:POST:/cleanup/queue/run": _tracked("in_process", "archiver_jobs", "archive"),
     "archiver/app.py:POST:/flush/silver/run": _tracked(

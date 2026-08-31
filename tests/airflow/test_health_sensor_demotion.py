@@ -123,8 +123,11 @@ class TestTheSensorSkipsRatherThanFails:
             path.name for path in _dag_files()
             if HEALTH_FACTORY in path.read_text()
         } - {"sensors.py"}
-        assert len(wired) == 15, (
-            f"{len(wired)} DAGs wire a health sensor, expected 15. If a DAG "
+        # 15 when Plan 140 Stage 4 landed; 13 since Plan 134's survey deleted
+        # cleanup_parquet.py and cleanup_artifacts.py, whose endpoint had been
+        # a no-op since V036 dropped raw_artifacts.
+        assert len(wired) == 13, (
+            f"{len(wired)} DAGs wire a health sensor, expected 13. If a DAG "
             "dropped its sensor, work can now start against a service that is "
             "not answering; the sensors gate DAG correctness independently of "
             "who reports the outage."

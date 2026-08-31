@@ -582,6 +582,55 @@ Stage E's asymmetry — a false negative costs time, a false positive suppresses
 or manufactures evidence — is the argument for why an untrustworthy instrument
 is worse than a slow one, and Plan 160 cites it directly.
 
+### Stage H — One invariant, two censuses, drifting independently (XS)
+
+**Found 2026-08-30**, when [PR #293](https://github.com/whitewalls86/new_car_tracker/pull/293)
+deleted two DAGs and CI failed on a count nobody had touched:
+
+```
+AssertionError: found 14 health sensors across the DagBag, expected 16
+```
+
+Two assertions encode the same invariant — *no DAG has silently dropped its
+health sensor* — by counting different units in different files:
+
+| Test | Counts | Marked | Value |
+|---|---|---|---|
+| `tests/airflow/test_health_sensor_demotion.py` | DAG **files** wiring `http_health_sensor` | unit | 13 |
+| `tests/integration/airflow/test_dag_integrity.py` | `check_*_health` **tasks** in the DagBag | `integration` | 14 |
+
+They differ legitimately: `hourly_analytics_refresh` wires two sensors, archiver
+and dbt_runner. Nothing connects them, so [Plan 134](plan_134_archiver_endpoint_failure_contract.md)'s
+deletion updated the first, missed the second, and shipped — `056cde7` claimed
+in its own message to have moved "the census", of which there turned out to be
+two.
+
+**The marker split is what hid it.** The local suite runs `-m "not
+integration"`, so the deletion was verified at 3097 passed — a true number that
+did not include the missed assertion, which only exists in CI. The author could
+not have seen the failure by running the documented local command, and the
+local airflow install cannot run that file at all (`airflow.models` is absent),
+so there is no local command that would have caught it.
+
+> **Why this belongs to Stage D and not to Plan 134.** Stage D warns that
+> whole-file marking will eventually de-gate a cross-component contract test
+> silently, *"which is the exact failure this repo keeps having, in a new
+> place."* This is that failure in another new place, and the de-gating agent is
+> not a marker applied too broadly but the routine local/CI split itself. A
+> gating assertion that the author's own verification structurally cannot reach
+> is de-gated for every purpose except the final CI run.
+
+Scope, in Stage D's step 2–3 neighbourhood: stop maintaining the two numbers
+separately. Either derive one from the other, or have both read one declared
+registry of which DAGs owe a sensor, so that deleting a DAG updates a single
+place and a genuine drop still fails. Failing that, the weaker fix is to make
+each census name the other in an inline comment — done reactively in `33b275e`,
+which is documentation, not a mechanism, and will drift again.
+
+Also record what the local command does not cover. "3097 passed" reading as
+full verification, when an entire marked class is excluded, is the reporting
+half of the same defect.
+
 ## Success criteria
 
 1. Every PR shows a coverage number in the CI log, and this doc records the

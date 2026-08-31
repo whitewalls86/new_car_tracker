@@ -25,17 +25,9 @@ DAGS_DIR = REPO_ROOT / "airflow" / "dags"
 
 # Map dag filename -> expected dag_id and expected task_ids
 DAG_SPECS = {
-    "cleanup_artifacts.py": {
-        "dag_id": "cleanup_artifacts",
-        "tasks": {"check_deploy_intent", "check_archiver_health", "cleanup_parquet"},
-    },
     "cleanup_queue.py": {
         "dag_id": "cleanup_queue",
         "tasks": {"check_deploy_intent", "check_archiver_health", "cleanup_queue"},
-    },
-    "cleanup_parquet.py": {
-        "dag_id": "cleanup_parquet",
-        "tasks": {"check_deploy_intent", "check_archiver_health", "cleanup_parquet"},
     },
     "dbt_build.py": {
         "dag_id": "dbt_build",
@@ -305,8 +297,13 @@ def test_health_sensors_skip_rather_than_fail_on_the_real_operators():
                     "sensors ignore soft_fail on timeout (apache/airflow#61130)"
                 )
 
-    assert health_sensors == 16, (
-        f"found {health_sensors} health sensors across the DagBag, expected 16. "
+    # 16 when Plan 140 Stage 4 landed; 14 since Plan 134's survey deleted
+    # cleanup_parquet.py and cleanup_artifacts.py, each of which wired one
+    # check_archiver_health, for an endpoint that had been a no-op since V036.
+    # This counts sensor *tasks*; test_health_sensor_demotion counts the DAG
+    # *files* that wire one, which is 13 -- one DAG wires two sensors.
+    assert health_sensors == 14, (
+        f"found {health_sensors} health sensors across the DagBag, expected 14. "
         "These gate DAG correctness independently of who reports the outage, "
         "so a dropped one is work starting against an unanswering service."
     )
