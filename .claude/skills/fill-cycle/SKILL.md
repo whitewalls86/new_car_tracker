@@ -268,11 +268,19 @@ order is the evidence.
 Every other field comes from the plan document. Do not paste the plan's problem
 statement, architecture, rejected alternatives or evidence; link to them.
 
-Status on creation:
+Status on creation: **`Ready`, for every issue you put in the cycle.**
 
-- `Ready` for genuinely pullable slices;
-- `Backlog` for category-3 items whose gate has not yet closed, with the gate
-  written in `Blocked by`.
+An earlier version of this rule said to use `Backlog` for a category-3 item
+whose gate has not closed. **That is not possible here.** Measured seeding
+Cycle 2 on 2026-08-31: an issue saved with a `Backlog` status comes back with no
+`cycleId` at all — Linear ejects it from the cycle silently, and the save
+reports success. CAR-40 was created that way, vanished from the cycle listing,
+and had to be re-saved as `Ready`.
+
+So a not-yet-pullable item carries its gate in the **`Blocked by` field**, which
+is what that field is for, and stays `Ready`. If an item should genuinely not
+appear in the cycle at all, do not seed it — that is the eligibility rule, not a
+status.
 
 Never create in `In Progress`, `In Review`, `Soaking` or `Done`.
 
