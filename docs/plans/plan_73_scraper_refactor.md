@@ -1,6 +1,6 @@
 # Plan 73: Scraper Code Review & Refactor
 
-**Status:** Deferred — review after Plan 72
+**Status:** Superseded by [Plan 163](plan_163_documented_code_quality_fixes.md) (2026-08-30)
 **Priority:** Low (reassess after linting pass)
 
 `scraper/app.py` has accumulated significant scope: scrape logic, async job management, background threading, rotation guards, processing endpoints, and FastAPI wiring all in one file. This plan is a full code review and refactor — structural split plus logic quality pass.

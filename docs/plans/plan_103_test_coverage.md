@@ -1,6 +1,6 @@
 # Plan 103: Test Coverage Gaps
 
-**Status:** Planned
+**Status:** Superseded by Plans 161 and 162 (2026-08-30)
 
 ---
 

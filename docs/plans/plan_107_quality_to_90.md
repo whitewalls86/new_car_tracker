@@ -1,6 +1,6 @@
 # Plan 107: Quality Drive to 90
 
-**Status:** Planned
+**Status:** Superseded by Plans 161 and 162 (2026-08-30)
 **Goal:** Raise codebase score from 80 → 90 across the agreed rubric
 **Integrates:** Plan 103 (test coverage), Plan 106 (code review cleanup)
 **Source rubric:** Correctness & Reliability (25), Code Quality (25), Architecture (20), Testing (15), Operational Readiness (15)
