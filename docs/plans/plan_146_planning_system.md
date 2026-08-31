@@ -192,6 +192,31 @@ message parsing is not a reliable signal — file history is. And the archive's
 oldest entries (Plans 0-7) predate plan documents entirely, so nothing can be
 backfilled for them; they stay as they are.
 
+**Defect, found 2026-08-31 and fixed in `bf989fc`.** The sweep skips a section
+heading it does not recognise, which it must — old revisions carry headings that
+assert no state. But Stage 2 shortened `## Current closeout — finish before
+opening another large build` to `## Current closeout` at `0c08382` on
+2026-08-21, `STATE_BY_HEADING` was not updated, and skipping turned that into
+silence: for nine days the sweep reported **every closeout plan as `absent`** —
+Plan 136 as having left the index, Plans 149 and 160 as never arriving. Found
+while writing the 2026-08-30 recap, whose state table could not be produced
+without patching the map by hand.
+
+It is the [Plan 139](plan_139_test_suite_maintenance.md) Stage H shape: one
+invariant encoded twice, and only one encoding able to fail.
+`tests/test_planning_docs.py` names the same heading and *does* raise on a
+rename, which is exactly why the suite stayed green while this went blind. The
+fix maps both forms and adds
+`TestTheStateParserClassifiesEveryLiveHeading`, which reads the script's own
+tables and asserts every `##` heading in the live index is mapped or explicitly
+ignored. Measured across all 189 revisions, `current closeout` was the only
+unmapped heading, present in 55 of them.
+
+A second defect was fixed in the same function: `_git` decoded with the locale
+codec, so on a cp1252 host the history walk died with `UnicodeDecodeError` and
+the sweep could not run at all — the same defect `b80f387` fixed in the test
+suite on 2026-08-25.
+
 ### Stage 2 — Collapse to four tables
 
 Fold "Paused or blocked" into Backlog with a `Trigger` column. Delete the Plan
