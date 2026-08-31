@@ -584,9 +584,18 @@ the tests were written, reviewed, merged and maintained, and no mechanism
 existed that could notice they never ran. It is the sharpest available argument
 for criterion 3, and it was found by measuring rather than by reading.
 
+**A fourth rule was added after review**, on evidence found while investigating
+this PR's own red CI: *the harness must not decide the outcome.* The
+`Documentation tests` job fails on every docs-only changeset, and
+`tests/test_planning_docs.py` passes or fails purely on whether the checkout
+directory name is a valid Python identifier — 35 passed as
+`cartracker-scraper`, 2 failed as `new_car_tracker`, same commit, same machine.
+`tests/airflow/test_prune_task_logs_dag.py` is the same class already repaired
+in `21333ab`. Both are G13; the CI fix is CAR-42.
+
 The gap list records every measured violation with an owner plan: G1-G2 and
 G4-G9, G11-G12 to Plan 162, G3 to Plan 139 Stage F (CAR-36), G10 to Plan 139
-Stage D items 4 and 5.
+Stage D items 4 and 5, G13 to Plan 146 Stage 1 (CAR-42).
 
 Cost: estimate 2, actual 1 (-1). The nine questions were largely answerable by
 measurement rather than deliberation.

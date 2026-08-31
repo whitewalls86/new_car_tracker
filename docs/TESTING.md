@@ -308,6 +308,62 @@ A handler-level test could not have caught the failure, and did not.
 
 Judgement, not mechanism. The skill states it and refuses to certify it.
 
+### The harness must not decide the outcome
+
+**A test's result must be determined by the code under test, not by the
+environment it happens to run in.** Where a test genuinely depends on an
+environmental capability, it declares that dependency — a skip with a reason, a
+mocked boundary with a comment saying which capability forced it — rather than
+letting the environment silently decide.
+
+This is a separate rule from the three above, and it has bitten this repository
+twice in two weeks in opposite directions.
+
+**The benign direction — it fails where it should pass.**
+`tests/airflow/test_prune_task_logs_dag.py` built a real symlink, which needs
+elevated privileges on Windows, so the test failed on a developer machine for a
+reason that had nothing to do with pruning. `21333ab` is the repair and is the
+pattern to copy: mock `Path.is_symlink` and say why in a comment —
+*"the behavior owned here is our refusal to traverse a run directory that the
+filesystem classifies as a symlink, not pathlib's OS integration."* That
+sentence is the rule working. It draws the line between the capability the test
+depends on and the behaviour the test owns, and it makes rule 3 above come out
+right rather than wrong: the code owns its *reaction* to `is_symlink`, not
+`is_symlink` itself.
+
+**The dangerous direction — it passes where it should fail.**
+`tests/test_planning_docs.py` imports `scripts`, which resolves only when the
+repository root is on `sys.path`. The root carries an `__init__.py`, so pytest
+walks up for the package root — and whether it stops at the repo or climbs past
+it depends on **whether the checkout directory name is a valid Python
+identifier.** Measured on one machine, one OS, one commit, changing only the
+directory:
+
+| Checkout directory | `pytest --noconftest tests/test_planning_docs.py` |
+|---|---|
+| `cartracker-scraper` | 35 passed |
+| `new_car_tracker` (what CI uses) | **2 failed** |
+
+Nothing about the code differed. The harness decided.
+
+This one is worse than the symlink case for two compounding reasons, and both
+are the subject of rules elsewhere in this document: it produced a **false
+green** on the developer machine, and the only job that would have caught it —
+`Documentation tests` — runs solely on docs-only changesets, so it was skipped
+in 29 of the last 40 CI runs. A test that cannot fail where it is run is the
+[G1](#the-gap-list) failure in miniature.
+
+**The practical rules, then:**
+
+- A test that depends on an environmental capability declares it. An unexplained
+  mock of a filesystem, clock, platform or path primitive is a finding.
+- A green run on a developer machine is not evidence the test passes in CI, and
+  a CI job that is usually *skipped* is not evidence of anything at all. Check
+  `conclusion`, never just the run's colour.
+- Where an environment difference is reproducible, reproduce it — a throwaway
+  worktree at a matching path costs a minute and settles the question that
+  speculation cannot.
+
 ### Where SQL lives
 
 **Production SQL is a separately executable `.sql` file, loaded by
@@ -399,6 +455,7 @@ Mechanically checkable today, and therefore CAR-34's scope:
 | Every service directory has a row in the "enough" table | Compare this document's table to the service directories on disk |
 | Every `.sql` file and module-level statement is executed by a Layer 2 test | Collect what `tests/integration/sql/` imports and executes; compare to what `queries.py` exposes |
 | Every `Layer N` mention in `tests/` and `ci.yml` matches this document | Regex both, compare to the headings here — this is what stops [G11](#the-gap-list) recurring |
+| Every pytest invocation in `ci.yml` sets `PYTHONPATH` | Parse the workflow's `run:` steps; a pytest step without it is [G13](#the-gap-list)'s failure |
 
 Not mechanically checkable, and the skill must **say so rather than imply
 coverage it does not have**: whether the thing under test is the thing being
@@ -433,6 +490,7 @@ Recorded here, fixed elsewhere — Plan 161's non-goals hold.
 | G7 | **`dashboard/`: 7 modules, 0 test files.** Its SQL is covered by Layer 2 through `dashboard.queries`; its Python is covered by nothing | — | Plan 162 |
 | G8 | **`scraper/`: Plan 84's four-month-old deferral, now lifted.** One integration file, which is itself in G1 | — | Plan 162 |
 | G9 | `tests/test_container_health_app.py` and `tests/test_container_health_collector.py` are Layer 1 tests sitting in Layer 0's directory. `container_health` has no `tests/container_health/` and no Layer 4 at all | — | Plan 162 |
+| G13 | **Two known harness-decides-the-outcome tests.** `Documentation tests` fails on every docs-only changeset because it is the only pytest step in `ci.yml` without `PYTHONPATH` — latent since `bf989fc` (2026-08-31 09:00 CDT) and first run ~7h later by PR #299, which is why it went unnoticed. `tests/airflow/test_prune_task_logs_dag.py` is the same class already repaired, in `21333ab`, and is the pattern | Reproduced on master's tree in a worktree named `new_car_tracker`: 2 failed, 33 passed | **Plan 146 Stage 1 (CAR-42)** for the CI fix; the rule itself is here |
 | G11 | **The layer numbers in the code are Plan 84's, not this document's.** Docstrings across `tests/` and two step names in `ci.yml` say "Layer 1 — SQL smoke" and "Layer 3 — API integration", which are Layers 2 and 4 here. Mechanical sweep; the asserting test covers it afterwards so the two cannot drift again | `grep -rn 'Layer [0-9]' tests/ .github/` | Plan 162 |
 | G12 | **`airflow/dags/` has no `.sql` convention and cannot reach one.** No module under it imports `shared`, so `shared.query_loader` is unavailable and the DAG tree is the only place in the repository where "production SQL is a `.sql` file" is structurally impossible. This is what forces the single legitimate `ast` reader, `_sensor_constant()` | `grep -rn 'from shared' airflow/dags/` returns nothing | Plan 162 |
 | G10 | **The unit job's coverage is measured and discarded** — `--cov --cov-report=term-missing`, no threshold, no artifact. Worse, `[tool.coverage.run] source` names six packages and omits `container_health`, `dashboard`, `scripts` and `airflow/dags`, so **the two services below the floor are the two the instrument cannot see** | `ci.yml:131`, `pyproject.toml` | Plan 139 Stage D, items 4 and 5 — the half of D that stayed with 139 |
