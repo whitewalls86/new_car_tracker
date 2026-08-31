@@ -1,9 +1,14 @@
 # Plan 138 Stage 0 baseline — 2026-08-31
 
 The pre-change record of the public surface, captured before any Stage 1 copy is
-written. Every number here was re-measured on 2026-08-31 against
-`origin/master` at `0c3e5dd` and the live site. **Nothing was carried forward
-from the plan's 2026-08-17 audit column**, which is stale in six of its rows.
+written. Every number here was re-measured on 2026-08-31 against `7ba7566` and the live
+site. **Nothing was carried forward from the plan's 2026-08-17 audit column**,
+which is stale in six of its rows.
+
+The measurements were first taken at `d6bceb6` and re-confirmed unchanged at
+`7ba7566`, this branch's base. Everything between the two is documentation —
+`git diff --name-only d6bceb6 7ba7566` returns only `docs/` paths — so no DAG,
+model, migration, Compose service, or test file moved underneath them.
 
 All live observations were read-only `GET` requests to `https://cartracker.info`.
 No production configuration, container, or datum was changed.
