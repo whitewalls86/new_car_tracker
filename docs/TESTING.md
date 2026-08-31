@@ -465,6 +465,7 @@ the suite does not implement:
 | Every `.sql` file is executed by a Layer 2 test | `test_every_production_sql_file_is_touched_by_a_layer_2_test` | Collect what `tests/integration/sql/` imports and executes; compare to what `queries.py` exposes |
 | Every `Layer N` mention in `tests/` and `ci.yml` matches this document | `test_every_layer_number_in_the_code_matches_the_contract`, `test_every_test_directory_is_assigned_a_layer` | Regex both, compare to the headings here — this is what stops [G11](#the-gap-list) recurring |
 | Every pytest invocation in `ci.yml` sets `PYTHONPATH` | `test_every_pytest_invocation_in_ci_sets_pythonpath` | Parse the workflow's `run:` steps; a pytest step without it is [G13](#the-gap-list)'s failure |
+| Coverage measures every service directory, and the number it produces is consumed | `test_every_service_directory_is_measured_by_coverage`, `test_the_coverage_number_the_unit_job_produces_is_consumed` | Compare `[tool.coverage.run] source` to the service directories on disk; require `--cov-fail-under` on every `ci.yml` step that passes `--cov` |
 
 ### Specified here, not yet asserted
 
@@ -555,7 +556,31 @@ the sequence and the plan documents stay the place the history lives.
 | G11 | **The layer numbers in the code are Plan 84's, not this document's.** Docstrings across `tests/` and two step names in `ci.yml` say "Layer 1 — SQL smoke" and "Layer 3 — API integration", which are Layers 2 and 4 here. Mechanical sweep; the asserting test covers it afterwards so the two cannot drift again | `grep -rn 'Layer [0-9]' tests/ .github/` | Plan 162 |
 | G12 | **`airflow/dags/` has no `.sql` convention and cannot reach one.** No module under it imports `shared`, so `shared.query_loader` is unavailable and the DAG tree is the only place in the repository where "production SQL is a `.sql` file" is structurally impossible. This is what forces the single legitimate `ast` reader, `_sensor_constant()` | `grep -rn 'from shared' airflow/dags/` returns nothing | Plan 162 |
 | G14 | **54 of 76 production `.sql` files are named by no Layer 2 test.** All 19 under `processing/sql/`, all 8 under `ops/sql/`, all 3 under `scraper/sql/`, 17 of `archiver/`'s, the 6 `dashboard/sql/data_health_*` files and `airflow/sql/delete_stale_emails.sql`. `test_ops_queries.py` and `test_processing_queries.py` are named for the services whose statements they should execute, import nothing from either `queries.py`, and **paraphrase the SQL instead** — which the rule above calls worse than no test, because a paraphrase passes forever | `tests/test_testing_contract.py`, at the weakest reading of "executed": a file counts as covered if Layer 2 so much as names it. A stricter check can only find more | Plan 162 |
-| G10 | **The unit job's coverage is measured and discarded** — `--cov --cov-report=term-missing`, no threshold, no artifact. Worse, `[tool.coverage.run] source` names six packages and omits `container_health`, `dashboard`, `scripts` and `airflow/dags`, so **the two services below the floor are the two the instrument cannot see** | `ci.yml:131`, `pyproject.toml` | Plan 162 — Stage D, reassigned 2026-08-31 |
+
+**G10 closed on 2026-08-31** by Plan 162 Stage 2 (CAR-46). Its row is gone
+because this list only shrinks: `[tool.coverage.run] source` now names all ten
+production directories, the unit job gates on `--cov-fail-under` and uploads
+`coverage.xml`, and the rules table above carries the two assertions that fail
+if either half comes back.
+
+Unblinding it moved the reported number from **88% to 76%** with no code
+changing, which is the whole point of the repair — the four directories added
+hold 11,709 of the repository's 19,733 measurable statements, more than the six
+that were being measured. What was hidden, measured the same run:
+
+| Added to `source` | Statements | Covered |
+|---|---|---|
+| `scripts/` | 10,488 | 70% |
+| `dashboard/`, `airflow/dags/`, `container_health/` | 1,221 | 43% |
+| *(previously measured: the other six)* | 8,024 | 88% |
+
+The 43% row is the two services the "enough" table already put below the floor,
+now visible to the instrument that will grade Stages 6 and 8. **The 70% row is
+a caveat on the threshold**, not a result: `scripts/` is largely one-off audit
+and migration code — `reconcile_april_detail.py` alone is 3,859 statements —
+so it dominates the total and will damp any movement the service stages
+produce. If the ratchet stops responding to real work, splitting the gate is
+the answer, not dropping the directory back out of `source`.
 
 ---
 
@@ -564,11 +589,14 @@ the sequence and the plan documents stay the place the history lives.
 - **The CI restructure.** Splitting the 267s `dbt build + test` job, building
   dbt against the Plan 120 lake snapshot, and running the suites against the
   real Compose definitions are [Plan 162](plans/plan_162_testing_census_and_restructure.md).
-- **A coverage threshold.** [Plan 162](plans/plan_162_testing_census_and_restructure.md)
-  owns whether there is a gate at all, and whether `airflow/dags/` and
-  `dashboard/` join the coverage configuration — Stage D moved there entire
-  when Plan 139 archived on 2026-08-31. This document says only that a
-  percentage is not the definition of enough.
+- **What the coverage threshold should be.** Whether there is a gate at all was
+  decided by [Plan 162](plans/plan_162_testing_census_and_restructure.md)
+  Stage 2 on 2026-08-31: there is one, `--cov-fail-under` on the unit job, over
+  all ten production directories including `airflow/dags/`, `dashboard/` and
+  `scripts/`. It is a ratchet against regression, raised by the stages that
+  raise the number. **The number it is set to is not a target**, and this
+  document's position is unchanged: a percentage is not the definition of
+  enough, and clearing the floor is not evidence that a service meets it.
 - **Impact-based test selection.** Plan 139 Stage E specified it and has since
   moved to Plan 162; nothing here changes its design.
 - **Fixing anything in the gap list.**

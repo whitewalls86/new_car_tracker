@@ -187,6 +187,42 @@ MUTATIONS = [
         [],
     ),
     (
+        "test_every_service_directory_is_measured_by_coverage",
+        "a new service package appears that coverage is not pointed at",
+        lambda: _write("notifier/__init__.py", ""),
+        [],
+        ["notifier/__init__.py"],
+    ),
+    (
+        "test_every_service_directory_is_measured_by_coverage",
+        "a coverage source is renamed and nothing measures it any more",
+        lambda: _edit("pyproject.toml", '    "dashboard",', '    "dashboards",'),
+        ["pyproject.toml"],
+        [],
+    ),
+    (
+        "test_the_coverage_number_the_unit_job_produces_is_consumed",
+        "the unit job goes back to measuring coverage and discarding it",
+        lambda: _edit(
+            ".github/workflows/ci.yml",
+            "\n          --cov-fail-under=74",
+            "",
+        ),
+        [".github/workflows/ci.yml"],
+        [],
+    ),
+    (
+        "test_the_coverage_number_the_unit_job_produces_is_consumed",
+        "a coverage threshold is left behind with nothing measuring coverage",
+        lambda: _edit(
+            ".github/workflows/ci.yml",
+            "          --cov --cov-report=term-missing --cov-report=xml",
+            "          --cov-report=term-missing --cov-report=xml",
+        ),
+        [".github/workflows/ci.yml"],
+        [],
+    ),
+    (
         "test_every_asserted_rule_names_a_real_test",
         "the rules table names a check that does not exist",
         lambda: _edit(

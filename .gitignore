@@ -13,6 +13,7 @@ dbt/.*.yml
 .claude/*
 !.claude/skills/
 .coverage
+coverage.xml
 GPT-Review-*.md.txt
 target/
 ssh-key*
