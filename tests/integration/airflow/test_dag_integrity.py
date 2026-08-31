@@ -140,6 +140,10 @@ DAG_SPECS = {
             "notify",
         },
     },
+    "disk_usage.py": {
+        "dag_id": "disk_usage",
+        "tasks": {"check_deploy_intent", "check_pack_worker_health", "disk_usage"},
+    },
     "prune_task_logs.py": {
         "dag_id": "prune_task_logs",
         "tasks": {"check_deploy_intent", "prune_task_logs"},
@@ -204,6 +208,34 @@ def test_dag_id_and_tasks(filename, spec):
         f"Task mismatch for '{dag_id}':\n"
         f"  expected: {spec['tasks']}\n"
         f"  actual:   {actual_tasks}"
+    )
+
+
+@pytest.mark.integration
+def test_every_dag_the_dagbag_builds_is_named_in_the_specs():
+    """DAG_SPECS is a census too, and it was already one short.
+
+    `disk_usage` was absent from it, so neither `test_dag_imports_without_error`
+    nor `test_dag_id_and_tasks` ever reached the DAG -- while
+    airflow/dags/disk_usage.py's own `except ImportError` comment said "the
+    Airflow integration suite imports the real DAG and asserts it exists". The
+    claim was checked into source and false, which is the same defect Plan 162
+    Stage 3 removed one layer up: a census kept honest by whoever remembers it.
+
+    Parametrising over DAG_SPECS can only ever check the DAGs someone thought to
+    list. This asks the DagBag instead, so a new DAG file fails until it is
+    named -- and a deleted one fails until its entry goes.
+    """
+    dagbag = _make_dagbag()
+    assert not dagbag.import_errors
+
+    built = set(dagbag.dags)
+    listed = {spec["dag_id"] for spec in DAG_SPECS.values()}
+    assert built == listed, (
+        "DAG_SPECS no longer names every DAG in airflow/dags/.\n"
+        f"  built but unlisted: {sorted(built - listed)}\n"
+        f"  listed but absent:  {sorted(listed - built)}\n"
+        "An unlisted DAG is imported and asserted by nothing in this file."
     )
 
 
