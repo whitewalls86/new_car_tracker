@@ -62,9 +62,12 @@ largest single item in the plan.
 
 ### Six gaps have no mechanism at all
 
-Six of the twelve gaps this plan owns are checked by nothing: **G5, G7, G8, G9,
-G10 and G12.** They are recorded in prose, they are not among the 120, and they
-can worsen without anything noticing. That is the condition
+Six of the thirteen gaps this plan owns are checked by nothing: **G5, G7, G8,
+G9, G10 and G12.** (Twelve at the census; **G13 was re-owned here on
+2026-08-31** when its Plan 146 half shipped, and it is half-checked — the
+`PYTHONPATH` clause is asserted and nothing else is.) They are recorded in
+prose, they are not among the 120, and they can worsen without anything
+noticing. That is the condition
 `ARCHITECTURE.md:179` was in before Plan 161, and it is why this plan's success
 criteria are written the way they are below.
 
@@ -92,7 +95,7 @@ order:
 | **2** | Unblind coverage. `[tool.coverage.run] source` names every service directory, and something consumes the number | G10 | -- |
 | **3** | The two health-sensor censuses read one declared source instead of two hardcoded counts | Plan 139 Stage H | -- |
 | **4** | Split the 267s `dbt build + test` job — the cheap half of the restructure | Plan 139 Stages B, C | -- |
-| **5** | The mechanical sweeps: 34 mock conversions and 16 layer renames | G4, G11 | 50 |
+| **5** | The mechanical sweeps: 34 mock conversions and 16 layer renames, plus the one live harness-decides-the-outcome test | G4, G11, G13 | 50 |
 | **6** | Route coverage. Build `container_health`'s test home, then fill it | G6, G9 | 12 |
 | **7** | SQL execution, from both directions. The largest stage | G14, G5 | 54 |
 | **8** | The services below the floor | G7, G8 | -- |
@@ -135,6 +138,16 @@ that do not exist; G6's four `container_health` routes are uncoverable until it
 does. G5 moves inline SQL into `.sql` files and G14 gets Layer 2 executing
 `.sql` files — the same modules, from opposite ends.
 
+**G13 joined Stage 5 on 2026-08-31, for the same reason.** It is the thirteenth
+gap and the only one this plan did not originally own: the contract assigned it
+to Plan 146 Stage 1 for the `PYTHONPATH` half, that half shipped as CAR-42, and
+the remaining instance was left owned by a plan that owes no code. Stage 5 is
+the right home because it is already the pass that reads every patch in the
+suite — and "an unexplained mock of a filesystem, clock, platform or path
+primitive is a finding" is the same question asked one step further out. The
+pattern the rule holds up as correct, `21333ab`, is itself a mocking fix. Doing
+the two together is one reading of the suite instead of two.
+
 ### Stage 3 carries a constraint worth knowing before it starts
 
 The two censuses live in **different virtual environments**.
@@ -167,13 +180,22 @@ could tell. This is the criterion the six unmechanised gaps exist to be measured
 against, and it is why Stage 2 comes before the stages that would otherwise be
 graded by the instrument it repairs.
 
-Two exceptions, stated here so they are decisions rather than omissions:
+Three exceptions, stated here so they are decisions rather than omissions:
 
 - **G7** cannot be asserted by the existing rules and needs its own approach;
   the criterion is met by whatever that approach is, not by the route rule.
 - **G12** may close without a rule at all, because the condition a rule would
   assert is the constraint being removed. If it ships without one, the plan says
   so explicitly rather than leaving a silent gap.
+- **G13 closes an instance without closing its class, and cannot do better.**
+  Fixing the canary test's quoting is a one-file repair; asserting that no test
+  lets its environment decide the outcome is not mechanisable, and the one place
+  that could observe the remaining failures — CI — runs Linux and is blind to
+  every Windows-only instance by construction. The `PYTHONPATH` clause is the
+  only part with a mechanism and it already has one. This is the weakest of the
+  three exceptions and it should be recorded as such rather than dressed up: the
+  next instance of G13's class will be found the way the last two were, by
+  someone running the suite somewhere CI does not.
 
 **3. The `dbt build + test` job is no longer the critical path**, and what
 replaced it is named for what it does. Measured in wall-clock seconds against
@@ -267,8 +289,8 @@ of each had already shipped under other plans without them.
 
 Archived. It decided the rules and built the mechanism that measures them; this
 plan closes the distance. `docs/TESTING.md`'s gap list names Plan 162 as the
-owner of twelve entries, and an assertion fails if that owner is ever an
-archived plan — so this plan cannot be quietly abandoned without the suite
+owner of thirteen entries — twelve at the census, plus G13, re-owned here on
+2026-08-31 — and an assertion fails if that owner is ever an archived plan — so this plan cannot be quietly abandoned without the suite
 saying so.
 
 ### Plans 103 and 107 — coverage
@@ -412,7 +434,24 @@ defects, and the queue fragility, were invisible to review and obvious to
 execution, so the remaining stages should be sized on the assumption that
 anything this plan has only *read* is still unmeasured.
 
-**Out of scope, found in passing:** `tests/scripts/test_verify_recovery_live_state.py::test_a_failing_canary_command_fails_the_check`
+**Found in passing, and it turned out to belong to nobody — so this plan took
+it.** `tests/scripts/test_verify_recovery_live_state.py::test_a_failing_canary_command_fails_the_check`
 fails on Windows ("The filename, directory name, or volume label syntax is
-incorrect") and passes in CI. Reproduced on an untouched checkout, so it
-predates this stage and belongs to nothing here.
+incorrect") and passes in CI; it quotes `sys.executable` with `shlex.quote`,
+which `cmd.exe` does not honour. Reproduced on an untouched checkout, so it
+predates this stage.
+
+Chasing its owner is what made it Plan 162's. It is G13's class, and G13 was
+the one gap in `docs/TESTING.md` this plan did not own — assigned to **Plan 146
+Stage 1 (CAR-42)**, scoped to the `PYTHONPATH` half. That half shipped; the
+`Documentation tests` step sets `PYTHONPATH` today, and `21333ab` had already
+repaired the other named instance. So the G13 row described finished work while
+naming an owner in closeout that owes no code, and the live instance — found and
+deliberately left by Plan 161 — had no owner at all.
+
+**G13 is therefore re-owned to Plan 162, Stage 5**, and the row rewritten to
+describe what is actually left. Stage 5 rather than Stage 3: Stage 3 is a
+specific two-venv census fix and "also small" is not a category, while Stage 5
+is already the pass that reads every patch in the suite. What that costs is
+honest and recorded above — [a third exception](#success-criteria) to success
+criterion 2, and the weakest of the three.
