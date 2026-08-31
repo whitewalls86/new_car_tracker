@@ -628,6 +628,77 @@ Cheap to fix and cheap to verify: the fix is a few lines, and the check on it
 is that a batch whose output is short fails loudly instead of resolving into a
 verdict about the log contract.
 
+**Third occurrence, 2026-08-30.** [PR #293 workflow run
+33341201637](https://github.com/whitewalls86/new_car_tracker/actions/runs/33341201637)
+failed on a branch touching no `promtail/`, corpus, compose or script file, and
+this time reported **two** mismatches in one run, in two different batches:
+
+```
+2 contract mismatch(es):
+  - airflow_warning: corpus says retained, Promtail dropped it
+  - oauth_upstream_failure: corpus says retained, Promtail dropped it
+```
+
+This refines the mechanism above rather than confirming it. Both missing lines
+are **mid-batch**, not trailing — `airflow_warning` is line 2 of the 4-line
+`airflow-scheduler/container_stdout` batch, and `oauth_upstream_failure` is line
+3 of 7 for `oauth2-proxy`. A process exiting before flushing loses its *tail*,
+so simple truncation does not explain a retained line 2 of 4 with lines 3 and 4
+present. The likelier reading is that Promtail's own output interleaves with the
+dry-run entries, and `_ENTRY` — which scores any unparseable stdout line as
+absent — cannot tell a mangled line from a dropped one. Either way Stage G's
+scope is unchanged and now better supported: absence must be proved, not
+inferred from short or unparseable output.
+
+### Stage H — One invariant, two censuses, drifting independently (XS)
+
+**Found 2026-08-30**, when [PR #293](https://github.com/whitewalls86/new_car_tracker/pull/293)
+deleted two DAGs and CI failed on a count nobody had touched:
+
+```
+AssertionError: found 14 health sensors across the DagBag, expected 16
+```
+
+Two assertions encode the same invariant — *no DAG has silently dropped its
+health sensor* — by counting different units in different files:
+
+| Test | Counts | Marked | Value |
+|---|---|---|---|
+| `tests/airflow/test_health_sensor_demotion.py` | DAG **files** wiring `http_health_sensor` | unit | 13 |
+| `tests/integration/airflow/test_dag_integrity.py` | `check_*_health` **tasks** in the DagBag | `integration` | 14 |
+
+They differ legitimately: `hourly_analytics_refresh` wires two sensors, archiver
+and dbt_runner. Nothing connects them, so [Plan 134](plan_134_archiver_endpoint_failure_contract.md)'s
+deletion updated the first, missed the second, and shipped — `056cde7` claimed
+in its own message to have moved "the census", of which there turned out to be
+two.
+
+**The marker split is what hid it.** The local suite runs `-m "not
+integration"`, so the deletion was verified at 3097 passed — a true number that
+did not include the missed assertion, which only exists in CI. The author could
+not have seen the failure by running the documented local command, and the
+local airflow install cannot run that file at all (`airflow.models` is absent),
+so there is no local command that would have caught it.
+
+> **Why this belongs to Stage D and not to Plan 134.** Stage D warns that
+> whole-file marking will eventually de-gate a cross-component contract test
+> silently, *"which is the exact failure this repo keeps having, in a new
+> place."* This is that failure in another new place, and the de-gating agent is
+> not a marker applied too broadly but the routine local/CI split itself. A
+> gating assertion that the author's own verification structurally cannot reach
+> is de-gated for every purpose except the final CI run.
+
+Scope, in Stage D's step 2–3 neighbourhood: stop maintaining the two numbers
+separately. Either derive one from the other, or have both read one declared
+registry of which DAGs owe a sensor, so that deleting a DAG updates a single
+place and a genuine drop still fails. Failing that, the weaker fix is to make
+each census name the other in an inline comment — done reactively in `33b275e`,
+which is documentation, not a mechanism, and will drift again.
+
+Also record what the local command does not cover. "3097 passed" reading as
+full verification, when an entire marked class is excluded, is the reporting
+half of the same defect.
+
 ## Success criteria
 
 1. Every PR shows a coverage number in the CI log, and this doc records the
