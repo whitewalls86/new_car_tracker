@@ -18,7 +18,7 @@ directions, so a waiver that no longer describes a violation fails just as
 loudly as an unwaived violation does. That is what "the list only shrinks"
 means when a test says it rather than a document.
 
-Seven rules are mechanical and are asserted here, matching the table in
+Eight rules are mechanical and are asserted here, matching the table in
 `docs/TESTING.md` under *What CI asserts*. Four more are judgement -- whether
 the thing under test is the thing being mocked, whether a failure branch
 matters to another service, whether an assertion is meaningful, and whether a
@@ -31,7 +31,7 @@ to the repository; ``test_every_asserted_rule_names_a_real_test`` compares the
 contract to this file, so the rules table cannot claim a check that was never
 written. It was added by CAR-43 after the table was found doing exactly that.
 
-Three of the seven checks report more violations than the contract's gap list
+Three of the eight checks report more violations than the contract's gap list
 recorded on 2026-08-31, because CAR-33 measured some of them by hand and by
 eye:
 
@@ -53,6 +53,7 @@ import json
 import re
 import subprocess
 import sys
+import tomllib
 from dataclasses import dataclass
 from datetime import date
 from functools import lru_cache
@@ -1006,7 +1007,7 @@ def test_every_layer_number_in_the_code_matches_the_contract():
 # Rule 7 -- the harness must not decide the outcome.
 # ---------------------------------------------------------------------------
 def test_every_pytest_invocation_in_ci_sets_pythonpath():
-    """G13, and the only one of the seven with nothing left to waive.
+    """G13, and one of the two rules here with nothing left to waive.
 
     ``tests/test_planning_docs.py`` passed or failed on one machine, one OS and
     one commit purely on whether the checkout directory name was a valid Python
@@ -1041,6 +1042,91 @@ def _step_env(job_name: str, step_name: str) -> tuple[str, ...]:
                 keys += list(step.get("env", {}))
         return tuple(keys)
     return ()
+
+
+# ---------------------------------------------------------------------------
+# Rule 8 -- the instrument can see every service, and its number is read.
+# ---------------------------------------------------------------------------
+COVERAGE_CONFIG = "pyproject.toml"
+
+
+@lru_cache(maxsize=None)
+def coverage_sources() -> frozenset[str]:
+    """``[tool.coverage.run] source``, as written."""
+    config = tomllib.loads(_read(COVERAGE_CONFIG))
+    source = config["tool"]["coverage"]["run"]["source"]
+    assert source, f"{COVERAGE_CONFIG} declares an empty coverage source list"
+    return frozenset(source)
+
+
+def test_every_service_directory_is_measured_by_coverage():
+    """G10's first half: a service coverage cannot see reads as covered.
+
+    Until Plan 162 Stage 2 this list named six packages and omitted
+    ``container_health``, ``dashboard``, ``scripts`` and ``airflow/dags`` --
+    so the two services the "enough" table puts furthest below the floor were
+    the two the instrument was blind to, and the 88% it reported was 88% of
+    the code already being tested. Adding them moved the honest number to 76%.
+
+    The forward direction is what this rule is for: a service package added
+    without a line here is measured by nothing, silently, and the total goes
+    *up* for it. ``scripts`` and ``airflow/dags`` are in ``source`` for the
+    same reason but cannot be demanded by the same derivation -- neither is a
+    package, so :func:`service_packages` does not see them. The phantom check
+    below is what still catches those two being renamed away.
+    """
+    missing = sorted(service_packages() - coverage_sources())
+    assert not missing, (
+        f"service directories absent from [tool.coverage.run] source in "
+        f"{COVERAGE_CONFIG}: {missing}. Coverage reports a percentage of what "
+        f"it was pointed at, so an unlisted service does not lower the "
+        f"number -- it disappears from it."
+    )
+
+    phantom = sorted(
+        entry for entry in coverage_sources()
+        if not (REPO_ROOT / entry).is_dir()
+    )
+    assert not phantom, (
+        f"[tool.coverage.run] source in {COVERAGE_CONFIG} names directories "
+        f"that do not exist: {phantom}. Coverage skips them without "
+        f"complaint, which is how a renamed package stops being measured."
+    )
+
+
+def test_the_coverage_number_the_unit_job_produces_is_consumed():
+    """G10's second half, and the half that was the whole of the gap.
+
+    ``--cov`` with nothing reading the result is a step that cannot fail on
+    coverage, which is a measurement and not a check. Plan 139 Stage A added
+    the measurement and stopped there. Both directions are asserted: a step
+    that measures without a floor, and a floor with nothing measuring, are the
+    same gap wearing different clothes.
+
+    The flags are compared as whole tokens rather than by substring, because
+    ``"--cov" in args`` is true of ``--cov-fail-under`` too -- which would make
+    the second half of this check unreachable and turn it into decoration.
+    """
+    measuring = {
+        f"{job}: {step}" for job, step, args in pytest_steps()
+        if any(flag == "--cov" or flag.startswith("--cov=")
+               for flag in args.split())
+    }
+    gated = {
+        f"{job}: {step}" for job, step, args in pytest_steps()
+        if any(flag.startswith("--cov-fail-under") for flag in args.split())
+    }
+    ungated = sorted(measuring - gated)
+    assert not ungated, (
+        f"pytest steps in {WORKFLOW} that measure coverage and set no "
+        f"threshold: {ungated}. The number is produced and discarded, which "
+        f"is exactly what G10 recorded."
+    )
+    unmeasured = sorted(gated - measuring)
+    assert not unmeasured, (
+        f"pytest steps in {WORKFLOW} that set a coverage threshold without "
+        f"measuring coverage: {unmeasured}."
+    )
 
 
 # ---------------------------------------------------------------------------

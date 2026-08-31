@@ -145,8 +145,8 @@ MUTATIONS = [
         "a gap entry a waiver depends on is renamed in the contract",
         lambda: _edit(
             "docs/TESTING.md",
-            "| G2 | `tests/integration/lakehouse/`",
-            "| G2x | `tests/integration/lakehouse/`",
+            "| G4 | **34 test files patch",
+            "| G4x | **34 test files patch",
         ),
         ["docs/TESTING.md"],
         [],
@@ -156,11 +156,23 @@ MUTATIONS = [
         "a waiver survives the repair it was waiting for",
         lambda: _edit(
             TEST,
-            'Waiver("tests/integration/lakehouse", gap="G2", owner=162),',
-            'Waiver("tests/integration/lakehouse", gap="G2", owner=162),\n'
-            '    Waiver("tests/integration/ops", gap="G1", owner=162),',
+            "CI_INVOCATION_WAIVERS = ()",
+            'CI_INVOCATION_WAIVERS = (\n'
+            '    Waiver("tests/integration/ops", gap="G4", owner=162),\n'
+            ')',
         ),
         [TEST],
+        [],
+    ),
+    (
+        "test_no_dormant_suite_is_quietly_running",
+        "a suite declared dormant acquires a CI step and keeps the declaration",
+        lambda: _edit(
+            ".github/workflows/ci.yml",
+            "run: pytest tests/integration/archiver/ -v -m integration",
+            "run: pytest tests/integration/lakehouse/ -v -m integration",
+        ),
+        [".github/workflows/ci.yml"],
         [],
     ),
     (
@@ -180,10 +192,46 @@ MUTATIONS = [
         "a waiver's owner plan is archived and the waiver stays behind",
         lambda: _edit(
             TEST,
-            'Waiver("tests/integration/lakehouse", gap="G2", owner=162),',
-            'Waiver("tests/integration/lakehouse", gap="G2", owner=84),',
+            'Waiver(subject, gap="G4", owner=162)',
+            'Waiver(subject, gap="G4", owner=84)',
         ),
         [TEST],
+        [],
+    ),
+    (
+        "test_every_service_directory_is_measured_by_coverage",
+        "a new service package appears that coverage is not pointed at",
+        lambda: _write("notifier/__init__.py", ""),
+        [],
+        ["notifier/__init__.py"],
+    ),
+    (
+        "test_every_service_directory_is_measured_by_coverage",
+        "a coverage source is renamed and nothing measures it any more",
+        lambda: _edit("pyproject.toml", '    "dashboard",', '    "dashboards",'),
+        ["pyproject.toml"],
+        [],
+    ),
+    (
+        "test_the_coverage_number_the_unit_job_produces_is_consumed",
+        "the unit job goes back to measuring coverage and discarding it",
+        lambda: _edit(
+            ".github/workflows/ci.yml",
+            "\n          --cov-fail-under=74",
+            "",
+        ),
+        [".github/workflows/ci.yml"],
+        [],
+    ),
+    (
+        "test_the_coverage_number_the_unit_job_produces_is_consumed",
+        "a coverage threshold is left behind with nothing measuring coverage",
+        lambda: _edit(
+            ".github/workflows/ci.yml",
+            "          --cov --cov-report=term-missing --cov-report=xml",
+            "          --cov-report=term-missing --cov-report=xml",
+        ),
+        [".github/workflows/ci.yml"],
         [],
     ),
     (

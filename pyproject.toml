@@ -25,11 +25,15 @@ markers = [
 
 [tool.coverage.run]
 source = [
+    "airflow/dags",
     "archiver",
+    "container_health",
+    "dashboard",
     "dbt_runner",
     "ops",
     "processing",
     "scraper",
+    "scripts",
     "shared",
 ]
 
