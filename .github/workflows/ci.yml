@@ -64,6 +64,13 @@ jobs:
       - run: pip install pytest
       - run: pytest --noconftest tests/test_planning_docs.py -q
         env:
+          # The repo root carries an __init__.py, so pytest's package-root walk
+          # climbs past it whenever the checkout directory name is a valid
+          # Python identifier -- which `new_car_tracker` is. That drops the repo
+          # root off sys.path and `from scripts import ...` stops resolving, so
+          # this job is the only place TestTheStateParserClassifiesEveryLiveHeading
+          # fails. Every other pytest step here already sets this.
+          PYTHONPATH: ${{ github.workspace }}
           LOG_PATH: /tmp/app.log
 
   lint:
