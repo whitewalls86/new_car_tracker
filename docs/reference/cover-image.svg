@@ -134,19 +134,19 @@
   <rect x="822" y="625" width="275" height="50" rx="25" fill="#0d1117" stroke="#21262d" stroke-width="1.5"/>
   <rect x="822" y="625" width="5"   height="50" fill="#e3b341"/>
   <text x="962" y="657" text-anchor="middle"
-        font-family="system-ui, Arial, sans-serif" font-size="19" fill="#8b949e">13.7M+ observations</text>
+        font-family="system-ui, Arial, sans-serif" font-size="19" fill="#8b949e">Replayable bronze HTML</text>
 
   <!-- Badge 4: Tests -->
   <rect x="1122" y="625" width="275" height="50" rx="25" fill="#0d1117" stroke="#21262d" stroke-width="1.5"/>
   <rect x="1122" y="625" width="5"   height="50" fill="#2ea043"/>
   <text x="1262" y="657" text-anchor="middle"
-        font-family="system-ui, Arial, sans-serif" font-size="19" fill="#8b949e">974 tests in CI</text>
+        font-family="system-ui, Arial, sans-serif" font-size="19" fill="#8b949e">3,000+ tests in CI</text>
 
   <!-- Badge 5: Migrations -->
   <rect x="1422" y="625" width="275" height="50" rx="25" fill="#0d1117" stroke="#21262d" stroke-width="1.5"/>
   <rect x="1422" y="625" width="5"   height="50" fill="#8957e5"/>
   <text x="1562" y="657" text-anchor="middle"
-        font-family="system-ui, Arial, sans-serif" font-size="19" fill="#8b949e">39 schema migrations</text>
+        font-family="system-ui, Arial, sans-serif" font-size="19" fill="#8b949e">40+ schema migrations</text>
 
   <!-- ===================== FOOTER ===================== -->
   <text x="960" y="945"
