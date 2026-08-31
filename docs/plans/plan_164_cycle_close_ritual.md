@@ -166,6 +166,25 @@ stashes survive here, four of them naming branches that no longer exist. They
 are invisible to every `git branch` command and appear in `git log --all`, which
 is how they were found. Report them; never drop one automatically.
 
+**7. `git branch -d`'s safety check is against the branch's configured
+*upstream*, not against `HEAD`** — so it returns opposite verdicts for branches
+in identical states. Measured deleting these three on 2026-08-31: two had no
+upstream, so `-d` tested them against `HEAD`, found them merged, and deleted
+them. The third had `branch.<name>.merge = refs/heads/master`, so `-d` tested it
+against `origin/master`, and refused — while saying plainly *"not yet merged to
+`refs/remotes/origin/master`, even though it is merged to HEAD"*.
+
+The refusal was correct and the message was honest; the trap is the
+inconsistency. Two succeed, one fails, and the obvious next move is the one git
+suggests in its own hint: `-D`. **A `-d` refusal is a signal to find out which
+ref it compared against, never a cue to reach for `-D`.** Establish where the
+content actually is first; here it was reachable from the pushed PR branch, and
+`-D` was justified only because of that.
+
+This also means an unmerged-PR workflow makes `-d` unreliable in the safe
+direction: a branch folded into a review branch is not merged to `master` yet, so
+`-d` will refuse or permit it depending on an unrelated config value.
+
 **6. Never touch the current branch or `master`, check open PRs before deleting,
 and assume another agent is mid-edit.** The repository already carries the
 shared-worktree rule for staging; it applies with more force to ref deletion,
