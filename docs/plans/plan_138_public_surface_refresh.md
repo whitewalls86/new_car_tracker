@@ -272,9 +272,10 @@ architecture, never lifting §1 or the prefix listings.
 
 **They are sources, not authorities, until reconciled.** A truth pass cannot
 draw from a document that carries the same drift it exists to remove.
-`ARCHITECTURAL_OVERVIEW` §1 states that FlareSolverr performs the browser
-bootstrap; `docker-compose.yml:174` marks that container **vestigial** and names
-`trawl` as the live scrape path. The mechanism described is accurate — the code
+As written on 2026-08-28, `ARCHITECTURAL_OVERVIEW` §1 stated that FlareSolverr
+performs the browser bootstrap; `docker-compose.yml:174` marks that container
+**vestigial** and names `trawl` as the live scrape path (resolved — see the
+Gate 0b evidence below). The mechanism described is accurate — the code
 still speaks the FlareSolverr v1 protocol and the environment variable is still
 `FLARESOLVERR_URL` — but a reader concludes the project runs FlareSolverr in
 production, which it does not. Both documents also predate Plan 145's Stage 5
@@ -284,6 +285,34 @@ commit and the Stage 6 machinery.
 against `docker-compose.yml` and `scraper/processors/cf_session.py`, and both
 documents' review dates are refreshed, before any Stage 1 copy is drawn from
 them. Anything not reconciled is quoted from the source tree instead.
+
+#### Gate 0b evidence — 2026-08-31 (CAR-37)
+
+The naming drift is reconciled. `ARCHITECTURAL_OVERVIEW` §1 no longer implies
+production runs FlareSolverr: seven passages changed, and a note after the
+two-layer bullet list now records the three facts that were in conflict.
+
+| Claim | Source of truth |
+|---|---|
+| The live solver is `trawl`, not `flaresolverr` | `docker-compose.yml:174` marks the container vestigial; `docker-compose.yml:209` defines `trawl`, digest-pinned under the `trawl` profile |
+| The variable kept its old name | `FLARESOLVERR_URL=http://trawl:8191` in production — [`runbook_solver_oom_and_recycle.md:8`](../runbooks/runbook_solver_oom_and_recycle.md), and Plan 136 §132 records the same |
+| The protocol really is FlareSolverr's | `cf_session.py:187` POSTs `{"cmd": "request.get"}` to `{FLARESOLVERR_URL}/v1`, which `trawl` implements |
+| The vestigial container still runs | Zero requests served since 2026-07-07, per the runbook; retained deliberately so health coverage never exempts a service believed unused |
+
+Review dates refreshed to 2026-08-31 on both documents.
+
+**Two findings recorded rather than fixed**, because both are outside this
+gate:
+
+- `.env.example:49-57` still defaults `FLARESOLVERR_URL` to the vestigial
+  container and describes `trawl` as an "Optional TRAWL solver trial". That is
+  the same drift one layer down, in a file this gate does not name.
+- Neither overview carries an internal-only marker, even though Stage 0 treats
+  them as internal references and §1 documents the anti-detection path. The
+  boundary currently lives only in this plan document.
+
+The staleness against Plan 145 Stage 5/6 noted above is **not** addressed here;
+this gate covered the scraper section only.
 
 ## Stage 1 — Rewrite the factual narrative
 
