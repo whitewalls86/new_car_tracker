@@ -478,6 +478,44 @@ jobs:
           TEST_DATABASE_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
           LOG_PATH: /tmp/scripts_test.log
 
+      - name: Run Processing integration tests
+        # Plan 162 Stage 1. These 58 tests had never appeared in this file in
+        # its history -- written, reviewed and merged against a step that did
+        # not exist. Two defects had been sitting in them the whole time: six
+        # cleanups named `staging.artifact_events`, a table no migration has
+        # ever created, and the VIN-relisting test seeded a mapping no older
+        # than the artifact meant to supersede it, so the recency guard in
+        # upsert_vin_to_listing.sql correctly declined to remap.
+        run: pytest tests/integration/processing/ -v -m integration
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          TEST_DATABASE_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
+          LOG_PATH: /tmp/processing_test.log
+
+      - name: Run Scraper integration tests
+        # Plan 162 Stage 1, and the whole of what G8 deferred: the 403 blocked
+        # cooldown upsert-plus-event path, against real Postgres.
+        run: pytest tests/integration/scraper/ -v -m integration
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          TEST_DATABASE_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
+          LOG_PATH: /tmp/scraper_test.log
+
+      - name: Run Shared integration tests
+        # Plan 162 Stage 1. Plan 131's pack fallback end-to-end against real
+        # MinIO -- the property Stage 4 deletes source objects on the strength
+        # of. INTEGRATION_HTML_DICT_ID is deliberately unset: the dictionary
+        # case declares its own skip rather than asserting against a
+        # dictionary this job never registers.
+        run: pytest tests/integration/shared/ -v -m integration
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          MINIO_ENDPOINT: http://localhost:9000
+          MINIO_ROOT_USER: cartracker
+          MINIO_ROOT_PASSWORD: cartracker123
+          MINIO_BUCKET: bronze
+          LOG_PATH: /tmp/shared_test.log
+
       - name: Run Airflow integration tests
         run: /tmp/airflow-venv/bin/pytest tests/integration/airflow/ -v -m integration
         env:

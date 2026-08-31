@@ -2,16 +2,22 @@
 
 ## Status
 
-**Stage 0, the census, is complete (CAR-40, 2026-08-31).** Written as a
-deliberate stub on 2026-08-30, when
+**Stages 0 and 1 are complete (CAR-40 and CAR-45, both 2026-08-31).** The
+census enumerated the work; Stage 1 ran the 73 tests nothing had ever invoked
+and found no production defects behind them, which
+[confirms the L estimate](#evidence--stage-1-the-orphaned-suites-car-45-2026-08-31).
+The waiver list stands at 116.
+
+This document was written as a deliberate stub on 2026-08-30, when
 [Plan 161](plan_161_testing_contract.md) had not yet decided the standard this
 plan measures against. That blocker is gone: 161's contract landed, was
 asserted, and is archived.
 
-Stages 1 through 10 are scoped below and unblocked. Effort is proposed as **L**,
-down from the XL placeholder, on the reasoning in
-[The estimate](#the-estimate). [`docs/PLANS.md`](../PLANS.md) owns priority and
-effort; this document does not choose them.
+Stages 2 through 10 are scoped below and unblocked. Effort is **L**, down from
+the XL placeholder, on the reasoning in [The estimate](#the-estimate) and now
+confirmed against a measurement rather than proposed.
+[`docs/PLANS.md`](../PLANS.md) owns priority and effort; this document does not
+choose them.
 
 ## What the census found
 
@@ -20,9 +26,13 @@ implements seven mechanical rules. It passes, and **a pass means only that the
 seven rules hold** — every violation standing on 2026-08-31 is grandfathered in
 a waiver list. That list is this plan's backlog:
 
+This is the census as taken, kept as the baseline the stages are measured
+against; the live count is whatever `tests/test_testing_contract.py` holds
+today. **Stage 1 has since cleared the CI-invocation row, leaving 116.**
+
 | Rule | Waivers | Gap |
 |---|---|---|
-| CI invocation | 4 | [G1](../TESTING.md#the-gap-list) (3), G2 (1) |
+| CI invocation | 4 → **0** | [G1](../TESTING.md#the-gap-list) (3), G2 (1) — both closed by Stage 1 |
 | Patching is `mocker` | 34 | G4 |
 | Route reached through `app.routes` | 12 | G6 |
 | `.sql` file touched by a Layer 2 test | 54 | G14 |
@@ -52,9 +62,12 @@ largest single item in the plan.
 
 ### Six gaps have no mechanism at all
 
-Six of the twelve gaps this plan owns are checked by nothing: **G5, G7, G8, G9,
-G10 and G12.** They are recorded in prose, they are not among the 120, and they
-can worsen without anything noticing. That is the condition
+Six of the thirteen gaps this plan owns are checked by nothing: **G5, G7, G8,
+G9, G10 and G12.** (Twelve at the census; **G13 was re-owned here on
+2026-08-31** when its Plan 146 half shipped, and it is half-checked — the
+`PYTHONPATH` clause is asserted and nothing else is.) They are recorded in
+prose, they are not among the 120, and they can worsen without anything
+noticing. That is the condition
 `ARCHITECTURE.md:179` was in before Plan 161, and it is why this plan's success
 criteria are written the way they are below.
 
@@ -78,11 +91,11 @@ order:
 | Stage | Work | Closes | Waivers |
 |---|---|---|---|
 | **0** | **The census. Complete — CAR-40, 2026-08-31** | — | — |
-| **1** | Run the orphaned suites. Execute the 11 files no CI step invokes, wire the survivors into CI, declare `tests/integration/lakehouse/` dormant | G1, G2 | 4 |
+| **1** | **The orphaned suites. Complete — CAR-45, 2026-08-31** | G1, G2 | 4 |
 | **2** | Unblind coverage. `[tool.coverage.run] source` names every service directory, and something consumes the number | G10 | -- |
 | **3** | The two health-sensor censuses read one declared source instead of two hardcoded counts | Plan 139 Stage H | -- |
 | **4** | Split the 267s `dbt build + test` job — the cheap half of the restructure | Plan 139 Stages B, C | -- |
-| **5** | The mechanical sweeps: 34 mock conversions and 16 layer renames | G4, G11 | 50 |
+| **5** | The mechanical sweeps: 34 mock conversions and 16 layer renames, plus the one live harness-decides-the-outcome test | G4, G11, G13 | 50 |
 | **6** | Route coverage. Build `container_health`'s test home, then fill it | G6, G9 | 12 |
 | **7** | SQL execution, from both directions. The largest stage | G14, G5 | 54 |
 | **8** | The services below the floor | G7, G8 | -- |
@@ -125,6 +138,16 @@ that do not exist; G6's four `container_health` routes are uncoverable until it
 does. G5 moves inline SQL into `.sql` files and G14 gets Layer 2 executing
 `.sql` files — the same modules, from opposite ends.
 
+**G13 joined Stage 5 on 2026-08-31, for the same reason.** It is the thirteenth
+gap and the only one this plan did not originally own: the contract assigned it
+to Plan 146 Stage 1 for the `PYTHONPATH` half, that half shipped as CAR-42, and
+the remaining instance was left owned by a plan that owes no code. Stage 5 is
+the right home because it is already the pass that reads every patch in the
+suite — and "an unexplained mock of a filesystem, clock, platform or path
+primitive is a finding" is the same question asked one step further out. The
+pattern the rule holds up as correct, `21333ab`, is itself a mocking fix. Doing
+the two together is one reading of the suite instead of two.
+
 ### Stage 3 carries a constraint worth knowing before it starts
 
 The two censuses live in **different virtual environments**.
@@ -157,13 +180,22 @@ could tell. This is the criterion the six unmechanised gaps exist to be measured
 against, and it is why Stage 2 comes before the stages that would otherwise be
 graded by the instrument it repairs.
 
-Two exceptions, stated here so they are decisions rather than omissions:
+Three exceptions, stated here so they are decisions rather than omissions:
 
 - **G7** cannot be asserted by the existing rules and needs its own approach;
   the criterion is met by whatever that approach is, not by the route rule.
 - **G12** may close without a rule at all, because the condition a rule would
   assert is the constraint being removed. If it ships without one, the plan says
   so explicitly rather than leaving a silent gap.
+- **G13 closes an instance without closing its class, and cannot do better.**
+  Fixing the canary test's quoting is a one-file repair; asserting that no test
+  lets its environment decide the outcome is not mechanisable, and the one place
+  that could observe the remaining failures — CI — runs Linux and is blind to
+  every Windows-only instance by construction. The `PYTHONPATH` clause is the
+  only part with a mechanism and it already has one. This is the weakest of the
+  three exceptions and it should be recorded as such rather than dressed up: the
+  next instance of G13's class will be found the way the last two were, by
+  someone running the suite somewhere CI does not.
 
 **3. The `dbt build + test` job is no longer the critical path**, and what
 replaced it is named for what it does. Measured in wall-clock seconds against
@@ -257,8 +289,8 @@ of each had already shipped under other plans without them.
 
 Archived. It decided the rules and built the mechanism that measures them; this
 plan closes the distance. `docs/TESTING.md`'s gap list names Plan 162 as the
-owner of twelve entries, and an assertion fails if that owner is ever an
-archived plan — so this plan cannot be quietly abandoned without the suite
+owner of thirteen entries — twelve at the census, plus G13, re-owned here on
+2026-08-31 — and an assertion fails if that owner is ever an archived plan — so this plan cannot be quietly abandoned without the suite
 saying so.
 
 ### Plans 103 and 107 — coverage
@@ -320,3 +352,106 @@ claim a mechanism it does not have.
 **What the census could not settle:** whether the 73 orphaned tests still pass.
 That is Stage 1, and it is the one input the L estimate rests on that remains
 unmeasured.
+
+### Evidence — Stage 1, the orphaned suites (CAR-45), 2026-08-31
+
+All five exit conditions met. Estimate 2.
+
+**The 73 tests were run.** Against a cold `postgres:16` with all 49 Flyway
+migrations applied and a MinIO container, matching the `dbt` job's services
+step for step — not against a warm local stack, which would have had the state
+the suites are missing:
+
+| Suite | Files | Tests | Result |
+|---|---|---|---|
+| `tests/integration/processing/` | 6 | 58 | **51 passed, 7 failed** |
+| `tests/integration/scraper/` | 1 | 4 | 4 passed |
+| `tests/integration/shared/` | 1 | 4 | 3 passed, 1 declared skip |
+| `tests/integration/lakehouse/` | 3 | 7 | dormant — not run |
+
+**66 of 73 passed. The 7 failures were all defects in the tests, none in
+production code** — which is the answer the estimate needed, and the better of
+the two available answers. The areas these suites cover are not unexercised
+because the code rotted; they were unexercised because nothing ran the tests.
+
+Two distinct defects, both of the kind only running can find:
+
+- **Six cleanups named `staging.artifact_events`, a table no migration has ever
+  created.** V017 created `staging.artifacts_queue_events`; the test file has
+  said `artifact_events` since `e95e426`, the commit whose message claims to
+  "close processing service test gap". Every one of those six tests had already
+  passed its assertions and then failed on teardown — the suite was born broken
+  and merged anyway, because merging did not involve running it.
+- **`test_vin_relisting_replaces_old_row` asserted a remap that
+  `upsert_vin_to_listing.sql` correctly refuses.** The SQL has a recency guard —
+  it only remaps on a strictly newer `mapped_at`, and production passes the new
+  artifact's `fetched_at`. The fixture defaulted the prior mapping's timestamp
+  to `now()`, so the value the test then supplied was never newer and the
+  remap was always a no-op. The test was wrong; the guard is the feature.
+
+**A third failure was found that the first two do not explain, and it is worth
+recording as unexplained.** In the first two runs
+`test_respects_batch_size_limit` reported five of its own rows claimed against
+`batch_size=2`. It has not reproduced since the queue was drained, and a direct
+harness confirms `_claim_batch(2)` returns exactly two rows. What *is*
+reproducible is the class it belongs to: `_claim_batch` reads the whole of
+`ops.artifacts_queue` lowest-`artifact_id`-first, so every "my row was claimed"
+assertion in that file is really asserting the row landed inside the first
+`LIMIT`. Seed twenty pending rows and two of those tests fail deterministically.
+
+That mattered enough to fix rather than note. The suite passes today in CI's
+step order — measured, not assumed: after `sql`, `ops` and `scripts` run,
+`ops.artifacts_queue` is empty — but "passes because the four suites ahead of
+it happened to leave no rows" is not wired in, it is booby-trapped. A
+function-scoped `_quiet_queue` fixture now parks any other claimable row for
+the duration of each test and restores it afterwards. Verified both ways: 58
+pass against a queue holding 20 foreign pending rows, and those 20 are still
+`pending` afterwards.
+
+**Dormancy could not be a waiver, and finding out why was the stage's one
+design change.** Stage 1 was scoped to declare `tests/integration/lakehouse/`
+dormant through the waiver list, on the reasoning that a waiver already carries
+a reason, an owner and a date. It cannot: `test_no_waiver_outlives_the_plan_that_owns_it`
+fails any waiver whose owner plan has archived, so the lakehouse entry would
+have failed the day *this plan* archived, and the only way to quiet it would
+have been to delete the record of why the suite is not running — losing exactly
+what G2 asked to be written down. Dormancy is a decision with no repair pending
+and no owner to outlive, so it now lives in `DORMANT_SUITES`: same file, same
+shape, no owner, no expiry. `test_no_dormant_suite_is_quietly_running` closes
+the other direction, failing a declared suite that acquires a CI step.
+
+**`CI_INVOCATION_WAIVERS` is `()`.** Both new assertions were verified by
+breaking them: removing the processing step fails the invocation rule against
+an empty waiver tuple, and pointing a step at the dormant suite fails the
+dormancy guard. 120 waivers → **116**.
+
+**The L estimate is confirmed.** Stage 1 was the one input it rested on that
+the census could not settle, and it resolved the favourable way: no production
+defects, no rot in the covered areas, and Stages 7 and 8 do not get worse. The
+two test defects cost minutes, not the days a genuine failure would have. What
+Stage 1 adds to the estimate is not effort but a warning about its shape — both
+defects, and the queue fragility, were invisible to review and obvious to
+execution, so the remaining stages should be sized on the assumption that
+anything this plan has only *read* is still unmeasured.
+
+**Found in passing, and it turned out to belong to nobody — so this plan took
+it.** `tests/scripts/test_verify_recovery_live_state.py::test_a_failing_canary_command_fails_the_check`
+fails on Windows ("The filename, directory name, or volume label syntax is
+incorrect") and passes in CI; it quotes `sys.executable` with `shlex.quote`,
+which `cmd.exe` does not honour. Reproduced on an untouched checkout, so it
+predates this stage.
+
+Chasing its owner is what made it Plan 162's. It is G13's class, and G13 was
+the one gap in `docs/TESTING.md` this plan did not own — assigned to **Plan 146
+Stage 1 (CAR-42)**, scoped to the `PYTHONPATH` half. That half shipped; the
+`Documentation tests` step sets `PYTHONPATH` today, and `21333ab` had already
+repaired the other named instance. So the G13 row described finished work while
+naming an owner in closeout that owes no code, and the live instance — found and
+deliberately left by Plan 161 — had no owner at all.
+
+**G13 is therefore re-owned to Plan 162, Stage 5**, and the row rewritten to
+describe what is actually left. Stage 5 rather than Stage 3: Stage 3 is a
+specific two-venv census fix and "also small" is not a category, while Stage 5
+is already the pass that reads every patch in the suite. What that costs is
+honest and recorded above — [a third exception](#success-criteria) to success
+criterion 2, and the weakest of the three.

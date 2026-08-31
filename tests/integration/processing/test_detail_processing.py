@@ -5,7 +5,7 @@ Tests run against real Postgres (rollback on teardown).
 Covers active, unlisted, VIN relisting, and blocked cooldown paths.
 """
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -153,9 +153,14 @@ class TestVinRelisting:
             listing_id=old_listing_id, vin=vin,
             artifact_id=artifact["artifact_id"],
         )
+        # The prior mapping must predate the artifact that supersedes it:
+        # upsert_vin_to_listing.sql only remaps on a strictly newer mapped_at,
+        # and production passes the new artifact's fetched_at. Defaulting this
+        # to now() made the seed no older than `now` and the remap a no-op.
         seed_vin_to_listing(
             vin=vin, listing_id=old_listing_id,
             artifact_id=artifact["artifact_id"],
+            mapped_at=now - timedelta(hours=1),
         )
 
         # Detect collision
