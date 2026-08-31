@@ -101,7 +101,7 @@ order:
 |---|---|---|---|
 | **0** | **The census. Complete — CAR-40, 2026-08-31** | — | — |
 | **1** | **The orphaned suites. Complete — CAR-45, 2026-08-31** | G1, G2 | 4 |
-| **2** | Unblind coverage. `[tool.coverage.run] source` names every service directory, and something consumes the number | G10 | -- |
+| **2** | **Unblind coverage. Complete — CAR-46, 2026-08-31** | G10 | -- |
 | **3** | **The two health-sensor censuses read one declared source. Complete — CAR-47, 2026-08-31** | Plan 139 Stage H | -- |
 | **4** | Split the 267s `dbt build + test` job — the cheap half of the restructure | Plan 139 Stages B, C | -- |
 | **5** | The mechanical sweeps: 34 mock conversions and 16 layer renames, plus the one live harness-decides-the-outcome test | G4, G11, G13 | 50 |
