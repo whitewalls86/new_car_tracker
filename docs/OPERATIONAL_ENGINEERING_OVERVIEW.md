@@ -259,6 +259,8 @@ The packed bronze format in [`shared/packfile.py`](../shared/packfile.py) groups
 - a trailer that locates the footer;
 - a Parquet sidecar index with source keys, offsets, lengths, identities, and raw SHA-256 hashes.
 
+Identity and placement are separate concerns in that index, and the separation was earned. [Plan 145](plans/plan_145_april_cutover_reconciliation.md) found the sidecar's `listing_id` wrong for 194,639 of 371,095 content matches — an identity column, not a placement one. Its Stage 5b split the two before any new pack was written, so a wrong identity can be corrected by rewriting that column while `source_key`, `frame_ordinal`, `offset_in_frame`, `length` and `raw_sha256` stay untouched. The pack bytes never move, and every read and index check keeps passing. Changing the sort order is a different question, and a separate unproven optimization.
+
 Frames use a soft 16 MiB target and seal at a listing boundary where possible. This preserves within-listing redundancy—the measured source of most compression benefit—while a hard ceiling prevents one listing with thousands of captures from creating an enormous decompression unit. Reading one artifact performs a ranged GET and decompresses one frame, not the whole pack.
 
 The sidecar belongs in MinIO, not Postgres, because millions of index rows are historical object-layout metadata rather than hot operational state. DuckDB and PyArrow can read it directly. The production read path narrows lookup to the artifact's year, month, and type; it does not scan every sidecar ever written.
@@ -289,6 +291,10 @@ A deterministic sample per pack also traverses the full production `read_packed_
 Processing status is included in the report but is not a veto. Once the production parser can read packed artifacts, a missing historical queue event does not mean the bytes are unsafe to remove. The checksum and resolvability proofs are the safety boundary; status remains useful anomaly telemetry.
 
 After pruning, the Airflow lifecycle performs a separate packed-read verification. Any refused delete is an immediate alert. The weekly recap records a concrete production result: July's 909,654 loose objects collapsed to 66 packed objects with zero refused deletes.
+
+July was the routine case. The harder one is [Plan 145](plans/plan_145_april_cutover_reconciliation.md), completed 2026-08-30, which needed a step this additive loop does not have: **replacing packs that already existed.** April's captures had to be repacked rather than merely packed, so Stage 6 wrote replacement packs, ran `repack-verify` across all 983,043 members, retired the 32 superseded packs, and only then pruned — 983,043 loose objects deleted, 0 refused. The same three proofs governed the retirement of a superseded pack that govern the deletion of a loose object.
+
+It also closed the one deletion this project had been deferring. The 1,172 legacy bronze Parquet objects were deleted with named approval, leaving `html/year=2026/month=4/artifact_type=detail_page/` empty and taking April from 24.48 GiB to 4.34 GiB — **20.14 GiB reclaimed.** The 127 out-of-scope results-page objects were left untouched, which is the more useful fact: a bulk deletion that knows what it is not allowed to touch is the one worth trusting.
 
 ### 4.5 Silver compaction protects readers from double counting
 
