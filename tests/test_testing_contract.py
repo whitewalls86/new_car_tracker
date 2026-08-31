@@ -497,8 +497,27 @@ ROUTE_WAIVERS = tuple(
 # this interpreter would register six sets of Prometheus collectors in one
 # registry and put scraper/ on sys.path for everything downstream -- which is
 # the harness deciding another test's outcome, the rule two sections below.
+_HTTP_VERBS = frozenset({"get", "post", "put", "patch", "delete", "head", "options"})
+
+# The enumerator is ``app.openapi()``, not a walk of ``app.routes``, and the
+# difference is not cosmetic -- it is this rule's own worked example of the
+# environment deciding the outcome.
+#
+# Up to FastAPI 0.128, ``include_router`` flattened a router's routes into
+# ``app.routes`` with the prefix already applied, so a shallow walk saw all of
+# them. By 0.141 it appends a single ``_IncludedRouter`` wrapper instead, which
+# exposes neither ``routes`` nor ``prefix`` and resolves its children at match
+# time. The walk still succeeds and still returns routes -- just four of them
+# for ``ops`` instead of 54. Every requirements file here pins nothing, so the
+# first CI run had 0.141 while this machine had 0.128, and the rule quietly
+# stopped checking 50 routes without failing.
+#
+# ``openapi()`` is public, stable across both, applies prefixes, and drops the
+# framework's own ``/docs``, ``/redoc`` and ``/openapi.json`` on its own, so the
+# endpoint-module filter that used to do that by hand is gone with it.
 _ROUTE_PROBE = """
 import importlib, json, os, sys, tempfile
+VERBS = {"get", "post", "put", "patch", "delete", "head", "options"}
 repo, service = sys.argv[1], sys.argv[2]
 os.environ.setdefault("LOG_PATH", os.path.join(tempfile.gettempdir(), "contract.log"))
 if len(sys.argv) > 3:
@@ -506,13 +525,12 @@ if len(sys.argv) > 3:
 sys.path.insert(0, repo)
 app = importlib.import_module(service + ".app").app
 print(json.dumps(sorted(
-    [method, route.path, getattr(route.endpoint, "__module__", "")]
-    for route in app.routes
-    for method in sorted(getattr(route, "methods", None) or ())
+    [method.upper(), path]
+    for path, operations in app.openapi()["paths"].items()
+    for method in operations
+    if method.lower() in VERBS
 )))
 """
-
-_HTTP_VERBS = frozenset({"get", "post", "put", "patch", "delete", "head", "options"})
 
 
 @lru_cache(maxsize=None)
@@ -525,10 +543,6 @@ def app_routes(service: str) -> tuple[tuple[str, str], ...]:
     ``processors`` as top-level names. Trying the plain recipe first matters --
     putting ``ops/`` on ``sys.path`` shadows the standard library's ``email``
     with ``ops/email.py`` and the app never imports at all.
-
-    Routes whose endpoint lives under ``fastapi.`` are the framework's own
-    ``/docs``, ``/redoc`` and ``/openapi.json``; they are not the service's to
-    test. That is decided by the endpoint's module, not by a list of paths.
     """
     failures = []
     for extra in ([], ["--service-dir"]):
@@ -538,9 +552,7 @@ def app_routes(service: str) -> tuple[tuple[str, str], ...]:
         )
         if result.returncode == 0:
             found = tuple(
-                (method, path)
-                for method, path, module in json.loads(result.stdout)
-                if not module.startswith("fastapi.")
+                (method, path) for method, path in json.loads(result.stdout)
             )
             # An empty table would satisfy every route rule by having nothing
             # to check, which is G1's failure in miniature: the rule passes
@@ -586,6 +598,37 @@ def _matches(route: str, requested: str) -> bool:
     """``/project-status/{project}`` is reached by ``/project-status/acme``."""
     pattern = re.sub(r"\\\{[^}]+\\\}", "[^/]+", re.escape(route))
     return re.fullmatch(pattern, requested) is not None
+
+
+def test_no_route_is_hidden_from_the_schema_this_rule_reads():
+    """``include_in_schema=False`` would make a route invisible to the rule above.
+
+    This is the price of enumerating from ``openapi()`` instead of walking
+    ``app.routes``, and it is worth paying only while it costs nothing: no
+    service uses the flag today. A route that opted out would be a route the
+    contract requires a test for and this file cannot see -- silently, which is
+    the one outcome the whole document is written against.
+
+    If a route ever genuinely needs to be hidden, the answer is a different
+    enumerator, not a quiet exemption. Failing here is how that conversation
+    gets started rather than missed.
+    """
+    hidden = sorted(
+        f"{_relative(path)}:{number}"
+        for service in service_packages()
+        for path in sorted((REPO_ROOT / service).rglob("*.py"))
+        for number, line in enumerate(
+            path.read_text(encoding="utf-8").splitlines(), start=1
+        )
+        if "include_in_schema" in line and "False" in line
+    )
+    assert not hidden, (
+        "these routes are hidden from the OpenAPI schema, which is what "
+        "test_every_route_is_reached_through_the_apps_routing_table reads:\n  "
+        + "\n  ".join(hidden)
+        + "\n\nA hidden route cannot be checked by that rule. Change the "
+        "enumerator rather than accepting the blind spot."
+    )
 
 
 def test_every_route_is_reached_through_the_apps_routing_table():
