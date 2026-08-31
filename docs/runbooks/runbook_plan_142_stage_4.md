@@ -469,7 +469,15 @@ export PLAN_SHA=<the printed digest>
 ```
 
 **Abort if** the package set differs from §2, anything appears under
-`compatibility_boundaries` other than `network`, or any package is removed.
+`compatibility_boundaries` other than `network` or `storage`, or any package is
+removed.
+
+> **`storage` is a boundary as of 2026-08-31.** The util-linux family —
+> `util-linux`, `mount`, `libmount1`, `libblkid1`, `libuuid1`, `libfdisk1`,
+> `libsmartcols1`, `uuid-runtime`, `bsdutils`, `fdisk` — resolves and mounts
+> `/mnt/data`, which is fstab'd by UUID with `nofail`. A regression there boots
+> the host cleanly with the data volume absent. It is reviewable, not a refusal;
+> §5.5.1 is the check that retires it.
 
 ### 5.3 Request, drain, authorize
 
@@ -522,6 +530,28 @@ Apt automation stays masked until after `complete`. That is deliberate.
 
 **Abort:** finish `dpkg` to a consistent state — never interrupt it. Roll back
 from the reviewed cached versions.
+
+### 5.5.1 Re-run the lockout checks — new packages, same two questions
+
+§5.1 ran these against the packages that are now *gone*. If the transaction
+touched netplan, systemd, openssh, or the util-linux family, the config parsers
+and the block-device resolver that decide whether you can reach a rebooted host
+have just been replaced. This is the last moment they are cheap.
+
+```bash
+sudo sshd -t && echo sshd-valid
+sudo netplan generate && echo netplan-valid
+sudo blkid /dev/sdb                  # must print the UUID /etc/fstab names
+findmnt --verify | grep -c '\[E\]'   # must be 0
+```
+
+Added after the 2026-08-31 window, where twelve util-linux packages were
+upgraded and `/mnt/data` is mounted by UUID with `nofail` — a combination that
+fails *silently* at boot rather than loudly. All four passed there, which is
+what made the reboot safe to send.
+
+**Abort:** do not reboot on a failure here. The old packages are still in the
+apt cache and the host is still up.
 
 ### 5.6 Reboot
 
@@ -583,9 +613,26 @@ python scripts/host_maintenance.py --api-url "$API" --manifest "$MANIFEST" \
 host-evidence row. A **409 leaves the phase at `validating`** — fix the named
 gate and repeat 5.7; never force it, and never use `/deploy/complete`.
 
-Restoration must come **after** `complete`, never before. Verify the three units
-are back to enabled + active and that `apt-mark showhold` is still exactly
-`docker.io`.
+Restoration must come **after** `complete`, never before. `restore-apt-automation`
+now starts the enabled timers itself and refuses if one does not go `active`, so
+the reported `apt_timer_activity` is the evidence. Confirm it independently —
+`enabled` is not `running`:
+
+```bash
+systemctl is-enabled apt-daily.timer apt-daily-upgrade.timer unattended-upgrades.service
+systemctl is-active  apt-daily.timer apt-daily-upgrade.timer
+systemctl list-timers 'apt-daily*'   # must list 2, with a real NEXT
+apt-mark showhold                    # must still be exactly docker.io
+```
+
+`unattended-upgrades.service` is *Unattended Upgrades Shutdown*, a oneshot
+systemd runs at shutdown; `inactive` is correct for it and it is never started
+here. Only the two timers must read `active`.
+
+Before 2026-08-31 this step unmasked and re-enabled the units but never started
+them, so after a reboot both timers came back `enabled` and `inactive (dead)`
+with `list-timers` reporting none — the host had silently stopped taking
+automatic security updates while the command reported success.
 
 ---
 

@@ -1770,6 +1770,198 @@ numerically to `6.8.0-1060-oracle`, `/boot` holds exactly those two images, and
 `reboot-required.pkgs` names `1059`, which has no `/boot` image and would
 otherwise have been a candidate. The end-to-end proof belongs to the window run.
 
+#### The window, executed 2026-08-31 — it completed, and it found two more defects
+
+The end-to-end proof the row above deferred now exists. The window ran
+`18:11:09Z → 18:35:54Z`, applied 38 packages and booted `6.8.0-1060-oracle`, and
+released through `complete` with all seven host gates and all six stack gates
+passing. Evidence bundle:
+`/var/lib/cartracker/maintenance/stage4-20260831T171000Z/`.
+
+It also stranded itself at `validating` for sixteen of those twenty-four
+minutes, on a gate that had never been able to pass. That is the finding.
+
+**1. Planned versus actual phase duration.**
+
+| Phase | Planned | Actual |
+|---|---|---|
+| `preflight` + `prepare-update` | 10 min | ~2 min (17:07–17:09) |
+| `request` → `active` | 2–5 min | **28.4 s** |
+| `stop` | 1–2 min | **9.2 s** |
+| `update` | 2–4 min | **35.5 s** |
+| `reboot` → back | 1–2 min | **28 s** (2026-08-18 took 35 s) |
+| `start` | 2 min | **77 s** |
+| `begin-validation` → release | 5 min | **16 min 20 s** — see defect 6 |
+| `complete` + `restore-apt-automation` | 2 min | ~50 s |
+| **Stack downtime** | ~5 min visible | **6 min 07 s** (18:12:49 → 18:18:55) |
+| **Production gated** | — | **24 min 45 s** (18:11:09 → 18:35:54) |
+
+Every mechanical phase beat its estimate, several by an order of magnitude. The
+estimates came from Stage 0 Phase B and the 2026-08-18 window and are now
+demonstrably conservative. Without defect 6 the window would have gated
+production for about 8.5 minutes.
+
+**2. Drain counts and time to zero.** Drained on the *first* poll:
+`{"blockers": [], "drained": true, "phase": "draining"}`. All twelve sources at
+zero with no oldest-start timestamps — `airflow_gate_observations`,
+`airflow_task_instances`, `archiver_jobs`, `container_processes`,
+`dbt_runner_jobs`, `ops_jobs`, `pack_worker_jobs`, `processing_artifacts`,
+`processing_jobs`, `running_detail_claims`, `scraper_detail_jobs`,
+`scraper_listing_jobs`. Request-to-active 28.4 s, against Stage 0 Phase B's 44
+tasks in 74.5 s.
+
+**3. Packages and kernel before/after.** `6.8.0-1058-oracle` →
+`6.8.0-1060-oracle`; boot ID `734c55e0…` → `8392d1cc…`; 38 packages upgraded, 0
+new, 0 removed; dpkg entry count unchanged at 630; `docker.io` hold intact at
+`29.1.3-0ubuntu3~22.04.2`; `/var/run/reboot-required` cleared; 0 pending
+upgrades afterwards.
+
+The transaction was **38 packages, not the 17** the run sheet scoped on
+2026-08-29. `prepare-update` refreshes the index before resolving, and the
+host's was two days stale, so twenty-one further `jammy-updates` packages plus
+one `jammy-security` (`cpio`) appeared. The §2 seventeen were unchanged inside
+it. The abort criteria that matter held — 0 new, 0 removed, hold intact — and
+the growth was reviewed rather than assumed: no `openssh-*`, no `systemd`, no
+`docker`/`containerd`, no `linux-image-*`. `libssh-4` was in the set and is not
+what it looks like: `ldd /usr/sbin/sshd` links it zero times, it is the client
+library that `cryptsetup` and `libcurl` pull in.
+
+**4. Downtime and health convergence.** 6 min 07 s of stack downtime. All 28
+containers returned, including the profile-gated `trawl` and `redis-trawl` —
+the failure mode the manifest path exists to prevent, confirmed rather than
+assumed. All healthy except `oauth2-proxy`, which is its documented `-1`, and
+`container_health` passed anyway: the Stage 4 exemption fix working in
+production. `boot_kernel_target_source: "installed"` in `update-result.json` is
+the deferred-reboot fallback working in production — the case that had no
+kernel package in the transaction at all.
+
+**5. Manual commands not represented by the script.** `sshd -t`,
+`netplan generate`, `findmnt --verify`, and the reconnect after reboot were
+expected. Two more were not, and both are now runbook steps rather than
+judgment: re-running the lockout checks *after* `update` (§5.5.1), and starting
+the apt timers by hand (defect 7). The re-run is not ceremony — the window
+replaced netplan and the entire blkid/mount stack, so the parsers and the
+block-device resolver that decide whether a rebooted host is reachable were not
+the ones §5.1 tested. `blkid /dev/sdb` returning the UUID `/etc/fstab` names,
+under the *new* `libblkid`, is what retired the storage risk before the reboot
+was sent.
+
+**6. Alerts and notifications.** Zero alerts fired at any point, including
+through the offline phase. Nothing paged for the stranded window either, which
+is consistent with `ct-stale-coordination` not yet existing.
+
+**7. Explicit resume evidence and post-resume DAG behaviour.** `validate-host`
+passed all seven gates and posted the durable host-evidence row
+(`evidence_id: 1`, generation 33); `complete` returned `phase: none` at
+18:35:54Z. Post-resume: **zero task failures** across four DAGs working through
+the held backlog — `orphan_checker` ×5, `scrape_detail_pages` ×2,
+`results_processing` ×2, `scrape_listings` ×1. `check_deploy_intent` logged
+`Success criteria met. Exiting.` rather than timing out, which is the specific
+defect from the 2026-08-18 window that Stage 1 was built to remove.
+
+`staging.coordination_state_events` holds one row per transition for generation
+33, and the checkpoint history is honest about the mid-window fix: every phase
+recorded at `df2d8a2`, `complete` at `22676f8`.
+
+#### Defect 6 — `mounts_expected` could never pass, and `validating` has no exit
+
+`validate-host` failed with `"required mount /mnt/data is missing"` while the
+mount was demonstrably present: `/dev/sdb` on `/mnt/data`, UUID matching fstab,
+writable, `findmnt --verify` reporting zero errors.
+
+`findmnt --json` returns a **tree**. Only `/` is a top-level element; every
+other mount arrives inside its `children`. `_mount_devices` iterated
+`payload["filesystems"]` and never descended, so `/mnt/data` was absent from
+both the observed facts *and* the preflight baseline, and the gate's
+`target not in observed or target not in baseline` check failed. It could not
+pass on any host in any state.
+
+That is the **third** gate of this shape in this plan, after `container_health`
+on `oauth2-proxy`'s documented `-1` and `observability_fresh` on a metric
+Promtail does not publish. The shape is now a category, not a coincidence: a
+fail-closed gate whose failing branch was never exercised against production's
+actual data.
+
+**What makes this one different is that it deadlocked.** `validating` is
+terminal for the operator. `POST /coordination/cancel` returns 409 there by
+design — the route carries the comment *"exposing an unguarded validating->none
+endpoint would turn state into false authority"* — and the only other exit,
+`complete`, requires the durable host-evidence row that `run_validate_host`
+posts **only after every gate passes**. An unpassable gate therefore strands a
+window with production paused and no operator path out. Cancelling was tried
+first and correctly refused.
+
+The escape was to fix the gate: PR #307, merged and pulled to `/opt/cartracker`
+mid-window, after which `validate-host` passed and `complete` succeeded. Sixteen
+minutes of gated production, all of it recoverable only through a code change.
+
+**Why no test caught it.** `_validation_inputs` built `filesystems` as a flat
+list with `/` and `/mnt/data` as siblings — a shape `findmnt` never emits. The
+same root cause as defect 5, where every test mocked `_prometheus_scalar` and
+none ever saw a query string. The fixture now carries the real nested tree, so
+every host-validation gate test exercises production's shape; against the old
+code it reproduces the exact production error.
+
+**The open question this leaves.** Whether a host window should have an
+operator-visible abandon path out of `validating` — one that records *why* it
+was abandoned rather than pretending the gates passed — is a real design
+question and is deliberately **not** answered here. The current refusal is sound
+in isolation; it is only dangerous when combined with a gate that cannot open,
+and the fix for that is to stop shipping gates that cannot open.
+
+#### Defect 7 — `restore-apt-automation` left security updates switched off
+
+`restore-apt-automation` returned `apt_automation_restored: true`. Both apt
+timers were `enabled` and `inactive (dead)` with `Trigger: n/a`, and
+`systemctl list-timers` listed **none**. The host had stopped taking automatic
+security updates and the command reported success.
+
+Unmasking does not start a unit, and the reboot happened while they were masked,
+so nothing else was ever going to. The step verified `is-enabled` and never
+`is-active` — and `enabled` is a boot-time promise, not a running timer.
+
+This is a regression from documented practice into code, which is the part worth
+keeping. [runbook_host_maintenance.md](../runbooks/runbook_host_maintenance.md)
+has always ended its controlled apt sequence with
+`sudo systemctl start apt-daily.timer apt-daily-upgrade.timer`. Stage 2
+codified that procedure and dropped its final line. The manual runbook was right
+and the script that replaced it was not — an argument for deriving these steps
+from the runbook rather than re-deriving them beside it.
+
+Fixed: the step now starts every enabled timer and refuses if one does not go
+`active`, reporting `apt_timer_activity` as evidence. The exemption is narrow —
+`unattended-upgrades.service` is *Unattended Upgrades Shutdown*, a oneshot
+systemd runs at shutdown, so it is never started here and `inactive` is correct
+for it.
+
+#### The boundary table named two of the seventeen packages that deserved it
+
+`package-plan.json` declared `compatibility_boundaries: ["network"]` on the
+strength of `netplan.io` and `netplan-generator`. Seventeen of the 38 packages
+should have declared a boundary.
+
+Two independent gaps, both now fixed:
+
+- **No storage boundary existed.** The util-linux family — `util-linux`,
+  `mount`, `libmount1`, `libblkid1`, `libuuid1`, `libfdisk1`, `libsmartcols1`,
+  `uuid-runtime`, `bsdutils`, `bsdextrautils`, `fdisk`, `eject` — matched no
+  prefix in `PACKAGE_BOUNDARIES`. Those are the packages that resolve and mount
+  `/mnt/data`, which is fstab'd by UUID with `nofail`: the failure mode is a
+  host that boots perfectly with the data volume simply absent.
+  `mounts_expected` is the gate for exactly that, which makes it doubly
+  unfortunate that the same window found that gate broken.
+- **Prefix matching missed each component's variants.**
+  `base_name.startswith()` saw `netplan.io` and `netplan-generator` but not
+  `libnetplan0` or `python3-netplan` — so a transaction carrying only the
+  library would have declared no boundary at all. Matching now also tries the
+  name with a `python3-` prefix removed, and with `lib` and a trailing soname
+  stripped, so a component's variants resolve to the component. Three tests hold
+  the line: the netplan family, the storage family, and a ten-package guard that
+  must keep matching nothing (`libattr1`, `libssh-4`, `coreutils`, `cpio`, …).
+
+`iproute2` — finding 7 from the pre-window scoping, previously "add it or
+document it" — is now matched by the `network` boundary.
+
 ## Rollback and recovery
 
 Rollback is phase-specific:

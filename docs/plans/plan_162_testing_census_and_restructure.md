@@ -95,11 +95,22 @@ superseded by the restructure or answered by Plan 161's contract:
 | E — advisory CI impact selection | **This plan.** Its own premise is "before any new fast path", and this is the fast path |
 | F — CI's database does not model production's schemas | **Stays in 139.** Independent, S, ships before either of these plans |
 | G — Promtail contract checker | Already moved to [Plan 160](plan_160_promtail_contract_checker_reliability.md) |
-| H — one invariant, two censuses | **Stays in 139.** XS, unrelated to the standard |
+| H — one invariant, two censuses | **This plan, from 2026-08-31.** Stage H scopes itself "in Stage D's step 2-3 neighbourhood", and the de-gating agent it names is *the routine local/CI split itself* -- this plan's subject, not a standalone defect. **XS and shippable on its own, ahead of the census**, so an XL scope cannot hold a two-file fix hostage |
 
-So Plan 139 reduces to Stages F and H. Whether it is formally split, superseded
-or simply re-scoped is a decision for when this plan is written properly — it is
-recorded here so the disposition is not lost, not decided here.
+**Resolved 2026-08-31.** Stage F shipped (PR #305, CAR-36) and Stage H moved
+here, so Plan 139 has nothing left and is archived. The question this paragraph
+left open — split, supersede or re-scope — was answered by delivery: A, B and F
+were delivered, and what remained was always this plan's.
+
+What Stage H asks for, carried here so it survives the move: the two
+health-sensor censuses read one declared source instead of two hardcoded
+numbers. `tests/airflow/test_health_sensor_demotion.py` asserts 13 DAG files
+wiring a sensor; `tests/integration/airflow/test_dag_integrity.py` asserts 14
+sensor tasks; one DAG wires two, so both are right and nothing connects them.
+Plan 134's deletion updated the first, missed the second, and shipped
+(`056cde7`); PR #293 then failed on a count nobody had touched. The comment
+added reactively in `33b275e` is documentation, not a mechanism, and will drift
+again.
 
 **Consequence, resolved 2026-08-30:** Plans 103 and 107 were triggered by "Plan
 139 Stage D settles the coverage gate." Stage D is being taken apart, so that
