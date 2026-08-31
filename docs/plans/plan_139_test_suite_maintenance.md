@@ -13,6 +13,13 @@ split out to [Plan 160](plan_160_promtail_contract_checker_reliability.md) on
 2026-08-30**, after a fourth occurrence outgrew what a stage of this plan could
 carry.
 
+**STAGE F COMPLETE 2026-08-31** — merged as PR #305 (`7f196ec`), CAR-36. CI
+runs `airflow db migrate` against its own Postgres as `airflow_user` after
+Flyway, the stand-in is retired, and the seven coordination-drain tests execute
+against Airflow's real tables on two cold runners. The audit found no third
+cross-schema exposure. A version-parity test now holds CI's Airflow to the
+Dockerfile's. **Stage H is the only stage left in this plan.**
+
 **STAGES A+B COMPLETE 2026-08-18** — merged as PR #213 (`4fa6c7d`). Surfaced
 2026-08-17 during Plan 135 Stage 4 development, when the unit suite's
 wall-clock time prompted the question "are we missing a mock somewhere?" The
