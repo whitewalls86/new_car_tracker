@@ -507,7 +507,6 @@ Recorded here, fixed elsewhere — Plan 161's non-goals hold.
 |---|---|---|---|
 | G1 | **73 integration-marked tests in 11 files that no CI step invokes.** `tests/integration/processing/` (58 tests, 6 files) has **never** appeared in `ci.yml`, and was last touched 2026-08-30. `tests/integration/scraper/` (4) and `tests/integration/shared/` (4) are orphaned the same way. Whether they still pass is unknown | `git log -S` over `ci.yml`; `pytest` invocations in `ci.yml` versus `tests/integration/*/` | Plan 162 |
 | G2 | `tests/integration/lakehouse/` (7 tests) is dormant **by decision** — Plan 125 pulled the job in `863a2f2`. Correct, but undeclared; it is indistinguishable from G1 by inspection | — | Plan 162 |
-| G3 | **CI's database does not create Airflow's schema**, so the drain's `airflow.task_instance` and `airflow.dag_run` statements cannot be executed by any layer — the exact class of bug that hung Plan 142's first deploy | — | **Plan 139 Stage F / CAR-36**, shipping ahead of Plan 162 |
 | G4 | **34 test files patch with something other than `mocker`** — 17 import `patch` from `unittest.mock`, 17 use `monkeypatch.setattr`, and two do both. The second half is what the 2026-08-31 census did not count: every one of those 17 targets a module object rather than process state, so `mocker.patch` is the tool for all of them. Two of the 34 are `tests/integration/airflow/`, whose venv **does not install pytest-mock** — a missing argument on one `pip install` line in `ci.yml`, not a conflict: `pytest-mock` depends only on `pytest`, which that venv already has. Fix the venv first, then convert all 34 | `tests/test_testing_contract.py`, AST census | Plan 162 |
 | G5 | **Inline SQL at `.execute()` call sites in 10 production modules**, against six that use the loader: `ops/routers/{coordination,deploy,scrape,users}.py`, `archiver/processors/{pack_bronze_html,delete_packed_source_html,flush_silver_observations,flush_staging_events}.py`, `shared/db.py`, `shared/duckdb_s3.py` | `.execute(` with a literal first argument | Plan 162 |
 | G6 | **Twelve routes reached by no test through any routing table**, not the four measured by eye: all four of `container_health`'s, including `/health` and `/metrics` (there is no `TestClient` in that service at all), and eight of `ops`' — the two `/maintenance` routes already named, plus `GET /coordination/status`, `POST /coordination/begin-validation`, `POST /coordination/cancel` and the three `/admin/snapshots/adaptive-refresh/` reads. The three coordination routes are the same surface whose drain hung Plan 142's first deploy | `tests/test_testing_contract.py`: each app's real `app.routes` versus the request literals in that service's own test directories | Plan 162 |
@@ -518,7 +517,7 @@ Recorded here, fixed elsewhere — Plan 161's non-goals hold.
 | G11 | **The layer numbers in the code are Plan 84's, not this document's.** Docstrings across `tests/` and two step names in `ci.yml` say "Layer 1 — SQL smoke" and "Layer 3 — API integration", which are Layers 2 and 4 here. Mechanical sweep; the asserting test covers it afterwards so the two cannot drift again | `grep -rn 'Layer [0-9]' tests/ .github/` | Plan 162 |
 | G12 | **`airflow/dags/` has no `.sql` convention and cannot reach one.** No module under it imports `shared`, so `shared.query_loader` is unavailable and the DAG tree is the only place in the repository where "production SQL is a `.sql` file" is structurally impossible. This is what forces the single legitimate `ast` reader, `_sensor_constant()` | `grep -rn 'from shared' airflow/dags/` returns nothing | Plan 162 |
 | G14 | **54 of 76 production `.sql` files are named by no Layer 2 test.** All 19 under `processing/sql/`, all 8 under `ops/sql/`, all 3 under `scraper/sql/`, 17 of `archiver/`'s, the 6 `dashboard/sql/data_health_*` files and `airflow/sql/delete_stale_emails.sql`. `test_ops_queries.py` and `test_processing_queries.py` are named for the services whose statements they should execute, import nothing from either `queries.py`, and **paraphrase the SQL instead** — which the rule above calls worse than no test, because a paraphrase passes forever | `tests/test_testing_contract.py`, at the weakest reading of "executed": a file counts as covered if Layer 2 so much as names it. A stricter check can only find more | Plan 162 |
-| G10 | **The unit job's coverage is measured and discarded** — `--cov --cov-report=term-missing`, no threshold, no artifact. Worse, `[tool.coverage.run] source` names six packages and omits `container_health`, `dashboard`, `scripts` and `airflow/dags`, so **the two services below the floor are the two the instrument cannot see** | `ci.yml:131`, `pyproject.toml` | Plan 139 Stage D, items 4 and 5 — the half of D that stayed with 139 |
+| G10 | **The unit job's coverage is measured and discarded** — `--cov --cov-report=term-missing`, no threshold, no artifact. Worse, `[tool.coverage.run] source` names six packages and omits `container_health`, `dashboard`, `scripts` and `airflow/dags`, so **the two services below the floor are the two the instrument cannot see** | `ci.yml:131`, `pyproject.toml` | Plan 162 — Stage D, reassigned 2026-08-31 |
 
 ---
 
@@ -527,10 +526,11 @@ Recorded here, fixed elsewhere — Plan 161's non-goals hold.
 - **The CI restructure.** Splitting the 267s `dbt build + test` job, building
   dbt against the Plan 120 lake snapshot, and running the suites against the
   real Compose definitions are [Plan 162](plans/plan_162_testing_census_and_restructure.md).
-- **A coverage threshold.** Plan 139 Stage D owns whether there is a gate at
-  all, and whether `airflow/dags/` and `dashboard/` join the coverage
-  configuration. This document says only that a percentage is not the
-  definition of enough.
+- **A coverage threshold.** [Plan 162](plans/plan_162_testing_census_and_restructure.md)
+  owns whether there is a gate at all, and whether `airflow/dags/` and
+  `dashboard/` join the coverage configuration — Stage D moved there entire
+  when Plan 139 archived on 2026-08-31. This document says only that a
+  percentage is not the definition of enough.
 - **Impact-based test selection.** Plan 139 Stage E specified it and has since
   moved to Plan 162; nothing here changes its design.
 - **Fixing anything in the gap list.**

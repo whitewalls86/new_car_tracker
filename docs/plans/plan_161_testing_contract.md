@@ -496,13 +496,16 @@ F is the exception and should not wait — see below.
 
 ## Sequencing note
 
-**Plan 139 Stage F should ship without waiting for this plan.** It closes the
-CI-schema gap that produced incident 1, it is S-effort, and Plan 142 Stage 4
-runs a maintenance window driven by exactly the coordination queries that gap
-hides. It is also the worked example this plan's question 3 reasons from, so
-landing it first makes that question concrete rather than theoretical.
+**Resolved 2026-08-31.** This section argued that Plan 139 Stage F should ship
+without waiting for this plan — it closed the CI-schema gap that produced
+incident 1, and it was the worked example question 3 reasons from. It shipped
+the same day (PR #305, CAR-36): CI now runs `airflow db migrate`, so the
+coordination queries crossing into the `airflow` schema execute at all.
+**[G3](../TESTING.md#the-gap-list) is closed and has left the gap list.**
 
-Everything else in Plan 139 waits.
+Plan 139 archived on 2026-08-31 with Stage F delivered; its remaining stages
+went to Plan 162. The argument above is spent and is kept only so the ordering
+that produced it stays legible.
 
 ## Success criteria
 
@@ -538,12 +541,16 @@ CI schema gap. This plan sets the standard that maintenance is measured
 against. Folding them together would give 139 two incompatible scopes.
 
 This originally left open whether Stages C and E move to the restructuring plan
-"when it is written". **That is decided, and not here** —
-[`docs/PLANS.md`](../PLANS.md) build-order row 3 records it: Stages B, C, E and
-the markers half of D belong to Plan 162; **Stage F, Stage H, and the
-coverage-decision half of D remain Plan 139's.** That half is D items 4 and 5 —
-whether a `--cov-fail-under` gate exists, and whether `airflow/dags/` and
-`dashboard/` join the coverage configuration — which is
+"when it is written", and a later revision recorded a split — Stages B, C, E
+and the markers half of D to Plan 162, with F, H and the coverage-decision half
+of D staying with 139.
+
+**That split lasted one day. Plan 139 archived on 2026-08-31** with Stages A, B
+and F delivered; C, D, E and H all went to Plan 162, and G was already Plan
+160's. Nothing stayed. So the disposition is simply: **Plan 162 owns everything
+Plan 139 did not deliver**, including D items 4 and 5 — whether a
+`--cov-fail-under` gate exists, and whether `airflow/dags/` and `dashboard/`
+join the coverage configuration — which is
 [G10](../TESTING.md#the-gap-list), and which Stage D had already framed
 correctly: *"either answer is fine; the current state — unmeasured and
 unexplained — is not."*

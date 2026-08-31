@@ -1014,6 +1014,52 @@ def test_no_waiver_outlives_the_plan_that_owns_it():
     )
 
 
+# The gap list's last column. Restricting the scan to it is what keeps this
+# check honest: ``docs/TESTING.md`` cites Plan 84 throughout because Plan 84 is
+# where the layer numbering came from, and Plan 84 is archived. A citation is
+# not an owner. Only the Owner cell claims someone is going to do something.
+_GAP_ROW_OWNER = re.compile(r"^\| (G\d+) \|.*\|([^|]*)\|\s*$", re.M)
+_OWNER_PLAN = re.compile(r"Plan (\d+)")
+
+
+def test_no_gap_entry_outlives_the_plan_that_owns_it():
+    """The same hinge as above, for the list the waivers point at.
+
+    This existed as prose in the contract before it existed as a check, and the
+    gap it left was found the way these things are always found: Plan 139
+    archived on 2026-08-31 with Stage F delivered, and G3 and G10 went on
+    naming it as their owner. Nothing failed, because the owner rule had been
+    implemented for waivers and not for the entries they cite.
+
+    A gap whose owner has archived is worse than an unowned one. It reads as
+    scheduled work, so nobody schedules it.
+
+    **Every plan the Owner cell names is treated as an owner**, which makes the
+    cell a place for owners and nothing else. That is a real constraint and it
+    caught its author immediately: G10's reassignment was first written as
+    "Plan 162 -- Stage D moved there entire when Plan 139 archived", and the
+    trailing history read as a second owner. Provenance belongs in the plan
+    documents, which is where it now is.
+    """
+    archived = {int(number) for number in _ARCHIVE_ROW.findall(_read(ARCHIVE))}
+    assert archived, f"no archive rows parsed out of {ARCHIVE}"
+    gap_list = _read(CONTRACT).split("## The gap list")[1]
+    rows = _GAP_ROW_OWNER.findall(gap_list)
+    assert rows, f"no gap rows parsed out of {CONTRACT}"
+    orphaned = sorted(
+        f"{entry} names Plan {number}, archived"
+        for entry, owner in rows
+        for number in (int(n) for n in _OWNER_PLAN.findall(owner))
+        if number in archived
+    )
+    assert not orphaned, (
+        "these gap entries name an owner plan that has been archived, so "
+        "nothing is going to fix them:\n  " + "\n  ".join(orphaned) +
+        "\n\nEither the gap is closed and the row should go, or it has a new "
+        "owner and the row should say so."
+    )
+
+
 def test_every_waiver_names_a_gap_entry_that_exists():
     """A waiver whose gap entry was deleted has lost its reason to exist."""
     gap_list = _read(CONTRACT).split("## The gap list")[1]
