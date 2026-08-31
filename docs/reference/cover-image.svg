@@ -130,7 +130,7 @@
   <text x="662" y="657" text-anchor="middle"
         font-family="system-ui, Arial, sans-serif" font-size="19" fill="#8b949e">Grafana observability</text>
 
-  <!-- Badge 3: Scale -->
+  <!-- Badge 3: Bronze -->
   <rect x="822" y="625" width="275" height="50" rx="25" fill="#0d1117" stroke="#21262d" stroke-width="1.5"/>
   <rect x="822" y="625" width="5"   height="50" fill="#e3b341"/>
   <text x="962" y="657" text-anchor="middle"
