@@ -1698,6 +1698,78 @@ blocks the window at the right place — before coordination is gated. Making a
 safe, days-ahead, read-only `preflight` fail because a `dbt` invocation happens
 to be running would trade a real gate for a scheduling nuisance.
 
+#### Deployed and verified in production — 2026-08-31
+
+Shipped as [PR #302](https://github.com/whitewalls86/new_car_tracker/pull/302),
+merged `df2d8a2`, CI green. Deployed the same evening: `git pull` carried
+`scripts/host_maintenance.py` — which the operator runs from the checkout, so
+blockers 2 and 3 needed no image — and `redeploy.sh ops` rebuilt the service
+that serves the two gate fixes. The deploy drained in 27s, recreated `ops`,
+reported every pollable service healthy after 5s, and released coordination.
+
+`container-health` was deliberately **not** rebuilt. `container_health/expected.py`
+changed, and that file is copied into its image too, so its image is one commit
+behind — but the change only *adds* `HEALTHCHECK_EXEMPT_SERVICES`, which nothing
+in that service reads, and `EXPECTED_SERVICES` is untouched. The drift is
+recorded here rather than left to be discovered, because an unrecorded
+half-deployed pair is exactly what cost this stage a re-scope in August.
+
+**The release gate, before and after.** Three blockers became one:
+
+| Gate | Before | After |
+|---|---|---|
+| `container_health` | `fail — unhealthy, unconfigured, or absent: oauth2-proxy` | **pass** |
+| `observability_fresh` | `unknown — evidence unavailable or malformed` | **pass** |
+| `coordination_expected` | fail | fail — correct, no window is open |
+
+Both were checked for the *right* reason rather than accepted on the verdict.
+`oauth2-proxy` still reads `-1` in Prometheus, so `container_health` passes via
+the documented exemption and not because the front door quietly became
+healthy. Exercised against the deployed code, the three branches read:
+
+```
+exempt oauth2-proxy = -1  -> pass
+exempt oauth2-proxy =  0  -> fail    absence still fails
+non-exempt grafana  = -1  -> fail    the exemption is not a general -1 tolerance
+```
+
+**Blocker 3, exercised against a live one-off.** A `docker compose run -d --rm
+--no-deps archiver sleep 600` reproduced the 2026-08-29 shape exactly — two
+running containers under one `cartracker/archiver` identity. With it alive, the
+deployed capture and plan-builder read:
+
+```
+containers captured        : 30
+one-offs in the manifest   : none
+archiver rows in manifest  : ['cartracker-archiver']
+plan derived               : OK, 1 project(s), 28 services
+```
+
+`build_running_set_plan` is the exact call that raised
+`running-set manifest duplicates cartracker/archiver` at `stop`, after
+coordination was already gated. Re-injecting the one-off into the manifest as
+the pre-fix capture would have recorded it still refuses, with the same wording
+— so the fix carries the weight, and the regression test reproduces the real
+failure rather than an invented one.
+
+The same test confirmed the half of the design that justifies skipping one-offs
+in capture: `/oneoff-processes` reported `active_processes: 1` while the
+container lived, so a `run` in flight still blocks a window at the drain, and
+`cartracker_container_health{container="archiver"}` stayed at `1` throughout —
+the one-off never masqueraded as the service. The container was removed and the
+fleet returned to zero one-offs, `phase: none`, and a healthy `archiver`.
+
+**What is still unproven.** `validate-host` has not run on a deferred-reboot
+window, because that requires a window. What was verified read-only is the input
+it stranded on: the exact `dpkg-query` `installed_kernels()` issues returns
+`installed` for `6.8.0-1058-oracle` and `6.8.0-1060-oracle` and `config-files`
+for `1049/1050/1054/1059`, every `-unsigned-` flavour is `not-installed`, and
+`linux-image-oracle` drops out on the versioned-name rule. The survivors sort
+numerically to `6.8.0-1060-oracle`, `/boot` holds exactly those two images, and
+`GRUB_DEFAULT=0` with `GRUB_TIMEOUT=0`. The status filter is load-bearing:
+`reboot-required.pkgs` names `1059`, which has no `/boot` image and would
+otherwise have been a candidate. The end-to-end proof belongs to the window run.
+
 ## Rollback and recovery
 
 Rollback is phase-specific:
