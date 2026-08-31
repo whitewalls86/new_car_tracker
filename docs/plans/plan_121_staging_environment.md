@@ -60,6 +60,64 @@ Scope for this plan:
 - update each service's Dockerfile/CI pip install to use `-c constraints.txt`
 - audit current `requirements.txt` files for already-drifted shared packages
 
+### Second incident, 2026-08-31: FastAPI 0.128 → 0.141, unpinned
+
+The `boto3` case above was a package **missing** from one service. This one is
+the other half of the same defect — a package **present everywhere and pinned
+nowhere** — and it is the stronger argument, because it reached CI without
+anyone changing a line of code.
+
+**What happened.** [Plan 161](plan_161_testing_contract.md)'s new contract test
+walked each FastAPI app's `app.routes` to enumerate its routes. It passed on a
+developer machine and failed in CI, reporting eight route waivers as stale.
+Neither the tests nor the routes had changed. **FastAPI changed
+`include_router`:** up to 0.128 it flattened a router's routes into
+`app.routes` with the prefix applied; by 0.141 it appends a single
+`_IncludedRouter` wrapper exposing neither `routes` nor `prefix`, resolving its
+children at match time.
+
+Reproduced on Linux in `cartracker-ops:latest`: `app.routes` yields 4
+non-framework routes and 10 wrappers, where `app.openapi()` yields all 54
+operations. The developer machine had resolved **0.128.0**; CI resolved
+**0.141.1**. Same commit, same code, different answer.
+
+**Why this belongs here and not in Plan 161.** Plan 161 fixed its own test — it
+now enumerates from `app.openapi()`, which is public and stable across both
+versions. That repair is complete and is not what this entry records. What it
+records is the exposure underneath:
+
+| Service | `fastapi` constraint |
+|---|---|
+| `ops`, `processing`, `scraper`, `dbt_runner`, `container_health` | **none** |
+| `archiver` | `>=0.115` — a floor with no ceiling |
+
+`uvicorn`, `pydantic`, `boto3`, `psycopg2-binary` and `pyarrow` are unpinned
+the same way. Across the whole tree only `prometheus-client==0.26.0` is pinned
+to an exact version.
+
+**The part that is not about tests.** CI is where this surfaced, but CI is not
+the exposure. Every service image is built with `pip install -r
+requirements.txt` and no constraint, so **a rebuild on the VM takes whatever
+was published that day.** FastAPI is a **pre-1.0 project**; a routing-layer
+internals change arriving in a minor bump is exactly what `0.x` reserves the
+right to do. A `docker compose build` on a Tuesday can therefore change
+production request routing or response serialisation with no commit, no review
+and no signal — and the first evidence would be behavioural, in production.
+
+**What this adds to the scope above.** Nothing structural: `constraints.txt`
+is still the fix. Two refinements:
+
+- The audit item should cover **web-stack packages, not only shared ones**.
+  `fastapi`, `uvicorn`, `pydantic` and `starlette` are the highest-risk entries
+  in the tree — pre-1.0 or fast-moving, and on every request path — yet they
+  are not "shared packages" in the `boto3` sense that motivated this section.
+- Pinning wants a **renewal mechanism**, not just a floor. A constraints file
+  that is never raised becomes its own liability; whatever raises it should be
+  a deliberate, reviewable change rather than a rebuild.
+
+**Evidence:** [Plan 161's CAR-34 evidence](plan_161_testing_contract.md#evidence--car-34-2026-08-31),
+PR #306, commit `e46ce27`.
+
 ---
 
 ## Context
