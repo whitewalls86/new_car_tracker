@@ -457,6 +457,10 @@ def test_restore_apt_automation_restores_recorded_units_and_verifies(mocker):
         calls.append(command)
         if command[:2] == ("systemctl", "is-enabled"):
             return _command(f"{states[command[2]]}\n")
+        if command[:2] == ("systemctl", "is-active"):
+            return _command(
+                "active" if states[command[2]] == "enabled" else "inactive"
+            )
         if command == ("apt-mark", "showhold"):
             return _command("docker.io\n")
         return _command()
@@ -480,10 +484,19 @@ def test_restore_apt_automation_restores_recorded_units_and_verifies(mocker):
     assert ("sudo", "systemctl", "enable", "apt-daily.timer") in calls
     assert ("sudo", "systemctl", "disable", "apt-daily-upgrade.timer") in calls
     assert ("sudo", "systemctl", "enable", "unattended-upgrades.service") in calls
+    # The enabled timer is started; the disabled one is not, and neither is
+    # the `unattended-upgrades.service` shutdown oneshot.
+    assert ("sudo", "systemctl", "start", "apt-daily.timer") in calls
+    assert ("sudo", "systemctl", "start", "apt-daily-upgrade.timer") not in calls
+    assert ("sudo", "systemctl", "start", "unattended-upgrades.service") not in calls
     assert result == {
         "phase": "complete",
         "apt_automation_restored": True,
         "apt_unit_states": states,
+        "apt_timer_activity": {
+            "apt-daily.timer": "active",
+            "apt-daily-upgrade.timer": "inactive",
+        },
         "holds": ["docker.io"],
     }
 
@@ -514,6 +527,10 @@ def test_restore_apt_automation_rechecks_reviewed_hold_set(mocker):
     def fake_run(command, **kwargs):
         if command[:2] == ("systemctl", "is-enabled"):
             return _command(f"{states[command[2]]}\n")
+        if command[:2] == ("systemctl", "is-active"):
+            return _command(
+                "active" if states[command[2]] == "enabled" else "inactive"
+            )
         if command == ("apt-mark", "showhold"):
             return _command("different-package\n")
         return _command()
@@ -533,6 +550,95 @@ def test_restore_apt_automation_rechecks_reviewed_hold_set(mocker):
 
     with pytest.raises(host_maintenance.MaintenanceError, match="holds changed"):
         host_maintenance.restore_apt_automation(args)
+
+
+def test_restore_apt_automation_fails_closed_when_an_enabled_timer_stays_inactive(mocker):
+    """Unmasking does not start a unit, and after a reboot nothing else will.
+
+    The 2026-08-31 window left both apt timers ``enabled`` and ``inactive
+    (dead)`` with ``systemctl list-timers`` reporting none, while this command
+    returned ``apt_automation_restored: True`` -- so the host had silently
+    stopped taking automatic security updates and reported the opposite.
+    """
+    args = _restore_apt_args()
+    states = _restore_apt_evidence()["apt_unit_states_before"]
+
+    def fake_run(command, **kwargs):
+        if command[:2] == ("systemctl", "is-enabled"):
+            return _command(states[command[2]])
+        if command[:2] == ("systemctl", "is-active"):
+            return _command("inactive")
+        if command == ("apt-mark", "showhold"):
+            return _command("docker.io")
+        return _command()
+
+    mocker.patch.object(
+        host_maintenance,
+        "latest_checkpoint",
+        return_value={"phase": "complete", "manifest_location": args.manifest},
+    )
+    mocker.patch.object(
+        host_maintenance, "load_package_plan", return_value=({"holds": ["docker.io"]}, "digest")
+    )
+    mocker.patch.object(
+        host_maintenance, "_read_existing_update_evidence", return_value=_restore_apt_evidence()
+    )
+    mocker.patch.object(host_maintenance, "_run_command", side_effect=fake_run)
+
+    with pytest.raises(host_maintenance.MaintenanceError, match="did not start: apt-daily.timer"):
+        host_maintenance.restore_apt_automation(args)
+
+
+def test_package_boundaries_match_a_components_library_and_python_variants():
+    """A boundary names a component; Debian ships it under several package names.
+
+    Prefix-matching the literal package name saw `netplan.io` and
+    `netplan-generator` but not `libnetplan0` or `python3-netplan`, so the
+    2026-08-31 transaction declared `network` from two of its four netplan
+    packages -- and would have declared none had it carried only the library.
+    """
+    for package in ("netplan.io", "netplan-generator", "libnetplan0", "python3-netplan"):
+        assert host_maintenance._package_boundaries(package) == ["network"], package
+    assert host_maintenance._package_boundaries("iproute2") == ["network"]
+
+
+def test_package_boundaries_name_the_storage_surface_that_resolves_the_data_mount():
+    """`/mnt/data` mounts by UUID with `nofail`, so blkid/mount are a boundary.
+
+    The 2026-08-31 window upgraded the whole util-linux family -- the packages
+    that resolve and mount the data volume -- in a transaction that declared no
+    boundary at all beyond netplan.
+    """
+    for package in (
+        "util-linux",
+        "mount",
+        "libmount1",
+        "libblkid1",
+        "libuuid1",
+        "libfdisk1",
+        "libsmartcols1",
+        "uuid-runtime",
+        "bsdutils",
+        "fdisk",
+    ):
+        assert host_maintenance._package_boundaries(package) == ["storage"], package
+
+
+def test_package_boundaries_do_not_over_match_unrelated_packages():
+    """The variant rule must not sweep in neighbours that share a leading string."""
+    for package in (
+        "libattr1",
+        "libbz2-1.0",
+        "libssh-4",
+        "libjcat1",
+        "libxmlb2",
+        "coreutils",
+        "cpio",
+        "diffutils",
+        "snapd",
+        "qemu-user-static",
+    ):
+        assert host_maintenance._package_boundaries(package) == [], package
 
 
 def test_checkpoint_refuses_symlink(mocker, tmp_path):
