@@ -626,6 +626,22 @@ greenfield-vs-populated gap is a Plan 162 census finding; the dump-restore
 rehearsal is a Plan 121 scope line. Both were written into those documents by
 this ticket.
 
+**Measured cost, correcting this stage's own estimate.** The stage guessed
+"roughly one `airflow db migrate` (~30-60s)". Run `33423400902` (PR #305) ran it
+in **3.1s** — 18:11:35.02 to 18:11:38.14 — on an empty Postgres, because Airflow
+builds a fresh metadata DB directly rather than replaying every revision. The
+venv install it needs was already in this job. Postgres logs one
+`relation "log" does not exist` inside that window: Airflow probing for an
+existing install before creating anything. The step exits 0 and it is not a
+defect.
+
+**Verified 2026-08-31, run `33423400902`.** All seven
+`TestCoordinationDrainQueries` tests passed against Airflow's real tables, with
+`REQUIRE_AIRFLOW_SCHEMA=1` set — so they executed rather than skipped, which is
+the whole claim. Both `test_airflow_version_parity.py` tests passed in the
+Airflow venv, confirming the Dockerfile tag, the `ci.yml` pin and the installed
+`airflow.__version__` agree at 3.2.0.
+
 **Local behaviour:** a missing `airflow` schema skips, so the suite still runs
 against a Flyway-only local database. CI sets `REQUIRE_AIRFLOW_SCHEMA=1`, which
 turns that skip into a failure — a skip in CI would silently restore the exact
