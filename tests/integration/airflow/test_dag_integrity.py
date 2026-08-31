@@ -20,10 +20,29 @@ from pathlib import Path
 
 import pytest
 
-from tests.health_sensor_census import expected_sensor_task_ids
-
 REPO_ROOT = Path(__file__).parents[3]
 DAGS_DIR = REPO_ROOT / "airflow" / "dags"
+CENSUS = REPO_ROOT / "tests" / "health_sensor_census.py"
+
+
+def _load_census():
+    """Load the health-sensor census by path rather than importing it.
+
+    This venv is `apache-airflow==3.2.0` in isolation and pytest does not put
+    the repo root on `sys.path` here: CI run 33444675959 failed collection with
+    `ModuleNotFoundError: No module named 'tests'` on a plain
+    `from tests.health_sensor_census import ...` that passed in the main venv.
+    Loading by path is what both readers of the census can do, and the census
+    imports nothing, so there is nothing to resolve. Same helper, same reason,
+    in tests/airflow/test_health_sensor_demotion.py.
+    """
+    spec = importlib.util.spec_from_file_location("health_sensor_census", CENSUS)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+expected_sensor_task_ids = _load_census().expected_sensor_task_ids
 
 # Map dag filename -> expected dag_id and expected task_ids
 DAG_SPECS = {

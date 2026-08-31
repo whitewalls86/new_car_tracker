@@ -16,17 +16,38 @@ tests/airflow/test_maintenance_pool.py, so they run in the ordinary suite
 without Airflow installed.
 """
 import ast
+import importlib.util
 from pathlib import Path
 
 import pytest
 
-from tests.health_sensor_census import HEALTH_SENSOR_CENSUS
-
 REPO_ROOT = Path(__file__).parents[2]
 DAGS_DIR = REPO_ROOT / "airflow" / "dags"
 SENSORS = DAGS_DIR / "sensors.py"
+CENSUS = REPO_ROOT / "tests" / "health_sensor_census.py"
 
 HEALTH_FACTORY = "http_health_sensor"
+
+
+def _load_census():
+    """Load the census by path rather than importing it.
+
+    `from tests.health_sensor_census import ...` resolves in this venv and not
+    in the isolated Airflow one, where pytest never puts the repo root on
+    `sys.path` -- CI run 33444675959 failed collection there with
+    `ModuleNotFoundError: No module named 'tests'` while the same import passed
+    locally. A declaration whose whole purpose is to be read from two virtual
+    environments cannot be reached by a mechanism that only one of them has, so
+    both readers load it the way that depends on nothing: by file path. The
+    census itself imports nothing, which is what makes that safe.
+    """
+    spec = importlib.util.spec_from_file_location("health_sensor_census", CENSUS)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+HEALTH_SENSOR_CENSUS = _load_census().HEALTH_SENSOR_CENSUS
 
 
 def _dag_files():

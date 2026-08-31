@@ -23,6 +23,13 @@ where importing `airflow` is a contract violation, and
 `tests/integration/airflow/` is the isolated `apache-airflow==3.2.0` venv built
 in CI. A declaration only both can read is a declaration with no dependencies.
 
+For the same reason, **both readers load this file by path and neither imports
+it**. `from tests.health_sensor_census import ...` resolves in the main venv and
+not in the Airflow one, where pytest leaves the repo root off `sys.path`: CI run
+33444675959 failed collection there with `ModuleNotFoundError: No module named
+'tests'` on an import that had passed locally. Importing nothing is what makes
+loading by path safe.
+
 The census is checked against the DAGs from both sides rather than trusted:
 `test_the_gate_survives_the_demotion` asserts the file-to-service mapping matches
 what the DAG sources actually call, and
