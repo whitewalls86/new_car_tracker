@@ -22,6 +22,15 @@ Four are defects found while scoping it. None is optional. B2 and B5 strand the
 window *after* the reboot, with production stopped and coordination unable to
 release.
 
+> **All five are closed as of 2026-08-31.** B1 by deployment (2026-08-30), B4 by
+> Plan 145 Stage 6 finishing, and B2, B3 and B5 in code with a regression test
+> each — see [The four defects, fixed](../plans/plan_142_planned_host_maintenance.md#the-four-defects-fixed--2026-08-31)
+> in the plan document. **The fixes must be deployed before the window runs**:
+> B2 and B3 are in `scripts/host_maintenance.py`, which the operator runs from a
+> checkout, so a `git pull` on the host is enough for those; B5 is in `ops`,
+> which needs a rebuild. Each blocker below is kept as written, because what it
+> found is the reason the fix has the shape it does.
+
 ### B1 — The Stage 3 resume gate is not deployed. Two images are stale.
 
 The running `cartracker-ops` image was built **2026-08-25T19:45:26Z**. Its
@@ -128,6 +137,15 @@ from. `GRUB_DEFAULT=0` with `GRUB_TIMEOUT=0`, so the highest installed kernel is
 what boots — here `6.8.0-1060-oracle` (`/boot` holds `1058` and `1060`;
 `reboot-required.pkgs` also names `1059`, which has since been autoremoved).
 
+**Done 2026-08-31.** `update` now reads the transaction first and the host's
+installed kernels second, writes `kernel_target_source` (`transaction` or
+`installed`) into both `update-result.json` and the checkpoint, and refuses at
+`update` if neither source names a kernel — rather than letting the window reach
+`validate-host` and strand there. "Highest" is now a numeric comparison: the
+string sort this line assumed ranks `6.8.0-999-oracle` above `6.8.0-1060-oracle`,
+which could not bite across one transaction and can across the installed set.
+Expect `boot_kernel_target_source: installed` in this window's evidence.
+
 ### B3 — A `docker compose run` one-off makes `stop` fail closed
 
 `capture_running_set` walks `docker ps --all` and records every container with no
@@ -158,6 +176,15 @@ never as expected services. Plan 142's capture never got the same treatment.
 Clean up the leaked 8-hour container first. **Action, real fix:** skip
 `oneoff=True` in `capture_running_set`, or fail in `preflight` where it is free
 to abort.
+
+**Done 2026-08-31 — the capture skip, not the preflight refusal.** A one-off is
+work in flight, not intended running state, and the drain contract already
+counts it (`ops/coordination_drain.py`'s `_container_processes`), which is the
+right place for a live `run` to block the window: before coordination is gated.
+Failing `preflight` — a safe, read-only step run days ahead — because a `dbt`
+invocation happens to be running would trade a real gate for a scheduling
+nuisance. The §5.0 gate below still checks for a leaked one-off, because an
+8-hour ad-hoc container is worth noticing whatever the manifest does with it.
 
 ### B5 — `oauth2-proxy` fails the `container_health` release gate, permanently
 
@@ -208,6 +235,21 @@ Either way, verify by reading `/coordination/release-status` and seeing
 `container_health: pass` **before** anything is stopped. This gate is readable
 at any time, costs nothing, and is the cheapest possible dress rehearsal for
 the whole resume path.
+
+**Done 2026-08-31 — the first option.** The gate now lets a service named in
+`healthcheck-exemptions.txt` read `-1` and nothing else: `0` still fails for it,
+because an expected service Docker no longer reports publishes `0`, so absence
+stays visible exactly as Stage 3 requires; a non-exempt `-1` still fails.
+`container_health/expected.py` carries `HEALTHCHECK_EXEMPT_SERVICES` frozen
+beside `EXPECTED_SERVICES`, on the same anti-drift bargain — a CI test asserts it
+equals the parsed exemptions file by exact set equality, and a second asserts
+`oauth2-proxy` is still the only exempt service that is also expected running.
+The front-door image change stays Plan 140's, and stays out of this window.
+
+**This one needs the `ops` rebuild.** B2 and B3 live in
+`scripts/host_maintenance.py`, which the operator runs from a checkout; this
+fix is served by `ops`. Read `release-status` after deploying and confirm
+`container_health: pass` before scheduling the window.
 
 ### B4 — Plan 145 Stage 6 must be finished first
 
@@ -368,11 +410,12 @@ export API=http://localhost:8060
 sudo install -d -m 0755 "$EVIDENCE"
 ```
 
-> **Pass `--api-url $API` on every command.** The script defaults to
-> `http://localhost:5050`, which on this host answers **500**. The coordination
-> API is on **8060** — `redeploy.sh` has it right (`OPS_URL="http://localhost:8060"`),
-> and §10.7 of the parent runbook omits the flag and would fail as written.
-> That omission should be fixed in §10.7 too.
+> **`--api-url $API` is now belt and braces.** The script defaulted to
+> `http://localhost:5050` — pgAdmin, which answers **500** — and the default is
+> `http://localhost:8060` as of 2026-08-31, matching `redeploy.sh`
+> (`OPS_URL="http://localhost:8060"`). The commands below still pass the flag
+> explicitly, because an evidence record should say which API it talked to
+> rather than leave it to a default that has already been wrong once.
 
 ### 5.0 Gate — before anything
 
@@ -581,10 +624,12 @@ host. They belong in the plan document, and B1–B3 want tickets.
 | # | Finding | Fix |
 |---|---|---|
 | 1 | Deployed `ops` **and** `container-health` predate the Stage 3 resume gate while its migrations are applied | Deploy `master` rebuilding both; consider a gate that refuses a host window when the API lacks the release routes |
-| 1b | The `container_health` release gate fails permanently on `oauth2-proxy`'s documented `-1`; no runtime code reads `healthcheck-exemptions.txt` | Honour the exemption in the gate, or fix the front-door image (Plan 140 scopes it separately) |
-| 2 | `boot_kernel_target` only ever comes from the current transaction, so a deferred-reboot window strands at `validate-host` | Fall back to the highest installed versioned kernel; record the source |
-| 3 | `capture_running_set` has no `oneoff` filter, so a `compose run` makes `stop` fail after production is already gated | Skip `oneoff=True` in capture (as Plan 140 does), or fail in `preflight` |
-| 4 | Script default `--api-url` is `:5050`; the ops API is `:8060`, and §10.7's commands omit the flag | Change the default to 8060 and fix §10.7 |
-| 5 | `/var/lib/containerd` is 29 GB and unmeasured — the storage runbook watches `/var/lib/docker` (714 MB) | Add the containerd store to the storage runbook's disk check; decide a reclaim policy separately |
-| 6 | `cartracker-archiver-run-44d23542ea2c` has been running 8 h — a leaked ad-hoc `compose run` | Clean up; consider whether one-offs need a max age |
+| 1b | The `container_health` release gate fails permanently on `oauth2-proxy`'s documented `-1`; no runtime code reads `healthcheck-exemptions.txt` | **Fixed 2026-08-31** — the gate honours the documented exemption; the front-door image stays Plan 140's |
+| 2 | `boot_kernel_target` only ever comes from the current transaction, so a deferred-reboot window strands at `validate-host` | **Fixed 2026-08-31** — falls back to the highest installed kernel, records the source, and refuses at `update` rather than at `validate-host` |
+| 3 | `capture_running_set` has no `oneoff` filter, so a `compose run` makes `stop` fail after production is already gated | **Fixed 2026-08-31** — capture skips `oneoff=True`, as Plan 140 does; the drain contract remains where a live one-off blocks the window |
+| 4 | Script default `--api-url` is `:5050`; the ops API is `:8060`, and §10.7's commands omit the flag | **Fixed 2026-08-31** — default is `:8060`; §10.7 already passes the flag |
+| 5 | `/var/lib/containerd` is 29 GB and unmeasured — the storage runbook watches `/var/lib/docker` (714 MB) | Add the containerd store to the storage runbook's disk check; decide a reclaim policy separately. **Re-measured 2026-08-31 with `sudo`: containerd 20 GB, docker 18 GB.** The 714 MB reading looks like an unprivileged `du` that could not traverse `overlay2`, so the "docker is small" half of this finding is wrong — both stores are large |
+| 6 | `cartracker-archiver-run-44d23542ea2c` has been running 8 h — a leaked ad-hoc `compose run` | Clean up; consider whether one-offs need a max age. **Gone as of 2026-08-31** — no one-offs running, no duplicate `(project, service)` identities |
 | 7 | `iproute2` is networking but matches no `PACKAGE_BOUNDARIES` prefix | Add it, or accept and document that the network boundary is netplan-only |
+| 8 | **`observability_fresh` can never pass**, on any host, in any state: it queries `promtail_client_request_errors_total`, which this Promtail does not publish, so `sum()` returns an empty vector and the gate reports `unknown` — which counts as a blocker | **Fixed 2026-08-31** — real metrics, `or vector(0)` on every counter query, and a test asserting that guard. See [A fifth defect](../plans/plan_142_planned_host_maintenance.md#a-fifth-defect-found-by-reading-the-gate--2026-08-31) |
+| 9 | **264 zombie processes** across three containers, none of which sets `HostConfig.Init`. `dbt-runner` leaks exactly one `python3.13` per hour since container start (141); `trawl` leaks 3 per browser launch (114); `airflow-dag-processor` holds 9 from a single incident on 2026-08-29 05:57–06:07 | Not a window blocker — 624 procs against `pid_max` 4194304 — but it grows monotonically with uptime and every deploy resets it invisibly. Needs its own ticket |

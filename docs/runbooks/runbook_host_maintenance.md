@@ -873,11 +873,12 @@ python scripts/host_maintenance.py --api-url "$API" --manifest "$MANIFEST" \
   --confirm-plan "$PACKAGE_PLAN_SHA256"
 ```
 
-> **`--api-url` is not optional here.** The client defaults to
-> `http://localhost:5050`, which answers **500** on this host; the coordination
-> API is on **8060**, as `redeploy.sh` already has it. These commands were
-> written without the flag and would have failed as printed — found 2026-08-29
-> while scoping the Stage 4 window.
+> **`--api-url` is explicit here on purpose.** The client used to default to
+> `http://localhost:5050` — pgAdmin, which answers **500** — so these commands
+> were written without the flag and would have failed as printed; found
+> 2026-08-29 while scoping the Stage 4 window. The default is
+> `http://localhost:8060` as of 2026-08-31, matching `redeploy.sh`. The flag
+> stays because an evidence record should name the API it talked to.
 
 1. **Host evidence — no user-visible change, no data risk.** `validate-host`
    writes `validate-host.json` and submits it only when every host gate passes.
