@@ -21,34 +21,40 @@ def duckdb_con():
 
 
 @pytest.fixture()
-def airflow_metadata_standin(cur):
+def airflow_metadata(cur):
     """
-    Minimal `airflow.task_instance` / `airflow.dag_run`, created per-test.
+    Binds a test to Airflow's real `airflow.task_instance` / `airflow.dag_run`.
 
-    Airflow owns these tables through its own migrations, not Flyway. In
-    production they live in the `airflow` schema of this same database
-    (`airflow.task_instance` held 438,355 rows on 2026-08-25); in CI, Flyway
-    creates the empty `airflow` schema and Airflow's metadata DB is SQLite, so
-    the tables never exist. That gap is why `ops/coordination_drain.py` shipped
-    querying `task_instance` unqualified: no test could execute it.
+    Airflow owns these tables through its own Alembic migrations, not Flyway.
+    They live in the `airflow` schema of this same database in production
+    (`airflow.task_instance` held 438,355 rows on 2026-08-25), and CI now
+    creates them the way production does -- `airflow db migrate` run as
+    `airflow_user`, whose `search_path = airflow`, after Flyway.
 
-    These stand-ins carry only the columns the drain queries read, so they
-    verify SQL shape and schema qualification -- an unqualified `task_instance`
-    still fails here, because `airflow` is not on the ops role's search_path.
-    They deliberately do NOT verify Airflow's real schema: a column renamed by
-    an Airflow upgrade would pass here and break in production. Replacing this
-    with a real `airflow db migrate` against the CI Postgres is tracked
-    separately.
+    This replaces the `airflow_metadata_standin` stopgap, which created
+    minimal tables carrying only the columns the drain queries read. The
+    stand-in caught schema *qualification* bugs and nothing else: a column
+    renamed by an Airflow upgrade passed against our own definition and broke
+    in production. Binding to the real tables is the point -- if an upgrade
+    moves a column these queries read, CI is where that surfaces.
 
-    The `cur` fixture's transaction is rolled back, so nothing is left behind.
+    Absence is a skip locally and a failure in CI (`REQUIRE_AIRFLOW_SCHEMA`).
+    A skip in CI would silently restore the blind spot this fixture exists to
+    close, which is how the drain queries reached production unexecuted.
     """
-    cur.execute("CREATE SCHEMA IF NOT EXISTS airflow")
     cur.execute(
-        """CREATE TABLE IF NOT EXISTS airflow.task_instance (
-               dag_id text, task_id text, state text, start_date timestamptz)"""
+        """SELECT table_name FROM information_schema.tables
+            WHERE table_schema = 'airflow'
+              AND table_name IN ('task_instance', 'dag_run', 'alembic_version')"""
     )
-    cur.execute(
-        """CREATE TABLE IF NOT EXISTS airflow.dag_run (
-               dag_id text, run_id text, state text, start_date timestamptz)"""
-    )
+    present = {row["table_name"] for row in cur.fetchall()}
+    missing = {"task_instance", "dag_run", "alembic_version"} - present
+    if missing:
+        reason = (
+            f"the airflow schema is missing {sorted(missing)} -- run "
+            "`airflow db migrate` against this database as airflow_user"
+        )
+        if os.environ.get("REQUIRE_AIRFLOW_SCHEMA"):
+            pytest.fail(reason)
+        pytest.skip(reason)
     return cur

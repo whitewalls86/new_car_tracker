@@ -62,6 +62,25 @@ That coincidence is the census's argument for existing.
   the CI-schema gap that [Plan 139](plan_139_test_suite_maintenance.md) Stage F
   fixes narrowly and this plan should close generally.
 
+**Two notes added 2026-08-31 by Plan 139 Stage F (CAR-36), for the census to
+pick up rather than rediscover:**
+
+- **CI's Postgres is greenfield; production's is populated.** Stage F now runs
+  `airflow db migrate` in CI, so the `airflow` schema exists — but it is built
+  from empty, while production's carries hundreds of thousands of rows. This is
+  the same root cause as bare-image-vs-Compose one bullet up: CI's database is
+  not shaped like production's. Worth measuring generally — *which* suites
+  depend on an empty database, and which would find something in a full one.
+  The rehearsal that would close it needs a deployed stack, not a CI job, and
+  is recorded in [Plan 121](plan_121_staging_environment.md).
+- **`tests/integration/airflow/` still points at
+  `sqlite:////tmp/airflow.db`.** Stage F deliberately left it there: it was
+  out of that ticket's exit criteria, and pointing the DAG tests at the same
+  Postgres metadata DB the drain tests read would mix test data into it. Now
+  that a real Airflow metadata schema exists in the same job, whether those
+  suites should share it is **this plan's** call — it is a question about how
+  CI's services are structured, which is exactly what the restructure owns.
+
 ### 3. What it absorbs from Plan 139
 
 Plan 139 was written as test-suite *maintenance*. Most of it is now either
