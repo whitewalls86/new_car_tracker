@@ -7,7 +7,7 @@ The census enumerated the work; Stage 1 ran the 73 tests nothing had ever
 invoked and found no production defects behind them, which
 [confirms the L estimate](#evidence--stage-1-the-orphaned-suites-car-45-2026-08-31);
 Stage 2 [unblinded the coverage instrument](#evidence--stage-2-unblinding-coverage-car-46-2026-08-31)
-the later stages are graded by, taking the reported number from 88% to 75.92%
+the later stages are graded by, taking the reported number from 88% to 75.95%
 without a line of production code changing. The waiver list stands at 116.
 
 This document was written as a deliberate stub on 2026-08-30, when
@@ -596,9 +596,10 @@ assertions carry the repair — `test_every_service_directory_is_measured_by_cov
 and `test_the_coverage_number_the_unit_job_produces_is_consumed`. Both were
 verified by breaking them; the mutation set is 19 and all 19 are caught.
 
-**Unblinding moved the reported number from 88% to 75.92% with no code
-changing.** The four directories added hold 11,709 of 19,733 measurable
-statements — more than the six that were being measured:
+**Unblinding moved the reported number from 88% to 75.95% with no code
+changing** — the figure CI reads, and the one the gate acts on. The four
+directories added hold 11,709 of 19,733 measurable statements — more than the
+six that were being measured:
 
 | Added to `source` | Statements | Covered |
 |---|---|---|
@@ -636,3 +637,25 @@ mutations in `scripts/verify_testing_contract_mutations.py` anchored on the
 removed G1 and G2 rows, so the script aborted rather than ran; its staleness
 guard is what said so. Re-anchored, and Stage 1's new dormancy rule was given
 the mutation it shipped without.
+
+**Confirmed in CI, which is the only place the gate can actually fire.**
+[Run 33442835886](https://github.com/whitewalls86/new_car_tracker/actions/runs/33442835886)
+on PR #318, all jobs green:
+
+- `Required test coverage of 74% reached. Total coverage: 75.95%` — the
+  threshold ran and passed, with **1.95 points of headroom**.
+- `Artifact coverage-xml has been successfully uploaded` — 49,164 bytes,
+  artifact 9776948765. The report outlives the log, which was the point.
+
+**Linux reads 75.95% where Windows reads 75.92%** — same 19,733 statements,
+4,745 missed against 4,752, so **seven statements are platform-dependent**.
+That is the number the ratchet's headroom has to absorb, and it is why 74 was
+set two points below the local measurement rather than one. A future stage
+raising the floor should keep at least that much slack.
+
+**The canary test that fails locally passes here**, which is G13 restated as
+evidence rather than assertion: `test_a_failing_canary_command_fails_the_check`
+is among the 3,195 that pass on Linux and is the one failure on Windows. CI
+cannot see the instance Stage 5 owns, exactly as its row says. The single
+Linux skip is unrelated — `test_every_sha_a_recap_names_is_a_real_commit`,
+which skips on a shallow clone.
