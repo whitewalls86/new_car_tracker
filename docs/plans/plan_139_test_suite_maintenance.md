@@ -566,6 +566,87 @@ Cost is roughly one `airflow db migrate` (~30-60s) on a job that already
 installs Airflow. Weigh that against a defect class that reaches production
 silently and fails closed.
 
+#### Stage F evidence — SHIPPED 2026-08-31 (CAR-36)
+
+All four scoped items landed, plus one guard the stage needed to be worth
+anything.
+
+1. **`airflow db migrate` runs against the CI Postgres.** A new
+   `.github/workflows/ci.yml` step runs it in the existing `/tmp/airflow-venv`
+   as `airflow_user` — the role Flyway V013 already creates, whose
+   `search_path = airflow` is what puts Alembic's tables in that schema. This
+   is production's mechanism, not a CI-only arrangement: `docker-compose.yml`'s
+   `airflow-init` sets `_AIRFLOW_DB_MIGRATE: 'true'` and is gated on
+   `flyway: service_completed_successfully`, so production re-runs this exact
+   command on every stack start. Flyway owns `public`/`ops`/`staging`; Airflow
+   owns everything inside `airflow`. Two migration systems, disjoint tables,
+   one database.
+2. **The SQL smoke step moved after it**, along with the Airflow venv install
+   that had sat 30 lines below it.
+3. **`airflow_metadata_standin` is retired.** Its replacement,
+   `airflow_metadata`, asserts the real tables are present rather than creating
+   any; the two INSERT-based drain tests now bind to Airflow's genuine
+   `dag_run`, which needed `run_type` and `run_after` the stand-in did not have
+   (both NOT NULL, no server default, filled from Python by Airflow). **That
+   breakage on day one is the mechanism working** — those are exactly the
+   columns an upgrade is free to change.
+4. **The audit found no third exposure.** Every schema-qualified reference
+   across `ops/`, `dashboard/sql/`, `archiver/sql/`, `airflow/sql/` and
+   `processing/` resolves to `ops.*`, `staging.*` or `public.*` — all
+   Flyway-created, all modelled by CI. `ops/coordination_drain.py` is the only
+   code that crosses into `airflow` (`airflow.task_instance:117`,
+   `airflow.dag_run:144`), and both queries are now executed.
+
+**The guard the stage needed.** CI pins `apache-airflow==3.2.0` in `ci.yml`;
+production runs `FROM apache/airflow:3.2.0` in `airflow/Dockerfile`. Nothing
+enforced that. `ci.yml`'s own comment claimed the pin "matches
+airflow/Dockerfile's base image tag" — a comment, not a check. Bump the
+Dockerfile alone and CI would keep validating the previous schema, turning this
+stage into a false assurance at the one moment it matters most.
+`tests/integration/airflow/test_airflow_version_parity.py` now asserts the
+Dockerfile tag, the `ci.yml` pin and the installed `airflow.__version__` are
+one version.
+
+**What this does not prove — the limit, so it is not overread later.** CI
+migrates **from empty**. Production migrates from a populated schema
+(`airflow.task_instance` held 438,355 rows on 2026-08-25). So this catches the
+schema Airflow 3.2.0 *builds* and any drift between it and our SQL; it cannot
+catch a failure in the *upgrade path* — an Alembic step that only fails on real
+data, a NOT NULL backfill hitting an existing null, a unique index that
+collides at scale, a migration that runs for twenty minutes. That matters
+because production re-migrates on every deploy and every Airflow service is
+gated on `airflow-init` completing: a failed migrate is a full stop, not a
+degraded mode. Rehearsing it needs a deployed stack with a restored dump, which
+is [Plan 121](plan_121_staging_environment.md)'s to own, not a CI job on the
+critical path [Plan 162](plan_162_testing_census_and_restructure.md) is trying
+to shorten.
+
+**Two dispositions recorded elsewhere, deliberately not done here.** The
+greenfield-vs-populated gap is a Plan 162 census finding; the dump-restore
+rehearsal is a Plan 121 scope line. Both were written into those documents by
+this ticket.
+
+**Measured cost, correcting this stage's own estimate.** The stage guessed
+"roughly one `airflow db migrate` (~30-60s)". Run `33423400902` (PR #305) ran it
+in **3.1s** — 18:11:35.02 to 18:11:38.14 — on an empty Postgres, because Airflow
+builds a fresh metadata DB directly rather than replaying every revision. The
+venv install it needs was already in this job. Postgres logs one
+`relation "log" does not exist` inside that window: Airflow probing for an
+existing install before creating anything. The step exits 0 and it is not a
+defect.
+
+**Verified 2026-08-31, run `33423400902`.** All seven
+`TestCoordinationDrainQueries` tests passed against Airflow's real tables, with
+`REQUIRE_AIRFLOW_SCHEMA=1` set — so they executed rather than skipped, which is
+the whole claim. Both `test_airflow_version_parity.py` tests passed in the
+Airflow venv, confirming the Dockerfile tag, the `ci.yml` pin and the installed
+`airflow.__version__` agree at 3.2.0.
+
+**Local behaviour:** a missing `airflow` schema skips, so the suite still runs
+against a Flyway-only local database. CI sets `REQUIRE_AIRFLOW_SCHEMA=1`, which
+turns that skip into a failure — a skip in CI would silently restore the exact
+blind spot this stage closes.
+
 ### Stage G — Moved to Plan 160 (2026-08-30)
 
 **Split out to [Plan 160](plan_160_promtail_contract_checker_reliability.md).**

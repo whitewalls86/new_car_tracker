@@ -84,6 +84,37 @@ unit tests, CI fixtures, or local development alone:
 - future Spark/Delta/MLflow services
 - deploy intent and service-drain behavior
 - production-like environment variables and secrets
+- **Airflow metadata migrations against populated data** (added 2026-08-31 by
+  Plan 139 Stage F, CAR-36)
+
+---
+
+## Scope note: rehearsing an Airflow upgrade
+
+Production runs `airflow db migrate` on **every** stack start —
+`docker-compose.yml`'s `airflow-init` sets `_AIRFLOW_DB_MIGRATE: 'true'`, gated
+on Flyway completing, and the apiserver, scheduler and dag-processor are all
+gated on `airflow-init` completing in turn. A failed migration is therefore a
+full stop for Airflow, not a degraded mode.
+
+[Plan 139](plan_139_test_suite_maintenance.md) Stage F made CI build that schema
+from empty, which catches drift between Airflow's tables and the `ops` queries
+that read them. It cannot catch the *upgrade path*: production migrates a
+populated schema (`airflow.task_instance` held 438,355 rows on 2026-08-25), and
+an Alembic step that only fails on real data — a NOT NULL backfill hitting an
+existing null, a unique index colliding at scale, a migration that runs for
+twenty minutes — is invisible to a build-from-empty.
+
+Closing that needs a deployed stack and a restored production Postgres dump,
+not a CI job: **restore a production dump into staging, run `airflow db
+migrate` against it, and confirm it completes before bumping the Airflow pin in
+`airflow/Dockerfile`.** Recorded here as a capability staging should have, not
+as a decision that it is in this plan's first slice.
+
+Note this is a *Postgres metadata* dump, and is unrelated to
+[Plan 120](plan_120_ci_lake_snapshot_delivery.md)'s production-derived
+fixtures — those are lake Parquet, closed over VIN/listing identity, with none
+of that machinery applicable here.
 
 ---
 

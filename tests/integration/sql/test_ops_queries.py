@@ -450,6 +450,23 @@ class TestArtifactsQueueEventsSchema:
 # coordination_drain.py — Plan 142 Stage 1 drain evidence queries
 # ============================================================================
 
+def _insert_dag_run(cur, dag_id: str, run_id: str) -> None:
+    """
+    A running `airflow.dag_run` row, as Airflow's own schema requires one.
+
+    `run_type` and `run_after` are NOT NULL with no server default -- Airflow
+    fills them from Python, so a raw INSERT must supply them. The retired
+    `airflow_metadata_standin` needed neither, which is precisely the drift
+    this fixture now catches: these columns are Airflow's to change.
+    """
+    cur.execute(
+        "INSERT INTO airflow.dag_run"
+        " (dag_id, run_id, state, start_date, run_type, run_after)"
+        " VALUES (%s, %s, 'running', now(), 'manual', now())",
+        (dag_id, run_id),
+    )
+
+
 class TestCoordinationDrainQueries:
     """
     These execute against a real schema because the unit tests cannot.
@@ -468,13 +485,13 @@ class TestCoordinationDrainQueries:
         row = cur.fetchone()
         assert row is not None and row["count"] >= 0
 
-    def test_airflow_task_instance_query_resolves(self, cur, airflow_metadata_standin):
+    def test_airflow_task_instance_query_resolves(self, cur, airflow_metadata):
         query = coordination_drain.task_instance_query(DEPLOY_SCOPE)
         assert query is not None, "the deploy scope must drain some task instances"
         cur.execute(*query)
         assert cur.fetchone() is not None
 
-    def test_gate_observation_query_resolves(self, cur, airflow_metadata_standin):
+    def test_gate_observation_query_resolves(self, cur, airflow_metadata):
         query = coordination_drain.gate_observation_query(DEPLOY_SCOPE, 1)
         assert query is not None, "the deploy scope must cover some admission DAGs"
         cur.execute(*query)
@@ -487,18 +504,14 @@ class TestCoordinationDrainQueries:
     # --- against the drain's real count.
 
     def test_gate_observation_count_falls_to_zero_as_live_runs_observe(
-        self, cur, airflow_metadata_standin
+        self, cur, airflow_metadata
     ):
         generation = 158
         query = coordination_drain.gate_observation_query(DEPLOY_SCOPE, generation)
         affected = query[1][:-1]
         runs = [(dag_id, f"{dag_id}-{uuid.uuid4().hex[:8]}") for dag_id in affected]
         for dag_id, run_id in runs:
-            cur.execute(
-                "INSERT INTO airflow.dag_run (dag_id, run_id, state, start_date)"
-                " VALUES (%s, %s, 'running', now())",
-                (dag_id, run_id),
-            )
+            _insert_dag_run(cur, dag_id, run_id)
 
         cur.execute(*query)
         assert cur.fetchone()["count"] == len(runs), "every live affected run blocks"
@@ -510,15 +523,11 @@ class TestCoordinationDrainQueries:
         assert cur.fetchone()["count"] == 0, "an observed run no longer blocks the drain"
 
     def test_an_observation_does_not_satisfy_the_next_generation(
-        self, cur, airflow_metadata_standin
+        self, cur, airflow_metadata
     ):
         dag_id = coordination_drain.gate_observation_query(DEPLOY_SCOPE, 1)[1][0]
         run_id = f"{dag_id}-{uuid.uuid4().hex[:8]}"
-        cur.execute(
-            "INSERT INTO airflow.dag_run (dag_id, run_id, state, start_date)"
-            " VALUES (%s, %s, 'running', now())",
-            (dag_id, run_id),
-        )
+        _insert_dag_run(cur, dag_id, run_id)
         cur.execute(GATE_OBSERVATION_SQL, (158, dag_id, run_id))
 
         cur.execute(*coordination_drain.gate_observation_query(DEPLOY_SCOPE, 158))
@@ -532,7 +541,7 @@ class TestCoordinationDrainQueries:
         )
 
     def test_repeated_observation_of_one_run_keeps_a_single_row(
-        self, cur, airflow_metadata_standin
+        self, cur, airflow_metadata
     ):
         """The reschedule sensor pokes every 60s for the length of the drain."""
         run_id = f"orphan_checker-{uuid.uuid4().hex[:8]}"
