@@ -2,9 +2,15 @@
 
 ## Status
 
-**DRAFT — audit complete; implementation has not started.** Written 2026-08-17
-after comparing the live `https://cartracker.info/info` page and `README.md`
-against `master` at `6f6a2ba`.
+**STAGE 0 COMPLETE — Stages 1 through 6 not started.** Written 2026-08-17 after
+comparing the live `https://cartracker.info/info` page and `README.md` against
+`master` at `6f6a2ba`.
+
+Both Stage 0 gates closed on 2026-08-31: **Gate 0b** reconciled the internal
+overviews (CAR-37, PR #313) and **Gate 0** recorded the baseline and gave every
+drift-table row a disposition (CAR-44, PR #315). Stage 1 may now draw copy from
+the reconciled overviews and the assigned replacement claims. No public surface
+has changed yet.
 
 The analytics acquisition and database-removal portion of Stage 4 moved to
 [Plan 143](plan_143_analytics_serving_snapshot.md) on 2026-08-18 before either
@@ -258,7 +264,7 @@ an explicit decision to remove the claim.
 
 #### Gate 0 evidence — 2026-08-31 (CAR-44)
 
-The baseline this gate asks for is
+**Gate 0 closed on 2026-08-31.** The baseline it asks for is
 [`docs/evidence/plan_138_stage_0_baseline_2026-08-31.md`](../evidence/plan_138_stage_0_baseline_2026-08-31.md),
 with screenshots alongside it. Every row of the drift table above carries a
 disposition there, plus three further rows of the same class found while
