@@ -3,7 +3,7 @@
 ## Observability, Deployment, Storage Economics, Testing, and Planning
 
 **Companion to:** [CarTracker Architectural Overview](ARCHITECTURAL_OVERVIEW.md)  
-**Codebase reviewed:** 2026-08-28
+**Codebase reviewed:** 2026-08-31
 
 ---
 

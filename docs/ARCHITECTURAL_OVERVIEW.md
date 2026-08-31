@@ -1,6 +1,6 @@
 # CarTracker Architectural Overview
 
-> Current-state narrative based on the source tree as of August 28, 2026.
+> Current-state narrative based on the source tree as of August 31, 2026.
 > This document is intended to be useful both as an engineering reference and
 > as source material for a conversational explanation of the system.
 
@@ -82,18 +82,29 @@ to mint a valid `cf_clearance` cookie. CarTracker separates these jobs:
 
 - `curl_cffi` performs normal fetches while impersonating a supported desktop
   Chrome TLS fingerprint.
-- FlareSolverr performs the expensive browser bootstrap and returns the page,
-  browser user agent, and cookies.
+- A headless browser solver performs the expensive browser bootstrap and
+  returns the page, browser user agent, and cookies.
 
 The result is much cheaper than driving a browser for every page, but more
 credible than attaching browser-looking headers to Python's ordinary TLS
 stack.
 
+**The solver is `trawl`, not FlareSolverr, and the names in the tree disagree
+with one another.** Production runs `FLARESOLVERR_URL=http://trawl:8191`: the
+variable kept its original name when the solver was swapped, and the wire
+protocol genuinely is FlareSolverr's — `cf_session.py` POSTs
+`{"cmd": "request.get", ...}` to `{FLARESOLVERR_URL}/v1`, which `trawl`
+implements. A vestigial `cartracker-flaresolverr` container is still defined
+and still running, having served zero requests since 2026-07-07; it is marked
+vestigial at `docker-compose.yml:174` and kept in scope only so health
+coverage never exempts a service on the belief that it is unused. Read
+"FlareSolverr" below as the name of the protocol, not of the process.
+
 ### Matching the cookie, user agent, headers, and TLS fingerprint
 
 `scraper/processors/cf_session.py` does not select a hard-coded impersonation
 target after bootstrapping. It parses the Chrome major version reported by
-FlareSolverr and maps it to an exact `curl_cffi` target where possible. If that
+the solver and maps it to an exact `curl_cffi` target where possible. If that
 version is unavailable, it chooses the nearest supported lower Chrome version;
 if the user agent cannot be parsed, it falls back to `chrome142`.
 
@@ -103,7 +114,7 @@ anti-bot signal. `make_cf_session()` therefore creates a fresh
 `curl_cffi.requests.Session` with all four pieces aligned:
 
 - the Chrome impersonation target;
-- the FlareSolverr user agent;
+- the browser user agent the solver reported;
 - browser navigation and client-hint headers;
 - cookies, including their domain and path attributes when available.
 
@@ -111,10 +122,10 @@ A fresh session is created for every caller because `curl_cffi` sessions are
 not safe for concurrent use. The expensive credentials are shared; the mutable
 network session is not.
 
-### The FlareSolverr bootstrap and 25-minute credential cache
+### The solver bootstrap and 25-minute credential cache
 
-On a cache miss, `get_cf_credentials()` sends a FlareSolverr `request.get`
-command to `/v1`, with the target URL and a millisecond timeout. A successful
+On a cache miss, `get_cf_credentials()` sends a FlareSolverr-protocol
+`request.get` command to `/v1`, with the target URL and a millisecond timeout. A successful
 solution supplies `userAgent`, cookies, response HTML, and an HTTP status.
 
 The returned credential record is process-wide and guarded by a
@@ -126,12 +137,12 @@ bootstrap when the cache expires; one thread refreshes while the rest wait and
 then reuse its result.
 
 The cache-miss return contract contains a useful optimization. It returns both
-the credentials and the HTML that FlareSolverr already fetched. A detail scrape
+the credentials and the HTML the solver already fetched. A detail scrape
 can use that HTML as its artifact rather than immediately request the same URL
 again. A cache hit returns credentials only, and the caller performs its fetch
 through a new replay session.
 
-FlareSolverr's `status: ok` is not treated as proof that Cars.com was reached.
+The solver's `status: ok` is not treated as proof that Cars.com was reached.
 The code separately classifies the returned HTTP status and HTML title. A 403
 or a known interstitial title such as “Just a moment...” is recorded as a
 challenge outcome. The credential record is still cached: refusing to cache it
