@@ -1480,16 +1480,50 @@ at 16. The pending work is one deferred reboot into the already-installed
 security-origin package is pending, because `unattended-upgrades` is doing its
 job.
 
-**1. The Stage 3 resume gate is not deployed, and two images are stale.** The
-running `ops` and `container-health` images were both built 2026-08-25T19:45Z.
-`ops` publishes no `/coordination/release-status`, `/coordination/host-evidence`
-or `/coordination/complete`; `container-health` 404s on the
-`/project-status/{project}` endpoint that `_auxiliary_still_stopped` reads.
-Meanwhile V044-V047 applied 2026-08-27/28 — the schema is ahead of the code that
-writes it. Expand-only, so harmless at rest, but a window run on these images
-would strand in `validating` with no release path but the forbidden facade.
-Rebuilding both is an ordinary scoped deploy; no config change is needed, and
-`ops` redeploying itself is safe because coordination state lives in Postgres.
+**1. The Stage 3 resume gate is not deployed, and two images are stale.**
+**~~Blocker~~ — closed 2026-08-30.** Both images are now current and the gate's
+endpoints answer; see [Stage 3 deployment](#stage-3-deployment--2026-08-30)
+below. The original finding is kept because the *way* it closed is the point.
+
+The running `ops` and `container-health` images were both built
+2026-08-25T19:45Z. `ops` published no `/coordination/release-status`,
+`/coordination/host-evidence` or `/coordination/complete`; `container-health`
+404d on the `/project-status/{project}` endpoint that `_auxiliary_still_stopped`
+reads. Meanwhile V044-V047 applied 2026-08-27/28 — the schema was ahead of the
+code that writes it. Expand-only, so harmless at rest, but a window run on those
+images would have stranded in `validating` with no release path but the
+forbidden facade. Rebuilding both is an ordinary scoped deploy; no config change
+is needed, and `ops` redeploying itself is safe because coordination state lives
+in Postgres.
+
+#### Stage 3 deployment — 2026-08-30
+
+The two halves did not land together, and only one was deliberate.
+
+| Service | Image built | How |
+|---|---|---|
+| `ops` | 2026-08-30 15:18 | **Incidentally**, carried by Plan 147's deploy |
+| `container-health` | 2026-08-31 02:35 | Deliberately, `redeploy.sh container-health` |
+
+So for roughly eleven hours the resume gate was **half deployed**: `ops` served
+all three coordination endpoints while `container-health` still 404d on
+`/project-status/{project}`, and nothing reported the split. It was found by
+probing the endpoints rather than by any signal, and only because this row was
+being checked for staleness.
+
+That is worth recording as more than bookkeeping. This plan exists because the
+fleet drifts service by service, and here the drift ran in the *helpful*
+direction — a component silently became more capable than the plan believed, via
+a deploy for an unrelated plan. A stale blocker that overstates what is broken
+costs real work: Stage 4 was sized against two rebuilds when it needed one.
+
+Verified after the deploy, through `ops` exactly as the gate reads it:
+`GET http://container-health:9110/project-status/cartracker` → **200**,
+container `healthy`.
+
+**Blockers 2, 3 and 4 below are untouched by this** — in particular
+`validate-host` still cannot pass a deferred-reboot window, which is the normal
+shape of a window on this host.
 
 **2. `validate-host` cannot pass a deferred-reboot window.** `apply_package_plan`
 derives `boot_kernel_target` only from packages *in the transaction*. On this
