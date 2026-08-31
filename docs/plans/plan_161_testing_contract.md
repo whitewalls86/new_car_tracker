@@ -2,11 +2,18 @@
 
 ## Status
 
+**The contract is written (CAR-33, 2026-08-31).** Success criteria 1, 4 and 5
+are met: [the nine questions are answered](#the-answers), the contract is
+[`docs/TESTING.md`](../TESTING.md), and the known violations are recorded as
+G1-G12 there. **Criteria 2 and 3 remain open** — the `.claude/skills/` reviewer
+and the test that asserts the contract are CAR-34. See
+[the evidence](#evidence--car-33-2026-08-31).
+
 Written 2026-08-30, out of a planning conversation that started as a test-suite
-refactor and stopped when the refactor turned out to be unwritable. The
-restructuring work is real and is described in
-[what this unblocks](#what-this-unblocks); it cannot be specified yet, because
-there is no standard for it to restructure toward.
+refactor and stopped when the refactor turned out to be unwritable. That
+restructuring work now has a standard to restructure toward, and a plan number:
+[Plan 162](plan_162_testing_census_and_restructure.md), which CAR-40 re-scopes
+against this contract.
 
 Priority and effort are proposed in [`docs/PLANS.md`](../PLANS.md), which owns
 both; this document does not choose them.
@@ -551,3 +558,35 @@ CAR-34 builds.
 
 Supplies the fixture Plan 162's restructure needs. Complete, and its output is
 already seeded in CI without being used for dbt.
+
+## Evidence
+
+### Evidence — CAR-33, 2026-08-31
+
+Criteria 1, 4 and 5 are met; 2 and 3 are CAR-34's and remain open. The contract
+is [`docs/TESTING.md`](../TESTING.md); `ARCHITECTURE.md:179` is a pointer with
+no second description behind it. Commits `cad95c8`, `06f90e3`, `9a56635`.
+
+**Four of this document's own 2026-08-30 measurements were wrong** and are
+corrected in [§Corrections](#corrections-to-this-documents-own-measurements).
+Two review corrections changed decisions rather than numbers: the Airflow
+mocking exemption was withdrawn as bad logic — it argued that the venv is built
+wrong, not that the convention should fork — and the layers were renumbered by
+dependency cost, after the original scheme left the dependency-free tier
+reading as the last one.
+
+**The largest finding was one the planning session did not make.** 73
+integration-marked tests across 11 files are invoked by no CI step, and
+`tests/integration/processing/` — 58 of them, last touched the day before — has
+never appeared in `ci.yml` at all. Recorded as G1; whether they still pass is
+unknown, and finding out is Plan 162's census. Nothing failed to produce this:
+the tests were written, reviewed, merged and maintained, and no mechanism
+existed that could notice they never ran. It is the sharpest available argument
+for criterion 3, and it was found by measuring rather than by reading.
+
+The gap list records every measured violation with an owner plan: G1-G2 and
+G4-G9, G11-G12 to Plan 162, G3 to Plan 139 Stage F (CAR-36), G10 to Plan 139
+Stage D items 4 and 5.
+
+Cost: estimate 2, actual 1 (-1). The nine questions were largely answerable by
+measurement rather than deliberation.
