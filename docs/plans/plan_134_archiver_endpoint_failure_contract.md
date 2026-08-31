@@ -2,7 +2,7 @@
 
 ## Status
 
-**Build order — in progress at Stage 1.** Split out of [Plan 131](plan_131_packed_cold_storage.md)
+**Build order — Stage 1 deployed 2026-08-30, observing to 2026-09-06.** Split out of [Plan 131](plan_131_packed_cold_storage.md)
 Stage 5 decision D5 on 2026-08-14, which fixed the two Plan 131 endpoints and
 deliberately left the rest alone.
 
@@ -47,9 +47,13 @@ never started.
 | `POST /flush/staging/run` | `{"total_flushed": int, "tables": [...], "error": str\|None}` | `error` set: any one of the per-table flushes failed | hourly, same DAG |
 | `POST /compact/silver/run` | `{"scanned", "compacted", "incremental", "skipped", "failed", "error", "partitions": [...]}` | **`failed > 0` with `error: None`** — see below | daily, 04:10 UTC |
 | `POST /cleanup/queue/run` | `{"total", "deleted", "failed", "results", "error"?}` | `error` set, or `failed > 0` | hourly |
-| `POST /cleanup/parquet/run` | `{"total", "deleted", "failed", "results"}` | **none — it is a structural no-op**, see below | daily 03:00 |
+| `POST /cleanup/parquet/run` | `{"total", "deleted", "failed", "results"}` | **none — it was a structural no-op**, see below | ~~daily 03:00~~ **deleted 2026-08-30 in `056cde7`** |
 
-No DAG in `airflow/dags/` inspects an `error` key.
+No DAG calling these endpoints inspects an `error` key. (`pack_bronze_html` does
+— `check_pack_result` and its siblings at
+[`pack_bronze_html.py:43`](../../airflow/dags/pack_bronze_html.py), `:54` and
+`:102` — but those are the Plan 131 endpoints, which already raise. An earlier
+draft of this line claimed no DAG anywhere did, which was never true.)
 
 ### The compact predicate is not `error`
 
@@ -112,9 +116,10 @@ Four items left as "not yet surveyed" on 2026-08-14 have now been read.
    `db/migrations/V036__drop_raw_artifact_tables.sql`, and would raise
    `relation "raw_artifacts" does not exist` if it were ever reached.
 
-   Production confirms it: **133 successful runs, still firing daily, most
-   recently 2026-08-30 03:00:01.** Every one of them did nothing, having first
-   burned a deploy-intent sensor and an archiver health check.
+   Production confirmed it: **133 successful runs, firing daily up to
+   2026-08-30 03:00:01.** Every one of them did nothing, having first burned a
+   deploy-intent sensor and an archiver health check. That was its last run —
+   the chain was deleted later the same day.
 
    A failure contract for this endpoint would be a predicate over a code path
    that cannot execute. **The disposition is deletion, not enforcement** — see
@@ -162,8 +167,12 @@ file proves nothing. Pause state and `airflow.dag_run` counts:
 | `flush_staging_events` | **yes** | — | — | manual-only by design |
 | `compact_silver` | no | 91 success, **0 failed ever** | 2026-08-30 04:10 | real work |
 | `cleanup_queue` | no | 3017 success, 5 failed (all 2026-07-08) | 2026-08-30 22:00 | real work |
-| `cleanup_parquet` | no | 133 success, 2 failed (April) | 2026-08-30 03:00 | **nothing — structural no-op** |
-| `cleanup_artifacts` | **yes** | **0 — never run** | — | nothing, ever |
+| `cleanup_parquet` | no | 133 success, 2 failed (April) | 2026-08-30 03:00 | **nothing — structural no-op.** Deleted 2026-08-30 |
+| `cleanup_artifacts` | **yes** | **0 — never run** | — | nothing, ever. Deleted 2026-08-30 |
+
+The last two rows are what the survey found that morning; both DAGs were
+deleted the same day in `056cde7` and no longer exist. Every other row is
+current.
 
 **`compact_silver`'s zero failures in 91 runs is the number this plan exists
 for.** It is not evidence that compaction never fails; it is what a `failed > 0`
@@ -445,6 +454,25 @@ check* — seven days confirming the predicates fire on nothing else — plus th
 
 ### Stage 1 — Warning-only predicates, and the two repairs the survey found
 
+**Shipped 2026-08-30 in [PR #295](https://github.com/whitewalls86/new_car_tracker/pull/295)**
+— `585c56f` the predicates, `0306629` the pager, `a05168b` this document.
+Deployed the same evening with `redeploy.sh archiver pack-worker`; both services
+share the `cartracker-archiver` image, and the DAG changes rode the
+`./airflow/dags` bind mount with no image rebuild. **The observation window runs
+to 2026-09-06.**
+
+Two things landed differently from the specification below, both recorded where
+they were found:
+
+- **Item 4 grew.** It was scoped as an edit to this DAG's `_notify`. The defect
+  turned out to be an `AttributeError` affecting all three notify tasks in the
+  repository, so the fix is a shared `airflow/dags/notifications.py` — see
+  [It was never only this DAG](#it-was-never-only-this-dag).
+- **The tests split across two suites.** The notifier's own behaviour is in
+  `tests/airflow/test_notifications.py` in the fast suite, because
+  `notifications.py` imports only `logging`, `os` and `requests`. Only what
+  needs a real Airflow install stayed in `tests/integration/airflow/`.
+
 One deploy of `archiver`, plus one of the Airflow DAG.
 
 1. Add `_flush_silver_failure_reason`, `_flush_staging_failure_reason` and
@@ -581,9 +609,13 @@ Mirroring `test_app.py:330-410`, per predicate:
 - The `error` case returns a reason quoting the error.
 - **`{"failed": 3, "error": None}` on compact returns a reason** — the case
   this plan's earlier draft would have missed.
-- The endpoint test asserts the 500's `detail` carries both the original
-  summary and `failure_reason`, and for compact that it carries the failing
-  `partitions` entries.
+- **Stage 1's endpoint tests assert the opposite of a 500**: a failing run
+  returns 200, carries the summary unchanged, and logs a `would fail` warning
+  naming the condition. That is the stage, and those assertions are what has to
+  change — deliberately, one endpoint at a time — when Stage 2 flips each one.
+- **Stage 2's endpoint test** asserts the 500's `detail` carries both the
+  original summary and `failure_reason`, and for compact that it carries the
+  failing `partitions` entries.
 
 ## Out of scope
 
@@ -596,14 +628,21 @@ Mirroring `test_app.py:330-410`, per predicate:
   it belongs with [Plan 135](plan_135_storage_observability.md) or
   [Plan 155](plan_155_log_dashboards.md). Loki's 90-day retention is sufficient
   for both windows here.
-- **Recovering orphaned `.tmp` partitions.** Stage 0 counts them. If the count
-  is non-zero, publishing them is a separate fix that must land before Stage 2
-  flips compaction, but it is not this plan's work.
-- **Deleting the dead `/cleanup/parquet/run` path.** The finding is this
-  plan's; the deletion is a separate decision, described at the end of Stage 3.
-- **Correcting `README.md`'s DAG table**, which describes `cleanup_artifacts`
-  and `cleanup_parquet` as doing work neither does, and gives the wrong
-  schedules for both flushes. Plan 138's truth pass.
+- **Recovering orphaned `.tmp` partitions.** Stage 0 counted them and found
+  **zero**, so nothing is owed here and Stage 2 is not gated on it. Had the
+  count been non-zero, publishing them would have been a separate fix landing
+  before Stage 2 flipped compaction.
+- **Deleting the dead `/cleanup/parquet/run` path.** The finding was this
+  plan's and the deletion was a separate decision — taken, and **done
+  2026-08-30 in `056cde7`**, ahead of Stage 3's gate. Recorded at the end of
+  Stage 3; listed here because the disposition, not the work, is what sat
+  outside this plan.
+- **Correcting `README.md`'s DAG table.** The `cleanup_artifacts` and
+  `cleanup_parquet` rows are already gone, removed by `056cde7` with the DAGs
+  themselves. What remains is the schedules it gives for both flushes —
+  `README.md:61-62` still says every 15 and every 5 minutes, when both DAGs are
+  paused manual-only and `hourly_analytics_refresh` owns the work hourly. Plan
+  138's truth pass.
 
 ## Success criteria
 
@@ -629,9 +668,14 @@ Plan 141 Stage 1 delivered. Cleared 2026-08-26.
 
 ### Plan 140 — service health contract
 
-Stage 1's `_notify` repair is the same defect Plan 140 Stage 4 fixed for the
-health sensors: a Telegram message that names the DAG rather than the component
-that broke. Follow the fix already recorded in that DAG's comment.
+Stage 1's `_notify` repair shares Plan 140 Stage 4's defect — a Telegram message
+naming the DAG rather than the component that broke — and the shared notifier
+now fixes it for all three notify tasks by naming the failed task.
+
+It was **not** the whole defect here, and the difference is worth carrying: Plan
+140's sensors delivered an unhelpful page, whereas these three delivered nothing
+at all. A repair scoped to Plan 140's shape would have left the pager silent and
+read as done. See [It was never only this DAG](#it-was-never-only-this-dag).
 
 ### Plan 135 / Plan 155 — storage observability and log dashboards
 

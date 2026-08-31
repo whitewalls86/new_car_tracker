@@ -54,8 +54,10 @@ Plan 142's Phase B window ran the same evening and closed clean: Stage 0 items
 6 and 7 are done, and the maintenance-pool hold ran 20:14:57 → 21:14:57,
 draining 44 tasks in 74.5s with zero failures.
 
-Plan 134's one-week observation window unblocks when Plan 141 Stage 4 accepts,
-but it owes code first and stays in the build order until that lands.
+Plan 134's Stage 1 deployed 2026-08-30: the flush and compact predicates are
+live but warning-only, and the Telegram pager — dead in all three DAGs since
+2026-05-08 — is repaired. The one-week window runs to 2026-09-06, and Stage 2's
+enforcement follows only if it is clean.
 
 Airflow owns scraping and maintenance. n8n is fully removed. Postgres owns hot
 operational state. MinIO stores bronze HTML and analytical history. dbt
@@ -112,7 +114,7 @@ it is smaller while a higher row has an executable next step.
 | Order | Plan | Title | Next executable slice | Workable? | Blocked by | Priority | Effort | Depends on / safe stopping point |
 |---:|---|---|---|---|---|---|---|---|
 | 1 | [142](plans/plan_142_planned_host_maintenance.md) **Stage 4** | Scoped operational coordination and host maintenance | Fix the four Stage 2/3 defects the 2026-08-29 scoping found — deferred-reboot kernel target, one-off manifest capture, the `oauth2-proxy` release-gate exemption, the client's API default — then deploy `ops` and `container-health` and run the window from the Stage 4 run sheet | **Y** | -- | 86 | M + first observed window | Stage 3 is built but **not deployed**: both images predate it while V044-V047 are applied; the plan document holds all five blockers. **Both external blockers are now clear** — Plan 145 Stage 6 finished 2026-08-30, and Plan 158 fixed and proved the coordination gate deadlock that made declaring intent unsafe, so the window is workable as soon as the four defects are fixed |
-| 2 | [134](plans/plan_134_archiver_endpoint_failure_contract.md) | Archiver endpoint failure contract | Stage 1 — the warning-only predicates, the `_notify` repair Stage 0 promoted to a prerequisite, and the seven-day regression window | **Y** | -- | 88 | S | Plan 141 completed 2026-08-26; the one-week observation begins when Plan 134's warning-only predicates deploy, then enforcement follows if the evidence is clean |
+| 2 | [134](plans/plan_134_archiver_endpoint_failure_contract.md) | Archiver endpoint failure contract | Stage 2 — enforcement, one endpoint per deploy at least 48h apart, in ascending blast radius: compact, then staging, then silver | N | Stage 1 observation window to 2026-09-06 | 88 | S | Stage 1 deployed 2026-08-30 and is a safe stopping point |
 | 3 | [138](plans/plan_138_public_surface_refresh.md) | Public surface refresh | Truth pass, public-root contract, accessible assets, Plan 143 stats presentation, and project-updates snapshot | **Y** | -- | 84 | L | Plan 143 supplies the stats contract; land before the next major platform milestone. **Its project-updates snapshot now reads [completed_plans.md](planning/completed_plans.md)**, since Plan 146 removed this file's duplicate Completed table |
 | 4 | [154](plans/plan_154_container_log_coverage.md) **Stage 0** | Container log coverage | Stage 0 — classify all 26 expected-running services and measure candidate log volume before admission | **Y** | -- | 70 | S + 7d observation | Plan 141 is complete; stop after Stage 0 unless measurements justify admitting new streams |
 | 5 | [151](plans/plan_151_distributed_tracing_and_runtime_topology_audit.md) | Distributed tracing and runtime topology audit | Stage 0 — define the bounded instrumentation experiment, telemetry contract, resource budgets, and Plan 142 declared-graph export | **Y** | -- | 72 | M + 7d observation | Plan 142 remains authoritative safety policy; begin metrics-only, and add Tempo only if aggregate telemetry cannot answer a recorded diagnostic question |
