@@ -687,6 +687,22 @@ def test_parser_exposes_guarded_complete_command():
     }
 
 
+def test_default_api_url_is_the_coordination_api_not_pgadmin():
+    """Every command run without `--api-url` has to reach ops.
+
+    The default was `:5050`, which is pgAdmin (`"5050:80"` in
+    docker-compose.yml) and answers 500. The coordination API is `:8060`, as
+    `scripts/redeploy.sh` already has it. Found 2026-08-29 while scoping the
+    Stage 4 window; the runbook's commands were written without the flag and
+    would have failed as printed.
+    """
+    parser = host_maintenance.build_parser()
+    default = parser.parse_args(["--manifest", "/tmp/m.json", "status"]).api_url
+
+    assert default == "http://localhost:8060"
+    assert default == host_maintenance.DEFAULT_API_URL
+
+
 def test_dry_run_plan_has_canonical_order_through_apt_restoration(mocker, tmp_path):
     run_command = mocker.patch.object(host_maintenance, "_run_command")
 
@@ -851,6 +867,8 @@ def test_apply_package_plan_requires_digest_reviews_masks_and_audits(mocker, tmp
         returncode = 0
         if command[:2] == ("systemctl", "is-enabled"):
             stdout = "enabled\n"
+        elif command[:2] == ("dpkg-query", "--show") and "linux-image-*" in command:
+            stdout = "installed linux-image-6.8.0-1058-oracle\n"
         elif command[:2] == ("dpkg-query", "--show"):
             stdout = "docker.io\t29.1\n"
         elif command == ("apt-mark", "showhold"):
@@ -875,9 +893,218 @@ def test_apply_package_plan_requires_digest_reviews_masks_and_audits(mocker, tmp
     assert set(evidence["apt_unit_states_before"].values()) == {"enabled"}
     assert evidence["installed_versions"] == {"docker.io": "29.1"}
     assert evidence["holds_after"] == ["docker.io"]
+    # This transaction carries no kernel, so the target is the host's installed
+    # one and the checkpoint says so.
+    assert evidence["boot_kernel_target"] == "6.8.0-1058-oracle"
+    assert evidence["boot_kernel_target_source"] == "installed"
     checkpoint.assert_called_once_with(
-        args.checkpoint, "updated", args.manifest, facts={"kernel": "6.8.0-test"}
+        args.checkpoint,
+        "updated",
+        args.manifest,
+        facts={"kernel": "6.8.0-test"},
+        kernel_target="6.8.0-1058-oracle",
+        kernel_target_source="installed",
     )
+
+
+def _kernel_plan(tmp_path, transaction_kernel):
+    """A confirmed plan whose transaction installs one versioned kernel."""
+    plan_path = tmp_path / "package-plan.json"
+    plan = {
+        "schema_version": 1,
+        "packages": [
+            {
+                "name": f"linux-image-{transaction_kernel}",
+                "version": "6.8.0-1060.66",
+                "boundaries": ["kernel"],
+                "held": False,
+            }
+        ],
+        "compatibility_boundaries": ["kernel"],
+        "holds": [],
+        "apply_command": ["sudo", "apt-get", "--yes", "install", "linux-image"],
+    }
+    plan_path.write_text(json.dumps(plan, indent=2) + "\n", encoding="utf-8")
+    return plan_path, host_maintenance.hashlib.sha256(plan_path.read_bytes()).hexdigest()
+
+
+def _apply_args(tmp_path, plan_path, digest):
+    return _args(
+        tmp_path,
+        "update",
+        package_plan=plan_path,
+        confirm_plan=digest,
+        confirm_apply=True,
+        release_notes_reviewed=True,
+        compatibility_reviewed=True,
+    )
+
+
+def _apply_host(mocker, args, *, dpkg_query, installed_kernels_stdout, holds_stdout=""):
+    """Stand up the host seam `update` reads, with the two dpkg-query shapes."""
+    mocker.patch.object(
+        host_maintenance,
+        "latest_checkpoint",
+        return_value={"phase": "stopped", "manifest_location": args.manifest},
+    )
+    mocker.patch.object(host_maintenance, "_utc_now", return_value="timestamp")
+    mocker.patch.object(
+        host_maintenance, "host_identity", return_value={"kernel": "6.8.0-1058-oracle"}
+    )
+
+    def fake_run(command, **kwargs):
+        stdout = ""
+        returncode = 0
+        if command[:2] == ("systemctl", "is-enabled"):
+            stdout = "enabled\n"
+        elif command[:2] == ("dpkg-query", "--show") and "linux-image-*" in command:
+            stdout = installed_kernels_stdout
+        elif command[:2] == ("dpkg-query", "--show"):
+            stdout = dpkg_query
+        elif command == ("apt-mark", "showhold"):
+            stdout = holds_stdout
+        elif command[:2] == ("sudo", "fuser"):
+            returncode = 1
+        return {"stdout": stdout, "stderr": "", "returncode": returncode}
+
+    mocker.patch.object(host_maintenance, "_run_command", side_effect=fake_run)
+
+
+def test_update_prefers_the_kernel_the_operator_confirmed_in_this_transaction(
+    mocker, tmp_path
+):
+    """A kernel in the reviewed plan outranks one that merely happens to be there."""
+    plan_path, digest = _kernel_plan(tmp_path, "6.8.0-1060-oracle")
+    args = _apply_args(tmp_path, plan_path, digest)
+    _apply_host(
+        mocker,
+        args,
+        dpkg_query="linux-image-6.8.0-1060-oracle\t6.8.0-1060.66\n",
+        installed_kernels_stdout=(
+            "installed linux-image-6.8.0-1058-oracle\n"
+            "installed linux-image-6.8.0-1060-oracle\n"
+        ),
+    )
+    checkpoint = mocker.patch.object(host_maintenance, "append_checkpoint")
+
+    result = host_maintenance.run(args)
+
+    assert result["boot_kernel_target"] == "6.8.0-1060-oracle"
+    assert result["boot_kernel_target_source"] == "transaction"
+    assert checkpoint.call_args.kwargs["kernel_target_source"] == "transaction"
+
+
+def test_update_falls_back_to_the_highest_installed_kernel_on_a_deferred_reboot(
+    mocker, tmp_path
+):
+    """The normal shape of a window on this host, and the one that stranded it.
+
+    `unattended-upgrades` installs kernels on its own schedule and defers only
+    the reboot, so the window that boots 6.8.0-1060-oracle carries no
+    `linux-image-*` in its own transaction. Deriving the target from the
+    transaction alone left `kernel_target` unwritten, and `validate-host` --
+    which runs after the reboot and after `start` -- then refused with
+    "updated checkpoint has no kernel target", stranding the window at
+    `validating` with production paused and no path to `complete`.
+    """
+    plan_path, digest = _write_package_plan(tmp_path)
+    args = _apply_args(tmp_path, plan_path, digest)
+    _apply_host(
+        mocker,
+        args,
+        dpkg_query="docker.io\t29.1\n",
+        installed_kernels_stdout=(
+            "installed linux-image-6.8.0-1058-oracle\n"
+            "installed linux-image-6.8.0-1060-oracle\n"
+        ),
+        holds_stdout="docker.io\n",
+    )
+    checkpoint = mocker.patch.object(host_maintenance, "append_checkpoint")
+
+    result = host_maintenance.run(args)
+
+    assert result["boot_kernel_target"] == "6.8.0-1060-oracle"
+    assert result["boot_kernel_target_source"] == "installed"
+    assert checkpoint.call_args.kwargs["kernel_target"] == "6.8.0-1060-oracle"
+    assert checkpoint.call_args.kwargs["kernel_target_source"] == "installed"
+
+
+def test_update_refuses_when_no_kernel_is_installed_to_validate_against(mocker, tmp_path):
+    """Fail here, where the window has not yet mutated the boot path.
+
+    `validate-host` requires a kernel target unconditionally, so a window that
+    reaches `validating` without one cannot complete. Refusing at `update`
+    costs a paused window; discovering it after the reboot costs the window.
+    """
+    plan_path, digest = _write_package_plan(tmp_path)
+    args = _apply_args(tmp_path, plan_path, digest)
+    _apply_host(
+        mocker,
+        args,
+        dpkg_query="docker.io\t29.1\n",
+        installed_kernels_stdout="deinstalled linux-image-6.8.0-1058-oracle\n",
+        holds_stdout="docker.io\n",
+    )
+
+    with pytest.raises(host_maintenance.MaintenanceError, match="no versioned kernel"):
+        host_maintenance.run(args)
+
+
+def test_update_still_refuses_a_confirmed_kernel_boundary_with_no_kernel_package(
+    mocker, tmp_path
+):
+    """A reviewed kernel boundary must be satisfied by the transaction itself.
+
+    The installed fallback names a boot target for a deferred reboot; it does
+    not stand in for a kernel the operator confirmed and apt then did not
+    install.
+    """
+    plan_path = tmp_path / "package-plan.json"
+    plan = {
+        "schema_version": 1,
+        "packages": [{"name": "docker.io", "version": "29.1", "boundaries": [], "held": False}],
+        "compatibility_boundaries": ["kernel"],
+        "holds": [],
+        "apply_command": ["sudo", "apt-get", "--yes", "install", "docker.io=29.1"],
+    }
+    plan_path.write_text(json.dumps(plan, indent=2) + "\n", encoding="utf-8")
+    digest = host_maintenance.hashlib.sha256(plan_path.read_bytes()).hexdigest()
+    args = _apply_args(tmp_path, plan_path, digest)
+    _apply_host(
+        mocker,
+        args,
+        dpkg_query="docker.io\t29.1\n",
+        installed_kernels_stdout="installed linux-image-6.8.0-1060-oracle\n",
+    )
+
+    with pytest.raises(host_maintenance.MaintenanceError, match="confirmed kernel update"):
+        host_maintenance.run(args)
+
+
+def test_installed_kernels_orders_by_abi_and_ignores_meta_and_removed_packages(mocker):
+    """String order is wrong here: 1060 has to outrank 999, not follow it."""
+    stdout = "\n".join(
+        [
+            "installed linux-image-generic",
+            "installed linux-image-oracle",
+            "installed linux-image-unsigned-6.8.0-2000-oracle",
+            "installed linux-image-6.8.0-999-oracle",
+            "installed linux-image-6.8.0-1060-oracle",
+            "config-files linux-image-6.8.0-1059-oracle",
+            "installed linux-image-6.10.0-1001-oracle",
+        ]
+    )
+    mocker.patch.object(
+        host_maintenance,
+        "_run_command",
+        return_value={"stdout": stdout, "stderr": "", "returncode": 0},
+    )
+
+    assert host_maintenance.installed_kernels() == [
+        "6.8.0-999-oracle",
+        "6.8.0-1060-oracle",
+        "6.10.0-1001-oracle",
+    ]
 
 
 @pytest.mark.parametrize(
@@ -1145,6 +1372,80 @@ def test_capture_running_set_records_compose_and_container_evidence(mocker):
         "options": {"max-size": "10m"},
     }
     assert "do-not-store" not in json.dumps(manifest)
+
+
+def test_capture_running_set_excludes_compose_one_offs(mocker):
+    """A live `docker compose run` must not make `stop` refuse.
+
+    `build_running_set_plan` rejects two running containers sharing one
+    (project, service) identity, and a one-off carries the same project and
+    service labels as the service it was launched from. On 2026-08-29 three
+    containers read `cartracker/archiver`: the service plus two `run` one-offs.
+    `preflight` does not derive the plan, so the refusal surfaced at `stop` --
+    after `request`, `drain` and `wait-active`, with production already gated.
+
+    A one-off is work in flight, not intended running state; the drain contract
+    is what must see it, and does (`ops/coordination_drain.py`). Plan 140's
+    collector already skips this label; this capture did not.
+    """
+    service = {
+        "Id": "container-1",
+        "Name": "/cartracker-archiver",
+        "Image": "sha256:image-1",
+        "Config": {
+            "Image": "cartracker-archiver:latest",
+            "Labels": {
+                "com.docker.compose.project": "cartracker",
+                "com.docker.compose.service": "archiver",
+                "com.docker.compose.project.working_dir": "/opt/cartracker",
+                "com.docker.compose.project.config_files": "/opt/cartracker/docker-compose.yml",
+            },
+        },
+        "State": {"Status": "running", "Running": True, "ExitCode": 0},
+        "HostConfig": {"RestartPolicy": {"Name": "unless-stopped"}, "LogConfig": {}},
+    }
+    one_off = {
+        **service,
+        "Id": "container-2",
+        "Name": "/cartracker-archiver-run-44d23542ea2c",
+        "Config": {
+            **service["Config"],
+            "Labels": {
+                **service["Config"]["Labels"],
+                "com.docker.compose.oneoff": "True",
+            },
+        },
+    }
+
+    def fake_run(command, **kwargs):
+        if command == ("docker", "ps", "--all", "--quiet"):
+            return {"stdout": "container-1\ncontainer-2\n", "stderr": "", "returncode": 0}
+        if command[:2] == ("docker", "inspect"):
+            return {"stdout": json.dumps([service, one_off]), "stderr": "", "returncode": 0}
+        if command[:3] == ("docker", "image", "inspect"):
+            return {"stdout": json.dumps([]), "stderr": "", "returncode": 0}
+        if command[:2] == ("docker", "compose"):
+            return {"stdout": json.dumps({"services": {}}), "stderr": "", "returncode": 0}
+        raise AssertionError(command)
+
+    mocker.patch.object(host_maintenance, "_run_command", side_effect=fake_run)
+    mocker.patch.object(
+        host_maintenance,
+        "host_identity",
+        return_value={
+            "git_revision": "abc123",
+            "kernel": "6.8.0-test",
+            "boot_id": "boot-before",
+        },
+    )
+    mocker.patch.object(host_maintenance, "_utc_now", return_value="timestamp")
+
+    manifest, _ = host_maintenance.capture_running_set()
+
+    assert [row["name"] for row in manifest["containers"]] == ["cartracker-archiver"]
+    # The point of the exclusion: the plan derives without a duplicate refusal.
+    plan = host_maintenance.build_running_set_plan(manifest)
+    assert [entry["services"] for entry in plan] == [["archiver"]]
 
 
 def test_capture_running_set_refuses_an_empty_host(mocker):

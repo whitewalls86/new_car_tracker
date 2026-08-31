@@ -1525,7 +1525,9 @@ container `healthy`.
 `validate-host` still cannot pass a deferred-reboot window, which is the normal
 shape of a window on this host.
 
-**2. `validate-host` cannot pass a deferred-reboot window.** `apply_package_plan`
+**2. `validate-host` cannot pass a deferred-reboot window.**
+**~~Blocker~~ — fixed 2026-08-31**, see [The four defects, fixed](#the-four-defects-fixed--2026-08-31).
+`apply_package_plan`
 derives `boot_kernel_target` only from packages *in the transaction*. On this
 host `unattended-upgrades` installs kernels and only the reboot is deferred, so
 the transaction carries no `linux-image-*`, `kernel_target` is never
@@ -1541,6 +1543,7 @@ which of the two sources the target came from. `GRUB_DEFAULT=0`, so that is what
 boots.
 
 **3. A `docker compose run` one-off makes `stop` fail closed.**
+**~~Blocker~~ — fixed 2026-08-31**, see [The four defects, fixed](#the-four-defects-fixed--2026-08-31).
 `capture_running_set` walks `docker ps --all` with no `com.docker.compose.oneoff`
 filter, and `build_running_set_plan` rejects two running containers sharing one
 `(project, service)` identity. During scoping there were three running
@@ -1556,6 +1559,7 @@ profile-gated, auxiliary and intentionally stopped services, and a one-off is
 none of those.
 
 **4. `oauth2-proxy` fails the `container_health` release gate permanently.**
+**~~Blocker~~ — fixed 2026-08-31**, see [The four defects, fixed](#the-four-defects-fixed--2026-08-31).
 `_container_health` fails on any expected service not reading `1`. `oauth2-proxy`
 is in `EXPECTED_SERVICES` and reads `-1` — unconfigured — and has since
 2026-08-20, because its distroless image has no shell for Docker to exec. That is
@@ -1576,8 +1580,9 @@ intent, and Stage 6's repack is not resumable. No coordination request — for t
 deploy above or for the window — until its one-offs have exited.
 
 Two smaller findings, recorded because they cost a window each if met live: the
-client's default `--api-url` is `http://localhost:5050`, which answers 500 on
-this host, while the coordination API is on 8060 as `redeploy.sh` already knows;
+client's default `--api-url` was `http://localhost:5050` — pgAdmin, which answers
+500 — while the coordination API is on 8060 as `redeploy.sh` already knows
+(**fixed 2026-08-31**);
 and `/` has crossed 72% used with 14 GB free against `validate-host`'s 10 GiB
 floor, driven by `/var/lib/containerd` at 29 GB, which the storage runbook does
 not measure because it watches `/var/lib/docker` (714 MB).
@@ -1589,6 +1594,56 @@ written for, and production presents a neighbouring case — a kernel installed 
 someone else, a container started by `run` rather than `up`, a service exempt
 from the contract the gate reads. None is visible from the tests; all are visible
 from one read-only pass over the live host.
+
+#### The four defects, fixed — 2026-08-31
+
+All four are closed in code, with a regression test each. Blocker 1 was already
+closed by deployment; blocker 5 (Plan 145 Stage 6) closed on its own. The window
+is runnable once this ships.
+
+| # | Fix | Where |
+|---|---|---|
+| 2 | `update` reads the boot target from the confirmed transaction first and falls back to the highest kernel installed on the host, recording which source answered | `apply_package_plan`, `installed_kernels` |
+| 3 | `capture_running_set` skips `com.docker.compose.oneoff`, as Plan 140's collector already does | `capture_running_set` |
+| 4 | The `container_health` release gate lets a service in `healthcheck-exemptions.txt` read `-1` and nothing else | `ops/coordination_release.py`, `container_health/expected.py` |
+| — | `--api-url` defaults to `:8060` | `DEFAULT_API_URL` |
+
+Three of them turned out to say something the scoping note did not.
+
+**The fallback exposed a latent ordering bug.** Choosing "the highest versioned
+`linux-image-*`" was a string sort, which ranks `6.8.0-999-oracle` above
+`6.8.0-1060-oracle`. It could not bite while the candidates were the one or two
+kernels in a single transaction; reading the host's whole installed set makes it
+reachable. The comparison is now numeric, and the versioned-kernel rule is a
+pattern (`linux-image-` followed by a digit) rather than a two-name deny-list, so
+`-generic`, `-virtual`, `-oracle` and the `-unsigned-` flavours drop out by
+construction instead of by enumeration.
+
+**A missing kernel target is now fatal at `update`, not at `validate-host`.**
+The old code raised only when the plan declared a `kernel` boundary, and
+`validate-host` then demanded a target unconditionally — which is precisely how
+this defect stranded a window after the reboot. Refusing at `update` costs a
+paused window that has not yet touched the boot path. A confirmed `kernel`
+boundary still has to be satisfied by the transaction itself: the fallback names
+a target for a deferred reboot, it does not stand in for a kernel the operator
+confirmed and apt did not install.
+
+**The exemption is narrow on purpose.** An exempt service may read `-1` and
+nothing else. `0` still fails for it, because an expected service Docker no
+longer reports publishes `0` — so absence stays visible, which is the Stage 3
+requirement the fail-closed gate was written for. A non-exempt `-1` still fails.
+`HEALTHCHECK_EXEMPT_SERVICES` is frozen beside `EXPECTED_SERVICES` and takes the
+same anti-drift bargain: a CI test asserts it equals the parsed
+`healthcheck-exemptions.txt` by exact set equality, and a second test asserts
+that `oauth2-proxy` remains the only exempt service that is also expected
+running — a second one appearing is a design change, not a list edit.
+
+One thing deliberately *not* done: `preflight` still does not refuse a live
+one-off. The drain contract already counts one-offs
+(`ops/coordination_drain.py`'s `_container_processes`), so a `run` in flight
+blocks the window at the right place — before coordination is gated. Making a
+safe, days-ahead, read-only `preflight` fail because a `dbt` invocation happens
+to be running would trade a real gate for a scheduling nuisance.
 
 ## Rollback and recovery
 

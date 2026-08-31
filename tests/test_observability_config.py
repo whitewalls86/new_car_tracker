@@ -802,6 +802,50 @@ class TestExpectedServicesMatchTheManifest:
             "nothing reports."
         )
 
+    def test_the_frozen_exemptions_equal_the_deny_list(self):
+        """Plan 142 Stage 4: the resume gate reads this set, so it has to be true.
+
+        ``ops/coordination_release.py`` lets an exempt service read -1 without
+        failing the ``container_health`` release gate. That is only safe while
+        the frozen copy is the same list ``healthcheck-exemptions.txt`` holds:
+        a service dropped from the file but left frozen here would keep an
+        unwatched -1 passing the gate that exists to catch it.
+
+        The same drift bargain as ``EXPECTED_SERVICES`` above, for the same
+        reason -- the exporter image reads no repo file at runtime.
+        """
+        from container_health.expected import HEALTHCHECK_EXEMPT_SERVICES
+
+        documented = set(load_health_exemptions())
+        assert set(HEALTHCHECK_EXEMPT_SERVICES) == documented, (
+            "container_health/expected.py has drifted from "
+            "healthcheck-exemptions.txt:\n"
+            f"  frozen but no longer exempt: "
+            f"{sorted(set(HEALTHCHECK_EXEMPT_SERVICES) - documented)}\n"
+            f"  exempt but not frozen:       "
+            f"{sorted(documented - set(HEALTHCHECK_EXEMPT_SERVICES))}\n"
+            "Regenerate it -- the command is beside the set in that module."
+        )
+
+    def test_only_one_exemption_is_an_expected_running_service(self):
+        """What makes the gate's tolerance narrow rather than a general -1 pass.
+
+        Every other exempt entry is a one-shot or a profile-gated tool that is
+        not expected running at all, so the release gate never consults it.
+        ``oauth2-proxy`` is the single service that is both expected and
+        permanently unconfigured, and it is the whole reason the gate needed an
+        exemption path. A second one appearing here is a design change, not a
+        list edit.
+        """
+        from container_health.expected import (
+            EXPECTED_SERVICES,
+            HEALTHCHECK_EXEMPT_SERVICES,
+        )
+
+        assert set(HEALTHCHECK_EXEMPT_SERVICES) & set(EXPECTED_SERVICES) == {
+            "oauth2-proxy"
+        }
+
     def test_one_shots_are_not_expected_running(self):
         """Named separately from the set comparison because it is the case the
         status filter exists for. `flyway` and `airflow-init` *do* run under

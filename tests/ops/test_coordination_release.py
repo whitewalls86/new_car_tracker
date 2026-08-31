@@ -68,6 +68,54 @@ def test_container_health_passes_only_healthy_expected_services(mocker):
     }
 
 
+def test_container_health_passes_an_exempt_service_reading_unconfigured(mocker):
+    """The gate has to be able to open on a host that is behaving correctly.
+
+    ``oauth2-proxy`` is expected, distroless, and has read -1 permanently since
+    2026-08-20 by design, with ``ct-container-health-unconfigured`` alerting on
+    it daily. Requiring 1 from it made the resume gate one that could never
+    open -- found 2026-08-29 while scoping the Stage 4 window, before any
+    window had been paused against it.
+    """
+    values = {service: 1 for service in coordination_release.EXPECTED_SERVICES}
+    values["oauth2-proxy"] = -1
+    mocker.patch("ops.coordination_release._container_health_values", return_value=values)
+
+    assert coordination_release._container_health(_state()) == {
+        "gate": "container_health",
+        "status": "pass",
+    }
+
+
+def test_container_health_still_rejects_unconfigured_non_exempt_services(mocker):
+    """The exemption is the documented list, not a general tolerance for -1."""
+    values = {service: 1 for service in coordination_release.EXPECTED_SERVICES}
+    values["grafana"] = -1
+    mocker.patch("ops.coordination_release._container_health_values", return_value=values)
+
+    result = coordination_release._container_health(_state())
+
+    assert result["status"] == "fail"
+    assert "grafana" in result["reason"]
+
+
+def test_container_health_still_rejects_an_exempt_service_that_is_gone(mocker):
+    """An exemption excuses a missing healthcheck contract, never absence.
+
+    An expected service Docker no longer reports publishes 0, and 0 from
+    ``oauth2-proxy`` means the front door is down -- exactly the state Stage 3
+    refuses to resume onto.
+    """
+    values = {service: 1 for service in coordination_release.EXPECTED_SERVICES}
+    values["oauth2-proxy"] = 0
+    mocker.patch("ops.coordination_release._container_health_values", return_value=values)
+
+    result = coordination_release._container_health(_state())
+
+    assert result["status"] == "fail"
+    assert "oauth2-proxy" in result["reason"]
+
+
 def test_container_health_fails_closed_on_missing_metric_evidence(mocker):
     mocker.patch(
         "ops.coordination_release._container_health_values", side_effect=ValueError("offline")

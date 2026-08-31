@@ -13,13 +13,18 @@ import re
 import subprocess
 import sys
 import time
+from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-DEFAULT_API_URL = "http://localhost:5050"
+# The coordination API is ops on 8060, which is what ``scripts/redeploy.sh``
+# already uses. The previous default of 5050 is pgAdmin (``"5050:80"`` in
+# docker-compose.yml), so every command run without ``--api-url`` answered 500
+# against the wrong service -- found 2026-08-29 while scoping the Stage 4 window.
+DEFAULT_API_URL = "http://localhost:8060"
 DEFAULT_CHECKPOINT = Path("/var/lib/cartracker/maintenance/history.jsonl")
 CHECKPOINT_PHASES = frozenset(
     {
@@ -52,6 +57,18 @@ APT_CONTROL_UNITS = (
     "unattended-upgrades.service",
 )
 _APT_INSTALLED_RE = re.compile(r"^Inst\s+(\S+)(?:\s+\[[^]]+\])?\s+\((\S+)")
+# A versioned kernel package names a kernel GRUB can select; the meta-packages
+# (`linux-image-generic`, `-virtual`, `-oracle`) and the `-unsigned-` flavours do
+# not, and `GRUB_DEFAULT=0` boots the highest signed versioned one.
+_VERSIONED_KERNEL_RE = re.compile(r"^linux-image-(\d[\w.+-]*)$")
+# `docker compose run` containers carry the project and service labels but are
+# one-shots, not members of the intended running set. Plan 140's collector skips
+# the same label (`container_health/collector.py`); this capture did not, so a
+# live `run` made two containers share one (project, service) identity.
+COMPOSE_ONEOFF_LABEL = "com.docker.compose.oneoff"
+# Where a checkpointed boot target came from: a `linux-image-*` in the confirmed
+# transaction, or the highest kernel already installed on the host.
+KERNEL_TARGET_SOURCES = frozenset({"transaction", "installed"})
 HOST_MAINTENANCE_PROCEDURE = (
     "preflight",
     "prepare-update",
@@ -613,6 +630,12 @@ def capture_running_set() -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
     for container in inspections:
         config = container.get("Config") or {}
         labels = config.get("Labels") or {}
+        if labels.get(COMPOSE_ONEOFF_LABEL) == "True":
+            # A one-off is work in flight, not intended running state. The drain
+            # contract already counts it (`ops/coordination_drain.py`'s
+            # `_container_processes`), which is where a live `run` must block the
+            # window -- before coordination is gated, not at `stop` afterwards.
+            continue
         state = container.get("State") or {}
         host_config = container.get("HostConfig") or {}
         project = labels.get("com.docker.compose.project")
@@ -1166,6 +1189,59 @@ def assert_package_manager_idle() -> None:
         raise MaintenanceError("dpkg --audit reported an inconsistent package database")
 
 
+def _kernel_sort_key(kernel: str) -> tuple[tuple[int, int, str], ...]:
+    """Order kernel names by their numeric ABI, not lexically.
+
+    ``6.8.0-1060-oracle`` has to sort above ``6.8.0-999-oracle``. A plain string
+    sort puts ``999`` last and would name a kernel GRUB is not going to select,
+    which matters now that the fallback below chooses among every kernel the
+    host has installed rather than the one or two in a single transaction.
+    """
+    return tuple(
+        (0, int(chunk), "") if chunk.isdigit() else (1, 0, chunk)
+        for chunk in re.split(r"(\d+)", kernel)
+        if chunk
+    )
+
+
+def _versioned_kernels(names: Iterable[str]) -> list[str]:
+    """Return the kernel names of versioned ``linux-image-*`` packages, ordered."""
+    matches = [_VERSIONED_KERNEL_RE.match(name) for name in names]
+    return sorted(
+        (match.group(1) for match in matches if match is not None),
+        key=_kernel_sort_key,
+    )
+
+
+def installed_kernels() -> list[str]:
+    """Return every versioned kernel currently installed on the host, ordered.
+
+    ``unattended-upgrades`` installs kernels on its own schedule and defers only
+    the reboot, so the window that boots a kernel is routinely not the window
+    that installed it. Reading the host's installed set is what lets such a
+    window name a boot target at all.
+
+    Only fully installed packages count. ``dpkg-query`` also reports removed
+    packages whose config files remain, and a kernel in that state has no
+    ``/boot`` image for GRUB to select.
+    """
+    result = _run_command(
+        (
+            "dpkg-query",
+            "--show",
+            "--showformat=${db:Status-Status} ${Package}\n",
+            "linux-image-*",
+        ),
+        allowed_returncodes=frozenset({0, 1}),
+    )
+    installed = []
+    for line in result["stdout"].splitlines():
+        status, separator, name = line.partition(" ")
+        if separator and status == "installed":
+            installed.append(name.strip())
+    return _versioned_kernels(installed)
+
+
 def apply_package_plan(args: argparse.Namespace) -> dict[str, Any]:
     """Apply one confirmed offline transaction and leave apt automation masked."""
     checkpoint = latest_checkpoint(args.checkpoint)
@@ -1233,15 +1309,33 @@ def apply_package_plan(args: argparse.Namespace) -> dict[str, Any]:
     # The kernel running before reboot is deliberately not the validation target.
     # A versioned linux-image package names the kernel that bootloader selection
     # will start after this transaction and the explicitly confirmed reboot.
-    boot_kernel_targets = sorted(
-        name.removeprefix("linux-image-")
-        for name in installed_versions
-        if name.startswith("linux-image-")
-        and name not in {"linux-image-generic", "linux-image-generic-hwe-22.04"}
-    )
-    boot_kernel_target = boot_kernel_targets[-1] if boot_kernel_targets else None
-    if "kernel" in boundaries and not boot_kernel_target:
+    #
+    # The transaction is not the only source, and on this host it is usually not
+    # the source at all: `unattended-upgrades` installs kernels on its own
+    # schedule and only the reboot is deferred, so a window that boots
+    # `6.8.0-1060-oracle` routinely carries no `linux-image-*` of its own. Read
+    # from the transaction first, because a kernel this operator confirmed
+    # outranks one that merely happens to be present, and fall back to the
+    # highest installed kernel otherwise. Record which source answered: after the
+    # reboot the checkpoint is the only evidence an operator has offline, and
+    # "confirmed in this transaction" and "already on the host" are not the same
+    # claim about how the target was chosen.
+    transaction_kernels = _versioned_kernels(installed_versions)
+    if transaction_kernels:
+        boot_kernel_target = transaction_kernels[-1]
+        kernel_target_source = "transaction"
+    else:
+        host_kernels = installed_kernels()
+        boot_kernel_target = host_kernels[-1] if host_kernels else None
+        kernel_target_source = "installed"
+    if "kernel" in boundaries and kernel_target_source != "transaction":
         raise MaintenanceError("confirmed kernel update has no versioned installed boot target")
+    if not boot_kernel_target:
+        # `validate-host` requires this target unconditionally, and it runs after
+        # the reboot and after `start`. Refusing here costs a paused window that
+        # has not yet mutated the boot path; discovering it there strands the
+        # window at `validating` with no path to `complete`.
+        raise MaintenanceError("no versioned kernel is installed to validate the boot against")
 
     _run_command(("sync",))
     facts = host_identity()
@@ -1256,17 +1350,24 @@ def apply_package_plan(args: argparse.Namespace) -> dict[str, Any]:
         "holds_after": holds_after,
         "running_kernel": facts["kernel"],
         "boot_kernel_target": boot_kernel_target,
+        "boot_kernel_target_source": kernel_target_source,
     }
     _safe_json_write(evidence_path, evidence)
-    checkpoint_kwargs: dict[str, Any] = {"facts": facts}
-    if boot_kernel_target:
-        checkpoint_kwargs["kernel_target"] = boot_kernel_target
-    append_checkpoint(args.checkpoint, "updated", args.manifest, **checkpoint_kwargs)
+    append_checkpoint(
+        args.checkpoint,
+        "updated",
+        args.manifest,
+        facts=facts,
+        kernel_target=boot_kernel_target,
+        kernel_target_source=kernel_target_source,
+    )
     return {
         "phase": "updated",
         "package_plan_sha256": digest,
         "packages": len(packages),
         "update_evidence": str(evidence_path),
+        "boot_kernel_target": boot_kernel_target,
+        "boot_kernel_target_source": kernel_target_source,
         "apt_automation_masked": True,
     }
 
@@ -1474,6 +1575,7 @@ def append_checkpoint(
     *,
     facts: dict[str, Any] | None = None,
     kernel_target: str | None = None,
+    kernel_target_source: str | None = None,
 ) -> dict[str, str]:
     """Append one durable transition breadcrumb with reviewed permissions."""
     # Reject invalid callers before collecting from the host.
@@ -1490,6 +1592,12 @@ def append_checkpoint(
         if not kernel_target:
             raise MaintenanceError("kernel target must not be empty")
         record["kernel_target"] = kernel_target
+    if kernel_target_source is not None:
+        if kernel_target is None:
+            raise MaintenanceError("kernel target source without a kernel target")
+        if kernel_target_source not in KERNEL_TARGET_SOURCES:
+            raise MaintenanceError(f"unsupported kernel target source: {kernel_target_source}")
+        record["kernel_target_source"] = kernel_target_source
 
     flags = os.O_APPEND | os.O_CREAT | os.O_WRONLY
     if hasattr(os, "O_NOFOLLOW"):

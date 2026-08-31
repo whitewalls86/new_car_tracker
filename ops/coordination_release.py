@@ -9,7 +9,7 @@ from typing import Any
 
 import requests
 
-from container_health.expected import EXPECTED_SERVICES
+from container_health.expected import EXPECTED_SERVICES, HEALTHCHECK_EXEMPT_SERVICES
 
 HTTP_TIMEOUT_SECONDS = 3
 PROMETHEUS_URL = os.environ.get("PROMETHEUS_URL", "http://prometheus:9090")
@@ -102,12 +102,30 @@ def _expected_services_present(_: dict[str, Any]) -> dict[str, str]:
 
 
 def _container_health(_: dict[str, Any]) -> dict[str, str]:
+    """Every expected service healthy, except the documented -1 exemptions.
+
+    Requiring 1 from everything reads as the strictest possible gate and is in
+    fact a gate that cannot open: `oauth2-proxy` is expected, is distroless, and
+    has therefore read -1 permanently since 2026-08-20 with
+    `ct-container-health-unconfigured` alerting on it daily by design. A window
+    that waits for it to reach 1 waits forever, with production paused.
+
+    So an exempt service may read -1 and nothing else: 0 still fails for it, and
+    -1 still fails for everyone else. Absence is not what is being excused --
+    an expected service that is gone publishes 0, and that keeps failing here
+    exactly as Stage 3 requires.
+    """
     gate = "container_health"
     try:
         values = _container_health_values()
     except (requests.RequestException, KeyError, TypeError, ValueError, OverflowError):
         return _unknown(gate, "container-health evidence unavailable or malformed")
-    bad = sorted(service for service in EXPECTED_SERVICES if values.get(service) != 1)
+    bad = sorted(
+        service
+        for service in EXPECTED_SERVICES
+        if values.get(service) != 1
+        and not (service in HEALTHCHECK_EXEMPT_SERVICES and values.get(service) == -1)
+    )
     if bad:
         return _failed(gate, f"unhealthy, unconfigured, or absent: {', '.join(bad)}")
     return _passed(gate)

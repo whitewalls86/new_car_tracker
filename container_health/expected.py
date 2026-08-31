@@ -91,3 +91,38 @@ EXPECTED_SERVICES: FrozenSet[str] = frozenset({
     "statsd-exporter",
     "trawl",
 })
+
+# ## The services that can never read 1, and why that is not drift
+#
+# Plan 142 Stage 3 makes this metric the resume gate for a host window, and the
+# gate is deliberately fail-closed: an expected service reading anything but
+# healthy holds the window at `validating`. That is right, and it does not open
+# for `oauth2-proxy`, which reads -1 (unconfigured) permanently and by design --
+# `quay.io/oauth2-proxy/oauth2-proxy:latest` is distroless, so no `healthcheck:`
+# can be expressed against it at all. Left unhandled, one documented hole turns
+# a fail-closed gate into a gate that cannot open.
+#
+# So the gate honours the *documented* exemption and only that: an exempt
+# service may read -1, a non-exempt service reading -1 still fails, and an
+# exempt service reading 0 -- absent, or a healthcheck that started working and
+# then failed -- still fails. The exemption excuses the missing contract, never
+# a service that is actually gone.
+#
+# Resolved here for the same reason `EXPECTED_SERVICES` is: the image COPYs only
+# this package and reads no repo file at runtime, and the container holding the
+# Docker grant should carry as little else as possible.
+# `TestHealthcheckExemptionsMatchTheDenyList` in
+# tests/test_observability_config.py asserts this equals the parsed
+# `healthcheck-exemptions.txt` by exact set equality, so it cannot drift
+# silently. Regenerate with:
+#
+#     python -c "from tests.test_deploy_script import load_health_exemptions
+#                as l; print(chr(10).join(sorted(l())))"
+HEALTHCHECK_EXEMPT_SERVICES: FrozenSet[str] = frozenset({
+    "airflow-init",
+    "dbt",
+    "dbt_test",
+    "flyway",
+    "oauth2-proxy",
+    "snapshot-worker",
+})
