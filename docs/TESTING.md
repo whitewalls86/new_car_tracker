@@ -16,8 +16,8 @@ Three things carry this contract, and they are the same contract:
 | Form | Where | Owner |
 |---|---|---|
 | For a person | this document | Plan 161 / CAR-33 |
-| For a coding agent | `.claude/skills/` reviewer | Plan 161 / CAR-34 |
-| For CI | a test in `tests/` that fails when this document and the repository disagree | Plan 161 / CAR-34 |
+| For a coding agent | [`.claude/skills/testing-contract/`](../.claude/skills/testing-contract/SKILL.md) | Plan 161 / CAR-34 |
+| For CI | [`tests/test_testing_contract.py`](../tests/test_testing_contract.py) | Plan 161 / CAR-34 |
 
 ---
 
@@ -168,6 +168,7 @@ the newer suites were already instances of them and are now named as such.
 
 | Directory | Layer | Note |
 |---|---|---|
+| `tests/dbt/` | 0 | The dbt project's cadence tags and selectors, checked as YAML and filesystem facts. No dbt invocation, no database — Layer 0 despite not sitting at the top level, which is why it needs a row here at all |
 | `tests/airflow/` | 1 | Unit tests of DAG modules. Runs in the **main** venv, so it must not import `airflow` — `test_notifications.py` and `test_coordination_admission.py` both avoid it deliberately, by import discipline and by AST reading |
 | `tests/integration/airflow/` | 4 | Runs in the **isolated Airflow venv** (`apache-airflow==3.2.0`), because Airflow's starlette pin conflicts with the FastAPI services' |
 | `tests/lakehouse/` | 1 | Unit tests of `scripts/` lakehouse tooling; the source is not a `lakehouse/` package |
@@ -441,9 +442,13 @@ list.
 
 ## What CI asserts, and what happens on violation
 
-**A test in `tests/` fails when this document and the repository disagree.**
-Not an advisory report. An advisory report is what `ARCHITECTURE.md`'s Testing
-Strategy section already was.
+**[`tests/test_testing_contract.py`](../tests/test_testing_contract.py) fails
+when this document and the repository disagree.** Not an advisory report. An
+advisory report is what `ARCHITECTURE.md`'s Testing Strategy section already
+was.
+
+It runs in the unit job, needs nothing, and is therefore Layer 0 — a fact about
+the repository, like the rest of that layer.
 
 Mechanically checkable today, and therefore CAR-34's scope:
 
@@ -468,9 +473,28 @@ that cannot tell them apart would fail on correct code.
 ### Waivers
 
 Today's violations do not block the next merge. They sit in **one dated waiver
-list, each entry with an owner plan**, and the asserting test fails on anything
-not in it. The list only shrinks; adding to it is a decision, not a
-convenience, and an entry whose owner plan has closed is itself a failure.
+list, each entry with an owner plan** — the `*_WAIVERS` tuples in
+[`tests/test_testing_contract.py`](../tests/test_testing_contract.py) — and the
+asserting test fails on anything not in it. The list only shrinks; adding to it
+is a decision, not a convenience, and an entry whose owner plan has closed is
+itself a failure.
+
+Three properties make that more than a promise, and each is its own assertion:
+
+- **A waiver that no longer describes a violation fails.** Without it, repairs
+  pile up behind a list that still claims they are outstanding, and the list
+  stops describing anything. This is what forces the deletion.
+- **A waiver whose owner plan has been archived fails**, checked against
+  `docs/planning/completed_plans.md`. A waiver that outlives its owner is
+  waiting for nobody.
+- **A waiver naming a gap entry not in the list below fails.** The gap entry is
+  the reason; delete the reason and the waiver has none.
+
+**Dormancy is declared through the same list, not a second mechanism.** A
+waiver already carries a reason, an owner and a date, and it already only
+shrinks. `tests/integration/lakehouse/` is waived against [G2](#the-gap-list)
+where the orphaned suites are waived against [G1](#the-gap-list), which is
+exactly what G2 asked for: dormant and orphaned, told apart by inspection.
 
 ---
 
@@ -484,15 +508,16 @@ Recorded here, fixed elsewhere — Plan 161's non-goals hold.
 | G1 | **73 integration-marked tests in 11 files that no CI step invokes.** `tests/integration/processing/` (58 tests, 6 files) has **never** appeared in `ci.yml`, and was last touched 2026-08-30. `tests/integration/scraper/` (4) and `tests/integration/shared/` (4) are orphaned the same way. Whether they still pass is unknown | `git log -S` over `ci.yml`; `pytest` invocations in `ci.yml` versus `tests/integration/*/` | Plan 162 |
 | G2 | `tests/integration/lakehouse/` (7 tests) is dormant **by decision** — Plan 125 pulled the job in `863a2f2`. Correct, but undeclared; it is indistinguishable from G1 by inspection | — | Plan 162 |
 | G3 | **CI's database does not create Airflow's schema**, so the drain's `airflow.task_instance` and `airflow.dag_run` statements cannot be executed by any layer — the exact class of bug that hung Plan 142's first deploy | — | **Plan 139 Stage F / CAR-36**, shipping ahead of Plan 162 |
-| G4 | **10 test files mix two patching mechanisms; 10 more use `unittest.mock.patch`.** Eight are `tests/scripts/` (7) and `tests/airflow/test_notifications.py`, all in the main venv where `mocker` is available. The other two are `tests/integration/airflow/`, whose venv **does not install pytest-mock** — a missing argument on one `pip install` line in `ci.yml`, not a conflict: `pytest-mock` depends only on `pytest`, which that venv already has. Fix the venv first, then convert all 20 | AST census, 2026-08-31 | Plan 162 |
+| G4 | **34 test files patch with something other than `mocker`** — 17 import `patch` from `unittest.mock`, 17 use `monkeypatch.setattr`, and two do both. The second half is what the 2026-08-31 census did not count: every one of those 17 targets a module object rather than process state, so `mocker.patch` is the tool for all of them. Two of the 34 are `tests/integration/airflow/`, whose venv **does not install pytest-mock** — a missing argument on one `pip install` line in `ci.yml`, not a conflict: `pytest-mock` depends only on `pytest`, which that venv already has. Fix the venv first, then convert all 34 | `tests/test_testing_contract.py`, AST census | Plan 162 |
 | G5 | **Inline SQL at `.execute()` call sites in 10 production modules**, against six that use the loader: `ops/routers/{coordination,deploy,scrape,users}.py`, `archiver/processors/{pack_bronze_html,delete_packed_source_html,flush_silver_observations,flush_staging_events}.py`, `shared/db.py`, `shared/duckdb_s3.py` | `.execute(` with a literal first argument | Plan 162 |
-| G6 | **Four routes reached by no test through any routing table**: `container_health`'s `/oneoff-processes` and `/project-status/{project}` (handler-level tests only, no `TestClient` in the service), and `ops`' `POST /maintenance/evict-delisted-cooldowns` and `POST /maintenance/reconcile-cooldown-cohorts` | `app.routes` versus test request literals | Plan 162 |
+| G6 | **Twelve routes reached by no test through any routing table**, not the four measured by eye: all four of `container_health`'s, including `/health` and `/metrics` (there is no `TestClient` in that service at all), and eight of `ops`' — the two `/maintenance` routes already named, plus `GET /coordination/status`, `POST /coordination/begin-validation`, `POST /coordination/cancel` and the three `/admin/snapshots/adaptive-refresh/` reads. The three coordination routes are the same surface whose drain hung Plan 142's first deploy | `tests/test_testing_contract.py`: each app's real `app.routes` versus the request literals in that service's own test directories | Plan 162 |
 | G7 | **`dashboard/`: 7 modules, 0 test files.** Its SQL is covered by Layer 2 through `dashboard.queries`; its Python is covered by nothing | — | Plan 162 |
 | G8 | **`scraper/`: Plan 84's four-month-old deferral, now lifted.** One integration file, which is itself in G1 | — | Plan 162 |
 | G9 | `tests/test_container_health_app.py` and `tests/test_container_health_collector.py` are Layer 1 tests sitting in Layer 0's directory. `container_health` has no `tests/container_health/` and no Layer 4 at all | — | Plan 162 |
 | G13 | **Two known harness-decides-the-outcome tests.** `Documentation tests` fails on every docs-only changeset because it is the only pytest step in `ci.yml` without `PYTHONPATH` — latent since `bf989fc` (2026-08-31 09:00 CDT) and first run ~7h later by PR #299, which is why it went unnoticed. `tests/airflow/test_prune_task_logs_dag.py` is the same class already repaired, in `21333ab`, and is the pattern | Reproduced on master's tree in a worktree named `new_car_tracker`: 2 failed, 33 passed | **Plan 146 Stage 1 (CAR-42)** for the CI fix; the rule itself is here |
 | G11 | **The layer numbers in the code are Plan 84's, not this document's.** Docstrings across `tests/` and two step names in `ci.yml` say "Layer 1 — SQL smoke" and "Layer 3 — API integration", which are Layers 2 and 4 here. Mechanical sweep; the asserting test covers it afterwards so the two cannot drift again | `grep -rn 'Layer [0-9]' tests/ .github/` | Plan 162 |
 | G12 | **`airflow/dags/` has no `.sql` convention and cannot reach one.** No module under it imports `shared`, so `shared.query_loader` is unavailable and the DAG tree is the only place in the repository where "production SQL is a `.sql` file" is structurally impossible. This is what forces the single legitimate `ast` reader, `_sensor_constant()` | `grep -rn 'from shared' airflow/dags/` returns nothing | Plan 162 |
+| G14 | **54 of 76 production `.sql` files are named by no Layer 2 test.** All 19 under `processing/sql/`, all 8 under `ops/sql/`, all 3 under `scraper/sql/`, 17 of `archiver/`'s, the 6 `dashboard/sql/data_health_*` files and `airflow/sql/delete_stale_emails.sql`. `test_ops_queries.py` and `test_processing_queries.py` are named for the services whose statements they should execute, import nothing from either `queries.py`, and **paraphrase the SQL instead** — which the rule above calls worse than no test, because a paraphrase passes forever | `tests/test_testing_contract.py`, at the weakest reading of "executed": a file counts as covered if Layer 2 so much as names it. A stricter check can only find more | Plan 162 |
 | G10 | **The unit job's coverage is measured and discarded** — `--cov --cov-report=term-missing`, no threshold, no artifact. Worse, `[tool.coverage.run] source` names six packages and omits `container_health`, `dashboard`, `scripts` and `airflow/dags`, so **the two services below the floor are the two the instrument cannot see** | `ci.yml:131`, `pyproject.toml` | Plan 139 Stage D, items 4 and 5 — the half of D that stayed with 139 |
 
 ---

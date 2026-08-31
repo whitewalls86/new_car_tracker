@@ -2,12 +2,19 @@
 
 ## Status
 
-**The contract is written (CAR-33, 2026-08-31).** Success criteria 1, 4 and 5
-are met: [the nine questions are answered](#the-answers), the contract is
-[`docs/TESTING.md`](../TESTING.md), and the known violations are recorded as
-G1-G12 there. **Criteria 2 and 3 remain open** — the `.claude/skills/` reviewer
-and the test that asserts the contract are CAR-34. See
-[the evidence](#evidence--car-33-2026-08-31).
+**Complete (CAR-33 and CAR-34, 2026-08-31).** All five success criteria are
+met. The contract is [`docs/TESTING.md`](../TESTING.md);
+[the nine questions are answered](#the-answers); the reviewer is
+[`.claude/skills/testing-contract/`](../../.claude/skills/testing-contract/SKILL.md);
+the asserting test is
+[`tests/test_testing_contract.py`](../../tests/test_testing_contract.py); and
+the known violations are G1-G14 in the gap list. See
+[CAR-33's evidence](#evidence--car-33-2026-08-31) and
+[CAR-34's](#evidence--car-34-2026-08-31).
+
+The gap list is Plan 162's inbox, not this plan's unfinished business —
+[the non-goals](#non-goals) are explicit that fixing the violations was never
+in scope.
 
 Written 2026-08-30, out of a planning conversation that started as a test-suite
 refactor and stopped when the refactor turned out to be unwritable. That
@@ -599,3 +606,86 @@ Stage D items 4 and 5, G13 to Plan 146 Stage 1 (CAR-42).
 
 Cost: estimate 2, actual 1 (-1). The nine questions were largely answerable by
 measurement rather than deliberation.
+
+### Evidence — CAR-34, 2026-08-31
+
+Criteria 2 and 3 are met, and the plan is complete.
+
+**The reviewer** is
+[`.claude/skills/testing-contract/`](../../.claude/skills/testing-contract/SKILL.md),
+in the shape of the six skills already here. Its central design choice answers
+[question 7](#7-what-does-the-agent-skill-check-and-what-can-it-not) directly:
+it **runs the asserting test rather than re-deriving its seven rules**, so
+there is one implementation of each and the copy nobody reads cannot drift from
+the one CI runs. Its own work is the four judgement rules, and it is required
+to end by naming which rules it could not reach — never with a bare approval.
+
+**The asserting test** is
+[`tests/test_testing_contract.py`](../../tests/test_testing_contract.py), Layer
+0, 15 assertions, ~4s, no dependencies. Every subject is derived: the services
+from the top-level Python packages on disk (which is exactly the eight the
+"enough" table has rows for), the routes from each app's real `app.routes` in a
+subprocess, the layers from the contract's own `###` headings and
+`**Lives in:**` lines.
+
+**The waiver mechanism has three assertions of its own**, and they are what
+make [question 8](#8-what-asserts-the-contract-in-ci-and-what-happens-on-violation)'s
+*"only ever shrinks"* a mechanism rather than an intention: a waiver that no
+longer describes a violation fails, a waiver whose owner plan has been archived
+fails, and a waiver naming a deleted gap entry fails. Dormancy is declared
+through the same list rather than a second mechanism —
+`tests/integration/lakehouse/` is waived against G2 where the orphaned suites
+are waived against G1, which is the whole of what G2 asked for.
+
+**Demonstrated by mutation, not asserted.**
+[`scripts/verify_testing_contract_mutations.py`](../../scripts/verify_testing_contract_mutations.py)
+applies one mutation per rule, runs the single assertion that should notice,
+and restores the tree. **11 of 11 caught**, tree green before and after. A
+contract test nobody has watched fail is a contract test nobody knows anything
+about, and the run is cheap enough to repeat whenever a rule is added or
+reworded — which is when a rule most often stops checking anything.
+
+**Three of CAR-33's measurements were low**, found by mechanising what had been
+measured by eye. Each is recorded against its gap entry rather than corrected
+in place:
+
+| Gap | By eye | Mechanically |
+|---|---|---|
+| G6 — routes reached through no routing table | 4 | **12**. All four of `container_health`'s, and eight of `ops`' — including `GET /coordination/status`, `POST /coordination/begin-validation` and `POST /coordination/cancel`, the same surface whose drain hung Plan 142's first deploy |
+| G4 — files not patching with `mocker` | 20 | **34**. 17 import `patch` from `unittest.mock`, 17 use `monkeypatch.setattr`, two do both. The second half was never counted; every one of those 17 targets a module object, not process state |
+| G14 — `.sql` files no Layer 2 test executes | not measured | **54 of 76.** New entry |
+
+**G14 is the largest of the three and the one worth reading.**
+`test_ops_queries.py` and `test_processing_queries.py` are named for the
+services whose statements they should execute, import nothing from either
+`queries.py`, and **paraphrase the SQL instead** — all 19 files under
+`processing/sql/` and all 8 under `ops/sql/` are executed by nothing. This
+document's own [question 3](#3-what-must-never-be-mocked) calls a paraphrase
+worse than no test, because it passes forever: it is a copy that cannot notice
+the original changed. The check that found it uses the *weakest* available
+reading of "executed" — a file counts as covered if Layer 2 so much as names
+it — chosen deliberately, because 54 files fail even that and a stricter check
+can only find more.
+
+**Two additions to CAR-33's contract**, both completions rather than
+re-decisions. `tests/dbt/` had no layer: it is Layer 0 (dbt YAML and filesystem
+facts, no invocation, no database) and now has a row, because a directory the
+contract does not place is a suite whose purpose nobody has stated and which
+every rule silently skips. And G14 is new.
+
+**The asserting test nearly broke its own rule**, which is worth recording
+because it is the third worked example of *the harness must not decide the
+outcome* and it was found by building rather than by reading. The check for
+production `.sql` files walks the repository — and `.claude/worktrees/` holds
+full second checkouts *inside* the tree, so from the main checkout the walk
+found **616 extra `.sql` files** and the result depended on how many branches
+happened to be open. Excluded by prefix, with the reason written beside it.
+
+**One pre-existing failure found and not fixed**, because it is neither this
+plan's nor CAR-34's:
+`tests/scripts/test_verify_recovery_live_state.py::test_a_failing_canary_command_fails_the_check`
+fails on Windows on master — *"The filename, directory name, or volume label
+syntax is incorrect"* — and passes in CI. That is G13's class exactly, in the
+benign direction, and it belongs with the rest of G13.
+
+Cost: estimate 1, actual not measured.
