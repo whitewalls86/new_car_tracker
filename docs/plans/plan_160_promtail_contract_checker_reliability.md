@@ -119,8 +119,16 @@ reads a source, batches entries, and ships them; `-dry-run` swaps the network
 client for one that prints, and `-stdin` makes it read to EOF and shut down.
 Entries still moving through that pipeline when shutdown wins are never written
 to stdout at all. The loss is arbitrary rather than positional because the
-pipeline is concurrent, and it does not reproduce on an unloaded machine
-because nothing delays the entries long enough to lose the race.
+pipeline is concurrent.
+
+> **Corrected by Stage 0.** This paragraph originally ended "and it does not
+> reproduce on an unloaded machine because nothing delays the entries long
+> enough to lose the race." That is wrong. It reproduced on the *first*
+> unloaded run and in 12 of 20, and adding load lowered the rate rather than
+> raising it. The window is opened by Promtail's own shutdown path, not by
+> host contention; contention was a plausible amplifier and turned out not to
+> be the cause. Nothing else in the mechanism changes — and the fix does not
+> depend on the amplifier, only on where the waiting happens.
 
 ### Why "wait longer" does not work, and where the waiting belongs
 
@@ -165,6 +173,58 @@ reproduced locally under any load, stop and say so** — the mechanism above is
 then not fully understood, and Stage 1 would be a guess dressed as a fix.
 
 This stage touches no code.
+
+#### Evidence — Stage 0
+
+**Reproduced on the first run, with no load at all.** The premise that the race
+needs a loaded machine is wrong, and it is worth correcting because it is what
+kept this filed as CI-only for a week. Stage G's 10/10 clean local runs were
+not measuring what they appeared to measure.
+
+Environment: the maintainer's macOS host, `arm64`, 8 cores, Docker Desktop
+29.5.2, `grafana/promtail:3.5.8` pulled locally. The script needs `TMPDIR` on a
+Docker-shared path — `TMPDIR="$HOME/.plan160-tmp"` — because `docker run -v`
+cannot mount `/var/folders/...`. That is the environment limitation the prompt
+warns about, not the defect, and the script is otherwise unmodified.
+
+```bash
+mkdir -p "$HOME/.plan160-tmp"
+export TMPDIR="$HOME/.plan160-tmp"
+for i in $(seq 20); do python scripts/verify_promtail_contract.py; done
+```
+
+**12 of 20 sequential, unloaded runs reported a mismatch**, and the missing set
+varied run to run on byte-identical inputs:
+
+| Runs reporting it | Fixture reported as "Promtail dropped it" | Batch |
+|---:|---|---|
+| 4 | `airflow_critical` | `airflow-apiserver` (4 lines, 2 retained) |
+| 4 | `application_structured_new_shape` | `scraper` (1 line, 1 retained) |
+| 2 | `application_missing_logger` | `ops` (2 lines, 2 retained) |
+| 1 | `oauth_interactive_redirect` | `oauth2-proxy` (7 lines, 6 retained) |
+| 1 | `oauth_lifecycle_severity_wins_over_status` | `oauth2-proxy` |
+| 1 | `airflow_task_logger_error` | `airflow-scheduler` (4 lines, 2 retained) |
+
+Two runs reported two fixtures at once; eight were clean.
+
+**`application_structured_new_shape` is the finding that settles the
+mechanism.** It is the *only* line in the `scraper` batch — one line in, one
+entry expected. A single-line batch losing its single entry cannot be tail
+truncation, cannot be positional, and cannot be a classification difference.
+The line was never written to stdout at all, which is exactly what the plan's
+corrected mechanism predicts.
+
+Adding load did **not** raise the rate: with eight CPU burners saturating all
+cores, 3 of 10 runs failed. The contention appears to slow Promtail's shutdown
+path as much as its pipeline, so the plain sequential loop is the reproduction
+to re-run. The mismatch rate is far higher here than in CI, which is consistent
+with `arm64` emulation overhead in Docker Desktop's VM widening the window.
+
+**Confirming the fix's premise before writing it.** A separate probe held stdin
+open after writing the 7-line `oauth2-proxy` batch: all 6 expected entries
+arrived at **t+0.51s, with stdin still open**. Promtail does not need EOF to
+emit entries, so waiting for a count before EOF is a real completion signal
+rather than a hope.
 
 ### Stage 1 — Hold stdin open, and wait for the expected count
 
@@ -225,6 +285,51 @@ that any inconclusive result names itself as one.
 Record the before and after in this document. This is the stage that turns the
 fix from plausible into demonstrated, and it is the reason Stage 0 is
 mandatory.
+
+#### Evidence — Stage 3
+
+The Stage 0 loop, re-run verbatim against the fixed checker on the same
+machine:
+
+| | Failures | Inconclusive | Clean |
+|---|---:|---:|---:|
+| **Before** — 20 unloaded runs | **12** | n/a — the verdict did not exist | 8 |
+| **After** — 20 unloaded runs | **0** | 1 | 19 |
+
+The one incomplete observation named itself, and recovered on its retry:
+
+```
+INCONCLUSIVE: 1 entry the checker could not observe. This is an incomplete
+observation, not a contract violation:
+  - oauth2-proxy/oauth_auth_failure: not observed on 1 of 2 attempts, retained
+    on 1 -- the checker lost it, the pipeline did not drop it
+```
+
+That run exited **0**. Under the old checker the same event would have been
+`oauth_auth_failure: corpus says retained, Promtail dropped it` and a red
+build — which is the whole defect, observed being fixed.
+
+**A genuine regression still fails.** In a scratch copy of `promtail.yml` the
+`ops` drop selector was widened from `{service="ops", level=""}` to
+`{service="ops", level="INFO"}`, so two lines the corpus says are retained are
+really dropped. The checker exited **1** and named both, and — the part that
+matters — classified them as deterministic rather than racy:
+
+```
+2 contract mismatch(es):
+  - application_old_shape: corpus says retained, Promtail dropped it on all 3 attempts
+  - application_missing_logger: corpus says retained, Promtail dropped it on all 3 attempts
+```
+
+Cost: a clean run went from ~1.6s to ~7s. Most of that is the `processing`
+batch riding its 3s grace, since a batch expecting zero entries has no positive
+signal to wait for. Against a job that already pulls and starts a container per
+batch, this is not worth optimising.
+
+**Inconclusive exits 0 deliberately.** A non-zero code would leave exactly the
+red build the plan set out to remove. The signal is the named stderr block, so
+the race's real frequency starts being recorded in CI logs — on this machine it
+is now roughly 1 run in 20, down from 12.
 
 ## Files
 
