@@ -18,7 +18,8 @@ runs `airflow db migrate` against its own Postgres as `airflow_user` after
 Flyway, the stand-in is retired, and the seven coordination-drain tests execute
 against Airflow's real tables on two cold runners. The audit found no third
 cross-schema exposure. A version-parity test now holds CI's Airflow to the
-Dockerfile's. **Stage H is the only stage left in this plan.**
+Dockerfile's. Stage H moved to Plan 162 the same day, which leaves this plan
+with nothing outstanding: **Plan 139 is complete and archived.**
 
 **STAGES A+B COMPLETE 2026-08-18** — merged as PR #213 (`4fa6c7d`). Surfaced
 2026-08-17 during Plan 135 Stage 4 development, when the unit suite's
@@ -670,7 +671,23 @@ Stage E's asymmetry — a false negative costs time, a false positive suppresses
 or manufactures evidence — is the argument for why an untrustworthy instrument
 is worse than a slow one, and Plan 160 cites it directly.
 
-### Stage H — One invariant, two censuses, drifting independently (XS)
+### Stage H — Moved to Plan 162 (2026-08-31)
+
+**Split out to [Plan 162](plan_162_testing_census_and_restructure.md).** The
+stage below is kept verbatim as the evidence Plan 162 inherits, because the two
+censuses and the incident that exposed them are the argument for fixing it.
+
+The move follows the stage's own scoping: it places itself "in Stage D's step
+2-3 neighbourhood", and Plan 162 had already absorbed the markers half of
+Stage D. The de-gating agent it names is not a mis-applied marker but *the
+routine local/CI split itself*, which is Plan 162's subject. Plan 161's
+`docs/TESTING.md` also answered part of its second half on 2026-08-31 by
+recording what `-m "not integration"` actually selects. Plan 162 carries it as
+XS and shippable ahead of the census.
+
+#### The evidence, as found
+
+**Stage H — One invariant, two censuses, drifting independently (XS)**
 
 **Found 2026-08-30**, when [PR #293](https://github.com/whitewalls86/new_car_tracker/pull/293)
 deleted two DAGs and CI failed on a count nobody had touched:
