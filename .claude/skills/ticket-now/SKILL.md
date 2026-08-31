@@ -83,12 +83,16 @@ disagrees.
 - One team: **Cartracker**, `ee63b26b-de49-4fa5-8617-bbaed7c1227d`.
 - Statuses: `Backlog`, `Ready`, `In Progress`, `In Review`, `Soaking`, `Done`,
   `Canceled`. `Duplicate` is reserved by Linear — never set it.
-- Projects exist per plan, named `Plan NNN — Title`. Create none here; a plan
-  outside the current horizon should not gain a project as a side effect of one
-  ticket. `fill-cycle` does create them, because seeding is what decides the
-  horizon in the first place; this skill runs against a horizon already set.
-  If the plan has no project, report that and put the issue in the cycle
-  without one.
+- Projects exist per plan, named `Plan NNN — Title`. **If the ticket's plan has
+  no project, create it with the ticket.** Mid-cycle work on a plan that did not
+  exist at seeding is the normal way a plan enters this board, and refusing the
+  project only leaves the issue orphaned. Plan 158 is the worked case: created,
+  ticketed, four stages shipped and archived inside Cycle 1, and **CAR-29 still
+  carries no project** because an earlier version of this rule forbade one.
+  The guard is not "never create" — it is the guard this skill already applies
+  to everything: it is for **the plan this ticket names**, and this skill
+  refuses work with no canonical plan, so the plan is already vetted before a
+  project can follow it. Say in the report that you created one.
 - **Estimates are required.** `1` under half a day, `2` about a day, `3` two to
   three days, `5` most of a week — the Fibonacci scale, enabled team-wide on
   2026-08-25.

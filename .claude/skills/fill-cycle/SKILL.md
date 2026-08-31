@@ -285,13 +285,10 @@ break is that nothing is created **silently**: every project you intend to
 create is named in the proposal, alongside the issues, and is created only on
 the same approval.
 
-This is the division from `ticket-now`, which creates none. That skill adds one
-issue to a cycle whose horizon is already set, so a project appearing there
-would be a plan entering the board as a side effect of a single ticket. Here the
-horizon is the thing under discussion.
-
-Never create a project for a plan you are not seeding an issue for in this same
-run.
+`ticket-now` does the same for the plan its ticket names, so the rule is one
+rule in both places: **a plan that gets an issue gets a project.** Neither skill
+creates one for a plan it is not filing against, and neither creates one the
+user has not seen first.
 
 ## After writing
 
