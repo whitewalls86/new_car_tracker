@@ -9,7 +9,19 @@ against `master` at `6f6a2ba`.
 The analytics acquisition and database-removal portion of Stage 4 moved to
 [Plan 143](plan_143_analytics_serving_snapshot.md) on 2026-08-18 before either
 plan deployed it. This plan owns presentation of that snapshot, not its
-production or storage connection.
+production or storage connection. **Plan 143 completed on 2026-08-20** (PRs #217
+and #218; see [completed_plans.md](../planning/completed_plans.md)), so Stage 4
+and PR D are unblocked — the snapshot contract they consume already exists in
+production.
+
+Two changes on 2026-08-31, from a scoping session:
+
+- **Weekly recaps become a public surface.** `docs/recaps/` holds an unbroken
+  weekly file from 2026-02-01 onward, and Stage 1d already establishes the
+  pattern a recap index needs. Stage 1e generates it; Stage 3d presents it.
+- **Per-service subdomain routing left this plan** and became
+  [Plan 165](plan_165_service_subdomain_routing.md), triggered by Plan 69. That
+  document records why it is not a stage here.
 
 This plan covers the repository README and the unauthenticated portfolio surface.
 It does not change dashboard behavior, authorization roles, or the production data
@@ -30,7 +42,10 @@ take database work out of the request path by rendering the last-known-good
 serving snapshot produced by Plan 143. Add a same-origin, dynamically loaded "Recent
 work" section whose build-generated JSON comes from the scored roadmap and recent
 completion tables in `docs/PLANS.md`, so the public page follows source control
-without making GitHub or Markdown parsing a production dependency.
+without making GitHub or Markdown parsing a production dependency. Publish the
+weekly recaps through the same build-time projection, as static pages the "Recent
+work" section links into, so the page that says what shipped has somewhere to
+send a reader who wants the account of it.
 
 ---
 
@@ -83,6 +98,9 @@ bare domain sees a login screen before seeing what the project is.
    runtime dependencies.
 8. Show the next planned work and recently completed work from a source-controlled,
    CI-validated snapshot rather than another hand-maintained block of page copy.
+9. Publish the weekly recaps as readable public pages, generated from
+   `docs/recaps/` at build time, so the long-form account of the work is reachable
+   from the landing page and stays current without hand-maintained copy.
 
 ## Non-goals
 
@@ -94,7 +112,16 @@ bare domain sees a login screen before seeing what the project is.
 - Redesigning the Streamlit dashboard.
 - Introducing a JavaScript framework or frontend build system.
 - Calling the GitHub API, cloning the repository, or parsing Markdown on a public
-  HTTP request.
+  HTTP request. Markdown is rendered at image-build time, never in a request.
+- Moving any service from a path prefix to its own subdomain. That is
+  [Plan 165](plan_165_service_subdomain_routing.md), and no part of it — including
+  a single-host proof — belongs in this plan's Caddy change.
+- Publishing plan documents themselves, or `ARCHITECTURAL_OVERVIEW.md` and
+  `OPERATIONAL_ENGINEERING_OVERVIEW.md`, as first-party pages. Recap links to plan
+  documents resolve to GitHub, as Stage 1d's roadmap links already do.
+- Adding comments, feeds beyond the recap index, search, or any other
+  blog-platform feature. The recap surface is a generated index plus generated
+  pages.
 - Publishing secrets, production infrastructure identifiers, private metrics, or
   operational endpoints that are not already intentionally public. This now has a
   named instance: the internal overviews recorded under Stage 0 document the
@@ -145,8 +172,11 @@ The public feed is a projection of the roadmap, not a second roadmap:
 
 - "Planned next" comes from the ordered rows in `docs/PLANS.md`'s **Default
   build order** table. Publish only the first four executable rows.
-- "Recently completed" comes from the newest-first **Completed** table in the
-  same file. Publish only the first four rows.
+- "Recently completed" comes from the newest-first table in
+  [`docs/planning/completed_plans.md`](../planning/completed_plans.md). Publish
+  only the first four rows. **This is a different file from the build order.**
+  Plan 146 removed `docs/PLANS.md`'s duplicate Completed table; what remains
+  under that heading is a pointer, and a generator that parses it finds no rows.
 - Titles, short public summaries, priority, effort, state, and source links may
   be shown. Internal hostnames, incident payloads, approval records, production
   object keys, and other operational detail must not be copied into the feed.
@@ -157,6 +187,27 @@ The public feed is a projection of the roadmap, not a second roadmap:
 The plan document remains the detailed source. The landing page is a small,
 current window into it.
 
+### 5. The weekly recaps
+
+The recaps are a fourth kind of fact, and the one with the least editorial
+control: they are written weekly by the `plan-week` skill against git history,
+not authored as public copy.
+
+- They are already public. Stage 1d's roadmap links resolve to
+  `github.com/whitewalls86/new_car_tracker`, so this plan already assumes the
+  repository is publicly readable, and `docs/recaps/` is in it. Publishing them
+  on the site changes their **prominence and framing**, not their disclosure
+  status. The review below is an editorial gate, not a leak gate.
+- They are a record of a week, not evergreen prose. A recap is correct as of its
+  date and is never revised to match a later truth. Every published recap must
+  carry its week and a statement that it is a point-in-time record, so §1's
+  production/experimental split is not contradicted by a six-month-old page.
+- They may name what the truth contract's §3 narrows. The word `trawl` appears
+  eleven times across five recap files — `2026-07-12.md:65`, `2026-07-19.md:17`,
+  `2026-08-23.md:41`, `2026-08-30.md:493` among them — and the scrape path is
+  exactly what the non-goals bar from *authored* public copy. Stage 1e decides
+  the policy; it does not get to be decided silently by a generator.
+
 ---
 
 ## Target route and access contract
@@ -165,6 +216,8 @@ current window into it.
 |---|---|---|
 | `/` | Public | Canonical portfolio landing page, HTTP 200 |
 | `/info` | Public | Permanent redirect to `/` |
+| `/recaps` | Public | Generated recap index, newest first, HTTP 200 |
+| `/recaps/YYYY-MM-DD` | Public | One generated recap page, HTTP 200 |
 | `/static_ops/*` | Public | Versioned local assets with long-lived caching |
 | `/robots.txt` | Public | Allows the public root and references the sitemap |
 | `/sitemap.xml` | Public | Contains only canonical public URLs |
@@ -269,7 +322,8 @@ Keep the current visual restraint and "why" storytelling, but use this sequence:
 5. Platform-evolution callout that clearly labels Iceberg work as a migration
    track.
 6. "Recent work" with separate "Planned next" and "Recently completed" lists,
-   loaded progressively from the source-controlled public roadmap snapshot.
+   loaded progressively from the source-controlled public roadmap snapshot, plus
+   a static link to the recap index for the long-form account.
 7. Four or five decision stories, including packed cold storage and the
    liveness lesson.
 8. Testing/evidence section and CTA.
@@ -333,6 +387,60 @@ newest-first completion dates, local plan-link existence,
 and the public schema. This makes a roadmap edit fail visibly when its public
 projection was not refreshed.
 
+### 1e. Weekly recap projection
+
+`docs/recaps/` holds one file per complete week, unbroken from `2026-02-01.md`
+to `2026-08-30.md` — 31 files at the time of writing. [Plan
+146](plan_146_planning_system.md) carries a 2026-09-14 gate on that habit
+continuing, so the corpus grows on its own and needs no new discipline from this
+plan.
+
+**This is Stage 1d's pattern pointed at a second directory:** source-controlled
+Markdown, a deterministic build-time projection, a static artifact under
+`ops/static_ops/`, a `--check` mode CI runs, and no repository call in a request.
+Three things differ, and they are the whole of the work.
+
+**1. Rendering happens at build time, in Python, and produces HTML.**
+`project-updates.json` is a small structured extract that `info.js` renders with
+`textContent`. A recap is long-form prose with tables, headings and internal
+anchors; `textContent` cannot render it and `innerHTML` is barred by Stage 4
+item 3 and by Stage 3c's CSP. So `scripts/build_public_recaps.py` renders each
+file to static HTML at image-build time, adding one Markdown library to the ops
+build. No Markdown reaches the browser and no Markdown is parsed in a request.
+
+**2. Links must be rewritten, and the rewrite is a correctness rule.** Recaps
+link relatively to plan documents (`../plans/plan_145_april_cutover_reconciliation.md`)
+and use internal anchors (`#merges`). Plan links resolve to the same GitHub blob
+URLs Stage 1d already emits; internal anchors stay internal. **A relative link
+that the generator cannot classify is a build failure, not a passthrough** — a
+silent passthrough is how a `docs/`-relative path becomes a 404 on the public
+site.
+
+**3. Publication is an editorial decision, made once, and recorded.** Per the
+truth contract's §5, the recaps are already public in the repository, so this is
+not about disclosure. It is about which of 31 weeks is the reading experience
+worth advertising, and about the §3 narrowing that authored copy obeys and
+recaps predate. Two candidate policies:
+
+| Policy | Cost |
+|---|---|
+| Publish from a chosen start date forward | One decision; the archive stays on GitHub; the site's oldest page is a week the author chose |
+| Publish all 31 after a read-through | 31 files of review before PR A can land, against prose that will not be revised afterwards |
+
+The generator must not decide this. It reads an explicit published-from date (or
+an explicit allow-list) from a committed source, and a recap outside it is not
+rendered.
+
+`--check` regenerates in memory and exits non-zero on drift, exactly as 1d's
+does. CI additionally validates: every rendered file has a parseable week date
+matching its filename; the index is newest-first with no gap between the
+published-from date and the newest file; no unclassifiable relative link
+survives; and no recap outside the published set produced output.
+
+**Gate 1e:** the publication policy is written down and committed, the generator
+refuses an unclassifiable link rather than emitting it, and `--check` fails on a
+new recap that has not been regenerated.
+
 ## Stage 2 — Make the landing page discoverable
 
 1. Add the exact-root public Caddy handler and keep `/dashboard*` protected.
@@ -346,11 +454,52 @@ projection was not refreshed.
    use the canonical root or explicit `/dashboard` route as appropriate.
 
 Search metadata must describe only the public page. Protected application paths
-should not be listed in the sitemap.
+should not be listed in the sitemap. The recap index and every published recap
+page are public and belong in the sitemap; the generator in Stage 1e emits that
+URL list so the sitemap cannot drift from what was actually rendered.
+
+### The catch-all is what serves the dashboard, and this stage is what moves it
+
+**Read this before editing the Caddyfile.** Item 1 above is not a small change,
+because the `/dashboard*` block is not what makes the dashboard work.
+
+`dashboard/Dockerfile` runs Streamlit with no `--server.baseUrlPath`, so
+Streamlit believes it is mounted at `/` and serves its own machinery from the
+root: `/_stcore/health` (which the Compose healthcheck calls at exactly that
+path), `/_stcore/stream` for the websocket, and the static bundle. Nothing
+rewrites those paths. They resolve today only because the Caddyfile's final
+`handle { … reverse_proxy dashboard:8501 }` catches everything unmatched and
+sends it to Streamlit.
+
+So the current root behaviour is load-bearing in a way no configuration states
+and no test asserts. This stage takes the root away from it.
+
+The requirement:
+
+8. Keep an authenticated catch-all reaching `dashboard:8501` for the Streamlit
+   root-served paths, and make the public root an **exact match** on `/` rather
+   than a prefix that swallows them. Removing or narrowing the catch-all without
+   giving Streamlit a base path breaks the dashboard's assets and websocket while
+   leaving `/dashboard` itself returning 200.
+
+That last clause is the trap. **A broken dashboard would still pass Gate 2 as
+originally written**, because Gate 2 only asserts that `/dashboard` *enters
+OAuth* — it never completes a sign-in and never loads a page. The failure would
+be invisible to every check in this plan and would surface as a blank dashboard
+after deploy.
+
+[Plan 165](plan_165_service_subdomain_routing.md) is the eventual fix: its own
+host gives Streamlit its whole origin back and removes the catch-all dependency
+entirely. Until then this plan must preserve the coupling deliberately rather
+than by accident, which means asserting it.
 
 **Gate 2:** a fresh unauthenticated session gets HTTP 200 at `/`; `/dashboard`
-enters OAuth; `/info` redirects once to `/`; robots and sitemap return their real
-content rather than a Google sign-in page.
+enters OAuth; `/info` redirects once to `/`; the recap index and one recap page
+return 200 without an OAuth redirect; robots and sitemap return their real
+content rather than a Google sign-in page; **and an authenticated `viewer`
+session loads the dashboard with its websocket connected and no failed
+`/_stcore/*` request** — verified by loading the page, not by a status code on
+`/dashboard`.
 
 ## Stage 3 — Accessibility and static-asset performance
 
@@ -388,17 +537,42 @@ The checked-in `demo.mp4` is 41,699,885 bytes. Replace it with:
 Do not apply a landing-page CSP blindly to Grafana, Airflow, Streamlit, MinIO, or
 OAuth routes; scope the header block to the public handlers.
 
+### 3d. Recap presentation
+
+The recap pages are the one place on the public surface with a long-form reading
+requirement, and they get it from the same local stylesheet rather than a second
+design.
+
+- A generated index at `/recaps`: newest first, each row the week and a
+  one-line lead taken from the file, with no client-side fetch. This page is
+  static HTML, unlike the "Recent work" section, because it has no freshness
+  contract to honour.
+- Each recap page carries its week, an explicit "point-in-time record" note per
+  the truth contract's §5, and a link back to `/`.
+- Reading measures: a bounded line length, the same heading hierarchy rule as
+  3a (`h1` → `h2` → `h3`, and the generator must not emit a skipped level from
+  the source Markdown), and tables inside a horizontally scrollable container so
+  the recaps' wide commit tables cannot overflow the page at 360 px.
+- The pages share `info.css`, load no JavaScript, and satisfy Stage 3c's CSP
+  without exception. A recap page that needs a script has been over-built.
+
 **Gate 3:** all page functions are usable with keyboard only, reduced-motion
 users do not receive autoplay, no third-party request is required to render the
-page, and the initial page view does not download the full demo.
+page, the initial page view does not download the full demo, and every recap
+page renders with JavaScript disabled and no horizontal overflow at 360 px.
 
 ## Stage 4 — Present the Plan 143 snapshot without request-time dependencies
 
-The current handler opens DuckDB independently for four stats and derives "last
-pipeline run" from completed queue rows that hourly cleanup removes. Plan 143
-owns removing both reads, producing the versioned serving snapshot, replacing
-that field with mart-derived `analytics_data_through_iso`, and loading an
-immutable presentation cache inside `ops`.
+As written on 2026-08-17, the handler opened DuckDB independently for four stats
+and derived "last pipeline run" from completed queue rows that hourly cleanup
+removes. Plan 143 owned removing both reads, producing the versioned serving
+snapshot, replacing that field with mart-derived `analytics_data_through_iso`,
+and loading an immutable presentation cache inside `ops`.
+
+**Plan 143 completed on 2026-08-20**, so that work has landed and this stage
+consumes a contract that already exists rather than waiting on one. Re-read the
+shipped snapshot schema before implementing; do not implement against the shape
+sketched in this document, which predates it.
 
 This plan owns only the public presentation contract:
 
@@ -455,11 +629,21 @@ Add tests for:
 - landing-template rendering with full, partial, stale, and empty stats;
 - public-roadmap generation, deterministic `--check`, schema validation, score
   and effort constraints, ordering, item caps, and broken local plan links;
+- recap generation: deterministic `--check`, filename-to-week agreement, index
+  ordering and gap detection, plan-link rewriting to GitHub, internal-anchor
+  preservation, **build failure on an unclassifiable relative link**, heading
+  hierarchy without skipped levels, and a recap outside the published set
+  producing no output;
 - project-updates progressive enhancement with valid, unavailable, malformed,
   empty, and unsupported-schema JSON;
 - semantic controls, required metadata, canonical URL, media fallback, and the
   absence of the known stale phrases;
 - Caddy route ordering and access requirements;
+- **the Streamlit root-path coupling**: that the public root matches `/` exactly
+  and does not swallow `/_stcore/*`, and that an authenticated catch-all still
+  reaches `dashboard:8501`. This asserts a behaviour the tree currently relies on
+  without stating, and it is the one Stage 2 regression that a status code on
+  `/dashboard` cannot detect;
 - public security and cache headers;
 - robots and sitemap content;
 - README links and the production-versus-experimental wording contract.
@@ -469,6 +653,8 @@ CI verification should include:
 ```text
 GET /                 -> 200, no OAuth redirect
 GET /info             -> 308 -> /
+GET /recaps           -> 200 text/html, no OAuth redirect
+GET /recaps/2026-08-30 -> 200 text/html, no OAuth redirect
 GET /static_ops/project-updates.json -> 200 application/json
 GET /robots.txt       -> 200 text/plain
 GET /sitemap.xml      -> 200 application/xml
@@ -499,9 +685,15 @@ Deploy `ops` and Caddy together because the root route depends on both.
    valid empty state.
 3. Confirm the project-updates JSON matches the roadmap, has the expected cache
    policy, and renders both lists without blocking the page.
+3b. Confirm the generated recap set in the image matches `docs/recaps/` under the
+   published-from policy, that the index has no gap, and that the sitemap lists
+   exactly the pages that were rendered.
 4. Apply the Caddy route change.
 5. Run the unauthenticated route matrix from an external client.
 6. Sign in as `viewer`, `observer`, and `admin` and verify existing boundaries.
+   As `viewer`, **open the dashboard and confirm the websocket connects and no
+   `/_stcore/*` request fails** — the root move is the change most likely to break
+   it, and a status code on `/dashboard` will not show it.
 7. Confirm dashboards, request-access email links, static media, and social cards.
 8. Watch Caddy and ops errors, response latency, OAuth redirects, and public-stats
    age for at least one analytics refresh cycle.
@@ -526,36 +718,50 @@ both rollout and rollback.
 | `ops/static_ops/info.js` | Accessible progressive enhancement |
 | `ops/static_ops/project-updates.json` | Deterministic public projection of planned and completed work |
 | `ops/static_ops/*` | Local vendor assets, poster, optimized video, favicon/social image |
-| `scripts/build_public_roadmap.py` | Parse the two roadmap tables, validate them, and generate/check the JSON snapshot |
+| `scripts/build_public_roadmap.py` | Parse the build order and the completion archive, validate them, and generate/check the JSON snapshot |
+| `scripts/build_public_recaps.py` | Render `docs/recaps/` to static HTML, rewrite links, emit the index and sitemap URL list, and `--check` for drift |
+| `ops/routers/info.py` or a recap router | Serve the generated recap index and pages as static responses |
+| `ops/requirements.txt` | One Markdown rendering library, used at build time only |
 | `dashboard/app.py` | Canonical portfolio and dashboard links |
 | `ops/email.py` | Canonical destinations where needed |
 | `tests/ops/routers/test_info.py` | Stats and template behavior |
 | `tests/test_observability_config.py` or focused Caddy test | Public/protected route contract and headers |
-| `docs/PLANS.md` | Ordered/scored plan source plus newest-first public completion summaries |
-| `.github/workflows/ci.yml` | Reject stale or invalid project-updates snapshots |
+| `docs/PLANS.md` | Ordered/scored plan source; the completion archive stays in `docs/planning/completed_plans.md` |
+| `docs/recaps/*.md` | Unchanged as a source; the recap publication policy is committed alongside them |
+| `.github/workflows/ci.yml` | Reject stale or invalid project-updates and recap snapshots |
 
 ## Recommended PR sequence
 
 1. **PR A — Truth and roadmap pass:** README and landing copy, accurate
    architecture, current versus experimental, scored roadmap, deterministic
-   public projection, and CI drift check; no routing change.
+   public projection, the recap publication policy and its generator, and CI
+   drift checks; no routing change.
 2. **PR B — Public root:** Caddy route contract, canonical metadata, robots,
-   sitemap, link updates, and route tests.
+   sitemap including the generated recap URLs, link updates, and route tests.
 3. **PR C — Frontend quality:** semantic interactions, dynamically loaded work
-   feed, extracted/local assets, optimized media, CSP, caching, and accessibility
-   evidence.
+   feed, recap index and page presentation, extracted/local assets, optimized
+   media, CSP, caching, and accessibility evidence.
 4. **PR D — Stats presentation:** consume the already-landed Plan 143 snapshot,
    add stale/partial/empty UI states, and verify no request-time dependency.
 
 PR A can ship independently. PRs B and C should be reviewed together for CSP and
-asset-path compatibility. PR D requires Plan 143's snapshot contract and must
-preserve the current soft-failure behavior throughout.
+asset-path compatibility. PR D requires Plan 143's snapshot contract, which
+landed on 2026-08-20, and must preserve the current soft-failure behavior
+throughout.
+
+The recap work splits across A and C on the same seam as the roadmap work —
+generation with the other build-time projections, presentation with the other
+frontend. If the publication policy in Stage 1e turns out to need a long
+read-through, the generator can land in PR A behind a published-from date that
+admits only recent weeks, and the date widened later without touching code.
 
 ## Completion criteria
 
 Plan 138 is complete only when:
 
-- `/` is the canonical public landing page and `/dashboard` remains protected;
+- `/` is the canonical public landing page and `/dashboard` remains protected,
+  with the Streamlit root-path coupling asserted by a test rather than held by
+  catch-all ordering;
 - `/info`, robots, sitemap, and every first-party link follow the route contract;
 - README and landing copy contain none of the audited factual contradictions;
 - production and experimental architecture are visibly separated;
@@ -563,6 +769,10 @@ Plan 138 is complete only when:
 - the page remains useful with no stats available;
 - planned and recently completed work load from a deterministic, CI-validated
   source-control snapshot, with a useful no-JavaScript/failure fallback;
+- the weekly recaps are published under a written policy, generated from
+  `docs/recaps/` at build time, reachable from the landing page, and readable
+  with JavaScript disabled at 360 px;
+- adding a recap to `docs/recaps/` without regenerating fails CI;
 - the demo is bounded, lazy, accessible, and cached;
 - interactive content works with keyboard and screen reader semantics;
 - scoped public security headers and local assets are in production;
