@@ -2,7 +2,7 @@
 
 ## Status
 
-**Complete (CAR-33 and CAR-34, 2026-08-31).** All five success criteria are
+**ARCHIVED 2026-08-31 (CAR-33 and CAR-34).** All five success criteria are
 met. The contract is [`docs/TESTING.md`](../TESTING.md);
 [the nine questions are answered](#the-answers); the reviewer is
 [`.claude/skills/testing-contract/`](../../.claude/skills/testing-contract/SKILL.md);
@@ -733,4 +733,4 @@ fails on Windows on master — *"The filename, directory name, or volume label
 syntax is incorrect"* — and passes in CI. That is G13's class exactly, in the
 benign direction, and it belongs with the rest of G13.
 
-Cost: estimate 1, actual not measured.
+Cost: estimate 1, actual 1 (0).

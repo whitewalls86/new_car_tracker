@@ -2,7 +2,13 @@
 
 ## Status
 
-BUILD ORDER — Stage 4; Stage 3 complete, waiting for a reviewed maintenance window, written 2026-08-18 after the first deliberate whole-host maintenance
+CLOSEOUT — **all five stages delivered.** Stage 4's first reviewed window ran
+2026-08-31 and is recorded below; the two defects it found (6 and 7) are fixed
+and deployed. The row leaves `PLANS.md` when a *second* window runs through the
+procedure, with a check-in set for **2026-09-30** — one window proves the
+procedure executes, not that it is durable.
+
+Written 2026-08-18 after the first deliberate whole-host maintenance
 window exposed that the repository has a deploy procedure and a storage
 runbook, but no durable procedure for pausing production, updating Ubuntu,
 rebooting the VM, proving the host and stack healthy, and safely resuming work.
@@ -1909,6 +1915,17 @@ question and is deliberately **not** answered here. The current refusal is sound
 in isolation; it is only dangerous when combined with a gate that cannot open,
 and the fix for that is to stop shipping gates that cannot open.
 
+**Decided 2026-08-31, at closeout: explicitly dropped.** Not deferred, not
+carried to another plan, and not left for a reader to rediscover — the question
+was asked, considered, and answered *no*. An abandon path is a second way out
+of `validating` whose whole purpose is to be used when a gate is wrong, and
+building it would make shipping a gate that cannot open cheaper rather than
+rarer. The remedy stays the one this window demonstrated: fix the gate.
+
+Recorded here rather than dropped silently because a deliberate absence reads
+differently from an oversight, and the next operator who deadlocks in
+`validating` deserves to find a decision instead of a gap.
+
 #### Defect 7 — `restore-apt-automation` left security updates switched off
 
 `restore-apt-automation` returned `apt_automation_restored: true`. Both apt
@@ -1961,6 +1978,23 @@ Two independent gaps, both now fixed:
 
 `iproute2` — finding 7 from the pre-window scoping, previously "add it or
 document it" — is now matched by the `network` boundary.
+
+#### Stage 4 closeout — 2026-08-31
+
+All three of CAR-17's exit checks are met: one reviewed window run through the
+checked-in procedure, the full before/after record captured above (items 1-7),
+and every undocumented manual command either folded into the script and runbook
+or given a written reason for staying judgment-based.
+
+The window's own yield is the part worth keeping in view. It **completed**, and
+it still surfaced two defects — one of which, `mounts_expected`, could never
+have passed and left `validating` with no exit. A procedure that runs to
+completion and still finds a deadlock is the argument for running it a second
+time before believing it, which is what the closeout gate asks for.
+
+Cost: estimate 2, actual 1 (-1). Stages 0-3 had already absorbed the design
+work; the window itself executed in one sitting, and the two defects it found
+were small once the evidence named them.
 
 ## Rollback and recovery
 
