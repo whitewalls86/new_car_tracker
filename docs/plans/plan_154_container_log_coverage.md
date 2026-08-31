@@ -10,22 +10,28 @@ creates the source-policy registry this plan revises.
 
 ## Problem
 
-[`docker-compose.yml`](../../docker-compose.yml) declares 33 services. 28 are in
-the default profile; 26 remain after one-shots (`flyway`, `airflow-init`). Of
-those 26, **10 have any path into Loki**:
+[`docker-compose.yml`](../../docker-compose.yml) declares 34 services. 28 are in
+the default profile, and 26 remain after the one-shots (`flyway`,
+`airflow-init`) — but the expected-running set is **28**, because `trawl` and
+`redis-trawl` run under the `trawl` profile. They are the live scrape path, so
+a profile gate is not absence. The authority is
+[`container_health/expected.py`](../../container_health/expected.py), which
+`TestExpectedServicesMatchTheManifest` holds equal to Plan 142's
+`maintenance-running-set.txt` by exact set equality. Of those 28, **10 have any
+path into Loki**:
 
 - Six by application file — `ops`, `scraper`, `processing`, `dbt_runner`,
   `archiver`, `pack-worker`.
 - Four by `promtail.enable=true` stdout — `oauth2-proxy`,
   `airflow-apiserver`, `airflow-scheduler`, `airflow-dag-processor`.
 
-**Sixteen have none:** `postgres`, `caddy`, `minio`, `dashboard`, `pgadmin`,
+**Eighteen have none:** `postgres`, `caddy`, `minio`, `dashboard`, `pgadmin`,
 `flaresolverr`, `airflow-triggerer`, `statsd-exporter`, `postgres-exporter`,
 `node-exporter`, `prometheus`, `grafana`, `loki`, `promtail`,
-`docker-socket-proxy`, `container-health`.
+`docker-socket-proxy`, `container-health`, `trawl`, `redis-trawl`.
 
 Most of those absences are correct, and Plan 141's source-policy table exists
-precisely to say so in writing. The problem is not that 16 services are
+precisely to say so in writing. The problem is not that 18 services are
 excluded. It is that **their exclusion was never a decision** — it is the
 residue of which services happened to get a label during the Plan 135 Stage 5
 rollout. A correct exclusion and an unconsidered one currently look identical.
@@ -58,7 +64,7 @@ therefore measures before it admits.
    service is a candidate for a drop policy, not automatic exclusion.
 4. **The observability stack does not observe itself into a loop.** `loki` and
    `promtail` stay out; local Docker rotation is their diagnostic path.
-5. **Coverage is not a target number.** "All 26 services ingested" is a failure
+5. **Coverage is not a target number.** "All 28 services ingested" is a failure
    mode, not a goal.
 6. **Privacy travels with the edge.** Caddy access logs carry client IPs and
    full request paths. A retention and redaction policy is a precondition for
@@ -81,7 +87,7 @@ therefore measures before it admits.
 
 Read-only, and the substance of this plan.
 
-1. For each of the 16 uncovered services, record: what it logs, at what volume,
+1. For each of the 18 uncovered services, record: what it logs, at what volume,
    what question its logs would answer, and whether another signal already
    answers it.
 2. Classify each as **admit**, **admit with a drop policy**, or **exclude with a
@@ -97,7 +103,7 @@ Read-only, and the substance of this plan.
 
 ### Stage 0 gate
 
-Every one of the 16 has a written classification with a measured volume figure.
+Every one of the 18 has a written classification with a measured volume figure.
 Services whose useful content is not currently emitted are recorded as
 configuration work, not as ingestion work.
 
@@ -157,7 +163,7 @@ narrowed or removed rather than absorbed.
 
 ## Success criteria
 
-1. All 26 expected-running services have a written, reasoned classification;
+1. All 28 expected-running services have a written, reasoned classification;
    none is excluded merely by omission.
 2. Every admitted service has a measured volume figure predating its admission.
 3. `caddy` and `postgres` are resolved explicitly — admitted with a policy, or
