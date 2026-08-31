@@ -435,7 +435,7 @@ Recorded here, fixed elsewhere — Plan 161's non-goals hold.
 | G9 | `tests/test_container_health_app.py` and `tests/test_container_health_collector.py` are Layer 1 tests sitting in Layer 0's directory. `container_health` has no `tests/container_health/` and no Layer 4 at all | — | Plan 162 |
 | G11 | **The layer numbers in the code are Plan 84's, not this document's.** Docstrings across `tests/` and two step names in `ci.yml` say "Layer 1 — SQL smoke" and "Layer 3 — API integration", which are Layers 2 and 4 here. Mechanical sweep; the asserting test covers it afterwards so the two cannot drift again | `grep -rn 'Layer [0-9]' tests/ .github/` | Plan 162 |
 | G12 | **`airflow/dags/` has no `.sql` convention and cannot reach one.** No module under it imports `shared`, so `shared.query_loader` is unavailable and the DAG tree is the only place in the repository where "production SQL is a `.sql` file" is structurally impossible. This is what forces the single legitimate `ast` reader, `_sensor_constant()` | `grep -rn 'from shared' airflow/dags/` returns nothing | Plan 162 |
-| G10 | **The unit job's coverage is measured and discarded** — `--cov --cov-report=term-missing`, no threshold, no artifact. Worse, `[tool.coverage.run] source` names six packages and omits `container_health`, `dashboard`, `scripts` and `airflow/dags`, so **the two services below the floor are the two the instrument cannot see** | `ci.yml:131`, `pyproject.toml` | Plan 139 Stage D |
+| G10 | **The unit job's coverage is measured and discarded** — `--cov --cov-report=term-missing`, no threshold, no artifact. Worse, `[tool.coverage.run] source` names six packages and omits `container_health`, `dashboard`, `scripts` and `airflow/dags`, so **the two services below the floor are the two the instrument cannot see** | `ci.yml:131`, `pyproject.toml` | Plan 139 Stage D, items 4 and 5 — the half of D that stayed with 139 |
 
 ---
 
@@ -445,7 +445,9 @@ Recorded here, fixed elsewhere — Plan 161's non-goals hold.
   dbt against the Plan 120 lake snapshot, and running the suites against the
   real Compose definitions are [Plan 162](plans/plan_162_testing_census_and_restructure.md).
 - **A coverage threshold.** Plan 139 Stage D owns whether there is a gate at
-  all; this document says a percentage is not the definition of enough.
-- **Impact-based test selection.** Plan 139 Stage E specified it; nothing here
-  changes it.
+  all, and whether `airflow/dags/` and `dashboard/` join the coverage
+  configuration. This document says only that a percentage is not the
+  definition of enough.
+- **Impact-based test selection.** Plan 139 Stage E specified it and has since
+  moved to Plan 162; nothing here changes its design.
 - **Fixing anything in the gap list.**

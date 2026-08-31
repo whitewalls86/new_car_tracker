@@ -441,8 +441,15 @@ that could notice they never ran.
 Two pieces of work are waiting on this plan's answers, and both were scoped in
 the conversation that produced it.
 
-**The test-suite restructuring** (no plan document yet — deliberately, it cannot
-be written until the questions above are answered):
+**[Plan 162](plan_162_testing_census_and_restructure.md) — the census and the
+test-suite restructuring.** This paragraph originally read "no plan document
+yet — deliberately, it cannot be written until the questions above are
+answered." That was true for about two hours: the stub was written the same
+day, 2026-08-30, precisely so the work had a number and a row instead of living
+in a conversation. It is `plan_162_testing_census_and_restructure.md`, and
+`docs/PLANS.md` build-order row 4 has pointed at it since.
+
+What it owns:
 
 - Split the `dbt build + test` job. It is **267s of a ~4 minute CI wall clock —
   the critical path** — and it is eight sequential suites sharing one Postgres
@@ -457,6 +464,15 @@ be written until the questions above are answered):
   ideally in CI. CI uses bare `postgres:16` and `minio/minio:latest` service
   containers rather than the Compose definitions, which is why CI's database is
   not production's database — the same root as question 3.
+- **The census**, and the twelve entries of
+  [the gap list](../TESTING.md#the-gap-list) that name Plan 162 as owner.
+
+Plan 162's stub carries preliminary readings taken 2026-08-30 and labels them
+"the starting point, not the census". Four of them are superseded by
+[the corrections above](#corrections-to-this-documents-own-measurements) and
+should not be re-derived: the mock, inline-SQL, route-coverage and
+per-service figures. Re-scoping that document against this contract — including
+replacing its placeholder XL — is **CAR-40**.
 
 **[Plan 139](plan_139_test_suite_maintenance.md)**, whose remaining stages are
 maintenance against a standard that does not exist yet. Stage C profiles the
@@ -491,6 +507,15 @@ Everything else in Plan 139 waits.
 
 ## Intersections
 
+### Plan 162 — the census and CI restructure
+
+The implementation half of this plan, and the owner of ten of the twelve gap
+entries. Its document exists — written 2026-08-30 as a deliberate stub, because
+its shape depended on the answers above. Those answers now exist, so **CAR-40
+re-scopes it against this contract**: replacing its placeholder XL with a real
+estimate, and dropping the four preliminary readings this plan has since
+corrected.
+
 ### Plan 139 — test suite maintenance
 
 The plan this was nearly written into, and should not be. Plan 139 is
@@ -498,21 +523,31 @@ maintenance — recover the critical path, add markers, profile a step, fix the
 CI schema gap. This plan sets the standard that maintenance is measured
 against. Folding them together would give 139 two incompatible scopes.
 
-Open: whether Stage C (profiling) and Stage E (impact selection) move to the
-restructuring plan when it is written, leaving 139 as D, F and H. That is a
-scope decision on an existing plan and is not taken here.
+This originally left open whether Stages C and E move to the restructuring plan
+"when it is written". **That is decided, and not here** —
+[`docs/PLANS.md`](../PLANS.md) build-order row 3 records it: Stages B, C, E and
+the markers half of D belong to Plan 162; **Stage F, Stage H, and the
+coverage-decision half of D remain Plan 139's.** That half is D items 4 and 5 —
+whether a `--cov-fail-under` gate exists, and whether `airflow/dags/` and
+`dashboard/` join the coverage configuration — which is
+[G10](../TESTING.md#the-gap-list), and which Stage D had already framed
+correctly: *"either answer is fine; the current state — unmeasured and
+unexplained — is not."*
 
 ### Plan 84 — integration testing
 
-Archived, and the source of the current layer model. Its explicit deferral of
-`dbt_runner` and `scraper` is one of the decisions question 6 must re-examine.
+Archived, and the source of the layer model this plan renumbers. Its explicit
+deferral of `dbt_runner` and `scraper` was question 6's to re-examine and
+[is now closed](#6-what-is-enough-per-service-and-who-says-so), split:
+`dbt_runner`'s lifted, `scraper`'s standing as [G8](../TESTING.md#the-gap-list).
 
 ### Plans 141 and 142 — the contract pattern
 
 Not dependencies; precedents. Both pair a checked-in registry with tests that
-assert reality matches it, which is the mechanism criterion 3 asks for.
+assert reality matches it, which is the mechanism criterion 3 asks for and
+CAR-34 builds.
 
 ### Plan 120 — CI lake snapshot
 
-Supplies the fixture the restructuring needs. Complete, and its output is
+Supplies the fixture Plan 162's restructure needs. Complete, and its output is
 already seeded in CI without being used for dbt.
