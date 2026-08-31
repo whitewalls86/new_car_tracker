@@ -450,17 +450,38 @@ was.
 It runs in the unit job, needs nothing, and is therefore Layer 0 — a fact about
 the repository, like the rest of that layer.
 
-Mechanically checkable today, and therefore CAR-34's scope:
+Mechanically checked today. **The `Asserted by` column is the load-bearing
+one** — `test_every_asserted_rule_names_a_real_test` reads it and fails if a
+cell names a function that does not exist, so this table cannot claim a check
+the suite does not implement:
 
-| Rule | How it is checked without a curated list |
-|---|---|
-| Every `tests/integration/<dir>` is invoked by a named CI step, or declared dormant with a reason | Parse `.github/workflows/ci.yml` for `pytest tests/integration/...` invocations; compare to the directories on disk |
-| Patching is `mocker`, everywhere | AST-walk for `unittest.mock.patch` and for `monkeypatch.setattr` on an application object. No venv carve-out — the two Airflow files are waived by name against [G4](#the-gap-list) |
-| Every route is reached through the app's routing table | Walk each FastAPI app's `app.routes`; compare to the verb/path literals tests actually request |
-| Every service directory has a row in the "enough" table | Compare this document's table to the service directories on disk |
-| Every `.sql` file and module-level statement is executed by a Layer 2 test | Collect what `tests/integration/sql/` imports and executes; compare to what `queries.py` exposes |
-| Every `Layer N` mention in `tests/` and `ci.yml` matches this document | Regex both, compare to the headings here — this is what stops [G11](#the-gap-list) recurring |
-| Every pytest invocation in `ci.yml` sets `PYTHONPATH` | Parse the workflow's `run:` steps; a pytest step without it is [G13](#the-gap-list)'s failure |
+| Rule | Asserted by | How it is checked without a curated list |
+|---|---|---|
+| Every `tests/integration/<dir>` is invoked by a named CI step, or declared dormant with a reason | `test_every_integration_suite_is_invoked_by_a_ci_step` | Parse `.github/workflows/ci.yml` for `pytest tests/integration/...` invocations; compare to the directories on disk |
+| Patching is `mocker`, everywhere | `test_patching_is_mocker_everywhere` | AST-walk for `unittest.mock.patch` and for `monkeypatch.setattr` on an application object. No venv carve-out — the two Airflow files are waived by name against [G4](#the-gap-list) |
+| Every route is reached through the app's routing table | `test_every_route_is_reached_through_the_apps_routing_table`, `test_no_route_is_hidden_from_the_schema_this_rule_reads` | Walk each FastAPI app's `app.routes`; compare to the verb/path literals tests actually request |
+| Every service directory has a row in the "enough" table | `test_every_service_directory_has_a_row_in_the_enough_table` | Compare this document's table to the service directories on disk |
+| Every `.sql` file is executed by a Layer 2 test | `test_every_production_sql_file_is_touched_by_a_layer_2_test` | Collect what `tests/integration/sql/` imports and executes; compare to what `queries.py` exposes |
+| Every `Layer N` mention in `tests/` and `ci.yml` matches this document | `test_every_layer_number_in_the_code_matches_the_contract`, `test_every_test_directory_is_assigned_a_layer` | Regex both, compare to the headings here — this is what stops [G11](#the-gap-list) recurring |
+| Every pytest invocation in `ci.yml` sets `PYTHONPATH` | `test_every_pytest_invocation_in_ci_sets_pythonpath` | Parse the workflow's `run:` steps; a pytest step without it is [G13](#the-gap-list)'s failure |
+
+### Specified here, not yet asserted
+
+Rules this document commits to that **no test implements yet**. They are not
+waivers — a waiver grandfathers a known violation of a rule that is enforced,
+while these are rules with no enforcement at all, so a violation of one is
+invisible rather than counted.
+
+| Rule | Why it is not asserted | Owner |
+|---|---|---|
+| Every module-level SQL statement in a production module is executed by a Layer 2 test | The Layer 2 check reads `.sql` files. Inline SQL at an `.execute()` call site is the opposite direction and is measured by nothing — [G5](#the-gap-list)'s ten modules | Plan 162 |
+
+Until 2026-08-31 this rule was not in this section. It was a clause inside the
+Layer 2 row above — *"every `.sql` file **and module-level statement**"* — which
+read as enforced, was never implemented, and was found by running the suite
+during Plan 162's first measurement rather than by anything failing. That is
+the drift this whole document exists to make impossible, occurring inside the
+document itself, which is why the `Asserted by` column now exists.
 
 Not mechanically checkable, and the skill must **say so rather than imply
 coverage it does not have**: whether the thing under test is the thing being
