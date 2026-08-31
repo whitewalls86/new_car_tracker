@@ -13,18 +13,19 @@ This document was written as a deliberate stub on 2026-08-30, when
 plan measures against. That blocker is gone: 161's contract landed, was
 asserted, and is archived.
 
-Stages 2 through 10 are scoped below and unblocked. Effort is **L**, down from
-the XL placeholder, on the reasoning in [The estimate](#the-estimate) and now
-confirmed against a measurement rather than proposed.
-[`docs/PLANS.md`](../PLANS.md) owns priority and effort; this document does not
-choose them.
+Stages 2 through 10, including 5b, are scoped below and unblocked. Effort is
+**L**, down from the XL placeholder, on the reasoning in
+[The estimate](#the-estimate) and now confirmed against a measurement rather
+than proposed. [`docs/PLANS.md`](../PLANS.md) owns priority and effort; this
+document does not choose them.
 
 ## What the census found
 
 [`tests/test_testing_contract.py`](../../tests/test_testing_contract.py)
-implements seven mechanical rules. It passes, and **a pass means only that the
-seven rules hold** — every violation standing on 2026-08-31 is grandfathered in
-a waiver list. That list is this plan's backlog:
+implemented seven mechanical rules when the census ran, and eight since Stage 2
+added the coverage rule. It passes, and **a pass means only that those rules
+hold** — every violation standing on 2026-08-31 is grandfathered in a waiver
+list. That list is this plan's backlog:
 
 This is the census as taken, kept as the baseline the stages are measured
 against; the live count is whatever `tests/test_testing_contract.py` holds
@@ -96,6 +97,7 @@ order:
 | **3** | The two health-sensor censuses read one declared source instead of two hardcoded counts | Plan 139 Stage H | -- |
 | **4** | Split the 267s `dbt build + test` job — the cheap half of the restructure | Plan 139 Stages B, C | -- |
 | **5** | The mechanical sweeps: 34 mock conversions and 16 layer renames, plus the one live harness-decides-the-outcome test | G4, G11, G13 | 50 |
+| **5b** | Separate production scripts from spent ones. `scripts/ops/` and `scripts/oneoff/`, the coverage denominator reads the split, and `ci_change_scope.py` gains its second prefix | — | -- |
 | **6** | Route coverage. Build `container_health`'s test home, then fill it | G6, G9 | 12 |
 | **7** | SQL execution, from both directions. The largest stage | G14, G5 | 54 |
 | **8** | The services below the floor | G7, G8 | -- |
@@ -147,6 +149,128 @@ suite — and "an unexplained mock of a filesystem, clock, platform or path
 primitive is a finding" is the same question asked one step further out. The
 pattern the rule holds up as correct, `21333ab`, is itself a mocking fix. Doing
 the two together is one reading of the suite instead of two.
+
+**Stage 5b sits immediately after Stage 5 because Stage 5 is what makes it
+free.** The first instinct was to run it near the front, so the stages that
+follow would visibly move the coverage number. The waiver list forbids it. Ten
+of Stage 5's 34 mocker waivers name files under `tests/scripts/` and
+`tests/integration/scripts/`, character for character, and `_assert_exactly`
+asserts both directions — so moving a test file breaks its waiver twice, once
+because the old subject has stopped existing and once because the new path is
+an unwaived violation. Running 5b first means rewriting ten waiver subjects
+that Stage 5 then deletes outright. Running it second costs nothing, because
+Stage 5 has already emptied the colliding set. No other waiver tuple names a
+`scripts/` path — `LAYER_2_WAIVERS` and `LAYER_NUMBER_WAIVERS` have none, and
+`CI_INVOCATION_WAIVERS` is empty since Stage 1 — so Stage 5 is the only
+collision in the plan.
+
+Nothing is lost by the delay. **Stages 6, 7, 8 and 9 are all downstream of
+Stage 5**, so every remaining stage that moves the number is still graded
+against the cleaned denominator, which was the whole point of going early. The
+CI payoff is not delayed either: Stage 4 is the dbt job split, and the impact
+selector that reads the new prefix is Stage 10.
+
+**It is numbered 5b rather than 6.** Inserting an integer renumbers five stages
+and invalidates two issues already filed against the old numbers — CAR-50 names
+Stage 6 and CAR-52 names Stage 8 in their titles. A letter costs nothing and
+breaks nothing.
+
+### Stage 5b: what the split is, and why a directory rather than a list
+
+Three buckets, but only two moves, which is what keeps the cost near zero:
+
+| Bucket | Where | Moves? | In the denominator? |
+|---|---|---|---|
+| **Production** — invoked by CI, an image, a Compose file or an ops route | `scripts/` (unchanged) | no | yes |
+| **Maintenance** — human-invoked, durable, named in a live runbook | `scripts/ops/` | yes | yes |
+| **One-off** — ran for a plan that has since archived | `scripts/oneoff/` | yes | **no** |
+
+`tests/scripts/` mirrors the split and needs one new row in the contract's
+*Where the newer suites sit* table, which
+`test_every_test_directory_is_assigned_a_layer` will demand the moment the
+directory appears.
+
+**Production does not move, and that is the entire cost argument.** There are
+20 binding references to `scripts/*` across 11 deploy surfaces — `ci.yml` (4),
+`docker-compose.lakehouse.local.yml` (3), `redeploy.sh` (3),
+`dbt_runner/Dockerfile` (2), `.env.example` (2), the two other lakehouse
+Compose files, `.gitattributes`, `deploy-followers.txt`,
+`ops/routers/snapshots.py` and `deploy.sh` — and **every one of them names a
+script that stays put.** Moving only the other two buckets rewrites no deploy
+surface at all.
+
+It also gives the list the safe failure direction, the one
+`maintenance-running-set.txt` already argues for in this repository: a new
+script lands in production-land and is measured **by default**, and has to be
+deliberately moved down to leave the instrument. Nobody drops something out of
+coverage by forgetting.
+
+**A directory rather than a manifest, because the directory is the
+declaration.** A manifest would be a second mechanism to keep in step with the
+first; the path is self-describing, `git log --follow` records the
+reclassification, and `[tool.coverage.run]` and `ci_change_scope.py` each read
+it for free. `scripts/ci_change_scope.py` is today a single-prefix classifier —
+`DOCS_PREFIX = b"docs/"` and nothing else — so a changeset confined to
+`scripts/oneoff/` plus its tests needs lint and its own unit tests and no
+Docker build, no dbt job, no 267-second critical path. That is the first real
+instance of the impact selection Stage 10 generalises, against code that
+already exists.
+
+**The classification is mechanical, and that is why this stage is small.** The
+first scoping of it assumed per-file archaeology across fifteen archived plans.
+It is not: **33 of the 35 Python scripts declare their owning plan in the first
+three lines of the docstring**, so the bucket falls out of a join — docstring
+plan number against the archived numbers in
+[`completed_plans.md`](../planning/completed_plans.md), overridden by the
+binding-reference grep, which wins in both directions.
+
+**The name is never the signal, and the override is what proves it.**
+`audit_adaptive_refresh_features.py` reads as forensics and is baked into
+`dbt_runner/Dockerfile`; `report_dbt_run_results.py` belongs to archived Plan
+123 and is in the same image. Both are production. The `audit_`, `estimate_`
+and `spike_` prefixes classify nothing.
+
+**Five scripts declare no plan and are the whole of the judgement.**
+`ci_change_scope.py` is settled by its `ci.yml` reference; the remaining four —
+`audit_parquet_layout.py`, `audit_normalized_parquet_layout_once.py`,
+`backfill_unlisted_silver.py` and `diff_semantic_duplicate_html.py` — need
+reading. That is the residual, and it is four files.
+
+**A coupling finding that ran the other way, recorded because the first reading
+of it was wrong.** Two production scripts import from scripts that look spent —
+`export_volatility_features_to_iceberg.py` takes `cleanup_keys` from
+`spike_iceberg_lakehouse.py`, and `train_html_dictionary.py` imports from
+`estimate_dictionary_savings.py`. Scoped as "production depends on a spike" and
+as this stage's hardest part. **The archive join dissolved both:** Plans 112 and
+129 are not archived, so all four files stay in production-land and neither
+import crosses a bucket boundary. The lesson is the one Stage 0 already
+recorded — run the measurement before sizing the work it implies.
+
+**Two constraints on `oneoff/`, stated so they are decisions rather than
+drift.** Spent means *out of the ratchet's denominator* — never deleted, and
+never untested: `reconcile_april_detail.py` is 84% covered **because** it
+deleted 14.6 GB of production data, and its tests are why that was safe. And an
+entry there should have to cite the archived plan it belongs to, so the bucket
+cannot outlive its reasons the way an unchecked waiver list would.
+
+**What it is worth, measured rather than asserted.** The `oneoff/` bucket —
+archived owning plan, no binding reference — is **14 scripts, 6,338 statements
+at 72%**, still over half of it `reconcile_april_detail.py` alone. Removing it
+takes the denominator from 19,733 to 13,395 and the reported number from 75.91%
+to **77.8%**. Stage 8's dashboard repair — 309 statements, 280 of them
+currently missed — moves the total by **+1.27 points today and +1.87 after**,
+so the ratchet becomes about **1.5× more responsive**. Real, and worth having
+before Stages 6 through 9 are graded; nowhere near large enough to justify
+paying the Stage 5 waiver collision to get it sooner. That arithmetic is why
+this stage is placed on the waiver argument rather than the coverage one.
+
+An earlier draft of this section put the bucket at 19 scripts and 7,019
+statements. It was close by accident and wrong in composition: it counted
+`spike_iceberg_lakehouse.py`, `run_dbt_spark.py`, `verify_dialect_datediff.py`
+and both `compare_gate_*_parity.py` against Plan 125, and
+`estimate_dictionary_savings.py` against Plan 129 — **six scripts belonging to
+plans that are still open.** Spent is a property of the owning plan's state, not
+of how finished a script looks.
 
 ### Stage 3 carries a constraint worth knowing before it starts
 
