@@ -136,6 +136,7 @@ order** — a row with no trigger is a wish, and wishes do not leave tables.
 | [79](plans/plan_79_multi_instance.md) | Multi-instance detail scraping | 40 | L | IP flagging or single-host throughput becomes the measured constraint. **This is also the plan that would create genuine multi-host need**, and therefore the honest trigger for Plan 88 |
 | [94](plans/plan_94_api_docs.md) | API documentation hub | 38 | M | Public or partner API consumption makes consolidated docs useful |
 | [64](plans/plan_64_pgbouncer.md) | Connection pooling — PgBouncer | 35 | M | Postgres connection exhaustion becomes the measured constraint. Plan 140's Airflow connection budget is the instrument that would show it |
+| [167](plans/plan_167_solver_config_default_truth.md) | Checked-in solver defaults name the wrong container | 32 | S | **Plan 136 Stage 3's verdict lands (2026-09-17).** Stage 2 decides whether `trawl` and `redis-trawl` stay profile-gated, which changes the population Plan 136 is measuring, so it must not land inside that window |
 | [108](plans/plan_108_deploy_trigger_endpoint.md) | Deploy trigger endpoint | 30 | M | Re-scope after Plan 136's narrower restart-authority design is proven |
 | [117](plans/plan_117_storage_and_adaptive_refresh_roadmap.md) | Open lakehouse + adaptive refresh roadmap | 30 | -- | Umbrella, never built directly. Archived when its arc (125 → 112/113 → 119 → 126/127) lands |
 | **88** | Kubernetes | 25 | XL | Multi-host scheduling or availability needs exceed Compose — **not merely service count**. Plan 79 is the honest trigger |
