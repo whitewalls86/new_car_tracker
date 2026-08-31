@@ -54,6 +54,11 @@ send a reader who wants the account of it.
 The current public surface tells a strong architectural story, but it now mixes
 three different snapshots of the project.
 
+The right-hand column is a dated audit and is **not** maintained. Six of its
+values went stale within two weeks; Gate 0 re-measured them on 2026-08-31 and
+recorded the current figures in
+[the Stage 0 baseline](../evidence/plan_138_stage_0_baseline_2026-08-31.md).
+
 | Public claim | Repository or live state on 2026-08-17 |
 |---|---|
 | 13+, 14, and 40+ make/model pairs | The same live page contains all three values; the live query reports 14 |
@@ -158,8 +163,9 @@ implies the public dashboard already reads Iceberg.
 Active listings, observations, throughput, tracked pairs, and analytical freshness
 come from the public stats snapshot. They must not also be hard-coded in hero or
 service-card prose. Repository inventory may use rounded statements such as
-"more than a dozen DAGs," "20+ dbt models," and "2,500+ tests," with an explicit
-"verified on" date where precision adds value.
+"more than a dozen DAGs," "20+ dbt models," and "3,000+ tests," with an explicit
+"verified on" date where precision adds value. (The example read "2,500+ tests"
+until Gate 0 re-measured the suite at 3,661 on 2026-08-31.)
 
 Avoid the phrases "without manual intervention," "every failure alerts," and
 "every service exposes `/ready`." The narrower, true claim is that long-running
@@ -249,6 +255,57 @@ during later plans without forcing a prose rewrite.
 
 **Gate 0:** every contradiction in the table above has an assigned replacement or
 an explicit decision to remove the claim.
+
+#### Gate 0 evidence — 2026-08-31 (CAR-44)
+
+The baseline this gate asks for is
+[`docs/evidence/plan_138_stage_0_baseline_2026-08-31.md`](../evidence/plan_138_stage_0_baseline_2026-08-31.md),
+with screenshots alongside it. Every row of the drift table above carries a
+disposition there, plus three further rows of the same class found while
+measuring.
+
+It is a document and not a test fixture on purpose: pinning these counts in CI
+would contradict the paragraph above it, and Stage 5 already scopes drift
+detection correctly as "the absence of the known stale phrases" — an assertion
+about wording rather than arithmetic.
+
+The counts were **re-measured, not carried forward**. Six of the drift table's
+2026-08-17 values are stale, and the audit column above is left as the dated
+historical record it is:
+
+| Subject | 2026-08-17 | 2026-08-31 |
+|---|---:|---:|
+| Airflow DAGs | 15 | **15** (19 files; 4 define no DAG) |
+| dbt models | 22 | **23** (5 / 9 / 9) |
+| Flyway migrations | 42 | **49** |
+| Tests collected | 2,553 | **3,661** |
+| Compose services | 26 | **34 defined / 28 non-profiled / 28 expected running** |
+
+Two measurements settled a question rather than just refreshing a number:
+
+- **The Compose denominator.** Two different sets both have 28 members, and
+  "28 without a profile gate" is the wrong one — it excludes `trawl` and
+  `redis-trawl`, the live scrape path, while including the `airflow-init` and
+  `flyway` one-shots. `EXPECTED_SERVICES` is the honest set, and it is already
+  test-enforced against Plan 142's manifest. Public copy prints no integer at
+  all: **"more than two dozen long-running services."**
+- **Mobile layout.** The page does **not** overflow at 360 px
+  (`body.scrollWidth` 356 ≤ 360). A plain headless screenshot appears to show
+  severe clipping, but the layout viewport floors at 512 px on this host, so
+  that image is a 512-wide layout cropped to 360. The committed screenshot
+  renders inside a 360 px iframe. Trusting the first image would have written a
+  false defect into the baseline.
+
+Counts are replaced with rounded phrasing throughout rather than refreshed to
+new exact values, so this gate does not simply reload the drift it exists to
+remove. §3's own "2,500+ tests" example was updated to "3,000+" for the same
+reason.
+
+Two findings recorded rather than fixed, both outside this gate: `/info` is
+served uncompressed (a Stage 3c number, captured here as the before-state), and
+the stats tile's `(stale)` marker is Plan 143's contract, not this plan's. The
+two Gate 0b findings — `.env.example:49-57` and the missing internal-only
+markers — remain open and are untouched by this gate.
 
 ### Internal source documents
 
