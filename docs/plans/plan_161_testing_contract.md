@@ -160,12 +160,34 @@ such — a deliberate absence reads differently from an oversight.
 
 ### 1. What are the layers, now?
 
-**Five, and the existing cut survives.** Layer 0 (config and contract tests) is
-new only as a name: `tests/test_planning_docs.py`,
+**Five, the existing cut survives, and the numbering changes.** Layer 0 (config
+and contract tests) is new only as a name: `tests/test_planning_docs.py`,
 `tests/test_observability_config.py` and the four `test_*_compose_config.py`
 files were already a distinct kind — facts about the repository that need no
-service running — governed by nothing. Layers 1, 2, 3 and unit (now Layer 4)
-are unchanged.
+service running — governed by nothing.
+
+The renumbering is the part worth defending. **A layer's number is its
+dependency cost**, which is the only reading under which the numbers mean
+anything and CI can fail on the cheapest thing first. Plan 84's scheme did not
+do that: it numbered the three integration tiers and left unit tests unnumbered
+beside them, so the fastest, dependency-free tier read as the *last* one — and
+it does not even describe CI, where the unit job has always run first, in a
+separate job. The fix is a **+1 shift** that preserves every relative position
+Plan 84 chose:
+
+| Plan 84 | Here | Layer | Needs |
+|---|---|---|---|
+| — | **0** | Config and contract | nothing |
+| unnumbered | **1** | Unit | nothing |
+| Layer 1 | **2** | SQL smoke | Postgres + migrations, DuckDB artifact |
+| Layer 2 | **3** | dbt model logic | the above + MinIO + a dbt build |
+| Layer 3 | **4** | Service API integration | Postgres + the app |
+
+Layers 3 and 4 keep Plan 84's relative order on its own fail-fast rationale
+(a broken schema should not cost a full dbt build) rather than strict cost;
+Plan 162's job split may revisit that pair. The cost is a docstring and CI-step
+sweep — [G11](../TESTING.md#the-gap-list) — and the asserting test covers the
+mapping afterwards, so code and document cannot drift apart again.
 
 The newer suites were already instances of the existing layers and are now
 named as such. The one that needed a real decision was `tests/airflow/` versus
@@ -183,28 +205,47 @@ from an orphaned one — see [G2](../TESTING.md#the-gap-list).
 
 ### 2. One mocking convention, or one per layer?
 
-**One convention, and the boundary is neither the layer nor the thing being
-mocked — it is which interpreter the suite runs in.**
-
-In the main venv, patching is `mocker` (pytest-mock). `tests/integration/airflow/`
-is exempt because its venv installs `apache-airflow`, `pytest`,
-`psycopg2-binary` and `requests` and **pytest-mock is not among them** — the
-`mocker` fixture does not exist in that interpreter. That is a cause CI states
-and a test can read, not a preference.
-
-Two clarifications shrink the apparent drift considerably. `from unittest.mock
-import MagicMock` is a **value constructor, not a patching mechanism**; 37 files
-import it and none of them are violations. And `monkeypatch` legitimately owns
-process state (`setenv`, `delenv`, `setitem`, `chdir`), where `mocker` is the
-wrong tool. Re-measured against those distinctions, the census is **10 files
-mixing two patching mechanisms and 10 using `unittest.mock.patch`, of which 2
-are the sanctioned Airflow exemption** — not the 21 mixed files this document
-originally reported.
+**One convention — `mocker` — with no per-layer, per-directory or per-venv
+carve-out.**
 
 The tiebreak, where one was needed: every shared fixture in `tests/conftest.py`
 is already built on `mocker`, so a test that uses `mock_cursor_context` and
 then reaches for `unittest.mock.patch` has two patch stacks unwinding in an
 order nobody chose.
+
+Two clarifications shrink the apparent drift considerably. `from unittest.mock
+import MagicMock` is a **value constructor, not a patching mechanism**; 37 files
+import it and none of them are violations. And `monkeypatch` legitimately owns
+process state (`setenv`, `delenv`, `setitem`, `chdir`), where `mocker` is the
+wrong tool. Re-measured against those distinctions the census is **10 files
+mixing two patching mechanisms and 10 using `unittest.mock.patch`** — not the
+21 mixed files this document originally reported.
+
+**A first draft of this answer exempted `tests/integration/airflow/`, and that
+was wrong.** The reasoning was that its venv installs `apache-airflow`,
+`pytest`, `psycopg2-binary` and `requests`, so `mocker` does not exist in that
+interpreter and `unittest.mock.patch` is therefore correct there. Every clause
+of that is factually true and the conclusion does not follow: **it is an
+argument that the venv is built wrong, not that the convention should fork.**
+
+The check that settles it: `pytest-mock` declares exactly one dependency,
+`pytest`, which that venv already installs. None of the starlette/fastapi
+conflict that forced the venv's existence touches it. It is a missing argument
+on one `pip install` line. And the two files do not need `unittest.mock` for
+anything — what they patch is `requests.post`, `requests.get`, `time.sleep`
+and one `patch.object` on a DAG module's `post_json`, all ordinary
+`mocker.patch` calls.
+
+So those two files are [G4](../TESTING.md#the-gap-list) with the rest, waived
+by name until the venv is fixed. **A waiver is how a defect waits its turn; an
+exemption says the code is correct.** They are not the same thing, and reaching
+for the second when you mean the first is how a standard quietly becomes a
+description of whatever already exists — which is the failure this whole plan
+is about.
+
+The general form, since it will recur: *"the environment cannot do it"* is a
+fact about the environment, and the first question is always whether the
+environment is right.
 
 ### 3. What must never be mocked?
 
@@ -217,15 +258,45 @@ strength — and the strongest one is already implemented in the tree.**
    pattern already exists: `ops/coordination_drain.py` lifted its statements to
    module scope (`RUNNING_DETAIL_CLAIMS_SQL`, `task_instance_query()`,
    `gate_observation_query()`) specifically so
-   `tests/integration/sql/test_ops_queries.py` can execute the real thing, and
-   `_sensor_constant()` in that same file reads a statement out of
-   `airflow/dags/sensors.py` with `ast` because the Layer 1 venv cannot import
-   it. The checkable half is the converse: **a `SELECT` in a test file that
-   appears in no `.sql` file and no production module is a paraphrase**, and a
-   paraphrase is worse than no test.
+   `tests/integration/sql/test_ops_queries.py` can execute the real thing.
 2. **A route must be reachable through the app's routing table.** See question 5.
 3. **The thing under test is not the thing you mock.** Judgement. The skill
    states it and refuses to certify it.
+
+**How a test gets hold of the real statement**, in order of preference: load
+the `.sql` file (no import, no dependencies, works from any interpreter);
+import the module-level constant or `(sql, params)` builder where the statement
+is generated; or, last, read it out of the source with `ast`.
+
+**`ast` should stay rare, and each use marks a defect elsewhere.**
+`_sensor_constant()` is the only one in the tree and it is correct, but the
+reason it was necessary is specific rather than a fact of life:
+`airflow/dags/sensors.py` imports `airflow.providers.postgres.hooks.postgres`
+and `airflow.sdk.bases.sensor` **at module scope**, and the SQL-smoke suite
+runs in the main venv, which has no Airflow — so `import sensors` raises before
+reaching the constant. Nothing about the statement resists import; a module
+around it does.
+
+The cause underneath that is narrower still, and is now
+[G12](../TESTING.md#the-gap-list): **`airflow/dags/` has no `.sql` convention
+and cannot reach one.** No module under it imports `shared`, so
+`shared.query_loader` — which six services use — is unavailable there, making
+the DAG tree the one place in the repository where the preferred option is
+structurally impossible. Fix that and the `ast` reader disappears.
+
+So: **no, `ast` should not become a common approach.** A rising count of `ast`
+readers is a signal to act on, not a pattern to spread — each marks SQL that
+ought to live in a file and does not. Where it genuinely is the only option,
+the reader carries a comment naming the import that forced it, so the next
+reader can tell a constraint from an accident.
+
+One correction to the first draft of this answer, which claimed paraphrase
+detection was the mechanical half: **it is not.** Fixture seeds are SQL in test
+files too — `test_ops_queries.py` inserts into `airflow.dag_run` legitimately —
+and a checker that cannot tell a seed from a paraphrase fails on correct code.
+The clean mechanical direction is the other one: **every `.sql` file and
+module-level statement is executed by a Layer 2 test.** Paraphrase detection is
+judgement, and the skill flags rather than fails.
 
 ### 4. Where does SQL live?
 
@@ -290,17 +361,21 @@ invoked by no CI step.
 
 ### 7. What does the agent skill check, and what can it not?
 
-Five rules are mechanical and are the skill's and the test's shared scope: CI
-invokes every integration directory or it is declared dormant; patching matches
-the directory-to-venv map; every route is reached through `app.routes`; every
-service directory has a row in the "enough" table; no test file contains a
-`SELECT` absent from every `.sql` file and production module. Each is derived
-from the repository rather than from a checked-in inventory.
+Six rules are mechanical and are the skill's and the test's shared scope: CI
+invokes every integration directory or it is declared dormant; patching is
+`mocker` everywhere; every route is reached through `app.routes`; every service
+directory has a row in the "enough" table; every `.sql` file and module-level
+statement is executed by a Layer 2 test; and every `Layer N` mention in
+`tests/` and `ci.yml` matches this contract. Each is derived from the
+repository rather than from a checked-in inventory.
 
-Three are judgement and the skill must **say so rather than imply coverage it
+Four are judgement and the skill must **say so rather than imply coverage it
 does not have**: whether the thing under test is the thing being mocked,
-whether a failure branch matters to another service, and whether an assertion
-is meaningful. Building both is CAR-34.
+whether a failure branch matters to another service, whether an assertion is
+meaningful, and whether a `SELECT` in a test file paraphrases production or
+seeds a fixture. That last one reads as mechanical and is not — fixture seeds
+are SQL in test files too, and a checker that cannot tell them apart fails on
+correct code. Building both is CAR-34.
 
 ### 8. What asserts the contract in CI, and what happens on violation?
 
@@ -340,7 +415,7 @@ difference between the two passes is itself informative.
 
 | Stated 2026-08-30 | Measured 2026-08-31 | Why it moved |
 |---|---|---|
-| 21 files mix two mocking styles | **10 files mix two patching mechanisms**; 10 more use `unittest.mock.patch`, 2 of them legitimately | The first pass counted `from unittest.mock import MagicMock` as a competing style. It is a value constructor, not a patching mechanism |
+| 21 files mix two mocking styles | **10 files mix two patching mechanisms**; 10 more use `unittest.mock.patch`, none of them legitimately | The first pass counted `from unittest.mock import MagicMock` as a competing style. It is a value constructor, not a patching mechanism |
 | 16 modules still carry inline SQL | **10 modules** carry inline SQL at an `.execute()` call site | The first pass counted `SELECT`-shaped lines, which matched docstrings and comments |
 | `/project-status/{project}` and `/oneoff-processes` are the only two routes with no reference anywhere in `tests/` | Both have had unit tests since `4d6ed4a` (2026-08-26). **Four routes are reached by no test through any routing table**, those two among them | Fixed between the planning session and this one — and the correction *strengthens* the argument, because the tests that exist call the handlers directly and were green throughout the 404 |
 | 32 of 35 routes are at least named by a test | **83 of 87** | The first pass counted a subset of services |
