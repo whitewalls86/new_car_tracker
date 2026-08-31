@@ -5,6 +5,19 @@
 **Companion to:** [CarTracker Architectural Overview](ARCHITECTURAL_OVERVIEW.md)  
 **Codebase reviewed:** 2026-08-31
 
+> **Long-form narrative — not front-door copy.** This document feeds
+> `README.md` by paraphrase only, and the reason is register, not secrecy.
+> Nothing here is undisclosed; the repository is public. Its case studies are
+> written at deep-dive length for a reader who already wants the mechanism,
+> and lifting them into the README or landing page produces front-door copy
+> written for the wrong reader — which is what
+> [Plan 138](plans/plan_138_public_surface_refresh.md)'s non-goals rule out.
+>
+> Unlike its companion, this document prints no production object prefixes and
+> carries no solver or session-bootstrap detail. The passages most often
+> mistaken for public copy are the storage-economics and liveness case
+> studies, which are already paraphrased into the README.
+
 ---
 
 ## 1. The Second Half of the Architecture
