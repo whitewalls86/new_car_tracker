@@ -22,15 +22,24 @@ owns the budget. Read it there, every time.** It is calibrated on measured
 completion and moves as cycles close; a copy here would be a second owner of a
 number whose whole purpose is to change.
 
-Verified 2026-08-29, and re-read rather than trusted: **~30 points**, from Cycle
-1's ~30 points completed in 6 days.
+**Read the number, and check its date against the last closed cycle.** Stage 1
+names **~30 points**, derived from a *mid-cycle* read of Cycle 1 on 2026-08-29.
+Cycle 1 then closed at **44 points completed across 23 issues** — the mid-cycle
+read undercounted by about 47%, because the last two days of the cycle landed
+four plans. Plan 149's *Cycle measures* section records the close and says the
+budget should be re-derived from it; until the maintainer sets the new figure,
+say which number you are proposing against and why.
+
+That is the general rule, not a one-off: a budget derived from an open cycle is
+a floor, never the value.
 
 This replaced a cap of *eight issues*, and the reason it was replaced is worth
-carrying. Cycle 1 seeded exactly eight and ran to **21 issues and 42 points** —
-62% of it arrived after the cycle started. The cap held perfectly and measured
-the wrong thing: it counts issues while the work is done in points, so seeding
-~15 points into a cycle that absorbs ~30 guarantees the remainder shows up as
-unplanned work, which is what made "issues added after cycle start" unreadable.
+carrying. Cycle 1 seeded 8 issues / **17 points** and closed at **25 issues / 48
+points** — **68% of the issues and 65% of the points arrived after the cycle
+started**. The cap held perfectly and measured the wrong thing: it counts issues
+while the work is done in points, so seeding 17 points into a cycle that absorbs
+48 guarantees the remainder shows up as unplanned work, which is what made
+"issues added after cycle start" unreadable.
 
 The issue count now falls out of the budget rather than driving it.
 
@@ -77,15 +86,39 @@ fills the budget from the top":
 
 1. the currently active top slice;
 2. the next two unblocked slices;
-3. any higher-priority slice whose **timed gate ends inside the cycle**;
+3. any higher-priority slice whose **timed gate ends early enough inside the
+   cycle to start the slice**;
 4. at most **two** safe fillers that become pullable only while a higher item
    soaks;
 5. Plan 149's own bootstrap and measurement work.
 
-Category 3 is the one that gets missed. A plan blocked today whose soak or
-observation window closes on Wednesday is *in scope for this cycle* — the board
-should hold it, because the person will be able to pull it. Read every `Blocked
-by` cell for a date, not just for a plan number.
+Category 3 is the one that gets missed, and it is also the one most easily read
+too literally. Both halves matter:
+
+**Read every `Blocked by` cell for a date, not just for a plan number.** A plan
+blocked today whose soak or observation window closes on Wednesday is in scope —
+the board should hold it, because the person will be able to pull it.
+
+**Then check that the slice actually fits in what the gate leaves behind.** A
+gate closing inside the cycle is necessary and not sufficient. Ask how long the
+*next slice* needs and compare it against the time between the gate closing and
+the cycle ending; if the answer is that the work starts next cycle, the row
+belongs to next cycle.
+
+The worked case, from Cycle 2's seeding on 2026-08-31. Plan 134 is priority 88 —
+the highest on the board — and its blocker reads `Stage 1 observation window to
+2026-09-06`, which closes inside a cycle ending 2026-09-07 05:00Z. By the date
+test alone it is a category-3 hold. It is not one: the window closes with about
+five hours of the cycle left, and Stage 2 is *three deploys at 48-hour intervals
+in ascending blast radius*. Five hours buys none of it. Seeding it would have put
+a highest-priority row on the board that nobody could start, which is the same
+failure as seeding a blocked row — arrived at through the rule rather than
+around it.
+
+Where the two halves disagree, say so in the proposal and leave the row out.
+That is a finding worth reporting, not a silent omission: it usually means the
+`Blocked by` cell states the gate but not the lead time the slice needs after
+it.
 
 Category 4 has a hard limit of two, and each filler must name the item it soaks
 behind. A filler with no soak to hide under is just extra work, and it is how a
@@ -107,7 +140,8 @@ mix and let the user see it.
   believe a trigger *has* been met, that is a finding to report — the row moves
   via the `plans` skill, with the user's decision, before it can be seeded.
 - **Superseded and closeout rows.** Closeout rows owe no code by definition.
-- **Blocked rows whose gate does not close inside the cycle.**
+- **Blocked rows whose gate does not close inside the cycle**, or whose gate
+  closes too late in it to start the slice.
 - **Plans with no document.**
 
 ## Repository state is not yours
@@ -272,7 +306,8 @@ whole of your part in fixing it.
   widens the budget without anyone deciding to.
 - **fill to the budget when the horizon is gates and windows.** The number sizes
   pullable work, and no amount of velocity shortens an observation window.
-- **seed a blocked row** whose gate does not close inside the cycle.
+- **seed a blocked row** whose gate does not close inside the cycle, or closes
+  so late in it that the slice cannot begin.
 - **create a project** for a plan outside the horizon.
 - **move an existing issue between cycles** or change another issue's status.
   Rollover is the user's decision and one of Plan 149's six measures.

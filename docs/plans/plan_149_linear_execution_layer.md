@@ -424,7 +424,12 @@ unchanged:
 
 - the currently active top slice;
 - the next two unblocked slices;
-- any higher-priority slice whose timed gate ends inside the cycle;
+- any higher-priority slice whose timed gate ends early enough inside the cycle
+  to start the slice. **Sharpened 2026-08-31**: the gate closing inside the cycle
+  is necessary and not sufficient. Plan 134's Stage 1 window closed 2026-09-06
+  against a cycle ending 2026-09-07, and its next slice is three deploys at
+  48-hour intervals — five hours of cycle buys none of it, so the row belongs to
+  the following cycle despite being the highest-priority row on the board;
 - at most two safe fillers that become pullable only while a higher item soaks;
 - Plan 149's own bootstrap/measurement work.
 
@@ -566,14 +571,41 @@ with no plan section yet" is a real gap in the issue contract.
 Filled in *after* each cycle closes, from a real read against the board plus
 the repository — not before. Rows below track the six measures defined above.
 
+Cycle 1 was read on **2026-08-31**, after it closed itself at
+`endsAt 2026-08-31T05:00:00Z`. The two qualitative rows are the maintainer's,
+supplied that day; the four countable rows are from Linear's cycle history
+reconciled against the issues themselves.
+
 | Measure | Cycle 1 (2026-08-25 → 2026-08-31, 6d) | Cycle 2 (2026-08-31 → 2026-09-07) | Cycle 3 (2026-09-07 → 2026-09-14) |
 |---|---|---|---|
-| Time to choose next work | — | — | — |
-| Issues added after cycle start | — | — | — |
-| Issue rollover | — | — | — |
-| State corrections | — | — | — |
-| Duplicate edits | — | — | — |
-| Recap effort | — | — | — |
+| Time to choose next work | **Better, with friction that has a named cause.** Maintainer, 2026-08-31: knowing what to do next was no longer the problem; the friction was "the gap between seeded work and output". That gap is the row below, measured — 17 points seeded against 48 delivered — so this is the same finding felt rather than a second one | — | — |
+| Issues added after cycle start | **17 of 25 issues (68%); 31 of 48 points (65%).** Seeded 8 issues / 17 points. This is the measurement that turned the eight-issue cap into a points budget | — | — |
+| Issue rollover | **2 of 25 issues (8%), 4 of 48 points.** CAR-17 (`Ready`) and CAR-31 (`Soaking`), both moved to Cycle 2 by Linear automatically at the close — no manual action, and none required. Neither is an oversized slice: CAR-31 is a seven-day observation window and CAR-17 waits on four Plan 142 Stage 2/3 defects. Rollover here measures gating, not slicing | — | — |
+| State corrections | **Partial — three known, no exhaustive count.** CAR-21 was flipped to `Soaking` twice by the merge automation mid-build and hand-corrected back twice; CAR-22 sat in `Ready` through its entire Stage 6 build and was moved by hand on 2026-08-30; and six of six transitions were manual on 2026-08-25, before the automation was understood. A complete figure needs a per-issue history read, which this one did not do — recorded as partial rather than presented as a total | — | — |
+| Duplicate edits | **Two, both on canceled issues.** CAR-28 held ~4,000 words duplicating Plan 145's ordering-trial evidence, was canceled 2026-08-27 and was still being edited 2026-08-30. CAR-27 was created and canceled into [Plan 156](plan_156_block_page_detection.md). Both are the shape Stage 3's *Remove* criterion names | — | — |
+| Recap effort | **Unchanged.** Maintainer, 2026-08-31: the 2026-08-30 recap was written from git and read Linear not at all, which is the design working — Linear supplies execution facts and does not replace the git-and-plan read. Follow-up identified rather than acted on: there is room to fold Linear history into the recap skill, to be tested against the next recap | — | — |
+
+### What the close changed about Stage 1's budget
+
+**The budget should be re-derived from this read.** Stage 1 currently names
+**~30 points**, taken from the mid-cycle read of 2026-08-29 which saw 15 issues
+and ~30 points done. The closed cycle completed **44 points across 23 issues** —
+the mid-cycle read undercounted by about 47%, because the last two days of the
+cycle landed Plans 147, 158, 160 and Plan 134's Stages 0 and 1.
+
+The caveat that travels with the number is unchanged and now has a second
+reason to travel: 44 points in 6 days is ~7.3/day, but Cycle 1 was dominated by
+Plan 145's compute-bound recovery work. A cycle whose horizon is deploy-gated
+slices, observation windows and a wall-clock maintenance window will not convert
+at that rate however it is seeded.
+
+One reconciliation detail, kept because it is a live hazard rather than an
+arithmetic curiosity: the completed estimates sum to **43**, and Linear reports
+**44**. The difference is **CAR-6, which carries no estimate and which Linear
+counts as 1 point in scope**. An unestimated issue therefore does not read as
+zero — it silently widens the budget by one, which is why `fill-cycle` and
+`ticket-now` now report an unestimated issue as unmeasured rather than summing
+around it.
 
 ## Stage 3 — Keep, change or remove
 
