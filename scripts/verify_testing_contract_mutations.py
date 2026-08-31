@@ -186,6 +186,28 @@ MUTATIONS = [
         [TEST],
         [],
     ),
+    (
+        "test_every_asserted_rule_names_a_real_test",
+        "the rules table names a check that does not exist",
+        lambda: _edit(
+            "docs/TESTING.md",
+            "`test_every_pytest_invocation_in_ci_sets_pythonpath`",
+            "`test_every_pytest_invocation_in_ci_sets_a_pythonpath`",
+        ),
+        ["docs/TESTING.md"],
+        [],
+    ),
+    (
+        "test_every_asserted_rule_names_a_real_test",
+        "a rule is listed as checked with no test named against it",
+        lambda: _edit(
+            "docs/TESTING.md",
+            "| `test_every_service_directory_has_a_row_in_the_enough_table` |",
+            "| the enough table is compared to disk |",
+        ),
+        ["docs/TESTING.md"],
+        [],
+    ),
 ]
 
 

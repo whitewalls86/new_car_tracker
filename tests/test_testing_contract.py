@@ -26,6 +26,11 @@ matters to another service, whether an assertion is meaningful, and whether a
 belong to ``.claude/skills/testing-contract/``, which flags them and refuses to
 certify them. **Nothing in this file should grow to imply it checks them.**
 
+One further check faces the other way. Every rule above compares the contract
+to the repository; ``test_every_asserted_rule_names_a_real_test`` compares the
+contract to this file, so the rules table cannot claim a check that was never
+written. It was added by CAR-43 after the table was found doing exactly that.
+
 Three of the seven checks report more violations than the contract's gap list
 recorded on 2026-08-31, because CAR-33 measured some of them by hand and by
 eye:
@@ -975,6 +980,82 @@ def _step_env(job_name: str, step_name: str) -> tuple[str, ...]:
                 keys += list(step.get("env", {}))
         return tuple(keys)
     return ()
+
+
+# ---------------------------------------------------------------------------
+# The contract's claims about its own enforcement.
+# ---------------------------------------------------------------------------
+_ASSERTED_BY_ROW = re.compile(r"^\|[^|]+\|([^|]+)\|[^|]+\|\s*$", re.M)
+_TEST_NAME = re.compile(r"`(test_\w+)`")
+
+
+def test_every_asserted_rule_names_a_real_test():
+    """The rules table may not claim a check the suite does not implement.
+
+    Every other check in this file compares the contract to the repository.
+    This one compares the contract to *this file*, and it exists because that
+    was the one direction nothing looked in.
+
+    Found on 2026-08-31, during Plan 162's first run of this suite rather than
+    by anything failing: the Layer 2 row read "every ``.sql`` file **and
+    module-level statement** is executed by a Layer 2 test". Only the
+    ``.sql``-file half was ever implemented. The inline-SQL half is G5, it is
+    measured by nothing, and the table had been asserting otherwise since the
+    day it was written. A document drifting from its mechanism while claiming
+    to be the mechanism is precisely what ``ARCHITECTURE.md:179`` did, one
+    document later.
+
+    **Only the forward direction is asserted** -- every rule the table names
+    exists. The reverse, that every test here appears in the table, is not
+    checked and deliberately: the waiver-hygiene checks below have no rule row
+    of their own, and enumerating the exceptions would need exactly the
+    curated list this file refuses to keep. So a rule can be implemented
+    without a row. A row cannot exist without a rule, and overclaiming was the
+    failure that happened.
+    """
+    section = _read(CONTRACT).split("## What CI asserts")[1]
+    section = section.split("### Specified here")[0]
+    matched = _ASSERTED_BY_ROW.findall(section)
+    assert len(matched) > 2, (
+        f"no rules table parsed out of {CONTRACT} under 'What CI asserts'"
+    )
+    # A markdown table opens with exactly two non-content rows. Asserting their
+    # shape rather than skipping them blind means a reordered or renamed column
+    # fails here instead of silently exempting the first real rule.
+    header, separator, *rows = matched
+    assert header.strip() == "Asserted by", (
+        f"the second column of the rules table in {CONTRACT} is "
+        f"'{header.strip()}', not 'Asserted by'"
+    )
+    assert set(separator.strip()) <= set("-:"), (
+        f"expected a markdown separator row, got '{separator.strip()}'"
+    )
+
+    defined = {
+        node.name
+        for node in ast.parse(Path(__file__).read_text(encoding="utf-8")).body
+        if isinstance(node, ast.FunctionDef)
+    }
+
+    unnamed = [cell.strip() for cell in rows if not _TEST_NAME.search(cell)]
+    assert not unnamed, (
+        f"rules in {CONTRACT} with no test named in the 'Asserted by' column: "
+        f"{unnamed}. A rule with no test belongs under 'Specified here, not "
+        f"yet asserted', where it is honest about being unenforced."
+    )
+
+    phantom = sorted(
+        name
+        for cell in rows
+        for name in _TEST_NAME.findall(cell)
+        if name not in defined
+    )
+    assert not phantom, (
+        f"{CONTRACT} names these as asserting a rule, and they do not exist "
+        f"in {Path(__file__).name}: {phantom}. Either the check was never "
+        f"written, or it was renamed and the contract now describes a "
+        f"mechanism that is not there."
+    )
 
 
 # ---------------------------------------------------------------------------
