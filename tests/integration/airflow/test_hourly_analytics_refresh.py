@@ -83,3 +83,79 @@ class TestHourlyDbtBuildPayload:
 
         _, kwargs = mock_post_json.call_args
         assert kwargs["payload"] == {"select": []}
+
+
+# ---------------------------------------------------------------------------
+# Plan 134 Stage 1 — what this DAG owes the shared notifier
+#
+# The notification behaviour itself lives in airflow/dags/notifications.py and
+# is tested in tests/airflow/test_notifications.py, which needs no Airflow.
+# What is DAG-specific is here: the headline, the set of tasks worth quoting,
+# and the XCom push without which the page has nothing to quote at all.
+# ---------------------------------------------------------------------------
+
+class TestNotifyDelegatesToTheSharedNotifier:
+    def test_it_pages_with_this_dags_headline_and_work_tasks(self, dbt_build_module):
+        context = {"ti": MagicMock(), "dag_run": MagicMock()}
+
+        with patch.object(dbt_build_module, "send_failure_alert") as send:
+            dbt_build_module._notify(**context)
+
+        send.assert_called_once()
+        args, kwargs = send.call_args
+        assert args[1] == "hourly analytics refresh FAILED"
+        assert kwargs["task_ids"] == dbt_build_module._WORK_TASKS
+
+    def test_the_work_tasks_are_the_tasks_that_can_fail(self, dbt_build_module):
+        """A task missing from this tuple is a task whose failure detail the
+        page silently drops."""
+        assert set(dbt_build_module._WORK_TASKS) == {
+            "flush_silver_observations",
+            "flush_staging_events",
+            "dbt_build",
+            "reconcile_cooldown_cohorts",
+        }
+
+
+class TestPostResultPreservesTheFailureForNotify:
+    """Without this push, a failed flush leaves the page nothing to quote.
+
+    The old callables returned post_json(...) directly, so a JsonPostError
+    propagated with no XCom behind it — and _notify pulled only dbt_build's,
+    which on a flush failure does not exist either.
+    """
+
+    def test_a_successful_post_is_pushed(self, dbt_build_module):
+        context = {"ti": MagicMock(), "dag_run": MagicMock()}
+        with patch.object(dbt_build_module, "post_json", return_value={"flushed": 7}):
+            result = dbt_build_module._run_flush_silver(**context)
+
+        assert result == {"flushed": 7}
+        context["ti"].xcom_push.assert_called_once_with(
+            key="result", value={"flushed": 7}
+        )
+
+    def test_a_500_body_is_pushed_and_the_error_still_raises(self, dbt_build_module):
+        """JsonPostError.result is the endpoint's summary plus its
+        failure_reason. The task must still fail — the push is so the page can
+        say why, not so the DAG can go green."""
+        body = {"flushed": 0, "error": "boom", "failure_reason": "flush aborted: boom"}
+        context = {"ti": MagicMock(), "dag_run": MagicMock()}
+        error = dbt_build_module.JsonPostError("500 Error", result=body)
+
+        with patch.object(dbt_build_module, "post_json", side_effect=error):
+            with pytest.raises(dbt_build_module.JsonPostError):
+                dbt_build_module._run_flush_staging(**context)
+
+        context["ti"].xcom_push.assert_called_once_with(key="result", value=body)
+
+    def test_the_cooldown_reconcile_is_covered_too(self, dbt_build_module):
+        body = {"error": "ops unreachable"}
+        context = {"ti": MagicMock(), "dag_run": MagicMock()}
+        error = dbt_build_module.JsonPostError("500 Error", result=body)
+
+        with patch.object(dbt_build_module, "post_json", side_effect=error):
+            with pytest.raises(dbt_build_module.JsonPostError):
+                dbt_build_module._run_reconcile_cooldowns(**context)
+
+        context["ti"].xcom_push.assert_called_once_with(key="result", value=body)

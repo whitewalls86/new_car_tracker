@@ -14,7 +14,10 @@ from ops.coordination_drain import gate_observation_query
 
 REPO_ROOT = Path(__file__).parents[2]
 DAGS_DIR = REPO_ROOT / "airflow" / "dags"
-SUPPORT_MODULES = {"coordination_contract", "pools", "sensors"}
+# Modules in airflow/dags/ that define no DAG and so declare no admission
+# surface. `notifications` is the shared Telegram failure notifier (Plan 134
+# Stage 1) — it is called *by* notify tasks and never gated by one.
+SUPPORT_MODULES = {"coordination_contract", "notifications", "pools", "sensors"}
 
 
 def _load_contract():

@@ -1,15 +1,12 @@
 """Monthly Plan 131 lifecycle: pack, prune, then verify cold bronze HTML."""
 
 import logging
-import os
 from datetime import timedelta
 from typing import Any, Dict, Optional
 
-import requests
+from notifications import send_failure_alert
 
 PACK_WORKER_URL = "http://pack-worker:8001"
-_TELEGRAM_API = os.environ.get("TELEGRAM_API", "")
-_TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
 logger = logging.getLogger(__name__)
 
@@ -218,40 +215,27 @@ def _run_verify(**context):
     return result
 
 
+def _pack_fallback_reason(result) -> Optional[str]:
+    """Why a pack-lifecycle task failed when it said so in its own vocabulary.
+
+    Consulted only when neither ``failure_reason`` nor ``error`` is set.
+    ``stopped_for_deploy`` and the verifier's sampled-member count are this
+    DAG's summaries reporting a failure without either standard field.
+    """
+    if result.get("stopped_for_deploy"):
+        return "deploy intent remained pending through all retries"
+    if result.get("failed"):
+        return f"{result['failed']} sampled member(s) failed verification"
+    return None
+
+
 def _notify(**context):
-    if not _TELEGRAM_API or not _TELEGRAM_CHAT_ID:
-        logger.warning("TELEGRAM_API/TELEGRAM_CHAT_ID not configured - skipping notification")
-        return
-
-    ti = context["ti"]
-    lines = [
+    send_failure_alert(
+        context,
         "bronze pack lifecycle FAILED",
-        f"Run:     {ti.dag_run.run_id}",
-        f"Date:    {ti.execution_date}",
-    ]
-    for task_id in ("pack_bronze_html", "prune_packed_source_html", "verify_pack_read_path"):
-        result = ti.xcom_pull(task_ids=task_id, key="result")
-        if not result:
-            continue
-        reason = result.get("failure_reason") or result.get("error")
-        if not reason and result.get("stopped_for_deploy"):
-            reason = "deploy intent remained pending through all retries"
-        if not reason and result.get("failed"):
-            reason = f"{result['failed']} sampled member(s) failed verification"
-        if reason:
-            lines.append(f"{task_id}: {reason}")
-        failures = result.get("failures") or []
-        if failures:
-            lines.append(f"{task_id} failures: {str(failures)[:800]}")
-
-    try:
-        requests.post(
-            f"https://api.telegram.org/bot{_TELEGRAM_API}/sendMessage",
-            json={"chat_id": _TELEGRAM_CHAT_ID, "text": "\n".join(lines)},
-            timeout=10,
-        )
-    except requests.RequestException:
-        logger.warning("Failed to send Telegram notification for bronze pack lifecycle failure")
+        task_ids=("pack_bronze_html", "prune_packed_source_html", "verify_pack_read_path"),
+        fallback_reason=_pack_fallback_reason,
+    )
 
 
 try:
