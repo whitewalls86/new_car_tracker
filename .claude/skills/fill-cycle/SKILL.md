@@ -236,8 +236,9 @@ the cycle is visible — five rows all reading "next unblocked slice" is a cycle
 with no soak-aware sequencing, and the user should be able to see that before
 agreeing.
 
-State the target cycle, the current count, the headroom, and what you are
-leaving out and why. Then wait.
+State the target cycle, the current point total, the headroom, **any projects
+that do not yet exist and would be created**, and what you are leaving out and
+why. Then wait.
 
 ## Writing the issues
 
@@ -275,9 +276,22 @@ Status on creation:
 
 Never create in `In Progress`, `In Review`, `Soaking` or `Done`.
 
-Set `project` to the plan's existing project. If a plan in the horizon has no
-project, say so and create the issue without one — a project is a Plan 149
-horizon decision and creating one silently expands the board's scope.
+Set `project` to the plan's existing project, named `Plan NNN — Title`.
+
+**A plan in the horizon that has no project gets one, created here.** Seeding is
+the operation that *decides* the horizon, so a project for a plan being seeded
+is not scope creep — it is the horizon being recorded. The rule it must not
+break is that nothing is created **silently**: every project you intend to
+create is named in the proposal, alongside the issues, and is created only on
+the same approval.
+
+This is the division from `ticket-now`, which creates none. That skill adds one
+issue to a cycle whose horizon is already set, so a project appearing there
+would be a plan entering the board as a side effect of a single ticket. Here the
+horizon is the thing under discussion.
+
+Never create a project for a plan you are not seeding an issue for in this same
+run.
 
 ## After writing
 
@@ -308,7 +322,8 @@ whole of your part in fixing it.
   pullable work, and no amount of velocity shortens an observation window.
 - **seed a blocked row** whose gate does not close inside the cycle, or closes
   so late in it that the slice cannot begin.
-- **create a project** for a plan outside the horizon.
+- **create a project** for a plan you are not seeding this run, or create one
+  that was not named in the approved proposal.
 - **move an existing issue between cycles** or change another issue's status.
   Rollover is the user's decision and one of Plan 149's six measures.
 - **choose a build-order position or a priority.** Those live in `PLANS.md` and

@@ -85,7 +85,9 @@ disagrees.
   `Canceled`. `Duplicate` is reserved by Linear — never set it.
 - Projects exist per plan, named `Plan NNN — Title`. Create none here; a plan
   outside the current horizon should not gain a project as a side effect of one
-  ticket. If the plan has no project, report that and put the issue in the cycle
+  ticket. `fill-cycle` does create them, because seeding is what decides the
+  horizon in the first place; this skill runs against a horizon already set.
+  If the plan has no project, report that and put the issue in the cycle
   without one.
 - **Estimates are required.** `1` under half a day, `2` about a day, `3` two to
   three days, `5` most of a week — the Fibonacci scale, enabled team-wide on
