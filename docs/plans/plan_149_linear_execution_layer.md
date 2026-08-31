@@ -327,6 +327,57 @@ This does not block Stage 2. A board whose states are moved by hand still
 answers the Stage 2 measures; it only makes "state corrections" a more
 prominent one.
 
+#### Corrected 2026-08-29 — the automations do fire, and the missing piece was linkage
+
+Everything above is the record of what was true on 2026-08-25. It is wrong
+about the mechanism, and the counter-evidence is exact.
+
+| Event | Time |
+|---|---|
+| PR #265 merged | 2026-08-28 **04:09:21Z** |
+| CAR-21 → `Soaking` | 2026-08-28 **04:09:23Z** |
+| PR #266 merged | 2026-08-28 **05:07:10Z** |
+| CAR-21 → `Soaking` | 2026-08-28 **05:07:12Z** |
+
+Two seconds, twice, from CAR-21's own state history. **The merge → `Soaking`
+automation works.**
+
+CAR-22 is the negative control, on the same plan in the same week: PRs #278 and
+#279 were opened and merged for it, and the issue has **zero attachments and no
+automated transition**. It sat in `Ready` from 2026-08-26 until it was moved by
+hand on 2026-08-30 — through the whole Stage 6 build, ordering trial, repack and
+retire.
+
+The difference is how the PR named its issue:
+
+| PR | Named the issue by | Attached | Automation |
+|---|---|---|---|
+| #265, #266 | `(CAR-21)` in the title | yes | **fired** |
+| #244 | Linear's suggested branch name | yes | untested — the target state was already held |
+| #278, #279 | neither: branch `plan-145-stage-6`, title `Plan 145 Stage 6: …` | **no** | none |
+
+The 2026-08-25 probe eliminated three explanations and missed the fourth:
+**attachment and status automation are separate mechanisms, and only attachment
+was ever demonstrated.** PR #244 attaching by branch name was read as proof the
+integration was live, when it proved only half of it. This project's own
+`plan-NNN-*` branch convention establishes neither.
+
+**Working rule: every PR title carries `(CAR-NN)`.** That is the entire fix, and
+it is the whole difference between CAR-21 and CAR-22.
+
+#### The merge automation is wrong for a multi-PR issue
+
+CAR-21 needed six PRs. Its state history reads `In Progress → Soaking → In
+Progress → Soaking → In Progress → Done`. Both `Soaking` transitions were the
+automation obeying its own rule correctly; both returns were hand corrections.
+
+The deviation note above anticipated that a **no-soak** issue would need a manual
+`Done`. It did not anticipate that **any issue whose work spans more than one
+PR** gets flipped to `Soaking` mid-build, once per merge. Given how work is
+actually sliced here, that is the dominant source of state corrections rather
+than an edge case — and it argues for smaller issues, not for disabling the
+automation.
+
 ### Seeded issues (Cycle 1)
 
 Derived from `PLANS.md` as it stood on 2026-08-24. Filler-order judgement: the
@@ -361,11 +412,24 @@ After the build-order placement of this plan is approved, derive the first
 cycle from `PLANS.md` as it stands that morning. Do not freeze today's exact
 rows into this document: the top gate can change overnight.
 
-Seed **no more than eight issues**:
+Seed to a **points budget calibrated on measured completion** — currently ~30,
+from Cycle 1's ~30 points in 6 days. **Revised 2026-08-29**; this read
+"no more than eight issues" until Cycle 1 supplied a velocity number and showed
+that an eight-issue seed leaves most of the cycle to arrive unplanned. See
+[Cycle 1 findings](#the-eight-issue-cap-is-measured-in-the-wrong-unit) for the
+evidence and the caveat that travels with the number.
+
+The budget sizes the cycle. The composition is what keeps it honest, and it is
+unchanged:
 
 - the currently active top slice;
 - the next two unblocked slices;
-- any higher-priority slice whose timed gate ends inside the cycle;
+- any higher-priority slice whose timed gate ends early enough inside the cycle
+  to start the slice. **Sharpened 2026-08-31**: the gate closing inside the cycle
+  is necessary and not sufficient. Plan 134's Stage 1 window closed 2026-09-06
+  against a cycle ending 2026-09-07, and its next slice is three deploys at
+  48-hour intervals — five hours of cycle buys none of it, so the row belongs to
+  the following cycle despite being the highest-priority row on the board;
 - at most two safe fillers that become pullable only while a higher item soaks;
 - Plan 149's own bootstrap/measurement work.
 
@@ -383,6 +447,14 @@ Estimates are optional in Cycle 1. If used, they describe execution size only:
 
 Do not estimate plan-document effort labels into issue points mechanically.
 One plan may produce several independently measured issues.
+
+**The day-mapping in that table is wrong by roughly 3x** — measured against
+Cycle 1, which delivered about 20 estimated working days in 6 calendar days. It
+is left standing rather than silently re-scaled: Cycle 1 is a 6-day cycle
+dominated by one compute-bound plan, and re-anchoring the whole scale on it
+would replace a known-wrong number with a differently-wrong one. Recalibrate,
+or drop the day column and keep points as relative size, once Cycle 2 supplies a
+second point.
 
 ## Stage 2 — Run three cycles
 
@@ -412,19 +484,128 @@ The first three cycles are calibration, not a velocity target. Do not use
 Linear's capacity prediction to raise commitments until three completed cycles
 exist, and do not treat issue count as comparable when issue sizes differ.
 
+## Cycle 1 findings — a mid-cycle read, 2026-08-29
+
+Taken with two days left in the cycle, because these change how Cycle 2 is
+seeded and waiting would mean seeding it on the assumptions this read
+overturns. **The measures table below is not filled from this read** — that
+one waits for the close, as designed.
+
+### The shape of the cycle
+
+| | |
+|---|---|
+| Window | 2026-08-25 05:00Z → 2026-08-31 05:00Z (6 days) |
+| Issues carrying the cycle | **21**, 42 points |
+| Seeded | 8 — CAR-6…CAR-13; the Stage 1 cap held exactly |
+| **Added after the start** | **13 — 62% of the cycle** |
+| Done at this read | 15 issues, ~30 points |
+| Open at this read | CAR-22 `In Progress`; CAR-12, 17, 23, 24, 25 `Ready` |
+| Plan 145 alone | 6 issues, 15 points |
+
+Also created and canceled without ever entering the cycle: CAR-27 (folded into
+[Plan 156](plan_156_block_page_detection.md)) and CAR-28 (fixed under Plan 145
+Stage 5b).
+
+The seed predicted the cycle's **start** accurately and its **content** not at
+all. Plan 145 entered the seed as a single 3-point issue to "close Stage 0d/0e
+and build the backfill write path", then revised its method three times and
+generated five further issues as it went. That is not a seeding failure — it is
+what a plan does when measurement contradicts it — but it means a seed list
+describes an opening position, never a commitment.
+
+### The eight-issue cap is measured in the wrong unit
+
+Stage 1 caps seeding at eight issues. The cap held (exactly 8 seeded) and the
+cycle still ran to 21, because `ticket-now` exists precisely to add. Eight was
+chosen before any velocity data existed; there is now a number, and it is
+**~30 points completed in 6 days**.
+
+Seeding ~15 points into a cycle that absorbs 30 guarantees the remainder
+arrives as unplanned work, which is what makes "issues added after cycle start"
+unreadable at 62%. **The cap therefore becomes a points budget calibrated on
+measured completion — currently ~30 — and the issue count falls out of it.**
+
+What actually protects the design is the *selection* rule, not the count: top of
+the build order, the five Stage 1 categories, and fillers that name the item
+they soak behind. Fourteen issues drawn from six build-order rows does not
+mirror a 19-row build order and a 16-row backlog; the failure the cap guards
+against is a board that holds work nobody could pull.
+
+**Carry this caveat with the number.** Cycle 1's 30 points were Plan 145 —
+compute-bound and code-bound work, which is what moves fastest here. Plan 147 is
+four sequential production deploys with verification between them, Plan 134
+opens a seven-day observation, and Plan 142's window is wall-clock. **Velocity
+does not compress a seven-day window.** Expect a calibrated cycle to hold slots
+that consume calendar without consuming days.
+
+### The estimate scale is off by roughly 3x
+
+Fourteen estimated issues completed, 30 points. Read against Stage 1's own
+table — 1 is under half a day, 2 about a day, 3 two to three days — that is
+**about 20 working days of estimated work delivered in 6 calendar days**.
+
+Either the day-mapping is recalibrated to how this project actually moves, or
+the descriptions come off the table and points become relative-size only. Left
+as it is, the scale makes a cycle unreadable against its own commitment.
+
+### CAR-28 became a second owner of a fact — the forbidden shape
+
+The issue contract says not to paste a plan's problem statement, measurements
+or rejected alternatives into Linear. CAR-28 holds roughly 4,000 words of
+measured evidence: both compression bench tests, the full ordering-trial result
+table, the May/June/July extrapolation and its caveats. It was **canceled on
+2026-08-27** and was **still being edited on 2026-08-30**. The same result also
+lives in Plan 145 §*Evidence — the ordering trial*.
+
+That is the "Duplicate edits" measure firing, on a canceled issue, and it is
+precisely the failure Stage 3's **Remove** criterion names. It is worth being
+clear about why it happened rather than treating it as carelessness: CAR-28 was
+a *question* that outlived its issue, and Linear was where the question was
+being asked. The rule survives the case — the durable copy belongs in the plan
+document, and the issue should be reduced to a pointer — but "an open question
+with no plan section yet" is a real gap in the issue contract.
+
 ## Cycle measures
 
 Filled in *after* each cycle closes, from a real read against the board plus
 the repository — not before. Rows below track the six measures defined above.
 
+Cycle 1 was read on **2026-08-31**, after it closed itself at
+`endsAt 2026-08-31T05:00:00Z`. The two qualitative rows are the maintainer's,
+supplied that day; the four countable rows are from Linear's cycle history
+reconciled against the issues themselves.
+
 | Measure | Cycle 1 (2026-08-25 → 2026-08-31, 6d) | Cycle 2 (2026-08-31 → 2026-09-07) | Cycle 3 (2026-09-07 → 2026-09-14) |
 |---|---|---|---|
-| Time to choose next work | — | — | — |
-| Issues added after cycle start | — | — | — |
-| Issue rollover | — | — | — |
-| State corrections | — | — | — |
-| Duplicate edits | — | — | — |
-| Recap effort | — | — | — |
+| Time to choose next work | **Better, with friction that has a named cause.** Maintainer, 2026-08-31: knowing what to do next was no longer the problem; the friction was "the gap between seeded work and output". That gap is the row below, measured — 17 points seeded against 48 delivered — so this is the same finding felt rather than a second one | — | — |
+| Issues added after cycle start | **17 of 25 issues (68%); 31 of 48 points (65%).** Seeded 8 issues / 17 points. This is the measurement that turned the eight-issue cap into a points budget | — | — |
+| Issue rollover | **2 of 25 issues (8%), 4 of 48 points.** CAR-17 (`Ready`) and CAR-31 (`Soaking`), both moved to Cycle 2 by Linear automatically at the close — no manual action, and none required. Neither is an oversized slice: CAR-31 is a seven-day observation window and CAR-17 waits on four Plan 142 Stage 2/3 defects. Rollover here measures gating, not slicing | — | — |
+| State corrections | **Partial — three known, no exhaustive count.** CAR-21 was flipped to `Soaking` twice by the merge automation mid-build and hand-corrected back twice; CAR-22 sat in `Ready` through its entire Stage 6 build and was moved by hand on 2026-08-30; and six of six transitions were manual on 2026-08-25, before the automation was understood. A complete figure needs a per-issue history read, which this one did not do — recorded as partial rather than presented as a total | — | — |
+| Duplicate edits | **Two, both on canceled issues.** CAR-28 held ~4,000 words duplicating Plan 145's ordering-trial evidence, was canceled 2026-08-27 and was still being edited 2026-08-30. CAR-27 was created and canceled into [Plan 156](plan_156_block_page_detection.md). Both are the shape Stage 3's *Remove* criterion names | — | — |
+| Recap effort | **Unchanged.** Maintainer, 2026-08-31: the 2026-08-30 recap was written from git and read Linear not at all, which is the design working — Linear supplies execution facts and does not replace the git-and-plan read. Follow-up identified rather than acted on: there is room to fold Linear history into the recap skill, to be tested against the next recap | — | — |
+
+### What the close changed about Stage 1's budget
+
+**The budget should be re-derived from this read.** Stage 1 currently names
+**~30 points**, taken from the mid-cycle read of 2026-08-29 which saw 15 issues
+and ~30 points done. The closed cycle completed **44 points across 23 issues** —
+the mid-cycle read undercounted by about 47%, because the last two days of the
+cycle landed Plans 147, 158, 160 and Plan 134's Stages 0 and 1.
+
+The caveat that travels with the number is unchanged and now has a second
+reason to travel: 44 points in 6 days is ~7.3/day, but Cycle 1 was dominated by
+Plan 145's compute-bound recovery work. A cycle whose horizon is deploy-gated
+slices, observation windows and a wall-clock maintenance window will not convert
+at that rate however it is seeded.
+
+One reconciliation detail, kept because it is a live hazard rather than an
+arithmetic curiosity: the completed estimates sum to **43**, and Linear reports
+**44**. The difference is **CAR-6, which carries no estimate and which Linear
+counts as 1 point in scope**. An unestimated issue therefore does not read as
+zero — it silently widens the budget by one, which is why `fill-cycle` and
+`ticket-now` now report an unestimated issue as unmeasured rather than summing
+around it.
 
 ## Stage 3 — Keep, change or remove
 
@@ -491,8 +672,11 @@ required to preserve a second copy.
 ## Success criteria
 
 1. Issue 1 bootstraps the system on 2026-08-25.
-2. The first cycle contains no more than eight issues and all link canonical
-   plan sections.
+2. The first cycle is **seeded** to its Stage 1 budget and every issue links a
+   canonical plan section. **Restated 2026-08-29** — this read "contains no more
+   than eight issues", which Cycle 1 failed on its second day and met exactly as
+   a seeding cap. A cycle's *contents* are not a criterion this plan can hold;
+   how much arrives unplanned is a measure, not a target.
 3. Three weekly cycles complete without Linear becoming necessary to recover
    plan state, build order or historical evidence.
 4. PR and soak status can be read at a glance without duplicating design facts.

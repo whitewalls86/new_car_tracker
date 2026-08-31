@@ -83,10 +83,16 @@ disagrees.
 - One team: **Cartracker**, `ee63b26b-de49-4fa5-8617-bbaed7c1227d`.
 - Statuses: `Backlog`, `Ready`, `In Progress`, `In Review`, `Soaking`, `Done`,
   `Canceled`. `Duplicate` is reserved by Linear — never set it.
-- Projects exist per plan, named `Plan NNN — Title`. Create none here; a plan
-  outside the current horizon should not gain a project as a side effect of one
-  ticket. If the plan has no project, report that and put the issue in the cycle
-  without one.
+- Projects exist per plan, named `Plan NNN — Title`. **If the ticket's plan has
+  no project, create it with the ticket.** Mid-cycle work on a plan that did not
+  exist at seeding is the normal way a plan enters this board, and refusing the
+  project only leaves the issue orphaned. Plan 158 is the worked case: created,
+  ticketed, four stages shipped and archived inside Cycle 1, and **CAR-29 still
+  carries no project** because an earlier version of this rule forbade one.
+  The guard is not "never create" — it is the guard this skill already applies
+  to everything: it is for **the plan this ticket names**, and this skill
+  refuses work with no canonical plan, so the plan is already vetted before a
+  project can follow it. Say in the report that you created one.
 - **Estimates are required.** `1` under half a day, `2` about a day, `3` two to
   three days, `5` most of a week — the Fibonacci scale, enabled team-wide on
   2026-08-25.
@@ -187,16 +193,24 @@ Report:
 
 - the issue identifier and URL;
 - which cycle it landed in and which of the three cycle cases applied;
-- the cycle's issue count against Plan 149 Stage 1's cap of **eight**, and
-  whether this addition crossed it;
+- the cycle's **point total** against Plan 149 Stage 1's budget, and whether
+  this addition crossed it. Sum estimates, do not count issues: Stage 1's cap
+  became a points budget on 2026-08-29, because Cycle 1 seeded exactly eight
+  issues and still ran to 21. Read the current number from the plan;
 - anything you did not fill — a missing project, an absent estimate, a `Blocked
   by` you could not state;
 - anything you noticed about repository state and deliberately did not change.
 
-If the addition takes the cycle past eight, say so plainly. The cap is Plan
-149's, it is about whether a cycle is an honest commitment, and quietly
+If the addition takes the cycle past its budget, say so plainly. The budget is
+Plan 149's, it is about whether a cycle is an honest commitment, and quietly
 exceeding it is how a board stops meaning anything. You do not refuse the
-addition — the user decided — but the count goes in the report.
+addition — the user decided — but the total goes in the report.
+
+This is the measure `ticket-now` is most able to distort. "Issues added after
+cycle start" ran at **62% in Cycle 1**, and every one of them came through this
+skill. That is not an argument for adding less; it is why the number has to be
+reported accurately every time, so the next seeding is calibrated against what
+actually happened rather than against what was planned.
 
 ## What this skill must never do
 

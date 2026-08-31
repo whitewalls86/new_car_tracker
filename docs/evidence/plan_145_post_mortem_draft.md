@@ -12,9 +12,12 @@ history including reverted and superseded revisions; the VM at `147.224.199.86`
 (tmux sessions, run logs, timings); and 20 Claude Code transcripts on this
 machine spanning 2026-08-25 to 2026-08-29.
 
-**One evidence gap.** No local transcript covers 2026-08-26 12:00–22:00, the
-window in which the first implementation was built, merged and reverted. That
-episode is reconstructed from git alone.
+**One evidence gap, now partly closed.** The window of 2026-08-26 12:00–22:00 —
+in which the first implementation was built, merged and reverted — was recorded
+here as reconstructed from git alone. A local transcript does cover
+**17:23–17:50** of it: the deploy of that implementation to production and the
+point at which it could not run. §3.1 sets out what it shows. The decision to
+revert, four hours later, remains unrecorded.
 
 ---
 
@@ -41,6 +44,7 @@ maintainer proposed, in plain language, after saying he felt like he was
 | 2026-08-17 | [Plan 137](../plans/plan_137_legacy_bronze_parquet_disposition.md) created — legacy Parquet disposition, never scheduled |
 | 2026-08-21 | **Plan 145 created** (`136cb9f`, PR #227). Supersedes 132 and 137: "three investigations turn out to be one April 2026 cutover seen from three sides." Goal: delete **1,299** objects / 13.79 GiB. Stage 0 gates 0a–0f closed the same day |
 | 2026-08-26 15:28 | First implementation merged — PR #255, `b21fd48`: a backfill processor, an April ledger script, and **changes to the production `detail_writer` and `silver_writer`** |
+| 2026-08-26 17:23–17:50 | Design 2 is **pulled onto the VM, rebuilt and health-gated into production** — then the ledger scan cannot start, because the legacy Parquet prefix is written down nowhere. See §3.1 |
 | 2026-08-26 19:36 | PR #256, `45f13a5` — "build complete April reconciliation ledger" |
 | 2026-08-26 21:49 | **Both reverted**, one minute apart (`f946f88`, `1601379`). 1,443 + 662 lines removed, including a 435-line implementation plan |
 | 2026-08-26 | **Design 2** (`7504f88`): the selective-recovery design is discarded for a staged recovery/write/repack/delete workflow |
@@ -88,6 +92,81 @@ Two of these produced code that was thrown away: design 2's merged
 implementation (reverted) and design 3's `parse` mode, which the Stage 3 handoff
 records as *"reverted before commit; the patch is in the session scratchpad
 only. Do not go looking for it."*
+
+### 3.1 What the 2026-08-26 revert looked like from inside — recovered
+
+One local transcript covers **2026-08-26 17:23–17:50**, four hours before the
+reverts. It is short and it is damning, and it changes the previous revision's
+claim that this episode is reconstructible from git alone.
+
+Design 2's implementation was not merely merged. It was **merged, pulled onto
+the VM, rebuilt into the `archiver` and `processing` images, and health-gated
+into production** — the maintainer's opening line is *"The code is merged, I'll
+pull on the VM."* The deploy succeeded. `docker exec cartracker-archiver python
+-c "import scripts.build_april_ledger as m; print(m.__file__)"` returned
+`/app/scripts/build_april_ledger.py`; the verify-the-loaded-code check passed.
+
+Then the run could not start, because **nobody knew where the input was.**
+The assistant said so before guessing, and the caveat is worth quoting in full
+because the guess followed anyway:
+
+> I do **not** have the literal legacy-Parquet prefix confirmed anywhere in the
+> docs or code — Plan 137 only describes it in prose ("the bronze HTML prefix,"
+> hour-partitioned `part-<uuid>-0.parquet`). Don't let me guess that string;
+> list it first.
+
+The listing came back with twelve top-level prefixes — `ci_snapshots/`,
+`dictionaries/`, `html/`, `html_packs/`, `lakehouse_spike/`, `mlflow/`,
+`ops_normalized/`, `scratch/`, `silver_normalized/`, `snapshot_archives/`,
+`snapshot_exports/`, `snapshot_planning_cache/` — and nothing in the list said
+which one it was. The assistant's own reading: *"None of these jump out as
+'legacy Parquet' by name."* It then proposed drilling into `html/` as *"the
+most likely candidate"* — a guess, one message after warning against guessing.
+The transcript ends there, at 17:50, with the ledger scan never run.
+
+**What this establishes, and what it does not.** It establishes that the
+design-2 implementation reached production and was then found to be
+**un-runnable against the population it existed to reconcile**, because the
+plan it was built from — Plan 137 — described the legacy lake only in prose and
+never pinned an object prefix. It does not establish that this is *why* the
+maintainer reverted four hours later; both revert commits carry bare
+`git revert` messages, PR #255 and #256 have **zero review comments**, and no
+transcript covers 17:50–21:49. But it is the last recorded state of that work
+before it was removed, and it is a much better lead for §13's first open
+question than "git alone."
+
+**The guess was right, and design 4 still refused to make it.** The legacy root
+is `html/`, exactly the prefix the assistant picked. That is not the
+vindication it looks like — design 4's Stage 1 opens with a `census` mode whose
+entire job is to *discover* the prefix by listing, and the constant carries a
+comment explaining why:
+
+> The Plan 72 archiver wrote `s3://<bucket>/html` partitioned by year, month and
+> artifact_type. pyarrow renders int32 partition values unpadded (`month=4`),
+> but the exact spelling is discovered by listing rather than assumed — **a
+> hardcoded guess that matches nothing would look like an empty population
+> instead of a failure.**
+> — `scripts/reconcile_april_detail.py:152`
+
+That is the entire lesson of 2026-08-26, compiled into a comment above a
+constant, three days later: the failure mode of guessing an input location is
+not an error, it is a **silent zero**. Design 4 also pins `BASELINE_OBJECTS =
+1172`, `BASELINE_ROWS = 951821` and a status census as *assertions about
+production*, "restated so drift is a stop rather than a shrug." Design 2 had
+none of that and could not have; nobody had yet been burned.
+
+**The revert diffstat sharpens what was being backed out.** The plan calls it
+"changes to the production `detail_writer` and `silver_writer`"; the numbers
+say more. Reverting #255 restored `processing/writers/detail_writer.py` across
+**471 changed lines** and `silver_writer.py` across 69 — design 2 had
+restructured two live production write paths so they could carry a historical
+backfill mode, added `processing/queries.py` and a new
+`insert_backfill_price_observation_event.sql`, and shipped
+`tests/processing/test_detail_writer_backfill.py` at **two different paths at
+once**. Design 4, by contrast, reimplemented both helpers inside the
+reconciliation script and left the production writers untouched (§6). The
+distance between those two answers is most of what the plan spent four days
+learning.
 
 ### The trust boundary is the scar tissue
 
@@ -197,6 +276,126 @@ month and compresses best.
 | **The canary's own commit set up a duplicate write** | PR #276 | Receipts are keyed by *batch name*. The canary commits under `<run>-canary` while its 234 artifacts also sit in `b00001`–`b00069`, so the full apply would have written those 505 observations twice and nothing downstream would have noticed. Flagged when Phase B was built; fixed only when the apply was imminent |
 | **The documented invocation could not run** | the window itself | The run sheet said `python scripts/verify_recovery_live_state.py` on the VM host. There is no `python` there, only `python3` — and no `psycopg2` and no venv, so it could never have imported `shared.db`. Three failures deep in one line, found by the maintainer typing it under time pressure |
 
+### 6.4 Three more findings, from the 08-28 transcripts
+
+The first two come from PR #272's review rounds and neither is in the table
+above; the third is about this repository rather than this plan. All three
+generalise past Plan 145.
+
+**A test double that cannot express absence makes every fail-closed gate
+untestable.** `_patch_slice2_io`'s `read_json` mock raised `KeyError` for a key
+it did not hold. The real `shared.minio` helper returns `None`. So no test
+could construct "the object is not there," and every refusal keyed on
+absence — the whole fail-closed family — was unprovable while looking
+thoroughly tested. The gate that mattered read `if report and "blocked_excluded"
+not in report: raise`, which **fails open** on a run with no report at all. It
+was re-keyed to `if apply and "blocked_excluded" not in report: raise` and the
+mock taught to return `None`. The defect was in the fixture, not the feature,
+and it had made the feature's own tests lie.
+
+**A row-level guard behind an object-level filter is not a backstop.**
+`compare`'s block-page filter quarantines whole objects; the fallback guard in
+`_scan_to_import` was per-row and detail-only. When a block page emits carousel
+rows, its detail row — the only row carrying the block signature — can land in
+`already_represented` while the junk carousel rows alone reach `to_import`, and
+the per-row check never sees them. The coverage of that gap depended on
+`objects_that_emitted_carousel_rows`, the one quantity the session had already
+decided not to measure (§6.5, the abandoned SSH check). The fix was not to
+measure it: `assign`, and later `apply`, simply refuse any compare run whose
+report has no `blocked_excluded` section. That refusal is what §6 calls
+"fail-closed and scoped" — this is where it came from, and it came from a reviewer,
+not from the builder.
+
+**And the escape hatch has an escape hatch.** This repo blocks bare `git commit`
+with a hook that says: *"BLOCKED: this repo requires the commit-plan-attribution
+workflow for every commit. Read this, then re-run the same command with
+`COMMIT_SKILL_OK=1` in front of it."* The guard's own error message hands over
+the bypass. That is the plan's own §12.4 rule — *a refusal a human can wave
+through will eventually be waved through* — turned back on the repository's
+tooling, and it is worth a line in the narrative because the plan spent four
+review rounds building refusals with no override while working inside a
+tool-chain whose refusals all have one.
+
+### 6.5 How the work was actually organised
+
+This is not in the plan documents and it is the thing most likely to be
+interesting to a reader outside the project. Nine review rounds finding nine
+real defects is not luck; it is a topology.
+
+**Roles were split across sessions, and the split was deliberate.**
+
+| role | who | evidence |
+|---|---|---|
+| build | a Sonnet session, given one handoff document and nothing else | *"Hello, please read and implement …canary_handoff.md"* — the entire opening prompt |
+| review | a separate Opus session, started cold, given the spec and told to read the diff against it | *"A Sonnet session built it from a handoff; I want a cold, independent read against that handoff and against reality."* |
+| operate | a third session with SSH to the VM, holding the run state | *"ssh into the VM, inspect the active tmux sessions, and report back with next steps"* |
+
+The reviewer never saw the builder's reasoning — only the handoff and the diff.
+That is why the reviews found contract holes rather than style: the reviewer had
+the same specification the builder had, and no access to the story the builder
+told itself about satisfying it.
+
+**The review prompt was itself a written artifact, and it did most of the
+work.** The prompts run to ~90 lines. They name the spec files *in reading
+order*, declare scope in an IN/OUT list ("OUT: executing the write canary;
+anything that commits to Postgres; merging the branch"), enumerate the
+non-negotiables to check **"verified in code not prose"**, and — the part worth
+stealing — close with a mutation test on the tests themselves:
+
+> Would a plausible mutation (drop a field from the ignore list; take the two
+> snapshots in two transactions; split an artifact; skip the window check) fail
+> exactly one test and nothing else? Call out any test that passes without
+> proving its claim.
+
+For a second review of already-reviewed code, the prompt adds: *"Two rounds
+already happened and several findings were fixed. Do NOT re-report what they
+covered — I want what they missed plus your own read of the whole."* Each round
+was therefore forced onto new ground rather than re-litigating the last one.
+That is the mechanism behind "nine review rounds, nine real findings."
+
+**The handoff is the interface — and it went stale in hours, not days.** §12.7
+credits the handoffs, and it should; the qualifier is that they decayed at the
+speed of the run. The Stage 5 canary handoff was written on 2026-08-28 and
+audited **the same morning**. Every situational number in it was already false:
+it said Stage 4 was at 426/1,204 (it was at 1,188), that the 32 unpacked shards
+had not started (they had finished), that slice 2 "cannot run for days" (it had
+already run end to end), and it did not mention `--probe`, which had not existed
+when it was written. Its stated *rationale* was gone too — "three slices merged
+and none run against production data, Phase A is the mitigation" had been
+discharged by the probe runs.
+
+The refresh is the instructive part: the phase ordering was **kept** and the
+reason for it was **replaced** — *"Phase A is worth doing first because the
+parser-control assumption is the deepest one the probe did not test, not because
+untested code needs de-risking."* A handoff whose numbers are refreshed but
+whose rationale is not is the more dangerous artifact, because it will look
+current.
+
+**Friction, recorded because it is representative.** Three exchanges on 08-28,
+all inside twenty minutes, all the same shape — the model doing an adjacent
+thing well instead of the requested thing:
+
+> *"I didn't ask for a code review. The review is done"*
+> *"Why a stacked PR? That isn't what I asked for."*
+> *"no. I've added a review on the new branch, please review it and commit any
+> fixes required TO THAT PR."*
+
+And one of the model's own, after the maintainer asked *"What are you trying to
+chase down?"* mid-investigation: *"Sorry — I should have said. Here's the whole
+picture; the last check was a nice-to-have footnote, not load-bearing."* The
+finding it had been sitting on for six minutes was the block-page leak. The cost
+of not leading with it was small here; the pattern is that the session held a
+Stage-4-invalidating result while visibly working on a footnote.
+
+The same exchange contains a good decision, worth keeping alongside the bad
+ones: the session **abandoned** the carousel-emission check rather than let it
+run — *"it's reading 1,204 objects one at a time over SSH, and the answer isn't
+worth the wait… object-level quarantine is correct whether the count is 0 or
+not."* It scoped the fix so the unmeasured quantity stopped mattering. A reviewer
+then found that the fallback guard still depended on exactly that quantity
+(§6.4 above), which is the honest end of the story: the decision was right and it was
+not free.
+
 ---
 
 ## 7. The parser control: the check the whole plan rests on, and it failed
@@ -300,6 +499,55 @@ shards, ~17,400 members each — took **9h20m**: 2.7% of the units, 56% of the
 wall clock. That skew is also why every probe was structurally blind (§6): the
 unpacked shards sort last.
 
+### The probe run, and how far it was off
+
+The probe (`cmp-e37723ede49fad4f`, 2026-08-28) is the only Stage 5 measurement
+this machine holds a transcript for, and setting it beside the authoritative run
+shows what a structurally-blind sample buys and what it costs.
+
+| | probe, 08-28 | authoritative, 08-29 |
+|---|---:|---:|
+| parsed rows compared | 4,455,248 | 5,738,532 |
+| `already_represented` | 3,980,701 | 4,977,697 |
+| `to_import` | 474,547 | 701,375 |
+| `blocked_excluded` | — (family did not exist) | 59,460 |
+| `unclassifiable` | 0 | 0 |
+| artifacts assigned | 294,325 | 341,903 |
+| batches | 59 | 69 |
+| preserved / allocated | 1,893 / 292,432 | 13,253 / 328,650 |
+| near-duplicate pairs ≤300 s | 67,994 over 7,483 listings | 96,800 |
+| pack members newly attributed | **0 of 42,276** | **36,220 of 42,276 (85.7%)** |
+
+The last row is §6's structural blindness in one line, and the second-to-last is
+its quieter twin: the probe's near-duplicate cohort was 70% of the real one and
+was already being carried into the maintainer's ruling.
+
+**The carousel fan-out is the counter-example — measurement that worked.** The
+canary handoff had been written against *"biased probe 5.25 / 9 on one shard"*;
+the probe replaced it with **5.6332 carousel rows per object over 671,657
+objects, max 8**. That number was correct and survived to the authoritative run,
+because fan-out is a property of the page, not of which shards the sample
+reached.
+
+**The probe's real yield was three preconditions, not three numbers.** It caught
+V047 unapplied on production (`UndefinedTable`, fixed at 15:56:39 UTC via
+`docker compose run --rm flyway`); it type-checked the entire write set — the
+`::uuid` cast, both `NOT NULL`s, both CHECKs — against real production rows and
+rolled back; and it proved authoritative/probe prefix isolation directly
+(`compared/` 0 objects, `assigned/` 0 objects, 0 `recovered` rows, 0 receipts)
+rather than by argument. It also left a residue that later mattered: **59
+assignment shards written under `assigned_probe/` from a pre-block-page-filter
+compare**, still sitting on the VM and reachable by `apply --run-id`. That
+residue is precisely what the stale-compare-run refusal in PR #272 was built to
+stop.
+
+One cosmetic defect is recorded here because it is the kind that survives:
+`compare --probe --apply`'s success line printed `wrote compared/…,
+inventory/….json` **without** the `_probe` suffix
+(`_print_compare_report`, `scripts/reconcile_april_detail.py:3671`). The data
+went to the right place — the isolation check proves it — but the operator's
+only on-screen confirmation of isolation said the opposite of the truth.
+
 ### Code
 
 | | at first commit | now |
@@ -324,6 +572,11 @@ handoffs (1,332 lines), a 975-line run sheet, a 250-line flag reference.
 85 commits mentioning plan-145 · 21 merged PRs (#227, #255–#276) · **2 reverted
 merges** · **9 review rounds** that produced follow-up fix commits — four of them
 on PR #274 alone, each finding a real defect in the canary's contract.
+
+**The review rounds were run by a separate cold session against the same
+handoff the builder had; §6.5 describes the topology and reproduces the review
+prompt.** That is the part of the process most worth carrying to the next plan,
+and it is currently written down nowhere but here.
 
 ---
 
@@ -485,13 +738,44 @@ anything again.
    want to understand why this has been so complicated. I feel like we've taken 8
    stabs at this, each of them better, but each of them convoluted, when what
    we're really trying to do is pretty simple."*
+11. **A plan that describes its input in prose has not specified its input.**
+   Design 2 was built, merged, deployed to production and health-gated before
+   anyone discovered that the legacy Parquet prefix — the location of the
+   1,299 objects the whole plan exists to delete — was written down nowhere
+   except Plan 137's prose. Stage 0 had closed six gates; none of them was
+   "name the prefix." Design 4's opening trust-boundary table is the direct
+   descendant of that, and it works because it pins *objects*, not
+   descriptions of objects.
+12. **Cheap fixtures make expensive gates unprovable.** The packer's tests gave
+   one silver row per `artifact_id`, so `any_value` could not pick wrong (§4).
+   The slice-2 mock raised `KeyError` where production returns `None`, so no
+   fail-closed gate could be tested (§6.4). Same failure twice, four months
+   apart, in unrelated code: the fixture was built to make the happy path
+   convenient rather than to represent the world, and in both cases the test
+   suite reported green over the exact defect it existed to catch.
+13. **Separate the builder from the reviewer, and give them the same spec.**
+   Nine review rounds produced nine real defects because the reviewer was a
+   cold session holding the handoff and the diff and nothing else — no access
+   to the builder's account of why the diff satisfies the handoff. The review
+   prompt's closing mutation test ("would a plausible mutation fail exactly one
+   test and nothing else?") is the single most reusable artifact this plan
+   produced, and it is not in any plan document.
+14. **A handoff decays at the speed of the run, and its rationale decays first.**
+   The canary handoff was stale within a day: every situational number false,
+   and — worse — its stated reason for the phase ordering already discharged by
+   the probe. Refreshing the numbers and leaving the rationale would have
+   produced a document that looked current and argued for the right thing for
+   the wrong reason.
 
 ---
 
 ## 13. Open questions for the narrative
 
-- Was the 2026-08-26 revert the right call, and what did it cost? Reconstructing
-  it needs Linear (CAR-13) or the PR discussions — no transcript survives locally.
+- Was the 2026-08-26 revert the right call, and what did it cost? **Partly
+  answered — see §3.1**, which recovers what the work looked like four hours
+  before it was reverted. The decision itself is still missing: PR #255 and #256
+  carry **zero review comments**, both reverts are bare `git revert` messages,
+  and 17:50–21:49 is unrecorded. Linear (CAR-13) is the remaining source.
 - Would forcing an unpacked shard into the early probes have been cheap? If yes,
   the block-page leak and the 42,276-member finding were both catchable a day
   earlier.
