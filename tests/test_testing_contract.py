@@ -317,11 +317,43 @@ def pytest_steps() -> tuple[tuple[str, str, str], ...]:
 # ---------------------------------------------------------------------------
 # Rule 1 -- every integration suite is invoked by CI, or waived.
 # ---------------------------------------------------------------------------
-CI_INVOCATION_WAIVERS = (
-    Waiver("tests/integration/lakehouse", gap="G2", owner=162),
-    Waiver("tests/integration/processing", gap="G1", owner=162),
-    Waiver("tests/integration/scraper", gap="G1", owner=162),
-    Waiver("tests/integration/shared", gap="G1", owner=162),
+CI_INVOCATION_WAIVERS = ()
+
+
+@dataclass(frozen=True)
+class Dormant:
+    """One suite that is deliberately not run, and the reason it is not.
+
+    Not a :class:`Waiver`, and the difference is the point. A waiver is debt: it
+    names a violation, an owner plan, and dies when that plan archives -- which
+    is exactly what ``test_no_waiver_outlives_the_plan_that_owns_it`` enforces.
+    Dormancy is a decision with no repair pending and no plan to outlive. Held
+    as a waiver, ``tests/integration/lakehouse/`` would have failed the moment
+    Plan 162 archived, and the only way to quiet it would have been to delete
+    the record of why the suite is not running -- losing precisely the fact G2
+    asked to be written down.
+
+    There is no ``gap`` field, deliberately. G2 asked for the declaration and
+    was deleted once it had one; a pointer to it would dangle, and the contract
+    already settled where that kind of history belongs -- the plan documents,
+    not a cell here. ``reason`` carries what a reader actually needs.
+    """
+
+    subject: str
+    reason: str
+    since: date = MEASURED
+
+
+DORMANT_SUITES = (
+    Dormant(
+        "tests/integration/lakehouse",
+        reason=(
+            "Plan 125 pulled the `lakehouse` job in 863a2f2 rather than patch "
+            "its fixture problem. The 7 tests need Lakekeeper and PySpark "
+            "services this workflow does not start; they are kept, not run, "
+            "until Plan 125 Gate C brings the stack back."
+        ),
+    ),
 )
 
 
@@ -330,15 +362,20 @@ def test_every_integration_suite_is_invoked_by_a_ci_step():
 
     73 integration-marked tests in 11 files were written, reviewed, merged and
     maintained while no CI step ran them, and ``tests/integration/processing/``
-    -- 58 of them -- has never appeared in ``ci.yml`` in its history. Nothing
+    -- 58 of them -- had never appeared in ``ci.yml`` in its history. Nothing
     failed. No mechanism existed that could notice.
 
-    Dormancy is declared here rather than through a second mechanism. A waiver
-    already carries a reason, an owner and a date, and it already only shrinks;
-    inventing a marker file beside it would put the same fact in two places.
-    ``tests/integration/lakehouse/`` is dormant by decision (Plan 125 pulled the
-    job in ``863a2f2``) and its waiver says so by naming G2 rather than G1 --
-    which is the whole of what G2 asked for: dormant and orphaned, told apart.
+    Plan 162 Stage 1 ran them. 66 of the 73 passed; the 7 that did not were two
+    defects in the tests themselves, both of the kind only running finds -- a
+    cleanup naming a table that no migration has ever created, and a fixture
+    seeding a timestamp that made the behaviour under test a no-op. Both are
+    fixed and all three suites now have named steps, which is why
+    :data:`CI_INVOCATION_WAIVERS` is empty and stays that way: an empty tuple
+    still fails ``_assert_exactly`` the moment a new suite appears unrun.
+
+    The remaining suite is dormant rather than orphaned, and says so through
+    :data:`DORMANT_SUITES` rather than a waiver -- see :class:`Dormant` for why
+    the distinction has to be structural.
     """
     invoked = {
         argument.split()[0].rstrip("/")
@@ -350,12 +387,36 @@ def test_every_integration_suite_is_invoked_by_a_ci_step():
         for directory in _test_directories()
         if _relative(directory).startswith("tests/integration/")
     }
+    dormant = {entry.subject for entry in DORMANT_SUITES}
     _assert_exactly(
-        suites - invoked,
+        suites - invoked - dormant,
         CI_INVOCATION_WAIVERS,
         "Every tests/integration/<dir> is invoked by a named CI step, or is "
-        "waived with the gap entry that says why (docs/TESTING.md, 'What CI "
-        "asserts').",
+        "declared in DORMANT_SUITES with the reason it is not run "
+        "(docs/TESTING.md, 'What CI asserts').",
+    )
+
+
+def test_no_dormant_suite_is_quietly_running():
+    """The other direction, without which dormancy is just an unread comment.
+
+    A suite that gets a CI step later and keeps its :class:`Dormant` entry
+    would leave the contract asserting a reason that stopped being true --
+    which is the failure mode this whole file exists to make impossible.
+    """
+    invoked = {
+        argument.split()[0].rstrip("/")
+        for _, _, argument in pytest_steps()
+        if argument.startswith("tests/integration/")
+    }
+    contradicted = sorted(
+        f"{entry.subject} (declared dormant {entry.since}: {entry.reason})"
+        for entry in DORMANT_SUITES
+        if entry.subject in invoked
+    )
+    assert not contradicted, (
+        "these suites are declared dormant and are invoked by a named CI step "
+        "anyway; delete the DORMANT_SUITES entry:\n  " + "\n  ".join(contradicted)
     )
 
 

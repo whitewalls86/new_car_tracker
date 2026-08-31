@@ -2,16 +2,22 @@
 
 ## Status
 
-**Stage 0, the census, is complete (CAR-40, 2026-08-31).** Written as a
-deliberate stub on 2026-08-30, when
+**Stages 0 and 1 are complete (CAR-40 and CAR-45, both 2026-08-31).** The
+census enumerated the work; Stage 1 ran the 73 tests nothing had ever invoked
+and found no production defects behind them, which
+[confirms the L estimate](#evidence--stage-1-the-orphaned-suites-car-45-2026-08-31).
+The waiver list stands at 116.
+
+This document was written as a deliberate stub on 2026-08-30, when
 [Plan 161](plan_161_testing_contract.md) had not yet decided the standard this
 plan measures against. That blocker is gone: 161's contract landed, was
 asserted, and is archived.
 
-Stages 1 through 10 are scoped below and unblocked. Effort is proposed as **L**,
-down from the XL placeholder, on the reasoning in
-[The estimate](#the-estimate). [`docs/PLANS.md`](../PLANS.md) owns priority and
-effort; this document does not choose them.
+Stages 2 through 10 are scoped below and unblocked. Effort is **L**, down from
+the XL placeholder, on the reasoning in [The estimate](#the-estimate) and now
+confirmed against a measurement rather than proposed.
+[`docs/PLANS.md`](../PLANS.md) owns priority and effort; this document does not
+choose them.
 
 ## What the census found
 
@@ -20,9 +26,13 @@ implements seven mechanical rules. It passes, and **a pass means only that the
 seven rules hold** — every violation standing on 2026-08-31 is grandfathered in
 a waiver list. That list is this plan's backlog:
 
+This is the census as taken, kept as the baseline the stages are measured
+against; the live count is whatever `tests/test_testing_contract.py` holds
+today. **Stage 1 has since cleared the CI-invocation row, leaving 116.**
+
 | Rule | Waivers | Gap |
 |---|---|---|
-| CI invocation | 4 | [G1](../TESTING.md#the-gap-list) (3), G2 (1) |
+| CI invocation | 4 → **0** | [G1](../TESTING.md#the-gap-list) (3), G2 (1) — both closed by Stage 1 |
 | Patching is `mocker` | 34 | G4 |
 | Route reached through `app.routes` | 12 | G6 |
 | `.sql` file touched by a Layer 2 test | 54 | G14 |
@@ -78,7 +88,7 @@ order:
 | Stage | Work | Closes | Waivers |
 |---|---|---|---|
 | **0** | **The census. Complete — CAR-40, 2026-08-31** | — | — |
-| **1** | Run the orphaned suites. Execute the 11 files no CI step invokes, wire the survivors into CI, declare `tests/integration/lakehouse/` dormant | G1, G2 | 4 |
+| **1** | **The orphaned suites. Complete — CAR-45, 2026-08-31** | G1, G2 | 4 |
 | **2** | Unblind coverage. `[tool.coverage.run] source` names every service directory, and something consumes the number | G10 | -- |
 | **3** | The two health-sensor censuses read one declared source instead of two hardcoded counts | Plan 139 Stage H | -- |
 | **4** | Split the 267s `dbt build + test` job — the cheap half of the restructure | Plan 139 Stages B, C | -- |
@@ -320,3 +330,89 @@ claim a mechanism it does not have.
 **What the census could not settle:** whether the 73 orphaned tests still pass.
 That is Stage 1, and it is the one input the L estimate rests on that remains
 unmeasured.
+
+### Evidence — Stage 1, the orphaned suites (CAR-45), 2026-08-31
+
+All five exit conditions met. Estimate 2.
+
+**The 73 tests were run.** Against a cold `postgres:16` with all 49 Flyway
+migrations applied and a MinIO container, matching the `dbt` job's services
+step for step — not against a warm local stack, which would have had the state
+the suites are missing:
+
+| Suite | Files | Tests | Result |
+|---|---|---|---|
+| `tests/integration/processing/` | 6 | 58 | **51 passed, 7 failed** |
+| `tests/integration/scraper/` | 1 | 4 | 4 passed |
+| `tests/integration/shared/` | 1 | 4 | 3 passed, 1 declared skip |
+| `tests/integration/lakehouse/` | 3 | 7 | dormant — not run |
+
+**66 of 73 passed. The 7 failures were all defects in the tests, none in
+production code** — which is the answer the estimate needed, and the better of
+the two available answers. The areas these suites cover are not unexercised
+because the code rotted; they were unexercised because nothing ran the tests.
+
+Two distinct defects, both of the kind only running can find:
+
+- **Six cleanups named `staging.artifact_events`, a table no migration has ever
+  created.** V017 created `staging.artifacts_queue_events`; the test file has
+  said `artifact_events` since `e95e426`, the commit whose message claims to
+  "close processing service test gap". Every one of those six tests had already
+  passed its assertions and then failed on teardown — the suite was born broken
+  and merged anyway, because merging did not involve running it.
+- **`test_vin_relisting_replaces_old_row` asserted a remap that
+  `upsert_vin_to_listing.sql` correctly refuses.** The SQL has a recency guard —
+  it only remaps on a strictly newer `mapped_at`, and production passes the new
+  artifact's `fetched_at`. The fixture defaulted the prior mapping's timestamp
+  to `now()`, so the value the test then supplied was never newer and the
+  remap was always a no-op. The test was wrong; the guard is the feature.
+
+**A third failure was found that the first two do not explain, and it is worth
+recording as unexplained.** In the first two runs
+`test_respects_batch_size_limit` reported five of its own rows claimed against
+`batch_size=2`. It has not reproduced since the queue was drained, and a direct
+harness confirms `_claim_batch(2)` returns exactly two rows. What *is*
+reproducible is the class it belongs to: `_claim_batch` reads the whole of
+`ops.artifacts_queue` lowest-`artifact_id`-first, so every "my row was claimed"
+assertion in that file is really asserting the row landed inside the first
+`LIMIT`. Seed twenty pending rows and two of those tests fail deterministically.
+
+That mattered enough to fix rather than note. The suite passes today in CI's
+step order — measured, not assumed: after `sql`, `ops` and `scripts` run,
+`ops.artifacts_queue` is empty — but "passes because the four suites ahead of
+it happened to leave no rows" is not wired in, it is booby-trapped. A
+function-scoped `_quiet_queue` fixture now parks any other claimable row for
+the duration of each test and restores it afterwards. Verified both ways: 58
+pass against a queue holding 20 foreign pending rows, and those 20 are still
+`pending` afterwards.
+
+**Dormancy could not be a waiver, and finding out why was the stage's one
+design change.** Stage 1 was scoped to declare `tests/integration/lakehouse/`
+dormant through the waiver list, on the reasoning that a waiver already carries
+a reason, an owner and a date. It cannot: `test_no_waiver_outlives_the_plan_that_owns_it`
+fails any waiver whose owner plan has archived, so the lakehouse entry would
+have failed the day *this plan* archived, and the only way to quiet it would
+have been to delete the record of why the suite is not running — losing exactly
+what G2 asked to be written down. Dormancy is a decision with no repair pending
+and no owner to outlive, so it now lives in `DORMANT_SUITES`: same file, same
+shape, no owner, no expiry. `test_no_dormant_suite_is_quietly_running` closes
+the other direction, failing a declared suite that acquires a CI step.
+
+**`CI_INVOCATION_WAIVERS` is `()`.** Both new assertions were verified by
+breaking them: removing the processing step fails the invocation rule against
+an empty waiver tuple, and pointing a step at the dormant suite fails the
+dormancy guard. 120 waivers → **116**.
+
+**The L estimate is confirmed.** Stage 1 was the one input it rested on that
+the census could not settle, and it resolved the favourable way: no production
+defects, no rot in the covered areas, and Stages 7 and 8 do not get worse. The
+two test defects cost minutes, not the days a genuine failure would have. What
+Stage 1 adds to the estimate is not effort but a warning about its shape — both
+defects, and the queue fragility, were invisible to review and obvious to
+execution, so the remaining stages should be sized on the assumption that
+anything this plan has only *read* is still unmeasured.
+
+**Out of scope, found in passing:** `tests/scripts/test_verify_recovery_live_state.py::test_a_failing_canary_command_fails_the_check`
+fails on Windows ("The filename, directory name, or volume label syntax is
+incorrect") and passes in CI. Reproduced on an untouched checkout, so it
+predates this stage and belongs to nothing here.
