@@ -203,10 +203,11 @@ not authored as public copy.
   carry its week and a statement that it is a point-in-time record, so §1's
   production/experimental split is not contradicted by a six-month-old page.
 - They may name what the truth contract's §3 narrows. The word `trawl` appears
-  eleven times across five recap files — `2026-07-12.md:65`, `2026-07-19.md:17`,
-  `2026-08-23.md:41`, `2026-08-30.md:493` among them — and the scrape path is
-  exactly what the non-goals bar from *authored* public copy. Stage 1e decides
-  the policy; it does not get to be decided silently by a generator.
+  eleven times across four recap files — `2026-07-12.md` (2), `2026-07-19.md`
+  (5), `2026-08-23.md` (1) and `2026-08-30.md` (3), which is the complete set —
+  and the scrape path is exactly what the non-goals bar from *authored* public
+  copy. Stage 1e decides the policy; it does not get to be decided silently by a
+  generator.
 
 ---
 
@@ -347,9 +348,24 @@ without reconciling contradictory statements.
 ### 1d. Public roadmap projection contract
 
 Keep `docs/PLANS.md` as the human-edited source of truth. Add
-`scripts/build_public_roadmap.py` to parse only two explicitly named Markdown
-tables: **Default build order** and **Completed**. Do not implement a general
-Markdown crawler and do not infer status from prose in every plan file.
+`scripts/build_public_roadmap.py` to parse exactly two explicitly named Markdown
+tables, **which live in two different files**:
+
+| List | Table | File |
+|---|---|---|
+| `planned` | **Default build order** | `docs/PLANS.md` |
+| `completed` | the archive table | `docs/planning/completed_plans.md` |
+
+Do not implement a general Markdown crawler and do not infer status from prose
+in every plan file. **There is no Completed table in `docs/PLANS.md`** — Plan 146
+replaced it with a pointer, so a generator that looks for one there finds no rows
+and silently publishes an empty list rather than failing.
+
+`PLANS.md`'s third table, **Current closeout**, is deliberately not an input. Its
+rows are deployed work whose evidence is still pending, which is neither "planned
+next" nor "recently completed"; such a plan appears in **neither** list until its
+completion row lands in the archive. That is the operational form of the truth
+contract's §4 rule, and it is why the feed needs no third state.
 
 The generator writes deterministic `ops/static_ops/project-updates.json` with a
 small versioned schema:
@@ -357,35 +373,73 @@ small versioned schema:
 ```json
 {
   "schema_version": 1,
-  "as_of": "2026-08-17",
+  "as_of": "2026-08-30",
   "planned": [
     {
-      "plan": "136",
-      "title": "Solver recycle and real liveness",
+      "plan": "161",
+      "title": "Testing contract",
       "order": 1,
-      "priority": 98,
-      "effort": "M",
+      "priority": 87,
+      "effort": "S",
       "state": "planned",
-      "summary": "Add truthful solver outcomes and a drain-aware recycle.",
-      "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_136_solver_recycle_and_liveness.md"
+      "summary": "Land the reviewer skill and the test that asserts the contract.",
+      "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_161_testing_contract.md"
     }
   ],
-  "completed": []
+  "completed": [
+    {
+      "plan": "147",
+      "title": "Scrape state ownership",
+      "date": "2026-08-30",
+      "state": "completed",
+      "summary": "Separated the fetch and enrichment timestamps so a stalled processor no longer causes the same listings to be re-fetched.",
+      "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_147_scrape_state_ownership.md"
+    }
+  ]
 }
 ```
 
 The real output contains at most four planned and four completed items. Use the
-roadmap's `as of` date instead of wall-clock generation time so unchanged input
-produces byte-identical output. Map the ordered table's **Next executable slice**
-column to the public `summary` field. Normalize plan identifiers to strings because
-the archive contains identifiers such as `V029` and `14.11`.
+roadmap's `as of` date — the one in `PLANS.md`'s **Current State** heading,
+`2026-08-30` at the time of writing — instead of wall-clock generation time, so
+unchanged input produces byte-identical output. Map the ordered table's **Next
+executable slice** column to the public `summary` field. Normalize plan
+identifiers to strings because the archive contains identifiers such as `V029`
+and `14.11`.
+
+**The two tables do not carry the same columns, and the completed side is the
+awkward one.** The archive is `| Plan | Description | Date |`: no title, no
+priority, no effort, and a bare number rather than a link in the Plan cell. So a
+completed item is assembled differently from a planned one.
+
+- `title` is the **bolded lead** of the Description cell, not the whole cell.
+- `priority` and `effort` do not exist for completed work and are not emitted.
+  Only planned items carry them.
+- `href` is synthesized from the plan number by globbing `docs/plans/plan_<n>_*.md`.
+  **That glob is ambiguous** — `plan_145_*` matches nine files, the main document
+  plus eight stage handoffs. Prefer the main document and treat any remaining
+  ambiguity as a build failure rather than picking one silently.
+- `summary` is the sentence that follows the bolded lead. This is the one field
+  a generator cannot be trusted with alone: those cells run to several hundred
+  words of incident narrative naming migrations, services, columns and object
+  paths, which is what §4 bars from the feed. Extraction is the default, and
+  **Gate 1d requires a human to read the four rows actually published.** Four
+  rows is a cheap review; the alternative — a new column in an archive Plan 146
+  owns — is a change to someone else's file for a four-row problem.
 
 The script supports `--check`: regenerate in memory, compare with the committed
 JSON, and exit non-zero on drift. CI runs that mode and also validates unique
-build order, score range 0-100, the `XS|S|M|L|XL` effort vocabulary,
-newest-first completion dates, local plan-link existence,
-and the public schema. This makes a roadmap edit fail visibly when its public
-projection was not refreshed.
+build order, score range 0-100, newest-first completion dates, local plan-link
+existence, and the public schema. This makes a roadmap edit fail visibly when its
+public projection was not refreshed.
+
+**Effort is validated on its leading token, not on the whole cell.** The build
+order's effort column carries qualifiers that plan sizing needs and the public
+schema does not — `M + first observed window`, `S + 7d observation`, `XL,
+research-gated`, `XS each`. Five of the twenty-two rows would fail a strict
+`XS|S|M|L|XL` match, so a naive vocabulary check fails on the day it is written.
+Parse and emit the leading token; leave the qualifier in `PLANS.md`, where it is
+doing real work.
 
 ### 1e. Weekly recap projection
 
@@ -410,11 +464,14 @@ build. No Markdown reaches the browser and no Markdown is parsed in a request.
 
 **2. Links must be rewritten, and the rewrite is a correctness rule.** Recaps
 link relatively to plan documents (`../plans/plan_145_april_cutover_reconciliation.md`)
-and use internal anchors (`#merges`). Plan links resolve to the same GitHub blob
-URLs Stage 1d already emits; internal anchors stay internal. **A relative link
-that the generator cannot classify is a build failure, not a passthrough** — a
-silent passthrough is how a `docs/`-relative path becomes a 404 on the public
-site.
+and use internal anchors (`#merges`). **Classify on the `docs/`-relative path,
+not on the `plans/` directory alone.** The corpus holds 129 `../plans/…` links
+*and* 4 `../planning/…` links — a rule that recognises only the first refuses to
+build against files that are already committed. Any repository-relative path
+resolves to the same GitHub blob URL Stage 1d already emits; internal anchors
+stay internal. **A relative link the generator cannot classify is a build
+failure, not a passthrough** — a silent passthrough is how a `docs/`-relative
+path becomes a 404 on the public site.
 
 **3. Publication is an editorial decision, made once, and recorded.** Per the
 truth contract's §5, the recaps are already public in the repository, so this is
@@ -445,12 +502,17 @@ new recap that has not been regenerated.
 
 1. Add the exact-root public Caddy handler and keep `/dashboard*` protected.
 2. Redirect external `/info` requests to `/` and add a canonical link.
-3. Serve public `robots.txt` and `sitemap.xml` without OAuth.
-4. Add a descriptive title and meta description.
-5. Add Open Graph and Twitter metadata using the existing cover artwork or a
+3. **Add public Caddy handlers for `/recaps` and `/recaps/YYYY-MM-DD`**, served
+   without OAuth on the same unauthenticated path as the root. The route table
+   above, Gate 2 and Stage 5 all require these routes; they need a handler of
+   their own because the authenticated catch-all would otherwise swallow them,
+   which is the same trap item 1 describes and fails the same silent way.
+4. Serve public `robots.txt` and `sitemap.xml` without OAuth.
+5. Add a descriptive title and meta description.
+6. Add Open Graph and Twitter metadata using the existing cover artwork or a
    purpose-built static preview.
-6. Add favicon links and JSON-LD for the software project and author.
-7. Update README, dashboard sidebar, email links, and other first-party links to
+7. Add favicon links and JSON-LD for the software project and author.
+8. Update README, dashboard sidebar, email links, and other first-party links to
    use the canonical root or explicit `/dashboard` route as appropriate.
 
 Search metadata must describe only the public page. Protected application paths
@@ -476,7 +538,7 @@ and no test asserts. This stage takes the root away from it.
 
 The requirement:
 
-8. Keep an authenticated catch-all reaching `dashboard:8501` for the Streamlit
+9. Keep an authenticated catch-all reaching `dashboard:8501` for the Streamlit
    root-served paths, and make the public root an **exact match** on `/` rather
    than a prefix that swallows them. Removing or narrowing the catch-all without
    giving Streamlit a base path breaks the dashboard's assets and websocket while
