@@ -2,7 +2,7 @@
 
 ## Status
 
-**Build order — ready to start.** Split out of
+**Closeout — observing until 2026-09-13.** Split out of
 [Plan 139](plan_139_test_suite_maintenance.md) Stage G on 2026-08-30, after a
 fourth occurrence produced two runs of the same branch that disagreed with each
 other. Stage G is removed from Plan 139 and its evidence is folded in below.
@@ -330,6 +330,37 @@ batch, this is not worth optimising.
 red build the plan set out to remove. The signal is the named stderr block, so
 the race's real frequency starts being recorded in CI logs — on this machine it
 is now roughly 1 run in 20, down from 12.
+
+#### Evidence — first green CI run
+
+[PR #294](https://github.com/whitewalls86/new_car_tracker/pull/294),
+[run 33346589424](https://github.com/whitewalls86/new_car_tracker/actions/runs/33346589424),
+2026-08-31 01:09 UTC. Every job passed. `Promtail config (real image)`
+finished in **17s** and replayed the corpus clean on the first attempt:
+
+```
+  airflow-apiserver        container_stdout    4 lines replayed
+  airflow-dag-processor    container_stdout    3 lines replayed
+  airflow-scheduler        container_stdout    4 lines replayed
+  oauth2-proxy             container_stdout    7 lines replayed
+  ops                      application_file    2 lines replayed
+  processing               application_file    1 lines replayed
+  scraper                  application_file    1 lines replayed
+
+22 fixtures agree with grafana/promtail:3.5.8.
+```
+
+No batch printed an attempt count, so nothing was retried and nothing was
+inconclusive — on `amd64`, natively, the first observation was complete.
+
+**One green run is not the gate, and this one is weaker evidence than the 20
+local runs.** CI reproduced the fault roughly four times in a week, so a single
+pass is well inside what the old checker would also have produced. It is
+recorded because it establishes the things a local run cannot: that the
+`Popen` path works on `amd64` under GitHub's runners, that holding stdin open
+does not hang the job, and that the added cost is 17s rather than something
+that would make the job worth narrowing. The actual gate is the observation
+window below.
 
 ## Files
 
