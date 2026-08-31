@@ -164,6 +164,18 @@ MUTATIONS = [
         [],
     ),
     (
+        "test_no_gap_entry_outlives_the_plan_that_owns_it",
+        "a gap entry's owner plan is archived and the entry stays behind",
+        lambda: _edit(
+            "docs/TESTING.md",
+            "| G14 | **54 of 76 production `.sql` files",
+            "| G14 | **PLACEHOLDER** | -- | Plan 84 |\n"
+            "| G15 | **54 of 76 production `.sql` files",
+        ),
+        ["docs/TESTING.md"],
+        [],
+    ),
+    (
         "test_no_waiver_outlives_the_plan_that_owns_it",
         "a waiver's owner plan is archived and the waiver stays behind",
         lambda: _edit(
