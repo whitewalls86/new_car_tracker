@@ -2,11 +2,13 @@
 
 ## Status
 
-**Stages 0 and 1 are complete (CAR-40 and CAR-45, both 2026-08-31).** The
-census enumerated the work; Stage 1 ran the 73 tests nothing had ever invoked
-and found no production defects behind them, which
-[confirms the L estimate](#evidence--stage-1-the-orphaned-suites-car-45-2026-08-31).
-The waiver list stands at 116.
+**Stages 0, 1 and 2 are complete (CAR-40, CAR-45 and CAR-46, all 2026-08-31).**
+The census enumerated the work; Stage 1 ran the 73 tests nothing had ever
+invoked and found no production defects behind them, which
+[confirms the L estimate](#evidence--stage-1-the-orphaned-suites-car-45-2026-08-31);
+Stage 2 [unblinded the coverage instrument](#evidence--stage-2-unblinding-coverage-car-46-2026-08-31)
+the later stages are graded by, taking the reported number from 88% to 75.92%
+without a line of production code changing. The waiver list stands at 116.
 
 This document was written as a deliberate stub on 2026-08-30, when
 [Plan 161](plan_161_testing_contract.md) had not yet decided the standard this
@@ -582,3 +584,55 @@ specific two-venv census fix and "also small" is not a category, while Stage 5
 is already the pass that reads every patch in the suite. What that costs is
 honest and recorded above — [a third exception](#success-criteria) to success
 criterion 2, and the weakest of the three.
+
+### Evidence — Stage 2, unblinding coverage (CAR-46), 2026-08-31
+
+All three exit conditions met. Commits `8c10d95` and `2b12294`. Estimate 1,
+actual 1.
+
+`[tool.coverage.run] source` now names all ten production directories, the unit
+job gates on `--cov-fail-under=74` and uploads `coverage.xml`, and two
+assertions carry the repair — `test_every_service_directory_is_measured_by_coverage`
+and `test_the_coverage_number_the_unit_job_produces_is_consumed`. Both were
+verified by breaking them; the mutation set is 19 and all 19 are caught.
+
+**Unblinding moved the reported number from 88% to 75.92% with no code
+changing.** The four directories added hold 11,709 of 19,733 measurable
+statements — more than the six that were being measured:
+
+| Added to `source` | Statements | Covered |
+|---|---|---|
+| `scripts/` | 10,488 | 70% |
+| `airflow/dags/` | 754 | 45% |
+| `dashboard/` | 309 | **9%** |
+| `container_health/` | 158 | **93%** |
+| *(the six already measured)* | 8,024 | 88% |
+
+**The two services the "enough" table calls below the floor are not alike, and
+only the instrument could show it.** `container_health` is among the
+best-covered directories in the repository at 93% and is still below the floor,
+because the floor is routes reached through the app and a Layer 4 that exists —
+neither of which a percentage measures. That is the contract's *"not a coverage
+percentage"* clause holding under its first real test, and it re-scopes Stage 6:
+G9 is a test-home and routing problem, not a coverage one. `dashboard/` at 9%
+is the genuine gap, and it is Stage 8's.
+
+**The threshold is a ratchet, not a target, and `scripts/` is the caveat on
+it.** At 10,488 statements it is over half the denominator and largely spent
+one-off code, so it damps the movement the service stages produce. That is
+[Stage 5b](#the-stages), scoped from this measurement.
+
+**Two of this stage's own claims were wrong and were corrected by measuring.**
+The gap list said unblinding would expose "the two services below the floor"; it
+exposed one badly covered service, one well-covered one, and a `scripts/`
+denominator nobody had counted. The first sizing of Stage 5b then repeated the
+error in miniature — see its section for what the archive join corrected.
+
+**Landed alongside Stage 1 and reconciled to it.** Stage 1 established the
+convention for repaired gap entries — row deleted, preamble names what closed
+it, history here, letters never reused — while this branch was open; G10's
+closure was rewritten to follow it. Stage 1's own deletions had left three
+mutations in `scripts/verify_testing_contract_mutations.py` anchored on the
+removed G1 and G2 rows, so the script aborted rather than ran; its staleness
+guard is what said so. Re-anchored, and Stage 1's new dormancy rule was given
+the mutation it shipped without.
