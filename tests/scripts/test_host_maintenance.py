@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 from argparse import Namespace
 from pathlib import Path
 
@@ -639,6 +640,46 @@ def test_package_boundaries_do_not_over_match_unrelated_packages():
         "qemu-user-static",
     ):
         assert host_maintenance._package_boundaries(package) == [], package
+
+
+def test_stage_4_abort_criterion_names_only_boundaries_that_exist():
+    """The run sheet's abort criterion and `PACKAGE_BOUNDARIES` must not drift.
+
+    `prepare-update` writes `compatibility_boundaries` from the table; §5.2 of
+    the Stage 4 run sheet tells the operator to abort when a boundary outside a
+    named set appears. The two are coupled and nothing else couples them: when
+    `storage` was added on 2026-08-31, a run sheet still saying "other than
+    `network`" would have aborted every ordinary window on this host, because
+    the util-linux family is in routine `jammy-updates` traffic.
+
+    The invariant is a **subset**, deliberately not the set equality that
+    `EXPECTED_SERVICES` takes against its manifest. The run sheet names the
+    boundaries expected for an ordinary window on this host, not every boundary
+    that exists -- a `kernel` or `ssh` boundary turning up genuinely should stop
+    the window, and that is the criterion working. What must never happen is the
+    run sheet naming a boundary that no longer exists in code: that permission
+    is dead text, and the live boundary it was renamed from would abort a window
+    nobody expected to stop.
+    """
+    runbook = (
+        Path(__file__).resolve().parents[2]
+        / "docs"
+        / "runbooks"
+        / "runbook_plan_142_stage_4.md"
+    )
+    text = runbook.read_text(encoding="utf-8")
+
+    marker = "anything appears under\n`compatibility_boundaries` other than "
+    start = text.index(marker) + len(marker)
+    clause = text[start : text.index(", or any package is", start)]
+    named = set(re.findall(r"`([a-z_]+)`", clause))
+
+    assert named, f"no boundary names parsed from the abort criterion: {clause!r}"
+    unknown = named - set(host_maintenance.PACKAGE_BOUNDARIES)
+    assert not unknown, (
+        f"the Stage 4 run sheet permits boundaries that PACKAGE_BOUNDARIES does "
+        f"not define: {sorted(unknown)}"
+    )
 
 
 def test_checkpoint_refuses_symlink(mocker, tmp_path):
