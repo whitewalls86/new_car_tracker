@@ -2,11 +2,18 @@
 
 ## Status
 
+**The contract is written (CAR-33, 2026-08-31).** Success criteria 1, 4 and 5
+are met: [the nine questions are answered](#the-answers), the contract is
+[`docs/TESTING.md`](../TESTING.md), and the known violations are recorded as
+G1-G12 there. **Criteria 2 and 3 remain open** — the `.claude/skills/` reviewer
+and the test that asserts the contract are CAR-34. See
+[the evidence](#evidence--car-33-2026-08-31).
+
 Written 2026-08-30, out of a planning conversation that started as a test-suite
-refactor and stopped when the refactor turned out to be unwritable. The
-restructuring work is real and is described in
-[what this unblocks](#what-this-unblocks); it cannot be specified yet, because
-there is no standard for it to restructure toward.
+refactor and stopped when the refactor turned out to be unwritable. That
+restructuring work now has a standard to restructure toward, and a plan number:
+[Plan 162](plan_162_testing_census_and_restructure.md), which CAR-40 re-scopes
+against this contract.
 
 Priority and effort are proposed in [`docs/PLANS.md`](../PLANS.md), which owns
 both; this document does not choose them.
@@ -150,13 +157,306 @@ matches reality. The pattern is established here; this applies it to testing.
    contract or replaced by a pointer to it. Leaving both recreates exactly the
    drift this plan exists to end.
 
+## The answers
+
+**Answered 2026-08-31 (CAR-33), measured against the repository that day.** The
+contract itself is [`docs/TESTING.md`](../TESTING.md); this section records the
+decisions and the evidence behind them, so a later reader can see *why* rather
+than only *what*. Where a question was answered "no rule", that is written as
+such — a deliberate absence reads differently from an oversight.
+
+### 1. What are the layers, now?
+
+**Five, the existing cut survives, and the numbering changes.** Layer 0 (config
+and contract tests) is new only as a name: `tests/test_planning_docs.py`,
+`tests/test_observability_config.py` and the four `test_*_compose_config.py`
+files were already a distinct kind — facts about the repository that need no
+service running — governed by nothing.
+
+The renumbering is the part worth defending. **A layer's number is its
+dependency cost**, which is the only reading under which the numbers mean
+anything and CI can fail on the cheapest thing first. Plan 84's scheme did not
+do that: it numbered the three integration tiers and left unit tests unnumbered
+beside them, so the fastest, dependency-free tier read as the *last* one — and
+it does not even describe CI, where the unit job has always run first, in a
+separate job. The fix is a **+1 shift** that preserves every relative position
+Plan 84 chose:
+
+| Plan 84 | Here | Layer | Needs |
+|---|---|---|---|
+| — | **0** | Config and contract | nothing |
+| unnumbered | **1** | Unit | nothing |
+| Layer 1 | **2** | SQL smoke | Postgres + migrations, DuckDB artifact |
+| Layer 2 | **3** | dbt model logic | the above + MinIO + a dbt build |
+| Layer 3 | **4** | Service API integration | Postgres + the app |
+
+Layers 3 and 4 keep Plan 84's relative order on its own fail-fast rationale
+(a broken schema should not cost a full dbt build) rather than strict cost;
+Plan 162's job split may revisit that pair. The cost is a docstring and CI-step
+sweep — [G11](../TESTING.md#the-gap-list) — and the asserting test covers the
+mapping afterwards, so code and document cannot drift apart again.
+
+The newer suites were already instances of the existing layers and are now
+named as such. The one that needed a real decision was `tests/airflow/` versus
+`tests/integration/airflow/`, and the answer is **the interpreter**, not the
+subject: `tests/integration/airflow/` runs from the isolated
+`apache-airflow==3.2.0` venv the CI job builds, and `tests/airflow/` runs in the
+main venv and therefore must not import `airflow`. Both existing files respect
+that already — `test_notifications.py` by import discipline,
+`test_coordination_admission.py` by reading DAG modules with `ast`.
+
+`tests/integration/lakehouse/` is **dormant by decision** (Plan 125 pulled the
+job in `863a2f2` rather than patch its fixture problem) and the contract makes
+dormancy declarable, because an undeclared dormant suite is indistinguishable
+from an orphaned one — see [G2](../TESTING.md#the-gap-list).
+
+### 2. One mocking convention, or one per layer?
+
+**One convention — `mocker` — with no per-layer, per-directory or per-venv
+carve-out.**
+
+The tiebreak, where one was needed: every shared fixture in `tests/conftest.py`
+is already built on `mocker`, so a test that uses `mock_cursor_context` and
+then reaches for `unittest.mock.patch` has two patch stacks unwinding in an
+order nobody chose.
+
+Two clarifications shrink the apparent drift considerably. `from unittest.mock
+import MagicMock` is a **value constructor, not a patching mechanism**; 37 files
+import it and none of them are violations. And `monkeypatch` legitimately owns
+process state (`setenv`, `delenv`, `setitem`, `chdir`), where `mocker` is the
+wrong tool. Re-measured against those distinctions the census is **10 files
+mixing two patching mechanisms and 10 using `unittest.mock.patch`** — not the
+21 mixed files this document originally reported.
+
+**A first draft of this answer exempted `tests/integration/airflow/`, and that
+was wrong.** The reasoning was that its venv installs `apache-airflow`,
+`pytest`, `psycopg2-binary` and `requests`, so `mocker` does not exist in that
+interpreter and `unittest.mock.patch` is therefore correct there. Every clause
+of that is factually true and the conclusion does not follow: **it is an
+argument that the venv is built wrong, not that the convention should fork.**
+
+The check that settles it: `pytest-mock` declares exactly one dependency,
+`pytest`, which that venv already installs. None of the starlette/fastapi
+conflict that forced the venv's existence touches it. It is a missing argument
+on one `pip install` line. And the two files do not need `unittest.mock` for
+anything — what they patch is `requests.post`, `requests.get`, `time.sleep`
+and one `patch.object` on a DAG module's `post_json`, all ordinary
+`mocker.patch` calls.
+
+So those two files are [G4](../TESTING.md#the-gap-list) with the rest, waived
+by name until the venv is fixed. **A waiver is how a defect waits its turn; an
+exemption says the code is correct.** They are not the same thing, and reaching
+for the second when you mean the first is how a standard quietly becomes a
+description of whatever already exists — which is the failure this whole plan
+is about.
+
+The general form, since it will recur: *"the environment cannot do it"* is a
+fact about the environment, and the first question is always whether the
+environment is right.
+
+### 3. What must never be mocked?
+
+**Yes, the rule is expressible, in three parts of descending mechanical
+strength — and the strongest one is already implemented in the tree.**
+
+1. **A production SQL string must reach a real engine in some layer.** Patching
+   the function that *runs* a query stays legitimate; what the rule forbids is
+   that being the only thing that ever happens to a statement. The repair
+   pattern already exists: `ops/coordination_drain.py` lifted its statements to
+   module scope (`RUNNING_DETAIL_CLAIMS_SQL`, `task_instance_query()`,
+   `gate_observation_query()`) specifically so
+   `tests/integration/sql/test_ops_queries.py` can execute the real thing.
+2. **A route must be reachable through the app's routing table.** See question 5.
+3. **The thing under test is not the thing you mock.** Judgement. The skill
+   states it and refuses to certify it.
+
+**How a test gets hold of the real statement**, in order of preference: load
+the `.sql` file (no import, no dependencies, works from any interpreter);
+import the module-level constant or `(sql, params)` builder where the statement
+is generated; or, last, read it out of the source with `ast`.
+
+**`ast` should stay rare, and each use marks a defect elsewhere.**
+`_sensor_constant()` is the only one in the tree and it is correct, but the
+reason it was necessary is specific rather than a fact of life:
+`airflow/dags/sensors.py` imports `airflow.providers.postgres.hooks.postgres`
+and `airflow.sdk.bases.sensor` **at module scope**, and the SQL-smoke suite
+runs in the main venv, which has no Airflow — so `import sensors` raises before
+reaching the constant. Nothing about the statement resists import; a module
+around it does.
+
+The cause underneath that is narrower still, and is now
+[G12](../TESTING.md#the-gap-list): **`airflow/dags/` has no `.sql` convention
+and cannot reach one.** No module under it imports `shared`, so
+`shared.query_loader` — which six services use — is unavailable there, making
+the DAG tree the one place in the repository where the preferred option is
+structurally impossible. Fix that and the `ast` reader disappears.
+
+So: **no, `ast` should not become a common approach.** A rising count of `ast`
+readers is a signal to act on, not a pattern to spread — each marks SQL that
+ought to live in a file and does not. Where it genuinely is the only option,
+the reader carries a comment naming the import that forced it, so the next
+reader can tell a constraint from an accident.
+
+One correction to the first draft of this answer, which claimed paraphrase
+detection was the mechanical half: **it is not.** Fixture seeds are SQL in test
+files too — `test_ops_queries.py` inserts into `airflow.dag_run` legitimately —
+and a checker that cannot tell a seed from a paraphrase fails on correct code.
+The clean mechanical direction is the other one: **every `.sql` file and
+module-level statement is executed by a Layer 2 test.** Paraphrase detection is
+judgement, and the skill flags rather than fails.
+
+### 4. Where does SQL live?
+
+**Yes — production SQL is a separately executable `.sql` file, loaded by
+`shared.query_loader.load_query` and exposed through the service's
+`queries.py`.** This was not invented here; six modules already do it and
+Layer 1 already executes what they expose.
+
+**Two exemptions.** *Structurally generated statements*, where the shape
+depends on the arguments — `task_instance_query()`'s `VALUES` list is `(%s, %s)`
+repeated per admitted task, which no file can hold. The exemption has a price:
+the builder must be a **module-level function returning `(sql, params)`** so
+Layer 1 can call it and execute the result. And *DDL and one-shot maintenance*,
+which Flyway and `scripts/` own. An `f`-string interpolating a value into SQL
+is neither exemption; it is a bug.
+
+Re-measured at `.execute()` call sites rather than by counting `SELECT`-shaped
+lines, the violation is **10 production modules**, not 16 — listed as
+[G5](../TESTING.md#the-gap-list).
+
+### 5. What does a service owe before it ships?
+
+**Every route reached through the app's routing table by at least one test,
+asserting the status code.** Of the three readings this document offered —
+named, called, asserted-on — the decision is the middle one, made specific:
+not "the handler function is called" but "the request goes through the app".
+
+The evidence for that precision is stronger than the 32/35 figure this document
+originally cited, and different from it. The real counts are **87 routes, 83 of
+which are named somewhere in `tests/`** — and the weakest reading is worthless,
+because it is cleared by the two endpoints that actually vanished in
+production. `container_health`'s `/oneoff-processes` and `/project-status/{project}`
+**do** have tests as of `4d6ed4a` (2026-08-26): `tests/test_container_health_app.py`
+calls `app.active_oneoff_processes()` and `app.project_status()` directly.
+There is **no `TestClient` anywhere in the repository for that service**, so
+those tests passed throughout the eleven hours `/project-status/{project}` was
+returning 404. A handler-level test cannot catch a routing failure, and did not.
+
+Health and readiness endpoints are not exempt — they are precisely what another
+service's drain logic reads.
+
+### 6. What is "enough" per service, and who says so?
+
+**Not a coverage percentage.** The floor is: every route reached through the
+app, every production statement executed against a real engine, and every
+failure branch another service's behaviour depends on. Coverage is an
+instrument for finding gaps, not the definition of one.
+
+**Who says so is a derived table**, in [`docs/TESTING.md`](../TESTING.md), with
+one row per service directory on disk — so a new service with no row is a
+contract violation rather than an omission from a list. Two services sit below
+the floor: `container_health` (4 modules, no Layer 3, no `TestClient`) and
+`dashboard` (7 modules, **zero test files anywhere**; its SQL is covered by
+Layer 1 through `dashboard.queries`, its Python by nothing).
+
+**Plan 84's four-month-old deferral is closed, and it splits.** `dbt_runner`'s
+deferral was already lifted in practice — it has a Layer 3 suite and its
+serving-snapshot SQL executes in Layer 1 against the real DuckDB artifact; it
+meets the floor. `scraper`'s stands and is the largest genuine gap after
+`dashboard`: ten source modules, one integration file, and that file is itself
+invoked by no CI step.
+
+### 7. What does the agent skill check, and what can it not?
+
+Six rules are mechanical and are the skill's and the test's shared scope: CI
+invokes every integration directory or it is declared dormant; patching is
+`mocker` everywhere; every route is reached through `app.routes`; every service
+directory has a row in the "enough" table; every `.sql` file and module-level
+statement is executed by a Layer 2 test; and every `Layer N` mention in
+`tests/` and `ci.yml` matches this contract. Each is derived from the
+repository rather than from a checked-in inventory.
+
+Four are judgement and the skill must **say so rather than imply coverage it
+does not have**: whether the thing under test is the thing being mocked,
+whether a failure branch matters to another service, whether an assertion is
+meaningful, and whether a `SELECT` in a test file paraphrases production or
+seeds a fixture. That last one reads as mechanical and is not — fixture seeds
+are SQL in test files too, and a checker that cannot tell them apart fails on
+correct code. Building both is CAR-34.
+
+### 8. What asserts the contract in CI, and what happens on violation?
+
+**A failing test, with a dated, owned waiver list that only shrinks.** Not an
+advisory report — an advisory report is exactly what `ARCHITECTURE.md`'s
+Testing Strategy section already was, and its failure mode is the reason this
+plan exists.
+
+Existing violations are grandfathered **explicitly**: each entry names its
+owner plan and its date, the test fails on anything not in the list, and an
+entry whose owner plan has closed is itself a failure. This keeps the contract
+mergeable today without turning CAR-34 into the fix-everything work this plan's
+non-goals defer, and it inherits `test_planning_docs.py`'s doctrine — coverage
+is asserted, not enumerated; the waiver list is the one sanctioned exception
+and is visible and countable.
+
+### 9. What happens to `ARCHITECTURE.md:179`?
+
+**Replaced by a pointer**, not rewritten in place. The contract is longer than
+an architecture reference should carry, and it is the source of truth for a
+skill and a test as well as for a reader — that argues for one addressable
+document, `docs/TESTING.md`.
+
+The section that remains is a pointer plus the two facts that are properties of
+the *system* rather than of the suite, and so belong in an architecture
+reference: **CI's database is not production's database** (bare `postgres:16`
+and `minio/minio:latest` rather than the Compose definitions, which is why
+Airflow's schema is absent), and **Airflow is tested in its own interpreter**,
+mirroring its own container in production. No summary of the contract was left
+behind.
+
+## Corrections to this document's own measurements
+
+The four figures below were measured on 2026-08-30 and are restated here rather
+than edited above, because the reasoning that used them is still sound and the
+difference between the two passes is itself informative.
+
+| Stated 2026-08-30 | Measured 2026-08-31 | Why it moved |
+|---|---|---|
+| 21 files mix two mocking styles | **10 files mix two patching mechanisms**; 10 more use `unittest.mock.patch`, none of them legitimately | The first pass counted `from unittest.mock import MagicMock` as a competing style. It is a value constructor, not a patching mechanism |
+| 16 modules still carry inline SQL | **10 modules** carry inline SQL at an `.execute()` call site | The first pass counted `SELECT`-shaped lines, which matched docstrings and comments |
+| `/project-status/{project}` and `/oneoff-processes` are the only two routes with no reference anywhere in `tests/` | Both have had unit tests since `4d6ed4a` (2026-08-26). **Four routes are reached by no test through any routing table**, those two among them | Fixed between the planning session and this one — and the correction *strengthens* the argument, because the tests that exist call the handlers directly and were green throughout the 404 |
+| 32 of 35 routes are at least named by a test | **83 of 87** | The first pass counted a subset of services |
+
+One measurement the first pass did not make at all, and the largest single
+finding of this ticket:
+
+> **73 integration-marked tests across 11 files are invoked by no CI step.**
+> `tests/integration/processing/` — 58 tests in 6 files, last touched
+> 2026-08-30 — has **never** appeared in `.github/workflows/ci.yml`
+> (`git log -S`, no results). `tests/integration/scraper/` (4) and
+> `tests/integration/shared/` (4) are orphaned the same way;
+> `tests/integration/lakehouse/` (7) is dormant by decision but undeclared.
+> Whether any of them still pass is unknown, and finding out is Plan 162's
+> census, not this ticket's.
+
+This is the sharpest available argument for criterion 3. Nothing failed. The
+tests were written, reviewed, merged and maintained, and no mechanism existed
+that could notice they never ran.
+
 ## What this unblocks
 
 Two pieces of work are waiting on this plan's answers, and both were scoped in
 the conversation that produced it.
 
-**The test-suite restructuring** (no plan document yet — deliberately, it cannot
-be written until the questions above are answered):
+**[Plan 162](plan_162_testing_census_and_restructure.md) — the census and the
+test-suite restructuring.** This paragraph originally read "no plan document
+yet — deliberately, it cannot be written until the questions above are
+answered." That was true for about two hours: the stub was written the same
+day, 2026-08-30, precisely so the work had a number and a row instead of living
+in a conversation. It is `plan_162_testing_census_and_restructure.md`, and
+`docs/PLANS.md` build-order row 4 has pointed at it since.
+
+What it owns:
 
 - Split the `dbt build + test` job. It is **267s of a ~4 minute CI wall clock —
   the critical path** — and it is eight sequential suites sharing one Postgres
@@ -171,6 +471,15 @@ be written until the questions above are answered):
   ideally in CI. CI uses bare `postgres:16` and `minio/minio:latest` service
   containers rather than the Compose definitions, which is why CI's database is
   not production's database — the same root as question 3.
+- **The census**, and the twelve entries of
+  [the gap list](../TESTING.md#the-gap-list) that name Plan 162 as owner.
+
+Plan 162's stub carries preliminary readings taken 2026-08-30 and labels them
+"the starting point, not the census". Four of them are superseded by
+[the corrections above](#corrections-to-this-documents-own-measurements) and
+should not be re-derived: the mock, inline-SQL, route-coverage and
+per-service figures. Re-scoping that document against this contract — including
+replacing its placeholder XL — is **CAR-40**.
 
 **[Plan 139](plan_139_test_suite_maintenance.md)**, whose remaining stages are
 maintenance against a standard that does not exist yet. Stage C profiles the
@@ -205,6 +514,15 @@ Everything else in Plan 139 waits.
 
 ## Intersections
 
+### Plan 162 — the census and CI restructure
+
+The implementation half of this plan, and the owner of ten of the twelve gap
+entries. Its document exists — written 2026-08-30 as a deliberate stub, because
+its shape depended on the answers above. Those answers now exist, so **CAR-40
+re-scopes it against this contract**: replacing its placeholder XL with a real
+estimate, and dropping the four preliminary readings this plan has since
+corrected.
+
 ### Plan 139 — test suite maintenance
 
 The plan this was nearly written into, and should not be. Plan 139 is
@@ -212,21 +530,72 @@ maintenance — recover the critical path, add markers, profile a step, fix the
 CI schema gap. This plan sets the standard that maintenance is measured
 against. Folding them together would give 139 two incompatible scopes.
 
-Open: whether Stage C (profiling) and Stage E (impact selection) move to the
-restructuring plan when it is written, leaving 139 as D, F and H. That is a
-scope decision on an existing plan and is not taken here.
+This originally left open whether Stages C and E move to the restructuring plan
+"when it is written". **That is decided, and not here** —
+[`docs/PLANS.md`](../PLANS.md) build-order row 3 records it: Stages B, C, E and
+the markers half of D belong to Plan 162; **Stage F, Stage H, and the
+coverage-decision half of D remain Plan 139's.** That half is D items 4 and 5 —
+whether a `--cov-fail-under` gate exists, and whether `airflow/dags/` and
+`dashboard/` join the coverage configuration — which is
+[G10](../TESTING.md#the-gap-list), and which Stage D had already framed
+correctly: *"either answer is fine; the current state — unmeasured and
+unexplained — is not."*
 
 ### Plan 84 — integration testing
 
-Archived, and the source of the current layer model. Its explicit deferral of
-`dbt_runner` and `scraper` is one of the decisions question 6 must re-examine.
+Archived, and the source of the layer model this plan renumbers. Its explicit
+deferral of `dbt_runner` and `scraper` was question 6's to re-examine and
+[is now closed](#6-what-is-enough-per-service-and-who-says-so), split:
+`dbt_runner`'s lifted, `scraper`'s standing as [G8](../TESTING.md#the-gap-list).
 
 ### Plans 141 and 142 — the contract pattern
 
 Not dependencies; precedents. Both pair a checked-in registry with tests that
-assert reality matches it, which is the mechanism criterion 3 asks for.
+assert reality matches it, which is the mechanism criterion 3 asks for and
+CAR-34 builds.
 
 ### Plan 120 — CI lake snapshot
 
-Supplies the fixture the restructuring needs. Complete, and its output is
+Supplies the fixture Plan 162's restructure needs. Complete, and its output is
 already seeded in CI without being used for dbt.
+
+## Evidence
+
+### Evidence — CAR-33, 2026-08-31
+
+Criteria 1, 4 and 5 are met; 2 and 3 are CAR-34's and remain open. The contract
+is [`docs/TESTING.md`](../TESTING.md); `ARCHITECTURE.md:179` is a pointer with
+no second description behind it. Commits `cad95c8`, `06f90e3`, `9a56635`.
+
+**Four of this document's own 2026-08-30 measurements were wrong** and are
+corrected in [§Corrections](#corrections-to-this-documents-own-measurements).
+Two review corrections changed decisions rather than numbers: the Airflow
+mocking exemption was withdrawn as bad logic — it argued that the venv is built
+wrong, not that the convention should fork — and the layers were renumbered by
+dependency cost, after the original scheme left the dependency-free tier
+reading as the last one.
+
+**The largest finding was one the planning session did not make.** 73
+integration-marked tests across 11 files are invoked by no CI step, and
+`tests/integration/processing/` — 58 of them, last touched the day before — has
+never appeared in `ci.yml` at all. Recorded as G1; whether they still pass is
+unknown, and finding out is Plan 162's census. Nothing failed to produce this:
+the tests were written, reviewed, merged and maintained, and no mechanism
+existed that could notice they never ran. It is the sharpest available argument
+for criterion 3, and it was found by measuring rather than by reading.
+
+**A fourth rule was added after review**, on evidence found while investigating
+this PR's own red CI: *the harness must not decide the outcome.* The
+`Documentation tests` job fails on every docs-only changeset, and
+`tests/test_planning_docs.py` passes or fails purely on whether the checkout
+directory name is a valid Python identifier — 35 passed as
+`cartracker-scraper`, 2 failed as `new_car_tracker`, same commit, same machine.
+`tests/airflow/test_prune_task_logs_dag.py` is the same class already repaired
+in `21333ab`. Both are G13; the CI fix is CAR-42.
+
+The gap list records every measured violation with an owner plan: G1-G2 and
+G4-G9, G11-G12 to Plan 162, G3 to Plan 139 Stage F (CAR-36), G10 to Plan 139
+Stage D items 4 and 5, G13 to Plan 146 Stage 1 (CAR-42).
+
+Cost: estimate 2, actual 1 (-1). The nine questions were largely answerable by
+measurement rather than deliberation.
