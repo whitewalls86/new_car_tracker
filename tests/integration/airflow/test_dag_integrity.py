@@ -22,6 +22,27 @@ import pytest
 
 REPO_ROOT = Path(__file__).parents[3]
 DAGS_DIR = REPO_ROOT / "airflow" / "dags"
+CENSUS = REPO_ROOT / "tests" / "health_sensor_census.py"
+
+
+def _load_census():
+    """Load the health-sensor census by path rather than importing it.
+
+    This venv is `apache-airflow==3.2.0` in isolation and pytest does not put
+    the repo root on `sys.path` here: CI run 33444675959 failed collection with
+    `ModuleNotFoundError: No module named 'tests'` on a plain
+    `from tests.health_sensor_census import ...` that passed in the main venv.
+    Loading by path is what both readers of the census can do, and the census
+    imports nothing, so there is nothing to resolve. Same helper, same reason,
+    in tests/airflow/test_health_sensor_demotion.py.
+    """
+    spec = importlib.util.spec_from_file_location("health_sensor_census", CENSUS)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+expected_sensor_task_ids = _load_census().expected_sensor_task_ids
 
 # Map dag filename -> expected dag_id and expected task_ids
 DAG_SPECS = {
@@ -119,6 +140,10 @@ DAG_SPECS = {
             "notify",
         },
     },
+    "disk_usage.py": {
+        "dag_id": "disk_usage",
+        "tasks": {"check_deploy_intent", "check_pack_worker_health", "disk_usage"},
+    },
     "prune_task_logs.py": {
         "dag_id": "prune_task_logs",
         "tasks": {"check_deploy_intent", "prune_task_logs"},
@@ -183,6 +208,34 @@ def test_dag_id_and_tasks(filename, spec):
         f"Task mismatch for '{dag_id}':\n"
         f"  expected: {spec['tasks']}\n"
         f"  actual:   {actual_tasks}"
+    )
+
+
+@pytest.mark.integration
+def test_every_dag_the_dagbag_builds_is_named_in_the_specs():
+    """DAG_SPECS is a census too, and it was already one short.
+
+    `disk_usage` was absent from it, so neither `test_dag_imports_without_error`
+    nor `test_dag_id_and_tasks` ever reached the DAG -- while
+    airflow/dags/disk_usage.py's own `except ImportError` comment said "the
+    Airflow integration suite imports the real DAG and asserts it exists". The
+    claim was checked into source and false, which is the same defect Plan 162
+    Stage 3 removed one layer up: a census kept honest by whoever remembers it.
+
+    Parametrising over DAG_SPECS can only ever check the DAGs someone thought to
+    list. This asks the DagBag instead, so a new DAG file fails until it is
+    named -- and a deleted one fails until its entry goes.
+    """
+    dagbag = _make_dagbag()
+    assert not dagbag.import_errors
+
+    built = set(dagbag.dags)
+    listed = {spec["dag_id"] for spec in DAG_SPECS.values()}
+    assert built == listed, (
+        "DAG_SPECS no longer names every DAG in airflow/dags/.\n"
+        f"  built but unlisted: {sorted(built - listed)}\n"
+        f"  listed but absent:  {sorted(listed - built)}\n"
+        "An unlisted DAG is imported and asserted by nothing in this file."
     )
 
 
@@ -278,7 +331,7 @@ def test_health_sensors_skip_rather_than_fail_on_the_real_operators():
     dagbag = _make_dagbag()
     assert not dagbag.import_errors
 
-    health_sensors = 0
+    health_sensors = []
     for dag in dagbag.dags.values():
         for task_id, task in dag.task_dict.items():
             if task_id == "check_deploy_intent":
@@ -287,7 +340,7 @@ def test_health_sensors_skip_rather_than_fail_on_the_real_operators():
                     "deploy intent must still stop the DAG"
                 )
             elif task_id.startswith("check_") and task_id.endswith("_health"):
-                health_sensors += 1
+                health_sensors.append(task_id)
                 assert task.soft_fail is True, (
                     f"{dag.dag_id}.{task_id} fails instead of skipping on "
                     "timeout, so a down service pages as a DAG failure again"
@@ -297,13 +350,18 @@ def test_health_sensors_skip_rather_than_fail_on_the_real_operators():
                     "sensors ignore soft_fail on timeout (apache/airflow#61130)"
                 )
 
-    # 16 when Plan 140 Stage 4 landed; 14 since Plan 134's survey deleted
-    # cleanup_parquet.py and cleanup_artifacts.py, each of which wired one
-    # check_archiver_health, for an endpoint that had been a no-op since V036.
-    # This counts sensor *tasks*; test_health_sensor_demotion counts the DAG
-    # *files* that wire one, which is 13 -- one DAG wires two sensors.
-    assert health_sensors == 14, (
-        f"found {health_sensors} health sensors across the DagBag, expected 14. "
+    # 16 sensor tasks when Plan 140 Stage 4 landed; 14 since Plan 134's survey
+    # deleted cleanup_parquet.py and cleanup_artifacts.py, each of which wired
+    # one check_archiver_health, for an endpoint that had been a no-op since
+    # V036. That deletion updated the file count in test_health_sensor_demotion
+    # and missed this one, so Plan 162 Stage 3 gave both the same source: this
+    # counts sensor *tasks* and that counts the DAG *files* wiring them, and
+    # both now derive from tests/health_sensor_census.py.
+    assert sorted(health_sensors) == expected_sensor_task_ids(), (
+        "the health sensors the DagBag built no longer match the census in "
+        "tests/health_sensor_census.py.\n"
+        f"  built:    {sorted(health_sensors)}\n"
+        f"  declared: {expected_sensor_task_ids()}\n"
         "These gate DAG correctness independently of who reports the outage, "
         "so a dropped one is work starting against an unanswering service."
     )

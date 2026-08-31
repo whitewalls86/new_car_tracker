@@ -16,6 +16,7 @@ tests/airflow/test_maintenance_pool.py, so they run in the ordinary suite
 without Airflow installed.
 """
 import ast
+import importlib.util
 from pathlib import Path
 
 import pytest
@@ -23,8 +24,30 @@ import pytest
 REPO_ROOT = Path(__file__).parents[2]
 DAGS_DIR = REPO_ROOT / "airflow" / "dags"
 SENSORS = DAGS_DIR / "sensors.py"
+CENSUS = REPO_ROOT / "tests" / "health_sensor_census.py"
 
 HEALTH_FACTORY = "http_health_sensor"
+
+
+def _load_census():
+    """Load the census by path rather than importing it.
+
+    `from tests.health_sensor_census import ...` resolves in this venv and not
+    in the isolated Airflow one, where pytest never puts the repo root on
+    `sys.path` -- CI run 33444675959 failed collection there with
+    `ModuleNotFoundError: No module named 'tests'` while the same import passed
+    locally. A declaration whose whole purpose is to be read from two virtual
+    environments cannot be reached by a mechanism that only one of them has, so
+    both readers load it the way that depends on nothing: by file path. The
+    census itself imports nothing, which is what makes that safe.
+    """
+    spec = importlib.util.spec_from_file_location("health_sensor_census", CENSUS)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+HEALTH_SENSOR_CENSUS = _load_census().HEALTH_SENSOR_CENSUS
 
 
 def _dag_files():
@@ -54,6 +77,31 @@ def _health_sensor_vars(tree: ast.Module) -> set:
                 t.id for t in node.targets if isinstance(t, ast.Name)
             )
     return names
+
+
+def _health_sensor_services(tree: ast.Module) -> tuple:
+    """The service names passed to http_health_sensor(...), in source order.
+
+    Positional-only on purpose: `service_name` is the first parameter and every
+    call site passes it as a literal, which is what makes the census checkable
+    without importing Airflow. A call that stops doing so fails here rather than
+    silently contributing nothing to the count.
+    """
+    services = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if not (isinstance(func, ast.Name) and func.id == HEALTH_FACTORY):
+            continue
+        arg = node.args[0] if node.args else None
+        assert isinstance(arg, ast.Constant) and isinstance(arg.value, str), (
+            f"{HEALTH_FACTORY} called without a literal service name, so the "
+            "task_id it builds cannot be read from source and the census in "
+            "tests/health_sensor_census.py can no longer be checked"
+        )
+        services.append((node.lineno, arg.value))
+    return tuple(service for _, service in sorted(services))
 
 
 def _notify_vars(tree: ast.Module) -> set:
@@ -118,19 +166,64 @@ class TestTheSensorSkipsRatherThanFails:
     def test_the_gate_survives_the_demotion(self):
         """A skip is not a removal. Every DAG that had a health sensor still
         has one, and it is still upstream of the work -- Plan 140 is explicit
-        that these must be demoted rather than deleted."""
+        that these must be demoted rather than deleted.
+
+        Checked as a mapping rather than as a count (Plan 162 Stage 3): the
+        DagBag census in tests/integration/airflow/test_dag_integrity.py counts
+        sensor *tasks* where this counts DAG *files*, and the two numbers differ
+        because `hourly_analytics_refresh` wires two. Both now derive from
+        tests/health_sensor_census.py, so the pair cannot go stale one at a
+        time -- which is exactly how they went stale in `056cde7`.
+
+        15 files when Plan 140 Stage 4 landed; 13 since Plan 134's survey
+        deleted cleanup_parquet.py and cleanup_artifacts.py, whose endpoint had
+        been a no-op since V036 dropped raw_artifacts.
+        """
         wired = {
-            path.name for path in _dag_files()
+            path.name: _health_sensor_services(_tree(path))
+            for path in _dag_files()
             if HEALTH_FACTORY in path.read_text()
-        } - {"sensors.py"}
-        # 15 when Plan 140 Stage 4 landed; 13 since Plan 134's survey deleted
-        # cleanup_parquet.py and cleanup_artifacts.py, whose endpoint had been
-        # a no-op since V036 dropped raw_artifacts.
-        assert len(wired) == 13, (
-            f"{len(wired)} DAGs wire a health sensor, expected 13. If a DAG "
-            "dropped its sensor, work can now start against a service that is "
-            "not answering; the sensors gate DAG correctness independently of "
-            "who reports the outage."
+        }
+        wired.pop("sensors.py", None)  # defines the factory, calls it nowhere
+        assert wired == HEALTH_SENSOR_CENSUS, (
+            "the health sensors wired in airflow/dags/ no longer match the "
+            "census in tests/health_sensor_census.py.\n"
+            f"  wired:    {sorted(wired.items())}\n"
+            f"  declared: {sorted(HEALTH_SENSOR_CENSUS.items())}\n"
+            "If a DAG dropped its sensor, work can now start against a service "
+            "that is not answering; the sensors gate DAG correctness "
+            "independently of who reports the outage. If the change was "
+            "deliberate, update the census -- the DagBag test reads the same "
+            "declaration and will follow."
+        )
+
+    def test_the_task_id_the_census_predicts_is_the_one_the_factory_builds(self):
+        """The join between the two censuses, asserted rather than assumed.
+
+        `expected_sensor_task_ids()` turns a declared service name into
+        `check_{service}_health` and the DagBag census compares that against
+        real task ids. Nothing else connects the two: rename the suffix here and
+        the integration test starts failing in the isolated Airflow venv against
+        a declaration that looks correct, which is a worse version of the drift
+        Plan 162 Stage 3 removed.
+        """
+        tree = _tree(SENSORS)
+        func = next(
+            n for n in ast.walk(tree)
+            if isinstance(n, ast.FunctionDef) and n.name == HEALTH_FACTORY
+        )
+        call = next(
+            n for n in ast.walk(func)
+            if isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Name)
+            and n.func.id == "_ServiceHealthSensor"
+        )
+        task_id = _kwarg(call, "task_id")
+        source = ast.get_source_segment(SENSORS.read_text(), task_id)
+        assert source == 'f"check_{service_name}_health"', (
+            f"{HEALTH_FACTORY} builds its task_id as {source}; "
+            "tests/health_sensor_census.py predicts check_{service}_health and "
+            "the DagBag census compares against that prediction"
         )
 
     def test_deploy_intent_is_left_alone(self):

@@ -2,13 +2,16 @@
 
 ## Status
 
-**Stages 0, 1 and 2 are complete (CAR-40, CAR-45 and CAR-46, all 2026-08-31).**
-The census enumerated the work; Stage 1 ran the 73 tests nothing had ever
-invoked and found no production defects behind them, which
+**Stages 0, 1, 2 and 3 are complete (CAR-40, CAR-45, CAR-46 and CAR-47, all
+2026-08-31).** The census enumerated the work; Stage 1 ran the 73 tests nothing
+had ever invoked and found no production defects behind them, which
 [confirms the L estimate](#evidence--stage-1-the-orphaned-suites-car-45-2026-08-31);
 Stage 2 [unblinded the coverage instrument](#evidence--stage-2-unblinding-coverage-car-46-2026-08-31)
 the later stages are graded by, taking the reported number from 88% to 75.95%
-without a line of production code changing. The waiver list stands at 116.
+without a line of production code changing; Stage 3
+[gave the two health-sensor censuses one declared source](#evidence--stage-3-one-declared-source-for-the-health-sensor-censuses-car-47-2026-08-31)
+and found a third census, `DAG_SPECS`, already one DAG short. The waiver list
+stands at 116 — Stage 3 closes no waivers, only Plan 139's Stage H.
 
 This document was written as a deliberate stub on 2026-08-30, when
 [Plan 161](plan_161_testing_contract.md) had not yet decided the standard this
@@ -98,8 +101,8 @@ order:
 |---|---|---|---|
 | **0** | **The census. Complete — CAR-40, 2026-08-31** | — | — |
 | **1** | **The orphaned suites. Complete — CAR-45, 2026-08-31** | G1, G2 | 4 |
-| **2** | Unblind coverage. `[tool.coverage.run] source` names every service directory, and something consumes the number | G10 | -- |
-| **3** | The two health-sensor censuses read one declared source instead of two hardcoded counts | Plan 139 Stage H | -- |
+| **2** | **Unblind coverage. Complete — CAR-46, 2026-08-31** | G10 | -- |
+| **3** | **The two health-sensor censuses read one declared source. Complete — CAR-47, 2026-08-31** | Plan 139 Stage H | -- |
 | **4** | Split the 267s `dbt build + test` job — the cheap half of the restructure | Plan 139 Stages B, C | -- |
 | **5** | The mechanical sweeps: 34 mock conversions and 16 layer renames, plus the one live harness-decides-the-outcome test | G4, G11, G13 | 50 |
 | **5b** | Separate production scripts from spent ones. `scripts/ops/` and `scripts/oneoff/`, the coverage denominator reads the split, and `ci_change_scope.py` gains its second prefix | — | -- |
@@ -659,3 +662,82 @@ is among the 3,195 that pass on Linux and is the one failure on Windows. CI
 cannot see the instance Stage 5 owns, exactly as its row says. The single
 Linux skip is unrelated — `test_every_sha_a_recap_names_is_a_real_commit`,
 which skips on a shallow clone.
+
+### Evidence — Stage 3, one declared source for the health-sensor censuses (CAR-47), 2026-08-31
+
+All three exit conditions met. Commits `17d4fab`, `a5fda6c` and `92ef62b`,
+[PR #319](https://github.com/whitewalls86/new_car_tracker/pull/319). Estimate 1,
+actual 1.
+
+`tests/health_sensor_census.py` declares the mapping both counts derive from:
+DAG file → the service names it passes to `http_health_sensor`. Thirteen keys,
+fourteen services — the two numbers that were hardcoded separately, now one
+declaration. **Declaring the structure rather than the two integers is what
+makes the stage's own constraint disappear**: "one DAG wires two sensors" is a
+fact in the data instead of the comment that was documenting it, and neither
+count can be updated without the other following.
+
+Both assertions got stronger as a side effect of having something to compare
+against:
+
+| Test | Before | After |
+|---|---|---|
+| `test_the_gate_survives_the_demotion` (main venv) | `len(wired) == 13` | the whole file→services mapping, ast-extracted from the real call sites, so drift names the DAG |
+| `test_health_sensors_skip_rather_than_fail_on_the_real_operators` (Airflow venv) | `health_sensors == 14` | sorted DagBag task ids against the ids the census implies, so a missing one names itself |
+
+One assertion is new. `test_the_task_id_the_census_predicts_is_the_one_the_factory_builds`
+pins `sensors.py`'s `f"check_{service_name}_health"` — the only link joining the
+census's service names to real task ids, and previously unchecked from either
+side.
+
+**The exit asked that the declared source not import Airflow; it imports nothing
+at all**, and that turned out to be load-bearing for a reason the exit did not
+anticipate.
+
+**The first attempt failed in exactly the way this stage exists to catch.**
+`from tests.health_sensor_census import ...` resolves in the main venv and not
+in the isolated `apache-airflow==3.2.0` one, where pytest leaves the repo root
+off `sys.path`.
+[Run 33444675959](https://github.com/whitewalls86/new_car_tracker/actions/runs/33444675959)
+failed collection with `ModuleNotFoundError: No module named 'tests'` on an
+import that had passed locally and could not be made to fail locally. The fix
+was to remove the environment from the question — both readers now load the
+census by path with `importlib.util`, which depends on nothing — rather than to
+add the repo root to the CI step's `PYTHONPATH`, which would have made the
+suite's outcome depend on its environment and manufactured a fresh instance of
+G13's class while closing this one. **The pre-push verification had proved only
+that the main venv could reach the file, and inferred the rest.** That is worth
+recording as the stage's real cost: the two-venv constraint was understood,
+written down in the issue, and still evaded on the one axis nobody checked.
+
+**Mutation-checked in three directions**, each failing with the intended
+message: dropping a census entry, adding a sensor to a DAG, and renaming the
+`task_id` format. The path loader was then re-verified against the condition CI
+actually had — with the repo root stripped from `sys.path`, the bare import
+raises the same `ModuleNotFoundError` while both test modules import cleanly and
+read 13 files / 14 tasks.
+
+**Confirmed in CI, which is the only place the DagBag half can run.**
+[Run 33445223553](https://github.com/whitewalls86/new_car_tracker/actions/runs/33445223553),
+all jobs green:
+`test_health_sensors_skip_rather_than_fail_on_the_real_operators PASSED` in the
+isolated venv, with `dbt build + test` at 4m43s.
+
+**What is not verified:** no mutation was run against the DagBag census in CI,
+which would mean pushing a deliberately broken commit. That half follows by
+construction — it reads the same declaration through the same loader — and it
+has passed, but it has not been broken on purpose the way the main-venv half
+has.
+
+**A third census was found one layer up, and was already one short.**
+`DAG_SPECS` in `tests/integration/airflow/test_dag_integrity.py` omitted
+`disk_usage`, so neither `test_dag_imports_without_error` nor
+`test_dag_id_and_tasks` ever reached that DAG — while
+`airflow/dags/disk_usage.py`'s own `except ImportError` comment claimed *"the
+Airflow integration suite imports the real DAG and asserts it exists"*. A false
+claim, checked into source, in the same shape as the defect this stage removed:
+a list kept honest by whoever remembers it. Fixed in `92ef62b` — the entry
+added, and a new assertion comparing the DagBag's dag_ids against the ones
+`DAG_SPECS` names, because parametrising over a list can only ever check the
+things someone thought to list. It is not owned by any stage: G12 is about
+`shared` imports, not this.
