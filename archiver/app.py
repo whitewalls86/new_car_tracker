@@ -63,6 +63,139 @@ _ALLOW_PACK_JOBS = (
     os.environ.get("ARCHIVER_ALLOW_PACK_JOBS", "false").lower() == "true"
 )
 
+# ---------------------------------------------------------------------------
+# Plan 134 Stage 1 — the flush/compact failure contract, warning-only
+# ---------------------------------------------------------------------------
+#
+# Exactly the gap the Plan 131 block below describes, on the three endpoints
+# that block deliberately left alone. Each processor returns a summary rather
+# than raising, this module returns it with a 200, and resp.raise_for_status()
+# — the entire check a DAG performs — passes on a run that flushed nothing
+# because the disk was full.
+#
+# Stage 0 measured what that has cost. A full MinIO produced 21 ERROR records
+# over five days (2026-08-08 → 08-13); code deployed ahead of its migration
+# produced 32 over sixteen hours (2026-08-26 → 08-27). Airflow recorded every
+# one of the 128 covering runs as success, and dbt built on stale data through
+# both. So these predicates are already known to be right on the two failure
+# modes that have actually happened.
+#
+# What is not known is what *else* they would fire on, and that is the whole
+# reason this stage warns instead of raising: an oversight here costs a log
+# line for seven days rather than a skipped dbt build every hour. Stage 2
+# flips them to a 500, one endpoint per deploy and 48 hours apart, in
+# ascending order of blast radius.
+#
+# The shape is _pack_failure_reason's, below: a pure function on the summary
+# dict, mirroring that job's own CLI exit code, unit-tested directly against
+# summary dicts, whose docstring records *why* each carried condition is
+# carried — a predicate without that reasoning is how an hourly job gets
+# failed over a quiet hour.
+
+
+def _warn_would_fail(job: str, reason: Optional[str]) -> None:
+    """Log the Stage 1 warning for a run Stage 2 will fail, and carry on.
+
+    The greppable half of the observation window. Every warning emitted here
+    carries the literal ``would fail``, so the seven-day gate is one query:
+
+        {service="archiver", level="WARNING"} |~ "would fail"
+
+    rather than a text-matching exercise across three job vocabularies. Keep
+    the phrase intact when Stage 2 replaces a call site with the raise — the
+    window is read out of that query, and each endpoint leaves it on its own
+    deploy.
+    """
+    if reason:
+        logger.warning("%s: would fail — %s", job, reason)
+
+
+def _flush_silver_failure_reason(summary: Dict[str, Any]) -> Optional[str]:
+    """Why this silver flush counts as failed, or None.
+
+    ``error`` is the whole predicate. ``flush_silver_observations`` sets it on
+    a DB connection failure, on a MinIO connection failure, and on any
+    exception inside the write-then-delete transaction — the last of which is
+    Stage 0's Incident 1, where PutObject returned XMinioStorageFull for five
+    days while the DAG went green every hour.
+
+    ``flushed == 0`` is **not** a failure. The processor returns
+    ``{"flushed": 0, "error": None}`` when nothing is staged, which is the
+    ordinary state of a quiet hour; failing on it would page forever on a
+    system that is working.
+    """
+    if summary.get("error"):
+        return f"flush aborted: {summary['error']}"
+    return None
+
+
+def _flush_staging_failure_reason(summary: Dict[str, Any]) -> Optional[str]:
+    """Why this staging flush counts as failed, or None.
+
+    The per-table failures are the condition worth naming. ``flush_staging_events``
+    flushes each table independently and rolls any failure up into a top-level
+    ``error`` of the literal ``"one or more tables failed"``, which says
+    nothing about which — and Stage 0's Incident 2 was two tables out of six,
+    missing for sixteen hours because the archiver image shipped ahead of V044
+    and V045. A page that cannot name them sends a human to read six tables.
+
+    The top-level ``error`` is still checked on its own, because the two
+    connection-failure paths set it with an empty ``tables`` list and there is
+    nothing per-table to name.
+
+    ``total_flushed == 0`` is **not** a failure, for the same reason it is not
+    on the silver flush: an hour with nothing staged is an ordinary hour.
+    """
+    failed = [
+        table.get("table") or "?"
+        for table in (summary.get("tables") or [])
+        if table.get("error")
+    ]
+    if failed:
+        return f"{len(failed)} staging table(s) failed to flush: {', '.join(failed)}"
+    if summary.get("error"):
+        return f"flush aborted: {summary['error']}"
+    return None
+
+
+def _compact_failure_reason(summary: Dict[str, Any]) -> Optional[str]:
+    """Why this compaction run counts as failed, or None.
+
+    **The predicate is ``error or failed``, and ``failed`` is the half that
+    matters.** ``compact_silver`` catches per-partition exceptions, counts them
+    in ``failed``, appends an ``{"ok": False, ...}`` entry to ``partitions``,
+    and then returns the run summary with ``"error": None``. Its top-level
+    ``error`` is set only when MinIO itself is unreachable, so a run in which
+    every partition failed is ``{"failed": 7, "error": None}`` — and, before
+    this predicate, a 200.
+
+    A failed partition is not a soft signal here. ``_compact_one`` writes a
+    ``.parquet.tmp``, verifies the row count, deletes the originals, then
+    renames; a rename failure raises *after* the originals are gone, leaving an
+    unpublished ``.tmp`` that the ``*.parquet`` glob does not match. That is
+    data which is present and invisible to every reader until a human moves it,
+    which is the condition on this service that most needs a person. So the
+    reason names the offending partitions rather than only counting them, and
+    the caller carries the whole summary — ``partitions`` entries included.
+
+    ``skipped`` and ``incremental`` are **not** failures. A partition that is
+    already compacted is skipped, an incremental merge is the normal daily
+    path, and a run that is entirely skipped is a clean run.
+    """
+    if summary.get("error"):
+        return f"run aborted: {summary['error']}"
+    failed = summary.get("failed") or 0
+    if failed:
+        names = [
+            f"{partition.get('source')}/{partition.get('date')}"
+            for partition in (summary.get("partitions") or [])
+            if not partition.get("ok", True)
+        ]
+        named = f": {', '.join(names)}" if names else ""
+        return f"{failed} partition(s) failed to compact{named}"
+    return None
+
+
 @app.post("/cleanup/queue")
 def run_cleanup_queue_batch(payload: dict = Body(...)) -> Dict[str, Any]:
     """Delete a caller-supplied list of artifacts_queue rows (status complete/skip)."""
@@ -83,16 +216,32 @@ def trigger_cleanup_queue() -> Dict[str, Any]:
 
 @app.post("/flush/silver/run")
 def trigger_flush_silver() -> Dict[str, Any]:
-    """Flush staging.silver_observations to MinIO silver layer (Airflow DAG trigger)."""
+    """Flush staging.silver_observations to MinIO silver layer (Airflow DAG trigger).
+
+    Plan 134 Stage 1: a run failing ``_flush_silver_failure_reason`` logs a
+    ``would fail`` warning and **still returns 200**. Stage 2 turns that into a
+    500 carrying the summary and a ``failure_reason`` — last of the three,
+    because a 500 here skips the dbt build for that hour.
+    """
     with active_job():
-        return _flush_silver_observations()
+        result = _flush_silver_observations()
+        _warn_would_fail("flush_silver", _flush_silver_failure_reason(result))
+        return result
 
 
 @app.post("/compact/silver/run")
 def trigger_compact_silver() -> Dict[str, Any]:
-    """Compact silver_normalized/observations partitions (Airflow DAG trigger)."""
+    """Compact silver_normalized/observations partitions (Airflow DAG trigger).
+
+    Plan 134 Stage 1: a run failing ``_compact_failure_reason`` logs a
+    ``would fail`` warning and **still returns 200**. Stage 2 turns that into a
+    500 carrying the summary and a ``failure_reason`` — first of the three,
+    because this runs daily and nothing downstream depends on it.
+    """
     with active_job():
-        return _compact_silver()
+        result = _compact_silver()
+        _warn_would_fail("compact_silver", _compact_failure_reason(result))
+        return result
 
 
 # ---------------------------------------------------------------------------
@@ -120,6 +269,10 @@ def trigger_compact_silver() -> Dict[str, Any]:
 # fixed the same way — but that converts long-standing *silent* failures into
 # sudden DAG failures and pages, which is its own change with its own blast
 # radius, not something to smuggle in under a packing plan.
+#
+# That change is Plan 134, and its predicates are in the block above. They are
+# warning-only through Stage 1's observation window; these three have raised
+# since Plan 131 Stage 5.
 
 
 @contextmanager
@@ -359,9 +512,17 @@ def trigger_verify_pack_read_path(payload: dict = Body(default={})) -> Dict[str,
 
 @app.post("/flush/staging/run")
 def trigger_flush_staging() -> Dict[str, Any]:
-    """Flush all staging event tables to MinIO Parquet (Airflow DAG trigger)."""
+    """Flush all staging event tables to MinIO Parquet (Airflow DAG trigger).
+
+    Plan 134 Stage 1: a run failing ``_flush_staging_failure_reason`` logs a
+    ``would fail`` warning naming the tables and **still returns 200**. Stage 2
+    turns that into a 500 carrying the summary and a ``failure_reason`` —
+    second of the three, since the dbt build does not read staging events.
+    """
     with active_job():
-        return _flush_staging_events()
+        result = _flush_staging_events()
+        _warn_would_fail("flush_staging", _flush_staging_failure_reason(result))
+        return result
 
 
 def _require_disk_usage_host_mounts() -> None:

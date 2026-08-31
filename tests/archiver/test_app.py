@@ -1,5 +1,7 @@
 """Unit tests for archiver/app.py — all HTTP endpoints."""
 
+import logging
+
 import pytest
 
 
@@ -1090,3 +1092,293 @@ class TestDiskUsageEndpoint:
 
         assert resp.status_code == 500
         assert resp.json()["detail"]["unpublished"] == ["/usr", "/tmp"]
+
+
+# ---------------------------------------------------------------------------
+# The Plan 134 failure contract, Stage 1 (warning-only)
+#
+# The same defect as the Plan 131 block above, on the three endpoints it left
+# alone. Stage 0 measured what it cost: five days of a full MinIO and sixteen
+# hours of code deployed ahead of its migration, both of which Airflow recorded
+# as unbroken success while dbt built on stale data.
+#
+# The predicates are tested here exactly as the Plan 131 ones are — directly
+# against summary dicts, including every passing case they must *not* fail on,
+# because a predicate that fails a quiet hour pages every hour forever. The
+# endpoints still return 200 through Stage 1's observation window; Stage 2
+# flips them to a 500 one deploy at a time.
+# ---------------------------------------------------------------------------
+
+class TestFlushSilverFailureReason:
+    def test_a_clean_flush_is_not_a_failure(self):
+        from archiver.app import _flush_silver_failure_reason
+
+        assert _flush_silver_failure_reason({"flushed": 4210, "error": None}) is None
+
+    def test_flushing_nothing_is_not_a_failure(self):
+        from archiver.app import _flush_silver_failure_reason
+
+        # The ordinary state of a quiet hour. The processor returns exactly
+        # this when nothing is staged, and failing on it would page forever on
+        # a system that is working.
+        assert _flush_silver_failure_reason({"flushed": 0, "error": None}) is None
+
+    def test_error_is_a_failure(self):
+        from archiver.app import _flush_silver_failure_reason
+
+        # Stage 0's Incident 1: XMinioStorageFull for five days, 200 every hour.
+        reason = _flush_silver_failure_reason({
+            "flushed": 0,
+            "error": "[Errno 5] ... (XMinioStorageFull) when calling the PutObject operation",
+        })
+        assert reason and "XMinioStorageFull" in reason
+
+    def test_a_connection_failure_is_a_failure(self):
+        from archiver.app import _flush_silver_failure_reason
+
+        reason = _flush_silver_failure_reason(
+            {"flushed": 0, "error": "could not connect to server"}
+        )
+        assert reason and "could not connect" in reason
+
+
+class TestFlushStagingFailureReason:
+    def test_a_clean_flush_is_not_a_failure(self):
+        from archiver.app import _flush_staging_failure_reason
+
+        assert _flush_staging_failure_reason({
+            "total_flushed": 812,
+            "tables": [
+                {"table": "staging.price_observation_events", "flushed": 812,
+                 "error": None},
+            ],
+            "error": None,
+        }) is None
+
+    def test_flushing_nothing_is_not_a_failure(self):
+        from archiver.app import _flush_staging_failure_reason
+
+        # Every table quiet. This is most hours.
+        assert _flush_staging_failure_reason({
+            "total_flushed": 0,
+            "tables": [
+                {"table": "staging.vin_to_listing_events", "flushed": 0, "error": None},
+                {"table": "staging.artifacts_queue_events", "flushed": 0, "error": None},
+            ],
+            "error": None,
+        }) is None
+
+    def test_the_reason_names_the_failing_tables(self):
+        from archiver.app import _flush_staging_failure_reason
+
+        # Stage 0's Incident 2: two tables out of six, sixteen hours, because
+        # the image shipped ahead of V044/V045. The roll-up error says only
+        # "one or more tables failed", which sends a human to read six tables.
+        reason = _flush_staging_failure_reason({
+            "total_flushed": 91,
+            "tables": [
+                {"table": "staging.price_observation_events", "flushed": 91,
+                 "error": None},
+                {"table": "staging.coordination_state_events", "flushed": 0,
+                 "error": 'relation "staging.coordination_state_events" does not exist'},
+                {"table": "staging.coordination_release_evidence", "flushed": 0,
+                 "error": 'relation "staging.coordination_release_evidence" does not exist'},
+            ],
+            "error": "one or more tables failed",
+        })
+        assert reason
+        assert "2 staging table(s)" in reason
+        assert "staging.coordination_state_events" in reason
+        assert "staging.coordination_release_evidence" in reason
+        # The table that worked is not in the page.
+        assert "price_observation_events" not in reason
+
+    def test_a_connection_failure_has_no_tables_to_name(self):
+        from archiver.app import _flush_staging_failure_reason
+
+        # Both connection paths return the error with an empty tables list, so
+        # the top-level error has to be checked on its own.
+        reason = _flush_staging_failure_reason(
+            {"total_flushed": 0, "tables": [], "error": "MinIO unreachable"}
+        )
+        assert reason and "MinIO unreachable" in reason
+
+    def test_a_partial_flush_still_fails(self):
+        from archiver.app import _flush_staging_failure_reason
+
+        # Rows landed. That is not a reason to call the run clean — the tables
+        # that did not land are still not in the lake.
+        reason = _flush_staging_failure_reason({
+            "total_flushed": 4000,
+            "tables": [{"table": "staging.x", "flushed": 0, "error": "boom"}],
+            "error": "one or more tables failed",
+        })
+        assert reason and "staging.x" in reason
+
+
+class TestCompactFailureReason:
+    def test_a_clean_run_is_not_a_failure(self):
+        from archiver.app import _compact_failure_reason
+
+        assert _compact_failure_reason({
+            "scanned": 12, "compacted": 3, "incremental": 1, "skipped": 8,
+            "failed": 0, "error": None,
+            "partitions": [{"source": "cargurus", "date": "2026-07-31", "ok": True}],
+        }) is None
+
+    def test_an_entirely_skipped_run_is_not_a_failure(self):
+        from archiver.app import _compact_failure_reason
+
+        # Every partition already compacted. The normal daily outcome.
+        assert _compact_failure_reason({
+            "scanned": 12, "compacted": 0, "incremental": 0, "skipped": 12,
+            "failed": 0, "error": None, "partitions": [],
+        }) is None
+
+    def test_an_incremental_run_is_not_a_failure(self):
+        from archiver.app import _compact_failure_reason
+
+        assert _compact_failure_reason({
+            "scanned": 4, "compacted": 0, "incremental": 4, "skipped": 0,
+            "failed": 0, "error": None, "partitions": [],
+        }) is None
+
+    def test_failed_partitions_are_a_failure_even_with_no_error(self):
+        from archiver.app import _compact_failure_reason
+
+        # The case this plan's earlier draft would have missed. compact_silver
+        # counts per-partition exceptions in `failed` and still returns
+        # "error": None, so `error` alone is not the predicate.
+        reason = _compact_failure_reason({
+            "scanned": 9, "compacted": 2, "incremental": 0, "skipped": 0,
+            "failed": 3, "error": None,
+            "partitions": [
+                {"source": "cargurus", "date": "2026-08-28", "ok": True},
+                {"source": "cargurus", "date": "2026-08-29", "ok": False,
+                 "error": "rename failed"},
+                {"source": "autotrader", "date": "2026-08-29", "ok": False,
+                 "error": "rename failed"},
+                {"source": "autotrader", "date": "2026-08-30", "ok": False,
+                 "error": "rename failed"},
+            ],
+        })
+        assert reason
+        assert "3 partition(s)" in reason
+        # Named, not just counted: a rename failure leaves an unpublished .tmp
+        # and a human has to go and find which partition it belongs to.
+        assert "cargurus/2026-08-29" in reason
+        assert "autotrader/2026-08-30" in reason
+        assert "cargurus/2026-08-28" not in reason
+
+    def test_a_count_without_partition_entries_still_fails(self):
+        from archiver.app import _compact_failure_reason
+
+        reason = _compact_failure_reason(
+            {"failed": 2, "error": None, "partitions": []}
+        )
+        assert reason and "2 partition(s)" in reason
+
+    def test_minio_unreachable_is_a_failure(self):
+        from archiver.app import _compact_failure_reason
+
+        # The only condition that sets the top-level error.
+        reason = _compact_failure_reason({
+            "scanned": 0, "compacted": 0, "incremental": 0, "skipped": 0,
+            "failed": 0, "error": "connection refused", "partitions": [],
+        })
+        assert reason and "connection refused" in reason
+
+
+class TestStage1IsWarningOnly:
+    """The endpoints still return 200. That is the stage, not an oversight.
+
+    An oversight in a predicate costs a log line for seven days here, and a
+    skipped dbt build every hour under Stage 2. These tests are what has to
+    change, deliberately and one endpoint at a time, when Stage 2 flips them.
+    """
+
+    def test_a_failed_silver_flush_warns_and_returns_200(
+        self, mock_archiver_client, mocker, caplog
+    ):
+        fake = {"flushed": 0, "error": "XMinioStorageFull"}
+        mocker.patch("archiver.app._flush_silver_observations", return_value=fake)
+
+        with caplog.at_level(logging.WARNING, logger="archiver"):
+            resp = mock_archiver_client.post("/flush/silver/run")
+
+        assert resp.status_code == 200
+        assert resp.json() == fake
+        assert "flush_silver: would fail" in caplog.text
+        assert "XMinioStorageFull" in caplog.text
+
+    def test_a_failed_staging_flush_warns_and_returns_200(
+        self, mock_archiver_client, mocker, caplog
+    ):
+        fake = {
+            "total_flushed": 0,
+            "tables": [{"table": "staging.coordination_state_events", "flushed": 0,
+                        "error": "relation does not exist"}],
+            "error": "one or more tables failed",
+        }
+        mocker.patch("archiver.app._flush_staging_events", return_value=fake)
+
+        with caplog.at_level(logging.WARNING, logger="archiver"):
+            resp = mock_archiver_client.post("/flush/staging/run")
+
+        assert resp.status_code == 200
+        assert resp.json() == fake
+        assert "flush_staging: would fail" in caplog.text
+        assert "staging.coordination_state_events" in caplog.text
+
+    def test_a_failed_compaction_warns_and_returns_200(
+        self, mock_archiver_client, mocker, caplog
+    ):
+        fake = {
+            "scanned": 2, "compacted": 0, "incremental": 0, "skipped": 0,
+            "failed": 1, "error": None,
+            "partitions": [{"source": "cargurus", "date": "2026-08-29",
+                            "ok": False, "error": "rename failed"}],
+        }
+        mocker.patch("archiver.app._compact_silver", return_value=fake)
+
+        with caplog.at_level(logging.WARNING, logger="archiver"):
+            resp = mock_archiver_client.post("/compact/silver/run")
+
+        assert resp.status_code == 200
+        assert resp.json() == fake
+        assert "compact_silver: would fail" in caplog.text
+        assert "cargurus/2026-08-29" in caplog.text
+
+    def test_every_stage_1_warning_carries_the_window_query_string(
+        self, mock_archiver_client, mocker, caplog
+    ):
+        """The seven-day gate is read from
+
+            {service="archiver", level="WARNING"} |~ "would fail"
+
+        so the literal is part of the contract, not a phrasing choice.
+        """
+        mocker.patch(
+            "archiver.app._flush_silver_observations",
+            return_value={"flushed": 0, "error": "boom"},
+        )
+
+        with caplog.at_level(logging.WARNING, logger="archiver"):
+            mock_archiver_client.post("/flush/silver/run")
+
+        assert [r for r in caplog.records if "would fail" in r.getMessage()]
+
+    def test_a_clean_run_warns_about_nothing(
+        self, mock_archiver_client, mocker, caplog
+    ):
+        # A quiet hour must be silent, or the window's own signal is noise.
+        mocker.patch(
+            "archiver.app._flush_silver_observations",
+            return_value={"flushed": 0, "error": None},
+        )
+
+        with caplog.at_level(logging.WARNING, logger="archiver"):
+            resp = mock_archiver_client.post("/flush/silver/run")
+
+        assert resp.status_code == 200
+        assert "would fail" not in caplog.text
