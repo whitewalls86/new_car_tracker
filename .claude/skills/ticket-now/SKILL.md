@@ -187,16 +187,24 @@ Report:
 
 - the issue identifier and URL;
 - which cycle it landed in and which of the three cycle cases applied;
-- the cycle's issue count against Plan 149 Stage 1's cap of **eight**, and
-  whether this addition crossed it;
+- the cycle's **point total** against Plan 149 Stage 1's budget, and whether
+  this addition crossed it. Sum estimates, do not count issues: Stage 1's cap
+  became a points budget on 2026-08-29, because Cycle 1 seeded exactly eight
+  issues and still ran to 21. Read the current number from the plan;
 - anything you did not fill — a missing project, an absent estimate, a `Blocked
   by` you could not state;
 - anything you noticed about repository state and deliberately did not change.
 
-If the addition takes the cycle past eight, say so plainly. The cap is Plan
-149's, it is about whether a cycle is an honest commitment, and quietly
+If the addition takes the cycle past its budget, say so plainly. The budget is
+Plan 149's, it is about whether a cycle is an honest commitment, and quietly
 exceeding it is how a board stops meaning anything. You do not refuse the
-addition — the user decided — but the count goes in the report.
+addition — the user decided — but the total goes in the report.
+
+This is the measure `ticket-now` is most able to distort. "Issues added after
+cycle start" ran at **62% in Cycle 1**, and every one of them came through this
+skill. That is not an argument for adding less; it is why the number has to be
+reported accurately every time, so the next seeding is calibrated against what
+actually happened rather than against what was planned.
 
 ## What this skill must never do
 
