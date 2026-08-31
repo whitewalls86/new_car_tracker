@@ -5,6 +5,16 @@ on:
     branches: [master]
   push:
     branches: [master]
+  # Manual re-run: `gh workflow run ci.yml --ref <branch>`. Without this there
+  # is no way to re-run CI against a *changed workflow file* -- `gh run rerun`
+  # replays the version the original run was built with, so a fix to this file
+  # can only be picked up by a new run. CAR-42 hit exactly that: two docs-only
+  # PRs stayed red after the fix merged and had to be branch-updated.
+  #
+  # A dispatch run classifies as docs_only=false, because the `changes` job has
+  # no base sha to diff against on this event, so it runs the full suite and
+  # skips `docs-tests`. That is the intended default for a manual run.
+  workflow_dispatch:
 
 jobs:
 
