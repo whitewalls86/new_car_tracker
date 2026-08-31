@@ -49,7 +49,24 @@ PACKAGE_BOUNDARIES = {
     "container_runtime": ("docker", "containerd", "runc"),
     "kernel": ("linux-image", "linux-headers", "linux-modules", "linux-oracle"),
     "ssh": ("openssh",),
-    "network": ("netplan", "network-manager", "systemd", "dnsmasq"),
+    "network": ("netplan", "network-manager", "systemd", "dnsmasq", "iproute"),
+    # `/mnt/data` is mounted by UUID with `nofail`, so a package that resolves or
+    # mounts block devices can leave the host booting cleanly with the data
+    # volume simply absent -- exactly what `validate-host`'s `mounts_expected`
+    # gate is there to catch. The 2026-08-31 window upgraded twelve of these in a
+    # transaction that declared no boundary at all.
+    "storage": (
+        "util-linux",
+        "mount",
+        "fdisk",
+        "blkid",
+        "uuid",
+        "smartcols",
+        "bsdutils",
+        "bsdextrautils",
+        "e2fsprogs",
+        "eject",
+    ),
 }
 APT_CONTROL_UNITS = (
     "apt-daily.timer",
@@ -1034,12 +1051,35 @@ def _parse_apt_simulation(output: str) -> dict[str, str]:
     return packages
 
 
+def _boundary_candidates(base_name: str) -> tuple[str, ...]:
+    """Names to match a package by, so a component's variants match its prefix.
+
+    A boundary names a component, but Debian ships that component under several
+    package names: `netplan.io` alongside `libnetplan0` and `python3-netplan`,
+    `mount` alongside `libmount1`. Prefix-matching the literal package name saw
+    only the first of each, so the 2026-08-31 window declared the `network`
+    boundary from two of its four netplan packages and would have declared none
+    at all had the transaction carried only the library.
+    """
+    candidates = {base_name}
+    for prefix in ("python3-", "python-"):
+        if base_name.startswith(prefix):
+            candidates.add(base_name[len(prefix) :])
+    if base_name.startswith("lib"):
+        trimmed = base_name[3:]
+        candidates.add(trimmed)
+        # Library packages carry the soname: libmount1, libnetplan0, libjcat1.
+        candidates.add(re.sub(r"[0-9.]+$", "", trimmed))
+    return tuple(candidate for candidate in candidates if candidate)
+
+
 def _package_boundaries(package: str) -> list[str]:
     base_name = package.split(":", 1)[0]
+    candidates = _boundary_candidates(base_name)
     return [
         boundary
         for boundary, prefixes in PACKAGE_BOUNDARIES.items()
-        if base_name.startswith(prefixes)
+        if any(candidate.startswith(prefixes) for candidate in candidates)
     ]
 
 
@@ -1407,6 +1447,17 @@ def restore_apt_automation(args: argparse.Namespace) -> dict[str, Any]:
         action = "enable" if states[unit] == "enabled" else "disable"
         _run_command(("sudo", "systemctl", action, unit))
 
+    # Unmasking does not start a unit, and the reboot happened while these were
+    # masked, so an enabled timer comes back `inactive (dead)` with no trigger:
+    # `systemctl list-timers` listed none after the 2026-08-31 window, meaning
+    # the host had silently stopped taking automatic security updates while this
+    # command reported success. Only the timers are started -- the
+    # `unattended-upgrades.service` unit is "Unattended Upgrades Shutdown", a
+    # oneshot systemd runs at shutdown, and starting it here would run that path.
+    for unit in APT_CONTROL_UNITS:
+        if unit.endswith(".timer") and states[unit] == "enabled":
+            _run_command(("sudo", "systemctl", "start", unit))
+
     verified_states = {}
     for unit in APT_CONTROL_UNITS:
         observed = _run_command(
@@ -1416,6 +1467,18 @@ def restore_apt_automation(args: argparse.Namespace) -> dict[str, Any]:
         verified_states[unit] = observed
         if observed != states[unit]:
             raise MaintenanceError(f"apt automation unit did not restore: {unit}")
+
+    verified_activity = {}
+    for unit in APT_CONTROL_UNITS:
+        if not unit.endswith(".timer"):
+            continue
+        observed = _run_command(
+            ("systemctl", "is-active", unit),
+            allowed_returncodes=frozenset({0, 3}),
+        )["stdout"].strip()
+        verified_activity[unit] = observed
+        if states[unit] == "enabled" and observed != "active":
+            raise MaintenanceError(f"apt automation timer did not start: {unit}")
 
     holds = sorted(
         line.strip()
@@ -1428,6 +1491,7 @@ def restore_apt_automation(args: argparse.Namespace) -> dict[str, Any]:
         "phase": "complete",
         "apt_automation_restored": True,
         "apt_unit_states": verified_states,
+        "apt_timer_activity": verified_activity,
         "holds": holds,
     }
 
