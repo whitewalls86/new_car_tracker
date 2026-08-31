@@ -538,11 +538,13 @@ Recorded here, fixed elsewhere — Plan 161's non-goals hold.
 
 An entry is deleted when it is repaired, not marked closed: a violations table
 that keeps its dead rows is a list you have to read twice to use. **G1 and G2
-were repaired by Plan 162 Stage 1 on 2026-08-31** (CAR-45) and are gone from
-the table below; what the run of those 73 tests found is in
+were repaired by Plan 162 Stage 1 on 2026-08-31** (CAR-45), and **G10 by Stage
+2 the same day** (CAR-46); all three are gone from the table below. What the
+run of those 73 tests found, and what unblinding coverage exposed, are in
 [`docs/plans/plan_162_testing_census_and_restructure.md`](plans/plan_162_testing_census_and_restructure.md),
-§Stage 1. The numbering never reuses a letter, so a deleted row leaves a gap in
-the sequence and the plan documents stay the place the history lives.
+§Stage 1 and §Stage 2. The numbering never reuses a letter, so a deleted row
+leaves a gap in the sequence and the plan documents stay the place the history
+lives.
 
 | # | Violation | Measure | Owner |
 |---|---|---|---|
@@ -556,31 +558,6 @@ the sequence and the plan documents stay the place the history lives.
 | G11 | **The layer numbers in the code are Plan 84's, not this document's.** Docstrings across `tests/` and two step names in `ci.yml` say "Layer 1 — SQL smoke" and "Layer 3 — API integration", which are Layers 2 and 4 here. Mechanical sweep; the asserting test covers it afterwards so the two cannot drift again | `grep -rn 'Layer [0-9]' tests/ .github/` | Plan 162 |
 | G12 | **`airflow/dags/` has no `.sql` convention and cannot reach one.** No module under it imports `shared`, so `shared.query_loader` is unavailable and the DAG tree is the only place in the repository where "production SQL is a `.sql` file" is structurally impossible. This is what forces the single legitimate `ast` reader, `_sensor_constant()` | `grep -rn 'from shared' airflow/dags/` returns nothing | Plan 162 |
 | G14 | **54 of 76 production `.sql` files are named by no Layer 2 test.** All 19 under `processing/sql/`, all 8 under `ops/sql/`, all 3 under `scraper/sql/`, 17 of `archiver/`'s, the 6 `dashboard/sql/data_health_*` files and `airflow/sql/delete_stale_emails.sql`. `test_ops_queries.py` and `test_processing_queries.py` are named for the services whose statements they should execute, import nothing from either `queries.py`, and **paraphrase the SQL instead** — which the rule above calls worse than no test, because a paraphrase passes forever | `tests/test_testing_contract.py`, at the weakest reading of "executed": a file counts as covered if Layer 2 so much as names it. A stricter check can only find more | Plan 162 |
-
-**G10 closed on 2026-08-31** by Plan 162 Stage 2 (CAR-46). Its row is gone
-because this list only shrinks: `[tool.coverage.run] source` now names all ten
-production directories, the unit job gates on `--cov-fail-under` and uploads
-`coverage.xml`, and the rules table above carries the two assertions that fail
-if either half comes back.
-
-Unblinding it moved the reported number from **88% to 76%** with no code
-changing, which is the whole point of the repair — the four directories added
-hold 11,709 of the repository's 19,733 measurable statements, more than the six
-that were being measured. What was hidden, measured the same run:
-
-| Added to `source` | Statements | Covered |
-|---|---|---|
-| `scripts/` | 10,488 | 70% |
-| `dashboard/`, `airflow/dags/`, `container_health/` | 1,221 | 43% |
-| *(previously measured: the other six)* | 8,024 | 88% |
-
-The 43% row is the two services the "enough" table already put below the floor,
-now visible to the instrument that will grade Stages 6 and 8. **The 70% row is
-a caveat on the threshold**, not a result: `scripts/` is largely one-off audit
-and migration code — `reconcile_april_detail.py` alone is 3,859 statements —
-so it dominates the total and will damp any movement the service stages
-produce. If the ratchet stops responding to real work, splitting the gate is
-the answer, not dropping the directory back out of `source`.
 
 ---
 

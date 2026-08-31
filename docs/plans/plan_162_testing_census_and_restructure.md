@@ -66,17 +66,20 @@ largest single item in the plan.
 Six of the thirteen gaps this plan owns are checked by nothing: **G5, G7, G8,
 G9, G10 and G12.** (Twelve at the census; **G13 was re-owned here on
 2026-08-31** when its Plan 146 half shipped, and it is half-checked — the
-`PYTHONPATH` clause is asserted and nothing else is.) They are recorded in
-prose, they are not among the 120, and they can worsen without anything
-noticing. That is the condition
+`PYTHONPATH` clause is asserted and nothing else is. **G10 has since been
+mechanised and closed** by Stage 2 the same day, leaving five.) They are
+recorded in prose, they are not among the 120, and they can worsen without
+anything noticing. That is the condition
 `ARCHITECTURE.md:179` was in before Plan 161, and it is why this plan's success
 criteria are written the way they are below.
 
 Three sub-cases, because they are not alike and the differences drive the stage
 order:
 
-- **G5, G9 and G10 have a natural, cheap assertion.** G10's is roughly five
-  lines: every service directory appears in `[tool.coverage.run] source`.
+- **G5, G9 and G10 have a natural, cheap assertion.** G10's was estimated at
+  roughly five lines — every service directory appears in
+  `[tool.coverage.run] source` — and Stage 2 built it, at that size plus a
+  second assertion for the half the estimate had not counted.
 - **G7 can never be reached by the existing rules.** `dashboard/` is Streamlit,
   not FastAPI. The route rule imports `<service>.app` and reads its OpenAPI
   schema; there is no schema to read. The "enough" floor's first clause is
