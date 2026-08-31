@@ -1,6 +1,6 @@
 # Plan 106: Code Review Cleanup
 
-**Status:** Planned
+**Status:** Superseded by [Plan 163](plan_163_documented_code_quality_fixes.md) (2026-08-30)
 **Priority:** Medium — no user-visible impact; reduces fragility and maintenance surface
 **Source:** Three-axis code review (duplication, unenforced assumptions, coherency), 2026-05-04
 
