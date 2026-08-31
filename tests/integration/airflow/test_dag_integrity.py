@@ -20,6 +20,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.health_sensor_census import expected_sensor_task_ids
+
 REPO_ROOT = Path(__file__).parents[3]
 DAGS_DIR = REPO_ROOT / "airflow" / "dags"
 
@@ -278,7 +280,7 @@ def test_health_sensors_skip_rather_than_fail_on_the_real_operators():
     dagbag = _make_dagbag()
     assert not dagbag.import_errors
 
-    health_sensors = 0
+    health_sensors = []
     for dag in dagbag.dags.values():
         for task_id, task in dag.task_dict.items():
             if task_id == "check_deploy_intent":
@@ -287,7 +289,7 @@ def test_health_sensors_skip_rather_than_fail_on_the_real_operators():
                     "deploy intent must still stop the DAG"
                 )
             elif task_id.startswith("check_") and task_id.endswith("_health"):
-                health_sensors += 1
+                health_sensors.append(task_id)
                 assert task.soft_fail is True, (
                     f"{dag.dag_id}.{task_id} fails instead of skipping on "
                     "timeout, so a down service pages as a DAG failure again"
@@ -297,13 +299,18 @@ def test_health_sensors_skip_rather_than_fail_on_the_real_operators():
                     "sensors ignore soft_fail on timeout (apache/airflow#61130)"
                 )
 
-    # 16 when Plan 140 Stage 4 landed; 14 since Plan 134's survey deleted
-    # cleanup_parquet.py and cleanup_artifacts.py, each of which wired one
-    # check_archiver_health, for an endpoint that had been a no-op since V036.
-    # This counts sensor *tasks*; test_health_sensor_demotion counts the DAG
-    # *files* that wire one, which is 13 -- one DAG wires two sensors.
-    assert health_sensors == 14, (
-        f"found {health_sensors} health sensors across the DagBag, expected 14. "
+    # 16 sensor tasks when Plan 140 Stage 4 landed; 14 since Plan 134's survey
+    # deleted cleanup_parquet.py and cleanup_artifacts.py, each of which wired
+    # one check_archiver_health, for an endpoint that had been a no-op since
+    # V036. That deletion updated the file count in test_health_sensor_demotion
+    # and missed this one, so Plan 162 Stage 3 gave both the same source: this
+    # counts sensor *tasks* and that counts the DAG *files* wiring them, and
+    # both now derive from tests/health_sensor_census.py.
+    assert sorted(health_sensors) == expected_sensor_task_ids(), (
+        "the health sensors the DagBag built no longer match the census in "
+        "tests/health_sensor_census.py.\n"
+        f"  built:    {sorted(health_sensors)}\n"
+        f"  declared: {expected_sensor_task_ids()}\n"
         "These gate DAG correctness independently of who reports the outage, "
         "so a dropped one is work starting against an unanswering service."
     )
