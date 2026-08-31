@@ -798,10 +798,19 @@ def _mount_devices(value: Any) -> dict[str, str] | None:
     filesystems = payload.get("filesystems") if isinstance(payload, dict) else None
     if not isinstance(filesystems, list):
         return None
+    # `findmnt --json` returns a tree, not a flat list: every mount below `/`
+    # arrives as a descendant of the root entry, so `/mnt/data` is never a
+    # top-level element. Reading only the top level made `mounts_expected`
+    # report the data mount missing on every host in every state.
     mounts = {}
-    for filesystem in filesystems:
+    pending = list(filesystems)
+    while pending:
+        filesystem = pending.pop()
         if not isinstance(filesystem, dict):
             continue
+        children = filesystem.get("children")
+        if isinstance(children, list):
+            pending.extend(children)
         target = filesystem.get("target")
         source = filesystem.get("source")
         if target in {"/", "/mnt/data"} and isinstance(source, str) and source:

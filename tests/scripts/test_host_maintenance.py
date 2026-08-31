@@ -84,11 +84,21 @@ def _command(stdout="", returncode=0):
 
 
 def _validation_inputs():
+    # `findmnt --json` nests every mount below `/` inside the root entry's
+    # `children`; it never returns `/mnt/data` as a sibling of `/`. The flat
+    # shape this fixture used to carry is what hid the `mounts_expected`
+    # defect that stranded the 2026-08-31 window at `validating`.
     mounts = json.dumps(
         {
             "filesystems": [
-                {"target": "/", "source": "/dev/root"},
-                {"target": "/mnt/data", "source": "/dev/data"},
+                {
+                    "target": "/",
+                    "source": "/dev/root",
+                    "children": [
+                        {"target": "/boot/efi", "source": "/dev/sda15"},
+                        {"target": "/mnt/data", "source": "/dev/data"},
+                    ],
+                }
             ]
         }
     )
@@ -153,6 +163,26 @@ def _validation_inputs():
             {},
             "fail",
         ),
+        (
+            "mounts_expected",
+            {
+                "mounts": _command(
+                    json.dumps(
+                        {
+                            "filesystems": [
+                                {
+                                    "target": "/",
+                                    "source": "/dev/root",
+                                    "children": [{"target": "/mnt/data", "source": "/dev/moved"}],
+                                }
+                            ]
+                        }
+                    )
+                )
+            },
+            {},
+            "fail",
+        ),
         ("mounts_expected", {"mounts": _command("not-json")}, {}, "unknown"),
         (
             "disk_headroom",
@@ -212,6 +242,40 @@ def test_all_host_validation_gates_pass_with_complete_evidence():
     assert set(results) == set(host_maintenance.HOST_VALIDATION_GATES)
     assert {result["verdict"] for result in results.values()} == {"pass"}
     assert host_maintenance.host_validation_passes(results) is True
+
+
+def test_mount_devices_reads_the_nested_findmnt_tree():
+    """`findmnt --json` nests mounts; reading only the top level saw no data mount.
+
+    Production output puts `/` at the top level and every other mount inside its
+    `children`, so `/mnt/data` was absent from both the observed facts and the
+    preflight baseline. `gate_mounts_expected` then failed "required mount
+    /mnt/data is missing" on every host in every state, and stranded the
+    2026-08-31 window at `validating` after the reboot.
+    """
+    payload = json.dumps(
+        {
+            "filesystems": [
+                {
+                    "target": "/",
+                    "source": "/dev/sda1",
+                    "children": [
+                        {"target": "/boot/efi", "source": "/dev/sda15"},
+                        {
+                            "target": "/snap/core22/2412",
+                            "source": "/dev/loop3",
+                            "children": [{"target": "/mnt/data", "source": "/dev/sdb"}],
+                        },
+                    ],
+                }
+            ]
+        }
+    )
+
+    assert host_maintenance._mount_devices(_command(payload)) == {
+        "/": "/dev/sda1",
+        "/mnt/data": "/dev/sdb",
+    }
 
 
 def test_host_validation_registry_rejects_one_unknown():
@@ -319,11 +383,14 @@ def test_complete_records_completion_checkpoint(mocker, tmp_path):
 
     assert result == {"phase": "none", "generation": 7}
     assert api.call_args_list[-1].args == (
-        "http://ops", "POST", "/coordination/complete", {
+        "http://ops",
+        "POST",
+        "/coordination/complete",
+        {
             "confirm_complete": True,
             "generation": 7,
             "manifest_sha256": host_maintenance.hashlib.sha256(b"manifest").hexdigest(),
-        }
+        },
     )
     checkpoint.assert_called_once_with(_args(tmp_path, "complete").checkpoint, "complete", "/tmp/m")
 
@@ -970,9 +1037,7 @@ def _apply_host(mocker, args, *, dpkg_query, installed_kernels_stdout, holds_std
     mocker.patch.object(host_maintenance, "_run_command", side_effect=fake_run)
 
 
-def test_update_prefers_the_kernel_the_operator_confirmed_in_this_transaction(
-    mocker, tmp_path
-):
+def test_update_prefers_the_kernel_the_operator_confirmed_in_this_transaction(mocker, tmp_path):
     """A kernel in the reviewed plan outranks one that merely happens to be there."""
     plan_path, digest = _kernel_plan(tmp_path, "6.8.0-1060-oracle")
     args = _apply_args(tmp_path, plan_path, digest)
@@ -981,8 +1046,7 @@ def test_update_prefers_the_kernel_the_operator_confirmed_in_this_transaction(
         args,
         dpkg_query="linux-image-6.8.0-1060-oracle\t6.8.0-1060.66\n",
         installed_kernels_stdout=(
-            "installed linux-image-6.8.0-1058-oracle\n"
-            "installed linux-image-6.8.0-1060-oracle\n"
+            "installed linux-image-6.8.0-1058-oracle\ninstalled linux-image-6.8.0-1060-oracle\n"
         ),
     )
     checkpoint = mocker.patch.object(host_maintenance, "append_checkpoint")
@@ -994,9 +1058,7 @@ def test_update_prefers_the_kernel_the_operator_confirmed_in_this_transaction(
     assert checkpoint.call_args.kwargs["kernel_target_source"] == "transaction"
 
 
-def test_update_falls_back_to_the_highest_installed_kernel_on_a_deferred_reboot(
-    mocker, tmp_path
-):
+def test_update_falls_back_to_the_highest_installed_kernel_on_a_deferred_reboot(mocker, tmp_path):
     """The normal shape of a window on this host, and the one that stranded it.
 
     `unattended-upgrades` installs kernels on its own schedule and defers only
@@ -1014,8 +1076,7 @@ def test_update_falls_back_to_the_highest_installed_kernel_on_a_deferred_reboot(
         args,
         dpkg_query="docker.io\t29.1\n",
         installed_kernels_stdout=(
-            "installed linux-image-6.8.0-1058-oracle\n"
-            "installed linux-image-6.8.0-1060-oracle\n"
+            "installed linux-image-6.8.0-1058-oracle\ninstalled linux-image-6.8.0-1060-oracle\n"
         ),
         holds_stdout="docker.io\n",
     )
@@ -1050,9 +1111,7 @@ def test_update_refuses_when_no_kernel_is_installed_to_validate_against(mocker, 
         host_maintenance.run(args)
 
 
-def test_update_still_refuses_a_confirmed_kernel_boundary_with_no_kernel_package(
-    mocker, tmp_path
-):
+def test_update_still_refuses_a_confirmed_kernel_boundary_with_no_kernel_package(mocker, tmp_path):
     """A reviewed kernel boundary must be satisfied by the transaction itself.
 
     The installed fallback names a boot target for a deferred reboot; it does
