@@ -66,6 +66,14 @@ STATE_BY_HEADING = {
     "in-progress / nearly complete": "build",
     "remaining priority order": "build",
     "default build order": "build",
+    # Both closeout headings are live: the long form ran until Plan 146 Stage 2
+    # shortened it at ``0c08382`` on 2026-08-21, and this sweep reads all 189
+    # revisions, so dropping either loses a real state from part of the history.
+    # The short form was missing for nine days, during which every closeout plan
+    # read as ``absent`` -- Plan 136 as having left the index, Plans 149 and 160
+    # as never arriving. ``TestTheStateParserClassifiesEveryLiveHeading`` in
+    # ``tests/test_planning_docs.py`` is what stops the next rename doing that.
+    "current closeout": "closeout",
     "current closeout -- finish before opening another large build": "closeout",
     "operational monitoring and completed implementation awaiting closeout": "closeout",
     "operational watch list and completed implementation awaiting closeout": "closeout",
@@ -101,9 +109,15 @@ BARE_PLAN = re.compile(r"^\*{0,2}(\d{1,3})\*{0,2}$")
 
 
 def _git(*args: str) -> str:
+    # ``encoding`` is explicit because ``text=True`` alone decodes with the
+    # locale codec. The index has carried non-ASCII since it was written (em
+    # dashes in every gate cell), so on a cp1252 host this raises
+    # ``UnicodeDecodeError`` part-way through the history walk and the sweep
+    # cannot run at all. Same defect, same fix, as ``b80f387`` applied to the
+    # test suite's ``Path.read_text()`` calls on 2026-08-25.
     return subprocess.run(
         ["git", "-C", str(REPO_ROOT), *args],
-        check=True, capture_output=True, text=True,
+        check=True, capture_output=True, text=True, encoding="utf-8",
     ).stdout
 
 

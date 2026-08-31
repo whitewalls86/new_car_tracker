@@ -1097,3 +1097,82 @@ class TestWeeklyRecaps:
             + "\nA sha in a recap is the evidence for the sentence around it. "
             "One that resolves to nothing is a citation to nowhere."
         )
+
+
+# ===========================================================================
+# Plan 146 Stage 1's parser, held to the index it reads.
+#
+# The index's structure is encoded twice: this file's ``TABLES`` name the
+# sections it parses, and ``scripts/audit_plan_state_history.py`` maps section
+# headings to plan states. Only one of the two failed loudly when a heading
+# changed, so ``## Current closeout -- finish before opening another large
+# build`` became ``## Current closeout`` at ``0c08382`` on 2026-08-21 and the
+# script silently stopped seeing the closeout table for nine days -- reporting
+# every closeout plan as ``absent``. Nothing failed, because the script's
+# ``state_map`` skips a heading it does not recognise.
+#
+# It has to skip. It reads all 189 revisions of the index and old revisions
+# carry headings that assert no state. What it must not do is skip one in the
+# index as it stands *today*, which is the case a test can decide.
+# ===========================================================================
+
+
+class TestTheStateParserClassifiesEveryLiveHeading:
+    """Every ``## `` heading in today's index is mapped or explicitly ignored.
+
+    This is the drift check, not a list to append to: it reads the script's own
+    two tables, so the only way to satisfy it is to classify the heading in the
+    script, which is the thing that was missing.
+
+    Measured over the whole history at the time of writing, ``current
+    closeout`` was the *only* unmapped heading across 189 revisions -- so this
+    assertion is cheap to keep true and was cheap to violate unnoticed.
+    """
+
+    @staticmethod
+    def _classification(heading: str):
+        from scripts import audit_plan_state_history as audit
+
+        key = heading.strip().replace("—", "--").rstrip("#").strip().lower()
+        if key in audit.IGNORED_HEADINGS_EXACT:
+            return "ignored"
+        if key.startswith(audit.IGNORED_HEADING_PREFIXES):
+            return "ignored"
+        return audit.STATE_BY_HEADING.get(key)
+
+    def test_no_live_heading_is_silently_skipped(self):
+        headings = [
+            section.partition("\n")[0].strip()
+            for section in re.split(r"^## +", _read(INDEX), flags=re.M)[1:]
+        ]
+        assert headings, "no '## ' headings found in the index"
+        unclassified = [h for h in headings if self._classification(h) is None]
+        assert not unclassified, (
+            f"headings in {INDEX} that "
+            f"scripts/audit_plan_state_history.py neither maps to a state nor "
+            f"ignores: {unclassified}. The script skips what it does not "
+            f"recognise, so an unmapped heading does not fail -- it silently "
+            f"drops that whole table from every state timeline. Add it to "
+            f"STATE_BY_HEADING, or to IGNORED_HEADINGS_EXACT/"
+            f"IGNORED_HEADING_PREFIXES if it asserts no state."
+        )
+
+    def test_every_live_table_section_is_mapped_to_a_state(self):
+        """The four tables this file parses out of the index are states.
+
+        Distinct from the check above: a heading could be *ignored* and pass it
+        while the table under it vanished from the timelines. Keying on
+        ``TABLES`` means the two encodings of the index's shape have to agree.
+        """
+        wrong = {
+            table.heading: self._classification(table.heading)
+            for table in TABLES
+            if table.heading is not None
+            and self._classification(table.heading)
+            not in {"build", "closeout", "backlog", "superseded", "archive"}
+        }
+        assert not wrong, (
+            f"sections this file parses as tables that the state parser does "
+            f"not read as states: {wrong}. Both files describe the same index; "
+            f"when they disagree the script is the one that fails quietly."
+        )
