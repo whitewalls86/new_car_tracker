@@ -297,8 +297,13 @@ def test_health_sensors_skip_rather_than_fail_on_the_real_operators():
                     "sensors ignore soft_fail on timeout (apache/airflow#61130)"
                 )
 
-    assert health_sensors == 16, (
-        f"found {health_sensors} health sensors across the DagBag, expected 16. "
+    # 16 when Plan 140 Stage 4 landed; 14 since Plan 134's survey deleted
+    # cleanup_parquet.py and cleanup_artifacts.py, each of which wired one
+    # check_archiver_health, for an endpoint that had been a no-op since V036.
+    # This counts sensor *tasks*; test_health_sensor_demotion counts the DAG
+    # *files* that wire one, which is 13 -- one DAG wires two sensors.
+    assert health_sensors == 14, (
+        f"found {health_sensors} health sensors across the DagBag, expected 14. "
         "These gate DAG correctness independently of who reports the outage, "
         "so a dropped one is work starting against an unanswering service."
     )
