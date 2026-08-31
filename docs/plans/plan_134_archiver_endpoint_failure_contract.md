@@ -361,6 +361,53 @@ So Stage 1's `_notify` repair is not a polish item. The notification path has
 never once delivered, and enforcement without fixing it converts silent
 endpoint failures into silent DAG failures.
 
+**Why it failed, found during Stage 1 implementation.** `_notify` read
+`ti.dag_run.run_id` and `ti.execution_date`. On Airflow 3 — this deployment
+runs 3.2.0 — the task SDK's `RuntimeTaskInstance` has **neither attribute**,
+confirmed against the running scheduler: its model fields are `dag_id`,
+`run_id`, `task_id`, `try_number`, `state` and friends, with no `dag_run` and
+no `execution_date`. So the task raised `AttributeError` on its second line,
+before it built any message, on every one of the 12 firings.
+
+This corrects the defect this document names below. It is **not** only the
+Plan 140 Stage 4 defect of a message naming the wrong component — that would
+have delivered a page that was merely unhelpful. Nothing was ever delivered.
+Both are real and Stage 1 fixes both, but the ordering matters: had the repair
+been scoped to wording alone, the pager would still have sent nothing and the
+Stage 2 gate would have been unreadable in exactly the way this stage exists to
+prevent.
+
+#### It was never only this DAG
+
+The two lines came from **`c92bd97`, "adding detail to airflow failure
+notification", authored 2026-05-08 13:10 UTC** against `dbt_build`. That DAG's
+notify task last succeeded at **12:03 UTC the same day** — an hour before the
+commit — and has not succeeded since. The block was then copied into the other
+two notify tasks. Every Telegram pager in this repo has been dead since that
+commit:
+
+| DAG | notify success | notify failed | Last success | Now |
+|---|---:|---:|---|---|
+| `dbt_build` | 27 | **268** | 2026-05-08 12:03 UTC | paused, still triggerable |
+| `hourly_analytics_refresh` | **0** | 12 | never | active |
+| `pack_bronze_html` | 0 | 0 | never fired (5 skips) | active, **latent** |
+
+`pack_bronze_html` is the one worth noting: its notify task has never fired at
+all, so the copy there was a page that would have failed the first time the
+monthly lifecycle broke.
+
+Fixed together, in one `airflow/dags/notifications.py`, because three copies is
+how one commit silenced the fleet. The module adds the two properties none of
+the copies had: a non-200 from Telegram is logged rather than passing as
+delivered, and the body is capped under Telegram's 4096-character limit, which
+quoting several tasks can clear. Its tests run in the fast suite — it imports
+only `logging`, `os` and `requests` — so the thing that is supposed to speak up
+when everything else breaks no longer needs an Airflow install to be covered.
+
+Strictly this is wider than Plan 134's DAG. It is in scope because Stage 2
+cannot be gated on a pager that does not work, and leaving two known-dead
+copies next to the repaired one would have re-seeded the defect.
+
 #### compact_silver is genuinely clean
 
 Its INFO summary line carries the count directly. Over 30 days, **30 of 30**
@@ -416,6 +463,19 @@ One deploy of `archiver`, plus one of the Airflow DAG.
    quote its `failure_reason`, rather than pulling only `dbt_build`'s XCom.
    `JsonPostError.result` already carries the 500 body; the notify task needs
    to read the failed task instance instead of a fixed `task_ids`.
+
+   It also has to **stop raising `AttributeError` before it sends anything** —
+   see [the pager has never worked](#the-pager-has-never-worked) for why that
+   is the larger half, and why the fix lands as a shared
+   `airflow/dags/notifications.py` covering all three notify tasks rather than
+   as an edit to this one. `ti.get_task_states(dag_id=..., run_ids=[...])` is
+   the Airflow 3 way to read sibling task states, and `context["dag_run"]` /
+   `context["logical_date"]` replace the two attributes that do not exist. The
+   state lookup is a round trip to the execution API, so it is guarded: a
+   lookup failure must not cost the page, or the repair reintroduces the bug it
+   is fixing. The three flush/reconcile callables also need a `_post_result`
+   wrapper — mirroring `pack_bronze_html`'s — since a task that raises
+   `JsonPostError` currently leaves no XCom for notify to quote at all.
 
 Then **observe for seven days.** The gate is: the warning rate matches Stage 0's
 measured rate, and every warning that fired names a condition the predicate
@@ -505,9 +565,12 @@ schedules that table still gives for both flushes.
 |---|---|
 | `archiver/app.py` | `_failure_reason` per job on `/flush/silver/run`, `/flush/staging/run`, `/compact/silver/run`; warning-only in Stage 1, 500 in Stage 2 |
 | `archiver/processors/cleanup_queue.py` | Stage 3 only — predicate over `error or failed` |
-| `airflow/dags/hourly_analytics_refresh.py` | `_notify` names the failed task and quotes `failure_reason` instead of reading only `dbt_build`'s XCom |
+| `airflow/dags/notifications.py` | **New.** The shared Telegram notifier: names the failed task, quotes its `failure_reason`, logs a rejected send, caps the body. Replaces three broken copies |
+| `airflow/dags/hourly_analytics_refresh.py` | `_notify` delegates to it; the flush/reconcile callables gain a `_post_result` wrapper so a failure leaves an XCom to quote |
+| `airflow/dags/dbt_build.py`, `airflow/dags/pack_bronze_html.py` | Same `_notify` defect, same fix — see [It was never only this DAG](#it-was-never-only-this-dag) |
 | `tests/archiver/test_app.py` | Each predicate unit-tested against summary dicts, including the passing cases it must *not* fail on |
-| `tests/airflow/` | `_notify` renders a flush failure without a `dbt_build` XCom |
+| `tests/airflow/test_notifications.py` | The notifier renders a flush failure with no `dbt_build` XCom, and never touches `ti.dag_run`/`ti.execution_date` — asserted with a spec'd mock, so a reintroduction fails the build. Fast suite: it needs no Airflow |
+| `tests/integration/airflow/test_hourly_analytics_refresh.py` | This DAG's headline and work-task set, and the `_post_result` XCom push on both the success and `JsonPostError` paths |
 
 ## Tests
 

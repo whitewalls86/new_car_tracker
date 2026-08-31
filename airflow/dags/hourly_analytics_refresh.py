@@ -1,10 +1,9 @@
 import logging
-import os
 from datetime import datetime, timedelta
 
-import requests
 from airflow.exceptions import AirflowFailException
 from airflow.providers.standard.operators.python import PythonOperator
+from notifications import send_failure_alert
 from sensors import JsonPostError, deploy_intent_sensor, http_health_sensor, post_json
 
 from airflow import DAG
@@ -12,25 +11,45 @@ from airflow import DAG
 ARCHIVER_URL = "http://archiver:8001"
 DBT_RUNNER_URL = "http://dbt_runner:8080"
 OPS_URL = "http://ops:8060"
-_TELEGRAM_API = os.environ.get("TELEGRAM_API", "")
-_TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
 logger = logging.getLogger(__name__)
 
 
-def _run_flush_silver():
-    return post_json(f"{ARCHIVER_URL}/flush/silver/run", timeout=300)
+def _post_result(context, url: str, timeout: int, payload=None):
+    """POST and preserve the response — success or failure — for _notify.
+
+    Plan 134 Stage 1. Without this, a task that raises JsonPostError leaves no
+    XCom behind, so the notification has nothing to quote but the DAG's own
+    name. ``JsonPostError.result`` is the parsed 500 body, which under Stage 2
+    is the endpoint's summary plus its ``failure_reason``; pushing it here is
+    what lets the page say which flush broke and why.
+
+    Same shape as pack_bronze_html._post_result, and deliberately so.
+    """
+    try:
+        result = post_json(url, payload=payload, timeout=timeout)
+    except JsonPostError as e:
+        context["ti"].xcom_push(key="result", value=e.result)
+        raise
+    context["ti"].xcom_push(key="result", value=result)
+    return result
 
 
-def _run_flush_staging():
-    return post_json(f"{ARCHIVER_URL}/flush/staging/run", timeout=300)
+def _run_flush_silver(**context):
+    return _post_result(context, f"{ARCHIVER_URL}/flush/silver/run", 300)
 
 
-def _run_reconcile_cooldowns():
+def _run_flush_staging(**context):
+    return _post_result(context, f"{ARCHIVER_URL}/flush/staging/run", 300)
+
+
+def _run_reconcile_cooldowns(**context):
     # Runs after the dbt build so it reads the freshly-rebuilt analytics state.
     # Emits 'cleared' events for listings counted as blocked in analytics but
     # gone from the live table; they flush + drop from the mart next cycle.
-    return post_json(f"{OPS_URL}/maintenance/reconcile-cooldown-cohorts", timeout=180)
+    return _post_result(
+        context, f"{OPS_URL}/maintenance/reconcile-cooldown-cohorts", 180
+    )
 
 
 DEFAULT_DBT_SELECT = ["tag:hourly_core"]
@@ -68,38 +87,18 @@ def _run_dbt_build(**context):
         raise
 
 
+# The tasks this DAG pages about, in execution order. notifications.py names
+# whichever of them actually failed and quotes what it left behind.
+_WORK_TASKS = (
+    "flush_silver_observations",
+    "flush_staging_events",
+    "dbt_build",
+    "reconcile_cooldown_cohorts",
+)
+
+
 def _notify(**context):
-    result = context["ti"].xcom_pull(task_ids="dbt_build", key="result")
-    ti = context["ti"]
-
-    if not _TELEGRAM_API or not _TELEGRAM_CHAT_ID:
-        logger.warning("TELEGRAM_API/TELEGRAM_CHAT_ID not configured - skipping notification")
-        return
-
-    lines = [
-        "hourly analytics refresh FAILED",
-        f"Run:     {ti.dag_run.run_id}",
-        f"Date:    {ti.execution_date}",
-    ]
-
-    if result:
-        if result.get("cmd"):
-            lines.append(f"Command: {result['cmd']}")
-        rc = result.get("returncode")
-        if rc is not None:
-            lines.append(f"Exit:    {rc}")
-        error_body = result.get("stderr") or result.get("stdout") or ""
-        if error_body:
-            lines += ["", error_body[-800:]]
-
-    try:
-        requests.post(
-            f"https://api.telegram.org/bot{_TELEGRAM_API}/sendMessage",
-            json={"chat_id": _TELEGRAM_CHAT_ID, "text": "\n".join(lines)},
-            timeout=10,
-        )
-    except requests.RequestException:
-        logger.warning("Failed to send Telegram notification for hourly analytics failure")
+    send_failure_alert(context, "hourly analytics refresh FAILED", task_ids=_WORK_TASKS)
 
 
 with DAG(
