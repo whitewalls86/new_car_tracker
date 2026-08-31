@@ -681,6 +681,44 @@ full second checkouts *inside* the tree, so from the main checkout the walk
 found **616 extra `.sql` files** and the result depended on how many branches
 happened to be open. Excluded by prefix, with the reason written beside it.
 
+**The asserting test failed its own first CI run, and the failure is the best
+worked example this plan produced.** It passed on the developer machine and
+reported eight stale `ops` route waivers on Linux. The cause was not the tests
+and not the routes: **FastAPI changed `include_router` between 0.128 and
+0.141.** Up to 0.128 it flattened a router's routes into `app.routes` with the
+prefix applied, so a shallow walk saw all of them; by 0.141 it appends a single
+`_IncludedRouter` wrapper exposing neither `routes` nor `prefix`, resolving its
+children at match time. Reproduced on Linux in `cartracker-ops:latest`:
+`app.routes` yields 4 non-framework routes and 10 wrappers where
+`app.openapi()` yields all 54 operations.
+
+Three things are worth carrying out of it.
+
+**The walk did not error — it returned four routes and called that the answer.**
+That is [the harness deciding the outcome](../TESTING.md#the-harness-must-not-decide-the-outcome)
+in the dangerous direction, inside the file written to assert that rule.
+
+**The stale-waiver assertion is the only reason it was caught.** With just the
+unwaived-violation half, the test would have gone green on 0.141 while checking
+4 routes instead of 54 — passing because nothing ran. That direction was
+argued for as bookkeeping hygiene, and it turned out to be the load-bearing
+half.
+
+**The underlying exposure is a dependency one and is not this plan's.**
+`fastapi` is unpinned in five of six services and floored at `>=0.115` in the
+sixth, so every service image takes whatever a **pre-1.0** project has
+published on build day — CI, and production on its next rebuild, with no code
+change and no signal. [Plan 121's `constraints.txt` item](plan_121_staging_environment.md)
+already proposes the fix and now has an incident behind it rather than a
+hypothetical.
+
+The repair was to enumerate from `app.openapi()` — public, stable across both
+versions, prefixes applied, and it drops the framework's own `/docs` and
+`/redoc` without the endpoint-module filter that used to do it by hand. Its one
+blind spot, `include_in_schema=False`, is closed by an assertion of its own:
+no service uses the flag, so the guard costs nothing and the blind spot cannot
+open unnoticed.
+
 **One pre-existing failure found and not fixed**, because it is neither this
 plan's nor CAR-34's:
 `tests/scripts/test_verify_recovery_live_state.py::test_a_failing_canary_command_fails_the_check`
