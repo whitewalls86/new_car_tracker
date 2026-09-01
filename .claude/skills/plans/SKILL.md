@@ -1,6 +1,6 @@
 ---
 name: plans
-description: "Perform a state transition in this repo's planning index — move a plan between the backlog, build order, closeout and superseded tables in docs/PLANS.md, add a closeout row, archive a completed plan into docs/planning/completed_plans.md, or transcribe a soak result the user supplies. Use when the user asks to move, promote, start, close out, archive, supersede, or otherwise re-file a plan's state. This skill writes state and never prose: every title, gate, trigger, date and description arrives from outside it — supplied by the user, or reasoned out and approved before this skill runs — and it does not author one mid-transition, choose a priority or a build-order position, or decide that a gate has closed."
+description: "Perform a state transition in this repo's planning index — move a plan between the backlog, build order, closeout and superseded tables in docs/PLANS.md, add a closeout row, archive a completed plan into docs/planning/completed_plans.md, transcribe a soak result the user supplies, or update a plan's next-executable-slice pointer without moving its row. Use when the user asks to move, promote, start, close out, archive, supersede, or otherwise re-file a plan's state. This skill writes state and never prose: every title, gate, trigger, date and description arrives from outside it — supplied by the user, or reasoned out and approved before this skill runs — and it does not author one mid-transition, choose a priority or a build-order position, or decide that a gate has closed."
 ---
 
 # Moving a plan between states
@@ -223,6 +223,39 @@ refuse, whoever typed it.
 
 You also do not decide the gate has closed. The user says it has.
 
+### 5. Update a plan's next executable slice
+
+**A pointer move is not a state change, and it still belongs here.** A slice
+finishes, the plan stays exactly where it is, and the build order's **Next
+executable slice** cell has to name what comes next. No row moves. Every other
+column, and every other row, is untouched.
+
+It is an operation of this skill for one reason: **that cell is published
+copy**, and the "After every operation" section below is where this repository
+keeps that fact. A pointer update made anywhere else is an edit to the landing
+page by someone who does not know they are making one — which is how it went
+wrong on 2026-09-01, when Plan 138's own closeout wrote the cell from the
+`close-out` skill and reached none of this.
+
+1. Read the row. Confirm the plan number and that the row is where the user
+   thinks it is.
+2. `Edit` the **slice cell only** — `old_string` running from the cell's first
+   words through enough of it to be unique. The `Order`, `Plan`, `Title`,
+   `Workable?`, `Blocked by`, `Priority`, `Effort` and `Depends on` cells all
+   stay byte-identical. Changing any of them is a different operation.
+3. Run the checks below. **The `--check` is not optional here** — a pointer
+   update inside the top four rows always moves the artifact.
+
+**The text arrives from outside, like everything else.** The user supplies the
+new cell, or approves it in the open session before this skill runs. You do not
+read the plan document and decide what the next slice is: that is composing, it
+is the boundary this skill exists to hold, and a pointer that names the wrong
+next step is worse than a stale one because it reads as deliberate.
+
+If the same request also moves the row, that is operation 1 **and** this one.
+Do them as two edits and say so, rather than rewriting a row and a cell in one
+motion.
+
 ## Plan documents and their status
 
 **Yes, this skill touches a plan document's status marker — and nothing else in
@@ -309,9 +342,9 @@ is prose. Do not add it.
 - **decide an order.** Insert where told; never choose a priority, an effort,
   or a build-order position.
 - **author or summarise mid-transition.** Titles, gates, triggers,
-  descriptions and soak results arrive from outside — supplied by the user, or
-  approved by them before this skill runs. Needing one you do not have is a
-  stop, never a draft.
+  descriptions, soak results and slice pointers arrive from outside —
+  supplied by the user, or approved by them before this skill runs. Needing one
+  you do not have is a stop, never a draft.
 - **edit plan document content** beyond the status marker above.
 - **grow a list of special cases.** If a plan seems to need an exception, the
   structure is wrong. That is the argument `tests/test_planning_docs.py` is
