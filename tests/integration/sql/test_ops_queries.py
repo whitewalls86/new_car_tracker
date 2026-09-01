@@ -12,6 +12,11 @@ from pathlib import Path
 import pytest
 
 from ops import coordination_drain
+from ops.queries import (
+    INSERT_BLOCKED_COOLDOWN_EVENTS_BATCH,
+    SELECT_COORDINATION_STATE_METRICS,
+    SELECT_USER_ROLE,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -573,3 +578,40 @@ class TestCoordinationDrainQueries:
             "coordination_gate_observations",
         ):
             assert f" {table}" not in sql, f"{table} is referenced without a schema"
+
+
+# ===========================================================================
+# Statements imported from ops.queries — Plan 162 Stage 7
+# ===========================================================================
+
+class TestExtractedOpsStatements:
+    """The first statements in this file that are the production text.
+
+    Everything above paraphrases: it retypes SQL that resembles what ops runs
+    and executes the copy, which passes forever whatever the original does.
+    These import from ``ops.queries``, the module ops itself imports, so a
+    column renamed underneath them fails here. The rest of the file is repaired
+    the same way.
+    """
+
+    def test_select_user_role(self, cur):
+        cur.execute(SELECT_USER_ROLE, ("no-such-email-hash",))
+        assert cur.fetchone() is None
+
+    def test_select_coordination_state_metrics(self, cur):
+        cur.execute(SELECT_COORDINATION_STATE_METRICS)
+        row = cur.fetchone()
+        # V0xx seeds the singleton row, so this reads a real one rather than
+        # proving only that the statement parses.
+        assert row is not None
+        assert set(row) == {"kind", "phase", "generation", "scope", "updated_at"}
+
+    def test_insert_blocked_cooldown_events_batch(self, cur):
+        from psycopg2.extras import execute_values
+
+        execute_values(
+            cur,
+            INSERT_BLOCKED_COOLDOWN_EVENTS_BATCH,
+            [(str(uuid.uuid4()), "cleared", 3)],
+        )
+        assert cur.rowcount == 1

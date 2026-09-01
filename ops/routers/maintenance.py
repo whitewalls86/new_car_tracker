@@ -11,6 +11,7 @@ from ops.queries import (
     EXPIRE_ORPHAN_DETAIL_CLAIMS,
     INSERT_ARTIFACT_EVENT,
     INSERT_BLOCKED_COOLDOWN_CLEARED_EVENT,
+    INSERT_BLOCKED_COOLDOWN_EVENTS_BATCH,
     MARK_ARTIFACT_STATUS,
     SELECT_LIVE_COOLDOWN_LISTINGS,
     SELECT_PENDING_CLEARED_LISTINGS,
@@ -151,8 +152,7 @@ def _reconcile_cooldown_cohorts() -> Dict[str, Any]:
         with db_cursor(error_context="reconcile: emit cleared") as cur:
             execute_values(
                 cur,
-                "INSERT INTO staging.blocked_cooldown_events "
-                "(listing_id, event_type, num_of_attempts) VALUES %s",
+                INSERT_BLOCKED_COOLDOWN_EVENTS_BATCH,
                 [(lid, "cleared", att) for lid, att in orphans],
             )
         logger.info("reconcile_cooldown_cohorts: emitted %d 'cleared' events "

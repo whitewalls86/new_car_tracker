@@ -854,7 +854,6 @@ LAYER_2_WAIVERS = tuple(
     Waiver(subject, gap="G14", owner=162)
     for subject in (
         "airflow/sql/delete_stale_emails.sql",
-        "archiver/sql/get_queue_cleanup_candidates.sql",
         "archiver/sql/lake_snapshot_selectors/active_to_unlisted.sql",
         "archiver/sql/lake_snapshot_selectors/benchmark_dense_make_model.sql",
         "archiver/sql/lake_snapshot_selectors/benchmark_sparse_make_model.sql",
@@ -1002,15 +1001,12 @@ def test_every_production_sql_file_is_touched_by_a_layer_2_test():
 INLINE_SQL_WAIVERS: tuple[Waiver, ...] = tuple(
     Waiver(subject, gap="G5", owner=162)
     for subject in (
-        "archiver/processors/cleanup_queue.py:33",
         "archiver/processors/flush_silver_observations.py:138",
         "archiver/processors/flush_silver_observations.py:148",
         "archiver/processors/flush_silver_observations.py:198",
         "archiver/processors/flush_staging_events.py:324",
         "archiver/processors/flush_staging_events.py:334",
         "archiver/processors/flush_staging_events.py:383",
-        "ops/coordination_metrics.py:52",
-        "ops/routers/auth.py:45",
         "ops/routers/coordination.py:106",
         "ops/routers/coordination.py:107",
         "ops/routers/coordination.py:239",
@@ -1037,7 +1033,6 @@ INLINE_SQL_WAIVERS: tuple[Waiver, ...] = tuple(
         "ops/routers/deploy.py:193",
         "ops/routers/deploy.py:194",
         "ops/routers/deploy.py:209",
-        "ops/routers/maintenance.py:152",
         "ops/routers/scrape.py:115",
         "ops/routers/scrape.py:121",
         "ops/routers/scrape.py:170",
@@ -1061,13 +1056,10 @@ INLINE_SQL_WAIVERS: tuple[Waiver, ...] = tuple(
         "ops/routers/users.py:336",
         "ops/routers/users.py:80",
         "ops/routers/users.py:88",
-        "processing/routers/artifact.py:33",
-        "processing/writers/srp_writer.py:77",
         "scraper/processors/scrape_detail.py:184",
         "scraper/processors/scrape_detail.py:194",
         "scraper/processors/scrape_results.py:315",
         "scraper/processors/scrape_results.py:326",
-        "shared/compression.py:130",
     )
 )
 

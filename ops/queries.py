@@ -21,3 +21,8 @@ EVICT_DELISTED_COOLDOWNS = _q("evict_delisted_cooldowns")
 INSERT_BLOCKED_COOLDOWN_CLEARED_EVENT = _q("insert_blocked_cooldown_cleared_event")
 SELECT_LIVE_COOLDOWN_LISTINGS = _q("select_live_cooldown_listings")
 SELECT_PENDING_CLEARED_LISTINGS = _q("select_pending_cleared_listings")
+INSERT_BLOCKED_COOLDOWN_EVENTS_BATCH = _q("insert_blocked_cooldown_events_batch")
+
+# Coordination and access control
+SELECT_COORDINATION_STATE_METRICS = _q("select_coordination_state_metrics")
+SELECT_USER_ROLE = _q("select_user_role")

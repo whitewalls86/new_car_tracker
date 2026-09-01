@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from prometheus_client.core import GaugeMetricFamily
 
 from ops.coordination_drain import _airflow_gate_observations
+from ops.queries import SELECT_COORDINATION_STATE_METRICS
 from shared.db import db_cursor
 
 
@@ -49,10 +50,7 @@ class CoordinationCollector:
             with db_cursor(
                 error_context="Coordination-Metrics", dict_cursor=True
             ) as cur:
-                cur.execute(
-                    """SELECT kind, phase, generation, scope, updated_at
-                         FROM coordination_state WHERE id = 1"""
-                )
+                cur.execute(SELECT_COORDINATION_STATE_METRICS)
                 row = cur.fetchone()
             if row is None:
                 raise RuntimeError("coordination row missing")

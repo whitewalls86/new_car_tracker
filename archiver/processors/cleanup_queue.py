@@ -11,7 +11,7 @@ there is nothing to archive; we only need to prune the work-queue table.
 import logging
 from typing import Any, Dict, List
 
-from archiver.queries import GET_QUEUE_CLEANUP_CANDIDATES
+from archiver.queries import DELETE_CLEANUP_CANDIDATES, GET_QUEUE_CLEANUP_CANDIDATES
 from shared.db import db_cursor
 
 logger = logging.getLogger("archiver")
@@ -30,18 +30,7 @@ def cleanup_queue(artifact_ids: List[int]) -> List[Dict[str, Any]]:
     results = []
     try:
         with db_cursor(error_context="cleanup_queue: delete rows") as cur:
-            cur.execute(
-                """
-                DELETE FROM ops.artifacts_queue
-                WHERE  artifact_id = ANY(%s)
-                  AND (
-                      status IN ('complete', 'skip')
-                      OR (status = 'retry' AND created_at < now() - interval '1 hour')
-                  )
-                RETURNING artifact_id
-                """,
-                (artifact_ids,),
-            )
+            cur.execute(DELETE_CLEANUP_CANDIDATES, (artifact_ids,))
             deleted_ids = {row[0] for row in cur.fetchall()}
     except Exception as e:
         logger.error("cleanup_queue: DELETE failed: %s", e)

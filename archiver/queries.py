@@ -19,3 +19,4 @@ def _q(name: str) -> str:
 
 # Plan 97: artifacts_queue cleanup
 GET_QUEUE_CLEANUP_CANDIDATES = _q("get_queue_cleanup_candidates")
+DELETE_CLEANUP_CANDIDATES = _q("delete_cleanup_candidates")

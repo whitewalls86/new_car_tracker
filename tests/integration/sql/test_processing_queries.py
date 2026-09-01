@@ -9,6 +9,11 @@ import uuid
 
 import pytest
 
+from processing.queries import (
+    CLAIM_ARTIFACT,
+    DELETE_PRICE_OBSERVATIONS_FOR_MISSING_LISTINGS,
+)
+
 pytestmark = pytest.mark.integration
 
 
@@ -560,3 +565,34 @@ class TestQueueIsEmpty:
             " WHERE status IN ('pending', 'retry')"
         )
         assert cur.fetchone()["cnt"] >= 1
+
+
+# ===========================================================================
+# Statements imported from processing.queries — Plan 162 Stage 7
+# ===========================================================================
+
+class TestExtractedProcessingStatements:
+    """The first statements in this file that are the production text.
+
+    Same repair as ``test_ops_queries.py``: everything above retypes SQL that
+    resembles what processing runs, and a retyped statement cannot notice the
+    original changed. These import from ``processing.queries``.
+    """
+
+    def test_claim_artifact_matching_nothing(self, cur):
+        cur.execute(CLAIM_ARTIFACT, {"artifact_id": -1})
+        assert cur.fetchone() is None
+
+    def test_claim_artifact_claims_a_pending_row(self, cur):
+        row = _insert_artifact(cur, status="pending")
+        cur.execute(CLAIM_ARTIFACT, {"artifact_id": row["artifact_id"]})
+        claimed = cur.fetchone()
+        assert claimed is not None
+        assert claimed["artifact_id"] == row["artifact_id"]
+
+    def test_delete_price_observations_for_missing_listings(self, cur):
+        cur.execute(
+            DELETE_PRICE_OBSERVATIONS_FOR_MISSING_LISTINGS,
+            (["NOSUCHVIN00000000"], [str(uuid.uuid4())]),
+        )
+        assert cur.rowcount == 0

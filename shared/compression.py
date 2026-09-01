@@ -7,6 +7,8 @@ import threading
 from dataclasses import dataclass, field
 from typing import Any
 
+from shared.queries import SELECT_COMPRESSION_DICTIONARY
+
 logger = logging.getLogger(__name__)
 
 
@@ -127,14 +129,7 @@ def _load_registered(dict_id: int) -> RegisteredDictionary:
     from shared.db import db_cursor
 
     with db_cursor(error_context="Load compression dictionary", dict_cursor=True) as cur:
-        cur.execute(
-            """
-            SELECT minio_path, dictionary_bytes
-            FROM ops.compression_dictionaries
-            WHERE dict_id = %s
-            """,
-            (dict_id,),
-        )
+        cur.execute(SELECT_COMPRESSION_DICTIONARY, (dict_id,))
         row = cur.fetchone()
     if row is None:
         raise UnknownDictionaryError(dict_id)

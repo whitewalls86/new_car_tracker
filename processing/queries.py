@@ -37,3 +37,7 @@ INSERT_VIN_TO_LISTING_EVENT = _load("insert_vin_to_listing_event")
 UPSERT_TRACKED_MODEL = _load("upsert_tracked_model")
 GET_TRACKED_MODELS = _load("get_tracked_models")
 INSERT_TRACKED_MODEL_EVENT = _load("insert_tracked_model_event")
+CLAIM_ARTIFACT = _load("claim_artifact")
+DELETE_PRICE_OBSERVATIONS_FOR_MISSING_LISTINGS = _load(
+    "delete_price_observations_for_missing_listings"
+)
