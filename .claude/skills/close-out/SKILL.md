@@ -62,18 +62,74 @@ Present, in this order:
    unmet, or unverifiable from here. Never mark a check met because the
    surrounding work looks finished.
 2. **Cost.** The estimate, the actual, and the delta — see below.
-3. **The plan document edit**, as the exact text you propose to add and where.
-4. **The `PLANS.md` consequence**, chosen from:
-   - **nothing** — the slice is done, the plan continues. *This is the common
-     case and should be proposed without apology.*
+3. **Whether the work moved a public surface** — one question, answered from
+   what you have just read. See below. Its answer becomes a line in the edit
+   below it, so ask it before you write that text.
+4. **The plan document edit**, as the exact text you propose to add and where.
+5. **The `PLANS.md` consequence**, chosen from:
+   - **nothing** — the slice is done, the plan continues, and the row's
+     **Next executable slice** cell still names something true. *This is the
+     common case and should be proposed without apology.*
+   - **the slice pointer moves, the plan does not** — the row stays where it
+     is and its slice cell now names the wrong next step. Propose the exact
+     replacement text. **This is not a lesser version of "nothing"**: that cell
+     is published copy on the landing page, so it is `plans` operation 5 and it
+     goes through that skill like any other `PLANS.md` edit.
    - **build order → closeout** — deployed, evidence pending. Needs a `Lands`
      date and a gate, and neither is yours to invent.
    - **closeout → archive** — the gate closed. Needs the archive description
      **and the plan's public summary** — see below. Propose both together.
    - **anything → superseded** — needs what superseded it.
-5. **What you could not verify**, named explicitly.
+6. **What you could not verify**, named explicitly.
 
 Then **stop**. Do not write. Do not call another skill.
+
+### Did this work move a public surface?
+
+Ask it as a step, every time:
+
+> Did this work change a **mechanism**, a **name**, or a **quantity** that
+> `README.md` or `ops/templates/info.html` states?
+
+That is the `public-surface-check` taxonomy read from the other end. That skill
+checks a surface someone edited against the repository; this asks whether the
+repository has just moved out from under a surface nobody edited. **The commit
+gate cannot see that case at all** — `public_surface_gate.py` fires on
+`README.md` or `ops/templates/info.html` appearing in `git diff --cached
+--name-only`, so a slice that adds migrations, adds containers or replaces a
+solver and edits no prose never reaches it. Every defect Plan 138's Gate 0
+found was that case: a surface standing still while the tree moved underneath
+it.
+
+**It must be cheap, and it will usually end in "no".** Answer it from the
+commits and evidence phase 1 has already gathered. Do not open either surface
+unless the answer is yes — a step that stops every closeout to deliberate will
+be skipped within a month, and then it holds nothing.
+
+Three outcomes, and **all three are recorded**:
+
+- **No** — one line in the evidence section, in the shape `Public surfaces: no
+  mechanism, name or quantity either surface states was changed by this work.`
+  Write it even though it is uneventful. That line is the only thing that
+  distinguishes a closeout where the question was asked and answered from one
+  where it was skipped.
+- **Yes, and small** — propose the correction as exact replacement text in the
+  approval stop this phase already makes, and land it with the closeout. It
+  stages a surface, so `public_surface_gate.py` fires and
+  `public-surface-check` reads the diff in the normal way. The two compose;
+  neither replaces the other.
+- **Yes, and larger than this closeout** — a ticket, via `ticket-now`, naming
+  the surface and the claim that is now wrong. A closeout is a bad place to
+  rewrite a section of the front door.
+
+**Propose; never write.** The approval stop covers this exactly as it covers
+everything else in phase 2.
+
+This is a step, not a hook, and saying so is part of using it honestly. Nothing
+forces a closeout to happen, so unlike the commit gate it is a check you can
+still miss by never closing out. It is worth doing anyway because it rides a
+ritual that already exists, and because the alternative is auditing accumulated
+drift after it has been published.
 
 ### The public summary, written once, when the plan archives
 
@@ -180,11 +236,22 @@ Only after approval, and only what was approved.
    `## Public summary` section in the same edit, then regenerate the public
    projection with `python scripts/build_public_roadmap.py` and commit its
    output — CI's `--check` fails on a stale artifact.
-2. **`docs/PLANS.md`, via the `plans` skill** — only if phase 2 proposed a
-   transition and the user approved it. Pass the approved values through and
-   tell that skill they were approved in the open session, with their source.
-   Never edit `PLANS.md` directly from here.
-3. **Linear** — set the issue to `Done`, post the closeout comment. Leave the
+2. **The public surface correction**, if the surface question ended in "yes,
+   and small" and the user approved the exact text. Write that text and nothing
+   else — a closeout is not the moment to tidy the rest of the file. The commit
+   then stages a surface, so `public_surface_gate.py` blocks it until
+   `public-surface-check` has read the diff and stamped it. Run that skill; do
+   not bypass the hook.
+3. **`docs/PLANS.md`, via the `plans` skill** — for a transition *or* a
+   slice-pointer update, whichever phase 2 proposed and the user approved. Pass
+   the approved values through and tell that skill they were approved in the
+   open session, with their source. **Never edit `PLANS.md` directly from
+   here**, and that includes a one-cell pointer edit: `plans` is where this
+   repository keeps the fact that the build order's top four rows are published
+   through `ops/static_ops/project-updates.json`, along with the regeneration
+   step and the check that proves it. An edit made from here reaches none of
+   that.
+4. **Linear** — set the issue to `Done`, post the closeout comment. Leave the
    estimate alone.
 
 If any step fails, stop and report. Do not carry on to the next: a plan
@@ -238,6 +305,12 @@ Report:
 - **overwrite `estimate` with the actual**, or derive an actual from elapsed
   calendar time.
 - **rewrite a plan's design** because the work diverged from it.
+- **silently edit a public surface.** A correction to `README.md` or
+  `ops/templates/info.html` is proposed as exact text and approved like
+  everything else here. One appearing in a closeout's diff without having been
+  on screen is the failure the surface question exists to prevent — and
+  skipping the question, or answering it and recording nothing, is the same
+  failure one step earlier.
 - **write a `## Public summary` the user has not approved.** It is public copy
   on a public page, and it is the one thing here a reader outside this project
   will ever see.
