@@ -582,39 +582,36 @@ The 1,172 files are gone. The 12.19 fields per row are not.
 
 ## COMPANION POST (Short LinkedIn post linking to the article)
 
-I asked for a one-off script. I got a fortress.
+There were 1,172 files. 13.66 GiB of four-month-old HTML, sitting on a VPS that
+did not have 13.66 GiB to spare.
 
-The job was to delete 1,172 files — 13.66 GiB of four-month-old HTML on a VPS
-that didn't have it to spare. If you're brave, that's one line.
+Deleting them is one line: a prefix and a delete.
 
-What I ended up with was 9,410 lines of Python, 7,107 lines of tests, seventeen
-subcommands, and four separate designs — the first of which I merged, deployed,
-and reverted the same evening.
-It hashed every page, copied all of them somewhere else, hashed them again, and
-refused to delete anything it couldn't prove existed in two places.
+It took three days, about thirty hours of compute, and four separate designs —
+the first of which I merged, deployed to production, and reverted the same
+evening, because no document anywhere said where the input actually lived.
 
-Not because the model I was building with was timid. Because my codebase is
-defensive — manifests written before anything is deleted, receipts on every
-write, gates that fail closed, nothing removed by prefix — and it read all of
-that, matched it, and wrote a throwaway script in the style of production code
-I'd already defended in review.
+Some of that was my own fault in a way I didn't expect. My codebase is
+defensive, so when I asked for a throwaway script, the model read all of that
+and wrote a throwaway script in that style. It was pattern-matching on code I'd
+already defended in review, which made it very hard to argue with.
 
-That's mostly a gift. It's the best argument I know for investing in your own
-conventions, now that conventions are executable by something that reads them.
+I spent most of those three days sure the whole thing was disproportionate.
 
-The catch is that a model has no concept of "this script runs once." It can't
-tell you when your own standards don't apply, and it won't tell you it isn't
-making that call. I spent three days sure the whole thing was disproportionate.
+Then the last check before deletion — the one the entire plan rested on — came
+back failed. 46.8% of the sampled rows disagreed with what production had
+recorded. That is the number that should end a project.
 
-Then the last check before deletion failed — 46.8% of the sampled rows
-disagreeing with what production had recorded — and the diagnosis was that the
-recovery wasn't wrong. It had **more**. A mean of 12.19 fields per row that the
-original pipeline never captured, because in April it was reading those same
-bytes through a schema with seven fewer columns.
+It took under an hour to establish that the parser was fine, and that the
+disagreement was the whole point.
 
-It was disproportionate to the deletion. It was exactly proportionate to what was
-in the files, which nobody knew, because nobody had looked.
+I've written up what was actually inside those files, and the argument for
+keeping raw source data that I did not have until this project produced it. It
+is not the usual insurance argument, and it is a lot stronger.
 
-Full write-up: [link]
+Your parser gets better over time. Your already-parsed results do not.
 
-Anyone else had a defensive check pay out as a discovery rather than a save?
+[link]
+
+Has anyone else gone back to raw bytes and found something the pipeline that
+first read them couldn't see?
