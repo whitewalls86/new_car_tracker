@@ -29,7 +29,7 @@
       "priority": 84,
       "effort": "L",
       "state": "planned",
-      "summary": "Stage 1d public roadmap projection — the landing page carries the section and its list ids; the generator and project-updates.json do not exist yet",
+      "summary": "Stage 1e weekly recap projection — 1d's build-time projection pattern pointed at docs/recaps/, rendering 31 files to static HTML with a link classifier that handles all three docs/ link classes",
       "href": "https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_138_public_surface_refresh.md"
     },
     {
