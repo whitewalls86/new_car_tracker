@@ -1,16 +1,25 @@
 # Plan 145 — Post-Mortem (Draft)
 
-**Status: draft, gathered 2026-08-29, updated the same evening. Plan 145 is not
-finished.** Stage 5 is now complete — the whole `to_import` population is
-committed — but Stage 6 is unstarted and **not one of the 1,172 legacy Parquet
-objects has been deleted**, which is the entire point of the plan. This is a
-mid-flight account assembled so the narrative can be written while the evidence
-is still recoverable — not a closeout.
+**Status: closed. Plan 145 finished 2026-08-30 and was archived that morning.**
+All 1,172 legacy Parquet objects are deleted,
+`html/year=2026/month=4/artifact_type=detail_page/` is empty, and April went from
+24.48 GiB to 4.34 GiB. The first two revisions of this document were written
+mid-flight, so the narrative could be assembled while the evidence was still
+recoverable; this one closes it against the finished plan. Sections dated before
+2026-08-30 are left as they were written, and marked where the run has since
+answered them.
 
 **Sources.** Current plan, handoff, runbook and reference documents; the full git
 history including reverted and superseded revisions; the VM at `147.224.199.86`
 (tmux sessions, run logs, timings); and 20 Claude Code transcripts on this
 machine spanning 2026-08-25 to 2026-08-29.
+
+**Added 2026-09-01, from sources that did not exist when the draft was written:**
+Stage 6's evidence sections in the plan document, the [2026-08-30
+recap](../recaps/2026-08-30.md), the archive entry in
+[`completed_plans.md`](../planning/completed_plans.md), and [Plan
+149](../plans/plan_149_linear_execution_layer.md)'s closed cycle-1 measures,
+which answer two of §13's open questions.
 
 **One evidence gap, now partly closed.** The window of 2026-08-26 12:00–22:00 —
 in which the first implementation was built, merged and reverted — was recorded
@@ -25,11 +34,13 @@ revert, four hours later, remains unrecorded.
 
 A plan whose **goal never changed once** — delete 1,172 legacy Parquet objects
 without losing anything that matters — took **four distinct designs, two
-reverted merge commits, one thrown-away uncommitted implementation, 18 merged
-pull requests, 79 commits, 7,562 lines of script and 5,513 lines of test** to
-reach a state where it still has not deleted a single byte. Every design died
-the same death: it trusted an identity key that measurement then disproved. The
-final method works because it stopped joining on metadata altogether and
+reverted merge commits, one thrown-away uncommitted implementation, 23 merged
+pull requests, 76 non-merge commits, 9,410 lines of script and 7,107 lines of
+test** to delete 14,670,223,837 bytes in a command that ran for under a minute.
+Three designs were discarded — of an unnamed input, of identity and of cost
+respectively — see §3 for why "each died on identity" is the plan's own
+overstatement, and for the correction to which design was actually built. The
+final method worked because it stopped joining on metadata altogether and
 flattened the population into one directory of bytes first — an idea the
 maintainer proposed, in plain language, after saying he felt like he was
 "talking to a wall."
@@ -44,12 +55,12 @@ maintainer proposed, in plain language, after saying he felt like he was
 | 2026-08-17 | [Plan 137](../plans/plan_137_legacy_bronze_parquet_disposition.md) created — legacy Parquet disposition, never scheduled |
 | 2026-08-21 | **Plan 145 created** (`136cb9f`, PR #227). Supersedes 132 and 137: "three investigations turn out to be one April 2026 cutover seen from three sides." Goal: delete **1,299** objects / 13.79 GiB. Stage 0 gates 0a–0f closed the same day |
 | 2026-08-26 15:28 | First implementation merged — PR #255, `b21fd48`: a backfill processor, an April ledger script, and **changes to the production `detail_writer` and `silver_writer`** |
-| 2026-08-26 17:23–17:50 | Design 2 is **pulled onto the VM, rebuilt and health-gated into production** — then the ledger scan cannot start, because the legacy Parquet prefix is written down nowhere. See §3.1 |
+| 2026-08-26 17:23–17:50 | **Design 1's implementation** is **pulled onto the VM, rebuilt and health-gated into production** — then the ledger scan cannot start, because the legacy Parquet prefix is written down nowhere. See §3.1 |
 | 2026-08-26 19:36 | PR #256, `45f13a5` — "build complete April reconciliation ledger" |
 | 2026-08-26 21:49 | **Both reverted**, one minute apart (`f946f88`, `1601379`). 1,443 + 662 lines removed, including a 435-line implementation plan |
-| 2026-08-26 | **Design 2** (`7504f88`): the selective-recovery design is discarded for a staged recovery/write/repack/delete workflow |
+| 2026-08-26 22:41 | **Design 2** (`7504f88`), written **52 minutes after the reverts**: the selective-recovery design is discarded for a staged recovery/write/repack/delete workflow. This design was never implemented |
 | 2026-08-27 12:09 | Implementation restarts. Within 90 minutes the sidecar `listing_id` defect surfaces |
-| 2026-08-27 | **Design 3** (`5c1162c`, PR #258): refuse all metadata, re-derive from bytes. Two-store union, 24.8 core-hours |
+| 2026-08-27 | **Design 3** (`5c1162c`, PR #258): refuse all metadata, re-derive from bytes. Two-store union, an estimated 24.8 core-hours |
 | 2026-08-27 16:30 | The maintainer proposes flattening. **Design 4** (`57baacd`) lands the same day |
 | 2026-08-27 15:00–19:08 | Stage 2 `materialize --apply` — 4h10m, 807,797 objects |
 | 2026-08-27 19:57–20:10 | Stage 3a `dedupe --apply` — 13 min, 371,095 distinct objects deleted |
@@ -69,29 +80,67 @@ maintainer proposed, in plain language, after saying he felt like he was
 | 2026-08-29 ~14:55 | Flush; `canary-flush-verify` finds all 505 / 140 / 234 in the lake by key |
 | 2026-08-29 15:17 | PR #276 merged — `apply` skips what the canary already wrote |
 | 2026-08-29 15:20–15:30 | **The full apply.** 69 batches in 7 chunked rounds. 341,903 artifacts / 701,375 rows committed |
+| 2026-08-29 | Stage 6 dry runs — all four modes read-only on `master` at `64631de`. `fetch_member_metadata` returns 843,439 lake-described members: exactly the 551,009 + 292,430 the corrected gate had derived before anything ran |
+| 2026-08-29 | **`pack-trial --apply`** — 18m02s, and the ordering trial **splits** (`d7d4e7a`). The incumbent clustering carries |
+| 2026-08-29 17:56–20:17 | **The repack** — 2h20m. 68 packs, 983,043 members packed and 983,043 verified, 0 read failures. `repack-verify` returns PASS |
+| 2026-08-29 | `retire-packs --apply` — the 32 superseded packs and their 32 sidecars deleted, 64 receipts, none absent |
+| 2026-08-29 23:43 – 08-30 02:26 | **The prune** — 2h43m. 983,043 loose objects deleted, 983,043 verified, **0 refused** |
+| 2026-08-30 03:53 | **`delete-legacy --apply`** — 1,172 planned, 1,172 deleted, 1,172 reconciled, 0 refused, in under a minute. **This is the thing the plan existed to do** |
+| 2026-08-30 | Plan 145 archived (`066d3e2`). April: 24.48 GiB → 4.34 GiB |
 
 ---
 
 ## 3. The goal never moved. The method moved four times.
 
 This is the single most important fact for the narrative, and it is the plan's
-own framing: *"The goal and success criteria have survived every revision
-unchanged. The method has now changed three times, each time because a
-measurement contradicted an identity key the previous method relied on."*
+own framing, and the sentence survived unchanged into the archived version:
+*"The goal and success criteria have survived every revision unchanged. The
+method has now changed three times, each time because a measurement contradicted
+an identity key the previous method relied on."*
 
 Counting the discarded pre-implementation design, there were four:
 
 | # | design | dated | what it assumed | how it died |
 |---|---|---|---|---|
-| 1 | **Selective recovery** | 2026-08-21 | Stage 0f showed only 270 of 355,845 unmatched captures witness a price change, so recover ~11,600 information-bearing rows and drop the rest | Discarded 2026-08-26 as under-ambitious once deletion became the stated goal |
-| 2 | **Metadata reconciliation** | 2026-08-26 | The pack sidecar's `listing_id` could carry a join between legacy Parquet and production | **Disproved:** sidecar `listing_id` is wrong for 194,639 of 371,095 content matches |
-| 3 | **Two-store union by content hash** | 2026-08-27 | Refuse all metadata; parse the union of both stores deduplicated by hash | Correct but overbuilt — 24.8 core-hours, and it carried a two-store reconciliation through every stage |
-| 4 | **Flatten first** | 2026-08-27 | Materialize, delete the twins, unpack — then everything downstream reads *one* store | In flight |
+| 1 | **Selective recovery** | 2026-08-21 | Stage 0f showed only 270 of 355,845 unmatched captures witness a price change, so recover ~11,600 information-bearing rows and drop the rest | **The only design that reached production.** Its five-file implementation plan is exactly what `b21fd48` built; merged, deployed, health-gated, and then un-runnable because no document named the legacy prefix. Reverted 21:49; superseded 52 minutes later once the goal had also hardened from recovery to disposal |
+| 2 | **Metadata reconciliation** | 2026-08-26 **22:41** | The pack sidecar's `listing_id` could carry a join between legacy Parquet and production | **Disproved before a line of code:** sidecar `listing_id` is wrong for 194,639 of 371,095 content matches. Written after the reverts, never implemented |
+| 3 | **Two-store union by content hash** | 2026-08-27 | Refuse all metadata; parse the union of both stores deduplicated by hash | **Never run.** Correct in instinct but overbuilt — costed at an estimated 24.8 core-hours, and it carried a two-store reconciliation through every stage. Its `parse` mode was reverted before commit |
+| 4 | **Flatten first** | 2026-08-27 | Materialize, delete the twins, unpack — then everything downstream reads *one* store | **It did not die.** It carried the plan to completion on 2026-08-30 |
 
-Two of these produced code that was thrown away: design 2's merged
+Two of these produced code that was thrown away: design 1's merged
 implementation (reverted) and design 3's `parse` mode, which the Stage 3 handoff
 records as *"reverted before commit; the patch is in the session scratchpad
 only. Do not go looking for it."*
+
+**The plan's own sentence overstates its own table, and this document repeated
+it.** *"Each time because a measurement contradicted an identity key"* holds for
+exactly one of the three changes. Design 1 died because its input was never
+named, and was then superseded because the stated goal had hardened from recovery
+to disposal. Design 3 was discarded because it was costed at an estimated 24.8
+core-hours and carried a two-store reconciliation through every stage. Only
+design 2 died on a disproved key — and it never reached code.
+
+**Corrected 2026-09-01, against git.** The first two revisions of this document
+attributed `b21fd48` (PR #255, merged 15:28) to design 2. That is wrong by seven
+hours: design 2 is `7504f88`, committed 22:41, *after* the 21:49 reverts. The
+merged implementation builds design 1's own "Files Changed" table, five files for
+five, and its ledger joins **on content hash, not on metadata** —
+`build_april_ledger.py`'s docstring reads *"Join legacy rows to sidecars by
+content hash, never by artifact ID."* Design 2 is therefore the one design in
+this plan that was never built, and the byte-hash instinct the narrative credits
+to design 3 was present in the first file merged. The error mattered because it
+made the plan look like a story of dawning realisation; it was closer to a story
+of an instinct that was right early and took three more designs to make
+affordable.
+
+The compressed version is memorable, it survived unchanged into the archived
+plan, it was repeated in the [2026-08-30 recap](../recaps/2026-08-30.md), and it
+was repeated in this document's first two revisions. That is how a framing
+becomes a fact. §7 and §8 already record two places where the plan's own
+explanation of something was wrong; this is the third, and it is the plan's
+explanation of *itself*. The accurate form: identity is the through-line, and
+design 4 won by making identity reconciliation unnecessary rather than by
+solving it.
 
 ### 3.1 What the 2026-08-26 revert looked like from inside — recovered
 
@@ -99,7 +148,7 @@ One local transcript covers **2026-08-26 17:23–17:50**, four hours before the
 reverts. It is short and it is damning, and it changes the previous revision's
 claim that this episode is reconstructible from git alone.
 
-Design 2's implementation was not merely merged. It was **merged, pulled onto
+Design 1's implementation was not merely merged. It was **merged, pulled onto
 the VM, rebuilt into the `archiver` and `processing` images, and health-gated
 into production** — the maintainer's opening line is *"The code is merged, I'll
 pull on the VM."* The deploy succeeded. `docker exec cartracker-archiver python
@@ -124,16 +173,23 @@ which one it was. The assistant's own reading: *"None of these jump out as
 most likely candidate"* — a guess, one message after warning against guessing.
 The transcript ends there, at 17:50, with the ledger scan never run.
 
-**What this establishes, and what it does not.** It establishes that the
-design-2 implementation reached production and was then found to be
-**un-runnable against the population it existed to reconcile**, because the
-plan it was built from — Plan 137 — described the legacy lake only in prose and
-never pinned an object prefix. It does not establish that this is *why* the
-maintainer reverted four hours later; both revert commits carry bare
-`git revert` messages, PR #255 and #256 have **zero review comments**, and no
-transcript covers 17:50–21:49. But it is the last recorded state of that work
-before it was removed, and it is a much better lead for §13's first open
-question than "git alone."
+**What this establishes.** The implementation reached production and was then
+found **un-runnable against the population it existed to reconcile**, because
+the plan it was built from — Plan 137 — described the legacy lake only in prose
+and never pinned an object prefix.
+
+**And it is enough to settle why it was reverted.** No document states a reason:
+both revert commits carry bare `git revert` messages, PR #255 and #256 have
+**zero review comments**, no transcript covers 17:50–21:49, and the plan rewrite
+52 minutes later records only that the implementations *"were reverted before
+this rewrite"* and *"are not inputs to this design."* An earlier revision of this
+document treated that as an open question. It is not one, and the distinction
+matters: **an unstated reason is not an unknown one.** The work had just failed
+in production, and — see the diffstat below — it had restructured two live
+production write paths to get there. Backing that out the same evening is the
+ordinary call. What is genuinely unrecorded is narrower: whether repairing the
+input was ever weighed against replacing the design, and what the four hours
+were spent on.
 
 **The guess was right, and design 4 still refused to make it.** The legacy root
 is `html/`, exactly the prefix the assistant picked. That is not the
@@ -146,13 +202,13 @@ comment explaining why:
 > but the exact spelling is discovered by listing rather than assumed — **a
 > hardcoded guess that matches nothing would look like an empty population
 > instead of a failure.**
-> — `scripts/reconcile_april_detail.py:152`
+> — `scripts/oneoff/reconcile_april_detail.py:152`
 
 That is the entire lesson of 2026-08-26, compiled into a comment above a
 constant, three days later: the failure mode of guessing an input location is
 not an error, it is a **silent zero**. Design 4 also pins `BASELINE_OBJECTS =
 1172`, `BASELINE_ROWS = 951821` and a status census as *assertions about
-production*, "restated so drift is a stop rather than a shrug." Design 2 had
+production*, "restated so drift is a stop rather than a shrug." Design 1 had
 none of that and could not have; nobody had yet been burned.
 
 **The revert diffstat sharpens what was being backed out.** The plan calls it
@@ -218,7 +274,7 @@ split identity from placement (`PackMember.cluster_key`), correcting the sidecar
 
 ---
 
-## 5. The compression question: settled, mechanised, reopened, deferred — in one evening
+## 5. The compression question: settled, mechanised, reopened, deferred — then refused
 
 Four commits on 2026-08-27, each withdrawing the previous claim. Worth the
 narrative space because it is the plan's best example of measuring rather than
@@ -235,6 +291,44 @@ The rejected shortcut is documented too: comparing April's bytes-per-page agains
 other months cannot work, because achieved ratios (43.66x / 67.95x / 82.00x /
 77.44x) do not track clustering quality at all — June is the worst-clustered
 month and compresses best.
+
+### The answer, 2026-08-29 — and it was a refusal
+
+`pack-trial --apply` ran the bounded trial as `trial-5fbadb36972161fb`, 18m02s,
+on the production dictionary, level and frame target. Both draws, same
+population, same dictionary, same frame target — only the 50,000 members differ:
+
+```
+drawn in current  true ordering is larger  by 27.50%
+drawn in true     true ordering is smaller by  4.76%
+```
+
+**A 32-point swing from sample selection alone, larger than the effect under
+test.** This is the bias the plan's own Caveats section predicted and could not
+size; the trial sized it, and it is bigger than the signal. The decision rule,
+fixed before the run, returns `current`, so the incumbent clustering carried and
+`fetch_member_metadata` was left alone. The trial wrote no pack — both sets were
+built in memory and discarded, verified afterwards against a prefix still holding
+exactly 32 `.zpack` and 32 `.idx.parquet`.
+
+**The plan originally specified one sample** — *"the first ~50,000 members of the
+flattened population"* — which taken in stored order is the `current` draw. It
+would have reported true ordering 27.50% worse and closed the question on an
+artefact. The two-sample rule is what turned an answer into a refusal.
+
+The mechanism is the coarse-key asymmetry the plan had already measured: the
+scrambled `cluster_key` averages 9.98 members per value against the true
+listing's 4.25. A contiguous draw in `current` order captures whole coarse
+clusters, and re-sorting by true listing shatters them; a draw in `true` order
+captures fine clusters spread across partial coarse ones, so re-sorting costs
+less. **A bounded trial therefore measures containment at least as much as
+ordering** — which is a caveat for any future trial of this shape, not just this
+one.
+
+For the question the plan left open about May, June and July: in its most
+favourable condition true ordering wins 4.76%, about 0.33 GiB against 6.86 GiB
+for a full repack of ~3M members. Not a decision — 50,000 members is not a
+month-global sort — but the first evidence that the ceiling is low.
 
 ---
 
@@ -476,6 +570,11 @@ flusher or `stg_observations.sql`).
 | `already_represented` / `to_import` / `blocked_excluded` / `unclassifiable` | 4,977,697 / **701,375** / 59,460 / **0** |
 | artifacts assigned (13,253 preserved + 328,650 allocated) | 341,903 |
 | unrecoverable by construction, accepted as closed loss | 11,453 |
+| members repacked and verified (Stage 6) | 983,043 |
+| replacement packs | 68 |
+| superseded packs retired | 32, plus 32 sidecars |
+| loose objects pruned | 983,043, **0 refused** |
+| **legacy Parquet objects deleted** | **1,172 / 14,670,223,837 bytes** |
 
 ### Wall clock, from the VM logs
 
@@ -489,9 +588,30 @@ flusher or `stg_observations.sql`).
 | `control`, `assign`, `canary-sample` | minutes each |
 | Phase B — migrate, dry run, two windows, flush verify | ~50 min, most of it drain |
 | **Stage 5 `apply` — all 69 batches** | **~10 min** (4.2 s/batch, 7 chunked rounds) |
+| Stage 6 `pack-trial` | 18m02s |
+| Stage 6 repack — 68 packs | 2h20m |
+| Stage 6 `retire-packs` | minutes |
+| Stage 6 prune | **2h43m** (29 min listing, 2h13m draining 68 packs) |
+| **Stage 6 `delete-legacy`** | **under a minute** |
 
-The apply being the fastest stage in the plan is worth a line. Four days of
-design and 6,000 lines of test stood behind ten minutes of writing.
+**The two moments the plan existed for were its two fastest.** The apply — ten
+minutes for 701,375 rows — and the deletion itself, under a minute for 13.66 GiB.
+Roughly thirty hours of measured compute and 7,107 lines of test stood behind
+eleven minutes of writing and deleting. The cost was never in the destructive
+step; it was in earning the right to take it.
+
+**And the whole of it fits in three days.** First implementation commit
+(`b21fd48`, 2026-08-26 15:28) to the deletion completing (2026-08-29 22:53) is
+**79h25m** — four designs, two reverted merges, 23 pull requests and every run in
+the table above. The plan document is dated five days earlier, but nothing was
+worked on it in between; that gap is calendar the document spent idle while other
+plans were being built, not planning effort, and counting it inflates the span.
+Measure from first implementation.
+
+**Thirty of those 79 hours are the table above running**, and the stages are
+strictly sequential — nothing parses until it is unpacked, nothing unpacks until
+the twins are deleted. That is a hard floor under the elapsed time that no
+amount of getting the design right the first time would have lowered.
 
 **The parse's tail is worth a sentence in the narrative.** Units 1–1,170 (the
 materialized shards) finished in 7h20m. Units 1,171–1,204 — the 32 unpacked pack
@@ -544,34 +664,49 @@ stop.
 One cosmetic defect is recorded here because it is the kind that survives:
 `compare --probe --apply`'s success line printed `wrote compared/…,
 inventory/….json` **without** the `_probe` suffix
-(`_print_compare_report`, `scripts/reconcile_april_detail.py:3671`). The data
-went to the right place — the isolation check proves it — but the operator's
-only on-screen confirmation of isolation said the opposite of the truth.
+(`_print_compare_report`, `scripts/oneoff/reconcile_april_detail.py:3935`). The
+data went to the right place — the isolation check proves it — but the operator's
+only on-screen confirmation of isolation said the opposite of the truth. It was
+never fixed: the line is still there in the archived script, which is the honest
+fate of a cosmetic defect on a one-off tool.
 
 ### Code
 
 | | at first commit | now |
 |---|---:|---:|
-| `scripts/reconcile_april_detail.py` | 876 | **7,919** |
-| `tests/scripts/test_reconcile_april_detail.py` | 496 | **6,033** |
+| `scripts/oneoff/reconcile_april_detail.py` | 876 | **9,410** |
+| `tests/scripts/oneoff/test_reconcile_april_detail.py` | 496 | **7,107** |
 
-Plus `scripts/verify_recovery_live_state.py` (283), three real-Postgres
-integration suites (1,273), one Flyway migration, and **13 CLI modes**: `census`,
+Plus `scripts/oneoff/verify_recovery_live_state.py` (283), three real-Postgres
+integration suites (1,273), one Flyway migration, and **17 CLI modes**: `census`,
 `materialize`, `dedupe`, `unpack`, `parse`, `compare`, `assign`, `apply`,
 `control`, `canary-sample`, `canary-remanifest`, `canary-commit`,
-`canary-flush-verify`.
+`canary-flush-verify`, `pack-trial`, `repack-verify`, `retire-packs`,
+`delete-legacy`.
 
-Five of those thirteen modes exist only so ~500 rows could be committed safely.
+Five of those seventeen modes exist only so ~500 rows could be committed safely.
 Whether that was proportionate is §13's question, not this section's.
 
-**Documentation is comparable in size to the code**: 1,801-line plan, six
-handoffs (1,332 lines), a 975-line run sheet, a 250-line flag reference.
+**Both files moved after the plan closed.** [Plan
+162](../plans/plan_162_testing_census_and_restructure.md) split `scripts/` into
+production and spent, and this one — a one-off by construction, run to completion
+and never to run again — went to `scripts/oneoff/` with its suite (`e954306`).
+The eight handoffs moved to `docs/prompts/` under [Plan
+146](../plans/plan_146_planning_system.md) (`538c9fa`). Every path in this
+document is written as the tree stands today.
+
+**Documentation ran to a third the size of the code**, which is the honest
+ratio and larger than it sounds: a 2,485-line plan, eight handoffs (2,084
+lines), two run sheets (1,356), a 310-line flag reference — **6,235 lines
+against 18,073** of script, test and integration suite, before counting this
+post-mortem.
 
 ### Process
 
-85 commits mentioning plan-145 · 21 merged PRs (#227, #255–#276) · **2 reverted
-merges** · **9 review rounds** that produced follow-up fix commits — four of them
-on PR #274 alone, each finding a real defect in the canary's contract.
+**76 non-merge commits** mentioning plan-145 on `master`, 100 including merges ·
+**23 merged PRs** (#227, #255–#283) · **2 reverted merges** · **9 review rounds**
+that produced follow-up fix commits — four of them on PR #274 alone, each finding
+a real defect in the canary's contract.
 
 **The review rounds were run by a separate cold session against the same
 handoff the builder had; §6.5 describes the topology and reproduces the review
@@ -636,75 +771,198 @@ lines to see anything… ctrl bd, option bd, and command bd do nothing"), an
 `docker exec` vs `compose run` earned its own runbook section after it was found
 to run stale code.
 
+**The same stale-code class, one stage later (2026-08-29).** The Stage 6 dry runs
+opened with `invalid choice: 'pack-trial'`. The archiver bakes its source into
+its image rather than mounting it, so `compose run` against an unrebuilt image
+runs the code from the last build. Identical in shape to the `docker exec`
+finding above, met again a stage later, and now a line in the Stage 6 run sheet.
+
+**A running average made someone else's load look like decay (2026-08-29).** The
+27.4-minute MinIO listing is paid twice across Stage 6 — once by the dry run,
+again by the repack — because nothing caches the enumeration. Two concurrent
+DuckDB queries during one of those listings cost about 90 seconds, and read
+against a running-average rate that looked like the run slowing down rather than
+like somebody else on the disk. The run sheet now says to keep other work off
+MinIO while it lists. It is the small, cheap cousin of the VM wedge above: the
+same mistake — treating a shared box as a private one — costing 90 seconds
+instead of 25 minutes.
+
+**The ambiguity guard fired on a real ambiguity (2026-08-29).** `retire-packs`
+requires `--verify-run-id`, which had looked like insurance against a contrived
+case. It was not optional: two verify reports existed on the store — the failed
+one from the dry-run phase, and the passing one — and the mode named both and
+refused to choose. Between the guard that refuses a *missing* report, which was
+what the plan anticipated, and the one that refuses an *ambiguous* one, the
+second is what met the world.
+
 ---
 
-## 11. Where it stands
+## 11. Where it ended
 
-**Stage 5 is complete.** As of 2026-08-29 15:30 UTC the whole `to_import`
-population is committed and flushed to the lake.
+**Plan 145 is complete and archived.** It closed 2026-08-30 and was archived that
+morning (`066d3e2`), in the same transition that moved [Plan
+156](../plans/plan_156_block_page_detection.md) into the build order — its only
+trigger had been Plan 145 Stage 5 finishing.
 
-| | artifacts | silver | price | queue |
-|---|---:|---:|---:|---:|
-| 69 batches | 341,669 | 700,870 | | |
-| canary | 234 | 505 | | |
-| **70 receipts** | **341,903** | **701,375** | **200,599** | **341,903** |
+### The deletion, 2026-08-30 03:53 UTC
 
-The arithmetic is the proof in both directions: the batches wrote exactly 234
-artifacts and 505 rows short of the assign census, so the canary exclusion
-caught every canary artifact — no duplicate; and the two rows sum to precisely
-that census, so it caught nothing else — no gap. Staging drained to zero, and
-the flushers delete only after a successful Parquet write.
+`delete-legacy --apply --maintainer-approval "Andrew Miller"
+--census-from-manifests --verify-run-id repack-4ea1c730c8b96ac1`. Under a minute.
 
-**Done and irreversible:** 371,095 objects deleted (recoverable from the packs);
-557,065 members unpacked; V047 applied; `ops.artifacts_queue_artifact_id_seq`
-advanced twice, by 292,432 (probe) and 329,856 (authoritative) — sanctioned
-`bigserial` gaps, not reuses; and now 701,375 silver rows, 200,599 historical
-price events and 341,903 recovered queue events committed and flushed.
+| | |
+|---|---:|
+| legacy objects, against a frozen baseline of 1,172 | 1,172 |
+| planned for deletion | 1,172 |
+| receipts `deleted` / `reconciled` | 1,172 / 1,172 |
+| `refused` / `absent` / `error:` | **0 / 0 / 0** |
+| legacy detail Parquet remaining | **0** |
+| `results_page` objects, before and after | 2,380 / 2,380 |
 
-**The V040 assertion held.** Two runs in a named window on a deploy-intent
-drain, `single transaction True` in both, all six protected relations
-byte-identical across the canary. Recovery changes no live state — measured,
-not asserted.
+By exact key from a manifest written **before the first delete**, in capped
+batches, never by prefix, with the approving name recorded in the manifest and in
+all 1,172 receipts. The drift gate passed against the census frozen on
+2026-08-21: nine days later the bytes were still `14,670,223,837`, exact to the
+byte. The out-of-scope results-page population was refused *by key as a
+predicate*, not filtered out of a listing — its 127 Parquet objects untouched.
 
-**Proven since this document was first written:**
+### The prune that made it safe, 2026-08-29 23:43 – 08-30 02:26
 
-- the write canary as a real commit, and the flush round trip into
-  `silver_normalized/observations/` and `ops_normalized/`, verified by key;
-- the V040 before/after equality, in a maintainer-opened window;
-- the duplicate-write interaction — `apply` now reads the canary's commit
-  record, with the receipt as the authority and both mismatch directions
-  stopping;
-- the full apply.
+983,043 loose objects deleted, 983,043 verified, **0 refused**, 0 already gone,
+8.83 GB and 1,937,177 inodes reclaimed. Every deletion was preceded by the full
+per-member check — the key resolves to the right pack, the extracted member
+matches the sidecar's `raw_sha256`, and the loose object matches the packed bytes
+exactly — and `surviving == members == handled` on all 68 packs, so nothing was
+skipped and nothing was assumed.
 
-**Still not done, and it is the whole point:** Stage 6 — repack, prune, and the
-deletion of the **1,172 legacy Parquet objects (13.66 GiB)**. Not one byte has
-been deleted. Stage 5b's compression trial is also outstanding.
+Its `no_event_row: 468,254` is worth one line because it looks alarming and is
+not: 139,604 members with no queue event at all, plus **328,650 — the entire
+`allocated_sequence` census from Stage 5**, whose `recovered` events carry
+`event_at = now()` and so fall outside the April window that query scans. Those
+artifacts have identity; this particular query cannot see it. Status is
+report-only in this processor and cannot gate a deletion, which is exactly why
+the run sheet warns against "fixing" the packer's `paths` glob to April.
 
-**One verification gap, stated plainly.** `canary-flush-verify` proves the round
-trip by key for the canary's 234 artifacts. The evidence for the other 341,669
-is the receipts plus the flushers' delete-on-success contract — strong, but not
-the same thing. A by-key check at full population would need a mode that does
-not exist, and none was written.
+### The end state
 
-**Two maintainer rulings:** the near-duplicate cohort and the carousel fan-out.
+| prefix | before Stage 6 | after |
+|---|---:|---:|
+| old April packs | 2,133,921,814 | — |
+| loose `.html.zst` | 9,478,040,747 | — |
+| legacy `.parquet` | 14,670,223,837 | — |
+| replacement packs + sidecars | — | 4,655,215,649 |
+| **total** | **24.48 GiB** | **4.34 GiB** |
+
+**20.14 GiB reclaimed against the 13.66 GiB the plan set out to delete** — the
+excess being the loose population the flattening itself created and the prune
+then removed. April's 983,043 distinct captures live in 68 verified packs, each
+member carrying the corrected `listing_id` where silver can describe it and an
+honest NULL where it cannot.
+
+Every success criterion is met, and the plan's table now carries achieved values
+against required ones rather than a column of aspirational zeroes.
+
+### Five numbers that were derived before they were measured, and came back exact
+
+This is the part of the closeout most worth carrying forward. The corrected
+Stage 6 gate's figures were computed from the assign and full-apply censuses and
+committed **marked "derived, not yet measured"**:
+
+| | derived | measured |
+|---|---:|---:|
+| no queue event | 139,604 | 139,604 |
+| — materialized | 133,548 | 133,548 |
+| — old pack member | 6,056 | 6,056 |
+| no `listing_id` | 325,414 | 325,414 |
+| with a listing | 657,629 | 657,629 |
+
+Exact in every cell. The two NULL columns differ by 185,810, which is precisely
+the carousel-only cohort a separate DuckDB breakdown had measured at 137,209 +
+48,601. Three independent measurements of the same population agree: the metadata
+query, the arithmetic from Stage 5's censuses, and the sidecars the packer
+actually wrote. Labelling them as predictions is what made the agreement a
+confirmation rather than a coincidence.
+
+The same coherence arrives from the other end. The legacy coverage join cleared
+against **983,041 distinct hashes over 983,043 members** — a two-member gap, and
+it is the same two members Stage 3a's own verification surfaced as 557,063
+distinct across 557,065. A discrepancy showing up twice from opposite directions
+is evidence the accounting is coherent rather than lucky.
+
+### One number that came back wrong, and why
+
+Achieved compression on the replacement packs is **39.28x**, *below* the original
+packs' 43.66x — and a mid-run extrapolation from four samples that predicted ~53x
+was simply wrong. The head packs do reach 53.2x; the tail collapses to 23.1x,
+because the 139,604 members with no queue event cluster on nothing and land
+there. It is a property of the population — the original packs never held the
+425,978 materialized objects — not of the packing, and it did not change the
+storage case. Recorded because the extrapolation was made confidently, in public,
+off four samples that were never going to carry it.
+
+### Done and irreversible
+
+371,095 objects deleted as content twins; 557,065 members unpacked; 983,043 loose
+objects pruned; 32 superseded packs retired; **1,172 legacy Parquet objects
+deleted**; V047 applied; `ops.artifacts_queue_artifact_id_seq` advanced twice, by
+292,432 (probe) and 329,856 (authoritative) — sanctioned `bigserial` gaps, not
+reuses; and 701,375 silver rows, 200,599 historical price events and 341,903
+recovered queue events committed and flushed.
+
+**The V040 assertion held.** Two runs in a named window on a deploy-intent drain,
+`single transaction True` in both, all six protected relations byte-identical
+across the canary. Recovery changed no live state — measured, not asserted.
+
+**One verification gap, and it is now permanent.** `canary-flush-verify` proved
+the round trip by key for the canary's 234 artifacts. The evidence for the other
+341,669 is the receipts plus the flushers' delete-on-success contract — strong,
+but not the same thing. A by-key check at full population would have needed a
+mode that does not exist, and none was written. Stage 6 does not close it: its
+per-member verification proves bronze bytes are in a pack, not that silver rows
+are in the lake.
+
+**Two maintainer rulings** — the near-duplicate cohort and the carousel fan-out.
 The fan-out was approved verbally during the run; the run sheet still records
-that `assign --apply` — which advanced the sequence permanently — was run before
-either was recorded.
+that `assign --apply`, which advanced the sequence permanently, ran before either
+was recorded.
 
-**Work this plan spawned:** [Plan 156](../plans/plan_156_block_page_detection.md)
-(fix `_detect_challenge`'s blindness to non-Cloudflare blocks), [Plan
-157](../plans/plan_157_april_reprocessing_enrichment.md) (the 12.19-field
-enrichment, blocked on Plan 125), CAR-28 (the packer defect), and an unhomed
-follow-up: the parser control needs a scope predicate before its exit code means
-anything again.
+### Work this plan spawned, and where it went
+
+- [**Plan 156**](../plans/plan_156_block_page_detection.md) — `_detect_challenge`
+  is blind to non-Cloudflare blocks. It sat in the backlog for exactly as long as
+  Plan 145 needed the parser unmodified, because the plan's whole deliverable was
+  a comparison against what production wrote and a parser change would have
+  invalidated it. It moved into the build order in the same commit that archived
+  Plan 145, and now sits at build-order 15, priority 42, effort S.
+- [**Plan 157**](../plans/plan_157_april_reprocessing_enrichment.md) — the
+  12.19-field enrichment. Backlog, priority 57, triggered by Plan 125's Iceberg
+  migration, which is at build-order 7 and has not landed.
+  `recovery/plan145/parsed/` (329 MB) is retained as its frozen input and is
+  marked **do not prune** in the index.
+- **CAR-28**, the packer defect, was fixed under Stage 5b — and then became a
+  finding in someone else's plan. The issue accumulated roughly 4,000 words of
+  measured compression evidence, was **canceled on 2026-08-27, and was still
+  being edited on 2026-08-30**. [Plan
+  149](../plans/plan_149_linear_execution_layer.md) records it as a second owner
+  of a fact its own issue contract forbids, and is clear about the cause rather
+  than treating it as carelessness: **CAR-28 was a question that outlived its
+  issue, and the tracker was where the question was being asked.** The rule
+  survives — the durable copy belongs in the plan document — but "an open
+  question with no plan section yet" is a real gap in that contract.
+- The unhomed follow-up is **still unhomed**: the parser control needs a scope
+  predicate before its exit code means anything again. Two days after the plan
+  closed, no plan owns it.
 
 ---
 
 ## 12. Draft lessons — for the maintainer to cut or keep
 
-1. **Every design that failed, failed on identity.** Bytes and hashes never lied;
-   every derived key did. The plan only stabilised once it stopped joining and
-   started flattening.
+1. **Identity is the through-line, not the cause of every death — and the plan
+   overstated it.** Of the three discarded designs, one died on identity, one on
+   scope and one on cost (§3). But identity is the only failure that reached
+   production and forced a revert, and the design that shipped won by making
+   identity reconciliation *unnecessary* rather than by solving it. The
+   defensible form of the lesson is about keys, not designs: bytes and hashes
+   never lied; every derived key did.
 2. **A defect invisible in production can still be the most expensive thing in
    the repo.** The `any_value` reduction has never served a wrong byte and cost
    three design revisions.
@@ -720,7 +978,7 @@ anything again.
 6. **Fixing the thing that produced the frozen artifact can destroy the artifact.**
    The re-sample instruction would have deleted the only record of the V040
    window's subject before set equality was established.
-7. **The narrative asset is the handoff.** Six handoff documents, each written to
+7. **The narrative asset is the handoff.** Eight handoff documents, each written to
    be executable by a session with no context, are why four days of work across
    many sessions and two models stayed coherent. They also carry the honest parts
    — "expect ~760, and if it is materially larger, stop and say so."
@@ -739,7 +997,7 @@ anything again.
    stabs at this, each of them better, but each of them convoluted, when what
    we're really trying to do is pretty simple."*
 11. **A plan that describes its input in prose has not specified its input.**
-   Design 2 was built, merged, deployed to production and health-gated before
+   Design 1 was built, merged, deployed to production and health-gated before
    anyone discovered that the legacy Parquet prefix — the location of the
    1,299 objects the whole plan exists to delete — was written down nowhere
    except Plan 137's prose. Stage 0 had closed six gates; none of them was
@@ -766,30 +1024,113 @@ anything again.
    the probe. Refreshing the numbers and leaving the rationale would have
    produced a document that looked current and argued for the right thing for
    the wrong reason.
+15. **A bounded trial's sample is a variable, not a detail.** Same population,
+   same dictionary, same frame target, two draws — and the answers landed 32
+   points apart, further than the effect under test. The plan originally
+   specified *one* sample, and that one sample was the draw that would have
+   reported the wrong sign with confidence. Fixing the decision rule before the
+   run is what let a split be read as a refusal rather than argued about
+   afterwards.
+16. **Label a number as derived and it becomes a testable claim.** Five figures
+   went into the Stage 6 gate marked "derived, not yet measured", and all five
+   came back exact. Getting them right silently would have been worth nothing;
+   the label is what turned the agreement into a confirmation, and it is the
+   cheapest form of prediction registration available in a repository.
+17. **Guards written for contrived cases meet real ones.** `retire-packs`'s
+   `--verify-run-id` looked like insurance against a situation nobody expected.
+   Within a day the store held two verify reports — one failed, one passed — and
+   the mode named both and refused to choose. The guard the plan reasoned about
+   was the *missing*-report case; the one that met the world was the ambiguous
+   one.
+18. **The thing a plan exists to do can be the cheapest thing in it.** The
+   deletion ran for under a minute. Behind it, inside three days: four designs,
+   thirty hours of compute, 9,410 lines of script, 7,107 lines of test, 23 pull
+   requests and nine review rounds. None of that cost is in the destructive
+   step. All of it is in
+   earning the right to take it — and that ratio, not the 20.14 GiB, is the
+   honest headline.
+19. **A confident extrapolation off four samples was wrong, in public, in the
+   same plan that got five predictions exactly right.** The mid-repack estimate
+   of ~53x compression came in at 39.28x. The difference between the two is not
+   care or skill; it is that the five were arithmetic over a fully enumerated
+   population and the one was an average over a head sample of a skewed
+   distribution. Same author, same day, same document.
 
 ---
 
 ## 13. Open questions for the narrative
 
-- Was the 2026-08-26 revert the right call, and what did it cost? **Partly
-  answered — see §3.1**, which recovers what the work looked like four hours
-  before it was reverted. The decision itself is still missing: PR #255 and #256
-  carry **zero review comments**, both reverts are bare `git revert` messages,
-  and 17:50–21:49 is unrecorded. Linear (CAR-13) is the remaining source.
-- Would forcing an unpacked shard into the early probes have been cheap? If yes,
-  the block-page leak and the 42,276-member finding were both catchable a day
-  earlier.
-- Was 16h45m of parsing the price of correctness, or of the flatten-everything
-  design? Design 3 costed 24.8 core-hours for the same answer, so flattening was
-  cheaper — but neither was ever compared against a targeted reparse of only the
-  captures silver lacks.
-- What is the honest estimate-versus-actual? `docs/PLANS.md` still carries Plan
-  145 at effort **M**.
-- **Was the canary apparatus proportionate?** Five of thirteen CLI modes,
-  `write_set_digest`, the promotion proof and four review rounds exist so that
-  ~500 rows could be committed safely — and the apply that followed, of 1,400×
-  as many rows, took ten minutes and needed none of it. The counter-argument is
-  that the canary is what made the apply boring. Both readings are available and
-  the document should pick one.
-- Would a full-population by-key lake verification have been worth writing? It
-  was not, and the gap is now permanent for this run.
+Three of these are now answered and a fourth is at least countable. The answers
+are recorded here rather than the questions deleted, because in two cases what
+the answer turned out to be matters less than the fact that the question was
+asked before the run rather than after it.
+
+- **Was the 2026-08-26 revert the right call, and what did it cost?** **The
+  first half is answered; only the cost is open.** The revert was right on its
+  face: the merged work had restructured two live production write paths — 471
+  changed lines in `detail_writer.py`, 69 in `silver_writer.py`, plus
+  `processing/queries.py` and a new backfill SQL statement — to serve a backfill
+  that had just proved un-runnable, and leaving that in place buys nothing.
+  Earlier revisions of this document called the reason unrecorded, which
+  conflated *nobody wrote it down* with *nobody knows*; only the first is true,
+  and it is unremarkable. What is open is the **cost**: whether repairing the
+  input rather than replacing the design was ever weighed, what 17:50–21:49 was
+  spent on, and whether any of the 1,443 reverted lines should have survived.
+  The tracker is thin — CAR-13 is a single **3-point** issue reading "Plan 145 —
+  close Stage 0d/0e, build backfill write path."
+
+- **Would forcing an unpacked shard into the early probes have been cheap?**
+  Still open, and Stage 6 added no evidence either way. If yes, the block-page
+  leak and the 42,276-member finding were both catchable a day earlier.
+
+- **Was 16h45m of parsing the price of correctness, or of the flatten-everything
+  design?** Now *countable*, if still not settled. Flattening cost 6h26m to build
+  the loose population (materialize, dedupe, unpack) and a further 5h03m to
+  remove it again (repack, prune) — about 11.5 hours of the plan's ~30, on top of
+  a parse that had to read every byte once regardless. Design 3 was **costed at
+  an estimated 24.8 core-hours and never run**, so flattening was cheaper than
+  the only rival that was ever specified — but the comparison is a measured span
+  against a projection, which is a weaker claim than it reads as. Neither was ever compared against the
+  third option nobody wrote down: a targeted reparse of only the captures silver
+  lacks.
+
+- **What is the honest estimate-versus-actual?** ~~`docs/PLANS.md` still carries
+  Plan 145 at effort **M**.~~ **Answered, and it is worse than "M".** The index
+  no longer carries Plan 145 at all — it is archived. The estimate that can be
+  audited is the tracker's: Plan 145 entered cycle 1 as **one 3-point issue**
+  (CAR-13) and left it as **six issues and 15 points**, a five-fold expansion
+  inside a six-day cycle. [Plan
+  149](../plans/plan_149_linear_execution_layer.md)'s close-out read finds the
+  point scale itself off by roughly 3x against its own day-mapping, and names
+  Plan 145 as the reason the cycle's "issues added after start" measure is
+  unreadable at 62%. Its verdict is the fair one and it is not an estimation
+  failure: *"That is not a seeding failure — it is what a plan does when
+  measurement contradicts it — but it means a seed list describes an opening
+  position, never a commitment."*
+
+- **Was the canary apparatus proportionate?** **The document should now pick
+  the second reading.** Five of seventeen CLI modes, `write_set_digest`, the
+  promotion proof and four review rounds existed so ~500 rows could be committed
+  safely; the apply that followed, of 1,400× as many rows, took ten minutes.
+  Stage 6 is the tiebreak, and it breaks toward the canary. The single most
+  destructive command in the plan — `delete-legacy`, 13.66 GiB, irreversible —
+  ran for under a minute, returned zeroes in every failure column, and needed no
+  improvisation at all, because by then every guard it relied on had been built,
+  argued over and exercised on something smaller. **The canary is what made both
+  the apply and the deletion boring.** That is the case for the apparatus, and it
+  is not available from Stage 5 alone.
+
+- **Would a full-population by-key lake verification have been worth writing?**
+  **Answered: it was not written, and the gap is now permanent.** Stage 6 does
+  not close it — verifying that bronze bytes sit in a pack says nothing about
+  whether silver rows reached the lake. The receipts and the delete-on-success
+  contract are what stand behind 341,669 of the 341,903 artifacts, and that is
+  where the record ends.
+
+- **New, from the closeout: what does 39.28x mean for May, June and July?** The
+  ordering trial's most favourable reading gives true-listing ordering a 4.76%
+  edge, about 0.33 GiB against 6.86 GiB — so the ceiling on re-sorting other
+  months is low. But April's replacement packs came in *below* the originals
+  because 139,604 unattributable members cluster on nothing, and every future
+  month packed from a flattened population will carry the same tail. Nobody has
+  asked what that does to the ~3.5 years of runway the retention case rests on.
