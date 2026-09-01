@@ -992,15 +992,98 @@ def test_every_production_sql_file_is_touched_by_a_layer_2_test():
     )
 
 
+# The surface the two SQL rules below read. **Not** :func:`service_packages`,
+# which answers a different question.
+#
+# Stage 7 wrote both rules against ``service_packages()`` and shipped a hole:
+# ``airflow/`` and ``scripts/`` hold neither an ``__init__.py`` nor, therefore,
+# any rule -- and they held 26 SQL sites, 22 of them in Plan 125's Iceberg and
+# Spark scripts, which Gates C and D productionize. "Is this a service" and "is
+# this production Python" coincided for the eight packages and stopped
+# coinciding exactly at the boundary that mattered.
+#
+# **The fix is not an ``__init__.py``.** ``service_packages()`` drives seven
+# rules -- the layer-home mapping, the hidden-route check, route coverage
+# (which imports ``<service>.app``), the "enough" table's rows and the coverage
+# ``source`` list. Making ``scripts`` a package would demand an "enough" row
+# for something that is not a service and send the route rule looking for
+# ``scripts.app``. The contract already says as much in
+# ``test_every_service_directory_is_in_the_coverage_source``: scripts and
+# airflow/dags "cannot be demanded by the same derivation -- neither is a
+# package".
+#
+# So this is a second derivation, and it is derived rather than listed for the
+# same reason as the first: ``scripts/oneoff/`` is excluded because Stage 5b
+# declared it spent in the contract's own bucket table, not because a list here
+# says so. A new bucket is covered by editing that table.
+def production_python_roots() -> tuple[Path, ...]:
+    """Every directory holding production Python, for the SQL rules only."""
+    roots = [REPO_ROOT / package for package in sorted(service_packages())]
+    roots.append(REPO_ROOT / "airflow" / "dags")
+    roots += [
+        REPO_ROOT / bucket
+        for bucket, measured in sorted(script_buckets().items())
+        if measured
+    ]
+    return tuple(root for root in roots if root.is_dir())
+
+
+def _spent_script_buckets() -> tuple[str, ...]:
+    """The buckets the contract declares spent, as posix prefixes."""
+    return tuple(
+        f"{bucket}/" for bucket, measured in sorted(script_buckets().items())
+        if not measured
+    )
+
+
+def production_python_files() -> list[Path]:
+    """Every ``.py`` file under :func:`production_python_roots`, spent excluded."""
+    seen: dict[str, Path] = {}
+    spent = _spent_script_buckets()
+    for root in production_python_roots():
+        for path in sorted(root.rglob("*.py")):
+            relative = path.relative_to(REPO_ROOT).as_posix()
+            if "__pycache__" in path.parts or relative.startswith(spent):
+                continue
+            seen[relative] = path
+    return [seen[key] for key in sorted(seen)]
+
+
 # ---------------------------------------------------------------------------
 # Rule 5b -- no production module holds SQL at its .execute() call site.
 # ---------------------------------------------------------------------------
-# Empty since Plan 162 Stage 7 (CAR-51). Seeded at 66 sites in 15 modules on
-# 2026-09-01 and drained the same day, each by the extraction it was waiting
-# for. The rule below is the whole of G5 now: it is what stops SQL returning
-# to a call site, where it cannot be imported and only a paraphrase can
-# cover it.
-INLINE_SQL_WAIVERS: tuple[Waiver, ...] = ()
+# The 66 sites in the eight service packages were seeded and drained on
+# 2026-09-01. These 22 are what widening the scan surface to production
+# Python exposed the same day -- all under scripts/, and 16 of them in Plan
+# 125's Iceberg and Spark tooling, which Gates C and D productionize. They
+# were never fixed and never waived; they were out of frame.
+INLINE_SQL_WAIVERS: tuple[Waiver, ...] = tuple(
+    Waiver(subject, gap="G5", owner=162)
+    for subject in (
+        "scripts/audit_adaptive_refresh_features.py:123",
+        "scripts/audit_adaptive_refresh_features.py:147",
+        "scripts/audit_adaptive_refresh_features.py:155",
+        "scripts/audit_adaptive_refresh_features.py:163",
+        "scripts/audit_adaptive_refresh_features.py:173",
+        "scripts/compare_gate_a_parity.py:223",
+        "scripts/compare_gate_b_parity.py:595",
+        "scripts/estimate_dictionary_savings.py:164",
+        "scripts/export_volatility_features_to_iceberg.py:123",
+        "scripts/export_volatility_features_to_iceberg.py:134",
+        "scripts/export_volatility_features_to_iceberg.py:151",
+        "scripts/export_volatility_features_to_iceberg.py:155",
+        "scripts/export_volatility_features_to_iceberg.py:214",
+        "scripts/preflight_local_lakehouse_snapshot.py:301",
+        "scripts/run_dbt_spark.py:115",
+        "scripts/run_dbt_spark.py:158",
+        "scripts/spike_iceberg_lakehouse.py:110",
+        "scripts/spike_iceberg_lakehouse.py:133",
+        "scripts/spike_iceberg_lakehouse.py:174",
+        "scripts/train_html_dictionary.py:133",
+        "scripts/train_html_dictionary.py:167",
+        "scripts/verify_dialect_datediff.py:128",
+    )
+)
 
 # Every name in this stack that takes a SQL string, whether or not it is used
 # here today. Scoping the set to what the repository currently calls is the
@@ -1159,9 +1242,7 @@ def test_no_production_module_holds_sql_at_its_execute_call_site():
     """
     found = {
         f"{_relative(path)}:{line}"
-        for package in sorted(service_packages())
-        for path in sorted((REPO_ROOT / package).rglob("*.py"))
-        if "__pycache__" not in path.parts
+        for path in production_python_files()
         for line in _inline_sql_sites(path.read_text(encoding="utf-8"), str(path))
     }
     _assert_exactly(
@@ -1178,6 +1259,7 @@ def test_no_production_module_holds_sql_at_its_execute_call_site():
 SQL_LITERAL_WAIVERS: tuple[Waiver, ...] = tuple(
     Waiver(subject, gap="G15", owner=162)
     for subject in (
+        "airflow/dags/sensors.py:49",
         "archiver/processors/delete_packed_source_html.py:304",
         "archiver/processors/lake_snapshot_cohort.py:109",
         "archiver/processors/lake_snapshot_cohort.py:156",
@@ -1200,6 +1282,9 @@ SQL_LITERAL_WAIVERS: tuple[Waiver, ...] = tuple(
         "ops/routers/admin.py:69",
         "ops/routers/maintenance.py:36",
         "processing/writers/silver_writer.py:38",
+        "scripts/audit_adaptive_refresh_features.py:128",
+        "scripts/audit_adaptive_refresh_features.py:135",
+        "scripts/estimate_dictionary_savings.py:206",
         "shared/deploy_intent.py:25",
     )
 )
@@ -1294,9 +1379,7 @@ def test_no_production_module_keeps_a_sql_statement_in_a_python_literal():
     """
     found = {
         f"{_relative(path)}:{line}"
-        for package in sorted(service_packages())
-        for path in sorted((REPO_ROOT / package).rglob("*.py"))
-        if "__pycache__" not in path.parts
+        for path in production_python_files()
         for line in _sql_literal_bindings(path.read_text(encoding="utf-8"), str(path))
     }
     _assert_exactly(
