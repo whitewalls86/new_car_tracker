@@ -15,26 +15,30 @@ reconciled overviews and the assigned replacement claims.
 | Stage 1 slice | State |
 |---|---|
 | **1a** README rewrite (CAR-38, PR #320) | Merged to `master` at `a458877`, **soaking** — merged is not closed, per the truth contract's §4 |
-| **1b** Landing-page structure (CAR-39, PR #322) | Merged to `master` at `63e5b6e` on 2026-08-31, **soaking and undeployed** — the template changed, the live page has not |
+| **1b** Landing-page structure (CAR-39, PR #322) | Merged to `master` at `63e5b6e` on 2026-08-31 and **deployed 2026-09-01**, soaking |
 | **1c** Cross-surface consistency (CAR-56) | Built 2026-08-31 as a review skill and commit hook **rather than the tests §1c specifies** — see the evidence below for the drift record that decided it. Exit check 2 is unmet as written |
-| **1d** Public roadmap projection (CAR-57, PR #326) | Merged to `master` on 2026-09-01, **soaking and undeployed** — the template and the artifact changed, the live page has not. Gate 1d closed on four authored `## Public summary` sections rather than a one-time read: the generator names every plan it had to extract, so the gate is a shrinking worklist rather than a recurring one |
-| **1e** Weekly recap projection (CAR-58, PR #331) | **Merged to `master` at `9199337` on 2026-09-01, soaking and undeployed** — and *unreachable*: the 20 generated pages ship in `ops/static_ops/generated/recaps/` (moved there by Stage 7) but nothing serves `/recaps` until Stage 2 item 3. — 20 of 31 weeks published behind a per-file `**Publish:**` marker, which is the policy this slice was asked to decide. The classifier turned out to have **four** classes, not three: the fourth is six sibling links between recaps, which no `../` rule covers. Exit check 2's "image-build time" is unmet as written — the artifact is committed and `--check`ed, as 1d's is — and check 8's "no gap from the published-from date" has no referent once the policy is a marker rather than a date |
+| **1d** Public roadmap projection (CAR-57, PR #326) | Merged to `master` on 2026-09-01 and **deployed the same day**, soaking. Gate 1d closed on four authored `## Public summary` sections rather than a one-time read: the generator names every plan it had to extract, so the gate is a shrinking worklist rather than a recurring one |
+| **1e** Weekly recap projection (CAR-58, PR #331) | **Merged to `master` at `9199337` on 2026-09-01 and deployed the same day**, soaking. **The pages are already public and always were** — `handle /static_ops/*` is unauthenticated, so they served 200 from the moment the image carried them; measured 2026-09-01. They are *unlinked*, not unreachable, and what Stage 2 owes them is a canonical route rather than a first one. — 20 of 31 weeks published behind a per-file `**Publish:**` marker, which is the policy this slice was asked to decide. The classifier turned out to have **four** classes, not three: the fourth is six sibling links between recaps, which no `../` rule covers. Exit check 2's "image-build time" is unmet as written — the artifact is committed and `--check`ed, as 1d's is — and check 8's "no gap from the published-from date" has no referent once the policy is a marker rather than a date |
 | **1h** Ask at closeout whether the landed work moved a surface (CAR-61, PR #335) | **Built 2026-09-01.** The step is in the `close-out` skill: one cheap question in the same mechanism/name/quantity taxonomy 1c already uses, proposing and never writing. It closes the third direction — 1c's gate fires only when a surface is *staged*, so a plan that changes the system and edits no prose never reaches it, which is the class every Gate 0 defect came from. **Gate 1h is three-quarters met**: the demonstration half still needs a closeout answering "yes", and the "no" it has was run from recall rather than from the skill — see the evidence below |
 | **3d** Recap presentation | Not started. Carries two open decisions raised 2026-09-01: the stylesheet question (3d says the recap pages share `info.css`; the shipped generator inlines `_STYLE`), and whether `/recaps` leads with the newest week in full above the index. Both block 1g's markup |
 | **1g** Link the published writing from the landing page | **Raised 2026-09-01 out of 1f, not started and deliberately unticketed — blocked on 3d's two open decisions, which govern its markup.** 1f decided the corpus is not maintained here; 1g links it from `/` anyway, under a list that carries only immutable facts — title, date, URL — because a per-article annotation is a new drift surface that rots every time the tree moves. The weight of the stage is the **add-an-article procedure**: a two-way reconciliation against both surfaces, held by a commit gate rather than by memory |
 | **1f** Reconcile against the published writings (CAR-59) | **Audit done 2026-08-31, copy pass landed 2026-09-01, soaking.** Four framings drawn from the corpus onto both surfaces, each fact verified against the tree and named below. **The scope question has its answer: the articles are out of scope, as point-in-time artifacts** — so the ten disposed-of claims in A and its bronze-retention contradiction with C are accepted and recorded, not fixed |
 
-**The two public surfaces are now in different states, and the distinction
-matters.** The repository is public, so 1a's README changed a public surface the
-moment it merged. The landing page has not: 1b merged to `master` on
-2026-08-31, but the ops service has not been redeployed from it, so
-`https://cartracker.info/info` still serves the pre-plan copy the Stage 0
-baseline screenshotted. A fetch on 2026-08-31 returned 54,343 bytes still
-carrying "without manual intervention" and the hardcoded make/model counts —
-two of the phrases Stage 0 disposed of. **Merging fixed the template, not the
-surface.** Until that deploy lands, **the README and the live page disagree** —
-which is the drift this plan exists to remove, temporarily widened by fixing one
-surface before the other. Stage 6 is what closes it.
+**The two public surfaces converged on 2026-09-01, and the gap they closed is
+worth keeping in the record.** The repository is public, so 1a's README changed
+a public surface the moment it merged. The landing page lagged: 1b merged on
+2026-08-31 and `https://cartracker.info/info` went on serving the pre-plan copy
+the Stage 0 baseline screenshotted — a fetch that day returned 54,343 bytes
+still carrying "without manual intervention" and the hardcoded make/model
+counts, two of the phrases Stage 0 disposed of. **Merging fixed the template,
+not the surface**, and for a day the README and the live page disagreed.
+
+The `ops` deploy on 2026-09-01 closed it. Measured against the live page the
+same day: **98,398 bytes, zero occurrences of "without manual intervention",
+and Stage 1d's `work-planned` lists present** — so 1b, 1d, 1e and 1f are
+deployed, not merely merged, and the build order's step 1 is done. This is the
+one status claim in this document that cannot be checked from the tree, which
+is why it carries its measurement rather than an assertion.
 
 The analytics acquisition and database-removal portion of Stage 4 moved to
 [Plan 143](plan_143_analytics_serving_snapshot.md) on 2026-08-18 before either
@@ -2202,16 +2206,27 @@ ops` does not apply a volume change and would report success anyway. It does
 so `/static_ops/generated/project-updates.json` can demonstrate the whole
 mechanism as soon as `ops` is recreated, without a single route change.
 
-**One consequence Stage 2 should know about.** That same public `/static_ops/*`
-handler means the 20 recap pages become fetchable at
-`/static_ops/generated/recaps/YYYY-MM-DD.html` the moment this deploys — before
-Stage 2 gives them their canonical `/recaps/YYYY-MM-DD` route. This is not a
-disclosure change; the truth contract's §5 already records that the recaps are
-public in the repository. It is a **canonicalisation** problem: one page reachable
-at two URLs, and Stage 2's sitemap and canonical links have to name only one.
-Stage 2 item 3 already builds the `/recaps` handler; what it gains here is the
-requirement that the static path not become a second published URL for the same
-content.
+**One consequence Stage 2 should know about, and it is already live.** The
+public `/static_ops/*` handler means the recap pages are fetchable at
+`/static_ops/recaps/YYYY-MM-DD.html` **today** — measured 2026-09-01, 200 with
+no OAuth redirect, from the 1e deploy earlier the same day and not from this
+slice. Stage 7 moves that URL under `generated/`; it neither creates nor removes
+the exposure.
+
+This is not a disclosure change; the truth contract's §5 already records that
+the recaps are public in the repository. It is a **canonicalisation** problem,
+and it is present rather than hypothetical: one page is reachable at a static
+path, Stage 2 adds `/recaps/YYYY-MM-DD`, and the sitemap Stage 2 introduces must
+name exactly one of them. Nothing links the static path today — the landing
+page's only recap mention points at GitHub — so the cost of leaving it is a
+duplicate URL nobody follows. The cost of *forgetting* it is a sitemap that
+publishes both.
+
+**This corrected a claim this document made twice.** Stage 1e's row and the
+Stage 2 rationale both said the generated pages were "unreachable until Stage 2
+item 3". They were never unreachable; they were unlinked. The distinction
+matters because it changes what Stage 2 is for — a canonical route and a
+sitemap that names one URL, rather than first access.
 
 **The publish procedure is written where the author stands**, not in a runbook
 nobody opens: `plan-week`'s "After writing" section now says a merged recap
@@ -2267,12 +2282,13 @@ anticipated: **everything that changed the landing page is merged and
 undeployed**, and **Stage 1e's generated pages have no route**. The order below
 is driven by those.
 
-**1. Deploy the merged copy — `ops` image only, no Caddy change.**
-`https://cartracker.info/` still serves the pre-plan copy the Stage 0 baseline
-screenshotted, while 1b, 1d, 1e and 1f are all merged. Stage 6 defers every
-deploy to the end, which is *why* four slices have accumulated unreleased. The
-template needs no route change to go live, so this is separable from Stage 6 and
-should not wait for it. Rollback is the previous image.
+**1. Deploy the merged copy — `ops` image only, no Caddy change. DONE
+2026-09-01.** The live page had gone on serving the pre-plan copy the Stage 0
+baseline screenshotted while 1b, 1d, 1e and 1f were all merged. Stage 6 defers
+every deploy to the end, which is *why* four slices had accumulated unreleased;
+the template needed no route change to go live, so this was separable from
+Stage 6 and did not wait for it. Verified on the live page the same day — see
+the status section's measurement.
 
 **2. Stage 1h (CAR-61) — the closeout question.** Cheap, ready, and it belongs
 *before* the stages below rather than after: steps 3 onward change mechanisms,
