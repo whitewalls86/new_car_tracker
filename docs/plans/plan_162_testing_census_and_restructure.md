@@ -2,9 +2,7 @@
 
 ## Status
 
-**Stages 0, 1, 2 and 3 are complete (CAR-40, CAR-45, CAR-46 and CAR-47, all
-2026-08-31); Stages 4, 5 and 5b are complete (CAR-48, CAR-49 and CAR-55, all
-2026-09-01).** The census enumerated
+**Stages 0–6 are complete. Stage 6b is next.** The census enumerated
 the work; Stage 1 ran the 73 tests nothing
 had ever invoked and found no production defects behind them, which
 [confirms the L estimate](#evidence--stage-1-the-orphaned-suites-car-45-2026-08-31);
