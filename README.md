@@ -237,8 +237,10 @@ of small objects cost far more on disk than their bytes suggested. Packing
 groups artifacts into immutable packs with a columnar sidecar index, so reading
 one artifact is a ranged GET and a single frame decompression rather than a
 scan. A source object may be deleted only after its packed replacement returns
-byte-identical content, verified against a hash in the sidecar. Across the
-packed months, inode pressure on the data volume fell by roughly two thirds.
+byte-identical content, verified against a hash in the sidecar. The first
+three packed months turned **2.7 million bronze objects into 222**, and inodes
+stopped being the binding constraint — bytes are again, which is where a storage
+problem should end up.
 
 ### Health that a green dashboard cannot fake
 
