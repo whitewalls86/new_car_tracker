@@ -122,6 +122,7 @@ order:
 | **5** | **The mechanical sweeps. Complete — CAR-49, 2026-09-01** | G4, G11, G13 | 50 |
 | **5b** | Separate production scripts from spent ones. `scripts/ops/` and `scripts/oneoff/`, the coverage denominator reads the split, and `ci_change_scope.py` gains its second prefix | — | -- |
 | **6** | Route coverage. Build `container_health`'s test home, then fill it | G6, G9 | 12 |
+| **6b** | Encoding-sensitive I/O, mechanised. Close G13's *class*, not another instance | G13's class | -- |
 | **7** | SQL execution, from both directions. The largest stage | G14, G5 | 56 |
 | **8** | The services below the floor | G7, G8 | -- |
 | **9** | `airflow/dags` and the `.sql` convention it cannot currently reach | G12 | -- |
@@ -197,6 +198,66 @@ selector that reads the new prefix is Stage 10.
 and invalidates two issues already filed against the old numbers — CAR-50 names
 Stage 6 and CAR-52 names Stage 8 in their titles. A letter costs nothing and
 breaks nothing.
+
+### Stage 6b was added by the failure this plan predicted
+
+**Added 2026-09-01.** Success criterion 2 records G13 as the weakest of its
+three exceptions, and says why in a sentence worth reading back: *"the next
+instance of G13's class will be found the way the last two were, by someone
+running the suite somewhere CI does not."* That is precisely what happened, six
+days later and while Stage 6 was being started.
+
+`tests/scripts/test_build_public_roadmap.py` writes a synthetic plan document
+containing an em-dash with `write_text` and no `encoding=`. The locale decides:
+UTF-8 on Linux, cp1252 on Windows, where the character becomes the byte `0x97`.
+`build_public_roadmap._first_heading` reads it back as UTF-8 — correctly — and
+raises. **The suite was green in CI and red on a developer machine**, which is
+the benign direction of the harness rule and the same shape as `21333ab`.
+
+**What makes it a stage rather than a second one-file repair is that four
+independent guards were in a position to catch it and none could.** Measured
+on 2026-09-01:
+
+1. **No encoding rule is configured.** `[tool.ruff.lint] select` is
+   `["E", "F", "I"]` — nothing that reads an encoding argument.
+2. **The rule that would is preview-gated.** `--select PLW1514` alone answers
+   *"Selection `PLW1514` has no effect because preview is not enabled"*, so it
+   is off twice over and silently.
+3. **Enabling it fully would still not have caught this.** With
+   `--select PLW1514 --preview` the repository has **22 violations and not one
+   of them is the line that broke master.** The rule fires only on a
+   directly-constructed receiver: `Path("b.md").write_text(...)` is flagged,
+   `(tmp_path / "a.md").write_text(...)` is not — with or without a `Path`
+   annotation on the fixture. It is blind to the idiom nearly every
+   fixture-writing test in this repository uses.
+4. **CI is `ubuntu-latest` in all ten jobs**, so this failure direction is
+   invisible by construction — the constraint G13's exception already named.
+
+The near-miss is the instructive part. *The harness must not decide the
+outcome* is written for exactly this class and even carries a Windows example,
+but its checkable rule is about **mocks** of filesystem, clock, platform or
+path primitives. A missing `encoding=` is not a mock, so Stage 5's sweep — the
+pass that read every patch in the suite — went straight past it. The prose
+covered this; no mechanism could.
+
+**So the stage is not "turn on the ruff rule".** Finding 3 is the whole reason
+it needs designing: the available tool cleans 22 real sites, several in
+production code (`ops/routers/admin.py`, `dbt_runner/app.py`, three
+`archiver/processors/` modules), and still would not have stopped the defect
+that prompted it. Closing the class means a rule that reads the calls the way
+the route rule reads request literals, a Windows job, or an argued case that
+neither is worth it — recorded as a decision either way.
+
+**It sits after Stage 6 and before Stage 7.** After 6 because CAR-50 is already
+in flight and re-cutting it buys nothing. Before 7 because **Stages 7, 8 and 9
+author more new tests than the rest of the plan combined**, and a guard that
+lands first is one those stages get for free rather than one that has to sweep
+what they wrote. That is the same argument that put Stage 2 ahead of the stages
+it measures.
+
+**The letter is positional, not topical.** 6b has nothing to do with route
+coverage; it is numbered this way for the reason 5b was, and CAR-52 still names
+Stage 8.
 
 ### Stage 5b: what the split is, and why a directory rather than a list
 
@@ -395,6 +456,17 @@ Three exceptions, stated here so they are decisions rather than omissions:
   three exceptions and it should be recorded as such rather than dressed up: the
   next instance of G13's class will be found the way the last two were, by
   someone running the suite somewhere CI does not.
+
+  **That prediction came true on 2026-09-01 and the exception is now narrower.**
+  A Windows-only encoding defect broke master, found exactly as forecast — by
+  someone running the suite where CI does not. It is the third instance of the
+  class, which is enough of a pattern to stop treating each one as a one-file
+  repair, so [Stage 6b](#stage-6b-was-added-by-the-failure-this-plan-predicted)
+  now owns the class. **The exception stands only for the part 6b concludes it
+  cannot mechanise**, and 6b is required to say which part that is rather than
+  leaving it implied. What is already settled is that the obvious mechanism does
+  not close it: `PLW1514` cannot see a `tmp_path / "name"` receiver, so the rule
+  that looks like the answer would have passed this defect too.
 
 **3. The `dbt build + test` job is no longer the critical path**, and what
 replaced it is named for what it does. Measured in wall-clock seconds against
