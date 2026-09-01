@@ -36,12 +36,12 @@ class TestPrometheusConfig:
     def test_prometheus_yml_parses(self):
         path = _REPO_ROOT / "prometheus" / "prometheus.yml"
         assert path.exists(), "prometheus/prometheus.yml missing"
-        doc = yaml.safe_load(path.read_text())
+        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
         assert "scrape_configs" in doc
 
     def test_all_expected_jobs_present(self):
         path = _REPO_ROOT / "prometheus" / "prometheus.yml"
-        doc = yaml.safe_load(path.read_text())
+        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
         job_names = {job["job_name"] for job in doc["scrape_configs"]}
         expected = {
             "airflow",
@@ -66,7 +66,7 @@ class TestPrometheusConfig:
         where that count lives, and Promtail was not a scrape target at all.
         """
         doc = yaml.safe_load(
-            (_REPO_ROOT / "prometheus" / "prometheus.yml").read_text()
+            (_REPO_ROOT / "prometheus" / "prometheus.yml").read_text(encoding="utf-8")
         )
         job = next(
             item for item in doc["scrape_configs"]
@@ -79,7 +79,7 @@ class TestPrometheusAndLokiConfig:
     def test_loki_yml_parses(self):
         path = _REPO_ROOT / "loki" / "loki.yml"
         assert path.exists(), "loki/loki.yml missing"
-        doc = yaml.safe_load(path.read_text())
+        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
         assert "server" in doc
         assert doc["server"]["http_listen_port"] == 3100
         assert "schema_config" in doc
@@ -87,7 +87,7 @@ class TestPrometheusAndLokiConfig:
     def test_promtail_yml_parses(self):
         path = _REPO_ROOT / "promtail" / "promtail.yml"
         assert path.exists(), "promtail/promtail.yml missing"
-        doc = yaml.safe_load(path.read_text())
+        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
         assert "server" in doc
         assert "clients" in doc
         assert "scrape_configs" in doc
@@ -95,7 +95,7 @@ class TestPrometheusAndLokiConfig:
 
     def test_promtail_all_services_present(self):
         path = _REPO_ROOT / "promtail" / "promtail.yml"
-        doc = yaml.safe_load(path.read_text())
+        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
         job_names = {job["job_name"] for job in doc["scrape_configs"]}
         expected = {
             "ops", "scraper", "processing", "dbt_runner", "archiver",
@@ -105,7 +105,7 @@ class TestPrometheusAndLokiConfig:
 
     def test_promtail_pack_worker_path(self):
         path = _REPO_ROOT / "promtail" / "promtail.yml"
-        doc = yaml.safe_load(path.read_text())
+        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
         job = next(
             job for job in doc["scrape_configs"] if job["job_name"] == "pack-worker"
         )
@@ -116,7 +116,7 @@ class TestPrometheusAndLokiConfig:
 
     def test_container_stdout_selection_is_explicit_and_excludes_loki(self):
         path = _REPO_ROOT / "promtail" / "promtail.yml"
-        doc = yaml.safe_load(path.read_text())
+        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
         job = next(
             job for job in doc["scrape_configs"]
             if job["job_name"] == "docker-operations"
@@ -124,7 +124,7 @@ class TestPrometheusAndLokiConfig:
         filters = job["docker_sd_configs"][0]["filters"]
         assert filters == [{"name": "label", "values": ["promtail.enable=true"]}]
 
-        compose = yaml.safe_load((_REPO_ROOT / "docker-compose.yml").read_text())
+        compose = yaml.safe_load((_REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
         selected = {
             name for name, service in compose["services"].items()
             if service.get("labels", {}).get("promtail.enable") == "true"
@@ -137,26 +137,26 @@ class TestPrometheusAndLokiConfig:
         }
 
     def test_stage_5_retention_is_single_90_day_policy(self):
-        loki = yaml.safe_load((_REPO_ROOT / "loki" / "loki.yml").read_text())
+        loki = yaml.safe_load((_REPO_ROOT / "loki" / "loki.yml").read_text(encoding="utf-8"))
         assert loki["compactor"]["retention_enabled"] is True
         assert loki["compactor"]["delete_request_store"] == "filesystem"
         assert loki["limits_config"]["retention_period"] == "90d"
 
     def test_promtail_container_discovery_mounts_are_read_only(self):
-        compose = yaml.safe_load((_REPO_ROOT / "docker-compose.yml").read_text())
+        compose = yaml.safe_load((_REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
         mounts = compose["services"]["promtail"]["volumes"]
         assert "/var/run/docker.sock:/var/run/docker.sock:ro" in mounts
         assert "/var/lib/docker/containers:/var/lib/docker/containers:ro" in mounts
         assert "promtail_positions:/positions" in mounts
 
         promtail = yaml.safe_load(
-            (_REPO_ROOT / "promtail" / "promtail.yml").read_text()
+            (_REPO_ROOT / "promtail" / "promtail.yml").read_text(encoding="utf-8")
         )
         assert promtail["positions"]["filename"] == "/positions/positions.yaml"
 
     def test_airflow_container_stdout_parses_then_filters_severity(self):
         promtail = yaml.safe_load(
-            (_REPO_ROOT / "promtail" / "promtail.yml").read_text()
+            (_REPO_ROOT / "promtail" / "promtail.yml").read_text(encoding="utf-8")
         )
         job = next(
             item for item in promtail["scrape_configs"]
@@ -182,7 +182,7 @@ class TestPrometheusAndLokiConfig:
 
     def test_oauth_status_and_lifecycle_parsers_match_the_contract_model(self):
         promtail = yaml.safe_load(
-            (_REPO_ROOT / "promtail" / "promtail.yml").read_text()
+            (_REPO_ROOT / "promtail" / "promtail.yml").read_text(encoding="utf-8")
         )
         job = next(
             item for item in promtail["scrape_configs"]
@@ -212,7 +212,7 @@ class TestPrometheusAndLokiConfig:
 
     def test_every_retained_job_sets_source_and_tails_only_active_app_log(self):
         promtail = yaml.safe_load(
-            (_REPO_ROOT / "promtail" / "promtail.yml").read_text()
+            (_REPO_ROOT / "promtail" / "promtail.yml").read_text(encoding="utf-8")
         )
         jobs = {job["job_name"]: job for job in promtail["scrape_configs"]}
 
@@ -226,10 +226,12 @@ class TestPrometheusAndLokiConfig:
             assert labels["__path__"] == f"/logs/{service}/app.log"
 
     def test_docker_29_compatible_promtail_and_nonempty_stream_labels(self):
-        compose = yaml.safe_load((_REPO_ROOT / "docker-compose.yml").read_text())
+        compose = yaml.safe_load((_REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
         assert compose["services"]["promtail"]["image"] == "grafana/promtail:3.5.8"
 
-        promtail = yaml.safe_load((_REPO_ROOT / "promtail" / "promtail.yml").read_text())
+        promtail = yaml.safe_load(
+            (_REPO_ROOT / "promtail" / "promtail.yml").read_text(encoding="utf-8")
+        )
         job = next(
             item for item in promtail["scrape_configs"]
             if item["job_name"] == "docker-operations"
@@ -245,7 +247,7 @@ class TestStructuredLogContract:
 
     @staticmethod
     def _cases():
-        return json.loads(_LOG_FIXTURE_PATH.read_text())["cases"]
+        return json.loads(_LOG_FIXTURE_PATH.read_text(encoding="utf-8"))["cases"]
 
     def test_every_fixture_has_the_expected_label_or_explicit_drop(self):
         for case in self._cases():
@@ -296,7 +298,7 @@ class TestLogSourcePolicyCoverage:
 
     @staticmethod
     def _compose_services():
-        compose = yaml.safe_load((_REPO_ROOT / "docker-compose.yml").read_text())
+        compose = yaml.safe_load((_REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
         return set(compose["services"])
 
     def test_every_compose_service_has_exactly_one_logging_policy(self):
@@ -330,7 +332,7 @@ class TestGrafanaProvisioning:
     def test_prometheus_datasource_yml_parses(self):
         path = _REPO_ROOT / "grafana" / "provisioning" / "datasources" / "prometheus.yml"
         assert path.exists()
-        doc = yaml.safe_load(path.read_text())
+        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
         assert doc["datasources"][0]["type"] == "prometheus"
         assert doc["datasources"][0]["uid"] == "cartracker-prometheus"
         assert doc["datasources"][0]["isDefault"] is True
@@ -338,7 +340,7 @@ class TestGrafanaProvisioning:
     def test_loki_datasource_yml_parses(self):
         path = _REPO_ROOT / "grafana" / "provisioning" / "datasources" / "loki.yml"
         assert path.exists(), "grafana/provisioning/datasources/loki.yml missing"
-        doc = yaml.safe_load(path.read_text())
+        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
         assert len(doc["datasources"]) == 1
         assert doc["datasources"][0]["type"] == "loki"
         assert doc["datasources"][0]["uid"] == "cartracker-loki"
@@ -346,7 +348,7 @@ class TestGrafanaProvisioning:
     def test_dashboards_yml_parses(self):
         path = _REPO_ROOT / "grafana" / "provisioning" / "dashboards" / "dashboards.yml"
         assert path.exists()
-        doc = yaml.safe_load(path.read_text())
+        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
         assert doc["providers"][0]["type"] == "file"
 
 
@@ -358,7 +360,7 @@ class TestDockerComposeSnapshotWorker:
     def _services():
         path = _REPO_ROOT / "docker-compose.yml"
         assert path.exists(), "docker-compose.yml missing"
-        doc = yaml.safe_load(path.read_text())
+        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
         return doc["services"]
 
     def test_snapshot_worker_service_exists(self):
@@ -416,7 +418,7 @@ class TestDockerComposeTrawlMemoryGuardrails:
     def _services():
         path = _REPO_ROOT / "docker-compose.yml"
         assert path.exists(), "docker-compose.yml missing"
-        doc = yaml.safe_load(path.read_text())
+        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
         return doc["services"]
 
     def test_trawl_memory_limits(self):
@@ -437,7 +439,7 @@ class TestAnalyticsSnapshotContract:
     @staticmethod
     def _services():
         path = _REPO_ROOT / "docker-compose.yml"
-        return yaml.safe_load(path.read_text())["services"]
+        return yaml.safe_load(path.read_text(encoding="utf-8"))["services"]
 
     def test_snapshot_has_one_writer_and_read_only_ops_consumer(self):
         services = self._services()
@@ -457,7 +459,9 @@ class TestAnalyticsSnapshotContract:
 
     def test_dbt_runner_is_the_direct_prometheus_target(self):
         path = _REPO_ROOT / "prometheus" / "prometheus.yml"
-        jobs = {job["job_name"]: job for job in yaml.safe_load(path.read_text())["scrape_configs"]}
+        jobs = {job["job_name"]: job for job in yaml.safe_load(
+            path.read_text(encoding="utf-8")
+        )["scrape_configs"]}
         assert jobs["dbt_runner"]["static_configs"][0]["targets"] == ["dbt_runner:8080"]
 
     def test_stable_metric_names_match_grafana_consumers(self):
@@ -466,7 +470,7 @@ class TestAnalyticsSnapshotContract:
         dashboard = json.loads(
             (
                 _REPO_ROOT / "grafana" / "dashboards" / "pipeline_health.json"
-            ).read_text()
+            ).read_text(encoding="utf-8")
         )
         dashboard_expressions = {
             target["expr"]
@@ -484,7 +488,7 @@ class TestAnalyticsSnapshotContract:
                 / "provisioning"
                 / "alerting"
                 / "rules.yml"
-            ).read_text()
+            ).read_text(encoding="utf-8")
         )
         stable_names = set(METRIC_NAMES) | {
             "cartracker_metrics_last_success_timestamp_seconds"
@@ -502,19 +506,19 @@ class TestAnalyticsSnapshotContract:
         assert all("cartracker_cooldown_backlog_high" not in expr for expr in alert_expressions)
 
     def test_rejected_proxy_and_embedded_sql_are_absent(self):
-        runner_source = (_REPO_ROOT / "dbt_runner" / "app.py").read_text()
+        runner_source = (_REPO_ROOT / "dbt_runner" / "app.py").read_text(encoding="utf-8")
         runner_python = "\n".join(
-            path.read_text() for path in (_REPO_ROOT / "dbt_runner").glob("*.py")
+            path.read_text(encoding="utf-8") for path in (_REPO_ROOT / "dbt_runner").glob("*.py")
         )
-        ops_source = (_REPO_ROOT / "ops" / "app.py").read_text()
+        ops_source = (_REPO_ROOT / "ops" / "app.py").read_text(encoding="utf-8")
         assert '"/analytics/metrics"' not in runner_source
         assert "ANALYTICS_READER_URL" not in ops_source
         assert "analytics_gauges" not in ops_source
         assert not re.search(r"\bSELECT\b.+\bFROM\b", runner_python, flags=re.IGNORECASE)
 
     def test_raw_s3_and_modeled_analytics_helpers_stay_separate(self):
-        modeled = (_REPO_ROOT / "shared" / "analytics_connection.py").read_text()
-        raw_s3 = (_REPO_ROOT / "shared" / "duckdb_s3.py").read_text()
+        modeled = (_REPO_ROOT / "shared" / "analytics_connection.py").read_text(encoding="utf-8")
+        raw_s3 = (_REPO_ROOT / "shared" / "duckdb_s3.py").read_text(encoding="utf-8")
         assert "MINIO" not in modeled
         assert "read_only=True" in modeled
         assert "analytics.duckdb" not in raw_s3
@@ -548,7 +552,7 @@ class TestAirflowConnectionBudget:
     @staticmethod
     def _services():
         path = _REPO_ROOT / "docker-compose.yml"
-        return yaml.safe_load(path.read_text())["services"]
+        return yaml.safe_load(path.read_text(encoding="utf-8"))["services"]
 
     @classmethod
     def _max_connections(cls) -> int:
@@ -642,7 +646,7 @@ class TestServiceHealthCoverage:
 
     @staticmethod
     def _compose() -> dict:
-        return yaml.safe_load((_REPO_ROOT / "docker-compose.yml").read_text())
+        return yaml.safe_load((_REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
 
     @classmethod
     def _services(cls) -> dict:
@@ -725,7 +729,7 @@ class TestServiceHealthCoverage:
         if not isinstance(build, dict):
             return None
         path = _REPO_ROOT / build["context"] / build["dockerfile"]
-        return path.read_text() if path.exists() else None
+        return path.read_text(encoding="utf-8") if path.exists() else None
 
     def test_images_without_an_http_client_do_not_probe_with_one(self):
         """The failure mode Plan 135 recorded and Plan 140 nearly repeated.
@@ -896,11 +900,13 @@ class TestContainerHealthExporterWiring:
 
     @classmethod
     def _services(cls) -> dict:
-        return yaml.safe_load((_REPO_ROOT / "docker-compose.yml").read_text())["services"]
+        return yaml.safe_load(
+            (_REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+        )["services"]
 
     @classmethod
     def _compose(cls) -> dict:
-        return yaml.safe_load((_REPO_ROOT / "docker-compose.yml").read_text())
+        return yaml.safe_load((_REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
 
     def test_the_exporter_is_its_own_service(self):
         exporter = self._services()["container-health"]
@@ -911,11 +917,13 @@ class TestContainerHealthExporterWiring:
         """Plan 143's pattern, not Plan 135's: the service that owns the data
         exposes /metrics and Prometheus scrapes it, so the value is computed
         when Prometheus asks and cannot be stale."""
-        doc = yaml.safe_load((_REPO_ROOT / "prometheus" / "prometheus.yml").read_text())
+        doc = yaml.safe_load(
+            (_REPO_ROOT / "prometheus" / "prometheus.yml").read_text(encoding="utf-8")
+        )
         job = next(j for j in doc["scrape_configs"] if j["job_name"] == "container-health")
         assert job["static_configs"][0]["targets"] == ["container-health:9110"]
         command = " ".join(
-            (_REPO_ROOT / "container_health" / "Dockerfile").read_text().split()
+            (_REPO_ROOT / "container_health" / "Dockerfile").read_text(encoding="utf-8").split()
         )
         assert "9110" in command, "exporter port drifted from the scrape target"
 
@@ -989,7 +997,7 @@ class TestNodeExporterFilesystemVisibility:
     @staticmethod
     def _node_exporter():
         path = _REPO_ROOT / "docker-compose.yml"
-        doc = yaml.safe_load(path.read_text())
+        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
         return doc["services"]["node-exporter"]
 
     def test_rootfs_flag_present(self):
@@ -1022,13 +1030,13 @@ class TestDiskWatchlistWiring:
     @staticmethod
     def _services():
         path = _REPO_ROOT / "docker-compose.yml"
-        doc = yaml.safe_load(path.read_text())
+        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
         return doc["services"]
 
     @staticmethod
     def _volumes():
         path = _REPO_ROOT / "docker-compose.yml"
-        return yaml.safe_load(path.read_text())["volumes"]
+        return yaml.safe_load(path.read_text(encoding="utf-8"))["volumes"]
 
     def test_node_exporter_reads_the_textfile_directory(self):
         node_exporter = self._services()["node-exporter"]
@@ -1080,7 +1088,7 @@ class TestCaddySnapshotDownloadRoute:
     def _caddyfile() -> str:
         path = _REPO_ROOT / "Caddyfile"
         assert path.exists(), "Caddyfile missing"
-        return path.read_text()
+        return path.read_text(encoding="utf-8")
 
     def test_snapshot_download_route_precedes_generic_admin_auth(self):
         text = self._caddyfile()
@@ -1107,7 +1115,7 @@ class TestOpsRuntimeRequirements:
         assert path.exists(), "ops/requirements.txt missing"
         return {
             line.strip().split("==", 1)[0].split(">=", 1)[0].split("[", 1)[0].lower()
-            for line in path.read_text().splitlines()
+            for line in path.read_text(encoding="utf-8").splitlines()
             if line.strip() and not line.strip().startswith("#")
         }
 
@@ -1125,17 +1133,17 @@ class TestGrafanaDashboards:
         assert self._EXPECTED <= found, f"Missing dashboards: {self._EXPECTED - found}"
 
     def test_pipeline_health_parses(self):
-        doc = json.loads((self._DASHBOARD_DIR / "pipeline_health.json").read_text())
+        doc = json.loads((self._DASHBOARD_DIR / "pipeline_health.json").read_text(encoding="utf-8"))
         assert doc["uid"] == "cartracker-pipeline-health"
         assert len(doc["panels"]) > 0
 
     def test_infrastructure_parses(self):
-        doc = json.loads((self._DASHBOARD_DIR / "infrastructure.json").read_text())
+        doc = json.loads((self._DASHBOARD_DIR / "infrastructure.json").read_text(encoding="utf-8"))
         assert doc["uid"] == "cartracker-infrastructure"
         assert len(doc["panels"]) > 0
 
     def _infrastructure_panels(self):
-        doc = json.loads((self._DASHBOARD_DIR / "infrastructure.json").read_text())
+        doc = json.loads((self._DASHBOARD_DIR / "infrastructure.json").read_text(encoding="utf-8"))
         return doc["panels"]
 
     def test_infrastructure_panel_ids_are_unique(self):
@@ -1250,7 +1258,7 @@ class TestGrafanaDashboards:
 
     def _pipeline_panels(self):
         path = _REPO_ROOT / "grafana" / "dashboards" / "pipeline_health.json"
-        return json.loads(path.read_text())["panels"]
+        return json.loads(path.read_text(encoding="utf-8"))["panels"]
 
     def test_solver_outcomes_are_chartable_not_only_alertable(self):
         """Plan 136 Stage 2, and not decoration.
@@ -1300,7 +1308,7 @@ class TestGrafanaDashboards:
 
         rules = yaml.safe_load(
             (_REPO_ROOT / "grafana" / "provisioning" / "alerting" / "rules.yml")
-            .read_text()
+            .read_text(encoding="utf-8")
         )
         alert_expressions = {
             datum["model"].get("expr", "")
@@ -1318,10 +1326,10 @@ class TestGrafanaDashboards:
         model_sql = (
             _REPO_ROOT / "dbt" / "models" / "marts"
             / "mart_cooldown_event_funnel.sql"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         snapshot_sql = (
             _REPO_ROOT / "dbt_runner" / "sql" / "analytics_metrics_snapshot.sql"
-        ).read_text()
+        ).read_text(encoding="utf-8")
 
         assert "ref('stg_blocked_cooldown_events')" in model_sql
         assert "event_type in ('blocked', 'incremented')" in model_sql
@@ -1389,12 +1397,12 @@ class TestGrafanaDashboards:
         assert "MinIO Logical Object Bytes" in titles
 
     def test_service_latency_parses(self):
-        doc = json.loads((self._DASHBOARD_DIR / "service_latency.json").read_text())
+        doc = json.loads((self._DASHBOARD_DIR / "service_latency.json").read_text(encoding="utf-8"))
         assert doc["uid"] == "cartracker-service-latency"
         assert len(doc["panels"]) > 0
 
     def test_logs_parses(self):
-        doc = json.loads((self._DASHBOARD_DIR / "logs.json").read_text())
+        doc = json.loads((self._DASHBOARD_DIR / "logs.json").read_text(encoding="utf-8"))
         assert doc["uid"] == "cartracker-logs"
         assert len(doc["panels"]) == 5
         assert {p["title"]: p["datasource"]["uid"] for p in doc["panels"]} == {
@@ -1411,7 +1419,7 @@ class TestGrafanaDashboards:
         )
 
     def test_log_dashboard_consumes_the_structured_contract(self):
-        doc = json.loads((self._DASHBOARD_DIR / "logs.json").read_text())
+        doc = json.loads((self._DASHBOARD_DIR / "logs.json").read_text(encoding="utf-8"))
         panels = {panel["title"]: panel for panel in doc["panels"]}
 
         errors = panels["Error / Warning / Critical Logs"]["targets"][0]["expr"]
@@ -1439,7 +1447,7 @@ class TestGrafanaDashboards:
         green no matter how badly the contract drifted. The count only exists
         in Promtail's own drop counter.
         """
-        doc = json.loads((self._DASHBOARD_DIR / "logs.json").read_text())
+        doc = json.loads((self._DASHBOARD_DIR / "logs.json").read_text(encoding="utf-8"))
         panels = {panel["title"]: panel for panel in doc["panels"]}
 
         expr = panels["Unclassified Log Lines (5m, expected 0)"]["targets"][0]["expr"]
@@ -1460,24 +1468,24 @@ class TestGrafanaAlertingProvisioning:
     def test_contact_points_yml_parses(self):
         path = self._ALERTING_DIR / "contact_points.yml"
         assert path.exists(), "contact_points.yml missing"
-        doc = yaml.safe_load(path.read_text())
+        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
         assert doc["contactPoints"][0]["receivers"][0]["type"] == "telegram"
 
     def test_notification_policies_yml_parses(self):
         path = self._ALERTING_DIR / "notification_policies.yml"
         assert path.exists(), "notification_policies.yml missing"
-        doc = yaml.safe_load(path.read_text())
+        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
         assert doc["policies"][0]["receiver"] == "telegram"
 
     def test_rules_yml_parses(self):
         path = self._ALERTING_DIR / "rules.yml"
         assert path.exists(), "rules.yml missing"
-        doc = yaml.safe_load(path.read_text())
+        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
         assert len(doc["groups"]) >= 2
 
     def test_rules_yml_all_uids_present(self):
         path = self._ALERTING_DIR / "rules.yml"
-        doc = yaml.safe_load(path.read_text())
+        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
         all_uids = {r["uid"] for g in doc["groups"] for r in g["rules"]}
         expected = {
             "ct-log-error-spike", "ct-403-log-spike",
@@ -1559,7 +1567,7 @@ class TestGrafanaAlertingProvisioning:
         assert "never auto-release" in gate["annotations"]["description"].lower()
 
     def _rule(self, uid):
-        doc = yaml.safe_load((self._ALERTING_DIR / "rules.yml").read_text())
+        doc = yaml.safe_load((self._ALERTING_DIR / "rules.yml").read_text(encoding="utf-8"))
         for group in doc["groups"]:
             for rule in group["rules"]:
                 if rule["uid"] == uid:
@@ -1579,7 +1587,7 @@ class TestGrafanaAlertingProvisioning:
         assert condition == {"type": "gt", "params": [60 * 60 + 15 * 60]}
         hourly_dag = (
             _REPO_ROOT / "airflow" / "dags" / "hourly_analytics_refresh.py"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         assert 'schedule="0 * * * *"' in hourly_dag
 
     def test_pack_verification_refused_watches_the_worker(self):
@@ -1670,7 +1678,7 @@ class TestGrafanaAlertingProvisioning:
         contract.
         """
         prometheus = yaml.safe_load(
-            (_REPO_ROOT / "prometheus" / "prometheus.yml").read_text()
+            (_REPO_ROOT / "prometheus" / "prometheus.yml").read_text(encoding="utf-8")
         )
         scrape_jobs = {job["job_name"] for job in prometheus["scrape_configs"]}
         expr = self._rule("ct-service-down")["data"][0]["model"]["expr"]
@@ -1747,7 +1755,7 @@ class TestGrafanaAlertingProvisioning:
             return int(text)
 
         services = yaml.safe_load(
-            (_REPO_ROOT / "docker-compose.yml").read_text()
+            (_REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
         )["services"]
         worst = {}
         for name, service in services.items():
@@ -1778,7 +1786,7 @@ class TestGrafanaAlertingProvisioning:
         mean the design drifted back to a cached .prom file, which is what
         Plan 143 spent a 24-hour soak correcting and Plan 136 D2 named first.
         """
-        doc = yaml.safe_load((self._ALERTING_DIR / "rules.yml").read_text())
+        doc = yaml.safe_load((self._ALERTING_DIR / "rules.yml").read_text(encoding="utf-8"))
         for group in doc["groups"]:
             for rule in group["rules"]:
                 for query in rule["data"]:
@@ -1801,7 +1809,7 @@ class TestGrafanaAlertingProvisioning:
         assert "severity" not in self._rule("ct-container-unhealthy").get("labels", {})
 
         policies = yaml.safe_load(
-            (self._ALERTING_DIR / "notification_policies.yml").read_text()
+            (self._ALERTING_DIR / "notification_policies.yml").read_text(encoding="utf-8")
         )["policies"]
         routes = policies[0]["routes"]
         coverage = [
@@ -1876,7 +1884,9 @@ class TestGrafanaAlertingProvisioning:
         would keep falling into zero-traffic stretches where the volume guard
         reads 0 and resets the `for`, making the rule quieter rather than
         faster."""
-        dag = (_REPO_ROOT / "airflow" / "dags" / "scrape_detail_pages.py").read_text()
+        dag = (
+            _REPO_ROOT / "airflow" / "dags" / "scrape_detail_pages.py"
+        ).read_text(encoding="utf-8")
         minutes = int(re.search(r'schedule="\*/(\d+) \* \* \* \*"', dag).group(1))
         expr = self._rule("ct-detail-fetch-failing")["data"][0]["model"]["expr"]
         windows = {int(w) for w in re.findall(r"\[(\d+)m\]", expr)}
@@ -1941,7 +1951,7 @@ class TestGrafanaAlertingProvisioning:
         """
         sql = (
             _REPO_ROOT / "dbt_runner" / "sql" / "analytics_metrics_snapshot.sql"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         assert re.search(
             r"hour\s*<\s*CAST\(date_trunc\('hour',\s*now\(\)\s*AT TIME ZONE 'UTC'\)",
             sql,

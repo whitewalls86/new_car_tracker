@@ -23,7 +23,7 @@ SUPPORT_MODULES = {"coordination_contract", "notifications", "pools", "sensors"}
 def _load_contract():
     namespace = {}
     path = DAGS_DIR / "coordination_contract.py"
-    exec(compile(path.read_text(), str(path), "exec"), namespace)  # noqa: S102
+    exec(compile(path.read_text(encoding="utf-8"), str(path), "exec"), namespace)  # noqa: S102
     return namespace
 
 
@@ -32,7 +32,7 @@ def _sensor_declarations() -> dict[str, str]:
     for path in DAGS_DIR.glob("*.py"):
         if path.name in {"sensors.py", "coordination_contract.py"}:
             continue
-        tree = ast.parse(path.read_text(), filename=str(path))
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         calls = [
             node
             for node in ast.walk(tree)
@@ -88,7 +88,7 @@ def test_every_dag_names_real_mutating_tasks_for_drain_evidence():
     assert set(drain_tasks) == set(declared)
     for dag_id, task_ids in drain_tasks.items():
         assert task_ids, dag_id
-        source = (DAGS_DIR / f"{dag_id}.py").read_text()
+        source = (DAGS_DIR / f"{dag_id}.py").read_text(encoding="utf-8")
         literal_task_ids = {
             node.value
             for node in ast.walk(ast.parse(source))
@@ -99,7 +99,7 @@ def test_every_dag_names_real_mutating_tasks_for_drain_evidence():
 
 
 def test_sensor_is_scoped_dual_signal_rescheduling_and_practically_unbounded():
-    source = (DAGS_DIR / "sensors.py").read_text()
+    source = (DAGS_DIR / "sensors.py").read_text(encoding="utf-8")
     tree = ast.parse(source)
     factory = next(
         node
@@ -257,7 +257,7 @@ def gate(mocker):
 
 def test_the_gate_read_selects_the_columns_this_row_supplies():
     """_gate_row's positions are only meaningful if the real SELECT agrees."""
-    source = (DAGS_DIR / "sensors.py").read_text()
+    source = (DAGS_DIR / "sensors.py").read_text(encoding="utf-8")
     sensor = next(
         node
         for node in ast.walk(ast.parse(source))

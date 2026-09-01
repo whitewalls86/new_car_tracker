@@ -52,7 +52,7 @@ def _build_snapshot(tmp_path, files=None, raw_members=None):
             "path": "snapshot.tar.zst",
         },
     }
-    (snapshot_dir / "manifest.json").write_text(json.dumps(manifest))
+    (snapshot_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     return archive, manifest
 
 
@@ -109,9 +109,9 @@ class TestSeedLakeSnapshot:
     def test_fails_on_checksum_mismatch(self, tmp_path):
         archive, _ = _build_snapshot(tmp_path)
         manifest_path = archive.with_name("manifest.json")
-        manifest = json.loads(manifest_path.read_text())
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         manifest["archive"]["sha256"] = "0" * 64
-        manifest_path.write_text(json.dumps(manifest))
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
         client = _mock_client()
 
         with pytest.raises(ChecksumMismatchError):

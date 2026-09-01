@@ -23,13 +23,17 @@ WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 
 
 def _dockerfile_version() -> str:
-    match = re.search(r"^FROM\s+apache/airflow:([^\s@]+)", DOCKERFILE.read_text(), re.M)
+    match = re.search(
+        r"^FROM\s+apache/airflow:([^\s@]+)",
+        DOCKERFILE.read_text(encoding="utf-8"),
+        re.M,
+    )
     assert match, f"no `FROM apache/airflow:<tag>` in {DOCKERFILE}"
     return match.group(1)
 
 
 def _workflow_version() -> str:
-    matches = re.findall(r'apache-airflow==([0-9][^"\'\s]*)', WORKFLOW.read_text())
+    matches = re.findall(r'apache-airflow==([0-9][^"\'\s]*)', WORKFLOW.read_text(encoding="utf-8"))
     assert matches, f"no pinned `apache-airflow==<version>` in {WORKFLOW}"
     assert len(set(matches)) == 1, f"{WORKFLOW} pins apache-airflow to {set(matches)}"
     return matches[0]

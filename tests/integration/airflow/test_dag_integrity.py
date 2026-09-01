@@ -407,7 +407,7 @@ def _parse_compose_ports():
     import yaml
 
     compose_path = REPO_ROOT / "docker-compose.yml"
-    with open(compose_path) as f:
+    with open(compose_path, encoding="utf-8") as f:
         compose = yaml.safe_load(f)
 
     service_ports = {}
@@ -423,7 +423,7 @@ def _parse_compose_ports():
         if dockerfile:
             df_path = REPO_ROOT / dockerfile
             if df_path.exists():
-                content = df_path.read_text()
+                content = df_path.read_text(encoding="utf-8")
                 m = re.search(r"--port[=\s]+(\d+)", content)
                 if m:
                     ports.add(int(m.group(1)))
@@ -440,7 +440,7 @@ def _extract_dag_service_urls():
     url_re = re.compile(r'http://(\w+):(\d+)')
     results = []
     for dag_file in DAGS_DIR.glob("*.py"):
-        content = dag_file.read_text()
+        content = dag_file.read_text(encoding="utf-8")
         for m in url_re.finditer(content):
             service = m.group(1)
             port = int(m.group(2))

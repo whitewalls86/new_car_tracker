@@ -209,7 +209,7 @@ class TestEndToEnd:
         rc = main(["--db-path", str(db_path), "--json-out", str(json_out)])
 
         assert rc == 1  # other spec tables are missing from this fixture db
-        written = json.loads(json_out.read_text())
+        written = json.loads(json_out.read_text(encoding="utf-8"))
         present = {r["table"]: r["missing"] for r in written}
         assert present["int_listing_state_fingerprints"] is False
         assert any(r["missing"] for r in written)

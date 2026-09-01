@@ -23,7 +23,9 @@ def _sensor_constant(name: str) -> str:
     cannot be imported here -- but the statement under test is the sensor's
     own, verbatim, not a copy that can drift away from it.
     """
-    source = (Path(__file__).parents[3] / "airflow" / "dags" / "sensors.py").read_text()
+    source = (
+        Path(__file__).parents[3] / "airflow" / "dags" / "sensors.py"
+    ).read_text(encoding="utf-8")
     return next(
         node.value.value
         for node in ast.parse(source).body

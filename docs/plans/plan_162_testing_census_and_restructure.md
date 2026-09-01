@@ -466,6 +466,21 @@ Three exceptions, stated here so they are decisions rather than omissions:
   not close it: `PLW1514` cannot see a `tmp_path / "name"` receiver, so the rule
   that looks like the answer would have passed this defect too.
 
+  **Stage 6b answered this on 2026-09-01, and the exception is now one named
+  behaviour rather than a whole rule.** Encoding is mechanised:
+  `test_every_text_read_and_write_states_its_encoding` requires `encoding=` on
+  every `read_text` and `write_text` in the repository, and fails on
+  `(tmp_path / "a.md").write_text("—")` — the exact call ruff answers
+  `All checks passed` on. **What remains unmechanisable is everything else the
+  harness decides: path separators, line endings, case-insensitive filename
+  collisions, and locale-dependent collation.** Those have no textual signature
+  to match on — the code that breaks on them is not distinguishable, by reading,
+  from code that does not — so the only instrument that sees them is an actual
+  second platform, and [Stage 6b's decision
+  record](#evidence--stage-6b-mechanising-the-encoding-sensitive-io-guard-car-60-2026-09-01)
+  says why a Windows runner was declined rather than built. That is the residue,
+  and it is now a list of four behaviours instead of an open-ended class.
+
 **3. The `dbt build + test` job is no longer the critical path**, and what
 replaced it is named for what it does. Measured in wall-clock seconds against
 the 267s baseline, not asserted.
@@ -1865,3 +1880,139 @@ Both scripts stop at the same line. `_run`'s `Popen` and threading needs a
 daemon, and faking it would assert the shape of the mocks rather than the
 behaviour of Promtail or Docker — rule 3 of what must never be mocked. That half
 is CI's in both cases, which is the whole argument of this stage stated twice.
+
+### Evidence — Stage 6b, mechanising the encoding-sensitive I/O guard (CAR-60), 2026-09-01
+
+The stage was filed to close G13's *class* rather than repair another instance
+of it, and it was allowed to conclude that no mechanism was worth building. It
+did not conclude that. A mechanism exists, it fails on the exact call that broke
+master, and the residue it cannot reach is now four named behaviours rather than
+an open-ended exception.
+
+#### The measurement that decided the design
+
+`PLW1514` was the obvious answer and the stage began by sizing it. Measured on
+this branch at `144db69`:
+
+| | Sites |
+|---|---|
+| `PLW1514` (`--preview`, explicit selection) | **28** |
+| `read_text`/`write_text` with no `encoding=` | **213** |
+| Ruff's share of the class | **~13%** |
+
+**The stage's brief recorded 22 and the number is 28.** The difference is not
+drift in the repository — it is that the 22 was measured before Stage 6 merged.
+The count is stated here as re-measured rather than carried forward, because a
+figure quoted from a stale branch is exactly the kind of unchecked claim this
+plan exists to stop.
+
+Every one of the 28 is a directly-constructed receiver or a builtin `open`. The
+shapes ruff never reports: **92 built with `/` from a fixture path** — the
+idiom the defect used and nearly every fixture-writing test here uses — and
+roughly 110 more on a plain name. Finding 3 of the stage's brief was correct
+and, if anything, understated it.
+
+#### The class was dormant, not live, and that changed the cost argument
+
+The development machine is Windows with `cp1252` and UTF-8 mode off, which is
+precisely the environment that exposes this. The suite on that machine, before
+any change: **3401 passed in 36s.** All 213 sites were already there and not
+one of them was failing.
+
+That is the finding that ruled out the Windows runner. **A Windows job added
+today would have gone green and caught nothing** — it only earns its cost when
+a future commit puts a non-ASCII character through one of these calls. It bills
+at twice the minutes of a Linux runner, it cannot run the Docker, dbt or
+Postgres legs, so it would be a unit-only eleventh job, and
+[PEP 686](https://peps.python.org/pep-0686/) is Final for **Python 3.15**,
+where UTF-8 mode becomes the default and the class stops existing. The
+repository is on 3.13 in all ten jobs. Paying a permanent recurring cost to
+guard a class with a known expiry, against a job that catches nothing on the
+day it lands, is the trade that was declined.
+
+**This is a decision, not an omission**, and the thing it gives up is named in
+success criterion 2: path separators, line endings, case-insensitive filename
+collisions and locale-dependent collation stay invisible to CI.
+
+#### Why the rule is a test and not a ruff setting
+
+Ruff resolves a receiver by type. `Path("b.md").write_text(...)` is flagged;
+`(tmp_path / "a.md").write_text(...)` is not, with or without a `Path`
+annotation on the fixture. Ruff has no plugin interface, so a check that reads
+these calls has to be Python, and it lives beside the route and mocker rules
+because it is the same kind of rule.
+
+**The two instruments were given the halves each reads correctly.** `PLW1514`
+owns `open` and `tempfile.NamedTemporaryFile`, where type inference is the
+right approach and a name-only rule would be wrong — `tarfile.open` and
+`os.open` take no encoding and would be false positives. The new rule owns
+`read_text` and `write_text`, which only `pathlib` defines, so the method name
+is proof on its own and no inference is needed. No gap between them, and no
+call reported twice.
+
+`explicit-preview-rules` is what makes enabling the preview-gated `PLW1514`
+affordable. `preview = true` alone also turns on every other preview rule in
+`E`/`F`/`I` — **207 new violations, all cosmetic whitespace**, measured the
+same day. Narrowing preview to the rules actually named costs nothing.
+
+#### The exit criterion, demonstrated rather than asserted
+
+The stage's second criterion asks for a mechanism that fails on
+`(tmp_path / "a.md").write_text("—")` with no `encoding=`. Both tools were run
+against that exact line:
+
+| Tool | Result |
+|---|---|
+| `ruff --select PLW1514 --preview` | `All checks passed!` |
+| `test_every_text_read_and_write_states_its_encoding` | **fails** |
+
+That comparison is kept as an assertion, not a note.
+`test_the_encoding_rule_sees_the_shape_ruff_cannot` pins all three receiver
+shapes the repository writes and pins the correct calls as clean, so if this
+rule ever narrows back to what ruff already sees, it fails instead of going
+quiet. The detection was split into `_encoding_free_text_io` for no other
+reason than to make that test possible: a structural check nothing exercises
+reports a clean repository whether or not it still works.
+
+#### What was swept, and why the sweep is safe rather than merely large
+
+All **213** sites were fixed; none were waived. The waiver list stays at 68.
+Waiving instead would have taken it to 281 and broken the one property the
+plan's three waiver assertions exist to protect — that the list only shrinks.
+
+**The sweep cannot change behaviour, and that is provable rather than hoped
+for.** Every one of these calls already runs in Linux CI, where the default
+encoding is UTF-8; writing `encoding="utf-8"` explicitly makes them do what
+they were already doing there. It was verified from both ends: green on Linux
+in CI, and green on the `cp1252` machine before (3401) and after (**3403**, the
+two new tests) — the platform where a wrong encoding would have shown up
+immediately.
+
+The edit was applied by AST position rather than by regex, in bytes rather than
+text. Both mattered: `col_offset` is a UTF-8 **byte** offset and this
+repository's docstrings are full of em-dashes, so a character-indexed insert
+would have landed in the wrong column on exactly the files this stage is about;
+and the working tree is CRLF, so a `read_text`/`write_text` round-trip would
+have rewritten every line ending in all 50 files. The diff was checked for
+mixed endings afterwards and has none.
+
+Twenty-four lines went over the 100-character limit once the keyword was added
+and were wrapped — fifteen sharing one shape, nine individually.
+
+#### What was deliberately not done
+
+- **No Windows runner**, for the reasons recorded above. This is the stage's
+  substantive decision and success criterion 2 now names what it costs.
+- **`.open()` on a non-`pathlib` receiver is not checked by the new rule.**
+  `tarfile.open`, `os.open` and `pyarrow`'s filesystem `open` share the name
+  and take no encoding, so a name-only rule would report them and be wrong.
+  Ruff's type inference covers the `open` family instead, which is the whole
+  point of splitting the two.
+- **`PYTHONUTF8` was not set anywhere.** It would make the class disappear on
+  every machine that had it, but it is an interpreter start-up flag: a developer
+  running `pytest` without it still diverges, so it moves the harness dependency
+  rather than removing it. Explicit `encoding=` needs no environment to be
+  correct.
+- **The 3.15 upgrade was not scheduled here.** PEP 686 will retire this class,
+  but that is a version bump with its own consequences and it is not Plan 162's
+  to make.

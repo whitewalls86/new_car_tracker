@@ -306,7 +306,7 @@ class TestExtrapolationMath:
         out_path = tmp_path / "proj.json"
         print_summary(stats, sample_rate=0.1, json_out=out_path)
         import json
-        data = json.loads(out_path.read_text())
+        data = json.loads(out_path.read_text(encoding="utf-8"))
         # projected_saved_bytes = 1_000_000 * 10_000 / 50_000 = 200_000
         assert data["projected_saved_bytes"] == 200_000
 
@@ -329,7 +329,7 @@ class TestExtrapolationMath:
         out_path = tmp_path / "summary.json"
         print_summary(stats, sample_rate=0.1, json_out=out_path)
         assert out_path.exists()
-        data = __import__("json").loads(out_path.read_text())
+        data = __import__("json").loads(out_path.read_text(encoding="utf-8"))
         assert data["savings_pct"] == pytest.approx(20.0, abs=0.01)
         assert data["recommendation"] in ("WORTH IT", "MAYBE", "SKIP")
 

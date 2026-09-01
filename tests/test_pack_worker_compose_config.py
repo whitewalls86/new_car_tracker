@@ -7,7 +7,7 @@ _REPO_ROOT = Path(__file__).parent.parent
 
 
 def _compose():
-    return yaml.safe_load((_REPO_ROOT / "docker-compose.yml").read_text())
+    return yaml.safe_load((_REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
 
 
 class TestPackWorkerComposeConfig:

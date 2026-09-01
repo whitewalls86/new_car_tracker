@@ -337,7 +337,11 @@ def test_manifest_fingerprints_are_reproducible(tmp_path):
 
 def test_observations_are_sorted_independently_of_arrival_order(tmp_path):
     _write(tmp_path, "sorted")
-    rows = (tmp_path / "sorted" / "observations_distinct.csv").read_text().splitlines()
+    rows = (
+        (tmp_path / "sorted" / "observations_distinct.csv")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    )
     assert rows[0] == ",".join(OBSERVATION_FIELDS)
     assert rows[1].startswith(LISTING_A)
     assert rows[2].startswith(LISTING_B)
@@ -345,7 +349,11 @@ def test_observations_are_sorted_independently_of_arrival_order(tmp_path):
 
 def test_the_occurrence_manifest_carries_the_legacy_locator(tmp_path):
     _write(tmp_path, "locator")
-    header = (tmp_path / "locator" / "occurrences_http200.csv").read_text().splitlines()[0]
+    header = (
+        (tmp_path / "locator" / "occurrences_http200.csv")
+        .read_text(encoding="utf-8")
+        .splitlines()[0]
+    )
     assert header == ",".join(OCCURRENCE_FIELDS)
     for column in ("legacy_object_key", "row_group", "row_offset",
                    "stored_sha256", "recomputed_sha256"):
@@ -354,7 +362,7 @@ def test_the_occurrence_manifest_carries_the_legacy_locator(tmp_path):
 
 def test_the_report_separates_the_two_distinct_hash_counts(tmp_path):
     report = _write(tmp_path, "report")
-    saved = json.loads((tmp_path / "report" / "stage1_report.json").read_text())
+    saved = json.loads((tmp_path / "report" / "stage1_report.json").read_text(encoding="utf-8"))
     # Stage 2's pack join is content-based, so it needs the recomputed count;
     # the stored count is what the old system believed. Reporting one number
     # for "the SHA" would hide the difference these tests exist to expose.
@@ -366,7 +374,7 @@ def test_the_report_separates_the_two_distinct_hash_counts(tmp_path):
 
 def test_the_report_cross_tabs_empty_against_status(tmp_path):
     _write(tmp_path, "crosstab")
-    saved = json.loads((tmp_path / "crosstab" / "stage1_report.json").read_text())
+    saved = json.loads((tmp_path / "crosstab" / "stage1_report.json").read_text(encoding="utf-8"))
     assert "empty_by_status" in saved["rows"]
     assert "empty_rows_carrying_stored_hash" in saved["rows"]
 

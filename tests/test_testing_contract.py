@@ -1080,8 +1080,9 @@ def test_every_layer_number_in_the_code_matches_the_contract():
 # Rule 7 -- the harness must not decide the outcome.
 # ---------------------------------------------------------------------------
 def test_every_pytest_invocation_in_ci_sets_pythonpath():
-    """The one mechanically checkable clause of "the harness must not decide
-    the outcome". The rest of that rule is judgement, and the contract says so.
+    """One of two mechanically checkable clauses of "the harness must not
+    decide the outcome" -- Stage 6b added the other, below. The rest of that
+    rule is judgement, and the contract says so.
 
     ``tests/test_planning_docs.py`` passed or failed on one machine, one OS and
     one commit purely on whether the checkout directory name was a valid Python
@@ -1124,6 +1125,140 @@ def _step_env(job_name: str, step_name: str) -> tuple[str, ...]:
                 keys += list(step.get("env", {}))
         return tuple(keys)
     return ()
+
+
+# The second mechanically checkable clause of the same rule, added by Stage 6b
+# after the class the row above calls judgement produced another instance.
+ENCODING_WAIVERS = ()
+
+# Not source, and ``.claude/`` is the one that matters: in the primary checkout
+# it holds every active worktree, so walking it would report each violation
+# once per worktree and make the count depend on how many branches happen to be
+# open. The rest mirror ``[tool.ruff] exclude``.
+_NOT_SOURCE = frozenset({
+    ".claude", ".git", "__pycache__", ".venv", "venv",
+    "node_modules", ".ruff_cache", ".pytest_cache", ".mypy_cache",
+    "dbt_packages", "target",
+})
+
+# ``pathlib`` and nothing else defines these two, so the receiver needs no type
+# inference: an attribute call by this name is a text read or write, whatever
+# expression produced the object. That is the entire reason this check exists
+# rather than a ruff setting -- see the docstring below.
+_TEXT_IO_METHODS = frozenset({"read_text", "write_text"})
+
+
+def _source_files() -> list[Path]:
+    """Every Python file in the repository, minus the directories that are not it."""
+    return sorted(
+        path
+        for path in REPO_ROOT.rglob("*.py")
+        if not _NOT_SOURCE & set(path.relative_to(REPO_ROOT).parts)
+    )
+
+
+def _encoding_free_text_io(source: str, filename: str = "<canary>") -> set[int]:
+    """Line numbers in *source* where a text read or write names no encoding.
+
+    Separated from the check below so the rule itself can be tested. A
+    structural check nothing exercises is a check that quietly stops matching
+    and reports a clean repository either way, which is the failure this file
+    exists to prevent.
+    """
+    tree = ast.parse(source, filename=filename)
+    return {
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr in _TEXT_IO_METHODS
+        and not any(keyword.arg == "encoding" for keyword in node.keywords)
+    }
+
+
+def test_the_encoding_rule_sees_the_shape_ruff_cannot():
+    """Stage 6b's exit criterion, kept as an assertion rather than a measurement.
+
+    The first line is the defect that broke master on 2026-09-01, reduced. Ruff
+    reports ``All checks passed`` on it under ``PLW1514 --preview``, verified
+    the same day; if this rule ever agrees with ruff, it has lost the only
+    thing it was built to add and the loss would otherwise be silent.
+
+    The receiver shapes below are the three the repository actually writes.
+    ``Path(...)`` is the one ruff already sees, and it is here so that
+    narrowing this rule to the fixture idiom alone would fail.
+    """
+    caught = _encoding_free_text_io(
+        'from pathlib import Path\n'
+        '(tmp_path / "a.md").write_text("—")\n'
+        'target.write_text("x")\n'
+        'Path("b.md").read_text()\n'
+    )
+    assert caught == {2, 3, 4}, (
+        "the encoding rule no longer sees every receiver shape: expected lines "
+        f"2, 3 and 4, got {sorted(caught)}"
+    )
+
+    clean = _encoding_free_text_io(
+        '(tmp_path / "a.md").write_text("—", encoding="utf-8")\n'
+        'Path("b.md").read_text(encoding="utf-8")\n'
+        'archive.read_bytes()\n'
+        'tarfile.open(path)\n'
+    )
+    assert not clean, (
+        f"the encoding rule fires on calls that are already correct: {sorted(clean)}"
+    )
+
+
+def test_every_text_read_and_write_states_its_encoding():
+    """The clause the row above called judgement, made mechanical.
+
+    ``Path.write_text`` with no ``encoding=`` does not choose an encoding. It
+    asks the operating system, which answers UTF-8 on Linux and cp1252 on
+    Windows. An em-dash is three bytes one way and one byte the other, so a
+    fixture written without an encoding and read back as UTF-8 -- correctly,
+    explicitly -- raises ``UnicodeDecodeError`` on a developer's machine and
+    passes in CI. That is ``tests/scripts/test_build_public_roadmap.py`` on
+    2026-09-01, and it is the benign direction of this rule: green where it is
+    measured, red where the work happens.
+
+    **Ruff's PLW1514 does not cover this and cannot be made to.** It resolves a
+    receiver by type, so it fires on ``Path("b.md").write_text(...)`` and stays
+    silent on ``(tmp_path / "a.md").write_text(...)`` -- with or without a
+    ``Path`` annotation on the fixture. Measured on 2026-09-01 the rule found
+    28 call sites and the repository had 213; the 92 built with ``/`` from a
+    fixture, which is the idiom nearly every test here uses, were all in the
+    silent set, including the one that broke master. Ruff has no plugin
+    interface, so a check that reads these calls has to be Python.
+
+    **The division of labour is deliberate.** ``PLW1514`` is enabled in
+    ``pyproject.toml`` under ``explicit-preview-rules`` and owns ``open`` and
+    ``tempfile.NamedTemporaryFile``, where its type inference is the right
+    instrument and this rule's would not be -- ``tarfile.open`` and
+    ``os.open`` take no encoding and a name-only check would flag them. This
+    rule owns ``read_text`` and ``write_text``, which only ``pathlib``
+    defines, so the name alone is proof and no inference is needed. Between
+    them there is no gap and no double report.
+
+    What this does **not** close is the rest of the class. Path separators,
+    line endings and case-insensitive filesystems still decide outcomes that
+    only a second platform can see, and CI is ``ubuntu-latest`` in all ten
+    jobs. Stage 6b's decision record says why that is accepted rather than
+    fixed with a Windows runner, and success criterion 2 names it.
+    """
+    found = {
+        f"{_relative(path)}:{line}"
+        for path in _source_files()
+        for line in _encoding_free_text_io(
+            path.read_text(encoding="utf-8"), filename=str(path)
+        )
+    }
+    _assert_exactly(
+        found,
+        ENCODING_WAIVERS,
+        "these text reads and writes let the machine choose the encoding, so "
+        "their result depends on the locale of whoever runs them:",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1370,6 +1505,7 @@ ALL_WAIVERS = (
     + ROUTE_WAIVERS
     + LAYER_2_WAIVERS
     + LAYER_NUMBER_WAIVERS
+    + ENCODING_WAIVERS
 )
 
 _ARCHIVE_ROW = re.compile(r"^\| (\d+)(?:\.\d+)? \| ", re.M)
