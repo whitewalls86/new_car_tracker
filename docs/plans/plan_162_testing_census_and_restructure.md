@@ -2077,6 +2077,47 @@ The 21 `subprocess` and logging sites were swept the same way afterwards. With
 those fixed, the rule that now covers all three shapes passes on an **empty
 waiver list**, which is the check that the sweep and the rule agree.
 
+#### What CI said, and what only CI could have said
+
+Green on `c7d1d33`, run
+[`33539915522`](https://github.com/whitewalls86/new_car_tracker/actions/runs/33539915522),
+all ten jobs (`Documentation tests` skipped by design on a changeset that is not
+docs-only). PR
+[#332](https://github.com/whitewalls86/new_car_tracker/pull/332).
+
+**It took three runs, and the two red ones are the evidence for the design.**
+The local suite could not have produced either: both failures were third-party
+code running inside jobs that exist only in CI.
+
+| Run | Head | Result |
+|---|---|---|
+| [`33537879926`](https://github.com/whitewalls86/new_car_tracker/actions/runs/33537879926) | `f9a702b` | 9/11 — dbt and Airflow jobs red |
+| [`33538571583`](https://github.com/whitewalls86/new_car_tracker/actions/runs/33538571583) | `27288e6` | 10/11 — Airflow job red |
+| [`33539915522`](https://github.com/whitewalls86/new_car_tracker/actions/runs/33539915522) | `c7d1d33` | **green** |
+
+The first red run failed on dbt's own `dbt.tracking`, `dbt.compilation`,
+`dbt.parser.manifest` and `dbt.utils.utils`, plus `airflow.configuration` — 32
+occurrences of the latter. The second, after those were silenced by name,
+failed on stdlib `configparser.py:739`: the layer beneath the module that had
+just been ignored, reached through the same call chain. **The escape hatch was
+uncovering offenders one frame at a time, with no way to see how many were
+left**, because that suite runs in a venv built only by CI.
+
+That is the run that ended the approach rather than the one that fixed it. Two
+rounds of ~2.5 minutes each bought one fact worth more than a green build: a
+guard that has to be told, module by module, whose code it is allowed to judge
+is not measuring what this stage set out to measure.
+
+**The third run is green because the question changed**, not because the last
+module was found. The shapes are checked statically over this repository's
+files, and CI never had to arbitrate dbt's file handling at all. Nothing in the
+`ci.yml` diff survives; the only workflow change in the merged branch is none.
+
+**The waiver list is unchanged at 68.** `ENCODING_WAIVERS` is empty and joins
+`ALL_WAIVERS`, so the three assertions that keep the list honest now cover this
+rule too: a waiver here that stopped describing a violation would fail, as would
+one naming a missing gap entry or an archived owner.
+
 #### What was deliberately not done
 
 - **No Windows runner**, for the reasons recorded above. This is the stage's
