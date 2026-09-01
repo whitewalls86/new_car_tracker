@@ -877,12 +877,6 @@ LAYER_2_WAIVERS = tuple(
         "archiver/sql/lake_snapshot_selectors/stable_state_run.sql",
         "archiver/sql/lake_snapshot_selectors/stale_listing.sql",
         "archiver/sql/lake_snapshot_selectors/state_change_run.sql",
-        "dashboard/sql/data_health_batch_outcomes.sql",
-        "dashboard/sql/data_health_block_rate.sql",
-        "dashboard/sql/data_health_cooldown_cohorts.sql",
-        "dashboard/sql/data_health_inventory_coverage.sql",
-        "dashboard/sql/data_health_price_freshness.sql",
-        "dashboard/sql/data_health_scrape_volume.sql",
         "ops/sql/evict_delisted_cooldowns.sql",
         "ops/sql/expire_orphan_detail_claims.sql",
         "ops/sql/insert_artifact_event.sql",
@@ -999,6 +993,251 @@ def test_every_production_sql_file_is_touched_by_a_layer_2_test():
         "migrations and dbt's models are the two exemptions; a statement no "
         "layer ever runs against a real engine is the search_path incident "
         "waiting to happen again.",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Rule 5b -- no production module holds SQL at its .execute() call site.
+# ---------------------------------------------------------------------------
+INLINE_SQL_WAIVERS: tuple[Waiver, ...] = tuple(
+    Waiver(subject, gap="G5", owner=162)
+    for subject in (
+        "archiver/processors/cleanup_queue.py:33",
+        "archiver/processors/flush_silver_observations.py:138",
+        "archiver/processors/flush_silver_observations.py:148",
+        "archiver/processors/flush_silver_observations.py:198",
+        "archiver/processors/flush_staging_events.py:324",
+        "archiver/processors/flush_staging_events.py:334",
+        "archiver/processors/flush_staging_events.py:383",
+        "ops/coordination_metrics.py:52",
+        "ops/routers/auth.py:45",
+        "ops/routers/coordination.py:106",
+        "ops/routers/coordination.py:107",
+        "ops/routers/coordination.py:239",
+        "ops/routers/coordination.py:240",
+        "ops/routers/coordination.py:257",
+        "ops/routers/coordination.py:315",
+        "ops/routers/coordination.py:316",
+        "ops/routers/coordination.py:337",
+        "ops/routers/coordination.py:346",
+        "ops/routers/coordination.py:380",
+        "ops/routers/coordination.py:381",
+        "ops/routers/coordination.py:392",
+        "ops/routers/coordination.py:411",
+        "ops/routers/coordination.py:435",
+        "ops/routers/coordination.py:445",
+        "ops/routers/coordination.py:474",
+        "ops/routers/coordination.py:475",
+        "ops/routers/coordination.py:493",
+        "ops/routers/coordination.py:528",
+        "ops/routers/coordination.py:557",
+        "ops/routers/deploy.py:120",
+        "ops/routers/deploy.py:121",
+        "ops/routers/deploy.py:135",
+        "ops/routers/deploy.py:193",
+        "ops/routers/deploy.py:194",
+        "ops/routers/deploy.py:209",
+        "ops/routers/maintenance.py:152",
+        "ops/routers/scrape.py:115",
+        "ops/routers/scrape.py:121",
+        "ops/routers/scrape.py:170",
+        "ops/routers/scrape.py:251",
+        "ops/routers/scrape.py:261",
+        "ops/routers/scrape.py:46",
+        "ops/routers/scrape.py:65",
+        "ops/routers/scrape.py:80",
+        "ops/routers/scrape.py:96",
+        "ops/routers/users.py:140",
+        "ops/routers/users.py:149",
+        "ops/routers/users.py:167",
+        "ops/routers/users.py:202",
+        "ops/routers/users.py:229",
+        "ops/routers/users.py:242",
+        "ops/routers/users.py:256",
+        "ops/routers/users.py:285",
+        "ops/routers/users.py:294",
+        "ops/routers/users.py:303",
+        "ops/routers/users.py:328",
+        "ops/routers/users.py:336",
+        "ops/routers/users.py:80",
+        "ops/routers/users.py:88",
+        "processing/routers/artifact.py:33",
+        "processing/writers/srp_writer.py:77",
+        "scraper/processors/scrape_detail.py:184",
+        "scraper/processors/scrape_detail.py:194",
+        "scraper/processors/scrape_results.py:315",
+        "scraper/processors/scrape_results.py:326",
+        "shared/compression.py:130",
+    )
+)
+
+# Every name in this stack that takes a SQL string, whether or not it is used
+# here today. Scoping the set to what the repository currently calls is the
+# mistake this plan keeps finding in its own instruments: the census undercounted
+# G14 and it undercounted G5, both because the check was fitted to the code in
+# front of it. ``executemany`` matches nothing on 2026-09-01 and is here anyway,
+# because the cost of a name that never fires is zero and the cost of a missing
+# one is a gap nothing reports. ``sql`` covers ``spark.sql(...)``, which is not
+# called yet either -- see the docstring below on what does and does not survive
+# PySpark.
+_SQL_CALL_NAMES = frozenset({
+    # DB-API and psycopg2
+    "execute", "executemany", "executescript", "execute_batch", "execute_values",
+    "mogrify", "copy_expert",
+    # DuckDB and Spark
+    "sql", "query", "from_query",
+    # pandas and SQLAlchemy
+    "read_sql", "read_sql_query", "read_sql_table", "text",
+})
+
+# The verb is what makes a generous name set safe. ``df.query("price > 100")``
+# and ``resp.text`` reach the walk below and are rejected on content, so adding
+# a name costs nothing while omitting one costs silence. It is also the part
+# that is dialect-independent: SELECT and INSERT read the same in Spark SQL as
+# in Postgres.
+_SQL_VERB = re.compile(
+    r"\s*(?:--[^\n]*\n\s*)*"
+    r"\b(SELECT|INSERT|UPDATE|DELETE|WITH|CREATE|DROP|ALTER|TRUNCATE|COPY|CALL|"
+    r"GRANT|REVOKE|VACUUM|ANALYZE|EXPLAIN|MERGE|UPSERT|REFRESH|REINDEX|"
+    r"INSTALL|LOAD|SET|ATTACH|DETACH|PRAGMA|BEGIN|COMMIT|ROLLBACK)\b",
+    re.I,
+)
+
+# Connection setup, not a query. ``INSTALL httpfs`` / ``LOAD httpfs`` /
+# ``SET s3_url_style=?`` configure a session; they name no table and no column,
+# so there is no schema for them to drift from -- which is the whole hazard the
+# rule exists to catch. Extracting them into .sql files for a Layer 2 test to
+# import would be ceremony, not coverage. Measured on 2026-09-01 this exempts
+# exactly the seven sites in ``shared/duckdb_s3.py`` and nothing else; in
+# particular no production module runs ``SET search_path`` through a cursor,
+# which would be a schema statement wearing this shape and is not exempt.
+_SESSION_SETUP_VERBS = frozenset({"INSTALL", "LOAD", "SET", "ATTACH", "DETACH", "PRAGMA"})
+
+
+def _leading_sql_literal(node: ast.AST) -> str | None:
+    """The literal text at the head of *node*, through the shapes that hide one.
+
+    A rule that only reads a bare ``ast.Constant`` makes concatenation the
+    escape hatch: ``"SELECT ..." + where`` and ``f"SELECT ... {col}"`` are the
+    two ways inline SQL is actually written once it needs a variable, and they
+    are the ones worth catching most.
+    """
+    if isinstance(node, ast.Constant):
+        return node.value if isinstance(node.value, str) else None
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        return _leading_sql_literal(node.left)
+    if isinstance(node, ast.JoinedStr) and node.values:
+        return _leading_sql_literal(node.values[0])
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+        if node.func.attr in {"format", "dedent", "strip", "lstrip", "join"}:
+            return _leading_sql_literal(node.func.value)
+    return None
+
+
+def _inline_sql_sites(source: str, filename: str = "<canary>") -> set[int]:
+    """Line numbers where a SQL-taking call is handed a literal statement.
+
+    **Every argument is read, not the first.** ``execute_values(cur, sql, rows)``
+    puts its statement second, and a first-argument rule is blind to it by
+    construction -- which is not hypothetical: it is
+    ``ops/routers/maintenance.py:152``, a literal INSERT into
+    ``staging.blocked_cooldown_events`` that the census never named because the
+    gap list describes the shape as "``.execute(`` with a literal first
+    argument".
+    """
+    tree = ast.parse(source, filename=filename)
+    found = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if isinstance(node.func, ast.Attribute):
+            name = node.func.attr
+        elif isinstance(node.func, ast.Name):
+            name = node.func.id
+        else:
+            continue
+        if name not in _SQL_CALL_NAMES:
+            continue
+        arguments = list(node.args) + [keyword.value for keyword in node.keywords]
+        for argument in arguments:
+            text = _leading_sql_literal(argument)
+            if text is None:
+                continue
+            match = _SQL_VERB.match(text)
+            if match and match.group(1).upper() not in _SESSION_SETUP_VERBS:
+                found.add(node.lineno)
+                break
+    return found
+
+
+def test_the_inline_sql_rule_sees_the_shapes_that_hide_a_statement():
+    """The rule below, tested on the shapes it exists to catch.
+
+    A structural check nothing exercises reports a clean repository whether or
+    not it still matches anything, which is the failure this whole file exists
+    to prevent -- so the detector is separated from the sweep and canaried here.
+    """
+    caught = _inline_sql_sites(
+        'cur.execute("SELECT 1")\n'                              # 1  bare literal
+        'cur.execute("SELECT * FROM t WHERE a = " + a)\n'        # 2  concatenated
+        'cur.execute(f"SELECT {col} FROM t")\n'                  # 3  f-string
+        'execute_values(cur, "INSERT INTO t VALUES %s", rows)\n'  # 4  second argument
+        'pd.read_sql(sql="SELECT 1", con=c)\n'                   # 5  keyword argument
+        'spark.sql("MERGE INTO t USING s ON t.id = s.id")\n'     # 6  Spark, no caller yet
+    )
+    assert caught == {1, 2, 3, 4, 5, 6}, (
+        f"the inline-SQL rule no longer sees every shape: caught {sorted(caught)}"
+    )
+
+    clean = _inline_sql_sites(
+        'cur.execute(CLAIM_ARTIFACTS, (limit,))\n'      # a loaded constant is the fix
+        'df.query("price > 100")\n'                     # not SQL: no leading verb
+        'con.execute("INSTALL httpfs")\n'               # session setup, exempt
+        'con.execute("SET s3_url_style=?", ["path"])\n'  # session setup, exempt
+    )
+    assert not clean, (
+        f"the inline-SQL rule fires on calls that are already correct: {sorted(clean)}"
+    )
+
+
+def test_no_production_module_holds_sql_at_its_execute_call_site():
+    """G5, which the census recorded in prose and nothing has ever checked.
+
+    Inline SQL is not merely untidy. It is what *manufactures* the paraphrase
+    the contract calls worse than no test: a statement written at its call site
+    cannot be imported, so the only way to give it a test is to retype it, and
+    a retyped statement passes forever while the original rots. Moving SQL into
+    a ``.sql`` file is not the goal -- it is what makes the retyping
+    unnecessary, and it is why this rule and
+    :func:`test_every_production_sql_file_is_touched_by_a_layer_2_test` are one
+    stage rather than two.
+
+    **What this does not survive is PySpark, and the residue is three named
+    things rather than an open question.** ``spark.sql("SELECT ...")`` is caught
+    already -- ``sql`` is in the name set and the verb guard does not care about
+    dialect. What is not caught: SQL *fragments* (``df.selectExpr("price >
+    msrp")``, ``F.expr(...)``, ``df.filter("year > 2020")``) start with no verb,
+    and the guard that makes a generous name set safe is exactly what makes it
+    blind to them; the DataFrame API is not text at all, so it can drift from a
+    schema with nothing textual to see; and a ``.sql`` file only earns its
+    keep if some engine executes it, which for Spark means the Lakekeeper and
+    PySpark services ``tests/integration/lakehouse`` is
+    :data:`DORMANT_SUITES`-declared against until Plan 125 Gate C returns them.
+    Static reading stops at the first of those three. The other two are caught
+    by executing them in CI or not at all.
+    """
+    found = {
+        f"{_relative(path)}:{line}"
+        for package in sorted(service_packages())
+        for path in sorted((REPO_ROOT / package).rglob("*.py"))
+        if "__pycache__" not in path.parts
+        for line in _inline_sql_sites(path.read_text(encoding="utf-8"), str(path))
+    }
+    _assert_exactly(
+        found,
+        INLINE_SQL_WAIVERS,
+        "these production modules hold SQL at the call site, where no test can "
+        "import it and only a paraphrase can cover it:",
     )
 
 
@@ -1594,6 +1833,7 @@ ALL_WAIVERS = (
     + MOCKER_WAIVERS
     + ROUTE_WAIVERS
     + LAYER_2_WAIVERS
+    + INLINE_SQL_WAIVERS
     + LAYER_NUMBER_WAIVERS
     + ENCODING_WAIVERS
 )
@@ -1693,6 +1933,7 @@ def test_every_waiver_names_a_gap_entry_that_exists():
         ("mocker", MOCKER_WAIVERS),
         ("route coverage", ROUTE_WAIVERS),
         ("Layer 2 SQL", LAYER_2_WAIVERS),
+        ("inline SQL", INLINE_SQL_WAIVERS),
         ("layer numbering", LAYER_NUMBER_WAIVERS),
     ],
 )

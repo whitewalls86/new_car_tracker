@@ -523,7 +523,7 @@ invisible rather than counted.
 
 | Rule | Why it is not asserted | Owner |
 |---|---|---|
-| Every module-level SQL statement in a production module is executed by a Layer 2 test | The Layer 2 check reads `.sql` files. Inline SQL at an `.execute()` call site is the opposite direction and is measured by nothing — [G5](#the-gap-list)'s ten modules | Plan 162 |
+| Every module-level SQL statement in a production module is executed by a Layer 2 test | ~~Inline SQL at an `.execute()` call site is the opposite direction and is measured by nothing~~ — **mechanised 2026-09-01 by Plan 162 Stage 7.** [G5](#the-gap-list) is now asserted by `test_no_production_module_holds_sql_at_its_execute_call_site` against `INLINE_SQL_WAIVERS`, seeded at the 66 measured sites and drained by the repairs. What stays unasserted is Spark: a SQL *fragment* (`selectExpr`, `expr`, a string `filter`) leads with no verb, and the DataFrame API is not text at all, so neither is visible to a static read | Plan 162 |
 
 Until 2026-08-31 this rule was not in this section. It was a clause inside the
 Layer 2 row above — *"every `.sql` file **and module-level statement**"* — which
@@ -598,7 +598,7 @@ place the history lives.
 
 | # | Violation | Measure | Owner |
 |---|---|---|---|
-| G5 | **Inline SQL at `.execute()` call sites in 10 production modules**, against six that use the loader: `ops/routers/{coordination,deploy,scrape,users}.py`, `archiver/processors/{pack_bronze_html,delete_packed_source_html,flush_silver_observations,flush_staging_events}.py`, `shared/db.py`, `shared/duckdb_s3.py` | `.execute(` with a literal first argument | Plan 162 |
+| G5 | **Inline SQL at a SQL-taking call site: 66 sites in 15 production modules**, measured 2026-09-01 by the rule below. The census said ten modules and named two that do not belong: `shared/db.py`'s only match is the usage example in `db_cursor`'s docstring, and `shared/duckdb_s3.py`'s seven are `INSTALL`/`LOAD`/`SET` session setup, which name no schema to drift from. Eight modules it never named do belong, including `ops/routers/maintenance.py:152` — a literal `INSERT` passed to `execute_values` as its *second* argument, which the measure below was originally written to miss | A SQL verb leading any argument of `execute`, `executemany`, `execute_values`, `execute_batch`, `copy_expert`, `mogrify`, `sql`, `query`, `read_sql`, `text` and their kin — asserted by `test_no_production_module_holds_sql_at_its_execute_call_site` | Plan 162 |
 | G7 | **`dashboard/`: 7 modules, 0 test files.** Its SQL is covered by Layer 2 through `dashboard.queries`; its Python is covered by nothing | — | Plan 162 |
 | G8 | **`scraper/`: Plan 84's four-month-old deferral, now lifted.** One integration file — orphaned until Stage 1 gave it a CI step, and still the whole of the service's coverage above Layer 1 | — | Plan 162 |
 | G12 | **`airflow/dags/` has no `.sql` convention and cannot reach one.** No module under it imports `shared`, so `shared.query_loader` is unavailable and the DAG tree is the only place in the repository where "production SQL is a `.sql` file" is structurally impossible. This is what forces the single legitimate `ast` reader, `_sensor_constant()` | `grep -rn 'from shared' airflow/dags/` returns nothing | Plan 162 |
