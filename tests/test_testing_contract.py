@@ -1288,9 +1288,26 @@ def test_the_runtime_encoding_guard_is_enabled_in_ci():
     )
 
     filters = tomllib.loads(_read(PYPROJECT))["tool"]["pytest"]["ini_options"]
-    assert "error::EncodingWarning" in filters.get("filterwarnings", []), (
+    warning_filters = filters.get("filterwarnings", [])
+    assert "error::EncodingWarning" in warning_filters, (
         f"{PYPROJECT} no longer turns EncodingWarning into an error, so CI "
         f"would print the warning and pass."
+    )
+
+    # An unscoped ignore is the obvious way to make a red build green, and it
+    # switches the guard off for every module at once. Third-party noise is
+    # exempted by naming the offending module, which stays visible in review.
+    # A filter is "action:message:category:module:lineno", so the module is
+    # field 3 and an entry that stops before it applies everywhere.
+    unscoped = [
+        entry for entry in warning_filters
+        if entry.startswith("ignore::EncodingWarning")
+        and entry.split(":")[3:4] in ([], [""])
+    ]
+    assert not unscoped, (
+        f"these entries in {PYPROJECT} ignore EncodingWarning everywhere "
+        f"rather than for one named module: {unscoped}. Scope the ignore to "
+        f"the third-party module that raises it, or the guard is off."
     )
 
 
