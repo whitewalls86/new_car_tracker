@@ -26,8 +26,8 @@ from shared.duckdb_s3 import get_duckdb_s3_connection
 # flush_staging_events.py. These were `silver/` and `ops/` until the Plan 110
 # layout rewrite moved them; the old paths matched nothing, so this script
 # returned an empty sample rather than failing. The same stale constants are
-# still present in scripts/diff_log_analysis.py and
-# scripts/diff_semantic_duplicate_html.py.
+# still present in scripts/oneoff/diff_log_analysis.py and
+# scripts/oneoff/diff_semantic_duplicate_html.py.
 SILVER_PATH = "s3://bronze/silver_normalized/observations/**/*.parquet"
 ARTIFACT_EVENTS_PATH = "s3://bronze/ops_normalized/artifacts_queue_events/**/*.parquet"
 

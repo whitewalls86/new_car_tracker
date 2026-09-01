@@ -364,7 +364,7 @@ Similarly, recovery-script integration tests use real transactions and migration
 
 ### 5.4 Coverage is a signal, not an arbitrary gate
 
-Coverage is reported for all ten production directories — `airflow/dags`, `archiver`, `container_health`, `dashboard`, `dbt_runner`, `ops`, `processing`, `scraper`, `scripts` and `shared` — with missing lines shown, and the unit job gates on `--cov-fail-under=74` and uploads `coverage.xml` so the report outlives the log.
+Coverage is reported for all ten production directories — `airflow/dags`, `archiver`, `container_health`, `dashboard`, `dbt_runner`, `ops`, `processing`, `scraper`, `scripts` and `shared` — with missing lines shown, and the unit job gates on `--cov-fail-under=75` and uploads `coverage.xml` so the report outlives the log. `scripts/oneoff/` is omitted from the denominator — those scripts belong to plans that have archived, and they stay tested without grading the code being written now.
 
 It was not always ten, and the correction is the point. [Plan 139](plans/plan_139_test_suite_maintenance.md) established an 88% baseline over six of them and deferred the gate decision. Six of ten meant the two services furthest below the testing contract's floor were the two the instrument could not see, so 88% was 88% of the code already being tested. [Plan 162](plans/plan_162_testing_census_and_restructure.md) Stage 2 added the missing four, and the honest number fell to **75.95% with no production code changing**. The threshold is a ratchet against regression, raised when a stage raises the number and never lowered to fit one — deliberately not a target, because a percentage is not this project's definition of enough. Two assertions hold the repair in place: one that every service directory appears in the coverage source, and one that a step measuring coverage also sets a threshold.
 
@@ -372,11 +372,15 @@ The same plan profiled CI before optimizing it, and published a hypothesis that 
 
 This is the testing philosophy in miniature: measure the bottleneck, preserve the high-value contract, and optimize the actual cost center.
 
-### 5.5 Documentation-only changes have a narrow fast path
+### 5.5 Changes that cannot break production have a narrow fast path
 
-[`ci_change_scope.py`](../scripts/ci_change_scope.py) classifies a change as documentation-only only when the path list is non-empty, well-formed, and every path is below `docs/`. Those changes run the planning-document tests instead of rebuilding application images and data services. Mixed or ambiguous changes fail safe into full CI.
+[`ci_change_scope.py`](../scripts/ci_change_scope.py) maps a changeset to the job groups it actually needs. Two zones of the tree can be edited without building or deploying anything: `docs/`, which needs the planning-document tests, and `scripts/oneoff/` with its mirrored tests, which needs lint and the unit suite but no Docker build, no dbt build and no database.
 
-This is not “skip tests for docs.” Planning documents are operational state, so their own contract suite still runs. The optimization removes irrelevant work while preserving the checks that can actually fail for the change.
+**The zones compose.** A branch that edits a spent script *and* writes up why takes the union of what each needs — lint and unit tests, nothing heavy — rather than falling back to the full workflow. That is the most ordinary shape of change in this repository, and classifying by zone rather than by a single "is it all documentation?" question is what makes the fast path reach it.
+
+Anything outside both zones is unclassified and costs a full run, and so does an empty, malformed or unreadable path list. The defaults in the workflow are the full workflow, so every way the classification can fail leaves them standing.
+
+This is not "skip tests for docs." Planning documents are operational state and their contract suite still runs; spent scripts stay linted and tested and only leave the coverage denominator. The optimization removes work that cannot fail for the change, and nothing else.
 
 ---
 

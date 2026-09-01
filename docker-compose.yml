@@ -541,7 +541,7 @@ services:
   # unlimited and the box tolerates it; a cap can be added from measured
   # contention rather than guessed at. Invoke explicitly, e.g.:
   #   docker compose run --rm april-processor python -m \
-  #     scripts.reconcile_april_detail materialize --max-objects 5
+  #     scripts.oneoff.reconcile_april_detail materialize --max-objects 5
   # (add --apply to write; without it the run plans and reports only)
   april-processor:
     build:

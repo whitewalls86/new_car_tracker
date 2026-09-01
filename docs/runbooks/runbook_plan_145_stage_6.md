@@ -94,7 +94,7 @@ with no copy left anywhere.
 Dry run first — it reads no object and tells you the sample composition:
 
 ```bash
-python -m scripts.reconcile_april_detail pack-trial
+python -m scripts.oneoff.reconcile_april_detail pack-trial
 ```
 
 **This step is done.** Run 2026-08-29 as `trial-5fbadb36972161fb`, 18m02s
@@ -106,7 +106,7 @@ The dry run took **35 s** and reported 843,439 members described by the lake,
 657,629 eligible, 50,000 per sample. The real run takes ~18 min under tmux.
 
 ```bash
-python -m scripts.reconcile_april_detail pack-trial --apply
+python -m scripts.oneoff.reconcile_april_detail pack-trial --apply
 ```
 
 It writes one report to `recovery/plan145/pack_trial/<run>/trial_report.json`
@@ -198,7 +198,7 @@ authoritative until step 4 says otherwise.
 ## 4. The gate
 
 ```bash
-python -m scripts.reconcile_april_detail repack-verify
+python -m scripts.oneoff.reconcile_april_detail repack-verify
 ```
 
 Read-only. It writes `recovery/plan145/repack/<run>/verify_report.json` and
@@ -262,8 +262,8 @@ step 5, not after.
 ## 5. Retire the superseded packs — IRREVERSIBLE
 
 ```bash
-python -m scripts.reconcile_april_detail retire-packs             # dry run
-python -m scripts.reconcile_april_detail retire-packs --apply
+python -m scripts.oneoff.reconcile_april_detail retire-packs             # dry run
+python -m scripts.oneoff.reconcile_april_detail retire-packs --apply
 ```
 
 64 objects: 32 packs and 32 sidecars. It refuses unless `repack-verify` passed
@@ -303,7 +303,7 @@ ones.
 Dry run. This proves coverage for all 1,172 objects and deletes nothing:
 
 ```bash
-python -m scripts.reconcile_april_detail delete-legacy \
+python -m scripts.oneoff.reconcile_april_detail delete-legacy \
   --census-dir <the Stage 1 output directory>
 ```
 
@@ -318,7 +318,7 @@ reason written down.
 Then, with a name:
 
 ```bash
-python -m scripts.reconcile_april_detail delete-legacy \
+python -m scripts.oneoff.reconcile_april_detail delete-legacy \
   --census-dir <dir> --apply --maintainer-approval "<your name>"
 ```
 

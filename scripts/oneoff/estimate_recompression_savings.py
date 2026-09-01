@@ -3,14 +3,14 @@
 Read-only: never calls put_object, delete_object, copy_object, or any write API.
 
 Usage examples:
-  python scripts/estimate_recompression_savings.py \\
+  python scripts/oneoff/estimate_recompression_savings.py \\
       --year 2026 --month 6 --sample-rate 0.05 --max-bytes 104857600
 
-  python scripts/estimate_recompression_savings.py \\
+  python scripts/oneoff/estimate_recompression_savings.py \\
       --prefix html/year=2026/month=5/artifact_type=results_page/ \\
       --sample-rate 0.01 --json-out /tmp/savings_results.json
 
-  python scripts/estimate_recompression_savings.py \\
+  python scripts/oneoff/estimate_recompression_savings.py \\
       --year 2025 --limit 50 --sample-rate 1.0
 """
 from __future__ import annotations

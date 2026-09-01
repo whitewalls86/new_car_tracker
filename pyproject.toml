@@ -36,6 +36,14 @@ source = [
     "scripts",
     "shared",
 ]
+# Spent means out of the ratchet's denominator -- never deleted, and never
+# untested. `scripts/oneoff/` holds scripts whose owning plan has archived:
+# `tests/scripts/oneoff/` still runs in the unit job, and the assertions that
+# proved those scripts safe still fail if they break. What they stop doing is
+# grading the code being written now. `reconcile_april_detail.py` alone is
+# 3,846 statements, and holding a finished recovery job in the denominator
+# makes the ratchet answer slowly to every stage that comes after it.
+omit = ["scripts/oneoff/*"]
 
 [tool.coverage.report]
 show_missing = true

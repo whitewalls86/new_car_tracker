@@ -11,9 +11,10 @@ on:
   # can only be picked up by a new run. CAR-42 hit exactly that: two docs-only
   # PRs stayed red after the fix merged and had to be branch-updated.
   #
-  # A dispatch run classifies as docs_only=false, because the `changes` job has
-  # no base sha to diff against on this event, so it runs the full suite and
-  # skips `docs-tests`. That is the intended default for a manual run.
+  # A dispatch run classifies as nothing at all, because the `changes` job has
+  # no base sha to diff against on this event, so it keeps the full-workflow
+  # defaults and skips `docs-tests`. That is the intended default for a manual
+  # run.
   workflow_dispatch:
 
 jobs:
@@ -22,7 +23,9 @@ jobs:
     name: Classify changed paths
     runs-on: ubuntu-latest
     outputs:
-      docs_only: ${{ steps.scope.outputs.docs_only }}
+      docs_tests: ${{ steps.scope.outputs.docs_tests }}
+      unit: ${{ steps.scope.outputs.unit }}
+      heavy: ${{ steps.scope.outputs.heavy }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -38,7 +41,13 @@ jobs:
           PUSH_HEAD_SHA: ${{ github.sha }}
         run: |
           set -uo pipefail
-          docs_only=false
+          # Defaults are the full workflow. Every path out of the block below
+          # that fails to classify leaves these standing, so an unreadable
+          # base sha, a crashed classifier or an output shape nobody expected
+          # can only ever cost a full run -- never a skipped one.
+          docs_tests=false
+          unit=true
+          heavy=true
 
           if [[ "$EVENT_NAME" == "pull_request" ]]; then
             base_sha="$PR_BASE_SHA"
@@ -53,19 +62,29 @@ jobs:
              && git cat-file -e "$head_sha^{commit}"; then
             if classified="$(git diff --no-renames --name-only -z \
                 "$base_sha" "$head_sha" | python scripts/ci_change_scope.py)"; then
-              if [[ "$classified" == "true" || "$classified" == "false" ]]; then
-                docs_only="$classified"
-              fi
+              # One `name=true|false` line per job group. Anything else is
+              # ignored and that group keeps its default above, so a malformed
+              # or extended classifier degrades to a full run rather than a
+              # silently narrowed one.
+              while IFS= read -r line; do
+                case "$line" in
+                  docs_tests=true|docs_tests=false) docs_tests="${line#*=}" ;;
+                  unit=true|unit=false) unit="${line#*=}" ;;
+                  heavy=true|heavy=false) heavy="${line#*=}" ;;
+                esac
+              done <<< "$classified"
             fi
           fi
 
-          echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
+          echo "docs_tests=$docs_tests" >> "$GITHUB_OUTPUT"
+          echo "unit=$unit" >> "$GITHUB_OUTPUT"
+          echo "heavy=$heavy" >> "$GITHUB_OUTPUT"
 
   docs-tests:
     name: Documentation tests
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.docs_only == 'true'
+    if: needs.changes.outputs.docs_tests == 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -87,7 +106,7 @@ jobs:
     name: Lint (ruff)
     runs-on: ubuntu-latest
     needs: changes
-    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true')
+    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.unit == 'true')
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -100,7 +119,7 @@ jobs:
     name: Promtail config (real image)
     runs-on: ubuntu-latest
     needs: [changes, docker-build]
-    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true') && needs.docker-build.result == 'success'
+    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.heavy == 'true') && needs.docker-build.result == 'success'
     steps:
       - uses: actions/checkout@v4
       - name: Validate with the production Promtail image
@@ -125,7 +144,7 @@ jobs:
     name: Unit tests (pytest)
     runs-on: ubuntu-latest
     needs: [changes, lint]
-    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true') && needs.lint.result == 'success'
+    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.unit == 'true') && needs.lint.result == 'success'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -151,10 +170,18 @@ jobs:
       # the ten production directories. The floor is a ratchet, not a target --
       # raise it when a stage raises the number, never lower it to fit a
       # regression.
+      #
+      # 74 -> 75 at Stage 5b, which did not improve any coverage: it removed
+      # `scripts/oneoff/` from the denominator, 19,733 statements -> 13,585,
+      # and the reported number went 75.91% -> 77.65% for that reason alone.
+      # The floor moves with it or it stops being a floor. Two points of
+      # headroom is the Stage 2 convention -- seven statements read differently
+      # on Linux and Windows, and the rest is ordinary churn, which a smaller
+      # denominator now amplifies rather than damps.
       - run: >-
           pytest tests/ -v -m "not integration"
           --cov --cov-report=term-missing --cov-report=xml
-          --cov-fail-under=74
+          --cov-fail-under=75
         env:
           PYTHONPATH: ${{ github.workspace }}
           LOG_PATH: /tmp/app.log
@@ -173,7 +200,7 @@ jobs:
     name: Docker build (all services)
     runs-on: ubuntu-latest
     needs: changes
-    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true')
+    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.heavy == 'true')
     steps:
       - uses: actions/checkout@v4
       - run: docker compose build
@@ -214,7 +241,7 @@ jobs:
     name: dbt model tests (real build)
     runs-on: ubuntu-latest
     needs: [changes, lint]
-    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true') && needs.lint.result == 'success'
+    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.heavy == 'true') && needs.lint.result == 'success'
     services:
       postgres:
         image: postgres:16
@@ -364,7 +391,7 @@ jobs:
     name: SQL + Airflow metadata contracts
     runs-on: ubuntu-latest
     needs: [changes, lint]
-    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true') && needs.lint.result == 'success'
+    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.heavy == 'true') && needs.lint.result == 'success'
     # The two suites here are the only ones that need a schema some other tool
     # owns: dbt's marts in DuckDB, and Airflow's own tables in Postgres. That
     # is also why the pinned Airflow venv build lives here and nowhere else --
@@ -562,7 +589,7 @@ jobs:
     name: Service integration tests (Postgres)
     runs-on: ubuntu-latest
     needs: [changes, lint]
-    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true') && needs.lint.result == 'success'
+    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.heavy == 'true') && needs.lint.result == 'success'
     # Five suites whose only shared dependency is a Postgres with the Flyway
     # migrations applied. None of them touches MinIO, dbt or Airflow, and
     # before the split every one of them waited on all three.
@@ -691,7 +718,7 @@ jobs:
     name: Lake integration tests (MinIO)
     runs-on: ubuntu-latest
     needs: [changes, lint]
-    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true') && needs.lint.result == 'success'
+    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.heavy == 'true') && needs.lint.result == 'success'
     # The two suites that read and write real objects. Postgres is here
     # because the archiver's flush paths write rows as well as Parquet; no dbt
     # and no Airflow, because neither suite has ever needed them.

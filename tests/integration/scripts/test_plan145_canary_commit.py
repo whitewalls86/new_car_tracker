@@ -28,8 +28,8 @@ from datetime import datetime, timezone
 
 import pytest
 
-import scripts.reconcile_april_detail as mod
-from scripts.reconcile_april_detail import (
+import scripts.oneoff.reconcile_april_detail as mod
+from scripts.oneoff.reconcile_april_detail import (
     RECEIPT_TABLE,
     RECOVERED_STATUS,
     ReconcileError,

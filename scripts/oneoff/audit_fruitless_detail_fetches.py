@@ -40,7 +40,7 @@ Two traps, both hit while writing this:
 Run it where the lake and DuckDB both are -- the archiver container has
 duckdb, boto3, pyarrow and ``shared/``::
 
-    scp -i ssh-key-2026-04-08.key scripts/audit_fruitless_detail_fetches.py \\
+    scp -i ssh-key-2026-04-08.key scripts/oneoff/audit_fruitless_detail_fetches.py \\
         ubuntu@147.224.199.86:/tmp/
     ssh ... 'docker cp /tmp/audit_fruitless_detail_fetches.py \\
         cartracker-archiver:/app/ && docker exec -w /app cartracker-archiver \\

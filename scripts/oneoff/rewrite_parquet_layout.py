@@ -15,8 +15,8 @@ In --replace-existing-target mode, deletes old normalized target files
 and renamed. Any delete failure fails the unit and exits nonzero.
 
 Usage:
-  python scripts/rewrite_parquet_layout.py --all --dry-run
-  python scripts/rewrite_parquet_layout.py --dataset silver_observations \\
+  python scripts/oneoff/rewrite_parquet_layout.py --all --dry-run
+  python scripts/oneoff/rewrite_parquet_layout.py --dataset silver_observations \\
       --source detail --month 2026-06 --apply \\
       --baseline-audit /tmp/audit.json --json-out /tmp/rewrite.json
 """

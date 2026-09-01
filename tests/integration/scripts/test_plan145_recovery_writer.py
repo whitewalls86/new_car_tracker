@@ -19,7 +19,7 @@ from datetime import datetime, timedelta, timezone
 import psycopg2.errors
 import pytest
 
-from scripts.reconcile_april_detail import (
+from scripts.oneoff.reconcile_april_detail import (
     RECEIPT_TABLE,
     RECOVERED_STATUS,
     ReceiptConflict,
@@ -418,7 +418,7 @@ def test_the_not_null_column_would_have_accepted_the_string_None(vc):
 
 @pytest.mark.parametrize("bad", [None, "", "not-a-uuid"])
 def test_the_writer_refuses_that_row_before_it_reaches_the_column(bad):
-    from scripts.reconcile_april_detail import ImportSetInvalid
+    from scripts.oneoff.reconcile_april_detail import ImportSetInvalid
 
     with pytest.raises(ImportSetInvalid):
         build_recovery_silver_row(

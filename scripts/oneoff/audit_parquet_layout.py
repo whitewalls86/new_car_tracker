@@ -4,9 +4,9 @@ Reports object counts, bytes, partition structure, schema variants, and row coun
 for silver and ops event datasets. Never writes to MinIO.
 
 Usage:
-  python scripts/audit_parquet_layout.py --all
-  python scripts/audit_parquet_layout.py --dataset silver_observations
-  python scripts/audit_parquet_layout.py \\
+  python scripts/oneoff/audit_parquet_layout.py --all
+  python scripts/oneoff/audit_parquet_layout.py --dataset silver_observations
+  python scripts/oneoff/audit_parquet_layout.py \\
       --dataset silver_observations \\
       --dataset price_observation_events \\
       --json-out /tmp/audit.json \\

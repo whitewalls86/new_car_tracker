@@ -1,4 +1,4 @@
-"""Unit tests for scripts/reconcile_april_detail.py (Plan 145, Stage 1).
+"""Unit tests for scripts/oneoff/reconcile_april_detail.py (Plan 145, Stage 1).
 
 Stage 1 is the run that decides whether 13.66 GiB of legacy Parquet may
 eventually be deleted, so these tests are about the *gates* holding, not about
@@ -27,7 +27,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.reconcile_april_detail import (
+from scripts.oneoff.reconcile_april_detail import (
     BASELINE_OBJECTS,
     BASELINE_ROWS,
     BASELINE_STATUS_CENSUS,
@@ -433,7 +433,7 @@ def _write_fixture_parquet(path: Path, rows: list[dict], *, row_group_size: int 
 def test_a_fixture_parquet_streams_through_the_real_loop(tmp_path):
     from datetime import datetime, timezone
 
-    from scripts.reconcile_april_detail import iter_rows
+    from scripts.oneoff.reconcile_april_detail import iter_rows
 
     html_a = b"<html>listing a</html>"
     html_dup = b"<html>duplicated capture</html>"
@@ -490,7 +490,7 @@ def test_a_fixture_missing_a_schema_column_stops_the_run(tmp_path):
     import pyarrow as pa
     import pyarrow.parquet as pq
 
-    from scripts.reconcile_april_detail import iter_rows
+    from scripts.oneoff.reconcile_april_detail import iter_rows
 
     fixture = tmp_path / "truncated.parquet"
     pq.write_table(pa.table({"artifact_id": [1]}), fixture)
@@ -503,7 +503,7 @@ def test_a_fixture_missing_a_schema_column_stops_the_run(tmp_path):
 
 # -- I: materialize -- deterministic keys and disposition rules -------------
 
-from scripts.reconcile_april_detail import (  # noqa: E402
+from scripts.oneoff.reconcile_april_detail import (  # noqa: E402
     DISPOSITIONS,
     _shard_key,
     materialize_row,
@@ -638,7 +638,7 @@ def test_materialize_defaults_to_a_dry_run():
 
 # -- K: dedupe (Stage 3a) -- the sidecar-hash join and the delete guard ----
 
-from scripts.reconcile_april_detail import (  # noqa: E402
+from scripts.oneoff.reconcile_april_detail import (  # noqa: E402
     MATERIALIZE_PREFIX,
     MAX_DELETE_BATCH,
     _dedupe_receipt_key,
@@ -781,7 +781,7 @@ def test_dedupe_defaults_to_a_dry_run():
 
 def _patch_dedupe(mocker, events, rows, sidecar_hashes):
     """Wire run_dedupe onto in-memory fakes, recording write/delete order."""
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
     import shared.minio as minio
 
     mocker.patch.object(mod, "_s3_client", lambda: object())
@@ -854,7 +854,7 @@ def test_run_dedupe_allow_rate_drift_reports_instead_of_stopping(mocker):
 import itertools  # noqa: E402
 
 import shared.compression as _compression  # noqa: E402
-from scripts.reconcile_april_detail import (  # noqa: E402
+from scripts.oneoff.reconcile_april_detail import (  # noqa: E402
     _unpack_shard_key,
     iter_members_by_frame,
     unpack_member,
@@ -1040,7 +1040,7 @@ def test_unpack_defaults_to_a_dry_run():
 
 
 def test_run_unpack_writes_every_member_under_its_original_key(mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
     import shared.minio as minio
 
     members, pack = _small_pack()
@@ -1129,7 +1129,7 @@ def _primary(**overrides):
 
 
 def test_parse_decodes_invalid_utf8_exactly_like_production():
-    from scripts.reconcile_april_detail import parse_one_input
+    from scripts.oneoff.reconcile_april_detail import parse_one_input
 
     body, record = _parse_record(body=b"before\xffafter")
     seen = {}
@@ -1147,7 +1147,7 @@ def test_parse_decodes_invalid_utf8_exactly_like_production():
 
 
 def test_parse_input_is_materialized_minus_deleted_union_unpacked():
-    from scripts.reconcile_april_detail import build_parse_units
+    from scripts.oneoff.reconcile_april_detail import build_parse_units
 
     mat = [(
         "recovery/plan145/materialized/a.parquet",
@@ -1166,7 +1166,7 @@ def test_parse_input_is_materialized_minus_deleted_union_unpacked():
 
 
 def test_parse_input_counts_repeated_materialized_keys_once():
-    from scripts.reconcile_april_detail import build_parse_units
+    from scripts.oneoff.reconcile_april_detail import build_parse_units
 
     repeated = {
         "object_key": "content-derived-key",
@@ -1184,7 +1184,7 @@ def test_parse_input_counts_repeated_materialized_keys_once():
 
 
 def test_identity_tiers_prefer_legacy_then_queue_and_count_disagreement():
-    from scripts.reconcile_april_detail import resolve_manifest_identity
+    from scripts.oneoff.reconcile_april_detail import resolve_manifest_identity
 
     record = {"object_key": "key", "raw_sha256": "sha"}
     legacy = {"sha": {"listing_id": LISTING_A, "fetched_at": "2026-04-01T00:00:00+00:00"}}
@@ -1201,7 +1201,7 @@ def test_identity_tiers_prefer_legacy_then_queue_and_count_disagreement():
 
 
 def test_parsed_page_identity_has_no_time_and_is_unimportable():
-    from scripts.reconcile_april_detail import parse_one_input
+    from scripts.oneoff.reconcile_april_detail import parse_one_input
 
     body, record = _parse_record()
     rows, audit = parse_one_input(
@@ -1216,7 +1216,7 @@ def test_parsed_page_identity_has_no_time_and_is_unimportable():
 
 
 def test_unpack_sidecar_listing_id_never_reaches_parser_or_output():
-    from scripts.reconcile_april_detail import build_parse_units, parse_one_input
+    from scripts.oneoff.reconcile_april_detail import build_parse_units, parse_one_input
 
     sidecar_id = "ffffffff-ffff-ffff-ffff-ffffffffffff"
     unpack = [(
@@ -1245,7 +1245,7 @@ def test_unpack_sidecar_listing_id_never_reaches_parser_or_output():
 
 
 def test_primary_and_qualifying_carousel_rows_mirror_production_drop_rules():
-    from scripts.reconcile_april_detail import build_observation_rows
+    from scripts.oneoff.reconcile_april_detail import build_observation_rows
 
     _, record = _parse_record()
     carousel = [
@@ -1266,7 +1266,7 @@ def test_primary_and_qualifying_carousel_rows_mirror_production_drop_rules():
 
 
 def test_unlisted_page_yields_one_null_price_row_and_no_carousel():
-    from scripts.reconcile_april_detail import build_observation_rows
+    from scripts.oneoff.reconcile_april_detail import build_observation_rows
 
     _, record = _parse_record()
     rows, _, _ = build_observation_rows(
@@ -1285,7 +1285,7 @@ def test_unlisted_page_yields_one_null_price_row_and_no_carousel():
       "price": None, "make": None}, "blocked_other"),
 ])
 def test_block_pages_are_distinct_and_emit_no_rows(primary, outcome):
-    from scripts.reconcile_april_detail import parse_one_input
+    from scripts.oneoff.reconcile_april_detail import parse_one_input
 
     body, record = _parse_record()
     rows, audit = parse_one_input(
@@ -1304,7 +1304,7 @@ def test_block_pages_are_distinct_and_emit_no_rows(primary, outcome):
      "blocked_other"),
 ])
 def test_real_production_parser_classifies_cloudflare_and_akamai(body, outcome):
-    from scripts.reconcile_april_detail import parse_one_input
+    from scripts.oneoff.reconcile_april_detail import parse_one_input
 
     _, record = _parse_record(body=body)
     rows, audit = parse_one_input(
@@ -1316,7 +1316,7 @@ def test_real_production_parser_classifies_cloudflare_and_akamai(body, outcome):
 
 
 def test_parse_hash_disagreement_stops_the_run():
-    from scripts.reconcile_april_detail import parse_one_input
+    from scripts.oneoff.reconcile_april_detail import parse_one_input
 
     _, record = _parse_record()
     with pytest.raises(ReconcileError, match="store moved"):
@@ -1324,7 +1324,7 @@ def test_parse_hash_disagreement_stops_the_run():
 
 
 def test_parse_exception_is_recorded_as_failed():
-    from scripts.reconcile_april_detail import parse_one_input
+    from scripts.oneoff.reconcile_april_detail import parse_one_input
 
     body, record = _parse_record()
 
@@ -1343,7 +1343,7 @@ def test_stage4_rows_round_trip_through_real_parquet_schemas(tmp_path):
     import pyarrow as pa
     import pyarrow.parquet as pq
 
-    from scripts.reconcile_april_detail import (
+    from scripts.oneoff.reconcile_april_detail import (
         _parsed_inputs_schema,
         _parsed_rows_schema,
         build_observation_rows,
@@ -1371,7 +1371,7 @@ def test_parse_defaults_to_a_dry_run():
 
 
 def test_parse_apply_gate_waits_for_every_unpack_member():
-    from scripts.reconcile_april_detail import check_parse_apply_gate
+    from scripts.oneoff.reconcile_april_detail import check_parse_apply_gate
 
     with pytest.raises(ReconcileError, match="Stage 3b may still be running"):
         check_parse_apply_gate(
@@ -1393,7 +1393,7 @@ def test_parse_apply_gate_waits_for_every_unpack_member():
 from datetime import datetime as _dt  # noqa: E402
 from datetime import timezone as _tz  # noqa: E402
 
-from scripts.reconcile_april_detail import (  # noqa: E402
+from scripts.oneoff.reconcile_april_detail import (  # noqa: E402
     COMPARE_WINDOW_US,
     EXPECTED_FLATTENED_INPUTS,
     DuplicateFingerprintConflict,
@@ -1412,7 +1412,7 @@ _WHEN = _dt(2026, 4, 15, 12, 0, 0, tzinfo=_tz.utc)
 
 def _prow(listing_id=LISTING_A, fetched_at=_WHEN, *, source="detail",
           fetched_at_source="legacy_manifest", **over):
-    from scripts.reconcile_april_detail import _parsed_rows_schema
+    from scripts.oneoff.reconcile_april_detail import _parsed_rows_schema
 
     row = {name: None for name in _parsed_rows_schema().names}
     row.update({
@@ -1649,7 +1649,7 @@ def _write_parsed_rows_fixture(path, rows):
     import pyarrow as pa
     import pyarrow.parquet as pq
 
-    from scripts.reconcile_april_detail import _parsed_rows_schema
+    from scripts.oneoff.reconcile_april_detail import _parsed_rows_schema
 
     pq.write_table(
         pa.Table.from_pylist(rows, schema=_parsed_rows_schema()), path,
@@ -1785,7 +1785,7 @@ def _compare_fixture_store(tmp_path):
 
 
 def _patch_compare_io(mocker, store, vin_rows, *, rows=5):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
     import shared.db as db
     import shared.minio as minio
 
@@ -1804,7 +1804,7 @@ def _patch_compare_io(mocker, store, vin_rows, *, rows=5):
 
 def test_run_compare_apply_partitions_and_freezes_then_reruns_as_a_noop(
         tmp_path, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store, (l1, _l2, _l3, _l4) = _compare_fixture_store(tmp_path)
     _patch_compare_io(mocker, store, [(l1, "VIN-L1")])
@@ -1866,7 +1866,7 @@ def test_run_compare_apply_partitions_and_freezes_then_reruns_as_a_noop(
 
 def test_run_compare_dry_run_writes_nothing_and_issues_no_vin_query(
         tmp_path, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store, (l1, *_rest) = _compare_fixture_store(tmp_path)
     conn = _FakeConn([(l1, "VIN-L1")])
@@ -1883,7 +1883,7 @@ def test_run_compare_dry_run_writes_nothing_and_issues_no_vin_query(
 
 def test_run_compare_apply_refuses_a_silver_shape_that_is_not_the_frozen_nine(
         tmp_path, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store, (l1, *_rest) = _compare_fixture_store(tmp_path)
     for key in [k for k in store if "/source=carousel/" in k or "/source=listings_page/" in k]:
@@ -1910,7 +1910,7 @@ def test_run_compare_apply_stops_on_any_no_listing_id_row_until_the_maintainer_r
 
     import pyarrow.parquet as _pq
 
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store, (l1, *_rest) = _compare_fixture_store(tmp_path)
     # a tier-2 capture: a real fetched_at, but no listing_id resolved.
@@ -1959,7 +1959,7 @@ def test_run_compare_probe_measures_the_no_listing_id_cohort_instead_of_dying(
     # The probe run's whole job is to learn this cohort's size against the
     # completed Stage 4 units. The gate must not stop it: nothing to protect,
     # since a probe writes nothing that can advance slice 2.
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store, (l1, *_rest) = _compare_fixture_store(tmp_path)
     store["recovery/plan145/parsed/rows/materialized-c.parquet"] = \
@@ -2004,7 +2004,7 @@ def test_run_compare_probe_measures_the_no_listing_id_cohort_instead_of_dying(
 import io  # noqa: E402
 import re  # noqa: E402
 
-from scripts.reconcile_april_detail import (  # noqa: E402
+from scripts.oneoff.reconcile_april_detail import (  # noqa: E402
     ID_ALLOCATED,
     ID_PRESERVED,
     MAX_BATCH_ARTIFACTS,
@@ -2137,7 +2137,7 @@ def _write_compared_shard(path, rows):
     import pyarrow as pa
     import pyarrow.parquet as pq
 
-    from scripts.reconcile_april_detail import _compared_schema
+    from scripts.oneoff.reconcile_april_detail import _compared_schema
 
     schema = _compared_schema("to_import")
     pq.write_table(
@@ -2153,7 +2153,7 @@ def _write_inputs_shard(path, records):
     import pyarrow as pa
     import pyarrow.parquet as pq
 
-    from scripts.reconcile_april_detail import _parsed_inputs_schema
+    from scripts.oneoff.reconcile_april_detail import _parsed_inputs_schema
 
     schema = _parsed_inputs_schema()
     pq.write_table(
@@ -2262,7 +2262,7 @@ def _slice2_fixture_store(tmp_path):
 
 
 def _patch_slice2_io(mocker, store, conn=None):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
     import shared.db as db
     import shared.minio as minio
 
@@ -2581,7 +2581,7 @@ def test_no_write_statement_names_the_protected_tables(mocker):
 # -- O.5: run_assign and run_apply end to end ----------------------------
 
 def test_run_assign_dry_run_plans_without_touching_the_sequence(tmp_path, capsys, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store, _ = _slice2_fixture_store(tmp_path)
     conn = _FakeWriteConn()
@@ -2599,7 +2599,7 @@ def test_run_assign_writes_one_identity_per_object_shared_by_all_its_rows(
         tmp_path, mocker):
     import pyarrow.parquet as pq
 
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store, (l1, _l2, l3, l4) = _slice2_fixture_store(tmp_path)
     conn = _FakeWriteConn(next_id=9_000_001)
@@ -2636,7 +2636,7 @@ def test_run_assign_writes_one_identity_per_object_shared_by_all_its_rows(
 def test_a_rerun_after_a_crash_reuses_the_recorded_ids(tmp_path, mocker):
     import pyarrow.parquet as pq
 
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store, _ = _slice2_fixture_store(tmp_path)
     first = _FakeWriteConn(next_id=9_000_001)
@@ -2655,7 +2655,7 @@ def test_a_rerun_after_a_crash_reuses_the_recorded_ids(tmp_path, mocker):
 
 
 def test_run_assign_never_reads_legacy_artifact_id(tmp_path, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store, _ = _slice2_fixture_store(tmp_path)
     requested = []
@@ -2676,7 +2676,7 @@ def test_run_assign_never_reads_legacy_artifact_id(tmp_path, mocker):
 
 def test_a_null_listing_id_in_to_import_stops_assign_and_reports_the_cohort(
         tmp_path, capsys, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store, _ = _slice2_fixture_store(tmp_path)
     store[f"recovery/plan145/compared/{_RUN}/to_import/materialized-c.parquet"] = \
@@ -2693,7 +2693,7 @@ def test_a_null_listing_id_in_to_import_stops_assign_and_reports_the_cohort(
 
 
 def test_a_non_uuid_listing_id_stops_assign_before_any_write(tmp_path, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store, _ = _slice2_fixture_store(tmp_path)
     store[f"recovery/plan145/compared/{_RUN}/to_import/materialized-c.parquet"] = \
@@ -2708,7 +2708,7 @@ def test_a_non_uuid_listing_id_stops_assign_before_any_write(tmp_path, mocker):
 
 
 def test_reassigning_a_run_under_different_caps_is_refused(tmp_path, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store, _ = _slice2_fixture_store(tmp_path)
     _patch_slice2_io(mocker, store, _FakeWriteConn())
@@ -2721,7 +2721,7 @@ def test_reassigning_a_run_under_different_caps_is_refused(tmp_path, mocker):
 
 def test_run_apply_dry_run_announces_the_blast_radius_and_writes_nothing(
         tmp_path, capsys, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store, _ = _slice2_fixture_store(tmp_path)
     _patch_slice2_io(mocker, store, _FakeWriteConn())
@@ -2740,7 +2740,7 @@ def test_run_apply_dry_run_announces_the_blast_radius_and_writes_nothing(
 
 def test_run_apply_writes_four_things_per_batch_in_one_transaction(
         tmp_path, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store, (l1, l2, l3, l4) = _slice2_fixture_store(tmp_path)
     _patch_slice2_io(mocker, store, _FakeWriteConn(next_id=9_000_001))
@@ -2769,7 +2769,7 @@ def test_run_apply_writes_four_things_per_batch_in_one_transaction(
     assert len(inserts["queue"]) == 3            # one per artifact
 
     from processing.writers.silver_writer import _POSTGRES_COLS
-    from scripts.reconcile_april_detail import (
+    from scripts.oneoff.reconcile_april_detail import (
         _PRICE_EVENT_COLS,
         _QUEUE_EVENT_COLS,
     )
@@ -2801,7 +2801,7 @@ def test_run_apply_refuses_a_write_set_over_the_canary_row_budget(
         tmp_path, mocker):
     # The gate is measured in rows, not batches: counting batches would let one
     # default-cap batch -- 50,000 silver rows -- through unapproved.
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store, _ = _slice2_fixture_store(tmp_path)
     _patch_slice2_io(mocker, store, _FakeWriteConn())
@@ -2817,7 +2817,7 @@ def test_run_apply_refuses_a_write_set_over_the_canary_row_budget(
 
 
 def test_a_named_approval_lets_an_oversized_write_set_through(tmp_path, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store, _ = _slice2_fixture_store(tmp_path)
     _patch_slice2_io(mocker, store, _FakeWriteConn())
@@ -2836,7 +2836,7 @@ def test_a_named_approval_lets_an_oversized_write_set_through(tmp_path, mocker):
 def test_several_canary_sized_batches_need_no_approval(tmp_path, mocker):
     # Three one-artifact batches, four silver rows in total: a batch count
     # would have refused this, a row budget correctly permits it.
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store, _ = _slice2_fixture_store(tmp_path)
     _patch_slice2_io(mocker, store, _FakeWriteConn())
@@ -2850,7 +2850,7 @@ def test_several_canary_sized_batches_need_no_approval(tmp_path, mocker):
 
 
 def test_the_canary_budget_leaves_room_for_the_plans_500_observation_canary():
-    from scripts.reconcile_april_detail import (
+    from scripts.oneoff.reconcile_april_detail import (
         CANARY_ROW_BUDGET,
         MAX_BATCH_SILVER_ROWS,
     )
@@ -2862,7 +2862,7 @@ def test_a_carousel_row_with_no_listing_id_stops_apply_before_any_write(
         tmp_path, mocker):
     # assign would have caught it, but apply re-reads the shards independently
     # and is the last check before the INSERT.
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store, _ = _slice2_fixture_store(tmp_path)
     _patch_slice2_io(mocker, store, _FakeWriteConn())
@@ -2893,7 +2893,7 @@ def _read_to_import_fixture(store, unit):
 # -- O.6: the bounded violation log --------------------------------------
 
 def test_the_violation_log_counts_everything_and_keeps_a_bounded_sample():
-    from scripts.reconcile_april_detail import ViolationLog
+    from scripts.oneoff.reconcile_april_detail import ViolationLog
 
     log = ViolationLog(max_examples=3)
     for i in range(1000):
@@ -2909,7 +2909,7 @@ def test_the_violation_log_counts_everything_and_keeps_a_bounded_sample():
 
 def test_a_systematic_failure_reports_its_true_size_from_a_bounded_sample(
         tmp_path, capsys, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store, _ = _slice2_fixture_store(tmp_path)
     store[f"recovery/plan145/compared/{_RUN}/to_import/materialized-c.parquet"] = \
@@ -2929,7 +2929,7 @@ def test_a_systematic_failure_reports_its_true_size_from_a_bounded_sample(
 
 def test_run_apply_stops_when_the_compare_output_moved_under_the_assignment(
         tmp_path, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store, _ = _slice2_fixture_store(tmp_path)
     _patch_slice2_io(mocker, store, _FakeWriteConn())
@@ -2950,7 +2950,7 @@ def test_run_apply_stops_when_the_compare_output_moved_under_the_assignment(
 
 
 def test_assign_and_apply_both_default_to_a_dry_run():
-    from scripts.reconcile_april_detail import parse_args
+    from scripts.oneoff.reconcile_april_detail import parse_args
 
     assert parse_args(["assign"]).apply is False
     assert parse_args(["apply"]).apply is False
@@ -2960,7 +2960,7 @@ def test_assign_and_apply_both_default_to_a_dry_run():
 def test_assign_issues_nextval_and_never_an_insert(tmp_path, mocker):
     # The assignment shard is written before any database insertion because
     # assign issues none: the only statement it may send is the sequence read.
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store, _ = _slice2_fixture_store(tmp_path)
     conn = _FakeWriteConn(next_id=9_000_001)
@@ -2976,7 +2976,7 @@ def test_assign_issues_nextval_and_never_an_insert(tmp_path, mocker):
 
 def test_apply_refuses_a_run_whose_identities_were_never_assigned(
         tmp_path, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store, _ = _slice2_fixture_store(tmp_path)
     conn = _FakeWriteConn()
@@ -3025,7 +3025,7 @@ def _probe_assigned_key(batch_name):
 
 
 def test_probe_defaults_to_off_on_assign_and_apply():
-    from scripts.reconcile_april_detail import parse_args
+    from scripts.oneoff.reconcile_april_detail import parse_args
 
     assert parse_args(["assign"]).probe is False
     assert parse_args(["apply"]).probe is False
@@ -3035,7 +3035,7 @@ def test_probe_assign_reads_the_probe_run_and_ignores_a_same_named_authoritative
         tmp_path, mocker):
     import pyarrow.parquet as pq
 
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     auth_store, _ = _slice2_fixture_store(tmp_path)
     store = _to_probe_store(auth_store)
@@ -3065,7 +3065,7 @@ def test_probe_assign_reads_the_probe_run_and_ignores_a_same_named_authoritative
 
 def test_authoritative_assign_does_not_see_a_probe_only_compare_run(
         tmp_path, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     auth_store, _ = _slice2_fixture_store(tmp_path)
     store = _to_probe_store(auth_store)          # ONLY *_probe Stage-5 outputs
@@ -3081,7 +3081,7 @@ def test_probe_assign_with_no_probe_compare_says_to_run_one_not_to_finish_slice_
     # probe run finds nothing, the fix is a probe compare -- telling a
     # maintainer "slice 1 must finish" would send them to wait on the very
     # thing this mode exists to route around.
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     auth_store, _ = _slice2_fixture_store(tmp_path)   # authoritative outputs only
     _patch_slice2_io(mocker, auth_store, _FakeWriteConn())
@@ -3097,7 +3097,7 @@ def test_authoritative_assign_with_both_prefixes_present_reads_the_authoritative
     # exist, and an authoritative assign must pick the authoritative one.
     import pyarrow.parquet as pq
 
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     auth_store, _ = _slice2_fixture_store(tmp_path)
     store = {**auth_store, **_to_probe_store(auth_store)}
@@ -3118,7 +3118,7 @@ def test_authoritative_assign_with_both_prefixes_present_reads_the_authoritative
 
 def test_probe_assign_writes_only_under_assigned_probe_and_apply_cannot_see_it(
         tmp_path, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     auth_store, _ = _slice2_fixture_store(tmp_path)
     store = {**auth_store, **_to_probe_store(auth_store)}   # both prefixes present
@@ -3145,7 +3145,7 @@ def test_probe_assign_writes_only_under_assigned_probe_and_apply_cannot_see_it(
 
 def _seed_probe_assignment(tmp_path, mocker):
     """A probe compare fixture with its assignment shards already written."""
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     auth_store, ids = _slice2_fixture_store(tmp_path)
     store = _to_probe_store(auth_store)
@@ -3156,7 +3156,7 @@ def _seed_probe_assignment(tmp_path, mocker):
 
 def test_apply_probe_apply_issues_every_statement_then_rolls_back(
         tmp_path, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store, _ = _seed_probe_assignment(tmp_path, mocker)
     conn = _FakeWriteConn()
@@ -3188,7 +3188,7 @@ def test_apply_probe_apply_issues_every_statement_then_rolls_back(
 
 def test_probe_apply_reports_the_would_be_write_set_like_a_dry_run(
         tmp_path, capsys, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store, _ = _seed_probe_assignment(tmp_path, mocker)
     conn = _FakeWriteConn()
@@ -3205,7 +3205,7 @@ def test_probe_apply_reports_the_would_be_write_set_like_a_dry_run(
 
 def test_a_constraint_violation_in_probe_apply_is_not_swallowed_by_the_rollback(
         tmp_path, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store, _ = _seed_probe_assignment(tmp_path, mocker)
     conn = _FakeWriteConn(fail_on="staging.price_observation_events")
@@ -3223,7 +3223,7 @@ def test_apply_probe_apply_refuses_a_bare_run_and_wants_an_explicit_batch(
         tmp_path, mocker):
     # The approval gate was the only bound on how much a bare apply --apply did;
     # a probe is exempt from approval, so it needs its own bound. --batch is it.
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store, _ = _seed_probe_assignment(tmp_path, mocker)
     conn = _FakeWriteConn()
@@ -3235,7 +3235,7 @@ def test_apply_probe_apply_refuses_a_bare_run_and_wants_an_explicit_batch(
 
 def test_probe_apply_refuses_maintainer_approval_and_ignores_the_canary_budget(
         tmp_path, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store, _ = _seed_probe_assignment(tmp_path, mocker)
     batch = assign_batch_name(_RUN, 1)
@@ -3263,7 +3263,7 @@ def test_probe_apply_refuses_maintainer_approval_and_ignores_the_canary_budget(
 
 def test_apply_probe_dry_run_reads_probe_prefixes_and_issues_no_statement(
         tmp_path, capsys, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store, _ = _seed_probe_assignment(tmp_path, mocker)
     conn = _FakeWriteConn()
@@ -3282,7 +3282,7 @@ def test_apply_probe_dry_run_reads_probe_prefixes_and_issues_no_statement(
 def test_authoritative_slice2_paths_are_unchanged_by_probe(tmp_path, mocker):
     # A bare authoritative assign+apply still lands in the authoritative
     # prefixes and commits, with no probe artefact anywhere.
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store, _ = _slice2_fixture_store(tmp_path)
     _patch_slice2_io(mocker, store, _FakeWriteConn(next_id=9_000_001))
@@ -3324,7 +3324,7 @@ def _write_ar_shard(path, rows):
     import pyarrow as pa
     import pyarrow.parquet as pq
 
-    from scripts.reconcile_april_detail import _compared_schema
+    from scripts.oneoff.reconcile_april_detail import _compared_schema
 
     schema = _compared_schema("already_represented")
     pq.write_table(
@@ -3340,7 +3340,7 @@ def _write_full_silver_fixture(path, rows):
     import pyarrow as pa
     import pyarrow.parquet as pq
 
-    from scripts.reconcile_april_detail import SILVER_FIELDS, _parsed_rows_schema
+    from scripts.oneoff.reconcile_april_detail import SILVER_FIELDS, _parsed_rows_schema
 
     base = _parsed_rows_schema()
     schema = pa.schema(
@@ -3361,7 +3361,7 @@ def _write_assigned_shard(path, rows):
     import pyarrow as pa
     import pyarrow.parquet as pq
 
-    from scripts.reconcile_april_detail import _assigned_schema
+    from scripts.oneoff.reconcile_april_detail import _assigned_schema
 
     schema = _assigned_schema()
     pq.write_table(
@@ -3374,7 +3374,7 @@ def _write_assigned_shard(path, rows):
 
 
 def _patch_slice3_io(mocker, store):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
     import shared.minio as minio
 
     mocker.patch.object(mod, "_s3_client", lambda: _FakeS3Store(store))
@@ -3428,7 +3428,7 @@ def _control_store(tmp_path, *, l1_silver_price=25000):
 
 def test_control_report_counts_only_the_two_exact_same_source_rows(
         tmp_path, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store, _ids = _control_store(tmp_path)
     _patch_slice3_io(mocker, store)
@@ -3447,7 +3447,7 @@ def test_control_report_counts_only_the_two_exact_same_source_rows(
 
 def test_control_reports_a_single_differing_business_field_and_exits_nonzero(
         tmp_path, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store, _ids = _control_store(tmp_path, l1_silver_price=25999)
     _patch_slice3_io(mocker, store)
@@ -3467,7 +3467,7 @@ def test_control_reports_a_single_differing_business_field_and_exits_nonzero(
 
 
 def test_control_ignores_carousel_vin_but_not_detail_vin():
-    from scripts.reconcile_april_detail import _control_field_disagreements
+    from scripts.oneoff.reconcile_april_detail import _control_field_disagreements
 
     carousel = _control_field_disagreements(
         {"source": "carousel", "vin": None}, {"source": "carousel", "vin": "V1"},
@@ -3481,7 +3481,7 @@ def test_control_ignores_carousel_vin_but_not_detail_vin():
 
 
 def test_control_ignore_list_is_exactly_four_and_a_fifth_breaks_it(mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     assert len(mod.CONTROL_IGNORED_FIELDS) == 4
     mocker.patch.object(
@@ -3496,7 +3496,7 @@ def test_control_renaming_an_ignore_token_makes_that_column_a_finding(
     # The token list is load-bearing: drop "artifact_id" from it (keeping the
     # count at four) and the deployed row's artifact_id starts showing up as a
     # disagreement, while "written_at" -- still named -- stays ignored.
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store, _ids = _control_store(tmp_path)
     _patch_slice3_io(mocker, store)
@@ -3515,7 +3515,7 @@ def test_control_renaming_an_ignore_token_makes_that_column_a_finding(
 
 
 def test_control_sample_size_below_one_is_refused(tmp_path, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store, _ids = _control_store(tmp_path)
     _patch_slice3_io(mocker, store)
@@ -3526,7 +3526,7 @@ def test_control_sample_size_below_one_is_refused(tmp_path, mocker):
 
 
 def test_control_dry_run_writes_nothing(tmp_path, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store, _ids = _control_store(tmp_path)
     _patch_slice3_io(mocker, store)
@@ -3537,7 +3537,7 @@ def test_control_dry_run_writes_nothing(tmp_path, mocker):
 
 
 def test_control_probe_reads_and_writes_only_the_probe_prefix(tmp_path, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store, _ids = _control_store(tmp_path)
     store = {k.replace("recovery/plan145/compared/",
@@ -3625,7 +3625,7 @@ def _canary_store(tmp_path, *, drop_assignment_for=None, orphan_assignment=False
 
 def test_canary_sample_covers_every_stratum_and_keeps_artifacts_whole(
         tmp_path, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store = _canary_store(tmp_path)
     _patch_slice3_io(mocker, store)
@@ -3651,7 +3651,7 @@ def test_canary_sample_manifest_holds_every_row_of_each_selected_object(
 
     import pyarrow.parquet as _pq
 
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store = _canary_store(tmp_path)
     _patch_slice3_io(mocker, store)
@@ -3670,7 +3670,7 @@ def test_canary_sample_manifest_holds_every_row_of_each_selected_object(
 
 def test_canary_sample_stops_when_a_to_import_object_has_no_assignment(
         tmp_path, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store = _canary_store(tmp_path, drop_assignment_for=_OD)
     _patch_slice3_io(mocker, store)
@@ -3685,7 +3685,7 @@ def test_canary_sample_stops_when_an_assigned_object_is_missing_from_the_read(
         tmp_path, mocker):
     # A whole dropped to_import shard: the object is gone from the read, so the
     # per-object count cross-check cannot see it -- only the assign-side check.
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store = _canary_store(tmp_path, orphan_assignment=True)
     _patch_slice3_io(mocker, store)
@@ -3700,7 +3700,7 @@ def test_canary_sample_stops_when_the_to_import_read_is_short_of_the_assignment(
         tmp_path, mocker):
     # OA's carousel row is missing from the to_import read; its assignment still
     # says silver_rows=2. Selecting OA would commit a half-artifact.
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store = _canary_store(tmp_path)
     la = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
@@ -3765,7 +3765,7 @@ def _canary_store_wide(tmp_path, *, n_common=38):
 
 def test_canary_sample_stratification_pass_covers_the_rare_strata_on_a_tiny_budget(
         tmp_path, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store = _canary_store_wide(tmp_path)
     _patch_slice3_io(mocker, store)
@@ -3784,7 +3784,7 @@ def test_canary_sample_stratification_pass_covers_the_rare_strata_on_a_tiny_budg
 
 
 def test_canary_sample_dry_run_writes_nothing(tmp_path, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store = _canary_store(tmp_path)
     _patch_slice3_io(mocker, store)
@@ -3798,7 +3798,7 @@ def test_canary_sample_dry_run_writes_nothing(tmp_path, mocker):
 
 def test_canary_sample_probe_reads_and_writes_only_the_probe_prefix(
         tmp_path, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store = _canary_store(tmp_path)
     store = {
@@ -3915,7 +3915,7 @@ def _blk_report(store):
 
 def test_a_block_page_object_is_quarantined_whole_including_its_carousel_rows(
         tmp_path, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store = _block_compare_store(tmp_path)
     _patch_compare_io(mocker, store, [(_BLK_REP, "VIN")], rows=5)
@@ -3947,7 +3947,7 @@ def test_a_priced_detail_row_is_untouched_even_when_its_carousel_rows_are_null(
     # Write this one first and watch it fail against a row-level filter: the
     # carousel row here is active with price/vin/make all NULL, so a row-level
     # predicate would quarantine it even though its object parsed a real price.
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     ok_key = "html/ok.zst"
     ok_a = "c1111111-1111-1111-1111-111111111111"
@@ -3979,7 +3979,7 @@ def test_an_unlisted_detail_row_with_null_values_is_not_excluded(
         tmp_path, mocker):
     # An unlisted page legitimately has no price; excluding it would discard
     # real observations.
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     un_key = "html/unl.zst"
     un_id = "d1111111-1111-1111-1111-111111111111"
@@ -4003,7 +4003,7 @@ def test_an_unlisted_detail_row_with_null_values_is_not_excluded(
 
 
 def test_the_four_families_sum_to_the_parsed_row_total(tmp_path, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store = _block_compare_store(tmp_path)
     _patch_compare_io(mocker, store, [(_BLK_REP, "VIN")], rows=5)
@@ -4021,7 +4021,7 @@ def test_the_four_families_sum_to_the_parsed_row_total(tmp_path, mocker):
 
 def test_a_quarantined_object_that_emitted_carousel_rows_is_reported_not_refused(
         tmp_path, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     # Stage 4 drops NULL-price carousel hints, so every carousel row that
     # exists carries a price. A quarantined object with carousel rows is a
@@ -4042,7 +4042,7 @@ def test_a_quarantined_object_that_emitted_carousel_rows_is_reported_not_refused
 
 def test_a_loosened_block_predicate_that_keeps_a_valued_detail_row_stops_apply(
         tmp_path, capsys, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     # Guard against a future edit to is_block_signature: drop the price/vin/
     # make-all-NULL requirement and a quarantined detail row can carry a value
@@ -4065,7 +4065,7 @@ def test_a_loosened_block_predicate_that_keeps_a_valued_detail_row_stops_apply(
 
 def test_assign_refuses_a_to_import_population_carrying_the_block_signature(
         tmp_path, capsys, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store, _ = _slice2_fixture_store(tmp_path)
     # 25 block-page objects: each a detail row that is active with price/vin/
@@ -4099,7 +4099,7 @@ def test_assign_refuses_a_to_import_population_carrying_the_block_signature(
 
 def test_assign_refuses_a_compare_run_that_predates_the_block_page_filter(
         tmp_path, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     # The per-row check only sees the detail row that carries the signature,
     # and a block page's detail row can sit in already_represented while only
@@ -4130,7 +4130,7 @@ def test_assign_refuses_a_compare_run_that_predates_the_block_page_filter(
 
 def test_apply_refuses_assignment_shards_from_a_pre_block_filter_compare_run(
         tmp_path, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     # assign refuses a stale run going forward; this is the same refusal for a
     # run whose assignment shards already exist -- apply re-reads them
@@ -4197,7 +4197,7 @@ def _write_canary_manifest(path, rows):
     import pyarrow as pa
     import pyarrow.parquet as pq
 
-    from scripts.reconcile_april_detail import _canary_manifest_schema
+    from scripts.oneoff.reconcile_april_detail import _canary_manifest_schema
 
     schema = _canary_manifest_schema()
     pq.write_table(pa.Table.from_pylist(
@@ -4245,7 +4245,7 @@ def _canary_ready(mod, tmp_path, mocker):
 
 def test_the_canary_commits_exactly_the_manifests_objects_and_no_more(
         tmp_path, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store = _canary_ready(mod, tmp_path, mocker)
     conn = _FakeWriteConn()
@@ -4271,7 +4271,7 @@ def test_the_canary_commits_exactly_the_manifests_objects_and_no_more(
     assert len(inserts["artifacts_queue_events"]) == 4       # one per artifact
 
     from processing.writers.silver_writer import _POSTGRES_COLS
-    from scripts.reconcile_april_detail import _QUEUE_EVENT_COLS
+    from scripts.oneoff.reconcile_april_detail import _QUEUE_EVENT_COLS
 
     queue = [dict(zip(_QUEUE_EVENT_COLS, r))
              for r in inserts["artifacts_queue_events"]]
@@ -4294,7 +4294,7 @@ def test_the_canary_commits_exactly_the_manifests_objects_and_no_more(
 def test_the_canary_goes_through_the_real_writer_with_the_receipt_inside_it(
         tmp_path, mocker):
     """Non-negotiable 1: reuse write_import_batch, do not reimplement it."""
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store = _canary_ready(mod, tmp_path, mocker)
     conn = _FakeWriteConn()
@@ -4331,7 +4331,7 @@ def test_the_canary_receipt_name_is_never_a_slice_2_batch_name(tmp_path, mocker)
     """A canary that borrowed b00001's name would mark all 5,000 of its
     artifacts committed on the strength of ~500 rows, and the full apply would
     skip that batch forever."""
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     name = mod.canary_batch_name(_C3RUN)
     assert not name.startswith(f"{_C3RUN}-b")
@@ -4356,7 +4356,7 @@ def test_the_canary_budget_is_fixed_in_code_with_no_flag_that_raises_it(
     """A widenable ceiling is --maintainer-approval under another name: an
     oversized or wrongly regenerated manifest could be committed by editing one
     number. So the budget is a constant and this mode carries no knob."""
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     for widening in (["--max-rows", "5000"],
                      ["--max-unapproved-rows", "5000"],
@@ -4387,7 +4387,7 @@ def test_an_over_budget_dry_run_reports_the_overage_instead_of_dying(
     """The oversized manifest is exactly when the maintainer needs the safe
     measurement run. A dry run opens no connection, so refusing one buys
     nothing and costs them the number they need."""
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store = _canary_ready(mod, tmp_path, mocker)
     conn = _FakeWriteConn()
@@ -4406,7 +4406,7 @@ def test_an_over_budget_dry_run_reports_the_overage_instead_of_dying(
 
 
 def test_an_apply_must_pin_the_manifest_it_was_approved_against(tmp_path, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store = _canary_ready(mod, tmp_path, mocker)
     conn = _FakeWriteConn()
@@ -4441,7 +4441,7 @@ def test_an_apply_must_pin_the_manifest_it_was_approved_against(tmp_path, mocker
 
 def test_the_dry_run_prints_the_pin_the_commit_will_need(tmp_path,
                                                          capsys, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store = _canary_ready(mod, tmp_path, mocker)
     _patch_slice2_io(mocker, store, _FakeWriteConn())
@@ -4455,7 +4455,7 @@ def test_the_dry_run_prints_the_pin_the_commit_will_need(tmp_path,
 
 def test_the_canary_dry_run_builds_the_write_set_and_issues_no_statement(
         tmp_path, capsys, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store = _canary_ready(mod, tmp_path, mocker)
     conn = _FakeWriteConn()
@@ -4476,7 +4476,7 @@ def test_the_canary_dry_run_builds_the_write_set_and_issues_no_statement(
 
 def test_a_rerun_of_the_canary_skips_on_the_receipt_and_writes_zero_rows(
         tmp_path, capsys, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store = _canary_ready(mod, tmp_path, mocker)
     digest = hashlib.sha256(
@@ -4511,8 +4511,8 @@ def test_a_rerun_of_the_canary_skips_on_the_receipt_and_writes_zero_rows(
 
 
 def test_the_same_canary_name_with_a_changed_manifest_stops(tmp_path, mocker):
-    import scripts.reconcile_april_detail as mod
-    from scripts.reconcile_april_detail import ReceiptConflict
+    import scripts.oneoff.reconcile_april_detail as mod
+    from scripts.oneoff.reconcile_april_detail import ReceiptConflict
 
     store = _canary_ready(mod, tmp_path, mocker)
     conn = _FakeWriteConn(receipts={f"{_C3RUN}-canary": ["b" * 64]})
@@ -4528,7 +4528,7 @@ def test_the_same_canary_name_with_a_changed_manifest_stops(tmp_path, mocker):
 
 def test_the_canary_writes_identity_from_the_shard_not_the_manifests_copy(
         tmp_path, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store = _canary_ready(mod, tmp_path, mocker)
     key = f"recovery/plan145/canary/{_C3RUN}-canary_sample.parquet"
@@ -4550,7 +4550,7 @@ def test_the_canary_writes_identity_from_the_shard_not_the_manifests_copy(
 
 def test_the_canary_stops_when_a_manifest_object_has_no_assignment_row(
         tmp_path, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store = _canary_ready(mod, tmp_path, mocker)
     assigned_key = f"recovery/plan145/assigned/{_C3RUN}-b00001.parquet"
@@ -4568,7 +4568,7 @@ def test_the_canary_stops_when_a_manifest_object_has_no_assignment_row(
 
 
 def test_the_canary_stops_rather_than_commit_half_an_artifact(tmp_path, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store = _canary_ready(mod, tmp_path, mocker)
     # drop _OA's carousel row: the object now reads 1 where both the assignment
@@ -4597,7 +4597,7 @@ def test_the_canary_stops_rather_than_commit_half_an_artifact(tmp_path, mocker):
 
 def test_the_canary_never_names_a_protected_table_in_any_statement(
         tmp_path, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store = _canary_ready(mod, tmp_path, mocker)
     conn = _FakeWriteConn()
@@ -4615,7 +4615,7 @@ def test_the_canary_never_names_a_protected_table_in_any_statement(
 
 def test_the_canary_refuses_a_compare_run_that_predates_the_block_page_filter(
         tmp_path, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store = _canary_ready(mod, tmp_path, mocker)
     store[f"recovery/plan145/compared/{_C3RUN}/compare_report.json"] = json.dumps(
@@ -4632,7 +4632,7 @@ def test_the_canary_refuses_a_compare_run_that_predates_the_block_page_filter(
 
 def test_the_canary_says_to_run_the_sampler_when_there_is_no_manifest(
         tmp_path, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store = _canary_commit_store(tmp_path)      # no canary-sample run
     conn = _FakeWriteConn()
@@ -4662,7 +4662,7 @@ def test_a_carousel_row_flipped_to_detail_is_caught_though_the_count_holds(
     """The concrete superset: _OA keeps two rows, but its carousel row becomes
     a detail row, so build_recovery_price_event mints a historical price event
     the frozen sample never approved."""
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store = _canary_ready(mod, tmp_path, mocker)
     la = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
@@ -4696,7 +4696,7 @@ def test_a_changed_business_value_is_caught_by_the_write_set_digest_alone(
         tmp_path, mocker):
     """Same object, same count, same detail/carousel split, same strata -- only
     the price moved. Nothing but the row digest sees this."""
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store = _canary_ready(mod, tmp_path, mocker)
     la = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
@@ -4728,7 +4728,7 @@ def test_a_changed_business_value_is_caught_by_the_write_set_digest_alone(
 def test_the_write_set_digest_ignores_shard_row_order():
     """A shard's row order is not part of the contract; re-reading one must not
     perturb the digest, or every commit would be a false alarm."""
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     assignment = {"object_key": _OA, "artifact_id": 9000001,
                   "listing_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
@@ -4747,7 +4747,7 @@ def test_a_vin_the_snapshot_fills_changes_the_write_set_digest():
     """The hole a raw-row digest leaves open: build_recovery_silver_row fills a
     missing carousel vin from the frozen snapshot *after* the to_import row, so
     a snapshot that moves changes what gets committed."""
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     hint = "aaaaaaaa-0000-0000-0000-aaaaaaaaaaaa"
     assignment = {"object_key": _OA, "artifact_id": 9000001,
@@ -4766,7 +4766,7 @@ def test_a_vin_the_snapshot_fills_changes_the_write_set_digest():
 def test_the_assignment_capture_time_changes_the_write_set_digest():
     """And the other one: the queue event's historical fetched_at comes from
     the assignment, which no to_import row carries."""
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     rows = [_ti_row("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", _OA, source="detail")]
     base = {"object_key": _OA, "artifact_id": 9000001,
@@ -4793,7 +4793,7 @@ def test_every_manifest_field_copied_from_the_assignment_is_bound(
         tmp_path, field, value, mocker):
     """Not just artifact_id. Each of these reaches the write set or names the
     stratum the sample was approved on."""
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store = _canary_ready(mod, tmp_path, mocker)
     key = f"recovery/plan145/canary/{_C3RUN}-canary_sample.parquet"
@@ -4819,7 +4819,7 @@ def test_a_manifest_naming_an_assignment_batch_that_does_not_exist_stops(
     """`batch_name` is bound too, but a wrong one never reaches the field
     comparison -- it resolves to no shard. That has to be a refusal, not a
     KeyError out of the object read."""
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store = _canary_ready(mod, tmp_path, mocker)
     key = f"recovery/plan145/canary/{_C3RUN}-canary_sample.parquet"
@@ -4841,7 +4841,7 @@ def test_a_manifest_naming_an_assignment_batch_that_does_not_exist_stops(
 def test_a_manifest_with_no_write_set_digest_is_refused_not_exempted(tmp_path, mocker):
     """Fail closed. A pre-write_set_digest manifest freezes only counts, which is
     exactly the contract the column exists to replace."""
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store = _canary_ready(mod, tmp_path, mocker)
     key = f"recovery/plan145/canary/{_C3RUN}-canary_sample.parquet"
@@ -4864,7 +4864,7 @@ def test_a_manifest_with_no_write_set_digest_is_refused_not_exempted(tmp_path, m
 
 def test_the_sampler_freezes_a_write_set_digest_for_every_selected_artifact(
         tmp_path, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store = _canary_ready(mod, tmp_path, mocker)
     rows = _read_manifest_rows(
@@ -4901,7 +4901,7 @@ def _v1_manifest(tmp_path, store, *, drop=("write_set_digest",
 
 def test_the_migration_preserves_the_frozen_manifest_and_its_object_set(
         tmp_path, capsys, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store = _canary_ready(mod, tmp_path, mocker)
     source_key = f"recovery/plan145/canary/{_C3RUN}-canary_sample.parquet"
@@ -4946,7 +4946,7 @@ def test_the_migration_refuses_when_an_input_moved_under_the_frozen_sample(
         tmp_path, mocker):
     """The whole reason not to re-sample: if an input moved, a re-selection
     would quietly pick a different set. The migration stops instead."""
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store = _canary_ready(mod, tmp_path, mocker)
     _v1_manifest(tmp_path, store)
@@ -4973,7 +4973,7 @@ def test_the_migration_refuses_when_an_input_moved_under_the_frozen_sample(
 
 def test_the_migration_will_not_overwrite_an_existing_migrated_manifest(
         tmp_path, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store = _canary_ready(mod, tmp_path, mocker)
     _v1_manifest(tmp_path, store)
@@ -4985,7 +4985,7 @@ def test_the_migration_will_not_overwrite_an_existing_migrated_manifest(
 
 
 def test_the_migration_dry_run_writes_nothing(tmp_path, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store = _canary_ready(mod, tmp_path, mocker)
     _v1_manifest(tmp_path, store)
@@ -5000,7 +5000,7 @@ def test_a_migrated_manifest_beside_the_original_is_the_one_that_is_read(
         tmp_path, mocker):
     """Resolution is by existence, not by a flag: there is no way to commit
     against the weaker manifest while a migrated one sits beside it."""
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store = _canary_ready(mod, tmp_path, mocker)
     _v1_manifest(tmp_path, store)
@@ -5047,7 +5047,7 @@ def test_a_substituted_sibling_with_a_different_object_set_commits_nothing(
     """Resolution picks the sibling because it exists. Existence is not a
     reason to trust it: a sibling created or replaced independently could hand
     a commit an object set that is not the window's subject."""
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store = _canary_ready(mod, tmp_path, mocker)
     target_key = _migrated(mod, tmp_path, mocker, store)
@@ -5075,7 +5075,7 @@ def test_a_same_object_set_sibling_that_changed_a_field_commits_nothing(
     inputs, so every downstream check -- which compares against those *current*
     inputs -- passes. Only the frozen manifest still remembers that _OA was
     carousel, and an extra historical price event is minted without it."""
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store = _canary_ready(mod, tmp_path, mocker)
     target_key = _migrated(mod, tmp_path, mocker, store)
@@ -5138,7 +5138,7 @@ def test_every_field_the_frozen_manifest_carried_must_survive_promotion(
         tmp_path, field, value, mocker):
     """A promotion may add page_fetched_at, write_set_digest,
     vin_snapshot_sha256 and the two source columns. Nothing else."""
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store = _canary_ready(mod, tmp_path, mocker)
     target_key = _migrated(mod, tmp_path, mocker, store)
@@ -5157,7 +5157,7 @@ def test_every_field_the_frozen_manifest_carried_must_survive_promotion(
 
 
 def test_a_promotion_may_add_the_migration_columns_and_only_those():
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     added = mod._CANARY_MIGRATION_ADDED_FIELDS
     assert added == {"page_fetched_at", "write_set_digest",
@@ -5173,7 +5173,7 @@ def test_a_promotion_may_add_the_migration_columns_and_only_those():
 def test_strata_order_is_not_part_of_the_promotion_contract(tmp_path, mocker):
     """The two manifests must name the same strata; a Parquet round trip is
     not required to preserve their order."""
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store = _canary_ready(mod, tmp_path, mocker)
     target_key = _migrated(mod, tmp_path, mocker, store)
@@ -5189,7 +5189,7 @@ def test_strata_order_is_not_part_of_the_promotion_contract(tmp_path, mocker):
 
 
 def test_a_sibling_promoted_from_other_bytes_commits_nothing(tmp_path, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store = _canary_ready(mod, tmp_path, mocker)
     target_key = _migrated(mod, tmp_path, mocker, store)
@@ -5208,7 +5208,7 @@ def test_a_sibling_promoted_from_other_bytes_commits_nothing(tmp_path, mocker):
 def test_a_sibling_naming_no_source_at_all_commits_nothing(tmp_path, mocker):
     """Only canary-remanifest may write this object, and it always names what
     it promoted."""
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store = _canary_ready(mod, tmp_path, mocker)
     target_key = _migrated(mod, tmp_path, mocker, store)
@@ -5229,7 +5229,7 @@ def test_the_frozen_manifest_must_still_exist_to_prove_the_promotion(
         tmp_path, mocker):
     """It is the only record of what the window's subject was. A promotion
     that can no longer be checked against it is not a promotion."""
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store = _canary_ready(mod, tmp_path, mocker)
     target_key = _migrated(mod, tmp_path, mocker, store)
@@ -5242,7 +5242,7 @@ def test_the_frozen_manifest_must_still_exist_to_prove_the_promotion(
 
 
 def test_the_frozen_slot_may_not_claim_to_be_a_promotion(tmp_path, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store = _canary_ready(mod, tmp_path, mocker)
     key = f"recovery/plan145/canary/{_C3RUN}-canary_sample.parquet"
@@ -5262,7 +5262,7 @@ def test_the_frozen_slot_may_not_claim_to_be_a_promotion(tmp_path, mocker):
 
 def test_a_good_promotion_is_reproved_and_reported_at_commit_time(
         tmp_path, capsys, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store = _canary_ready(mod, tmp_path, mocker)
     source_key = f"recovery/plan145/canary/{_C3RUN}-canary_sample.parquet"
@@ -5283,7 +5283,7 @@ def test_a_good_promotion_is_reproved_and_reported_at_commit_time(
 def test_the_flush_check_also_refuses_an_unproven_sibling(tmp_path, mocker):
     """It rebuilds the write set from the manifest, so it resolves the same
     sibling and must apply the same proof."""
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store = _canary_ready(mod, tmp_path, mocker)
     target_key = _migrated(mod, tmp_path, mocker, store)
@@ -5308,7 +5308,7 @@ def test_phase_b_refuses_a_bucket_that_is_not_the_configured_one(
     """Reads take the bucket they are given, but bare-key object_exists and
     write_bytes use the configured one -- so an override splits a run's
     inputs, its checks and its outputs across two buckets."""
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store = _canary_ready(mod, tmp_path, mocker)
     conn = _FakeWriteConn()
@@ -5325,7 +5325,7 @@ def test_phase_b_refuses_a_bucket_that_is_not_the_configured_one(
 
 
 def test_phase_b_accepts_the_configured_bucket_named_explicitly(tmp_path, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
     import shared.minio as minio
 
     store = _canary_ready(mod, tmp_path, mocker)
@@ -5341,7 +5341,7 @@ def test_a_vin_snapshot_that_moved_after_sampling_stops_the_commit(
     """build_recovery_silver_row fills a missing carousel vin from the frozen
     snapshot, so changing it changes a committed VIN -- while every count,
     stratum and assignment check passes."""
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store = _canary_ready(mod, tmp_path, mocker)
     store[f"recovery/plan145/vin_snapshot/{_C3RUN}.parquet"] = _write_vin_shard(
@@ -5363,7 +5363,7 @@ def test_a_vin_snapshot_that_moved_after_sampling_stops_the_commit(
 def test_an_assignment_capture_time_that_moved_stops_the_commit(tmp_path, mocker):
     """The queue event's historical fetched_at comes from the assignment, and
     no to_import row carries it."""
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store = _canary_ready(mod, tmp_path, mocker)
     assigned_key = f"recovery/plan145/assigned/{_C3RUN}-b00001.parquet"
@@ -5393,7 +5393,7 @@ def test_a_lost_commit_report_is_repaired_with_the_receipts_own_time(
     when the batch actually landed -- canary-flush-verify uses that time as its
     LastModified bound and to pick the queue-event partition, so a retry's
     clock sends it looking in the wrong month."""
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
     import shared.minio as minio
 
     store = _canary_ready(mod, tmp_path, mocker)
@@ -5438,7 +5438,7 @@ def test_a_lost_commit_report_is_repaired_with_the_receipts_own_time(
 
 def test_the_first_commit_records_the_receipts_time_not_the_processs(
         tmp_path, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store = _canary_ready(mod, tmp_path, mocker)
     real_commit = _dt(2026, 8, 29, 6, 30, 0, tzinfo=_tz.utc)
@@ -5459,7 +5459,7 @@ def test_no_receipt_time_is_a_refusal_not_a_wall_clock_fallback(tmp_path, mocker
     wrong LastModified bound and the wrong queue-event partition that reading
     the receipt exists to prevent. V047 declares the column NOT NULL DEFAULT
     now(), so a missing value is a receipt problem, not a timing one."""
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store = _canary_ready(mod, tmp_path, mocker)
     commit_key = f"recovery/plan145/canary/{_C3RUN}-canary_commit.json"
@@ -5480,7 +5480,7 @@ def test_no_receipt_time_is_a_refusal_not_a_wall_clock_fallback(tmp_path, mocker
 
 
 def test_no_receipt_time_leaves_no_flush_expectation_behind(tmp_path, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store = _canary_ready(mod, tmp_path, mocker)
     conn = _FakeWriteConn(receipt_committed_at=None)
@@ -5501,7 +5501,7 @@ def test_no_receipt_time_leaves_no_flush_expectation_behind(tmp_path, mocker):
 
 def test_a_commit_report_that_disagrees_with_the_receipt_is_rewritten(
         tmp_path, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store = _canary_ready(mod, tmp_path, mocker)
     real_commit = _dt(2026, 7, 31, 23, 50, 0, tzinfo=_tz.utc)
@@ -5638,7 +5638,7 @@ def _committed_canary(mod, tmp_path, mocker):
 
 def test_the_flush_round_trip_passes_when_every_row_reached_the_lake(
         tmp_path, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store = _committed_canary(mod, tmp_path, mocker)
     _flush_the_canary(mod, tmp_path, store)
@@ -5664,7 +5664,7 @@ def test_the_flush_round_trip_passes_when_every_row_reached_the_lake(
 
 def test_the_flush_verification_fails_when_the_lake_objects_are_absent(
         tmp_path, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store = _committed_canary(mod, tmp_path, mocker)
     # committed, but no flush has run: staging still holds the rows
@@ -5683,7 +5683,7 @@ def test_the_flush_verification_fails_when_the_lake_objects_are_absent(
 
 def test_one_table_left_behind_by_the_flush_fails_the_round_trip(
         tmp_path, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store = _committed_canary(mod, tmp_path, mocker)
     _flush_the_canary(mod, tmp_path, store, drop=("queue",))
@@ -5695,7 +5695,7 @@ def test_one_table_left_behind_by_the_flush_fails_the_round_trip(
 
 def test_a_partly_flushed_table_fails_on_the_rows_that_did_not_arrive(
         tmp_path, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store = _committed_canary(mod, tmp_path, mocker)
     _flush_the_canary(mod, tmp_path, store)
@@ -5718,7 +5718,7 @@ def test_the_flush_check_reads_a_silver_rows_source_from_the_hive_path(
         tmp_path, mocker):
     """`source` is a partition column: it is in the key, not in the file. A
     check that keyed on a file column would match nothing."""
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store = _committed_canary(mod, tmp_path, mocker)
     _flush_the_canary(mod, tmp_path, store)
@@ -5737,7 +5737,7 @@ def test_the_flush_check_reads_a_silver_rows_source_from_the_hive_path(
 def test_a_duplicate_flush_is_recorded_and_is_not_a_failure(tmp_path, mocker):
     """A flush interrupted between the Parquet write and the DELETE re-runs and
     writes the rows again; the flusher's own contract calls that acceptable."""
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store = _committed_canary(mod, tmp_path, mocker)
     _flush_the_canary(mod, tmp_path, store)
@@ -5753,7 +5753,7 @@ def test_a_duplicate_flush_is_recorded_and_is_not_a_failure(tmp_path, mocker):
 
 
 def test_the_flush_check_refuses_before_the_canary_has_committed(tmp_path, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store = _canary_ready(mod, tmp_path, mocker)
     _patch_slice2_io(mocker, store, _FakeWriteConn())
@@ -5766,7 +5766,7 @@ def test_the_flush_check_rebuilds_the_expectation_rather_than_trusting_the_repor
         tmp_path, mocker):
     """A verification that read its expectation out of the writer's own record
     of what it wrote would pass on a writer that recorded the wrong thing."""
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store = _committed_canary(mod, tmp_path, mocker)
     _flush_the_canary(mod, tmp_path, store)
@@ -5785,7 +5785,7 @@ def test_the_flush_check_rebuilds_the_expectation_rather_than_trusting_the_repor
 
 
 def test_the_flush_check_writes_nothing_without_apply(tmp_path, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store = _committed_canary(mod, tmp_path, mocker)
     _flush_the_canary(mod, tmp_path, store)
@@ -5799,7 +5799,7 @@ def test_the_flush_check_writes_nothing_without_apply(tmp_path, mocker):
 
 def test_an_unreadable_lake_object_is_reported_and_does_not_crash_the_check(
         tmp_path, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store = _committed_canary(mod, tmp_path, mocker)
     _flush_the_canary(mod, tmp_path, store)
@@ -5836,7 +5836,7 @@ def _slice2_with_canary(tmp_path, mocker, *, skip=(_MAT_KEY,)):
     """A committed canary covering `skip`, over the slice-2 fixture's objects."""
     store, ids = _slice2_fixture_store(tmp_path)
     _patch_slice2_io(mocker, store, _FakeWriteConn(next_id=9_000_001))
-    mod = __import__("scripts.reconcile_april_detail", fromlist=["x"])
+    mod = __import__("scripts.oneoff.reconcile_april_detail", fromlist=["x"])
     mod.run_assign(mod.parse_args(["assign", "--apply"]))
 
     manifest_key = f"recovery/plan145/canary/{_RUN}-canary_sample.parquet"
@@ -5856,7 +5856,7 @@ def _slice2_with_canary(tmp_path, mocker, *, skip=(_MAT_KEY,)):
 
 
 def test_apply_skips_the_artifacts_the_canary_already_committed(tmp_path, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store, (l1, l2, l3, l4), digest = _slice2_with_canary(tmp_path, mocker)
     conn = _FakeWriteConn(receipts={f"{_RUN}-canary": [digest]})
@@ -5885,7 +5885,7 @@ def test_apply_skips_the_artifacts_the_canary_already_committed(tmp_path, mocker
 
 def test_apply_reports_the_skip_in_its_blast_radius(tmp_path,
                                                     capsys, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store, _, _ = _slice2_with_canary(tmp_path, mocker)
     _patch_slice2_io(mocker, store, _FakeWriteConn())
@@ -5898,7 +5898,7 @@ def test_apply_reports_the_skip_in_its_blast_radius(tmp_path,
 
 
 def test_the_apply_dry_run_still_opens_no_connection(tmp_path, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store, _, _ = _slice2_with_canary(tmp_path, mocker)
     conn = _FakeWriteConn()
@@ -5911,7 +5911,7 @@ def test_the_apply_dry_run_still_opens_no_connection(tmp_path, mocker):
 def test_the_budget_gate_still_refuses_before_any_statement(tmp_path, mocker):
     """The exclusion is computed connection-free precisely so the gate keeps
     this property: nothing is issued until the row budget has been cleared."""
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store, _, _ = _slice2_with_canary(tmp_path, mocker)
     conn = _FakeWriteConn()
@@ -5926,7 +5926,7 @@ def test_the_budget_gate_still_refuses_before_any_statement(tmp_path, mocker):
 def test_a_commit_report_with_no_receipt_stops_the_apply(tmp_path, mocker):
     """The canary was rolled back and its report left behind. Excluding would
     silently drop those artifacts from the import."""
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store, _, _ = _slice2_with_canary(tmp_path, mocker)
     conn = _FakeWriteConn()                       # no receipt for the canary
@@ -5942,7 +5942,7 @@ def test_a_commit_report_with_no_receipt_stops_the_apply(tmp_path, mocker):
 def test_a_receipt_with_no_commit_report_stops_the_apply(tmp_path, mocker):
     """The mirror failure: rows were committed that this run cannot identify,
     so it cannot avoid writing them twice."""
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store, _, digest = _slice2_with_canary(tmp_path, mocker)
     del store[f"recovery/plan145/canary/{_RUN}-canary_commit.json"]
@@ -5957,7 +5957,7 @@ def test_a_receipt_with_no_commit_report_stops_the_apply(tmp_path, mocker):
 
 def test_a_manifest_that_moved_under_the_commit_report_stops_the_apply(
         tmp_path, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store, _, digest = _slice2_with_canary(tmp_path, mocker)
     store[f"recovery/plan145/canary/{_RUN}-canary_sample.parquet"] += b"tamper"
@@ -5970,7 +5970,7 @@ def test_a_manifest_that_moved_under_the_commit_report_stops_the_apply(
 
 
 def test_no_canary_means_no_exclusion_and_no_extra_statement(tmp_path, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store, _ = _slice2_fixture_store(tmp_path)
     _patch_slice2_io(mocker, store, _FakeWriteConn(next_id=9_000_001))
@@ -5991,7 +5991,7 @@ def test_no_canary_means_no_exclusion_and_no_extra_statement(tmp_path, mocker):
 def test_a_probe_apply_ignores_the_canary_entirely(tmp_path, mocker):
     """A probe commits nothing, so it cannot duplicate the canary and must not
     spend a statement checking."""
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store, _, digest = _slice2_with_canary(tmp_path, mocker)
     probe_store = {k.replace("recovery/plan145/compared/",
@@ -6021,7 +6021,7 @@ def test_a_probe_apply_ignores_the_canary_entirely(tmp_path, mocker):
 
 import dataclasses  # noqa: E402
 
-from scripts.reconcile_april_detail import (  # noqa: E402
+from scripts.oneoff.reconcile_april_detail import (  # noqa: E402
     DEDUPE_PREFIX,
     LEGACY_DELETE_PREFIX,
     REPACK_PREFIX,
@@ -6117,7 +6117,7 @@ def _s6_body(name: str) -> bytes:
 # --- the ordering trial ----------------------------------------------------
 
 def test_trial_orders_by_the_arm_under_test():
-    from scripts.reconcile_april_detail import order_for_arm
+    from scripts.oneoff.reconcile_april_detail import order_for_arm
 
     rows = [
         _s6_row("k1", 1, "LB", "CA", day=1),
@@ -6130,7 +6130,7 @@ def test_trial_orders_by_the_arm_under_test():
 
 
 def test_trial_refuses_an_unknown_arm():
-    from scripts.reconcile_april_detail import ReconcileError, order_for_arm
+    from scripts.oneoff.reconcile_april_detail import ReconcileError, order_for_arm
 
     with pytest.raises(ReconcileError, match="unknown trial arm"):
         order_for_arm([], "whatever")
@@ -6140,7 +6140,7 @@ def test_a_member_with_no_subject_listing_is_left_out_of_the_trial():
     """In the true arm they would collapse into one enormous false cluster,
     and a member with no subject listing cannot inform a question about
     ordering by subject listing."""
-    from scripts.reconcile_april_detail import select_trial_sample
+    from scripts.oneoff.reconcile_april_detail import select_trial_sample
 
     rows = [
         _s6_row("k1", 1, "LA", "CA"),
@@ -6158,7 +6158,7 @@ def test_a_member_with_no_subject_listing_is_left_out_of_the_trial():
 
 
 def test_the_trial_sample_is_contiguous_in_the_order_it_is_drawn_in():
-    from scripts.reconcile_april_detail import select_trial_sample
+    from scripts.oneoff.reconcile_april_detail import select_trial_sample
 
     rows = [_s6_row(f"k{i}", i, f"L{9 - i}", f"C{i}") for i in range(6)]
 
@@ -6171,7 +6171,7 @@ def test_the_trial_sample_is_contiguous_in_the_order_it_is_drawn_in():
 
 def test_both_arms_pack_exactly_the_same_members():
     """The whole point of a fixed population: only the order may differ."""
-    from scripts.reconcile_april_detail import pack_trial_arm
+    from scripts.oneoff.reconcile_april_detail import pack_trial_arm
 
     rows = [_s6_row(f"k{i}", i, f"L{i % 3}", f"C{i % 2}") for i in range(6)]
 
@@ -6194,7 +6194,7 @@ def test_both_arms_pack_exactly_the_same_members():
 def test_the_trial_arm_decides_which_key_frames_are_cut_on():
     """Identity and placement are separable since Stage 5b; the trial is the
     caller that makes them differ on purpose."""
-    from scripts.reconcile_april_detail import pack_trial_arm
+    from scripts.oneoff.reconcile_april_detail import pack_trial_arm
     from shared.packfile import PackWriter
 
     seen: list[str | None] = []
@@ -6232,7 +6232,7 @@ def _trial_sample(drawn_in, current_bytes, true_bytes):
 
 
 def test_true_ordering_carries_only_when_it_wins_on_every_sample():
-    from scripts.reconcile_april_detail import decide_trial_winner
+    from scripts.oneoff.reconcile_april_detail import decide_trial_winner
 
     decision = decide_trial_winner([
         _trial_sample("current", 1000, 900),
@@ -6244,7 +6244,7 @@ def test_true_ordering_carries_only_when_it_wins_on_every_sample():
 
 
 def test_a_split_verdict_leaves_the_incumbent_in_place():
-    from scripts.reconcile_april_detail import decide_trial_winner
+    from scripts.oneoff.reconcile_april_detail import decide_trial_winner
 
     decision = decide_trial_winner([
         _trial_sample("current", 1000, 1100),
@@ -6255,7 +6255,7 @@ def test_a_split_verdict_leaves_the_incumbent_in_place():
 
 
 def test_the_trial_reports_the_size_of_the_difference_not_only_its_sign():
-    from scripts.reconcile_april_detail import decide_trial_winner
+    from scripts.oneoff.reconcile_april_detail import decide_trial_winner
 
     decision = decide_trial_winner([_trial_sample("current", 1000, 800)])
     verdict = decision["per_sample"][0]
@@ -6264,7 +6264,7 @@ def test_the_trial_reports_the_size_of_the_difference_not_only_its_sign():
 
 
 def test_a_trial_run_id_is_reproducible_from_the_member_set():
-    from scripts.reconcile_april_detail import _trial_run_id
+    from scripts.oneoff.reconcile_april_detail import _trial_run_id
 
     a = [{"drawn_in": "current", "source_keys": ["k1", "k2"]}]
     b = [{"drawn_in": "current", "source_keys": ["k1", "k2"]}]
@@ -6292,7 +6292,7 @@ def _s6_new_member(sha, *, artifact_id=1, listing_id="L", claims=1,
 
 
 def test_replacement_coverage_passes_when_everything_is_carried_over():
-    from scripts.reconcile_april_detail import check_replacement_coverage
+    from scripts.oneoff.reconcile_april_detail import check_replacement_coverage
 
     baseline = {"old1": "sha1", "old2": "sha2"}
     population = ["old1", "old2", "mat1"]
@@ -6308,7 +6308,7 @@ def test_replacement_coverage_passes_when_everything_is_carried_over():
 
 
 def test_an_old_member_no_replacement_holds_is_a_stop():
-    from scripts.reconcile_april_detail import check_replacement_coverage
+    from scripts.oneoff.reconcile_april_detail import check_replacement_coverage
 
     result = check_replacement_coverage(
         {"old1": "sha1", "old2": "sha2"}, ["old1", "old2"],
@@ -6322,7 +6322,7 @@ def test_an_old_member_no_replacement_holds_is_a_stop():
 def test_an_old_member_whose_bytes_changed_is_a_stop():
     """The originals are deleted immediately after this passes, so a hash that
     moved is the one thing that can never be reported as a warning."""
-    from scripts.reconcile_april_detail import check_replacement_coverage
+    from scripts.oneoff.reconcile_april_detail import check_replacement_coverage
 
     result = check_replacement_coverage(
         {"old1": "sha1"}, ["old1"], {"old1": _s6_new_member("DIFFERENT")},
@@ -6333,7 +6333,7 @@ def test_an_old_member_whose_bytes_changed_is_a_stop():
 
 
 def test_a_live_object_no_replacement_holds_is_a_stop():
-    from scripts.reconcile_april_detail import check_replacement_coverage
+    from scripts.oneoff.reconcile_april_detail import check_replacement_coverage
 
     result = check_replacement_coverage(
         {}, ["mat1", "mat2"], {"mat1": _s6_new_member("sha1")},
@@ -6343,7 +6343,7 @@ def test_a_live_object_no_replacement_holds_is_a_stop():
 
 
 def test_a_member_claimed_by_two_replacement_packs_is_a_stop():
-    from scripts.reconcile_april_detail import check_replacement_coverage
+    from scripts.oneoff.reconcile_april_detail import check_replacement_coverage
 
     result = check_replacement_coverage(
         {"old1": "sha1"}, ["old1"], {"old1": _s6_new_member("sha1", claims=2)},
@@ -6356,7 +6356,7 @@ def test_identity_is_decomposed_by_where_the_member_came_from():
     """Stage 6's gate names 42,276, which is a property of the 557,065-member
     pack population. The replacement packs hold the flattened 983,043, so the
     verifier reports the decomposition instead of asserting that number."""
-    from scripts.reconcile_april_detail import describe_identity
+    from scripts.oneoff.reconcile_april_detail import describe_identity
 
     baseline = {"old1": "sha1", "old2": "sha2"}
     new = {
@@ -6380,7 +6380,7 @@ def test_identity_is_decomposed_by_where_the_member_came_from():
 def test_a_replacement_sidecar_that_repeats_the_scrambled_column_is_caught():
     """April's old sidecar was correct for 31.4% of members, so near-total
     agreement means the run wrote the historical value again."""
-    from scripts.reconcile_april_detail import compare_identity_to_the_old_sidecars
+    from scripts.oneoff.reconcile_april_detail import compare_identity_to_the_old_sidecars
 
     old = {f"k{i}": _s6_new_member("s", listing_id=f"L{i}") for i in range(10)}
     unchanged = {f"k{i}": _s6_new_member("s", listing_id=f"L{i}") for i in range(10)}
@@ -6398,7 +6398,7 @@ def test_a_replacement_sidecar_that_repeats_the_scrambled_column_is_caught():
 
 
 def test_sidecars_are_split_against_the_frozen_old_pack_set():
-    from scripts.reconcile_april_detail import split_sidecars
+    from scripts.oneoff.reconcile_april_detail import split_sidecars
 
     old_packs = {f"{_S6_PACK_PREFIX}pack-00000.zpack"}
     old, new = split_sidecars(
@@ -6411,7 +6411,7 @@ def test_sidecars_are_split_against_the_frozen_old_pack_set():
 
 
 def test_the_read_back_sample_is_stratified_over_the_replacement_packs():
-    from scripts.reconcile_april_detail import _sample_members_for_readback
+    from scripts.oneoff.reconcile_april_detail import _sample_members_for_readback
 
     members = {}
     for sidecar in ("sc-a", "sc-b", "sc-c"):
@@ -6427,7 +6427,7 @@ def test_the_read_back_sample_is_stratified_over_the_replacement_packs():
 
 def test_a_baseline_that_names_no_pack_refuses_rather_than_verifying_nothing(
     mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     mocker.patch.object(mod, "_s3_client", lambda: _FakeS6Store({}))
     with pytest.raises(ReconcileError, match="no Stage 3b unpack manifests"):
@@ -6437,7 +6437,7 @@ def test_a_baseline_that_names_no_pack_refuses_rather_than_verifying_nothing(
 # --- retiring the superseded packs -----------------------------------------
 
 def test_retirement_plans_one_pack_and_one_sidecar_per_retired_pack():
-    from scripts.reconcile_april_detail import plan_pack_retirement
+    from scripts.oneoff.reconcile_april_detail import plan_pack_retirement
 
     planned = plan_pack_retirement([
         f"{_S6_PACK_PREFIX}pack-00001.zpack",
@@ -6454,7 +6454,7 @@ def test_retirement_plans_one_pack_and_one_sidecar_per_retired_pack():
 
 
 def test_a_key_outside_the_frozen_pack_set_is_refused_by_the_guard():
-    from scripts.reconcile_april_detail import (
+    from scripts.oneoff.reconcile_april_detail import (
         delete_objects_in_batches,
         plan_pack_retirement,
     )
@@ -6477,7 +6477,7 @@ def test_a_key_outside_the_frozen_pack_set_is_refused_by_the_guard():
 
 
 def test_retiring_without_a_verification_report_is_refused(monkeypatch):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store = {f"{UNPACK_PREFIX}/pack-00000.parquet": b""}
     with pytest.raises(ReconcileError, match="nothing may be retired"):
@@ -6485,7 +6485,7 @@ def test_retiring_without_a_verification_report_is_refused(monkeypatch):
 
 
 def test_retiring_on_a_failed_verification_report_is_refused():
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     key = f"{REPACK_PREFIX}/repack-abc/verify_report.json"
     store = {key: json.dumps(
@@ -6497,7 +6497,7 @@ def test_retiring_on_a_failed_verification_report_is_refused():
 
 
 def test_two_verification_reports_must_be_disambiguated_by_name():
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store = {
         f"{REPACK_PREFIX}/repack-a/verify_report.json": b"{}",
@@ -6519,7 +6519,7 @@ def _legacy_coverage(hashes, skipped=0):
 
 
 def test_a_legacy_object_is_deletable_when_every_body_is_in_a_replacement_pack():
-    from scripts.reconcile_april_detail import plan_legacy_deletions
+    from scripts.oneoff.reconcile_april_detail import plan_legacy_deletions
 
     key = f"{_S6_POP_PREFIX}part-0.parquet"
     planned, refusals = plan_legacy_deletions(
@@ -6538,7 +6538,7 @@ def test_a_legacy_object_is_deletable_when_every_body_is_in_a_replacement_pack()
 def test_a_legacy_object_with_an_uncovered_body_is_refused_not_skipped():
     """A partially recoverable legacy object is exactly the case where
     deleting loses something."""
-    from scripts.reconcile_april_detail import plan_legacy_deletions
+    from scripts.oneoff.reconcile_april_detail import plan_legacy_deletions
 
     key = f"{_S6_POP_PREFIX}part-0.parquet"
     planned, refusals = plan_legacy_deletions(
@@ -6555,7 +6555,7 @@ def test_a_legacy_object_with_an_uncovered_body_is_refused_not_skipped():
 
 def test_a_results_page_key_is_refused_by_key():
     """The 127 results-page objects are out of scope for the whole plan."""
-    from scripts.reconcile_april_detail import plan_legacy_deletions
+    from scripts.oneoff.reconcile_april_detail import plan_legacy_deletions
 
     key = "html/year=2026/month=4/artifact_type=results_page/part-0.parquet"
     planned, refusals = plan_legacy_deletions(
@@ -6570,7 +6570,7 @@ def test_a_results_page_key_is_refused_by_key():
 
 
 def test_a_legacy_object_no_stage_2_manifest_describes_is_refused():
-    from scripts.reconcile_april_detail import plan_legacy_deletions
+    from scripts.oneoff.reconcile_april_detail import plan_legacy_deletions
 
     planned, refusals = plan_legacy_deletions(
         [_legacy_object(f"{_S6_POP_PREFIX}part-0.parquet")],
@@ -6584,7 +6584,7 @@ def test_a_legacy_object_no_stage_2_manifest_describes_is_refused():
 def test_an_object_whose_rows_were_all_empty_or_blocked_needs_no_coverage():
     """43,014 empty and 101,010 non-success rows produced no body, so they can
     never need covering."""
-    from scripts.reconcile_april_detail import plan_legacy_deletions
+    from scripts.oneoff.reconcile_april_detail import plan_legacy_deletions
 
     key = f"{_S6_POP_PREFIX}part-0.parquet"
     planned, refusals = plan_legacy_deletions(
@@ -6597,7 +6597,7 @@ def test_an_object_whose_rows_were_all_empty_or_blocked_needs_no_coverage():
 
 
 def test_the_legacy_delete_guard_refuses_anything_off_the_manifest():
-    from scripts.reconcile_april_detail import delete_objects_in_batches
+    from scripts.oneoff.reconcile_april_detail import delete_objects_in_batches
 
     planned_keys = {f"{_S6_POP_PREFIX}part-0.parquet"}
 
@@ -6615,7 +6615,7 @@ def test_the_legacy_delete_guard_refuses_anything_off_the_manifest():
 
 
 def test_deleting_without_named_approval_is_refused(mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     args = parse_args(["delete-legacy", "--apply"])
     mocker.patch.object(mod, "_s3_client", lambda: _FakeS6Store({}))
@@ -6633,7 +6633,7 @@ def test_delete_legacy_needs_a_census_or_an_explicit_fallback():
 
 
 def test_an_edited_stage_1_census_is_refused(tmp_path):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     census = tmp_path / "object_census.csv"
     census.write_text("legacy_object_key\nkey-a\n", encoding="utf-8")
@@ -6647,7 +6647,7 @@ def test_an_edited_stage_1_census_is_refused(tmp_path):
 
 
 def test_the_frozen_census_key_set_is_read_back_verbatim(tmp_path):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     census = tmp_path / "object_census.csv"
     census.write_text(
@@ -6775,7 +6775,7 @@ def _s6_seed_store(*, uncovered=False):
 
 
 def _patch_verify_io(mocker, store, *, population=3):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     fake = _FakeS6Store(store)
     mocker.patch.object(mod, "_s3_client", lambda: fake)
@@ -6785,7 +6785,7 @@ def _patch_verify_io(mocker, store, *, population=3):
 
 
 def test_repack_verify_passes_on_a_complete_replacement(capsys, mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
     import shared.minio as minio
 
     store, old_packs, _ = _s6_seed_store()
@@ -6816,7 +6816,7 @@ def test_repack_verify_passes_on_a_complete_replacement(capsys, mocker):
 
 def test_repack_verify_fails_and_exits_non_zero_when_a_member_is_dropped(
     mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
     import shared.minio as minio
 
     store, _, new_pack = _s6_seed_store()
@@ -6845,7 +6845,7 @@ def test_repack_verify_fails_and_exits_non_zero_when_a_member_is_dropped(
 
 def test_retire_packs_deletes_exactly_the_frozen_set_and_nothing_else(
     mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
     import shared.minio as minio
 
     store, old_packs, new_pack = _s6_seed_store()
@@ -6877,7 +6877,7 @@ def test_retire_packs_deletes_exactly_the_frozen_set_and_nothing_else(
 
 
 def test_a_retire_dry_run_writes_no_manifest_and_deletes_nothing(mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store, old_packs, new_pack = _s6_seed_store()
     fake = _FakeS6Store(store)
@@ -6897,7 +6897,7 @@ def test_a_retire_dry_run_writes_no_manifest_and_deletes_nothing(mocker):
 
 def test_retiring_after_the_replacement_set_moved_is_refused(mocker):
     """Re-verify rather than retire against a proof of a store that changed."""
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store, old_packs, new_pack = _s6_seed_store()
     fake = _FakeS6Store(store)
@@ -6942,7 +6942,7 @@ def _s6_legacy_store(*, uncovered=False):
 
 
 def _patch_legacy_io(mocker, store, *, baseline=2):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
     import shared.minio as minio
 
     fake = _FakeS6Store(store)
@@ -6968,7 +6968,7 @@ def _legacy_args(*extra):
 
 def test_delete_legacy_removes_the_parquet_and_leaves_results_pages_alone(
     mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store, legacy_keys, results_key = _s6_legacy_store()
     fake = _patch_legacy_io(mocker, store)
@@ -6984,7 +6984,7 @@ def test_delete_legacy_removes_the_parquet_and_leaves_results_pages_alone(
 
 
 def test_a_legacy_dry_run_deletes_nothing_and_writes_no_manifest(mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store, _, _ = _s6_legacy_store()
     fake = _patch_legacy_io(mocker, store)
@@ -6996,7 +6996,7 @@ def test_a_legacy_dry_run_deletes_nothing_and_writes_no_manifest(mocker):
 
 def test_one_uncovered_body_stops_the_whole_deletion(mocker):
     """Not a skip: the refused object is a body that exists nowhere else."""
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store, _, _ = _s6_legacy_store(uncovered=True)
     fake = _patch_legacy_io(mocker, store)
@@ -7009,7 +7009,7 @@ def test_one_uncovered_body_stops_the_whole_deletion(mocker):
 
 def test_allow_partial_deletes_the_covered_objects_and_says_which_it_left(
     mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store, legacy_keys, _ = _s6_legacy_store(uncovered=True)
     fake = _patch_legacy_io(mocker, store)
@@ -7026,7 +7026,7 @@ def test_allow_partial_deletes_the_covered_objects_and_says_which_it_left(
 def test_a_drifted_legacy_population_stops_the_run(mocker):
     """The count is held to the frozen baseline, so a population that moved is
     a stop rather than a deletion against a different set of objects."""
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store, _, _ = _s6_legacy_store()
     _patch_legacy_io(mocker, store, baseline=1172)
@@ -7039,7 +7039,7 @@ def test_a_legacy_object_no_stage_2_shard_names_is_drift_not_a_deletion(
     mocker):
     """--census-from-manifests is a weaker attestation than the census, not an
     absent one: the Stage 2 shards still have to name every live key."""
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store, _, _ = _s6_legacy_store()
     store[f"{_S6_POP_PREFIX}part-stray.parquet"] = b"never materialized"
@@ -7050,7 +7050,7 @@ def test_a_legacy_object_no_stage_2_shard_names_is_drift_not_a_deletion(
 
 
 def test_deleting_before_any_replacement_pack_exists_is_refused(mocker):
-    import scripts.reconcile_april_detail as mod
+    import scripts.oneoff.reconcile_april_detail as mod
 
     store, _, _ = _s6_legacy_store()
     new_sidecar = f"{_S6_PACK_PREFIX}pack-00002.idx.parquet"
@@ -7067,7 +7067,7 @@ def test_the_read_back_extracts_from_the_replacement_pack_not_whichever_holds_it
     so a read through ``read_packed_html`` could serve the whole sample from
     the packs this stage is about to delete and report success. The bytes under
     test are the replacement's."""
-    from scripts.reconcile_april_detail import read_back_members
+    from scripts.oneoff.reconcile_april_detail import read_back_members
     from shared.packfile import read_index_parquet, write_index_parquet
 
     store, _, new_pack = _s6_seed_store()
@@ -7095,7 +7095,7 @@ def test_the_read_back_extracts_from_the_replacement_pack_not_whichever_holds_it
 
 
 def test_a_sidecar_naming_a_member_its_pack_does_not_hold_is_reported():
-    from scripts.reconcile_april_detail import read_back_members
+    from scripts.oneoff.reconcile_april_detail import read_back_members
 
     store, _, new_pack = _s6_seed_store()
     sidecar = new_pack.replace(".zpack", ".idx.parquet")

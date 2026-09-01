@@ -11,7 +11,7 @@ import datetime as dt
 
 import pytest
 
-from scripts.estimate_pack_savings import (
+from scripts.oneoff.estimate_pack_savings import (
     OBJECT_DIR_BYTES,
     Capture,
     derive_b_and_d,

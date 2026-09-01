@@ -1,4 +1,4 @@
-"""Unit tests for scripts/audit_sectioned_html_storage.py (Plan 114, Stage 3).
+"""Unit tests for scripts/oneoff/audit_sectioned_html_storage.py (Plan 114, Stage 3).
 
 The audit's job is to produce numbers a retention decision will be made from,
 so these tests are mostly about the measurements being *honest* rather than
@@ -23,7 +23,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from scripts.audit_sectioned_html_storage import (
+from scripts.oneoff.audit_sectioned_html_storage import (
     DEFAULT_OBJECT_OVERHEAD_BYTES,
     INODES_PER_OBJECT,
     ArtifactRecord,
@@ -44,7 +44,11 @@ from scripts.audit_sectioned_html_storage import (
     section_name_stats,
 )
 
-_FIXTURE_DIR = Path(__file__).parent.parent / "fixtures" / "html"
+# Anchored on the `tests/` directory by name rather than by counting parents,
+# so moving this module between `tests/scripts/` and `tests/scripts/oneoff/`
+# cannot silently repoint it at a directory that does not exist.
+_TESTS_DIR = next(p for p in Path(__file__).resolve().parents if p.name == "tests")
+_FIXTURE_DIR = _TESTS_DIR / "fixtures" / "html"
 
 
 # ── Shared helpers ────────────────────────────────────────────────────────────
@@ -590,7 +594,7 @@ class TestCollectArtifacts:
     def _patched(self, mocker, html: str):
         mocker.patch("shared.minio.read_html", return_value=html.encode("utf-8"))
         mocker.patch(
-            "scripts.audit_sectioned_html_storage._compressed_size", return_value=5000
+            "scripts.oneoff.audit_sectioned_html_storage._compressed_size", return_value=5000
         )
 
     def test_fetches_sections_and_records_each_artifact(self, mocker):
@@ -620,7 +624,7 @@ class TestCollectArtifacts:
             "shared.minio.read_html",
             side_effect=[RuntimeError("boom"), html.encode("utf-8")],
         )
-        mocker.patch("scripts.audit_sectioned_html_storage._compressed_size", return_value=1)
+        mocker.patch("scripts.oneoff.audit_sectioned_html_storage._compressed_size", return_value=1)
 
         totals = Totals()
         artifacts, _ = collect_artifacts(
@@ -635,7 +639,7 @@ class TestCollectArtifacts:
         html = _load_fixture("real_detail_crv")
         mocker.patch("shared.minio.read_html", return_value=html.encode("utf-8"))
         mocker.patch(
-            "scripts.audit_sectioned_html_storage._compressed_size",
+            "scripts.oneoff.audit_sectioned_html_storage._compressed_size",
             side_effect=RuntimeError("no such key"),
         )
 
@@ -660,7 +664,7 @@ class TestCollectArtifacts:
     def test_lossy_utf8_decode_is_flagged(self, mocker):
         mocker.patch("shared.minio.read_html", return_value=b"<html>\xff\xfe</html>")
         mocker.patch(
-            "scripts.audit_sectioned_html_storage._compressed_size", return_value=1
+            "scripts.oneoff.audit_sectioned_html_storage._compressed_size", return_value=1
         )
 
         artifacts, _ = collect_artifacts([_row()], Totals(), verify_parse=False)

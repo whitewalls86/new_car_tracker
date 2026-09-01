@@ -23,7 +23,7 @@ Run it in the ``archiver`` container -- it carries zstandard, boto3, duckdb and
 ``shared/`` -- specifically so ``processing`` stays free for that backfill:
 
     docker exec -it cartracker-archiver \\
-        python -m scripts.estimate_pack_savings --listings 150 --json-out /tmp/pack.json
+        python -m scripts.oneoff.estimate_pack_savings --listings 150 --json-out /tmp/pack.json
 
 Sampling is by whole LISTING, not by artifact, because a grouping measurement
 needs every capture of the listings it samples. Listings are ordered by

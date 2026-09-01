@@ -1,4 +1,4 @@
-"""Unit tests for scripts/estimate_recompression_savings.py
+"""Unit tests for scripts/oneoff/estimate_recompression_savings.py
 
 Groups:
   A - zstd round-trip math
@@ -19,6 +19,16 @@ from unittest.mock import MagicMock
 
 import pytest
 import zstandard as zstd
+
+# The repo root, anchored on `tests/` by name rather than by counting parents.
+# The subprocess cases below assert a non-zero exit, which a wrong cwd also
+# produces -- "script not found" and "argparse rejected the flags" are the same
+# return code, so a miscounted parent would leave them passing for the wrong
+# reason instead of failing.
+_REPO_ROOT = next(
+    p for p in Path(__file__).resolve().parents if p.name == "tests"
+).parent
+
 
 # ── Shared helpers ────────────────────────────────────────────────────────────
 
@@ -42,7 +52,7 @@ def _obj(
     key: str = "html/year=2026/month=6/artifact_type=detail_page/aaa.html.zst",
     size: int = 100,
 ):
-    from scripts.estimate_recompression_savings import ObjectInfo
+    from scripts.oneoff.estimate_recompression_savings import ObjectInfo
     return ObjectInfo(key=key, size=size)
 
 
@@ -59,7 +69,7 @@ def _args(**kwargs) -> argparse.Namespace:
 
 class TestZstdRoundTrip:
     def test_measure_correct_fields(self):
-        from scripts.estimate_recompression_savings import measure_object
+        from scripts.oneoff.estimate_recompression_savings import measure_object
         html = b"<html>" + b"A" * 10_000 + b"</html>"
         compressed = _compress(html, level=3)
         client = _make_client(compressed)
@@ -71,7 +81,7 @@ class TestZstdRoundTrip:
         assert result.saved_bytes == result.old_compressed - result.new_compressed
 
     def test_level9_smaller_than_level3_for_repetitive_html(self):
-        from scripts.estimate_recompression_savings import measure_object
+        from scripts.oneoff.estimate_recompression_savings import measure_object
         html = b"<html><body>" * 5_000  # highly repetitive → level 9 wins
         compressed = _compress(html, level=3)
         client = _make_client(compressed)
@@ -80,7 +90,7 @@ class TestZstdRoundTrip:
         assert result.new_compressed <= result.old_compressed
 
     def test_saved_bytes_exact(self):
-        from scripts.estimate_recompression_savings import measure_object
+        from scripts.oneoff.estimate_recompression_savings import measure_object
         html = b"hello world content " * 1_000
         compressed = _compress(html, level=3)
         client = _make_client(compressed)
@@ -90,7 +100,7 @@ class TestZstdRoundTrip:
     def test_incompressible_data_no_crash(self):
         import os
 
-        from scripts.estimate_recompression_savings import measure_object
+        from scripts.oneoff.estimate_recompression_savings import measure_object
         random_bytes = os.urandom(10_000)
         compressed = _compress(random_bytes, level=3)
         client = _make_client(compressed)
@@ -105,7 +115,7 @@ class TestZstdRoundTrip:
 
 class TestMeasureObject:
     def test_correct_result_fields(self):
-        from scripts.estimate_recompression_savings import measure_object
+        from scripts.oneoff.estimate_recompression_savings import measure_object
         html = b"<p>test content</p>" * 500
         compressed = _compress(html, level=3)
         result = measure_object(_make_client(compressed), "bronze", _obj())
@@ -115,19 +125,19 @@ class TestMeasureObject:
         assert result.new_compressed > 0
 
     def test_put_object_never_called(self):
-        from scripts.estimate_recompression_savings import measure_object
+        from scripts.oneoff.estimate_recompression_savings import measure_object
         client = _make_client(_compress(b"<html>x</html>" * 100))
         measure_object(client, "bronze", _obj())
         client.put_object.assert_not_called()
 
     def test_delete_object_never_called(self):
-        from scripts.estimate_recompression_savings import measure_object
+        from scripts.oneoff.estimate_recompression_savings import measure_object
         client = _make_client(_compress(b"<html>x</html>" * 100))
         measure_object(client, "bronze", _obj())
         client.delete_object.assert_not_called()
 
     def test_copy_object_never_called(self):
-        from scripts.estimate_recompression_savings import measure_object
+        from scripts.oneoff.estimate_recompression_savings import measure_object
         client = _make_client(_compress(b"<html>x</html>" * 100))
         measure_object(client, "bronze", _obj())
         client.copy_object.assert_not_called()
@@ -135,7 +145,7 @@ class TestMeasureObject:
     def test_client_error_sets_error_field(self):
         from botocore.exceptions import ClientError
 
-        from scripts.estimate_recompression_savings import measure_object
+        from scripts.oneoff.estimate_recompression_savings import measure_object
         err = ClientError({"Error": {"Code": "NoSuchKey", "Message": ""}}, "GetObject")
         result = measure_object(_make_client(error=err), "bronze", _obj())
         assert result.error is not None
@@ -144,18 +154,18 @@ class TestMeasureObject:
     def test_client_error_does_not_raise(self):
         from botocore.exceptions import ClientError
 
-        from scripts.estimate_recompression_savings import measure_object
+        from scripts.oneoff.estimate_recompression_savings import measure_object
         err = ClientError({"Error": {"Code": "500", "Message": ""}}, "GetObject")
         result = measure_object(_make_client(error=err), "bronze", _obj())
         assert result is not None  # no exception propagated
 
     def test_corrupt_zstd_sets_error_field(self):
-        from scripts.estimate_recompression_savings import measure_object
+        from scripts.oneoff.estimate_recompression_savings import measure_object
         result = measure_object(_make_client(b"not_valid_zstd_garbage"), "bronze", _obj())
         assert result.error is not None
 
     def test_corrupt_zstd_does_not_raise(self):
-        from scripts.estimate_recompression_savings import measure_object
+        from scripts.oneoff.estimate_recompression_savings import measure_object
         result = measure_object(_make_client(b"\x00\x01\x02\x03"), "bronze", _obj())
         assert result is not None
 
@@ -164,30 +174,30 @@ class TestMeasureObject:
 
 class TestBuildPrefixes:
     def test_prefix_passthrough(self):
-        from scripts.estimate_recompression_savings import build_prefixes
+        from scripts.oneoff.estimate_recompression_savings import build_prefixes
         args = _args(prefix="html/year=2026/month=5/artifact_type=detail_page/")
         assert build_prefixes(args, MagicMock()) == [
             "html/year=2026/month=5/artifact_type=detail_page/"
         ]
 
     def test_year_and_month_constructs_prefix(self):
-        from scripts.estimate_recompression_savings import build_prefixes
+        from scripts.oneoff.estimate_recompression_savings import build_prefixes
         args = _args(year=2026, month=5, artifact_type="detail_page")
         assert build_prefixes(args, MagicMock()) == [
             "html/year=2026/month=5/artifact_type=detail_page/"
         ]
 
     def test_results_page_artifact_type(self):
-        from scripts.estimate_recompression_savings import build_prefixes
+        from scripts.oneoff.estimate_recompression_savings import build_prefixes
         args = _args(year=2026, month=3, artifact_type="results_page")
         result = build_prefixes(args, MagicMock())
         assert result == ["html/year=2026/month=3/artifact_type=results_page/"]
 
     def test_year_without_month_calls_discover(self, mocker):
-        from scripts.estimate_recompression_savings import build_prefixes
+        from scripts.oneoff.estimate_recompression_savings import build_prefixes
         args = _args(year=2026, month=None, artifact_type="detail_page", bucket="bronze")
         mock_discover = mocker.patch(
-            "scripts.estimate_recompression_savings.discover_months_for_year",
+            "scripts.oneoff.estimate_recompression_savings.discover_months_for_year",
             return_value=[(2026, 3), (2026, 4)],
         )
 
@@ -200,19 +210,19 @@ class TestBuildPrefixes:
 
     def test_month_without_year_argparse_error(self):
         result = subprocess.run(
-            [sys.executable, "scripts/estimate_recompression_savings.py", "--month", "5"],
+            [sys.executable, "scripts/oneoff/estimate_recompression_savings.py", "--month", "5"],
             capture_output=True,
             text=True,
-            cwd=str(Path(__file__).parents[2]),
+            cwd=str(_REPO_ROOT),
         )
         assert result.returncode != 0
 
     def test_no_selector_argparse_error(self):
         result = subprocess.run(
-            [sys.executable, "scripts/estimate_recompression_savings.py"],
+            [sys.executable, "scripts/oneoff/estimate_recompression_savings.py"],
             capture_output=True,
             text=True,
-            cwd=str(Path(__file__).parents[2]),
+            cwd=str(_REPO_ROOT),
         )
         assert result.returncode != 0
 
@@ -221,39 +231,42 @@ class TestBuildPrefixes:
 
 class TestSampler:
     def test_systematic_rate_half(self):
-        from scripts.estimate_recompression_savings import make_sampler
+        from scripts.oneoff.estimate_recompression_savings import make_sampler
         sampler = make_sampler(0.5, False)  # stride = round(1/0.5) = 2
         sampled = [i for i in range(10) if sampler(i)]
         assert sampled == [0, 2, 4, 6, 8]
 
     def test_systematic_rate_tenth(self):
-        from scripts.estimate_recompression_savings import make_sampler
+        from scripts.oneoff.estimate_recompression_savings import make_sampler
         sampler = make_sampler(0.1, False)  # stride = 10
         sampled = [i for i in range(100) if sampler(i)]
         assert len(sampled) == 10
 
     def test_systematic_full_rate(self):
-        from scripts.estimate_recompression_savings import make_sampler
+        from scripts.oneoff.estimate_recompression_savings import make_sampler
         sampler = make_sampler(1.0, False)  # stride = 1, all sampled
         sampled = [i for i in range(10) if sampler(i)]
         assert sampled == list(range(10))
 
     def test_bernoulli_rate_zero_none_sampled(self, mocker):
-        from scripts.estimate_recompression_savings import make_sampler
-        mocker.patch("scripts.estimate_recompression_savings.random.random", return_value=0.5)
+        from scripts.oneoff.estimate_recompression_savings import make_sampler
+        mocker.patch(
+            "scripts.oneoff.estimate_recompression_savings.random.random",
+            return_value=0.5,
+        )
 
         sampler = make_sampler(0.0, True)  # 0.5 < 0.0 is always False
         sampled = [i for i in range(10) if sampler(i)]
         assert sampled == []
 
     def test_bernoulli_rate_one_all_sampled(self):
-        from scripts.estimate_recompression_savings import make_sampler
+        from scripts.oneoff.estimate_recompression_savings import make_sampler
         sampler = make_sampler(1.0, True)  # random.random() < 1.0 always True
         sampled = [i for i in range(10) if sampler(i)]
         assert len(sampled) == 10
 
     def test_systematic_reproducible(self):
-        from scripts.estimate_recompression_savings import make_sampler
+        from scripts.oneoff.estimate_recompression_savings import make_sampler
         sampler1 = make_sampler(0.2, False)
         sampler2 = make_sampler(0.2, False)
         assert [sampler1(i) for i in range(20)] == [sampler2(i) for i in range(20)]
@@ -263,7 +276,7 @@ class TestSampler:
 
 class TestExtrapolationMath:
     def test_20pct_savings_projection(self, capsys):
-        from scripts.estimate_recompression_savings import Stats, print_summary
+        from scripts.oneoff.estimate_recompression_savings import Stats, print_summary
         stats = Stats(
             scanned=1_000,
             sampled=50,
@@ -279,7 +292,7 @@ class TestExtrapolationMath:
         assert "20.0%" in out
 
     def test_projection_includes_listed_bytes(self, tmp_path):
-        from scripts.estimate_recompression_savings import Stats, print_summary
+        from scripts.oneoff.estimate_recompression_savings import Stats, print_summary
         stats = Stats(
             scanned=100,
             sampled=10,
@@ -298,14 +311,14 @@ class TestExtrapolationMath:
         assert data["projected_saved_bytes"] == 200_000
 
     def test_zero_sampled_no_crash(self, capsys):
-        from scripts.estimate_recompression_savings import Stats, print_summary
+        from scripts.oneoff.estimate_recompression_savings import Stats, print_summary
         stats = Stats(scanned=100, sampled=0, listed_bytes=500_000)
         print_summary(stats, sample_rate=0.05)
         out = capsys.readouterr().out
         assert "0.0%" in out
 
     def test_json_out_written(self, tmp_path):
-        from scripts.estimate_recompression_savings import Stats, print_summary
+        from scripts.oneoff.estimate_recompression_savings import Stats, print_summary
         stats = Stats(
             scanned=100,
             sampled=10,
@@ -321,7 +334,7 @@ class TestExtrapolationMath:
         assert data["recommendation"] in ("WORTH IT", "MAYBE", "SKIP")
 
     def test_recommendation_thresholds(self):
-        from scripts.estimate_recompression_savings import recommendation
+        from scripts.oneoff.estimate_recompression_savings import recommendation
         assert recommendation(20.0) == "WORTH IT"
         assert recommendation(15.0) == "WORTH IT"
         assert recommendation(14.9) == "MAYBE"
@@ -334,7 +347,7 @@ class TestExtrapolationMath:
 
 class TestFailureAccumulation:
     def test_failed_count_and_sampled(self):
-        from scripts.estimate_recompression_savings import Stats, measure_object
+        from scripts.oneoff.estimate_recompression_savings import Stats, measure_object
         html = b"<html>ok</html>" * 200
         good = _make_client(_compress(html))
         bad = _make_client(b"corrupt_junk_not_zstd")
@@ -352,7 +365,7 @@ class TestFailureAccumulation:
         assert len(stats.failed_keys) <= 5
 
     def test_failed_keys_capped_at_5(self):
-        from scripts.estimate_recompression_savings import Stats, measure_object
+        from scripts.oneoff.estimate_recompression_savings import Stats, measure_object
         bad = _make_client(b"junk")
         stats = Stats()
         for i in range(10):
@@ -366,7 +379,7 @@ class TestFailureAccumulation:
         assert len(stats.failed_keys) == 5
 
     def test_failed_objects_count_as_sampled(self):
-        from scripts.estimate_recompression_savings import Stats, measure_object
+        from scripts.oneoff.estimate_recompression_savings import Stats, measure_object
         bad = _make_client(b"junk")
         stats = Stats()
         for i in range(5):
@@ -383,7 +396,7 @@ class TestFailureAccumulation:
 class TestReadOnlyContract:
     def _run_main_with_mocks(self, mocker) -> MagicMock:
         """Run main() end-to-end with mocked MinIO, return the boto3 client mock."""
-        from scripts.estimate_recompression_savings import main
+        from scripts.oneoff.estimate_recompression_savings import main
 
         html = b"<html>content</html>" * 200
         compressed = _compress(html, level=3)
@@ -407,11 +420,11 @@ class TestReadOnlyContract:
         mock_client.get_paginator.return_value = mock_paginator
 
         mocker.patch(
-            "scripts.estimate_recompression_savings.get_boto3_client",
+            "scripts.oneoff.estimate_recompression_savings.get_boto3_client",
             return_value=mock_client,
         )
         mocker.patch(
-            "scripts.estimate_recompression_savings.get_s3fs", return_value=MagicMock()
+            "scripts.oneoff.estimate_recompression_savings.get_s3fs", return_value=MagicMock()
         )
         mocker.patch(
             "sys.argv",

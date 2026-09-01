@@ -1,4 +1,4 @@
-"""Unit tests for scripts/audit_parquet_layout.py
+"""Unit tests for scripts/oneoff/audit_parquet_layout.py
 
 Groups:
   A - parser validation (--dataset / --all mutual exclusion and requirement)
@@ -84,35 +84,35 @@ def _mock_paginator(entries: list[tuple[str, int]]):
 
 class TestParserValidation:
     def test_no_dataset_or_all_fails(self):
-        from scripts.audit_parquet_layout import parse_args
+        from scripts.oneoff.audit_parquet_layout import parse_args
 
         with pytest.raises(SystemExit) as exc:
             parse_args([])
         assert exc.value.code != 0
 
     def test_dataset_and_all_together_fails(self):
-        from scripts.audit_parquet_layout import parse_args
+        from scripts.oneoff.audit_parquet_layout import parse_args
 
         with pytest.raises(SystemExit) as exc:
             parse_args(["--all", "--dataset", "silver_observations"])
         assert exc.value.code != 0
 
     def test_all_alone_succeeds(self):
-        from scripts.audit_parquet_layout import parse_args
+        from scripts.oneoff.audit_parquet_layout import parse_args
 
         args = parse_args(["--all"])
         assert args.all is True
         assert args.datasets is None
 
     def test_single_dataset_succeeds(self):
-        from scripts.audit_parquet_layout import parse_args
+        from scripts.oneoff.audit_parquet_layout import parse_args
 
         args = parse_args(["--dataset", "silver_observations"])
         assert args.datasets == ["silver_observations"]
         assert args.all is False
 
     def test_multiple_datasets_repeatable(self):
-        from scripts.audit_parquet_layout import parse_args
+        from scripts.oneoff.audit_parquet_layout import parse_args
 
         args = parse_args([
             "--dataset", "silver_observations",
@@ -122,46 +122,46 @@ class TestParserValidation:
         assert "price_observation_events" in args.datasets
 
     def test_invalid_dataset_name_fails(self):
-        from scripts.audit_parquet_layout import parse_args
+        from scripts.oneoff.audit_parquet_layout import parse_args
 
         with pytest.raises(SystemExit) as exc:
             parse_args(["--dataset", "nonexistent_table"])
         assert exc.value.code != 0
 
     def test_json_out_path_parsed(self, tmp_path):
-        from scripts.audit_parquet_layout import parse_args
+        from scripts.oneoff.audit_parquet_layout import parse_args
 
         out = tmp_path / "report.json"
         args = parse_args(["--all", "--json-out", str(out)])
         assert args.json_out == out
 
     def test_markdown_out_path_parsed(self, tmp_path):
-        from scripts.audit_parquet_layout import parse_args
+        from scripts.oneoff.audit_parquet_layout import parse_args
 
         out = tmp_path / "report.md"
         args = parse_args(["--all", "--markdown-out", str(out)])
         assert args.markdown_out == out
 
     def test_sample_files_default(self):
-        from scripts.audit_parquet_layout import parse_args
+        from scripts.oneoff.audit_parquet_layout import parse_args
 
         args = parse_args(["--all"])
         assert args.sample_files == 3
 
     def test_sample_files_override(self):
-        from scripts.audit_parquet_layout import parse_args
+        from scripts.oneoff.audit_parquet_layout import parse_args
 
         args = parse_args(["--all", "--sample-files", "10"])
         assert args.sample_files == 10
 
     def test_prefix_mode_defaults_to_current(self):
-        from scripts.audit_parquet_layout import parse_args
+        from scripts.oneoff.audit_parquet_layout import parse_args
 
         args = parse_args(["--all"])
         assert args.prefix_mode == "current"
 
     def test_prefix_mode_normalized_parsed(self):
-        from scripts.audit_parquet_layout import parse_args
+        from scripts.oneoff.audit_parquet_layout import parse_args
 
         args = parse_args(["--all", "--prefix-mode", "normalized"])
         assert args.prefix_mode == "normalized"
@@ -180,12 +180,12 @@ class TestDatasetPrefixMapping:
         ("artifacts_queue_events", "ops/artifacts_queue_events/"),
     ])
     def test_prefix_correct(self, dataset, expected_prefix):
-        from scripts.audit_parquet_layout import DATASET_CONFIGS
+        from scripts.oneoff.audit_parquet_layout import DATASET_CONFIGS
 
         assert DATASET_CONFIGS[dataset]["prefix"] == expected_prefix
 
     def test_all_supported_datasets_have_config(self):
-        from scripts.audit_parquet_layout import DATASET_CONFIGS, SUPPORTED_DATASETS
+        from scripts.oneoff.audit_parquet_layout import DATASET_CONFIGS, SUPPORTED_DATASETS
 
         for name in SUPPORTED_DATASETS:
             assert name in DATASET_CONFIGS
@@ -195,7 +195,7 @@ class TestDatasetPrefixMapping:
             assert "partition_template" in config
 
     def test_current_prefix_mode_matches_default_configs(self):
-        from scripts.audit_parquet_layout import (
+        from scripts.oneoff.audit_parquet_layout import (
             DATASET_CONFIGS,
             dataset_configs_for_prefix_mode,
         )
@@ -217,13 +217,13 @@ class TestDatasetPrefixMapping:
         ("artifacts_queue_events", "ops_normalized/artifacts_queue_events/"),
     ])
     def test_normalized_prefix_correct(self, dataset, expected_prefix):
-        from scripts.audit_parquet_layout import dataset_configs_for_prefix_mode
+        from scripts.oneoff.audit_parquet_layout import dataset_configs_for_prefix_mode
 
         configs = dataset_configs_for_prefix_mode("normalized")
         assert configs[dataset]["prefix"] == expected_prefix
 
     def test_normalized_silver_pattern_matches_month_partition(self):
-        from scripts.audit_parquet_layout import (
+        from scripts.oneoff.audit_parquet_layout import (
             _is_expected_key,
             dataset_configs_for_prefix_mode,
         )
@@ -238,7 +238,7 @@ class TestDatasetPrefixMapping:
         assert _is_expected_key(key, pattern)
 
     def test_normalized_silver_pattern_rejects_day_partition(self):
-        from scripts.audit_parquet_layout import (
+        from scripts.oneoff.audit_parquet_layout import (
             _is_expected_key,
             dataset_configs_for_prefix_mode,
         )
@@ -253,7 +253,7 @@ class TestDatasetPrefixMapping:
         assert not _is_expected_key(key, pattern)
 
     def test_normalized_ops_pattern_matches(self):
-        from scripts.audit_parquet_layout import (
+        from scripts.oneoff.audit_parquet_layout import (
             _is_expected_key,
             dataset_configs_for_prefix_mode,
         )
@@ -270,7 +270,7 @@ class TestDatasetPrefixMapping:
 
 class TestPartitionPathHelpers:
     def test_partition_path_of_silver(self):
-        from scripts.audit_parquet_layout import _partition_path_of
+        from scripts.oneoff.audit_parquet_layout import _partition_path_of
 
         key = (
             "silver/observations/source=detail"
@@ -281,7 +281,7 @@ class TestPartitionPathHelpers:
         )
 
     def test_partition_path_of_ops(self):
-        from scripts.audit_parquet_layout import _partition_path_of
+        from scripts.oneoff.audit_parquet_layout import _partition_path_of
 
         key = "ops/price_observation_events/year=2026/month=6/part-abc.parquet"
         assert _partition_path_of(key) == "ops/price_observation_events/year=2026/month=6/"
@@ -296,7 +296,7 @@ class TestPartitionPathHelpers:
 
     @pytest.mark.parametrize("key", _SILVER_MATCH)
     def test_silver_expected_pattern_matches(self, key):
-        from scripts.audit_parquet_layout import DATASET_CONFIGS, _is_expected_key
+        from scripts.oneoff.audit_parquet_layout import DATASET_CONFIGS, _is_expected_key
 
         pattern = DATASET_CONFIGS["silver_observations"]["expected_pattern"]
         assert _is_expected_key(key, pattern)
@@ -313,7 +313,7 @@ class TestPartitionPathHelpers:
 
     @pytest.mark.parametrize("key", _SILVER_REJECT)
     def test_silver_expected_pattern_rejects(self, key):
-        from scripts.audit_parquet_layout import DATASET_CONFIGS, _is_expected_key
+        from scripts.oneoff.audit_parquet_layout import DATASET_CONFIGS, _is_expected_key
 
         pattern = DATASET_CONFIGS["silver_observations"]["expected_pattern"]
         assert not _is_expected_key(key, pattern)
@@ -335,7 +335,7 @@ class TestPartitionPathHelpers:
 
     @pytest.mark.parametrize("table,key", _OPS_MATCH)
     def test_ops_expected_pattern_matches(self, table, key):
-        from scripts.audit_parquet_layout import DATASET_CONFIGS, _is_expected_key
+        from scripts.oneoff.audit_parquet_layout import DATASET_CONFIGS, _is_expected_key
 
         pattern = DATASET_CONFIGS[table]["expected_pattern"]
         assert _is_expected_key(key, pattern)
@@ -360,7 +360,7 @@ class TestPartitionPathHelpers:
 
     @pytest.mark.parametrize("table,key", _OPS_REJECT)
     def test_ops_expected_pattern_rejects(self, table, key):
-        from scripts.audit_parquet_layout import DATASET_CONFIGS, _is_expected_key
+        from scripts.oneoff.audit_parquet_layout import DATASET_CONFIGS, _is_expected_key
 
         pattern = DATASET_CONFIGS[table]["expected_pattern"]
         assert not _is_expected_key(key, pattern)
@@ -371,13 +371,13 @@ class TestPartitionPathHelpers:
 
 class TestSmallFileDetection:
     def test_small_file_counted(self, mocker):
-        from scripts.audit_parquet_layout import DATASET_CONFIGS, audit_dataset
+        from scripts.oneoff.audit_parquet_layout import DATASET_CONFIGS, audit_dataset
 
         key = "ops/price_observation_events/year=2026/month=6/part-small.parquet"
         size = 512 * 1024  # 512 KiB — under 1 MiB threshold
 
         client = _mock_paginator([(key, size)])
-        mocker.patch("scripts.audit_parquet_layout.read_file_metadata", return_value=None)
+        mocker.patch("scripts.oneoff.audit_parquet_layout.read_file_metadata", return_value=None)
 
         result = audit_dataset(
             client, MagicMock(), "bronze",
@@ -389,13 +389,13 @@ class TestSmallFileDetection:
         assert result["small_files"] == 1
 
     def test_large_file_not_counted(self, mocker):
-        from scripts.audit_parquet_layout import DATASET_CONFIGS, audit_dataset
+        from scripts.oneoff.audit_parquet_layout import DATASET_CONFIGS, audit_dataset
 
         key = "ops/price_observation_events/year=2026/month=6/part-large.parquet"
         size = 5 * 1024 * 1024  # 5 MiB
 
         client = _mock_paginator([(key, size)])
-        mocker.patch("scripts.audit_parquet_layout.read_file_metadata", return_value=None)
+        mocker.patch("scripts.oneoff.audit_parquet_layout.read_file_metadata", return_value=None)
 
         result = audit_dataset(
             client, MagicMock(), "bronze",
@@ -407,12 +407,12 @@ class TestSmallFileDetection:
         assert result["small_files"] == 0
 
     def test_small_file_threshold_is_one_mib(self):
-        from scripts.audit_parquet_layout import SMALL_FILE_THRESHOLD
+        from scripts.oneoff.audit_parquet_layout import SMALL_FILE_THRESHOLD
 
         assert SMALL_FILE_THRESHOLD == 1 * 1024 * 1024
 
     def test_mixed_sizes(self, mocker):
-        from scripts.audit_parquet_layout import DATASET_CONFIGS, audit_dataset
+        from scripts.oneoff.audit_parquet_layout import DATASET_CONFIGS, audit_dataset
 
         entries = [
             ("ops/price_observation_events/year=2026/month=6/part-a.parquet", 512 * 1024),
@@ -420,7 +420,7 @@ class TestSmallFileDetection:
             ("ops/price_observation_events/year=2026/month=6/part-c.parquet", 100),
         ]
         client = _mock_paginator(entries)
-        mocker.patch("scripts.audit_parquet_layout.read_file_metadata", return_value=None)
+        mocker.patch("scripts.oneoff.audit_parquet_layout.read_file_metadata", return_value=None)
 
         result = audit_dataset(
             client, MagicMock(), "bronze",
@@ -439,7 +439,7 @@ class TestSmallFileDetection:
 
 class TestUnexpectedPathDetection:
     def test_unexpected_path_detected(self, mocker):
-        from scripts.audit_parquet_layout import DATASET_CONFIGS, audit_dataset
+        from scripts.oneoff.audit_parquet_layout import DATASET_CONFIGS, audit_dataset
 
         good_key = (
             "silver/observations/source=detail"
@@ -452,7 +452,7 @@ class TestUnexpectedPathDetection:
             (bad_key, 500),
         ]
         client = _mock_paginator(entries)
-        mocker.patch("scripts.audit_parquet_layout.read_file_metadata", return_value=None)
+        mocker.patch("scripts.oneoff.audit_parquet_layout.read_file_metadata", return_value=None)
 
         result = audit_dataset(
             client, MagicMock(), "bronze",
@@ -466,14 +466,14 @@ class TestUnexpectedPathDetection:
         assert result["total_objects"] == 2
 
     def test_no_unexpected_paths_when_all_conform(self, mocker):
-        from scripts.audit_parquet_layout import DATASET_CONFIGS, audit_dataset
+        from scripts.oneoff.audit_parquet_layout import DATASET_CONFIGS, audit_dataset
 
         key = (
             "silver/observations/source=detail"
             "/obs_year=2026/obs_month=6/obs_day=15/part-a.parquet"
         )
         client = _mock_paginator([(key, 2 * 1024 * 1024)])
-        mocker.patch("scripts.audit_parquet_layout.read_file_metadata", return_value=None)
+        mocker.patch("scripts.oneoff.audit_parquet_layout.read_file_metadata", return_value=None)
 
         result = audit_dataset(
             client, MagicMock(), "bronze",
@@ -500,7 +500,7 @@ class TestRowCountFromMetadata:
 
         mocker.patch("pyarrow.parquet.read_metadata", return_value=actual_meta)
 
-        from scripts.audit_parquet_layout import read_file_metadata
+        from scripts.oneoff.audit_parquet_layout import read_file_metadata
 
         info = read_file_metadata("bronze", "any/key.parquet", MagicMock())
 
@@ -513,7 +513,7 @@ class TestRowCountFromMetadata:
 
         mocker.patch("pyarrow.parquet.read_metadata", return_value=actual_meta)
 
-        from scripts.audit_parquet_layout import read_file_metadata
+        from scripts.oneoff.audit_parquet_layout import read_file_metadata
 
         info = read_file_metadata("bronze", "any/key.parquet", MagicMock())
 
@@ -524,7 +524,7 @@ class TestRowCountFromMetadata:
         """If pq.read_metadata raises, read_file_metadata returns None without crashing."""
         mocker.patch("pyarrow.parquet.read_metadata", side_effect=OSError("not found"))
 
-        from scripts.audit_parquet_layout import read_file_metadata
+        from scripts.oneoff.audit_parquet_layout import read_file_metadata
 
         info = read_file_metadata("bronze", "missing/key.parquet", MagicMock())
 
@@ -532,7 +532,7 @@ class TestRowCountFromMetadata:
 
     def test_partition_rows_aggregated_from_all_files(self, tmp_path, mocker):
         """audit_dataset sums rows from ALL files in a partition, not just sample_files."""
-        from scripts.audit_parquet_layout import DATASET_CONFIGS, FileMetaInfo, audit_dataset
+        from scripts.oneoff.audit_parquet_layout import DATASET_CONFIGS, FileMetaInfo, audit_dataset
 
         # 5 files in the same partition; sample_files=2 should still give rows from all 5
         keys = [
@@ -544,7 +544,10 @@ class TestRowCountFromMetadata:
         def _fake_meta(bucket, key, fs):
             return FileMetaInfo(rows=10, schema_fingerprint="abc123", ts_min=None, ts_max=None)
 
-        mocker.patch("scripts.audit_parquet_layout.read_file_metadata", side_effect=_fake_meta)
+        mocker.patch(
+            "scripts.oneoff.audit_parquet_layout.read_file_metadata",
+            side_effect=_fake_meta,
+        )
 
         result = audit_dataset(
             client, MagicMock(), "bronze",
@@ -562,7 +565,7 @@ class TestRowCountFromMetadata:
 
     def test_schema_sampling_limited_by_sample_files(self, tmp_path, mocker):
         """Schema fingerprints are collected from at most sample_files per partition."""
-        from scripts.audit_parquet_layout import (
+        from scripts.oneoff.audit_parquet_layout import (
             DATASET_CONFIGS,
             FileMetaInfo,
             _schema_fingerprint,
@@ -587,7 +590,10 @@ class TestRowCountFromMetadata:
             _calls[0] += 1
             return FileMetaInfo(rows=5, schema_fingerprint=fp, ts_min=None, ts_max=None)
 
-        mocker.patch("scripts.audit_parquet_layout.read_file_metadata", side_effect=_cycling_meta)
+        mocker.patch(
+            "scripts.oneoff.audit_parquet_layout.read_file_metadata",
+            side_effect=_cycling_meta,
+        )
 
         result = audit_dataset(
             client, MagicMock(), "bronze",
@@ -603,13 +609,13 @@ class TestRowCountFromMetadata:
 
     def test_rows_null_when_all_metadata_reads_fail(self, tmp_path, mocker):
         """rows is None (not 0) when every footer read fails for a partition."""
-        from scripts.audit_parquet_layout import DATASET_CONFIGS, audit_dataset
+        from scripts.oneoff.audit_parquet_layout import DATASET_CONFIGS, audit_dataset
 
         key = "ops/price_observation_events/year=2026/month=6/part-a.parquet"
         client = _mock_paginator([(key, 2 * 1024 * 1024)])
 
         mocker.patch(
-            "scripts.audit_parquet_layout.read_file_metadata", return_value=None
+            "scripts.oneoff.audit_parquet_layout.read_file_metadata", return_value=None
         )
 
         result = audit_dataset(
@@ -631,7 +637,7 @@ class TestRowCountFromMetadata:
 
 class TestSchemaVariantDetection:
     def test_two_files_same_schema_one_variant(self, tmp_path, mocker):
-        from scripts.audit_parquet_layout import (
+        from scripts.oneoff.audit_parquet_layout import (
             DATASET_CONFIGS,
             FileMetaInfo,
             _schema_fingerprint,
@@ -650,7 +656,10 @@ class TestSchemaVariantDetection:
         def _same_schema(bucket, key, fs):
             return FileMetaInfo(rows=5, schema_fingerprint=fp, ts_min=None, ts_max=None)
 
-        mocker.patch("scripts.audit_parquet_layout.read_file_metadata", side_effect=_same_schema)
+        mocker.patch(
+            "scripts.oneoff.audit_parquet_layout.read_file_metadata",
+            side_effect=_same_schema,
+        )
 
         result = audit_dataset(
             client, MagicMock(), "bronze",
@@ -662,7 +671,7 @@ class TestSchemaVariantDetection:
         assert result["schema_variants"] == 1
 
     def test_two_files_different_schema_two_variants(self, tmp_path, mocker):
-        from scripts.audit_parquet_layout import (
+        from scripts.oneoff.audit_parquet_layout import (
             DATASET_CONFIGS,
             FileMetaInfo,
             _schema_fingerprint,
@@ -688,7 +697,7 @@ class TestSchemaVariantDetection:
             _calls[0] += 1
             return FileMetaInfo(rows=5, schema_fingerprint=_fps[idx], ts_min=None, ts_max=None)
 
-        _patch = "scripts.audit_parquet_layout.read_file_metadata"
+        _patch = "scripts.oneoff.audit_parquet_layout.read_file_metadata"
         mocker.patch(_patch, side_effect=_alternating_schema)
 
         result = audit_dataset(
@@ -701,14 +710,14 @@ class TestSchemaVariantDetection:
         assert result["schema_variants"] == 2
 
     def test_schema_fingerprint_differs_for_different_schemas(self):
-        from scripts.audit_parquet_layout import _schema_fingerprint
+        from scripts.oneoff.audit_parquet_layout import _schema_fingerprint
 
         fp1 = _schema_fingerprint(_OPS_SCHEMA)
         fp2 = _schema_fingerprint(_ALT_SCHEMA)
         assert fp1 != fp2
 
     def test_schema_fingerprint_same_for_identical_schemas(self):
-        from scripts.audit_parquet_layout import _schema_fingerprint
+        from scripts.oneoff.audit_parquet_layout import _schema_fingerprint
 
         schema_copy = pa.schema([
             pa.field("event_id", pa.int64()),
@@ -719,7 +728,7 @@ class TestSchemaVariantDetection:
 
     def test_schema_fingerprint_same_for_reordered_columns(self):
         """Column reordering does not produce a different fingerprint (logical compat)."""
-        from scripts.audit_parquet_layout import _schema_fingerprint
+        from scripts.oneoff.audit_parquet_layout import _schema_fingerprint
 
         schema_orig = pa.schema([
             pa.field("event_id", pa.int64()),
@@ -735,7 +744,7 @@ class TestSchemaVariantDetection:
 
     def test_schema_variants_from_real_fixtures(self, tmp_path, mocker):
         """Integration: two local Parquet fixtures with different schemas → 2 variants."""
-        from scripts.audit_parquet_layout import (
+        from scripts.oneoff.audit_parquet_layout import (
             DATASET_CONFIGS,
             FileMetaInfo,
             _schema_fingerprint,
@@ -770,7 +779,10 @@ class TestSchemaVariantDetection:
                 ts_max=None,
             )
 
-        mocker.patch("scripts.audit_parquet_layout.read_file_metadata", side_effect=_real_meta)
+        mocker.patch(
+            "scripts.oneoff.audit_parquet_layout.read_file_metadata",
+            side_effect=_real_meta,
+        )
 
         result = audit_dataset(
             client, MagicMock(), "bronze",
@@ -813,7 +825,7 @@ class TestJsonOutput:
         }
 
     def test_json_contains_dataset_keys(self, tmp_path):
-        from scripts.audit_parquet_layout import build_json_report
+        from scripts.oneoff.audit_parquet_layout import build_json_report
 
         results = {
             "silver_observations": self._make_mock_result("silver_observations"),
@@ -827,7 +839,7 @@ class TestJsonOutput:
         assert "price_observation_events" in report["datasets"]
 
     def test_json_output_valid_and_serializable(self, tmp_path):
-        from scripts.audit_parquet_layout import build_json_report
+        from scripts.oneoff.audit_parquet_layout import build_json_report
 
         results = {"silver_observations": self._make_mock_result("silver_observations")}
         report = build_json_report(results)
@@ -838,7 +850,7 @@ class TestJsonOutput:
         assert parsed["datasets"]["silver_observations"]["total_objects"] == 10
 
     def test_json_written_to_path(self, tmp_path):
-        from scripts.audit_parquet_layout import build_json_report
+        from scripts.oneoff.audit_parquet_layout import build_json_report
 
         results = {"silver_observations": self._make_mock_result("silver_observations")}
         report = build_json_report(results)
@@ -850,7 +862,7 @@ class TestJsonOutput:
         assert "silver_observations" in data["datasets"]
 
     def test_json_dataset_has_required_fields(self):
-        from scripts.audit_parquet_layout import build_json_report
+        from scripts.oneoff.audit_parquet_layout import build_json_report
 
         results = {"price_observation_events": self._make_mock_result("price_observation_events")}
         report = build_json_report(results)
@@ -865,7 +877,7 @@ class TestJsonOutput:
             assert key in ds, f"Missing key: {key}"
 
     def test_json_partition_has_required_fields(self):
-        from scripts.audit_parquet_layout import build_json_report
+        from scripts.oneoff.audit_parquet_layout import build_json_report
 
         results = {"price_observation_events": self._make_mock_result("price_observation_events")}
         report = build_json_report(results)
@@ -921,32 +933,32 @@ class TestMarkdownOutput:
         }
 
     def test_markdown_contains_pipe_rows(self):
-        from scripts.audit_parquet_layout import build_markdown_report
+        from scripts.oneoff.audit_parquet_layout import build_markdown_report
 
         md = build_markdown_report(self._make_report())
         pipe_lines = [line for line in md.splitlines() if "|" in line]
         assert len(pipe_lines) > 0
 
     def test_markdown_contains_dataset_name(self):
-        from scripts.audit_parquet_layout import build_markdown_report
+        from scripts.oneoff.audit_parquet_layout import build_markdown_report
 
         md = build_markdown_report(self._make_report())
         assert "silver_observations" in md
 
     def test_markdown_contains_partition_info(self):
-        from scripts.audit_parquet_layout import build_markdown_report
+        from scripts.oneoff.audit_parquet_layout import build_markdown_report
 
         md = build_markdown_report(self._make_report())
         assert "source=detail" in md
 
     def test_markdown_unexpected_paths_listed(self):
-        from scripts.audit_parquet_layout import build_markdown_report
+        from scripts.oneoff.audit_parquet_layout import build_markdown_report
 
         md = build_markdown_report(self._make_report())
         assert "stray.csv" in md
 
     def test_markdown_written_to_path(self, tmp_path):
-        from scripts.audit_parquet_layout import build_markdown_report
+        from scripts.oneoff.audit_parquet_layout import build_markdown_report
 
         out = tmp_path / "audit.md"
         md = build_markdown_report(self._make_report())
@@ -957,7 +969,7 @@ class TestMarkdownOutput:
         assert "silver_observations" in text
 
     def test_markdown_summary_table_headers(self):
-        from scripts.audit_parquet_layout import build_markdown_report
+        from scripts.oneoff.audit_parquet_layout import build_markdown_report
 
         md = build_markdown_report(self._make_report())
         assert "Objects" in md
@@ -970,7 +982,7 @@ class TestMarkdownOutput:
 
 class TestNoMutation:
     def _run_audit(self, mocker, client, fs_mock=None):
-        from scripts.audit_parquet_layout import DATASET_CONFIGS, audit_dataset
+        from scripts.oneoff.audit_parquet_layout import DATASET_CONFIGS, audit_dataset
 
         key = "ops/price_observation_events/year=2026/month=6/part-a.parquet"
         entries = [(key, 2 * 1024 * 1024)]
@@ -983,7 +995,7 @@ class TestNoMutation:
         if fs_mock is None:
             fs_mock = MagicMock()
 
-        mocker.patch("scripts.audit_parquet_layout.read_file_metadata", return_value=None)
+        mocker.patch("scripts.oneoff.audit_parquet_layout.read_file_metadata", return_value=None)
 
         audit_dataset(
             client, fs_mock, "bronze",

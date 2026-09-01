@@ -1,4 +1,4 @@
-"""Unit tests for scripts/rewrite_parquet_layout.py
+"""Unit tests for scripts/oneoff/rewrite_parquet_layout.py
 
 Groups:
   A - CLI validation (--dataset/--all, --source, --month, invalid names)
@@ -84,7 +84,7 @@ def _make_unit(
     keys: list[str] | None = None,
     source_bytes: int = 1000,
 ):
-    from scripts.rewrite_parquet_layout import RewriteUnit
+    from scripts.oneoff.rewrite_parquet_layout import RewriteUnit
 
     if keys is None:
         keys = [f"ops/{dataset}/year={year}/month={month}/part-0.parquet"]
@@ -117,89 +117,89 @@ def _make_unit(
 
 class TestCliValidation:
     def test_no_selector_fails(self):
-        from scripts.rewrite_parquet_layout import parse_args
+        from scripts.oneoff.rewrite_parquet_layout import parse_args
 
         with pytest.raises(SystemExit) as exc:
             parse_args([])
         assert exc.value.code != 0
 
     def test_dataset_and_all_mutually_exclusive(self):
-        from scripts.rewrite_parquet_layout import parse_args
+        from scripts.oneoff.rewrite_parquet_layout import parse_args
 
         with pytest.raises(SystemExit) as exc:
             parse_args(["--all", "--dataset", "silver_observations"])
         assert exc.value.code != 0
 
     def test_all_alone_succeeds(self):
-        from scripts.rewrite_parquet_layout import parse_args
+        from scripts.oneoff.rewrite_parquet_layout import parse_args
 
         args = parse_args(["--all"])
         assert args.all is True
         assert args.datasets is None
 
     def test_single_dataset_succeeds(self):
-        from scripts.rewrite_parquet_layout import parse_args
+        from scripts.oneoff.rewrite_parquet_layout import parse_args
 
         args = parse_args(["--dataset", "silver_observations"])
         assert args.datasets == ["silver_observations"]
 
     def test_invalid_dataset_rejected(self):
-        from scripts.rewrite_parquet_layout import parse_args
+        from scripts.oneoff.rewrite_parquet_layout import parse_args
 
         with pytest.raises(SystemExit) as exc:
             parse_args(["--dataset", "nonexistent_table"])
         assert exc.value.code != 0
 
     def test_source_rejected_for_non_silver_dataset(self):
-        from scripts.rewrite_parquet_layout import parse_args
+        from scripts.oneoff.rewrite_parquet_layout import parse_args
 
         with pytest.raises(SystemExit) as exc:
             parse_args(["--dataset", "price_observation_events", "--source", "detail"])
         assert exc.value.code != 0
 
     def test_source_valid_for_silver(self):
-        from scripts.rewrite_parquet_layout import parse_args
+        from scripts.oneoff.rewrite_parquet_layout import parse_args
 
         args = parse_args(["--dataset", "silver_observations", "--source", "detail"])
         assert args.source == "detail"
 
     def test_source_with_all_is_valid(self):
         """--all includes silver; --source filtering applies to silver units only."""
-        from scripts.rewrite_parquet_layout import parse_args
+        from scripts.oneoff.rewrite_parquet_layout import parse_args
 
         args = parse_args(["--all", "--source", "carousel"])
         assert args.all is True
         assert args.source == "carousel"
 
     def test_invalid_month_format_rejected(self):
-        from scripts.rewrite_parquet_layout import parse_args
+        from scripts.oneoff.rewrite_parquet_layout import parse_args
 
         for bad in ["2026", "06-2026", "2026/06", "not-a-date"]:
             with pytest.raises(SystemExit):
                 parse_args(["--all", "--month", bad])
 
     def test_valid_month_parsed(self):
-        from scripts.rewrite_parquet_layout import parse_args
+        from scripts.oneoff.rewrite_parquet_layout import parse_args
 
         args = parse_args(["--all", "--month", "2026-06"])
         assert args.month == "2026-06"
 
     def test_default_is_dry_run(self):
-        from scripts.rewrite_parquet_layout import parse_args
+        from scripts.oneoff.rewrite_parquet_layout import parse_args
 
         args = parse_args(["--all"])
         assert args.dry_run is True
         assert args.apply is False
 
     def test_apply_disables_dry_run(self):
-        from scripts.rewrite_parquet_layout import parse_args
+        from scripts.oneoff.rewrite_parquet_layout import parse_args
 
         args = parse_args(["--all", "--apply"])
         assert args.apply is True
         assert args.dry_run is False
 
     def test_limit_partitions_parsed(self):
-        from scripts.rewrite_parquet_layout import parse_args
+        from scripts.oneoff.rewrite_parquet_layout import parse_args
 
         args = parse_args(["--all", "--limit-partitions", "5"])
         assert args.limit_partitions == 5
@@ -223,7 +223,7 @@ class TestSilverDiscovery:
         ]
 
     def test_multiple_days_collapsed_into_one_unit(self):
-        from scripts.rewrite_parquet_layout import _discover_silver_units
+        from scripts.oneoff.rewrite_parquet_layout import _discover_silver_units
 
         entries = self._keys(days=(1, 2, 3))
         client = _mock_paginator(entries)
@@ -236,7 +236,7 @@ class TestSilverDiscovery:
         assert len(units[0].source_keys) == 3
 
     def test_different_months_produce_separate_units(self):
-        from scripts.rewrite_parquet_layout import _discover_silver_units
+        from scripts.oneoff.rewrite_parquet_layout import _discover_silver_units
 
         entries = self._keys(month=6) + self._keys(month=7)
         client = _mock_paginator(entries)
@@ -247,7 +247,7 @@ class TestSilverDiscovery:
         assert months == {6, 7}
 
     def test_different_sources_produce_separate_units(self):
-        from scripts.rewrite_parquet_layout import _discover_silver_units
+        from scripts.oneoff.rewrite_parquet_layout import _discover_silver_units
 
         entries = self._keys(source="detail") + self._keys(source="carousel")
         client = _mock_paginator(entries)
@@ -258,7 +258,7 @@ class TestSilverDiscovery:
         assert sources == {"detail", "carousel"}
 
     def test_source_filter_applied(self):
-        from scripts.rewrite_parquet_layout import _discover_silver_units
+        from scripts.oneoff.rewrite_parquet_layout import _discover_silver_units
 
         entries = self._keys(source="detail") + self._keys(source="carousel")
         client = _mock_paginator(entries)
@@ -268,7 +268,7 @@ class TestSilverDiscovery:
         assert units[0].source == "detail"
 
     def test_month_filter_applied(self):
-        from scripts.rewrite_parquet_layout import _discover_silver_units
+        from scripts.oneoff.rewrite_parquet_layout import _discover_silver_units
 
         entries = self._keys(month=6) + self._keys(month=7)
         client = _mock_paginator(entries)
@@ -278,7 +278,7 @@ class TestSilverDiscovery:
         assert units[0].month == 6
 
     def test_source_prefix_contains_all_days(self):
-        from scripts.rewrite_parquet_layout import _discover_silver_units
+        from scripts.oneoff.rewrite_parquet_layout import _discover_silver_units
 
         entries = self._keys(days=(1, 15, 28))
         client = _mock_paginator(entries)
@@ -291,7 +291,7 @@ class TestSilverDiscovery:
         assert f"obs_month={unit.month}" in unit.source_prefix
 
     def test_target_prefix_is_normalized(self):
-        from scripts.rewrite_parquet_layout import _discover_silver_units
+        from scripts.oneoff.rewrite_parquet_layout import _discover_silver_units
 
         entries = self._keys()
         client = _mock_paginator(entries)
@@ -300,7 +300,7 @@ class TestSilverDiscovery:
         assert units[0].target_prefix.startswith("silver_normalized/observations/")
 
     def test_unexpected_keys_ignored(self):
-        from scripts.rewrite_parquet_layout import _discover_silver_units
+        from scripts.oneoff.rewrite_parquet_layout import _discover_silver_units
 
         entries = [
             ("silver/observations/orphan.parquet", 100),
@@ -330,7 +330,7 @@ class TestOpsDiscovery:
         ]
 
     def test_multiple_files_in_same_month_are_one_unit(self):
-        from scripts.rewrite_parquet_layout import _discover_ops_units
+        from scripts.oneoff.rewrite_parquet_layout import _discover_ops_units
 
         entries = self._ops_entries(n=5)
         client = _mock_paginator(entries)
@@ -340,7 +340,7 @@ class TestOpsDiscovery:
         assert len(units[0].source_keys) == 5
 
     def test_different_months_produce_separate_units(self):
-        from scripts.rewrite_parquet_layout import _discover_ops_units
+        from scripts.oneoff.rewrite_parquet_layout import _discover_ops_units
 
         entries = self._ops_entries(month=6) + self._ops_entries(month=7)
         client = _mock_paginator(entries)
@@ -349,7 +349,7 @@ class TestOpsDiscovery:
         assert len(units) == 2
 
     def test_month_filter_applied(self):
-        from scripts.rewrite_parquet_layout import _discover_ops_units
+        from scripts.oneoff.rewrite_parquet_layout import _discover_ops_units
 
         entries = self._ops_entries(month=6) + self._ops_entries(month=7)
         client = _mock_paginator(entries)
@@ -361,7 +361,7 @@ class TestOpsDiscovery:
         assert units[0].month == 6
 
     def test_target_prefix_is_normalized(self):
-        from scripts.rewrite_parquet_layout import _discover_ops_units
+        from scripts.oneoff.rewrite_parquet_layout import _discover_ops_units
 
         entries = self._ops_entries()
         client = _mock_paginator(entries)
@@ -370,7 +370,7 @@ class TestOpsDiscovery:
         assert units[0].target_prefix.startswith("ops_normalized/price_observation_events/")
 
     def test_all_supported_ops_datasets_discoverable(self):
-        from scripts.rewrite_parquet_layout import SUPPORTED_DATASETS, _discover_ops_units
+        from scripts.oneoff.rewrite_parquet_layout import SUPPORTED_DATASETS, _discover_ops_units
 
         for dataset in SUPPORTED_DATASETS:
             if dataset == "silver_observations":
@@ -381,7 +381,7 @@ class TestOpsDiscovery:
             assert len(units) == 1, f"Expected 1 unit for {dataset}"
 
     def test_limit_partitions_respected(self):
-        from scripts.rewrite_parquet_layout import discover_units
+        from scripts.oneoff.rewrite_parquet_layout import discover_units
 
         # 3 months of price_observation_events
         entries = [
@@ -407,7 +407,7 @@ class TestDryRunSafety:
         return fs
 
     def test_dry_run_never_calls_write_table(self, mocker):
-        from scripts.rewrite_parquet_layout import _dry_run_unit
+        from scripts.oneoff.rewrite_parquet_layout import _dry_run_unit
 
         unit = _make_unit()
         fs = self._make_fs_mock()
@@ -421,7 +421,7 @@ class TestDryRunSafety:
         fs.open.assert_not_called()
 
     def test_dry_run_never_calls_rename(self, mocker):
-        from scripts.rewrite_parquet_layout import _dry_run_unit
+        from scripts.oneoff.rewrite_parquet_layout import _dry_run_unit
 
         unit = _make_unit()
         fs = self._make_fs_mock()
@@ -436,7 +436,7 @@ class TestDryRunSafety:
         fs.move.assert_not_called()
 
     def test_dry_run_never_calls_pq_write_table(self, mocker):
-        from scripts.rewrite_parquet_layout import _dry_run_unit
+        from scripts.oneoff.rewrite_parquet_layout import _dry_run_unit
 
         unit = _make_unit()
         fs = self._make_fs_mock()
@@ -451,7 +451,7 @@ class TestDryRunSafety:
 
     def test_dry_run_does_not_call_pq_read_table(self, mocker):
         """dry_run reads only metadata (footer), never full column data."""
-        from scripts.rewrite_parquet_layout import _dry_run_unit
+        from scripts.oneoff.rewrite_parquet_layout import _dry_run_unit
 
         unit = _make_unit()
         fs = self._make_fs_mock()
@@ -465,7 +465,7 @@ class TestDryRunSafety:
         mock_read.assert_not_called()
 
     def test_dry_run_result_status_ok_when_would_proceed(self, mocker):
-        from scripts.rewrite_parquet_layout import _dry_run_unit
+        from scripts.oneoff.rewrite_parquet_layout import _dry_run_unit
 
         unit = _make_unit()
         fs = self._make_fs_mock()
@@ -485,7 +485,7 @@ class TestDryRunSafety:
         assert result.rows_source == 10
 
     def test_dry_run_skip_existing_when_target_has_parquet(self, mocker):
-        from scripts.rewrite_parquet_layout import _dry_run_unit
+        from scripts.oneoff.rewrite_parquet_layout import _dry_run_unit
 
         unit = _make_unit()
         existing = [
@@ -509,7 +509,7 @@ class TestDryRunSafety:
 
 class TestDataTransformation:
     def test_concat_sort_sorts_by_available_column(self):
-        from scripts.rewrite_parquet_layout import _concat_sort
+        from scripts.oneoff.rewrite_parquet_layout import _concat_sort
 
         schema = pa.schema([pa.field("event_at", pa.timestamp("us", tz="UTC"))])
         t1 = pa.table(
@@ -525,7 +525,7 @@ class TestDataTransformation:
         assert dates[0] < dates[1]
 
     def test_concat_sort_missing_sort_columns_do_not_fail(self):
-        from scripts.rewrite_parquet_layout import _concat_sort
+        from scripts.oneoff.rewrite_parquet_layout import _concat_sort
 
         schema = pa.schema([pa.field("event_id", pa.int64())])
         t = pa.table({"event_id": [3, 1, 2]}, schema=schema)
@@ -534,7 +534,7 @@ class TestDataTransformation:
         assert len(result) == 3
 
     def test_concat_sort_preserves_row_count(self):
-        from scripts.rewrite_parquet_layout import _concat_sort
+        from scripts.oneoff.rewrite_parquet_layout import _concat_sort
 
         schema = pa.schema([pa.field("event_id", pa.int64())])
         tables = [
@@ -546,7 +546,7 @@ class TestDataTransformation:
 
     def test_concat_sort_uses_only_existing_columns(self):
         """Sort columns that exist are used; absent ones are silently ignored."""
-        from scripts.rewrite_parquet_layout import _concat_sort
+        from scripts.oneoff.rewrite_parquet_layout import _concat_sort
 
         schema = pa.schema([
             pa.field("event_id", pa.int64()),
@@ -558,14 +558,14 @@ class TestDataTransformation:
         assert len(result) == 5
 
     def test_schema_fingerprint_stable_across_column_order(self):
-        from scripts.rewrite_parquet_layout import _schema_fingerprint
+        from scripts.oneoff.rewrite_parquet_layout import _schema_fingerprint
 
         s1 = pa.schema([pa.field("a", pa.int64()), pa.field("b", pa.string())])
         s2 = pa.schema([pa.field("b", pa.string()), pa.field("a", pa.int64())])
         assert _schema_fingerprint(s1) == _schema_fingerprint(s2)
 
     def test_schema_fingerprint_differs_for_different_schemas(self):
-        from scripts.rewrite_parquet_layout import _schema_fingerprint
+        from scripts.oneoff.rewrite_parquet_layout import _schema_fingerprint
 
         s1 = pa.schema([pa.field("a", pa.int64())])
         s2 = pa.schema([pa.field("a", pa.string())])
@@ -600,7 +600,7 @@ class TestApplyFlow:
         replace_existing: bool = False,
     ):
         """Run _apply_unit with mocked pyarrow I/O and an s3fs mock."""
-        from scripts.rewrite_parquet_layout import _apply_unit
+        from scripts.oneoff.rewrite_parquet_layout import _apply_unit
 
         rows_written = write_rows_override if write_rows_override is not None else len(source_table)
         written_meta = self._make_meta_mock(rows_written)
@@ -694,7 +694,7 @@ class TestApplyFlow:
         fs_mock.rename.assert_not_called()
 
     def test_schema_fingerprint_in_result(self, mocker):
-        from scripts.rewrite_parquet_layout import _schema_fingerprint
+        from scripts.oneoff.rewrite_parquet_layout import _schema_fingerprint
 
         unit = _make_unit()
         table = _make_table(5)
@@ -705,14 +705,14 @@ class TestApplyFlow:
 
     def test_sort_columns_applied_to_silver(self):
         """Silver units are sorted by fetched_at, listing_id, artifact_id."""
-        from scripts.rewrite_parquet_layout import _SORT_COLS
+        from scripts.oneoff.rewrite_parquet_layout import _SORT_COLS
 
         assert "fetched_at" in _SORT_COLS["silver_observations"]
         assert "listing_id" in _SORT_COLS["silver_observations"]
 
     def test_sort_priority_for_ops_tables(self):
         """Ops event tables have event_at as the primary sort column."""
-        from scripts.rewrite_parquet_layout import _SORT_COLS
+        from scripts.oneoff.rewrite_parquet_layout import _SORT_COLS
 
         for dataset, sort_cols in _SORT_COLS.items():
             if dataset == "silver_observations":
@@ -723,7 +723,7 @@ class TestApplyFlow:
 
     def test_real_parquet_round_trip_row_count(self):
         """End-to-end: read real Parquet bytes → concat+sort → write → validate count."""
-        from scripts.rewrite_parquet_layout import _concat_sort, _schema_fingerprint
+        from scripts.oneoff.rewrite_parquet_layout import _concat_sort, _schema_fingerprint
 
         N = 30
         schema = pa.schema([
@@ -880,7 +880,7 @@ class TestOldPrefixUntouched:
         rg.num_rows = len(table)
         mock_meta.return_value.num_row_groups = 1
         mock_meta.return_value.row_group.return_value = rg
-        from scripts.rewrite_parquet_layout import _apply_unit
+        from scripts.oneoff.rewrite_parquet_layout import _apply_unit
         _apply_unit(unit, fs_mock, "bronze")
 
         old_prefixes = ("silver/observations/", "ops/price_observation_events/")
@@ -906,7 +906,7 @@ class TestOldPrefixUntouched:
         rg.num_rows = len(table)
         mock_meta.return_value.num_row_groups = 1
         mock_meta.return_value.row_group.return_value = rg
-        from scripts.rewrite_parquet_layout import _apply_unit
+        from scripts.oneoff.rewrite_parquet_layout import _apply_unit
         _apply_unit(unit, fs_mock, "bronze")
 
         if fs_mock.rename.called:
@@ -928,7 +928,7 @@ class TestBaselineAudit:
         }
 
     def test_load_baseline_audit_silver_aggregates_across_days(self, tmp_path):
-        from scripts.rewrite_parquet_layout import load_baseline_audit
+        from scripts.oneoff.rewrite_parquet_layout import load_baseline_audit
 
         base = "silver/observations/source=detail"
         data = self._baseline_json("silver_observations", [
@@ -947,7 +947,7 @@ class TestBaselineAudit:
         assert silver[("detail", 2026, 7)] == 200
 
     def test_load_baseline_audit_ops_aggregates(self, tmp_path):
-        from scripts.rewrite_parquet_layout import load_baseline_audit
+        from scripts.oneoff.rewrite_parquet_layout import load_baseline_audit
 
         data = self._baseline_json("price_observation_events", [
             {"path": "ops/price_observation_events/year=2026/month=6/", "rows": 1000},
@@ -962,7 +962,7 @@ class TestBaselineAudit:
         assert ops[(2026, 7)] == 2000
 
     def test_load_baseline_audit_skips_null_rows(self, tmp_path):
-        from scripts.rewrite_parquet_layout import load_baseline_audit
+        from scripts.oneoff.rewrite_parquet_layout import load_baseline_audit
 
         data = self._baseline_json("price_observation_events", [
             {"path": "ops/price_observation_events/year=2026/month=6/", "rows": None},
@@ -1014,12 +1014,12 @@ class TestBaselineAudit:
         mock_write = mocker.patch("pyarrow.parquet.write_table")
         mocker.patch("pyarrow.parquet.read_metadata")
 
-        from scripts.rewrite_parquet_layout import _apply_unit
+        from scripts.oneoff.rewrite_parquet_layout import _apply_unit
         _apply_unit(unit, fs_mock, "bronze", baseline_rows=99)
         mock_write.assert_not_called()
 
     def test_baseline_lookup_returns_none_for_missing_dataset(self, tmp_path):
-        from scripts.rewrite_parquet_layout import _baseline_lookup, load_baseline_audit
+        from scripts.oneoff.rewrite_parquet_layout import _baseline_lookup, load_baseline_audit
 
         data = {"generated_at": "...", "datasets": {}}
         f = tmp_path / "audit.json"
@@ -1067,7 +1067,7 @@ class TestReportStructure:
         return type("UnitResult", (), defaults)()
 
     def test_report_has_required_top_level_keys(self):
-        from scripts.rewrite_parquet_layout import build_report
+        from scripts.oneoff.rewrite_parquet_layout import build_report
 
         report = build_report(
             [], dry_run=True, bucket="bronze", datasets=["price_observation_events"]
@@ -1076,19 +1076,19 @@ class TestReportStructure:
             assert key in report, f"Missing key: {key}"
 
     def test_report_mode_dry_run(self):
-        from scripts.rewrite_parquet_layout import build_report
+        from scripts.oneoff.rewrite_parquet_layout import build_report
 
         report = build_report([], dry_run=True, bucket="bronze", datasets=[])
         assert report["mode"] == "dry_run"
 
     def test_report_mode_apply(self):
-        from scripts.rewrite_parquet_layout import build_report
+        from scripts.oneoff.rewrite_parquet_layout import build_report
 
         report = build_report([], dry_run=False, bucket="bronze", datasets=[])
         assert report["mode"] == "apply"
 
     def test_unit_has_required_fields(self):
-        from scripts.rewrite_parquet_layout import UnitResult, build_report
+        from scripts.oneoff.rewrite_parquet_layout import UnitResult, build_report
 
         r = UnitResult(
             dataset="price_observation_events",
@@ -1121,7 +1121,7 @@ class TestReportStructure:
             assert key in unit, f"Missing unit key: {key}"
 
     def test_report_json_serializable(self):
-        from scripts.rewrite_parquet_layout import UnitResult, build_report
+        from scripts.oneoff.rewrite_parquet_layout import UnitResult, build_report
 
         r = UnitResult(
             dataset="price_observation_events",
@@ -1142,7 +1142,7 @@ class TestReportStructure:
         assert parsed["units"][0]["status"] == "ok"
 
     def test_json_out_written_to_file(self, tmp_path):
-        from scripts.rewrite_parquet_layout import build_report
+        from scripts.oneoff.rewrite_parquet_layout import build_report
 
         report = build_report([], dry_run=True, bucket="bronze", datasets=[])
         out = tmp_path / "report.json"
@@ -1158,7 +1158,7 @@ class TestReportStructure:
 
 class TestNeverDeleteGuarantee:
     def _run_apply(self, mocker, table=None):
-        from scripts.rewrite_parquet_layout import _apply_unit
+        from scripts.oneoff.rewrite_parquet_layout import _apply_unit
 
         unit = _make_unit()
         if table is None:
@@ -1192,7 +1192,7 @@ class TestNeverDeleteGuarantee:
         import ast
         import inspect
 
-        import scripts.rewrite_parquet_layout as module
+        import scripts.oneoff.rewrite_parquet_layout as module
 
         source = inspect.getsource(module)
         tree = ast.parse(source)
@@ -1207,7 +1207,7 @@ class TestNeverDeleteGuarantee:
 
     def test_no_cleanup_in_script_module(self):
         """cleanup_parquet is not imported in the rewrite script."""
-        import scripts.rewrite_parquet_layout as module
+        import scripts.oneoff.rewrite_parquet_layout as module
 
         source_text = open(module.__file__).read()
         assert "cleanup_parquet" not in source_text
@@ -1215,7 +1215,7 @@ class TestNeverDeleteGuarantee:
 
     def test_fs_rm_never_called_on_rename_failure(self, mocker):
         """Even when rename fails, no rm/delete is called to clean up the tmp."""
-        from scripts.rewrite_parquet_layout import _apply_unit
+        from scripts.oneoff.rewrite_parquet_layout import _apply_unit
 
         unit = _make_unit()
         table = _make_table(5)
@@ -1248,7 +1248,7 @@ class TestReplaceExistingTarget:
     """Tests for --replace-existing-target finalization mode."""
 
     def test_cli_flag_accepted(self):
-        from scripts.rewrite_parquet_layout import parse_args
+        from scripts.oneoff.rewrite_parquet_layout import parse_args
 
         args = parse_args(["--all", "--apply", "--replace-existing-target"])
         assert args.replace_existing_target is True
@@ -1306,7 +1306,7 @@ class TestReplaceExistingTarget:
         )
         fs_mock.rename.side_effect = None  # already called; just inspect call_args_list
         # Re-run with tracking side effects
-        from scripts.rewrite_parquet_layout import _apply_unit
+        from scripts.oneoff.rewrite_parquet_layout import _apply_unit
 
         fs_mock2 = MagicMock()
         fs_mock2.ls.return_value = [old_path]
@@ -1424,13 +1424,13 @@ class TestReplaceExistingTarget:
         mock_write = mocker.patch("pyarrow.parquet.write_table")
         mocker.patch("pyarrow.parquet.read_metadata")
 
-        from scripts.rewrite_parquet_layout import _apply_unit
+        from scripts.oneoff.rewrite_parquet_layout import _apply_unit
         _apply_unit(unit, fs_mock, "bronze", baseline_rows=99, replace_existing=True)
         mock_write.assert_not_called()
 
     def test_replace_mode_dry_run_reports_would_replace(self, mocker):
         """In dry-run with replace_existing=True, status is ok and replaced_files is set."""
-        from scripts.rewrite_parquet_layout import _dry_run_unit
+        from scripts.oneoff.rewrite_parquet_layout import _dry_run_unit
 
         unit = _make_unit()
         existing = [
@@ -1453,7 +1453,7 @@ class TestReplaceExistingTarget:
 
     def test_replace_mode_dry_run_no_rm_called(self, mocker):
         """Dry-run with replace_existing=True never calls fs.rm."""
-        from scripts.rewrite_parquet_layout import _dry_run_unit
+        from scripts.oneoff.rewrite_parquet_layout import _dry_run_unit
 
         unit = _make_unit()
         existing = [
@@ -1473,7 +1473,7 @@ class TestReplaceExistingTarget:
 
     def test_replace_mode_report_includes_replaced_files_field(self):
         """The JSON report includes replaced_files for each unit."""
-        from scripts.rewrite_parquet_layout import UnitResult, build_report
+        from scripts.oneoff.rewrite_parquet_layout import UnitResult, build_report
 
         r = UnitResult(
             dataset="price_observation_events",
@@ -1500,7 +1500,7 @@ class TestReplaceExistingTarget:
             "bronze/ops_normalized/price_observation_events"
             "/year=2026/month=6/part-old.parquet"
         )
-        from scripts.rewrite_parquet_layout import _apply_unit
+        from scripts.oneoff.rewrite_parquet_layout import _apply_unit
 
         fs_mock = MagicMock()
         fs_mock.ls.return_value = [old_path]
@@ -1528,7 +1528,7 @@ class TestReplaceExistingTarget:
             "bronze/ops_normalized/price_observation_events"
             "/year=2026/month=6/part-old.parquet"
         )
-        from scripts.rewrite_parquet_layout import _apply_unit
+        from scripts.oneoff.rewrite_parquet_layout import _apply_unit
 
         fs_mock = MagicMock()
         fs_mock.ls.return_value = [old_path]
@@ -1557,7 +1557,7 @@ class TestReplaceExistingTarget:
             "bronze/ops_normalized/price_observation_events"
             "/year=2026/month=6/part-old.parquet"
         )
-        from scripts.rewrite_parquet_layout import _apply_unit
+        from scripts.oneoff.rewrite_parquet_layout import _apply_unit
 
         fs_mock = MagicMock()
         fs_mock.ls.return_value = [old_path]
@@ -1589,7 +1589,7 @@ class TestReplaceExistingTarget:
             "bronze/ops_normalized/price_observation_events"
             "/year=2026/month=6/part-b.parquet"
         )
-        from scripts.rewrite_parquet_layout import _apply_unit
+        from scripts.oneoff.rewrite_parquet_layout import _apply_unit
 
         fs_mock = MagicMock()
         fs_mock.ls.return_value = [old_a, old_b]
@@ -1657,7 +1657,7 @@ def _run_apply_capture_written(
     mocker, unit, source_table, *, replace_existing=False, baseline_rows=None
 ):
     """Run _apply_unit and capture the table passed to pq.write_table."""
-    from scripts.rewrite_parquet_layout import _apply_unit
+    from scripts.oneoff.rewrite_parquet_layout import _apply_unit
 
     written_tables: list[pa.Table] = []
 
@@ -1764,7 +1764,7 @@ class TestPartitionColumnStripping:
 
     def test_replace_mode_still_works_after_drop(self, mocker):
         """replace_existing=True completes successfully when partition cols are dropped."""
-        from scripts.rewrite_parquet_layout import _apply_unit
+        from scripts.oneoff.rewrite_parquet_layout import _apply_unit
 
         unit = _make_unit(dataset="price_observation_events")
         source_table = _make_table_with_partition_cols(8, "price_observation_events")
@@ -1803,7 +1803,7 @@ class TestPartitionColumnStripping:
 
     def test_dry_run_no_write_for_table_with_partition_cols(self, mocker):
         """dry-run never writes even when source table contains partition columns."""
-        from scripts.rewrite_parquet_layout import _dry_run_unit
+        from scripts.oneoff.rewrite_parquet_layout import _dry_run_unit
 
         unit = _make_unit(dataset="price_observation_events")
         fs_mock = MagicMock()
@@ -1842,7 +1842,7 @@ class TestPartitionColumnStripping:
 
     def test_no_partition_cols_in_source_leaves_table_unchanged(self):
         """Tables that never had partition columns are written as-is (no-op drop)."""
-        from scripts.rewrite_parquet_layout import _drop_partition_cols
+        from scripts.oneoff.rewrite_parquet_layout import _drop_partition_cols
 
         schema = pa.schema([
             pa.field("event_id", pa.int64()),
@@ -1856,7 +1856,7 @@ class TestPartitionColumnStripping:
 
     def test_drop_partition_cols_helper_silver(self):
         """_drop_partition_cols removes all three silver partition columns."""
-        from scripts.rewrite_parquet_layout import _drop_partition_cols
+        from scripts.oneoff.rewrite_parquet_layout import _drop_partition_cols
 
         source_table = _make_table_with_partition_cols(3, "silver_observations")
         dropped = _drop_partition_cols(source_table, "silver_observations")
@@ -1867,7 +1867,7 @@ class TestPartitionColumnStripping:
 
     def test_drop_partition_cols_helper_ops(self):
         """_drop_partition_cols removes year and month for ops datasets."""
-        from scripts.rewrite_parquet_layout import _drop_partition_cols
+        from scripts.oneoff.rewrite_parquet_layout import _drop_partition_cols
 
         source_table = _make_table_with_partition_cols(3, "price_observation_events")
         dropped = _drop_partition_cols(source_table, "price_observation_events")

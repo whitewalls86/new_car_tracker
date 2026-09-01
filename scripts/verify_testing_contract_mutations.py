@@ -145,8 +145,8 @@ MUTATIONS = [
         "a gap entry a waiver depends on is renamed in the contract",
         lambda: _edit(
             "docs/TESTING.md",
-            "| G4 | **34 test files patch",
-            "| G4x | **34 test files patch",
+            "| G6 | **Twelve routes reached",
+            "| G6x | **Twelve routes reached",
         ),
         ["docs/TESTING.md"],
         [],
@@ -158,7 +158,7 @@ MUTATIONS = [
             TEST,
             "CI_INVOCATION_WAIVERS = ()",
             'CI_INVOCATION_WAIVERS = (\n'
-            '    Waiver("tests/integration/ops", gap="G4", owner=162),\n'
+            '    Waiver("tests/integration/ops", gap="G6", owner=162),\n'
             ')',
         ),
         [TEST],
@@ -180,9 +180,9 @@ MUTATIONS = [
         "a gap entry's owner plan is archived and the entry stays behind",
         lambda: _edit(
             "docs/TESTING.md",
-            "| G14 | **54 of 76 production `.sql` files",
+            "| G14 | **56 of 76 production `.sql` files",
             "| G14 | **PLACEHOLDER** | -- | Plan 84 |\n"
-            "| G15 | **54 of 76 production `.sql` files",
+            "| G15 | **56 of 76 production `.sql` files",
         ),
         ["docs/TESTING.md"],
         [],
@@ -192,8 +192,8 @@ MUTATIONS = [
         "a waiver's owner plan is archived and the waiver stays behind",
         lambda: _edit(
             TEST,
-            'Waiver(subject, gap="G4", owner=162)',
-            'Waiver(subject, gap="G4", owner=84)',
+            'Waiver(subject, gap="G6", owner=162)',
+            'Waiver(subject, gap="G6", owner=84)',
         ),
         [TEST],
         [],
@@ -217,7 +217,7 @@ MUTATIONS = [
         "the unit job goes back to measuring coverage and discarding it",
         lambda: _edit(
             ".github/workflows/ci.yml",
-            "\n          --cov-fail-under=74",
+            "\n          --cov-fail-under=75",
             "",
         ),
         [".github/workflows/ci.yml"],
@@ -254,6 +254,38 @@ MUTATIONS = [
             "| the enough table is compared to disk |",
         ),
         ["docs/TESTING.md"],
+        [],
+    ),
+    (
+        "test_every_script_directory_is_classified",
+        "a new script directory appears that the contract classifies nowhere",
+        lambda: _write("scripts/adhoc/probe.py", "print('probe')\n"),
+        [],
+        ["scripts/adhoc/probe.py"],
+    ),
+    (
+        "test_every_script_directory_is_classified",
+        "a script bucket is renamed and the contract keeps describing the old one",
+        lambda: _edit("docs/TESTING.md", "| `scripts/oneoff/` |", "| `scripts/spent/` |"),
+        ["docs/TESTING.md"],
+        [],
+    ),
+    (
+        "test_every_unmeasured_script_bucket_is_omitted_from_coverage",
+        "a bucket the contract calls unmeasured re-enters the denominator",
+        lambda: _edit("pyproject.toml", 'omit = ["scripts/oneoff/*"]', "omit = []"),
+        ["pyproject.toml"],
+        [],
+    ),
+    (
+        "test_every_unmeasured_script_bucket_is_omitted_from_coverage",
+        "coverage stops measuring a bucket the contract calls measured",
+        lambda: _edit(
+            "pyproject.toml",
+            'omit = ["scripts/oneoff/*"]',
+            'omit = ["scripts/oneoff/*", "scripts/*"]',
+        ),
+        ["pyproject.toml"],
         [],
     ),
 ]

@@ -79,8 +79,8 @@ use that pattern.** It runs inside the long-lived container, which is not
 guaranteed to be on the built image. Use:
 
 ```bash
-docker compose run --rm archiver         python -m scripts.reconcile_april_detail …
-docker compose run --rm april-processor  python -m scripts.reconcile_april_detail …
+docker compose run --rm archiver         python -m scripts.oneoff.reconcile_april_detail …
+docker compose run --rm april-processor  python -m scripts.oneoff.reconcile_april_detail …
 ```
 
 Verified 2026-08-28: `archiver` gives cwd `/app`, Python 3.13.15, duckdb 1.5.5,
@@ -140,7 +140,7 @@ counts, `refusals: []`, no drift flag.
 
 ```bash
 # for the record — do not re-run
-docker compose run --rm archiver python -m scripts.reconcile_april_detail \
+docker compose run --rm archiver python -m scripts.oneoff.reconcile_april_detail \
   compare --apply --duckdb-threads 1 --duckdb-memory-limit 2GB
 ```
 
@@ -170,7 +170,7 @@ built on it**, so it runs before the rulings and before a single sequence value
 is allocated. It reads only slice 1's output and needs nothing from slice 2.
 
 ```bash
-docker compose run --rm archiver python -m scripts.reconcile_april_detail \
+docker compose run --rm archiver python -m scripts.oneoff.reconcile_april_detail \
   control --apply --run-id cmp-6c7c90d807bbdf13 \
   --sample-size 500 --seed 145 \
   --duckdb-threads 1 --duckdb-memory-limit 2GB 2>&1 \
@@ -314,7 +314,7 @@ blocks §5.2 from being run, and this sheet's summary is not the approval.
 ### 5.1 Assign, dry run
 
 ```bash
-docker compose run --rm april-processor python -m scripts.reconcile_april_detail \
+docker compose run --rm april-processor python -m scripts.oneoff.reconcile_april_detail \
   assign --run-id cmp-6c7c90d807bbdf13 2>&1 \
   | tee /home/ubuntu/plan145-assign-dryrun.log
 ```
@@ -354,7 +354,7 @@ and the batch count. Expect the order of ~400k artifacts and ~80 batches from
 **Requires §3 clean and §4.2 ruled.**
 
 ```bash
-docker compose run --rm april-processor python -m scripts.reconcile_april_detail \
+docker compose run --rm april-processor python -m scripts.oneoff.reconcile_april_detail \
   assign --apply --run-id cmp-6c7c90d807bbdf13 2>&1 \
   | tee /home/ubuntu/plan145-assign-apply.log
 ```
@@ -378,7 +378,7 @@ Confirm it moved by exactly the allocated count.
 ### 5.3 Apply, dry run only
 
 ```bash
-docker compose run --rm april-processor python -m scripts.reconcile_april_detail \
+docker compose run --rm april-processor python -m scripts.oneoff.reconcile_april_detail \
   apply --run-id cmp-6c7c90d807bbdf13 --batch cmp-6c7c90d807bbdf13-b00001 2>&1 \
   | tee /home/ubuntu/plan145-apply-dryrun.log
 ```
@@ -408,7 +408,7 @@ record of a human decision, not a way past one.
 ## 6. The canary sample
 
 ```bash
-docker compose run --rm archiver python -m scripts.reconcile_april_detail \
+docker compose run --rm archiver python -m scripts.oneoff.reconcile_april_detail \
   canary-sample --apply --run-id cmp-6c7c90d807bbdf13 \
   --target-rows 500 --seed 145 2>&1 \
   | tee /home/ubuntu/plan145-canary-sample-auth.log
@@ -474,11 +474,11 @@ Pin `--run-id cmp-6c7c90d807bbdf13` on every one of them.
 ### 7.1 Step 1 — migrate the manifest
 
 ```bash
-docker compose run --rm april-processor python -m scripts.reconcile_april_detail \
+docker compose run --rm april-processor python -m scripts.oneoff.reconcile_april_detail \
   canary-remanifest --run-id cmp-6c7c90d807bbdf13 2>&1 \
   | tee /home/ubuntu/plan145-canary-remanifest-dryrun.log
 
-docker compose run --rm april-processor python -m scripts.reconcile_april_detail \
+docker compose run --rm april-processor python -m scripts.oneoff.reconcile_april_detail \
   canary-remanifest --apply --run-id cmp-6c7c90d807bbdf13 2>&1 \
   | tee /home/ubuntu/plan145-canary-remanifest.log
 ```
@@ -497,7 +497,7 @@ already exists.
 ### 7.2 Step 2 — dry run, and read the pin
 
 ```bash
-docker compose run --rm april-processor python -m scripts.reconcile_april_detail \
+docker compose run --rm april-processor python -m scripts.oneoff.reconcile_april_detail \
   canary-commit --run-id cmp-6c7c90d807bbdf13 2>&1 \
   | tee /home/ubuntu/plan145-canary-commit-dryrun.log
 ```
@@ -600,7 +600,7 @@ docker exec cartracker-postgres psql -U cartracker -tAc \
 
 **Run the verifier inside `april-processor`, not on the host.** The host has
 Python 3.10 with **no `psycopg2` and no venv**, so
-`python3 scripts/verify_recovery_live_state.py` cannot import `shared.db` at
+`python3 scripts/oneoff/verify_recovery_live_state.py` cannot import `shared.db` at
 all — and there is no `python` on the host either, only `python3`. Inside the
 container the dependency is already there, and `--canary-cmd` becomes a plain
 in-container invocation rather than a nested `docker compose run`.
@@ -608,9 +608,9 @@ in-container invocation rather than a nested `docker compose run`.
 ```bash
 cd /opt/cartracker
 docker compose run --rm -v /home/ubuntu:/out april-processor \
-  python -m scripts.verify_recovery_live_state \
+  python -m scripts.oneoff.verify_recovery_live_state \
     --window p145-canary-2026-08-29 \
-    --canary-cmd "python -m scripts.reconcile_april_detail canary-commit --apply \
+    --canary-cmd "python -m scripts.oneoff.reconcile_april_detail canary-commit --apply \
       --run-id cmp-6c7c90d807bbdf13 \
       --expect-manifest-sha256 d2b9d4d58edd069b2ecc907f5b56c7dd02f9f144866aae3da05c7757d31ff010 \
       --expect-rows 505" \
@@ -634,7 +634,7 @@ Sanity-check the invocation before the window by omitting `--window` — the
 script refuses with exit 2 and opens no connection:
 
 ```bash
-docker compose run --rm april-processor python -m scripts.verify_recovery_live_state
+docker compose run --rm april-processor python -m scripts.oneoff.verify_recovery_live_state
 ```
 
 **Blast radius** (with `--window`). One transaction against production Postgres:
@@ -768,7 +768,7 @@ docker exec cartracker-airflow-scheduler \
 `schedule=None` and exist for the same purpose.)
 
 ```bash
-docker compose run --rm archiver python -m scripts.reconcile_april_detail \
+docker compose run --rm archiver python -m scripts.oneoff.reconcile_april_detail \
   canary-flush-verify --apply --run-id cmp-6c7c90d807bbdf13 2>&1 \
   | tee /home/ubuntu/plan145-canary-flush.log
 ```

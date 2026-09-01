@@ -11,10 +11,10 @@ Correlates diff size spikes with semantic state changes to show what drives
 storage cost under each model.
 
 Run inside dbt_runner container:
-    python scripts/diff_log_analysis.py
-    python scripts/diff_log_analysis.py --listings 3 --min-observations 50
-    python scripts/diff_log_analysis.py --max-per-day 3  # exclude dealer_unenriched outliers
-    python scripts/diff_log_analysis.py --cleanup   # delete scratch diffs after
+    python scripts/oneoff/diff_log_analysis.py
+    python scripts/oneoff/diff_log_analysis.py --listings 3 --min-observations 50
+    python scripts/oneoff/diff_log_analysis.py --max-per-day 3  # exclude dealer_unenriched outliers
+    python scripts/oneoff/diff_log_analysis.py --cleanup   # delete scratch diffs after
 """
 from __future__ import annotations
 
