@@ -184,7 +184,7 @@ jobs:
   #
   # What that job was: eight pytest suites run one after another on a single
   # runner, behind one Flyway migration, one shared `pip install`, one dbt
-  # build and one `pip install apache-airflow==3.2.0`. It measured 254-282s
+  # build and one pinned Airflow venv install. It measured 254-282s
   # across three consecutive runs and was the whole CI critical path; its name
   # described the first of the eight things it did.
   #
@@ -358,9 +358,15 @@ jobs:
     if: always() && (needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true') && needs.lint.result == 'success'
     # The two suites here are the only ones that need a schema some other tool
     # owns: dbt's marts in DuckDB, and Airflow's own tables in Postgres. That
-    # is also why `pip install apache-airflow==3.2.0` lives here and nowhere
-    # else -- before the split it ran on every invocation of all eight suites,
-    # 26s of a job in which six of them never import Airflow.
+    # is also why the pinned Airflow venv build lives here and nowhere else --
+    # before the split it ran on every invocation of all eight suites, 26s of a
+    # job in which six of them never import Airflow.
+    #
+    # Do not write the pinned version into a comment anywhere in this file.
+    # test_ci_pins_the_airflow_version_production_runs greps the whole workflow
+    # for `apache-airflow==<version>` and requires exactly one distinct match,
+    # so a prose mention becomes a second, punctuation-mangled "pin". Say
+    # "the pinned Airflow venv" and let the install step below be the pin.
     services:
       postgres:
         image: postgres:16
