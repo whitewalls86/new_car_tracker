@@ -176,6 +176,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
+      # The verifier imports the production label constants rather than
+      # restating them, so it pulls container_health.collector and with it
+      # prometheus_client. Installed from the service's own requirements file
+      # rather than pinned again here: one source for the version, and fastapi
+      # and uvicorn ride along for a couple of seconds. This step is the only
+      # place container_health is imported outside its own image, which is why
+      # its dependency set is declared rather than inherited.
+      - run: pip install -r container_health/requirements.txt
       # The Layer 4 suite serves a recording, so nothing in it can notice the
       # day Docker or the proxy changes a response shape. This is the only step
       # that asks the real thing: it stands up tecnativa/docker-socket-proxy
