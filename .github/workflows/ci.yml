@@ -276,15 +276,24 @@ jobs:
           python-version: "3.13"
 
       - name: Install dependencies
+        # Plan 162 Stage 4: this job installs requirements-dev.txt plus only
+        # the service requirements that supply what its own suites import,
+        # measured rather than assumed. The blanket seven-file install put the
+        # same ~220MB of wheels in every job; `dashboard/` alone is ~50MB of
+        # streamlit/pydeck/pandas/plotly/pillow that no integration suite
+        # reaches, because `dashboard/queries.py` imports `pathlib` and
+        # `shared.query_loader` and nothing else.
+        #
+        # The failure direction is safe: a distribution that turns out to be
+        # needed is an ImportError at collection, named and immediate. Add the
+        # file back when a suite grows an import; do not pre-empt it.
+        #
+        # Needs: boto3/botocore, duckdb, psycopg2, pyarrow, s3fs, yaml,
+        # zstandard -- the suite's own imports plus the fixture seeder's.
         run: |
           pip install \
             -r requirements-dev.txt \
-            -r scraper/requirements.txt \
-            -r archiver/requirements.txt \
-            -r processing/requirements.txt \
-            -r ops/requirements.txt \
-            -r dashboard/requirements.txt \
-            -r dbt_runner/requirements.txt
+            -r archiver/requirements.txt
 
       - name: Create MinIO bucket
         run: python .github/scripts/create_ci_bucket.py
@@ -440,18 +449,31 @@ jobs:
           python-version: "3.13"
 
       - name: Install dependencies
+        # Plan 162 Stage 4: this job installs requirements-dev.txt plus only
+        # the service requirements that supply what its own suites import,
+        # measured rather than assumed. The blanket seven-file install put the
+        # same ~220MB of wheels in every job; `dashboard/` alone is ~50MB of
+        # streamlit/pydeck/pandas/plotly/pillow that no integration suite
+        # reaches, because `dashboard/queries.py` imports `pathlib` and
+        # `shared.query_loader` and nothing else.
+        #
+        # The failure direction is safe: a distribution that turns out to be
+        # needed is an ImportError at collection, named and immediate. Add the
+        # file back when a suite grows an import; do not pre-empt it.
+        #
+        # The SQL suite needs duckdb and psycopg2; the fixture seeder and the
+        # dbt build need boto3, pyarrow and s3fs. archiver/requirements.txt
+        # supplies all five. tests/integration/sql/ imports dashboard.queries
+        # and dbt_runner.queries, but both are load_query modules with no
+        # third-party imports of their own.
+        # 
         # No airflow/requirements.txt here: Airflow's starlette/fastapi
         # constraints conflict with the FastAPI services', so it gets the
         # isolated venv below, mirroring how it is its own container in prod.
         run: |
           pip install \
             -r requirements-dev.txt \
-            -r scraper/requirements.txt \
-            -r archiver/requirements.txt \
-            -r processing/requirements.txt \
-            -r ops/requirements.txt \
-            -r dashboard/requirements.txt \
-            -r dbt_runner/requirements.txt
+            -r archiver/requirements.txt
 
       - name: Create MinIO bucket
         run: python .github/scripts/create_ci_bucket.py
@@ -603,14 +625,31 @@ jobs:
           python-version: "3.13"
 
       - name: Install dependencies
+        # Plan 162 Stage 4: this job installs requirements-dev.txt plus only
+        # the service requirements that supply what its own suites import,
+        # measured rather than assumed. The blanket seven-file install put the
+        # same ~220MB of wheels in every job; `dashboard/` alone is ~50MB of
+        # streamlit/pydeck/pandas/plotly/pillow that no integration suite
+        # reaches, because `dashboard/queries.py` imports `pathlib` and
+        # `shared.query_loader` and nothing else.
+        #
+        # The failure direction is safe: a distribution that turns out to be
+        # needed is an ImportError at collection, named and immediate. Add the
+        # file back when a suite grows an import; do not pre-empt it.
+        #
+        # Five suites, needing bs4, duckdb, fastapi, prometheus_client,
+        # prometheus_fastapi_instrumentator, psycopg2, pyarrow, s3fs,
+        # boto3 and zstandard.
+        # 
+        # Not scraper/requirements.txt, despite the scraper suite running
+        # here: tests/integration/scraper/ imports processing.queries and
+        # scraper.queries, both pure load_query modules, so curl_cffi
+        # (13.5MB) and asyncpg are never reached.
         run: |
           pip install \
             -r requirements-dev.txt \
-            -r scraper/requirements.txt \
-            -r archiver/requirements.txt \
             -r processing/requirements.txt \
             -r ops/requirements.txt \
-            -r dashboard/requirements.txt \
             -r dbt_runner/requirements.txt
 
       - name: Run API integration tests (Layer 3)
@@ -729,15 +768,24 @@ jobs:
           python-version: "3.13"
 
       - name: Install dependencies
+        # Plan 162 Stage 4: this job installs requirements-dev.txt plus only
+        # the service requirements that supply what its own suites import,
+        # measured rather than assumed. The blanket seven-file install put the
+        # same ~220MB of wheels in every job; `dashboard/` alone is ~50MB of
+        # streamlit/pydeck/pandas/plotly/pillow that no integration suite
+        # reaches, because `dashboard/queries.py` imports `pathlib` and
+        # `shared.query_loader` and nothing else.
+        #
+        # The failure direction is safe: a distribution that turns out to be
+        # needed is an ImportError at collection, named and immediate. Add the
+        # file back when a suite grows an import; do not pre-empt it.
+        #
+        # Needs: boto3/botocore, duckdb, psycopg2, pyarrow, s3fs, yaml,
+        # zstandard -- all of which archiver/requirements.txt supplies.
         run: |
           pip install \
             -r requirements-dev.txt \
-            -r scraper/requirements.txt \
-            -r archiver/requirements.txt \
-            -r processing/requirements.txt \
-            -r ops/requirements.txt \
-            -r dashboard/requirements.txt \
-            -r dbt_runner/requirements.txt
+            -r archiver/requirements.txt
 
       - name: Create MinIO bucket
         run: python .github/scripts/create_ci_bucket.py
