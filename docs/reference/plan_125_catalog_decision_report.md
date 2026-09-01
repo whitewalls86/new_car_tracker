@@ -184,7 +184,7 @@ Before Gate A migration code:
 - [ ] Record the service identity model above in the implementation docs.
   Still open: the identities are defined in this report but are not yet reflected
   in the migration plan's implementation sections
-  ([docs/plans/plan_125_duckdb_to_iceberg_migration.md](plan_125_duckdb_to_iceberg_migration.md)),
+  ([docs/plans/plan_125_duckdb_to_iceberg_migration.md](../plans/plan_125_duckdb_to_iceberg_migration.md)),
   which is where Gate D's reader abstraction will need them. Gate D scope, not
   Gate 0.5's.
 - [x] Defer any Polaris/Gravitino/UC OSS spike unless the team explicitly chooses

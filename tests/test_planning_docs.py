@@ -15,11 +15,15 @@ said nothing whatsoever about the other 42, because nothing forced it to.
 
 Two structural facts the next reader will otherwise assume wrongly:
 
-* **Plan number and plan document are not one-to-one.** 79 documents carry 73
-  distinct numbers: Plan 125 has three documents, Plans 110, 120 and 123 have
-  two each, and ``plan_v018_schema_migration.md`` declares no number at all.
-  Coverage therefore keys on **the plan number a document declares**, not on
-  the filename, and several documents can legitimately share one table row.
+* **Plan number and plan document are one-to-one again, but nothing here
+  depends on that.** It was not: 79 documents carried 73 distinct numbers, with
+  Plan 125 holding three documents and Plans 110, 120 and 123 two each. On
+  2026-09-01 the stage handoffs and implementation prompts moved to
+  ``docs/prompts/`` and the reports to ``docs/reference/`` -- directories that
+  already existed for those kinds -- leaving 94 documents and 94 numbers here.
+  Coverage still keys on **the plan number a document declares** rather than on
+  the filename, because that is what survives the property being lost again;
+  ``plan_v018_schema_migration.md`` still declares no number at all.
 * **The converse does not hold and is not asserted.** 61 table rows have no
   document -- nearly all archive rows for plans finished before plan documents
   existed, plus six whose documents were deleted. A row without a document is

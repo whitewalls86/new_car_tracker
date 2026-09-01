@@ -2,8 +2,8 @@
 
 **Status:** Draft  
 **Branch:** feature/storage-refresh-implementation-plans  
-**Plan doc:** [docs/plans/plan_110_html_storage_optimization.md](plan_110_html_storage_optimization.md)  
-**Roadmap:** [docs/plans/plan_117_storage_and_adaptive_refresh_roadmap.md](plan_117_storage_and_adaptive_refresh_roadmap.md)
+**Plan doc:** [docs/plans/plan_110_html_storage_optimization.md](../plans/plan_110_html_storage_optimization.md)  
+**Roadmap:** [docs/plans/plan_117_storage_and_adaptive_refresh_roadmap.md](../plans/plan_117_storage_and_adaptive_refresh_roadmap.md)
 
 ---
 

@@ -30,7 +30,7 @@ surface.
 
 > **Catalog governance decision (read first):** before implementation, settle
 > whether to keep Lakekeeper or spike an alternate governed catalog now. See
-> [docs/plans/plan_125_catalog_decision_report.md](plan_125_catalog_decision_report.md)
+> [docs/reference/plan_125_catalog_decision_report.md](../reference/plan_125_catalog_decision_report.md)
 > and **Gate 0.5** below. The current recommendation is to keep Lakekeeper and
 > apply the report's catalog-neutral guardrails (R1-R7).
 
@@ -89,7 +89,7 @@ adds the dashboard/ops/Grafana reader migration detail needed for cutover.
    Prefer `dbt-spark` or a similarly standard dbt-compatible path if it can
    write Iceberg cleanly. Use custom PySpark only where dbt cannot reasonably
    express the operation. *Settled at Gate A:* `dbt-spark==1.10.3`, `method: session`
-   — see [Gate A adapter choice](plan_125_portability_audit.md#gate-a-adapter-choice).
+   — see [Gate A adapter choice](../reference/plan_125_portability_audit.md#gate-a-adapter-choice).
    This principle also rules out forking dbt-spark's incremental internals to
    recreate `delete+insert` unless a measurement proves it necessary. *Gate C
    later removed even that exception: a vanilla `pre_hook` + `append` design
@@ -107,7 +107,7 @@ wiring dbt/Spark writers, readers, ops metrics, and MLflow provenance to a
 catalog shape we intend to leave.
 
 See the full analysis in
-[docs/plans/plan_125_catalog_decision_report.md](plan_125_catalog_decision_report.md).
+[docs/reference/plan_125_catalog_decision_report.md](../reference/plan_125_catalog_decision_report.md).
 
 Decision:
 
@@ -216,7 +216,7 @@ provisioning module. No consumer script changes.
 Audit the current dbt project for DuckDB-specific assumptions.
 
 **Status: implemented.** Full findings:
-[docs/plans/plan_125_portability_audit.md](plan_125_portability_audit.md) — a
+[docs/reference/plan_125_portability_audit.md](../reference/plan_125_portability_audit.md) — a
 human-readable audit doc, not a script; the checks were one-time reads that
 would not pay for a maintained tool.
 
@@ -246,7 +246,7 @@ Deliverables (all covered by the audit doc):
    `int_listing_state_runs` and `int_listing_observation_runs` have no equivalent —
    and both are **daily**, feeding a model that already fully rebuilds, so the Gate B
    plan is to materialize them as `table`. Full per-model plan:
-   [Incremental strategy decision](plan_125_portability_audit.md#incremental-strategy-decision).
+   [Incremental strategy decision](../reference/plan_125_portability_audit.md#incremental-strategy-decision).
 2. **`postgres_scan` against live Postgres (audit F8)** is an architectural
    blocker, not a dialect one. `stg_search_configs` and `int_active_make_models`
    read live HOT tables, and `int_active_make_models` inner-joins into
@@ -313,10 +313,10 @@ Iceberg.
 
 Three of the blockers are now answered from primary sources; no Gate A model has
 been implemented. Full rationale in the audit:
-[Gate A adapter choice](plan_125_portability_audit.md#gate-a-adapter-choice),
-[Incremental strategy decision](plan_125_portability_audit.md#incremental-strategy-decision),
-[Unit-test impact](plan_125_portability_audit.md#unit-test-impact),
-[Risks/unknowns remaining](plan_125_portability_audit.md#risksunknowns-remaining).
+[Gate A adapter choice](../reference/plan_125_portability_audit.md#gate-a-adapter-choice),
+[Incremental strategy decision](../reference/plan_125_portability_audit.md#incremental-strategy-decision),
+[Unit-test impact](../reference/plan_125_portability_audit.md#unit-test-impact),
+[Risks/unknowns remaining](../reference/plan_125_portability_audit.md#risksunknowns-remaining).
 
 | Blocker | Status |
 |---|---|
@@ -654,7 +654,7 @@ all.~~
 > build a dict fixture, and the tests began to ERROR. Nobody re-ran them, so the
 > table above kept saying PROVEN for a claim that had stopped being true. They
 > pass again as of Gate B, via `format: sql` fixtures. Full mechanism and fix:
-> [F16](plan_125_portability_audit.md#f16-dbt-unit-tests-cannot-mock-an-ephemeral-model--found-at-gate-b-disproves-a-gate-a-claim).
+> [F16](../reference/plan_125_portability_audit.md#f16-dbt-unit-tests-cannot-mock-an-ephemeral-model--found-at-gate-b-disproves-a-gate-a-claim).
 > The `+00` literal half of the claim stands.
 >
 > This is the clearest evidence in the whole plan that a documented PASS decays.
@@ -723,7 +723,7 @@ Evidence, not intent. What is not listed here is not done.
 | **`merge` works on Iceberg via dbt-spark** — the central Gate B risk | `mart_scrape_volume` built and then re-ran incrementally; Iceberg snapshot history shows `op=overwrite added=1354 deleted=1354`, i.e. a real MERGE, not a rebuild |
 | **The merge is idempotent** | rerun → 1,354 rows, 1,354 distinct keys, **0 duplicates** |
 | **Exact DuckDB parity on the canary** | 1,354/1,354 rows, **zero** value differences, on 16,847 real observations |
-| **md5/fingerprint parity on real data** | 1,354/1,354 md5 surrogate keys matched (see the audit's [dialect measurements](plan_125_portability_audit.md#gate-b-dialect-measurements)) |
+| **md5/fingerprint parity on real data** | 1,354/1,354 md5 surrogate keys matched (see the audit's [dialect measurements](../reference/plan_125_portability_audit.md#gate-b-dialect-measurements)) |
 | **`stg_observations` builds on Spark** | `rlike`, `ephemeral`, and `s3a://` Hive-partitioned Parquet all work; feeds the canary |
 | **DuckDB production path is unaffected** | full `dbt build --target duckdb --full-refresh` → **201/201 PASS**, including all 64 dbt unit tests and the refactored `valid_vin` tests |
 
@@ -735,7 +735,7 @@ The audit's step 2 said to prove `insert_overwrite` over `merge`, because
 the incoming batch, so today's production build strands that row too. `merge` is
 therefore *exactly* equivalent to current behaviour and `insert_overwrite` would
 be a behaviour change. Full detail and the generated SQL:
-[the correction](plan_125_portability_audit.md#correction-the-mart_scrape_volume-canary-premise-was-false).
+[the correction](../reference/plan_125_portability_audit.md#correction-the-mart_scrape_volume-canary-premise-was-false).
 
 **`mart_scrape_volume`'s Gate C row above is updated accordingly: `merge`, not
 `insert_overwrite`.**
@@ -793,8 +793,8 @@ Also verified along the way:
 Before any model was ported, two cast items the audit had filed as "mechanical"
 turned out not to be, and one construct the audit never found at all blocked the
 build. Both are written up in the audit:
-[F12 corrected](plan_125_portability_audit.md#f12-casts-int-numeric52-timestamp-date),
-[F15](plan_125_portability_audit.md#f15-lateral-column-alias-in-a-window-order-by--found-at-gate-b-missed-by-the-audit).
+[F12 corrected](../reference/plan_125_portability_audit.md#f12-casts-int-numeric52-timestamp-date),
+[F15](../reference/plan_125_portability_audit.md#f15-lateral-column-alias-in-a-window-order-by--found-at-gate-b-missed-by-the-audit).
 
 ### The datediff verification gap is closed — and the old probe could not have caught it
 
@@ -930,7 +930,7 @@ things have changed, and two of them only became true today:
    behind a target nothing uses. Gate B has 10 models, real incremental logic, and
    38 passing Spark unit tests.
 2. **Unit tests on Spark were silently broken for ~a day and nobody noticed**
-   ([F16](plan_125_portability_audit.md#f16-dbt-unit-tests-cannot-mock-an-ephemeral-model--found-at-gate-b-disproves-a-gate-a-claim)).
+   ([F16](../reference/plan_125_portability_audit.md#f16-dbt-unit-tests-cannot-mock-an-ephemeral-model--found-at-gate-b-disproves-a-gate-a-claim)).
    Gate A recorded them PASSING; Gate A's own later `view`→`ephemeral` switch broke
    them; the doc still said PROVEN. **That is the strongest possible argument for
    this job**: the regression was invisible precisely because nothing re-ran it.
@@ -989,7 +989,7 @@ Scope, deliberately narrow:
 > (`int_latest_observation`, both fingerprint models, `int_listing_state_runs`).
 > Dict fixtures are built by introspecting the mocked input's relation
 > (`get_fixture_sql` → `get_columns_in_relation`) — the same mechanism as
-> [F16](plan_125_portability_audit.md#f16-dbt-unit-tests-cannot-mock-an-ephemeral-model--found-at-gate-b-disproves-a-gate-a-claim),
+> [F16](../reference/plan_125_portability_audit.md#f16-dbt-unit-tests-cannot-mock-an-ephemeral-model--found-at-gate-b-disproves-a-gate-a-claim),
 > with a different trigger: F16's relation could *never* exist (ephemeral),
 > these relations just don't exist *yet* on the CI job's freshly-registered
 > catalog, where no model has ever been built. Error signature:
@@ -1083,7 +1083,7 @@ What Gate C still genuinely owns, updated for those decisions:
   first run, where `{{ this }}` does not exist yet) is not.
 - **Building decision 1**: the `add_files` sync job co-mingled with
   `compact_silver.py`, the `fs.s3.*` mirror config (audit
-  [F17](plan_125_portability_audit.md#f17-add_files-bypasses-s3fileio-and-lakekeepers-location-check-is-scheme-sensitive--found-at-the-gate-c-spike)),
+  [F17](../reference/plan_125_portability_audit.md#f17-add_files-bypasses-s3fileio-and-lakekeepers-location-check-is-scheme-sensitive--found-at-the-gate-c-spike)),
   and the production warehouse registration with a wide key-prefix.
 - **Automating the late-arrival verification.** It was run by hand. F16 is the
   standing lesson that an unautomated PASS decays silently — and the
@@ -1096,7 +1096,7 @@ What Gate C still genuinely owns, updated for those decisions:
 - Extending the same treatment to any model not in the Gate B ten.
 
 Per-model strategy, decided at the Gate A research pass (full rationale:
-[Incremental strategy decision](plan_125_portability_audit.md#incremental-strategy-decision)).
+[Incremental strategy decision](../reference/plan_125_portability_audit.md#incremental-strategy-decision)).
 None of these are `delete+insert` any more — that strategy does not exist on
 dbt-spark:
 
@@ -1204,7 +1204,7 @@ the narrow spike prefix; the production registration is where that changes.
 Two non-obvious config gotchas hit along the way — `add_files`'s manifest
 writer bypassing Iceberg's own `S3FileIO`, and the scheme-sensitivity of the
 `LOCATION` sub-path check — are recorded precisely as audit
-[F17](plan_125_portability_audit.md#f17-add_files-bypasses-s3fileio-and-lakekeepers-location-check-is-scheme-sensitive--found-at-the-gate-c-spike).
+[F17](../reference/plan_125_portability_audit.md#f17-add_files-bypasses-s3fileio-and-lakekeepers-location-check-is-scheme-sensitive--found-at-the-gate-c-spike).
 Both will bite again if forgotten.
 
 This also closes Gate 0's deferred question ("read Parquet directly through
@@ -1565,7 +1565,7 @@ Unit tests:
 - Metadata/prefix safety checks.
 
 dbt unit tests — see
-[Unit-Test Strategy For Spark/Iceberg Migration](plan_125_portability_audit.md#unit-test-strategy-for-sparkiceberg-migration)
+[Unit-Test Strategy For Spark/Iceberg Migration](../reference/plan_125_portability_audit.md#unit-test-strategy-for-sparkiceberg-migration)
 for the full policy. Summary:
 
 - The project has **64** dbt unit tests (2 staging / 31 intermediate / 31 marts)

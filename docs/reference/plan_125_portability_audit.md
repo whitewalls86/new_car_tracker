@@ -4,7 +4,7 @@
 
 **Implemented, plus a Gate A research pass and a Gate A implementation pass
 (both 2026-07-16).** This document is the Gate 0 deliverable for
-[Plan 125: DuckDB to Iceberg Analytics Migration](plan_125_duckdb_to_iceberg_migration.md).
+[Plan 125: DuckDB to Iceberg Analytics Migration](../plans/plan_125_duckdb_to_iceberg_migration.md).
 
 > **The Gate A implementation corrected two of this document's claims.** Read
 > these before trusting anything below:
@@ -18,7 +18,7 @@
 >    [Does dbt-spark support unit tests?](#does-dbt-spark-support-unit-tests).
 >
 > Full evidence, deviations, and reproduction commands:
-> [Gate A results](plan_125_duckdb_to_iceberg_migration.md#gate-a-results-2026-07-16).
+> [Gate A results](../plans/plan_125_duckdb_to_iceberg_migration.md#gate-a-results-2026-07-16).
 
 The Gate A pass resolved three of the Gate 0 open questions from primary sources —
 the adapter's own macros and the dbt/Iceberg/Spark docs — without implementing any
@@ -237,7 +237,7 @@ until a VM run proves the rebuild is actually too slow.
 > the vanilla design doesn't, at the cost of an adapter fork. Still
 > non-atomic (two commits) — that caveat is unchanged. Full design and what
 > remains unverified (the dbt-level hook wiring):
-> [Gate C shape decisions](plan_125_duckdb_to_iceberg_migration.md#gate-c-shape-decisions-2026-07-17),
+> [Gate C shape decisions](../plans/plan_125_duckdb_to_iceberg_migration.md#gate-c-shape-decisions-2026-07-17),
 > decision 3.
 
 ### F2. `select * exclude (...)` — DuckDB-only syntax
@@ -485,12 +485,12 @@ run). The fix there is `dbt run --empty` before `dbt test`, **not** `format:
 sql` conversion — the relation is one cheap empty build away, unlike the
 ephemeral case above where it can never exist. Do not convert those 13
 fixtures. Full write-up:
-[the CI amendment](plan_125_duckdb_to_iceberg_migration.md#ci-decision-add-a-narrow-dbt-spark-unit-test-job--the-gate-a-calculus-has-changed).
+[the CI amendment](../plans/plan_125_duckdb_to_iceberg_migration.md#ci-decision-add-a-narrow-dbt-spark-unit-test-job--the-gate-a-calculus-has-changed).
 
 ### F17. `add_files` bypasses S3FileIO, and Lakekeeper's LOCATION check is scheme-sensitive — **FOUND AT THE GATE C SPIKE**
 
 Two config-level traps hit while proving the Gate C source-exposure decision
-([Gate C shape decisions](plan_125_duckdb_to_iceberg_migration.md#gate-c-shape-decisions-2026-07-17),
+([Gate C shape decisions](../plans/plan_125_duckdb_to_iceberg_migration.md#gate-c-shape-decisions-2026-07-17),
 decision 1). Both verified against the real local Lakekeeper/MinIO/Spark stack
 (2026-07-17); neither is documented upstream anywhere you would find it before
 losing the afternoon. Recorded per this document's convention for things the
@@ -540,7 +540,7 @@ Lakekeeper's remote request signing is scoped **per-table-location**, so
 location — which is why the production warehouse must be registered with a
 key-prefix wide enough to cover both `silver_normalized/` and the Iceberg
 tables. Full evidence chain:
-[Gate C shape decisions](plan_125_duckdb_to_iceberg_migration.md#gate-c-shape-decisions-2026-07-17).
+[Gate C shape decisions](../plans/plan_125_duckdb_to_iceberg_migration.md#gate-c-shape-decisions-2026-07-17).
 
 ### Not found (good news)
 
@@ -642,7 +642,7 @@ Gate C, where snapshot-consistent reads may start to matter for incremental
 watermarks. → **Revisited and decided at Gate C (2026-07-17): silver is
 registered metadata-only via `add_files` over a widened warehouse prefix,
 keeping Parquet the recovery point. See
-[Gate C shape decisions](plan_125_duckdb_to_iceberg_migration.md#gate-c-shape-decisions-2026-07-17)
+[Gate C shape decisions](../plans/plan_125_duckdb_to_iceberg_migration.md#gate-c-shape-decisions-2026-07-17)
 and [F17](#f17-add_files-bypasses-s3fileio-and-lakekeepers-location-check-is-scheme-sensitive--found-at-the-gate-c-spike).**
 
 ## Gate A adapter choice
@@ -840,7 +840,7 @@ rows in the 72h window rewrote the single file holding the entire table. Correct
 but it means merge cost here scales with file layout, not with window size.
 **Acted on at Gate C: this measurement is the core of the case for
 merge-on-read as the Gate C-era write mode — see
-[Gate C shape decisions](plan_125_duckdb_to_iceberg_migration.md#gate-c-shape-decisions-2026-07-17),
+[Gate C shape decisions](../plans/plan_125_duckdb_to_iceberg_migration.md#gate-c-shape-decisions-2026-07-17),
 decision 2. Whether the already-shipped merge models get reconfigured to MoR +
 a partition spec awaits the Gate C runtime measurement.**
 

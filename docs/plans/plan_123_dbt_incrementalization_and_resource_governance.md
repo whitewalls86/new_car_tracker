@@ -411,7 +411,7 @@ and `int_listing_state_runs` are left as full-table builds for Phases 3 and 4.
       > dbt-duckdb, and this model's Iceberg path is a straight `merge` on
       > `artifact_id` (row-unique), so nothing here needs redoing. Left in place as
       > the historical record; see
-      > [Plan 125 § Incremental strategy decision](plan_125_portability_audit.md#incremental-strategy-decision).
+      > [Plan 125 § Incremental strategy decision](../reference/plan_125_portability_audit.md#incremental-strategy-decision).
 - [x] Added `fingerprint_incremental_lookback_days` (default `3`, matching the
       existing `staleness_window_days` convention) to `dbt/dbt_project.yml`
       vars, documented there and in
@@ -951,7 +951,7 @@ trend checks remain open. This means:
 ### Phase 5 measurement update (2026-07-10)
 
 Initial production resource measurements were collected in
-`docs/plans/plan_123_dbt_resource_baseline.md`. `hourly_core` ran in roughly 62-70s
+`docs/reference/plan_123_dbt_resource_baseline.md`. `hourly_core` ran in roughly 62-70s
 and is dominated by `int_latest_observation` and `mart_scrape_volume`;
 `feature_daily` ran in roughly 47s and is dominated by
 `int_listing_volatility_features` and
@@ -971,7 +971,7 @@ convert a model merely because a lower layer just became incremental. Every
 Phase 5 candidate needs both of the following before a conversion commit is
 opened, not just one:
 
-1. Runtime/resource evidence from `docs/plans/plan_123_dbt_resource_baseline.md`
+1. Runtime/resource evidence from `docs/reference/plan_123_dbt_resource_baseline.md`
    showing the model is actually a meaningful share of `hourly_core` or
    `feature_daily` runtime (via `scripts/report_dbt_run_results.py`) or a
    meaningful share of DuckDB file growth/scan volume.
@@ -1067,7 +1067,7 @@ First implementation chunk against the two questions above
 chosen first over `int_latest_observation` because it satisfies both Phase 5
 conversion criteria cleanly:
 
-1. Resource evidence: `docs/plans/plan_123_dbt_resource_baseline.md` shows it at
+1. Resource evidence: `docs/reference/plan_123_dbt_resource_baseline.md` shows it at
    ~27-30s, one of the two dominant costs in a 62-70s `hourly_core` run.
 2. Update key: its grain is a clean `(hour, source)` aggregate over
    `stg_observations.fetched_at` — a fixed, non-mutating dimension. Once an
@@ -1133,7 +1133,7 @@ Second implementation chunk against the two Phase 5 hourly_core candidates
 `int_latest_observation` was deferred behind `mart_scrape_volume` because its
 update key needed a correctness argument, not just a scan-volume one:
 
-1. Resource evidence: `docs/plans/plan_123_dbt_resource_baseline.md` shows it at
+1. Resource evidence: `docs/reference/plan_123_dbt_resource_baseline.md` shows it at
    ~26-31s, the other dominant cost in a 62-70s `hourly_core` run alongside
    `mart_scrape_volume`.
 2. Update key: `int_latest_observation` is **not** simply "latest row per
@@ -1376,7 +1376,7 @@ Capture before/after measurements for:
 Store the report in:
 
 ```text
-docs/plans/plan_123_dbt_resource_baseline.md
+docs/reference/plan_123_dbt_resource_baseline.md
 ```
 
 ## Rollout Order

@@ -1148,3 +1148,46 @@ now would assert a habit nobody has watched.
 The diff was one row leaving the build order, one row arriving in closeout, 17
 renumbered `Order` cells and one status marker — nothing reflowed, and
 `PLANS.md` unchanged at 169 lines.
+
+### `plans/` holds plans only, 2026-09-01
+
+Stage 3 sorted `docs/` by kind and left `plans/` flat, which was right. What it
+did not do was finish the sort: fourteen documents that are not plans stayed
+there, because their filenames begin `plan_` or `implementation_plan_` and the
+move was by directory rather than by kind.
+
+They were eight Plan 145 stage handoffs, three `implementation_plan_*`
+documents, and three reports. The handoffs title themselves *"implementation
+prompt"* and *"implementation handoff"*, which is precisely what `prompts/`
+already held twelve of; the reports are audits and baselines, which is what
+`reference/` already held. So nothing new was invented here — eleven documents
+moved to `prompts/`, three to `reference/`, and `docs/plans/` went from 108
+documents over 94 numbers to **94 documents over 94 numbers, one to one**.
+
+**This does not reopen Stage 3's decision; it applies it.** The rule was
+*directories encode kind, not state*, and the objection recorded against an
+`active/`/`completed/` split was that a file would move when a plan's **state**
+changed. A handoff's kind does not change, ever. `plans/` is still flat and
+still holds one path per plan forever.
+
+**What prompted it.** Plan 138 Stage 1d generates the public roadmap and has to
+turn a plan number into a link. `plan_145_*.md` matched nine files, so the
+generator carried a rule preferring the `# Plan <n>: <title>` colon form and
+failing the build on anything it could not settle. That rule still exists and
+is still tested, but it is now a second line of defence:
+`test_every_plan_number_globs_to_exactly_one_document` asserts the property
+directly, so a handoff refiled into `plans/` fails there first.
+
+**Cost, for the next person who moves files.** 14 renames, 38 markdown links
+repaired inside `docs/`, and 14 root-relative paths repointed in code comments
+and backticked prose that no link test can see — `dbt/` models, `shared/`,
+`tests/`. The repair was driven by which links *failed to resolve* rather than
+by pattern-matching the move, which caught three pre-existing dangling links in
+`claude_prompt_plan_146_stage_5.md`. Those were reverted: all three are
+illustrative content inside a code fence or span, one of them a deliberately
+broken link used as a mutation-test fixture, and the link test strips both.
+**A link inside a fence is an example, not a pointer.**
+
+One thing was deliberately not touched. `claude_prompt_plan_146_stage_4.md`
+names these documents in a census — *"78 of the 79 documents"* — which is a
+point-in-time measurement, not a pointer, and is left as it stood.
