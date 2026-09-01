@@ -166,6 +166,25 @@ jobs:
       - name: Replay the log contract fixtures through the real pipeline
         run: python scripts/verify_promtail_contract.py
 
+  container-health-contract:
+    name: container_health Docker contract (real proxy)
+    runs-on: ubuntu-latest
+    needs: [changes, lint]
+    if: always() && (needs.changes.result != 'success' || needs.changes.outputs.heavy == 'true') && needs.lint.result == 'success'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      # The Layer 4 suite serves a recording, so nothing in it can notice the
+      # day Docker or the proxy changes a response shape. This is the only step
+      # that asks the real thing: it stands up tecnativa/docker-socket-proxy
+      # against a throwaway labelled fleet and asserts the live responses still
+      # carry every field collector.py reads. Same split Plan 141 uses for
+      # Promtail, and the corpus is the only thing the two share.
+      - name: Verify the recorded Docker API contract against the real proxy
+        run: python scripts/verify_container_health_docker_contract.py
+
   unit-tests:
     name: Unit tests (pytest)
     runs-on: ubuntu-latest
@@ -695,6 +714,16 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}
           TEST_DATABASE_URL: postgresql://cartracker:cartracker@localhost:5432/cartracker
           LOG_PATH: /tmp/ops_test.log
+
+      - name: Run container_health integration tests (Layer 4)
+        # Plan 162 Stage 6. Needs no service: the suite stands up a strict fake
+        # of docker-socket-proxy on loopback and serves the recorded corpus, so
+        # the whole request path runs with nothing mocked and no daemon. The
+        # real proxy is exercised once, in `container-health-contract`.
+        run: pytest tests/integration/container_health/ -v -m integration
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          LOG_PATH: /tmp/container_health_test.log
 
       - name: Run recovery-script integration tests
         # Plan 145 Stage 5 slice 2 writes to Postgres inside one transaction
