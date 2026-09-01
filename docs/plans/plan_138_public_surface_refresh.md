@@ -2,15 +2,31 @@
 
 ## Status
 
-**STAGE 0 COMPLETE — Stages 1 through 6 not started.** Written 2026-08-17 after
-comparing the live `https://cartracker.info/info` page and `README.md` against
-`master` at `6f6a2ba`.
+**STAGE 0 COMPLETE — STAGE 1 IN PROGRESS. Stages 2 through 6 not started.**
+Written 2026-08-17 after comparing the live `https://cartracker.info/info` page
+and `README.md` against `master` at `6f6a2ba`.
 
 Both Stage 0 gates closed on 2026-08-31: **Gate 0b** reconciled the internal
 overviews (CAR-37, PR #313) and **Gate 0** recorded the baseline and gave every
-drift-table row a disposition (CAR-44, PR #315). Stage 1 may now draw copy from
-the reconciled overviews and the assigned replacement claims. No public surface
-has changed yet.
+drift-table row a disposition (CAR-44, PR #315), so Stage 1 draws copy from the
+reconciled overviews and the assigned replacement claims.
+
+| Stage 1 slice | State |
+|---|---|
+| **1a** README rewrite (CAR-38, PR #320) | Merged to `master` at `a458877`, **soaking** — merged is not closed, per the truth contract's §4 |
+| **1b** Landing-page structure (CAR-39) | In review |
+| **1c** Cross-surface consistency | Not started; 1b was built to meet it by construction rather than leave it to a later check |
+| **1d** Public roadmap projection | Not started. The landing page carries the section and its list ids; the generator and `project-updates.json` do not exist yet |
+| **1e** Weekly recap projection | Not started |
+| **1f** Reconcile against the published writings | **Audit done 2026-08-31**, copy pass not started. Three articles supplied; one carries ten disposed-of claims and contradicts another on bronze retention. The surface scope question is open |
+
+**The two public surfaces are now in different states, and the distinction
+matters.** The repository is public, so 1a's README changed a public surface the
+moment it merged. The landing page has not: 1b is unmerged, nothing has
+deployed, and `https://cartracker.info/info` still serves the pre-plan copy the
+Stage 0 baseline screenshotted. Until 1b deploys, **the README and the live page
+disagree** — which is the drift this plan exists to remove, temporarily widened
+by fixing one surface before the other. Stage 6 is what closes it.
 
 The analytics acquisition and database-removal portion of Stage 4 moved to
 [Plan 143](plan_143_analytics_serving_snapshot.md) on 2026-08-18 before either
@@ -31,7 +47,10 @@ Two changes on 2026-08-31, from a scoping session:
 
 This plan covers the repository README and the unauthenticated portfolio surface.
 It does not change dashboard behavior, authorization roles, or the production data
-architecture.
+architecture. **That inventory of public surfaces may be incomplete** — the
+author's published writing is public and covers some of the same claims, which
+[Stage 1f](#1f-reconcile-against-the-published-writings) raises as an explicit
+scope decision rather than leaving unstated here.
 
 ## Decision in one paragraph
 
@@ -457,6 +476,197 @@ neutral language about browser-assisted session bootstrap, TLS-compatible HTTP
 clients, bounded retries, and adaptive cooldown. Keep the deeper implementation
 details in the technical README.
 
+
+#### Stage 1b evidence — 2026-08-31 (CAR-39)
+
+`ops/templates/info.html` is rebuilt in the eight-part sequence above. The page
+now carries the same claims as the README, so Stage 1c's cross-surface
+requirement is met by construction: twelve shared claims were checked as
+normalized strings across both files, and all twelve agree — the archiver not
+populating HOT tables, the backoff living in `ops.ops_detail_scrape_queue`, the
+dashboard reading DuckDB, Iceberg as a migration track, `trawl` as the live
+solver, `hourly_analytics_refresh` owning the scheduled sequence, functional
+liveness still open, the salted email hash, the absent `LICENSE`, the Cars.com
+non-affiliation, and the two rounded counts both surfaces print.
+
+**What the sequence changed, beyond copy.** Three of the eight items did not
+exist on the page at all: the platform-evolution callout (item 5), the recent-work
+lists (item 6), and the testing/evidence section (item 8). Two items existed but
+were wrong rather than merely stale:
+
+- **The data journey named five stages and mislabeled two of them.** "Bronze"
+  pointed at *Processing → Postgres*, which is the operational layer, not bronze;
+  bronze is the stored HTML that no stage named. The strip now runs the plan's six:
+  Fetch → Bronze HTML → Parse/HOT state → Silver Parquet → dbt/DuckDB marts →
+  Dashboard.
+- **The decision stories were five cards, and two of them were not decisions.**
+  "The Data Journey" restated the section above it, and "10M+ observations, one
+  server" was mostly volatile counts. Both are gone. Packed cold storage and the
+  liveness lesson take their places, as §1b item 7 requires, and the single-server
+  point survives inside the storage story where it is a conclusion rather than a
+  statistic.
+
+Every phrase Gate 0 assigned for deletion is gone, and no exact repository count
+is printed anywhere on the page. The scrape-path language is rewritten to
+description rather than marketing: "anti-detection layer (Chrome TLS
+fingerprinting + Cloudflare bypass)" becomes an HTTP client whose TLS behavior
+matches a mainstream browser, with bounded retries and an adaptive per-listing
+cooldown governing refusals.
+
+**Two scope decisions, both recorded rather than assumed.**
+
+1. **The recent-work lists ship as structure, not as a feed.** §1b item 6 wants
+   them loaded from the roadmap snapshot, and that snapshot is Stage 1d's
+   deliverable: neither `scripts/build_public_roadmap.py` nor
+   `ops/static_ops/project-updates.json` exists yet. Fetching an artifact that
+   is not there would put a 404 on every public page load, which Stage 5's "no
+   failed asset requests" bar would then have to remove. So the section ships
+   with both columns, the `work-planned` and `work-completed` list ids that 1d's
+   renderer will target, and static content that points a reader at the build
+   order and the archive on GitHub — the real sources, reachable today.
+2. **The recap pointer resolves to GitHub, not to `/recaps`.** The route does
+   not exist until Stage 1e generates the pages and Stage 2 opens the path. The
+   truth contract's §5 already establishes that the recaps are public in the
+   repository, so the GitHub link is accurate now and 1e/2 will retarget it.
+
+**Three counts on the page were stale in the same way the drift table's rows
+were, and were not in it.** Found while writing the copy, measured against
+`a458877`:
+
+| Old claim | Measured | What the page says now |
+|---|---:|---|
+| "Nine alert rules" (`info.html:639`) | 22 rules in `grafana/provisioning/alerting/rules.yml` | "More than twenty alert rules" |
+| "all five Python services" ship logs (`:638`) | 6 — `test_promtail_all_services_present` names ops, scraper, processing, dbt_runner, archiver, pack-worker | "every Python service" |
+| "Twelve DAGs" (`:557`) | 15 `dag_id=` values | "More than a dozen DAGs" |
+
+**One correction to the Gate 0 baseline.** Row 11 disposes of "Every service
+exposes a `/ready` endpoint" and its evidence table says "Exactly three do."
+**Four do:** `scraper/app.py:272`, `processing/app.py:29`,
+`archiver/app.py:651`, and `dbt_runner/app.py:88`, whose `/ready` returns 503
+while jobs are in flight — the same drain contract, not a health alias. The
+disposition itself is unaffected, because the replacement claim it assigned
+prints no integer: "long-running worker services expose `/ready` and participate
+in deploy draining" is true at three and true at four. The baseline document is
+a dated record and is left as written; this is the correction, in the stage that
+found it.
+
+**Tests.** `tests/ops/routers/test_info.py` gains
+`TestLandingPageStructure` — nine tests over the rendered page: the eight
+sections in the plan's order, the six journey stages in order, the archiver and
+backoff mechanisms stated correctly, Iceberg labeled a migration track, both
+work lists present with the recap pointer, no barred phrase surviving, the
+tracked-pair count appearing exactly once, and the whole narrative surviving an
+empty stats snapshot (Goal 6). The barred-phrase list is an enumeration, which
+the testing contract's first rule normally forbids; it is sanctioned here
+because Stage 5 scopes public-surface drift detection as "the absence of the
+known stale phrases", which is an assertion about wording rather than about the
+repository.
+
+Each new test was mutation-checked rather than trusted: reintroducing "anti-detection
+… without manual intervention" fails the barred-phrase test, renaming a
+`data-layer` fails the journey test, and moving the recent-work section after the
+decision stories fails the order test. `tests/ops/` passes at 380.
+
+**A second pass judged the page as a portfolio piece, not only as a truth
+pass.** Four changes came out of it, all within §1b's own items:
+
+- **The storage-layer table moved onto the page** (§1b item 3). The pipeline
+  strip says what happens; it does not say what a *row* is. The README's
+  Layer / Physical home / Grain / Why-it-exists table is the strongest
+  data-modelling artifact either surface has, and it was README-only. It is now
+  on both, which also widens Stage 1c's agreement rather than narrowing it.
+- **Three measured outcomes were promoted out of the collapsed panels.** The
+  45-second dbt build that blocked scheduling, the roughly two-thirds fall in
+  inode pressure, and the outage's eight hours were all written where only a
+  reader who clicked "Read more" would find them. They are dated results, not
+  the volatile inventory §3 bars, so a reader who never clicks now sees what the
+  decisions produced.
+- **The hero names the constraint.** "All of it runs on a single host" is the
+  premise most of the decisions below answer to, and the page previously left a
+  reader to infer it from the architecture section.
+- **The recent-work placeholder was cut roughly in half.** Standing at item 6
+  it occupies prime position, and until Stage 1d generates the feed its content
+  is necessarily a pointer. Two short pointers read as a deliberate window into
+  the record; two paragraphs about planning read as filler in the place the
+  reader expected work.
+
+**The linear strip became a diagram, and §1b item 3 is why.** Item 3 specifies
+the journey as a linear string, and a strip implemented it literally — but the
+strip cannot express the two facts that make this pipeline worth reading about:
+the scraper writes the page and its pointer separately, and processing writes
+current state and its event **in one transaction**, beginning two paths that
+never rejoin. The left path is a *loop* — HOT state feeds the scrape queue view,
+which decides the next fetch — and a strip cannot draw a cycle at all.
+
+The strip is replaced by an inline SVG carrying the same journey plus both forks
+and the loop, and its dead CSS is deleted rather than left orphaned. This is an
+addition to item 3, not a substitution for it: the specified sequence is the path
+through the diagram.
+
+**Two things made this the right call rather than scope creep**, and both came
+from outside this stage:
+
+- **§1b item 1 already made "Explore the architecture" the primary CTA.** The
+  page sends its main call-to-action at the architecture, so the architecture is
+  what has to reward the click. A linear strip did not.
+- **The dashboard cannot carry the visual weight, and will not soon.**
+  [Plan 150](plan_150_analytics_product_and_bi_serving_layer.md) records the same
+  judgment in its problem statement — "the public product presents only a small
+  Streamlit dashboard with basic graphs", a mismatch that "limits the portfolio
+  value of work that already exists" — at priority 68 and effort XL,
+  research-gated. So the platform *is* the public product for now, and the
+  diagram is the honest place to spend the page's visual budget.
+
+**This has a consequence for Stage 3b**, which is now written into that
+stage rather than restated here: if the dashboard is not yet the product, the
+prior question is whether the hero video should exist at all, not what format it
+takes. Found here; decided there.
+
+**Stage 3a's colour rule was met on the way in rather than retrofitted.** Every
+node states its layer as text in a badge, so the stroke colour is reinforcement
+and never the signal, and the control loop is dashed as well as labelled. The
+`<svg>` carries `role="img"`, a `<title>`, and a `<desc>` that states both forks
+and the loop in prose — the diagram's whole argument reaches a reader who cannot
+see it. Three tests hold that: the node sequence, the description's three
+claims, and the non-colour encoding of the loop.
+
+One defect found by rendering rather than by reading: `parse` and `decides` had
+no `--layer-color`, so `stroke: var(--layer-color)` computed to nothing and both
+nodes rendered with no border at all. The rule now carries a fallback, and both
+layers have a colour. It is only visible in a screenshot, which is why one was
+taken in each theme.
+
+**Layout re-measured, by the method the baseline had to invent.** The page was
+rendered with representative stats and probed inside a 360 px iframe served over
+a local HTTP origin — an iframe because headless Chrome floors the top-level
+layout viewport at 512 px on this host, and HTTP rather than `file://` because a
+`file://` iframe is an opaque origin whose document the probe cannot read:
+
+```text
+innerWidth=360  body.scrollWidth=360  documentElement.scrollWidth=360
+widest element: div.pipeline-stage, right edge 796
+```
+
+`scrollWidth (360) <= innerWidth (360)`, so there is still no page-level overflow.
+The widest element is still `div.pipeline-stage`, now reaching 796 rather than the
+baseline's 666 because the strip gained a sixth stage; it scrolls inside its own
+`overflow-x: auto` container, which is the same intentional behaviour the baseline
+recorded rather than a regression.
+
+**One presentation observation left for Stage 3.** In several service cards the
+"Why?" affordance wraps onto its own line, because `.why-cta`'s `margin-left:
+auto` pushes it to the card's right edge and the title, badge, and affordance
+together exceed the text column at a three-up grid width. This is pre-existing —
+it is in the baseline's committed desktop screenshot — and shortening seven
+over-long badges in this stage reduced it without removing it. Recorded here
+rather than fixed, because card presentation is Stage 3's.
+
+**Not in this stage**, per CAR-39: Stage 2's routes and search metadata, Stage
+3's accessibility and asset work — the Pico and simple-icons CDN dependencies
+the baseline recorded are still there and are Stage 3c's to remove — and Stage
+4's snapshot presentation. The stats block's markup is carried across unchanged
+for that reason; only the freshness note beneath it is new.
+
 ### 1c. Cross-surface consistency
 
 Create a review checklist, and optionally a small source module for shared URLs
@@ -621,6 +831,196 @@ survives; and no recap outside the published set produced output.
 refuses an unclassifiable link rather than emitting it, and `--check` fails on a
 new recap that has not been regenerated.
 
+### 1f. Reconcile against the published writings
+
+**The corpus, as supplied 2026-08-31.** URLs are recorded without their
+`trackingId` and `lipi` query parameters, which are per-session identifiers from
+the referring profile view and are not part of the article's address.
+
+| # | Title | Published | URL |
+|---|---|---|---|
+| A | I Built a Vehicle Pricing Data Platform From Scratch. Here's What I Actually Learned About Data Engineering. | 2026-05-08 | [`/pulse/…-heres-miller-hrb7e`](https://www.linkedin.com/pulse/i-built-vehicle-pricing-data-platform-from-scratch-heres-miller-hrb7e) |
+| B | Which Rows Belong in a Test Fixture, and What Has to Come With Them | 2026-07-21 | [`/pulse/…-andrew-miller-i2z8c`](https://www.linkedin.com/pulse/which-rows-belong-test-fixture-what-has-come-them-andrew-miller-i2z8c) |
+| C | I Thought Compression Was a Codec. A Full Disk Taught Me It Was Architecture. | 2026-08-17 | [`/pulse/…-andrew-miller-nxvrc`](https://www.linkedin.com/pulse/i-thought-compression-codec-full-disk-taught-me-andrew-miller-nxvrc) |
+| D | *(planned)* The Plan 145 cutover, loosely based on [its post-mortem draft](../evidence/plan_145_post_mortem_draft.md) | — | not yet written |
+
+#### First pass, 2026-08-31: what the corpus is worth as a source
+
+**All three are better front-door prose than anything this plan has drawn from
+so far**, and C in particular reaches conclusions the surfaces state more weakly:
+
+- **C names the cost model error better than the README does.** "I had built a
+  cost model with one variable: bytes. Adding the cost of an object's mere
+  existence reversed the decision. My estimate was not wrong about bytes. It was
+  measuring the wrong noun." That is the storage lesson in three sentences.
+- **C supplies the framing for why bronze exists at all** — bronze is what
+  arrived, silver and mart are opinions about what it means, so an optimization
+  that keeps only what today's parser understands "quietly turns bronze into
+  another opinion."
+- **C also records a failure the surfaces do not mention**: section-level
+  deduplication was built, proven lossless, and *rejected* because per-object
+  overhead made it 223% worse. A portfolio page that shows a rejected design is
+  more credible than one that shows only what worked.
+- **B is the source for the testing section's fourth layer.** Cross-engine
+  equivalence is currently one sentence on the landing page; B explains what a
+  selector is and why coverage's arrow is reversed — branches enumerated first,
+  then data shopped for in production to reach them.
+- **A is the weakest as a source and the strongest as a warning.** See below.
+
+#### The audit: A is a public surface carrying the drift this plan removes
+
+Article A is dated 2026-05-08 and its "The Numbers" section states, as current
+fact, **ten claims the Gate 0 disposition table has since disposed of**:
+
+| Claim in A | Gate 0 row | Current |
+|---|---|---|
+| "13+ make/model pairs" | 1 | live stat, 14 |
+| "12 Airflow DAGs" | 2 | 15 |
+| "17 dbt models" | 3 | 23 |
+| "39 Flyway migrations" | 4 | 49 |
+| "974 tests" / "950+" / "705 unit" / "37 API integration" | 5 | 3,661 collected |
+| "six services" | 6 | more than two dozen long-running |
+| "9 Telegram alert rules" | *(found in 1b)* | 22 |
+| "FlareSolverr handles JavaScript challenge pages" | 13 | `trawl` is the live solver |
+| "concurrent scraping with **anti-detection**" | §1b | the barred marketing register, twice |
+| "30-day bronze retention window … reprocessing is only possible within that window" | — | **superseded by C**: packing retains every page, with ~3.5 years of runway |
+
+The last row is the sharpest, because **A and C contradict each other** and both
+are published under the same name. A tells a reader bronze is discarded after 30
+days; C tells the same reader every page is retained and explains the packing
+that made it possible. No repository change can reconcile that; only an edit or
+a dated note can.
+
+A also closes with "Live at: cartracker.info/info", which Stage 2 turns into a
+permanent redirect. That one degrades gracefully and needs no action.
+
+**This is the finding the scope question was asked about**, and it is no longer
+hypothetical: the drift this plan is removing from two surfaces is live on a
+third, in an article that is the most likely entry point a reader has.
+
+#### What the corpus caught in *this* repository
+
+Reconciliation ran both directions, and the corpus won one.
+
+**"Inode pressure fell by roughly two thirds" is unsourced, and the correction
+first attempted here was wrong in the same way.** The phrase entered in Stage 1a
+and is not drawn from `OPERATIONAL_ENGINEERING_OVERVIEW`, which discusses inodes
+only qualitatively. C supplies measurements, and its campaign-start figure
+cross-checks exactly against [Plan 131](plan_131_packed_cold_storage.md) §156 —
+9,101,670 inodes used, in both.
+
+The first correction replaced it with "fell by more than half", from the
+whole-volume reading. **That is true and it answers the wrong question**, which
+is the same defect as the original, one denominator over:
+
+| Denominator | Before | After | Fall |
+|---|---:|---:|---:|
+| Inodes the packed artifacts themselves cost | 6,053,495 | 497 | **99.99%**, a 12,173× reduction |
+| Inodes used on the whole volume | 9,101,670 | 3,897,963 | 57.17% |
+
+Both are computed from C: 2,702,453 source objects across April–June became 222
+packs and sidecars, at the ~2.24 inodes per object C measures for this bucket.
+The per-month form C states independently agrees — "an unpacked month costs
+roughly 2.2 million inodes; a packed month costs about 300", and May's 1,021,266
+objects do compute to ~2.29M.
+
+**The 849,290-inode gap between the two rows is the pipeline continuing to
+work.** Packing should have freed ~6.05M; the volume only shows ~5.20M
+recovered, because bronze kept arriving throughout — C says so directly, "while
+scraping never stopped". So the whole-volume percentage charges packing for
+ongoing ingestion and for every unrelated consumer on the filesystem, and
+reports a modest 57% for a mechanism that removed 99.99% of what it was pointed
+at.
+
+**This is the Compose-denominator problem again**, and this plan has already
+been caught by it once. Gate 0 found that "two different sets both have 28
+members" and that the defensible-looking one excluded the live scrape path. Same
+class: an arithmetically correct number answering a question nobody asked.
+
+**Four candidate framings. The surfaces currently carry (d), the conservative
+one, pending a decision:**
+
+| | Framing | Cost |
+|---|---|---|
+| **a** | "2.7 million bronze objects became 222" | Directly measured, one obvious denominator, no inode arithmetic and no per-object constant. Historical and dated, so it cannot drift |
+| **b** | "An unpacked month costs ~2.2 million inodes; a packed month costs about 300" | States the *mechanism* rather than a campaign total, so it stays true for every future month. Needs the reader to care about inodes |
+| **c** | "Inodes stopped being the binding constraint; bytes are again" | The engineering conclusion, and the one C itself lands on. Carries no number to drift, and says the least to a skimming reader |
+| **d** | "The volume's inode use fell by more than half" | True, and understates the mechanism by a factor of roughly seven hundred |
+
+**Decided 2026-08-31 and applied to both surfaces: (a) as the headline, (c) as
+the consequence, and no percentage at all.** Both now read "the first three
+packed months turned 2.7 million bronze objects into 222, and inodes stopped
+being the binding constraint — bytes are again."
+
+(a) is the number a reader remembers and the only one whose denominator needs no
+explanation; (c) is what it bought. The phrasing is anchored to **the first
+three** packed months rather than to "the packed months", so a fourth does not
+make a true sentence false — July is still unpacked and C records that there is
+no recurring lifecycle DAG yet.
+
+(b) stays available and belongs in
+[OPERATIONAL_ENGINEERING_OVERVIEW](../OPERATIONAL_ENGINEERING_OVERVIEW.md) §4.3
+rather than on a landing page: "an unpacked month costs roughly 2.2 million
+inodes; a packed month costs about 300" states the mechanism, so it stays true
+for every future month, and a runbook reader is the one who needs it.
+
+**No percentage survives on either surface**, which is the durable part of this
+decision. Both wrong answers here were percentages whose denominators were
+unstated; the object count has one denominator and it is in the sentence.
+
+Note what this means for the corpus's standing: **C is more current than the
+plan documents.** Plan 131 records the campaign's start; nothing in `docs/`
+records where it finished. The article does.
+
+#### Still open after this pass
+
+- **The surface question is unanswered.** The three options above stand, now
+  with a measured ten-row audit behind them rather than a hypothesis.
+- **Nothing from B or C has been drawn onto a surface yet.** This pass audited
+  and reconciled; it did not rewrite copy. The specific candidates named above —
+  C's cost-model sentence, C's bronze-as-arrival framing, C's rejected-design
+  story, B's reversed coverage arrow — are the shortlist for a copy pass, and
+  each still owes Gate 1f its verification against the tree.
+- **Article D is planned, and it is not like the others.** Its source is
+  [`docs/evidence/plan_145_post_mortem_draft.md`](../evidence/plan_145_post_mortem_draft.md),
+  **not** the Plan 145 document — a distinction that changes what the gate has
+  to do.
+
+  A plan says what should happen and goes stale when the tree moves past it. A
+  post-mortem says what did happen on dated evidence, which is the truth
+  contract's §5 category: correct as of its date and never revised to match a
+  later truth. **So D barely needs the staleness check A–C needed.** Its facts
+  are historical by construction.
+
+  What it needs instead is the opposite filter, and a stronger one. The draft is
+  795 lines of internal-register material: §10 is operational incidents, §6.4
+  draws on working transcripts, §3.1 reconstructs a revert from inside, and §9
+  carries cost and population arithmetic. The truth contract's §4 bars exactly
+  this from public surfaces — "incident payloads, approval records, production
+  object keys, and other operational detail". A–C were published first and
+  reconciled afterwards; **D is internal first and published afterwards, so its
+  risk runs the other way**: not "is this still true?" but "what in here should
+  never leave the repository in this register?"
+
+  The draft anticipates this. §12 is "Draft lessons — for the maintainer to cut
+  or keep" and §13 is "Open questions for the narrative", so the document is
+  already staged for exactly this pass rather than needing to be mined for it.
+
+  One thing D should carry that A–C did not: **the post-mortem's honesty is the
+  reason to publish it at all.** §7 records that the parser control the whole
+  plan rested on failed, and §8 that the plan's own explanation of the
+  near-duplicate cohort was wrong. An article that keeps those is worth more
+  than one that keeps the recovery and drops the two admissions.
+
+  **Gate for D, before publication rather than after:** every claim about
+  *current* state — as opposed to what was true during the cutover — is checked
+  against the tree, and the §4 register filter is applied to the incident,
+  transcript, and arithmetic sections. This is the cheapest point in the cycle
+  to catch both, and the only one where fixing costs nothing. Article A is the
+  standing argument for doing it here: it has carried ten disposed-of claims
+  since May because nothing checked it before it went out.
+
+
 ## Stage 2 — Make the landing page discoverable
 
 1. Add the exact-root public Caddy handler and keep `/dashboard*` protected.
@@ -688,25 +1088,75 @@ session loads the dashboard with its websocket connected and no failed
 
 ## Stage 3 — Accessibility and static-asset performance
 
+**Stage 1b settled three of this stage's items early and moved a fourth's
+before-number.** They are marked below rather than deleted, so the stage reads as
+what is left rather than as a list where the reader has to work out which parts
+already happened.
+
 ### 3a. Semantic interactions
 
 - Replace clickable service-card and highlight `<div>` elements with buttons plus
   associated panels, or native `<details>/<summary>` elements.
 - Expose `aria-expanded`, `aria-controls`, focus state, and Escape/collapse
   behavior where custom controls remain.
-- Restore a valid heading hierarchy (`h1` -> `h2` -> `h3`).
-- Do not depend on color alone for pipeline layers or active state.
+- ~~Restore a valid heading hierarchy (`h1` -> `h2` -> `h3`).~~ **Done in 1b for
+  the landing page.** The outline opened two `h2` -> `h4` gaps, at the decision
+  cards and the evidence cards; card titles moved to `h3` and their in-panel
+  subheads to `h4`. `test_the_heading_outline_skips_no_level` walks the rendered
+  outline and fails on any jump greater than one, so this cannot regress. **What
+  remains is 3d's generator**, which must not emit a skipped level from source
+  Markdown — a different mechanism, still open.
+- Do not depend on colour alone for **active state**. *(The pipeline-layer half
+  of this item is done: 1b replaced the strip with a diagram whose every node
+  states its layer as badge text and whose control loop is dashed as well as
+  labelled, held by `test_the_control_loop_is_not_signalled_by_colour_alone`.)*
+  Active state is still colour-only — `.service-card.active` and
+  `.highlight-card.active` signal with `border-color` plus a `box-shadow` ring
+  and nothing else — and the buttons this stage introduces are where that gets
+  fixed, since `aria-expanded` carries it for free.
 - Respect `prefers-reduced-motion` and avoid autoplay for those users.
+- **Preserve the diagram's text equivalent.** The `<svg>` carries `role="img"`,
+  a `<title>`, and a `<desc>` stating both forks and the control loop in prose.
+  That description *is* the diagram's argument for a reader who cannot see it,
+  and is asserted by
+  `test_the_diagram_is_described_for_a_reader_who_cannot_see_it`. Any rework of
+  this section keeps it.
 
 ### 3b. Demo media
 
-The checked-in `demo.mp4` is 41,699,885 bytes. Replace it with:
+**Decide whether the hero media should exist at all, before deciding its
+format.** This item was written as a size problem, and Stage 1b's portfolio pass
+found the premise underneath it is the open question.
+
+The checked-in `demo.mp4` is 41,699,885 bytes and shows the Streamlit dashboard.
+[Plan 150](plan_150_analytics_product_and_bi_serving_layer.md) records that the
+dashboard is the project's *weakest* public surface — "the public product
+presents only a small Streamlit dashboard with basic graphs", a mismatch that
+"limits the portfolio value of work that already exists" — at priority 68 and
+effort **XL, research-gated**. So it will not improve on this plan's timescale.
+
+If that judgment holds, the page currently leads with its weakest asset, and
+compressing the video only makes a weaker first impression arrive faster. 1b
+already moved the visual weight to the architecture diagram, which is the
+honest hero while the platform is the product. **Three options, and this stage
+picks one:**
+
+| Option | Cost |
+|---|---|
+| Remove the hero media entirely | The diagram carries the section; nothing to encode, and the largest asset on the page disappears |
+| Keep a still, not a video | One poster image, an accessible caption, kilobytes rather than megabytes |
+| Keep a video, re-encoded | The full list below, for an asset whose subject Plan 150 says is not yet worth showing |
+
+If a video survives that decision, it needs:
 
 - a poster image that communicates the dashboard before playback;
 - a WebM primary plus compressed MP4 fallback;
 - `preload="metadata"` or `preload="none"`;
 - controls, an accessible label, and a short text transcript/caption;
 - an 8 MiB maximum per video asset and no eager full-video transfer.
+
+**Do not delete `demo.mp4` from the repository as part of removing it from the
+page.** Those are separate decisions, and the second one is not this plan's.
 
 ### 3c. Local assets and response policy
 
@@ -718,6 +1168,20 @@ The checked-in `demo.mp4` is 41,699,885 bytes. Replace it with:
 - Enable gzip or Brotli for HTML, CSS, JavaScript, SVG, and JSON/XML responses.
 - Apply public-route headers: CSP, `X-Content-Type-Options`, `Referrer-Policy`,
   `Permissions-Policy`, and `frame-ancestors 'none'`.
+
+**This stage's before-number moved, and it moved the wrong way.** The Stage 0
+baseline measured `/info` at 54,352 bytes of uncompressed HTML. Stage 1b rebuilt
+the page and the rendered document is now roughly 78 KB — the section count
+grew, the diagram is inline SVG, and the stylesheet gained the diagram, table,
+and evolution blocks. **Compression is therefore worth more than the baseline
+implied, not less**, and the extraction in item 1 now has a larger stylesheet to
+move.
+
+Two things deliberately did *not* get worse. The diagram is inline SVG and the
+layer table is markup, so **1b added no new third-party request** — the CDN
+problem is still exactly the two hosts the baseline named, PicoCSS on jsdelivr
+and twelve icons on simpleicons. And because the SVG is inline it needs no
+`img-src` allowance and satisfies a same-origin CSP as written.
 
 Do not apply a landing-page CSP blindly to Grafana, Airflow, Streamlit, MinIO, or
 OAuth routes; scope the header block to the public handlers.
@@ -738,13 +1202,22 @@ design.
   3a (`h1` → `h2` → `h3`, and the generator must not emit a skipped level from
   the source Markdown), and tables inside a horizontally scrollable container so
   the recaps' wide commit tables cannot overflow the page at 360 px.
+  **Reuse 1b's container rather than inventing a second one:** `.layer-table-wrap`
+  and `.diagram-wrap` are an `overflow-x: auto` parent around a `min-width` child,
+  which is the pattern that keeps a wide element scrolling inside its own strip
+  while `body.scrollWidth` stays at 360.
 - The pages share `info.css`, load no JavaScript, and satisfy Stage 3c's CSP
   without exception. A recap page that needs a script has been over-built.
 
 **Gate 3:** all page functions are usable with keyboard only, reduced-motion
 users do not receive autoplay, no third-party request is required to render the
-page, the initial page view does not download the full demo, and every recap
-page renders with JavaScript disabled and no horizontal overflow at 360 px.
+page, the initial page view does not download the full demo *(or the demo is
+gone, per 3b)*, and every recap page renders with JavaScript disabled and no
+horizontal overflow at 360 px.
+
+Gate 3 does not re-litigate what 1b already holds under test: the heading
+outline, the diagram's text equivalent, the non-colour encoding of the control
+loop, and the absence of page-level overflow at 360 px.
 
 ## Stage 4 — Present the Plan 143 snapshot without request-time dependencies
 
@@ -832,6 +1305,51 @@ Add tests for:
 - public security and cache headers;
 - robots and sitemap content;
 - README links and the production-versus-experimental wording contract.
+
+### Open question: is there anything to assert about denominators?
+
+**Not a requirement, and possibly not a test at all.** Recorded here because
+Stage 5 is where drift detection lives, and this plan has now been caught twice
+by a defect its current scope would not have found.
+
+Both times the number was arithmetically correct and answered a question nobody
+asked:
+
+| Where | The number | Why it was wrong |
+|---|---|---|
+| Gate 0, Compose services | "28 without a profile gate" | A true count of the wrong set — it excluded `trawl` and `redis-trawl`, the live scrape path |
+| Stage 1f, inodes | "fell by roughly two thirds", then "by more than half" | Whole-volume readings for a mechanism that removed 99.99% of the inodes it was pointed at. **The first correction repeated the original's mistake** |
+
+Stage 5's scope is "the absence of the known stale phrases", which is an
+assertion about wording. Neither of these was a stale phrase. Both were *new*
+wordings, individually true, and wrong about what they were counting — so a
+phrase list would have passed all four of them.
+
+**The reason this is a question and not a task** is that the hard part is not
+mechanical. A test can assert that a published number appears somewhere with its
+denominator named; it cannot know which denominator is the honest one. That
+judgment is what Gate 0 exercised when it chose `EXPECTED_SERVICES` over the
+profile count, and it is what picked the object count over the volume
+percentage. Encoding it as a rule risks a test that passes on a stated-but-wrong
+denominator, which is worse than no test, because it certifies the judgment it
+cannot make.
+
+Some possible answers, none of them owed:
+
+- **Nothing.** Two instances is a pattern of two. Both were caught by review, which
+  may be the correct control for a judgment call.
+- **An editorial line, not a test.** Stage 1c already creates a review checklist;
+  "every published count names the set it counts" is one line there and costs
+  nothing.
+- **A narrow assertion.** The surfaces currently publish almost no bare integers
+  by design — the rounding rule in the truth contract's §3 did most of this work
+  already. A test that fails on a *new* bare integer entering public copy would
+  catch the shape without judging the denominator. It would also be noisy, since
+  dates, versions, and the deal score's 0–100 are all legitimate.
+
+Stage 5 may reasonably conclude that the §3 rounding rule plus review is
+sufficient and that this needs no coverage. Recording the question is the point;
+answering it is not a gate.
 
 CI verification should include:
 
