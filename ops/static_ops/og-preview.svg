@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <!-- Source for og-preview.png, which is what the page's metadata points at:
+       Facebook, LinkedIn and X do not render SVG link previews. Rasterise it by
+       mounting this directory at /w in an alpine container, installing the
+       packages "rsvg-convert" and "font-dejavu", and running:
+
+         rsvg-convert -w 1200 -h 630 /w/og-preview.svg -o /w/og-preview.png
+
+       (XML comments cannot carry a double hyphen, which is why the container
+       flags are described rather than pasted.)
+
+       Plan 138 Stage 2 added this. The metadata pointed at dbt-bit-standalone.png
+       before it, which is the dbt vendor logo: a third party's trademark
+       standing in as this project's own preview image. -->
+  <rect width="1200" height="630" fill="#11191f"/>
+
+  <!-- The same falling-price motif as favicon.svg: the thing the pipeline records. -->
+  <polyline points="90,300 260,200 400,255 560,140" fill="none" stroke="#4ade80"
+            stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="560" cy="140" r="18" fill="#4ade80"/>
+
+  <text x="90" y="430" font-family="DejaVu Sans, sans-serif" font-size="86"
+        font-weight="bold" fill="#f4f7f9">CarTracker</text>
+  <text x="90" y="492" font-family="DejaVu Sans, sans-serif" font-size="34"
+        fill="#9fb0bd">A production data pipeline for car prices</text>
+  <text x="90" y="556" font-family="DejaVu Sans, sans-serif" font-size="28"
+        fill="#4ade80">cartracker.info</text>
+</svg>

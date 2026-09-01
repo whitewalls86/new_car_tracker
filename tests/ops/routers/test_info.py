@@ -43,7 +43,7 @@ class TestInfoEndpoint:
             return_value=_presentation(stats),
         )
 
-        response = mock_client.get("/info")
+        response = mock_client.get("/")
 
         assert response.status_code == 200
         assert "1.2M" in response.text
@@ -57,7 +57,7 @@ class TestInfoEndpoint:
             return_value=_presentation({"active_listings": 500}),
         )
 
-        response = mock_client.get("/info")
+        response = mock_client.get("/")
 
         assert response.status_code == 200
         assert "Active listings" in response.text
@@ -70,7 +70,7 @@ class TestInfoEndpoint:
             return_value=_presentation(stats, status="failed", stale=True),
         )
 
-        response = mock_client.get("/info")
+        response = mock_client.get("/")
 
         assert response.status_code == 200
         assert "Analytics data through (stale)" in response.text
@@ -81,7 +81,7 @@ class TestInfoEndpoint:
             return_value=_presentation(status="not_ready", stale=True),
         )
 
-        response = mock_client.get("/info")
+        response = mock_client.get("/")
 
         assert response.status_code == 200
         assert "A production data pipeline for tracking car prices" in response.text
@@ -106,7 +106,7 @@ class TestInfoEndpoint:
             side_effect=AssertionError("request must not refresh files"),
         )
 
-        response = mock_client.get("/info")
+        response = mock_client.get("/")
 
         assert response.status_code == 200
         duckdb_connect.assert_not_called()
@@ -197,7 +197,7 @@ class TestLandingPageStructure:
             return_value=_presentation(_FULL_STATS),
         )
 
-        body = _body_only(mock_client.get("/info").text)
+        body = _body_only(mock_client.get("/").text)
 
         positions = []
         for heading in _SECTION_SEQUENCE:
@@ -216,7 +216,7 @@ class TestLandingPageStructure:
 
         # The stylesheet carries data-layer selectors too, and they sit above the
         # diagram, so order has to be read from the body alone.
-        body = _body_only(mock_client.get("/info").text)
+        body = _body_only(mock_client.get("/").text)
 
         # §1b item 3's journey, plus the two nodes a linear strip cannot show:
         # the operational fork and the queue that closes the loop back to fetch.
@@ -237,7 +237,7 @@ class TestLandingPageStructure:
             return_value=_presentation(_FULL_STATS),
         )
 
-        flat = _flat(mock_client.get("/info").text)
+        flat = _flat(mock_client.get("/").text)
 
         assert 'role="img"' in flat
         assert 'aria-labelledby="flow-title flow-desc"' in flat
@@ -258,7 +258,7 @@ class TestLandingPageStructure:
             return_value=_presentation(_FULL_STATS),
         )
 
-        flat = _flat(mock_client.get("/info").text)
+        flat = _flat(mock_client.get("/").text)
 
         assert 'class="edge loop"' in flat
         assert ".flow-diagram .edge.loop { stroke-dasharray" in flat
@@ -279,7 +279,7 @@ class TestLandingPageStructure:
             return_value=_presentation(_FULL_STATS),
         )
 
-        flat = _flat(mock_client.get("/info").text)
+        flat = _flat(mock_client.get("/").text)
 
         for layer in ("bronze", "operational", "staging", "silver", "mart"):
             assert f'<tr data-layer="{layer}">' in flat, f"no table row for {layer}"
@@ -299,7 +299,7 @@ class TestLandingPageStructure:
             return_value=_presentation(_FULL_STATS),
         )
 
-        body = mock_client.get("/info").text
+        body = mock_client.get("/").text
 
         flat = _flat(body)
         assert "It does not populate the HOT tables." in flat
@@ -314,7 +314,7 @@ class TestLandingPageStructure:
             return_value=_presentation(_FULL_STATS),
         )
 
-        body = mock_client.get("/info").text
+        body = mock_client.get("/").text
 
         assert "ops.ops_detail_scrape_queue" in body
 
@@ -327,7 +327,7 @@ class TestLandingPageStructure:
             return_value=_presentation(_FULL_STATS),
         )
 
-        body = mock_client.get("/info").text
+        body = mock_client.get("/").text
 
         flat = _flat(body)
         assert "Migration track" in flat
@@ -345,13 +345,16 @@ class TestLandingPageStructure:
             return_value=_presentation(_FULL_STATS),
         )
 
-        body = mock_client.get("/info").text
+        body = mock_client.get("/").text
 
         assert 'id="work-planned"' in body
         assert 'id="work-completed"' in body
         assert "Planned next" in body
         assert "Recently completed" in body
-        assert "docs/recaps" in body
+        # Stage 2 gave the recaps a route; the pointer was a GitHub directory
+        # link until then. tests/ops/routers/test_public_routes.py holds the
+        # canonical form.
+        assert 'href="/recaps"' in body
 
     def test_no_barred_phrase_survives_on_the_page(self, mock_client, mocker):
         mocker.patch(
@@ -359,7 +362,7 @@ class TestLandingPageStructure:
             return_value=_presentation(_FULL_STATS),
         )
 
-        body = mock_client.get("/info").text.lower()
+        body = mock_client.get("/").text.lower()
 
         found = [p for p in _BARRED_PHRASES if p.lower() in body]
         assert not found, f"phrases Gate 0 removed have returned to the page: {found}"
@@ -373,7 +376,7 @@ class TestLandingPageStructure:
             return_value=_presentation(_FULL_STATS),
         )
 
-        body = mock_client.get("/info").text
+        body = mock_client.get("/").text
 
         assert body.count(">14<") == 1, (
             "a tracked-pair count appears somewhere other than the live stats tile"
@@ -392,7 +395,7 @@ class TestLandingPageStructure:
             return_value=_presentation(_FULL_STATS),
         )
 
-        body = _body_only(mock_client.get("/info").text)
+        body = _body_only(mock_client.get("/").text)
 
         outline = [
             (int(m.group(1)), re.sub(r"<[^>]+>", "", m.group(2)).strip())
@@ -415,7 +418,7 @@ class TestLandingPageStructure:
             return_value=_presentation(status="not_ready", stale=True),
         )
 
-        body = _body_only(mock_client.get("/info").text)
+        body = _body_only(mock_client.get("/").text)
 
         assert "<h2>Live stats</h2>" not in body
         for heading in _SECTION_SEQUENCE:

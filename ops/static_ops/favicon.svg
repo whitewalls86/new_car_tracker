@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="CarTracker">
+  <title>CarTracker</title>
+  <rect width="32" height="32" rx="6" fill="#11191f"/>
+  <!-- A falling price series: the thing the whole pipeline exists to record. -->
+  <polyline points="5,22 12,15 18,19 27,8" fill="none" stroke="#4ade80"
+            stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="27" cy="8" r="3" fill="#4ade80"/>
+</svg>
