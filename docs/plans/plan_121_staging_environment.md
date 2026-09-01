@@ -145,6 +145,46 @@ unit tests, CI fixtures, or local development alone:
 - **Airflow metadata migrations against populated data** (added 2026-08-31 by
   Plan 139 Stage F, CAR-36)
 
+### What local bring-up actually is now (recorded 2026-08-31)
+
+`scripts/setup.ps1` was deleted on 2026-08-31. It was the last artifact in the
+repository that assumed a local full-stack install — a fossil of the
+local-hosting era, last touched 2026-03-23, predating the Oracle VM. It had
+been non-functional since roughly April: it read `db/schema/schema_new.sql` and
+three `db/seed/*.sql` files that no longer exist, under
+`$ErrorActionPreference = "Stop"`, so it aborted at step 4 of 7. Nothing in CI
+ran it, which is why nobody noticed.
+
+That matters here because it changes what this plan is solving. **The data
+plane already comes up locally in three commands:**
+
+```bash
+docker network create cartracker-net
+docker volume create cartracker_pgdata     # declared external:
+docker compose up -d
+```
+
+Both jobs the old script existed to do are now done by the stack itself —
+Flyway applies every migration on first start, and `shared/minio.py` creates
+the `bronze` bucket lazily on first use. There is no schema step and no seed
+step to automate.
+
+**The access plane is what does not come up.** `Caddyfile` is a single site
+block hardcoded to `https://cartracker.info`, and Google OAuth requires a human
+registering a client against a domain they control. Neither has a local or dev
+variant. So a developer can run the pipeline but cannot exercise auth, role
+behavior, or routing — which is precisely the first three bullets above, and
+what Phase 1 (Environment Isolation) and Phase 4 (Auth and Safety) exist for.
+
+A replacement bootstrap script was considered and rejected on 2026-08-31. The
+scriptable remainder is the three commands above, already in the README quick
+start; everything that actually blocks a newcomer — OAuth registration, the
+domain and TLS story, choosing the `.env` secrets — is irreducibly manual. A
+script automating the easy part while unable to do the hard part is the same
+false confidence that let the deleted one rot unnoticed, and it would inherit
+the same defect unless CI exercised it, which CI has no reason to do when it
+already performs an equivalent bootstrap of its own.
+
 ---
 
 ## Scope note: rehearsing an Airflow upgrade
