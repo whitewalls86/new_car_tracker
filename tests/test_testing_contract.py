@@ -850,19 +850,22 @@ def test_every_service_directory_has_a_row_in_the_enough_table():
 # ---------------------------------------------------------------------------
 # Rule 5 -- every .sql file is executed by a Layer 2 test.
 # ---------------------------------------------------------------------------
-# One entry left, and it is not a missing test. processing/sql/
-# get_active_search_configs.sql was added by Plan 93 with the processing
-# service and has never been referenced by any Python file since -- no
-# constant loads it, no call site names it, and `git log -S` finds only the
-# contract test that waives it. Writing it a Layer 2 test would cover code
-# nothing calls; deleting it would shrink the denominator, which is what
-# G16 exists to police. It stays waived until someone decides which.
-LAYER_2_WAIVERS = tuple(
-    Waiver(subject, gap="G14", owner=162)
-    for subject in (
-        "processing/sql/get_active_search_configs.sql",
-    )
-)
+# Empty since Plan 162 Stage 7 (CAR-51). Every production .sql file is
+# executed by a Layer 2 test that imports the constant production imports.
+#
+# The last entry came off by deletion rather than by a test, which is allowed
+# only because the statement that absorbed it can be named -- G16's rule, and
+# the first case to exercise it. processing/sql/get_active_search_configs.sql
+# read `params -> 'makes'` and `params -> 'models'` out of search_configs jsonb
+# for carousel make/model filtering. That filtering still happens, in
+# detail_writer._get_tracked_models() under a section header that still says
+# "Carousel search_config filtering", but it reads ops.tracked_models joined to
+# enabled search_configs instead -- a normalised (search_key, make, model)
+# grain rather than paired jsonb arrays. Same question, same consumer, same
+# `enabled = true` gate, different source. The pre-normalisation version had
+# been dead since Plan 93 shipped it: no constant loaded it and `git log -S`
+# found only the waiver naming it.
+LAYER_2_WAIVERS: tuple[Waiver, ...] = ()
 
 _SQL_SUITE_ROW = re.compile(r"^\| `(tests/integration/[^`]+)` \| ", re.M)
 
