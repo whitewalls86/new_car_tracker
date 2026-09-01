@@ -109,7 +109,10 @@ caller expects. No business-logic assertions.
 **Runs against two engines, not one:** Postgres with Flyway migrations applied
 (`ops`, `processing`, the views), and the DuckDB file that
 `dbt build --target duckdb` produced earlier in the same job (`dashboard`,
-`dbt_runner`'s serving snapshots).
+`dbt_runner`'s serving snapshots). Needing both is why this suite runs in the
+`SQL + Airflow metadata contracts` job, which builds dbt for the 21 DuckDB
+tests and runs `airflow db migrate` for the one file that reads Airflow's own
+`task_instance` and `dag_run`.
 
 **Pattern:** per-test rollback. Each test opens a transaction, seeds minimal
 rows, runs the query, asserts columns, rolls back. Nothing is committed.
@@ -563,9 +566,11 @@ lives.
 
 ## What this contract does not decide
 
-- **The CI restructure.** Splitting the 267s `dbt build + test` job, building
-  dbt against the Plan 120 lake snapshot, and running the suites against the
-  real Compose definitions are [Plan 162](plans/plan_162_testing_census_and_restructure.md).
+- **The CI restructure.** Building dbt against the Plan 120 lake snapshot and
+  running the suites against the real Compose definitions are
+  [Plan 162](plans/plan_162_testing_census_and_restructure.md), Stage 10. The
+  first half — splitting the 267s `dbt build + test` job into four jobs named
+  for what they run — shipped as Stage 4 on 2026-09-01.
 - **What the coverage threshold should be.** Whether there is a gate at all was
   decided by [Plan 162](plans/plan_162_testing_census_and_restructure.md)
   Stage 2 on 2026-08-31: there is one, `--cov-fail-under` on the unit job, over

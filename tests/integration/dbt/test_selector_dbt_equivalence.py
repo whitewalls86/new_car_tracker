@@ -19,13 +19,12 @@ job:
   3. then runs this test, which opens the resulting DuckDB file and compares
      dbt's output to the selector SQL run over the same MinIO source data.
 
-Requires MINIO_ENDPOINT and DUCKDB_PATH (both set by the CI `dbt` job).
+Requires MINIO_ENDPOINT and DUCKDB_PATH (both set by the CI `dbt model tests (real build)` job).
 Skipped everywhere else — there is no local dbt/MinIO stack to run this
 against.
 """
 import os
 
-import duckdb
 import pytest
 
 from archiver.processors.lake_snapshot_selectors import build_selector_query
@@ -41,6 +40,8 @@ from scripts.seed_lake_snapshot_fixture import (
 )
 from shared.duckdb_s3 import get_duckdb_s3_connection
 
+from .real_build import analytics_con
+
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.skipif(
@@ -51,7 +52,7 @@ pytestmark = [
 
 
 def _dbt_con():
-    return duckdb.connect(os.environ["DUCKDB_PATH"], read_only=True)
+    return analytics_con()
 
 
 def _selector_vins(name: str) -> set:

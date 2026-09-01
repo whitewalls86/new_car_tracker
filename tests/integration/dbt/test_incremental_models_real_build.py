@@ -33,19 +33,17 @@ but they are kept in top-to-bottom definition order (pytest's natural
 execution order within a module) since that's the order the fixture phases
 document their lookback-window anchors relative to each other.
 
-Requires MINIO_ENDPOINT and DUCKDB_PATH (both set by the CI `dbt` job).
+Requires MINIO_ENDPOINT and DUCKDB_PATH (both set by the CI `dbt model tests (real build)` job).
 Skipped everywhere else — there is no local dbt/MinIO stack to run this
 against.
 """
 import os
-import shutil
-import subprocess
-from pathlib import Path
 
-import duckdb
 import pytest
 
 from scripts import seed_lake_snapshot_fixture as fx
+
+from .real_build import analytics_con, dbt_is_installed, run_dbt
 
 pytestmark = [
     pytest.mark.integration,
@@ -53,36 +51,12 @@ pytestmark = [
         not os.environ.get("MINIO_ENDPOINT") or not os.environ.get("DUCKDB_PATH"),
         reason="MINIO_ENDPOINT/DUCKDB_PATH not set — no local dbt/MinIO stack to build against",
     ),
-    pytest.mark.skipif(shutil.which("dbt") is None, reason="dbt is not installed"),
+    pytest.mark.skipif(not dbt_is_installed(), reason="dbt is not installed"),
 ]
-
-REPO_ROOT = Path(__file__).resolve().parents[3]
-DBT_DIR = REPO_ROOT / "dbt"
-DBT_BIN = shutil.which("dbt")
-
-
-def _dbt_env() -> dict:
-    env = dict(os.environ)
-    # register_upstream_external_models() (dbt-duckdb's on-run-start hook,
-    # dbt_project.yml) needs POSTGRES_URL on every invocation regardless of
-    # --select. The CI step that runs this test doesn't export it (only the
-    # earlier one-shot "dbt build" step does), so default it to the same
-    # CI Postgres service credentials used elsewhere (tests/integration/conftest.py).
-    env.setdefault("POSTGRES_URL", "postgresql://cartracker:cartracker@localhost:5432/cartracker")
-    return env
-
-
-def _run_dbt(*args):
-    result = subprocess.run(
-        [DBT_BIN, *args, "--profiles-dir", ".", "--target", "duckdb"],
-        cwd=DBT_DIR, capture_output=True, text=True, env=_dbt_env(),
-    )
-    assert result.returncode == 0, result.stdout + result.stderr
-    return result
 
 
 def _con():
-    return duckdb.connect(os.environ["DUCKDB_PATH"], read_only=True)
+    return analytics_con()
 
 
 # ===========================================================================
@@ -108,7 +82,7 @@ def test_detail_fingerprint_incremental_real_build_scenario():
 
     # --- incremental phase: seed phase 2, rerun dbt build with no --full-refresh ---
     fx.seed(phase="detail_fingerprint_incremental")
-    _run_dbt("build", "--select", "int_listing_state_fingerprints")
+    run_dbt("build", "--select", "int_listing_state_fingerprints")
 
     rows2 = _fingerprint_rows()
     by_artifact2 = {r[0]: r for r in rows2}
@@ -132,12 +106,12 @@ def test_detail_fingerprint_incremental_real_build_scenario():
     )
 
     # --- repeated incremental run with no new data is idempotent ---
-    _run_dbt("build", "--select", "int_listing_state_fingerprints")
+    run_dbt("build", "--select", "int_listing_state_fingerprints")
     assert _fingerprint_rows() == rows2
 
     # --- incremental output equals a full-refresh over the same final data ---
     incremental_snapshot = sorted(rows2)
-    _run_dbt("build", "--select", "int_listing_state_fingerprints", "--full-refresh")
+    run_dbt("build", "--select", "int_listing_state_fingerprints", "--full-refresh")
     assert sorted(_fingerprint_rows()) == incremental_snapshot
 
 
@@ -185,7 +159,7 @@ def test_price_history_incremental_real_build_scenario():
 
     # --- incremental phase: seed phase 2, rerun dbt build with no --full-refresh ---
     fx.seed(phase="price_history_incremental")
-    _run_dbt("build", "--select", "int_price_history")
+    run_dbt("build", "--select", "int_price_history")
 
     by_vin2 = {r[0]: r for r in _price_history_rows()}
     affected = by_vin2[fx.VIN_PH_AFFECTED]
@@ -208,12 +182,12 @@ def test_price_history_incremental_real_build_scenario():
     )
 
     # --- repeated incremental run with no new data is idempotent ---
-    _run_dbt("build", "--select", "int_price_history")
+    run_dbt("build", "--select", "int_price_history")
     assert {r[0]: r for r in _price_history_rows()} == by_vin2
 
     # --- incremental output equals a full-refresh over the same final data ---
     incremental_snapshot = sorted(_price_history_rows())
-    _run_dbt("build", "--select", "int_price_history", "--full-refresh")
+    run_dbt("build", "--select", "int_price_history", "--full-refresh")
     assert sorted(_price_history_rows()) == incremental_snapshot
 
 
@@ -245,7 +219,7 @@ def test_listing_state_runs_incremental_real_build_scenario():
 
     # --- incremental phase: seed phase 2, rerun dbt build (fingerprints + runs) ---
     fx.seed(phase="listing_state_runs_incremental")
-    _run_dbt("build", "--select", "int_listing_state_fingerprints", "int_listing_state_runs")
+    run_dbt("build", "--select", "int_listing_state_fingerprints", "int_listing_state_runs")
 
     runs_a = _runs_rows(fx.VIN_RUNS_A)
     assert len(runs_a) == 4, "a late artifact inside the lookback splits the original fp_a run"
@@ -264,7 +238,7 @@ def test_listing_state_runs_incremental_real_build_scenario():
     )
 
     # --- repeated incremental run with no new data is idempotent ---
-    _run_dbt("build", "--select", "int_listing_state_fingerprints", "int_listing_state_runs")
+    run_dbt("build", "--select", "int_listing_state_fingerprints", "int_listing_state_runs")
     assert _runs_rows(fx.VIN_RUNS_A) == runs_a
     assert _runs_rows(fx.VIN_RUNS_B) == runs_b
 
@@ -272,7 +246,7 @@ def test_listing_state_runs_incremental_real_build_scenario():
     incremental_a = sorted(runs_a)
     incremental_b = sorted(runs_b)
     incremental_stable = sorted(runs_stable_before)
-    _run_dbt(
+    run_dbt(
         "build", "--select", "int_listing_state_fingerprints", "int_listing_state_runs",
         "--full-refresh",
     )
@@ -333,7 +307,7 @@ def test_scrape_volume_incremental_real_build_scenario():
 
     # --- incremental phase: seed phase 2, rerun dbt build with no --full-refresh ---
     fx.seed(phase="scrape_volume_incremental")
-    _run_dbt("build", "--select", "mart_scrape_volume")
+    run_dbt("build", "--select", "mart_scrape_volume")
 
     affected = _scrape_volume_row(fx.SV_AFFECTED_HOUR, "detail")
     assert affected[2] == 2 and affected[3] == 2, (
@@ -360,11 +334,11 @@ def test_scrape_volume_incremental_real_build_scenario():
 
     # --- repeated incremental run with no new data is idempotent ---
     snapshot = _all_scrape_volume_rows()
-    _run_dbt("build", "--select", "mart_scrape_volume")
+    run_dbt("build", "--select", "mart_scrape_volume")
     assert _all_scrape_volume_rows() == snapshot
 
     # --- incremental output equals a full-refresh over the same final data ---
-    _run_dbt("build", "--select", "mart_scrape_volume", "--full-refresh")
+    run_dbt("build", "--select", "mart_scrape_volume", "--full-refresh")
     assert _all_scrape_volume_rows() == snapshot
 
 
@@ -406,7 +380,7 @@ def test_latest_observation_incremental_real_build_scenario():
 
     # --- incremental phase: seed phase 2, rerun dbt build with no --full-refresh ---
     fx.seed(phase="latest_observation_incremental")
-    _run_dbt("build", "--select", "int_latest_observation")
+    run_dbt("build", "--select", "int_latest_observation")
 
     priority = _latest_observation_row(fx.VIN_LO_PRIORITY)
     assert priority[1] == "detail" and priority[2] == fx.LO_PRIORITY_DETAIL_MAKE, (
@@ -441,7 +415,7 @@ def test_latest_observation_incremental_real_build_scenario():
         _latest_observation_row(fx.VIN_LO_NEW),
         _latest_observation_row(fx.VIN_LO_STABLE),
     )
-    _run_dbt("build", "--select", "int_latest_observation")
+    run_dbt("build", "--select", "int_latest_observation")
     assert (
         _latest_observation_row(fx.VIN_LO_PRIORITY),
         _latest_observation_row(fx.VIN_LO_DETAIL_UPGRADE),
@@ -450,7 +424,7 @@ def test_latest_observation_incremental_real_build_scenario():
     ) == snapshot
 
     # --- incremental output equals a full-refresh over the same final data ---
-    _run_dbt("build", "--select", "int_latest_observation", "--full-refresh")
+    run_dbt("build", "--select", "int_latest_observation", "--full-refresh")
     assert (
         _latest_observation_row(fx.VIN_LO_PRIORITY),
         _latest_observation_row(fx.VIN_LO_DETAIL_UPGRADE),
@@ -491,7 +465,7 @@ def test_observation_runs_incremental_real_build_scenario():
 
     # --- incremental phase: seed phase 2, rerun dbt build (fingerprints + runs) ---
     fx.seed(phase="observation_runs_incremental")
-    _run_dbt(
+    run_dbt(
         "build", "--select",
         "int_listing_observation_fingerprints", "int_listing_observation_runs",
     )
@@ -521,7 +495,7 @@ def test_observation_runs_incremental_real_build_scenario():
     )
 
     # --- repeated incremental run with no new data is idempotent ---
-    _run_dbt(
+    run_dbt(
         "build", "--select",
         "int_listing_observation_fingerprints", "int_listing_observation_runs",
     )
@@ -532,7 +506,7 @@ def test_observation_runs_incremental_real_build_scenario():
     incremental_a = sorted(runs_a)
     incremental_b = sorted(runs_b)
     incremental_stable = sorted(runs_stable_before)
-    _run_dbt(
+    run_dbt(
         "build", "--select", "int_listing_observation_fingerprints", "int_listing_observation_runs",
         "--full-refresh",
     )

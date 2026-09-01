@@ -13,7 +13,8 @@ in tests/archiver/test_export_ci_lake_snapshot.py; here every test touches real
 Parquet. Entity constants are imported from the seed so seeding and assertions
 cannot drift apart.
 
-Requires MINIO_ENDPOINT (set by the CI `dbt` job). Skipped everywhere else.
+Requires MINIO_ENDPOINT (set by the CI `Lake integration tests (MinIO)` job).
+Skipped everywhere else.
 """
 import os
 

@@ -14,7 +14,8 @@ exactly the pollution the Plan 120 closure fix removed at the cohort-closure
 level, and this test proves the export writer doesn't reintroduce it via a
 naive `artifact_id IN (...)` table filter.
 
-Requires MINIO_ENDPOINT (set by the CI `dbt` job). Skipped everywhere else.
+Requires MINIO_ENDPOINT (set by the CI `Lake integration tests (MinIO)` job).
+Skipped everywhere else.
 """
 import os
 

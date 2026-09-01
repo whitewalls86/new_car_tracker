@@ -339,13 +339,20 @@ For application changes, [`.github/workflows/ci.yml`](../.github/workflows/ci.ym
 - the non-integration pytest suite with coverage reporting;
 - a build of every Compose image;
 - Promtail syntax validation and fixture replay through the real production image;
-- a dbt/integration job backed by real Postgres, MinIO, and Loki service containers.
+- four parallel integration jobs backed by real Postgres and MinIO service containers.
 
-The dbt job applies the actual Flyway migrations with CI-specific credentials, creates the MinIO bucket, installs the same pinned dbt adapters used by the runtime, and installs DuckDB's `httpfs` and `postgres_scanner` extensions. It seeds empty Parquet schemas so model compilation exercises the real external-source shape, then uploads a production-shaped shared lake fixture under a reserved partition.
+Every one of those four applies the actual Flyway migrations with CI-specific credentials, and each declares only the services its own suites need. They are cut by prerequisite rather than by service name, because the prerequisite is the only thing the suites ever shared:
 
-The job runs a real DuckDB dbt build and follows it with separate integration suites for SQL, the ops API, recovery scripts, Airflow DAGs, the archiver, selector/dbt equivalence, and dbt-runner.
+| Job | Prerequisite it pays for | Suites |
+|---|---|---|
+| `dbt model tests (real build)` | a real `dbt build --target duckdb` | `tests/integration/dbt/` |
+| `SQL + Airflow metadata contracts` | that build **and** the `airflow` schema `airflow db migrate` creates | `tests/integration/sql/`, `tests/integration/airflow/` |
+| `Service integration tests (Postgres)` | a migrated Postgres, nothing else | ops, recovery scripts, processing, scraper, dbt_runner |
+| `Lake integration tests (MinIO)` | the Plan 120 lake-snapshot fixture in object storage | shared, archiver |
 
-Airflow is installed in an isolated virtual environment because its FastAPI/Starlette dependency constraints conflict with the application's FastAPI services. This mirrors production's container boundary instead of forcing incompatible dependencies into one CI environment.
+The two dbt-building jobs create the MinIO bucket, install the same pinned dbt adapters used by the runtime, and install DuckDB's `httpfs` and `postgres_scanner` extensions. They seed empty Parquet schemas so model compilation exercises the real external-source shape, then upload a production-shaped shared lake fixture under a reserved partition.
+
+Airflow is installed in an isolated virtual environment because its FastAPI/Starlette dependency constraints conflict with the application's FastAPI services. This mirrors production's container boundary instead of forcing incompatible dependencies into one CI environment. That install lives in the one job whose suites need it; until [Plan 162](plans/plan_162_testing_census_and_restructure.md) Stage 4 split these jobs apart, it ran ahead of all eight suites, six of which never import Airflow.
 
 ### 5.3 Shared fixtures test semantics, not hand-written imitations
 
@@ -357,9 +364,11 @@ Similarly, recovery-script integration tests use real transactions and migration
 
 ### 5.4 Coverage is a signal, not an arbitrary gate
 
-Coverage is reported for `archiver`, `dbt_runner`, `ops`, `processing`, `scraper`, and `shared`, with missing lines shown. There is deliberately no `fail-under` threshold yet. [Plan 139](plans/plan_139_test_suite_maintenance.md) established an 88% baseline and required several weeks of observation before deciding whether a numeric gate would improve quality or merely block unrelated work.
+Coverage is reported for all ten production directories — `airflow/dags`, `archiver`, `container_health`, `dashboard`, `dbt_runner`, `ops`, `processing`, `scraper`, `scripts` and `shared` — with missing lines shown, and the unit job gates on `--cov-fail-under=74` and uploads `coverage.xml` so the report outlives the log.
 
-The same plan profiled CI before optimizing it. The local unit suite was already near its structural floor; dependency installation, service startup, and repeated real dbt builds dominated the critical path. That led to targeted work such as caching and to a remaining task to profile the slow dbt-equivalence step, rather than introducing parallel pytest workers for a small theoretical gain and new shared-state risk.
+It was not always ten, and the correction is the point. [Plan 139](plans/plan_139_test_suite_maintenance.md) established an 88% baseline over six of them and deferred the gate decision. Six of ten meant the two services furthest below the testing contract's floor were the two the instrument could not see, so 88% was 88% of the code already being tested. [Plan 162](plans/plan_162_testing_census_and_restructure.md) Stage 2 added the missing four, and the honest number fell to **75.95% with no production code changing**. The threshold is a ratchet against regression, raised when a stage raises the number and never lowered to fit one — deliberately not a target, because a percentage is not this project's definition of enough. Two assertions hold the repair in place: one that every service directory appears in the coverage source, and one that a step measuring coverage also sets a threshold.
+
+The same plan profiled CI before optimizing it, and published a hypothesis that measurement then killed: pip caching saved too little to clear runner variance and was reverted under the stage's own rule, while dropping a scheduling edge between jobs was kept. Plan 162 Stage 4 finished the job. The suspect step — repeated real dbt builds — turned out not to be running dbt at all: 21 `dbt build --select` subprocesses, of which roughly 80 of 93 seconds was Python starting and importing dbt rather than transforming data. Invoking dbt in-process took that suite from 86–95s to 25–37s, and splitting the one serial integration job into four cut CI's wall clock from 292s to about 155s — quoted as a spread because three consecutive runs of identical code varied by 20 seconds, which is the floor on what a future optimization here can demonstrate. Parallel pytest workers are still not used, for the same reason as before: a small theoretical gain against new shared-state risk.
 
 This is the testing philosophy in miniature: measure the bottleneck, preserve the high-value contract, and optimize the actual cost center.
 

@@ -1,0 +1,103 @@
+"""The read-only guard on this directory's warehouse connection.
+
+Deliberately **not** marked `integration`, so it runs in the unit job as well:
+it needs no MinIO, no Postgres and no dbt, and the property it protects is
+worth knowing about before a 118-second job starts. `docs/TESTING.md` settles
+that a file's location does not decide where it runs -- the marker does.
+
+This exists because Plan 162 Stage 4 replaced a mechanism with a different
+mechanism. `read_only=True` on the connection used to make it impossible for
+an assertion to mutate the warehouse it was inspecting; in-process dbt holds
+the file open read-write, so that is no longer available and
+`ReadOnlyConnection` refuses non-read statements instead. A repair with no
+assertion behind it is the plan's success criterion 2 failing, so here is the
+assertion.
+"""
+
+import duckdb
+import pytest
+
+from .real_build import ReadOnlyConnection, refuse_writes
+
+
+@pytest.fixture()
+def con():
+    """A throwaway in-memory warehouse, wrapped the way the real one is."""
+    raw = duckdb.connect(":memory:")
+    raw.execute("create table t as select 1 as a, 'x' as b")
+    return ReadOnlyConnection(raw)
+
+
+class TestReadsAreAllowed:
+    """The guard is worthless if it also blocks the suite's real queries."""
+
+    def test_a_plain_select_runs(self, con):
+        assert con.execute("select a from t").fetchall() == [(1,)]
+
+    def test_a_cte_runs(self, con):
+        """`WITH ... SELECT` is the shape most of the real queries take.
+
+        DuckDB's parser types it SELECT, which is the reason classification
+        is delegated to `extract_statements` rather than matching a leading
+        keyword.
+        """
+        rows = con.execute(
+            "with c as (select a from t) select a from c"
+        ).fetchall()
+        assert rows == [(1,)]
+
+    def test_parameters_are_passed_through(self, con):
+        assert con.execute("select a from t where b = ?", ["x"]).fetchall() == [(1,)]
+
+    def test_fetchone_and_description_still_work(self, con):
+        result = con.execute("select a, b from t")
+        assert result.fetchone() == (1, "x")
+        assert [column[0] for column in con.description] == ["a", "b"]
+
+
+class TestWritesAreRefused:
+    """Each of these would have been impossible on a read-only connection."""
+
+    @pytest.mark.parametrize("sql", [
+        "insert into t values (2, 'y')",
+        "update t set a = 9",
+        "delete from t",
+        "create table u as select 1",
+        "drop table t",
+        "alter table t rename to u",
+        # A read-only connection never had an opinion about this one: it reads
+        # the warehouse and writes the filesystem.
+        "copy t to '/tmp/leaked.csv'",
+        "attach ':memory:' as other",
+    ])
+    def test_a_mutating_statement_is_refused(self, con, sql):
+        with pytest.raises(AssertionError, match="for reading"):
+            con.execute(sql)
+
+    def test_a_write_hidden_behind_a_read_is_refused(self, con):
+        """Multi-statement input is where a leading-keyword check would fail."""
+        with pytest.raises(AssertionError, match="INSERT"):
+            con.execute("select a from t; insert into t values (3, 'z')")
+
+    def test_the_refusal_names_the_statement_type(self, con):
+        with pytest.raises(AssertionError, match="DELETE"):
+            con.execute("delete from t")
+
+    def test_nothing_was_written(self, con):
+        """The refusal has to happen before execution, not after it."""
+        for sql in ("insert into t values (2, 'y')", "delete from t"):
+            with pytest.raises(AssertionError):
+                con.execute(sql)
+        assert con.execute("select count(*) from t").fetchone() == (1,)
+
+
+def test_the_allowlist_denies_by_default():
+    """The direction that matters: unknown statement kinds are refused.
+
+    An allowlist that grew into a denylist would let the next DuckDB release
+    add a writing statement type this suite silently permits.
+    """
+    with pytest.raises(AssertionError):
+        refuse_writes("vacuum")
+    with pytest.raises(AssertionError):
+        refuse_writes("set threads = 1")
