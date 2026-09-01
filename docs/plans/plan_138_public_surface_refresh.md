@@ -18,7 +18,7 @@ reconciled overviews and the assigned replacement claims.
 | **1b** Landing-page structure (CAR-39, PR #322) | Merged to `master` at `63e5b6e` on 2026-08-31, **soaking and undeployed** — the template changed, the live page has not |
 | **1c** Cross-surface consistency (CAR-56) | Built 2026-08-31 as a review skill and commit hook **rather than the tests §1c specifies** — see the evidence below for the drift record that decided it. Exit check 2 is unmet as written |
 | **1d** Public roadmap projection (CAR-57, PR #326) | Merged to `master` on 2026-09-01, **soaking and undeployed** — the template and the artifact changed, the live page has not. Gate 1d closed on four authored `## Public summary` sections rather than a one-time read: the generator names every plan it had to extract, so the gate is a shrinking worklist rather than a recurring one |
-| **1e** Weekly recap projection (CAR-58, PR #331) | **Merged to `master` at `9199337` on 2026-09-01, soaking and undeployed** — and *unreachable*: the 20 generated pages ship in `ops/static_ops/recaps/` but nothing serves `/recaps` until Stage 2 item 3. — 20 of 31 weeks published behind a per-file `**Publish:**` marker, which is the policy this slice was asked to decide. The classifier turned out to have **four** classes, not three: the fourth is six sibling links between recaps, which no `../` rule covers. Exit check 2's "image-build time" is unmet as written — the artifact is committed and `--check`ed, as 1d's is — and check 8's "no gap from the published-from date" has no referent once the policy is a marker rather than a date |
+| **1e** Weekly recap projection (CAR-58, PR #331) | **Merged to `master` at `9199337` on 2026-09-01, soaking and undeployed** — and *unreachable*: the 20 generated pages ship in `ops/static_ops/generated/recaps/` (moved there by Stage 7) but nothing serves `/recaps` until Stage 2 item 3. — 20 of 31 weeks published behind a per-file `**Publish:**` marker, which is the policy this slice was asked to decide. The classifier turned out to have **four** classes, not three: the fourth is six sibling links between recaps, which no `../` rule covers. Exit check 2's "image-build time" is unmet as written — the artifact is committed and `--check`ed, as 1d's is — and check 8's "no gap from the published-from date" has no referent once the policy is a marker rather than a date |
 | **1h** Ask at closeout whether the landed work moved a surface (CAR-61, PR #335) | **Built 2026-09-01.** The step is in the `close-out` skill: one cheap question in the same mechanism/name/quantity taxonomy 1c already uses, proposing and never writing. It closes the third direction — 1c's gate fires only when a surface is *staged*, so a plan that changes the system and edits no prose never reaches it, which is the class every Gate 0 defect came from. **Gate 1h is three-quarters met**: the demonstration half still needs a closeout answering "yes", and the "no" it has was run from recall rather than from the skill — see the evidence below |
 | **3d** Recap presentation | Not started. Carries two open decisions raised 2026-09-01: the stylesheet question (3d says the recap pages share `info.css`; the shipped generator inlines `_STYLE`), and whether `/recaps` leads with the newest week in full above the index. Both block 1g's markup |
 | **1g** Link the published writing from the landing page | **Raised 2026-09-01 out of 1f, not started and deliberately unticketed — blocked on 3d's two open decisions, which govern its markup.** 1f decided the corpus is not maintained here; 1g links it from `/` anyway, under a list that carries only immutable facts — title, date, URL — because a per-article annotation is a new drift surface that rots every time the tree moves. The weight of the stage is the **add-an-article procedure**: a two-way reconciliation against both surfaces, held by a commit gate rather than by memory |
@@ -771,7 +771,7 @@ next" nor "recently completed"; such a plan appears in **neither** list until it
 completion row lands in the archive. That is the operational form of the truth
 contract's §4 rule, and it is why the feed needs no third state.
 
-The generator writes deterministic `ops/static_ops/project-updates.json` with a
+The generator writes deterministic `ops/static_ops/generated/project-updates.json` with a
 small versioned schema:
 
 ```json
@@ -932,7 +932,7 @@ new recap that has not been regenerated.
 
 #### Stage 1e evidence — 2026-09-01 (CAR-58)
 
-`scripts/build_public_recaps.py` emits `ops/static_ops/recaps/` — 20 pages and a
+`scripts/build_public_recaps.py` emits `ops/static_ops/generated/recaps/` — 20 pages and a
 newest-first `index.html` — from the 31 files in `docs/recaps/`. CI runs
 `--check` in the documentation job, beside 1d's.
 
@@ -1908,12 +1908,13 @@ The work feed is dynamic in the browser but static and source-controlled at the
 service boundary:
 
 1. Run `python scripts/build_public_roadmap.py` whenever the roadmap changes.
-   Commit the deterministic `ops/static_ops/project-updates.json`; the existing
-   ops image build already copies it into the image.
+   Commit the deterministic `ops/static_ops/generated/project-updates.json`.
+   Stage 7 bind-mounts that directory into `ops` from the checkout, so it
+   reaches the page on the next `git pull` rather than the next image build.
 2. Add semantic "Planned next" and "Recently completed" containers to
    `info.html`, with a plain link to the GitHub roadmap as the no-JavaScript and
    fetch-failure fallback.
-3. `info.js` fetches `/static_ops/project-updates.json` after the narrative is
+3. `info.js` fetches `/static_ops/generated/project-updates.json` after the narrative is
    usable, validates `schema_version`, and renders with DOM APIs and
    `textContent` only. Do not inject feed values through `innerHTML`.
 4. Sort planned items by `order` and completed items by date even though the
@@ -2016,7 +2017,7 @@ GET /                 -> 200, no OAuth redirect
 GET /info             -> 308 -> /
 GET /recaps           -> 200 text/html, no OAuth redirect
 GET /recaps/2026-08-30 -> 200 text/html, no OAuth redirect
-GET /static_ops/project-updates.json -> 200 application/json
+GET /static_ops/generated/project-updates.json -> 200 application/json
 GET /robots.txt       -> 200 text/plain
 GET /sitemap.xml      -> 200 application/xml
 GET /dashboard        -> OAuth redirect when unauthenticated
@@ -2238,7 +2239,7 @@ the page rather than a claim the page makes.
 | `ops/templates/info.html` | Correct copy and semantic markup |
 | `ops/static_ops/info.css` | Extracted page styles |
 | `ops/static_ops/info.js` | Accessible progressive enhancement |
-| `ops/static_ops/project-updates.json` | Deterministic public projection of planned and completed work |
+| `ops/static_ops/generated/project-updates.json` | Deterministic public projection of planned and completed work |
 | `ops/static_ops/*` | Local vendor assets, poster, optimized video, favicon/social image |
 | `scripts/build_public_roadmap.py` | Parse the build order and the completion archive, validate them, and generate/check the JSON snapshot |
 | `scripts/build_public_recaps.py` | Render `docs/recaps/` to static HTML, rewrite links, emit the index and sitemap URL list, and `--check` for drift |
