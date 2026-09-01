@@ -12,6 +12,10 @@ dbt/logs/
 dbt/.*.yml
 .claude/*
 !.claude/skills/
+# Hooks are repository policy, not a personal preference, so the shared
+# settings file is tracked and settings.local.json stays ignored by the rule
+# above. Plan 138 Stage 1c added the first one.
+!.claude/settings.json
 .coverage
 coverage.xml
 GPT-Review-*.md.txt
