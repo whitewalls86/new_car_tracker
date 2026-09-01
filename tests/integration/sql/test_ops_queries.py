@@ -32,6 +32,7 @@ from ops.queries import (
     INSERT_COMPLETION_RECEIPT,
     INSERT_COORDINATION_RELEASE_EVIDENCE,
     INSERT_COORDINATION_STATE_EVENT,
+    INSERT_SEARCH_CONFIG,
     MARK_ROTATION_SLOT_QUEUED,
     MARK_SEARCH_CONFIG_QUEUED,
     RECORD_DETAIL_FETCHES,
@@ -39,6 +40,7 @@ from ops.queries import (
     RELEASE_DEPLOY_COORDINATION,
     REQUEST_COORDINATION_STATE,
     REQUEST_DEPLOY_COORDINATION,
+    RETIRE_SEARCH_CONFIG,
     SELECT_ACCESS_REQUESTS,
     SELECT_AUTHORIZED_USERS,
     SELECT_COMPLETION_RECEIPT,
@@ -59,9 +61,14 @@ from ops.queries import (
     SELECT_PENDING_REQUEST_NOTIFICATION_EMAIL,
     SELECT_RELEASE_EVIDENCE,
     SELECT_ROTATION_SLOT_CONFIGS,
+    SELECT_RUNNING_DETAIL_CLAIMS,
+    SELECT_SEARCH_CONFIG_BY_KEY,
+    SELECT_SEARCH_CONFIGS,
     SELECT_STUCK_PROCESSING_ARTIFACTS,
     SELECT_USER_ROLE,
     SET_DEPLOY_INTENT,
+    TOGGLE_SEARCH_CONFIG_ENABLED,
+    UPDATE_SEARCH_CONFIG,
     UPDATE_USER_ROLE,
     UPSERT_AUTHORIZED_USER,
 )
@@ -95,21 +102,12 @@ DEPLOY_SCOPE = frozenset(
 class TestSearchConfigQueries:
 
     def test_list_searches(self, cur):
-        cur.execute("""
-            SELECT search_key, enabled, source, params,
-                   rotation_order, last_queued_at, created_at, updated_at
-            FROM search_configs
-            ORDER BY enabled DESC, rotation_order NULLS LAST, search_key
-        """)
+        cur.execute(SELECT_SEARCH_CONFIGS)
         rows = cur.fetchall()
         assert isinstance(rows, list)
 
     def test_get_search_by_key(self, cur, seed_search_config):
-        cur.execute(
-            "SELECT search_key, enabled, source, params, rotation_order, last_queued_at"
-            " FROM search_configs WHERE search_key = %s",
-            (seed_search_config,),
-        )
+        cur.execute(SELECT_SEARCH_CONFIG_BY_KEY, (seed_search_config,))
         row = cur.fetchone()
         assert row is not None
 
@@ -1094,3 +1092,63 @@ class TestMaintenanceStatements:
 
         cur.execute(SELECT_PENDING_CLEARED_LISTINGS)
         assert listing_id in {row["listing_id"] for row in cur.fetchall()}
+
+
+class TestSearchConfigAdminStatements:
+    """admin.py's writes, which nothing executed until Plan 162 Stage 7.
+
+    All six were ``sql = \"\"\"...\"\"\"`` locals -- importable in principle and in
+    no .sql file in practice, so the Layer 2 census could not count them and
+    the two read tests above had to retype the statement to test anything.
+    """
+
+    def test_insert_then_read_back_by_key(self, cur):
+        key = f"test-{uuid.uuid4().hex[:8]}"
+        cur.execute(INSERT_SEARCH_CONFIG, (key, True, json.dumps({"makes": []}), 1, 1))
+        assert cur.rowcount == 1
+
+        cur.execute(SELECT_SEARCH_CONFIG_BY_KEY, (key,))
+        row = cur.fetchone()
+        assert row is not None and row["enabled"] is True
+
+    def test_update_rewrites_every_mutable_field(self, cur):
+        key = f"test-{uuid.uuid4().hex[:8]}"
+        cur.execute(INSERT_SEARCH_CONFIG, (key, True, json.dumps({}), 1, 1))
+        cur.execute(
+            UPDATE_SEARCH_CONFIG,
+            (False, json.dumps({"makes": ["Honda"]}), 9, 2, key),
+        )
+        assert cur.rowcount == 1
+        cur.execute(SELECT_SEARCH_CONFIG_BY_KEY, (key,))
+        row = cur.fetchone()
+        assert row["enabled"] is False and row["rotation_order"] == 9
+
+    def test_toggle_flips_without_reading_first(self, cur):
+        key = f"test-{uuid.uuid4().hex[:8]}"
+        cur.execute(INSERT_SEARCH_CONFIG, (key, True, json.dumps({}), 1, 1))
+        # NOT enabled rather than a supplied value, so this is what proves two
+        # toggles cannot both write the same state from a stale read.
+        cur.execute(TOGGLE_SEARCH_CONFIG_ENABLED, (key,))
+        cur.execute(SELECT_SEARCH_CONFIG_BY_KEY, (key,))
+        assert cur.fetchone()["enabled"] is False
+
+    def test_retire_disables_and_frees_the_key(self, cur):
+        key = f"test-{uuid.uuid4().hex[:8]}"
+        cur.execute(INSERT_SEARCH_CONFIG, (key, True, json.dumps({}), 1, 1))
+        cur.execute(RETIRE_SEARCH_CONFIG, (f"{key}-retired", key))
+        assert cur.rowcount == 1
+
+        cur.execute(SELECT_SEARCH_CONFIG_BY_KEY, (key,))
+        assert cur.fetchone() is None, "the original key must be free to reuse"
+        cur.execute(SELECT_SEARCH_CONFIG_BY_KEY, (f"{key}-retired",))
+        assert cur.fetchone()["enabled"] is False
+
+
+class TestDrainGateStatement:
+
+    def test_select_running_detail_claims(self, cur):
+        cur.execute(SELECT_RUNNING_DETAIL_CLAIMS)
+        count, oldest = cur.fetchone().values()
+        # MIN is what separates "busy" from "stuck", so it must come back even
+        # when there is nothing running.
+        assert count == 0 or oldest is not None

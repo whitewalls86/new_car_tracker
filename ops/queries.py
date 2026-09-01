@@ -87,3 +87,17 @@ INSERT_ARTIFACT_EVENT = shared_queries.INSERT_ARTIFACT_EVENT
 INSERT_BLOCKED_COOLDOWN_CLEARED_EVENT = (
     shared_queries.INSERT_BLOCKED_COOLDOWN_CLEARED_EVENT
 )
+
+# Search-config administration (admin.py). Held as `sql = """..."""` locals at
+# their call sites until Plan 162 Stage 7 -- importable in principle, in no
+# .sql file in practice, so the Layer 2 census could not count them and
+# test_ops_queries.py had to retype two of them to test anything.
+SELECT_SEARCH_CONFIGS = _q("select_search_configs")
+SELECT_SEARCH_CONFIG_BY_KEY = _q("select_search_config_by_key")
+INSERT_SEARCH_CONFIG = _q("insert_search_config")
+UPDATE_SEARCH_CONFIG = _q("update_search_config")
+TOGGLE_SEARCH_CONFIG_ENABLED = _q("toggle_search_config_enabled")
+RETIRE_SEARCH_CONFIG = _q("retire_search_config")
+
+# Read by the drain gate (coordination_drain.py).
+SELECT_RUNNING_DETAIL_CLAIMS = _q("select_running_detail_claims")
