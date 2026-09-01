@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Week of 2026-03-30 to 2026-04-05</title>
+<style>
+:root { color-scheme: light dark; }
+body { margin: 0 auto; padding: 2rem 1.25rem 4rem; max-width: 46rem;
+  font: 16px/1.65 system-ui, -apple-system, "Segoe UI", sans-serif; }
+h1, h2, h3 { line-height: 1.25; margin-top: 2.25rem; }
+h1 { margin-top: 0; }
+code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9em; }
+pre { overflow-x: auto; padding: 0.85rem 1rem; border-radius: 6px;
+  background: rgba(127, 127, 127, 0.12); }
+:not(pre) > code { padding: 0.15em 0.35em; border-radius: 3px;
+  background: rgba(127, 127, 127, 0.15); }
+.table-scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; margin: 1.25rem 0; }
+th, td { text-align: left; padding: 0.45rem 0.7rem;
+  border-bottom: 1px solid rgba(127, 127, 127, 0.35); }
+.note { margin: 1.5rem 0 2.5rem; padding: 0.85rem 1rem; border-radius: 6px;
+  font-size: 0.925rem; background: rgba(127, 127, 127, 0.1);
+  border-left: 3px solid rgba(127, 127, 127, 0.5); }
+.index-list { list-style: none; padding: 0; }
+.index-list li { padding: 0.6rem 0;
+  border-bottom: 1px solid rgba(127, 127, 127, 0.25); }
+.index-list .meta { display: block; font-size: 0.9rem; opacity: 0.75; }
+</style>
+</head>
+<body>
+<main>
+<p class="note">This is a point-in-time record of the week of 2026-03-30 to 2026-04-05. It was written from the repository&#x27;s history for that week and is not revised afterwards, so later pages may supersede what it says.</p>
+<h1 id="week-of-2026-03-30-to-2026-04-05">Week of 2026-03-30 to 2026-04-05</h1>
+<p><strong>Window:</strong> 2026-03-30 00:00:00 to 2026-04-05 23:59:59, local author time
+<strong>Recapped:</strong> 2026-08-29
+<strong>Commits in window:</strong> 32 (25 non-merge, 7 merges)</p>
+<p>This is a backfill written <strong>146 days after the window closed</strong>. The week
+concentrated 32 commits into March 30–April 2, establishing coordinated
+deployment controls and then building the project's first broad unit-test
+foundation.</p>
+<h2 id="what-shipped">What shipped</h2>
+<p><code>5de4429</code> explicitly joins Plans 60 and 75. Their shared goal was a safe
+redeploy path with operational ownership separated from scraping: the admin
+panel moved from the scraper into a dedicated <code>ops</code> service, deploy intent and
+n8n execution state moved into the database, and the scraper was reduced to
+scraping concerns. The surrounding commits built the deploy-status API,
+workflow gates, health polling, redeploy script and service health endpoints
+that allowed scheduled work to drain before containers changed.</p>
+<p>The deployment work also repaired the detail workflow so carousel hints could
+be unlisted without forcing a full dbt rebuild. In the planning index, that
+dbt correction and the service-health gate were recorded as completed Plans
+74 and 76, although the implementing commits do not name those plans and
+therefore remain unattributed under this recap's rule.</p>
+<p>The second half of the window made services testable. dbt_runner reached 105
+tests and reported full coverage of its application module; database access
+moved into a shared helper; ops gained deploy, admin and model coverage; and
+the scraper received 184 tests anchored to the n8n API contract. A final
+browser-impersonation update followed the scraper suite.</p>
+<h2 id="what-moved-between-states">What moved between states</h2>
+<p>Four planning-index revisions occurred, all on March 30. Their net effect was:</p>
+<ul>
+<li>Plan 74 entered the legacy archive for the corrected new-search-config dbt
+path.</li>
+<li>Plan 76 entered the legacy archive for service health endpoints, database
+checks and n8n's health gate.</li>
+</ul>
+<p>Plans 60 and 75 shipped together during the window, but their completion did
+not appear as a net state transition in the historical parser's view.</p>
+<h2 id="what-is-still-owed">What is still owed</h2>
+<p>The missing Plans 60 and 75 transition was a historical filing gap, not an
+open implementation gate. As of 2026-08-29, the completed-plan ledger records
+Plans 60+75 together and also contains Plans 74 and 76. No planning-state
+action is owed today.</p>
+<h2 id="unattributed-commits">Unattributed commits</h2>
+<p>Only <code>5de4429</code> carries plan references (Plans 60 and 75). The other 24
+non-merge commits are unattributed:</p>
+<pre><code class="language-text">57d0879 first working draft of new deployment management
+a043d94 Minor Bug fixes and changes to ensure new coordination layer works
+d170fc6 Building API endpoint for changing deploy status
+131cf0f further work on the deploy features
+0ddd456 workflow cleanup
+1522073 adding route for admin base
+8714a05 Adding health endpoints
+8ac1747 adding health pollin workflows
+7887f20 wiring in the health checks
+d646785 updated plans
+2d5ecce fixing a tweak on detail pages to correctly unlist carousel hints without full DBT rebuild
+d81839d First bach of unit tests!
+b78c569 Additional dbt_runner tests, and minor refactor to create database helper.
+a0ea835 Working through more dbt_runner tests.
+c4d8cfe more dbt_runner testing
+5484b88 Add comprehensive unit tests for dbt_runner endpoints
+699d151 Refactor to bring DB connection inline with other containers. Moving DB connection to shared space so that all conatiners can use it
+7d4f25f Setting up ops/ directory to get tested.
+caeea4c Setting up ops/ directory to get tested.
+d2abbd3 Refactor deployment db connections
+c7b459d Added deploy testings
+859418a Finishing up the refactor to use shared db connection resources, and add testing.
+d904089 Add unit test suite for scraper/ package (184 tests, 70% coverage)
+f20f221 updating browser impresonation
+</code></pre>
+<h2 id="merges">Merges</h2>
+<p>None of the merge branches names a plan.</p>
+<ul>
+<li><code>60b39c9</code> — PR #44 from <code>claude/tender-saha</code>.</li>
+<li><code>8509fa1</code> — PR #45 from <code>claude/tender-saha</code>.</li>
+<li><code>cba98b1</code> — PR #46 from <code>feature/unit-tests</code>.</li>
+<li><code>b91f372</code> — PR #47 from <code>feature/unit-tests</code>.</li>
+<li><code>b18050a</code> — branch merge from the GitHub remote into <code>feature/unit-tests</code>;
+no PR is named.</li>
+<li><code>af426da</code> — PR #48 from <code>feature/unit-tests</code>.</li>
+<li><code>c612734</code> — PR #49 from <code>fix/curl-agent</code>.</li>
+</ul>
+<h2 id="deferred-to-the-next-recap">Deferred to the next recap</h2>
+<p><strong>1,073 commits</strong> sit after this window's end as of 2026-08-29.</p>
+<pre><code class="language-bash">git rev-list --count --all --since='2026-04-05 23:59:59'   # 1073
+</code></pre>
+<p>That raw tail includes every following week through the current partial week.
+Every complete week from April 6 through the week ending August 23 is already
+covered. No following complete week is genuinely uncovered; the week ending
+August 30 is in progress.</p>
+</main>
+</body>
+</html>

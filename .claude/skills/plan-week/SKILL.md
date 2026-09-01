@@ -276,12 +276,23 @@ Two mechanical traps:
 `docs/recaps/<sunday>.md`, and these headings verbatim — the suite checks for
 them, and stable headings are what make the files comparable week to week.
 
+**Set `**Publish:** false` when the window holds no commits, `true` otherwise.**
+Plan 138 Stage 1e renders the published recaps to the public site, and this
+marker is the whole of what it reads — the generator does not decide, and it
+fails rather than guessing when the marker is absent. A no-commit week is a
+real record and stays in the repository; what it is not is a page worth
+advertising, and eleven of the first thirty-one weeks were empty. You are
+setting a default, not a verdict: a week with commits that should stay
+internal anyway is a `false` you write deliberately, and nothing here
+overrides it later.
+
 ```markdown
 # Week of <mon> to <sun>
 
 **Window:** <mon> 00:00:00 to <sun> 23:59:59, local author time
 **Recapped:** <the date you are writing>
 **Commits in window:** N (M non-merge, K merges)
+**Publish:** <true|false>
 
 ## What shipped
 

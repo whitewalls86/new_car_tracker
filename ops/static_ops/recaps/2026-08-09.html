@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Week of 2026-08-03 to 2026-08-09</title>
+<style>
+:root { color-scheme: light dark; }
+body { margin: 0 auto; padding: 2rem 1.25rem 4rem; max-width: 46rem;
+  font: 16px/1.65 system-ui, -apple-system, "Segoe UI", sans-serif; }
+h1, h2, h3 { line-height: 1.25; margin-top: 2.25rem; }
+h1 { margin-top: 0; }
+code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9em; }
+pre { overflow-x: auto; padding: 0.85rem 1rem; border-radius: 6px;
+  background: rgba(127, 127, 127, 0.12); }
+:not(pre) > code { padding: 0.15em 0.35em; border-radius: 3px;
+  background: rgba(127, 127, 127, 0.15); }
+.table-scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; margin: 1.25rem 0; }
+th, td { text-align: left; padding: 0.45rem 0.7rem;
+  border-bottom: 1px solid rgba(127, 127, 127, 0.35); }
+.note { margin: 1.5rem 0 2.5rem; padding: 0.85rem 1rem; border-radius: 6px;
+  font-size: 0.925rem; background: rgba(127, 127, 127, 0.1);
+  border-left: 3px solid rgba(127, 127, 127, 0.5); }
+.index-list { list-style: none; padding: 0; }
+.index-list li { padding: 0.6rem 0;
+  border-bottom: 1px solid rgba(127, 127, 127, 0.25); }
+.index-list .meta { display: block; font-size: 0.9rem; opacity: 0.75; }
+</style>
+</head>
+<body>
+<main>
+<p class="note">This is a point-in-time record of the week of 2026-08-03 to 2026-08-09. It was written from the repository&#x27;s history for that week and is not revised afterwards, so later pages may supersede what it says.</p>
+<h1 id="week-of-2026-08-03-to-2026-08-09">Week of 2026-08-03 to 2026-08-09</h1>
+<p><strong>Window:</strong> 2026-08-03 00:00:00 to 2026-08-09 23:59:59, local author time
+<strong>Recapped:</strong> 2026-08-21
+<strong>Commits in window:</strong> 1 (1 non-merge, 0 merges)</p>
+<p>One commit, on the last working day of the week. It is the week work resumed
+after a seventeen-day break — the maintainer was on vacation, per their own
+account on 2026-08-21 — and the commit it resumed with set up everything the
+following week then measured and rejected.</p>
+<p>This recap was written on 2026-08-21, twelve days after its window closed, to
+fill a gap in <code>docs/recaps/</code> rather than at the end of the week it describes.
+Everything below was read from git and from the plan documents on that date.</p>
+<h2 id="what-shipped">What shipped</h2>
+<h3 id="plan-114-the-sectioner-itself-built-and-gated">Plan 114 — the sectioner itself, built and gated</h3>
+<p><code>8cab72a</code> on 2026-08-08 landed Stages 0-2 of
+<a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_114_sectioned_html_artifact_audit.md">Plan 114</a>: 1,005 lines
+across <code>processing/html_sections.py</code> and its tests, splitting raw cars.com
+detail pages into named, content-addressed sections. No MinIO, no scripts, no
+scraper or production changes.</p>
+<p>The plan exists because Plan 110 found that whole-file byte hashes do not
+match even when parsed vehicle state is unchanged, with the difference
+concentrated in request, session and
+analytics regions while the vehicle data stays stable. If sections could be
+made stable and reusable, artifacts could be retained far longer than a 30-day
+window — which is the prize the whole audit was chasing.</p>
+<p>Three decisions in the commit are worth keeping, because each is a refusal:</p>
+<ul>
+<li><strong>Correct by construction, not by testing.</strong> Sections are contiguous,
+non-overlapping character slices covering the whole document, so
+<code>reconstruct(extract_sections(html)) == html</code> holds by the shape of the data
+structure. Offsets come from an <code>html.parser</code> subclass rather than from
+BeautifulSoup with <code>str(element)</code> re-joined, specifically so that lxml
+normalising an attribute cannot be mistaken for the sectioner being wrong.</li>
+<li><strong>A lossy tier was built and then dropped.</strong> An earlier draft key-sorted JSON
+script bodies and discarded sections believed to be per-request noise, for a
+measured ~1.8% reuse gain. It was cut because the equivalence gate can only
+validate against the <em>current</em> parser, while the entire point of retaining
+artifacts is reprocessing under future ones — so any lossy transform is a bet
+that cannot be re-run.</li>
+<li><strong>Two whole-document parser scans make pruning unsafe, and are now pinned by
+tests.</strong> <code>parse_detail_page.py:166</code> scans the serialized document for
+<code>&quot;seller&quot;:{...}</code> and takes the first match, so dropping an earlier section
+holding a decoy blob changes <code>dealer_phone</code> and the fallback <code>dealer_zip</code>.
+<code>parse_detail_page.py:72</code> scans the raw string for &quot;no longer available&quot;, so
+dropping a section containing that text flips <code>listing_state</code> from
+<code>unlisted</code> to <code>active</code>. No fixture carries an unlisted marker, so that second
+scan is covered by injecting one rather than left untested.</li>
+</ul>
+<p>The Stage 2 gate passed on all three fixtures. What it did not yet touch is the
+storage question — whether sectioning is <em>worth</em> doing — which is Stage 3, and
+Stage 3 ran the following week at <code>1f0e847</code> and answered no on a 223%
+regression. See <a href="2026-08-16.html">2026-08-16</a>.</p>
+<h2 id="what-moved-between-states">What moved between states</h2>
+<p>Nothing. <code>docs/PLANS.md</code> has <strong>no revision</strong> with an author date inside this
+window, so no plan entered, left or changed table — including Plan 114, whose
+implementation this week was.</p>
+<h2 id="what-is-still-owed">What is still owed</h2>
+<ul>
+<li><strong>Plan 114's storage case was untested when the week ended.</strong> The commit is
+explicit that it is audit-first and should not replace raw HTML writes in the
+production scrape path. The measurement that would decide it had not run.</li>
+<li><strong><code>listing_state</code> corruption is pinned but not fixed.</strong> The second parser
+scan flips unlisted and challenge pages to <code>active</code>, and this commit's tests
+stop sectioning from <em>causing</em> that. The underlying defect is not this plan's
+and later became the blocker on
+<a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_130_parser_input_projection.md">Plan 130</a>.</li>
+<li><strong>The Plan 125 Gate C branch stayed unmerged</strong> through the break and was not
+touched this week.</li>
+</ul>
+<h2 id="unattributed-commits">Unattributed commits</h2>
+<p>None. The window's single commit names Plan 114 in its subject.</p>
+<h2 id="merges">Merges</h2>
+<p>None. <code>8cab72a</code> reached <code>master</code> the following week, inside <code>788bb33</code>
+(PR #184) on 2026-08-10, which is counted in
+<a href="2026-08-16.html">2026-08-16</a> — the one merge in that window that carried work
+in from before it.</p>
+<h2 id="deferred-to-the-next-recap">Deferred to the next recap</h2>
+<p><strong>173 commits</strong> fall after this window's end, as of 2026-08-21.</p>
+<pre><code class="language-bash">git rev-list --count --all --since='2026-08-09 23:59:59'   # 173
+</code></pre>
+<p>Because this recap was backfilled, most of that tail is no longer deferred: the
+week ending <a href="2026-08-16.html">2026-08-16</a> is recapped. What remains genuinely
+uncovered is the week of 2026-08-17, which is not complete and so is not
+recappable yet.</p>
+</main>
+</body>
+</html>

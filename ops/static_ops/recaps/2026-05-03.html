@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Week of 2026-04-27 to 2026-05-03</title>
+<style>
+:root { color-scheme: light dark; }
+body { margin: 0 auto; padding: 2rem 1.25rem 4rem; max-width: 46rem;
+  font: 16px/1.65 system-ui, -apple-system, "Segoe UI", sans-serif; }
+h1, h2, h3 { line-height: 1.25; margin-top: 2.25rem; }
+h1 { margin-top: 0; }
+code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9em; }
+pre { overflow-x: auto; padding: 0.85rem 1rem; border-radius: 6px;
+  background: rgba(127, 127, 127, 0.12); }
+:not(pre) > code { padding: 0.15em 0.35em; border-radius: 3px;
+  background: rgba(127, 127, 127, 0.15); }
+.table-scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; margin: 1.25rem 0; }
+th, td { text-align: left; padding: 0.45rem 0.7rem;
+  border-bottom: 1px solid rgba(127, 127, 127, 0.35); }
+.note { margin: 1.5rem 0 2.5rem; padding: 0.85rem 1rem; border-radius: 6px;
+  font-size: 0.925rem; background: rgba(127, 127, 127, 0.1);
+  border-left: 3px solid rgba(127, 127, 127, 0.5); }
+.index-list { list-style: none; padding: 0; }
+.index-list li { padding: 0.6rem 0;
+  border-bottom: 1px solid rgba(127, 127, 127, 0.25); }
+.index-list .meta { display: block; font-size: 0.9rem; opacity: 0.75; }
+</style>
+</head>
+<body>
+<main>
+<p class="note">This is a point-in-time record of the week of 2026-04-27 to 2026-05-03. It was written from the repository&#x27;s history for that week and is not revised afterwards, so later pages may supersede what it says.</p>
+<h1 id="week-of-2026-04-27-to-2026-05-03">Week of 2026-04-27 to 2026-05-03</h1>
+<p><strong>Window:</strong> 2026-04-27 00:00:00 to 2026-05-03 23:59:59, local author time
+<strong>Recapped:</strong> 2026-08-28
+<strong>Commits in window:</strong> 141 (109 non-merge, 32 merges)</p>
+<p>This is a backfill written <strong>117 days after the window closed</strong>. It is an
+unusually large week: the measured commit/body/stat read was about 12.6k
+tokens. Work spanned the final Airflow cutover, dbt/DuckDB and dashboard
+migrations, n8n decommissioning, portfolio presentation, and a new production
+observability stack.</p>
+<h2 id="what-shipped">What shipped</h2>
+<p><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_71_airflow.md">Plan 71</a> closed the remaining scraper migration
+and processing-test gap at <code>e95e426</code>: scheduled listing and detail DAGs, safe
+claim release, a scraper readiness endpoint, 52 processing integration tests,
+95% processing unit coverage, and dashboard visibility into Airflow. This made
+the orchestrator thin and kept business behavior in tested services.</p>
+<p>The surrounding unattributed work completed the same architectural turn.
+<code>421f90c</code> replaced dbt-backed operational views with plain Postgres views over
+HOT tables. <code>9f08336</code> rebuilt dbt on DuckDB/MinIO silver, replaced Python
+integration seeding with declarative dbt unit tests, and overhauled CI.
+<code>db85b2a</code> and its follow-ups converted the Streamlit dashboard into an
+analytics product reading DuckDB materializations instead of operational
+Postgres queries.</p>
+<p><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_86_grafana.md">Plan 86</a> added Prometheus and Grafana at
+<code>3b84995</code>, with Airflow, Postgres, MinIO, service and host metrics provisioned
+as code. Later commits added Loki/Promtail aggregation, customer-pipeline
+gauges, dashboards, Telegram alerts and operational fixes. The plan's purpose
+was to add observability only after Airflow supplied meaningful production
+signals to observe.</p>
+<p><code>850cdb9</code> names <a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_102_decommission.md">Plans 102</a> and
+<a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_95_portfolio_landing_page.md">95</a>. It removed n8n, legacy
+Postgres and dead service paths while turning <code>/info</code> into a concise portfolio
+landing page. Follow-ups removed stale tests and mounts, polished the page and
+demo, and added data-health metrics. Plan 103 appears only in that commit's
+body after the subject has already attributed the commit to Plans 102 and 95,
+so it is not an additional attribution under this recap's rule.</p>
+<p>The rest of the week repaired issues exposed by the migration: Flyway ordering
+and grants, SRP scheduling, 403 ownership, cooldown events, archiver foreign
+keys, VIN collisions, dashboard queries, Caddy/static paths, CI, logging and
+alert timing. All are named below rather than disappearing for lack of a plan
+number.</p>
+<h2 id="what-moved-between-states">What moved between states</h2>
+<p>Seven planning-index revisions produced these net transitions:</p>
+<ul>
+<li><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_71_airflow.md">Plan 71</a> left build order and received a
+completed record for its scrape DAGs and testing work. Its final n8n removal
+was completed later in the week through Plan 102.</li>
+<li><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_86_grafana.md">Plan 86</a> left backlog as the metrics stack
+shipped.</li>
+<li><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_90_dbt_cleanup.md">Plan 90</a> moved from backlog to superseded;
+its DuckDB source layer had landed through Plan 96 and its remaining cleanup
+was absorbed into Plans 101 and 102.</li>
+<li><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_91_uuid_type_cleanup.md">Plans 91</a> and
+<a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_92_service_drain.md">92</a> left build order.</li>
+<li><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_96_silver_layer.md">Plan 96</a> left backlog after establishing
+MinIO silver as the durable observation store and DuckDB analytics surface.</li>
+<li><a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_102_decommission.md">Plan 102</a> entered build order.</li>
+</ul>
+<h2 id="what-is-still-owed">What is still owed</h2>
+<p>Documents for <a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_99_price_observations_per_source.md">Plan 99</a>,
+<a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_100_historical_data_migration.md">Plan 100</a>,
+<a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_101_dashboard_restructure.md">Plan 101</a>, Plan 102 and
+<a href="https://github.com/whitewalls86/new_car_tracker/blob/master/docs/plans/plan_103_test_coverage.md">Plan 103</a> were created during the week.
+Plans 99–101 shipped without ever appearing in an active-table transition;
+Plan 103 ended the window with a document but no table row. Plans 86, 91, 92
+and 96 also left active tables without every terminal state being explicit in
+that week's index. Those were historical filing gaps.</p>
+<p>As of 2026-08-28, Plans 71, 86, 91, 92, 96 and 99–102 are archived; Plan 90 is
+superseded; and Plan 103 is in backlog with a trigger. No planning-state action
+is owed today.</p>
+<h2 id="unattributed-commits">Unattributed commits</h2>
+<p>Three non-merge commits carry plan references: <code>e95e426</code> (Plan 71), <code>3b84995</code>
+(Plan 86), and <code>850cdb9</code> (Plans 102 and 95). The other 106 are unattributed:</p>
+<pre><code class="language-text">421f90c replace dbt ops views with plain postgres views reading HOT tables directly
+d222b67 fix view creation
+525099a fixing dashboard queries for new schema
+de546fe moving dashboard queries to sql files to keep testing in sync with reality. Streamline linting.
+8c31554 fixing ops scrape sql
+ddecda8 fixing dashboard imports
+d18c880 fix the test setup to work with other tests, hit the actual test data.
+c8c9a75 add new dashboard queries to get airflow stats. remove dependencies on n8n runs.
+d61d073 fix import
+3387e7c fix dashboard query to use correct schema for airflow stats
+144dc00 fixing port for scraper
+1f99a4b increasing batch size
+049d469 additional planning
+9f08336 Rebuild dbt layer for silver/DuckDB architecture and overhaul CI
+47da02f integration and testing fixes for new framework
+8c09e2c fixing minio image
+c0a0764 fixing migration guard for airflow check
+ffe880f fixing dbt unit tests
+cc5c011 more CI tweaking.
+864aaf4 fixing dbt setup
+dc3c253 testing a row in a table
+8bbb391 defining source column types.
+f779b5b adding empty model runs to build structure before unit testing.
+4a668d2 removing unit tests on source tables.
+90e316b fixing data types, wrong ci values supplied.
+130bd8a fixing test expectations.
+b21096c fixing airflow smoke test to remove removed task.
+844a1c7 fix minio config
+db85b2a Refactoring the dashboard to pull from minio data
+8e6e66e add testing support
+49ed455 fixing import
+87ccbbc new dashboard page for ops health
+3a85ccc linting
+4319839 fixing unit tests.
+da822c3 fixing tests
+dcde98c adding test data
+79990e5 fix flyway migrations
+7f0458f fixing dashboard requirements
+bdf2b68 dashboard tweaks and dbt fixes for correct data
+88cb4f0 filter mart to only tracked vehicles
+e892dbd fixing unit tests for new mart def
+e96a441 fixing dealer id mapping
+ca96b33 fixing dashboard queries
+ff080c0 fix processing bug w/ writing unlisting events.
+9cf593f script to backfill unlisted data
+a77f789 fix marts to correctly keep vehicle info when tracking unlistings.
+0ca724e fix price freshness
+2255434 fix flyway migration for CI
+63825cc flyway fixes
+f3d580a adding requirements to test env
+dfd5c1d fixing CI dependencies
+171f2ec cleaning up claude's flyway mess
+4cfc205 final flyway fix
+c636ee9 fixing caddyfile handling
+ff035aa fixing unit test for DBT, adding dashboard link, planning.
+a61d1af more planning
+ded1bf1 docker-compose.override.yml: removed stale n8n service block
+4069b09 cleaning up integration tests refrencing removed tables.
+0d87ffb cleaning up integration tests refrencing removed tables.
+3fbd1b1 fix a couple bugs
+51d90ef info page polish
+1ec094d info page enhancements
+2bb6ca0 info page tweaks
+88f22c8 info page tweaks
+93ba47a info page tweaks
+f7d5c6b linting
+577b647 adding new dashboard metrics for scraping performance.
+a2be03d linting
+c3e8006 fixing ci dependencies
+5cf2203 tweaks to the info page
+832943e dashboard fix
+d31592b fixing SRP bug
+788f548 linting
+ae5e7aa more robust logging
+c8257e3 fix bad pathing handle
+fe9a37b more pathing fixes
+2280f45 fixing 403 bug, moving recording of 403's to source.
+caf09e7 cleaning up the integration testing
+818efee problem in cleanup queue
+bd5f6b6 archiver fix
+50f70db migration to fix scraper permissions
+ed322eb Redesigning the landing page for maximum impact
+d281722 demo vid
+311cc58 more page tweaks
+52e4258 full language pass. Cleaning it up.
+6eeb928 fixing sequence permissions for scraper
+09b450b dealing with version conflict
+a6211d7 another version tweak
+0fb3f25 fixing bug on vin collisions coming from carousel hints.
+1547095 fixing unlisted query on dashboard
+9dc3f54 telling the story on key design changes.
+620ecba adding some through-put metrics
+6c5f2ff fixing detail drop downs
+cf216c8 Add Loki 2.9.8 and Promtail 2.9.8 services to aggregate logs from all Python services (ops, scraper, processing, dbt_runner, archiver).
+da26ec6 fixing set up of dashboards
+f8a40af fix test
+ccd39f7 adding customer pipeline health metrics
+4e3c3c2 adding new metrics to dashboards
+3aea888 add alerting via telegram to grafana.
+cbb7dd6 fixing grafana setup
+14bf973 trying older grafana version
+1304e05 fix env variable
+6e9bf9d telegram set up tweaks
+002e55f fixing alert timing rules
+efc9fb2 updating readme and info page with new stuff
+eb5484c tidyiing up landing page
+</code></pre>
+<h2 id="merges">Merges</h2>
+<p>None of the merge branches names a plan.</p>
+<ul>
+<li><code>3e1676c</code> — PR #88 from <code>feature/staging-minio-transport</code>.</li>
+<li><code>8faf2ff</code> — PR #87 from <code>feature/postgres-hot-views</code>.</li>
+<li><code>faebf26</code> — PR #89 from <code>feature/scrapers-to-airflow</code>.</li>
+<li><code>d9b746a</code> — PR #90 from <code>feature/postgres-hot-views</code>.</li>
+<li><code>1ee18c9</code> — merge of <code>origin/master</code> into <code>feature/scrapers-to-airflow</code>; no PR.</li>
+<li><code>ad45e74</code> — PR #91 from <code>feature/scrapers-to-airflow</code>.</li>
+<li><code>e1fda65</code> — PR #92 from <code>feature/scrapers-to-airflow</code>.</li>
+<li><code>0648e24</code> — PR #93 from <code>feature/duck-dbt</code>.</li>
+<li><code>ca7d586</code> — PR #94 from <code>feature/minio-based-dashboard</code>.</li>
+<li><code>ab1bcb1</code> — PR #95 from <code>feature/minio-based-dashboard</code>.</li>
+<li><code>28ebf6c</code> — PR #96 from <code>feature/grafana</code>.</li>
+<li><code>6989dcb</code> — PR #97 from <code>feature/grafana</code>.</li>
+<li><code>1af16d8</code> — PR #98 from <code>feature/grafana</code>.</li>
+<li><code>b2d840f</code> — PR #99 from <code>feature/grafana</code>.</li>
+<li><code>ead379e</code> — PR #100 from <code>feature/grafana</code>.</li>
+<li><code>777b0f9</code> — PR #101 from <code>cleanup/prod-cleanup</code>.</li>
+<li><code>220e51c</code> — PR #102 from <code>feature/dashboard-improvements</code>.</li>
+<li><code>4cbf46a</code> — PR #103 from <code>fix/403-rate-tracking</code>.</li>
+<li><code>ed8923d</code> — PR #104 from <code>fix/403-rate-tracking</code>.</li>
+<li><code>8928996</code> — PR #105 from <code>fix/403-rate-tracking</code>.</li>
+<li><code>5356abd</code> — PR #106 from <code>fix/403-processing</code>.</li>
+<li><code>28d1a3a</code> — PR #107 from <code>fix/archiver-fks</code>.</li>
+<li><code>c567044</code> — PR #108 from <code>fix/scraper-permissions</code>.</li>
+<li><code>1667650</code> — PR #109 from <code>feature/landing-page</code>.</li>
+<li><code>18b84a2</code> — PR #110 from <code>fix/db-permissions</code>.</li>
+<li><code>24782fa</code> — PR #111 from <code>fix/writer-services</code>.</li>
+<li><code>0cb50f3</code> — PR #112 from <code>fix/dashboard-unlisted</code>.</li>
+<li><code>8595823</code> — PR #113 from <code>feature/info-deep-dives</code>.</li>
+<li><code>af6c20d</code> — PR #114 from <code>feature/info-deep-dives</code>.</li>
+<li><code>222ba8f</code> — PR #115 from <code>feature/info-deep-dives</code>.</li>
+<li><code>e7e279e</code> — PR #116 from <code>feature/logging-and-alerting</code>.</li>
+<li><code>a445429</code> — PR #117 from <code>doc/update-for-loki-alerts</code>.</li>
+</ul>
+<h2 id="deferred-to-the-next-recap">Deferred to the next recap</h2>
+<p><strong>683 commits</strong> sit after this window's end as of 2026-08-28.</p>
+<pre><code class="language-bash">git rev-list --count --all --since='2026-05-03 23:59:59'   # 683
+</code></pre>
+<p>That raw tail includes every following week through the current partial week.
+The complete weeks ending May 10, May 17, May 24, May 31, June 7, June 14,
+June 21, June 28, July 5, July 12, July 19, July 26, August 2, August 9, August
+16 and August 23 are already covered. No following complete week is genuinely
+uncovered; the week ending August 30 is still in progress.</p>
+</main>
+</body>
+</html>

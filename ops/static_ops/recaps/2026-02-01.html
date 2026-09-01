@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Week of 2026-01-26 to 2026-02-01</title>
+<style>
+:root { color-scheme: light dark; }
+body { margin: 0 auto; padding: 2rem 1.25rem 4rem; max-width: 46rem;
+  font: 16px/1.65 system-ui, -apple-system, "Segoe UI", sans-serif; }
+h1, h2, h3 { line-height: 1.25; margin-top: 2.25rem; }
+h1 { margin-top: 0; }
+code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9em; }
+pre { overflow-x: auto; padding: 0.85rem 1rem; border-radius: 6px;
+  background: rgba(127, 127, 127, 0.12); }
+:not(pre) > code { padding: 0.15em 0.35em; border-radius: 3px;
+  background: rgba(127, 127, 127, 0.15); }
+.table-scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; margin: 1.25rem 0; }
+th, td { text-align: left; padding: 0.45rem 0.7rem;
+  border-bottom: 1px solid rgba(127, 127, 127, 0.35); }
+.note { margin: 1.5rem 0 2.5rem; padding: 0.85rem 1rem; border-radius: 6px;
+  font-size: 0.925rem; background: rgba(127, 127, 127, 0.1);
+  border-left: 3px solid rgba(127, 127, 127, 0.5); }
+.index-list { list-style: none; padding: 0; }
+.index-list li { padding: 0.6rem 0;
+  border-bottom: 1px solid rgba(127, 127, 127, 0.25); }
+.index-list .meta { display: block; font-size: 0.9rem; opacity: 0.75; }
+</style>
+</head>
+<body>
+<main>
+<p class="note">This is a point-in-time record of the week of 2026-01-26 to 2026-02-01. It was written from the repository&#x27;s history for that week and is not revised afterwards, so later pages may supersede what it says.</p>
+<h1 id="week-of-2026-01-26-to-2026-02-01">Week of 2026-01-26 to 2026-02-01</h1>
+<p><strong>Window:</strong> 2026-01-26 00:00:00 to 2026-02-01 23:59:59, local author time
+<strong>Recapped:</strong> 2026-08-30
+<strong>Commits in window:</strong> 17 (17 non-merge, 0 merges)</p>
+<p>This is a backfill written <strong>210 days after the window closed</strong>. It is the
+first week in this repository, but not the beginning of the CarTracker idea.
+The public predecessor, <a href="https://github.com/whitewalls86/Car-Tracker"><code>whitewalls86/Car-Tracker</code></a>,
+contains 44 commits from May 15 to June 9, 2025. Its final form was a local
+Python application with a committed SQLite database, a Streamlit dashboard,
+price history, listing verification, user-agent rotation and a batched job
+dispatcher.</p>
+<p>The January 28 import is a clean rewrite rather than a git continuation. A
+blob comparison found no shared application-code files between the old
+repository's final tree and <code>78d8f86</code>; only empty/package and IDE metadata
+files match exactly. The rewrite keeps the same domain—Cars.com listings,
+VINs, prices and active/unlisted state—but changes the operating model to
+Docker, FastAPI, n8n, Postgres, retained raw HTML artifacts and observation
+tables.</p>
+<h2 id="what-shipped">What shipped</h2>
+<p><code>78d8f86</code> established the new system in one large import: the scraper API,
+results/detail processors, five n8n workflows and the Postgres schema. Raw
+pages became first-class artifacts, and listing state became a set of SRP and
+detail observations rather than updates to one local SQLite row.</p>
+<p>The rest of January made that foundation runnable and analytical. <code>3533abd</code>
+and <code>4a2cbb2</code> added and corrected Docker Compose; <code>516ec7e</code> added a support
+bundle; <code>c5bde3f</code>, <code>8779043</code>, <code>0e54172</code>, <code>23cf7c3</code>, <code>de7280c</code> and <code>4b39d43</code>
+built the dbt backbone from staging through VIN mapping, price events,
+vehicle snapshots and operational staleness models. <code>f81dea0</code> separated the
+scraper package, while <code>88ef13f</code> added <code>dbt_runner</code> and rewired n8n to invoke
+dbt. <code>fc7889b</code> repaired refresh logic, and <code>cf00ca2</code> added the first README and
+dependency hygiene.</p>
+<p>No numbered plans existed yet. The work is therefore described from the
+commit bodies and file changes, not retroactively assigned to plans created
+in March.</p>
+<h2 id="what-moved-between-states">What moved between states</h2>
+<p>Nothing moved. <code>docs/PLANS.md</code> did not exist during this window, and the
+planning-history parser reports zero index revisions.</p>
+<h2 id="what-is-still-owed">What is still owed</h2>
+<p>The week ended with a runnable but young rewrite and no planning index. Git
+records no further work in this repository until March 12, so it cannot say
+whether the intervening gap was intentional, blocked or simply unrecorded.
+As of 2026-08-30, later recaps and the completed-plan ledger cover the system's
+subsequent planning history; no planning-state action is inferred from this
+pre-plan week.</p>
+<h2 id="unattributed-commits">Unattributed commits</h2>
+<p>All 17 non-merge commits are unattributed because none names a plan in its
+subject or body:</p>
+<pre><code class="language-text">78d8f86 asdf
+9218b5e asdf
+0f325c1 adding gitignore
+3533abd Add docker-compose and ignore local env secrets
+4a2cbb2 Fix docker-compose to use external volumes and compose-managed build
+516ec7e Add debug bundler.
+c5bde3f adding dbt backbone
+76eba39 Remove ide files
+8779043 standing up DBT environment, building first tables.
+0e54172 dbt improvements
+23cf7c3 details model
+de7280c adding more dbt models, tests, and updating workflow logic to pass listing id correctly into detail table
+4b39d43 adding more models to approach dbt dropping into workflow
+f81dea0 refactor for new dbt_runner tooling
+88ef13f added dbt_runner for calling dbt rebuilds from n8n. Rewired n8n to call dbt.
+fc7889b fixing some logic issues with refreshes.
+cf00ca2 Project hygiene and docs
+</code></pre>
+<h2 id="merges">Merges</h2>
+<p>There were no merge commits in this window.</p>
+<h2 id="deferred-to-the-next-recap">Deferred to the next recap</h2>
+<p><strong>1,353 commits</strong> sit after this window's end as of 2026-08-30.</p>
+<pre><code class="language-bash">git rev-list --count --all --since='2026-02-01 23:59:59'   # 1353
+</code></pre>
+<p>That raw tail includes every later week through the current partial week. In
+this backfill batch, every complete week from February 2 through March 29 is
+covered, and the existing recap series covers March 30 through August 23. No
+following complete week is genuinely uncovered; the week ending August 30 is
+in progress.</p>
+</main>
+</body>
+</html>
